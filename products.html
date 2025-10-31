@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Products - MinimalShop</title>
+    <title>Products - At Factory Price</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
@@ -48,9 +48,17 @@
         }
 
         .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
             font-size: 1.5rem;
             font-weight: 700;
             color: #000;
+        }
+
+        .logo-image {
+            height: 40px;
+            width: auto;
         }
 
         .nav-links {
@@ -257,7 +265,12 @@
 <body>
     <nav class="navbar">
         <div class="nav-container">
-            <h1 class="logo"><a href="index.html">MinimalShop</a></h1>
+            <h1 class="logo">
+                <a href="index.html" style="display: flex; align-items: center; gap: 12px;">
+                    <img src="images/logo.png" alt="At Factory Price Logo" class="logo-image" onerror="this.style.display='none'">
+                    <span>At Factory Price</span>
+                </a>
+            </h1>
             <div class="nav-links">
                 <a href="index.html" class="nav-link">Home</a>
                 <a href="products.html" class="nav-link active">Products</a>
@@ -289,8 +302,8 @@
     <footer class="footer">
         <div class="footer-content">
             <div class="footer-section">
-                <h3>MinimalShop</h3>
-                <p>Premium products for modern living</p>
+                <h3>At Factory Price</h3>
+                <p>Premium products at factory direct prices</p>
             </div>
             <div class="footer-section">
                 <h4>Quick Links</h4>
@@ -305,7 +318,7 @@
             </div>
         </div>
         <div class="footer-bottom">
-            <p>&copy; 2024 MinimalShop. All rights reserved.</p>
+            <p>&copy; 2024 At Factory Price. All rights reserved.</p>
         </div>
     </footer>
 
