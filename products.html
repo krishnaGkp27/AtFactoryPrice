@@ -129,6 +129,94 @@
             color: #666;
         }
 
+        /* Search Bar Styles */
+        .search-container {
+            max-width: 600px;
+            margin: 0 auto 3rem;
+            position: relative;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 1rem 3rem 1rem 1.2rem;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-family: inherit;
+            transition: border-color 0.3s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #000;
+        }
+
+        .search-icon {
+            position: absolute;
+            right: 1.2rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #666;
+        }
+
+        /* Category Filter Styles */
+        .category-filter {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            flex-wrap: wrap;
+            margin-bottom: 3rem;
+        }
+
+        .category-btn {
+            padding: 0.7rem 1.5rem;
+            border: 2px solid #e0e0e0;
+            background: #fff;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #666;
+        }
+
+        .category-btn:hover {
+            border-color: #000;
+            color: #000;
+        }
+
+        .category-btn.active {
+            background: #000;
+            color: #fff;
+            border-color: #000;
+        }
+
+        /* Category Section Styles */
+        .category-section {
+            margin-bottom: 4rem;
+        }
+
+        .category-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .category-title {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: #000;
+        }
+
+        .category-count {
+            font-size: 0.9rem;
+            color: #666;
+            font-weight: 500;
+        }
+
         .products-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -158,6 +246,18 @@
 
         .product-info {
             padding: 1.5rem;
+        }
+
+        .product-category-tag {
+            display: inline-block;
+            padding: 0.3rem 0.8rem;
+            background: #f0f0f0;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #666;
+            margin-bottom: 0.8rem;
+            text-transform: uppercase;
         }
 
         .product-name {
@@ -200,6 +300,18 @@
 
         .btn-add-cart:hover {
             background: #333;
+        }
+
+        .no-results {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+
+        .no-results h3 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: #333;
         }
 
         .footer {
@@ -259,6 +371,15 @@
             .nav-link {
                 font-size: 0.85rem;
             }
+
+            .category-filter {
+                gap: 0.5rem;
+            }
+
+            .category-btn {
+                padding: 0.6rem 1rem;
+                font-size: 0.85rem;
+            }
         }
     </style>
 </head>
@@ -267,10 +388,7 @@
         <div class="nav-container">
             <h1 class="logo">
                 <a href="index.html" style="display: flex; align-items: center; gap: 12px;">
-                    <img src="images/logo.png" alt="At Factory Price Logo" class="logo-image" onerror="this.style.display='none'" style="
-    width: 120px;
-    height: 80px;
-">
+                    <img src="images/logo.png" alt="At Factory Price Logo" class="logo-image" onerror="this.style.display='none'" style="width: 120px; height: 80px;">
                 </a>
             </h1>
             <div class="nav-links">
@@ -295,8 +413,37 @@
                 <p>Discover our curated collection</p>
             </div>
 
-            <div class="products-grid" id="productsGrid">
+            <!-- Search Bar -->
+            <div class="search-container">
+                <input type="text" 
+                       id="searchInput" 
+                       class="search-input" 
+                       placeholder="Search products..."
+                       onkeyup="filterProducts()">
+                <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                </svg>
+            </div>
+
+            <!-- Category Filter -->
+            <div class="category-filter">
+                <button class="category-btn active" onclick="filterByCategory('all')">All Products</button>
+                <button class="category-btn" onclick="filterByCategory('electronics')">Electronics</button>
+                <button class="category-btn" onclick="filterByCategory('accessories')">Accessories</button>
+                <button class="category-btn" onclick="filterByCategory('audio')">Audio</button>
+                <button class="category-btn" onclick="filterByCategory('wearables')">Wearables</button>
+            </div>
+
+            <!-- Products Container -->
+            <div id="productsContainer">
                 <!-- Products will be loaded here by JavaScript -->
+            </div>
+
+            <!-- No Results Message -->
+            <div id="noResults" class="no-results" style="display: none;">
+                <h3>No products found</h3>
+                <p>Try adjusting your search or filter criteria</p>
             </div>
         </div>
     </main>
@@ -326,58 +473,80 @@
 
     <script>
         // ============================================
-        // PRODUCT DATA - CUSTOMIZE YOUR PRODUCTS HERE
+        // PRODUCT DATA WITH CATEGORIES
         // ============================================
         const products = [
+            // ELECTRONICS CATEGORY
             {
                 id: 1,
                 name: 'Premium Wireless Headphones',
                 price: 89.99,
-                image: 'images/product1.jpg',
-                description: 'High-quality sound with noise cancellation'
-            },
-            {
-                id: 2,
-                name: 'Smart Watch Series 5',
-                price: 299.99,
-                image: 'images/product2.jpg',
-                description: 'Fitness tracking and notifications'
-            },
-            {
-                id: 3,
-                name: 'Minimalist Backpack',
-                price: 59.99,
-                image: 'images/product3.jpg',
-                description: 'Sleek design with laptop compartment'
-            },
-            {
-                id: 4,
-                name: 'Portable Bluetooth Speaker',
-                price: 49.99,
-                image: 'images/product4.jpg',
-                description: 'Waterproof with 12-hour battery'
+                image: 'images/electronics/headphones.jpg',
+                description: 'High-quality sound with noise cancellation',
+                category: 'electronics'
             },
             {
                 id: 5,
                 name: 'USB-C Hub Adapter',
                 price: 34.99,
-                image: 'images/product5.jpg',
-                description: 'Multi-port connectivity solution'
+                image: 'images/electronics/usb-hub.jpg',
+                description: 'Multi-port connectivity solution',
+                category: 'electronics'
             },
             {
                 id: 6,
                 name: 'Wireless Charging Pad',
                 price: 24.99,
-                image: 'images/product6.jpg',
-                description: 'Fast charging for all devices'
+                image: 'images/electronics/charging-pad.jpg',
+                description: 'Fast charging for all devices',
+                category: 'electronics'
+            },
+            
+            // WEARABLES CATEGORY
+            {
+                id: 2,
+                name: 'Smart Watch Series 5',
+                price: 299.99,
+                image: 'images/wearables/smartwatch.jpg',
+                description: 'Fitness tracking and notifications',
+                category: 'wearables'
+            },
+            
+            // ACCESSORIES CATEGORY
+            {
+                id: 3,
+                name: 'Minimalist Backpack',
+                price: 59.99,
+                image: 'images/accessories/backpack.jpg',
+                description: 'Sleek design with laptop compartment',
+                category: 'accessories'
+            },
+            
+            // AUDIO CATEGORY
+            {
+                id: 4,
+                name: 'Portable Bluetooth Speaker',
+                price: 49.99,
+                image: 'images/audio/speaker.jpg',
+                description: 'Waterproof with 12-hour battery',
+                category: 'audio'
             }
         ];
+
+        // Category display names
+        const categoryNames = {
+            'electronics': 'Electronics',
+            'wearables': 'Wearables',
+            'accessories': 'Accessories',
+            'audio': 'Audio Equipment'
+        };
+
+        let currentCategory = 'all';
+        let searchQuery = '';
 
         // ============================================
         // CART FUNCTIONS
         // ============================================
-
-        // Add product to cart
         function addToCart(productId) {
             const product = products.find(p => p.id === productId);
             if (!product) return;
@@ -400,11 +569,9 @@
             localStorage.setItem('cart', JSON.stringify(cart));
             updateCartCount();
             
-            // Show success message
             alert('✓ Product added to cart!');
         }
 
-        // Update cart count in navigation
         function updateCartCount() {
             const cart = JSON.parse(localStorage.getItem('cart') || '[]');
             const totalItems = cart.reduce((total, item) => total + item.quantity, 0);
@@ -416,38 +583,116 @@
         }
 
         // ============================================
-        // DISPLAY PRODUCTS
+        // FILTER AND SEARCH FUNCTIONS
         // ============================================
+        function filterByCategory(category) {
+            currentCategory = category;
+            
+            // Update active button
+            const buttons = document.querySelectorAll('.category-btn');
+            buttons.forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            displayProducts();
+        }
 
+        function filterProducts() {
+            searchQuery = document.getElementById('searchInput').value.toLowerCase();
+            displayProducts();
+        }
+
+        function getFilteredProducts() {
+            let filtered = products;
+            
+            // Filter by category
+            if (currentCategory !== 'all') {
+                filtered = filtered.filter(p => p.category === currentCategory);
+            }
+            
+            // Filter by search query
+            if (searchQuery) {
+                filtered = filtered.filter(p => 
+                    p.name.toLowerCase().includes(searchQuery) ||
+                    p.description.toLowerCase().includes(searchQuery) ||
+                    p.category.toLowerCase().includes(searchQuery)
+                );
+            }
+            
+            return filtered;
+        }
+
+        // ============================================
+        // DISPLAY PRODUCTS BY CATEGORY
+        // ============================================
         function displayProducts() {
-            const productsGrid = document.getElementById('productsGrid');
-            if (!productsGrid) return;
+            const productsContainer = document.getElementById('productsContainer');
+            const noResults = document.getElementById('noResults');
+            
+            if (!productsContainer) return;
 
-            productsGrid.innerHTML = products.map(product => `
-                <div class="product-card">
-                    <img src="${product.image}" 
-                         alt="${product.name}" 
-                         class="product-image" 
-                         onerror="this.src='https://via.placeholder.com/400x280/667eea/ffffff?text=${encodeURIComponent(product.name)}'">
-                    <div class="product-info">
-                        <h3 class="product-name">${product.name}</h3>
-                        <p class="product-description">${product.description}</p>
-                        <div class="product-footer">
-                            <span class="product-price">$${product.price.toFixed(2)}</span>
-                            <button class="btn-add-cart" onclick="addToCart(${product.id})">
-                                Add to Cart
-                            </button>
+            const filteredProducts = getFilteredProducts();
+            
+            if (filteredProducts.length === 0) {
+                productsContainer.innerHTML = '';
+                noResults.style.display = 'block';
+                return;
+            }
+            
+            noResults.style.display = 'none';
+            
+            // Group products by category
+            const groupedProducts = {};
+            filteredProducts.forEach(product => {
+                if (!groupedProducts[product.category]) {
+                    groupedProducts[product.category] = [];
+                }
+                groupedProducts[product.category].push(product);
+            });
+
+            // Generate HTML for each category
+            let html = '';
+            
+            Object.keys(groupedProducts).forEach(category => {
+                const categoryProducts = groupedProducts[category];
+                const categoryName = categoryNames[category] || category;
+                
+                html += `
+                    <div class="category-section">
+                        <div class="category-header">
+                            <h2 class="category-title">${categoryName}</h2>
+                            <span class="category-count">${categoryProducts.length} ${categoryProducts.length === 1 ? 'Product' : 'Products'}</span>
+                        </div>
+                        <div class="products-grid">
+                            ${categoryProducts.map(product => `
+                                <div class="product-card">
+                                    <img src="${product.image}" 
+                                         alt="${product.name}" 
+                                         class="product-image" 
+                                         onerror="this.src='https://via.placeholder.com/400x280/667eea/ffffff?text=${encodeURIComponent(product.name)}'">
+                                    <div class="product-info">
+                                        <span class="product-category-tag">${category}</span>
+                                        <h3 class="product-name">${product.name}</h3>
+                                        <p class="product-description">${product.description}</p>
+                                        <div class="product-footer">
+                                            <span class="product-price">$${product.price.toFixed(2)}</span>
+                                            <button class="btn-add-cart" onclick="addToCart(${product.id})">
+                                                Add to Cart
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            `).join('')}
                         </div>
                     </div>
-                </div>
-            `).join('');
+                `;
+            });
+
+            productsContainer.innerHTML = html;
         }
 
         // ============================================
         // INITIALIZE ON PAGE LOAD
         // ============================================
-
-        // Load products and update cart count when page loads
         displayProducts();
         updateCartCount();
     </script>
