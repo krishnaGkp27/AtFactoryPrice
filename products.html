@@ -4,7 +4,7 @@
     
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Products - At Factory Price</title>
-    <link href="./test_files/css2" rel="stylesheet">
+    <link href="file:///C:/Users/John/Documents/GitHub/AtFactoryPrice/test_files/css2" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -491,7 +491,9 @@
     <nav class="navbar">
         <div class="nav-container">
             <h1 class="logo">
-                <a href="file:///C:/Users/John/Documents/GitHub/AtFactoryPrice/index.html">At Factory Price</a>
+                <a href="file:///C:/Users/John/Documents/GitHub/AtFactoryPrice/index.html" style="display: flex; align-items: center; gap: 12px;">
+                    <img src="./test_files/logo.png" alt="At Factory Price Logo" class="logo-image" onerror="this.style.display=&#39;none&#39;" style="width: 120px; height: 80px;">
+                </a>
             </h1>
             <div class="nav-links">
                 <a href="file:///C:/Users/John/Documents/GitHub/AtFactoryPrice/index.html" class="nav-link">Home</a>
@@ -530,12 +532,12 @@
             
                     <li class="breadcrumb-item">
                         <span class="breadcrumb-separator">›</span>
-                        <span class="breadcrumb-link" onclick="navigateToLevel1(&#39;fabric&#39;)">Fabric</span>
+                        <span class="breadcrumb-link" onclick="navigateToLevel1(&#39;garments&#39;)">Garments</span>
                     </li>
                 
                     <li class="breadcrumb-item">
                         <span class="breadcrumb-separator">›</span>
-                        <span class="breadcrumb-current">Mens Fabric</span>
+                        <span class="breadcrumb-current">Womens Garments</span>
                     </li>
                 </ul></nav>
 
@@ -544,19 +546,28 @@
 
             <!-- Page Header -->
             <div class="page-header" id="pageHeader">
-                <h1>Mens Fabric</h1>
-                <p>High-quality fabrics for men</p>
-                <span class="item-count">1 Types Available</span>
+                <h1>Womens Garments</h1>
+                <p>Elegant clothing for women</p>
+                <span class="item-count">2 Types Available</span>
             </div>
 
             <!-- Content Area -->
             <div id="contentArea"><div class="category-grid">
-                    <div class="category-card" onclick="navigateToLevel3(&#39;fabric&#39;, &#39;mens&#39;, &#39;senator-material&#39;)">
-                        <img src="file:///C:/Users/John/Documents/GitHub/AtFactoryPrice/images/categories/senator.jpg" alt="Senator Material" class="category-image" onerror="this.style.background=&#39;linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)&#39;" style="background: linear-gradient(135deg, rgb(79, 172, 254) 0%, rgb(0, 242, 254) 100%);">
+                    <div class="category-card" onclick="navigateToLevel3(&#39;garments&#39;, &#39;womens&#39;, &#39;gown&#39;)">
+                        <img src="file:///C:/Users/John/Documents/GitHub/AtFactoryPrice/images/categories/gown.jpg" alt="Gowns" class="category-image" onerror="this.style.background=&#39;linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)&#39;" style="background: linear-gradient(135deg, rgb(79, 172, 254) 0%, rgb(0, 242, 254) 100%);">
                         <div class="category-overlay">
-                            <h2 class="category-name">Senator Material</h2>
-                            <p class="category-description">Traditional senator fabric</p>
-                            <span class="category-count">2 Products</span>
+                            <h2 class="category-name">Gowns</h2>
+                            <p class="category-description">Beautiful gowns</p>
+                            <span class="category-count">1 Products</span>
+                        </div>
+                    </div>
+                
+                    <div class="category-card" onclick="navigateToLevel3(&#39;garments&#39;, &#39;womens&#39;, &#39;kaftan&#39;)">
+                        <img src="file:///C:/Users/John/Documents/GitHub/AtFactoryPrice/images/categories/kaftan.jpg" alt="Kaftans" class="category-image" onerror="this.style.background=&#39;linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)&#39;" style="background: linear-gradient(135deg, rgb(79, 172, 254) 0%, rgb(0, 242, 254) 100%);">
+                        <div class="category-overlay">
+                            <h2 class="category-name">Kaftans</h2>
+                            <p class="category-description">Traditional kaftans</p>
+                            <span class="category-count">1 Products</span>
                         </div>
                     </div>
                 </div></div>
