@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
+<!-- saved from url=(0072)file:///C:/Users/John/Documents/GitHub/AtFactoryPrice/products_test.html -->
+<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Products - At Factory Price</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="./test_files/css2" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -16,7 +16,7 @@
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             line-height: 1.6;
             color: #333;
-            background-color: #fff;
+            background-color: #f8f9fa;
         }
 
         a {
@@ -39,7 +39,7 @@
         }
 
         .nav-container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
             padding: 1rem 2rem;
             display: flex;
@@ -48,17 +48,9 @@
         }
 
         .logo {
-            display: flex;
-            align-items: center;
-            gap: 12px;
             font-size: 1.5rem;
             font-weight: 700;
             color: #000;
-        }
-
-        .logo-image {
-            height: 40px;
-            width: auto;
         }
 
         .nav-links {
@@ -102,45 +94,79 @@
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
-            padding: 0 20px;
+            padding: 40px 20px;
         }
 
-        .products-page {
-            padding: 60px 20px;
-            min-height: 70vh;
+        /* Breadcrumb */
+        .breadcrumb {
+            background: #fff;
+            padding: 1.2rem 1.8rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
         }
 
-        .page-header {
-            text-align: center;
-            margin-bottom: 3rem;
+        .breadcrumb-list {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            flex-wrap: wrap;
+            list-style: none;
         }
 
-        .page-header h1 {
-            font-size: 2.5rem;
-            font-weight: 700;
-            margin-bottom: 0.5rem;
-            color: #000;
+        .breadcrumb-item {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
         }
 
-        .page-header p {
-            font-size: 1.1rem;
+        .breadcrumb-link {
             color: #666;
+            font-size: 0.95rem;
+            transition: color 0.3s;
+            cursor: pointer;
+            padding: 0.3rem 0.6rem;
+            border-radius: 6px;
         }
 
-        /* Search Bar Styles */
+        .breadcrumb-link:hover {
+            color: #000;
+            background: #f0f0f0;
+        }
+
+        .breadcrumb-separator {
+            color: #ccc;
+            font-size: 1.2rem;
+        }
+
+        .breadcrumb-current {
+            color: #000;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        /* Search Container */
         .search-container {
-            max-width: 600px;
-            margin: 0 auto 3rem;
+            background: #fff;
+            padding: 1.5rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .search-wrapper {
             position: relative;
+            max-width: 600px;
+            margin: 0 auto;
         }
 
         .search-input {
             width: 100%;
             padding: 1rem 3rem 1rem 1.2rem;
             border: 2px solid #e0e0e0;
-            border-radius: 12px;
+            border-radius: 10px;
             font-size: 1rem;
             font-family: inherit;
             transition: border-color 0.3s;
@@ -157,112 +183,182 @@
             top: 50%;
             transform: translateY(-50%);
             color: #666;
+            pointer-events: none;
         }
 
-        /* Category Filter Styles */
-        .category-filter {
-            display: flex;
-            justify-content: center;
-            gap: 1rem;
-            flex-wrap: wrap;
-            margin-bottom: 3rem;
-        }
-
-        .category-btn {
-            padding: 0.7rem 1.5rem;
-            border: 2px solid #e0e0e0;
-            background: #fff;
-            border-radius: 8px;
-            font-size: 0.95rem;
-            font-weight: 600;
+        .clear-search {
+            position: absolute;
+            right: 3rem;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #f0f0f0;
+            border: none;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
             cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            color: #666;
             transition: all 0.3s;
+        }
+
+        .clear-search:hover {
+            background: #e0e0e0;
+            color: #000;
+        }
+
+        .clear-search.visible {
+            display: flex;
+        }
+
+        /* Page Header */
+        .page-header {
+            background: #fff;
+            padding: 2rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            text-align: center;
+        }
+
+        .page-header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            color: #000;
+        }
+
+        .page-header p {
+            color: #666;
+            font-size: 1.1rem;
+        }
+
+        .item-count {
+            display: inline-block;
+            margin-top: 0.5rem;
+            padding: 0.4rem 1rem;
+            background: #f0f0f0;
+            border-radius: 20px;
+            font-size: 0.9rem;
             color: #666;
         }
 
-        .category-btn:hover {
-            border-color: #000;
-            color: #000;
-        }
-
-        .category-btn.active {
-            background: #000;
-            color: #fff;
-            border-color: #000;
-        }
-
-        /* Category Section Styles */
-        .category-section {
-            margin-bottom: 4rem;
-        }
-
-        .category-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        /* Category Cards Grid */
+        .category-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 2rem;
             margin-bottom: 2rem;
-            padding-bottom: 1rem;
-            border-bottom: 2px solid #e0e0e0;
         }
 
-        .category-title {
-            font-size: 1.8rem;
+        .category-card {
+            background: #fff;
+            border-radius: 16px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            position: relative;
+        }
+
+        .category-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 12px 28px rgba(0,0,0,0.15);
+        }
+
+        .category-image {
+            width: 100%;
+            height: 280px;
+            object-fit: cover;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .category-overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
+            padding: 2rem 1.5rem 1.5rem;
+            color: #fff;
+        }
+
+        .category-name {
+            font-size: 1.5rem;
             font-weight: 700;
-            color: #000;
+            margin-bottom: 0.3rem;
+        }
+
+        .category-description {
+            font-size: 0.9rem;
+            color: rgba(255,255,255,0.9);
+            margin-bottom: 0.5rem;
         }
 
         .category-count {
-            font-size: 0.9rem;
-            color: #666;
-            font-weight: 500;
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            backdrop-filter: blur(10px);
+            padding: 0.3rem 0.8rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
         }
 
+        /* Product Cards Grid */
         .products-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 30px;
-            margin-bottom: 40px;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 2rem;
         }
 
         .product-card {
             background: #fff;
-            border: 1px solid #e0e0e0;
-            border-radius: 12px;
+            border-radius: 16px;
             overflow: hidden;
             transition: all 0.3s;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
         }
 
         .product-card:hover {
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
             transform: translateY(-5px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.15);
         }
 
         .product-image {
             width: 100%;
-            height: 280px;
+            height: 260px;
             object-fit: cover;
-            background: #f0f0f0;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
         }
 
         .product-info {
             padding: 1.5rem;
         }
 
-        .product-category-tag {
-            display: inline-block;
-            padding: 0.3rem 0.8rem;
+        .product-badges {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .product-badge {
+            padding: 0.3rem 0.7rem;
             background: #f0f0f0;
             border-radius: 6px;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: 600;
             color: #666;
-            margin-bottom: 0.8rem;
             text-transform: uppercase;
         }
 
         .product-name {
-            font-size: 1.1rem;
-            font-weight: 600;
+            font-size: 1.2rem;
+            font-weight: 700;
             margin-bottom: 0.5rem;
             color: #000;
         }
@@ -270,18 +366,20 @@
         .product-description {
             font-size: 0.9rem;
             color: #666;
-            margin-bottom: 1rem;
-            line-height: 1.5;
+            margin-bottom: 1.2rem;
+            line-height: 1.6;
         }
 
         .product-footer {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            padding-top: 1rem;
+            border-top: 1px solid #f0f0f0;
         }
 
         .product-price {
-            font-size: 1.5rem;
+            font-size: 1.8rem;
             font-weight: 700;
             color: #000;
         }
@@ -289,79 +387,94 @@
         .btn-add-cart {
             background: #000;
             color: #fff;
-            padding: 0.7rem 1.5rem;
-            border-radius: 8px;
+            padding: 0.8rem 1.5rem;
+            border-radius: 10px;
             font-size: 0.9rem;
             font-weight: 600;
             border: none;
             cursor: pointer;
-            transition: background 0.3s;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
 
         .btn-add-cart:hover {
             background: #333;
+            transform: scale(1.05);
         }
 
-        .no-results {
+        /* Empty State */
+        .empty-state {
+            background: #fff;
+            border-radius: 16px;
+            padding: 80px 20px;
             text-align: center;
-            padding: 60px 20px;
-            color: #666;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
         }
 
-        .no-results h3 {
+        .empty-state svg {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 1.5rem;
+            opacity: 0.3;
+        }
+
+        .empty-state h3 {
             font-size: 1.5rem;
-            margin-bottom: 1rem;
+            margin-bottom: 0.8rem;
             color: #333;
         }
 
-        .footer {
+        .empty-state p {
+            color: #666;
+            margin-bottom: 1.5rem;
+        }
+
+        .btn-back {
+            display: inline-block;
+            padding: 0.8rem 1.8rem;
             background: #000;
             color: #fff;
-            padding: 60px 20px 20px;
-            margin-top: 80px;
+            border-radius: 10px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
         }
 
-        .footer-content {
-            max-width: 1200px;
-            margin: 0 auto;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 40px;
-            margin-bottom: 40px;
+        .btn-back:hover {
+            background: #333;
         }
 
-        .footer-section h3,
-        .footer-section h4 {
-            margin-bottom: 1rem;
-            font-size: 1.2rem;
+        /* Animations */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
-        .footer-section p {
-            color: #aaa;
-            margin-bottom: 0.5rem;
+        .category-card, .product-card {
+            animation: fadeIn 0.4s ease-out;
         }
 
-        .footer-section a {
-            display: block;
-            color: #aaa;
-            margin-bottom: 0.5rem;
-            transition: color 0.3s;
-        }
-
-        .footer-section a:hover {
-            color: #fff;
-        }
-
-        .footer-bottom {
-            text-align: center;
-            padding-top: 20px;
-            border-top: 1px solid #333;
-            color: #888;
-        }
-
+        /* Responsive */
         @media (max-width: 768px) {
+            .category-grid,
             .products-grid {
                 grid-template-columns: 1fr;
+            }
+
+            .page-header h1 {
+                font-size: 2rem;
+            }
+
+            .category-name {
+                font-size: 1.3rem;
             }
 
             .nav-links {
@@ -371,15 +484,6 @@
             .nav-link {
                 font-size: 0.85rem;
             }
-
-            .category-filter {
-                gap: 0.5rem;
-            }
-
-            .category-btn {
-                padding: 0.6rem 1rem;
-                font-size: 0.85rem;
-            }
         }
     </style>
 </head>
@@ -387,165 +491,800 @@
     <nav class="navbar">
         <div class="nav-container">
             <h1 class="logo">
-                <a href="index.html" style="display: flex; align-items: center; gap: 12px;">
-                    <img src="images/logo.png" alt="At Factory Price Logo" class="logo-image" onerror="this.style.display='none'" style="width: 120px; height: 80px;">
-                </a>
+                <a href="file:///C:/Users/John/Documents/GitHub/AtFactoryPrice/index.html">At Factory Price</a>
             </h1>
             <div class="nav-links">
-                <a href="index.html" class="nav-link">Home</a>
-                <a href="products.html" class="nav-link active">Products</a>
-                <a href="cart.html" class="nav-link cart-link">
+                <a href="file:///C:/Users/John/Documents/GitHub/AtFactoryPrice/index.html" class="nav-link">Home</a>
+                <a href="file:///C:/Users/John/Documents/GitHub/AtFactoryPrice/products.html" class="nav-link active">Products</a>
+                <a href="file:///C:/Users/John/Documents/GitHub/AtFactoryPrice/cart.html" class="nav-link cart-link">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="9" cy="21" r="1"></circle>
                         <circle cx="20" cy="21" r="1"></circle>
                         <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
                     </svg>
-                    <span class="cart-count" id="cartCount">0</span>
+                    <span class="cart-count" id="cartCount" style="display: flex;">2</span>
                 </a>
             </div>
         </div>
     </nav>
 
-    <main class="products-page">
+    <main>
         <div class="container">
+            <!-- Breadcrumb -->
+            <div class="search-container">
+                <div class="search-wrapper">
+                    <input type="text" id="searchInput" class="search-input" placeholder="Search products by name, category, or description..." onkeyup="handleSearch()" oninput="toggleClearButton()">
+                    <button class="clear-search" id="clearSearchBtn" onclick="clearSearch()" title="Clear search">×</button>
+                    <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <path d="m21 21-4.35-4.35"></path>
+                    </svg>
+                </div>
+            </div>
+
+<nav class="breadcrumb" id="breadcrumb">
+                <ul class="breadcrumb-list">
+                    <li class="breadcrumb-item">
+                        <span class="breadcrumb-link" onclick="navigateToHome()">All Categories</span>
+                    </li>
             
+                    <li class="breadcrumb-item">
+                        <span class="breadcrumb-separator">›</span>
+                        <span class="breadcrumb-link" onclick="navigateToLevel1(&#39;fabric&#39;)">Fabric</span>
+                    </li>
+                
+                    <li class="breadcrumb-item">
+                        <span class="breadcrumb-separator">›</span>
+                        <span class="breadcrumb-current">Mens Fabric</span>
+                    </li>
+                </ul></nav>
 
             <!-- Search Bar -->
-            <div class="search-container">
-                <input type="text" 
-                       id="searchInput" 
-                       class="search-input" 
-                       placeholder="Search products..."
-                       onkeyup="filterProducts()">
-                <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="11" cy="11" r="8"></circle>
-                    <path d="m21 21-4.35-4.35"></path>
-                </svg>
+            
+
+            <!-- Page Header -->
+            <div class="page-header" id="pageHeader">
+                <h1>Mens Fabric</h1>
+                <p>High-quality fabrics for men</p>
+                <span class="item-count">1 Types Available</span>
             </div>
 
-            <!-- Category Filter -->
-            <div class="category-filter">
-                <button class="category-btn active" onclick="filterByCategory('all')">All Products</button>
-                <button class="category-btn" onclick="filterByCategory('electronics')">Electronics</button>
-                <button class="category-btn" onclick="filterByCategory('accessories')">Accessories</button>
-                <button class="category-btn" onclick="filterByCategory('audio')">Audio</button>
-                <button class="category-btn" onclick="filterByCategory('wearables')">Wearables</button>
-            </div>
-
-            <!-- Products Container -->
-            <div id="productsContainer">
-                <!-- Products will be loaded here by JavaScript -->
-            </div>
-
-            <!-- No Results Message -->
-            <div id="noResults" class="no-results" style="display: none;">
-                <h3>No products found</h3>
-                <p>Try adjusting your search or filter criteria</p>
-            </div>
+            <!-- Content Area -->
+            <div id="contentArea"><div class="category-grid">
+                    <div class="category-card" onclick="navigateToLevel3(&#39;fabric&#39;, &#39;mens&#39;, &#39;senator-material&#39;)">
+                        <img src="file:///C:/Users/John/Documents/GitHub/AtFactoryPrice/images/categories/senator.jpg" alt="Senator Material" class="category-image" onerror="this.style.background=&#39;linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)&#39;" style="background: linear-gradient(135deg, rgb(79, 172, 254) 0%, rgb(0, 242, 254) 100%);">
+                        <div class="category-overlay">
+                            <h2 class="category-name">Senator Material</h2>
+                            <p class="category-description">Traditional senator fabric</p>
+                            <span class="category-count">2 Products</span>
+                        </div>
+                    </div>
+                </div></div>
         </div>
     </main>
 
-    <footer class="footer">
-        <div class="footer-content">
-            <div class="footer-section">
-                <h3>At Factory Price</h3>
-                <p>Premium products at factory direct prices</p>
-            </div>
-            <div class="footer-section">
-                <h4>Quick Links</h4>
-                <a href="products.html">Products</a>
-                <a href="cart.html">Cart</a>
-                <a href="checkout.html">Checkout</a>
-            </div>
-            <div class="footer-section">
-                <h4>Contact</h4>
-                <p>Email: hello@minimalshop.com</p>
-                <p>Phone: +1 234 567 8900</p>
-            </div>
-        </div>
-        <div class="footer-bottom">
-            <p>&copy; 2024 At Factory Price. All rights reserved.</p>
-        </div>
-    </footer>
-
     <script>
         // ============================================
-        // PRODUCT DATA WITH CATEGORIES
+        // DATA STRUCTURE - API Ready
         // ============================================
-        const products = [
-            // ELECTRONICS CATEGORY
-            {
-                id: 1,
-                name: 'Premium Wireless Headphones',
-                price: 89.99,
-                image: 'images/electronics/headphones.jpg',
-                description: 'High-quality sound with noise cancellation',
-                category: 'electronics'
+        const StoreData = {
+            categories: {
+                'fabric': {
+                    name: 'Fabric',
+                    description: 'Premium fabrics for all purposes',
+                    image: 'images/categories/fabric.jpg',
+                    subcategories: {
+                        'mens': {
+                            name: 'Mens Fabric',
+                            description: 'High-quality fabrics for men',
+                            image: 'images/categories/fabric-mens.jpg',
+                            types: {
+                                'senator-material': {
+                                    name: 'Senator Material',
+                                    description: 'Traditional senator fabric',
+                                    image: 'images/categories/senator.jpg'
+                                }
+                            }
+                        },
+                        'uniform': {
+                            name: 'Uniform Fabric',
+                            description: 'Professional uniform materials',
+                            image: 'images/categories/fabric-uniform.jpg',
+                            types: {
+                                'chinos': {
+                                    name: 'Chinos',
+                                    description: 'Comfortable chinos fabric',
+                                    image: 'images/categories/chinos.jpg'
+                                },
+                                'cashmere': {
+                                    name: 'Cashmere',
+                                    description: 'Luxury cashmere material',
+                                    image: 'images/categories/cashmere.jpg'
+                                },
+                                'gaberdine': {
+                                    name: 'Gaberdine',
+                                    description: 'Professional gaberdine fabric',
+                                    image: 'images/categories/gaberdine.jpg'
+                                },
+                                'tr': {
+                                    name: 'TR Fabric',
+                                    description: 'Durable TR blend material',
+                                    image: 'images/categories/tr.jpg'
+                                }
+                            }
+                        },
+                        'womens': {
+                            name: 'Womens Fabric',
+                            description: 'Elegant fabrics for women',
+                            image: 'images/categories/fabric-womens.jpg',
+                            types: {
+                                'silk': {
+                                    name: 'Silk',
+                                    description: 'Pure silk fabric',
+                                    image: 'images/categories/silk.jpg'
+                                }
+                            }
+                        }
+                    }
+                },
+                'garments': {
+                    name: 'Garments',
+                    description: 'Ready-to-wear clothing for everyone',
+                    image: 'images/categories/garments.jpg',
+                    subcategories: {
+                        'mens': {
+                            name: 'Mens Garments',
+                            description: 'Stylish clothing for men',
+                            image: 'images/categories/garments-mens.jpg',
+                            types: {
+                                't-shirt': {
+                                    name: 'T-Shirts',
+                                    description: 'Comfortable t-shirts',
+                                    image: 'images/categories/tshirt.jpg'
+                                },
+                                'boxers': {
+                                    name: 'Boxers',
+                                    description: 'Comfortable boxer shorts',
+                                    image: 'images/categories/boxers.jpg'
+                                },
+                                'singlets': {
+                                    name: 'Singlets',
+                                    description: 'Breathable singlets',
+                                    image: 'images/categories/singlets.jpg'
+                                }
+                            }
+                        },
+                        'womens': {
+                            name: 'Womens Garments',
+                            description: 'Elegant clothing for women',
+                            image: 'images/categories/garments-womens.jpg',
+                            types: {
+                                'gown': {
+                                    name: 'Gowns',
+                                    description: 'Beautiful gowns',
+                                    image: 'images/categories/gown.jpg'
+                                },
+                                'kaftan': {
+                                    name: 'Kaftans',
+                                    description: 'Traditional kaftans',
+                                    image: 'images/categories/kaftan.jpg'
+                                }
+                            }
+                        },
+                        'kids': {
+                            name: 'Kids Garments',
+                            description: 'Comfortable clothing for kids',
+                            image: 'images/categories/garments-kids.jpg',
+                            types: {
+                                't-shirt': {
+                                    name: 'Kids T-Shirts',
+                                    description: 'Fun t-shirts for kids',
+                                    image: 'images/categories/kids-tshirt.jpg'
+                                },
+                                'pants': {
+                                    name: 'Kids Pants',
+                                    description: 'Durable kids pants',
+                                    image: 'images/categories/kids-pants.jpg'
+                                }
+                            }
+                        }
+                    }
+                }
             },
-            {
-                id: 5,
-                name: 'USB-C Hub Adapter',
-                price: 34.99,
-                image: 'images/electronics/usb-hub.jpg',
-                description: 'Multi-port connectivity solution',
-                category: 'electronics'
-            },
-            {
-                id: 6,
-                name: 'Wireless Charging Pad',
-                price: 24.99,
-                image: 'images/electronics/charging-pad.jpg',
-                description: 'Fast charging for all devices',
-                category: 'electronics'
-            },
-            
-            // WEARABLES CATEGORY
-            {
-                id: 2,
-                name: 'Smart Watch Series 5',
-                price: 299.99,
-                image: 'images/wearables/smartwatch.jpg',
-                description: 'Fitness tracking and notifications',
-                category: 'wearables'
-            },
-            
-            // ACCESSORIES CATEGORY
-            {
-                id: 3,
-                name: 'Minimalist Backpack',
-                price: 59.99,
-                image: 'images/accessories/backpack.jpg',
-                description: 'Sleek design with laptop compartment',
-                category: 'accessories'
-            },
-            
-            // AUDIO CATEGORY
-            {
-                id: 4,
-                name: 'Portable Bluetooth Speaker',
-                price: 49.99,
-                image: 'images/audio/speaker.jpg',
-                description: 'Waterproof with 12-hour battery',
-                category: 'audio'
-            }
-        ];
 
-        // Category display names
-        const categoryNames = {
-            'electronics': 'Electronics',
-            'wearables': 'Wearables',
-            'accessories': 'Accessories',
-            'audio': 'Audio Equipment'
+            products: [
+                // Fabric > Mens > Senator Material
+                {
+                    id: 1,
+                    name: 'Premium Senator Material - Navy Blue',
+                    price: 45.99,
+                    image: 'images/products/senator-1.jpg',
+                    description: 'High-quality senator material perfect for traditional wear. Rich navy blue color with excellent drape.',
+                    category: { level1: 'fabric', level2: 'mens', level3: 'senator-material' }
+                },
+                {
+                    id: 2,
+                    name: 'Classic Senator Fabric - Wine',
+                    price: 42.99,
+                    image: 'images/products/senator-2.jpg',
+                    description: 'Elegant wine-colored senator material. Durable and comfortable for all-day wear.',
+                    category: { level1: 'fabric', level2: 'mens', level3: 'senator-material' }
+                },
+
+                // Fabric > Uniform > Chinos
+                {
+                    id: 3,
+                    name: 'Chinos Uniform Fabric - Khaki',
+                    price: 29.99,
+                    image: 'images/products/chinos-1.jpg',
+                    description: 'Professional khaki chinos fabric. Perfect for uniform requirements.',
+                    category: { level1: 'fabric', level2: 'uniform', level3: 'chinos' }
+                },
+
+                // Fabric > Uniform > Cashmere
+                {
+                    id: 4,
+                    name: 'Luxury Cashmere Fabric - Grey',
+                    price: 89.99,
+                    image: 'images/products/cashmere-1.jpg',
+                    description: 'Soft and warm cashmere fabric. Premium quality for elegant uniforms.',
+                    category: { level1: 'fabric', level2: 'uniform', level3: 'cashmere' }
+                },
+
+                // Fabric > Uniform > Gaberdine
+                {
+                    id: 5,
+                    name: 'Gaberdine Uniform Material - Black',
+                    price: 34.99,
+                    image: 'images/products/gaberdine-1.jpg',
+                    description: 'Professional black gaberdine fabric. Wrinkle-resistant and durable.',
+                    category: { level1: 'fabric', level2: 'uniform', level3: 'gaberdine' }
+                },
+
+                // Fabric > Uniform > TR
+                {
+                    id: 6,
+                    name: 'TR Fabric Blend - Navy',
+                    price: 24.99,
+                    image: 'images/products/tr-1.jpg',
+                    description: 'Durable TR fabric blend. Easy care and long-lasting.',
+                    category: { level1: 'fabric', level2: 'uniform', level3: 'tr' }
+                },
+
+                // Fabric > Womens > Silk
+                {
+                    id: 7,
+                    name: 'Pure Silk Fabric - Cream',
+                    price: 79.99,
+                    image: 'images/products/silk-1.jpg',
+                    description: 'Luxurious pure silk fabric. Smooth texture with natural sheen.',
+                    category: { level1: 'fabric', level2: 'womens', level3: 'silk' }
+                },
+
+                // Garments > Mens > T-shirt
+                {
+                    id: 8,
+                    name: 'Classic Mens T-Shirt - White',
+                    price: 19.99,
+                    image: 'images/products/mens-tshirt-1.jpg',
+                    description: 'Comfortable 100% cotton t-shirt. Perfect fit and breathable.',
+                    category: { level1: 'garments', level2: 'mens', level3: 't-shirt' }
+                },
+                {
+                    id: 9,
+                    name: 'Mens Graphic T-Shirt - Black',
+                    price: 24.99,
+                    image: 'images/products/mens-tshirt-2.jpg',
+                    description: 'Stylish graphic print t-shirt. Premium quality cotton.',
+                    category: { level1: 'garments', level2: 'mens', level3: 't-shirt' }
+                },
+
+                // Garments > Mens > Boxers
+                {
+                    id: 10,
+                    name: 'Premium Mens Boxers - Pack of 3',
+                    price: 29.99,
+                    image: 'images/products/boxers-1.jpg',
+                    description: 'Comfortable boxer shorts in pack of 3. Soft elastic waistband.',
+                    category: { level1: 'garments', level2: 'mens', level3: 'boxers' }
+                },
+
+                // Garments > Mens > Singlets
+                {
+                    id: 11,
+                    name: 'Mens Cotton Singlet - Grey',
+                    price: 12.99,
+                    image: 'images/products/singlet-1.jpg',
+                    description: 'Breathable cotton singlet. Perfect for layering or sports.',
+                    category: { level1: 'garments', level2: 'mens', level3: 'singlets' }
+                },
+
+                // Garments > Womens > Gown
+                {
+                    id: 12,
+                    name: 'Elegant Evening Gown - Red',
+                    price: 129.99,
+                    image: 'images/products/gown-1.jpg',
+                    description: 'Stunning red evening gown. Perfect for special occasions.',
+                    category: { level1: 'garments', level2: 'womens', level3: 'gown' }
+                },
+
+                // Garments > Womens > Kaftan
+                {
+                    id: 13,
+                    name: 'Traditional Kaftan - Blue',
+                    price: 69.99,
+                    image: 'images/products/kaftan-1.jpg',
+                    description: 'Beautiful traditional kaftan with intricate designs.',
+                    category: { level1: 'garments', level2: 'womens', level3: 'kaftan' }
+                },
+
+                // Garments > Kids > T-shirt
+                {
+                    id: 14,
+                    name: 'Kids Fun T-Shirt - Yellow',
+                    price: 15.99,
+                    image: 'images/products/kids-tshirt-1.jpg',
+                    description: 'Colorful kids t-shirt with fun graphics. Soft and durable.',
+                    category: { level1: 'garments', level2: 'kids', level3: 't-shirt' }
+                },
+
+                // Garments > Kids > Pants
+                {
+                    id: 15,
+                    name: 'Kids Comfortable Pants - Blue',
+                    price: 22.99,
+                    image: 'images/products/kids-pants-1.jpg',
+                    description: 'Durable kids pants with elastic waist. Perfect for play.',
+                    category: { level1: 'garments', level2: 'kids', level3: 'pants' }
+                }
+            ]
         };
 
-        let currentCategory = 'all';
-        let searchQuery = '';
+        // ============================================
+        // NAVIGATION STATE
+        // ============================================
+        let navigationState = {
+            level1: null,
+            level2: null,
+            level3: null,
+            searchQuery: ''
+        };
+
+        // ============================================
+        // SEARCH FUNCTIONS
+        // ============================================
+        function handleSearch() {
+            const searchInput = document.getElementById('searchInput');
+            navigationState.searchQuery = searchInput.value.toLowerCase().trim();
+            render();
+        }
+
+        function clearSearch() {
+            const searchInput = document.getElementById('searchInput');
+            searchInput.value = '';
+            navigationState.searchQuery = '';
+            toggleClearButton();
+            render();
+        }
+
+        function toggleClearButton() {
+            const searchInput = document.getElementById('searchInput');
+            const clearBtn = document.getElementById('clearSearchBtn');
+            if (searchInput.value.length > 0) {
+                clearBtn.classList.add('visible');
+            } else {
+                clearBtn.classList.remove('visible');
+            }
+        }
+
+        function getFilteredProducts() {
+            let products = StoreData.products;
+            const query = navigationState.searchQuery;
+
+            if (!query) {
+                return products;
+            }
+
+            return products.filter(p => {
+                const level1Name = StoreData.categories[p.category.level1].name.toLowerCase();
+                const level2Name = StoreData.categories[p.category.level1].subcategories[p.category.level2].name.toLowerCase();
+                const level3Name = StoreData.categories[p.category.level1].subcategories[p.category.level2].types[p.category.level3].name.toLowerCase();
+
+                return p.name.toLowerCase().includes(query) ||
+                       p.description.toLowerCase().includes(query) ||
+                       level1Name.includes(query) ||
+                       level2Name.includes(query) ||
+                       level3Name.includes(query);
+            });
+        }
+
+        // ============================================
+        // NAVIGATION FUNCTIONS
+        // ============================================
+        function navigateToLevel1(key) {
+            navigationState = { level1: key, level2: null, level3: null, searchQuery: '' };
+            document.getElementById('searchInput').value = '';
+            render();
+        }
+
+        function navigateToLevel2(level1Key, level2Key) {
+            navigationState = { level1: level1Key, level2: level2Key, level3: null, searchQuery: '' };
+            document.getElementById('searchInput').value = '';
+            render();
+        }
+
+        function navigateToLevel3(level1Key, level2Key, level3Key) {
+            navigationState = { level1: level1Key, level2: level2Key, level3: level3Key, searchQuery: '' };
+            document.getElementById('searchInput').value = '';
+            render();
+        }
+
+        function navigateToHome() {
+            navigationState = { level1: null, level2: null, level3: null, searchQuery: '' };
+            document.getElementById('searchInput').value = '';
+            render();
+        }
+
+        // ============================================
+        // BREADCRUMB
+        // ============================================
+        function renderBreadcrumb() {
+            const breadcrumb = document.getElementById('breadcrumb');
+            const { level1, level2, level3, searchQuery } = navigationState;
+
+            if (searchQuery) {
+                breadcrumb.innerHTML = `
+                    <ul class="breadcrumb-list">
+                        <li class="breadcrumb-item">
+                            <span class="breadcrumb-link" onclick="navigateToHome()">All Categories</span>
+                        </li>
+                        <li class="breadcrumb-item">
+                            <span class="breadcrumb-separator">›</span>
+                            <span class="breadcrumb-current">Search Results</span>
+                        </li>
+                    </ul>
+                `;
+                return;
+            }
+
+            let html = `
+                <ul class="breadcrumb-list">
+                    <li class="breadcrumb-item">
+                        <span class="breadcrumb-link" onclick="navigateToHome()">All Categories</span>
+                    </li>
+            `;
+
+            if (level1) {
+                const level1Data = StoreData.categories[level1];
+                html += `
+                    <li class="breadcrumb-item">
+                        <span class="breadcrumb-separator">›</span>
+                        ${level2 || level3 ? 
+                            `<span class="breadcrumb-link" onclick="navigateToLevel1('${level1}')">${level1Data.name}</span>` :
+                            `<span class="breadcrumb-current">${level1Data.name}</span>`
+                        }
+                    </li>
+                `;
+            }
+
+            if (level2) {
+                const level2Data = StoreData.categories[level1].subcategories[level2];
+                html += `
+                    <li class="breadcrumb-item">
+                        <span class="breadcrumb-separator">›</span>
+                        ${level3 ? 
+                            `<span class="breadcrumb-link" onclick="navigateToLevel2('${level1}', '${level2}')">${level2Data.name}</span>` :
+                            `<span class="breadcrumb-current">${level2Data.name}</span>`
+                        }
+                    </li>
+                `;
+            }
+
+            if (level3) {
+                const level3Data = StoreData.categories[level1].subcategories[level2].types[level3];
+                html += `
+                    <li class="breadcrumb-item">
+                        <span class="breadcrumb-separator">›</span>
+                        <span class="breadcrumb-current">${level3Data.name}</span>
+                    </li>
+                `;
+            }
+
+            html += '</ul>';
+            breadcrumb.innerHTML = html;
+        }
+
+        // ============================================
+        // PAGE HEADER
+        // ============================================
+        function renderPageHeader() {
+            const header = document.getElementById('pageHeader');
+            const { level1, level2, level3, searchQuery } = navigationState;
+
+            let title, description, count;
+
+            if (searchQuery) {
+                const filteredProducts = getFilteredProducts();
+                title = `Search Results for "${searchQuery}"`;
+                description = filteredProducts.length > 0 ? 
+                    'Found matching products below' : 
+                    'No products found matching your search';
+                count = filteredProducts.length + ' Results';
+            } else if (!level1) {
+                title = 'Browse Our Collections';
+                description = 'Explore our premium fabrics and ready-to-wear garments';
+                count = Object.keys(StoreData.categories).length + ' Main Categories';
+            } else if (!level2) {
+                const data = StoreData.categories[level1];
+                title = data.name;
+                description = data.description;
+                count = Object.keys(data.subcategories).length + ' Subcategories';
+            } else if (!level3) {
+                const data = StoreData.categories[level1].subcategories[level2];
+                title = data.name;
+                description = data.description;
+                count = Object.keys(data.types).length + ' Types Available';
+            } else {
+                const data = StoreData.categories[level1].subcategories[level2].types[level3];
+                title = data.name;
+                description = data.description;
+                const productCount = StoreData.products.filter(p => 
+                    p.category.level1 === level1 && 
+                    p.category.level2 === level2 && 
+                    p.category.level3 === level3
+                ).length;
+                count = productCount + ' Products Available';
+            }
+
+            header.innerHTML = `
+                <h1>${title}</h1>
+                <p>${description}</p>
+                <span class="item-count">${count}</span>
+            `;
+        }
+
+        // ============================================
+        // CONTENT RENDERING
+        // ============================================
+        function renderContent() {
+            const contentArea = document.getElementById('contentArea');
+            const { level1, level2, level3, searchQuery } = navigationState;
+
+            if (searchQuery) {
+                // Show search results
+                renderSearchResults(contentArea);
+            } else if (!level1) {
+                // Show Level 1 categories
+                renderLevel1Categories(contentArea);
+            } else if (!level2) {
+                // Show Level 2 subcategories
+                renderLevel2Categories(contentArea, level1);
+            } else if (!level3) {
+                // Show Level 3 types
+                renderLevel3Types(contentArea, level1, level2);
+            } else {
+                // Show Products
+                renderProducts(contentArea, level1, level2, level3);
+            }
+        }
+
+        function renderSearchResults(container) {
+            const products = getFilteredProducts();
+
+            if (products.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <path d="m21 21-4.35-4.35"></path>
+                        </svg>
+                        <h3>No Products Found</h3>
+                        <p>Try different keywords or browse our categories</p>
+                        <span class="btn-back" onclick="clearSearch()">Clear Search</span>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '<div class="products-grid">';
+
+            products.forEach(product => {
+                const level1Key = product.category.level1;
+                const level2Key = product.category.level2;
+                const level3Key = product.category.level3;
+                
+                const level1Name = StoreData.categories[level1Key].name;
+                const level2Name = StoreData.categories[level1Key].subcategories[level2Key].name;
+                const level3Name = StoreData.categories[level1Key].subcategories[level2Key].types[level3Key].name;
+
+                html += `
+                    <div class="product-card">
+                        <img src="${product.image}" alt="${product.name}" class="product-image"
+                             onerror="this.style.background='linear-gradient(135deg, #f093fb 0%, #f5576c 100%)'">
+                        <div class="product-info">
+                            <div class="product-badges">
+                                <span class="product-badge">${level1Name}</span>
+                                <span class="product-badge">${level2Name}</span>
+                                <span class="product-badge">${level3Name}</span>
+                            </div>
+                            <h3 class="product-name">${product.name}</h3>
+                            <p class="product-description">${product.description}</p>
+                            <div class="product-footer">
+                                <span class="product-price">${product.price.toFixed(2)}</span>
+                                <button class="btn-add-cart" onclick="addToCart(${product.id})">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="9" cy="21" r="1"></circle>
+                                        <circle cx="20" cy="21" r="1"></circle>
+                                        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+                                    </svg>
+                                    Add to Cart
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function renderLevel1Categories(container) {
+            const categories = StoreData.categories;
+            let html = '<div class="category-grid">';
+
+            Object.keys(categories).forEach(key => {
+                const cat = categories[key];
+                const count = Object.keys(cat.subcategories).length;
+                
+                html += `
+                    <div class="category-card" onclick="navigateToLevel1('${key}')">
+                        <img src="${cat.image}" alt="${cat.name}" class="category-image"
+                             onerror="this.style.background='linear-gradient(135deg, #667eea 0%, #764ba2 100%)'">
+                        <div class="category-overlay">
+                            <h2 class="category-name">${cat.name}</h2>
+                            <p class="category-description">${cat.description}</p>
+                            <span class="category-count">${count} Categories</span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function renderLevel2Categories(container, level1Key) {
+            const subcategories = StoreData.categories[level1Key].subcategories;
+            let html = '<div class="category-grid">';
+
+            Object.keys(subcategories).forEach(key => {
+                const subcat = subcategories[key];
+                const count = Object.keys(subcat.types).length;
+                
+                html += `
+                    <div class="category-card" onclick="navigateToLevel2('${level1Key}', '${key}')">
+                        <img src="${subcat.image}" alt="${subcat.name}" class="category-image"
+                             onerror="this.style.background='linear-gradient(135deg, #f093fb 0%, #f5576c 100%)'">
+                        <div class="category-overlay">
+                            <h2 class="category-name">${subcat.name}</h2>
+                            <p class="category-description">${subcat.description}</p>
+                            <span class="category-count">${count} Types</span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function renderLevel3Types(container, level1Key, level2Key) {
+            const types = StoreData.categories[level1Key].subcategories[level2Key].types;
+            let html = '<div class="category-grid">';
+
+            Object.keys(types).forEach(key => {
+                const type = types[key];
+                const count = StoreData.products.filter(p => 
+                    p.category.level1 === level1Key && 
+                    p.category.level2 === level2Key && 
+                    p.category.level3 === key
+                ).length;
+                
+                html += `
+                    <div class="category-card" onclick="navigateToLevel3('${level1Key}', '${level2Key}', '${key}')">
+                        <img src="${type.image}" alt="${type.name}" class="category-image"
+                             onerror="this.style.background='linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)'">
+                        <div class="category-overlay">
+                            <h2 class="category-name">${type.name}</h2>
+                            <p class="category-description">${type.description}</p>
+                            <span class="category-count">${count} Products</span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function renderProducts(container, level1Key, level2Key, level3Key) {
+            const products = StoreData.products.filter(p => 
+                p.category.level1 === level1Key && 
+                p.category.level2 === level2Key && 
+                p.category.level3 === level3Key
+            );
+
+            if (products.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="8" x2="12" y2="12"></line>
+                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                        </svg>
+                        <h3>No Products Available</h3>
+                        <p>This category is currently empty. Check back soon!</p>
+                        <span class="btn-back" onclick="navigateToLevel2('${level1Key}', '${level2Key}')">Go Back</span>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '<div class="products-grid">';
+
+            products.forEach(product => {
+                const level1Name = StoreData.categories[level1Key].name;
+                const level2Name = StoreData.categories[level1Key].subcategories[level2Key].name;
+                const level3Name = StoreData.categories[level1Key].subcategories[level2Key].types[level3Key].name;
+
+                html += `
+                    <div class="product-card">
+                        <img src="${product.image}" alt="${product.name}" class="product-image"
+                             onerror="this.style.background='linear-gradient(135deg, #f093fb 0%, #f5576c 100%)'">
+                        <div class="product-info">
+                            <div class="product-badges">
+                                <span class="product-badge">${level1Name}</span>
+                                <span class="product-badge">${level2Name}</span>
+                                <span class="product-badge">${level3Name}</span>
+                            </div>
+                            <h3 class="product-name">${product.name}</h3>
+                            <p class="product-description">${product.description}</p>
+                            <div class="product-footer">
+                                <span class="product-price">$${product.price.toFixed(2)}</span>
+                                <button class="btn-add-cart" onclick="addToCart(${product.id})">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="9" cy="21" r="1"></circle>
+                                        <circle cx="20" cy="21" r="1"></circle>
+                                        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+                                    </svg>
+                                    Add to Cart
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        // ============================================
+        // RENDER ALL
+        // ============================================
+        function render() {
+            renderBreadcrumb();
+            renderPageHeader();
+            renderContent();
+        }
 
         // ============================================
         // CART FUNCTIONS
         // ============================================
         function addToCart(productId) {
-            const product = products.find(p => p.id === productId);
+            const product = StoreData.products.find(p => p.id === productId);
             if (!product) return;
 
             let cart = JSON.parse(localStorage.getItem('cart') || '[]');
@@ -565,7 +1304,6 @@
 
             localStorage.setItem('cart', JSON.stringify(cart));
             updateCartCount();
-            
             alert('✓ Product added to cart!');
         }
 
@@ -580,118 +1318,11 @@
         }
 
         // ============================================
-        // FILTER AND SEARCH FUNCTIONS
+        // INITIALIZE
         // ============================================
-        function filterByCategory(category) {
-            currentCategory = category;
-            
-            // Update active button
-            const buttons = document.querySelectorAll('.category-btn');
-            buttons.forEach(btn => btn.classList.remove('active'));
-            event.target.classList.add('active');
-            
-            displayProducts();
-        }
-
-        function filterProducts() {
-            searchQuery = document.getElementById('searchInput').value.toLowerCase();
-            displayProducts();
-        }
-
-        function getFilteredProducts() {
-            let filtered = products;
-            
-            // Filter by category
-            if (currentCategory !== 'all') {
-                filtered = filtered.filter(p => p.category === currentCategory);
-            }
-            
-            // Filter by search query
-            if (searchQuery) {
-                filtered = filtered.filter(p => 
-                    p.name.toLowerCase().includes(searchQuery) ||
-                    p.description.toLowerCase().includes(searchQuery) ||
-                    p.category.toLowerCase().includes(searchQuery)
-                );
-            }
-            
-            return filtered;
-        }
-
-        // ============================================
-        // DISPLAY PRODUCTS BY CATEGORY
-        // ============================================
-        function displayProducts() {
-            const productsContainer = document.getElementById('productsContainer');
-            const noResults = document.getElementById('noResults');
-            
-            if (!productsContainer) return;
-
-            const filteredProducts = getFilteredProducts();
-            
-            if (filteredProducts.length === 0) {
-                productsContainer.innerHTML = '';
-                noResults.style.display = 'block';
-                return;
-            }
-            
-            noResults.style.display = 'none';
-            
-            // Group products by category
-            const groupedProducts = {};
-            filteredProducts.forEach(product => {
-                if (!groupedProducts[product.category]) {
-                    groupedProducts[product.category] = [];
-                }
-                groupedProducts[product.category].push(product);
-            });
-
-            // Generate HTML for each category
-            let html = '';
-            
-            Object.keys(groupedProducts).forEach(category => {
-                const categoryProducts = groupedProducts[category];
-                const categoryName = categoryNames[category] || category;
-                
-                html += `
-                    <div class="category-section">
-                        <div class="category-header">
-                            <h2 class="category-title">${categoryName}</h2>
-                            <span class="category-count">${categoryProducts.length} ${categoryProducts.length === 1 ? 'Product' : 'Products'}</span>
-                        </div>
-                        <div class="products-grid">
-                            ${categoryProducts.map(product => `
-                                <div class="product-card">
-                                    <img src="${product.image}" 
-                                         alt="${product.name}" 
-                                         class="product-image" 
-                                         onerror="this.src='https://via.placeholder.com/400x280/667eea/ffffff?text=${encodeURIComponent(product.name)}'">
-                                    <div class="product-info">
-                                        <span class="product-category-tag">${category}</span>
-                                        <h3 class="product-name">${product.name}</h3>
-                                        <p class="product-description">${product.description}</p>
-                                        <div class="product-footer">
-                                            <span class="product-price">$${product.price.toFixed(2)}</span>
-                                            <button class="btn-add-cart" onclick="addToCart(${product.id})">
-                                                Add to Cart
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-                `;
-            });
-
-            productsContainer.innerHTML = html;
-        }
-
-        // ============================================
-        // INITIALIZE ON PAGE LOAD
-        // ============================================
-        displayProducts();
+        render();
         updateCartCount();
+        toggleClearButton();
     </script>
-</body>
-</html>
+
+</body></html>
