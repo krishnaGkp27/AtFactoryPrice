@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MinimalShop - Premium Products</title>
+    <title>AtFactoryPrice - Premium Products Direct from Factory</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
@@ -362,6 +362,28 @@
             color: #fff;
         }
 
+        .social-links {
+            display: flex;
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .social-links a {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            background: #333;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.3s;
+        }
+
+        .social-links a:hover {
+            background: #555;
+        }
+
         .footer-bottom {
             text-align: center;
             padding-top: 20px;
@@ -405,10 +427,7 @@
     <nav class="navbar">
         <div class="nav-container">
             <h1 class="logo">
-                <img src="images/logo.png" alt="At Factory Price Logo" class="logo-image" onerror="this.style.display='none'" style="
-    width: 120px;
-    height: 80px;
-">
+                <img src="images/logo.png" alt="AtFactoryPrice Logo" class="logo-image" onerror="this.style.display='none'" style="width: 120px; height: 80px;">
             </h1>
             <div class="nav-links">
                 <a href="index.html" class="nav-link active">Home</a>
@@ -427,8 +446,8 @@
 
     <section class="hero">
         <div class="hero-content">
-            <h1 class="hero-title">Welcome to At Factory Price</h1>
-            <p class="hero-subtitle">Curated collection of premium products for modern living</p>
+            <h1 class="hero-title">Welcome to AtFactoryPrice</h1>
+            <p class="hero-subtitle">Premium fabrics and garments directly from manufacturers in Lagos, Nigeria</p>
             <a href="products.html" class="btn-primary">Shop Now</a>
         </div>
     </section>
@@ -437,24 +456,24 @@
         <h2 class="section-title">Featured Products</h2>
         <div class="slideshow-container">
             <div class="slide active">
-                <img src="images/slide1.jpg" alt="Premium Wireless Headphones" class="slide-image" 
+                <img src="images/slide1.jpg" alt="Premium Fabrics" class="slide-image" 
                      onerror="this.style.background='linear-gradient(135deg, #667eea 0%, #764ba2 100%)'">
-                <div class="slide-caption">Premium Wireless Headphones</div>
+                <div class="slide-caption">Premium Senator Materials</div>
             </div>
             <div class="slide">
-                <img src="images/slide2.jpg" alt="Smart Watch Series 5" class="slide-image"
+                <img src="images/slide2.jpg" alt="Quality Garments" class="slide-image"
                      onerror="this.style.background='linear-gradient(135deg, #f093fb 0%, #f5576c 100%)'">
-                <div class="slide-caption">Smart Watch Series 5</div>
+                <div class="slide-caption">Quality Ready-Made Garments</div>
             </div>
             <div class="slide">
-                <img src="images/slide3.jpg" alt="Minimalist Backpack" class="slide-image"
+                <img src="images/slide3.jpg" alt="Uniform Fabrics" class="slide-image"
                      onerror="this.style.background='linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)'">
-                <div class="slide-caption">Minimalist Backpack</div>
+                <div class="slide-caption">Professional Uniform Fabrics</div>
             </div>
             <div class="slide">
-                <img src="images/slide4.jpg" alt="Portable Bluetooth Speaker" class="slide-image"
+                <img src="images/slide4.jpg" alt="Fashion Collection" class="slide-image"
                      onerror="this.style.background='linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)'">
-                <div class="slide-caption">Portable Bluetooth Speaker</div>
+                <div class="slide-caption">Latest Fashion Collection</div>
             </div>
             
             <button class="slide-btn prev" onclick="changeSlide(-1)">&#10094;</button>
@@ -472,29 +491,29 @@
     <section class="about-section">
         <div class="about-container">
             <div class="about-image">
-                <img src="images/brand.jpg" alt="About At Factory Price"
+                <img src="images/brand.jpg" alt="About AtFactoryPrice"
                      onerror="this.style.background='linear-gradient(135deg, #667eea 0%, #764ba2 100%)'">
             </div>
             <div class="about-content">
                 <h2 class="about-title">Our Story</h2>
                 <p class="about-text">
-                    At Factory Price, we believe in bringing you quality products directly from manufacturers at unbeatable prices. Our mission is to eliminate middlemen and pass the savings directly to you, making premium products accessible to everyone.
+                    AtFactoryPrice brings you premium fabrics and garments directly from manufacturers in Lagos, Nigeria. We eliminate middlemen to offer you the best quality at unbeatable factory prices.
                 </p>
                 <p class="about-text">
-                    Every product in our collection is sourced directly from trusted factories, ensuring authenticity, quality, and the best prices in the market. We're committed to transparency, value, and customer satisfaction.
+                    From senator materials to ready-made garments, every product is sourced directly from trusted factories. We're committed to quality, affordability, and customer satisfaction with fast delivery across Lagos.
                 </p>
                 <div class="about-values">
                     <div class="value-item">
                         <h3>Factory Direct</h3>
-                        <p>Best prices by cutting out middlemen</p>
+                        <p>Best prices with no middlemen</p>
                     </div>
                     <div class="value-item">
                         <h3>Fast Delivery</h3>
-                        <p>Quick and reliable shipping worldwide</p>
+                        <p>1-2 business days in Lagos</p>
                     </div>
                     <div class="value-item">
                         <h3>Quality Assured</h3>
-                        <p>Authentic products directly from manufacturers</p>
+                        <p>Premium products from trusted sources</p>
                     </div>
                 </div>
             </div>
@@ -503,15 +522,43 @@
 
     <section class="cta-section">
         <h2 class="cta-title">Ready to Discover More?</h2>
-        <p class="cta-text">Browse our complete collection and find your perfect match</p>
+        <p class="cta-text">Browse our complete collection of fabrics and garments</p>
         <a href="products.html" class="btn-primary">Explore Products</a>
     </section>
 
     <footer class="footer">
         <div class="footer-content">
             <div class="footer-section">
-                <h3>At Factory Price</h3>
-                <p>Premium products at factory direct prices</p>
+                <h3>AtFactoryPrice</h3>
+                <p>Premium fabrics and garments at factory direct prices</p>
+                <p style="margin-top: 15px;">Lagos, Lagos State, Nigeria</p>
+                <div class="social-links">
+                    <a href="https://facebook.com/share/14WqsB8Z33L/" target="_blank" title="Facebook">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                            <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                        </svg>
+                    </a>
+                    <a href="https://instagram.com/atfactoryprice1" target="_blank" title="Instagram">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                            <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+                        </svg>
+                    </a>
+                    <a href="https://tiktok.com/@bpentekz2re" target="_blank" title="TikTok">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                            <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-5.2 1.74 2.89 2.89 0 012.31-4.64 2.93 2.93 0 01.88.13V9.4a6.84 6.84 0 00-1-.05A6.33 6.33 0 005 20.1a6.34 6.34 0 0010.86-4.43v-7a8.16 8.16 0 004.77 1.52v-3.4a4.85 4.85 0 01-1-.1z"/>
+                        </svg>
+                    </a>
+                    <a href="https://youtube.com/@at_factoryprice" target="_blank" title="YouTube">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                            <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                        </svg>
+                    </a>
+                    <a href="https://wa.me/2348138475360" target="_blank" title="WhatsApp">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
+                        </svg>
+                    </a>
+                </div>
             </div>
             <div class="footer-section">
                 <h4>Quick Links</h4>
@@ -521,12 +568,17 @@
             </div>
             <div class="footer-section">
                 <h4>Contact</h4>
-                <p>Email: hello@minimalshop.com</p>
-                <p>Phone: +1 234 567 8900</p>
+                <p>Johngn09@gmail.com</p>
+                <p>bpenther16@gmail.com</p>
+                <p>+234-813-847-5360</p>
+            </div>
+            <div class="footer-section">
+                <h4>Delivery</h4>
+                <p>Lagos: 1-2 Business Days</p>
             </div>
         </div>
         <div class="footer-bottom">
-            <p>&copy; 2024 At Factory Price. All rights reserved.</p>
+            <p>&copy; 2024 AtFactoryPrice. All rights reserved.</p>
         </div>
     </footer>
 
