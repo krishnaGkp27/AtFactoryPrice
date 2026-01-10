@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - AtFactoryPrice</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+        }
+
+        .btn {
+            background: black;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .btn:hover {
+            background: #333;
+        }
+
+        .btn-secondary {
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #d0d0d0;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+        }
+
+        .modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-header h2 {
+            font-size: 24px;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 30px;
+            cursor: pointer;
+            color: #999;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: black;
+        }
+
+        .upload-area {
+            border: 2px dashed #e0e0e0;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+        }
+
+        .upload-area:hover {
+            border-color: black;
+            background: #f9f9f9;
+        }
+
+        .preview-img {
+            max-width: 100%;
+            max-height: 200px;
+            border-radius: 10px;
+            margin: 10px 0;
+        }
+
+        .products-table {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        th {
+            font-weight: 600;
+            background: #f9f9f9;
+        }
+
+        .product-img {
+            width: 60px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 8px;
+        }
+
+        .status {
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .status.show {
+            display: block;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .login-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .login-box {
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        .login-box h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .login-box p {
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- Login Screen -->
+        <div class="login-container" id="loginScreen">
+            <div class="login-box">
+                <h1>Admin Login</h1>
+                <p>AtFactoryPrice Management</p>
+                
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="loginEmail" placeholder="admin@atfactoryprice.com">
+                </div>
+                
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="loginPassword" placeholder="••••••••">
+                </div>
+                
+                <button class="btn" onclick="login()" style="width: 100%">Login to Dashboard</button>
+            </div>
+        </div>
+
+        <!-- Admin Dashboard -->
+        <div id="dashboard" style="display: none;">
+            <div class="container">
+                <div class="header">
+                    <h1>AtFactoryPrice Admin</h1>
+                    <button class="btn btn-danger" onclick="logout()">Logout</button>
+                </div>
+
+                <div id="statusMsg" class="status"></div>
+
+                <button class="btn" onclick="openModal()" style="margin-bottom: 20px">+ Add New Product</button>
+
+                <div class="products-table">
+                    <h2 style="margin-bottom: 20px">Products (<span id="productCount">0</span>)</h2>
+                    <div id="productsContainer"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Product Modal -->
+        <div class="modal" id="productModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="modalTitle">Add New Product</h2>
+                    <button class="close-btn" onclick="closeModal()">×</button>
+                </div>
+
+                <div class="form-group">
+                    <label>Product Image</label>
+                    <div class="upload-area" onclick="document.getElementById('imageInput').click()">
+                        <div id="uploadPlaceholder">
+                            <p>📷 Click to upload image</p>
+                            <p style="font-size: 12px; color: #999; margin-top: 5px">Uploads to Cloudinary</p>
+                        </div>
+                        <img id="previewImg" class="preview-img" style="display: none;">
+                    </div>
+                    <input type="file" id="imageInput" accept="image/*" style="display: none" onchange="uploadImage(event)">
+                </div>
+
+                <div class="form-group">
+                    <label>Product Name *</label>
+                    <input type="text" id="productName" placeholder="e.g., Premium Senator Material">
+                </div>
+
+                <div class="form-group">
+                    <label>Price (₦) *</label>
+                    <input type="number" id="productPrice" placeholder="15000">
+                </div>
+
+                <div class="form-group">
+                    <label>Description *</label>
+                    <textarea id="productDescription" rows="4" placeholder="Product description..."></textarea>
+                </div>
+
+                <div style="display: flex; gap: 10px">
+                    <button class="btn" onclick="saveProduct()" style="flex: 1">Save Product</button>
+                    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const CONFIG = {
+            cloudinary: {
+                cloudName: 'dpxwuty0f',
+                uploadPreset: 'atfactoryprice_products'
+            }
+        };
+
+        // State
+        let currentUser = null;
+        let products = [];
+        let editingProduct = null;
+        let uploadedImageUrl = '';
+        let uploadedImageId = '';
+
+        // Initialize
+        function init() {
+            loadProducts();
+            checkLogin();
+        }
+
+        function checkLogin() {
+            const user = localStorage.getItem('afp_user');
+            if (user) {
+                currentUser = JSON.parse(user);
+                showDashboard();
+            }
+        }
+
+        function login() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+
+            if (email && password) {
+                currentUser = { email };
+                localStorage.setItem('afp_user', JSON.stringify(currentUser));
+                showDashboard();
+            } else {
+                alert('Please enter email and password');
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('afp_user');
+            currentUser = null;
+            document.getElementById('loginScreen').style.display = 'flex';
+            document.getElementById('dashboard').style.display = 'none';
+        }
+
+        function showDashboard() {
+            document.getElementById('loginScreen').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'block';
+            renderProducts();
+        }
+
+        function loadProducts() {
+            const stored = localStorage.getItem('afp_products');
+            products = stored ? JSON.parse(stored) : [];
+        }
+
+        function saveProducts() {
+            localStorage.setItem('afp_products', JSON.stringify(products));
+        }
+
+        function openModal(product = null) {
+            editingProduct = product;
+            
+            if (product) {
+                document.getElementById('modalTitle').textContent = 'Edit Product';
+                document.getElementById('productName').value = product.name;
+                document.getElementById('productPrice').value = product.price;
+                document.getElementById('productDescription').value = product.description;
+                
+                if (product.imageUrl) {
+                    document.getElementById('previewImg').src = product.imageUrl;
+                    document.getElementById('previewImg').style.display = 'block';
+                    document.getElementById('uploadPlaceholder').style.display = 'none';
+                    uploadedImageUrl = product.imageUrl;
+                    uploadedImageId = product.cloudinaryId;
+                }
+            } else {
+                document.getElementById('modalTitle').textContent = 'Add New Product';
+                document.getElementById('productName').value = '';
+                document.getElementById('productPrice').value = '';
+                document.getElementById('productDescription').value = '';
+                document.getElementById('previewImg').style.display = 'none';
+                document.getElementById('uploadPlaceholder').style.display = 'block';
+                uploadedImageUrl = '';
+                uploadedImageId = '';
+            }
+            
+            document.getElementById('productModal').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('productModal').classList.remove('active');
+        }
+
+        async function uploadImage(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            showStatus('Uploading to Cloudinary...', 'info');
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('upload_preset', CONFIG.cloudinary.uploadPreset);
+                formData.append('folder', 'products');
+
+                const response = await fetch(
+                    `https://api.cloudinary.com/v1_1/${CONFIG.cloudinary.cloudName}/image/upload`,
+                    { method: 'POST', body: formData }
+                );
+
+                if (!response.ok) {
+                    throw new Error('Upload failed');
+                }
+
+                const data = await response.json();
+                
+                uploadedImageUrl = data.secure_url;
+                uploadedImageId = data.public_id;
+                
+                document.getElementById('previewImg').src = data.secure_url;
+                document.getElementById('previewImg').style.display = 'block';
+                document.getElementById('uploadPlaceholder').style.display = 'none';
+                
+                showStatus('✅ Image uploaded successfully!', 'success');
+                
+            } catch (error) {
+                console.error(error);
+                showStatus('❌ Upload failed: ' + error.message, 'error');
+            }
+        }
+
+        function saveProduct() {
+            const name = document.getElementById('productName').value;
+            const price = document.getElementById('productPrice').value;
+            const description = document.getElementById('productDescription').value;
+
+            if (!name || !price || !description) {
+                alert('Please fill in all required fields');
+                return;
+            }
+
+            const product = {
+                id: editingProduct ? editingProduct.id : Date.now().toString(),
+                name,
+                price: parseFloat(price),
+                description,
+                imageUrl: uploadedImageUrl,
+                cloudinaryId: uploadedImageId
+            };
+
+            if (editingProduct) {
+                const index = products.findIndex(p => p.id === editingProduct.id);
+                products[index] = product;
+            } else {
+                products.push(product);
+            }
+
+            saveProducts();
+            renderProducts();
+            closeModal();
+            showStatus('✅ Product saved successfully!', 'success');
+        }
+
+        function deleteProduct(id) {
+            if (!confirm('Are you sure you want to delete this product?')) return;
+            
+            products = products.filter(p => p.id !== id);
+            saveProducts();
+            renderProducts();
+            showStatus('Product deleted', 'success');
+        }
+
+        function renderProducts() {
+            const container = document.getElementById('productsContainer');
+            document.getElementById('productCount').textContent = products.length;
+
+            if (products.length === 0) {
+                container.innerHTML = '<div class="empty-state"><p>No products yet. Click "Add New Product" to get started.</p></div>';
+                return;
+            }
+
+            const html = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Image</th>
+                            <th>Product</th>
+                            <th>Price</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${products.map(p => `
+                            <tr>
+                                <td>
+                                    <img src="${p.imageUrl || 'https://via.placeholder.com/60'}" 
+                                         alt="${p.name}" class="product-img">
+                                </td>
+                                <td>
+                                    <strong>${p.name}</strong><br>
+                                    <small style="color: #666">${p.description.substring(0, 60)}...</small>
+                                </td>
+                                <td><strong>₦${p.price.toFixed(2)}</strong></td>
+                                <td>
+                                    <button class="btn btn-secondary" onclick='openModal(${JSON.stringify(p)})' 
+                                            style="padding: 8px 16px; margin-right: 5px">Edit</button>
+                                    <button class="btn btn-danger" onclick="deleteProduct('${p.id}')" 
+                                            style="padding: 8px 16px">Delete</button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        function showStatus(message, type) {
+            const statusEl = document.getElementById('statusMsg');
+            statusEl.textContent = message;
+            statusEl.className = `status ${type} show`;
+            
+            setTimeout(() => {
+                statusEl.classList.remove('show');
+            }, 3000);
+        }
+
+        // Initialize on load
+        init();
+    </script>
+</body>
+</html>
