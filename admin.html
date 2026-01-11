@@ -90,7 +90,7 @@
             background: white;
             padding: 30px;
             border-radius: 15px;
-            max-width: 600px;
+            max-width: 700px;
             width: 90%;
             max-height: 90vh;
             overflow-y: auto;
@@ -126,7 +126,8 @@
         }
 
         .form-group input,
-        .form-group textarea {
+        .form-group textarea,
+        .form-group select {
             width: 100%;
             padding: 12px;
             border: 2px solid #e0e0e0;
@@ -135,9 +136,21 @@
         }
 
         .form-group input:focus,
-        .form-group textarea:focus {
+        .form-group textarea:focus,
+        .form-group select:focus {
             outline: none;
             border-color: black;
+        }
+
+        .form-group select:disabled {
+            background: #f5f5f5;
+            cursor: not-allowed;
+        }
+
+        .category-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
         }
 
         .upload-area {
@@ -188,6 +201,34 @@
             height: 60px;
             object-fit: cover;
             border-radius: 8px;
+        }
+
+        .category-badges {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .badge-blue {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .badge-green {
+            background: #e8f5e9;
+            color: #388e3c;
+        }
+
+        .badge-purple {
+            background: #f3e5f5;
+            color: #7b1fa2;
         }
 
         .status {
@@ -242,6 +283,12 @@
             text-align: center;
             padding: 60px 20px;
             color: #999;
+        }
+
+        @media (max-width: 768px) {
+            .category-grid {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
@@ -308,7 +355,7 @@
 
                 <div class="form-group">
                     <label>Product Name *</label>
-                    <input type="text" id="productName" placeholder="e.g., Premium Senator Material">
+                    <input type="text" id="productName" placeholder="e.g., Premium Senator Material - Navy Blue">
                 </div>
 
                 <div class="form-group">
@@ -321,7 +368,31 @@
                     <textarea id="productDescription" rows="4" placeholder="Product description..."></textarea>
                 </div>
 
-                <div style="display: flex; gap: 10px">
+                <div class="form-group">
+                    <label>Category Path *</label>
+                    <div class="category-grid">
+                        <div>
+                            <label style="font-weight: normal; font-size: 12px; margin-bottom: 5px">Main Category</label>
+                            <select id="category1" onchange="updateCategory2()">
+                                <option value="">Select</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-weight: normal; font-size: 12px; margin-bottom: 5px">Subcategory</label>
+                            <select id="category2" onchange="updateCategory3()" disabled>
+                                <option value="">Select</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-weight: normal; font-size: 12px; margin-bottom: 5px">Type</label>
+                            <select id="category3" disabled>
+                                <option value="">Select</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 10px; margin-top: 30px">
                     <button class="btn" onclick="saveProduct()" style="flex: 1">Save Product</button>
                     <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                 </div>
@@ -338,6 +409,68 @@
             }
         };
 
+        // Categories structure
+        const CATEGORIES = {
+            fabric: {
+                name: 'Fabric',
+                subcategories: {
+                    mens: {
+                        name: 'Mens Fabric',
+                        types: {
+                            senator: 'Senator Material',
+                            cashmere: 'Cashmere',
+                            damask: 'Damask'
+                        }
+                    },
+                    womens: {
+                        name: 'Womens Fabric',
+                        types: {
+                            silk: 'Silk',
+                            lace: 'Lace',
+                            ankara: 'Ankara'
+                        }
+                    },
+                    uniform: {
+                        name: 'Uniform Fabric',
+                        types: {
+                            chinos: 'Chinos',
+                            gaberdine: 'Gaberdine',
+                            tr: 'TR Fabric'
+                        }
+                    }
+                }
+            },
+            garments: {
+                name: 'Garments',
+                subcategories: {
+                    mens: {
+                        name: 'Mens Garments',
+                        types: {
+                            tshirt: 'T-Shirts',
+                            shirt: 'Shirts',
+                            trousers: 'Trousers'
+                        }
+                    },
+                    womens: {
+                        name: 'Womens Garments',
+                        types: {
+                            gown: 'Gowns',
+                            kaftan: 'Kaftans',
+                            skirt: 'Skirts'
+                        }
+                    },
+                    kids: {
+                        name: 'Kids Garments',
+                        types: {
+                            tshirt: 'T-Shirts',
+                            pants: 'Pants',
+                            dress: 'Dresses'
+                        }
+                    }
+                }
+            }
+        };
+
         // State
         let currentUser = null;
         let products = [];
@@ -349,6 +482,61 @@
         function init() {
             loadProducts();
             checkLogin();
+            populateCategory1();
+        }
+
+        function populateCategory1() {
+            const select = document.getElementById('category1');
+            select.innerHTML = '<option value="">Select</option>';
+            
+            Object.keys(CATEGORIES).forEach(key => {
+                const option = document.createElement('option');
+                option.value = key;
+                option.textContent = CATEGORIES[key].name;
+                select.appendChild(option);
+            });
+        }
+
+        function updateCategory2() {
+            const cat1 = document.getElementById('category1').value;
+            const select2 = document.getElementById('category2');
+            const select3 = document.getElementById('category3');
+            
+            select2.innerHTML = '<option value="">Select</option>';
+            select3.innerHTML = '<option value="">Select</option>';
+            select2.disabled = true;
+            select3.disabled = true;
+            
+            if (cat1 && CATEGORIES[cat1]) {
+                const subcategories = CATEGORIES[cat1].subcategories;
+                Object.keys(subcategories).forEach(key => {
+                    const option = document.createElement('option');
+                    option.value = key;
+                    option.textContent = subcategories[key].name;
+                    select2.appendChild(option);
+                });
+                select2.disabled = false;
+            }
+        }
+
+        function updateCategory3() {
+            const cat1 = document.getElementById('category1').value;
+            const cat2 = document.getElementById('category2').value;
+            const select3 = document.getElementById('category3');
+            
+            select3.innerHTML = '<option value="">Select</option>';
+            select3.disabled = true;
+            
+            if (cat1 && cat2 && CATEGORIES[cat1]?.subcategories[cat2]) {
+                const types = CATEGORIES[cat1].subcategories[cat2].types;
+                Object.keys(types).forEach(key => {
+                    const option = document.createElement('option');
+                    option.value = key;
+                    option.textContent = types[key];
+                    select3.appendChild(option);
+                });
+                select3.disabled = false;
+            }
         }
 
         function checkLogin() {
@@ -396,6 +584,7 @@
 
         function openModal(product = null) {
             editingProduct = product;
+            populateCategory1();
             
             if (product) {
                 document.getElementById('modalTitle').textContent = 'Edit Product';
@@ -410,11 +599,29 @@
                     uploadedImageUrl = product.imageUrl;
                     uploadedImageId = product.cloudinaryId;
                 }
+
+                // Set categories
+                if (product.category) {
+                    document.getElementById('category1').value = product.category.level1 || '';
+                    updateCategory2();
+                    setTimeout(() => {
+                        document.getElementById('category2').value = product.category.level2 || '';
+                        updateCategory3();
+                        setTimeout(() => {
+                            document.getElementById('category3').value = product.category.level3 || '';
+                        }, 50);
+                    }, 50);
+                }
             } else {
                 document.getElementById('modalTitle').textContent = 'Add New Product';
                 document.getElementById('productName').value = '';
                 document.getElementById('productPrice').value = '';
                 document.getElementById('productDescription').value = '';
+                document.getElementById('category1').value = '';
+                document.getElementById('category2').value = '';
+                document.getElementById('category3').value = '';
+                document.getElementById('category2').disabled = true;
+                document.getElementById('category3').disabled = true;
                 document.getElementById('previewImg').style.display = 'none';
                 document.getElementById('uploadPlaceholder').style.display = 'block';
                 uploadedImageUrl = '';
@@ -470,9 +677,17 @@
             const name = document.getElementById('productName').value;
             const price = document.getElementById('productPrice').value;
             const description = document.getElementById('productDescription').value;
+            const cat1 = document.getElementById('category1').value;
+            const cat2 = document.getElementById('category2').value;
+            const cat3 = document.getElementById('category3').value;
 
             if (!name || !price || !description) {
-                alert('Please fill in all required fields');
+                alert('Please fill in all required fields (Name, Price, Description)');
+                return;
+            }
+
+            if (!cat1 || !cat2 || !cat3) {
+                alert('Please select complete category path (Main Category → Subcategory → Type)');
                 return;
             }
 
@@ -482,7 +697,12 @@
                 price: parseFloat(price),
                 description,
                 imageUrl: uploadedImageUrl,
-                cloudinaryId: uploadedImageId
+                cloudinaryId: uploadedImageId,
+                category: {
+                    level1: cat1,
+                    level2: cat2,
+                    level3: cat3
+                }
             };
 
             if (editingProduct) {
@@ -507,6 +727,26 @@
             showStatus('Product deleted', 'success');
         }
 
+        function getCategoryPath(category) {
+            if (!category || !category.level1) return '';
+            
+            let path = [];
+            
+            if (CATEGORIES[category.level1]) {
+                path.push(CATEGORIES[category.level1].name);
+                
+                if (category.level2 && CATEGORIES[category.level1].subcategories[category.level2]) {
+                    path.push(CATEGORIES[category.level1].subcategories[category.level2].name);
+                    
+                    if (category.level3 && CATEGORIES[category.level1].subcategories[category.level2].types[category.level3]) {
+                        path.push(CATEGORIES[category.level1].subcategories[category.level2].types[category.level3]);
+                    }
+                }
+            }
+            
+            return path;
+        }
+
         function renderProducts() {
             const container = document.getElementById('productsContainer');
             document.getElementById('productCount').textContent = products.length;
@@ -522,12 +762,15 @@
                         <tr>
                             <th>Image</th>
                             <th>Product</th>
+                            <th>Category Path</th>
                             <th>Price</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${products.map(p => `
+                        ${products.map(p => {
+                            const categoryPath = getCategoryPath(p.category);
+                            return `
                             <tr>
                                 <td>
                                     <img src="${p.imageUrl || 'https://via.placeholder.com/60'}" 
@@ -537,6 +780,13 @@
                                     <strong>${p.name}</strong><br>
                                     <small style="color: #666">${p.description.substring(0, 60)}...</small>
                                 </td>
+                                <td>
+                                    <div class="category-badges">
+                                        ${categoryPath.length > 0 ? `<span class="badge badge-blue">${categoryPath[0]}</span>` : ''}
+                                        ${categoryPath.length > 1 ? `<span class="badge badge-green">${categoryPath[1]}</span>` : ''}
+                                        ${categoryPath.length > 2 ? `<span class="badge badge-purple">${categoryPath[2]}</span>` : ''}
+                                    </div>
+                                </td>
                                 <td><strong>₦${p.price.toFixed(2)}</strong></td>
                                 <td>
                                     <button class="btn btn-secondary" onclick='openModal(${JSON.stringify(p)})' 
@@ -545,7 +795,7 @@
                                             style="padding: 8px 16px">Delete</button>
                                 </td>
                             </tr>
-                        `).join('')}
+                        `}).join('')}
                     </tbody>
                 </table>
             `;

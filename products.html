@@ -99,6 +99,53 @@
             padding: 40px 20px;
         }
 
+        .breadcrumb {
+            background: #fff;
+            padding: 1.2rem 1.8rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .breadcrumb-list {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            flex-wrap: wrap;
+            list-style: none;
+        }
+
+        .breadcrumb-item {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+        }
+
+        .breadcrumb-link {
+            color: #666;
+            font-size: 0.95rem;
+            transition: color 0.3s;
+            cursor: pointer;
+            padding: 0.3rem 0.6rem;
+            border-radius: 6px;
+        }
+
+        .breadcrumb-link:hover {
+            color: #000;
+            background: #f0f0f0;
+        }
+
+        .breadcrumb-separator {
+            color: #ccc;
+            font-size: 1.2rem;
+        }
+
+        .breadcrumb-current {
+            color: #000;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
         .page-header {
             background: #fff;
             padding: 2rem;
@@ -130,6 +177,61 @@
             color: #666;
         }
 
+        .category-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .category-card {
+            background: #fff;
+            border-radius: 16px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            position: relative;
+        }
+
+        .category-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 12px 28px rgba(0,0,0,0.15);
+        }
+
+        .category-image {
+            width: 100%;
+            height: 280px;
+            object-fit: cover;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .category-overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
+            padding: 2rem 1.5rem 1.5rem;
+            color: #fff;
+        }
+
+        .category-name {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 0.3rem;
+        }
+
+        .category-count {
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            backdrop-filter: blur(10px);
+            padding: 0.3rem 0.8rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
         .products-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -158,6 +260,23 @@
 
         .product-info {
             padding: 1.5rem;
+        }
+
+        .product-badges {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .product-badge {
+            padding: 0.3rem 0.7rem;
+            background: #f0f0f0;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
         }
 
         .product-name {
@@ -260,12 +379,12 @@
             }
         }
 
-        .product-card {
+        .product-card, .category-card {
             animation: fadeIn 0.4s ease-out;
         }
 
         @media (max-width: 768px) {
-            .products-grid {
+            .products-grid, .category-grid {
                 grid-template-columns: 1fr;
             }
 
@@ -307,9 +426,11 @@
 
     <main>
         <div class="container">
+            <nav class="breadcrumb" id="breadcrumb"></nav>
+
             <div class="page-header">
-                <h1>Our Products</h1>
-                <p>Premium fabrics and garments at factory prices</p>
+                <h1 id="pageTitle">Our Products</h1>
+                <p id="pageSubtitle">Premium fabrics and garments at factory prices</p>
                 <span class="item-count" id="productCount">Loading...</span>
             </div>
 
@@ -318,7 +439,76 @@
     </main>
 
     <script>
-        // Cloudinary configuration for optimized images
+        // Categories structure (same as admin)
+        const CATEGORIES = {
+            fabric: {
+                name: 'Fabric',
+                subcategories: {
+                    mens: {
+                        name: 'Mens Fabric',
+                        types: {
+                            senator: 'Senator Material',
+                            cashmere: 'Cashmere',
+                            damask: 'Damask'
+                        }
+                    },
+                    womens: {
+                        name: 'Womens Fabric',
+                        types: {
+                            silk: 'Silk',
+                            lace: 'Lace',
+                            ankara: 'Ankara'
+                        }
+                    },
+                    uniform: {
+                        name: 'Uniform Fabric',
+                        types: {
+                            chinos: 'Chinos',
+                            gaberdine: 'Gaberdine',
+                            tr: 'TR Fabric'
+                        }
+                    }
+                }
+            },
+            garments: {
+                name: 'Garments',
+                subcategories: {
+                    mens: {
+                        name: 'Mens Garments',
+                        types: {
+                            tshirt: 'T-Shirts',
+                            shirt: 'Shirts',
+                            trousers: 'Trousers'
+                        }
+                    },
+                    womens: {
+                        name: 'Womens Garments',
+                        types: {
+                            gown: 'Gowns',
+                            kaftan: 'Kaftans',
+                            skirt: 'Skirts'
+                        }
+                    },
+                    kids: {
+                        name: 'Kids Garments',
+                        types: {
+                            tshirt: 'T-Shirts',
+                            pants: 'Pants',
+                            dress: 'Dresses'
+                        }
+                    }
+                }
+            }
+        };
+
+        // Navigation state
+        let navState = {
+            level1: null,
+            level2: null,
+            level3: null
+        };
+
+        // Cloudinary config
         const CLOUDINARY_CONFIG = {
             cloudName: 'dpxwuty0f',
             baseUrl: 'https://res.cloudinary.com/dpxwuty0f/image/upload/'
@@ -330,7 +520,6 @@
                 return imageUrl || 'https://via.placeholder.com/400x260?text=No+Image';
             }
             
-            // Extract public_id from Cloudinary URL
             const parts = imageUrl.split('/upload/');
             if (parts.length === 2) {
                 return `${CLOUDINARY_CONFIG.baseUrl}w_${width},q_auto,f_auto/${parts[1]}`;
@@ -339,19 +528,197 @@
             return imageUrl;
         }
 
-        // Load products from localStorage (same storage as admin panel)
+        // Load products
         function loadProducts() {
             const stored = localStorage.getItem('afp_products');
             return stored ? JSON.parse(stored) : [];
         }
 
-        // Render products
-        function renderProducts() {
-            const products = loadProducts();
-            const container = document.getElementById('productsContainer');
-            const countEl = document.getElementById('productCount');
+        // Navigate
+        function navigateHome() {
+            navState = { level1: null, level2: null, level3: null };
+            render();
+        }
 
-            countEl.textContent = `${products.length} Products Available`;
+        function navigateLevel1(key) {
+            navState = { level1: key, level2: null, level3: null };
+            render();
+        }
+
+        function navigateLevel2(l1, l2) {
+            navState = { level1: l1, level2: l2, level3: null };
+            render();
+        }
+
+        function navigateLevel3(l1, l2, l3) {
+            navState = { level1: l1, level2: l2, level3: l3 };
+            render();
+        }
+
+        // Render breadcrumb
+        function renderBreadcrumb() {
+            const breadcrumb = document.getElementById('breadcrumb');
+            const { level1, level2, level3 } = navState;
+
+            let html = `<ul class="breadcrumb-list"><li class="breadcrumb-item"><span class="breadcrumb-link" onclick="navigateHome()">All Categories</span></li>`;
+
+            if (level1) {
+                const l1Data = CATEGORIES[level1];
+                html += `<li class="breadcrumb-item"><span class="breadcrumb-separator">›</span>`;
+                html += level2 || level3 ? 
+                    `<span class="breadcrumb-link" onclick="navigateLevel1('${level1}')">${l1Data.name}</span>` :
+                    `<span class="breadcrumb-current">${l1Data.name}</span>`;
+                html += `</li>`;
+            }
+
+            if (level2) {
+                const l2Data = CATEGORIES[level1].subcategories[level2];
+                html += `<li class="breadcrumb-item"><span class="breadcrumb-separator">›</span>`;
+                html += level3 ? 
+                    `<span class="breadcrumb-link" onclick="navigateLevel2('${level1}', '${level2}')">${l2Data.name}</span>` :
+                    `<span class="breadcrumb-current">${l2Data.name}</span>`;
+                html += `</li>`;
+            }
+
+            if (level3) {
+                const l3Data = CATEGORIES[level1].subcategories[level2].types[level3];
+                html += `<li class="breadcrumb-item"><span class="breadcrumb-separator">›</span><span class="breadcrumb-current">${l3Data}</span></li>`;
+            }
+
+            html += '</ul>';
+            breadcrumb.innerHTML = html;
+        }
+
+        // Render header
+        function renderHeader() {
+            const { level1, level2, level3 } = navState;
+            
+            let title = 'Our Products';
+            let subtitle = 'Premium fabrics and garments at factory prices';
+
+            if (!level1) {
+                title = 'Browse Categories';
+                subtitle = 'Explore our collection of premium fabrics and garments';
+            } else if (!level2) {
+                title = CATEGORIES[level1].name;
+                subtitle = `Browse our ${CATEGORIES[level1].name.toLowerCase()} collection`;
+            } else if (!level3) {
+                title = CATEGORIES[level1].subcategories[level2].name;
+                subtitle = `Explore ${CATEGORIES[level1].subcategories[level2].name.toLowerCase()}`;
+            } else {
+                title = CATEGORIES[level1].subcategories[level2].types[level3];
+                subtitle = `Premium ${CATEGORIES[level1].subcategories[level2].types[level3].toLowerCase()}`;
+            }
+
+            document.getElementById('pageTitle').textContent = title;
+            document.getElementById('pageSubtitle').textContent = subtitle;
+        }
+
+        // Render content
+        function render() {
+            renderBreadcrumb();
+            renderHeader();
+            
+            const { level1, level2, level3 } = navState;
+            const container = document.getElementById('productsContainer');
+
+            if (!level1) {
+                renderLevel1Categories(container);
+            } else if (!level2) {
+                renderLevel2Categories(container, level1);
+            } else if (!level3) {
+                renderLevel3Types(container, level1, level2);
+            } else {
+                renderProducts(container, level1, level2, level3);
+            }
+        }
+
+        function renderLevel1Categories(container) {
+            const products = loadProducts();
+            let html = '<div class="category-grid">';
+
+            Object.keys(CATEGORIES).forEach(key => {
+                const cat = CATEGORIES[key];
+                const count = products.filter(p => p.category?.level1 === key).length;
+                
+                html += `
+                    <div class="category-card" onclick="navigateLevel1('${key}')">
+                        <div class="category-image"></div>
+                        <div class="category-overlay">
+                            <h2 class="category-name">${cat.name}</h2>
+                            <span class="category-count">${count} Products</span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
+            document.getElementById('productCount').textContent = `${Object.keys(CATEGORIES).length} Categories`;
+        }
+
+        function renderLevel2Categories(container, level1) {
+            const products = loadProducts();
+            const subcats = CATEGORIES[level1].subcategories;
+            let html = '<div class="category-grid">';
+
+            Object.keys(subcats).forEach(key => {
+                const subcat = subcats[key];
+                const count = products.filter(p => p.category?.level1 === level1 && p.category?.level2 === key).length;
+                
+                html += `
+                    <div class="category-card" onclick="navigateLevel2('${level1}', '${key}')">
+                        <div class="category-image"></div>
+                        <div class="category-overlay">
+                            <h2 class="category-name">${subcat.name}</h2>
+                            <span class="category-count">${count} Products</span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
+            document.getElementById('productCount').textContent = `${Object.keys(subcats).length} Subcategories`;
+        }
+
+        function renderLevel3Types(container, level1, level2) {
+            const products = loadProducts();
+            const types = CATEGORIES[level1].subcategories[level2].types;
+            let html = '<div class="category-grid">';
+
+            Object.keys(types).forEach(key => {
+                const type = types[key];
+                const count = products.filter(p => 
+                    p.category?.level1 === level1 && 
+                    p.category?.level2 === level2 && 
+                    p.category?.level3 === key
+                ).length;
+                
+                html += `
+                    <div class="category-card" onclick="navigateLevel3('${level1}', '${level2}', '${key}')">
+                        <div class="category-image"></div>
+                        <div class="category-overlay">
+                            <h2 class="category-name">${type}</h2>
+                            <span class="category-count">${count} Products</span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
+            document.getElementById('productCount').textContent = `${Object.keys(types).length} Types`;
+        }
+
+        function renderProducts(container, level1, level2, level3) {
+            const products = loadProducts().filter(p => 
+                p.category?.level1 === level1 && 
+                p.category?.level2 === level2 && 
+                p.category?.level3 === level3
+            );
+
+            document.getElementById('productCount').textContent = `${products.length} Products`;
 
             if (products.length === 0) {
                 container.innerHTML = `
@@ -362,8 +729,8 @@
                             <line x1="12" y1="16" x2="12.01" y2="16"></line>
                         </svg>
                         <h3>No Products Yet</h3>
-                        <p>Products will appear here once added through the admin panel</p>
-                        <a href="admin.html" class="btn-primary">Go to Admin Panel</a>
+                        <p>No products in this category. Check back soon!</p>
+                        <a href="javascript:navigateHome()" class="btn-primary">Browse All Categories</a>
                     </div>
                 `;
                 return;
@@ -373,6 +740,11 @@
 
             products.forEach(product => {
                 const optimizedImageUrl = getCloudinaryUrl(product.imageUrl, 400);
+                const categoryPath = [
+                    CATEGORIES[level1].name,
+                    CATEGORIES[level1].subcategories[level2].name,
+                    CATEGORIES[level1].subcategories[level2].types[level3]
+                ];
                 
                 html += `
                     <div class="product-card">
@@ -382,6 +754,11 @@
                             class="product-image"
                             loading="lazy">
                         <div class="product-info">
+                            <div class="product-badges">
+                                <span class="product-badge">${categoryPath[0]}</span>
+                                <span class="product-badge">${categoryPath[1]}</span>
+                                <span class="product-badge">${categoryPath[2]}</span>
+                            </div>
                             <h3 class="product-name">${product.name}</h3>
                             <p class="product-description">${product.description}</p>
                             <div class="product-footer">
@@ -404,7 +781,7 @@
             container.innerHTML = html;
         }
 
-        // Add to cart function
+        // Add to cart
         function addToCart(productId) {
             const products = loadProducts();
             const product = products.find(p => p.id === productId);
@@ -447,15 +824,8 @@
         }
 
         // Initialize
-        renderProducts();
+        render();
         updateCartCount();
-
-        // Auto-refresh when products are updated (from admin panel)
-        window.addEventListener('storage', function(e) {
-            if (e.key === 'afp_products') {
-                renderProducts();
-            }
-        });
     </script>
 </body>
 </html>
