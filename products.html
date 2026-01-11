@@ -368,6 +368,12 @@
             background: #333;
         }
 
+        .loading {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+
         @keyframes fadeIn {
             from {
                 opacity: 0;
@@ -411,7 +417,6 @@
             <div class="nav-links">
                 <a href="index.html" class="nav-link">Home</a>
                 <a href="products.html" class="nav-link active">Products</a>
-                <a href="admin.html" class="nav-link">Admin</a>
                 <a href="cart.html" class="nav-link cart-link">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="9" cy="21" r="1"></circle>
@@ -434,12 +439,32 @@
                 <span class="item-count" id="productCount">Loading...</span>
             </div>
 
-            <div id="productsContainer"></div>
+            <div id="productsContainer">
+                <div class="loading">Loading products...</div>
+            </div>
         </div>
     </main>
 
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
     <script>
-        // Categories structure (same as admin)
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA3SzcQWEgWv51hA5CsNyj6WG1cp-sZYKA",
+            authDomain: "atfactoryprice-6ba8f.firebaseapp.com",
+            projectId: "atfactoryprice-6ba8f",
+            storageBucket: "atfactoryprice-6ba8f.firebasestorage.app",
+            messagingSenderId: "660895645396",
+            appId: "1:660895645396:web:a4ea1e8febc6e0b7f74541"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        // Categories structure
         const CATEGORIES = {
             fabric: {
                 name: 'Fabric',
@@ -508,6 +533,9 @@
             level3: null
         };
 
+        // Products data
+        let products = [];
+
         // Cloudinary config
         const CLOUDINARY_CONFIG = {
             cloudName: 'dpxwuty0f',
@@ -528,13 +556,32 @@
             return imageUrl;
         }
 
-        // Load products
-        function loadProducts() {
-            const stored = localStorage.getItem('afp_products');
-            return stored ? JSON.parse(stored) : [];
+        // Load products from Firestore
+        async function loadProducts() {
+            try {
+                const snapshot = await db.collection('products').orderBy('name').get();
+                products = [];
+                
+                snapshot.forEach(doc => {
+                    products.push({
+                        id: doc.id,
+                        ...doc.data()
+                    });
+                });
+                
+                render();
+            } catch (error) {
+                console.error('Error loading products:', error);
+                document.getElementById('productsContainer').innerHTML = `
+                    <div class="empty-state">
+                        <h3>Error Loading Products</h3>
+                        <p>Please refresh the page or try again later.</p>
+                    </div>
+                `;
+            }
         }
 
-        // Navigate
+        // Navigate functions
         function navigateHome() {
             navState = { level1: null, level2: null, level3: null };
             render();
@@ -634,7 +681,6 @@
         }
 
         function renderLevel1Categories(container) {
-            const products = loadProducts();
             let html = '<div class="category-grid">';
 
             Object.keys(CATEGORIES).forEach(key => {
@@ -658,7 +704,6 @@
         }
 
         function renderLevel2Categories(container, level1) {
-            const products = loadProducts();
             const subcats = CATEGORIES[level1].subcategories;
             let html = '<div class="category-grid">';
 
@@ -683,7 +728,6 @@
         }
 
         function renderLevel3Types(container, level1, level2) {
-            const products = loadProducts();
             const types = CATEGORIES[level1].subcategories[level2].types;
             let html = '<div class="category-grid">';
 
@@ -712,15 +756,15 @@
         }
 
         function renderProducts(container, level1, level2, level3) {
-            const products = loadProducts().filter(p => 
+            const filteredProducts = products.filter(p => 
                 p.category?.level1 === level1 && 
                 p.category?.level2 === level2 && 
                 p.category?.level3 === level3
             );
 
-            document.getElementById('productCount').textContent = `${products.length} Products`;
+            document.getElementById('productCount').textContent = `${filteredProducts.length} Products`;
 
-            if (products.length === 0) {
+            if (filteredProducts.length === 0) {
                 container.innerHTML = `
                     <div class="empty-state">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -738,7 +782,7 @@
 
             let html = '<div class="products-grid">';
 
-            products.forEach(product => {
+            filteredProducts.forEach(product => {
                 const optimizedImageUrl = getCloudinaryUrl(product.imageUrl, 400);
                 const categoryPath = [
                     CATEGORIES[level1].name,
@@ -783,7 +827,6 @@
 
         // Add to cart
         function addToCart(productId) {
-            const products = loadProducts();
             const product = products.find(p => p.id === productId);
             
             if (!product) {
@@ -824,7 +867,7 @@
         }
 
         // Initialize
-        render();
+        loadProducts();
         updateCartCount();
     </script>
 </body>
