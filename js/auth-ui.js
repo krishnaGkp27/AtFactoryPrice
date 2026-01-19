@@ -25,6 +25,7 @@ const dbInstance = firebase.firestore();
 // Current user state
 let currentUser = null;
 let currentUserData = null;
+let authInitialized = false;
 
 // Auth UI Styles
 const authStyles = `
@@ -729,10 +730,7 @@ function initAuthUI() {
         document.body.insertAdjacentHTML('beforeend', checkoutPromptHTML);
     }
 
-    // Update navbar with auth button
-    updateNavbarAuth();
-
-    // Listen for auth state changes
+    // Listen for auth state changes (don't show login button until auth state is determined)
     authInstance.onAuthStateChanged(async (user) => {
         currentUser = user;
         if (user) {
@@ -748,6 +746,7 @@ function initAuthUI() {
         } else {
             currentUserData = null;
         }
+        authInitialized = true;
         updateNavbarAuth();
     });
 
@@ -797,6 +796,9 @@ function updateNavbarAuth() {
         existingAuth.remove();
     }
 
+    // Don't show anything until auth state is determined
+    if (!authInitialized) return;
+
     const authElement = document.createElement('div');
     authElement.className = 'auth-nav-item';
 
@@ -810,7 +812,7 @@ function updateNavbarAuth() {
         const referralCode = currentUserData?.referralCode || '';
         
         authElement.innerHTML = `
-            <a href="profile.html" class="user-menu">
+            <div class="user-menu">
                 <button class="user-menu-trigger" onclick="toggleUserDropdown(event)">
                     <span class="user-avatar">${initials}</span>
                     <span class="user-name">Welcome, ${firstName}</span>
@@ -877,7 +879,7 @@ function updateNavbarAuth() {
                         Log Out
                     </div>
                 </div>
-            </a>
+            </div>
         `;
     } else {
         // Show login button
