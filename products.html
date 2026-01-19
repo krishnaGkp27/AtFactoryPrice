@@ -494,6 +494,294 @@
             animation: fadeIn 0.4s ease-out;
         }
 
+        /* ===== AI-LIKE SEARCH EXPERIENCE - Phase 2 ===== */
+        .search-section {
+            margin-bottom: 32px;
+        }
+
+        .search-container {
+            position: relative;
+            max-width: 600px;
+            margin: 0 auto 24px;
+        }
+
+        .search-input-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+            background: #fff;
+            border: 2px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 4px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.04);
+        }
+
+        .search-input-wrapper:focus-within {
+            border-color: #000;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+        }
+
+        .search-icon {
+            padding: 12px 16px;
+            color: #94a3b8;
+        }
+
+        .search-input {
+            flex: 1;
+            border: none;
+            outline: none;
+            font-size: 1rem;
+            padding: 12px 0;
+            background: transparent;
+            font-family: inherit;
+        }
+
+        .search-input::placeholder {
+            color: #94a3b8;
+        }
+
+        .search-btn {
+            background: #000;
+            color: #fff;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .search-btn:hover {
+            background: #1a1a1a;
+        }
+
+        /* AI-like Search Suggestions Dropdown */
+        .search-suggestions {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            right: 0;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+            padding: 16px 0;
+            z-index: 100;
+            display: none;
+            border: 1px solid #e2e8f0;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .search-suggestions.active {
+            display: block;
+            animation: slideDown 0.2s ease-out;
+        }
+
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .suggestion-section {
+            padding: 8px 20px;
+        }
+
+        .suggestion-section-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .suggestion-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        .suggestion-item:hover {
+            background: #f8fafc;
+        }
+
+        .suggestion-icon {
+            width: 32px;
+            height: 32px;
+            background: #f1f5f9;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #64748b;
+        }
+
+        .suggestion-text {
+            font-size: 0.95rem;
+            color: #0f172a;
+        }
+
+        .suggestion-badge {
+            margin-left: auto;
+            font-size: 0.7rem;
+            padding: 4px 8px;
+            background: #000;
+            color: #fff;
+            border-radius: 6px;
+            font-weight: 600;
+        }
+
+        /* Smart Sorting UI */
+        .filters-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+
+        .sort-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .sort-label {
+            font-size: 0.875rem;
+            color: #64748b;
+            font-weight: 500;
+        }
+
+        .sort-select {
+            appearance: none;
+            background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") no-repeat right 12px center;
+            background-size: 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 10px 40px 10px 16px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            min-width: 200px;
+        }
+
+        .sort-select:focus {
+            outline: none;
+            border-color: #000;
+        }
+
+        .view-toggle {
+            display: flex;
+            gap: 4px;
+            background: #f1f5f9;
+            padding: 4px;
+            border-radius: 10px;
+        }
+
+        .view-btn {
+            padding: 8px 12px;
+            border: none;
+            background: transparent;
+            border-radius: 8px;
+            cursor: pointer;
+            color: #64748b;
+            transition: all 0.2s ease;
+        }
+
+        .view-btn.active {
+            background: #fff;
+            color: #000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        /* B2B Indicators on Product Cards */
+        .b2b-indicators {
+            display: flex;
+            gap: 6px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+
+        .b2b-badge {
+            font-size: 0.65rem;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .b2b-badge.wholesale {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: #fff;
+        }
+
+        .b2b-badge.moq {
+            background: #f0fdf4;
+            color: #166534;
+            border: 1px solid #bbf7d0;
+        }
+
+        .b2b-badge.bulk {
+            background: #fef3c7;
+            color: #92400e;
+            border: 1px solid #fde68a;
+        }
+
+        /* Bulk Buying Helper */
+        .bulk-helper {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+            padding: 10px 12px;
+            background: #f0fdf4;
+            border-radius: 10px;
+            border: 1px solid #bbf7d0;
+        }
+
+        .bulk-helper-icon {
+            color: #16a34a;
+        }
+
+        .bulk-helper-text {
+            font-size: 0.8rem;
+            color: #166534;
+        }
+
+        .bulk-helper-link {
+            color: #16a34a;
+            font-weight: 600;
+            text-decoration: none;
+            margin-left: auto;
+            white-space: nowrap;
+        }
+
+        .bulk-helper-link:hover {
+            text-decoration: underline;
+        }
+
+        /* Quantity Helper Text */
+        .qty-helper {
+            font-size: 0.75rem;
+            color: #64748b;
+            margin-top: 8px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .qty-helper svg {
+            color: #10b981;
+        }
+
         @media (max-width: 768px) {
             .products-grid, .category-grid {
                 grid-template-columns: 1fr;
@@ -509,6 +797,46 @@
 
             .nav-link {
                 font-size: 0.85rem;
+            }
+
+            /* Mobile Search - Sticky */
+            .search-section {
+                position: sticky;
+                top: 70px;
+                z-index: 50;
+                background: #f8fafc;
+                padding: 16px 0;
+                margin: -20px -20px 24px;
+                padding: 16px 20px;
+            }
+
+            .search-container {
+                margin-bottom: 0;
+            }
+
+            .search-btn {
+                padding: 12px 16px;
+            }
+
+            .search-btn span {
+                display: none;
+            }
+
+            .filters-bar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .sort-container {
+                width: 100%;
+            }
+
+            .sort-select {
+                flex: 1;
+            }
+
+            .view-toggle {
+                display: none;
             }
         }
 
@@ -577,6 +905,135 @@
                 <h1 id="pageTitle">Our Products</h1>
                 <p id="pageSubtitle">Premium fabrics and garments at factory prices</p>
                 <span class="item-count" id="productCount">Loading...</span>
+            </div>
+
+            <!-- AI-Like Search Experience (UI Only) -->
+            <div class="search-section">
+                <div class="search-container">
+                    <div class="search-input-wrapper">
+                        <span class="search-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <path d="M21 21l-4.35-4.35"></path>
+                            </svg>
+                        </span>
+                        <input type="text" class="search-input" id="productSearch" placeholder="Search fabrics, garments, bulk orders..." autocomplete="off">
+                        <button class="search-btn" onclick="handleSearch()">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <path d="M21 21l-4.35-4.35"></path>
+                            </svg>
+                            <span>Search</span>
+                        </button>
+                    </div>
+                    <!-- AI-Simulated Search Suggestions (UI Shell) -->
+                    <div class="search-suggestions" id="searchSuggestions">
+                        <div class="suggestion-section">
+                            <div class="suggestion-section-title">Popular Searches</div>
+                            <div class="suggestion-item" onclick="quickSearch('Senator Material')">
+                                <span class="suggestion-icon">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
+                                        <line x1="7" y1="7" x2="7.01" y2="7"></line>
+                                    </svg>
+                                </span>
+                                <span class="suggestion-text">Senator Material</span>
+                                <span class="suggestion-badge">Trending</span>
+                            </div>
+                            <div class="suggestion-item" onclick="quickSearch('Cotton Fabric')">
+                                <span class="suggestion-icon">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
+                                        <line x1="7" y1="7" x2="7.01" y2="7"></line>
+                                    </svg>
+                                </span>
+                                <span class="suggestion-text">Cotton Fabric</span>
+                            </div>
+                            <div class="suggestion-item" onclick="quickSearch('Uniform Fabric')">
+                                <span class="suggestion-icon">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
+                                        <line x1="7" y1="7" x2="7.01" y2="7"></line>
+                                    </svg>
+                                </span>
+                                <span class="suggestion-text">Uniform Fabric</span>
+                                <span class="suggestion-badge">B2B</span>
+                            </div>
+                        </div>
+                        <div class="suggestion-section">
+                            <div class="suggestion-section-title">Categories</div>
+                            <div class="suggestion-item" onclick="navigateLevel1('fabric')">
+                                <span class="suggestion-icon">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="3" y="3" width="7" height="7"></rect>
+                                        <rect x="14" y="3" width="7" height="7"></rect>
+                                        <rect x="14" y="14" width="7" height="7"></rect>
+                                        <rect x="3" y="14" width="7" height="7"></rect>
+                                    </svg>
+                                </span>
+                                <span class="suggestion-text">All Fabrics</span>
+                            </div>
+                            <div class="suggestion-item" onclick="navigateLevel1('garments')">
+                                <span class="suggestion-icon">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="3" y="3" width="7" height="7"></rect>
+                                        <rect x="14" y="3" width="7" height="7"></rect>
+                                        <rect x="14" y="14" width="7" height="7"></rect>
+                                        <rect x="3" y="14" width="7" height="7"></rect>
+                                    </svg>
+                                </span>
+                                <span class="suggestion-text">All Garments</span>
+                            </div>
+                        </div>
+                        <div class="suggestion-section">
+                            <div class="suggestion-section-title">Bulk Orders</div>
+                            <div class="suggestion-item" onclick="window.open('https://wa.me/2348138475360?text=Hi! I want to place a bulk order', '_blank')">
+                                <span class="suggestion-icon" style="background: #dcfce7; color: #16a34a;">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+                                    </svg>
+                                </span>
+                                <span class="suggestion-text">Contact for Bulk Orders</span>
+                                <span class="suggestion-badge" style="background: #16a34a;">WhatsApp</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Smart Sorting UI -->
+                <div class="filters-bar">
+                    <div class="sort-container">
+                        <span class="sort-label">Sort by:</span>
+                        <select class="sort-select" id="sortSelect" onchange="handleSort(this.value)">
+                            <option value="recommended">⭐ Recommended</option>
+                            <option value="name">A-Z (Name)</option>
+                            <option value="price-low">Price: Low to High</option>
+                            <option value="price-high">Price: High to Low</option>
+                            <option value="bulk">🏭 Best for Bulk Buyers</option>
+                            <option value="popular">🔥 Popular This Week</option>
+                        </select>
+                    </div>
+                    <div class="view-toggle">
+                        <button class="view-btn active" title="Grid View">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="7" height="7"></rect>
+                                <rect x="14" y="3" width="7" height="7"></rect>
+                                <rect x="14" y="14" width="7" height="7"></rect>
+                                <rect x="3" y="14" width="7" height="7"></rect>
+                            </svg>
+                        </button>
+                        <button class="view-btn" title="List View">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="8" y1="6" x2="21" y2="6"></line>
+                                <line x1="8" y1="12" x2="21" y2="12"></line>
+                                <line x1="8" y1="18" x2="21" y2="18"></line>
+                                <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                                <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                                <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <div id="productsContainer">
@@ -1040,6 +1497,11 @@
                 const showFactoryBadge = true; // All products are factory direct
                 const showBestsellerBadge = index < 3; // First 3 items as bestsellers
                 
+                // B2B indicators based on product position (simulated AI recommendation)
+                const showWholesale = index % 4 === 0; // Every 4th product
+                const showMOQ = index % 3 === 0; // Every 3rd product
+                const showBulkDiscount = index < 5; // First 5 products
+                
                 html += `
                     <div class="product-card">
                         <div class="product-image-container">
@@ -1061,6 +1523,14 @@
                             </div>
                             <h3 class="product-name">${product.name}</h3>
                             <p class="product-description">${product.description || 'Premium quality product direct from factory'}</p>
+                            
+                            <!-- B2B Indicators (AI-Simulated) -->
+                            <div class="b2b-indicators">
+                                ${showWholesale ? '<span class="b2b-badge wholesale">Best for Wholesale</span>' : ''}
+                                ${showMOQ ? '<span class="b2b-badge moq">MOQ Friendly</span>' : ''}
+                                ${showBulkDiscount ? '<span class="b2b-badge bulk">Bulk Discount</span>' : ''}
+                            </div>
+                            
                             <div class="product-footer">
                                 <div class="product-price-wrapper">
                                     <span class="product-price-label">Price</span>
@@ -1074,6 +1544,19 @@
                                     </svg>
                                     Add
                                 </button>
+                            </div>
+                            
+                            <!-- Bulk Buying Helper (AI-Like Assistance) -->
+                            <div class="bulk-helper">
+                                <span class="bulk-helper-icon">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <path d="M12 16v-4"></path>
+                                        <path d="M12 8h.01"></path>
+                                    </svg>
+                                </span>
+                                <span class="bulk-helper-text">Buying in bulk? Get better rates!</span>
+                                <a href="https://wa.me/2348138475360?text=Hi! I'm interested in bulk order for ${encodeURIComponent(product.name)}" target="_blank" class="bulk-helper-link">WhatsApp Us</a>
                             </div>
                         </div>
                     </div>
@@ -1124,6 +1607,175 @@
                 cartCountEl.style.display = totalItems > 0 ? 'flex' : 'none';
             }
         }
+
+        // ===== AI-LIKE SEARCH EXPERIENCE (UI Only) =====
+        const searchInput = document.getElementById('productSearch');
+        const searchSuggestions = document.getElementById('searchSuggestions');
+        
+        // Show suggestions on focus
+        searchInput?.addEventListener('focus', () => {
+            searchSuggestions?.classList.add('active');
+        });
+        
+        // Hide suggestions when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.search-container')) {
+                searchSuggestions?.classList.remove('active');
+            }
+        });
+        
+        // Filter products based on search (UI enhancement - graceful fallback)
+        searchInput?.addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase().trim();
+            if (query.length > 0) {
+                // Hide suggestions when typing
+                searchSuggestions?.classList.remove('active');
+            } else {
+                searchSuggestions?.classList.add('active');
+            }
+        });
+        
+        // Handle search submit
+        function handleSearch() {
+            const query = searchInput?.value.toLowerCase().trim();
+            if (!query) return;
+            
+            // Filter products by search query (client-side filtering)
+            const searchResults = products.filter(p => 
+                p.name?.toLowerCase().includes(query) ||
+                p.description?.toLowerCase().includes(query) ||
+                p.category?.level1?.toLowerCase().includes(query) ||
+                p.category?.level2?.toLowerCase().includes(query) ||
+                p.category?.level3?.toLowerCase().includes(query)
+            );
+            
+            // Display search results
+            displaySearchResults(searchResults, query);
+            searchSuggestions?.classList.remove('active');
+        }
+        
+        // Quick search from suggestions
+        function quickSearch(term) {
+            if (searchInput) {
+                searchInput.value = term;
+                handleSearch();
+            }
+        }
+        
+        // Display search results
+        function displaySearchResults(results, query) {
+            const container = document.getElementById('productsContainer');
+            document.getElementById('pageTitle').textContent = `Search Results`;
+            document.getElementById('pageSubtitle').textContent = `Found ${results.length} products for "${query}"`;
+            document.getElementById('productCount').textContent = `${results.length} Products`;
+            
+            if (results.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <path d="M21 21l-4.35-4.35"></path>
+                        </svg>
+                        <h3>No Results Found</h3>
+                        <p>Try different keywords or browse our categories</p>
+                        <a href="javascript:navigateHome()" class="btn-primary">Browse All Categories</a>
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = '<div class="products-grid">';
+            results.forEach((product, index) => {
+                const optimizedImageUrl = getCloudinaryUrl(product.imageUrl, 400);
+                const showFactoryBadge = true;
+                const showBestsellerBadge = index < 3;
+                const showWholesale = index % 4 === 0;
+                const showMOQ = index % 3 === 0;
+                const showBulkDiscount = index < 5;
+                
+                html += `
+                    <div class="product-card">
+                        <div class="product-image-container">
+                            <div class="product-promo-badge">
+                                ${showFactoryBadge ? '<span class="badge-factory">Factory Price</span>' : ''}
+                                ${showBestsellerBadge ? '<span class="badge-bestseller">Best Seller</span>' : ''}
+                            </div>
+                            <img src="${optimizedImageUrl}" alt="${product.name}" class="product-image" loading="lazy">
+                        </div>
+                        <div class="product-info">
+                            <h3 class="product-name">${product.name}</h3>
+                            <p class="product-description">${product.description || 'Premium quality product'}</p>
+                            <div class="b2b-indicators">
+                                ${showWholesale ? '<span class="b2b-badge wholesale">Best for Wholesale</span>' : ''}
+                                ${showMOQ ? '<span class="b2b-badge moq">MOQ Friendly</span>' : ''}
+                                ${showBulkDiscount ? '<span class="b2b-badge bulk">Bulk Discount</span>' : ''}
+                            </div>
+                            <div class="product-footer">
+                                <div class="product-price-wrapper">
+                                    <span class="product-price-label">Price</span>
+                                    <span class="product-price">₦${parseFloat(product.price).toLocaleString()}</span>
+                                </div>
+                                <button class="btn-add-cart" onclick="addToCart('${product.id}')">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="9" cy="21" r="1"></circle>
+                                        <circle cx="20" cy="21" r="1"></circle>
+                                        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+                                    </svg>
+                                    Add
+                                </button>
+                            </div>
+                            <div class="bulk-helper">
+                                <span class="bulk-helper-icon">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <path d="M12 16v-4"></path>
+                                        <path d="M12 8h.01"></path>
+                                    </svg>
+                                </span>
+                                <span class="bulk-helper-text">Buying in bulk?</span>
+                                <a href="https://wa.me/2348138475360?text=Hi! I'm interested in ${encodeURIComponent(product.name)}" target="_blank" class="bulk-helper-link">WhatsApp</a>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            container.innerHTML = html;
+        }
+        
+        // Handle sort change (maps to existing behavior - UI only)
+        function handleSort(sortType) {
+            // Sort the products array based on selection
+            let sortedProducts = [...products];
+            
+            switch(sortType) {
+                case 'name':
+                    sortedProducts.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                    break;
+                case 'price-low':
+                    sortedProducts.sort((a, b) => parseFloat(a.price || 0) - parseFloat(b.price || 0));
+                    break;
+                case 'price-high':
+                    sortedProducts.sort((a, b) => parseFloat(b.price || 0) - parseFloat(a.price || 0));
+                    break;
+                case 'bulk':
+                case 'popular':
+                case 'recommended':
+                default:
+                    // Keep default order (as loaded from Firestore)
+                    break;
+            }
+            
+            products = sortedProducts;
+            render();
+        }
+        
+        // Enter key triggers search
+        searchInput?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                handleSearch();
+            }
+        });
 
         // Initialize
         loadProducts();

@@ -441,6 +441,195 @@
             color: #888;
         }
 
+        /* ===== AI-LIKE RECOMMENDATIONS SECTION - Phase 2 ===== */
+        .recommendations-section {
+            margin-top: 48px;
+            padding-top: 32px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .recommendations-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+        }
+
+        .recommendations-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #0f172a;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .recommendations-title .ai-badge {
+            font-size: 0.65rem;
+            padding: 4px 8px;
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            color: #fff;
+            border-radius: 6px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .recommendations-subtitle {
+            font-size: 0.875rem;
+            color: #64748b;
+            margin-top: 4px;
+        }
+
+        .recommendations-scroll {
+            display: flex;
+            gap: 16px;
+            overflow-x: auto;
+            padding-bottom: 16px;
+            scroll-snap-type: x mandatory;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .recommendations-scroll::-webkit-scrollbar {
+            height: 6px;
+        }
+
+        .recommendations-scroll::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 3px;
+        }
+
+        .recommendations-scroll::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+        }
+
+        .recommendation-card {
+            flex: 0 0 200px;
+            background: #fff;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid #e2e8f0;
+            transition: all 0.3s ease;
+            scroll-snap-align: start;
+            cursor: pointer;
+        }
+
+        .recommendation-card:hover {
+            border-color: #000;
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+        }
+
+        .recommendation-image {
+            width: 100%;
+            height: 140px;
+            object-fit: cover;
+            background: #f8fafc;
+        }
+
+        .recommendation-info {
+            padding: 12px;
+        }
+
+        .recommendation-name {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #0f172a;
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .recommendation-price {
+            font-size: 1rem;
+            font-weight: 700;
+            color: #0f172a;
+        }
+
+        .recommendation-badge {
+            display: inline-block;
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            background: #f0fdf4;
+            color: #166534;
+            border-radius: 4px;
+            margin-top: 6px;
+            font-weight: 600;
+        }
+
+        .recommendation-add-btn {
+            width: 100%;
+            padding: 10px;
+            background: #000;
+            color: #fff;
+            border: none;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        .recommendation-add-btn:hover {
+            background: #1a1a1a;
+        }
+
+        /* Bulk Order Helper in Cart */
+        .cart-bulk-helper {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 20px;
+            background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+            border-radius: 12px;
+            border: 1px solid #bbf7d0;
+            margin-top: 16px;
+        }
+
+        .cart-bulk-helper-icon {
+            width: 40px;
+            height: 40px;
+            background: #16a34a;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            flex-shrink: 0;
+        }
+
+        .cart-bulk-helper-content {
+            flex: 1;
+        }
+
+        .cart-bulk-helper-title {
+            font-weight: 600;
+            color: #166534;
+            font-size: 0.95rem;
+        }
+
+        .cart-bulk-helper-text {
+            font-size: 0.8rem;
+            color: #15803d;
+        }
+
+        .cart-bulk-helper-btn {
+            background: #16a34a;
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-decoration: none;
+            white-space: nowrap;
+            transition: background 0.2s ease;
+        }
+
+        .cart-bulk-helper-btn:hover {
+            background: #15803d;
+        }
+
         @media (max-width: 768px) {
             .cart-item {
                 grid-template-columns: 80px 1fr;
@@ -462,6 +651,23 @@
 
             .nav-link {
                 font-size: 0.85rem;
+            }
+
+            .recommendation-card {
+                flex: 0 0 160px;
+            }
+
+            .recommendation-image {
+                height: 100px;
+            }
+
+            .cart-bulk-helper {
+                flex-direction: column;
+                text-align: center;
+            }
+
+            .cart-bulk-helper-btn {
+                width: 100%;
             }
         }
     </style>
@@ -628,23 +834,103 @@
                 </div>
             `).join('');
 
+            // Generate cart items list for WhatsApp message
+            const cartItemsList = cart.map(item => `- ${item.name} (Qty: ${item.quantity})`).join('%0A');
+            const whatsappMessage = `Hi! I'd like to place a bulk order for:%0A${cartItemsList}%0A%0APlease let me know the bulk pricing.`;
+
             cartContent.innerHTML = `
                 <div class="cart-items">
                     ${cartItemsHTML}
                 </div>
+                
+                <!-- Bulk Order Helper (AI-Like Assistance) -->
+                <div class="cart-bulk-helper">
+                    <div class="cart-bulk-helper-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                            <path d="M2 17l10 5 10-5"></path>
+                            <path d="M2 12l10 5 10-5"></path>
+                        </svg>
+                    </div>
+                    <div class="cart-bulk-helper-content">
+                        <div class="cart-bulk-helper-title">Buying in bulk? Get factory-direct pricing!</div>
+                        <div class="cart-bulk-helper-text">Higher quantity = Better per-unit rates. Contact us for wholesale discounts.</div>
+                    </div>
+                    <a href="https://wa.me/2348138475360?text=${whatsappMessage}" target="_blank" class="cart-bulk-helper-btn">
+                        WhatsApp for Bulk Rates
+                    </a>
+                </div>
+                
                 <div class="cart-summary">
+                    <div class="summary-header">Order Summary</div>
                     <div class="summary-row">
-                        <span>Subtotal</span>
-                        <span>$${calculateTotal()}</span>
+                        <span>Subtotal (${cart.length} items)</span>
+                        <span>₦${parseFloat(calculateTotal()).toLocaleString()}</span>
+                    </div>
+                    <div class="summary-row">
+                        <span>Shipping</span>
+                        <span>Calculated at checkout</span>
                     </div>
                     <div class="summary-total">
                         <span>Total</span>
-                        <span>$${calculateTotal()}</span>
+                        <span>₦${parseFloat(calculateTotal()).toLocaleString()}</span>
                     </div>
                 </div>
                 <div class="cart-actions">
                     <a href="products.html" class="btn-secondary">Continue Shopping</a>
                     <a href="checkout.html" class="btn-primary">Proceed to Checkout</a>
+                </div>
+                
+                <!-- AI-Like Recommendations Section -->
+                <div class="recommendations-section">
+                    <div class="recommendations-header">
+                        <div>
+                            <div class="recommendations-title">
+                                Customers Also Bought
+                                <span class="ai-badge">Suggested</span>
+                            </div>
+                            <div class="recommendations-subtitle">Based on items in your cart</div>
+                        </div>
+                    </div>
+                    <div class="recommendations-scroll">
+                        <!-- Static recommendations (UI shell - would be populated from existing product data) -->
+                        <div class="recommendation-card" onclick="window.location.href='products.html'">
+                            <div style="height: 140px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);"></div>
+                            <div class="recommendation-info">
+                                <div class="recommendation-name">Senator Material</div>
+                                <div class="recommendation-price">₦5,500</div>
+                                <span class="recommendation-badge">Popular</span>
+                            </div>
+                            <button class="recommendation-add-btn" onclick="event.stopPropagation(); window.location.href='products.html'">View Product</button>
+                        </div>
+                        <div class="recommendation-card" onclick="window.location.href='products.html'">
+                            <div style="height: 140px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);"></div>
+                            <div class="recommendation-info">
+                                <div class="recommendation-name">Cotton Fabric</div>
+                                <div class="recommendation-price">₦3,200</div>
+                                <span class="recommendation-badge">Best Seller</span>
+                            </div>
+                            <button class="recommendation-add-btn" onclick="event.stopPropagation(); window.location.href='products.html'">View Product</button>
+                        </div>
+                        <div class="recommendation-card" onclick="window.location.href='products.html'">
+                            <div style="height: 140px; background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);"></div>
+                            <div class="recommendation-info">
+                                <div class="recommendation-name">Uniform Fabric</div>
+                                <div class="recommendation-price">₦2,800</div>
+                                <span class="recommendation-badge">B2B Favorite</span>
+                            </div>
+                            <button class="recommendation-add-btn" onclick="event.stopPropagation(); window.location.href='products.html'">View Product</button>
+                        </div>
+                        <div class="recommendation-card" onclick="window.location.href='products.html'">
+                            <div style="height: 140px; background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);"></div>
+                            <div class="recommendation-info">
+                                <div class="recommendation-name">Ankara Fabric</div>
+                                <div class="recommendation-price">₦4,500</div>
+                                <span class="recommendation-badge">Trending</span>
+                            </div>
+                            <button class="recommendation-add-btn" onclick="event.stopPropagation(); window.location.href='products.html'">View Product</button>
+                        </div>
+                    </div>
                 </div>
             `;
         }
