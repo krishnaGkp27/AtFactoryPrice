@@ -782,6 +782,341 @@
             color: #10b981;
         }
 
+        /* ===== PHASE 3: B2B WHOLESALE MODE - UI Only ===== */
+        
+        /* Wholesale View Toggle */
+        .wholesale-toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+            border-radius: 12px;
+            margin-bottom: 24px;
+        }
+
+        .wholesale-toggle-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #fff;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .wholesale-toggle-label svg {
+            color: #fbbf24;
+        }
+
+        .wholesale-toggle {
+            position: relative;
+            width: 48px;
+            height: 26px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 13px;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+
+        .wholesale-toggle.active {
+            background: #10b981;
+        }
+
+        .wholesale-toggle::after {
+            content: '';
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 20px;
+            height: 20px;
+            background: #fff;
+            border-radius: 50%;
+            transition: transform 0.3s ease;
+        }
+
+        .wholesale-toggle.active::after {
+            transform: translateX(22px);
+        }
+
+        .wholesale-toggle-hint {
+            font-size: 0.75rem;
+            color: rgba(255,255,255,0.7);
+            margin-left: auto;
+        }
+
+        /* Wholesale Mode Active Styles */
+        body.wholesale-mode .product-card {
+            border: 2px solid #10b981;
+        }
+
+        body.wholesale-mode .bulk-pricing-table {
+            display: block;
+        }
+
+        body.wholesale-mode .moq-highlight {
+            display: flex;
+        }
+
+        body.wholesale-mode .wholesale-cta {
+            display: flex;
+        }
+
+        /* Bulk Pricing Visual Table */
+        .bulk-pricing-table {
+            display: none;
+            margin-top: 12px;
+            background: #f8fafc;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid #e2e8f0;
+        }
+
+        .bulk-pricing-table.always-show {
+            display: block;
+        }
+
+        .bulk-pricing-header {
+            background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+            color: #fff;
+            padding: 10px 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .bulk-pricing-header svg {
+            color: #fbbf24;
+        }
+
+        .bulk-pricing-rows {
+            padding: 8px;
+        }
+
+        .bulk-pricing-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 10px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            transition: background 0.2s ease;
+        }
+
+        .bulk-pricing-row:hover {
+            background: #e2e8f0;
+        }
+
+        .bulk-pricing-row.highlight {
+            background: #dcfce7;
+            border: 1px solid #bbf7d0;
+        }
+
+        .bulk-pricing-qty {
+            font-weight: 600;
+            color: #0f172a;
+        }
+
+        .bulk-pricing-rate {
+            color: #64748b;
+        }
+
+        .bulk-pricing-rate.best {
+            color: #16a34a;
+            font-weight: 700;
+        }
+
+        .bulk-pricing-contact {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 12px;
+            background: #f0fdf4;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .bulk-pricing-contact a {
+            color: #16a34a;
+            font-weight: 600;
+            font-size: 0.8rem;
+            text-decoration: none;
+        }
+
+        .bulk-pricing-contact a:hover {
+            text-decoration: underline;
+        }
+
+        .bulk-pricing-disclaimer {
+            font-size: 0.65rem;
+            color: #94a3b8;
+            padding: 8px 12px;
+            background: #f8fafc;
+            border-top: 1px solid #e2e8f0;
+            text-align: center;
+        }
+
+        /* MOQ Highlight */
+        .moq-highlight {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #fef3c7;
+            border-radius: 8px;
+            border: 1px solid #fde68a;
+            margin-top: 10px;
+        }
+
+        .moq-highlight.always-show {
+            display: flex;
+        }
+
+        .moq-highlight-icon {
+            color: #d97706;
+        }
+
+        .moq-highlight-text {
+            font-size: 0.75rem;
+            color: #92400e;
+        }
+
+        .moq-highlight-text strong {
+            font-weight: 700;
+        }
+
+        /* Wholesale CTA Button */
+        .wholesale-cta {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            width: 100%;
+            padding: 10px 16px;
+            background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 10px;
+            text-decoration: none;
+            transition: all 0.3s ease;
+        }
+
+        .wholesale-cta.always-show {
+            display: flex;
+        }
+
+        .wholesale-cta:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(22, 163, 74, 0.3);
+        }
+
+        /* B2B Trust Section */
+        .b2b-trust-section {
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 32px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .b2b-trust-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .b2b-trust-header h3 {
+            font-size: 1rem;
+            font-weight: 700;
+            color: #0f172a;
+        }
+
+        .b2b-trust-badge {
+            font-size: 0.65rem;
+            padding: 4px 8px;
+            background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+            color: #fff;
+            border-radius: 6px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .b2b-trust-items {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+        }
+
+        .b2b-trust-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px;
+            background: #fff;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .b2b-trust-item-icon {
+            width: 36px;
+            height: 36px;
+            background: #f0fdf4;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #16a34a;
+        }
+
+        .b2b-trust-item-text {
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: #374151;
+        }
+
+        /* Wholesale Badges on Cards */
+        .wholesale-badge-ribbon {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 3;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            align-items: flex-end;
+        }
+
+        .ribbon-badge {
+            font-size: 0.6rem;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .ribbon-badge.wholesale-available {
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            color: #fff;
+        }
+
+        .ribbon-badge.reseller {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: #fff;
+        }
+
+        .ribbon-badge.factory-direct {
+            background: #000;
+            color: #fff;
+        }
+
         @media (max-width: 768px) {
             .products-grid, .category-grid {
                 grid-template-columns: 1fr;
@@ -837,6 +1172,41 @@
 
             .view-toggle {
                 display: none;
+            }
+
+            /* Phase 3 Mobile Styles */
+            .wholesale-toggle-container {
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+
+            .wholesale-toggle-hint {
+                width: 100%;
+                margin-left: 0;
+                text-align: center;
+            }
+
+            .b2b-trust-items {
+                grid-template-columns: 1fr;
+            }
+
+            .bulk-pricing-table {
+                overflow-x: auto;
+            }
+
+            .wholesale-cta {
+                position: fixed;
+                bottom: 20px;
+                left: 20px;
+                right: 20px;
+                z-index: 100;
+                border-radius: 12px;
+                padding: 14px 20px;
+                box-shadow: 0 4px 20px rgba(22, 163, 74, 0.4);
+            }
+
+            body.wholesale-mode .wholesale-cta {
+                display: flex;
             }
         }
 
@@ -905,6 +1275,58 @@
                 <h1 id="pageTitle">Our Products</h1>
                 <p id="pageSubtitle">Premium fabrics and garments at factory prices</p>
                 <span class="item-count" id="productCount">Loading...</span>
+            </div>
+
+            <!-- Phase 3: Wholesale View Toggle (UI Only) -->
+            <div class="wholesale-toggle-container">
+                <span class="wholesale-toggle-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                        <path d="M2 17l10 5 10-5"></path>
+                        <path d="M2 12l10 5 10-5"></path>
+                    </svg>
+                    Wholesale View
+                </span>
+                <div class="wholesale-toggle" id="wholesaleToggle" onclick="toggleWholesaleMode()"></div>
+                <span class="wholesale-toggle-hint">Toggle to see bulk pricing & MOQ info</span>
+            </div>
+
+            <!-- Phase 3: B2B Trust Section -->
+            <div class="b2b-trust-section">
+                <div class="b2b-trust-header">
+                    <h3>Trusted by Retailers & Resellers</h3>
+                    <span class="b2b-trust-badge">B2B Ready</span>
+                </div>
+                <div class="b2b-trust-items">
+                    <div class="b2b-trust-item">
+                        <div class="b2b-trust-item-icon">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                                <path d="M2 17l10 5 10-5"></path>
+                                <path d="M2 12l10 5 10-5"></path>
+                            </svg>
+                        </div>
+                        <span class="b2b-trust-item-text">Factory Direct Supply</span>
+                    </div>
+                    <div class="b2b-trust-item">
+                        <div class="b2b-trust-item-icon">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                            </svg>
+                        </div>
+                        <span class="b2b-trust-item-text">Consistent Quality Assurance</span>
+                    </div>
+                    <div class="b2b-trust-item">
+                        <div class="b2b-trust-item-icon">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <polyline points="12 6 12 12 16 14"></polyline>
+                            </svg>
+                        </div>
+                        <span class="b2b-trust-item-text">Bulk Orders Priority Fulfillment</span>
+                    </div>
+                </div>
             </div>
 
             <!-- AI-Like Search Experience (UI Only) -->
@@ -1502,12 +1924,28 @@
                 const showMOQ = index % 3 === 0; // Every 3rd product
                 const showBulkDiscount = index < 5; // First 5 products
                 
+                // Calculate tiered pricing display (UI only - visual representation)
+                const basePrice = parseFloat(product.price);
+                const tier1Price = basePrice; // 10-49 units
+                const tier2Label = 'Better Rate'; // 50-99 units (label only)
+                const tier3Label = 'Contact Us'; // 100+ units
+                
+                // Wholesale ribbon badges
+                const showWholesaleRibbon = index % 5 === 0;
+                const showResellerRibbon = index % 7 === 0;
+                
                 html += `
                     <div class="product-card">
                         <div class="product-image-container">
                             <div class="product-promo-badge">
                                 ${showFactoryBadge ? '<span class="badge-factory">Factory Price</span>' : ''}
                                 ${showBestsellerBadge ? '<span class="badge-bestseller">Best Seller</span>' : ''}
+                            </div>
+                            <!-- Phase 3: Wholesale Ribbon Badges -->
+                            <div class="wholesale-badge-ribbon">
+                                ${showWholesaleRibbon ? '<span class="ribbon-badge wholesale-available">Wholesale</span>' : ''}
+                                ${showResellerRibbon ? '<span class="ribbon-badge reseller">For Resellers</span>' : ''}
+                                <span class="ribbon-badge factory-direct">Factory Direct</span>
                             </div>
                             <img 
                                 src="${optimizedImageUrl}" 
@@ -1534,7 +1972,7 @@
                             <div class="product-footer">
                                 <div class="product-price-wrapper">
                                     <span class="product-price-label">Price</span>
-                                    <span class="product-price">₦${parseFloat(product.price).toLocaleString()}</span>
+                                    <span class="product-price">₦${basePrice.toLocaleString()}</span>
                                 </div>
                                 <button class="btn-add-cart" onclick="addToCart('${product.id}')">
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1545,6 +1983,60 @@
                                     Add
                                 </button>
                             </div>
+                            
+                            <!-- Phase 3: MOQ Highlight (visible in wholesale mode) -->
+                            <div class="moq-highlight">
+                                <span class="moq-highlight-icon">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                                    </svg>
+                                </span>
+                                <span class="moq-highlight-text"><strong>MOQ: 10 units</strong> • Bulk orders receive priority fulfillment</span>
+                            </div>
+                            
+                            <!-- Phase 3: Bulk Pricing Visual Table (UI Only) -->
+                            <div class="bulk-pricing-table">
+                                <div class="bulk-pricing-header">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                                        <path d="M2 17l10 5 10-5"></path>
+                                    </svg>
+                                    Bulk Pricing Tiers
+                                </div>
+                                <div class="bulk-pricing-rows">
+                                    <div class="bulk-pricing-row">
+                                        <span class="bulk-pricing-qty">10 - 49 units</span>
+                                        <span class="bulk-pricing-rate">₦${basePrice.toLocaleString()}/unit</span>
+                                    </div>
+                                    <div class="bulk-pricing-row highlight">
+                                        <span class="bulk-pricing-qty">50 - 99 units</span>
+                                        <span class="bulk-pricing-rate best">Better Rate ✓</span>
+                                    </div>
+                                    <div class="bulk-pricing-row">
+                                        <span class="bulk-pricing-qty">100+ units</span>
+                                        <span class="bulk-pricing-rate best">Best Price ✓</span>
+                                    </div>
+                                </div>
+                                <div class="bulk-pricing-contact">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="color: #16a34a;">
+                                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+                                    </svg>
+                                    <a href="https://wa.me/2348138475360?text=Hi! I need bulk pricing for ${encodeURIComponent(product.name)}" target="_blank">Contact for Best Price</a>
+                                </div>
+                                <div class="bulk-pricing-disclaimer">
+                                    Final pricing confirmed at checkout or via WhatsApp
+                                </div>
+                            </div>
+                            
+                            <!-- Phase 3: Wholesale CTA (visible in wholesale mode) -->
+                            <a href="https://wa.me/2348138475360?text=Hi! I'm a reseller interested in wholesale pricing for ${encodeURIComponent(product.name)}" target="_blank" class="wholesale-cta">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+                                </svg>
+                                Request Bulk Quote
+                            </a>
                             
                             <!-- Bulk Buying Helper (AI-Like Assistance) -->
                             <div class="bulk-helper">
@@ -1776,6 +2268,36 @@
                 handleSearch();
             }
         });
+
+        // ===== PHASE 3: Wholesale Mode Toggle (UI Only) =====
+        let wholesaleMode = false;
+        
+        function toggleWholesaleMode() {
+            wholesaleMode = !wholesaleMode;
+            const toggle = document.getElementById('wholesaleToggle');
+            const body = document.body;
+            
+            if (wholesaleMode) {
+                toggle?.classList.add('active');
+                body.classList.add('wholesale-mode');
+                // Show all bulk pricing tables and MOQ highlights
+                document.querySelectorAll('.bulk-pricing-table').forEach(el => el.classList.add('always-show'));
+                document.querySelectorAll('.moq-highlight').forEach(el => el.classList.add('always-show'));
+                document.querySelectorAll('.wholesale-cta').forEach(el => el.classList.add('always-show'));
+            } else {
+                toggle?.classList.remove('active');
+                body.classList.remove('wholesale-mode');
+                // Hide bulk pricing tables and MOQ highlights
+                document.querySelectorAll('.bulk-pricing-table').forEach(el => el.classList.remove('always-show'));
+                document.querySelectorAll('.moq-highlight').forEach(el => el.classList.remove('always-show'));
+                document.querySelectorAll('.wholesale-cta').forEach(el => el.classList.remove('always-show'));
+            }
+        }
+        
+        // Check URL for wholesale mode parameter
+        if (new URLSearchParams(window.location.search).get('wholesale') === 'true') {
+            setTimeout(() => toggleWholesaleMode(), 500);
+        }
 
         // Initialize
         loadProducts();

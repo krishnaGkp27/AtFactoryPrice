@@ -630,6 +630,89 @@
             background: #15803d;
         }
 
+        /* Phase 3: Wholesale Informational Banner */
+        .wholesale-info-banner {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 20px 24px;
+            background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+            border-radius: 16px;
+            margin-bottom: 24px;
+            color: #fff;
+        }
+
+        .wholesale-info-icon {
+            width: 48px;
+            height: 48px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .wholesale-info-icon svg {
+            color: #fbbf24;
+        }
+
+        .wholesale-info-content {
+            flex: 1;
+        }
+
+        .wholesale-info-title {
+            font-weight: 700;
+            font-size: 1rem;
+            margin-bottom: 4px;
+        }
+
+        .wholesale-info-text {
+            font-size: 0.85rem;
+            color: rgba(255,255,255,0.8);
+        }
+
+        .wholesale-info-cta {
+            background: #fff;
+            color: #0f172a;
+            padding: 12px 20px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-decoration: none;
+            white-space: nowrap;
+            transition: all 0.2s ease;
+        }
+
+        .wholesale-info-cta:hover {
+            background: #f1f5f9;
+            transform: translateY(-2px);
+        }
+
+        /* Wholesale Trust Badge in Cart */
+        .cart-wholesale-trust {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            padding: 16px;
+            background: #f8fafc;
+            border-radius: 12px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+        }
+
+        .cart-trust-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.8rem;
+            color: #64748b;
+        }
+
+        .cart-trust-item svg {
+            color: #16a34a;
+        }
+
         @media (max-width: 768px) {
             .cart-item {
                 grid-template-columns: 80px 1fr;
@@ -668,6 +751,23 @@
 
             .cart-bulk-helper-btn {
                 width: 100%;
+            }
+
+            /* Phase 3 Mobile Styles */
+            .wholesale-info-banner {
+                flex-direction: column;
+                text-align: center;
+                padding: 16px;
+            }
+
+            .wholesale-info-cta {
+                width: 100%;
+                text-align: center;
+            }
+
+            .cart-wholesale-trust {
+                flex-direction: column;
+                gap: 12px;
             }
         }
     </style>
@@ -838,7 +938,29 @@
             const cartItemsList = cart.map(item => `- ${item.name} (Qty: ${item.quantity})`).join('%0A');
             const whatsappMessage = `Hi! I'd like to place a bulk order for:%0A${cartItemsList}%0A%0APlease let me know the bulk pricing.`;
 
+            // Calculate total items for wholesale messaging
+            const totalItems = cart.reduce((total, item) => total + item.quantity, 0);
+            const showWholesaleBanner = totalItems >= 5; // Show if 5+ items
+            
             cartContent.innerHTML = `
+                <!-- Phase 3: Wholesale Informational Banner -->
+                <div class="wholesale-info-banner">
+                    <div class="wholesale-info-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                            <path d="M2 17l10 5 10-5"></path>
+                            <path d="M2 12l10 5 10-5"></path>
+                        </svg>
+                    </div>
+                    <div class="wholesale-info-content">
+                        <div class="wholesale-info-title">🏭 Bulk Orders May Qualify for Special Pricing</div>
+                        <div class="wholesale-info-text">Contact us before checkout for large quantities. Factory-direct rates available for resellers.</div>
+                    </div>
+                    <a href="https://wa.me/2348138475360?text=${whatsappMessage}" target="_blank" class="wholesale-info-cta">
+                        Get Bulk Quote
+                    </a>
+                </div>
+                
                 <div class="cart-items">
                     ${cartItemsHTML}
                 </div>
@@ -930,6 +1052,30 @@
                             </div>
                             <button class="recommendation-add-btn" onclick="event.stopPropagation(); window.location.href='products.html'">View Product</button>
                         </div>
+                    </div>
+                </div>
+                
+                <!-- Phase 3: Wholesale Trust Badges -->
+                <div class="cart-wholesale-trust">
+                    <div class="cart-trust-item">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                        </svg>
+                        Factory Direct Supply
+                    </div>
+                    <div class="cart-trust-item">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                        </svg>
+                        Consistent Quality
+                    </div>
+                    <div class="cart-trust-item">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <polyline points="12 6 12 12 16 14"></polyline>
+                        </svg>
+                        Priority Fulfillment
                     </div>
                 </div>
             `;
