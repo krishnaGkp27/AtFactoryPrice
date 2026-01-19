@@ -800,12 +800,17 @@ function updateNavbarAuth() {
     const authElement = document.createElement('div');
     authElement.className = 'auth-nav-item';
 
-    if (currentUser && currentUserData) {
+    if (currentUser) {
         // Show user menu with "Welcome {user}"
-        const initials = getInitials(currentUserData.name || currentUserData.email);
-        const firstName = (currentUserData.name || 'User').split(' ')[0];
+        // Use currentUserData if available, otherwise fallback to Firebase Auth data
+        const displayName = currentUserData?.name || currentUser.displayName || currentUser.email?.split('@')[0] || 'User';
+        const displayEmail = currentUserData?.email || currentUser.email || '';
+        const initials = getInitials(displayName);
+        const firstName = displayName.split(' ')[0];
+        const referralCode = currentUserData?.referralCode || '';
+        
         authElement.innerHTML = `
-            <div class="user-menu">
+            <a href="profile.html" class="user-menu">
                 <button class="user-menu-trigger" onclick="toggleUserDropdown(event)">
                     <span class="user-avatar">${initials}</span>
                     <span class="user-name">Welcome, ${firstName}</span>
@@ -815,14 +820,14 @@ function updateNavbarAuth() {
                 </button>
                 <div class="user-dropdown" id="userDropdown">
                     <div class="user-dropdown-header">
-                        <div class="user-fullname">${currentUserData.name || 'User'}</div>
-                        <div class="user-email">${currentUserData.email}</div>
+                        <div class="user-fullname">${displayName}</div>
+                        <div class="user-email">${displayEmail}</div>
                     </div>
-                    ${currentUserData.referralCode ? `
+                    ${referralCode ? `
                     <div class="referral-code-badge">
                         <span>Your Code:</span>
-                        <code>${currentUserData.referralCode}</code>
-                        <button class="copy-code-btn" onclick="copyReferralCode('${currentUserData.referralCode}')" title="Copy code">
+                        <code>${referralCode}</code>
+                        <button class="copy-code-btn" onclick="copyReferralCode('${referralCode}')" title="Copy code">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -872,7 +877,7 @@ function updateNavbarAuth() {
                         Log Out
                     </div>
                 </div>
-            </div>
+            </a>
         `;
     } else {
         // Show login button
