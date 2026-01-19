@@ -450,22 +450,12 @@
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
 
-    <!-- Auth UI Component -->
+    <!-- Auth UI Component (loaded first to initialize Firebase) -->
     <script src="js/auth-ui.js"></script>
 
     <script>
-        // Firebase Configuration
-        const firebaseConfig = {
-            apiKey: "AIzaSyA3SzcQWEgWv51hA5CsNyj6WG1cp-sZYKA",
-            authDomain: "atfactoryprice-6ba8f.firebaseapp.com",
-            projectId: "atfactoryprice-6ba8f",
-            storageBucket: "atfactoryprice-6ba8f.firebasestorage.app",
-            messagingSenderId: "660895645396",
-            appId: "1:660895645396:web:a4ea1e8febc6e0b7f74541"
-        };
-
-        // Initialize Firebase
-        firebase.initializeApp(firebaseConfig);
+        // Firebase is already initialized by auth-ui.js
+        // Use the existing Firestore instance
         const db = firebase.firestore();
 
         // Categories structure
