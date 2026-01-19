@@ -1,16 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Camera, Plus, Edit, Trash2, Upload, Save, X, LogOut, LogIn, Package } from 'lucide-react';
 
-// CONFIGURATION - Replace with your actual keys
+// YOUR ACTUAL CONFIGURATION
 const CONFIG = {
   firebase: {
     apiKey: "AIzaSyA3SzcQWEgWv51hA5CsNyj6WG1cp-sZYKA",
-  authDomain: "atfactoryprice-6ba8f.firebaseapp.com",
-  projectId: "atfactoryprice-6ba8f",
-  storageBucket: "atfactoryprice-6ba8f.firebasestorage.app",
-  messagingSenderId: "660895645396",
-  appId: "1:660895645396:web:a4ea1e8febc6e0b7f74541"
-
+    authDomain: "atfactoryprice-6ba8f.firebaseapp.com",
+    projectId: "atfactoryprice-6ba8f",
+    storageBucket: "atfactoryprice-6ba8f.firebasestorage.app",
+    messagingSenderId: "660895645396",
+    appId: "1:660895645396:web:a4ea1e8febc6e0b7f74541"
   },
   cloudinary: {
     cloudName: "dpxwuty0f",
@@ -109,22 +108,39 @@ const AdminPanel = () => {
     setPassword('');
   };
 
-  const handleImageUpload = (file) => {
+  // REAL CLOUDINARY UPLOAD - PRODUCTION READY
+  const handleImageUpload = async (file) => {
     if (!file) return;
 
     setUploadingImage(true);
 
     try {
-      const simulatedCloudinaryId = `products/${file.name.split('.')[0]}_${Date.now()}`;
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('upload_preset', CONFIG.cloudinary.uploadPreset);
+      formData.append('folder', 'products');
+
+      const response = await fetch(
+        `https://api.cloudinary.com/v1_1/${CONFIG.cloudinary.cloudName}/image/upload`,
+        {
+          method: 'POST',
+          body: formData
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Upload failed');
+      }
+
+      const data = await response.json();
       
-      setTimeout(() => {
-        setProductForm({ ...productForm, cloudinaryId: simulatedCloudinaryId });
-        setUploadingImage(false);
-        alert('Image uploaded successfully! (Simulated - Replace with real Cloudinary upload)');
-      }, 1000);
+      setProductForm({ ...productForm, cloudinaryId: data.public_id });
+      alert('✅ Image uploaded successfully to Cloudinary!');
+      
     } catch (error) {
-      console.error('Error uploading image:', error);
-      alert('Error uploading image. Please try again.');
+      console.error('Error uploading to Cloudinary:', error);
+      alert('❌ Error uploading image. Please check your Cloudinary settings and try again.');
+    } finally {
       setUploadingImage(false);
     }
   };
@@ -165,7 +181,7 @@ const AdminPanel = () => {
       setEditingProduct(null);
       setShowProductForm(false);
       
-      alert(editingProduct ? 'Product updated successfully!' : 'Product added successfully!');
+      alert(editingProduct ? '✅ Product updated successfully!' : '✅ Product added successfully!');
     } catch (error) {
       console.error('Error saving product:', error);
       alert('Error saving product. Please try again.');
@@ -248,7 +264,7 @@ const AdminPanel = () => {
           
           <div className="mt-6 p-4 bg-blue-50 rounded-lg">
             <p className="text-sm text-blue-800">
-              <strong>Demo Access:</strong> Enter any email and password to access the admin panel
+              <strong>Demo Mode:</strong> Enter any email and password to test. For production, enable Firebase Auth.
             </p>
           </div>
         </div>
@@ -384,7 +400,7 @@ const AdminPanel = () => {
                     ) : (
                       <div>
                         <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                        <p className="text-gray-600 mb-4">Upload product image</p>
+                        <p className="text-gray-600 mb-4">Upload product image to Cloudinary</p>
                         <input
                           type="file"
                           accept="image/*"
@@ -396,7 +412,7 @@ const AdminPanel = () => {
                           htmlFor="imageUpload"
                           className="inline-block px-4 py-2 bg-black text-white rounded-lg cursor-pointer hover:bg-gray-800 transition"
                         >
-                          {uploadingImage ? 'Uploading...' : 'Choose Image'}
+                          {uploadingImage ? 'Uploading to Cloudinary...' : 'Choose Image'}
                         </label>
                       </div>
                     )}
@@ -611,13 +627,13 @@ const AdminPanel = () => {
           </div>
         </div>
 
-        <div className="mt-8 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-6 border border-blue-200">
-          <h3 className="text-lg font-bold text-gray-900 mb-4">🚀 Setup Instructions</h3>
+        <div className="mt-8 bg-gradient-to-r from-green-50 to-blue-50 rounded-xl p-6 border border-green-200">
+          <h3 className="text-lg font-bold text-gray-900 mb-4">✅ System Status</h3>
           <div className="space-y-3 text-sm text-gray-700">
-            <p><strong>1. Firebase Setup:</strong> Create project at console.firebase.google.com, enable Authentication & Firestore</p>
-            <p><strong>2. Cloudinary Setup:</strong> Sign up at cloudinary.com, get cloud name and create upload preset</p>
-            <p><strong>3. Update Config:</strong> Replace CONFIG values at top with your actual keys</p>
-            <p><strong>4. Current Status:</strong> Demo mode - using localStorage. Replace with Firebase/Cloudinary</p>
+            <p><strong>✅ Cloudinary:</strong> ACTIVE - Real image uploads enabled (Cloud: {CONFIG.cloudinary.cloudName})</p>
+            <p><strong>⚠️ Firebase Auth:</strong> Demo mode - Replace handleLogin with real Firebase auth</p>
+            <p><strong>📦 Storage:</strong> LocalStorage (switch to Firestore for production)</p>
+            <p className="pt-2 text-xs text-gray-500">Next step: Enable Firebase Authentication for secure admin access</p>
           </div>
         </div>
       </main>
