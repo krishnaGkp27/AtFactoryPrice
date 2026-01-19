@@ -1271,12 +1271,6 @@
         <div class="container">
             <nav class="breadcrumb" id="breadcrumb"></nav>
 
-            <div class="page-header">
-                <h1 id="pageTitle">Our Products</h1>
-                <p id="pageSubtitle">Premium fabrics and garments at factory prices</p>
-                <span class="item-count" id="productCount">Loading...</span>
-            </div>
-
             <!-- Phase 3: Wholesale View Toggle (UI Only) -->
             <div class="wholesale-toggle-container">
                 <span class="wholesale-toggle-label">
@@ -1783,8 +1777,11 @@
                 subtitle = `Premium ${CATEGORIES[level1].subcategories[level2].types[level3].toLowerCase()}`;
             }
 
-            document.getElementById('pageTitle').textContent = title;
-            document.getElementById('pageSubtitle').textContent = subtitle;
+            // Page header removed - elements no longer exist
+            const pageTitleEl = document.getElementById('pageTitle');
+            const pageSubtitleEl = document.getElementById('pageSubtitle');
+            if (pageTitleEl) pageTitleEl.textContent = title;
+            if (pageSubtitleEl) pageSubtitleEl.textContent = subtitle;
         }
 
         // Render content
@@ -1827,7 +1824,8 @@
 
             html += '</div>';
             container.innerHTML = html;
-            document.getElementById('productCount').textContent = `${Object.keys(CATEGORIES).length} Categories`;
+            const productCountEl1 = document.getElementById('productCount');
+            if (productCountEl1) productCountEl1.textContent = `${Object.keys(CATEGORIES).length} Categories`;
         }
 
         function renderLevel2Categories(container, level1) {
@@ -1852,7 +1850,8 @@
 
             html += '</div>';
             container.innerHTML = html;
-            document.getElementById('productCount').textContent = `${Object.keys(subcats).length} Subcategories`;
+            const productCountEl2 = document.getElementById('productCount');
+            if (productCountEl2) productCountEl2.textContent = `${Object.keys(subcats).length} Subcategories`;
         }
 
         function renderLevel3Types(container, level1, level2) {
@@ -1877,7 +1876,8 @@
 
             html += '</div>';
             container.innerHTML = html;
-            document.getElementById('productCount').textContent = `${Object.keys(types).length} Types`;
+            const productCountEl3 = document.getElementById('productCount');
+            if (productCountEl3) productCountEl3.textContent = `${Object.keys(types).length} Types`;
         }
 
         function renderProducts(container, level1, level2, level3) {
@@ -1887,7 +1887,8 @@
                 p.category?.level3 === level3
             );
 
-            document.getElementById('productCount').textContent = `${filteredProducts.length} Products`;
+            const productCountEl4 = document.getElementById('productCount');
+            if (productCountEl4) productCountEl4.textContent = `${filteredProducts.length} Products`;
 
             if (filteredProducts.length === 0) {
                 container.innerHTML = `
@@ -2157,9 +2158,12 @@
         // Display search results
         function displaySearchResults(results, query) {
             const container = document.getElementById('productsContainer');
-            document.getElementById('pageTitle').textContent = `Search Results`;
-            document.getElementById('pageSubtitle').textContent = `Found ${results.length} products for "${query}"`;
-            document.getElementById('productCount').textContent = `${results.length} Products`;
+            const searchTitleEl = document.getElementById('pageTitle');
+            const searchSubtitleEl = document.getElementById('pageSubtitle');
+            const searchCountEl = document.getElementById('productCount');
+            if (searchTitleEl) searchTitleEl.textContent = `Search Results`;
+            if (searchSubtitleEl) searchSubtitleEl.textContent = `Found ${results.length} products for "${query}"`;
+            if (searchCountEl) searchCountEl.textContent = `${results.length} Products`;
             
             if (results.length === 0) {
                 container.innerHTML = `
