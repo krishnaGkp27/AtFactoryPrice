@@ -4,7 +4,7 @@
  */
 
 // Firebase Configuration (shared across all pages)
-const firebaseConfig = {
+const AUTH_FIREBASE_CONFIG = {
     apiKey: "AIzaSyA3SzcQWEgWv51hA5CsNyj6WG1cp-sZYKA",
     authDomain: "atfactoryprice-6ba8f.firebaseapp.com",
     projectId: "atfactoryprice-6ba8f",
@@ -15,11 +15,12 @@ const firebaseConfig = {
 
 // Initialize Firebase if not already initialized
 if (!firebase.apps.length) {
-    firebase.initializeApp(firebaseConfig);
+    firebase.initializeApp(AUTH_FIREBASE_CONFIG);
 }
 
-const auth = firebase.auth();
-const db = firebase.firestore();
+// Use existing auth/db if available, or create new references
+const authInstance = firebase.auth();
+const dbInstance = firebase.firestore();
 
 // Current user state
 let currentUser = null;
@@ -967,7 +968,7 @@ async function handleLogin(event) {
     submitBtn.textContent = 'Logging in...';
 
     try {
-        await auth.signInWithEmailAndPassword(email, password);
+        await authInstance.signInWithEmailAndPassword(email, password);
         successDiv.textContent = 'Login successful!';
         successDiv.classList.add('show');
         
@@ -1035,7 +1036,7 @@ async function validateSignupReferral() {
     statusDiv.style.color = '#666';
 
     try {
-        const usersSnapshot = await db.collection('users')
+        const usersSnapshot = await dbInstance.collection('users')
             .where('referralCode', '==', code)
             .limit(1)
             .get();
@@ -1122,7 +1123,7 @@ async function handleSignup(event) {
         let codeExists = true;
         let attempts = 0;
         while (codeExists && attempts < 10) {
-            const check = await db.collection('users')
+            const check = await dbInstance.collection('users')
                 .where('referralCode', '==', newReferralCode)
                 .limit(1)
                 .get();
@@ -1149,10 +1150,10 @@ async function handleSignup(event) {
             accountType: 'customer'
         };
 
-        await db.collection('users').doc(user.uid).set(userData);
+        await dbInstance.collection('users').doc(user.uid).set(userData);
 
         // Create empty wallet
-        await db.collection('wallets').doc(user.uid).set({
+        await dbInstance.collection('wallets').doc(user.uid).set({
             userId: user.uid,
             totalEarned: 0,
             pending: 0,
@@ -1204,7 +1205,7 @@ async function handleForgotPassword(event) {
     }
 
     try {
-        await auth.sendPasswordResetEmail(email);
+        await authInstance.sendPasswordResetEmail(email);
         successDiv.textContent = 'Password reset email sent! Check your inbox.';
         successDiv.classList.add('show');
         errorDiv.classList.remove('show');
@@ -1218,7 +1219,7 @@ async function handleForgotPassword(event) {
 // Handle logout
 async function handleLogout() {
     try {
-        await auth.signOut();
+        await authInstance.signOut();
         window.location.reload();
     } catch (error) {
         console.error('Logout error:', error);
