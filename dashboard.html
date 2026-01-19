@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Dashboard - AtFactoryPrice</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f8f9fa;
+            color: #333;
+        }
+
+        .navbar {
+            background: #fff;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #000;
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 2rem;
+        }
+
+        .nav-link {
+            font-size: 0.95rem;
+            font-weight: 500;
+            color: #666;
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        .nav-link:hover {
+            color: #000;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        .page-header {
+            margin-bottom: 30px;
+        }
+
+        .page-header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .page-header p {
+            color: #666;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .card h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #333;
+        }
+
+        .wallet-amount {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #000;
+            margin-bottom: 8px;
+        }
+
+        .wallet-label {
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .referral-section {
+            margin-top: 20px;
+        }
+
+        .referral-link-box {
+            background: #f8f9fa;
+            padding: 16px;
+            border-radius: 8px;
+            margin-top: 12px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .referral-link-box input {
+            flex: 1;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+        }
+
+        .btn-copy {
+            background: #000;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+            white-space: nowrap;
+        }
+
+        .btn-copy:hover {
+            background: #333;
+        }
+
+        .btn-primary {
+            background: #000;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-block;
+            margin-top: 12px;
+        }
+
+        .btn-primary:hover {
+            background: #333;
+        }
+
+        .commissions-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .commission-item {
+            padding: 12px;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .commission-item:last-child {
+            border-bottom: none;
+        }
+
+        .commission-info {
+            flex: 1;
+        }
+
+        .commission-amount {
+            font-weight: 700;
+            color: #000;
+        }
+
+        .commission-status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            margin-top: 4px;
+        }
+
+        .status-pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-available {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-withdrawn {
+            background: #e2e3e5;
+            color: #383d41;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #000;
+        }
+
+        .stat-label {
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <h1 class="logo">
+                <a href="index.html" style="text-decoration: none; color: inherit;">AtFactoryPrice</a>
+            </h1>
+            <div class="nav-links">
+                <a href="index.html" class="nav-link">Home</a>
+                <a href="products.html" class="nav-link">Products</a>
+                <a href="dashboard.html" class="nav-link" style="color: #000;">Dashboard</a>
+                <a href="#" class="nav-link" onclick="logout()">Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <main>
+        <div class="container">
+            <div class="page-header">
+                <h1>My Dashboard</h1>
+                <p>Manage your Partner Program account</p>
+            </div>
+
+            <div class="dashboard-grid">
+                <!-- Wallet Card -->
+                <div class="card">
+                    <h3>Wallet</h3>
+                    <div id="walletContent" class="loading">Loading wallet...</div>
+                </div>
+
+                <!-- Referral Card -->
+                <div class="card">
+                    <h3>My Referral Link</h3>
+                    <p style="color: #666; font-size: 0.9rem; margin-bottom: 12px;">
+                        Share this link to earn commissions when people you refer make purchases.
+                    </p>
+                    <div id="referralContent" class="loading">Loading...</div>
+                </div>
+
+                <!-- Stats Card -->
+                <div class="card">
+                    <h3>Partner Stats</h3>
+                    <div id="statsContent" class="loading">Loading stats...</div>
+                </div>
+            </div>
+
+            <!-- Commissions Card -->
+            <div class="card" style="margin-top: 20px;">
+                <h3>Commission History</h3>
+                <div id="commissionsContent" class="loading">Loading commissions...</div>
+            </div>
+
+            <!-- Withdrawals Card -->
+            <div class="card" style="margin-top: 20px;">
+                <h3>Withdrawal Requests</h3>
+                <div id="withdrawalsContent" class="loading">Loading withdrawals...</div>
+                <button class="btn-primary" onclick="showWithdrawalModal()">Request Withdrawal</button>
+            </div>
+        </div>
+    </main>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
+    <!-- Services -->
+    <script src="js/referral-utils.js"></script>
+    <script src="js/commission-service.js"></script>
+    <script src="js/wallet-service.js"></script>
+
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA3SzcQWEgWv51hA5CsNyj6WG1cp-sZYKA",
+            authDomain: "atfactoryprice-6ba8f.firebaseapp.com",
+            projectId: "atfactoryprice-6ba8f",
+            storageBucket: "atfactoryprice-6ba8f.firebasestorage.app",
+            messagingSenderId: "660895645396",
+            appId: "1:660895645396:web:a4ea1e8febc6e0b7f74541"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        let currentUser = null;
+        let userData = null;
+
+        // Check authentication
+        auth.onAuthStateChanged(async (user) => {
+            if (user) {
+                currentUser = user;
+                await loadUserData();
+                await loadDashboard();
+            } else {
+                window.location.href = 'login.html';
+            }
+        });
+
+        // Load user data
+        async function loadUserData() {
+            try {
+                const userDoc = await db.collection('users').doc(currentUser.uid).get();
+                if (userDoc.exists) {
+                    userData = { id: userDoc.id, ...userDoc.data() };
+                } else {
+                    // User document doesn't exist - redirect to signup
+                    window.location.href = 'signup.html';
+                }
+            } catch (error) {
+                console.error('Error loading user data:', error);
+            }
+        }
+
+        // Load dashboard data
+        async function loadDashboard() {
+            await loadWallet();
+            await loadReferralInfo();
+            await loadStats();
+            await loadCommissions();
+            await loadWithdrawals();
+        }
+
+        // Load wallet
+        async function loadWallet() {
+            try {
+                const wallet = await getWallet(currentUser.uid);
+                const walletDiv = document.getElementById('walletContent');
+                
+                if (wallet) {
+                    walletDiv.innerHTML = `
+                        <div class="wallet-amount">₦${wallet.available.toFixed(2)}</div>
+                        <div class="wallet-label">Available for Withdrawal</div>
+                        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #f0f0f0;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                <span style="color: #666;">Pending:</span>
+                                <span style="font-weight: 600;">₦${wallet.pending.toFixed(2)}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: #666;">Total Earned:</span>
+                                <span style="font-weight: 600;">₦${wallet.totalEarned.toFixed(2)}</span>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    walletDiv.innerHTML = '<div class="empty-state">No wallet data</div>';
+                }
+            } catch (error) {
+                console.error('Error loading wallet:', error);
+                document.getElementById('walletContent').innerHTML = '<div class="empty-state">Error loading wallet</div>';
+            }
+        }
+
+        // Load referral info
+        async function loadReferralInfo() {
+            try {
+                if (!userData) return;
+
+                const referralLink = getReferralLink(currentUser.uid, userData.referralCode);
+                const referralDiv = document.getElementById('referralContent');
+                
+                referralDiv.innerHTML = `
+                    <div class="referral-link-box">
+                        <input type="text" id="referralLinkInput" value="${referralLink}" readonly>
+                        <button class="btn-copy" onclick="copyReferralLink()">Copy</button>
+                    </div>
+                    <p style="margin-top: 12px; font-size: 0.85rem; color: #666;">
+                        Your Referral Code: <strong>${userData.referralCode}</strong>
+                    </p>
+                `;
+            } catch (error) {
+                console.error('Error loading referral info:', error);
+            }
+        }
+
+        // Load stats
+        async function loadStats() {
+            try {
+                const directReferrals = await getDirectReferralsCount(currentUser.uid);
+                const commissions = await getUserCommissions(currentUser.uid);
+                const wallet = await getWallet(currentUser.uid);
+
+                const statsDiv = document.getElementById('statsContent');
+                statsDiv.innerHTML = `
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-value">${directReferrals}</div>
+                            <div class="stat-label">Direct Referrals</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value">${commissions.length}</div>
+                            <div class="stat-label">Total Commissions</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value">₦${wallet ? wallet.totalEarned.toFixed(0) : '0'}</div>
+                            <div class="stat-label">Total Earned</div>
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        // Load commissions
+        async function loadCommissions() {
+            try {
+                const commissions = await getUserCommissions(currentUser.uid);
+                const commissionsDiv = document.getElementById('commissionsContent');
+
+                if (commissions.length === 0) {
+                    commissionsDiv.innerHTML = '<div class="empty-state">No commissions yet</div>';
+                    return;
+                }
+
+                let html = '<div class="commissions-list">';
+                commissions.forEach(comm => {
+                    const statusClass = `status-${comm.status}`;
+                    html += `
+                        <div class="commission-item">
+                            <div class="commission-info">
+                                <div>Order #${comm.orderId.substring(0, 8)}</div>
+                                <div style="font-size: 0.85rem; color: #666; margin-top: 4px;">
+                                    Level ${comm.level} • ${comm.commissionRate * 100}% • ${new Date(comm.createdAt.toDate()).toLocaleDateString()}
+                                </div>
+                                <span class="commission-status ${statusClass}">${comm.status}</span>
+                            </div>
+                            <div class="commission-amount">₦${comm.commissionAmount.toFixed(2)}</div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                commissionsDiv.innerHTML = html;
+            } catch (error) {
+                console.error('Error loading commissions:', error);
+            }
+        }
+
+        // Load withdrawals
+        async function loadWithdrawals() {
+            try {
+                const withdrawals = await getUserWithdrawals(currentUser.uid);
+                const withdrawalsDiv = document.getElementById('withdrawalsContent');
+
+                if (withdrawals.length === 0) {
+                    withdrawalsDiv.innerHTML = '<div class="empty-state">No withdrawal requests</div>';
+                    return;
+                }
+
+                let html = '<div style="margin-bottom: 16px;">';
+                withdrawals.forEach(wd => {
+                    const statusClass = `status-${wd.status}`;
+                    html += `
+                        <div class="commission-item">
+                            <div class="commission-info">
+                                <div>₦${wd.amount.toFixed(2)}</div>
+                                <div style="font-size: 0.85rem; color: #666; margin-top: 4px;">
+                                    ${new Date(wd.requestedAt.toDate()).toLocaleDateString()}
+                                </div>
+                                <span class="commission-status ${statusClass}">${wd.status}</span>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                withdrawalsDiv.innerHTML = html;
+            } catch (error) {
+                console.error('Error loading withdrawals:', error);
+            }
+        }
+
+        // Copy referral link
+        function copyReferralLink() {
+            const input = document.getElementById('referralLinkInput');
+            input.select();
+            document.execCommand('copy');
+            alert('Referral link copied to clipboard!');
+        }
+
+        // Show withdrawal modal
+        function showWithdrawalModal() {
+            const wallet = getWallet(currentUser.uid).then(wallet => {
+                if (!wallet || wallet.available < 1000) {
+                    alert('Minimum withdrawal is ₦1,000. You need more available balance.');
+                    return;
+                }
+
+                const amount = prompt(`Enter withdrawal amount (Available: ₦${wallet.available.toFixed(2)}):`);
+                if (!amount) return;
+
+                const amountNum = parseFloat(amount);
+                if (isNaN(amountNum) || amountNum <= 0) {
+                    alert('Invalid amount');
+                    return;
+                }
+
+                if (amountNum > wallet.available) {
+                    alert('Amount exceeds available balance');
+                    return;
+                }
+
+                const paymentMethod = prompt('Payment Method (e.g., Bank Transfer):');
+                if (!paymentMethod) return;
+
+                const accountDetails = prompt('Account Details (e.g., Account Number, Bank Name):');
+                if (!accountDetails) return;
+
+                requestWithdrawal(currentUser.uid, amountNum, paymentMethod, accountDetails)
+                    .then(result => {
+                        if (result.success) {
+                            alert('Withdrawal request submitted! Admin will review it.');
+                            loadWithdrawals();
+                            loadWallet();
+                        }
+                    })
+                    .catch(error => {
+                        alert('Error: ' + error.message);
+                    });
+            });
+        }
+
+        // Logout
+        function logout() {
+            if (confirm('Are you sure you want to logout?')) {
+                auth.signOut().then(() => {
+                    window.location.href = 'index.html';
+                });
+            }
+        }
+    </script>
+</body>
+</html>
