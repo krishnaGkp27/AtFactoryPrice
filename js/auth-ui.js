@@ -733,12 +733,12 @@ function initAuthUI() {
     updateNavbarAuth();
 
     // Listen for auth state changes
-    auth.onAuthStateChanged(async (user) => {
+    authInstance.onAuthStateChanged(async (user) => {
         currentUser = user;
         if (user) {
             // Load user data
             try {
-                const userDoc = await db.collection('users').doc(user.uid).get();
+                const userDoc = await dbInstance.collection('users').doc(user.uid).get();
                 if (userDoc.exists) {
                     currentUserData = userDoc.data();
                 }
@@ -801,13 +801,14 @@ function updateNavbarAuth() {
     authElement.className = 'auth-nav-item';
 
     if (currentUser && currentUserData) {
-        // Show user menu
+        // Show user menu with "Welcome {user}"
         const initials = getInitials(currentUserData.name || currentUserData.email);
+        const firstName = (currentUserData.name || 'User').split(' ')[0];
         authElement.innerHTML = `
             <div class="user-menu">
                 <button class="user-menu-trigger" onclick="toggleUserDropdown(event)">
                     <span class="user-avatar">${initials}</span>
-                    <span class="user-name">${currentUserData.name || 'User'}</span>
+                    <span class="user-name">Welcome, ${firstName}</span>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="6 9 12 15 18 9"></polyline>
                     </svg>
@@ -829,12 +830,38 @@ function updateNavbarAuth() {
                         </button>
                     </div>
                     ` : ''}
+                    <a href="profile.html" class="user-dropdown-item">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                        My Profile
+                    </a>
                     <a href="dashboard.html" class="user-dropdown-item">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-                            <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                            <rect x="3" y="3" width="7" height="7"></rect>
+                            <rect x="14" y="3" width="7" height="7"></rect>
+                            <rect x="14" y="14" width="7" height="7"></rect>
+                            <rect x="3" y="14" width="7" height="7"></rect>
                         </svg>
                         Dashboard
+                    </a>
+                    <a href="orders.html" class="user-dropdown-item">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+                            <line x1="3" y1="6" x2="21" y2="6"></line>
+                            <path d="M16 10a4 4 0 0 1-8 0"></path>
+                        </svg>
+                        My Orders
+                    </a>
+                    <a href="referrals.html" class="user-dropdown-item">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="9" cy="7" r="4"></circle>
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                        </svg>
+                        My Referrals
                     </a>
                     <div class="user-dropdown-item logout" onclick="handleLogout()">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1115,7 +1142,7 @@ async function handleSignup(event) {
 
     try {
         // Create Firebase Auth user
-        const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+        const userCredential = await authInstance.createUserWithEmailAndPassword(email, password);
         const user = userCredential.user;
 
         // Generate unique referral code for new user

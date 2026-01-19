@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Profile - AtFactoryPrice</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f8f9fa;
+        }
+
+        a {
+            text-decoration: none;
+            color: inherit;
+        }
+
+        .navbar {
+            background: #fff;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #000;
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 2rem;
+        }
+
+        .nav-link {
+            font-size: 0.95rem;
+            font-weight: 500;
+            color: #666;
+            transition: color 0.3s;
+        }
+
+        .nav-link:hover {
+            color: #000;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        .page-header {
+            margin-bottom: 2rem;
+        }
+
+        .page-header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #000;
+            margin-bottom: 0.5rem;
+        }
+
+        .page-header p {
+            color: #666;
+        }
+
+        .profile-grid {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 2rem;
+        }
+
+        @media (max-width: 768px) {
+            .profile-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Profile Sidebar */
+        .profile-sidebar {
+            background: #fff;
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            text-align: center;
+            height: fit-content;
+        }
+
+        .avatar-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .avatar-large {
+            width: 120px;
+            height: 120px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3rem;
+            font-weight: 700;
+            margin: 0 auto 1rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .avatar-large img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .avatar-upload-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            background: #f5f5f5;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .avatar-upload-btn:hover {
+            background: #e8e8e8;
+        }
+
+        .avatar-upload-btn input {
+            display: none;
+        }
+
+        .sidebar-name {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #000;
+            margin-bottom: 0.3rem;
+        }
+
+        .sidebar-email {
+            color: #666;
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+        }
+
+        .sidebar-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid #f0f0f0;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #000;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: #666;
+        }
+
+        /* Profile Content */
+        .profile-content {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .profile-section {
+            background: #fff;
+            border-radius: 16px;
+            padding: 1.5rem 2rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .section-header h2 {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #000;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-header h2 svg {
+            width: 20px;
+            height: 20px;
+            opacity: 0.7;
+        }
+
+        .btn-edit {
+            padding: 6px 14px;
+            background: #f5f5f5;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-edit:hover {
+            background: #e8e8e8;
+        }
+
+        .form-group {
+            margin-bottom: 1.2rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #333;
+            font-size: 0.9rem;
+        }
+
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px 14px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-family: inherit;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #000;
+        }
+
+        .form-group input:disabled {
+            background: #f9f9f9;
+            color: #666;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        @media (max-width: 600px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .btn-primary {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px 24px;
+            background: #000;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .btn-primary:hover {
+            background: #333;
+        }
+
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px 24px;
+            background: #fff;
+            color: #333;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-secondary:hover {
+            background: #f5f5f5;
+            border-color: #ccc;
+        }
+
+        .btn-danger {
+            background: #fff;
+            color: #e53935;
+            border: 2px solid #ffcdd2;
+        }
+
+        .btn-danger:hover {
+            background: #ffebee;
+            border-color: #e53935;
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid #f0f0f0;
+        }
+
+        /* Password Section */
+        .password-requirements {
+            margin-top: 0.5rem;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            color: #666;
+        }
+
+        .password-requirements li {
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .password-requirements li.valid {
+            color: #2e7d32;
+        }
+
+        /* Referral Section */
+        .referral-code-display {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            background: #e8f5e9;
+            border-radius: 10px;
+            margin-bottom: 1rem;
+        }
+
+        .referral-code-display code {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #2e7d32;
+            letter-spacing: 2px;
+        }
+
+        .btn-copy {
+            padding: 8px 16px;
+            background: #2e7d32;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-copy:hover {
+            background: #1b5e20;
+        }
+
+        .referral-link-box {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .referral-link-box input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            background: #f9f9f9;
+        }
+
+        /* Alert Messages */
+        .alert {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+            display: none;
+        }
+
+        .alert.show {
+            display: block;
+        }
+
+        .alert-success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border: 1px solid #a5d6a7;
+        }
+
+        .alert-error {
+            background: #ffebee;
+            color: #c62828;
+            border: 1px solid #ef9a9a;
+        }
+
+        /* Delete Account */
+        .danger-zone {
+            border: 2px solid #ffcdd2;
+            background: #fff5f5;
+        }
+
+        .danger-zone .section-header {
+            border-bottom-color: #ffcdd2;
+        }
+
+        .danger-zone h2 {
+            color: #c62828;
+        }
+
+        .danger-warning {
+            padding: 1rem;
+            background: #ffebee;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+            color: #c62828;
+        }
+
+        /* Loading state */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255,255,255,0.9);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .loading-overlay.show {
+            display: flex;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f0f0f0;
+            border-top-color: #000;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="index.html" class="logo">AtFactoryPrice</a>
+            <div class="nav-links">
+                <a href="index.html" class="nav-link">Home</a>
+                <a href="products.html" class="nav-link">Products</a>
+                <a href="cart.html" class="nav-link">Cart</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+    </div>
+
+    <main class="container">
+        <div class="page-header">
+            <h1>My Profile</h1>
+            <p>Manage your account settings and preferences</p>
+        </div>
+
+        <div class="profile-grid">
+            <!-- Sidebar -->
+            <div class="profile-sidebar">
+                <div class="avatar-section">
+                    <div class="avatar-large" id="avatarDisplay">
+                        <span id="avatarInitials">?</span>
+                    </div>
+                    <label class="avatar-upload-btn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        Change Photo
+                        <input type="file" id="avatarUpload" accept="image/*">
+                    </label>
+                </div>
+                <div class="sidebar-name" id="sidebarName">Loading...</div>
+                <div class="sidebar-email" id="sidebarEmail">...</div>
+                <div class="sidebar-stats">
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalOrders">0</div>
+                        <div class="stat-label">Orders</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalReferrals">0</div>
+                        <div class="stat-label">Referrals</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="profile-content">
+                <!-- Personal Information -->
+                <div class="profile-section">
+                    <div class="section-header">
+                        <h2>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="12" cy="7" r="4"></circle>
+                            </svg>
+                            Personal Information
+                        </h2>
+                    </div>
+                    <div id="personalInfoAlert" class="alert"></div>
+                    <form id="personalInfoForm">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="fullName">Full Name</label>
+                                <input type="text" id="fullName" placeholder="John Doe">
+                            </div>
+                            <div class="form-group">
+                                <label for="phone">Phone Number</label>
+                                <input type="tel" id="phone" placeholder="+234 813 847 5360">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="email">Email Address</label>
+                            <input type="email" id="email" disabled>
+                        </div>
+                        <div class="form-group">
+                            <label for="address">Default Delivery Address</label>
+                            <textarea id="address" rows="3" placeholder="Enter your default delivery address"></textarea>
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="btn-primary" id="savePersonalInfo">
+                                Save Changes
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Change Password -->
+                <div class="profile-section">
+                    <div class="section-header">
+                        <h2>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                            </svg>
+                            Change Password
+                        </h2>
+                    </div>
+                    <div id="passwordAlert" class="alert"></div>
+                    <form id="passwordForm">
+                        <div class="form-group">
+                            <label for="currentPassword">Current Password</label>
+                            <input type="password" id="currentPassword" placeholder="Enter current password">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="newPassword">New Password</label>
+                                <input type="password" id="newPassword" placeholder="Enter new password" minlength="6">
+                            </div>
+                            <div class="form-group">
+                                <label for="confirmPassword">Confirm New Password</label>
+                                <input type="password" id="confirmPassword" placeholder="Confirm new password">
+                            </div>
+                        </div>
+                        <ul class="password-requirements">
+                            <li id="reqLength">At least 6 characters</li>
+                            <li id="reqMatch">Passwords match</li>
+                        </ul>
+                        <div class="form-actions">
+                            <button type="submit" class="btn-primary" id="changePasswordBtn">
+                                Update Password
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Referral Code -->
+                <div class="profile-section">
+                    <div class="section-header">
+                        <h2>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="9" cy="7" r="4"></circle>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                            </svg>
+                            Your Referral Code
+                        </h2>
+                    </div>
+                    <p style="color: #666; margin-bottom: 1rem;">Share your code with friends and earn commissions on their purchases!</p>
+                    <div class="referral-code-display">
+                        <code id="referralCode">Loading...</code>
+                        <button class="btn-copy" onclick="copyReferralCode()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                            Copy Code
+                        </button>
+                    </div>
+                    <div class="form-group">
+                        <label>Your Referral Link</label>
+                        <div class="referral-link-box">
+                            <input type="text" id="referralLink" readonly>
+                            <button type="button" class="btn-secondary" onclick="copyReferralLink()">Copy Link</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Danger Zone -->
+                <div class="profile-section danger-zone">
+                    <div class="section-header">
+                        <h2>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                                <line x1="12" y1="9" x2="12" y2="13"></line>
+                                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                            </svg>
+                            Danger Zone
+                        </h2>
+                    </div>
+                    <div class="danger-warning">
+                        <strong>Warning:</strong> Deleting your account is permanent and cannot be undone. All your data, orders, and referral earnings will be lost.
+                    </div>
+                    <button class="btn-secondary btn-danger" onclick="confirmDeleteAccount()">
+                        Delete My Account
+                    </button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
+
+    <!-- Auth UI Component -->
+    <script src="js/auth-ui.js"></script>
+
+    <script>
+        let currentUserProfile = null;
+
+        // Show/hide loading
+        function showLoading() {
+            document.getElementById('loadingOverlay').classList.add('show');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingOverlay').classList.remove('show');
+        }
+
+        // Show alert message
+        function showAlert(elementId, message, type) {
+            const alert = document.getElementById(elementId);
+            alert.textContent = message;
+            alert.className = `alert show alert-${type}`;
+            setTimeout(() => {
+                alert.classList.remove('show');
+            }, 5000);
+        }
+
+        // Get initials from name
+        function getInitials(name) {
+            if (!name) return '?';
+            const parts = name.trim().split(' ');
+            if (parts.length >= 2) {
+                return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+            }
+            return name.substring(0, 2).toUpperCase();
+        }
+
+        // Load user profile
+        async function loadUserProfile() {
+            showLoading();
+            
+            authInstance.onAuthStateChanged(async (user) => {
+                if (!user) {
+                    // Redirect to login if not authenticated
+                    window.location.href = 'login.html';
+                    return;
+                }
+
+                try {
+                    const userDoc = await dbInstance.collection('users').doc(user.uid).get();
+                    
+                    if (userDoc.exists) {
+                        currentUserProfile = { uid: user.uid, email: user.email, ...userDoc.data() };
+                        populateProfile(currentUserProfile);
+                        await loadStats(user.uid);
+                    }
+                } catch (error) {
+                    console.error('Error loading profile:', error);
+                } finally {
+                    hideLoading();
+                }
+            });
+        }
+
+        // Populate profile form
+        function populateProfile(data) {
+            // Sidebar
+            document.getElementById('sidebarName').textContent = data.name || 'User';
+            document.getElementById('sidebarEmail').textContent = data.email;
+            document.getElementById('avatarInitials').textContent = getInitials(data.name || data.email);
+
+            // Avatar image
+            if (data.avatarUrl) {
+                document.getElementById('avatarDisplay').innerHTML = `<img src="${data.avatarUrl}" alt="Avatar">`;
+            }
+
+            // Form fields
+            document.getElementById('fullName').value = data.name || '';
+            document.getElementById('phone').value = data.phone || '';
+            document.getElementById('email').value = data.email || '';
+            document.getElementById('address').value = data.address || '';
+
+            // Referral code
+            document.getElementById('referralCode').textContent = data.referralCode || 'N/A';
+            document.getElementById('referralLink').value = data.referralCode 
+                ? `${window.location.origin}/signup.html?ref=${data.referralCode}`
+                : '';
+        }
+
+        // Load stats
+        async function loadStats(userId) {
+            try {
+                // Count orders
+                const ordersSnapshot = await dbInstance.collection('orders')
+                    .where('buyerId', '==', userId)
+                    .get();
+                document.getElementById('totalOrders').textContent = ordersSnapshot.size;
+
+                // Count referrals
+                const referralsSnapshot = await dbInstance.collection('users')
+                    .where('sponsorId', '==', userId)
+                    .get();
+                document.getElementById('totalReferrals').textContent = referralsSnapshot.size;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        // Save personal information
+        document.getElementById('personalInfoForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const name = document.getElementById('fullName').value.trim();
+            const phone = document.getElementById('phone').value.trim();
+            const address = document.getElementById('address').value.trim();
+
+            if (!name) {
+                showAlert('personalInfoAlert', 'Please enter your name', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('savePersonalInfo');
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+
+            try {
+                await dbInstance.collection('users').doc(currentUserProfile.uid).update({
+                    name: name,
+                    phone: phone,
+                    address: address,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+
+                // Update sidebar
+                document.getElementById('sidebarName').textContent = name;
+                document.getElementById('avatarInitials').textContent = getInitials(name);
+
+                showAlert('personalInfoAlert', 'Profile updated successfully!', 'success');
+            } catch (error) {
+                console.error('Error updating profile:', error);
+                showAlert('personalInfoAlert', 'Error updating profile. Please try again.', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Save Changes';
+            }
+        });
+
+        // Password validation
+        const newPasswordInput = document.getElementById('newPassword');
+        const confirmPasswordInput = document.getElementById('confirmPassword');
+
+        function validatePassword() {
+            const newPass = newPasswordInput.value;
+            const confirmPass = confirmPasswordInput.value;
+
+            // Length check
+            const lengthReq = document.getElementById('reqLength');
+            if (newPass.length >= 6) {
+                lengthReq.classList.add('valid');
+                lengthReq.innerHTML = '✓ At least 6 characters';
+            } else {
+                lengthReq.classList.remove('valid');
+                lengthReq.innerHTML = 'At least 6 characters';
+            }
+
+            // Match check
+            const matchReq = document.getElementById('reqMatch');
+            if (newPass && confirmPass && newPass === confirmPass) {
+                matchReq.classList.add('valid');
+                matchReq.innerHTML = '✓ Passwords match';
+            } else {
+                matchReq.classList.remove('valid');
+                matchReq.innerHTML = 'Passwords match';
+            }
+        }
+
+        newPasswordInput.addEventListener('input', validatePassword);
+        confirmPasswordInput.addEventListener('input', validatePassword);
+
+        // Change password
+        document.getElementById('passwordForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const currentPassword = document.getElementById('currentPassword').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+
+            if (!currentPassword || !newPassword || !confirmPassword) {
+                showAlert('passwordAlert', 'Please fill in all password fields', 'error');
+                return;
+            }
+
+            if (newPassword.length < 6) {
+                showAlert('passwordAlert', 'New password must be at least 6 characters', 'error');
+                return;
+            }
+
+            if (newPassword !== confirmPassword) {
+                showAlert('passwordAlert', 'New passwords do not match', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('changePasswordBtn');
+            btn.disabled = true;
+            btn.textContent = 'Updating...';
+
+            try {
+                const user = authInstance.currentUser;
+                const credential = firebase.auth.EmailAuthProvider.credential(user.email, currentPassword);
+                
+                // Re-authenticate
+                await user.reauthenticateWithCredential(credential);
+                
+                // Update password
+                await user.updatePassword(newPassword);
+
+                showAlert('passwordAlert', 'Password updated successfully!', 'success');
+                document.getElementById('passwordForm').reset();
+            } catch (error) {
+                console.error('Error changing password:', error);
+                let message = 'Error changing password. Please try again.';
+                if (error.code === 'auth/wrong-password') {
+                    message = 'Current password is incorrect';
+                }
+                showAlert('passwordAlert', message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Update Password';
+            }
+        });
+
+        // Avatar upload
+        document.getElementById('avatarUpload').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // Validate file type
+            if (!file.type.startsWith('image/')) {
+                alert('Please select an image file');
+                return;
+            }
+
+            // Validate file size (max 2MB)
+            if (file.size > 2 * 1024 * 1024) {
+                alert('Image size must be less than 2MB');
+                return;
+            }
+
+            showLoading();
+
+            try {
+                const storage = firebase.storage();
+                const storageRef = storage.ref(`avatars/${currentUserProfile.uid}`);
+                
+                // Upload file
+                await storageRef.put(file);
+                
+                // Get download URL
+                const downloadURL = await storageRef.getDownloadURL();
+
+                // Update user document
+                await dbInstance.collection('users').doc(currentUserProfile.uid).update({
+                    avatarUrl: downloadURL,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+
+                // Update display
+                document.getElementById('avatarDisplay').innerHTML = `<img src="${downloadURL}" alt="Avatar">`;
+
+                alert('Avatar updated successfully!');
+            } catch (error) {
+                console.error('Error uploading avatar:', error);
+                alert('Error uploading avatar. Please try again.');
+            } finally {
+                hideLoading();
+            }
+        });
+
+        // Copy referral code
+        function copyReferralCode() {
+            const code = document.getElementById('referralCode').textContent;
+            navigator.clipboard.writeText(code).then(() => {
+                alert('Referral code copied!');
+            });
+        }
+
+        // Copy referral link
+        function copyReferralLink() {
+            const link = document.getElementById('referralLink').value;
+            navigator.clipboard.writeText(link).then(() => {
+                alert('Referral link copied!');
+            });
+        }
+
+        // Delete account
+        async function confirmDeleteAccount() {
+            const confirmed = confirm('Are you sure you want to delete your account? This action cannot be undone.');
+            
+            if (!confirmed) return;
+
+            const password = prompt('Please enter your password to confirm account deletion:');
+            if (!password) return;
+
+            showLoading();
+
+            try {
+                const user = authInstance.currentUser;
+                const credential = firebase.auth.EmailAuthProvider.credential(user.email, password);
+                
+                // Re-authenticate
+                await user.reauthenticateWithCredential(credential);
+
+                // Delete user document
+                await dbInstance.collection('users').doc(user.uid).delete();
+
+                // Delete wallet
+                await dbInstance.collection('wallets').doc(user.uid).delete();
+
+                // Delete user account
+                await user.delete();
+
+                alert('Account deleted successfully.');
+                window.location.href = 'index.html';
+            } catch (error) {
+                console.error('Error deleting account:', error);
+                let message = 'Error deleting account. Please try again.';
+                if (error.code === 'auth/wrong-password') {
+                    message = 'Incorrect password';
+                }
+                alert(message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // Initialize
+        loadUserProfile();
+    </script>
+</body>
+</html>
