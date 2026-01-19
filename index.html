@@ -101,46 +101,282 @@
             justify-content: center;
         }
 
+        /* ===== HERO SECTION - Enhanced 2026 Design ===== */
         .hero {
-            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-            padding: 100px 20px;
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            padding: 120px 20px;
             text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Subtle background pattern */
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: radial-gradient(circle at 25% 25%, rgba(0,0,0,0.02) 1px, transparent 1px);
+            background-size: 50px 50px;
+            pointer-events: none;
         }
 
         .hero-content {
             max-width: 800px;
             margin: 0 auto;
+            position: relative;
+            z-index: 1;
+            animation: fadeInUp 0.8s ease-out;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .hero-badge {
+            display: inline-block;
+            background: rgba(0,0,0,0.08);
+            color: #333;
+            padding: 8px 16px;
+            border-radius: 50px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            margin-bottom: 1.5rem;
+            letter-spacing: 0.5px;
         }
 
         .hero-title {
             font-size: 3.5rem;
             font-weight: 700;
-            margin-bottom: 1rem;
+            margin-bottom: 1.25rem;
             color: #000;
+            line-height: 1.1;
+            letter-spacing: -1px;
         }
 
         .hero-subtitle {
             font-size: 1.25rem;
-            color: #555;
-            margin-bottom: 2rem;
+            color: #64748b;
+            margin-bottom: 2.5rem;
+            line-height: 1.6;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* Dual CTA Buttons */
+        .hero-cta {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
         }
 
         .btn-primary {
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
             background: #000;
             color: #fff;
-            padding: 1rem 2.5rem;
-            border-radius: 8px;
+            padding: 1rem 2rem;
+            border-radius: 10px;
             font-weight: 600;
             font-size: 1rem;
-            transition: all 0.3s;
-            border: none;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 2px solid #000;
             cursor: pointer;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.15);
         }
 
         .btn-primary:hover {
-            background: #333;
+            background: #1a1a1a;
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.2);
+        }
+
+        .btn-secondary {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            background: transparent;
+            color: #000;
+            padding: 1rem 2rem;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 1rem;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 2px solid #000;
+            cursor: pointer;
+        }
+
+        .btn-secondary:hover {
+            background: #000;
+            color: #fff;
+            transform: translateY(-3px);
+        }
+
+        /* ===== TRUST HIGHLIGHTS SECTION ===== */
+        .trust-section {
+            background: #fff;
+            padding: 48px 20px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .trust-container {
+            max-width: 1100px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 32px;
+        }
+
+        .trust-item {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 20px 24px;
+            background: #f8fafc;
+            border-radius: 12px;
+            transition: all 0.3s ease;
+        }
+
+        .trust-item:hover {
+            background: #f1f5f9;
             transform: translateY(-2px);
+        }
+
+        .trust-icon {
+            width: 48px;
+            height: 48px;
+            background: #000;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .trust-icon svg {
+            width: 24px;
+            height: 24px;
+            stroke: #fff;
+        }
+
+        .trust-content h4 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #000;
+            margin-bottom: 4px;
+        }
+
+        .trust-content p {
+            font-size: 0.875rem;
+            color: #64748b;
+            margin: 0;
+        }
+
+        /* ===== CATEGORY CARDS SECTION ===== */
+        .categories-section {
+            padding: 80px 20px;
+            background: #fff;
+        }
+
+        .categories-header {
+            text-align: center;
+            margin-bottom: 48px;
+        }
+
+        .categories-header h2 {
+            font-size: 2.25rem;
+            font-weight: 700;
+            color: #000;
+            margin-bottom: 12px;
+        }
+
+        .categories-header p {
+            font-size: 1.1rem;
+            color: #64748b;
+        }
+
+        .categories-grid {
+            max-width: 1100px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 24px;
+        }
+
+        .category-card-home {
+            position: relative;
+            border-radius: 16px;
+            overflow: hidden;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 280px;
+            cursor: pointer;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .category-card-home:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+        }
+
+        .category-card-home::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(to bottom, transparent 40%, rgba(0,0,0,0.8) 100%);
+            z-index: 1;
+        }
+
+        .category-card-content {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 32px;
+            z-index: 2;
+            color: #fff;
+        }
+
+        .category-card-content h3 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .category-card-content p {
+            font-size: 0.95rem;
+            opacity: 0.85;
+            margin-bottom: 16px;
+        }
+
+        .category-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: #fff;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: gap 0.3s ease;
+        }
+
+        .category-card-home:hover .category-link {
+            gap: 12px;
         }
 
         .slideshow-section {
@@ -392,12 +628,60 @@
         }
 
         @media (max-width: 768px) {
+            .hero {
+                padding: 80px 20px;
+            }
+
             .hero-title {
-                font-size: 2.5rem;
+                font-size: 2.25rem;
+                letter-spacing: -0.5px;
             }
 
             .hero-subtitle {
                 font-size: 1rem;
+            }
+
+            .hero-cta {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .btn-primary, .btn-secondary {
+                width: 100%;
+                max-width: 280px;
+                padding: 14px 24px;
+            }
+
+            /* Trust section mobile */
+            .trust-container {
+                grid-template-columns: 1fr;
+                gap: 16px;
+            }
+
+            .trust-item {
+                padding: 16px 20px;
+            }
+
+            /* Categories mobile */
+            .categories-section {
+                padding: 60px 20px;
+            }
+
+            .categories-header h2 {
+                font-size: 1.75rem;
+            }
+
+            .categories-grid {
+                grid-template-columns: 1fr;
+                gap: 16px;
+            }
+
+            .category-card-home {
+                min-height: 200px;
+            }
+
+            .category-card-content {
+                padding: 24px;
             }
 
             .about-container {
@@ -419,6 +703,25 @@
             
             .slide-image {
                 height: 300px;
+            }
+
+            .section-title {
+                font-size: 1.75rem;
+            }
+        }
+
+        /* Tablet adjustments */
+        @media (max-width: 1024px) and (min-width: 769px) {
+            .trust-container {
+                gap: 20px;
+            }
+
+            .trust-item {
+                padding: 16px;
+            }
+
+            .trust-content h4 {
+                font-size: 0.9rem;
             }
         }
     </style>
@@ -446,9 +749,104 @@
 
     <section class="hero">
         <div class="hero-content">
+            <span class="hero-badge">🏭 Direct from Factory</span>
             <h1 class="hero-title">Welcome to AtFactoryPrice</h1>
             <p class="hero-subtitle">Premium fabrics and garments directly from manufacturers in Lagos, Nigeria</p>
-            <a href="products.html" class="btn-primary">Shop Now</a>
+            <div class="hero-cta">
+                <a href="products.html" class="btn-primary">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="9" cy="21" r="1"></circle>
+                        <circle cx="20" cy="21" r="1"></circle>
+                        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+                    </svg>
+                    Shop Now
+                </a>
+                <a href="https://wa.me/2348138475360" class="btn-secondary" target="_blank">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
+                    </svg>
+                    WhatsApp Us
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Trust Highlights Section -->
+    <section class="trust-section">
+        <div class="trust-container">
+            <div class="trust-item">
+                <div class="trust-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                        <path d="M2 17l10 5 10-5"></path>
+                        <path d="M2 12l10 5 10-5"></path>
+                    </svg>
+                </div>
+                <div class="trust-content">
+                    <h4>Factory Direct Pricing</h4>
+                    <p>No middlemen, best prices guaranteed</p>
+                </div>
+            </div>
+            <div class="trust-item">
+                <div class="trust-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                    </svg>
+                </div>
+                <div class="trust-content">
+                    <h4>Secure Checkout</h4>
+                    <p>Safe and trusted payment options</p>
+                </div>
+            </div>
+            <div class="trust-item">
+                <div class="trust-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2">
+                        <path d="M5 12h14"></path>
+                        <path d="M12 5l7 7-7 7"></path>
+                    </svg>
+                </div>
+                <div class="trust-content">
+                    <h4>Fast Delivery in Nigeria</h4>
+                    <p>1-2 business days in Lagos</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Shop by Category Section -->
+    <section class="categories-section">
+        <div class="categories-header">
+            <h2>Shop by Category</h2>
+            <p>Explore our curated collection of premium fabrics and garments</p>
+        </div>
+        <div class="categories-grid">
+            <a href="products.html" class="category-card-home" style="background: linear-gradient(135deg, #1a1a2e 0%, #0f3460 100%);">
+                <div class="category-card-content">
+                    <h3>Fabrics</h3>
+                    <p>Senator, Cashmere, Damask, Silk, Lace & more</p>
+                    <span class="category-link">
+                        Browse Fabrics
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M5 12h14"></path>
+                            <path d="M12 5l7 7-7 7"></path>
+                        </svg>
+                    </span>
+                </div>
+            </a>
+            <a href="products.html" class="category-card-home" style="background: linear-gradient(135deg, #2d3436 0%, #000000 100%);">
+                <div class="category-card-content">
+                    <h3>Garments</h3>
+                    <p>Ready-made clothing for Men, Women & Kids</p>
+                    <span class="category-link">
+                        Browse Garments
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M5 12h14"></path>
+                            <path d="M12 5l7 7-7 7"></path>
+                        </svg>
+                    </span>
+                </div>
+            </a>
         </div>
     </section>
 
