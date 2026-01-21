@@ -290,6 +290,113 @@ function updatePWA() {
   window.location.reload();
 }
 
+// ===== SMOOTH HEADER HIDE/SHOW ON SCROLL =====
+let lastScrollY = 0;
+let scrollThreshold = 80; // Minimum scroll distance before hiding header
+let fadeThreshold = 40; // When to start fading
+let headerState = 'visible'; // 'visible', 'fading', 'hidden'
+let fadeTimeout = null;
+
+function initSmoothHeader() {
+  const navbar = document.querySelector('.navbar');
+  if (!navbar) return;
+  
+  // Set initial state
+  navbar.classList.add('header-visible');
+  
+  let ticking = false;
+  
+  window.addEventListener('scroll', () => {
+    if (!ticking) {
+      window.requestAnimationFrame(() => {
+        handleHeaderScroll(navbar);
+        ticking = false;
+      });
+      ticking = true;
+    }
+  }, { passive: true });
+}
+
+function handleHeaderScroll(navbar) {
+  const currentScrollY = window.scrollY;
+  
+  // Add scrolled class for glass effect when not at top
+  if (currentScrollY > 10) {
+    navbar.classList.add('header-scrolled');
+  } else {
+    navbar.classList.remove('header-scrolled');
+    navbar.classList.remove('header-fading');
+  }
+  
+  // At or near top - always show header fully
+  if (currentScrollY < fadeThreshold) {
+    clearTimeout(fadeTimeout);
+    navbar.classList.remove('header-hidden', 'header-fading', 'header-entering');
+    navbar.classList.add('header-visible');
+    headerState = 'visible';
+    lastScrollY = currentScrollY;
+    return;
+  }
+  
+  // Calculate scroll direction and speed
+  const scrollDiff = currentScrollY - lastScrollY;
+  const scrollSpeed = Math.abs(scrollDiff);
+  
+  // Scrolling down - elegant fade out sequence
+  if (scrollDiff > 5) {
+    clearTimeout(fadeTimeout);
+    
+    if (headerState === 'visible' && currentScrollY > fadeThreshold) {
+      // Start fading - becomes semi-transparent
+      navbar.classList.remove('header-visible', 'header-entering');
+      navbar.classList.add('header-fading');
+      headerState = 'fading';
+      
+      // After a moment, fully hide if still scrolling down
+      fadeTimeout = setTimeout(() => {
+        if (headerState === 'fading') {
+          navbar.classList.remove('header-fading');
+          navbar.classList.add('header-hidden');
+          headerState = 'hidden';
+        }
+      }, 150);
+    } else if (headerState === 'fading' && currentScrollY > scrollThreshold) {
+      // Fast scroll - hide immediately
+      if (scrollSpeed > 20) {
+        clearTimeout(fadeTimeout);
+        navbar.classList.remove('header-fading');
+        navbar.classList.add('header-hidden');
+        headerState = 'hidden';
+      }
+    }
+  }
+  // Scrolling up - elegant fade in sequence
+  else if (scrollDiff < -5) {
+    clearTimeout(fadeTimeout);
+    
+    if (headerState === 'hidden') {
+      // Bring back with premium animation
+      navbar.classList.remove('header-hidden', 'header-fading');
+      navbar.classList.add('header-entering');
+      headerState = 'entering';
+      
+      // After animation completes, set to visible
+      fadeTimeout = setTimeout(() => {
+        navbar.classList.remove('header-entering');
+        navbar.classList.add('header-visible');
+        headerState = 'visible';
+      }, 400);
+    } else if (headerState === 'fading') {
+      // Cancel fade and show
+      navbar.classList.remove('header-fading');
+      navbar.classList.add('header-visible');
+      headerState = 'visible';
+    }
+  }
+  
+  lastScrollY = currentScrollY;
+}
+
 // ===== INITIALIZE PWA =====
 document.addEventListener('DOMContentLoaded', () => {
   // Register service worker
@@ -297,6 +404,9 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Initialize mobile navigation
   initMobileNavigation();
+  
+  // Initialize smooth header scroll behavior
+  initSmoothHeader();
   
   // Check initial online status
   updateOnlineStatus();

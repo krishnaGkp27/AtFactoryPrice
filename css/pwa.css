@@ -318,6 +318,68 @@ html {
   scroll-behavior: smooth;
 }
 
+/* ===== SMOOTH HEADER HIDE/SHOW ON SCROLL ===== */
+.navbar {
+  transition: transform 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94), 
+              opacity 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+              background-color 0.3s ease,
+              backdrop-filter 0.3s ease,
+              -webkit-backdrop-filter 0.3s ease,
+              box-shadow 0.3s ease;
+  will-change: transform, opacity, background-color;
+}
+
+/* Initial state - fully visible */
+.navbar.header-visible {
+  transform: translateY(0);
+  opacity: 1;
+  background-color: rgba(255, 255, 255, 1);
+}
+
+/* Scrolled state - add subtle glass effect */
+.navbar.header-scrolled {
+  background-color: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.08);
+}
+
+/* Fading state - becoming transparent */
+.navbar.header-fading {
+  opacity: 0.6;
+  background-color: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* Hidden state - fully invisible with elegant slide up */
+.navbar.header-hidden {
+  transform: translateY(-100%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Premium entrance animation */
+.navbar.header-entering {
+  animation: headerSlideIn 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+@keyframes headerSlideIn {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.7;
+    background-color: rgba(255, 255, 255, 0.85);
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+    background-color: rgba(255, 255, 255, 0.95);
+  }
+}
+
 /* ===== TOUCH FEEDBACK ===== */
 .mobile-nav-item:active {
   transform: scale(0.95);

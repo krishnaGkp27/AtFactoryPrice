@@ -1,0 +1,9 @@
+: Login/Signup is visible after user login
+User information not populated in fields like Name, email and phone number. Keep it static
+Delivery Address - ( Based on PIN code allowed ) , provide options to user. 
+Link home page slides with cloudinary in production.
+Profile picture upload, keep signup information frozen.
+Cache the user details flex box to avoid frequent loading.
+
+
+

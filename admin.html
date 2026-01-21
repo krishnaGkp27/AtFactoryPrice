@@ -37,6 +37,26 @@
             font-size: 24px;
         }
 
+        .header-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header-logo img {
+            height: 40px;
+            width: auto;
+        }
+
+        .header-logo span {
+            font-size: 14px;
+            font-weight: 600;
+            color: #666;
+            background: #f3f4f6;
+            padding: 4px 10px;
+            border-radius: 6px;
+        }
+
         .btn {
             background: black;
             color: white;
@@ -284,6 +304,16 @@
             margin-bottom: 30px;
         }
 
+        .login-logo {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        .login-logo img {
+            height: 50px;
+            width: auto;
+        }
+
         .empty-state {
             text-align: center;
             padding: 60px 20px;
@@ -295,6 +325,758 @@
                 grid-template-columns: 1fr;
             }
         }
+
+        /* B2B Configuration Toggle Switches */
+        .b2b-config-section {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 10px;
+        }
+
+        .b2b-config-title {
+            font-weight: 700;
+            font-size: 14px;
+            color: #333;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .b2b-config-title svg {
+            color: #6366f1;
+        }
+
+        .toggle-group {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+
+        .toggle-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .toggle-item:hover {
+            border-color: #6366f1;
+        }
+
+        .toggle-label {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .toggle-label-text {
+            font-weight: 600;
+            font-size: 13px;
+            color: #333;
+        }
+
+        .toggle-label-hint {
+            font-size: 11px;
+            color: #888;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 48px;
+            height: 26px;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: 0.3s;
+            border-radius: 26px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(22px);
+        }
+
+        .badge-preview {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 12px;
+            padding: 8px 12px;
+            background: #e8f5e9;
+            border-radius: 6px;
+            font-size: 11px;
+            color: #388e3c;
+        }
+
+        @media (max-width: 600px) {
+            .toggle-group {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* ===== PHASE 6: DASHBOARD CARDS ===== */
+        .dashboard-stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+        }
+
+        .stat-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .stat-card-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .stat-card-icon.primary { background: #ede9fe; color: #7c3aed; }
+        .stat-card-icon.success { background: #dcfce7; color: #16a34a; }
+        .stat-card-icon.warning { background: #fef3c7; color: #d97706; }
+        .stat-card-icon.info { background: #dbeafe; color: #2563eb; }
+        .stat-card-icon.danger { background: #fee2e2; color: #dc2626; }
+        .stat-card-icon.neutral { background: #f3f4f6; color: #6b7280; }
+
+        .stat-card-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #111;
+            line-height: 1;
+        }
+
+        .stat-card-label {
+            font-size: 13px;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        .stat-card-trend {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-top: 8px;
+        }
+
+        .stat-card-trend.up { background: #dcfce7; color: #16a34a; }
+        .stat-card-trend.down { background: #fee2e2; color: #dc2626; }
+        .stat-card-trend.neutral { background: #f3f4f6; color: #6b7280; }
+
+        /* Dashboard Section Headers */
+        .dashboard-section {
+            margin-bottom: 24px;
+        }
+
+        .dashboard-section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Reseller/Distributor Stats */
+        .reseller-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .placeholder-card {
+            opacity: 0.6;
+            position: relative;
+        }
+
+        .placeholder-card::after {
+            content: 'Coming Soon';
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            font-size: 9px;
+            background: #f3f4f6;
+            color: #6b7280;
+            padding: 2px 6px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        /* ===== PRICING UNIT CONFIGURATION ===== */
+        .pricing-unit-section {
+            background: #f0fdf4;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 10px;
+            border: 1px solid #bbf7d0;
+        }
+
+        .pricing-unit-title {
+            font-weight: 700;
+            font-size: 14px;
+            color: #166534;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .unit-selector-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .unit-option {
+            position: relative;
+        }
+
+        .unit-option input[type="radio"] {
+            position: absolute;
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .unit-option label {
+            display: block;
+            padding: 10px 12px;
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            text-align: center;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .unit-option label:hover {
+            border-color: #16a34a;
+            background: #f0fdf4;
+        }
+
+        .unit-option input[type="radio"]:checked + label {
+            border-color: #16a34a;
+            background: #16a34a;
+            color: white;
+        }
+
+        .custom-unit-input {
+            display: none;
+            margin-top: 12px;
+        }
+
+        .custom-unit-input.show {
+            display: block;
+        }
+
+        .custom-unit-input input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #16a34a;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .custom-unit-input input:focus {
+            outline: none;
+            border-color: #166534;
+        }
+
+        .price-label-preview {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+            padding: 10px 12px;
+            background: white;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #166534;
+        }
+
+        .price-label-preview strong {
+            color: #111;
+        }
+
+        /* Product Insights Section (Edit Modal) */
+        .product-insights {
+            background: #f8fafc;
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 10px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .product-insights-title {
+            font-weight: 600;
+            font-size: 13px;
+            color: #64748b;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .insights-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+
+        .insight-item {
+            background: white;
+            padding: 10px 12px;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .insight-label {
+            font-size: 11px;
+            color: #94a3b8;
+            margin-bottom: 4px;
+        }
+
+        .insight-value {
+            font-size: 13px;
+            font-weight: 600;
+            color: #334155;
+        }
+
+        .insight-value.yes { color: #16a34a; }
+        .insight-value.no { color: #94a3b8; }
+
+        /* Responsive for dashboard */
+        @media (max-width: 1024px) {
+            .dashboard-stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .reseller-stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 600px) {
+            .dashboard-stats {
+                grid-template-columns: 1fr;
+            }
+            .reseller-stats {
+                grid-template-columns: 1fr;
+            }
+            .unit-selector-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .insights-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* ===== FILTER & SORT TOOLBAR ===== */
+        .filter-toolbar {
+            background: white;
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin-bottom: 16px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        }
+
+        .filter-toolbar-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .filter-toolbar-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .filter-toggle-btn {
+            background: #f3f4f6;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #666;
+        }
+
+        .filter-toggle-btn:hover {
+            background: #e5e7eb;
+        }
+
+        .filter-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
+            gap: 12px;
+            align-items: end;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .filter-group label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .filter-group input,
+        .filter-group select {
+            padding: 8px 12px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 13px;
+            background: white;
+        }
+
+        .filter-group input:focus,
+        .filter-group select:focus {
+            outline: none;
+            border-color: #6366f1;
+        }
+
+        .filter-group input::placeholder {
+            color: #aaa;
+        }
+
+        /* B2B Badge Filter */
+        .badge-filter-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .badge-filter-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .badge-filter-item input[type="checkbox"] {
+            width: 14px;
+            height: 14px;
+            cursor: pointer;
+        }
+
+        .badge-filter-item label {
+            font-size: 11px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        /* Price Range Filter */
+        .price-range-inputs {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .price-range-inputs input {
+            width: 80px;
+            padding: 6px 8px;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .price-range-inputs span {
+            color: #999;
+            font-size: 12px;
+        }
+
+        /* Filter Actions */
+        .filter-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #f0f0f0;
+        }
+
+        .filter-actions button {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+        }
+
+        .btn-apply-filter {
+            background: #6366f1;
+            color: white;
+        }
+
+        .btn-apply-filter:hover {
+            background: #4f46e5;
+        }
+
+        .btn-clear-filter {
+            background: #f3f4f6;
+            color: #666;
+        }
+
+        .btn-clear-filter:hover {
+            background: #e5e7eb;
+        }
+
+        /* Active Filters Display */
+        .active-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .active-filter-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #ede9fe;
+            color: #6366f1;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .active-filter-tag button {
+            background: none;
+            border: none;
+            color: #6366f1;
+            cursor: pointer;
+            padding: 0;
+            font-size: 14px;
+            line-height: 1;
+        }
+
+        /* Sort Headers */
+        th.sortable {
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+            padding-right: 24px;
+        }
+
+        th.sortable:hover {
+            background: #f0f0f0;
+        }
+
+        th.sortable::after {
+            content: '↕';
+            position: absolute;
+            right: 8px;
+            color: #ccc;
+            font-size: 12px;
+        }
+
+        th.sortable.asc::after {
+            content: '↑';
+            color: #6366f1;
+        }
+
+        th.sortable.desc::after {
+            content: '↓';
+            color: #6366f1;
+        }
+
+        /* Pagination */
+        .pagination-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 0;
+            border-top: 1px solid #e0e0e0;
+            margin-top: 16px;
+        }
+
+        .pagination-info {
+            font-size: 13px;
+            color: #666;
+        }
+
+        .pagination-controls {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .pagination-btn {
+            min-width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #e0e0e0;
+            background: white;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            color: #333;
+        }
+
+        .pagination-btn:hover:not(:disabled) {
+            background: #f3f4f6;
+            border-color: #d0d0d0;
+        }
+
+        .pagination-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .pagination-btn.active {
+            background: #6366f1;
+            color: white;
+            border-color: #6366f1;
+        }
+
+        .page-size-selector {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .page-size-selector select {
+            padding: 6px 10px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 13px;
+            background: white;
+        }
+
+        /* Results count badge */
+        .results-count {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #f3f4f6;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            color: #666;
+            margin-left: 12px;
+        }
+
+        .results-count.filtered {
+            background: #fef3c7;
+            color: #d97706;
+        }
+
+        /* Collapsible Filter Section */
+        .filter-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+
+        .filter-content.expanded {
+            max-height: 500px;
+        }
+
+        /* Responsive Filter */
+        @media (max-width: 1024px) {
+            .filter-row {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 600px) {
+            .filter-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .pagination-container {
+                flex-direction: column;
+                gap: 12px;
+            }
+            
+            .filter-toolbar-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 8px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -302,8 +1084,12 @@
         <!-- Login Screen -->
         <div class="login-container" id="loginScreen">
             <div class="login-box">
+                <div class="login-logo">
+                    <img src="images/logo.png" alt="AtFactoryPrice" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                    <h1 style="font-size:28px;margin:0;display:none;">AtFactoryPrice</h1>
+                </div>
                 <h1>Admin Login</h1>
-                <p>AtFactoryPrice Management</p>
+                <p>Management Dashboard</p>
                 
                 <div class="form-group">
                     <label>Email</label>
@@ -323,17 +1109,269 @@
         <div id="dashboard" style="display: none;">
             <div class="container">
                 <div class="header">
-                    <h1>AtFactoryPrice Admin</h1>
-                    <button class="btn btn-danger" onclick="logout()">Logout</button>
+                    <div class="header-logo">
+                        <img src="images/logo.png" alt="AtFactoryPrice" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                        <h1 style="display: none;">AtFactoryPrice</h1>
+                        <span>Admin</span>
+                    </div>
+                    <div style="display: flex; gap: 12px;">
+                        <a href="admin-orders.html" class="btn btn-secondary" style="text-decoration: none;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 6px;">
+                                <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+                                <line x1="3" y1="6" x2="21" y2="6"></line>
+                                <path d="M16 10a4 4 0 0 1-8 0"></path>
+                            </svg>
+                            Orders
+                        </a>
+                        <a href="admin-mlm.html" class="btn btn-secondary" style="text-decoration: none;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 6px;">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="9" cy="7" r="4"></circle>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                            </svg>
+                            MLM
+                        </a>
+                        <button class="btn btn-danger" onclick="logout()">Logout</button>
+                    </div>
                 </div>
 
                 <div id="statusMsg" class="status"></div>
 
+                <!-- Phase 6: Product Statistics Dashboard -->
+                <div class="dashboard-section">
+                    <div class="dashboard-section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 3v18h18"></path>
+                            <path d="M18 17V9"></path>
+                            <path d="M13 17V5"></path>
+                            <path d="M8 17v-3"></path>
+                        </svg>
+                        Product Overview
+                    </div>
+                    <div class="dashboard-stats">
+                        <div class="stat-card">
+                            <div class="stat-card-header">
+                                <div class="stat-card-icon primary">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+                                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                                        <path d="M16 10a4 4 0 0 1-8 0"></path>
+                                    </svg>
+                                </div>
+                            </div>
+                            <div class="stat-card-value" id="statTotalProducts">0</div>
+                            <div class="stat-card-label">Total Products</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-header">
+                                <div class="stat-card-icon success">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                                        <path d="M2 17l10 5 10-5"></path>
+                                        <path d="M2 12l10 5 10-5"></path>
+                                    </svg>
+                                </div>
+                            </div>
+                            <div class="stat-card-value" id="statWholesaleProducts">0</div>
+                            <div class="stat-card-label">Wholesale Products</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-header">
+                                <div class="stat-card-icon warning">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                                    </svg>
+                                </div>
+                            </div>
+                            <div class="stat-card-value" id="statBestSellers">0</div>
+                            <div class="stat-card-label">Best Sellers</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-header">
+                                <div class="stat-card-icon info">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
+                                        <line x1="7" y1="7" x2="7.01" y2="7"></line>
+                                    </svg>
+                                </div>
+                            </div>
+                            <div class="stat-card-value" id="statBulkEnabled">0</div>
+                            <div class="stat-card-label">Bulk-Enabled Products</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Phase 6: Reseller/Distributor Prep UI (Placeholders) -->
+                <div class="dashboard-section">
+                    <div class="dashboard-section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="9" cy="7" r="4"></circle>
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                        </svg>
+                        Reseller & Distributor Insights
+                    </div>
+                    <div class="reseller-stats">
+                        <div class="stat-card placeholder-card">
+                            <div class="stat-card-header">
+                                <div class="stat-card-icon neutral">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="1" y="3" width="15" height="13"></rect>
+                                        <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon>
+                                        <circle cx="5.5" cy="18.5" r="2.5"></circle>
+                                        <circle cx="18.5" cy="18.5" r="2.5"></circle>
+                                    </svg>
+                                </div>
+                            </div>
+                            <div class="stat-card-value">--</div>
+                            <div class="stat-card-label">Reseller Orders</div>
+                        </div>
+                        <div class="stat-card placeholder-card">
+                            <div class="stat-card-header">
+                                <div class="stat-card-icon neutral">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                        <polyline points="14 2 14 8 20 8"></polyline>
+                                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                                        <polyline points="10 9 9 9 8 9"></polyline>
+                                    </svg>
+                                </div>
+                            </div>
+                            <div class="stat-card-value">--</div>
+                            <div class="stat-card-label">Bulk Requests</div>
+                        </div>
+                        <div class="stat-card placeholder-card">
+                            <div class="stat-card-header">
+                                <div class="stat-card-icon neutral">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <line x1="12" y1="1" x2="12" y2="23"></line>
+                                        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                                    </svg>
+                                </div>
+                            </div>
+                            <div class="stat-card-value">--</div>
+                            <div class="stat-card-label">Network Sales</div>
+                        </div>
+                    </div>
+                </div>
+
                 <button class="btn" onclick="openModal()" style="margin-bottom: 20px">+ Add New Product</button>
 
+                <!-- Filter & Sort Toolbar -->
+                <div class="filter-toolbar">
+                    <div class="filter-toolbar-header">
+                        <div class="filter-toolbar-title">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                            </svg>
+                            Filter & Sort Products
+                            <span class="results-count" id="resultsCount">0 products</span>
+                        </div>
+                        <button class="filter-toggle-btn" onclick="toggleFilterPanel()">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                            <span id="filterToggleText">Show Filters</span>
+                        </button>
+                    </div>
+                    
+                    <div class="filter-content" id="filterContent">
+                        <div class="filter-row">
+                            <div class="filter-group">
+                                <label>Search Product</label>
+                                <input type="text" id="filterProductName" placeholder="Search by name..." oninput="applyFilters()">
+                            </div>
+                            <div class="filter-group">
+                                <label>Main Category</label>
+                                <select id="filterCategory1" onchange="updateFilterCategory2(); applyFilters();">
+                                    <option value="">All Categories</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label>Subcategory</label>
+                                <select id="filterCategory2" onchange="applyFilters();">
+                                    <option value="">All Subcategories</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label>Price Range</label>
+                                <div class="price-range-inputs">
+                                    <input type="number" id="filterPriceMin" placeholder="Min" oninput="applyFilters()">
+                                    <span>-</span>
+                                    <input type="number" id="filterPriceMax" placeholder="Max" oninput="applyFilters()">
+                                </div>
+                            </div>
+                            <div class="filter-group">
+                                <label>Sort By</label>
+                                <select id="sortField" onchange="applyFilters();">
+                                    <option value="name-asc">Name (A-Z)</option>
+                                    <option value="name-desc">Name (Z-A)</option>
+                                    <option value="price-asc">Price (Low-High)</option>
+                                    <option value="price-desc">Price (High-Low)</option>
+                                    <option value="date-desc">Newest First</option>
+                                    <option value="date-asc">Oldest First</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="filter-group" style="margin-top: 12px;">
+                            <label>B2B Badges</label>
+                            <div class="badge-filter-group">
+                                <div class="badge-filter-item">
+                                    <input type="checkbox" id="filterBestSeller" onchange="applyFilters()">
+                                    <label for="filterBestSeller">Best Seller</label>
+                                </div>
+                                <div class="badge-filter-item">
+                                    <input type="checkbox" id="filterWholesale" onchange="applyFilters()">
+                                    <label for="filterWholesale">Wholesale</label>
+                                </div>
+                                <div class="badge-filter-item">
+                                    <input type="checkbox" id="filterMOQ" onchange="applyFilters()">
+                                    <label for="filterMOQ">MOQ Friendly</label>
+                                </div>
+                                <div class="badge-filter-item">
+                                    <input type="checkbox" id="filterBulk" onchange="applyFilters()">
+                                    <label for="filterBulk">Bulk Discount</label>
+                                </div>
+                                <div class="badge-filter-item">
+                                    <input type="checkbox" id="filterHasUnit" onchange="applyFilters()">
+                                    <label for="filterHasUnit">Has Unit Set</label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="filter-actions">
+                            <button class="btn-clear-filter" onclick="clearAllFilters()">Clear All Filters</button>
+                        </div>
+                        
+                        <div class="active-filters" id="activeFilters"></div>
+                    </div>
+                </div>
+
                 <div class="products-table">
-                    <h2 style="margin-bottom: 20px">Products (<span id="productCount">0</span>)</h2>
+                    <h2 style="margin-bottom: 20px">
+                        Products 
+                        <span id="productCount">0</span>
+                    </h2>
                     <div id="productsContainer"></div>
+                    
+                    <!-- Pagination -->
+                    <div class="pagination-container" id="paginationContainer" style="display: none;">
+                        <div class="pagination-info" id="paginationInfo">Showing 1-10 of 100 products</div>
+                        <div class="pagination-controls" id="paginationControls"></div>
+                        <div class="page-size-selector">
+                            <label>Show:</label>
+                            <select id="pageSize" onchange="changePageSize()">
+                                <option value="10">10</option>
+                                <option value="25">25</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -364,8 +1402,67 @@
                 </div>
 
                 <div class="form-group">
-                    <label>Price (₦) *</label>
+                    <label id="priceFieldLabel">Price (₦) *</label>
                     <input type="number" id="productPrice" placeholder="15000">
+                </div>
+
+                <!-- Pricing Unit Configuration -->
+                <div class="form-group">
+                    <label>Pricing Unit (Optional)</label>
+                    <div class="pricing-unit-section">
+                        <div class="pricing-unit-title">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
+                                <line x1="7" y1="7" x2="7.01" y2="7"></line>
+                            </svg>
+                            Select how this product is priced
+                        </div>
+                        <div class="unit-selector-grid">
+                            <div class="unit-option">
+                                <input type="radio" name="pricingUnit" id="unitNone" value="" checked onchange="updatePricingUnit()">
+                                <label for="unitNone">Default</label>
+                            </div>
+                            <div class="unit-option">
+                                <input type="radio" name="pricingUnit" id="unitYard" value="Yard" onchange="updatePricingUnit()">
+                                <label for="unitYard">Per Yard</label>
+                            </div>
+                            <div class="unit-option">
+                                <input type="radio" name="pricingUnit" id="unitPiece" value="Piece" onchange="updatePricingUnit()">
+                                <label for="unitPiece">Per Piece</label>
+                            </div>
+                            <div class="unit-option">
+                                <input type="radio" name="pricingUnit" id="unitMeter" value="Meter" onchange="updatePricingUnit()">
+                                <label for="unitMeter">Per Meter</label>
+                            </div>
+                            <div class="unit-option">
+                                <input type="radio" name="pricingUnit" id="unitRoll" value="Roll" onchange="updatePricingUnit()">
+                                <label for="unitRoll">Per Roll</label>
+                            </div>
+                            <div class="unit-option">
+                                <input type="radio" name="pricingUnit" id="unitPack" value="Pack" onchange="updatePricingUnit()">
+                                <label for="unitPack">Per Pack</label>
+                            </div>
+                            <div class="unit-option">
+                                <input type="radio" name="pricingUnit" id="unitSet" value="Set" onchange="updatePricingUnit()">
+                                <label for="unitSet">Per Set</label>
+                            </div>
+                            <div class="unit-option">
+                                <input type="radio" name="pricingUnit" id="unitCustom" value="custom" onchange="updatePricingUnit()">
+                                <label for="unitCustom">Custom</label>
+                            </div>
+                        </div>
+                        <div class="custom-unit-input" id="customUnitContainer">
+                            <input type="text" id="customUnitName" placeholder="Enter custom unit (e.g., Bundle, Box, Dozen)" oninput="updatePricingUnit()">
+                        </div>
+                        <div class="price-label-preview" id="priceLabelPreview">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="16" x2="12" y2="12"></line>
+                                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                            </svg>
+                            Price will display as: <strong id="pricePreviewText">₦X,XXX</strong>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="form-group">
@@ -393,6 +1490,99 @@
                             <select id="category3" disabled>
                                 <option value="">Select</option>
                             </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- B2B Configuration Section -->
+                <div class="form-group">
+                    <label>B2B & Wholesale Configuration</label>
+                    <div class="b2b-config-section">
+                        <div class="b2b-config-title">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                                <path d="M2 17l10 5 10-5"></path>
+                                <path d="M2 12l10 5 10-5"></path>
+                            </svg>
+                            Product Badges & Indicators
+                        </div>
+                        <div class="toggle-group">
+                            <div class="toggle-item">
+                                <div class="toggle-label">
+                                    <span class="toggle-label-text">Best Seller</span>
+                                    <span class="toggle-label-hint">Highlight as top product</span>
+                                </div>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="bestSeller">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="toggle-item">
+                                <div class="toggle-label">
+                                    <span class="toggle-label-text">Wholesale Available</span>
+                                    <span class="toggle-label-hint">Best for bulk buyers</span>
+                                </div>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="wholesaleAvailable">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="toggle-item">
+                                <div class="toggle-label">
+                                    <span class="toggle-label-text">MOQ Friendly</span>
+                                    <span class="toggle-label-hint">Low minimum order qty</span>
+                                </div>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="moqFriendly">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="toggle-item">
+                                <div class="toggle-label">
+                                    <span class="toggle-label-text">Bulk Discount</span>
+                                    <span class="toggle-label-hint">Discounts on large orders</span>
+                                </div>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="bulkDiscount">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="badge-preview" id="badgePreview" style="display: none;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                            </svg>
+                            <span id="badgePreviewText">Badges will appear on product card</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Product Insights (shown when editing) -->
+                <div class="form-group" id="productInsightsSection" style="display: none;">
+                    <label>Product Insights</label>
+                    <div class="product-insights">
+                        <div class="product-insights-title">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="16" x2="12" y2="12"></line>
+                                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                            </svg>
+                            Auto-generated product information
+                        </div>
+                        <div class="insights-grid">
+                            <div class="insight-item">
+                                <div class="insight-label">Common Unit</div>
+                                <div class="insight-value" id="insightUnit">--</div>
+                            </div>
+                            <div class="insight-item">
+                                <div class="insight-label">Bulk Friendly</div>
+                                <div class="insight-value" id="insightBulkFriendly">--</div>
+                            </div>
+                            <div class="insight-item">
+                                <div class="insight-label">Wholesale Enabled</div>
+                                <div class="insight-value" id="insightWholesale">--</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -499,13 +1689,23 @@
         // State
         let currentUser = null;
         let products = [];
+        let filteredProducts = []; // For filter/sort results
         let editingProduct = null;
         let uploadedImageUrl = '';
         let uploadedImageId = '';
 
+        // Pagination State
+        let currentPage = 1;
+        let pageSize = 10;
+        let totalPages = 1;
+
+        // Filter State
+        let filterPanelExpanded = false;
+
         // Initialize
         function init() {
             populateCategory1();
+            populateFilterCategories();
             checkAuth();
         }
 
@@ -668,6 +1868,19 @@
                         }, 50);
                     }, 50);
                 }
+
+                // Load B2B configuration fields
+                document.getElementById('bestSeller').checked = product.bestSeller === true;
+                document.getElementById('wholesaleAvailable').checked = product.wholesaleAvailable === true;
+                document.getElementById('moqFriendly').checked = product.moqFriendly === true;
+                document.getElementById('bulkDiscount').checked = product.bulkDiscount === true;
+
+                // Load pricing unit (Phase 6)
+                loadPricingUnit(product.pricingUnit);
+
+                // Show and populate product insights
+                document.getElementById('productInsightsSection').style.display = 'block';
+                updateProductInsights(product);
             } else {
                 document.getElementById('modalTitle').textContent = 'Add New Product';
                 document.getElementById('productName').value = '';
@@ -682,7 +1895,24 @@
                 document.getElementById('uploadPlaceholder').style.display = 'block';
                 uploadedImageUrl = '';
                 uploadedImageId = '';
+
+                // Reset B2B configuration fields
+                document.getElementById('bestSeller').checked = false;
+                document.getElementById('wholesaleAvailable').checked = false;
+                document.getElementById('moqFriendly').checked = false;
+                document.getElementById('bulkDiscount').checked = false;
+
+                // Reset pricing unit (Phase 6)
+                resetPricingUnit();
+
+                // Hide product insights for new products
+                document.getElementById('productInsightsSection').style.display = 'none';
             }
+
+            // Update badge preview
+            updateBadgePreview();
+            // Update pricing unit preview
+            updatePricingUnit();
             
             document.getElementById('productModal').classList.add('active');
         }
@@ -739,6 +1969,24 @@
             const cat2 = document.getElementById('category2').value;
             const cat3 = document.getElementById('category3').value;
 
+            // Get B2B configuration values
+            const bestSeller = document.getElementById('bestSeller').checked;
+            const wholesaleAvailable = document.getElementById('wholesaleAvailable').checked;
+            const moqFriendly = document.getElementById('moqFriendly').checked;
+            const bulkDiscount = document.getElementById('bulkDiscount').checked;
+
+            // Get pricing unit (Phase 6)
+            const pricingUnit = getSelectedPricingUnit();
+
+            // Validate custom unit if selected
+            if (document.getElementById('unitCustom').checked) {
+                const customUnit = document.getElementById('customUnitName').value.trim();
+                if (!customUnit) {
+                    alert('Please enter a custom unit name or select a different unit');
+                    return;
+                }
+            }
+
             if (!name || !price || !description) {
                 alert('Please fill in all required fields (Name, Price, Description)');
                 return;
@@ -760,6 +2008,13 @@
                     level2: cat2,
                     level3: cat3
                 },
+                // B2B Configuration fields
+                bestSeller,
+                wholesaleAvailable,
+                moqFriendly,
+                bulkDiscount,
+                // Pricing Unit (Phase 6) - stored as metadata
+                pricingUnit: pricingUnit || null,
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             };
 
@@ -819,30 +2074,73 @@
             return path;
         }
 
-        // Render products
+        // Render products with filtering, sorting, and pagination
         function renderProducts() {
             const container = document.getElementById('productsContainer');
-            document.getElementById('productCount').textContent = products.length;
+            
+            // Update dashboard statistics (Phase 6)
+            updateDashboardStats();
 
-            if (products.length === 0) {
-                container.innerHTML = '<div class="empty-state"><p>No products yet. Click "Add New Product" to get started.</p></div>';
+            // Apply filters and sorting
+            applyFilters();
+        }
+
+        // Render the filtered/sorted products with pagination
+        function renderFilteredProducts() {
+            const container = document.getElementById('productsContainer');
+            const isFiltered = filteredProducts.length !== products.length;
+            
+            // Update counts
+            document.getElementById('productCount').textContent = products.length;
+            const resultsCountEl = document.getElementById('resultsCount');
+            if (isFiltered) {
+                resultsCountEl.textContent = `${filteredProducts.length} of ${products.length} products`;
+                resultsCountEl.classList.add('filtered');
+            } else {
+                resultsCountEl.textContent = `${products.length} products`;
+                resultsCountEl.classList.remove('filtered');
+            }
+
+            if (filteredProducts.length === 0) {
+                container.innerHTML = products.length === 0 
+                    ? '<div class="empty-state"><p>No products yet. Click "Add New Product" to get started.</p></div>'
+                    : '<div class="empty-state"><p>No products match your filters. Try adjusting your criteria.</p></div>';
+                document.getElementById('paginationContainer').style.display = 'none';
                 return;
             }
 
+            // Calculate pagination
+            totalPages = Math.ceil(filteredProducts.length / pageSize);
+            if (currentPage > totalPages) currentPage = totalPages;
+            if (currentPage < 1) currentPage = 1;
+            
+            const startIndex = (currentPage - 1) * pageSize;
+            const endIndex = Math.min(startIndex + pageSize, filteredProducts.length);
+            const paginatedProducts = filteredProducts.slice(startIndex, endIndex);
+
+            // Render table
             const html = `
                 <table>
                     <thead>
                         <tr>
                             <th>Image</th>
-                            <th>Product</th>
-                            <th>Category Path</th>
-                            <th>Price</th>
+                            <th class="sortable" onclick="sortByColumn('name')" data-sort="name">Product</th>
+                            <th class="sortable" onclick="sortByColumn('category')" data-sort="category">Category Path</th>
+                            <th>B2B Badges</th>
+                            <th class="sortable" onclick="sortByColumn('price')" data-sort="price">Price</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${products.map(p => {
+                        ${paginatedProducts.map(p => {
                             const categoryPath = getCategoryPath(p.category);
+                            // Generate B2B badge indicators
+                            const b2bBadges = [];
+                            if (p.bestSeller) b2bBadges.push('<span class="badge" style="background:#fef3c7;color:#d97706;">★ Best</span>');
+                            if (p.wholesaleAvailable) b2bBadges.push('<span class="badge" style="background:#ede9fe;color:#7c3aed;">Wholesale</span>');
+                            if (p.moqFriendly) b2bBadges.push('<span class="badge" style="background:#dbeafe;color:#2563eb;">MOQ</span>');
+                            if (p.bulkDiscount) b2bBadges.push('<span class="badge" style="background:#dcfce7;color:#16a34a;">Bulk</span>');
+                            
                             return `
                             <tr>
                                 <td>
@@ -851,7 +2149,7 @@
                                 </td>
                                 <td>
                                     <strong>${p.name}</strong><br>
-                                    <small style="color: #666">${p.description.substring(0, 60)}...</small>
+                                    <small style="color: #666">${(p.description || '').substring(0, 60)}...</small>
                                 </td>
                                 <td>
                                     <div class="category-badges">
@@ -860,7 +2158,15 @@
                                         ${categoryPath.length > 2 ? `<span class="badge badge-purple">${categoryPath[2]}</span>` : ''}
                                     </div>
                                 </td>
-                                <td><strong>₦${p.price.toFixed(2)}</strong></td>
+                                <td>
+                                    <div class="category-badges">
+                                        ${b2bBadges.length > 0 ? b2bBadges.join('') : '<span style="color:#999;font-size:12px;">None</span>'}
+                                    </div>
+                                </td>
+                                <td>
+                                    <strong>₦${p.price.toLocaleString()}</strong>
+                                    ${p.pricingUnit ? `<br><span style="font-size:11px;color:#16a34a;">/ ${p.pricingUnit}</span>` : ''}
+                                </td>
                                 <td>
                                     <button class="btn btn-secondary" onclick='openModal(${JSON.stringify(p).replace(/'/g, "&apos;")})' 
                                             style="padding: 8px 16px; margin-right: 5px">Edit</button>
@@ -874,6 +2180,338 @@
             `;
 
             container.innerHTML = html;
+            
+            // Render pagination
+            renderPagination(startIndex, endIndex);
+            
+            // Update sort column indicators
+            updateSortIndicators();
+        }
+
+        // ===== FILTER FUNCTIONS =====
+        
+        // Toggle filter panel visibility
+        function toggleFilterPanel() {
+            filterPanelExpanded = !filterPanelExpanded;
+            const content = document.getElementById('filterContent');
+            const toggleText = document.getElementById('filterToggleText');
+            
+            if (filterPanelExpanded) {
+                content.classList.add('expanded');
+                toggleText.textContent = 'Hide Filters';
+            } else {
+                content.classList.remove('expanded');
+                toggleText.textContent = 'Show Filters';
+            }
+        }
+
+        // Populate filter category dropdowns
+        function populateFilterCategories() {
+            const select = document.getElementById('filterCategory1');
+            if (!select) return;
+            
+            select.innerHTML = '<option value="">All Categories</option>';
+            Object.keys(CATEGORIES).forEach(key => {
+                const option = document.createElement('option');
+                option.value = key;
+                option.textContent = CATEGORIES[key].name;
+                select.appendChild(option);
+            });
+        }
+
+        // Update filter subcategory based on main category
+        function updateFilterCategory2() {
+            const cat1 = document.getElementById('filterCategory1').value;
+            const select2 = document.getElementById('filterCategory2');
+            
+            select2.innerHTML = '<option value="">All Subcategories</option>';
+            
+            if (cat1 && CATEGORIES[cat1]) {
+                const subcategories = CATEGORIES[cat1].subcategories;
+                Object.keys(subcategories).forEach(key => {
+                    const option = document.createElement('option');
+                    option.value = key;
+                    option.textContent = subcategories[key].name;
+                    select2.appendChild(option);
+                });
+            }
+        }
+
+        // Apply all filters and sorting
+        function applyFilters() {
+            // Get filter values
+            const searchTerm = (document.getElementById('filterProductName')?.value || '').toLowerCase().trim();
+            const category1 = document.getElementById('filterCategory1')?.value || '';
+            const category2 = document.getElementById('filterCategory2')?.value || '';
+            const priceMin = parseFloat(document.getElementById('filterPriceMin')?.value) || 0;
+            const priceMax = parseFloat(document.getElementById('filterPriceMax')?.value) || Infinity;
+            const sortValue = document.getElementById('sortField')?.value || 'name-asc';
+            
+            // B2B badge filters
+            const filterBestSeller = document.getElementById('filterBestSeller')?.checked || false;
+            const filterWholesale = document.getElementById('filterWholesale')?.checked || false;
+            const filterMOQ = document.getElementById('filterMOQ')?.checked || false;
+            const filterBulk = document.getElementById('filterBulk')?.checked || false;
+            const filterHasUnit = document.getElementById('filterHasUnit')?.checked || false;
+
+            // Filter products
+            filteredProducts = products.filter(p => {
+                // Search filter
+                if (searchTerm && !p.name.toLowerCase().includes(searchTerm)) {
+                    return false;
+                }
+                
+                // Category filters
+                if (category1 && p.category?.level1 !== category1) {
+                    return false;
+                }
+                if (category2 && p.category?.level2 !== category2) {
+                    return false;
+                }
+                
+                // Price range filter
+                if (p.price < priceMin || p.price > priceMax) {
+                    return false;
+                }
+                
+                // B2B badge filters (OR logic - show if ANY checked filter matches)
+                const anyBadgeFilterActive = filterBestSeller || filterWholesale || filterMOQ || filterBulk || filterHasUnit;
+                if (anyBadgeFilterActive) {
+                    const matchesBadge = (filterBestSeller && p.bestSeller) ||
+                                         (filterWholesale && p.wholesaleAvailable) ||
+                                         (filterMOQ && p.moqFriendly) ||
+                                         (filterBulk && p.bulkDiscount) ||
+                                         (filterHasUnit && p.pricingUnit);
+                    if (!matchesBadge) return false;
+                }
+                
+                return true;
+            });
+
+            // Sort products
+            const [sortField, sortDir] = sortValue.split('-');
+            filteredProducts.sort((a, b) => {
+                let comparison = 0;
+                
+                switch (sortField) {
+                    case 'name':
+                        comparison = (a.name || '').localeCompare(b.name || '');
+                        break;
+                    case 'price':
+                        comparison = (a.price || 0) - (b.price || 0);
+                        break;
+                    case 'date':
+                        const dateA = a.createdAt?.toDate?.() || new Date(0);
+                        const dateB = b.createdAt?.toDate?.() || new Date(0);
+                        comparison = dateA - dateB;
+                        break;
+                    case 'category':
+                        const catA = getCategoryPath(a.category).join(' ');
+                        const catB = getCategoryPath(b.category).join(' ');
+                        comparison = catA.localeCompare(catB);
+                        break;
+                }
+                
+                return sortDir === 'desc' ? -comparison : comparison;
+            });
+
+            // Reset to page 1 when filters change
+            currentPage = 1;
+            
+            // Update active filters display
+            updateActiveFilters();
+            
+            // Render filtered results
+            renderFilteredProducts();
+        }
+
+        // Sort by clicking column header
+        function sortByColumn(column) {
+            const sortField = document.getElementById('sortField');
+            const currentValue = sortField.value;
+            const [currentColumn, currentDir] = currentValue.split('-');
+            
+            let newDir = 'asc';
+            if (currentColumn === column) {
+                newDir = currentDir === 'asc' ? 'desc' : 'asc';
+            }
+            
+            // Map column to sort field value
+            const columnMap = {
+                'name': `name-${newDir}`,
+                'price': `price-${newDir}`,
+                'category': `name-${newDir}`, // Category sorts by name for now
+                'date': `date-${newDir}`
+            };
+            
+            sortField.value = columnMap[column] || `name-${newDir}`;
+            applyFilters();
+        }
+
+        // Update sort indicators on table headers
+        function updateSortIndicators() {
+            const sortValue = document.getElementById('sortField')?.value || 'name-asc';
+            const [sortField, sortDir] = sortValue.split('-');
+            
+            document.querySelectorAll('th.sortable').forEach(th => {
+                th.classList.remove('asc', 'desc');
+                if (th.dataset.sort === sortField || (th.dataset.sort === 'name' && sortField === 'name')) {
+                    th.classList.add(sortDir);
+                }
+            });
+        }
+
+        // Update active filters display
+        function updateActiveFilters() {
+            const container = document.getElementById('activeFilters');
+            if (!container) return;
+            
+            const filters = [];
+            
+            const searchTerm = document.getElementById('filterProductName')?.value;
+            if (searchTerm) filters.push({ label: `Search: "${searchTerm}"`, clear: () => { document.getElementById('filterProductName').value = ''; applyFilters(); }});
+            
+            const cat1 = document.getElementById('filterCategory1')?.value;
+            if (cat1) filters.push({ label: `Category: ${CATEGORIES[cat1]?.name}`, clear: () => { document.getElementById('filterCategory1').value = ''; updateFilterCategory2(); applyFilters(); }});
+            
+            const cat2 = document.getElementById('filterCategory2')?.value;
+            if (cat2) {
+                const cat1Val = document.getElementById('filterCategory1')?.value;
+                const subName = CATEGORIES[cat1Val]?.subcategories[cat2]?.name || cat2;
+                filters.push({ label: `Subcategory: ${subName}`, clear: () => { document.getElementById('filterCategory2').value = ''; applyFilters(); }});
+            }
+            
+            const priceMin = document.getElementById('filterPriceMin')?.value;
+            const priceMax = document.getElementById('filterPriceMax')?.value;
+            if (priceMin || priceMax) {
+                const label = priceMin && priceMax ? `Price: ₦${priceMin} - ₦${priceMax}` : 
+                              priceMin ? `Price: ≥ ₦${priceMin}` : `Price: ≤ ₦${priceMax}`;
+                filters.push({ label, clear: () => { document.getElementById('filterPriceMin').value = ''; document.getElementById('filterPriceMax').value = ''; applyFilters(); }});
+            }
+            
+            if (document.getElementById('filterBestSeller')?.checked) filters.push({ label: 'Best Seller', clear: () => { document.getElementById('filterBestSeller').checked = false; applyFilters(); }});
+            if (document.getElementById('filterWholesale')?.checked) filters.push({ label: 'Wholesale', clear: () => { document.getElementById('filterWholesale').checked = false; applyFilters(); }});
+            if (document.getElementById('filterMOQ')?.checked) filters.push({ label: 'MOQ Friendly', clear: () => { document.getElementById('filterMOQ').checked = false; applyFilters(); }});
+            if (document.getElementById('filterBulk')?.checked) filters.push({ label: 'Bulk Discount', clear: () => { document.getElementById('filterBulk').checked = false; applyFilters(); }});
+            if (document.getElementById('filterHasUnit')?.checked) filters.push({ label: 'Has Unit', clear: () => { document.getElementById('filterHasUnit').checked = false; applyFilters(); }});
+            
+            if (filters.length === 0) {
+                container.innerHTML = '';
+                return;
+            }
+            
+            container.innerHTML = filters.map((f, i) => `
+                <span class="active-filter-tag">
+                    ${f.label}
+                    <button onclick="clearFilter(${i})" title="Remove filter">×</button>
+                </span>
+            `).join('');
+            
+            // Store clear functions globally for access
+            window._filterClearFns = filters.map(f => f.clear);
+        }
+
+        // Clear individual filter
+        function clearFilter(index) {
+            if (window._filterClearFns && window._filterClearFns[index]) {
+                window._filterClearFns[index]();
+            }
+        }
+
+        // Clear all filters
+        function clearAllFilters() {
+            document.getElementById('filterProductName').value = '';
+            document.getElementById('filterCategory1').value = '';
+            document.getElementById('filterCategory2').innerHTML = '<option value="">All Subcategories</option>';
+            document.getElementById('filterPriceMin').value = '';
+            document.getElementById('filterPriceMax').value = '';
+            document.getElementById('filterBestSeller').checked = false;
+            document.getElementById('filterWholesale').checked = false;
+            document.getElementById('filterMOQ').checked = false;
+            document.getElementById('filterBulk').checked = false;
+            document.getElementById('filterHasUnit').checked = false;
+            document.getElementById('sortField').value = 'name-asc';
+            
+            applyFilters();
+        }
+
+        // ===== PAGINATION FUNCTIONS =====
+        
+        // Render pagination controls
+        function renderPagination(startIndex, endIndex) {
+            const container = document.getElementById('paginationContainer');
+            const infoEl = document.getElementById('paginationInfo');
+            const controlsEl = document.getElementById('paginationControls');
+            
+            // Show/hide pagination based on total products
+            if (filteredProducts.length <= 10) {
+                container.style.display = 'none';
+                return;
+            }
+            
+            container.style.display = 'flex';
+            
+            // Update info text
+            infoEl.textContent = `Showing ${startIndex + 1}-${endIndex} of ${filteredProducts.length} products`;
+            
+            // Generate pagination buttons
+            let paginationHTML = '';
+            
+            // Previous button
+            paginationHTML += `<button class="pagination-btn" onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="15 18 9 12 15 6"></polyline>
+                </svg>
+            </button>`;
+            
+            // Page numbers (show max 5 pages)
+            const maxVisiblePages = 5;
+            let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+            let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+            
+            if (endPage - startPage < maxVisiblePages - 1) {
+                startPage = Math.max(1, endPage - maxVisiblePages + 1);
+            }
+            
+            if (startPage > 1) {
+                paginationHTML += `<button class="pagination-btn" onclick="goToPage(1)">1</button>`;
+                if (startPage > 2) paginationHTML += `<span style="padding: 0 8px;">...</span>`;
+            }
+            
+            for (let i = startPage; i <= endPage; i++) {
+                paginationHTML += `<button class="pagination-btn ${i === currentPage ? 'active' : ''}" onclick="goToPage(${i})">${i}</button>`;
+            }
+            
+            if (endPage < totalPages) {
+                if (endPage < totalPages - 1) paginationHTML += `<span style="padding: 0 8px;">...</span>`;
+                paginationHTML += `<button class="pagination-btn" onclick="goToPage(${totalPages})">${totalPages}</button>`;
+            }
+            
+            // Next button
+            paginationHTML += `<button class="pagination-btn" onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                </svg>
+            </button>`;
+            
+            controlsEl.innerHTML = paginationHTML;
+        }
+
+        // Go to specific page
+        function goToPage(page) {
+            if (page < 1 || page > totalPages) return;
+            currentPage = page;
+            renderFilteredProducts();
+            
+            // Scroll to top of products table
+            document.querySelector('.products-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        // Change page size
+        function changePageSize() {
+            pageSize = parseInt(document.getElementById('pageSize').value);
+            currentPage = 1;
+            renderFilteredProducts();
         }
 
         // Show status message
@@ -888,6 +2526,169 @@
                 }, 3000);
             }
         }
+
+        // Update badge preview based on selected options
+        function updateBadgePreview() {
+            const bestSeller = document.getElementById('bestSeller').checked;
+            const wholesaleAvailable = document.getElementById('wholesaleAvailable').checked;
+            const moqFriendly = document.getElementById('moqFriendly').checked;
+            const bulkDiscount = document.getElementById('bulkDiscount').checked;
+
+            const badges = [];
+            if (bestSeller) badges.push('Best Seller');
+            if (wholesaleAvailable) badges.push('Wholesale');
+            if (moqFriendly) badges.push('MOQ Friendly');
+            if (bulkDiscount) badges.push('Bulk Discount');
+
+            const previewEl = document.getElementById('badgePreview');
+            const previewText = document.getElementById('badgePreviewText');
+
+            if (badges.length > 0) {
+                previewEl.style.display = 'inline-flex';
+                previewText.textContent = `Active badges: ${badges.join(', ')}`;
+            } else {
+                previewEl.style.display = 'none';
+            }
+        }
+
+        // ===== PHASE 6: PRICING UNIT FUNCTIONS =====
+        
+        // Standard pricing units
+        const PRICING_UNITS = ['Yard', 'Piece', 'Meter', 'Roll', 'Pack', 'Set'];
+
+        // Update pricing unit selection and price label
+        function updatePricingUnit() {
+            const selectedUnit = getSelectedPricingUnit();
+            const customContainer = document.getElementById('customUnitContainer');
+            const priceLabel = document.getElementById('priceFieldLabel');
+            const pricePreviewText = document.getElementById('pricePreviewText');
+            const priceInput = document.getElementById('productPrice');
+            const currentPrice = priceInput.value ? parseFloat(priceInput.value).toLocaleString() : 'X,XXX';
+
+            // Show/hide custom unit input
+            if (document.getElementById('unitCustom').checked) {
+                customContainer.classList.add('show');
+            } else {
+                customContainer.classList.remove('show');
+            }
+
+            // Update price field label
+            if (selectedUnit) {
+                priceLabel.textContent = `Price per ${selectedUnit} (₦) *`;
+                pricePreviewText.textContent = `₦${currentPrice} / ${selectedUnit}`;
+            } else {
+                priceLabel.textContent = 'Price (₦) *';
+                pricePreviewText.textContent = `₦${currentPrice}`;
+            }
+        }
+
+        // Get the currently selected pricing unit
+        function getSelectedPricingUnit() {
+            const radios = document.querySelectorAll('input[name="pricingUnit"]');
+            for (const radio of radios) {
+                if (radio.checked) {
+                    if (radio.value === 'custom') {
+                        return document.getElementById('customUnitName').value.trim() || null;
+                    }
+                    return radio.value || null;
+                }
+            }
+            return null;
+        }
+
+        // Load pricing unit into form (when editing)
+        function loadPricingUnit(unit) {
+            // Reset all first
+            resetPricingUnit();
+
+            if (!unit) {
+                document.getElementById('unitNone').checked = true;
+                return;
+            }
+
+            // Check if it's a standard unit
+            if (PRICING_UNITS.includes(unit)) {
+                const radioId = 'unit' + unit;
+                const radio = document.getElementById(radioId);
+                if (radio) {
+                    radio.checked = true;
+                }
+            } else {
+                // It's a custom unit
+                document.getElementById('unitCustom').checked = true;
+                document.getElementById('customUnitName').value = unit;
+                document.getElementById('customUnitContainer').classList.add('show');
+            }
+        }
+
+        // Reset pricing unit to default
+        function resetPricingUnit() {
+            document.getElementById('unitNone').checked = true;
+            document.getElementById('customUnitName').value = '';
+            document.getElementById('customUnitContainer').classList.remove('show');
+            document.getElementById('priceFieldLabel').textContent = 'Price (₦) *';
+        }
+
+        // ===== PHASE 6: DASHBOARD STATISTICS =====
+        
+        // Update dashboard statistics from loaded products
+        function updateDashboardStats() {
+            const totalProducts = products.length;
+            const wholesaleProducts = products.filter(p => p.wholesaleAvailable === true).length;
+            const bestSellers = products.filter(p => p.bestSeller === true).length;
+            const bulkEnabled = products.filter(p => p.bulkDiscount === true || p.moqFriendly === true).length;
+
+            // Update stat cards
+            document.getElementById('statTotalProducts').textContent = totalProducts;
+            document.getElementById('statWholesaleProducts').textContent = wholesaleProducts;
+            document.getElementById('statBestSellers').textContent = bestSellers;
+            document.getElementById('statBulkEnabled').textContent = bulkEnabled;
+        }
+
+        // ===== PHASE 6: PRODUCT INSIGHTS =====
+        
+        // Update product insights section when editing
+        function updateProductInsights(product) {
+            // Common unit
+            const unitEl = document.getElementById('insightUnit');
+            if (product.pricingUnit) {
+                unitEl.textContent = product.pricingUnit;
+                unitEl.className = 'insight-value';
+            } else {
+                unitEl.textContent = 'Not set';
+                unitEl.className = 'insight-value no';
+            }
+
+            // Bulk friendly
+            const bulkEl = document.getElementById('insightBulkFriendly');
+            const isBulkFriendly = product.bulkDiscount === true || product.moqFriendly === true;
+            bulkEl.textContent = isBulkFriendly ? 'Yes' : 'No';
+            bulkEl.className = isBulkFriendly ? 'insight-value yes' : 'insight-value no';
+
+            // Wholesale enabled
+            const wholesaleEl = document.getElementById('insightWholesale');
+            const isWholesale = product.wholesaleAvailable === true;
+            wholesaleEl.textContent = isWholesale ? 'Yes' : 'No';
+            wholesaleEl.className = isWholesale ? 'insight-value yes' : 'insight-value no';
+        }
+
+        // Add event listeners for B2B toggles and pricing unit
+        document.addEventListener('DOMContentLoaded', function() {
+            // B2B toggle listeners
+            const toggles = ['bestSeller', 'wholesaleAvailable', 'moqFriendly', 'bulkDiscount'];
+            toggles.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.addEventListener('change', updateBadgePreview);
+                }
+            });
+
+            // Price input listener for live preview update
+            const priceInput = document.getElementById('productPrice');
+            if (priceInput) {
+                priceInput.addEventListener('input', updatePricingUnit);
+            }
+        });
 
         // Initialize on load
         init();

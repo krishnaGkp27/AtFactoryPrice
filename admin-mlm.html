@@ -1,0 +1,1521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MLM Management - AtFactoryPrice Admin</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Header */
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .header-left img {
+            height: 40px;
+        }
+
+        .header-title h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+        }
+
+        .header-title p {
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 12px;
+        }
+
+        .btn {
+            background: #000;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn:hover {
+            background: #333;
+        }
+
+        .btn-secondary {
+            background: #f3f4f6;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e5e7eb;
+        }
+
+        .btn-danger {
+            background: #dc2626;
+        }
+
+        .btn-danger:hover {
+            background: #b91c1c;
+        }
+
+        .btn-success {
+            background: #059669;
+        }
+
+        .btn-success:hover {
+            background: #047857;
+        }
+
+        /* Navigation Tabs */
+        .nav-tabs {
+            display: flex;
+            gap: 4px;
+            background: white;
+            padding: 8px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        }
+
+        .nav-tab {
+            padding: 12px 24px;
+            border: none;
+            background: transparent;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: #666;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+
+        .nav-tab:hover {
+            background: #f3f4f6;
+        }
+
+        .nav-tab.active {
+            background: #000;
+            color: #fff;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        }
+
+        .stat-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .stat-card-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .stat-card-icon.purple { background: #ede9fe; color: #7c3aed; }
+        .stat-card-icon.green { background: #d1fae5; color: #059669; }
+        .stat-card-icon.yellow { background: #fef3c7; color: #d97706; }
+        .stat-card-icon.blue { background: #dbeafe; color: #2563eb; }
+        .stat-card-icon.red { background: #fee2e2; color: #dc2626; }
+
+        .stat-card-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #000;
+        }
+
+        .stat-card-label {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        /* Card */
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            margin-bottom: 24px;
+        }
+
+        .card-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-header h2 {
+            font-size: 1rem;
+            font-weight: 700;
+        }
+
+        .card-body {
+            padding: 24px;
+        }
+
+        /* Table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 14px 16px;
+            text-align: left;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        th {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background: #f9fafb;
+        }
+
+        td {
+            font-size: 0.9rem;
+        }
+
+        .badge {
+            display: inline-flex;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .badge-pending { background: #fef3c7; color: #d97706; }
+        .badge-approved { background: #dbeafe; color: #2563eb; }
+        .badge-paid { background: #d1fae5; color: #059669; }
+        .badge-rejected { background: #fee2e2; color: #dc2626; }
+
+        /* Commission Rules Form */
+        .rules-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+        }
+
+        .rule-card {
+            background: #f9fafb;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .rule-card h4 {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 16px;
+        }
+
+        .rule-input-group {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .rule-input-group input {
+            width: 80px;
+            padding: 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 1.25rem;
+            font-weight: 700;
+            text-align: center;
+        }
+
+        .rule-input-group input:focus {
+            outline: none;
+            border-color: #6366f1;
+        }
+
+        .rule-input-group span {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #666;
+        }
+
+        /* User Search */
+        .search-box {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .search-box input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 0.95rem;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: #000;
+        }
+
+        /* User Info Card */
+        .user-info-card {
+            background: #f9fafb;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 24px;
+        }
+
+        .user-info-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .user-avatar {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .user-details h3 {
+            font-size: 1.1rem;
+            font-weight: 700;
+        }
+
+        .user-details p {
+            color: #666;
+            font-size: 0.85rem;
+        }
+
+        .user-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+        }
+
+        .user-stat {
+            text-align: center;
+            padding: 12px;
+            background: white;
+            border-radius: 8px;
+        }
+
+        .user-stat-value {
+            font-size: 1.25rem;
+            font-weight: 700;
+        }
+
+        .user-stat-label {
+            font-size: 0.75rem;
+            color: #666;
+        }
+
+        /* Network Tree */
+        .network-tree {
+            padding: 20px;
+        }
+
+        .tree-level {
+            margin-left: 30px;
+            padding-left: 20px;
+            border-left: 2px solid #e5e7eb;
+        }
+
+        .tree-node {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: #f9fafb;
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        .tree-node-avatar {
+            width: 36px;
+            height: 36px;
+            background: #e5e7eb;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .tree-node-info {
+            flex: 1;
+        }
+
+        .tree-node-name {
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .tree-node-email {
+            font-size: 0.75rem;
+            color: #666;
+        }
+
+        .level-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 700;
+        }
+
+        .level-badge.l1 { background: #d1fae5; color: #059669; }
+        .level-badge.l2 { background: #ede9fe; color: #6366f1; }
+        .level-badge.l3 { background: #fef3c7; color: #d97706; }
+
+        /* Top Earners */
+        .top-earner-item {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 16px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .top-earner-item:last-child {
+            border-bottom: none;
+        }
+
+        .top-earner-rank {
+            width: 32px;
+            height: 32px;
+            background: #f3f4f6;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.85rem;
+        }
+
+        .top-earner-rank.gold { background: #fef3c7; color: #d97706; }
+        .top-earner-rank.silver { background: #f1f5f9; color: #64748b; }
+        .top-earner-rank.bronze { background: #fed7aa; color: #c2410c; }
+
+        .top-earner-info {
+            flex: 1;
+        }
+
+        .top-earner-name {
+            font-weight: 600;
+        }
+
+        .top-earner-amount {
+            font-weight: 700;
+            color: #059669;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-overlay.show {
+            display: flex;
+        }
+
+        .modal {
+            background: white;
+            border-radius: 16px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            font-size: 1.1rem;
+            font-weight: 700;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            opacity: 0.5;
+        }
+
+        .modal-close:hover {
+            opacity: 1;
+        }
+
+        .modal-body {
+            padding: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #333;
+        }
+
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 0.95rem;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #000;
+        }
+
+        /* Tab Content */
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Status Message */
+        .status-msg {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            display: none;
+        }
+
+        .status-msg.show {
+            display: block;
+        }
+
+        .status-msg.success {
+            background: #d1fae5;
+            color: #059669;
+        }
+
+        .status-msg.error {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        /* Loading */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        /* Login Screen */
+        .login-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        }
+
+        .login-box {
+            background: white;
+            padding: 40px;
+            border-radius: 16px;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        .login-box h1 {
+            font-size: 1.5rem;
+            margin-bottom: 8px;
+        }
+
+        .login-box > p {
+            color: #666;
+            margin-bottom: 24px;
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .stats-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .rules-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .user-stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .header {
+                flex-direction: column;
+                gap: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- Login Screen -->
+        <div class="login-container" id="loginScreen">
+            <div class="login-box">
+                <h1>MLM Admin</h1>
+                <p>AtFactoryPrice Management</p>
+                
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="loginEmail" placeholder="admin@atfactoryprice.com">
+                </div>
+                
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="loginPassword" placeholder="••••••••">
+                </div>
+                
+                <button class="btn" onclick="login()" style="width: 100%">Login to Dashboard</button>
+            </div>
+        </div>
+
+        <!-- Admin Dashboard -->
+        <div id="dashboard" style="display: none;">
+            <div class="container">
+                <div class="header">
+                    <div class="header-left">
+                        <img src="images/logo.png" alt="AtFactoryPrice" onerror="this.style.display='none'">
+                        <div class="header-title">
+                            <h1>MLM Management</h1>
+                            <p>Commission rules, payouts, and network analytics</p>
+                        </div>
+                    </div>
+                    <div class="header-actions">
+                        <a href="admin.html" class="btn btn-secondary">← Back to Admin</a>
+                        <button class="btn btn-danger" onclick="logout()">Logout</button>
+                    </div>
+                </div>
+
+                <div id="statusMsg" class="status-msg"></div>
+
+                <!-- Stats Overview -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-card-header">
+                            <div class="stat-card-icon purple">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                    <circle cx="9" cy="7" r="4"></circle>
+                                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                                    <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="stat-card-value" id="statTotalUsers">0</div>
+                        <div class="stat-card-label">Total MLM Users</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card-header">
+                            <div class="stat-card-icon green">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="1" x2="12" y2="23"></line>
+                                    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="stat-card-value" id="statTotalCommissions">₦0</div>
+                        <div class="stat-card-label">Total Commissions</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card-header">
+                            <div class="stat-card-icon yellow">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <polyline points="12 6 12 12 16 14"></polyline>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="stat-card-value" id="statPendingCommissions">₦0</div>
+                        <div class="stat-card-label">Pending Commissions</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card-header">
+                            <div class="stat-card-icon red">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="stat-card-value" id="statPendingPayouts">₦0</div>
+                        <div class="stat-card-label">Pending Payouts</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card-header">
+                            <div class="stat-card-icon blue">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="1" y="3" width="15" height="13"></rect>
+                                    <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon>
+                                    <circle cx="5.5" cy="18.5" r="2.5"></circle>
+                                    <circle cx="18.5" cy="18.5" r="2.5"></circle>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="stat-card-value" id="statPendingPayoutCount">0</div>
+                        <div class="stat-card-label">Payout Requests</div>
+                    </div>
+                </div>
+
+                <!-- Navigation Tabs -->
+                <div class="nav-tabs">
+                    <button class="nav-tab active" onclick="switchTab('overview')">Overview</button>
+                    <button class="nav-tab" onclick="switchTab('rules')">Commission Rules</button>
+                    <button class="nav-tab" onclick="switchTab('payouts')">Payouts</button>
+                    <button class="nav-tab" onclick="switchTab('users')">User Network</button>
+                    <button class="nav-tab" onclick="switchTab('audit')">Audit Log</button>
+                </div>
+
+                <!-- Tab: Overview -->
+                <div class="tab-content active" id="tab-overview">
+                    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px;">
+                        <!-- Recent Commissions -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>Recent Commissions</h2>
+                            </div>
+                            <div class="card-body" style="padding: 0;">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Date</th>
+                                            <th>Order</th>
+                                            <th>Beneficiary</th>
+                                            <th>Level</th>
+                                            <th>Amount</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="recentCommissionsTable">
+                                        <tr><td colspan="6" class="loading">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Top Earners -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>Top Earners</h2>
+                            </div>
+                            <div class="card-body" style="padding: 0;" id="topEarnersContainer">
+                                <div class="loading">Loading...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab: Commission Rules -->
+                <div class="tab-content" id="tab-rules">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Commission Rules Configuration</h2>
+                            <button class="btn" onclick="saveCommissionRules()">Save Changes</button>
+                        </div>
+                        <div class="card-body">
+                            <p style="color: #666; margin-bottom: 20px;">
+                                Configure commission percentages for each level. 
+                                Total commission per order should not exceed 20%.
+                            </p>
+                            <div class="rules-grid">
+                                <div class="rule-card">
+                                    <h4>Level 1 (Direct Referral)</h4>
+                                    <div class="rule-input-group">
+                                        <input type="number" id="ruleLevel1" value="10" min="0" max="20">
+                                        <span>%</span>
+                                    </div>
+                                </div>
+                                <div class="rule-card">
+                                    <h4>Level 2</h4>
+                                    <div class="rule-input-group">
+                                        <input type="number" id="ruleLevel2" value="5" min="0" max="20">
+                                        <span>%</span>
+                                    </div>
+                                </div>
+                                <div class="rule-card">
+                                    <h4>Level 3</h4>
+                                    <div class="rule-input-group">
+                                        <input type="number" id="ruleLevel3" value="2" min="0" max="20">
+                                        <span>%</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div style="margin-top: 20px; padding: 16px; background: #fef3c7; border-radius: 8px;">
+                                <strong>Current Total:</strong> <span id="totalCommissionPercent">17</span>% per order
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab: Payouts -->
+                <div class="tab-content" id="tab-payouts">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Withdrawal Requests</h2>
+                            <button class="btn btn-secondary" onclick="exportPayouts()">Export CSV</button>
+                        </div>
+                        <div class="card-body" style="padding: 0;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>User</th>
+                                        <th>Amount</th>
+                                        <th>Bank Details</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="payoutsTable">
+                                    <tr><td colspan="6" class="loading">Loading...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab: User Network -->
+                <div class="tab-content" id="tab-users">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>User Network Inspector</h2>
+                        </div>
+                        <div class="card-body">
+                            <div class="search-box">
+                                <input type="text" id="userSearchInput" placeholder="Search by email or referral code...">
+                                <button class="btn" onclick="searchUser()">Search</button>
+                            </div>
+                            
+                            <div id="userSearchResult" style="display: none;">
+                                <!-- User info will be populated here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab: Audit Log -->
+                <div class="tab-content" id="tab-audit">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>MLM Audit Log</h2>
+                        </div>
+                        <div class="card-body" style="padding: 0;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>Action</th>
+                                        <th>Details</th>
+                                        <th>User</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="auditLogTable">
+                                    <tr><td colspan="4" class="loading">Loading...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Process Payout Modal -->
+    <div class="modal-overlay" id="payoutModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Process Payout</h3>
+                <button class="modal-close" onclick="closePayoutModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div id="payoutModalContent">
+                    <!-- Content will be populated -->
+                </div>
+                <div class="form-group">
+                    <label>Admin Notes</label>
+                    <textarea id="payoutNotes" rows="3" placeholder="Optional notes..."></textarea>
+                </div>
+                <div style="display: flex; gap: 12px; margin-top: 20px;">
+                    <button class="btn btn-success" onclick="approvePayout()" style="flex: 1;">Approve & Mark Paid</button>
+                    <button class="btn btn-danger" onclick="rejectPayout()" style="flex: 1;">Reject</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
+    <!-- MLM Service -->
+    <script src="js/mlm-service.js"></script>
+
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA3SzcQWEgWv51hA5CsNyj6WG1cp-sZYKA",
+            authDomain: "atfactoryprice-6ba8f.firebaseapp.com",
+            projectId: "atfactoryprice-6ba8f",
+            storageBucket: "atfactoryprice-6ba8f.firebasestorage.app",
+            messagingSenderId: "660895645396",
+            appId: "1:660895645396:web:a4ea1e8febc6e0b7f74541"
+        };
+
+        // Initialize Firebase
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        let currentAdmin = null;
+        let currentPayoutId = null;
+
+        // Show status message
+        function showStatus(message, type) {
+            const el = document.getElementById('statusMsg');
+            el.textContent = message;
+            el.className = `status-msg show ${type}`;
+            setTimeout(() => el.classList.remove('show'), 3000);
+        }
+
+        // Format currency
+        function formatCurrency(amount) {
+            return '₦' + (amount || 0).toLocaleString();
+        }
+
+        // Format date
+        function formatDate(date) {
+            if (!date) return '-';
+            const d = date.toDate ? date.toDate() : new Date(date);
+            return d.toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' });
+        }
+
+        // Login
+        async function login() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+
+            if (!email || !password) {
+                alert('Please enter email and password');
+                return;
+            }
+
+            try {
+                await auth.signInWithEmailAndPassword(email, password);
+            } catch (error) {
+                alert('Login failed: ' + error.message);
+            }
+        }
+
+        // Logout
+        async function logout() {
+            await auth.signOut();
+        }
+
+        // Check auth state
+        auth.onAuthStateChanged(async (user) => {
+            if (user) {
+                currentAdmin = user;
+                document.getElementById('loginScreen').style.display = 'none';
+                document.getElementById('dashboard').style.display = 'block';
+                loadDashboardData();
+            } else {
+                document.getElementById('loginScreen').style.display = 'flex';
+                document.getElementById('dashboard').style.display = 'none';
+            }
+        });
+
+        // Load dashboard data
+        async function loadDashboardData() {
+            try {
+                const stats = await MLMService.getAdminMLMStats();
+                
+                document.getElementById('statTotalUsers').textContent = stats.totalMLMUsers;
+                document.getElementById('statTotalCommissions').textContent = formatCurrency(stats.totalCommissions);
+                document.getElementById('statPendingCommissions').textContent = formatCurrency(stats.pendingCommissions);
+                document.getElementById('statPendingPayouts').textContent = formatCurrency(stats.pendingPayouts);
+                document.getElementById('statPendingPayoutCount').textContent = stats.pendingPayoutCount;
+
+                // Load top earners
+                renderTopEarners(stats.topEarners);
+                
+                // Load recent commissions
+                loadRecentCommissions();
+                
+                // Load commission rules
+                loadCommissionRules();
+                
+                // Load payouts
+                loadPayouts();
+                
+                // Load audit log
+                loadAuditLog();
+                
+            } catch (error) {
+                console.error('Error loading dashboard:', error);
+            }
+        }
+
+        // Render top earners
+        function renderTopEarners(earners) {
+            const container = document.getElementById('topEarnersContainer');
+            
+            if (earners.length === 0) {
+                container.innerHTML = '<div class="loading">No earners yet</div>';
+                return;
+            }
+
+            container.innerHTML = earners.map((e, i) => `
+                <div class="top-earner-item">
+                    <div class="top-earner-rank ${i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : ''}">${i + 1}</div>
+                    <div class="top-earner-info">
+                        <div class="top-earner-name">${e.name}</div>
+                    </div>
+                    <div class="top-earner-amount">${formatCurrency(e.totalEarned)}</div>
+                </div>
+            `).join('');
+        }
+
+        // Load recent commissions
+        async function loadRecentCommissions() {
+            const tbody = document.getElementById('recentCommissionsTable');
+            
+            try {
+                const snapshot = await db.collection('mlm_commissions')
+                    .orderBy('createdAt', 'desc')
+                    .limit(20)
+                    .get();
+
+                if (snapshot.empty) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="loading">No commissions yet</td></tr>';
+                    return;
+                }
+
+                const rows = [];
+                for (const doc of snapshot.docs) {
+                    const data = doc.data();
+                    
+                    // Get beneficiary name
+                    let beneficiaryName = 'Unknown';
+                    try {
+                        const userDoc = await db.collection('users').doc(data.beneficiaryId).get();
+                        if (userDoc.exists) beneficiaryName = userDoc.data().name || userDoc.data().email;
+                    } catch (e) {}
+
+                    rows.push(`
+                        <tr>
+                            <td>${formatDate(data.createdAt)}</td>
+                            <td>${data.orderId?.substring(0, 8) || '-'}...</td>
+                            <td>${beneficiaryName}</td>
+                            <td><span class="level-badge l${data.level}">L${data.level}</span></td>
+                            <td>${formatCurrency(data.commissionAmount)}</td>
+                            <td><span class="badge badge-${data.status}">${data.status}</span></td>
+                        </tr>
+                    `);
+                }
+
+                tbody.innerHTML = rows.join('');
+                
+            } catch (error) {
+                console.error('Error loading commissions:', error);
+                tbody.innerHTML = '<tr><td colspan="6" class="loading">Error loading data</td></tr>';
+            }
+        }
+
+        // Load commission rules
+        async function loadCommissionRules() {
+            const rules = await MLMService.getCommissionRules();
+            
+            document.getElementById('ruleLevel1').value = rules[1] || 10;
+            document.getElementById('ruleLevel2').value = rules[2] || 5;
+            document.getElementById('ruleLevel3').value = rules[3] || 2;
+            
+            updateTotalPercent();
+        }
+
+        // Update total percent display
+        function updateTotalPercent() {
+            const l1 = parseFloat(document.getElementById('ruleLevel1').value) || 0;
+            const l2 = parseFloat(document.getElementById('ruleLevel2').value) || 0;
+            const l3 = parseFloat(document.getElementById('ruleLevel3').value) || 0;
+            document.getElementById('totalCommissionPercent').textContent = l1 + l2 + l3;
+        }
+
+        // Add listeners for rule inputs
+        document.addEventListener('DOMContentLoaded', () => {
+            ['ruleLevel1', 'ruleLevel2', 'ruleLevel3'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener('input', updateTotalPercent);
+            });
+        });
+
+        // Save commission rules
+        async function saveCommissionRules() {
+            const rules = {
+                1: parseFloat(document.getElementById('ruleLevel1').value) || 0,
+                2: parseFloat(document.getElementById('ruleLevel2').value) || 0,
+                3: parseFloat(document.getElementById('ruleLevel3').value) || 0
+            };
+
+            const result = await MLMService.saveCommissionRules(rules);
+            
+            if (result.success) {
+                showStatus('Commission rules saved successfully!', 'success');
+            } else {
+                showStatus(result.error || 'Error saving rules', 'error');
+            }
+        }
+
+        // Load payouts
+        async function loadPayouts() {
+            const tbody = document.getElementById('payoutsTable');
+            
+            try {
+                const snapshot = await db.collection('mlm_withdrawals')
+                    .orderBy('requestedAt', 'desc')
+                    .limit(50)
+                    .get();
+
+                if (snapshot.empty) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="loading">No withdrawal requests</td></tr>';
+                    return;
+                }
+
+                const rows = [];
+                for (const doc of snapshot.docs) {
+                    const data = doc.data();
+                    
+                    // Get user name
+                    let userName = 'Unknown';
+                    try {
+                        const userDoc = await db.collection('users').doc(data.userId).get();
+                        if (userDoc.exists) userName = userDoc.data().name || userDoc.data().email;
+                    } catch (e) {}
+
+                    const bankDetails = data.paymentDetails || {};
+                    
+                    rows.push(`
+                        <tr>
+                            <td>${formatDate(data.requestedAt)}</td>
+                            <td>${userName}</td>
+                            <td><strong>${formatCurrency(data.amount)}</strong></td>
+                            <td>
+                                <small>
+                                    ${bankDetails.bankName || '-'}<br>
+                                    ${bankDetails.accountNumber || '-'}<br>
+                                    ${bankDetails.accountName || '-'}
+                                </small>
+                            </td>
+                            <td><span class="badge badge-${data.status}">${data.status}</span></td>
+                            <td>
+                                ${data.status === 'pending' ? `
+                                    <button class="btn btn-success" style="padding: 6px 12px; font-size: 0.8rem;" onclick="openPayoutModal('${doc.id}')">Process</button>
+                                ` : '-'}
+                            </td>
+                        </tr>
+                    `);
+                }
+
+                tbody.innerHTML = rows.join('');
+                
+            } catch (error) {
+                console.error('Error loading payouts:', error);
+                tbody.innerHTML = '<tr><td colspan="6" class="loading">Error loading data</td></tr>';
+            }
+        }
+
+        // Open payout modal
+        async function openPayoutModal(payoutId) {
+            currentPayoutId = payoutId;
+            
+            const doc = await db.collection('mlm_withdrawals').doc(payoutId).get();
+            if (!doc.exists) {
+                alert('Payout not found');
+                return;
+            }
+
+            const data = doc.data();
+            const bankDetails = data.paymentDetails || {};
+            
+            // Get user name
+            let userName = 'Unknown';
+            try {
+                const userDoc = await db.collection('users').doc(data.userId).get();
+                if (userDoc.exists) userName = userDoc.data().name || userDoc.data().email;
+            } catch (e) {}
+
+            document.getElementById('payoutModalContent').innerHTML = `
+                <div style="background: #f9fafb; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+                    <p><strong>User:</strong> ${userName}</p>
+                    <p><strong>Amount:</strong> ${formatCurrency(data.amount)}</p>
+                    <p><strong>Bank:</strong> ${bankDetails.bankName || '-'}</p>
+                    <p><strong>Account:</strong> ${bankDetails.accountNumber || '-'}</p>
+                    <p><strong>Name:</strong> ${bankDetails.accountName || '-'}</p>
+                </div>
+            `;
+
+            document.getElementById('payoutModal').classList.add('show');
+        }
+
+        // Close payout modal
+        function closePayoutModal() {
+            document.getElementById('payoutModal').classList.remove('show');
+            currentPayoutId = null;
+        }
+
+        // Approve payout
+        async function approvePayout() {
+            if (!currentPayoutId) return;
+
+            const notes = document.getElementById('payoutNotes').value;
+            const result = await MLMService.processWithdrawal(currentPayoutId, currentAdmin.uid, true, notes);
+            
+            if (result.success) {
+                showStatus('Payout approved and marked as paid!', 'success');
+                closePayoutModal();
+                loadPayouts();
+                loadDashboardData();
+            } else {
+                showStatus(result.error || 'Error processing payout', 'error');
+            }
+        }
+
+        // Reject payout
+        async function rejectPayout() {
+            if (!currentPayoutId) return;
+
+            const notes = document.getElementById('payoutNotes').value;
+            if (!notes) {
+                alert('Please provide a reason for rejection');
+                return;
+            }
+
+            const result = await MLMService.processWithdrawal(currentPayoutId, currentAdmin.uid, false, notes);
+            
+            if (result.success) {
+                showStatus('Payout rejected. Funds returned to user.', 'success');
+                closePayoutModal();
+                loadPayouts();
+                loadDashboardData();
+            } else {
+                showStatus(result.error || 'Error processing payout', 'error');
+            }
+        }
+
+        // Search user
+        async function searchUser() {
+            const query = document.getElementById('userSearchInput').value.trim();
+            if (!query) return;
+
+            const resultDiv = document.getElementById('userSearchResult');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = '<div class="loading">Searching...</div>';
+
+            try {
+                // Search by email or referral code
+                let userDoc = null;
+                
+                // Try email first
+                const emailSnapshot = await db.collection('users')
+                    .where('email', '==', query)
+                    .limit(1)
+                    .get();
+                
+                if (!emailSnapshot.empty) {
+                    userDoc = emailSnapshot.docs[0];
+                } else {
+                    // Try referral code
+                    const codeSnapshot = await db.collection('users')
+                        .where('referralCode', '==', query.toUpperCase())
+                        .limit(1)
+                        .get();
+                    
+                    if (!codeSnapshot.empty) {
+                        userDoc = codeSnapshot.docs[0];
+                    }
+                }
+
+                if (!userDoc) {
+                    resultDiv.innerHTML = '<div class="loading">User not found</div>';
+                    return;
+                }
+
+                const userData = userDoc.data();
+                const userId = userDoc.id;
+
+                // Get wallet and network
+                const wallet = await MLMService.getUserWallet(userId);
+                const network = await MLMService.getNetworkCounts(userId);
+                const downline = await MLMService.getDirectDownline(userId);
+
+                resultDiv.innerHTML = `
+                    <div class="user-info-card">
+                        <div class="user-info-header">
+                            <div class="user-avatar">${(userData.name || 'U').substring(0, 2).toUpperCase()}</div>
+                            <div class="user-details">
+                                <h3>${userData.name || 'Unknown'}</h3>
+                                <p>${userData.email}</p>
+                                <p>Referral Code: <strong>${userData.referralCode || 'N/A'}</strong></p>
+                            </div>
+                        </div>
+                        <div class="user-stats-grid">
+                            <div class="user-stat">
+                                <div class="user-stat-value">${formatCurrency(wallet?.totalEarned || 0)}</div>
+                                <div class="user-stat-label">Total Earned</div>
+                            </div>
+                            <div class="user-stat">
+                                <div class="user-stat-value">${formatCurrency(wallet?.available || 0)}</div>
+                                <div class="user-stat-label">Available</div>
+                            </div>
+                            <div class="user-stat">
+                                <div class="user-stat-value">${network.total}</div>
+                                <div class="user-stat-label">Network Size</div>
+                            </div>
+                            <div class="user-stat">
+                                <div class="user-stat-value">${network.level1}</div>
+                                <div class="user-stat-label">Direct Referrals</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <h4 style="margin: 20px 0 12px;">Direct Downline (Level 1)</h4>
+                    <div class="network-tree">
+                        ${downline.length === 0 ? '<p style="color: #666;">No direct referrals yet</p>' : 
+                            downline.map(d => `
+                                <div class="tree-node">
+                                    <div class="tree-node-avatar">${(d.name || 'U').substring(0, 2).toUpperCase()}</div>
+                                    <div class="tree-node-info">
+                                        <div class="tree-node-name">${d.name || 'Unknown'}</div>
+                                        <div class="tree-node-email">${d.email}</div>
+                                    </div>
+                                    <span class="level-badge l1">L1</span>
+                                </div>
+                            `).join('')
+                        }
+                    </div>
+                `;
+
+            } catch (error) {
+                console.error('Search error:', error);
+                resultDiv.innerHTML = '<div class="loading">Error searching user</div>';
+            }
+        }
+
+        // Load audit log
+        async function loadAuditLog() {
+            const tbody = document.getElementById('auditLogTable');
+            
+            try {
+                const snapshot = await db.collection('mlm_audit_logs')
+                    .orderBy('timestamp', 'desc')
+                    .limit(50)
+                    .get();
+
+                if (snapshot.empty) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="loading">No audit logs yet</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = snapshot.docs.map(doc => {
+                    const data = doc.data();
+                    return `
+                        <tr>
+                            <td>${formatDate(data.timestamp)}</td>
+                            <td><span class="badge badge-${data.action.includes('approved') ? 'approved' : data.action.includes('rejected') ? 'rejected' : 'pending'}">${data.action}</span></td>
+                            <td>${data.orderId ? `Order: ${data.orderId.substring(0, 8)}...` : ''} ${data.amount ? formatCurrency(data.amount) : ''}</td>
+                            <td>${data.userId?.substring(0, 8) || '-'}...</td>
+                        </tr>
+                    `;
+                }).join('');
+                
+            } catch (error) {
+                console.error('Error loading audit log:', error);
+                tbody.innerHTML = '<tr><td colspan="4" class="loading">Error loading data</td></tr>';
+            }
+        }
+
+        // Export payouts to CSV
+        async function exportPayouts() {
+            try {
+                const snapshot = await db.collection('mlm_withdrawals')
+                    .orderBy('requestedAt', 'desc')
+                    .get();
+
+                if (snapshot.empty) {
+                    alert('No payouts to export');
+                    return;
+                }
+
+                let csv = 'Date,User ID,Amount,Bank,Account Number,Account Name,Status\n';
+                
+                snapshot.docs.forEach(doc => {
+                    const d = doc.data();
+                    const bank = d.paymentDetails || {};
+                    csv += `${formatDate(d.requestedAt)},${d.userId},${d.amount},${bank.bankName || ''},${bank.accountNumber || ''},${bank.accountName || ''},${d.status}\n`;
+                });
+
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `mlm-payouts-${new Date().toISOString().split('T')[0]}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+
+            } catch (error) {
+                console.error('Export error:', error);
+                alert('Error exporting data');
+            }
+        }
+
+        // Switch tabs
+        function switchTab(tabId) {
+            // Update tab buttons
+            document.querySelectorAll('.nav-tab').forEach(tab => {
+                tab.classList.remove('active');
+                if (tab.textContent.toLowerCase().includes(tabId.split('-')[0])) {
+                    tab.classList.add('active');
+                }
+            });
+            
+            // Update tab content
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            const targetTab = document.getElementById('tab-' + tabId);
+            if (targetTab) {
+                targetTab.classList.add('active');
+            }
+        }
+
+        // Fix tab switching
+        document.querySelectorAll('.nav-tab').forEach(tab => {
+            tab.addEventListener('click', function() {
+                const tabName = this.textContent.toLowerCase().replace(' ', '');
+                const tabMap = {
+                    'overview': 'overview',
+                    'commissionrules': 'rules',
+                    'payouts': 'payouts',
+                    'usernetwork': 'users',
+                    'auditlog': 'audit'
+                };
+                const tabId = tabMap[tabName] || 'overview';
+                
+                document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+                this.classList.add('active');
+                
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                document.getElementById('tab-' + tabId)?.classList.add('active');
+            });
+        });
+    </script>
+</body>
+</html>

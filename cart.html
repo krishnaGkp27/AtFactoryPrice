@@ -795,10 +795,15 @@
                 </a>
             </h1>
             <div class="nav-links">
-                <a href="index.html" class="nav-link">Home</a>
+                <a href="index.html" class="nav-link" title="Home">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                        <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                    </svg>
+                </a>
                 <a href="products.html" class="nav-link">Products</a>
-                <a href="cart.html" class="nav-link cart-link active">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <a href="cart.html" class="nav-link cart-link active" title="Cart">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="9" cy="21" r="1"></circle>
                         <circle cx="20" cy="21" r="1"></circle>
                         <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
@@ -857,12 +862,13 @@
         // Update item quantity
         function updateQuantity(productId, change) {
             let cart = getCart();
-            const item = cart.find(item => item.id === productId);
+            // Compare as strings to handle both string and number IDs
+            const item = cart.find(item => String(item.id) === String(productId));
             
             if (item) {
                 item.quantity += change;
                 if (item.quantity <= 0) {
-                    cart = cart.filter(item => item.id !== productId);
+                    cart = cart.filter(item => String(item.id) !== String(productId));
                 }
             }
             
@@ -874,7 +880,8 @@
         function removeFromCart(productId) {
             if (confirm('Remove this item from cart?')) {
                 let cart = getCart();
-                cart = cart.filter(item => item.id !== productId);
+                // Compare as strings to handle both string and number IDs
+                cart = cart.filter(item => String(item.id) !== String(productId));
                 saveCart(cart);
                 displayCart();
             }
@@ -919,22 +926,25 @@
                 return;
             }
 
-            const cartItemsHTML = cart.map(item => `
+            const cartItemsHTML = cart.map(item => {
+                // Escape the ID for safe use in onclick handlers (handles both string and number IDs)
+                const safeId = String(item.id).replace(/'/g, "\\'");
+                return `
                 <div class="cart-item">
                     <img src="${item.image}" alt="${item.name}" class="cart-item-image"
                          onerror="this.src='https://via.placeholder.com/100x100/667eea/ffffff?text=${encodeURIComponent(item.name)}'">
                     <div class="cart-item-info">
                         <h3>${item.name}</h3>
-                        <p>$${item.price.toFixed(2)}</p>
+                        <p>₦${item.price.toLocaleString()}${item.pricingUnit ? ' / ' + item.pricingUnit : ''}</p>
                     </div>
                     <div class="quantity-controls">
-                        <button class="qty-btn" onclick="updateQuantity(${item.id}, -1)">−</button>
+                        <button class="qty-btn" onclick="updateQuantity('${safeId}', -1)">−</button>
                         <span class="qty-display">${item.quantity}</span>
-                        <button class="qty-btn" onclick="updateQuantity(${item.id}, 1)">+</button>
+                        <button class="qty-btn" onclick="updateQuantity('${safeId}', 1)">+</button>
                     </div>
                     <div class="cart-item-price">
-                        <div class="price">$${(item.price * item.quantity).toFixed(2)}</div>
-                        <button class="btn-remove" onclick="removeFromCart(${item.id})">
+                        <div class="price">₦${(item.price * item.quantity).toLocaleString()}</div>
+                        <button class="btn-remove" onclick="removeFromCart('${safeId}')">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="3 6 5 6 21 6"></polyline>
                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -943,7 +953,8 @@
                         </button>
                     </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
 
             // Generate cart items list for WhatsApp message
             const cartItemsList = cart.map(item => `- ${item.name} (Qty: ${item.quantity})`).join('%0A');

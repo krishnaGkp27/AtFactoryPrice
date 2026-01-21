@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Management - AtFactoryPrice Admin</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .header-left img {
+            height: 40px;
+        }
+
+        .header-title h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+        }
+
+        .header-title p {
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 12px;
+        }
+
+        .btn {
+            background: #000;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+        }
+
+        .btn:hover {
+            background: #333;
+        }
+
+        .btn-secondary {
+            background: #f3f4f6;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e5e7eb;
+        }
+
+        .btn-success {
+            background: #059669;
+        }
+
+        .btn-success:hover {
+            background: #047857;
+        }
+
+        .btn-danger {
+            background: #dc2626;
+        }
+
+        .btn-danger:hover {
+            background: #b91c1c;
+        }
+
+        .btn-warning {
+            background: #d97706;
+        }
+
+        .btn-warning:hover {
+            background: #b45309;
+        }
+
+        /* Stats */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        }
+
+        .stat-card-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #000;
+        }
+
+        .stat-card-label {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        /* Card */
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            margin-bottom: 24px;
+        }
+
+        .card-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-header h2 {
+            font-size: 1rem;
+            font-weight: 700;
+        }
+
+        .card-body {
+            padding: 24px;
+        }
+
+        /* Filters */
+        .filter-bar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .filter-bar select,
+        .filter-bar input {
+            padding: 10px 14px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 0.9rem;
+        }
+
+        .filter-bar select:focus,
+        .filter-bar input:focus {
+            outline: none;
+            border-color: #000;
+        }
+
+        /* Table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 14px 16px;
+            text-align: left;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        th {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background: #f9fafb;
+        }
+
+        td {
+            font-size: 0.9rem;
+        }
+
+        .badge {
+            display: inline-flex;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .badge-pending { background: #fef3c7; color: #d97706; }
+        .badge-processing { background: #dbeafe; color: #2563eb; }
+        .badge-completed { background: #d1fae5; color: #059669; }
+        .badge-delivered { background: #d1fae5; color: #059669; }
+        .badge-cancelled { background: #fee2e2; color: #dc2626; }
+        .badge-unpaid { background: #fee2e2; color: #dc2626; }
+        .badge-paid { background: #d1fae5; color: #059669; }
+
+        /* Order Detail */
+        .order-items {
+            list-style: none;
+        }
+
+        .order-items li {
+            padding: 8px 0;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .order-items li:last-child {
+            border-bottom: none;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-overlay.show {
+            display: flex;
+        }
+
+        .modal {
+            background: white;
+            border-radius: 16px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            font-size: 1.1rem;
+            font-weight: 700;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            opacity: 0.5;
+        }
+
+        .modal-close:hover {
+            opacity: 1;
+        }
+
+        .modal-body {
+            padding: 24px;
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #f5f5f5;
+        }
+
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+
+        .detail-label {
+            color: #666;
+            font-size: 0.85rem;
+        }
+
+        .detail-value {
+            font-weight: 500;
+        }
+
+        /* Action buttons */
+        .action-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #f0f0f0;
+        }
+
+        .action-buttons button {
+            padding: 8px 14px;
+            font-size: 0.85rem;
+        }
+
+        /* Status Message */
+        .status-msg {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            display: none;
+        }
+
+        .status-msg.show {
+            display: block;
+        }
+
+        .status-msg.success {
+            background: #d1fae5;
+            color: #059669;
+        }
+
+        .status-msg.error {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        /* Login Screen */
+        .login-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #000 0%, #333 100%);
+        }
+
+        .login-box {
+            background: white;
+            padding: 40px;
+            border-radius: 16px;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        .login-box h1 {
+            font-size: 1.5rem;
+            margin-bottom: 8px;
+        }
+
+        .login-box > p {
+            color: #666;
+            margin-bottom: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #333;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 0.95rem;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #000;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .header {
+                flex-direction: column;
+                gap: 16px;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .filter-bar {
+                flex-direction: column;
+            }
+
+            table {
+                font-size: 0.8rem;
+            }
+
+            th, td {
+                padding: 10px 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- Login Screen -->
+        <div class="login-container" id="loginScreen">
+            <div class="login-box">
+                <h1>Order Management</h1>
+                <p>AtFactoryPrice Admin</p>
+                
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="loginEmail" placeholder="admin@atfactoryprice.com">
+                </div>
+                
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="loginPassword" placeholder="••••••••">
+                </div>
+                
+                <button class="btn" onclick="login()" style="width: 100%">Login</button>
+            </div>
+        </div>
+
+        <!-- Dashboard -->
+        <div id="dashboard" style="display: none;">
+            <div class="container">
+                <div class="header">
+                    <div class="header-left">
+                        <img src="images/logo.png" alt="AtFactoryPrice" onerror="this.style.display='none'">
+                        <div class="header-title">
+                            <h1>Order Management</h1>
+                            <p>Process orders and trigger MLM commissions</p>
+                        </div>
+                    </div>
+                    <div class="header-actions">
+                        <a href="admin.html" class="btn btn-secondary">← Products</a>
+                        <a href="admin-mlm.html" class="btn btn-secondary">MLM Dashboard</a>
+                        <button class="btn btn-danger" onclick="logout()">Logout</button>
+                    </div>
+                </div>
+
+                <div id="statusMsg" class="status-msg"></div>
+
+                <!-- Stats -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-card-value" id="statTotalOrders">0</div>
+                        <div class="stat-card-label">Total Orders</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card-value" id="statPendingOrders">0</div>
+                        <div class="stat-card-label">Pending Orders</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card-value" id="statCompletedOrders">0</div>
+                        <div class="stat-card-label">Completed Orders</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card-value" id="statTotalRevenue">₦0</div>
+                        <div class="stat-card-label">Total Revenue</div>
+                    </div>
+                </div>
+
+                <!-- Orders Table -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Orders</h2>
+                        <button class="btn btn-secondary" onclick="loadOrders()">Refresh</button>
+                    </div>
+                    <div class="card-body" style="padding: 0;">
+                        <div class="filter-bar" style="padding: 16px;">
+                            <select id="filterStatus" onchange="filterOrders()">
+                                <option value="">All Statuses</option>
+                                <option value="pending">Pending</option>
+                                <option value="processing">Processing</option>
+                                <option value="completed">Completed</option>
+                                <option value="delivered">Delivered</option>
+                                <option value="cancelled">Cancelled</option>
+                            </select>
+                            <select id="filterPayment" onchange="filterOrders()">
+                                <option value="">All Payments</option>
+                                <option value="unpaid">Unpaid</option>
+                                <option value="paid">Paid</option>
+                            </select>
+                            <input type="text" id="filterSearch" placeholder="Search by name or phone..." oninput="filterOrders()">
+                        </div>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Order ID</th>
+                                    <th>Date</th>
+                                    <th>Customer</th>
+                                    <th>Total</th>
+                                    <th>Status</th>
+                                    <th>Payment</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ordersTable">
+                                <tr><td colspan="7" class="loading">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Order Detail Modal -->
+    <div class="modal-overlay" id="orderModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Order Details</h3>
+                <button class="modal-close" onclick="closeOrderModal()">×</button>
+            </div>
+            <div class="modal-body" id="orderModalContent">
+                <!-- Content populated dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
+    <!-- MLM Service -->
+    <script src="js/mlm-service.js"></script>
+
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA3SzcQWEgWv51hA5CsNyj6WG1cp-sZYKA",
+            authDomain: "atfactoryprice-6ba8f.firebaseapp.com",
+            projectId: "atfactoryprice-6ba8f",
+            storageBucket: "atfactoryprice-6ba8f.firebasestorage.app",
+            messagingSenderId: "660895645396",
+            appId: "1:660895645396:web:a4ea1e8febc6e0b7f74541"
+        };
+
+        // Initialize Firebase
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        let orders = [];
+        let currentOrderId = null;
+
+        // Show status message
+        function showStatus(message, type) {
+            const el = document.getElementById('statusMsg');
+            el.textContent = message;
+            el.className = `status-msg show ${type}`;
+            setTimeout(() => el.classList.remove('show'), 3000);
+        }
+
+        // Format currency
+        function formatCurrency(amount) {
+            return '₦' + (amount || 0).toLocaleString();
+        }
+
+        // Format date
+        function formatDate(date) {
+            if (!date) return '-';
+            const d = date.toDate ? date.toDate() : new Date(date);
+            return d.toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        }
+
+        // Login
+        async function login() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+
+            if (!email || !password) {
+                alert('Please enter email and password');
+                return;
+            }
+
+            try {
+                await auth.signInWithEmailAndPassword(email, password);
+            } catch (error) {
+                alert('Login failed: ' + error.message);
+            }
+        }
+
+        // Logout
+        async function logout() {
+            await auth.signOut();
+        }
+
+        // Check auth state
+        auth.onAuthStateChanged(async (user) => {
+            if (user) {
+                document.getElementById('loginScreen').style.display = 'none';
+                document.getElementById('dashboard').style.display = 'block';
+                loadOrders();
+            } else {
+                document.getElementById('loginScreen').style.display = 'flex';
+                document.getElementById('dashboard').style.display = 'none';
+            }
+        });
+
+        // Load orders
+        async function loadOrders() {
+            const tbody = document.getElementById('ordersTable');
+            tbody.innerHTML = '<tr><td colspan="7" class="loading">Loading...</td></tr>';
+
+            try {
+                const snapshot = await db.collection('orders')
+                    .orderBy('createdAt', 'desc')
+                    .limit(100)
+                    .get();
+
+                orders = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                }));
+
+                updateStats();
+                filterOrders();
+
+            } catch (error) {
+                console.error('Error loading orders:', error);
+                tbody.innerHTML = '<tr><td colspan="7" class="loading">Error loading orders</td></tr>';
+            }
+        }
+
+        // Update stats
+        function updateStats() {
+            const totalOrders = orders.length;
+            const pendingOrders = orders.filter(o => o.status === 'pending').length;
+            const completedOrders = orders.filter(o => ['completed', 'delivered'].includes(o.status)).length;
+            const totalRevenue = orders
+                .filter(o => o.paymentStatus === 'paid')
+                .reduce((sum, o) => sum + (o.total || 0), 0);
+
+            document.getElementById('statTotalOrders').textContent = totalOrders;
+            document.getElementById('statPendingOrders').textContent = pendingOrders;
+            document.getElementById('statCompletedOrders').textContent = completedOrders;
+            document.getElementById('statTotalRevenue').textContent = formatCurrency(totalRevenue);
+        }
+
+        // Filter orders
+        function filterOrders() {
+            const status = document.getElementById('filterStatus').value;
+            const payment = document.getElementById('filterPayment').value;
+            const search = document.getElementById('filterSearch').value.toLowerCase();
+
+            let filtered = orders;
+
+            if (status) {
+                filtered = filtered.filter(o => o.status === status);
+            }
+
+            if (payment) {
+                filtered = filtered.filter(o => o.paymentStatus === payment);
+            }
+
+            if (search) {
+                filtered = filtered.filter(o => 
+                    (o.customerName || '').toLowerCase().includes(search) ||
+                    (o.customerPhone || '').toLowerCase().includes(search) ||
+                    o.id.toLowerCase().includes(search)
+                );
+            }
+
+            renderOrders(filtered);
+        }
+
+        // Render orders table
+        function renderOrders(orderList) {
+            const tbody = document.getElementById('ordersTable');
+
+            if (orderList.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="loading">No orders found</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = orderList.map(order => `
+                <tr>
+                    <td><strong>${order.id.substring(0, 8)}...</strong></td>
+                    <td>${formatDate(order.createdAt)}</td>
+                    <td>
+                        <div>${order.customerName || 'Guest'}</div>
+                        <small style="color: #666;">${order.customerPhone || ''}</small>
+                    </td>
+                    <td><strong>${formatCurrency(order.total)}</strong></td>
+                    <td><span class="badge badge-${order.status || 'pending'}">${order.status || 'pending'}</span></td>
+                    <td><span class="badge badge-${order.paymentStatus || 'unpaid'}">${order.paymentStatus || 'unpaid'}</span></td>
+                    <td>
+                        <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8rem;" onclick="viewOrder('${order.id}')">View</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        // View order details
+        async function viewOrder(orderId) {
+            currentOrderId = orderId;
+            const order = orders.find(o => o.id === orderId);
+            
+            if (!order) {
+                alert('Order not found');
+                return;
+            }
+
+            const items = order.items || [];
+            const itemsHTML = items.map(item => `
+                <li>
+                    <span>${item.name} x${item.quantity}</span>
+                    <span>${formatCurrency(item.price * item.quantity)}</span>
+                </li>
+            `).join('');
+
+            document.getElementById('orderModalContent').innerHTML = `
+                <div class="detail-row">
+                    <span class="detail-label">Order ID</span>
+                    <span class="detail-value">${order.id}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Date</span>
+                    <span class="detail-value">${formatDate(order.createdAt)}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Status</span>
+                    <span class="detail-value"><span class="badge badge-${order.status || 'pending'}">${order.status || 'pending'}</span></span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Payment</span>
+                    <span class="detail-value"><span class="badge badge-${order.paymentStatus || 'unpaid'}">${order.paymentStatus || 'unpaid'}</span></span>
+                </div>
+                
+                <h4 style="margin: 20px 0 10px; font-size: 0.9rem; color: #666;">Customer Details</h4>
+                <div class="detail-row">
+                    <span class="detail-label">Name</span>
+                    <span class="detail-value">${order.customerName || '-'}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Phone</span>
+                    <span class="detail-value">${order.customerPhone || '-'}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Address</span>
+                    <span class="detail-value">${order.customerAddress || '-'}</span>
+                </div>
+                ${order.customerNotes ? `
+                <div class="detail-row">
+                    <span class="detail-label">Notes</span>
+                    <span class="detail-value">${order.customerNotes}</span>
+                </div>
+                ` : ''}
+                ${order.buyerId ? `
+                <div class="detail-row">
+                    <span class="detail-label">User ID</span>
+                    <span class="detail-value" style="font-size: 0.8rem;">${order.buyerId}</span>
+                </div>
+                ` : '<div class="detail-row"><span class="detail-label">Guest Order</span><span class="detail-value">Yes</span></div>'}
+                
+                <h4 style="margin: 20px 0 10px; font-size: 0.9rem; color: #666;">Order Items</h4>
+                <ul class="order-items">
+                    ${itemsHTML || '<li>No items</li>'}
+                </ul>
+                
+                <div class="detail-row" style="margin-top: 16px; font-weight: 700;">
+                    <span>Total</span>
+                    <span>${formatCurrency(order.total)}</span>
+                </div>
+
+                <div class="action-buttons">
+                    ${order.status === 'pending' ? `
+                        <button class="btn btn-warning" onclick="updateOrderStatus('processing')">Mark Processing</button>
+                    ` : ''}
+                    ${order.status === 'processing' ? `
+                        <button class="btn btn-success" onclick="updateOrderStatus('completed')">Mark Completed</button>
+                    ` : ''}
+                    ${order.status === 'completed' ? `
+                        <button class="btn btn-success" onclick="updateOrderStatus('delivered')">Mark Delivered</button>
+                    ` : ''}
+                    ${order.paymentStatus !== 'paid' ? `
+                        <button class="btn btn-success" onclick="markAsPaid()">Mark as Paid + Calculate Commission</button>
+                    ` : ''}
+                    ${order.status !== 'cancelled' && order.status !== 'delivered' ? `
+                        <button class="btn btn-danger" onclick="updateOrderStatus('cancelled')">Cancel Order</button>
+                    ` : ''}
+                </div>
+            `;
+
+            document.getElementById('orderModal').classList.add('show');
+        }
+
+        // Close order modal
+        function closeOrderModal() {
+            document.getElementById('orderModal').classList.remove('show');
+            currentOrderId = null;
+        }
+
+        // Update order status
+        async function updateOrderStatus(newStatus) {
+            if (!currentOrderId) return;
+
+            try {
+                await db.collection('orders').doc(currentOrderId).update({
+                    status: newStatus,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+
+                showStatus(`Order marked as ${newStatus}!`, 'success');
+                closeOrderModal();
+                loadOrders();
+
+            } catch (error) {
+                console.error('Error updating order:', error);
+                showStatus('Error updating order status', 'error');
+            }
+        }
+
+        /**
+         * Mark order as paid and calculate MLM commissions
+         * This is the key function that triggers the MLM system
+         */
+        async function markAsPaid() {
+            if (!currentOrderId) return;
+
+            const order = orders.find(o => o.id === currentOrderId);
+            if (!order) return;
+
+            if (!confirm('Mark this order as PAID and calculate MLM commissions?\n\nThis will:\n- Set payment status to "paid"\n- Calculate commissions for the buyer\'s upline\n- Credit pending commissions to their wallets')) {
+                return;
+            }
+
+            try {
+                // Update order payment status
+                await db.collection('orders').doc(currentOrderId).update({
+                    paymentStatus: 'paid',
+                    status: order.status === 'pending' ? 'processing' : order.status,
+                    paidAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+
+                // Calculate MLM commissions if order has a registered buyer
+                if (order.buyerId) {
+                    console.log('Calculating commissions for buyer:', order.buyerId);
+                    
+                    const commissionResult = await MLMService.calculateOrderCommissions(
+                        currentOrderId,
+                        order.buyerId,
+                        order.total || 0
+                    );
+
+                    if (commissionResult.success) {
+                        const commissionsCount = commissionResult.commissions?.length || 0;
+                        if (commissionsCount > 0) {
+                            showStatus(`Order marked as paid! ${commissionsCount} commission(s) calculated.`, 'success');
+                        } else {
+                            showStatus('Order marked as paid! No commissions (no upline found).', 'success');
+                        }
+                    } else {
+                        showStatus(`Order marked as paid. Commission calculation: ${commissionResult.message || commissionResult.error}`, 'success');
+                    }
+                } else {
+                    showStatus('Order marked as paid! (Guest order - no MLM commissions)', 'success');
+                }
+
+                closeOrderModal();
+                loadOrders();
+
+            } catch (error) {
+                console.error('Error marking order as paid:', error);
+                showStatus('Error updating order', 'error');
+            }
+        }
+    </script>
+</body>
+</html>

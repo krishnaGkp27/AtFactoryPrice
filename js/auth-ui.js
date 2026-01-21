@@ -27,12 +27,56 @@ let currentUser = null;
 let currentUserData = null;
 let authInitialized = false;
 
+// Cache keys for instant auth display
+const AUTH_CACHE_KEY = 'auth_user_cache';
+
+// Get cached user data for instant display
+function getCachedAuthData() {
+    try {
+        const cached = localStorage.getItem(AUTH_CACHE_KEY);
+        if (cached) {
+            return JSON.parse(cached);
+        }
+    } catch (e) {
+        console.error('Error reading auth cache:', e);
+    }
+    return null;
+}
+
+// Save user data to cache
+function setCachedAuthData(userData) {
+    try {
+        if (userData) {
+            localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify(userData));
+        } else {
+            localStorage.removeItem(AUTH_CACHE_KEY);
+        }
+    } catch (e) {
+        console.error('Error saving auth cache:', e);
+    }
+}
+
+// Clear cached auth data (on logout)
+function clearCachedAuthData() {
+    try {
+        localStorage.removeItem(AUTH_CACHE_KEY);
+    } catch (e) {
+        console.error('Error clearing auth cache:', e);
+    }
+}
+
 // Auth UI Styles
 const authStyles = `
 <style id="auth-ui-styles">
     /* Auth Button in Navbar */
     .auth-nav-item {
         position: relative;
+        opacity: 0;
+        transition: opacity 0.2s ease-in-out;
+    }
+
+    .auth-nav-item.visible {
+        opacity: 1;
     }
 
     .btn-auth {
@@ -730,21 +774,37 @@ function initAuthUI() {
         document.body.insertAdjacentHTML('beforeend', checkoutPromptHTML);
     }
 
-    // Listen for auth state changes (don't show login button until auth state is determined)
+    // INSTANT: Show cached auth state immediately (no delay)
+    const cachedUser = getCachedAuthData();
+    if (cachedUser) {
+        currentUserData = cachedUser;
+        authInitialized = true;
+        updateNavbarAuth(true); // true = from cache, show immediately
+    }
+
+    // Listen for auth state changes (update when Firebase confirms)
     authInstance.onAuthStateChanged(async (user) => {
         currentUser = user;
         if (user) {
-            // Load user data
+            // Load user data from Firestore
             try {
                 const userDoc = await dbInstance.collection('users').doc(user.uid).get();
                 if (userDoc.exists) {
                     currentUserData = userDoc.data();
+                    // Cache for instant display on next page load
+                    setCachedAuthData({
+                        ...currentUserData,
+                        uid: user.uid,
+                        email: user.email
+                    });
                 }
             } catch (error) {
                 console.error('Error loading user data:', error);
             }
         } else {
             currentUserData = null;
+            // Clear cache on logout
+            clearCachedAuthData();
         }
         authInitialized = true;
         updateNavbarAuth();
@@ -786,7 +846,8 @@ function initAuthUI() {
 }
 
 // Update navbar with appropriate auth element
-function updateNavbarAuth() {
+// fromCache: if true, show immediately without transition (cached data)
+function updateNavbarAuth(fromCache = false) {
     const navLinks = document.querySelector('.nav-links');
     if (!navLinks) return;
 
@@ -802,11 +863,23 @@ function updateNavbarAuth() {
     const authElement = document.createElement('div');
     authElement.className = 'auth-nav-item';
 
-    if (currentUser) {
-        // Show user menu with "Welcome {user}"
+    // If from cache, show immediately; otherwise fade in
+    if (fromCache) {
+        authElement.classList.add('visible');
+    } else {
+        setTimeout(() => {
+            authElement.classList.add('visible');
+        }, 50);
+    }
+
+    // Check if user is logged in (from Firebase or cache)
+    const isLoggedIn = currentUser || (currentUserData && currentUserData.uid);
+    
+    if (isLoggedIn) {
+        // Show user menu with user name
         // Use currentUserData if available, otherwise fallback to Firebase Auth data
-        const displayName = currentUserData?.name || currentUser.displayName || currentUser.email?.split('@')[0] || 'User';
-        const displayEmail = currentUserData?.email || currentUser.email || '';
+        const displayName = currentUserData?.name || currentUser?.displayName || currentUser?.email?.split('@')[0] || currentUserData?.email?.split('@')[0] || 'User';
+        const displayEmail = currentUserData?.email || currentUser?.email || '';
         const initials = getInitials(displayName);
         const firstName = displayName.split(' ')[0];
         const referralCode = currentUserData?.referralCode || '';
@@ -815,7 +888,7 @@ function updateNavbarAuth() {
             <div class="user-menu">
                 <button class="user-menu-trigger" onclick="toggleUserDropdown(event)">
                     <span class="user-avatar">${initials}</span>
-                    <span class="user-name">Welcome, ${firstName}</span>
+                    <span class="user-name">${firstName}</span>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="6 9 12 15 18 9"></polyline>
                     </svg>
@@ -823,7 +896,6 @@ function updateNavbarAuth() {
                 <div class="user-dropdown" id="userDropdown">
                     <div class="user-dropdown-header">
                         <div class="user-fullname">${displayName}</div>
-                        <div class="user-email">${displayEmail}</div>
                     </div>
                     ${referralCode ? `
                     <div class="referral-code-badge">
@@ -846,12 +918,10 @@ function updateNavbarAuth() {
                     </a>
                     <a href="dashboard.html" class="user-dropdown-item">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="3" y="3" width="7" height="7"></rect>
-                            <rect x="14" y="3" width="7" height="7"></rect>
-                            <rect x="14" y="14" width="7" height="7"></rect>
-                            <rect x="3" y="14" width="7" height="7"></rect>
+                            <line x1="12" y1="1" x2="12" y2="23"></line>
+                            <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
                         </svg>
-                        Dashboard
+                        My Earnings
                     </a>
                     <a href="orders.html" class="user-dropdown-item">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -861,14 +931,14 @@ function updateNavbarAuth() {
                         </svg>
                         My Orders
                     </a>
-                    <a href="referrals.html" class="user-dropdown-item">
+                    <a href="dashboard.html#referrals" class="user-dropdown-item">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
                             <circle cx="9" cy="7" r="4"></circle>
                             <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
                             <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                         </svg>
-                        My Referrals
+                        My Network
                     </a>
                     <div class="user-dropdown-item logout" onclick="handleLogout()">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1253,6 +1323,8 @@ async function handleForgotPassword(event) {
 // Handle logout
 async function handleLogout() {
     try {
+        // Clear cached auth data immediately
+        clearCachedAuthData();
         await authInstance.signOut();
         window.location.reload();
     } catch (error) {

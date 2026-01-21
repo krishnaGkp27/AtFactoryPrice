@@ -343,10 +343,15 @@
                 </a>
             </h1>
             <div class="nav-links">
-                <a href="index.html" class="nav-link">Home</a>
+                <a href="index.html" class="nav-link" title="Home">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                        <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                    </svg>
+                </a>
                 <a href="products.html" class="nav-link">Products</a>
-                <a href="cart.html" class="nav-link cart-link">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <a href="cart.html" class="nav-link cart-link" title="Cart">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="9" cy="21" r="1"></circle>
                         <circle cx="20" cy="21" r="1"></circle>
                         <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
@@ -443,7 +448,25 @@
         </div>
     </footer>
 
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
+    <!-- Auth UI Component -->
+    <script src="js/auth-ui.js"></script>
+    
+    <!-- MLM Service -->
+    <script src="js/mlm-service.js"></script>
+
+    <!-- PWA Script -->
+    <script src="js/pwa.js"></script>
+
     <script>
+        // Use Firebase instances from auth-ui.js
+        const db = dbInstance;
+        const auth = authInstance;
+
         // Get cart from localStorage
         function getCart() {
             return JSON.parse(localStorage.getItem('cart') || '[]');
@@ -452,7 +475,7 @@
         // Calculate total price
         function calculateTotal() {
             const cart = getCart();
-            return cart.reduce((total, item) => total + (item.price * item.quantity), 0).toFixed(2);
+            return cart.reduce((total, item) => total + (item.price * item.quantity), 0);
         }
 
         // Update cart count
@@ -464,6 +487,11 @@
                 cartCountEl.textContent = totalItems;
                 cartCountEl.style.display = totalItems > 0 ? 'flex' : 'none';
             }
+        }
+
+        // Format currency
+        function formatCurrency(amount) {
+            return '₦' + (amount || 0).toLocaleString();
         }
 
         // Display checkout summary
@@ -487,7 +515,7 @@
             const summaryHTML = cart.map(item => `
                 <div class="summary-item">
                     <span>${item.name} x${item.quantity}</span>
-                    <span>$${(item.price * item.quantity).toFixed(2)}</span>
+                    <span>${formatCurrency(item.price * item.quantity)}</span>
                 </div>
             `).join('');
 
@@ -495,9 +523,32 @@
                 ${summaryHTML}
                 <div class="summary-total-row">
                     <span>Total</span>
-                    <span>$${calculateTotal()}</span>
+                    <span>${formatCurrency(calculateTotal())}</span>
                 </div>
             `;
+        }
+
+        // Pre-fill form if user is logged in
+        function prefillUserData() {
+            auth.onAuthStateChanged(async (user) => {
+                if (user) {
+                    try {
+                        const userDoc = await db.collection('users').doc(user.uid).get();
+                        if (userDoc.exists) {
+                            const userData = userDoc.data();
+                            const nameField = document.getElementById('customerName');
+                            const phoneField = document.getElementById('customerPhone');
+                            const addressField = document.getElementById('customerAddress');
+                            
+                            if (nameField && !nameField.value) nameField.value = userData.name || '';
+                            if (phoneField && !phoneField.value) phoneField.value = userData.phone || '';
+                            if (addressField && !addressField.value) addressField.value = userData.address || '';
+                        }
+                    } catch (error) {
+                        console.error('Error pre-filling user data:', error);
+                    }
+                }
+            });
         }
 
         // Get customer data from form
@@ -533,80 +584,173 @@
             
             message += '\n*Order Items:*\n';
             cart.forEach(item => {
-                message += `• ${item.name} x${item.quantity} - $${(item.price * item.quantity).toFixed(2)}\n`;
+                message += `• ${item.name} x${item.quantity} - ${formatCurrency(item.price * item.quantity)}\n`;
             });
             
-            message += `\n*Total: $${calculateTotal()}*`;
+            message += `\n*Total: ${formatCurrency(calculateTotal())}*`;
             
             return message;
         }
 
+        /**
+         * Save order to Firestore and trigger MLM commission calculation
+         * @param {string} orderSource - 'form', 'whatsapp', or 'telegram'
+         */
+        async function saveOrderToFirestore(orderSource) {
+            const cart = getCart();
+            const customer = getCustomerData();
+            const total = calculateTotal();
+            const user = auth.currentUser;
+
+            try {
+                // Create order document
+                const orderData = {
+                    // Customer info
+                    customerName: customer.name,
+                    customerPhone: customer.phone,
+                    customerAddress: customer.address,
+                    customerNotes: customer.notes,
+                    
+                    // Order details
+                    items: cart.map(item => ({
+                        productId: item.id || null,
+                        name: item.name,
+                        price: item.price,
+                        quantity: item.quantity,
+                        pricingUnit: item.pricingUnit || null
+                    })),
+                    subtotal: total,
+                    total: total,
+                    
+                    // Metadata
+                    orderSource: orderSource,
+                    status: 'pending', // pending -> processing -> completed -> delivered
+                    paymentStatus: 'unpaid', // unpaid -> paid -> refunded
+                    
+                    // User tracking (for MLM)
+                    buyerId: user ? user.uid : null,
+                    buyerEmail: user ? user.email : customer.phone,
+                    isGuestOrder: !user,
+                    
+                    // Timestamps
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                };
+
+                // Save order
+                const orderRef = await db.collection('orders').add(orderData);
+                console.log('Order saved:', orderRef.id);
+
+                // Note: MLM commissions are calculated when order is marked as completed/paid
+                // This happens in the admin panel or via a backend trigger
+                // For demo purposes, we can trigger commission calculation immediately
+                // In production, this should happen after payment confirmation
+
+                return { success: true, orderId: orderRef.id };
+
+            } catch (error) {
+                console.error('Error saving order:', error);
+                return { success: false, error: error.message };
+            }
+        }
+
         // Submit via form
-        function submitViaForm() {
+        async function submitViaForm() {
             const customer = getCustomerData();
             
             if (!validateCustomerData(customer)) return;
 
-            // Here you would send to your form handler (Netlify Forms, etc.)
-            alert('Order submitted successfully! We will contact you soon.');
-            
-            // Clear cart and form
-            localStorage.removeItem('cart');
-            document.getElementById('customerName').value = '';
-            document.getElementById('customerPhone').value = '';
-            document.getElementById('customerAddress').value = '';
-            document.getElementById('customerNotes').value = '';
-            
-            setTimeout(() => {
-                window.location.href = 'index.html';
-            }, 1000);
+            // Disable buttons during submission
+            document.querySelectorAll('.btn-submit').forEach(btn => btn.disabled = true);
+
+            // Save order to Firestore
+            const result = await saveOrderToFirestore('form');
+
+            if (result.success) {
+                alert('Order submitted successfully! Order ID: ' + result.orderId.substring(0, 8) + '\n\nWe will contact you soon to confirm your order.');
+                
+                // Clear cart
+                localStorage.removeItem('cart');
+                
+                setTimeout(() => {
+                    window.location.href = 'index.html';
+                }, 1000);
+            } else {
+                alert('There was an error submitting your order. Please try again or use WhatsApp.');
+                document.querySelectorAll('.btn-submit').forEach(btn => btn.disabled = false);
+            }
         }
 
         // Submit via WhatsApp
-        function submitViaWhatsApp() {
+        async function submitViaWhatsApp() {
             const customer = getCustomerData();
             
             if (!validateCustomerData(customer)) return;
 
-            const message = generateOrderMessage();
+            // Save order to Firestore first
+            const result = await saveOrderToFirestore('whatsapp');
             
-            // IMPORTANT: Replace with your WhatsApp number (country code + number, no + or spaces)
-            // Example: For +1 234-567-8900, use: 1234567890
-            const phoneNumber = '1234567890';
-            
-            const url = `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
-            window.open(url, '_blank');
+            if (result.success) {
+                const message = generateOrderMessage() + `\n\nOrder ID: ${result.orderId.substring(0, 8)}`;
+                
+                // Replace with your WhatsApp number
+                const phoneNumber = '2348138475360';
+                
+                const url = `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
+                window.open(url, '_blank');
+                
+                // Clear cart
+                localStorage.removeItem('cart');
+                
+                setTimeout(() => {
+                    window.location.href = 'index.html';
+                }, 2000);
+            } else {
+                // Still allow WhatsApp even if save fails
+                const message = generateOrderMessage();
+                const phoneNumber = '2348138475360';
+                const url = `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
+                window.open(url, '_blank');
+            }
         }
 
         // Submit via Telegram
-        function submitViaTelegram() {
+        async function submitViaTelegram() {
             const customer = getCustomerData();
             
             if (!validateCustomerData(customer)) return;
 
-            const message = generateOrderMessage();
+            // Save order to Firestore first
+            const result = await saveOrderToFirestore('telegram');
             
-            // IMPORTANT: Replace with your Telegram username (without @)
-            const username = 'yourusername';
-            
-            const url = `https://t.me/${username}?text=${encodeURIComponent(message)}`;
-            window.open(url, '_blank');
+            if (result.success) {
+                const message = generateOrderMessage() + `\n\nOrder ID: ${result.orderId.substring(0, 8)}`;
+                
+                // Replace with your Telegram username
+                const username = 'atfactoryprice';
+                
+                const url = `https://t.me/${username}?text=${encodeURIComponent(message)}`;
+                window.open(url, '_blank');
+                
+                // Clear cart
+                localStorage.removeItem('cart');
+                
+                setTimeout(() => {
+                    window.location.href = 'index.html';
+                }, 2000);
+            } else {
+                // Still allow Telegram even if save fails
+                const message = generateOrderMessage();
+                const username = 'atfactoryprice';
+                const url = `https://t.me/${username}?text=${encodeURIComponent(message)}`;
+                window.open(url, '_blank');
+            }
         }
 
         // Initialize
         displayCheckoutSummary();
         updateCartCount();
+        prefillUserData();
     </script>
-
-    <!-- Firebase SDK -->
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
-
-    <!-- Auth UI Component -->
-    <script src="js/auth-ui.js"></script>
-
-    <!-- PWA Script -->
-    <script src="js/pwa.js"></script>
 </body>
 </html>

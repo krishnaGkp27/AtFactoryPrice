@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Dashboard - AtFactoryPrice</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#000000">
     <style>
         * {
             margin: 0;
@@ -14,10 +16,17 @@
 
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: #f8f9fa;
+            line-height: 1.6;
             color: #333;
+            background-color: #f5f7fa;
         }
 
+        a {
+            text-decoration: none;
+            color: inherit;
+        }
+
+        /* Navbar */
         .navbar {
             background: #fff;
             box-shadow: 0 2px 8px rgba(0,0,0,0.08);
@@ -27,7 +36,7 @@
         }
 
         .nav-container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
             padding: 1rem 2rem;
             display: flex;
@@ -35,10 +44,9 @@
             align-items: center;
         }
 
-        .logo {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: #000;
+        .logo img {
+            height: 50px;
+            width: auto;
         }
 
         .nav-links {
@@ -51,271 +59,858 @@
             font-size: 0.95rem;
             font-weight: 500;
             color: #666;
-            text-decoration: none;
             transition: color 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
 
-        .nav-link:hover {
+        .nav-link:hover, .nav-link.active {
             color: #000;
         }
 
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 40px 20px;
+        .cart-link {
+            position: relative;
         }
 
+        .cart-count {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: #000;
+            color: #fff;
+            font-size: 0.7rem;
+            font-weight: 600;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Main Container */
+        .dashboard-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        /* Page Header */
         .page-header {
-            margin-bottom: 30px;
+            margin-bottom: 24px;
         }
 
         .page-header h1 {
-            font-size: 2.5rem;
+            font-size: 1.75rem;
             font-weight: 700;
-            margin-bottom: 0.5rem;
+            color: #000;
+            margin-bottom: 4px;
         }
 
         .page-header p {
             color: #666;
+            font-size: 0.95rem;
         }
 
-        .dashboard-grid {
+        /* Stats Grid */
+        .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: repeat(4, 1fr);
             gap: 20px;
-            margin-bottom: 30px;
+            margin-bottom: 24px;
         }
 
-        .card {
+        .stat-card {
             background: #fff;
-            border-radius: 12px;
+            border-radius: 16px;
             padding: 24px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+            position: relative;
+            overflow: hidden;
         }
 
-        .card h3 {
-            font-size: 1.1rem;
-            font-weight: 600;
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+        }
+
+        .stat-card.total::before { background: linear-gradient(180deg, #6366f1, #8b5cf6); }
+        .stat-card.pending::before { background: linear-gradient(180deg, #f59e0b, #d97706); }
+        .stat-card.available::before { background: linear-gradient(180deg, #10b981, #059669); }
+        .stat-card.withdrawn::before { background: linear-gradient(180deg, #64748b, #475569); }
+
+        .stat-card-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             margin-bottom: 16px;
-            color: #333;
         }
 
-        .wallet-amount {
-            font-size: 2rem;
+        .stat-card.total .stat-card-icon { background: #ede9fe; color: #6366f1; }
+        .stat-card.pending .stat-card-icon { background: #fef3c7; color: #d97706; }
+        .stat-card.available .stat-card-icon { background: #d1fae5; color: #059669; }
+        .stat-card.withdrawn .stat-card-icon { background: #f1f5f9; color: #475569; }
+
+        .stat-card-value {
+            font-size: 1.75rem;
             font-weight: 700;
             color: #000;
-            margin-bottom: 8px;
+            margin-bottom: 4px;
         }
 
-        .wallet-label {
-            font-size: 0.9rem;
+        .stat-card-label {
+            font-size: 0.85rem;
             color: #666;
         }
 
-        .referral-section {
-            margin-top: 20px;
-        }
-
-        .referral-link-box {
-            background: #f8f9fa;
-            padding: 16px;
-            border-radius: 8px;
-            margin-top: 12px;
-            display: flex;
-            gap: 10px;
+        .stat-card-trend {
+            display: inline-flex;
             align-items: center;
-        }
-
-        .referral-link-box input {
-            flex: 1;
-            padding: 10px;
-            border: 2px solid #e0e0e0;
+            gap: 4px;
+            margin-top: 8px;
+            padding: 4px 8px;
             border-radius: 6px;
-            font-family: 'Courier New', monospace;
-            font-size: 0.9rem;
-        }
-
-        .btn-copy {
-            background: #000;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 6px;
-            cursor: pointer;
+            font-size: 0.75rem;
             font-weight: 600;
-            font-size: 0.9rem;
-            white-space: nowrap;
         }
 
-        .btn-copy:hover {
-            background: #333;
+        .stat-card-trend.up { background: #d1fae5; color: #059669; }
+        .stat-card-trend.neutral { background: #f1f5f9; color: #64748b; }
+
+        /* Dashboard Grid */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
         }
 
-        .btn-primary {
-            background: #000;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 600;
-            text-decoration: none;
-            display: inline-block;
-            margin-top: 12px;
+        /* Card */
+        .card {
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+            overflow: hidden;
         }
 
-        .btn-primary:hover {
-            background: #333;
-        }
-
-        .commissions-list {
-            max-height: 400px;
-            overflow-y: auto;
-        }
-
-        .commission-item {
-            padding: 12px;
+        .card-header {
+            padding: 20px 24px;
             border-bottom: 1px solid #f0f0f0;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
 
-        .commission-item:last-child {
-            border-bottom: none;
+        .card-header h2 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #000;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
 
-        .commission-info {
+        .card-header h2 svg {
+            width: 20px;
+            height: 20px;
+            opacity: 0.6;
+        }
+
+        .card-body {
+            padding: 24px;
+        }
+
+        /* Network Stats */
+        .network-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .network-stat {
+            text-align: center;
+            padding: 20px;
+            background: #f8fafc;
+            border-radius: 12px;
+        }
+
+        .network-stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #000;
+        }
+
+        .network-stat-label {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        .network-stat.level1 { border-left: 3px solid #10b981; }
+        .network-stat.level2 { border-left: 3px solid #6366f1; }
+        .network-stat.level3 { border-left: 3px solid #f59e0b; }
+
+        /* Referral Section */
+        .referral-section {
+            background: linear-gradient(135deg, #000 0%, #1a1a1a 100%);
+            border-radius: 16px;
+            padding: 24px;
+            color: #fff;
+            margin-bottom: 24px;
+        }
+
+        .referral-section h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            opacity: 0.9;
+        }
+
+        .referral-code-box {
+            background: rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .referral-code {
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: 3px;
+        }
+
+        .btn-copy {
+            background: #fff;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: transform 0.2s;
+        }
+
+        .btn-copy:hover {
+            transform: scale(1.02);
+        }
+
+        .share-buttons {
+            display: flex;
+            gap: 12px;
+        }
+
+        .btn-share {
             flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+
+        .btn-share.whatsapp {
+            background: #25D366;
+            color: #fff;
+        }
+
+        .btn-share.copy-link {
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .btn-share:hover {
+            transform: translateY(-2px);
+        }
+
+        /* Commission Table */
+        .commission-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .commission-table th,
+        .commission-table td {
+            padding: 14px 16px;
+            text-align: left;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .commission-table th {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background: #f8fafc;
+        }
+
+        .commission-table td {
+            font-size: 0.9rem;
         }
 
         .commission-amount {
-            font-weight: 700;
-            color: #000;
+            font-weight: 600;
+            color: #059669;
         }
 
         .commission-status {
-            display: inline-block;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.8rem;
+            display: inline-flex;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.75rem;
             font-weight: 600;
-            margin-top: 4px;
         }
 
-        .status-pending {
-            background: #fff3cd;
-            color: #856404;
+        .commission-status.pending {
+            background: #fef3c7;
+            color: #d97706;
         }
 
-        .status-available {
-            background: #d4edda;
-            color: #155724;
+        .commission-status.approved {
+            background: #dbeafe;
+            color: #2563eb;
         }
 
-        .status-withdrawn {
-            background: #e2e3e5;
-            color: #383d41;
+        .commission-status.paid {
+            background: #d1fae5;
+            color: #059669;
         }
 
-        .empty-state {
-            text-align: center;
-            padding: 40px;
+        .level-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 700;
+        }
+
+        .level-badge.l1 { background: #d1fae5; color: #059669; }
+        .level-badge.l2 { background: #ede9fe; color: #6366f1; }
+        .level-badge.l3 { background: #fef3c7; color: #d97706; }
+
+        /* Activity Feed */
+        .activity-feed {
+            list-style: none;
+        }
+
+        .activity-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 16px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .activity-item:last-child {
+            border-bottom: none;
+        }
+
+        .activity-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .activity-icon.commission { background: #d1fae5; color: #059669; }
+        .activity-icon.referral { background: #ede9fe; color: #6366f1; }
+        .activity-icon.withdrawal { background: #fee2e2; color: #dc2626; }
+
+        .activity-content {
+            flex: 1;
+        }
+
+        .activity-message {
+            font-size: 0.9rem;
+            color: #333;
+            margin-bottom: 4px;
+        }
+
+        .activity-time {
+            font-size: 0.75rem;
             color: #999;
         }
 
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-            margin-top: 12px;
+        /* Withdrawal Section */
+        .withdrawal-card {
+            background: #fff;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.06);
         }
 
-        .stat-item {
+        .withdrawal-balance {
             text-align: center;
-            padding: 12px;
-            background: #f8f9fa;
-            border-radius: 8px;
+            padding: 20px;
+            background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+            border-radius: 12px;
+            color: #fff;
+            margin-bottom: 20px;
         }
 
-        .stat-value {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: #000;
-        }
-
-        .stat-label {
+        .withdrawal-balance-label {
             font-size: 0.85rem;
-            color: #666;
-            margin-top: 4px;
+            opacity: 0.9;
+            margin-bottom: 4px;
         }
 
-        .loading {
-            text-align: center;
-            padding: 40px;
+        .withdrawal-balance-amount {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 6px;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px 14px;
+            border: 2px solid #e5e7eb;
+            border-radius: 10px;
+            font-size: 0.95rem;
+            transition: border-color 0.2s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #000;
+        }
+
+        .btn-withdraw {
+            width: 100%;
+            padding: 14px;
+            background: #000;
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn-withdraw:hover {
+            background: #333;
+        }
+
+        .btn-withdraw:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .min-withdrawal-note {
+            font-size: 0.75rem;
             color: #666;
+            margin-top: 12px;
+            text-align: center;
+        }
+
+        /* Disclaimer */
+        .mlm-disclaimer {
+            background: #fffbeb;
+            border: 1px solid #fef3c7;
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 24px;
+            font-size: 0.8rem;
+            color: #92400e;
+        }
+
+        .mlm-disclaimer strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #999;
+        }
+
+        .empty-state svg {
+            width: 60px;
+            height: 60px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        /* Loading */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255,255,255,0.9);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .loading-overlay.show {
+            display: flex;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f0f0f0;
+            border-top-color: #000;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* View All Link */
+        .view-all-link {
+            font-size: 0.85rem;
+            color: #6366f1;
+            font-weight: 500;
+        }
+
+        .view-all-link:hover {
+            text-decoration: underline;
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .network-stats {
+                grid-template-columns: 1fr;
+            }
+
+            .share-buttons {
+                flex-direction: column;
+            }
+
+            .nav-links {
+                gap: 1rem;
+            }
+
+            .dashboard-container {
+                padding: 16px;
+            }
+
+            .commission-table {
+                font-size: 0.8rem;
+            }
+
+            .commission-table th,
+            .commission-table td {
+                padding: 10px 8px;
+            }
         }
     </style>
 </head>
 <body>
     <nav class="navbar">
         <div class="nav-container">
-            <h1 class="logo">
-                <a href="index.html">
-                    <img src="images/logo.png" alt="AtFactoryPrice Logo" class="logo-image" onerror="this.style.display='none'; this.parentElement.innerHTML='AtFactoryPrice'" style="width: 120px; height: 80px;">
-                </a>
-            </h1>
+            <a href="index.html" class="logo">
+                <img src="images/logo.png" alt="AtFactoryPrice" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';">
+                <span style="font-size:1.5rem;font-weight:700;display:none;">AtFactoryPrice</span>
+            </a>
             <div class="nav-links">
-                <a href="index.html" class="nav-link">Home</a>
+                <a href="index.html" class="nav-link" title="Home">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                        <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                    </svg>
+                </a>
                 <a href="products.html" class="nav-link">Products</a>
-                <a href="dashboard.html" class="nav-link" style="color: #000;">Dashboard</a>
-                <a href="#" class="nav-link" onclick="logout()">Logout</a>
+                <a href="dashboard.html" class="nav-link active">Dashboard</a>
+                <a href="cart.html" class="nav-link cart-link" title="Cart">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="9" cy="21" r="1"></circle>
+                        <circle cx="20" cy="21" r="1"></circle>
+                        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+                    </svg>
+                    <span class="cart-count" id="cartCount">0</span>
+                </a>
             </div>
         </div>
     </nav>
 
-    <main>
-        <div class="container">
-            <div class="page-header">
-                <h1>My Dashboard</h1>
-                <p>Manage your Partner Program account</p>
-            </div>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+    </div>
 
-            <div class="dashboard-grid">
-                <!-- Wallet Card -->
-                <div class="card">
-                    <h3>Wallet</h3>
-                    <div id="walletContent" class="loading">Loading wallet...</div>
+    <main class="dashboard-container">
+        <div class="page-header">
+            <h1>My Network & Earnings</h1>
+            <p>Track your referrals, commissions, and earnings</p>
+        </div>
+
+        <!-- Earnings Stats -->
+        <div class="stats-grid">
+            <div class="stat-card total">
+                <div class="stat-card-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="1" x2="12" y2="23"></line>
+                        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                    </svg>
+                </div>
+                <div class="stat-card-value" id="totalEarned">₦0</div>
+                <div class="stat-card-label">Total Earned</div>
+                <div class="stat-card-trend up" id="monthlyTrend">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
+                    </svg>
+                    <span id="monthlyEarnings">₦0 this month</span>
+                </div>
+            </div>
+            <div class="stat-card pending">
+                <div class="stat-card-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                </div>
+                <div class="stat-card-value" id="pendingBalance">₦0</div>
+                <div class="stat-card-label">Pending Commissions</div>
+                <div class="stat-card-trend neutral">Processing...</div>
+            </div>
+            <div class="stat-card available">
+                <div class="stat-card-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
+                        <line x1="1" y1="10" x2="23" y2="10"></line>
+                    </svg>
+                </div>
+                <div class="stat-card-value" id="availableBalance">₦0</div>
+                <div class="stat-card-label">Available to Withdraw</div>
+            </div>
+            <div class="stat-card withdrawn">
+                <div class="stat-card-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                    </svg>
+                </div>
+                <div class="stat-card-value" id="totalWithdrawn">₦0</div>
+                <div class="stat-card-label">Total Withdrawn</div>
+            </div>
+        </div>
+
+        <!-- Referral Section -->
+        <div class="referral-section">
+            <h3>🎯 Your Referral Code</h3>
+            <div class="referral-code-box">
+                <span class="referral-code" id="referralCode">LOADING</span>
+                <button class="btn-copy" onclick="copyReferralCode()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                    Copy
+                </button>
+            </div>
+            <div class="share-buttons">
+                <button class="btn-share whatsapp" onclick="shareViaWhatsApp()">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+                        <path d="M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.832-1.438A9.955 9.955 0 0 0 12 22c5.523 0 10-4.477 10-10S17.523 2 12 2z"/>
+                    </svg>
+                    Share on WhatsApp
+                </button>
+                <button class="btn-share copy-link" onclick="copyReferralLink()">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                    </svg>
+                    Copy Link
+                </button>
+            </div>
+        </div>
+
+        <div class="dashboard-grid">
+            <!-- Left Column -->
+            <div>
+                <!-- Network Overview -->
+                <div class="card" style="margin-bottom: 24px;">
+                    <div class="card-header">
+                        <h2>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="9" cy="7" r="4"></circle>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                            </svg>
+                            My Network
+                        </h2>
+                        <span class="view-all-link" id="totalNetwork">0 total members</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="network-stats">
+                            <div class="network-stat level1">
+                                <div class="network-stat-value" id="level1Count">0</div>
+                                <div class="network-stat-label">Level 1 (Direct)</div>
+                            </div>
+                            <div class="network-stat level2">
+                                <div class="network-stat-value" id="level2Count">0</div>
+                                <div class="network-stat-label">Level 2</div>
+                            </div>
+                            <div class="network-stat level3">
+                                <div class="network-stat-value" id="level3Count">0</div>
+                                <div class="network-stat-label">Level 3</div>
+                            </div>
+                        </div>
+                        <p style="font-size: 0.8rem; color: #666; text-align: center;">
+                            Earn commissions when your network members make purchases
+                        </p>
+                    </div>
                 </div>
 
-                <!-- Referral Card -->
+                <!-- Commission History -->
                 <div class="card">
-                    <h3>My Referral Link</h3>
-                    <p style="color: #666; font-size: 0.9rem; margin-bottom: 12px;">
-                        Share this link to earn commissions when people you refer make purchases.
-                    </p>
-                    <div id="referralContent" class="loading">Loading...</div>
+                    <div class="card-header">
+                        <h2>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="1" x2="12" y2="23"></line>
+                                <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                            </svg>
+                            Commission History
+                        </h2>
+                    </div>
+                    <div class="card-body" style="padding: 0;">
+                        <div id="commissionTableContainer">
+                            <table class="commission-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>From</th>
+                                        <th>Level</th>
+                                        <th>Amount</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="commissionTableBody">
+                                    <tr>
+                                        <td colspan="5" class="empty-state">
+                                            <p>No commissions yet</p>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column -->
+            <div>
+                <!-- Withdrawal -->
+                <div class="withdrawal-card" style="margin-bottom: 24px;">
+                    <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 16px;">Request Withdrawal</h3>
+                    <div class="withdrawal-balance">
+                        <div class="withdrawal-balance-label">Available Balance</div>
+                        <div class="withdrawal-balance-amount" id="withdrawalAvailable">₦0</div>
+                    </div>
+                    <form id="withdrawalForm" onsubmit="handleWithdrawal(event)">
+                        <div class="form-group">
+                            <label>Amount (₦)</label>
+                            <input type="number" id="withdrawAmount" placeholder="Enter amount" min="5000" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Bank Name</label>
+                            <input type="text" id="bankName" placeholder="e.g., Access Bank" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Account Number</label>
+                            <input type="text" id="accountNumber" placeholder="10 digit account number" maxlength="10" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Account Name</label>
+                            <input type="text" id="accountName" placeholder="Account holder name" required>
+                        </div>
+                        <button type="submit" class="btn-withdraw" id="withdrawBtn">Request Withdrawal</button>
+                    </form>
+                    <p class="min-withdrawal-note">Minimum withdrawal: ₦5,000</p>
                 </div>
 
-                <!-- Stats Card -->
+                <!-- Activity Feed -->
                 <div class="card">
-                    <h3>Partner Stats</h3>
-                    <div id="statsContent" class="loading">Loading stats...</div>
+                    <div class="card-header">
+                        <h2>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                            </svg>
+                            Recent Activity
+                        </h2>
+                    </div>
+                    <div class="card-body" style="padding: 0 24px;">
+                        <ul class="activity-feed" id="activityFeed">
+                            <li class="empty-state">
+                                <p>No recent activity</p>
+                            </li>
+                        </ul>
+                    </div>
                 </div>
             </div>
+        </div>
 
-            <!-- Commissions Card -->
-            <div class="card" style="margin-top: 20px;">
-                <h3>Commission History</h3>
-                <div id="commissionsContent" class="loading">Loading commissions...</div>
-            </div>
-
-            <!-- Withdrawals Card -->
-            <div class="card" style="margin-top: 20px;">
-                <h3>Withdrawal Requests</h3>
-                <div id="withdrawalsContent" class="loading">Loading withdrawals...</div>
-                <button class="btn-primary" onclick="showWithdrawalModal()">Request Withdrawal</button>
-            </div>
+        <!-- Disclaimer -->
+        <div class="mlm-disclaimer">
+            <strong>📌 Important Notice</strong>
+            Earnings displayed are based on actual sales performance of your network. 
+            Commission rates: Level 1 (10%), Level 2 (5%), Level 3 (2%). 
+            Commissions are approved 7 days after order completion. 
+            AtFactoryPrice does not guarantee any specific income.
         </div>
     </main>
 
@@ -324,271 +919,369 @@
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
 
-    <!-- Services -->
-    <script src="js/referral-utils.js"></script>
-    <script src="js/commission-service.js"></script>
-    <script src="js/wallet-service.js"></script>
+    <!-- Auth UI -->
+    <script src="js/auth-ui.js"></script>
+    
+    <!-- MLM Service -->
+    <script src="js/mlm-service.js"></script>
 
     <script>
-        // Firebase Configuration
-        const firebaseConfig = {
-            apiKey: "AIzaSyA3SzcQWEgWv51hA5CsNyj6WG1cp-sZYKA",
-            authDomain: "atfactoryprice-6ba8f.firebaseapp.com",
-            projectId: "atfactoryprice-6ba8f",
-            storageBucket: "atfactoryprice-6ba8f.firebasestorage.app",
-            messagingSenderId: "660895645396",
-            appId: "1:660895645396:web:a4ea1e8febc6e0b7f74541"
-        };
+        // Use Firebase instances from auth-ui.js
+        const db = dbInstance;
+        const auth = authInstance;
 
-        // Initialize Firebase
-        firebase.initializeApp(firebaseConfig);
-        const auth = firebase.auth();
-        const db = firebase.firestore();
+        let currentUserData = null;
 
-        let currentUser = null;
-        let userData = null;
-
-        // Check authentication
-        auth.onAuthStateChanged(async (user) => {
-            if (user) {
-                currentUser = user;
-                await loadUserData();
-                await loadDashboard();
-            } else {
-                window.location.href = 'login.html';
+        /**
+         * Generate a unique referral code from user ID
+         * Format: AFP + 6 alphanumeric characters derived from user ID
+         */
+        function generateReferralCodeFromId(userId) {
+            const prefix = 'AFP';
+            // Use parts of the user ID to create a unique code
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+            let hash = 0;
+            for (let i = 0; i < userId.length; i++) {
+                const char = userId.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash; // Convert to 32bit integer
             }
-        });
-
-        // Load user data
-        async function loadUserData() {
-            try {
-                const userDoc = await db.collection('users').doc(currentUser.uid).get();
-                if (userDoc.exists) {
-                    userData = { id: userDoc.id, ...userDoc.data() };
-                } else {
-                    // User document doesn't exist - redirect to signup
-                    window.location.href = 'signup.html';
-                }
-            } catch (error) {
-                console.error('Error loading user data:', error);
+            
+            let code = prefix;
+            const absHash = Math.abs(hash);
+            for (let i = 0; i < 6; i++) {
+                const index = (absHash + i * 7 + userId.charCodeAt(i % userId.length)) % chars.length;
+                code += chars[index];
             }
+            return code;
         }
 
-        // Load dashboard data
-        async function loadDashboard() {
-            await loadWallet();
-            await loadReferralInfo();
-            await loadStats();
-            await loadCommissions();
-            await loadWithdrawals();
-        }
-
-        // Load wallet
-        async function loadWallet() {
+        /**
+         * Generate and save referral code to Firestore
+         */
+        async function generateAndSaveReferralCode(userId, createNewDoc = false) {
+            const referralCode = generateReferralCodeFromId(userId);
+            
             try {
-                const wallet = await getWallet(currentUser.uid);
-                const walletDiv = document.getElementById('walletContent');
+                // Check if this code already exists (unlikely but possible)
+                const existingCode = await db.collection('users')
+                    .where('referralCode', '==', referralCode)
+                    .limit(1)
+                    .get();
                 
-                if (wallet) {
-                    walletDiv.innerHTML = `
-                        <div class="wallet-amount">₦${wallet.available.toFixed(2)}</div>
-                        <div class="wallet-label">Available for Withdrawal</div>
-                        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #f0f0f0;">
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                                <span style="color: #666;">Pending:</span>
-                                <span style="font-weight: 600;">₦${wallet.pending.toFixed(2)}</span>
-                            </div>
-                            <div style="display: flex; justify-content: space-between;">
-                                <span style="color: #666;">Total Earned:</span>
-                                <span style="font-weight: 600;">₦${wallet.totalEarned.toFixed(2)}</span>
-                            </div>
-                        </div>
-                    `;
-                } else {
-                    walletDiv.innerHTML = '<div class="empty-state">No wallet data</div>';
+                let finalCode = referralCode;
+                if (!existingCode.empty && existingCode.docs[0].id !== userId) {
+                    // Code collision - add random suffix
+                    const randomSuffix = Math.random().toString(36).substring(2, 4).toUpperCase();
+                    finalCode = referralCode.substring(0, 7) + randomSuffix;
                 }
-            } catch (error) {
-                console.error('Error loading wallet:', error);
-                document.getElementById('walletContent').innerHTML = '<div class="empty-state">Error loading wallet</div>';
-            }
-        }
-
-        // Load referral info
-        async function loadReferralInfo() {
-            try {
-                if (!userData) return;
-
-                const referralLink = getReferralLink(currentUser.uid, userData.referralCode);
-                const referralDiv = document.getElementById('referralContent');
                 
-                referralDiv.innerHTML = `
-                    <div class="referral-link-box">
-                        <input type="text" id="referralLinkInput" value="${referralLink}" readonly>
-                        <button class="btn-copy" onclick="copyReferralLink()">Copy</button>
-                    </div>
-                    <p style="margin-top: 12px; font-size: 0.85rem; color: #666;">
-                        Your Referral Code: <strong>${userData.referralCode}</strong>
-                    </p>
-                `;
+                if (createNewDoc) {
+                    // Create new user document
+                    await db.collection('users').doc(userId).set({
+                        uid: userId,
+                        referralCode: finalCode,
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        isActive: true
+                    });
+                } else {
+                    // Update existing document
+                    await db.collection('users').doc(userId).update({
+                        referralCode: finalCode,
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                }
+                
+                console.log('Referral code generated and saved:', finalCode);
+                return finalCode;
+                
             } catch (error) {
-                console.error('Error loading referral info:', error);
+                console.error('Error saving referral code:', error);
+                return referralCode; // Return the code even if save fails
             }
         }
 
-        // Load stats
-        async function loadStats() {
-            try {
-                const directReferrals = await getDirectReferralsCount(currentUser.uid);
-                const commissions = await getUserCommissions(currentUser.uid);
-                const wallet = await getWallet(currentUser.uid);
-
-                const statsDiv = document.getElementById('statsContent');
-                statsDiv.innerHTML = `
-                    <div class="stats-grid">
-                        <div class="stat-item">
-                            <div class="stat-value">${directReferrals}</div>
-                            <div class="stat-label">Direct Referrals</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-value">${commissions.length}</div>
-                            <div class="stat-label">Total Commissions</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-value">₦${wallet ? wallet.totalEarned.toFixed(0) : '0'}</div>
-                            <div class="stat-label">Total Earned</div>
-                        </div>
-                    </div>
-                `;
-            } catch (error) {
-                console.error('Error loading stats:', error);
-            }
+        // Show/hide loading
+        function showLoading() {
+            document.getElementById('loadingOverlay').classList.add('show');
         }
 
-        // Load commissions
-        async function loadCommissions() {
-            try {
-                const commissions = await getUserCommissions(currentUser.uid);
-                const commissionsDiv = document.getElementById('commissionsContent');
+        function hideLoading() {
+            document.getElementById('loadingOverlay').classList.remove('show');
+        }
 
-                if (commissions.length === 0) {
-                    commissionsDiv.innerHTML = '<div class="empty-state">No commissions yet</div>';
+        // Format currency
+        function formatCurrency(amount) {
+            return '₦' + (amount || 0).toLocaleString();
+        }
+
+        // Format date
+        function formatDate(date) {
+            if (!date) return '-';
+            const d = date instanceof Date ? date : date.toDate?.() || new Date(date);
+            return d.toLocaleDateString('en-NG', { 
+                day: 'numeric', 
+                month: 'short', 
+                year: 'numeric' 
+            });
+        }
+
+        // Format relative time
+        function formatRelativeTime(date) {
+            if (!date) return '';
+            const d = date instanceof Date ? date : date.toDate?.() || new Date(date);
+            const now = new Date();
+            const diff = now - d;
+            const minutes = Math.floor(diff / 60000);
+            const hours = Math.floor(diff / 3600000);
+            const days = Math.floor(diff / 86400000);
+
+            if (minutes < 60) return `${minutes}m ago`;
+            if (hours < 24) return `${hours}h ago`;
+            if (days < 7) return `${days}d ago`;
+            return formatDate(d);
+        }
+
+        // Initialize dashboard
+        async function initDashboard() {
+            showLoading();
+
+            auth.onAuthStateChanged(async (user) => {
+                if (!user) {
+                    window.location.href = 'login.html';
                     return;
                 }
 
-                let html = '<div class="commissions-list">';
-                commissions.forEach(comm => {
-                    const statusClass = `status-${comm.status}`;
-                    html += `
-                        <div class="commission-item">
-                            <div class="commission-info">
-                                <div>Order #${comm.orderId.substring(0, 8)}</div>
-                                <div style="font-size: 0.85rem; color: #666; margin-top: 4px;">
-                                    Level ${comm.level} • ${comm.commissionRate * 100}% • ${new Date(comm.createdAt.toDate()).toLocaleDateString()}
-                                </div>
-                                <span class="commission-status ${statusClass}">${comm.status}</span>
-                            </div>
-                            <div class="commission-amount">₦${comm.commissionAmount.toFixed(2)}</div>
-                        </div>
+                try {
+                    // Get user data
+                    const userDoc = await db.collection('users').doc(user.uid).get();
+                    if (userDoc.exists) {
+                        currentUserData = { uid: user.uid, ...userDoc.data() };
+                        
+                        // Generate referral code if user doesn't have one
+                        if (!currentUserData.referralCode) {
+                            const generatedCode = await generateAndSaveReferralCode(user.uid);
+                            currentUserData.referralCode = generatedCode;
+                        }
+                        
+                        // Update referral code display
+                        document.getElementById('referralCode').textContent = currentUserData.referralCode;
+
+                        // Load all dashboard data
+                        await Promise.all([
+                            loadEarningsSummary(user.uid),
+                            loadCommissionHistory(user.uid),
+                            loadActivityFeed(user.uid)
+                        ]);
+                    } else {
+                        // User document doesn't exist, create it with referral code
+                        const generatedCode = await generateAndSaveReferralCode(user.uid, true);
+                        currentUserData = { 
+                            uid: user.uid, 
+                            email: user.email,
+                            referralCode: generatedCode 
+                        };
+                        document.getElementById('referralCode').textContent = generatedCode;
+                    }
+                } catch (error) {
+                    console.error('Error loading dashboard:', error);
+                } finally {
+                    hideLoading();
+                }
+            });
+        }
+
+        // Load earnings summary
+        async function loadEarningsSummary(userId) {
+            try {
+                const summary = await MLMService.getEarningsSummary(userId);
+
+                // Update wallet stats
+                document.getElementById('totalEarned').textContent = formatCurrency(summary.wallet.totalEarned);
+                document.getElementById('pendingBalance').textContent = formatCurrency(summary.wallet.pending);
+                document.getElementById('availableBalance').textContent = formatCurrency(summary.wallet.available);
+                document.getElementById('withdrawalAvailable').textContent = formatCurrency(summary.wallet.available);
+                document.getElementById('totalWithdrawn').textContent = formatCurrency(summary.wallet.withdrawn);
+
+                // Monthly earnings
+                document.getElementById('monthlyEarnings').textContent = formatCurrency(summary.thisMonthEarnings) + ' this month';
+
+                // Network stats
+                document.getElementById('level1Count').textContent = summary.network.level1;
+                document.getElementById('level2Count').textContent = summary.network.level2;
+                document.getElementById('level3Count').textContent = summary.network.level3;
+                document.getElementById('totalNetwork').textContent = summary.network.total + ' total members';
+
+            } catch (error) {
+                console.error('Error loading earnings:', error);
+            }
+        }
+
+        // Load commission history
+        async function loadCommissionHistory(userId) {
+            try {
+                const commissions = await MLMService.getCommissionHistory(userId, 20);
+                const tbody = document.getElementById('commissionTableBody');
+
+                if (commissions.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="5" class="empty-state">
+                                <p>No commissions yet. Start referring to earn!</p>
+                            </td>
+                        </tr>
                     `;
-                });
-                html += '</div>';
-                commissionsDiv.innerHTML = html;
+                    return;
+                }
+
+                tbody.innerHTML = commissions.map(c => `
+                    <tr>
+                        <td>${formatDate(c.createdAt)}</td>
+                        <td>${c.buyerName}</td>
+                        <td><span class="level-badge l${c.level}">L${c.level}</span></td>
+                        <td class="commission-amount">${formatCurrency(c.commissionAmount)}</td>
+                        <td><span class="commission-status ${c.status}">${c.status}</span></td>
+                    </tr>
+                `).join('');
+
             } catch (error) {
                 console.error('Error loading commissions:', error);
             }
         }
 
-        // Load withdrawals
-        async function loadWithdrawals() {
+        // Load activity feed
+        async function loadActivityFeed(userId) {
             try {
-                const withdrawals = await getUserWithdrawals(currentUser.uid);
-                const withdrawalsDiv = document.getElementById('withdrawalsContent');
+                const activities = await MLMService.getNetworkActivity(userId, 10);
+                const feed = document.getElementById('activityFeed');
 
-                if (withdrawals.length === 0) {
-                    withdrawalsDiv.innerHTML = '<div class="empty-state">No withdrawal requests</div>';
+                if (activities.length === 0) {
+                    feed.innerHTML = `
+                        <li class="empty-state">
+                            <p>No recent activity</p>
+                        </li>
+                    `;
                     return;
                 }
 
-                let html = '<div style="margin-bottom: 16px;">';
-                withdrawals.forEach(wd => {
-                    const statusClass = `status-${wd.status}`;
-                    html += `
-                        <div class="commission-item">
-                            <div class="commission-info">
-                                <div>₦${wd.amount.toFixed(2)}</div>
-                                <div style="font-size: 0.85rem; color: #666; margin-top: 4px;">
-                                    ${new Date(wd.requestedAt.toDate()).toLocaleDateString()}
-                                </div>
-                                <span class="commission-status ${statusClass}">${wd.status}</span>
-                            </div>
+                feed.innerHTML = activities.map(a => `
+                    <li class="activity-item">
+                        <div class="activity-icon ${a.type}">
+                            ${a.type === 'commission' ? `
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="1" x2="12" y2="23"></line>
+                                    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                                </svg>
+                            ` : `
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                    <circle cx="8.5" cy="7" r="4"></circle>
+                                    <line x1="20" y1="8" x2="20" y2="14"></line>
+                                    <line x1="23" y1="11" x2="17" y2="11"></line>
+                                </svg>
+                            `}
                         </div>
-                    `;
-                });
-                html += '</div>';
-                withdrawalsDiv.innerHTML = html;
+                        <div class="activity-content">
+                            <div class="activity-message">${a.message}</div>
+                            <div class="activity-time">${formatRelativeTime(a.date)}</div>
+                        </div>
+                    </li>
+                `).join('');
+
             } catch (error) {
-                console.error('Error loading withdrawals:', error);
+                console.error('Error loading activity:', error);
             }
+        }
+
+        // Copy referral code
+        function copyReferralCode() {
+            const code = document.getElementById('referralCode').textContent;
+            navigator.clipboard.writeText(code).then(() => {
+                alert('Referral code copied: ' + code);
+            });
         }
 
         // Copy referral link
         function copyReferralLink() {
-            const input = document.getElementById('referralLinkInput');
-            input.select();
-            document.execCommand('copy');
-            alert('Referral link copied to clipboard!');
-        }
-
-        // Show withdrawal modal
-        function showWithdrawalModal() {
-            const wallet = getWallet(currentUser.uid).then(wallet => {
-                if (!wallet || wallet.available < 1000) {
-                    alert('Minimum withdrawal is ₦1,000. You need more available balance.');
-                    return;
-                }
-
-                const amount = prompt(`Enter withdrawal amount (Available: ₦${wallet.available.toFixed(2)}):`);
-                if (!amount) return;
-
-                const amountNum = parseFloat(amount);
-                if (isNaN(amountNum) || amountNum <= 0) {
-                    alert('Invalid amount');
-                    return;
-                }
-
-                if (amountNum > wallet.available) {
-                    alert('Amount exceeds available balance');
-                    return;
-                }
-
-                const paymentMethod = prompt('Payment Method (e.g., Bank Transfer):');
-                if (!paymentMethod) return;
-
-                const accountDetails = prompt('Account Details (e.g., Account Number, Bank Name):');
-                if (!accountDetails) return;
-
-                requestWithdrawal(currentUser.uid, amountNum, paymentMethod, accountDetails)
-                    .then(result => {
-                        if (result.success) {
-                            alert('Withdrawal request submitted! Admin will review it.');
-                            loadWithdrawals();
-                            loadWallet();
-                        }
-                    })
-                    .catch(error => {
-                        alert('Error: ' + error.message);
-                    });
+            const code = currentUserData?.referralCode || '';
+            const link = `${window.location.origin}/signup.html?ref=${code}`;
+            navigator.clipboard.writeText(link).then(() => {
+                alert('Referral link copied!');
             });
         }
 
-        // Logout
-        function logout() {
-            if (confirm('Are you sure you want to logout?')) {
-                auth.signOut().then(() => {
-                    window.location.href = 'index.html';
+        // Share via WhatsApp
+        function shareViaWhatsApp() {
+            const code = currentUserData?.referralCode || '';
+            const link = `${window.location.origin}/signup.html?ref=${code}`;
+            const message = `Shop quality products at factory prices! Use my referral code ${code} or click this link: ${link}`;
+            window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
+        }
+
+        // Handle withdrawal request
+        async function handleWithdrawal(event) {
+            event.preventDefault();
+
+            const amount = parseFloat(document.getElementById('withdrawAmount').value);
+            const bankName = document.getElementById('bankName').value.trim();
+            const accountNumber = document.getElementById('accountNumber').value.trim();
+            const accountName = document.getElementById('accountName').value.trim();
+
+            if (!amount || amount < 5000) {
+                alert('Minimum withdrawal amount is ₦5,000');
+                return;
+            }
+
+            if (!bankName || !accountNumber || !accountName) {
+                alert('Please fill in all bank details');
+                return;
+            }
+
+            const btn = document.getElementById('withdrawBtn');
+            btn.disabled = true;
+            btn.textContent = 'Processing...';
+
+            try {
+                const result = await MLMService.requestWithdrawal(currentUserData.uid, amount, {
+                    bankName,
+                    accountNumber,
+                    accountName
                 });
+
+                if (result.success) {
+                    alert('Withdrawal request submitted successfully! You will be notified once processed.');
+                    document.getElementById('withdrawalForm').reset();
+                    // Reload data
+                    await loadEarningsSummary(currentUserData.uid);
+                } else {
+                    alert(result.error || 'Failed to submit withdrawal request');
+                }
+            } catch (error) {
+                console.error('Withdrawal error:', error);
+                alert('Error submitting withdrawal request');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Request Withdrawal';
             }
         }
+
+        // Update cart count
+        function updateCartCount() {
+            const cart = JSON.parse(localStorage.getItem('cart') || '[]');
+            const totalItems = cart.reduce((total, item) => total + item.quantity, 0);
+            const cartCountEl = document.getElementById('cartCount');
+            if (cartCountEl) {
+                cartCountEl.textContent = totalItems;
+                cartCountEl.style.display = totalItems > 0 ? 'flex' : 'none';
+            }
+        }
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', () => {
+            initDashboard();
+            updateCartCount();
+        });
     </script>
 </body>
 </html>
