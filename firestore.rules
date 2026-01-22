@@ -124,6 +124,32 @@ service cloud.firestore {
       allow read: if isAdmin();
       
       // No client writes - only Cloud Functions
+      // Logs are immutable once created
+      allow write: if false;
+    }
+    
+    // ===== PHASE 7: MLM RISK FLAGS COLLECTION =====
+    match /mlm_risk_flags/{flagId} {
+      // Only admin can read risk flags
+      // Users should NOT see their own risk flags
+      allow read: if isAdmin();
+      
+      // No client writes - only Cloud Functions create flags
+      allow create: if false;
+      
+      // Only admin can update (review, resolve)
+      allow update: if isAdmin();
+      
+      // No deletes - flags are permanent record
+      allow delete: if false;
+    }
+    
+    // ===== PHASE 7: MLM ANALYTICS DAILY COLLECTION =====
+    match /mlm_analytics_daily/{dateKey} {
+      // Only admin can read analytics
+      allow read: if isAdmin();
+      
+      // No client writes - only Cloud Functions aggregate
       allow write: if false;
     }
     

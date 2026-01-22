@@ -1,10 +1,13 @@
 /**
  * AtFactoryPrice MLM Cloud Functions
  * 
+ * Phase 7: Enhanced with Fraud Prevention, Analytics, and Wallet Safety
+ * 
  * Secure, server-side commission calculation and wallet management
  * All wallet operations MUST go through these functions
  * 
  * SAFETY: No client-side wallet writes allowed
+ * FRAUD: All suspicious activity logged and flagged
  */
 
 const functions = require('firebase-functions');
@@ -20,13 +23,29 @@ const DEFAULT_MLM_CONFIG = {
     commissionLockDays: 7,
     mlmEnabled: true,
     maxTotalCommissionPercent: 20,
-    fallbackSponsorId: 'SYSTEM'
+    fallbackSponsorId: 'SYSTEM',
+    // Phase 7: Wallet Safety
+    maxWithdrawalsPerDay: 3,
+    maxWithdrawalsPerWeek: 10,
+    minAccountAgeDays: 7,
+    minReferralsForAutoPayout: 1,
+    withdrawalVelocityAlertPercent: 80
 };
 
 const DEFAULT_COMMISSION_RULES = {
     1: { percentage: 10, active: true },
     2: { percentage: 5, active: true },
     3: { percentage: 2, active: true }
+};
+
+// ===== RISK TYPES =====
+const RISK_TYPES = {
+    REFERRAL_ABUSE: 'referral_abuse',
+    ORDER_ABUSE: 'order_abuse',
+    WALLET_ABUSE: 'wallet_abuse',
+    NETWORK_ABUSE: 'network_abuse',
+    VELOCITY_ALERT: 'velocity_alert',
+    SUSPICIOUS_ACTIVITY: 'suspicious_activity'
 };
 
 // ===== HELPER FUNCTIONS =====
@@ -787,5 +806,872 @@ exports.initializeMLMConfig = functions.https.onRequest(async (req, res) => {
     } catch (error) {
         console.error('Init error:', error);
         res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================================================
+// PHASE 7: FRAUD DETECTION MODULE
+// ============================================================================
+
+/**
+ * Create a risk flag for a user
+ * @param {string} userId - User ID to flag
+ * @param {string} riskType - Type of risk
+ * @param {number} riskScore - Score 0-100
+ * @param {string} description - Description of the risk
+ * @param {object} metadata - Additional data
+ */
+async function createRiskFlag(userId, riskType, riskScore, description, metadata = {}) {
+    try {
+        const existingFlag = await db.collection('mlm_risk_flags')
+            .where('userId', '==', userId)
+            .where('riskType', '==', riskType)
+            .where('status', '==', 'open')
+            .limit(1)
+            .get();
+        
+        // If open flag exists, update score if higher
+        if (!existingFlag.empty) {
+            const doc = existingFlag.docs[0];
+            const currentScore = doc.data().riskScore || 0;
+            if (riskScore > currentScore) {
+                await doc.ref.update({
+                    riskScore: riskScore,
+                    description: description,
+                    metadata: { ...doc.data().metadata, ...metadata },
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                });
+            }
+            return doc.id;
+        }
+        
+        // Create new flag
+        const flagRef = await db.collection('mlm_risk_flags').add({
+            userId: userId,
+            riskType: riskType,
+            riskScore: riskScore,
+            description: description,
+            metadata: metadata,
+            status: 'open',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            reviewedBy: null,
+            reviewedAt: null,
+            adminNotes: null
+        });
+        
+        // Log to audit
+        await db.collection('mlm_audit_logs').add({
+            action: 'risk_flag_created',
+            userId: userId,
+            riskType: riskType,
+            riskScore: riskScore,
+            flagId: flagRef.id,
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        return flagRef.id;
+    } catch (error) {
+        console.error('Error creating risk flag:', error);
+        return null;
+    }
+}
+
+/**
+ * Analyze referral patterns for a user
+ */
+async function analyzeReferralPatterns(userId) {
+    const risks = [];
+    const now = new Date();
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    
+    try {
+        // Check for rapid referral creation
+        const recentReferrals = await db.collection('users')
+            .where('sponsorId', '==', userId)
+            .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(oneHourAgo))
+            .get();
+        
+        if (recentReferrals.size >= 5) {
+            risks.push({
+                type: RISK_TYPES.REFERRAL_ABUSE,
+                score: Math.min(recentReferrals.size * 15, 100),
+                description: `${recentReferrals.size} referrals in 1 hour - possible referral farming`
+            });
+        }
+        
+        // Check for referrals without orders
+        const allReferrals = await db.collection('users')
+            .where('sponsorId', '==', userId)
+            .get();
+        
+        let referralsWithoutOrders = 0;
+        for (const doc of allReferrals.docs) {
+            const orders = await db.collection('orders')
+                .where('userId', '==', doc.id)
+                .limit(1)
+                .get();
+            if (orders.empty) {
+                referralsWithoutOrders++;
+            }
+        }
+        
+        if (allReferrals.size >= 5 && referralsWithoutOrders / allReferrals.size > 0.8) {
+            risks.push({
+                type: RISK_TYPES.REFERRAL_ABUSE,
+                score: 60,
+                description: `${Math.round(referralsWithoutOrders / allReferrals.size * 100)}% of referrals have no orders`
+            });
+        }
+        
+    } catch (error) {
+        console.error('Error analyzing referral patterns:', error);
+    }
+    
+    return risks;
+}
+
+/**
+ * Analyze order patterns for a user
+ */
+async function analyzeOrderPatterns(userId) {
+    const risks = [];
+    const now = new Date();
+    const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    
+    try {
+        // Check for commission farming - many small orders
+        const recentOrders = await db.collection('orders')
+            .where('userId', '==', userId)
+            .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(oneWeekAgo))
+            .get();
+        
+        if (recentOrders.size >= 10) {
+            const orderAmounts = recentOrders.docs.map(d => d.data().total || d.data().totalAmount || 0);
+            const avgAmount = orderAmounts.reduce((a, b) => a + b, 0) / orderAmounts.length;
+            
+            // Flag if many small orders (avg < 5000 Naira)
+            if (avgAmount < 5000 && recentOrders.size >= 15) {
+                risks.push({
+                    type: RISK_TYPES.ORDER_ABUSE,
+                    score: 70,
+                    description: `${recentOrders.size} orders with avg ₦${Math.round(avgAmount)} - possible commission farming`
+                });
+            }
+        }
+        
+        // Check downline order patterns
+        const downlineUsers = await db.collection('users')
+            .where('sponsorId', '==', userId)
+            .get();
+        
+        let downlineOrderCount = 0;
+        let downlineSmallOrders = 0;
+        
+        for (const userDoc of downlineUsers.docs) {
+            const orders = await db.collection('orders')
+                .where('userId', '==', userDoc.id)
+                .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(oneWeekAgo))
+                .get();
+            
+            downlineOrderCount += orders.size;
+            orders.docs.forEach(o => {
+                if ((o.data().total || o.data().totalAmount || 0) < 3000) {
+                    downlineSmallOrders++;
+                }
+            });
+        }
+        
+        if (downlineOrderCount > 20 && downlineSmallOrders / downlineOrderCount > 0.7) {
+            risks.push({
+                type: RISK_TYPES.ORDER_ABUSE,
+                score: 65,
+                description: `Downline has ${downlineOrderCount} orders with ${Math.round(downlineSmallOrders/downlineOrderCount*100)}% small orders`
+            });
+        }
+        
+    } catch (error) {
+        console.error('Error analyzing order patterns:', error);
+    }
+    
+    return risks;
+}
+
+/**
+ * Analyze wallet patterns for a user
+ */
+async function analyzeWalletPatterns(userId) {
+    const risks = [];
+    const now = new Date();
+    const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    
+    try {
+        // Get wallet
+        const walletDoc = await db.collection('mlm_wallets').doc(userId).get();
+        if (!walletDoc.exists) return risks;
+        
+        const wallet = walletDoc.data();
+        
+        // Check withdrawal velocity
+        const recentWithdrawals = await db.collection('mlm_payout_requests')
+            .where('userId', '==', userId)
+            .where('requestedAt', '>=', admin.firestore.Timestamp.fromDate(oneWeekAgo))
+            .get();
+        
+        const config = await getMLMConfig();
+        
+        if (recentWithdrawals.size >= config.maxWithdrawalsPerWeek) {
+            risks.push({
+                type: RISK_TYPES.VELOCITY_ALERT,
+                score: 50,
+                description: `${recentWithdrawals.size} withdrawal requests in 7 days - high velocity`
+            });
+        }
+        
+        // Check for rapid withdrawal after commission unlock
+        const recentCommissions = await db.collection('mlm_commissions')
+            .where('beneficiaryId', '==', userId)
+            .where('status', '==', 'approved')
+            .where('approvedAt', '>=', admin.firestore.Timestamp.fromDate(oneWeekAgo))
+            .get();
+        
+        const recentCommissionTotal = recentCommissions.docs.reduce((sum, d) => sum + (d.data().amount || 0), 0);
+        const recentWithdrawalTotal = recentWithdrawals.docs.reduce((sum, d) => sum + (d.data().amount || 0), 0);
+        
+        if (recentCommissionTotal > 0 && recentWithdrawalTotal / recentCommissionTotal > 0.9) {
+            risks.push({
+                type: RISK_TYPES.WALLET_ABUSE,
+                score: 55,
+                description: `Withdrawn ${Math.round(recentWithdrawalTotal/recentCommissionTotal*100)}% of recent commissions immediately`
+            });
+        }
+        
+        // Check for large percentage withdrawal
+        if (wallet.totalEarned > 10000 && wallet.availableBalance > 0) {
+            const withdrawnPercent = (wallet.withdrawnBalance / wallet.totalEarned) * 100;
+            if (withdrawnPercent > config.withdrawalVelocityAlertPercent) {
+                risks.push({
+                    type: RISK_TYPES.VELOCITY_ALERT,
+                    score: 40,
+                    description: `Withdrawn ${Math.round(withdrawnPercent)}% of total earnings`
+                });
+            }
+        }
+        
+    } catch (error) {
+        console.error('Error analyzing wallet patterns:', error);
+    }
+    
+    return risks;
+}
+
+/**
+ * Analyze network patterns for a user
+ */
+async function analyzeNetworkPatterns(userId) {
+    const risks = [];
+    
+    try {
+        // Get network entry
+        const networkDoc = await db.collection('mlm_network').doc(userId).get();
+        
+        // Check for deep but narrow networks
+        const directReferrals = await db.collection('users')
+            .where('sponsorId', '==', userId)
+            .get();
+        
+        if (directReferrals.size > 0) {
+            // Count level 2
+            let level2Count = 0;
+            for (const doc of directReferrals.docs) {
+                const l2 = await db.collection('users')
+                    .where('sponsorId', '==', doc.id)
+                    .get();
+                level2Count += l2.size;
+            }
+            
+            // Deep narrow network: many L2 but few L1
+            if (directReferrals.size <= 3 && level2Count >= 10) {
+                risks.push({
+                    type: RISK_TYPES.NETWORK_ABUSE,
+                    score: 50,
+                    description: `Narrow network: ${directReferrals.size} L1, ${level2Count} L2 - possible collusion`
+                });
+            }
+        }
+        
+        // Check for dormant network activation
+        const oneMonthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        
+        const oldReferrals = await db.collection('users')
+            .where('sponsorId', '==', userId)
+            .where('createdAt', '<=', admin.firestore.Timestamp.fromDate(oneMonthAgo))
+            .get();
+        
+        let recentActivityCount = 0;
+        for (const doc of oldReferrals.docs) {
+            const recentOrders = await db.collection('orders')
+                .where('userId', '==', doc.id)
+                .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(oneWeekAgo))
+                .limit(1)
+                .get();
+            if (!recentOrders.empty) {
+                recentActivityCount++;
+            }
+        }
+        
+        if (oldReferrals.size >= 5 && recentActivityCount / oldReferrals.size > 0.6) {
+            risks.push({
+                type: RISK_TYPES.NETWORK_ABUSE,
+                score: 45,
+                description: `${Math.round(recentActivityCount/oldReferrals.size*100)}% of dormant network suddenly active`
+            });
+        }
+        
+    } catch (error) {
+        console.error('Error analyzing network patterns:', error);
+    }
+    
+    return risks;
+}
+
+/**
+ * Scheduled function: Fraud Scanner
+ * Runs every 6 hours to analyze all MLM users
+ */
+exports.scheduledFraudScanner = functions.pubsub
+    .schedule('0 */6 * * *')
+    .timeZone('Africa/Lagos')
+    .onRun(async (context) => {
+        console.log('Starting scheduled fraud scan');
+        
+        try {
+            // Get all MLM users with wallets
+            const walletsSnapshot = await db.collection('mlm_wallets')
+                .where('totalEarned', '>', 0)
+                .limit(500)
+                .get();
+            
+            let flagsCreated = 0;
+            
+            for (const walletDoc of walletsSnapshot.docs) {
+                const userId = walletDoc.id;
+                
+                // Run all analyses
+                const referralRisks = await analyzeReferralPatterns(userId);
+                const orderRisks = await analyzeOrderPatterns(userId);
+                const walletRisks = await analyzeWalletPatterns(userId);
+                const networkRisks = await analyzeNetworkPatterns(userId);
+                
+                const allRisks = [...referralRisks, ...orderRisks, ...walletRisks, ...networkRisks];
+                
+                // Create flags for significant risks
+                for (const risk of allRisks) {
+                    if (risk.score >= 40) {
+                        await createRiskFlag(userId, risk.type, risk.score, risk.description);
+                        flagsCreated++;
+                    }
+                }
+            }
+            
+            // Log scan completion
+            await db.collection('mlm_audit_logs').add({
+                action: 'fraud_scan_completed',
+                usersScanned: walletsSnapshot.size,
+                flagsCreated: flagsCreated,
+                timestamp: admin.firestore.FieldValue.serverTimestamp()
+            });
+            
+            console.log(`Fraud scan complete: ${walletsSnapshot.size} users, ${flagsCreated} flags`);
+            return null;
+            
+        } catch (error) {
+            console.error('Fraud scan error:', error);
+            throw error;
+        }
+    });
+
+/**
+ * Real-time trigger: Analyze on referral creation
+ */
+exports.analyzeNewReferral = functions.firestore
+    .document('users/{userId}')
+    .onCreate(async (snapshot, context) => {
+        const userId = context.params.userId;
+        const userData = snapshot.data();
+        
+        if (!userData.sponsorId) return null;
+        
+        try {
+            // Analyze sponsor's referral pattern
+            const risks = await analyzeReferralPatterns(userData.sponsorId);
+            
+            for (const risk of risks) {
+                if (risk.score >= 50) {
+                    await createRiskFlag(userData.sponsorId, risk.type, risk.score, risk.description, {
+                        triggeredBy: 'new_referral',
+                        newUserId: userId
+                    });
+                }
+            }
+            
+        } catch (error) {
+            console.error('Error analyzing new referral:', error);
+        }
+        
+        return null;
+    });
+
+/**
+ * Real-time trigger: Analyze on withdrawal request
+ */
+exports.analyzeWithdrawalRequest = functions.firestore
+    .document('mlm_payout_requests/{requestId}')
+    .onCreate(async (snapshot, context) => {
+        const requestData = snapshot.data();
+        const userId = requestData.userId;
+        
+        try {
+            // Analyze wallet patterns
+            const walletRisks = await analyzeWalletPatterns(userId);
+            
+            for (const risk of walletRisks) {
+                if (risk.score >= 40) {
+                    await createRiskFlag(userId, risk.type, risk.score, risk.description, {
+                        triggeredBy: 'withdrawal_request',
+                        requestId: context.params.requestId,
+                        amount: requestData.amount
+                    });
+                }
+            }
+            
+            // Check wallet status
+            const walletDoc = await db.collection('mlm_wallets').doc(userId).get();
+            if (walletDoc.exists && walletDoc.data().walletStatus === 'frozen') {
+                // Reject the request automatically
+                await snapshot.ref.update({
+                    status: 'rejected',
+                    processedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    notes: 'Auto-rejected: Wallet is frozen pending review'
+                });
+                
+                // Log
+                await db.collection('mlm_audit_logs').add({
+                    action: 'withdrawal_auto_rejected',
+                    userId: userId,
+                    requestId: context.params.requestId,
+                    reason: 'frozen_wallet',
+                    timestamp: admin.firestore.FieldValue.serverTimestamp()
+                });
+            }
+            
+        } catch (error) {
+            console.error('Error analyzing withdrawal request:', error);
+        }
+        
+        return null;
+    });
+
+// ============================================================================
+// PHASE 7: ADMIN RISK MANAGEMENT FUNCTIONS
+// ============================================================================
+
+/**
+ * Admin: Review a risk flag
+ */
+exports.reviewRiskFlag = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    const adminEmails = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com'];
+    const adminUser = await admin.auth().getUser(context.auth.uid);
+    
+    if (!adminEmails.includes(adminUser.email)) {
+        throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+    }
+    
+    const { flagId, status, notes } = data;
+    
+    if (!flagId || !['reviewed', 'resolved'].includes(status)) {
+        throw new functions.https.HttpsError('invalid-argument', 'Invalid parameters');
+    }
+    
+    try {
+        await db.collection('mlm_risk_flags').doc(flagId).update({
+            status: status,
+            reviewedBy: context.auth.uid,
+            reviewedAt: admin.firestore.FieldValue.serverTimestamp(),
+            adminNotes: notes || null
+        });
+        
+        await db.collection('mlm_audit_logs').add({
+            action: `risk_flag_${status}`,
+            flagId: flagId,
+            reviewedBy: context.auth.uid,
+            notes: notes,
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        return { success: true };
+        
+    } catch (error) {
+        console.error('Error reviewing flag:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to review flag');
+    }
+});
+
+/**
+ * Admin: Freeze/unfreeze user wallet
+ */
+exports.updateWalletStatus = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    const adminEmails = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com'];
+    const adminUser = await admin.auth().getUser(context.auth.uid);
+    
+    if (!adminEmails.includes(adminUser.email)) {
+        throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+    }
+    
+    const { userId, walletStatus, reason } = data;
+    
+    if (!userId || !['normal', 'review', 'frozen'].includes(walletStatus)) {
+        throw new functions.https.HttpsError('invalid-argument', 'Invalid parameters');
+    }
+    
+    try {
+        await db.collection('mlm_wallets').doc(userId).update({
+            walletStatus: walletStatus,
+            walletStatusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            walletStatusUpdatedBy: context.auth.uid,
+            walletStatusReason: reason || null
+        });
+        
+        await db.collection('mlm_audit_logs').add({
+            action: 'wallet_status_changed',
+            userId: userId,
+            newStatus: walletStatus,
+            reason: reason,
+            changedBy: context.auth.uid,
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        return { success: true };
+        
+    } catch (error) {
+        console.error('Error updating wallet status:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to update wallet status');
+    }
+});
+
+/**
+ * Admin: Get automation readiness for a user
+ */
+exports.getAutomationReadiness = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    const { userId } = data;
+    const targetUserId = userId || context.auth.uid;
+    
+    try {
+        const checks = {
+            noOpenFlags: false,
+            walletNormal: false,
+            accountAgeOk: false,
+            minReferralsOk: false,
+            ready: false
+        };
+        
+        const config = await getMLMConfig();
+        
+        // Check open risk flags
+        const openFlags = await db.collection('mlm_risk_flags')
+            .where('userId', '==', targetUserId)
+            .where('status', '==', 'open')
+            .limit(1)
+            .get();
+        checks.noOpenFlags = openFlags.empty;
+        
+        // Check wallet status
+        const wallet = await db.collection('mlm_wallets').doc(targetUserId).get();
+        checks.walletNormal = !wallet.exists || (wallet.data().walletStatus || 'normal') === 'normal';
+        
+        // Check account age
+        const user = await db.collection('users').doc(targetUserId).get();
+        if (user.exists && user.data().createdAt) {
+            const createdAt = user.data().createdAt.toDate();
+            const ageInDays = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
+            checks.accountAgeOk = ageInDays >= config.minAccountAgeDays;
+        }
+        
+        // Check referral count
+        const referrals = await db.collection('users')
+            .where('sponsorId', '==', targetUserId)
+            .limit(config.minReferralsForAutoPayout + 1)
+            .get();
+        checks.minReferralsOk = referrals.size >= config.minReferralsForAutoPayout;
+        
+        // Overall readiness
+        checks.ready = checks.noOpenFlags && checks.walletNormal && checks.accountAgeOk && checks.minReferralsOk;
+        
+        return checks;
+        
+    } catch (error) {
+        console.error('Error checking automation readiness:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to check readiness');
+    }
+});
+
+// ============================================================================
+// PHASE 7: ANALYTICS MODULE
+// ============================================================================
+
+/**
+ * Scheduled function: Daily Analytics Aggregation
+ * Runs at 1 AM daily
+ */
+exports.aggregateDailyAnalytics = functions.pubsub
+    .schedule('0 1 * * *')
+    .timeZone('Africa/Lagos')
+    .onRun(async (context) => {
+        console.log('Starting daily analytics aggregation');
+        
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const dateKey = today.toISOString().split('T')[0]; // YYYY-MM-DD
+        
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        
+        try {
+            // Total commissions generated today
+            const todayCommissions = await db.collection('mlm_commissions')
+                .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(yesterday))
+                .where('createdAt', '<', admin.firestore.Timestamp.fromDate(today))
+                .get();
+            
+            const totalCommissionsGenerated = todayCommissions.docs.reduce((sum, d) => sum + (d.data().amount || 0), 0);
+            
+            // Commissions paid today
+            const paidCommissions = await db.collection('mlm_commissions')
+                .where('status', '==', 'paid')
+                .where('paidAt', '>=', admin.firestore.Timestamp.fromDate(yesterday))
+                .where('paidAt', '<', admin.firestore.Timestamp.fromDate(today))
+                .get();
+            
+            const totalCommissionsPaid = paidCommissions.docs.reduce((sum, d) => sum + (d.data().amount || 0), 0);
+            
+            // Active MLM users (users with commissions)
+            const activeUsersSnapshot = await db.collection('mlm_wallets')
+                .where('totalEarned', '>', 0)
+                .get();
+            const activeMLMUsers = activeUsersSnapshot.size;
+            
+            // Average commission per user
+            const avgCommissionPerUser = activeMLMUsers > 0 ? totalCommissionsGenerated / activeMLMUsers : 0;
+            
+            // Top 10 earners
+            const topEarnersSnapshot = await db.collection('mlm_wallets')
+                .orderBy('totalEarned', 'desc')
+                .limit(10)
+                .get();
+            
+            const topEarners = [];
+            for (const doc of topEarnersSnapshot.docs) {
+                const userDoc = await db.collection('users').doc(doc.id).get();
+                topEarners.push({
+                    userId: doc.id,
+                    name: userDoc.exists ? (userDoc.data().name || userDoc.data().email) : 'Unknown',
+                    totalEarned: doc.data().totalEarned
+                });
+            }
+            
+            // Top 10 referrers
+            const usersSnapshot = await db.collection('users').get();
+            const referrerCounts = {};
+            usersSnapshot.docs.forEach(doc => {
+                const sponsorId = doc.data().sponsorId;
+                if (sponsorId && sponsorId !== 'SYSTEM') {
+                    referrerCounts[sponsorId] = (referrerCounts[sponsorId] || 0) + 1;
+                }
+            });
+            
+            const topReferrers = Object.entries(referrerCounts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 10);
+            
+            const topReferrersData = [];
+            for (const [userId, count] of topReferrers) {
+                const userDoc = await db.collection('users').doc(userId).get();
+                topReferrersData.push({
+                    userId: userId,
+                    name: userDoc.exists ? (userDoc.data().name || userDoc.data().email) : 'Unknown',
+                    referralCount: count
+                });
+            }
+            
+            // Network growth rate (new MLM users today)
+            const newMLMUsers = await db.collection('mlm_network')
+                .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(yesterday))
+                .where('createdAt', '<', admin.firestore.Timestamp.fromDate(today))
+                .get();
+            
+            // Risk metrics
+            const openRiskFlags = await db.collection('mlm_risk_flags')
+                .where('status', '==', 'open')
+                .get();
+            
+            const highRiskFlags = openRiskFlags.docs.filter(d => d.data().riskScore >= 70).length;
+            
+            // Save analytics
+            await db.collection('mlm_analytics_daily').doc(dateKey).set({
+                date: admin.firestore.Timestamp.fromDate(yesterday),
+                dateKey: dateKey,
+                metrics: {
+                    totalCommissionsGenerated: totalCommissionsGenerated,
+                    totalCommissionsPaid: totalCommissionsPaid,
+                    activeMLMUsers: activeMLMUsers,
+                    avgCommissionPerUser: avgCommissionPerUser,
+                    newNetworkMembers: newMLMUsers.size,
+                    openRiskFlags: openRiskFlags.size,
+                    highRiskFlags: highRiskFlags
+                },
+                topEarners: topEarners,
+                topReferrers: topReferrersData,
+                createdAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+            
+            console.log(`Analytics aggregated for ${dateKey}`);
+            return null;
+            
+        } catch (error) {
+            console.error('Analytics aggregation error:', error);
+            throw error;
+        }
+    });
+
+/**
+ * Admin: Get analytics data
+ */
+exports.getMLMAnalytics = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    const { startDate, endDate, limit } = data;
+    const queryLimit = Math.min(limit || 30, 90);
+    
+    try {
+        let query = db.collection('mlm_analytics_daily')
+            .orderBy('date', 'desc')
+            .limit(queryLimit);
+        
+        if (startDate) {
+            query = query.where('date', '>=', admin.firestore.Timestamp.fromDate(new Date(startDate)));
+        }
+        
+        if (endDate) {
+            query = query.where('date', '<=', admin.firestore.Timestamp.fromDate(new Date(endDate)));
+        }
+        
+        const snapshot = await query.get();
+        
+        const analytics = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+        
+        return { analytics };
+        
+    } catch (error) {
+        console.error('Error getting analytics:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to get analytics');
+    }
+});
+
+/**
+ * Admin: Generate real-time analytics snapshot
+ */
+exports.getRealtimeAnalytics = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    try {
+        const now = new Date();
+        const todayStart = new Date(now);
+        todayStart.setHours(0, 0, 0, 0);
+        
+        const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        
+        // Today's commissions
+        const todayCommissions = await db.collection('mlm_commissions')
+            .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(todayStart))
+            .get();
+        const todayTotal = todayCommissions.docs.reduce((sum, d) => sum + (d.data().amount || 0), 0);
+        
+        // This week's commissions
+        const weekCommissions = await db.collection('mlm_commissions')
+            .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(weekAgo))
+            .get();
+        const weekTotal = weekCommissions.docs.reduce((sum, d) => sum + (d.data().amount || 0), 0);
+        
+        // Pending payouts
+        const pendingPayouts = await db.collection('mlm_payout_requests')
+            .where('status', '==', 'pending')
+            .get();
+        const pendingTotal = pendingPayouts.docs.reduce((sum, d) => sum + (d.data().amount || 0), 0);
+        
+        // Risk summary
+        const openFlags = await db.collection('mlm_risk_flags')
+            .where('status', '==', 'open')
+            .get();
+        
+        const riskByType = {};
+        openFlags.docs.forEach(d => {
+            const type = d.data().riskType;
+            riskByType[type] = (riskByType[type] || 0) + 1;
+        });
+        
+        // Wallet status summary
+        const frozenWallets = await db.collection('mlm_wallets')
+            .where('walletStatus', '==', 'frozen')
+            .get();
+        
+        const reviewWallets = await db.collection('mlm_wallets')
+            .where('walletStatus', '==', 'review')
+            .get();
+        
+        return {
+            today: {
+                commissions: todayTotal,
+                count: todayCommissions.size
+            },
+            thisWeek: {
+                commissions: weekTotal,
+                count: weekCommissions.size
+            },
+            pendingPayouts: {
+                total: pendingTotal,
+                count: pendingPayouts.size
+            },
+            risk: {
+                openFlags: openFlags.size,
+                byType: riskByType,
+                frozenWallets: frozenWallets.size,
+                reviewWallets: reviewWallets.size
+            }
+        };
+        
+    } catch (error) {
+        console.error('Error getting realtime analytics:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to get analytics');
     }
 });

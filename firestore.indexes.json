@@ -24,6 +24,14 @@
       ]
     },
     {
+      "collectionGroup": "mlm_commissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "approvedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "mlm_payout_requests",
       "queryScope": "COLLECTION",
       "fields": [
@@ -40,10 +48,25 @@
       ]
     },
     {
+      "collectionGroup": "mlm_payout_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "requestedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "mlm_wallets",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "totalEarned", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "mlm_wallets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "walletStatus", "order": "ASCENDING" }
       ]
     },
     {
@@ -52,6 +75,13 @@
       "fields": [
         { "fieldPath": "sponsorId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "mlm_network",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
       ]
     },
     {
@@ -75,6 +105,52 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "mlm_audit_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "action", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "mlm_risk_flags",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "mlm_risk_flags",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "mlm_risk_flags",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "riskType", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "mlm_risk_flags",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "riskScore", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "mlm_analytics_daily",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "date", "order": "DESCENDING" }
       ]
     }
   ],

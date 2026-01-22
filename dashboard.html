@@ -1100,6 +1100,46 @@
             </div>
         </div>
 
+        <!-- Phase 7: Earnings Analytics -->
+        <div class="card" style="margin-top: 24px;">
+            <div class="card-header">
+                <h2>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
+                        <polyline points="17 6 23 6 23 12"></polyline>
+                    </svg>
+                    Earnings Analytics
+                </h2>
+            </div>
+            <div class="card-body">
+                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px;">
+                    <!-- Monthly Earnings Chart -->
+                    <div>
+                        <h4 style="font-size: 0.9rem; font-weight: 600; color: #666; margin-bottom: 16px;">Monthly Earnings (Last 6 Months)</h4>
+                        <div id="earningsChart" style="height: 200px; display: flex; align-items: flex-end; justify-content: space-around; gap: 12px; padding: 20px 0; background: #f9fafb; border-radius: 12px;">
+                            <!-- Chart will be rendered by JS -->
+                            <div style="text-align: center; color: #666; width: 100%;">Loading...</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Commission Breakdown by Level -->
+                    <div>
+                        <h4 style="font-size: 0.9rem; font-weight: 600; color: #666; margin-bottom: 16px;">Earnings by Level</h4>
+                        <div id="levelBreakdown" style="background: #f9fafb; border-radius: 12px; padding: 20px;">
+                            <!-- Level breakdown will be rendered by JS -->
+                            <div style="text-align: center; color: #666;">Loading...</div>
+                        </div>
+                        
+                        <h4 style="font-size: 0.9rem; font-weight: 600; color: #666; margin: 24px 0 16px;">Referral Timeline</h4>
+                        <div id="referralTimeline" style="max-height: 200px; overflow-y: auto;">
+                            <!-- Timeline will be rendered by JS -->
+                            <div style="text-align: center; color: #666; padding: 20px;">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Disclaimer -->
         <div class="mlm-disclaimer">
             <strong>📌 Important Notice</strong>
@@ -1163,16 +1203,20 @@
             
             try {
                 // Check if this code already exists (unlikely but possible)
-                const existingCode = await db.collection('users')
-                    .where('referralCode', '==', referralCode)
-                    .limit(1)
-                    .get();
-                
                 let finalCode = referralCode;
-                if (!existingCode.empty && existingCode.docs[0].id !== userId) {
-                    // Code collision - add random suffix
-                    const randomSuffix = Math.random().toString(36).substring(2, 4).toUpperCase();
-                    finalCode = referralCode.substring(0, 7) + randomSuffix;
+                try {
+                    const existingCode = await db.collection('users')
+                        .where('referralCode', '==', referralCode)
+                        .limit(1)
+                        .get();
+                    
+                    if (!existingCode.empty && existingCode.docs[0].id !== userId) {
+                        // Code collision - add random suffix
+                        const randomSuffix = Math.random().toString(36).substring(2, 4).toUpperCase();
+                        finalCode = referralCode.substring(0, 7) + randomSuffix;
+                    }
+                } catch (queryError) {
+                    console.warn('Could not check for code collision, using generated code:', queryError);
                 }
                 
                 if (createNewDoc) {
@@ -1185,11 +1229,11 @@
                         isActive: true
                     });
                 } else {
-                    // Update existing document
-                    await db.collection('users').doc(userId).update({
+                    // Update existing document - use set with merge to handle both cases
+                    await db.collection('users').doc(userId).set({
                         referralCode: finalCode,
                         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-                    });
+                    }, { merge: true });
                 }
                 
                 console.log('Referral code generated and saved:', finalCode);
@@ -1197,7 +1241,8 @@
                 
             } catch (error) {
                 console.error('Error saving referral code:', error);
-                return referralCode; // Return the code even if save fails
+                // Return the generated code even if save fails (so UI can display it)
+                return referralCode;
             }
         }
 
@@ -1255,40 +1300,55 @@
                 try {
                     // Get user data
                     const userDoc = await db.collection('users').doc(user.uid).get();
+                    
                     if (userDoc.exists) {
                         currentUserData = { uid: user.uid, ...userDoc.data() };
                         
                         // Generate referral code if user doesn't have one
                         if (!currentUserData.referralCode) {
+                            console.log('User has no referral code, generating one...');
                             const generatedCode = await generateAndSaveReferralCode(user.uid);
                             currentUserData.referralCode = generatedCode;
                         }
                         
-                        // Update referral code display
-                        document.getElementById('referralCode').textContent = currentUserData.referralCode;
+                        // Update referral code display - with fallback
+                        const displayCode = currentUserData.referralCode || generateReferralCodeFromId(user.uid);
+                        document.getElementById('referralCode').textContent = displayCode;
                         
                         // Generate QR code
-                        generateQRCode(currentUserData.referralCode);
+                        generateQRCode(displayCode);
 
                         // Load all dashboard data
                         await Promise.all([
                             loadEarningsSummary(user.uid),
                             loadCommissionHistory(user.uid),
                             loadActivityFeed(user.uid),
-                            loadNetworkTree(user.uid)
+                            loadNetworkTree(user.uid),
+                            loadEarningsAnalytics(user.uid)
                         ]);
                     } else {
                         // User document doesn't exist, create it with referral code
+                        console.log('User document does not exist, creating...');
                         const generatedCode = await generateAndSaveReferralCode(user.uid, true);
                         currentUserData = { 
                             uid: user.uid, 
                             email: user.email,
                             referralCode: generatedCode 
                         };
-                        document.getElementById('referralCode').textContent = generatedCode;
+                        
+                        // Update display with fallback
+                        const displayCode = generatedCode || generateReferralCodeFromId(user.uid);
+                        document.getElementById('referralCode').textContent = displayCode;
+                        generateQRCode(displayCode);
                     }
                 } catch (error) {
                     console.error('Error loading dashboard:', error);
+                    // Even on error, try to display a referral code
+                    if (user.uid) {
+                        const fallbackCode = generateReferralCodeFromId(user.uid);
+                        document.getElementById('referralCode').textContent = fallbackCode;
+                        generateQRCode(fallbackCode);
+                    }
                 } finally {
                     hideLoading();
                 }
@@ -1610,6 +1670,222 @@
             if (cartCountEl) {
                 cartCountEl.textContent = totalItems;
                 cartCountEl.style.display = totalItems > 0 ? 'flex' : 'none';
+            }
+        }
+
+        // ============================================================================
+        // PHASE 7: CUSTOMER ANALYTICS (LIMITED VIEW)
+        // ============================================================================
+
+        // Load earnings analytics (monthly chart, level breakdown, timeline)
+        async function loadEarningsAnalytics(userId) {
+            try {
+                // Load monthly earnings chart
+                loadMonthlyEarningsChart(userId);
+                
+                // Load commission breakdown by level
+                loadLevelBreakdown(userId);
+                
+                // Load referral timeline
+                loadReferralTimeline(userId);
+                
+            } catch (error) {
+                console.error('Error loading analytics:', error);
+            }
+        }
+
+        // Load monthly earnings chart (last 6 months)
+        async function loadMonthlyEarningsChart(userId) {
+            const chartContainer = document.getElementById('earningsChart');
+            
+            try {
+                const sixMonthsAgo = new Date();
+                sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+                
+                // Get commissions for last 6 months
+                let commissionsSnapshot;
+                try {
+                    commissionsSnapshot = await db.collection('mlm_commissions')
+                        .where('beneficiaryId', '==', userId)
+                        .where('createdAt', '>=', firebase.firestore.Timestamp.fromDate(sixMonthsAgo))
+                        .get();
+                } catch (queryError) {
+                    // Try simpler query without date filter
+                    console.warn('Complex query failed, using simple query:', queryError);
+                    commissionsSnapshot = await db.collection('mlm_commissions')
+                        .where('beneficiaryId', '==', userId)
+                        .limit(100)
+                        .get();
+                }
+                
+                // Group by month
+                const monthlyData = {};
+                const months = [];
+                
+                // Initialize last 6 months
+                for (let i = 5; i >= 0; i--) {
+                    const d = new Date();
+                    d.setMonth(d.getMonth() - i);
+                    const key = d.toISOString().substring(0, 7); // YYYY-MM
+                    const label = d.toLocaleDateString('en-US', { month: 'short' });
+                    monthlyData[key] = 0;
+                    months.push({ key, label });
+                }
+                
+                // Sum commissions by month
+                commissionsSnapshot.docs.forEach(doc => {
+                    const data = doc.data();
+                    if (data.createdAt) {
+                        const date = data.createdAt.toDate();
+                        const key = date.toISOString().substring(0, 7);
+                        if (monthlyData.hasOwnProperty(key)) {
+                            monthlyData[key] += data.amount || 0;
+                        }
+                    }
+                });
+                
+                const values = months.map(m => monthlyData[m.key]);
+                const maxValue = Math.max(...values, 1);
+                
+                chartContainer.innerHTML = months.map((m, i) => {
+                    const value = values[i];
+                    const height = Math.max((value / maxValue) * 150, 8);
+                    return `
+                        <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 8px;">
+                            <div style="font-size: 0.7rem; color: #059669; font-weight: 600;">₦${value > 0 ? (value >= 1000 ? (value / 1000).toFixed(1) + 'k' : value.toFixed(0)) : '0'}</div>
+                            <div style="width: 100%; max-width: 40px; height: ${height}px; background: linear-gradient(to top, #059669, #34d399); border-radius: 6px 6px 0 0;"></div>
+                            <div style="font-size: 0.75rem; color: #666;">${m.label}</div>
+                        </div>
+                    `;
+                }).join('');
+                
+            } catch (error) {
+                console.error('Error loading monthly chart:', error);
+                chartContainer.innerHTML = '<div style="text-align: center; color: #666; width: 100%;">Unable to load chart</div>';
+            }
+        }
+
+        // Load commission breakdown by level
+        async function loadLevelBreakdown(userId) {
+            const container = document.getElementById('levelBreakdown');
+            
+            try {
+                // Get all commissions
+                const commissionsSnapshot = await db.collection('mlm_commissions')
+                    .where('beneficiaryId', '==', userId)
+                    .get();
+                
+                const levelTotals = { 1: 0, 2: 0, 3: 0 };
+                let total = 0;
+                
+                commissionsSnapshot.docs.forEach(doc => {
+                    const data = doc.data();
+                    const level = data.level || 1;
+                    const amount = data.amount || 0;
+                    if (levelTotals.hasOwnProperty(level)) {
+                        levelTotals[level] += amount;
+                    }
+                    total += amount;
+                });
+                
+                const levelColors = {
+                    1: '#059669',
+                    2: '#6366f1',
+                    3: '#d97706'
+                };
+                
+                if (total === 0) {
+                    container.innerHTML = `
+                        <div style="text-align: center; color: #666; padding: 20px;">
+                            <p>No earnings yet</p>
+                            <p style="font-size: 0.8rem;">Start referring to earn commissions!</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                container.innerHTML = Object.entries(levelTotals).map(([level, amount]) => {
+                    const percent = total > 0 ? Math.round(amount / total * 100) : 0;
+                    return `
+                        <div style="margin-bottom: 16px;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                                <span style="font-size: 0.85rem; font-weight: 500;">Level ${level}</span>
+                                <span style="font-weight: 600; color: ${levelColors[level]};">₦${amount.toLocaleString()}</span>
+                            </div>
+                            <div style="height: 10px; background: #e5e7eb; border-radius: 5px; overflow: hidden;">
+                                <div style="width: ${percent}%; height: 100%; background: ${levelColors[level]}; border-radius: 5px;"></div>
+                            </div>
+                            <div style="font-size: 0.75rem; color: #999; margin-top: 4px;">${percent}% of total</div>
+                        </div>
+                    `;
+                }).join('') + `
+                    <div style="padding-top: 12px; border-top: 1px solid #e5e7eb; margin-top: 8px;">
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="font-weight: 600;">Total Earned</span>
+                            <span style="font-weight: 700; color: #000;">₦${total.toLocaleString()}</span>
+                        </div>
+                    </div>
+                `;
+                
+            } catch (error) {
+                console.error('Error loading level breakdown:', error);
+                container.innerHTML = '<div style="text-align: center; color: #666;">Unable to load breakdown</div>';
+            }
+        }
+
+        // Load referral activity timeline
+        async function loadReferralTimeline(userId) {
+            const container = document.getElementById('referralTimeline');
+            
+            try {
+                // Get recent referrals - try without ordering first if index not ready
+                let referralsSnapshot;
+                try {
+                    referralsSnapshot = await db.collection('users')
+                        .where('sponsorId', '==', userId)
+                        .orderBy('createdAt', 'desc')
+                        .limit(10)
+                        .get();
+                } catch (indexError) {
+                    // Fallback without ordering if index not available
+                    console.warn('Index not available for referral timeline, using unordered query');
+                    referralsSnapshot = await db.collection('users')
+                        .where('sponsorId', '==', userId)
+                        .limit(10)
+                        .get();
+                }
+                
+                if (referralsSnapshot.empty) {
+                    container.innerHTML = `
+                        <div style="text-align: center; color: #666; padding: 20px;">
+                            <p>No referrals yet</p>
+                            <p style="font-size: 0.8rem;">Share your code to grow your network!</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                container.innerHTML = referralsSnapshot.docs.map(doc => {
+                    const data = doc.data();
+                    const name = data.name || data.email?.split('@')[0] || 'New Member';
+                    const initials = name.substring(0, 2).toUpperCase();
+                    const date = data.createdAt ? data.createdAt.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-';
+                    
+                    return `
+                        <div style="display: flex; align-items: center; gap: 12px; padding: 10px; border-bottom: 1px solid #f0f0f0;">
+                            <div style="width: 36px; height: 36px; background: linear-gradient(135deg, #059669, #34d399); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 600;">${initials}</div>
+                            <div style="flex: 1;">
+                                <div style="font-weight: 500; font-size: 0.9rem;">${name}</div>
+                                <div style="font-size: 0.75rem; color: #666;">Joined ${date}</div>
+                            </div>
+                            <span style="font-size: 0.7rem; padding: 2px 8px; background: #d1fae5; color: #059669; border-radius: 4px;">L1</span>
+                        </div>
+                    `;
+                }).join('');
+                
+            } catch (error) {
+                console.error('Error loading referral timeline:', error);
+                container.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">Unable to load timeline</div>';
             }
         }
 
