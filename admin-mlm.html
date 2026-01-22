@@ -769,6 +769,7 @@
                     <button class="nav-tab" onclick="switchTab('payouts')">Payouts</button>
                     <button class="nav-tab" onclick="switchTab('users')">User Network</button>
                     <button class="nav-tab" onclick="switchTab('audit')">Audit Log</button>
+                    <button class="nav-tab" onclick="switchTab('config')">Settings</button>
                 </div>
 
                 <!-- Tab: Overview -->
@@ -918,6 +919,94 @@
                                     <tr><td colspan="4" class="loading">Loading...</td></tr>
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab: Settings -->
+                <div class="tab-content" id="tab-config">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>MLM System Configuration</h2>
+                            <button class="btn btn-success" onclick="saveMLMConfig()">Save Configuration</button>
+                        </div>
+                        <div class="card-body">
+                            <p style="color: #666; margin-bottom: 24px;">
+                                Configure MLM system settings. Changes take effect immediately.
+                            </p>
+                            
+                            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px;">
+                                <div class="form-group">
+                                    <label>MLM System Enabled</label>
+                                    <select id="configEnabled">
+                                        <option value="true">Enabled</option>
+                                        <option value="false">Disabled</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Maximum Commission Depth</label>
+                                    <input type="number" id="configMaxDepth" value="3" min="1" max="10">
+                                </div>
+                                <div class="form-group">
+                                    <label>Minimum Withdrawal Amount (₦)</label>
+                                    <input type="number" id="configMinWithdrawal" value="5000" min="1000">
+                                </div>
+                                <div class="form-group">
+                                    <label>Commission Lock Days</label>
+                                    <input type="number" id="configLockDays" value="7" min="0" max="30">
+                                </div>
+                            </div>
+
+                            <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #e5e7eb;">
+                                <h3 style="font-size: 1rem; margin-bottom: 16px;">System Actions</h3>
+                                <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                                    <button class="btn btn-secondary" onclick="initializeMLMConfig()">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"></path>
+                                        </svg>
+                                        Initialize Default Config
+                                    </button>
+                                    <button class="btn btn-secondary" onclick="runCommissionUnlock()">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                                        </svg>
+                                        Unlock Pending Commissions
+                                    </button>
+                                    <button class="btn btn-secondary" onclick="recalculateWallets()">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polyline points="23 4 23 10 17 10"></polyline>
+                                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                                        </svg>
+                                        Recalculate Wallets
+                                    </button>
+                                </div>
+                                <p style="color: #999; font-size: 0.8rem; margin-top: 12px;">
+                                    ⚠️ These actions may take time to complete. Do not close this page while processing.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card" style="margin-top: 24px;">
+                        <div class="card-header">
+                            <h2>Deployment Info</h2>
+                        </div>
+                        <div class="card-body">
+                            <p style="color: #666; margin-bottom: 16px;">
+                                For production deployment with Cloud Functions, run:
+                            </p>
+                            <pre style="background: #f3f4f6; padding: 16px; border-radius: 8px; font-size: 0.85rem; overflow-x: auto;">
+# Deploy Firestore rules
+firebase deploy --only firestore:rules
+
+# Deploy Cloud Functions
+cd functions && npm install && cd ..
+firebase deploy --only functions
+
+# Initialize config (one-time)
+curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
+                            </pre>
                         </div>
                     </div>
                 </div>
@@ -1505,7 +1594,8 @@
                     'commissionrules': 'rules',
                     'payouts': 'payouts',
                     'usernetwork': 'users',
-                    'auditlog': 'audit'
+                    'auditlog': 'audit',
+                    'settings': 'config'
                 };
                 const tabId = tabMap[tabName] || 'overview';
                 
@@ -1514,8 +1604,165 @@
                 
                 document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
                 document.getElementById('tab-' + tabId)?.classList.add('active');
+                
+                // Load config when settings tab opened
+                if (tabId === 'config') {
+                    loadMLMConfig();
+                }
             });
         });
+
+        // Load MLM configuration
+        async function loadMLMConfig() {
+            try {
+                const configDoc = await db.collection('mlm_configs').doc('settings').get();
+                
+                if (configDoc.exists) {
+                    const data = configDoc.data();
+                    document.getElementById('configEnabled').value = data.mlmEnabled !== false ? 'true' : 'false';
+                    document.getElementById('configMaxDepth').value = data.maxDepth || 3;
+                    document.getElementById('configMinWithdrawal').value = data.minWithdrawalAmount || 5000;
+                    document.getElementById('configLockDays').value = data.commissionLockDays || 7;
+                }
+            } catch (error) {
+                console.error('Error loading config:', error);
+            }
+        }
+
+        // Save MLM configuration
+        async function saveMLMConfig() {
+            try {
+                await db.collection('mlm_configs').doc('settings').set({
+                    mlmEnabled: document.getElementById('configEnabled').value === 'true',
+                    maxDepth: parseInt(document.getElementById('configMaxDepth').value) || 3,
+                    minWithdrawalAmount: parseInt(document.getElementById('configMinWithdrawal').value) || 5000,
+                    commissionLockDays: parseInt(document.getElementById('configLockDays').value) || 7,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    updatedBy: currentAdmin.uid
+                }, { merge: true });
+
+                showStatus('Configuration saved successfully!', 'success');
+            } catch (error) {
+                console.error('Error saving config:', error);
+                showStatus('Error saving configuration', 'error');
+            }
+        }
+
+        // Initialize MLM configuration
+        async function initializeMLMConfig() {
+            if (!confirm('This will initialize/reset MLM configuration to defaults. Continue?')) {
+                return;
+            }
+
+            try {
+                const result = await MLMService.initializeMLMConfig();
+                
+                if (result.success) {
+                    showStatus('MLM configuration initialized successfully!', 'success');
+                    loadMLMConfig();
+                    loadCommissionRules();
+                } else {
+                    showStatus(result.error || 'Error initializing config', 'error');
+                }
+            } catch (error) {
+                console.error('Error initializing config:', error);
+                showStatus('Error initializing configuration', 'error');
+            }
+        }
+
+        // Run commission unlock (manual trigger)
+        async function runCommissionUnlock() {
+            if (!confirm('This will unlock all pending commissions past their lock date. Continue?')) {
+                return;
+            }
+
+            showStatus('Processing commission unlock...', 'success');
+
+            try {
+                const result = await MLMService.approvePendingCommissions();
+                
+                if (result.success) {
+                    showStatus(`Unlocked ${result.approved || 0} commissions!`, 'success');
+                    loadDashboardData();
+                } else {
+                    showStatus(result.error || 'Error unlocking commissions', 'error');
+                }
+            } catch (error) {
+                console.error('Error unlocking commissions:', error);
+                showStatus('Error unlocking commissions', 'error');
+            }
+        }
+
+        // Recalculate wallets (admin utility)
+        async function recalculateWallets() {
+            if (!confirm('This will recalculate all wallet balances from commission records. This may take a while. Continue?')) {
+                return;
+            }
+
+            showStatus('Recalculating wallets... This may take a while.', 'success');
+
+            try {
+                // Get all commissions grouped by beneficiary
+                const commissions = await db.collection('mlm_commissions').get();
+                
+                const walletTotals = {};
+                
+                commissions.docs.forEach(doc => {
+                    const data = doc.data();
+                    const beneficiary = data.beneficiaryId;
+                    const amount = data.amount || data.commissionAmount || 0;
+                    const status = data.status;
+                    
+                    if (!walletTotals[beneficiary]) {
+                        walletTotals[beneficiary] = {
+                            totalEarned: 0,
+                            pendingBalance: 0,
+                            availableBalance: 0
+                        };
+                    }
+                    
+                    walletTotals[beneficiary].totalEarned += amount;
+                    
+                    if (status === 'pending') {
+                        walletTotals[beneficiary].pendingBalance += amount;
+                    } else if (status === 'approved') {
+                        walletTotals[beneficiary].availableBalance += amount;
+                    }
+                });
+                
+                // Update wallets
+                let updated = 0;
+                for (const [userId, totals] of Object.entries(walletTotals)) {
+                    // Get existing wallet for withdrawn amount
+                    const existingWallet = await db.collection('mlm_wallets').doc(userId).get();
+                    const withdrawnBalance = existingWallet.exists ? (existingWallet.data().withdrawnBalance || 0) : 0;
+                    const lockedBalance = existingWallet.exists ? (existingWallet.data().lockedBalance || 0) : 0;
+                    
+                    // Adjust available balance for withdrawn/locked
+                    const adjustedAvailable = Math.max(0, totals.availableBalance - withdrawnBalance - lockedBalance);
+                    
+                    await db.collection('mlm_wallets').doc(userId).set({
+                        userId: userId,
+                        totalEarned: totals.totalEarned,
+                        pendingBalance: totals.pendingBalance,
+                        availableBalance: adjustedAvailable,
+                        withdrawnBalance: withdrawnBalance,
+                        lockedBalance: lockedBalance,
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        recalculatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    }, { merge: true });
+                    
+                    updated++;
+                }
+                
+                showStatus(`Recalculated ${updated} wallets!`, 'success');
+                loadDashboardData();
+                
+            } catch (error) {
+                console.error('Error recalculating wallets:', error);
+                showStatus('Error recalculating wallets: ' + error.message, 'error');
+            }
+        }
     </script>
 </body>
 </html>

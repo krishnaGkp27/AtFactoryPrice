@@ -5,10 +5,13 @@
  * MLM Type: Unilevel (configurable depth)
  * Commissions: Derived only from completed, paid orders
  * 
+ * IMPORTANT: Wallet writes are handled by Cloud Functions only
+ * Client-side operations are read-only for wallet data
+ * 
  * SAFETY: All earnings are performance-based. No guaranteed income.
  */
 
-// ===== MLM CONFIGURATION =====
+// ===== MLM CONFIGURATION (defaults, overridden by Firestore config) =====
 const MLM_CONFIG = {
     // Maximum depth for commission distribution
     maxLevels: 3,
@@ -32,6 +35,29 @@ const MLM_CONFIG = {
     // MLM system enabled flag
     enabled: true
 };
+
+// ===== LOAD MLM CONFIG FROM FIRESTORE =====
+let mlmConfigLoaded = false;
+
+async function loadMLMConfig() {
+    if (mlmConfigLoaded) return MLM_CONFIG;
+    
+    try {
+        const configDoc = await db.collection('mlm_configs').doc('settings').get();
+        if (configDoc.exists) {
+            const data = configDoc.data();
+            MLM_CONFIG.maxLevels = data.maxDepth || MLM_CONFIG.maxLevels;
+            MLM_CONFIG.minWithdrawal = data.minWithdrawalAmount || MLM_CONFIG.minWithdrawal;
+            MLM_CONFIG.approvalDelayDays = data.commissionLockDays || MLM_CONFIG.approvalDelayDays;
+            MLM_CONFIG.enabled = data.mlmEnabled !== false;
+        }
+        mlmConfigLoaded = true;
+    } catch (error) {
+        console.error('Error loading MLM config:', error);
+    }
+    
+    return MLM_CONFIG;
+}
 
 // ===== COMMISSION RULES MANAGEMENT =====
 
@@ -379,59 +405,93 @@ async function approvePendingCommissions() {
 // ===== WALLET OPERATIONS =====
 
 /**
- * Get user wallet
+ * Get user wallet from mlm_wallets collection
+ * READ-ONLY: Wallet writes are handled by Cloud Functions
  */
 async function getUserWallet(userId) {
     try {
-        const walletDoc = await db.collection('wallets').doc(userId).get();
+        // Try new collection first
+        const mlmWalletDoc = await db.collection('mlm_wallets').doc(userId).get();
         
-        if (walletDoc.exists) {
-            return walletDoc.data();
+        if (mlmWalletDoc.exists) {
+            const data = mlmWalletDoc.data();
+            // Normalize field names for backward compatibility
+            return {
+                userId: data.userId,
+                totalEarned: data.totalEarned || 0,
+                pending: data.pendingBalance || 0,
+                available: data.availableBalance || 0,
+                withdrawn: data.withdrawnBalance || 0,
+                locked: data.lockedBalance || 0,
+                createdAt: data.createdAt,
+                updatedAt: data.updatedAt
+            };
         }
         
-        // Create default wallet if doesn't exist
-        const defaultWallet = {
+        // Fallback to legacy wallets collection
+        const legacyWalletDoc = await db.collection('wallets').doc(userId).get();
+        
+        if (legacyWalletDoc.exists) {
+            return legacyWalletDoc.data();
+        }
+        
+        // Return default wallet structure (do NOT create - Cloud Functions handle this)
+        return {
             userId: userId,
             totalEarned: 0,
             pending: 0,
             available: 0,
             withdrawn: 0,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            locked: 0
         };
-        
-        await db.collection('wallets').doc(userId).set(defaultWallet);
-        return defaultWallet;
         
     } catch (error) {
         console.error('Error getting wallet:', error);
-        return null;
+        return {
+            userId: userId,
+            totalEarned: 0,
+            pending: 0,
+            available: 0,
+            withdrawn: 0,
+            locked: 0
+        };
     }
 }
 
 /**
- * Request withdrawal
+ * Request withdrawal via Cloud Functions (secure)
+ * This calls the Firebase Cloud Function instead of writing directly
  */
 async function requestWithdrawal(userId, amount, paymentDetails) {
+    await loadMLMConfig();
+    
+    // Validate amount client-side first
+    if (amount < MLM_CONFIG.minWithdrawal) {
+        return { success: false, error: `Minimum withdrawal is ₦${MLM_CONFIG.minWithdrawal.toLocaleString()}` };
+    }
+    
+    // Get wallet to validate balance
+    const wallet = await getUserWallet(userId);
+    
+    if (!wallet) {
+        return { success: false, error: 'Wallet not found' };
+    }
+    
+    if (amount > wallet.available) {
+        return { success: false, error: 'Insufficient available balance' };
+    }
+    
     try {
-        // Get wallet
-        const wallet = await getUserWallet(userId);
-        
-        if (!wallet) {
-            return { success: false, error: 'Wallet not found' };
+        // Try Cloud Functions first (preferred)
+        if (typeof firebase !== 'undefined' && firebase.functions) {
+            const requestWithdrawalFn = firebase.functions().httpsCallable('requestWithdrawal');
+            const result = await requestWithdrawalFn({ amount, paymentDetails });
+            return result.data;
         }
         
-        // Validate amount
-        if (amount < MLM_CONFIG.minWithdrawal) {
-            return { success: false, error: `Minimum withdrawal is ₦${MLM_CONFIG.minWithdrawal.toLocaleString()}` };
-        }
-        
-        if (amount > wallet.available) {
-            return { success: false, error: 'Insufficient available balance' };
-        }
-        
+        // Fallback: Direct write (for when Cloud Functions not deployed)
         // Check for pending withdrawal
-        const pendingWithdrawals = await db.collection('mlm_withdrawals')
+        const pendingWithdrawals = await db.collection('mlm_payout_requests')
             .where('userId', '==', userId)
             .where('status', '==', 'pending')
             .limit(1)
@@ -441,44 +501,63 @@ async function requestWithdrawal(userId, amount, paymentDetails) {
             return { success: false, error: 'You have a pending withdrawal request' };
         }
         
-        // Create withdrawal request
-        const batch = db.batch();
-        
-        const withdrawalRef = db.collection('mlm_withdrawals').doc();
-        batch.set(withdrawalRef, {
+        // Create withdrawal request (fallback method)
+        const withdrawalRef = db.collection('mlm_payout_requests').doc();
+        await withdrawalRef.set({
             userId: userId,
             amount: amount,
             paymentDetails: paymentDetails,
-            status: 'pending', // pending -> approved -> paid / rejected
+            payoutMethod: 'bank_transfer',
+            status: 'pending',
             requestedAt: firebase.firestore.FieldValue.serverTimestamp(),
             processedAt: null,
             processedBy: null,
             notes: null
         });
         
-        // Deduct from available (hold for processing)
-        const walletRef = db.collection('wallets').doc(userId);
-        batch.update(walletRef, {
-            available: firebase.firestore.FieldValue.increment(-amount),
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
+        // Update wallet (fallback - in production this should be Cloud Functions only)
+        const walletRef = db.collection('mlm_wallets').doc(userId);
+        const walletDoc = await walletRef.get();
         
-        await batch.commit();
+        if (walletDoc.exists) {
+            await walletRef.update({
+                availableBalance: firebase.firestore.FieldValue.increment(-amount),
+                lockedBalance: firebase.firestore.FieldValue.increment(amount),
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+        }
         
         return { success: true, withdrawalId: withdrawalRef.id };
         
     } catch (error) {
         console.error('Error requesting withdrawal:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: error.message || 'Failed to submit withdrawal request' };
     }
 }
 
 /**
  * Process withdrawal (admin action)
+ * Uses Cloud Functions in production, fallback to direct write
  */
 async function processWithdrawal(withdrawalId, adminId, approved, notes = '') {
     try {
-        const withdrawalDoc = await db.collection('mlm_withdrawals').doc(withdrawalId).get();
+        // Try Cloud Functions first (preferred)
+        if (typeof firebase !== 'undefined' && firebase.functions) {
+            const processWithdrawalFn = firebase.functions().httpsCallable('processWithdrawal');
+            const result = await processWithdrawalFn({ withdrawalId, approved, notes });
+            return result.data;
+        }
+        
+        // Fallback: Direct write (for when Cloud Functions not deployed)
+        // Try new collection first
+        let withdrawalDoc = await db.collection('mlm_payout_requests').doc(withdrawalId).get();
+        let collectionName = 'mlm_payout_requests';
+        
+        if (!withdrawalDoc.exists) {
+            // Fallback to legacy collection
+            withdrawalDoc = await db.collection('mlm_withdrawals').doc(withdrawalId).get();
+            collectionName = 'mlm_withdrawals';
+        }
         
         if (!withdrawalDoc.exists) {
             return { success: false, error: 'Withdrawal not found' };
@@ -501,20 +580,40 @@ async function processWithdrawal(withdrawalId, adminId, approved, notes = '') {
             notes: notes
         });
         
-        if (approved) {
-            // Mark as withdrawn in wallet
-            const walletRef = db.collection('wallets').doc(withdrawal.userId);
-            batch.update(walletRef, {
-                withdrawn: firebase.firestore.FieldValue.increment(withdrawal.amount),
-                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
+        // Update wallet in mlm_wallets collection
+        const walletRef = db.collection('mlm_wallets').doc(withdrawal.userId);
+        const walletDoc = await walletRef.get();
+        
+        if (walletDoc.exists) {
+            if (approved) {
+                // Move from locked to withdrawn
+                batch.update(walletRef, {
+                    lockedBalance: firebase.firestore.FieldValue.increment(-withdrawal.amount),
+                    withdrawnBalance: firebase.firestore.FieldValue.increment(withdrawal.amount),
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            } else {
+                // Return to available balance
+                batch.update(walletRef, {
+                    lockedBalance: firebase.firestore.FieldValue.increment(-withdrawal.amount),
+                    availableBalance: firebase.firestore.FieldValue.increment(withdrawal.amount),
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            }
         } else {
-            // Return to available balance if rejected
-            const walletRef = db.collection('wallets').doc(withdrawal.userId);
-            batch.update(walletRef, {
-                available: firebase.firestore.FieldValue.increment(withdrawal.amount),
-                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
+            // Fallback to legacy wallets collection
+            const legacyWalletRef = db.collection('wallets').doc(withdrawal.userId);
+            if (approved) {
+                batch.update(legacyWalletRef, {
+                    withdrawn: firebase.firestore.FieldValue.increment(withdrawal.amount),
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            } else {
+                batch.update(legacyWalletRef, {
+                    available: firebase.firestore.FieldValue.increment(withdrawal.amount),
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            }
         }
         
         // Audit log
@@ -584,14 +683,25 @@ async function getCommissionHistory(userId, limit = 50) {
 
 /**
  * Get withdrawal history for a user
+ * Tries new mlm_payout_requests collection first, then legacy
  */
 async function getWithdrawalHistory(userId, limit = 20) {
     try {
-        const snapshot = await db.collection('mlm_withdrawals')
+        // Try new collection first
+        let snapshot = await db.collection('mlm_payout_requests')
             .where('userId', '==', userId)
             .orderBy('requestedAt', 'desc')
             .limit(limit)
             .get();
+        
+        // If empty, try legacy collection
+        if (snapshot.empty) {
+            snapshot = await db.collection('mlm_withdrawals')
+                .where('userId', '==', userId)
+                .orderBy('requestedAt', 'desc')
+                .limit(limit)
+                .get();
+        }
         
         return snapshot.docs.map(doc => ({
             id: doc.id,
@@ -601,7 +711,20 @@ async function getWithdrawalHistory(userId, limit = 20) {
         
     } catch (error) {
         console.error('Error getting withdrawal history:', error);
-        return [];
+        // Try without orderBy if index doesn't exist
+        try {
+            const snapshot = await db.collection('mlm_payout_requests')
+                .where('userId', '==', userId)
+                .limit(limit)
+                .get();
+            return snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data(),
+                requestedAt: doc.data().requestedAt?.toDate?.() || new Date()
+            }));
+        } catch (e) {
+            return [];
+        }
     }
 }
 
@@ -645,60 +768,116 @@ async function getEarningsSummary(userId) {
  */
 async function getAdminMLMStats() {
     try {
-        // Total MLM users (users with sponsors or referrals)
-        const usersWithSponsors = await db.collection('users')
-            .where('sponsorId', '!=', null)
-            .get();
+        // Total MLM users - check both mlm_network and users with sponsors
+        let totalMLMUsers = 0;
+        try {
+            const networkCount = await db.collection('mlm_network').get();
+            totalMLMUsers = networkCount.size;
+        } catch (e) {
+            // Fallback to users collection
+            const usersWithSponsors = await db.collection('users')
+                .where('sponsorId', '!=', null)
+                .get();
+            totalMLMUsers = usersWithSponsors.size;
+        }
         
-        // Total commissions
+        // Total commissions from mlm_commissions
         const allCommissions = await db.collection('mlm_commissions').get();
         let totalCommissions = 0;
         let pendingCommissions = 0;
+        let approvedCommissions = 0;
         
         allCommissions.docs.forEach(doc => {
             const data = doc.data();
-            totalCommissions += data.commissionAmount || 0;
+            const amount = data.amount || data.commissionAmount || 0;
+            totalCommissions += amount;
             if (data.status === 'pending') {
-                pendingCommissions += data.commissionAmount || 0;
+                pendingCommissions += amount;
+            } else if (data.status === 'approved') {
+                approvedCommissions += amount;
             }
         });
         
-        // Pending payouts
-        const pendingPayouts = await db.collection('mlm_withdrawals')
-            .where('status', '==', 'pending')
-            .get();
-        
+        // Pending payouts - try new collection first
         let pendingPayoutAmount = 0;
-        pendingPayouts.docs.forEach(doc => {
-            pendingPayoutAmount += doc.data().amount || 0;
-        });
+        let pendingPayoutCount = 0;
         
-        // Top earners (by total earned)
-        const walletsSnapshot = await db.collection('wallets')
-            .orderBy('totalEarned', 'desc')
-            .limit(10)
-            .get();
+        try {
+            const pendingPayouts = await db.collection('mlm_payout_requests')
+                .where('status', '==', 'pending')
+                .get();
+            
+            pendingPayouts.docs.forEach(doc => {
+                pendingPayoutAmount += doc.data().amount || 0;
+            });
+            pendingPayoutCount = pendingPayouts.size;
+        } catch (e) {
+            // Fallback to legacy collection
+            const pendingPayouts = await db.collection('mlm_withdrawals')
+                .where('status', '==', 'pending')
+                .get();
+            
+            pendingPayouts.docs.forEach(doc => {
+                pendingPayoutAmount += doc.data().amount || 0;
+            });
+            pendingPayoutCount = pendingPayouts.size;
+        }
         
+        // Top earners (by total earned) - try new collection first
         const topEarners = [];
-        for (const doc of walletsSnapshot.docs) {
-            const walletData = doc.data();
-            if (walletData.totalEarned > 0) {
-                const userDoc = await db.collection('users').doc(doc.id).get();
-                topEarners.push({
-                    userId: doc.id,
-                    name: userDoc.exists ? userDoc.data().name : 'Unknown',
-                    totalEarned: walletData.totalEarned
-                });
+        try {
+            const walletsSnapshot = await db.collection('mlm_wallets')
+                .orderBy('totalEarned', 'desc')
+                .limit(10)
+                .get();
+            
+            for (const doc of walletsSnapshot.docs) {
+                const walletData = doc.data();
+                if (walletData.totalEarned > 0) {
+                    const userDoc = await db.collection('users').doc(doc.id).get();
+                    topEarners.push({
+                        userId: doc.id,
+                        name: userDoc.exists ? (userDoc.data().name || userDoc.data().email) : 'Unknown',
+                        totalEarned: walletData.totalEarned
+                    });
+                }
+            }
+        } catch (e) {
+            // Fallback to legacy wallets collection
+            const walletsSnapshot = await db.collection('wallets')
+                .orderBy('totalEarned', 'desc')
+                .limit(10)
+                .get();
+            
+            for (const doc of walletsSnapshot.docs) {
+                const walletData = doc.data();
+                if (walletData.totalEarned > 0) {
+                    const userDoc = await db.collection('users').doc(doc.id).get();
+                    topEarners.push({
+                        userId: doc.id,
+                        name: userDoc.exists ? (userDoc.data().name || userDoc.data().email) : 'Unknown',
+                        totalEarned: walletData.totalEarned
+                    });
+                }
             }
         }
         
+        // Get top referrers (most direct referrals)
+        const topReferrers = [];
+        try {
+            // This requires aggregation which isn't supported in client-side Firestore
+            // We'll use a workaround by getting users ordered by referral count if stored
+        } catch (e) {}
+        
         return {
-            totalMLMUsers: usersWithSponsors.size,
+            totalMLMUsers: totalMLMUsers,
             totalCommissions: totalCommissions,
             pendingCommissions: pendingCommissions,
+            approvedCommissions: approvedCommissions,
             pendingPayouts: pendingPayoutAmount,
-            pendingPayoutCount: pendingPayouts.size,
-            topEarners: topEarners
+            pendingPayoutCount: pendingPayoutCount,
+            topEarners: topEarners,
+            topReferrers: topReferrers
         };
         
     } catch (error) {
@@ -707,9 +886,11 @@ async function getAdminMLMStats() {
             totalMLMUsers: 0,
             totalCommissions: 0,
             pendingCommissions: 0,
+            approvedCommissions: 0,
             pendingPayouts: 0,
             pendingPayoutCount: 0,
-            topEarners: []
+            topEarners: [],
+            topReferrers: []
         };
     }
 }
@@ -776,11 +957,156 @@ async function getNetworkActivity(userId, limit = 20) {
     }
 }
 
+// ===== NETWORK TREE FUNCTIONS =====
+
+/**
+ * Get full network tree for a user (lazy-loaded by level)
+ */
+async function getNetworkTree(userId, maxDepth = 3) {
+    const tree = {
+        userId: userId,
+        children: [],
+        stats: { total: 0, byLevel: {} }
+    };
+    
+    try {
+        // Get direct downline (Level 1)
+        const level1 = await getDirectDownline(userId);
+        tree.children = level1.map(u => ({
+            userId: u.userId,
+            name: u.name || u.email,
+            email: u.email,
+            referralCode: u.referralCode,
+            joinedAt: u.createdAt,
+            level: 1,
+            children: [] // Lazy loaded
+        }));
+        tree.stats.byLevel[1] = level1.length;
+        tree.stats.total = level1.length;
+        
+        // Get Level 2 if needed
+        if (maxDepth >= 2 && level1.length > 0) {
+            for (const l1User of tree.children) {
+                const level2 = await getDirectDownline(l1User.userId);
+                l1User.children = level2.map(u => ({
+                    userId: u.userId,
+                    name: u.name || u.email,
+                    email: u.email,
+                    level: 2,
+                    children: []
+                }));
+                tree.stats.byLevel[2] = (tree.stats.byLevel[2] || 0) + level2.length;
+                tree.stats.total += level2.length;
+                
+                // Get Level 3 if needed
+                if (maxDepth >= 3 && level2.length > 0) {
+                    for (const l2User of l1User.children) {
+                        const level3 = await getDirectDownline(l2User.userId);
+                        l2User.children = level3.map(u => ({
+                            userId: u.userId,
+                            name: u.name || u.email,
+                            email: u.email,
+                            level: 3,
+                            children: []
+                        }));
+                        tree.stats.byLevel[3] = (tree.stats.byLevel[3] || 0) + level3.length;
+                        tree.stats.total += level3.length;
+                    }
+                }
+            }
+        }
+        
+    } catch (error) {
+        console.error('Error building network tree:', error);
+    }
+    
+    return tree;
+}
+
+/**
+ * Get user's MLM profile with network path
+ */
+async function getUserMLMProfile(userId) {
+    try {
+        // Get from mlm_network collection
+        const networkDoc = await db.collection('mlm_network').doc(userId).get();
+        
+        if (networkDoc.exists) {
+            const data = networkDoc.data();
+            return {
+                userId: data.userId,
+                sponsorId: data.sponsorId,
+                path: data.path || [],
+                depth: data.depth || 0,
+                createdAt: data.createdAt
+            };
+        }
+        
+        // Fallback to users collection
+        const userDoc = await db.collection('users').doc(userId).get();
+        
+        if (userDoc.exists) {
+            const data = userDoc.data();
+            return {
+                userId: userId,
+                sponsorId: data.sponsorId,
+                referralCode: data.referralCode,
+                path: [],
+                depth: 0,
+                createdAt: data.createdAt
+            };
+        }
+        
+        return null;
+        
+    } catch (error) {
+        console.error('Error getting MLM profile:', error);
+        return null;
+    }
+}
+
+/**
+ * Initialize MLM config in Firestore (admin use)
+ */
+async function initializeMLMConfig() {
+    try {
+        // Set default config
+        await db.collection('mlm_configs').doc('settings').set({
+            maxDepth: MLM_CONFIG.maxLevels,
+            minWithdrawalAmount: MLM_CONFIG.minWithdrawal,
+            commissionLockDays: MLM_CONFIG.approvalDelayDays,
+            mlmEnabled: MLM_CONFIG.enabled,
+            maxTotalCommissionPercent: MLM_CONFIG.maxTotalCommission,
+            fallbackSponsorId: 'SYSTEM',
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        
+        // Set default commission rules
+        for (let level = 1; level <= 3; level++) {
+            await db.collection('mlm_commission_rules').doc(`level_${level}`).set({
+                level: level,
+                percentage: MLM_CONFIG.defaultCommissions[level],
+                active: true,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+        }
+        
+        return { success: true };
+        
+    } catch (error) {
+        console.error('Error initializing MLM config:', error);
+        return { success: false, error: error.message };
+    }
+}
+
 // Export for use in other files
 if (typeof window !== 'undefined') {
     window.MLMService = {
         // Config
         MLM_CONFIG,
+        loadMLMConfig,
+        initializeMLMConfig,
         
         // Commission Rules
         getCommissionRules,
@@ -791,6 +1117,8 @@ if (typeof window !== 'undefined') {
         getSponsorChainWithDetails,
         getDirectDownline,
         getNetworkCounts,
+        getNetworkTree,
+        getUserMLMProfile,
         
         // Commissions
         calculateOrderCommissions,

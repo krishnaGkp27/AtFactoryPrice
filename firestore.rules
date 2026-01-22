@@ -1,0 +1,183 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===== HELPER FUNCTIONS =====
+    
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Check if user is the owner of the document
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Check if user is admin (by email)
+    // TODO: Replace with custom claims in production
+    function isAdmin() {
+      return isAuthenticated() && 
+        request.auth.token.email in ['admin@atfactoryprice.com', 'hello@atfactoryprice.com'];
+    }
+    
+    // Check if this is the first write (create)
+    function isCreate() {
+      return resource == null;
+    }
+    
+    // Check if field is unchanged
+    function fieldUnchanged(field) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([field]);
+    }
+    
+    // ===== USER COLLECTION =====
+    match /users/{userId} {
+      // Users can read their own data
+      allow read: if isOwner(userId) || isAdmin();
+      
+      // Users can create their own document
+      allow create: if isOwner(userId);
+      
+      // Users can update their own document, but sponsorId is write-once
+      allow update: if isOwner(userId) && (
+        // If sponsorId already exists, it cannot be changed
+        !('sponsorId' in resource.data) || 
+        fieldUnchanged('sponsorId')
+      );
+      
+      // Only admin can delete
+      allow delete: if isAdmin();
+    }
+    
+    // ===== MLM NETWORK COLLECTION =====
+    match /mlm_network/{userId} {
+      // Users can read their own network entry
+      allow read: if isOwner(userId) || isAdmin();
+      
+      // Only Cloud Functions can write (no client writes)
+      allow write: if false;
+    }
+    
+    // ===== MLM WALLETS COLLECTION =====
+    match /mlm_wallets/{userId} {
+      // Users can only read their own wallet
+      allow read: if isOwner(userId) || isAdmin();
+      
+      // NO CLIENT WRITES - all wallet operations through Cloud Functions
+      allow write: if false;
+    }
+    
+    // ===== MLM COMMISSIONS COLLECTION =====
+    match /mlm_commissions/{commissionId} {
+      // Users can read their own commissions
+      allow read: if isAuthenticated() && (
+        resource.data.beneficiaryId == request.auth.uid || 
+        resource.data.buyerId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // NO CLIENT WRITES - commissions created by Cloud Functions only
+      allow write: if false;
+    }
+    
+    // ===== MLM COMMISSION RULES COLLECTION =====
+    match /mlm_commission_rules/{ruleId} {
+      // Anyone authenticated can read rules
+      allow read: if isAuthenticated();
+      
+      // Only admin can write rules
+      allow write: if isAdmin();
+    }
+    
+    // ===== MLM CONFIG COLLECTION =====
+    match /mlm_configs/{configId} {
+      // Anyone authenticated can read config
+      allow read: if isAuthenticated();
+      
+      // Only admin can write config
+      allow write: if isAdmin();
+    }
+    
+    // ===== MLM PAYOUT REQUESTS COLLECTION =====
+    match /mlm_payout_requests/{requestId} {
+      // Users can read their own payout requests
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Users can create payout requests through Cloud Functions only
+      // Direct client writes not allowed for security
+      allow create: if false;
+      
+      // Only admin can update (approve/reject)
+      allow update: if isAdmin();
+      
+      // No deletes
+      allow delete: if false;
+    }
+    
+    // ===== MLM AUDIT LOGS COLLECTION =====
+    match /mlm_audit_logs/{logId} {
+      // Only admin can read audit logs
+      allow read: if isAdmin();
+      
+      // No client writes - only Cloud Functions
+      allow write: if false;
+    }
+    
+    // ===== ORDERS COLLECTION =====
+    match /orders/{orderId} {
+      // Users can read their own orders
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.buyerId == request.auth.uid ||
+        resource.data.customerId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Users can create orders
+      allow create: if isAuthenticated();
+      
+      // Users can update their own pending orders, admin can update any
+      allow update: if isAuthenticated() && (
+        (resource.data.userId == request.auth.uid && resource.data.status == 'pending') ||
+        isAdmin()
+      );
+      
+      // Only admin can delete
+      allow delete: if isAdmin();
+    }
+    
+    // ===== WALLETS COLLECTION (Legacy - redirect to mlm_wallets) =====
+    match /wallets/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if false;
+    }
+    
+    // ===== MLM WITHDRAWALS COLLECTION (Legacy) =====
+    match /mlm_withdrawals/{withdrawalId} {
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        isAdmin()
+      );
+      allow write: if false;
+    }
+    
+    // ===== PRODUCTS COLLECTION =====
+    match /products/{productId} {
+      // Anyone can read products
+      allow read: if true;
+      
+      // Only admin can write
+      allow write: if isAdmin();
+    }
+    
+    // ===== CATEGORIES COLLECTION =====
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}
