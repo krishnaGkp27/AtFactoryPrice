@@ -15,43 +15,132 @@ function generateReferralCode() {
 }
 
 // Validate referral code format
+// Accepts AFP followed by at least 3 alphanumeric characters
 function isValidReferralCodeFormat(code) {
     if (!code || typeof code !== 'string') return false;
-    return /^AFP[A-Z0-9]{6}$/.test(code.toUpperCase());
+    // Accept codes like AFP123456, AFPABC123, etc. (6-12 chars after AFP)
+    return /^AFP[A-Z0-9]{3,12}$/.test(code.trim().toUpperCase());
 }
 
 // Check if referral code exists and is valid
+// Uses public referral_codes collection for validation (works without auth)
 async function validateReferralCode(code) {
-    if (!isValidReferralCodeFormat(code)) {
+    if (!code || typeof code !== 'string' || code.trim().length < 6) {
         return { valid: false, error: 'Invalid referral code format' };
     }
 
+    const codeUpper = code.trim().toUpperCase();
+
     try {
-        const codeUpper = code.toUpperCase();
-        const usersSnapshot = await db.collection('users')
-            .where('referralCode', '==', codeUpper)
-            .limit(1)
-            .get();
-
-        if (usersSnapshot.empty) {
-            return { valid: false, error: 'Referral code not found' };
+        // Method 1: Check public referral_codes collection (works without auth)
+        if (typeof db !== 'undefined') {
+            try {
+                const codeDoc = await db.collection('referral_codes').doc(codeUpper).get();
+                
+                if (codeDoc.exists) {
+                    const codeData = codeDoc.data();
+                    
+                    if (codeData.isActive === false) {
+                        return { valid: false, error: 'Referral code is inactive' };
+                    }
+                    
+                    return {
+                        valid: true,
+                        userId: codeData.userId,
+                        userData: { 
+                            name: codeData.userName || 'Partner',
+                            email: codeData.userName || 'Partner'
+                        }
+                    };
+                }
+            } catch (publicError) {
+                console.warn('Public referral_codes lookup failed:', publicError.message);
+            }
         }
 
-        const userDoc = usersSnapshot.docs[0];
-        const userData = userDoc.data();
-
-        if (!userData.isActive) {
-            return { valid: false, error: 'Referral code is inactive' };
+        // Method 2: Try Cloud Function validation (if deployed)
+        if (typeof firebase !== 'undefined' && firebase.functions) {
+            try {
+                const validateFunc = firebase.functions().httpsCallable('validateReferralCode');
+                const result = await validateFunc({ code: codeUpper });
+                
+                if (result.data) {
+                    if (result.data.valid) {
+                        return {
+                            valid: true,
+                            userId: result.data.userId,
+                            userData: { 
+                                name: result.data.userName,
+                                email: result.data.userName
+                            }
+                        };
+                    } else {
+                        return { valid: false, error: result.data.error || 'Invalid referral code' };
+                    }
+                }
+            } catch (funcError) {
+                console.warn('Cloud Function validation failed:', funcError.message);
+            }
         }
 
-        return {
-            valid: true,
-            userId: userDoc.id,
-            userData: userData
-        };
+        // Method 3: Direct users collection query (only works if authenticated)
+        if (typeof db !== 'undefined') {
+            try {
+                const usersSnapshot = await db.collection('users')
+                    .where('referralCode', '==', codeUpper)
+                    .limit(1)
+                    .get();
+
+                if (!usersSnapshot.empty) {
+                    const userDoc = usersSnapshot.docs[0];
+                    const userData = userDoc.data();
+
+                    if (userData.isActive === false) {
+                        return { valid: false, error: 'Referral code is inactive' };
+                    }
+
+                    // Also save to public collection for future lookups
+                    try {
+                        await saveToPublicReferralCodes(codeUpper, userDoc.id, userData.name);
+                    } catch (e) { /* ignore */ }
+
+                    return {
+                        valid: true,
+                        userId: userDoc.id,
+                        userData: userData
+                    };
+                }
+            } catch (usersError) {
+                // Permission denied is expected for unauthenticated users
+                if (usersError.code !== 'permission-denied') {
+                    console.warn('Users collection query failed:', usersError.message);
+                }
+            }
+        }
+
+        return { valid: false, error: 'Referral code not found' };
+        
     } catch (error) {
         console.error('Error validating referral code:', error);
-        return { valid: false, error: 'Error validating code' };
+        return { valid: false, error: 'Error validating code. Please try again.' };
+    }
+}
+
+// Save referral code to public lookup collection
+async function saveToPublicReferralCodes(code, userId, userName) {
+    if (!code || !userId) return;
+    
+    try {
+        await db.collection('referral_codes').doc(code.toUpperCase()).set({
+            code: code.toUpperCase(),
+            userId: userId,
+            userName: userName || 'Partner',
+            isActive: true,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        console.log('Saved to public referral_codes:', code);
+    } catch (error) {
+        console.warn('Could not save to public referral_codes:', error.message);
     }
 }
 

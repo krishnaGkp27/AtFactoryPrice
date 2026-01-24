@@ -237,7 +237,7 @@
                 <h3>Have a Referral Code? (Optional)</h3>
                 <p>Enter a referral code if someone referred you to join our Partner Program.</p>
                 <div class="referral-input-group">
-                    <input type="text" id="referralCode" placeholder="AFP12345" maxlength="9">
+                    <input type="text" id="referralCode" placeholder="AFPXXXXXX" maxlength="15">
                     <button type="button" class="btn-validate" onclick="validateReferralCodeInput()">Validate</button>
                 </div>
                 <div id="referralStatus" class="referral-status"></div>
@@ -255,6 +255,7 @@
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-functions-compat.js"></script>
 
     <!-- Referral Utilities -->
     <script src="js/referral-utils.js"></script>
@@ -292,26 +293,47 @@
             const codeInput = document.getElementById('referralCode');
             const code = codeInput.value.trim().toUpperCase();
             const statusDiv = document.getElementById('referralStatus');
+            const validateBtn = document.querySelector('.btn-validate');
 
             if (!code) {
                 statusDiv.className = 'referral-status';
+                statusDiv.textContent = '';
                 validatedSponsorId = null;
                 validatedSponsorCode = null;
                 return;
             }
 
-            const result = await validateReferralCode(code);
-            
-            if (result.valid) {
-                statusDiv.className = 'referral-status valid';
-                statusDiv.textContent = `✓ Valid referral code! Referred by: ${result.userData.name || result.userData.email}`;
-                validatedSponsorId = result.userId;
-                validatedSponsorCode = code;
-            } else {
+            // Show loading state
+            statusDiv.className = 'referral-status';
+            statusDiv.style.display = 'block';
+            statusDiv.style.background = '#f0f0f0';
+            statusDiv.style.color = '#666';
+            statusDiv.textContent = '⏳ Validating...';
+            validateBtn.disabled = true;
+
+            try {
+                const result = await validateReferralCode(code);
+                
+                if (result.valid) {
+                    statusDiv.className = 'referral-status valid';
+                    const referrerName = result.userData?.name || result.userData?.email || 'Partner';
+                    statusDiv.textContent = `✓ Valid referral code! Referred by: ${referrerName}`;
+                    validatedSponsorId = result.userId;
+                    validatedSponsorCode = code;
+                } else {
+                    statusDiv.className = 'referral-status invalid';
+                    statusDiv.textContent = `✗ ${result.error || 'Invalid referral code'}`;
+                    validatedSponsorId = null;
+                    validatedSponsorCode = null;
+                }
+            } catch (error) {
+                console.error('Validation error:', error);
                 statusDiv.className = 'referral-status invalid';
-                statusDiv.textContent = `✗ ${result.error}`;
+                statusDiv.textContent = '✗ Error validating code. Please try again.';
                 validatedSponsorId = null;
                 validatedSponsorCode = null;
+            } finally {
+                validateBtn.disabled = false;
             }
         }
 
@@ -410,6 +432,20 @@
                 };
 
                 await db.collection('users').doc(user.uid).set(userData);
+
+                // Also save to public referral_codes collection for future validation
+                try {
+                    await db.collection('referral_codes').doc(newReferralCode).set({
+                        code: newReferralCode,
+                        userId: user.uid,
+                        userName: name,
+                        isActive: true,
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                    console.log('Saved to public referral_codes collection');
+                } catch (publicError) {
+                    console.warn('Could not save to public referral_codes:', publicError);
+                }
 
                 // Create empty wallet
                 await db.collection('wallets').doc(user.uid).set({

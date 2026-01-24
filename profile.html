@@ -775,6 +775,93 @@
             return name.substring(0, 2).toUpperCase();
         }
 
+        // Generate deterministic referral code from user ID (fallback)
+        function generateReferralCodeFromId(userId) {
+            if (!userId) return 'AFP' + Date.now().toString(36).toUpperCase();
+            // Take first 3 and last 3 characters of userId, uppercase
+            const prefix = userId.substring(0, 3).toUpperCase();
+            const suffix = userId.slice(-3).toUpperCase();
+            return 'AFP' + prefix + suffix;
+        }
+
+        // Generate and save referral code if not exists
+        async function ensureReferralCode(userId) {
+            try {
+                const userDoc = await dbInstance.collection('users').doc(userId).get();
+                const userData = userDoc.exists ? userDoc.data() : {};
+                
+                // Get user name for public collection
+                const userName = userData.name || userData.email?.split('@')[0] || 'Partner';
+                
+                // If user already has a referral code, ensure it's in public collection too
+                if (userData.referralCode) {
+                    console.log('User already has referral code:', userData.referralCode);
+                    // Ensure it's also in public collection
+                    try {
+                        await dbInstance.collection('referral_codes').doc(userData.referralCode).set({
+                            code: userData.referralCode,
+                            userId: userId,
+                            userName: userName,
+                            isActive: true,
+                            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                        }, { merge: true });
+                    } catch (e) { console.warn('Could not sync to public collection:', e.message); }
+                    return userData.referralCode;
+                }
+                
+                // Generate a new referral code
+                const newCode = generateReferralCodeFromId(userId);
+                console.log('Generated new referral code:', newCode);
+                
+                // Check if this code already exists (to avoid duplicates)
+                let finalCode = newCode;
+                try {
+                    const existingQuery = await dbInstance.collection('users')
+                        .where('referralCode', '==', newCode)
+                        .limit(1)
+                        .get();
+                    
+                    if (!existingQuery.empty) {
+                        // Code exists, append random suffix
+                        finalCode = newCode + Math.random().toString(36).substring(2, 4).toUpperCase();
+                        console.log('Code collision, using:', finalCode);
+                    }
+                } catch (queryError) {
+                    console.warn('Error checking existing code, using generated:', queryError);
+                }
+                
+                // Save to user document
+                try {
+                    await dbInstance.collection('users').doc(userId).set({
+                        referralCode: finalCode
+                    }, { merge: true });
+                    console.log('Saved referral code to Firestore:', finalCode);
+                } catch (saveError) {
+                    console.warn('Failed to save referral code to Firestore:', saveError);
+                }
+                
+                // Also save to public referral_codes collection for signup validation
+                try {
+                    await dbInstance.collection('referral_codes').doc(finalCode).set({
+                        code: finalCode,
+                        userId: userId,
+                        userName: userName,
+                        isActive: true,
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    }, { merge: true });
+                    console.log('Saved to public referral_codes collection');
+                } catch (publicError) {
+                    console.warn('Could not save to public referral_codes:', publicError.message);
+                }
+                
+                return finalCode;
+            } catch (error) {
+                console.error('Error in ensureReferralCode:', error);
+                // Return a deterministic fallback
+                return generateReferralCodeFromId(userId);
+            }
+        }
+
         // Load user profile
         async function loadUserProfile() {
             showLoading();
@@ -788,14 +875,38 @@
 
                 try {
                     const userDoc = await dbInstance.collection('users').doc(user.uid).get();
+                    const userData = userDoc.exists ? userDoc.data() : {};
                     
-                    if (userDoc.exists) {
-                        currentUserProfile = { uid: user.uid, email: user.email, ...userDoc.data() };
-                        populateProfile(currentUserProfile);
-                        await loadStats(user.uid);
+                    // Ensure referral code exists
+                    let referralCode = userData.referralCode;
+                    if (!referralCode) {
+                        console.log('No referral code found, generating one...');
+                        referralCode = await ensureReferralCode(user.uid);
                     }
+                    
+                    currentUserProfile = { 
+                        uid: user.uid, 
+                        email: user.email, 
+                        referralCode: referralCode,
+                        ...userData 
+                    };
+                    
+                    // Ensure referralCode is set (override if userData had empty/undefined)
+                    if (!currentUserProfile.referralCode) {
+                        currentUserProfile.referralCode = generateReferralCodeFromId(user.uid);
+                    }
+                    
+                    console.log('Profile loaded with referral code:', currentUserProfile.referralCode);
+                    populateProfile(currentUserProfile);
+                    await loadStats(user.uid);
                 } catch (error) {
                     console.error('Error loading profile:', error);
+                    // Even on error, try to show something
+                    if (user) {
+                        const fallbackCode = generateReferralCodeFromId(user.uid);
+                        document.getElementById('referralCode').textContent = fallbackCode;
+                        document.getElementById('referralLink').value = `${window.location.origin}/signup.html?ref=${fallbackCode}`;
+                    }
                 } finally {
                     hideLoading();
                 }
@@ -820,11 +931,11 @@
             document.getElementById('email').value = data.email || '';
             document.getElementById('address').value = data.address || '';
 
-            // Referral code
-            document.getElementById('referralCode').textContent = data.referralCode || 'N/A';
-            document.getElementById('referralLink').value = data.referralCode 
-                ? `${window.location.origin}/signup.html?ref=${data.referralCode}`
-                : '';
+            // Referral code - always ensure a code is displayed
+            const referralCode = data.referralCode || generateReferralCodeFromId(data.uid);
+            console.log('Displaying referral code:', referralCode);
+            document.getElementById('referralCode').textContent = referralCode;
+            document.getElementById('referralLink').value = `${window.location.origin}/signup.html?ref=${referralCode}`;
         }
 
         // Load stats

@@ -1219,6 +1219,15 @@
                     console.warn('Could not check for code collision, using generated code:', queryError);
                 }
                 
+                // Get user name for public collection
+                let userName = 'Partner';
+                try {
+                    const userDoc = await db.collection('users').doc(userId).get();
+                    if (userDoc.exists) {
+                        userName = userDoc.data().name || userDoc.data().email?.split('@')[0] || 'Partner';
+                    }
+                } catch (e) { /* ignore */ }
+                
                 if (createNewDoc) {
                     // Create new user document
                     await db.collection('users').doc(userId).set({
@@ -1234,6 +1243,20 @@
                         referralCode: finalCode,
                         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
                     }, { merge: true });
+                }
+                
+                // Also save to public referral_codes collection for signup validation
+                try {
+                    await db.collection('referral_codes').doc(finalCode).set({
+                        code: finalCode,
+                        userId: userId,
+                        userName: userName,
+                        isActive: true,
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    }, { merge: true });
+                    console.log('Saved to public referral_codes collection');
+                } catch (publicError) {
+                    console.warn('Could not save to public referral_codes:', publicError.message);
                 }
                 
                 console.log('Referral code generated and saved:', finalCode);

@@ -191,6 +191,24 @@ service cloud.firestore {
       allow write: if false;
     }
     
+    // ===== REFERRAL CODES LOOKUP COLLECTION =====
+    // Public read-only collection for referral code validation during signup
+    match /referral_codes/{codeId} {
+      // Anyone can read (needed for signup validation)
+      allow read: if true;
+      
+      // Only authenticated users can write their own code
+      allow create: if isAuthenticated() && 
+        request.resource.data.userId == request.auth.uid;
+      
+      // Users can update only their own entry
+      allow update: if isAuthenticated() && 
+        resource.data.userId == request.auth.uid;
+      
+      // No deletes
+      allow delete: if false;
+    }
+    
     // ===== PRODUCTS COLLECTION =====
     match /products/{productId} {
       // Anyone can read products

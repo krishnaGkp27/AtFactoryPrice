@@ -160,6 +160,103 @@ async function getOrCreateWallet(userId) {
     return defaultWallet;
 }
 
+// ===== REFERRAL CODE VALIDATION (PUBLIC) =====
+
+/**
+ * Validate referral code - callable without authentication
+ * Used during signup to verify referral codes
+ * 
+ * @param {string} data.code - The referral code to validate
+ * @returns {object} { valid, userId, userName, error }
+ */
+exports.validateReferralCode = functions.https.onCall(async (data) => {
+    const { code } = data;
+    
+    if (!code || typeof code !== 'string') {
+        return { valid: false, error: 'Invalid referral code' };
+    }
+    
+    const codeUpper = code.trim().toUpperCase();
+    
+    // Validate format: AFP followed by alphanumeric characters (6+ chars)
+    if (!/^AFP[A-Z0-9]{3,}$/.test(codeUpper)) {
+        return { valid: false, error: 'Invalid referral code format' };
+    }
+    
+    try {
+        // First try exact match on referralCode field
+        let usersSnapshot = await db.collection('users')
+            .where('referralCode', '==', codeUpper)
+            .limit(1)
+            .get();
+        
+        if (!usersSnapshot.empty) {
+            const userDoc = usersSnapshot.docs[0];
+            const userData = userDoc.data();
+            
+            if (userData.isActive === false) {
+                return { valid: false, error: 'Referral code is inactive' };
+            }
+            
+            return {
+                valid: true,
+                userId: userDoc.id,
+                userName: userData.name || userData.email?.split('@')[0] || 'User'
+            };
+        }
+        
+        // Fallback: Check if this could be a UID-derived code (AFP + 6 chars from UID)
+        // Format: AFP + first 3 chars + last 3 chars of UID
+        if (codeUpper.length === 9) {
+            const prefix = codeUpper.substring(3, 6); // chars 4-6
+            const suffix = codeUpper.substring(6, 9); // chars 7-9
+            
+            // Query users and check if any UID matches the pattern
+            // Since we can't do LIKE queries, we'll check recent users
+            const recentUsersSnapshot = await db.collection('users')
+                .orderBy('createdAt', 'desc')
+                .limit(500)
+                .get();
+            
+            for (const doc of recentUsersSnapshot.docs) {
+                const uid = doc.id;
+                const uidPrefix = uid.substring(0, 3).toUpperCase();
+                const uidSuffix = uid.slice(-3).toUpperCase();
+                
+                if (uidPrefix === prefix && uidSuffix === suffix) {
+                    const userData = doc.data();
+                    
+                    if (userData.isActive === false) {
+                        return { valid: false, error: 'Referral code is inactive' };
+                    }
+                    
+                    // Save the referral code to this user's document for future lookups
+                    try {
+                        await db.collection('users').doc(uid).update({
+                            referralCode: codeUpper
+                        });
+                        console.log(`Saved derived referral code ${codeUpper} to user ${uid}`);
+                    } catch (saveError) {
+                        console.warn('Could not save derived referral code:', saveError);
+                    }
+                    
+                    return {
+                        valid: true,
+                        userId: doc.id,
+                        userName: userData.name || userData.email?.split('@')[0] || 'User'
+                    };
+                }
+            }
+        }
+        
+        return { valid: false, error: 'Referral code not found' };
+        
+    } catch (error) {
+        console.error('Error validating referral code:', error);
+        return { valid: false, error: 'Error validating code. Please try again.' };
+    }
+});
+
 // ===== COMMISSION CALCULATION TRIGGER =====
 
 /**
