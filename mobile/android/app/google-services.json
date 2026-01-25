@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "660895645396",
+    "project_id": "atfactoryprice-6ba8f",
+    "storage_bucket": "atfactoryprice-6ba8f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:660895645396:android:62549ecff89f753af74541",
+        "android_client_info": {
+          "package_name": "com.atfactoryprice.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyADjiJiU5e1kd48bDINW69OrqLVo8y_NHE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
