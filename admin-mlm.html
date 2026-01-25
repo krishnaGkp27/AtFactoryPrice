@@ -765,12 +765,24 @@
                 <!-- Navigation Tabs -->
                 <div class="nav-tabs">
                     <button class="nav-tab active" onclick="switchTab('overview')">Overview</button>
+                    <button class="nav-tab" onclick="switchTab('points')">
+                        <span style="display: inline-flex; align-items: center; gap: 6px;">
+                            Reward Points
+                            <span style="background: linear-gradient(135deg, #f59e0b, #d97706); color: white; padding: 2px 6px; border-radius: 8px; font-size: 0.65rem; font-weight: 700;">NEW</span>
+                        </span>
+                    </button>
                     <button class="nav-tab" onclick="switchTab('rules')">Commission Rules</button>
                     <button class="nav-tab" onclick="switchTab('payouts')">Payouts</button>
                     <button class="nav-tab" onclick="switchTab('users')">User Network</button>
                     <button class="nav-tab" onclick="switchTab('fraud')">Risk & Fraud</button>
                     <button class="nav-tab" onclick="switchTab('analytics')">Analytics</button>
                     <button class="nav-tab" onclick="switchTab('audit')">Audit Log</button>
+                    <button class="nav-tab" onclick="switchTab('sheets')">
+                        <span style="display: inline-flex; align-items: center; gap: 6px;">
+                            Data Sync
+                            <span style="background: linear-gradient(135deg, #10b981, #059669); color: white; padding: 2px 6px; border-radius: 8px; font-size: 0.65rem; font-weight: 700;">NEW</span>
+                        </span>
+                    </button>
                     <button class="nav-tab" onclick="switchTab('config')">Settings</button>
                 </div>
 
@@ -1168,6 +1180,169 @@
                     </div>
                 </div>
 
+                <!-- Tab: Reward Points -->
+                <div class="tab-content" id="tab-points">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px;">
+                        <!-- Points Overview Stats -->
+                        <div class="card" style="grid-column: span 2;">
+                            <div class="card-header">
+                                <h2>
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; vertical-align: middle; margin-right: 8px;">
+                                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                                    </svg>
+                                    Reward Points System
+                                </h2>
+                                <button class="btn btn-success" onclick="savePointsConfig()">Save Points Config</button>
+                            </div>
+                            <div class="card-body">
+                                <div class="stats-grid" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 24px;">
+                                    <div class="stat-card" style="background: linear-gradient(135deg, #fef3c7, #fde68a); border: none;">
+                                        <div class="stat-card-value" id="statTotalPointsIssued" style="color: #92400e;">0</div>
+                                        <div class="stat-card-label" style="color: #a16207;">Total Issued</div>
+                                    </div>
+                                    <div class="stat-card" style="background: linear-gradient(135deg, #dcfce7, #bbf7d0); border: none;">
+                                        <div class="stat-card-value" id="statTotalAvailablePoints" style="color: #166534;">0</div>
+                                        <div class="stat-card-label" style="color: #15803d;">Total Available</div>
+                                    </div>
+                                    <div class="stat-card" style="background: linear-gradient(135deg, #fef9c3, #fef08a); border: none;">
+                                        <div class="stat-card-value" id="statTotalPendingPoints" style="color: #854d0e;">0</div>
+                                        <div class="stat-card-label" style="color: #a16207;">Total Pending</div>
+                                    </div>
+                                    <div class="stat-card" style="background: linear-gradient(135deg, #e0e7ff, #c7d2fe); border: none;">
+                                        <div class="stat-card-value" id="statTotalRedeemedPoints" style="color: #3730a3;">0</div>
+                                        <div class="stat-card-label" style="color: #4338ca;">Total Redeemed</div>
+                                    </div>
+                                    <div class="stat-card" style="background: linear-gradient(135deg, #f1f5f9, #e2e8f0); border: none;">
+                                        <div class="stat-card-value" id="statPointsUsers" style="color: #475569;">0</div>
+                                        <div class="stat-card-label" style="color: #64748b;">Users with Points</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Points Configuration -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>Points Configuration</h2>
+                            </div>
+                            <div class="card-body">
+                                <div class="form-group">
+                                    <label>Points System Enabled</label>
+                                    <select id="pointsConfigEnabled">
+                                        <option value="true">Enabled</option>
+                                        <option value="false">Disabled</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Points per ₦1 Commission</label>
+                                    <input type="number" id="pointsPerCurrency" value="1" min="0.1" step="0.1">
+                                    <small style="color: #666;">How many points are awarded per ₦1 of commission</small>
+                                </div>
+                                <div class="form-group">
+                                    <label>Points Lock Days</label>
+                                    <input type="number" id="pointsLockDays" value="7" min="0" max="90">
+                                    <small style="color: #666;">Days before points become available</small>
+                                </div>
+                                <div class="form-group">
+                                    <label>Points Expiry Days</label>
+                                    <input type="number" id="pointsExpireDays" value="365" min="30" max="730">
+                                    <small style="color: #666;">Days until unused points expire</small>
+                                </div>
+                                <div class="form-group">
+                                    <label>Max Points per Order</label>
+                                    <input type="number" id="maxPointsPerOrder" value="100000" min="1000">
+                                    <small style="color: #666;">Maximum points awarded per single order</small>
+                                </div>
+                                <div class="form-group">
+                                    <label>Points Name</label>
+                                    <input type="text" id="pointsName" value="Reward Points" maxlength="30">
+                                </div>
+                                <div class="form-group">
+                                    <label>Points Symbol</label>
+                                    <input type="text" id="pointsSymbol" value="RP" maxlength="5">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Top Points Earners -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>Top Points Earners</h2>
+                            </div>
+                            <div class="card-body" id="topPointsEarnersContainer" style="padding: 0;">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>#</th>
+                                            <th>User</th>
+                                            <th>Total Earned</th>
+                                            <th>Available</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="topPointsEarnersTable">
+                                        <tr><td colspan="4" class="loading">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Manual Points Adjustment -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Manual Points Adjustment</h2>
+                        </div>
+                        <div class="card-body">
+                            <p style="color: #666; margin-bottom: 16px;">
+                                Manually add, subtract, or redeem points for a user. All adjustments are logged in the audit trail.
+                            </p>
+                            <div style="display: grid; grid-template-columns: 2fr 1fr 2fr 3fr auto; gap: 16px; align-items: end;">
+                                <div class="form-group" style="margin: 0;">
+                                    <label>User ID or Email</label>
+                                    <input type="text" id="adjustmentUserId" placeholder="Enter user ID or search...">
+                                </div>
+                                <div class="form-group" style="margin: 0;">
+                                    <label>Points</label>
+                                    <input type="number" id="adjustmentPoints" value="0" min="1">
+                                </div>
+                                <div class="form-group" style="margin: 0;">
+                                    <label>Type</label>
+                                    <select id="adjustmentType">
+                                        <option value="add">Add Points</option>
+                                        <option value="bonus">Add Bonus Points</option>
+                                        <option value="subtract">Subtract Points</option>
+                                        <option value="redeem">Redeem Points</option>
+                                        <option value="correction">Correction</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" style="margin: 0;">
+                                    <label>Reason</label>
+                                    <input type="text" id="adjustmentReason" placeholder="Enter reason for adjustment...">
+                                </div>
+                                <button class="btn" onclick="submitPointsAdjustment()" style="height: 42px;">Apply Adjustment</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Points Disclaimer -->
+                    <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 16px; margin-top: 24px;">
+                        <h4 style="color: #92400e; font-size: 0.9rem; margin-bottom: 8px;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; vertical-align: middle; margin-right: 6px;">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="16" x2="12" y2="12"></line>
+                                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                            </svg>
+                            Important Information
+                        </h4>
+                        <ul style="font-size: 0.85rem; color: #a16207; margin-left: 20px; line-height: 1.8;">
+                            <li>Reward points have no fixed cash value and are separate from the bank payout system</li>
+                            <li>Points are automatically awarded when MLM commissions are generated</li>
+                            <li>Redemption schemes are controlled externally by the business</li>
+                            <li>All points adjustments are permanently logged for audit purposes</li>
+                        </ul>
+                    </div>
+                </div>
+
                 <!-- Tab: Settings -->
                 <div class="tab-content" id="tab-config">
                     <div class="card">
@@ -1255,6 +1430,245 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
                         </div>
                     </div>
                 </div>
+
+                <!-- Tab: Google Sheets Sync -->
+                <div class="tab-content" id="tab-sheets">
+                    <!-- Sync Status Cards -->
+                    <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 24px;">
+                        <div class="stat-card">
+                            <div class="stat-card-header">
+                                <div class="stat-card-icon green">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path>
+                                        <polyline points="14 2 14 8 20 8"></polyline>
+                                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                                        <polyline points="10 9 9 9 8 9"></polyline>
+                                    </svg>
+                                </div>
+                                <div class="stat-card-value" id="sheetsSyncStatus">Not Configured</div>
+                            </div>
+                            <div class="stat-card-label">Sync Status</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-header">
+                                <div class="stat-card-icon blue">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <polyline points="12 6 12 12 16 14"></polyline>
+                                    </svg>
+                                </div>
+                                <div class="stat-card-value" id="sheetsLastSync">Never</div>
+                            </div>
+                            <div class="stat-card-label">Last Sync</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-header">
+                                <div class="stat-card-icon purple">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                        <line x1="3" y1="9" x2="21" y2="9"></line>
+                                        <line x1="9" y1="21" x2="9" y2="9"></line>
+                                    </svg>
+                                </div>
+                                <div class="stat-card-value" id="sheetsAvailableCount">0</div>
+                            </div>
+                            <div class="stat-card-label">Available Sheets</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-header">
+                                <div class="stat-card-icon orange">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="7 10 12 15 17 10"></polyline>
+                                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                                    </svg>
+                                </div>
+                                <div class="stat-card-value" id="sheetsTotalRows">0</div>
+                            </div>
+                            <div class="stat-card-label">Total Rows Synced</div>
+                        </div>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+                        <!-- Sync Configuration -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;">
+                                        <circle cx="12" cy="12" r="3"></circle>
+                                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                                    </svg>
+                                    Sync Configuration
+                                </h2>
+                                <button class="btn btn-success" onclick="saveSheetsConfig()">Save Config</button>
+                            </div>
+                            <div class="card-body">
+                                <div class="form-group">
+                                    <label>Google Sheets Sync</label>
+                                    <select id="sheetsEnabled">
+                                        <option value="false">Disabled</option>
+                                        <option value="true">Enabled</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Auto-Sync Schedule</label>
+                                    <select id="sheetsAutoSync">
+                                        <option value="false">Manual Only</option>
+                                        <option value="true">Enabled (Daily at 3 AM)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Spreadsheet ID</label>
+                                    <input type="text" id="sheetsSpreadsheetId" placeholder="Enter Google Spreadsheet ID">
+                                    <small style="color: #666; display: block; margin-top: 4px;">
+                                        Find this in the spreadsheet URL: docs.google.com/spreadsheets/d/<strong>[SPREADSHEET_ID]</strong>/edit
+                                    </small>
+                                </div>
+                                <div style="margin-top: 16px; padding: 12px; background: #fef3c7; border-radius: 8px;">
+                                    <p style="color: #92400e; font-size: 0.85rem; margin: 0;">
+                                        <strong>⚠️ Setup Required:</strong> Configure Google Sheets service account credentials using Firebase Functions config before enabling sync.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Manual Sync Actions -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;">
+                                        <polyline points="23 4 23 10 17 10"></polyline>
+                                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                                    </svg>
+                                    Sync Actions
+                                </h2>
+                            </div>
+                            <div class="card-body">
+                                <p style="color: #666; margin-bottom: 16px;">
+                                    Manually trigger sync from Google Sheets to Firestore cache.
+                                </p>
+                                <div style="display: flex; flex-direction: column; gap: 12px;">
+                                    <button class="btn" onclick="triggerFullSync()" id="btnFullSync">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;">
+                                            <polyline points="23 4 23 10 17 10"></polyline>
+                                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                                        </svg>
+                                        Sync All Sheets
+                                    </button>
+                                    <button class="btn btn-secondary" onclick="triggerProductsSync()">
+                                        Sync Products Only
+                                    </button>
+                                    <button class="btn btn-secondary" onclick="triggerCategoriesSync()">
+                                        Sync Categories Only
+                                    </button>
+                                </div>
+                                <div id="syncProgressContainer" style="display: none; margin-top: 16px; padding: 12px; background: #f3f4f6; border-radius: 8px;">
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <div class="loading-spinner" style="width: 16px; height: 16px;"></div>
+                                        <span id="syncProgressText">Syncing...</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Cache Status Table -->
+                    <div class="card" style="margin-top: 24px;">
+                        <div class="card-header">
+                            <h2>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;">
+                                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                    <line x1="3" y1="9" x2="21" y2="9"></line>
+                                    <line x1="9" y1="21" x2="9" y2="9"></line>
+                                </svg>
+                                Cached Data Status
+                            </h2>
+                            <button class="btn btn-secondary" onclick="loadSheetsStatus()">Refresh</button>
+                        </div>
+                        <div class="card-body" style="padding: 0;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Sheet Name</th>
+                                        <th>Firestore Collection</th>
+                                        <th>Last Sync</th>
+                                        <th>Row Count</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="sheetsCacheTable">
+                                    <tr>
+                                        <td colspan="5" style="text-align: center; color: #666; padding: 40px;">
+                                            Loading cache status...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Recent Sync Logs -->
+                    <div class="card" style="margin-top: 24px;">
+                        <div class="card-header">
+                            <h2>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                    <polyline points="14 2 14 8 20 8"></polyline>
+                                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                                </svg>
+                                Recent Sync Logs
+                            </h2>
+                        </div>
+                        <div class="card-body" style="padding: 0;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>Action</th>
+                                        <th>Triggered By</th>
+                                        <th>Rows Processed</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="sheetsSyncLogs">
+                                    <tr>
+                                        <td colspan="5" style="text-align: center; color: #666; padding: 40px;">
+                                            No sync logs yet
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Setup Instructions -->
+                    <div class="card" style="margin-top: 24px; background: linear-gradient(135deg, #f0fdf4, #dcfce7);">
+                        <div class="card-header">
+                            <h2 style="color: #166534;">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                                </svg>
+                                Setup Instructions
+                            </h2>
+                        </div>
+                        <div class="card-body">
+                            <ol style="color: #166534; line-height: 2;">
+                                <li>Create a Google Cloud service account with Sheets API access</li>
+                                <li>Download the service account JSON key file</li>
+                                <li>Configure Firebase Functions with the credentials:
+                                    <pre style="background: #166534; color: white; padding: 12px; border-radius: 8px; margin: 8px 0; font-size: 0.85rem;">firebase functions:config:set googlesheets.client_email="your-service@project.iam.gserviceaccount.com" googlesheets.private_key="-----BEGIN PRIVATE KEY-----\n..."</pre>
+                                </li>
+                                <li>Share your Google Sheet with the service account email</li>
+                                <li>Enter the Spreadsheet ID above and enable sync</li>
+                                <li>Deploy Cloud Functions: <code>firebase deploy --only functions</code></li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -1286,6 +1700,7 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-functions-compat.js"></script>
 
     <!-- MLM Service -->
     <script src="js/mlm-service.js"></script>
@@ -1836,10 +2251,16 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
                 const tabName = this.textContent.toLowerCase().replace(' ', '');
                 const tabMap = {
                     'overview': 'overview',
+                    'rewardpointsnew': 'points',
+                    'rewardpoints': 'points',
                     'commissionrules': 'rules',
                     'payouts': 'payouts',
                     'usernetwork': 'users',
+                    'risk&fraud': 'fraud',
+                    'analytics': 'analytics',
                     'auditlog': 'audit',
+                    'datasyncnew': 'sheets',
+                    'datasync': 'sheets',
                     'settings': 'config'
                 };
                 const tabId = tabMap[tabName] || 'overview';
@@ -1853,6 +2274,16 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
                 // Load config when settings tab opened
                 if (tabId === 'config') {
                     loadMLMConfig();
+                }
+                
+                // Load points when points tab opened
+                if (tabId === 'points') {
+                    loadPointsOverview();
+                }
+                
+                // Load sheets status when sheets tab opened
+                if (tabId === 'sheets') {
+                    loadSheetsStatus();
                 }
             });
         });
@@ -1890,6 +2321,245 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
             } catch (error) {
                 console.error('Error saving config:', error);
                 showStatus('Error saving configuration', 'error');
+            }
+        }
+
+        // ===== REWARD POINTS MANAGEMENT =====
+        
+        // Load points overview
+        async function loadPointsOverview() {
+            try {
+                // Try Cloud Function first
+                if (typeof firebase !== 'undefined' && firebase.functions) {
+                    try {
+                        const getAdminPointsOverview = firebase.functions().httpsCallable('getAdminPointsOverview');
+                        const result = await getAdminPointsOverview({});
+                        
+                        if (result.data) {
+                            const { stats, topEarners, config } = result.data;
+                            
+                            // Update stats
+                            document.getElementById('statTotalPointsIssued').textContent = (stats.totalPointsIssued || 0).toLocaleString();
+                            document.getElementById('statTotalAvailablePoints').textContent = (stats.totalAvailable || 0).toLocaleString();
+                            document.getElementById('statTotalPendingPoints').textContent = (stats.totalPending || 0).toLocaleString();
+                            document.getElementById('statTotalRedeemedPoints').textContent = (stats.totalRedeemed || 0).toLocaleString();
+                            document.getElementById('statPointsUsers').textContent = (stats.totalUsers || 0).toLocaleString();
+                            
+                            // Update config fields
+                            if (config) {
+                                document.getElementById('pointsConfigEnabled').value = config.pointsEnabled !== false ? 'true' : 'false';
+                                document.getElementById('pointsPerCurrency').value = config.pointsPerCurrencyUnit || 1;
+                                document.getElementById('pointsLockDays').value = config.pointsLockDays || 7;
+                                document.getElementById('pointsExpireDays').value = config.pointsExpireDays || 365;
+                                document.getElementById('maxPointsPerOrder').value = config.maxPointsPerOrder || 100000;
+                                document.getElementById('pointsName').value = config.pointsName || 'Reward Points';
+                                document.getElementById('pointsSymbol').value = config.pointsSymbol || 'RP';
+                            }
+                            
+                            // Render top earners
+                            renderTopPointsEarners(topEarners);
+                            return;
+                        }
+                    } catch (funcError) {
+                        console.warn('Cloud Function for points overview not available:', funcError.message);
+                    }
+                }
+                
+                // Fallback: Direct Firestore query
+                await loadPointsOverviewFromFirestore();
+                
+            } catch (error) {
+                console.error('Error loading points overview:', error);
+            }
+        }
+        
+        // Fallback: Load points from Firestore directly
+        async function loadPointsOverviewFromFirestore() {
+            try {
+                // Load config
+                const configDoc = await db.collection('mlm_configs').doc('points_settings').get();
+                if (configDoc.exists) {
+                    const config = configDoc.data();
+                    document.getElementById('pointsConfigEnabled').value = config.pointsEnabled !== false ? 'true' : 'false';
+                    document.getElementById('pointsPerCurrency').value = config.pointsPerCurrencyUnit || 1;
+                    document.getElementById('pointsLockDays').value = config.pointsLockDays || 7;
+                    document.getElementById('pointsExpireDays').value = config.pointsExpireDays || 365;
+                    document.getElementById('maxPointsPerOrder').value = config.maxPointsPerOrder || 100000;
+                    document.getElementById('pointsName').value = config.pointsName || 'Reward Points';
+                    document.getElementById('pointsSymbol').value = config.pointsSymbol || 'RP';
+                }
+                
+                // Load wallets aggregate (limited to first 100 for performance)
+                const walletsSnapshot = await db.collection('mlm_points_wallet')
+                    .orderBy('totalPointsEarned', 'desc')
+                    .limit(100)
+                    .get();
+                
+                let totalIssued = 0, totalAvailable = 0, totalPending = 0, totalRedeemed = 0;
+                const topEarners = [];
+                
+                walletsSnapshot.docs.forEach(doc => {
+                    const w = doc.data();
+                    totalIssued += w.totalPointsEarned || 0;
+                    totalAvailable += w.availablePoints || 0;
+                    totalPending += w.pendingPoints || 0;
+                    totalRedeemed += w.redeemedPoints || 0;
+                    
+                    if (topEarners.length < 10 && (w.totalPointsEarned || 0) > 0) {
+                        topEarners.push({
+                            userId: doc.id,
+                            totalEarned: w.totalPointsEarned || 0,
+                            available: w.availablePoints || 0
+                        });
+                    }
+                });
+                
+                document.getElementById('statTotalPointsIssued').textContent = totalIssued.toLocaleString();
+                document.getElementById('statTotalAvailablePoints').textContent = totalAvailable.toLocaleString();
+                document.getElementById('statTotalPendingPoints').textContent = totalPending.toLocaleString();
+                document.getElementById('statTotalRedeemedPoints').textContent = totalRedeemed.toLocaleString();
+                document.getElementById('statPointsUsers').textContent = walletsSnapshot.size.toLocaleString();
+                
+                // Get names for top earners
+                for (const earner of topEarners) {
+                    try {
+                        const userDoc = await db.collection('users').doc(earner.userId).get();
+                        if (userDoc.exists) {
+                            const u = userDoc.data();
+                            earner.name = u.name || u.email?.split('@')[0] || 'User';
+                            earner.email = u.email;
+                        }
+                    } catch (e) {
+                        earner.name = 'Unknown';
+                    }
+                }
+                
+                renderTopPointsEarners(topEarners);
+                
+            } catch (error) {
+                console.error('Error loading points from Firestore:', error);
+            }
+        }
+        
+        // Render top points earners table
+        function renderTopPointsEarners(earners) {
+            const tbody = document.getElementById('topPointsEarnersTable');
+            
+            if (!earners || earners.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #94a3b8; padding: 20px;">No points data yet</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = earners.map((e, i) => `
+                <tr>
+                    <td>${i + 1}</td>
+                    <td>
+                        <div style="font-weight: 500;">${e.name || 'User'}</div>
+                        <div style="font-size: 0.8rem; color: #94a3b8;">${e.email || e.userId?.substring(0, 12) + '...'}</div>
+                    </td>
+                    <td style="font-weight: 600; color: #92400e;">${(e.totalEarned || 0).toLocaleString()}</td>
+                    <td style="color: #166534;">${(e.available || 0).toLocaleString()}</td>
+                </tr>
+            `).join('');
+        }
+        
+        // Save points configuration
+        async function savePointsConfig() {
+            try {
+                // Try Cloud Function first
+                if (typeof firebase !== 'undefined' && firebase.functions) {
+                    try {
+                        const updatePointsConfig = firebase.functions().httpsCallable('updatePointsConfig');
+                        await updatePointsConfig({
+                            pointsEnabled: document.getElementById('pointsConfigEnabled').value === 'true',
+                            pointsPerCurrencyUnit: parseFloat(document.getElementById('pointsPerCurrency').value) || 1,
+                            pointsLockDays: parseInt(document.getElementById('pointsLockDays').value) || 7,
+                            pointsExpireDays: parseInt(document.getElementById('pointsExpireDays').value) || 365,
+                            maxPointsPerOrder: parseInt(document.getElementById('maxPointsPerOrder').value) || 100000,
+                            pointsName: document.getElementById('pointsName').value || 'Reward Points',
+                            pointsSymbol: document.getElementById('pointsSymbol').value || 'RP'
+                        });
+                        showStatus('Points configuration saved successfully!', 'success');
+                        return;
+                    } catch (funcError) {
+                        console.warn('Cloud Function not available, saving directly:', funcError.message);
+                    }
+                }
+                
+                // Fallback: Direct Firestore save
+                await db.collection('mlm_configs').doc('points_settings').set({
+                    pointsEnabled: document.getElementById('pointsConfigEnabled').value === 'true',
+                    pointsPerCurrencyUnit: parseFloat(document.getElementById('pointsPerCurrency').value) || 1,
+                    pointsLockDays: parseInt(document.getElementById('pointsLockDays').value) || 7,
+                    pointsExpireDays: parseInt(document.getElementById('pointsExpireDays').value) || 365,
+                    maxPointsPerOrder: parseInt(document.getElementById('maxPointsPerOrder').value) || 100000,
+                    pointsName: document.getElementById('pointsName').value || 'Reward Points',
+                    pointsSymbol: document.getElementById('pointsSymbol').value || 'RP',
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    updatedBy: currentAdmin?.uid || 'admin'
+                }, { merge: true });
+                
+                showStatus('Points configuration saved successfully!', 'success');
+                
+            } catch (error) {
+                console.error('Error saving points config:', error);
+                showStatus('Error saving points configuration', 'error');
+            }
+        }
+        
+        // Submit points adjustment
+        async function submitPointsAdjustment() {
+            const userId = document.getElementById('adjustmentUserId').value.trim();
+            const points = parseInt(document.getElementById('adjustmentPoints').value) || 0;
+            const adjustmentType = document.getElementById('adjustmentType').value;
+            const reason = document.getElementById('adjustmentReason').value.trim();
+            
+            if (!userId) {
+                showStatus('Please enter a user ID or email', 'error');
+                return;
+            }
+            
+            if (points <= 0) {
+                showStatus('Please enter a valid points amount', 'error');
+                return;
+            }
+            
+            if (!reason) {
+                showStatus('Please enter a reason for the adjustment', 'error');
+                return;
+            }
+            
+            if (!confirm(`Are you sure you want to ${adjustmentType} ${points} points for user ${userId}?`)) {
+                return;
+            }
+            
+            try {
+                // Try Cloud Function
+                if (typeof firebase !== 'undefined' && firebase.functions) {
+                    const adminAdjustPoints = firebase.functions().httpsCallable('adminAdjustPoints');
+                    await adminAdjustPoints({
+                        userId: userId,
+                        points: points,
+                        adjustmentType: adjustmentType,
+                        reason: reason
+                    });
+                    
+                    showStatus(`Successfully ${adjustmentType === 'add' || adjustmentType === 'bonus' ? 'added' : adjustmentType === 'redeem' ? 'redeemed' : 'adjusted'} ${points} points for user`, 'success');
+                    
+                    // Clear form
+                    document.getElementById('adjustmentUserId').value = '';
+                    document.getElementById('adjustmentPoints').value = '0';
+                    document.getElementById('adjustmentReason').value = '';
+                    
+                    // Reload points overview
+                    loadPointsOverview();
+                } else {
+                    showStatus('Cloud Functions required for points adjustment', 'error');
+                }
+                
+            } catch (error) {
+                console.error('Error adjusting points:', error);
+                showStatus(error.message || 'Error adjusting points', 'error');
             }
         }
 
@@ -2665,6 +3335,8 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
                 loadRiskDashboard();
             } else if (tabId === 'analytics') {
                 loadAnalyticsDashboard();
+            } else if (tabId === 'sheets') {
+                loadSheetsStatus();
             }
             
             // Update tabs manually since we added new ones
@@ -2678,6 +3350,8 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
                     'risk&fraud': 'fraud',
                     'analytics': 'analytics',
                     'auditlog': 'audit',
+                    'datasyncnew': 'sheets',
+                    'datasync': 'sheets',
                     'settings': 'config'
                 };
                 const tabName = t.textContent.toLowerCase().replace(' ', '').replace('&', '');
@@ -2694,6 +3368,261 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
                 loadMLMConfig();
             }
         };
+
+        // ==========================================================
+        // GOOGLE SHEETS SYNC FUNCTIONS
+        // ==========================================================
+        
+        // Load sheets sync status
+        async function loadSheetsStatus() {
+            try {
+                // Load config
+                const configDoc = await db.collection('mlm_configs').doc('sheets_settings').get();
+                const config = configDoc.exists ? configDoc.data() : {};
+                
+                // Update config form
+                document.getElementById('sheetsEnabled').value = config.sheetsEnabled ? 'true' : 'false';
+                document.getElementById('sheetsAutoSync').value = config.autoSyncEnabled ? 'true' : 'false';
+                document.getElementById('sheetsSpreadsheetId').value = config.spreadsheetId || '';
+                
+                // Update status cards
+                document.getElementById('sheetsSyncStatus').textContent = config.sheetsEnabled ? 'Enabled' : 'Disabled';
+                document.getElementById('sheetsSyncStatus').style.color = config.sheetsEnabled ? '#059669' : '#6b7280';
+                
+                if (config.lastSyncAt) {
+                    const lastSync = config.lastSyncAt.toDate ? config.lastSyncAt.toDate() : new Date(config.lastSyncAt);
+                    document.getElementById('sheetsLastSync').textContent = formatDate(lastSync);
+                } else {
+                    document.getElementById('sheetsLastSync').textContent = 'Never';
+                }
+                
+                // Load cache stats
+                await loadCacheStats();
+                
+                // Load sync logs
+                await loadSyncLogs();
+                
+            } catch (error) {
+                console.error('Error loading sheets status:', error);
+                showStatus('Failed to load sheets status', 'error');
+            }
+        }
+        
+        // Load cache statistics
+        async function loadCacheStats() {
+            const sheetMappings = {
+                'products': { collection: 'sheets_cache_products', name: 'Products' },
+                'categories': { collection: 'sheets_cache_categories', name: 'Categories' },
+                'mlm_configs': { collection: 'sheets_cache_mlm_configs', name: 'MLM Configs' },
+                'reward_schemes': { collection: 'sheets_cache_reward_schemes', name: 'Reward Schemes' }
+            };
+            
+            const tbody = document.getElementById('sheetsCacheTable');
+            let html = '';
+            let totalRows = 0;
+            let availableCount = 0;
+            
+            for (const [sheetName, mapping] of Object.entries(sheetMappings)) {
+                try {
+                    // Get hash info for last sync time
+                    const hashDoc = await db.collection('sheets_cache').doc(`hash_${sheetName}`).get();
+                    const hashData = hashDoc.exists ? hashDoc.data() : null;
+                    
+                    let lastSync = 'Never';
+                    let rowCount = 0;
+                    
+                    if (hashData) {
+                        if (hashData.updatedAt) {
+                            const date = hashData.updatedAt.toDate ? hashData.updatedAt.toDate() : new Date(hashData.updatedAt);
+                            lastSync = formatDate(date);
+                        }
+                        rowCount = hashData.rowCount || 0;
+                        totalRows += rowCount;
+                        availableCount++;
+                    }
+                    
+                    html += `
+                        <tr>
+                            <td><strong>${mapping.name}</strong></td>
+                            <td><code style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px;">${mapping.collection}</code></td>
+                            <td>${lastSync}</td>
+                            <td>${rowCount.toLocaleString()}</td>
+                            <td>
+                                <button class="btn btn-secondary" style="padding: 4px 12px; font-size: 0.8rem;" onclick="triggerSheetSync('${sheetName}')">
+                                    Sync
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                } catch (error) {
+                    console.error(`Error loading cache stats for ${sheetName}:`, error);
+                    html += `
+                        <tr>
+                            <td><strong>${mapping.name}</strong></td>
+                            <td><code style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px;">${mapping.collection}</code></td>
+                            <td colspan="3" style="color: #dc2626;">Error loading</td>
+                        </tr>
+                    `;
+                }
+            }
+            
+            tbody.innerHTML = html || '<tr><td colspan="5" style="text-align: center; color: #666;">No cache data available</td></tr>';
+            document.getElementById('sheetsAvailableCount').textContent = availableCount;
+            document.getElementById('sheetsTotalRows').textContent = totalRows.toLocaleString();
+        }
+        
+        // Load sync logs
+        async function loadSyncLogs() {
+            try {
+                const snapshot = await db.collection('sheets_sync_logs')
+                    .orderBy('timestamp', 'desc')
+                    .limit(10)
+                    .get();
+                
+                const tbody = document.getElementById('sheetsSyncLogs');
+                
+                if (snapshot.empty) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #666; padding: 40px;">No sync logs yet</td></tr>';
+                    return;
+                }
+                
+                let html = '';
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    const timestamp = data.timestamp?.toDate ? formatDate(data.timestamp.toDate()) : 'N/A';
+                    const triggeredBy = data.triggeredBy === 'system' ? 'Scheduled' : (data.triggeredByEmail || 'Admin');
+                    const rowsProcessed = data.results?.totalRowsProcessed || 0;
+                    const success = data.results?.success !== false && !data.error;
+                    
+                    html += `
+                        <tr>
+                            <td>${timestamp}</td>
+                            <td>${data.action || 'sync'}</td>
+                            <td>${triggeredBy}</td>
+                            <td>${rowsProcessed.toLocaleString()}</td>
+                            <td>
+                                <span class="status-badge ${success ? 'status-approved' : 'status-rejected'}">
+                                    ${success ? 'Success' : 'Error'}
+                                </span>
+                            </td>
+                        </tr>
+                    `;
+                });
+                
+                tbody.innerHTML = html;
+            } catch (error) {
+                console.error('Error loading sync logs:', error);
+            }
+        }
+        
+        // Save sheets configuration
+        async function saveSheetsConfig() {
+            try {
+                const config = {
+                    sheetsEnabled: document.getElementById('sheetsEnabled').value === 'true',
+                    autoSyncEnabled: document.getElementById('sheetsAutoSync').value === 'true',
+                    spreadsheetId: document.getElementById('sheetsSpreadsheetId').value.trim(),
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    updatedBy: currentAdmin?.uid
+                };
+                
+                await db.collection('mlm_configs').doc('sheets_settings').set(config, { merge: true });
+                
+                showStatus('Sheets configuration saved successfully', 'success');
+                loadSheetsStatus();
+                
+            } catch (error) {
+                console.error('Error saving sheets config:', error);
+                showStatus('Failed to save configuration: ' + error.message, 'error');
+            }
+        }
+        
+        // Trigger full sync
+        async function triggerFullSync() {
+            await triggerSync([]);
+        }
+        
+        // Trigger products sync only
+        async function triggerProductsSync() {
+            await triggerSync(['products']);
+        }
+        
+        // Trigger categories sync only
+        async function triggerCategoriesSync() {
+            await triggerSync(['categories']);
+        }
+        
+        // Trigger specific sheet sync
+        async function triggerSheetSync(sheetName) {
+            await triggerSync([sheetName]);
+        }
+        
+        // Common sync function
+        async function triggerSync(sheets) {
+            const progressContainer = document.getElementById('syncProgressContainer');
+            const progressText = document.getElementById('syncProgressText');
+            const btnFullSync = document.getElementById('btnFullSync');
+            
+            try {
+                progressContainer.style.display = 'block';
+                progressText.textContent = 'Starting sync...';
+                btnFullSync.disabled = true;
+                
+                // Try Cloud Function first
+                if (typeof firebase !== 'undefined' && firebase.functions) {
+                    try {
+                        const syncSheetsToFirestore = firebase.functions().httpsCallable('syncSheetsToFirestore');
+                        const result = await syncSheetsToFirestore({ sheets: sheets });
+                        
+                        if (result.data.success) {
+                            progressText.textContent = `Sync completed! ${result.data.totalRowsUpdated} rows updated.`;
+                            showStatus(`Sync completed: ${result.data.totalRowsUpdated} rows updated`, 'success');
+                        } else {
+                            progressText.textContent = 'Sync completed with some errors.';
+                            showStatus('Sync completed with errors', 'error');
+                        }
+                        
+                        // Reload stats
+                        setTimeout(() => {
+                            progressContainer.style.display = 'none';
+                            loadSheetsStatus();
+                        }, 2000);
+                        
+                        return;
+                    } catch (funcError) {
+                        console.error('Cloud Function error:', funcError);
+                        progressText.textContent = 'Error: ' + (funcError.message || 'Sync failed');
+                        showStatus('Sync failed: ' + funcError.message, 'error');
+                    }
+                } else {
+                    progressText.textContent = 'Cloud Functions not available';
+                    showStatus('Cloud Functions required for sync. Deploy functions first.', 'error');
+                }
+                
+            } catch (error) {
+                console.error('Error triggering sync:', error);
+                progressText.textContent = 'Error: ' + error.message;
+                showStatus('Sync failed: ' + error.message, 'error');
+            } finally {
+                btnFullSync.disabled = false;
+                setTimeout(() => {
+                    progressContainer.style.display = 'none';
+                }, 3000);
+            }
+        }
+        
+        // Format date helper
+        function formatDate(date) {
+            if (!date) return 'N/A';
+            const options = { 
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric', 
+                hour: '2-digit', 
+                minute: '2-digit' 
+            };
+            return date.toLocaleDateString('en-US', options);
+        }
     </script>
 </body>
 </html>

@@ -223,5 +223,105 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+    
+    // ===== PHASE 8: MLM POINTS WALLET COLLECTION =====
+    match /mlm_points_wallet/{userId} {
+      // Users can only read their own points wallet
+      allow read: if isOwner(userId) || isAdmin();
+      
+      // NO CLIENT WRITES - all points operations through Cloud Functions
+      allow write: if false;
+    }
+    
+    // ===== PHASE 8: MLM POINTS LEDGER COLLECTION =====
+    match /mlm_points_ledger/{entryId} {
+      // Users can read their own points transactions
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // NO CLIENT WRITES - all ledger entries created by Cloud Functions
+      allow write: if false;
+    }
+    
+    // ===== GOOGLE SHEETS SYNC CACHE =====
+    match /sheets_cache/{cacheId} {
+      // Anyone authenticated can read cached data
+      allow read: if isAuthenticated();
+      
+      // Only Cloud Functions write cache
+      allow write: if false;
+    }
+    
+    // ===== SHEETS CACHE - PRODUCTS =====
+    match /sheets_cache_products/{productId} {
+      // Anyone can read cached products
+      allow read: if true;
+      
+      // Only Cloud Functions write
+      allow write: if false;
+    }
+    
+    // ===== SHEETS CACHE - CATEGORIES =====
+    match /sheets_cache_categories/{categoryId} {
+      // Anyone can read cached categories
+      allow read: if true;
+      
+      // Only Cloud Functions write
+      allow write: if false;
+    }
+    
+    // ===== SHEETS CACHE - MLM CONFIGS =====
+    match /sheets_cache_mlm_configs/{configId} {
+      // Authenticated users can read MLM configs from sheets
+      allow read: if isAuthenticated();
+      
+      // Only Cloud Functions write
+      allow write: if false;
+    }
+    
+    // ===== SHEETS CACHE - REWARD SCHEMES =====
+    match /sheets_cache_reward_schemes/{schemeId} {
+      // Authenticated users can read reward schemes
+      allow read: if isAuthenticated();
+      
+      // Only Cloud Functions write
+      allow write: if false;
+    }
+    
+    // ===== SHEETS SYNC LOGS =====
+    match /sheets_sync_logs/{logId} {
+      // Only admin can read sync logs
+      allow read: if isAdmin();
+      
+      // Only Cloud Functions write logs
+      allow write: if false;
+    }
+    
+    // ===== INTERNAL FORMS COLLECTION =====
+    match /internal_forms/{formId} {
+      // Admin can read all forms, employees can read forms they have access to
+      allow read: if isAdmin();
+      
+      // Only admin can create/update/delete forms
+      allow write: if isAdmin();
+    }
+    
+    // ===== FORM SUBMISSIONS COLLECTION =====
+    match /form_submissions/{submissionId} {
+      // Users can read their own submissions, admin can read all
+      allow read: if isAuthenticated() && (
+        resource.data.submittedBy == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Authenticated users can create submissions
+      allow create: if isAuthenticated() && 
+        request.resource.data.submittedBy == request.auth.uid;
+      
+      // No updates or deletes
+      allow update, delete: if false;
+    }
   }
 }
