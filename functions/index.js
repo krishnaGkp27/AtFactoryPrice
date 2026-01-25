@@ -12,6 +12,7 @@
 
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
+const { google } = require('googleapis');
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -1770,5 +1771,1425 @@ exports.getRealtimeAnalytics = functions.https.onCall(async (data, context) => {
     } catch (error) {
         console.error('Error getting realtime analytics:', error);
         throw new functions.https.HttpsError('internal', 'Failed to get analytics');
+    }
+});
+
+// =====================================================
+// PHASE 8: MLM REWARD POINTS SYSTEM
+// Points replace currency wallet for MLM rewards
+// Bank payout system remains UNCHANGED and SEPARATE
+// =====================================================
+
+// Default points configuration
+const DEFAULT_POINTS_CONFIG = {
+    pointsEnabled: true,
+    pointsPerCurrencyUnit: 1, // 1 point per ₦1 commission
+    pointsLockDays: 7,
+    minPointsForRedemption: 1000,
+    maxPointsPerOrder: 100000,
+    pointsExpireDays: 365, // Points expire after 1 year
+    pointsName: 'Reward Points',
+    pointsSymbol: 'RP'
+};
+
+/**
+ * Get points configuration
+ */
+async function getPointsConfig() {
+    try {
+        const configDoc = await db.collection('mlm_configs').doc('points_settings').get();
+        if (configDoc.exists) {
+            return { ...DEFAULT_POINTS_CONFIG, ...configDoc.data() };
+        }
+        return DEFAULT_POINTS_CONFIG;
+    } catch (error) {
+        console.error('Error getting points config:', error);
+        return DEFAULT_POINTS_CONFIG;
+    }
+}
+
+/**
+ * Get or create points wallet for a user
+ */
+async function getOrCreatePointsWallet(userId) {
+    const walletRef = db.collection('mlm_points_wallet').doc(userId);
+    const walletDoc = await walletRef.get();
+    
+    if (walletDoc.exists) {
+        return { id: walletDoc.id, ...walletDoc.data() };
+    }
+    
+    // Create new points wallet
+    const newWallet = {
+        userId: userId,
+        totalPointsEarned: 0,
+        availablePoints: 0,
+        pendingPoints: 0,
+        redeemedPoints: 0,
+        expiredPoints: 0,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+    
+    await walletRef.set(newWallet);
+    return { id: userId, ...newWallet };
+}
+
+/**
+ * Create points ledger entry
+ */
+async function createPointsLedgerEntry(data) {
+    const entry = {
+        userId: data.userId,
+        sourceType: data.sourceType, // 'order', 'referral', 'admin', 'bonus', 'expiry'
+        sourceId: data.sourceId || null,
+        points: data.points,
+        description: data.description || '',
+        status: data.status || 'pending', // 'pending', 'available', 'redeemed', 'expired', 'cancelled'
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        unlockAt: data.unlockAt || null,
+        expiresAt: data.expiresAt || null,
+        metadata: data.metadata || {}
+    };
+    
+    const docRef = await db.collection('mlm_points_ledger').add(entry);
+    return { id: docRef.id, ...entry };
+}
+
+/**
+ * Calculate and award points when order commission is created
+ * This runs ALONGSIDE existing commission calculation (not replacing it)
+ * Trigger: When mlm_commissions document is created
+ */
+exports.calculateOrderPoints = functions.firestore
+    .document('mlm_commissions/{commissionId}')
+    .onCreate(async (snap, context) => {
+        const commission = snap.data();
+        const commissionId = context.params.commissionId;
+        
+        try {
+            const config = await getPointsConfig();
+            
+            if (!config.pointsEnabled) {
+                console.log('Points system disabled, skipping points calculation');
+                return null;
+            }
+            
+            const userId = commission.beneficiaryId;
+            const commissionAmount = commission.amount || 0;
+            
+            if (!userId || commissionAmount <= 0) {
+                console.log('Invalid commission data for points:', commissionId);
+                return null;
+            }
+            
+            // Calculate points (commission amount * conversion rate)
+            const points = Math.floor(commissionAmount * config.pointsPerCurrencyUnit);
+            
+            if (points <= 0) {
+                console.log('No points to award for commission:', commissionId);
+                return null;
+            }
+            
+            // Cap points per order
+            const cappedPoints = Math.min(points, config.maxPointsPerOrder);
+            
+            // Calculate unlock and expiry dates
+            const now = new Date();
+            const unlockDate = new Date(now.getTime() + config.pointsLockDays * 24 * 60 * 60 * 1000);
+            const expiryDate = new Date(now.getTime() + config.pointsExpireDays * 24 * 60 * 60 * 1000);
+            
+            // Create points ledger entry
+            await createPointsLedgerEntry({
+                userId: userId,
+                sourceType: 'order',
+                sourceId: commission.orderId,
+                points: cappedPoints,
+                description: `Points from order commission (Level ${commission.level})`,
+                status: 'pending',
+                unlockAt: admin.firestore.Timestamp.fromDate(unlockDate),
+                expiresAt: admin.firestore.Timestamp.fromDate(expiryDate),
+                metadata: {
+                    commissionId: commissionId,
+                    commissionAmount: commissionAmount,
+                    level: commission.level,
+                    buyerId: commission.buyerId
+                }
+            });
+            
+            // Update points wallet (add to pending)
+            const walletRef = db.collection('mlm_points_wallet').doc(userId);
+            await walletRef.set({
+                pendingPoints: admin.firestore.FieldValue.increment(cappedPoints),
+                totalPointsEarned: admin.firestore.FieldValue.increment(cappedPoints),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+            
+            console.log(`Awarded ${cappedPoints} pending points to user ${userId} for commission ${commissionId}`);
+            
+            // Log audit entry
+            await db.collection('mlm_audit_logs').add({
+                action: 'points_awarded',
+                actorId: 'system',
+                targetId: userId,
+                metadata: {
+                    points: cappedPoints,
+                    commissionId: commissionId,
+                    orderId: commission.orderId,
+                    status: 'pending'
+                },
+                timestamp: admin.firestore.FieldValue.serverTimestamp()
+            });
+            
+            return { success: true, points: cappedPoints };
+            
+        } catch (error) {
+            console.error('Error calculating order points:', error);
+            return null;
+        }
+    });
+
+/**
+ * Unlock pending points after lock period
+ * Scheduled: Runs every 6 hours
+ */
+exports.unlockPendingPoints = functions.pubsub
+    .schedule('every 6 hours')
+    .onRun(async (context) => {
+        console.log('Running scheduled points unlock...');
+        
+        try {
+            const config = await getPointsConfig();
+            
+            if (!config.pointsEnabled) {
+                console.log('Points system disabled');
+                return null;
+            }
+            
+            const now = admin.firestore.Timestamp.now();
+            
+            // Find pending points entries that should be unlocked
+            const pendingEntries = await db.collection('mlm_points_ledger')
+                .where('status', '==', 'pending')
+                .where('unlockAt', '<=', now)
+                .limit(500)
+                .get();
+            
+            if (pendingEntries.empty) {
+                console.log('No pending points to unlock');
+                return null;
+            }
+            
+            console.log(`Found ${pendingEntries.size} points entries to unlock`);
+            
+            const batch = db.batch();
+            const userUpdates = {};
+            
+            pendingEntries.docs.forEach(doc => {
+                const entry = doc.data();
+                const userId = entry.userId;
+                const points = entry.points;
+                
+                // Update ledger entry status
+                batch.update(doc.ref, {
+                    status: 'available',
+                    unlockedAt: now
+                });
+                
+                // Accumulate user updates
+                if (!userUpdates[userId]) {
+                    userUpdates[userId] = { pendingToAvailable: 0 };
+                }
+                userUpdates[userId].pendingToAvailable += points;
+            });
+            
+            // Update user wallets
+            Object.keys(userUpdates).forEach(userId => {
+                const walletRef = db.collection('mlm_points_wallet').doc(userId);
+                batch.set(walletRef, {
+                    pendingPoints: admin.firestore.FieldValue.increment(-userUpdates[userId].pendingToAvailable),
+                    availablePoints: admin.firestore.FieldValue.increment(userUpdates[userId].pendingToAvailable),
+                    updatedAt: now
+                }, { merge: true });
+            });
+            
+            await batch.commit();
+            
+            console.log(`Unlocked points for ${Object.keys(userUpdates).length} users`);
+            
+            return { unlocked: pendingEntries.size, users: Object.keys(userUpdates).length };
+            
+        } catch (error) {
+            console.error('Error unlocking pending points:', error);
+            return null;
+        }
+    });
+
+/**
+ * Expire old points
+ * Scheduled: Runs daily at 2 AM
+ */
+exports.expireOldPoints = functions.pubsub
+    .schedule('0 2 * * *')
+    .timeZone('Africa/Lagos')
+    .onRun(async (context) => {
+        console.log('Running scheduled points expiry...');
+        
+        try {
+            const config = await getPointsConfig();
+            
+            if (!config.pointsEnabled) {
+                console.log('Points system disabled');
+                return null;
+            }
+            
+            const now = admin.firestore.Timestamp.now();
+            
+            // Find available points entries that have expired
+            const expiredEntries = await db.collection('mlm_points_ledger')
+                .where('status', '==', 'available')
+                .where('expiresAt', '<=', now)
+                .limit(500)
+                .get();
+            
+            if (expiredEntries.empty) {
+                console.log('No points to expire');
+                return null;
+            }
+            
+            console.log(`Found ${expiredEntries.size} points entries to expire`);
+            
+            const batch = db.batch();
+            const userUpdates = {};
+            
+            expiredEntries.docs.forEach(doc => {
+                const entry = doc.data();
+                const userId = entry.userId;
+                const points = entry.points;
+                
+                // Update ledger entry status
+                batch.update(doc.ref, {
+                    status: 'expired',
+                    expiredAt: now
+                });
+                
+                // Accumulate user updates
+                if (!userUpdates[userId]) {
+                    userUpdates[userId] = { expiredPoints: 0 };
+                }
+                userUpdates[userId].expiredPoints += points;
+            });
+            
+            // Update user wallets
+            Object.keys(userUpdates).forEach(userId => {
+                const walletRef = db.collection('mlm_points_wallet').doc(userId);
+                batch.set(walletRef, {
+                    availablePoints: admin.firestore.FieldValue.increment(-userUpdates[userId].expiredPoints),
+                    expiredPoints: admin.firestore.FieldValue.increment(userUpdates[userId].expiredPoints),
+                    updatedAt: now
+                }, { merge: true });
+            });
+            
+            await batch.commit();
+            
+            console.log(`Expired points for ${Object.keys(userUpdates).length} users`);
+            
+            return { expired: expiredEntries.size, users: Object.keys(userUpdates).length };
+            
+        } catch (error) {
+            console.error('Error expiring points:', error);
+            return null;
+        }
+    });
+
+/**
+ * Admin: Manually adjust user points
+ * Use cases: Corrections, bonuses, manual redemptions
+ */
+exports.adminAdjustPoints = functions.https.onCall(async (data, context) => {
+    // Verify admin
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    const adminEmail = context.auth.token.email;
+    const adminEmails = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com'];
+    
+    if (!adminEmails.includes(adminEmail)) {
+        throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+    }
+    
+    const { userId, points, adjustmentType, reason } = data;
+    
+    if (!userId || typeof points !== 'number' || !adjustmentType || !reason) {
+        throw new functions.https.HttpsError('invalid-argument', 'Missing required fields');
+    }
+    
+    const validTypes = ['add', 'subtract', 'redeem', 'bonus', 'correction'];
+    if (!validTypes.includes(adjustmentType)) {
+        throw new functions.https.HttpsError('invalid-argument', 'Invalid adjustment type');
+    }
+    
+    try {
+        const wallet = await getOrCreatePointsWallet(userId);
+        const absPoints = Math.abs(points);
+        
+        // Validate subtraction doesn't go negative
+        if ((adjustmentType === 'subtract' || adjustmentType === 'redeem') && wallet.availablePoints < absPoints) {
+            throw new functions.https.HttpsError('failed-precondition', 'Insufficient available points');
+        }
+        
+        // Create ledger entry
+        let ledgerStatus = 'available';
+        let pointsChange = absPoints;
+        
+        if (adjustmentType === 'subtract' || adjustmentType === 'redeem') {
+            ledgerStatus = adjustmentType === 'redeem' ? 'redeemed' : 'cancelled';
+            pointsChange = -absPoints;
+        }
+        
+        await createPointsLedgerEntry({
+            userId: userId,
+            sourceType: 'admin',
+            sourceId: context.auth.uid,
+            points: pointsChange,
+            description: `Admin ${adjustmentType}: ${reason}`,
+            status: ledgerStatus,
+            metadata: {
+                adjustmentType: adjustmentType,
+                adminId: context.auth.uid,
+                adminEmail: adminEmail,
+                reason: reason
+            }
+        });
+        
+        // Update wallet
+        const walletRef = db.collection('mlm_points_wallet').doc(userId);
+        const updateData = {
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+        
+        if (adjustmentType === 'add' || adjustmentType === 'bonus') {
+            updateData.availablePoints = admin.firestore.FieldValue.increment(absPoints);
+            updateData.totalPointsEarned = admin.firestore.FieldValue.increment(absPoints);
+        } else if (adjustmentType === 'subtract' || adjustmentType === 'correction') {
+            updateData.availablePoints = admin.firestore.FieldValue.increment(-absPoints);
+        } else if (adjustmentType === 'redeem') {
+            updateData.availablePoints = admin.firestore.FieldValue.increment(-absPoints);
+            updateData.redeemedPoints = admin.firestore.FieldValue.increment(absPoints);
+        }
+        
+        await walletRef.set(updateData, { merge: true });
+        
+        // Audit log
+        await db.collection('mlm_audit_logs').add({
+            action: 'admin_points_adjustment',
+            actorId: context.auth.uid,
+            targetId: userId,
+            metadata: {
+                adjustmentType,
+                points: pointsChange,
+                reason,
+                adminEmail
+            },
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        console.log(`Admin ${adminEmail} adjusted ${pointsChange} points for user ${userId}: ${reason}`);
+        
+        return { success: true, pointsAdjusted: pointsChange };
+        
+    } catch (error) {
+        console.error('Error adjusting points:', error);
+        if (error instanceof functions.https.HttpsError) {
+            throw error;
+        }
+        throw new functions.https.HttpsError('internal', 'Failed to adjust points');
+    }
+});
+
+/**
+ * Get user's points summary (for dashboard)
+ */
+exports.getPointsSummary = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    const userId = data.userId || context.auth.uid;
+    
+    // Only allow users to see their own points, or admin to see any
+    const adminEmails = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com'];
+    if (userId !== context.auth.uid && !adminEmails.includes(context.auth.token.email)) {
+        throw new functions.https.HttpsError('permission-denied', 'Cannot view other users points');
+    }
+    
+    try {
+        const config = await getPointsConfig();
+        const wallet = await getOrCreatePointsWallet(userId);
+        
+        // Get recent transactions
+        const recentTransactions = await db.collection('mlm_points_ledger')
+            .where('userId', '==', userId)
+            .orderBy('createdAt', 'desc')
+            .limit(20)
+            .get();
+        
+        const transactions = recentTransactions.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate?.() || null,
+            unlockAt: doc.data().unlockAt?.toDate?.() || null,
+            expiresAt: doc.data().expiresAt?.toDate?.() || null
+        }));
+        
+        return {
+            wallet: {
+                totalPointsEarned: wallet.totalPointsEarned || 0,
+                availablePoints: wallet.availablePoints || 0,
+                pendingPoints: wallet.pendingPoints || 0,
+                redeemedPoints: wallet.redeemedPoints || 0,
+                expiredPoints: wallet.expiredPoints || 0
+            },
+            transactions,
+            config: {
+                pointsName: config.pointsName,
+                pointsSymbol: config.pointsSymbol,
+                minPointsForRedemption: config.minPointsForRedemption,
+                pointsLockDays: config.pointsLockDays
+            }
+        };
+        
+    } catch (error) {
+        console.error('Error getting points summary:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to get points summary');
+    }
+});
+
+/**
+ * Admin: Get all users points overview
+ */
+exports.getAdminPointsOverview = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    const adminEmails = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com'];
+    if (!adminEmails.includes(context.auth.token.email)) {
+        throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+    }
+    
+    try {
+        const config = await getPointsConfig();
+        
+        // Get aggregate stats
+        const walletsSnapshot = await db.collection('mlm_points_wallet').get();
+        
+        let totalPointsIssued = 0;
+        let totalAvailable = 0;
+        let totalPending = 0;
+        let totalRedeemed = 0;
+        let totalExpired = 0;
+        const topEarners = [];
+        
+        walletsSnapshot.docs.forEach(doc => {
+            const wallet = doc.data();
+            totalPointsIssued += wallet.totalPointsEarned || 0;
+            totalAvailable += wallet.availablePoints || 0;
+            totalPending += wallet.pendingPoints || 0;
+            totalRedeemed += wallet.redeemedPoints || 0;
+            totalExpired += wallet.expiredPoints || 0;
+            
+            if ((wallet.totalPointsEarned || 0) > 0) {
+                topEarners.push({
+                    userId: doc.id,
+                    totalEarned: wallet.totalPointsEarned || 0,
+                    available: wallet.availablePoints || 0
+                });
+            }
+        });
+        
+        // Sort and limit top earners
+        topEarners.sort((a, b) => b.totalEarned - a.totalEarned);
+        const top10Earners = topEarners.slice(0, 10);
+        
+        // Get user names for top earners
+        for (const earner of top10Earners) {
+            try {
+                const userDoc = await db.collection('users').doc(earner.userId).get();
+                if (userDoc.exists) {
+                    const userData = userDoc.data();
+                    earner.name = userData.name || userData.email?.split('@')[0] || 'User';
+                    earner.email = userData.email;
+                }
+            } catch (e) {
+                earner.name = 'Unknown';
+            }
+        }
+        
+        return {
+            config,
+            stats: {
+                totalPointsIssued,
+                totalAvailable,
+                totalPending,
+                totalRedeemed,
+                totalExpired,
+                totalUsers: walletsSnapshot.size
+            },
+            topEarners: top10Earners
+        };
+        
+    } catch (error) {
+        console.error('Error getting admin points overview:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to get points overview');
+    }
+});
+
+/**
+ * Admin: Update points configuration
+ */
+exports.updatePointsConfig = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    const adminEmails = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com'];
+    if (!adminEmails.includes(context.auth.token.email)) {
+        throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+    }
+    
+    try {
+        const allowedFields = [
+            'pointsEnabled',
+            'pointsPerCurrencyUnit',
+            'pointsLockDays',
+            'minPointsForRedemption',
+            'maxPointsPerOrder',
+            'pointsExpireDays',
+            'pointsName',
+            'pointsSymbol'
+        ];
+        
+        const updateData = {};
+        allowedFields.forEach(field => {
+            if (data[field] !== undefined) {
+                updateData[field] = data[field];
+            }
+        });
+        
+        updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+        updateData.updatedBy = context.auth.uid;
+        
+        await db.collection('mlm_configs').doc('points_settings').set(updateData, { merge: true });
+        
+        // Audit log
+        await db.collection('mlm_audit_logs').add({
+            action: 'points_config_updated',
+            actorId: context.auth.uid,
+            metadata: updateData,
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        console.log(`Points config updated by ${context.auth.token.email}`);
+        
+        return { success: true };
+        
+    } catch (error) {
+        console.error('Error updating points config:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to update points config');
+    }
+});
+
+// ==========================================================
+// PHASE 2: GOOGLE SHEETS INTEGRATION
+// Sync data from Google Sheets to Firestore (cached, low cost)
+// ==========================================================
+
+// Google Sheets Configuration Defaults
+const DEFAULT_SHEETS_CONFIG = {
+    sheetsEnabled: false,
+    autoSyncEnabled: false,
+    syncIntervalHours: 24,
+    lastSyncAt: null,
+    spreadsheetId: '', // Must be configured by admin
+    serviceAccountEmail: '' // For reference only - credentials via functions config
+};
+
+// Sheet mappings - which sheets map to which Firestore collections
+const SHEET_MAPPINGS = {
+    'products': {
+        firestoreCollection: 'sheets_cache_products',
+        keyColumn: 'id',
+        columns: ['id', 'name', 'price', 'category', 'unit', 'description', 'image', 'wholesaleAvailable', 'moqFriendly', 'bulkDiscount', 'bestSeller']
+    },
+    'categories': {
+        firestoreCollection: 'sheets_cache_categories',
+        keyColumn: 'id',
+        columns: ['id', 'name', 'path', 'parent', 'order']
+    },
+    'mlm_configs': {
+        firestoreCollection: 'sheets_cache_mlm_configs',
+        keyColumn: 'key',
+        columns: ['key', 'value', 'type', 'description']
+    },
+    'reward_schemes': {
+        firestoreCollection: 'sheets_cache_reward_schemes',
+        keyColumn: 'id',
+        columns: ['id', 'name', 'pointsRequired', 'description', 'active']
+    }
+};
+
+/**
+ * Get Google Sheets configuration from Firestore
+ */
+async function getSheetsConfig() {
+    try {
+        const configDoc = await db.collection('mlm_configs').doc('sheets_settings').get();
+        if (configDoc.exists) {
+            return { ...DEFAULT_SHEETS_CONFIG, ...configDoc.data() };
+        }
+        return DEFAULT_SHEETS_CONFIG;
+    } catch (error) {
+        console.error('Error getting sheets config:', error);
+        return DEFAULT_SHEETS_CONFIG;
+    }
+}
+
+/**
+ * Get authenticated Google Sheets API client
+ * Uses service account credentials from Firebase Functions config
+ */
+async function getSheetsClient() {
+    try {
+        // Get service account credentials from functions config or environment
+        const credentials = functions.config().googlesheets || {};
+        
+        if (!credentials.client_email || !credentials.private_key) {
+            throw new Error('Google Sheets credentials not configured. Use firebase functions:config:set to configure.');
+        }
+        
+        const auth = new google.auth.GoogleAuth({
+            credentials: {
+                client_email: credentials.client_email,
+                private_key: credentials.private_key.replace(/\\n/g, '\n')
+            },
+            scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly']
+        });
+        
+        const sheets = google.sheets({ version: 'v4', auth });
+        return sheets;
+    } catch (error) {
+        console.error('Error creating Sheets client:', error);
+        throw error;
+    }
+}
+
+/**
+ * Calculate a simple hash of data for change detection
+ */
+function calculateDataHash(data) {
+    const str = JSON.stringify(data);
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+    }
+    return hash.toString(16);
+}
+
+/**
+ * Read data from a specific sheet
+ */
+async function readSheetData(sheets, spreadsheetId, sheetName, columns) {
+    try {
+        const range = `${sheetName}!A:${String.fromCharCode(64 + columns.length)}`;
+        
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId,
+            range
+        });
+        
+        const rows = response.data.values || [];
+        if (rows.length <= 1) {
+            return []; // Only header or empty
+        }
+        
+        // First row is headers, rest is data
+        const headers = rows[0];
+        const data = [];
+        
+        for (let i = 1; i < rows.length; i++) {
+            const row = rows[i];
+            const obj = {};
+            
+            columns.forEach((col, index) => {
+                const headerIndex = headers.indexOf(col);
+                if (headerIndex !== -1 && row[headerIndex] !== undefined) {
+                    // Type conversion for boolean fields
+                    let value = row[headerIndex];
+                    if (['wholesaleAvailable', 'moqFriendly', 'bulkDiscount', 'bestSeller', 'active'].includes(col)) {
+                        value = value.toLowerCase() === 'true' || value === '1' || value === 'yes';
+                    } else if (['price', 'pointsRequired', 'order'].includes(col)) {
+                        value = parseFloat(value) || 0;
+                    }
+                    obj[col] = value;
+                } else if (index < row.length) {
+                    obj[col] = row[index] || '';
+                }
+            });
+            
+            // Only add if key column has a value
+            const mapping = Object.values(SHEET_MAPPINGS).find(m => m.columns.includes(columns[0]));
+            const keyCol = mapping ? mapping.keyColumn : columns[0];
+            if (obj[keyCol]) {
+                data.push(obj);
+            }
+        }
+        
+        return data;
+    } catch (error) {
+        console.error(`Error reading sheet ${sheetName}:`, error);
+        throw error;
+    }
+}
+
+/**
+ * Sync data from a sheet to Firestore collection
+ * Uses batch writes for efficiency
+ */
+async function syncSheetToFirestore(sheetName, mapping, sheets, spreadsheetId) {
+    const startTime = Date.now();
+    const result = {
+        sheetName,
+        collection: mapping.firestoreCollection,
+        rowsProcessed: 0,
+        rowsUpdated: 0,
+        rowsSkipped: 0,
+        errors: [],
+        durationMs: 0
+    };
+    
+    try {
+        // Read data from sheet
+        const data = await readSheetData(sheets, spreadsheetId, sheetName, mapping.columns);
+        result.rowsProcessed = data.length;
+        
+        if (data.length === 0) {
+            result.durationMs = Date.now() - startTime;
+            return result;
+        }
+        
+        // Calculate hash to detect changes
+        const newHash = calculateDataHash(data);
+        
+        // Check previous hash
+        const hashDoc = await db.collection('sheets_cache').doc(`hash_${sheetName}`).get();
+        const previousHash = hashDoc.exists ? hashDoc.data().hash : null;
+        
+        if (newHash === previousHash) {
+            result.rowsSkipped = data.length;
+            result.durationMs = Date.now() - startTime;
+            console.log(`No changes detected for sheet ${sheetName}, skipping sync`);
+            return result;
+        }
+        
+        // Batch write to Firestore
+        const batchSize = 500; // Firestore limit
+        let batchCount = 0;
+        let batch = db.batch();
+        
+        for (const item of data) {
+            const docId = item[mapping.keyColumn];
+            if (!docId) continue;
+            
+            const docRef = db.collection(mapping.firestoreCollection).doc(docId.toString());
+            batch.set(docRef, {
+                ...item,
+                _syncedAt: admin.firestore.FieldValue.serverTimestamp(),
+                _source: 'google_sheets'
+            }, { merge: true });
+            
+            batchCount++;
+            result.rowsUpdated++;
+            
+            // Commit batch when full
+            if (batchCount >= batchSize) {
+                await batch.commit();
+                batch = db.batch();
+                batchCount = 0;
+            }
+        }
+        
+        // Commit remaining items
+        if (batchCount > 0) {
+            await batch.commit();
+        }
+        
+        // Update hash
+        await db.collection('sheets_cache').doc(`hash_${sheetName}`).set({
+            hash: newHash,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            rowCount: data.length
+        });
+        
+    } catch (error) {
+        result.errors.push(error.message);
+        console.error(`Error syncing sheet ${sheetName}:`, error);
+    }
+    
+    result.durationMs = Date.now() - startTime;
+    return result;
+}
+
+/**
+ * Admin-triggered sync from Google Sheets
+ * Requires admin authentication
+ */
+exports.syncSheetsToFirestore = functions.https.onCall(async (data, context) => {
+    // Authentication check
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    const adminEmails = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com'];
+    if (!adminEmails.includes(context.auth.token.email)) {
+        throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+    }
+    
+    const syncStartTime = Date.now();
+    const results = {
+        success: false,
+        sheetsProcessed: 0,
+        totalRowsProcessed: 0,
+        totalRowsUpdated: 0,
+        sheetResults: [],
+        errors: [],
+        durationMs: 0
+    };
+    
+    try {
+        // Get sheets configuration
+        const config = await getSheetsConfig();
+        
+        if (!config.sheetsEnabled) {
+            throw new functions.https.HttpsError('failed-precondition', 'Google Sheets sync is not enabled');
+        }
+        
+        if (!config.spreadsheetId) {
+            throw new functions.https.HttpsError('failed-precondition', 'Spreadsheet ID not configured');
+        }
+        
+        // Get authenticated sheets client
+        const sheets = await getSheetsClient();
+        
+        // Determine which sheets to sync
+        const sheetsToSync = data.sheets && data.sheets.length > 0 
+            ? data.sheets.filter(s => SHEET_MAPPINGS[s])
+            : Object.keys(SHEET_MAPPINGS);
+        
+        // Sync each sheet
+        for (const sheetName of sheetsToSync) {
+            const mapping = SHEET_MAPPINGS[sheetName];
+            const sheetResult = await syncSheetToFirestore(sheetName, mapping, sheets, config.spreadsheetId);
+            
+            results.sheetResults.push(sheetResult);
+            results.sheetsProcessed++;
+            results.totalRowsProcessed += sheetResult.rowsProcessed;
+            results.totalRowsUpdated += sheetResult.rowsUpdated;
+            
+            if (sheetResult.errors.length > 0) {
+                results.errors.push(...sheetResult.errors);
+            }
+        }
+        
+        results.success = results.errors.length === 0;
+        results.durationMs = Date.now() - syncStartTime;
+        
+        // Log sync action
+        await db.collection('sheets_sync_logs').add({
+            action: 'manual_sync',
+            triggeredBy: context.auth.uid,
+            triggeredByEmail: context.auth.token.email,
+            results: results,
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        // Update last sync time
+        await db.collection('mlm_configs').doc('sheets_settings').set({
+            lastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
+            lastSyncBy: context.auth.uid,
+            lastSyncStatus: results.success ? 'success' : 'partial_error'
+        }, { merge: true });
+        
+        console.log(`Sheets sync completed by ${context.auth.token.email}: ${results.totalRowsUpdated} rows updated`);
+        
+        return results;
+        
+    } catch (error) {
+        console.error('Error in sheets sync:', error);
+        
+        // Log failed sync attempt
+        await db.collection('sheets_sync_logs').add({
+            action: 'manual_sync',
+            triggeredBy: context.auth?.uid || 'unknown',
+            error: error.message,
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        throw new functions.https.HttpsError('internal', error.message || 'Sheets sync failed');
+    }
+});
+
+/**
+ * Scheduled sync from Google Sheets
+ * Runs daily at 3 AM (configurable)
+ */
+exports.scheduledSheetsSync = functions.pubsub
+    .schedule('0 3 * * *')
+    .timeZone('Africa/Lagos')
+    .onRun(async (context) => {
+        console.log('Starting scheduled sheets sync...');
+        
+        const syncStartTime = Date.now();
+        const results = {
+            success: false,
+            sheetsProcessed: 0,
+            totalRowsProcessed: 0,
+            totalRowsUpdated: 0,
+            sheetResults: [],
+            errors: []
+        };
+        
+        try {
+            const config = await getSheetsConfig();
+            
+            // Check if auto-sync is enabled
+            if (!config.sheetsEnabled || !config.autoSyncEnabled) {
+                console.log('Scheduled sheets sync is disabled, skipping');
+                return null;
+            }
+            
+            if (!config.spreadsheetId) {
+                console.log('No spreadsheet ID configured, skipping sync');
+                return null;
+            }
+            
+            const sheets = await getSheetsClient();
+            
+            // Sync all configured sheets
+            for (const [sheetName, mapping] of Object.entries(SHEET_MAPPINGS)) {
+                try {
+                    const sheetResult = await syncSheetToFirestore(sheetName, mapping, sheets, config.spreadsheetId);
+                    results.sheetResults.push(sheetResult);
+                    results.sheetsProcessed++;
+                    results.totalRowsProcessed += sheetResult.rowsProcessed;
+                    results.totalRowsUpdated += sheetResult.rowsUpdated;
+                    
+                    if (sheetResult.errors.length > 0) {
+                        results.errors.push(...sheetResult.errors);
+                    }
+                } catch (sheetError) {
+                    results.errors.push(`Sheet ${sheetName}: ${sheetError.message}`);
+                }
+            }
+            
+            results.success = results.errors.length === 0;
+            
+            // Log scheduled sync
+            await db.collection('sheets_sync_logs').add({
+                action: 'scheduled_sync',
+                triggeredBy: 'system',
+                results: results,
+                durationMs: Date.now() - syncStartTime,
+                timestamp: admin.firestore.FieldValue.serverTimestamp()
+            });
+            
+            // Update last sync time
+            await db.collection('mlm_configs').doc('sheets_settings').set({
+                lastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
+                lastSyncBy: 'system',
+                lastSyncStatus: results.success ? 'success' : 'partial_error'
+            }, { merge: true });
+            
+            console.log(`Scheduled sheets sync completed: ${results.totalRowsUpdated} rows updated`);
+            
+        } catch (error) {
+            console.error('Error in scheduled sheets sync:', error);
+            
+            await db.collection('sheets_sync_logs').add({
+                action: 'scheduled_sync',
+                triggeredBy: 'system',
+                error: error.message,
+                timestamp: admin.firestore.FieldValue.serverTimestamp()
+            });
+        }
+        
+        return null;
+    });
+
+/**
+ * Get sync status and logs for admin dashboard
+ */
+exports.getSyncStatus = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    const adminEmails = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com'];
+    if (!adminEmails.includes(context.auth.token.email)) {
+        throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+    }
+    
+    try {
+        // Get current config
+        const config = await getSheetsConfig();
+        
+        // Get recent sync logs
+        const logsSnapshot = await db.collection('sheets_sync_logs')
+            .orderBy('timestamp', 'desc')
+            .limit(10)
+            .get();
+        
+        const logs = logsSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            timestamp: doc.data().timestamp?.toDate?.() || null
+        }));
+        
+        // Get cache stats
+        const cacheStats = {};
+        for (const [sheetName, mapping] of Object.entries(SHEET_MAPPINGS)) {
+            const hashDoc = await db.collection('sheets_cache').doc(`hash_${sheetName}`).get();
+            cacheStats[sheetName] = {
+                collection: mapping.firestoreCollection,
+                lastSync: hashDoc.exists ? hashDoc.data().updatedAt?.toDate?.() : null,
+                rowCount: hashDoc.exists ? hashDoc.data().rowCount : 0
+            };
+        }
+        
+        return {
+            config: {
+                sheetsEnabled: config.sheetsEnabled,
+                autoSyncEnabled: config.autoSyncEnabled,
+                syncIntervalHours: config.syncIntervalHours,
+                spreadsheetId: config.spreadsheetId ? '***configured***' : null,
+                lastSyncAt: config.lastSyncAt?.toDate?.() || null,
+                lastSyncStatus: config.lastSyncStatus
+            },
+            recentLogs: logs,
+            cacheStats: cacheStats,
+            availableSheets: Object.keys(SHEET_MAPPINGS)
+        };
+        
+    } catch (error) {
+        console.error('Error getting sync status:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to get sync status');
+    }
+});
+
+/**
+ * Update sheets configuration
+ */
+exports.updateSheetsConfig = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    const adminEmails = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com'];
+    if (!adminEmails.includes(context.auth.token.email)) {
+        throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+    }
+    
+    try {
+        const allowedFields = [
+            'sheetsEnabled',
+            'autoSyncEnabled',
+            'syncIntervalHours',
+            'spreadsheetId'
+        ];
+        
+        const updateData = {};
+        allowedFields.forEach(field => {
+            if (data[field] !== undefined) {
+                updateData[field] = data[field];
+            }
+        });
+        
+        updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+        updateData.updatedBy = context.auth.uid;
+        
+        await db.collection('mlm_configs').doc('sheets_settings').set(updateData, { merge: true });
+        
+        // Audit log
+        await db.collection('mlm_audit_logs').add({
+            action: 'sheets_config_updated',
+            actorId: context.auth.uid,
+            metadata: { ...updateData, spreadsheetId: updateData.spreadsheetId ? '***' : null },
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        console.log(`Sheets config updated by ${context.auth.token.email}`);
+        
+        return { success: true };
+        
+    } catch (error) {
+        console.error('Error updating sheets config:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to update sheets config');
+    }
+});
+
+// ==========================================================
+// PHASE 4: INTERNAL EMPLOYEE FORMS
+// Custom forms for internal data collection
+// ==========================================================
+
+/**
+ * Get all forms (admin) or accessible forms (employee)
+ */
+exports.getForms = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    try {
+        const adminEmails = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com'];
+        const isAdmin = adminEmails.includes(context.auth.token.email);
+        
+        let query = db.collection('internal_forms').where('isActive', '==', true);
+        
+        // If not admin, filter by allowed roles
+        if (!isAdmin) {
+            const userDoc = await db.collection('users').doc(context.auth.uid).get();
+            const userRole = userDoc.exists ? userDoc.data().role || 'employee' : 'employee';
+            query = query.where('allowedRoles', 'array-contains', userRole);
+        }
+        
+        const snapshot = await query.orderBy('createdAt', 'desc').get();
+        
+        return {
+            forms: snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data(),
+                createdAt: doc.data().createdAt?.toDate?.() || null,
+                updatedAt: doc.data().updatedAt?.toDate?.() || null
+            }))
+        };
+        
+    } catch (error) {
+        console.error('Error getting forms:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to get forms');
+    }
+});
+
+/**
+ * Create a new form (admin only)
+ */
+exports.createForm = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    const adminEmails = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com'];
+    if (!adminEmails.includes(context.auth.token.email)) {
+        throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+    }
+    
+    try {
+        const { title, description, fields, allowedRoles } = data;
+        
+        if (!title || !fields || !Array.isArray(fields) || fields.length === 0) {
+            throw new functions.https.HttpsError('invalid-argument', 'Title and fields are required');
+        }
+        
+        const formData = {
+            title: title.trim(),
+            description: description?.trim() || '',
+            fields: fields.map((field, index) => ({
+                id: `field_${index}`,
+                label: field.label || '',
+                type: field.type || 'text',
+                required: field.required === true,
+                options: field.options || [],
+                placeholder: field.placeholder || ''
+            })),
+            allowedRoles: allowedRoles || ['employee', 'admin'],
+            isActive: true,
+            createdBy: context.auth.uid,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+        
+        const docRef = await db.collection('internal_forms').add(formData);
+        
+        // Audit log
+        await db.collection('mlm_audit_logs').add({
+            action: 'form_created',
+            actorId: context.auth.uid,
+            targetId: docRef.id,
+            metadata: { title: formData.title, fieldCount: fields.length },
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        return { success: true, formId: docRef.id };
+        
+    } catch (error) {
+        console.error('Error creating form:', error);
+        throw new functions.https.HttpsError('internal', error.message || 'Failed to create form');
+    }
+});
+
+/**
+ * Update a form (admin only)
+ */
+exports.updateForm = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    const adminEmails = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com'];
+    if (!adminEmails.includes(context.auth.token.email)) {
+        throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+    }
+    
+    try {
+        const { formId, title, description, fields, allowedRoles, isActive } = data;
+        
+        if (!formId) {
+            throw new functions.https.HttpsError('invalid-argument', 'Form ID is required');
+        }
+        
+        const updateData = {
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedBy: context.auth.uid
+        };
+        
+        if (title !== undefined) updateData.title = title.trim();
+        if (description !== undefined) updateData.description = description.trim();
+        if (fields !== undefined) updateData.fields = fields;
+        if (allowedRoles !== undefined) updateData.allowedRoles = allowedRoles;
+        if (isActive !== undefined) updateData.isActive = isActive;
+        
+        await db.collection('internal_forms').doc(formId).update(updateData);
+        
+        // Audit log
+        await db.collection('mlm_audit_logs').add({
+            action: 'form_updated',
+            actorId: context.auth.uid,
+            targetId: formId,
+            metadata: { changes: Object.keys(updateData).filter(k => k !== 'updatedAt' && k !== 'updatedBy') },
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        return { success: true };
+        
+    } catch (error) {
+        console.error('Error updating form:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to update form');
+    }
+});
+
+/**
+ * Submit a form (authenticated employees)
+ */
+exports.submitForm = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    try {
+        const { formId, responses } = data;
+        
+        if (!formId || !responses) {
+            throw new functions.https.HttpsError('invalid-argument', 'Form ID and responses are required');
+        }
+        
+        // Verify form exists and user has access
+        const formDoc = await db.collection('internal_forms').doc(formId).get();
+        if (!formDoc.exists) {
+            throw new functions.https.HttpsError('not-found', 'Form not found');
+        }
+        
+        const formData = formDoc.data();
+        if (!formData.isActive) {
+            throw new functions.https.HttpsError('failed-precondition', 'Form is not active');
+        }
+        
+        // Get user info
+        const userDoc = await db.collection('users').doc(context.auth.uid).get();
+        const userData = userDoc.exists ? userDoc.data() : {};
+        
+        // Create submission
+        const submission = {
+            formId,
+            formTitle: formData.title,
+            responses,
+            submittedBy: context.auth.uid,
+            submittedByEmail: context.auth.token.email,
+            submittedByName: userData.name || userData.firstName || 'Unknown',
+            submittedAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+        
+        const docRef = await db.collection('form_submissions').add(submission);
+        
+        // Audit log
+        await db.collection('mlm_audit_logs').add({
+            action: 'form_submitted',
+            actorId: context.auth.uid,
+            targetId: docRef.id,
+            metadata: { formId, formTitle: formData.title },
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        console.log(`Form ${formId} submitted by ${context.auth.token.email}`);
+        
+        return { success: true, submissionId: docRef.id };
+        
+    } catch (error) {
+        console.error('Error submitting form:', error);
+        throw new functions.https.HttpsError('internal', error.message || 'Failed to submit form');
+    }
+});
+
+/**
+ * Get form submissions (admin sees all, users see their own)
+ */
+exports.getFormSubmissions = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    try {
+        const { formId, limit: queryLimit } = data;
+        const adminEmails = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com'];
+        const isAdmin = adminEmails.includes(context.auth.token.email);
+        
+        let query = db.collection('form_submissions');
+        
+        if (formId) {
+            query = query.where('formId', '==', formId);
+        }
+        
+        // Non-admins can only see their own submissions
+        if (!isAdmin) {
+            query = query.where('submittedBy', '==', context.auth.uid);
+        }
+        
+        query = query.orderBy('submittedAt', 'desc').limit(queryLimit || 50);
+        
+        const snapshot = await query.get();
+        
+        return {
+            submissions: snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data(),
+                submittedAt: doc.data().submittedAt?.toDate?.() || null
+            }))
+        };
+        
+    } catch (error) {
+        console.error('Error getting submissions:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to get submissions');
     }
 });
