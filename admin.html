@@ -193,6 +193,215 @@
             margin: 10px 0;
         }
 
+        /* ===== MULTI-IMAGE UPLOAD STYLES ===== */
+        .multi-image-upload {
+            margin-top: 15px;
+        }
+
+        .multi-image-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            font-weight: 500;
+        }
+
+        .multi-image-label .badge {
+            background: #10b981;
+            color: white;
+            font-size: 0.7rem;
+            padding: 2px 8px;
+            border-radius: 10px;
+        }
+
+        .multi-upload-area {
+            border: 2px dashed #e0e0e0;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            background: #fafafa;
+            transition: all 0.3s ease;
+        }
+
+        .multi-upload-area:hover {
+            border-color: #10b981;
+            background: #f0fdf4;
+        }
+
+        .multi-upload-area.dragover {
+            border-color: #10b981;
+            background: #dcfce7;
+        }
+
+        .multi-upload-icon {
+            font-size: 2rem;
+            margin-bottom: 8px;
+        }
+
+        .multi-upload-text {
+            color: #666;
+            font-size: 0.9rem;
+        }
+
+        .multi-upload-hint {
+            color: #999;
+            font-size: 0.75rem;
+            margin-top: 4px;
+        }
+
+        /* Image Preview Grid */
+        .image-preview-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 12px;
+            margin-top: 15px;
+        }
+
+        .preview-item {
+            position: relative;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #f5f5f5;
+            border: 2px solid #e0e0e0;
+            aspect-ratio: 1;
+            transition: all 0.2s ease;
+        }
+
+        .preview-item:hover {
+            border-color: #10b981;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .preview-item.uploading {
+            opacity: 0.6;
+        }
+
+        .preview-item.primary {
+            border-color: #10b981;
+            border-width: 3px;
+        }
+
+        .preview-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .preview-item-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .preview-item:hover .preview-item-overlay {
+            opacity: 1;
+        }
+
+        .preview-item-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .preview-item-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: none;
+            background: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+
+        .preview-item-btn:hover {
+            transform: scale(1.1);
+        }
+
+        .preview-item-btn.delete {
+            background: #ef4444;
+            color: white;
+        }
+
+        .preview-item-btn.move-left,
+        .preview-item-btn.move-right {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .preview-item-badge {
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            background: #10b981;
+            color: white;
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+
+        .preview-item-number {
+            position: absolute;
+            bottom: 6px;
+            right: 6px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            font-size: 0.7rem;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+        }
+
+        .upload-progress {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: #e0e0e0;
+        }
+
+        .upload-progress-bar {
+            height: 100%;
+            background: #10b981;
+            transition: width 0.3s ease;
+        }
+
+        .image-count-info {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 10px;
+            padding: 8px 12px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            font-size: 0.85rem;
+        }
+
+        .image-count-info .count {
+            font-weight: 600;
+        }
+
+        .image-count-info .hint {
+            color: #666;
+        }
+
         .products-table {
             background: white;
             border-radius: 10px;
@@ -1384,16 +1593,40 @@
                     <button class="close-btn" onclick="closeModal()">×</button>
                 </div>
 
+                <!-- Primary Product Image (Required) -->
                 <div class="form-group">
-                    <label>Product Image</label>
+                    <label>Primary Product Image *</label>
                     <div class="upload-area" onclick="document.getElementById('imageInput').click()">
                         <div id="uploadPlaceholder">
-                            <p>📷 Click to upload image</p>
-                            <p style="font-size: 12px; color: #999; margin-top: 5px">Uploads to Cloudinary</p>
+                            <p>📷 Click to upload main image</p>
+                            <p style="font-size: 12px; color: #999; margin-top: 5px">This will be the primary display image</p>
                         </div>
                         <img id="previewImg" class="preview-img" style="display: none;">
                     </div>
-                    <input type="file" id="imageInput" accept="image/*" style="display: none" onchange="uploadImage(event)">
+                    <input type="file" id="imageInput" accept="image/jpeg,image/jpg,image/png,image/webp" style="display: none" onchange="uploadImage(event)">
+                </div>
+                
+                <!-- Additional Product Images (Optional - Multi-Image Carousel) -->
+                <div class="form-group multi-image-upload">
+                    <label class="multi-image-label">
+                        Additional Images (Optional)
+                        <span class="badge">Carousel</span>
+                    </label>
+                    <div class="multi-upload-area" id="multiUploadArea" onclick="document.getElementById('multiImageInput').click()">
+                        <div class="multi-upload-icon">📸</div>
+                        <div class="multi-upload-text">Click or drag to add more images</div>
+                        <div class="multi-upload-hint">JPG, PNG, WebP • Max 5 additional images • Drag to reorder</div>
+                    </div>
+                    <input type="file" id="multiImageInput" accept="image/jpeg,image/jpg,image/png,image/webp" multiple style="display: none" onchange="handleMultiImageUpload(event)">
+                    
+                    <!-- Image Preview Grid -->
+                    <div class="image-preview-grid" id="imagePreviewGrid"></div>
+                    
+                    <!-- Image Count Info -->
+                    <div class="image-count-info" id="imageCountInfo" style="display: none;">
+                        <span class="count"><span id="uploadedCount">0</span> / 5 additional images</span>
+                        <span class="hint">Drag images to reorder</span>
+                    </div>
                 </div>
 
                 <div class="form-group">
@@ -1856,6 +2089,13 @@
                     uploadedImageUrl = product.imageUrl;
                     uploadedImageId = product.cloudinaryId;
                 }
+                
+                // Load additional images for carousel (if any)
+                if (product.images && Array.isArray(product.images) && product.images.length > 0) {
+                    loadAdditionalImages(product.images);
+                } else {
+                    clearAdditionalImages();
+                }
 
                 if (product.category) {
                     document.getElementById('category1').value = product.category.level1 || '';
@@ -1895,6 +2135,9 @@
                 document.getElementById('uploadPlaceholder').style.display = 'block';
                 uploadedImageUrl = '';
                 uploadedImageId = '';
+                
+                // Clear additional images for carousel
+                clearAdditionalImages();
 
                 // Reset B2B configuration fields
                 document.getElementById('bestSeller').checked = false;
@@ -1960,6 +2203,277 @@
             }
         }
 
+        // ===== MULTI-IMAGE UPLOAD SYSTEM =====
+        // State for additional product images (carousel)
+        let additionalImages = []; // Array of { url: string, publicId: string }
+        const MAX_ADDITIONAL_IMAGES = 5;
+        
+        /**
+         * Handle multi-image file selection
+         * @param {Event} event - File input change event
+         */
+        async function handleMultiImageUpload(event) {
+            const files = Array.from(event.target.files);
+            if (!files.length) return;
+            
+            // Validate file count
+            const remainingSlots = MAX_ADDITIONAL_IMAGES - additionalImages.length;
+            if (files.length > remainingSlots) {
+                showStatus(`⚠️ Can only add ${remainingSlots} more images. Max ${MAX_ADDITIONAL_IMAGES} additional images.`, 'error');
+                return;
+            }
+            
+            // Validate file types
+            const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+            const invalidFiles = files.filter(f => !allowedTypes.includes(f.type));
+            if (invalidFiles.length > 0) {
+                showStatus('⚠️ Only JPG, PNG, and WebP images are allowed', 'error');
+                return;
+            }
+            
+            showStatus(`Uploading ${files.length} image(s)...`, 'info');
+            
+            // Upload each file
+            for (const file of files) {
+                try {
+                    const result = await uploadSingleImage(file);
+                    if (result) {
+                        additionalImages.push(result);
+                    }
+                } catch (error) {
+                    console.error('Upload error:', error);
+                    showStatus(`❌ Failed to upload ${file.name}: ${error.message}`, 'error');
+                }
+            }
+            
+            // Update UI
+            renderImagePreviewGrid();
+            showStatus(`✅ ${files.length} image(s) uploaded successfully!`, 'success');
+            
+            // Reset file input
+            event.target.value = '';
+        }
+        
+        /**
+         * Upload a single image to Cloudinary
+         * @param {File} file - Image file to upload
+         * @returns {Promise<{url: string, publicId: string} | null>}
+         */
+        async function uploadSingleImage(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('upload_preset', CONFIG.cloudinary.uploadPreset);
+            formData.append('folder', 'products');
+            
+            const response = await fetch(
+                `https://api.cloudinary.com/v1_1/${CONFIG.cloudinary.cloudName}/image/upload`,
+                { method: 'POST', body: formData }
+            );
+            
+            if (!response.ok) {
+                throw new Error('Upload failed');
+            }
+            
+            const data = await response.json();
+            return {
+                url: data.secure_url,
+                publicId: data.public_id
+            };
+        }
+        
+        /**
+         * Render the image preview grid
+         */
+        function renderImagePreviewGrid() {
+            const grid = document.getElementById('imagePreviewGrid');
+            const countInfo = document.getElementById('imageCountInfo');
+            const countSpan = document.getElementById('uploadedCount');
+            
+            if (!grid) return;
+            
+            if (additionalImages.length === 0) {
+                grid.innerHTML = '';
+                countInfo.style.display = 'none';
+                return;
+            }
+            
+            countInfo.style.display = 'flex';
+            countSpan.textContent = additionalImages.length;
+            
+            grid.innerHTML = additionalImages.map((img, index) => `
+                <div class="preview-item" data-index="${index}" draggable="true">
+                    <img src="${img.url}" alt="Product image ${index + 1}" loading="lazy">
+                    ${index === 0 ? '<span class="preview-item-badge">1st</span>' : ''}
+                    <span class="preview-item-number">${index + 1}</span>
+                    <div class="preview-item-overlay">
+                        <div class="preview-item-actions">
+                            ${index > 0 ? `
+                                <button class="preview-item-btn move-left" onclick="moveImage(${index}, -1)" title="Move left">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="15 18 9 12 15 6"></polyline>
+                                    </svg>
+                                </button>
+                            ` : ''}
+                            ${index < additionalImages.length - 1 ? `
+                                <button class="preview-item-btn move-right" onclick="moveImage(${index}, 1)" title="Move right">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="9 18 15 12 9 6"></polyline>
+                                    </svg>
+                                </button>
+                            ` : ''}
+                            <button class="preview-item-btn delete" onclick="removeImage(${index})" title="Remove">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+            
+            // Initialize drag and drop
+            initDragAndDrop();
+        }
+        
+        /**
+         * Move image in the array
+         * @param {number} index - Current index
+         * @param {number} direction - -1 for left, 1 for right
+         */
+        function moveImage(index, direction) {
+            const newIndex = index + direction;
+            if (newIndex < 0 || newIndex >= additionalImages.length) return;
+            
+            // Swap images
+            [additionalImages[index], additionalImages[newIndex]] = 
+            [additionalImages[newIndex], additionalImages[index]];
+            
+            renderImagePreviewGrid();
+        }
+        
+        /**
+         * Remove image from array
+         * @param {number} index - Image index to remove
+         */
+        function removeImage(index) {
+            additionalImages.splice(index, 1);
+            renderImagePreviewGrid();
+            showStatus('Image removed', 'info');
+        }
+        
+        /**
+         * Initialize drag and drop for image reordering
+         */
+        function initDragAndDrop() {
+            const grid = document.getElementById('imagePreviewGrid');
+            if (!grid) return;
+            
+            const items = grid.querySelectorAll('.preview-item');
+            let draggedItem = null;
+            
+            items.forEach(item => {
+                item.addEventListener('dragstart', (e) => {
+                    draggedItem = item;
+                    item.style.opacity = '0.5';
+                    e.dataTransfer.effectAllowed = 'move';
+                });
+                
+                item.addEventListener('dragend', () => {
+                    item.style.opacity = '1';
+                    draggedItem = null;
+                    items.forEach(i => i.classList.remove('drag-over'));
+                });
+                
+                item.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    item.classList.add('drag-over');
+                });
+                
+                item.addEventListener('dragleave', () => {
+                    item.classList.remove('drag-over');
+                });
+                
+                item.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    item.classList.remove('drag-over');
+                    
+                    if (draggedItem && draggedItem !== item) {
+                        const fromIndex = parseInt(draggedItem.dataset.index);
+                        const toIndex = parseInt(item.dataset.index);
+                        
+                        // Reorder array
+                        const [movedItem] = additionalImages.splice(fromIndex, 1);
+                        additionalImages.splice(toIndex, 0, movedItem);
+                        
+                        renderImagePreviewGrid();
+                    }
+                });
+            });
+            
+            // Also handle drag and drop for the upload area
+            const uploadArea = document.getElementById('multiUploadArea');
+            if (uploadArea) {
+                uploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.add('dragover');
+                });
+                
+                uploadArea.addEventListener('dragleave', () => {
+                    uploadArea.classList.remove('dragover');
+                });
+                
+                uploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.remove('dragover');
+                    
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        // Trigger file input handler
+                        const input = document.getElementById('multiImageInput');
+                        const dataTransfer = new DataTransfer();
+                        Array.from(files).forEach(f => dataTransfer.items.add(f));
+                        input.files = dataTransfer.files;
+                        handleMultiImageUpload({ target: input });
+                    }
+                });
+            }
+        }
+        
+        /**
+         * Clear additional images (for new product or reset)
+         */
+        function clearAdditionalImages() {
+            additionalImages = [];
+            renderImagePreviewGrid();
+        }
+        
+        /**
+         * Load existing additional images (when editing product)
+         * @param {string[]} images - Array of image URLs
+         */
+        function loadAdditionalImages(images) {
+            if (!images || !Array.isArray(images)) {
+                additionalImages = [];
+            } else {
+                // Convert URLs to our format (publicId will be empty for existing images)
+                additionalImages = images.map(url => ({
+                    url: url,
+                    publicId: '' // We don't have publicId for existing images
+                }));
+            }
+            renderImagePreviewGrid();
+        }
+        
+        /**
+         * Get additional image URLs for saving
+         * @returns {string[]} Array of image URLs
+         */
+        function getAdditionalImageUrls() {
+            return additionalImages.map(img => img.url);
+        }
+
         // Save product to Firestore
         async function saveProduct() {
             const name = document.getElementById('productName').value;
@@ -1997,6 +2511,9 @@
                 return;
             }
 
+            // Get additional images for carousel (if any)
+            const additionalImageUrls = getAdditionalImageUrls();
+            
             const product = {
                 name,
                 price: parseFloat(price),
@@ -2015,6 +2532,9 @@
                 bulkDiscount,
                 // Pricing Unit (Phase 6) - stored as metadata
                 pricingUnit: pricingUnit || null,
+                // Additional images for carousel (only if more than 1 image total)
+                // Keep imageUrl as primary, images array is for carousel
+                images: additionalImageUrls.length > 0 ? additionalImageUrls : null,
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             };
 

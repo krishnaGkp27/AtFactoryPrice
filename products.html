@@ -1318,6 +1318,172 @@
             }
         }
 
+        /* ===== PRODUCT IMAGE CAROUSEL - Vanilla JS ===== */
+        .product-carousel {
+            position: relative;
+            width: 100%;
+            height: 260px;
+            overflow: hidden;
+            background: #f8fafc;
+        }
+
+        .carousel-track {
+            display: flex;
+            height: 100%;
+            transition: transform 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            will-change: transform;
+        }
+
+        .carousel-slide {
+            flex: 0 0 100%;
+            width: 100%;
+            height: 100%;
+        }
+
+        .carousel-slide img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+        }
+
+        .product-card:hover .carousel-slide img {
+            transform: scale(1.12);
+        }
+
+        /* Carousel Navigation Arrows */
+        .carousel-nav {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 36px;
+            height: 36px;
+            background: rgba(255,255,255,0.95);
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 10;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+
+        .carousel-nav:hover {
+            background: #fff;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+
+        .carousel-nav.prev {
+            left: 10px;
+        }
+
+        .carousel-nav.next {
+            right: 10px;
+        }
+
+        .product-card:hover .carousel-nav {
+            opacity: 1;
+        }
+
+        .carousel-nav:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .carousel-nav svg {
+            width: 18px;
+            height: 18px;
+            color: #0f172a;
+        }
+
+        /* Carousel Dot Indicators */
+        .carousel-dots {
+            position: absolute;
+            bottom: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 6px;
+            z-index: 10;
+        }
+
+        .carousel-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.5);
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            padding: 0;
+        }
+
+        .carousel-dot.active {
+            background: #fff;
+            transform: scale(1.2);
+            box-shadow: 0 0 4px rgba(0,0,0,0.3);
+        }
+
+        .carousel-dot:hover {
+            background: rgba(255,255,255,0.8);
+        }
+
+        /* Image Count Badge */
+        .carousel-count {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            background: rgba(0,0,0,0.6);
+            color: #fff;
+            font-size: 0.7rem;
+            padding: 4px 8px;
+            border-radius: 12px;
+            z-index: 10;
+            backdrop-filter: blur(4px);
+        }
+
+        /* Touch/Swipe Support Styles */
+        .carousel-track.dragging {
+            transition: none;
+        }
+
+        .carousel-track.dragging img {
+            pointer-events: none;
+        }
+
+        /* Mobile Carousel Adjustments */
+        @media (max-width: 768px) {
+            .carousel-nav {
+                width: 32px;
+                height: 32px;
+                opacity: 0.8;
+            }
+
+            .carousel-nav.prev {
+                left: 6px;
+            }
+
+            .carousel-nav.next {
+                right: 6px;
+            }
+
+            .product-card:hover .carousel-nav {
+                opacity: 1;
+            }
+
+            .carousel-dots {
+                bottom: 8px;
+            }
+
+            .carousel-dot {
+                width: 6px;
+                height: 6px;
+            }
+        }
+
         /* Skeleton Loading Styles */
         .skeleton-card {
             background: #f0f0f0;
@@ -2066,8 +2232,32 @@
                 const showWholesaleRibbon = index % 5 === 0;
                 const showResellerRibbon = index % 7 === 0;
                 
-                html += `
-                    <div class="product-card">
+                // Check for multi-image carousel support
+                const hasMultipleImages = product.images && Array.isArray(product.images) && product.images.length > 1;
+                const carouselHTML = hasMultipleImages ? generateCarouselHTML(product, product.name) : null;
+                
+                // Image container HTML - carousel or single image
+                let imageContainerHTML;
+                if (carouselHTML) {
+                    // Multi-image carousel
+                    imageContainerHTML = `
+                        <div class="product-image-container">
+                            ${carouselHTML}
+                            <!-- Premium zoom overlay for carousel -->
+                            <div class="image-zoom-overlay" onclick="openCarouselLightbox('${product.id}', '${product.name.replace(/'/g, "\\'")}', '₦${basePrice.toLocaleString()}')">
+                                <div class="zoom-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="11" cy="11" r="8"></circle>
+                                        <path d="M21 21l-4.35-4.35"></path>
+                                        <line x1="11" y1="8" x2="11" y2="14"></line>
+                                        <line x1="8" y1="11" x2="14" y2="11"></line>
+                                    </svg>
+                                </div>
+                            </div>
+                        </div>`;
+                } else {
+                    // Single image (fallback)
+                    imageContainerHTML = `
                         <div class="product-image-container" onclick="openLightbox('${optimizedImageUrl}', '${product.name.replace(/'/g, "\\'")}', '₦${basePrice.toLocaleString()}')">
                             <!-- Premium zoom overlay -->
                             <div class="image-zoom-overlay">
@@ -2085,7 +2275,12 @@
                                 alt="${product.name}" 
                                 class="product-image"
                                 loading="lazy">
-                        </div>
+                        </div>`;
+                }
+                
+                html += `
+                    <div class="product-card">
+                        ${imageContainerHTML}
                         <div class="product-info">
                             <!-- Badges moved below image for cleaner look -->
                             <div class="product-badges-inline">
@@ -2195,6 +2390,12 @@
 
             html += '</div>';
             container.innerHTML = html;
+            
+            // Initialize carousels for products with multiple images
+            initAllCarousels();
+            
+            // Lazy load carousel images on scroll
+            lazyLoadCarouselImages();
         }
 
         // Add to cart
@@ -2412,6 +2613,9 @@
         });
 
         // ===== PREMIUM IMAGE LIGHTBOX =====
+        // Store product images for carousel lightbox
+        let productImagesMap = {};
+        
         function openLightbox(imageUrl, title, price) {
             const lightbox = document.getElementById('imageLightbox');
             const lightboxImage = document.getElementById('lightboxImage');
@@ -2428,6 +2632,21 @@
                 
                 lightbox.classList.add('active');
                 document.body.style.overflow = 'hidden'; // Prevent scrolling
+            }
+        }
+        
+        // Open lightbox for carousel (shows current slide)
+        function openCarouselLightbox(productId, title, price) {
+            const carousel = document.querySelector(`.product-carousel[data-product-id="${productId}"]`);
+            if (!carousel) return;
+            
+            const currentSlide = carousel.querySelector('.carousel-dot.active');
+            const currentIndex = currentSlide ? Array.from(carousel.querySelectorAll('.carousel-dot')).indexOf(currentSlide) : 0;
+            
+            const slides = carousel.querySelectorAll('.carousel-slide img');
+            if (slides[currentIndex]) {
+                const imageUrl = slides[currentIndex].src || slides[currentIndex].dataset.src;
+                openLightbox(imageUrl, title, price);
             }
         }
         
@@ -2476,6 +2695,251 @@
         // Check URL for wholesale mode parameter
         if (new URLSearchParams(window.location.search).get('wholesale') === 'true') {
             setTimeout(() => toggleWholesaleMode(), 500);
+        }
+
+        // ===== PRODUCT IMAGE CAROUSEL - Vanilla JS Component =====
+        
+        /**
+         * Initialize carousel for a product card
+         * @param {HTMLElement} carouselEl - The carousel container element
+         */
+        function initCarousel(carouselEl) {
+            const track = carouselEl.querySelector('.carousel-track');
+            const slides = carouselEl.querySelectorAll('.carousel-slide');
+            const dots = carouselEl.querySelectorAll('.carousel-dot');
+            const prevBtn = carouselEl.querySelector('.carousel-nav.prev');
+            const nextBtn = carouselEl.querySelector('.carousel-nav.next');
+            
+            if (!track || slides.length === 0) return;
+            
+            let currentIndex = 0;
+            let startX = 0;
+            let currentX = 0;
+            let isDragging = false;
+            
+            // Update carousel position
+            function updateCarousel(animate = true) {
+                if (!animate) {
+                    track.classList.add('dragging');
+                }
+                track.style.transform = `translateX(-${currentIndex * 100}%)`;
+                
+                // Update dots
+                dots.forEach((dot, i) => {
+                    dot.classList.toggle('active', i === currentIndex);
+                });
+                
+                // Update nav buttons
+                if (prevBtn) prevBtn.disabled = currentIndex === 0;
+                if (nextBtn) nextBtn.disabled = currentIndex === slides.length - 1;
+                
+                if (!animate) {
+                    // Re-enable transitions after a frame
+                    requestAnimationFrame(() => {
+                        track.classList.remove('dragging');
+                    });
+                }
+            }
+            
+            // Navigate to slide
+            function goToSlide(index) {
+                currentIndex = Math.max(0, Math.min(index, slides.length - 1));
+                updateCarousel();
+            }
+            
+            // Arrow navigation
+            if (prevBtn) {
+                prevBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    goToSlide(currentIndex - 1);
+                });
+            }
+            
+            if (nextBtn) {
+                nextBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    goToSlide(currentIndex + 1);
+                });
+            }
+            
+            // Dot navigation
+            dots.forEach((dot, i) => {
+                dot.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    goToSlide(i);
+                });
+            });
+            
+            // Touch/Swipe support
+            function handleDragStart(e) {
+                isDragging = true;
+                startX = e.type.includes('mouse') ? e.pageX : e.touches[0].pageX;
+                currentX = startX;
+                track.classList.add('dragging');
+            }
+            
+            function handleDragMove(e) {
+                if (!isDragging) return;
+                e.preventDefault();
+                
+                currentX = e.type.includes('mouse') ? e.pageX : e.touches[0].pageX;
+                const diff = currentX - startX;
+                const percent = (diff / carouselEl.offsetWidth) * 100;
+                const translateX = -currentIndex * 100 + percent;
+                
+                track.style.transform = `translateX(${translateX}%)`;
+            }
+            
+            function handleDragEnd() {
+                if (!isDragging) return;
+                isDragging = false;
+                track.classList.remove('dragging');
+                
+                const diff = currentX - startX;
+                const threshold = carouselEl.offsetWidth * 0.2; // 20% threshold
+                
+                if (Math.abs(diff) > threshold) {
+                    if (diff > 0 && currentIndex > 0) {
+                        currentIndex--;
+                    } else if (diff < 0 && currentIndex < slides.length - 1) {
+                        currentIndex++;
+                    }
+                }
+                
+                updateCarousel();
+            }
+            
+            // Touch events
+            track.addEventListener('touchstart', handleDragStart, { passive: true });
+            track.addEventListener('touchmove', handleDragMove, { passive: false });
+            track.addEventListener('touchend', handleDragEnd);
+            
+            // Mouse events (for desktop)
+            track.addEventListener('mousedown', handleDragStart);
+            track.addEventListener('mousemove', handleDragMove);
+            track.addEventListener('mouseup', handleDragEnd);
+            track.addEventListener('mouseleave', handleDragEnd);
+            
+            // Prevent default drag behavior on images
+            track.querySelectorAll('img').forEach(img => {
+                img.addEventListener('dragstart', (e) => e.preventDefault());
+            });
+            
+            // Initialize
+            updateCarousel(false);
+        }
+        
+        /**
+         * Initialize all carousels on the page
+         * Call this after rendering products
+         */
+        function initAllCarousels() {
+            document.querySelectorAll('.product-carousel').forEach(carousel => {
+                initCarousel(carousel);
+            });
+        }
+        
+        /**
+         * Generate carousel HTML for a product with multiple images
+         * @param {Object} product - Product object with images array
+         * @param {string} productName - Product name for alt text
+         * @returns {string} Carousel HTML
+         */
+        function generateCarouselHTML(product, productName) {
+            const images = product.images || [];
+            const fallbackImage = product.imageUrl;
+            
+            // If no images array or only one image, return null (use single image)
+            if (!images || images.length <= 1) {
+                return null;
+            }
+            
+            // Generate optimized Cloudinary URLs for all images
+            const optimizedImages = images.map(url => getCloudinaryUrl(url, 400));
+            
+            // Generate slides HTML
+            const slidesHTML = optimizedImages.map((url, i) => `
+                <div class="carousel-slide">
+                    <img 
+                        src="${i === 0 ? url : ''}" 
+                        data-src="${url}" 
+                        alt="${productName} - Image ${i + 1}" 
+                        loading="${i === 0 ? 'eager' : 'lazy'}"
+                        onload="this.classList.add('loaded')"
+                        onerror="this.src='https://via.placeholder.com/400x260?text=Image+Error'">
+                </div>
+            `).join('');
+            
+            // Generate dots HTML
+            const dotsHTML = optimizedImages.map((_, i) => `
+                <button class="carousel-dot ${i === 0 ? 'active' : ''}" aria-label="Go to image ${i + 1}"></button>
+            `).join('');
+            
+            return `
+                <div class="product-carousel" data-product-id="${product.id}">
+                    <div class="carousel-track">
+                        ${slidesHTML}
+                    </div>
+                    
+                    <!-- Navigation Arrows -->
+                    <button class="carousel-nav prev" aria-label="Previous image" disabled>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="15 18 9 12 15 6"></polyline>
+                        </svg>
+                    </button>
+                    <button class="carousel-nav next" aria-label="Next image">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                    </button>
+                    
+                    <!-- Dot Indicators -->
+                    <div class="carousel-dots">
+                        ${dotsHTML}
+                    </div>
+                    
+                    <!-- Image Count Badge -->
+                    <span class="carousel-count">${optimizedImages.length} photos</span>
+                </div>
+            `;
+        }
+
+        /**
+         * Lazy load carousel images when they come into view
+         * Uses Intersection Observer for performance
+         */
+        function lazyLoadCarouselImages() {
+            const images = document.querySelectorAll('.carousel-slide img[data-src]');
+            
+            if ('IntersectionObserver' in window) {
+                const imageObserver = new IntersectionObserver((entries, observer) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            const img = entry.target;
+                            if (img.dataset.src && !img.src) {
+                                img.src = img.dataset.src;
+                            }
+                            observer.unobserve(img);
+                        }
+                    });
+                }, {
+                    rootMargin: '100px 0px', // Load images 100px before they enter viewport
+                    threshold: 0.01
+                });
+                
+                images.forEach(img => {
+                    if (!img.src && img.dataset.src) {
+                        imageObserver.observe(img);
+                    }
+                });
+            } else {
+                // Fallback for browsers without IntersectionObserver
+                images.forEach(img => {
+                    if (img.dataset.src && !img.src) {
+                        img.src = img.dataset.src;
+                    }
+                });
+            }
         }
 
         // Initialize
