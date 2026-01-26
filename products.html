@@ -2850,6 +2850,11 @@
             const additionalImages = product.images || [];
             const primaryImage = product.imageUrl;
             
+            // Debug: Log carousel images
+            console.log('Carousel for:', productName);
+            console.log('Primary image:', primaryImage);
+            console.log('Additional images:', additionalImages);
+            
             // If no additional images, return null (use single image display)
             if (!additionalImages || additionalImages.length === 0) {
                 return null;
@@ -2859,15 +2864,18 @@
             // Primary image comes first, then additional images in order
             const allImages = primaryImage ? [primaryImage, ...additionalImages] : additionalImages;
             
+            console.log('All carousel images:', allImages);
+            
             // Generate optimized Cloudinary URLs for all images
             const optimizedImages = allImages.map(url => getCloudinaryUrl(url, 400));
             
-            // Generate slides HTML
+            console.log('Optimized URLs:', optimizedImages);
+            
+            // Generate slides HTML - load all images directly (no lazy loading for carousel)
             const slidesHTML = optimizedImages.map((url, i) => `
                 <div class="carousel-slide">
                     <img 
-                        src="${i === 0 ? url : ''}" 
-                        data-src="${url}" 
+                        src="${url}" 
                         alt="${productName} - Image ${i + 1}" 
                         loading="${i === 0 ? 'eager' : 'lazy'}"
                         onload="this.classList.add('loaded')"

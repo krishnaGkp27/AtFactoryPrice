@@ -2517,6 +2517,12 @@
             // Get additional images for carousel (if any)
             const additionalImageUrls = getAdditionalImageUrls();
             
+            // Debug: Log what we're saving
+            console.log('Saving product with:');
+            console.log('Primary image URL:', uploadedImageUrl);
+            console.log('Additional image URLs:', additionalImageUrls);
+            console.log('additionalImages array:', additionalImages);
+            
             const product = {
                 name,
                 price: parseFloat(price),
