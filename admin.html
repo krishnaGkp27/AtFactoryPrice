@@ -2471,7 +2471,10 @@
          * @returns {string[]} Array of image URLs
          */
         function getAdditionalImageUrls() {
-            return additionalImages.map(img => img.url);
+            if (!additionalImages || !Array.isArray(additionalImages)) {
+                return [];
+            }
+            return additionalImages.filter(img => img && img.url).map(img => img.url);
         }
 
         // Save product to Firestore
@@ -2532,11 +2535,16 @@
                 bulkDiscount,
                 // Pricing Unit (Phase 6) - stored as metadata
                 pricingUnit: pricingUnit || null,
-                // Additional images for carousel (only if more than 1 image total)
-                // Keep imageUrl as primary, images array is for carousel
-                images: additionalImageUrls.length > 0 ? additionalImageUrls : null,
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             };
+            
+            // Only add images array if there are additional images (avoid storing null/empty)
+            if (additionalImageUrls && additionalImageUrls.length > 0) {
+                product.images = additionalImageUrls;
+            } else if (editingProduct && editingProduct.images) {
+                // Clear images array if editing and previously had images but now removed
+                product.images = firebase.firestore.FieldValue.delete();
+            }
 
             try {
                 showStatus('Saving product...', 'info');
