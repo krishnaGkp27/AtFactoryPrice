@@ -2233,7 +2233,8 @@
                 const showResellerRibbon = index % 7 === 0;
                 
                 // Check for multi-image carousel support
-                const hasMultipleImages = product.images && Array.isArray(product.images) && product.images.length > 1;
+                // Show carousel if there's at least 1 additional image (plus the primary imageUrl = 2+ total)
+                const hasMultipleImages = product.images && Array.isArray(product.images) && product.images.length >= 1;
                 const carouselHTML = hasMultipleImages ? generateCarouselHTML(product, product.name) : null;
                 
                 // Image container HTML - carousel or single image
@@ -2846,16 +2847,20 @@
          * @returns {string} Carousel HTML
          */
         function generateCarouselHTML(product, productName) {
-            const images = product.images || [];
-            const fallbackImage = product.imageUrl;
+            const additionalImages = product.images || [];
+            const primaryImage = product.imageUrl;
             
-            // If no images array or only one image, return null (use single image)
-            if (!images || images.length <= 1) {
+            // If no additional images, return null (use single image display)
+            if (!additionalImages || additionalImages.length === 0) {
                 return null;
             }
             
+            // Combine primary image with additional images for carousel
+            // Primary image comes first, then additional images in order
+            const allImages = primaryImage ? [primaryImage, ...additionalImages] : additionalImages;
+            
             // Generate optimized Cloudinary URLs for all images
-            const optimizedImages = images.map(url => getCloudinaryUrl(url, 400));
+            const optimizedImages = allImages.map(url => getCloudinaryUrl(url, 400));
             
             // Generate slides HTML
             const slidesHTML = optimizedImages.map((url, i) => `

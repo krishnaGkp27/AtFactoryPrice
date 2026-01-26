@@ -2548,6 +2548,11 @@
 
             try {
                 showStatus('Saving product...', 'info');
+                
+                // Debug: Log current user info
+                const user = auth.currentUser;
+                console.log('Current user:', user ? user.email : 'Not authenticated');
+                console.log('User UID:', user ? user.uid : 'N/A');
 
                 if (editingProduct) {
                     await db.collection('products').doc(editingProduct.id).update(product);
@@ -2561,7 +2566,8 @@
                 closeModal();
                 loadProducts();
             } catch (error) {
-                console.error(error);
+                console.error('Save error:', error);
+                console.error('User email:', auth.currentUser ? auth.currentUser.email : 'Not logged in');
                 showStatus('❌ Error saving product: ' + error.message, 'error');
             }
         }

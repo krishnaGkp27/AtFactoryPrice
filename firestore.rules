@@ -16,9 +16,10 @@ service cloud.firestore {
     
     // Check if user is admin (by email)
     // Add your admin email addresses to this list
+    // Note: Firebase Auth emails are case-insensitive, using .lower() for comparison
     function isAdmin() {
       return isAuthenticated() && 
-        request.auth.token.email in [
+        request.auth.token.email.lower() in [
           'admin@atfactoryprice.com', 
           'hello@atfactoryprice.com',
           'atfactorypriceonline@gmail.com'
