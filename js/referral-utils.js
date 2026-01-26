@@ -30,15 +30,20 @@ async function validateReferralCode(code) {
     }
 
     const codeUpper = code.trim().toUpperCase();
+    console.log('Validating referral code:', codeUpper);
 
     try {
         // Method 1: Check public referral_codes collection (works without auth)
         if (typeof db !== 'undefined') {
             try {
+                console.log('Checking referral_codes collection for:', codeUpper);
                 const codeDoc = await db.collection('referral_codes').doc(codeUpper).get();
+                
+                console.log('Document exists:', codeDoc.exists);
                 
                 if (codeDoc.exists) {
                     const codeData = codeDoc.data();
+                    console.log('Code data:', codeData);
                     
                     if (codeData.isActive === false) {
                         return { valid: false, error: 'Referral code is inactive' };
@@ -52,9 +57,11 @@ async function validateReferralCode(code) {
                             email: codeData.userName || 'Partner'
                         }
                     };
+                } else {
+                    console.log('Code not found in referral_codes collection, trying users collection...');
                 }
             } catch (publicError) {
-                console.warn('Public referral_codes lookup failed:', publicError.message);
+                console.warn('Public referral_codes lookup failed:', publicError.message, publicError.code);
             }
         }
 
@@ -118,7 +125,8 @@ async function validateReferralCode(code) {
             }
         }
 
-        return { valid: false, error: 'Referral code not found' };
+        console.log('Referral code not found in any collection:', codeUpper);
+        return { valid: false, error: 'Referral code not found. Ask the referrer to log into their dashboard first.' };
         
     } catch (error) {
         console.error('Error validating referral code:', error);
