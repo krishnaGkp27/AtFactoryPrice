@@ -15,10 +15,15 @@ service cloud.firestore {
     }
     
     // Check if user is admin (by email)
-    // TODO: Replace with custom claims in production
+    // Add your admin email addresses to this list
     function isAdmin() {
       return isAuthenticated() && 
-        request.auth.token.email in ['admin@atfactoryprice.com', 'hello@atfactoryprice.com'];
+        request.auth.token.email in [
+          'admin@atfactoryprice.com', 
+          'hello@atfactoryprice.com',
+          'atfactorypriceonline@gmail.com'
+          // Add more admin emails here as needed
+        ];
     }
     
     // Check if this is the first write (create)
