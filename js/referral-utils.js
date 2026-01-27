@@ -32,37 +32,41 @@ async function validateReferralCode(code) {
     const codeUpper = code.trim().toUpperCase();
     console.log('Validating referral code:', codeUpper);
 
+    // Check if Firestore is available
+    if (typeof db === 'undefined') {
+        console.error('Firestore (db) is not defined!');
+        return { valid: false, error: 'Database connection not available' };
+    }
+
     try {
         // Method 1: Check public referral_codes collection (works without auth)
-        if (typeof db !== 'undefined') {
-            try {
-                console.log('Checking referral_codes collection for:', codeUpper);
-                const codeDoc = await db.collection('referral_codes').doc(codeUpper).get();
+        try {
+            console.log('Checking referral_codes collection for:', codeUpper);
+            const codeDoc = await db.collection('referral_codes').doc(codeUpper).get();
+            
+            console.log('Document exists:', codeDoc.exists);
+            
+            if (codeDoc.exists) {
+                const codeData = codeDoc.data();
+                console.log('Code data:', codeData);
                 
-                console.log('Document exists:', codeDoc.exists);
-                
-                if (codeDoc.exists) {
-                    const codeData = codeDoc.data();
-                    console.log('Code data:', codeData);
-                    
-                    if (codeData.isActive === false) {
-                        return { valid: false, error: 'Referral code is inactive' };
-                    }
-                    
-                    return {
-                        valid: true,
-                        userId: codeData.userId,
-                        userData: { 
-                            name: codeData.userName || 'Partner',
-                            email: codeData.userName || 'Partner'
-                        }
-                    };
-                } else {
-                    console.log('Code not found in referral_codes collection, trying users collection...');
+                if (codeData.isActive === false) {
+                    return { valid: false, error: 'Referral code is inactive' };
                 }
-            } catch (publicError) {
-                console.warn('Public referral_codes lookup failed:', publicError.message, publicError.code);
+                
+                return {
+                    valid: true,
+                    userId: codeData.userId,
+                    userData: { 
+                        name: codeData.userName || 'Partner',
+                        email: codeData.userName || 'Partner'
+                    }
+                };
+            } else {
+                console.log('Code not found in referral_codes collection, trying users collection...');
             }
+        } catch (publicError) {
+            console.warn('Public referral_codes lookup failed:', publicError.message, publicError.code);
         }
 
         // Method 2: Try Cloud Function validation (if deployed)

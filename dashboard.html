@@ -1318,6 +1318,7 @@
                 
                 // Also save to public referral_codes collection for signup validation
                 try {
+                    console.log('Saving to referral_codes collection:', finalCode, userId, userName);
                     await db.collection('referral_codes').doc(finalCode).set({
                         code: finalCode,
                         userId: userId,
@@ -1325,9 +1326,10 @@
                         isActive: true,
                         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
                     }, { merge: true });
-                    console.log('Saved to public referral_codes collection');
+                    console.log('✅ Successfully saved to public referral_codes collection:', finalCode);
                 } catch (publicError) {
-                    console.warn('Could not save to public referral_codes:', publicError.message);
+                    console.error('❌ Could not save to public referral_codes:', publicError.message, publicError.code);
+                    console.error('Full error:', publicError);
                 }
                 
                 console.log('Referral code generated and saved:', finalCode);

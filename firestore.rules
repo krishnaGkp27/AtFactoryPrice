@@ -203,13 +203,10 @@ service cloud.firestore {
       // Anyone can read (needed for signup validation)
       allow read: if true;
       
-      // Only authenticated users can write their own code
-      allow create: if isAuthenticated() && 
+      // Authenticated users can create/update their own referral code entry
+      // Using simpler rule: any authenticated user can write if userId matches their auth uid
+      allow write: if isAuthenticated() && 
         request.resource.data.userId == request.auth.uid;
-      
-      // Users can update only their own entry
-      allow update: if isAuthenticated() && 
-        resource.data.userId == request.auth.uid;
       
       // No deletes
       allow delete: if false;

@@ -328,8 +328,9 @@
                 }
             } catch (error) {
                 console.error('Validation error:', error);
+                console.error('Error details:', error.message, error.code);
                 statusDiv.className = 'referral-status invalid';
-                statusDiv.textContent = '✗ Error validating code. Please try again.';
+                statusDiv.textContent = `✗ Error: ${error.message || 'Error validating code. Please try again.'}`;
                 validatedSponsorId = null;
                 validatedSponsorCode = null;
             } finally {
