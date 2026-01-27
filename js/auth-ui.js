@@ -1140,34 +1140,35 @@ async function validateSignupReferral() {
     statusDiv.style.color = '#666';
 
     try {
-        const usersSnapshot = await dbInstance.collection('users')
-            .where('referralCode', '==', code)
-            .limit(1)
-            .get();
+        // First try public referral_codes collection (works without auth)
+        console.log('Checking referral_codes collection for:', code);
+        const codeDoc = await dbInstance.collection('referral_codes').doc(code).get();
+        
+        if (codeDoc.exists) {
+            const codeData = codeDoc.data();
+            console.log('Found in referral_codes:', codeData);
+            
+            if (codeData.isActive === false) {
+                statusDiv.className = 'referral-status invalid';
+                statusDiv.textContent = '✗ This referral code is inactive';
+                validatedSponsorId = null;
+                validatedSponsorCode = null;
+                return;
+            }
 
-        if (usersSnapshot.empty) {
-            statusDiv.className = 'referral-status invalid';
-            statusDiv.textContent = '✗ Referral code not found';
-            validatedSponsorId = null;
-            validatedSponsorCode = null;
+            statusDiv.className = 'referral-status valid';
+            statusDiv.textContent = `✓ Valid! Referred by: ${codeData.userName || 'Partner'}`;
+            validatedSponsorId = codeData.userId;
+            validatedSponsorCode = code;
             return;
         }
 
-        const userDoc = usersSnapshot.docs[0];
-        const userData = userDoc.data();
-
-        if (!userData.isActive) {
-            statusDiv.className = 'referral-status invalid';
-            statusDiv.textContent = '✗ This referral code is inactive';
-            validatedSponsorId = null;
-            validatedSponsorCode = null;
-            return;
-        }
-
-        statusDiv.className = 'referral-status valid';
-        statusDiv.textContent = `✓ Valid! Referred by: ${userData.name || userData.email}`;
-        validatedSponsorId = userDoc.id;
-        validatedSponsorCode = code;
+        // Code not found in public collection
+        console.log('Code not found in referral_codes collection');
+        statusDiv.className = 'referral-status invalid';
+        statusDiv.textContent = '✗ Referral code not found. Ask the referrer to log into their dashboard first.';
+        validatedSponsorId = null;
+        validatedSponsorCode = null;
     } catch (error) {
         console.error('Error validating referral:', error);
         statusDiv.className = 'referral-status invalid';
