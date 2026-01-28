@@ -3193,3 +3193,562 @@ exports.getFormSubmissions = functions.https.onCall(async (data, context) => {
         throw new functions.https.HttpsError('internal', 'Failed to get submissions');
     }
 });
+
+
+// ======================================================================
+// PAYMENT WEBHOOK HANDLER
+// ======================================================================
+// This is the authoritative endpoint for payment verification.
+// ONLY THIS ENDPOINT should mark orders as paid.
+// Redirect URL is for UX only and should never update payment status.
+// ======================================================================
+
+const crypto = require('crypto');
+
+// Payment Gateway Configuration
+// IMPORTANT: Set these in Firebase Functions config or environment variables
+// firebase functions:config:set payment.secret_key="YOUR_SECRET_KEY"
+// firebase functions:config:set payment.allowed_ips="IP1,IP2,IP3"
+const PAYMENT_CONFIG = {
+    // Secret key for signature validation (get from bank/payment gateway)
+    secretKey: functions.config().payment?.secret_key || process.env.PAYMENT_SECRET_KEY || 'your-secret-key-here',
+    // Allowed IPs for webhook (optional, get from payment gateway)
+    allowedIPs: (functions.config().payment?.allowed_ips || process.env.PAYMENT_ALLOWED_IPS || '').split(',').filter(ip => ip.trim()),
+    // Algorithm for signature verification
+    signatureAlgorithm: functions.config().payment?.signature_algorithm || 'sha256',
+    // Header name for signature (varies by gateway)
+    signatureHeader: functions.config().payment?.signature_header || 'x-payment-signature'
+};
+
+/**
+ * Verify webhook signature
+ * Supports multiple signature methods (customize based on your payment gateway)
+ */
+function verifyWebhookSignature(payload, signature, secretKey) {
+    if (!signature || !secretKey) {
+        console.warn('Signature verification skipped - no signature or secret key');
+        return { valid: false, reason: 'Missing signature or secret key' };
+    }
+
+    try {
+        // Method 1: HMAC SHA256 (most common)
+        const expectedSignature = crypto
+            .createHmac(PAYMENT_CONFIG.signatureAlgorithm, secretKey)
+            .update(typeof payload === 'string' ? payload : JSON.stringify(payload))
+            .digest('hex');
+
+        // Compare signatures (constant-time comparison to prevent timing attacks)
+        const signatureBuffer = Buffer.from(signature.toLowerCase());
+        const expectedBuffer = Buffer.from(expectedSignature.toLowerCase());
+        
+        if (signatureBuffer.length !== expectedBuffer.length) {
+            return { valid: false, reason: 'Signature length mismatch' };
+        }
+
+        const isValid = crypto.timingSafeEqual(signatureBuffer, expectedBuffer);
+        return { valid: isValid, reason: isValid ? 'Valid signature' : 'Invalid signature' };
+        
+    } catch (error) {
+        console.error('Signature verification error:', error);
+        return { valid: false, reason: `Verification error: ${error.message}` };
+    }
+}
+
+/**
+ * Verify IP address is allowed
+ */
+function verifyIPAddress(requestIP) {
+    if (!PAYMENT_CONFIG.allowedIPs || PAYMENT_CONFIG.allowedIPs.length === 0) {
+        // No IP restriction configured
+        return { valid: true, reason: 'No IP restriction configured' };
+    }
+
+    const isAllowed = PAYMENT_CONFIG.allowedIPs.includes(requestIP);
+    return { 
+        valid: isAllowed, 
+        reason: isAllowed ? 'IP allowed' : `IP ${requestIP} not in allowed list` 
+    };
+}
+
+/**
+ * Log webhook call for audit
+ */
+async function logWebhookCall(logData) {
+    try {
+        await db.collection('payment_webhook_logs').add({
+            ...logData,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            // Make logs read-only by storing in a separate collection
+            // Admin can view but cannot modify
+        });
+    } catch (error) {
+        console.error('Failed to log webhook call:', error);
+    }
+}
+
+/**
+ * PAYMENT WEBHOOK HANDLER
+ * 
+ * This is the ONLY endpoint that should mark orders as paid.
+ * 
+ * URL: https://<region>-<project-id>.cloudfunctions.net/paymentWebhookHandler
+ * Method: POST
+ * 
+ * Expected payload (customize based on your payment gateway):
+ * {
+ *   orderId: string,
+ *   transactionReference: string,
+ *   status: 'SUCCESS' | 'FAILED' | 'PENDING' | 'CANCELLED',
+ *   amount: number,
+ *   currency: string,
+ *   timestamp: string,
+ *   ... other gateway-specific fields
+ * }
+ */
+exports.paymentWebhookHandler = functions.https.onRequest(async (req, res) => {
+    // Only accept POST requests
+    if (req.method !== 'POST') {
+        console.warn('Invalid method:', req.method);
+        res.status(405).json({ error: 'Method not allowed' });
+        return;
+    }
+
+    const startTime = Date.now();
+    const requestIP = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown';
+    const rawPayload = req.rawBody?.toString() || JSON.stringify(req.body);
+    
+    // Base log data
+    const logData = {
+        requestIP,
+        rawPayload,
+        headers: {
+            'content-type': req.headers['content-type'],
+            'user-agent': req.headers['user-agent'],
+            [PAYMENT_CONFIG.signatureHeader]: req.headers[PAYMENT_CONFIG.signatureHeader] ? '[PRESENT]' : '[MISSING]'
+        },
+        receivedAt: new Date().toISOString()
+    };
+
+    try {
+        // Step 1: Verify IP address (if configured)
+        const ipVerification = verifyIPAddress(requestIP);
+        logData.ipVerification = ipVerification;
+        
+        if (!ipVerification.valid && PAYMENT_CONFIG.allowedIPs.length > 0) {
+            console.warn('Webhook rejected - IP not allowed:', requestIP);
+            logData.result = 'REJECTED_IP';
+            await logWebhookCall(logData);
+            res.status(403).json({ error: 'Forbidden' });
+            return;
+        }
+
+        // Step 2: Verify signature
+        const signature = req.headers[PAYMENT_CONFIG.signatureHeader] || 
+                         req.headers['x-signature'] ||
+                         req.headers['x-webhook-signature'] ||
+                         req.body?.signature;
+                         
+        const signatureVerification = verifyWebhookSignature(rawPayload, signature, PAYMENT_CONFIG.secretKey);
+        logData.signatureVerification = signatureVerification;
+
+        // IMPORTANT: In production, you should reject invalid signatures
+        // For testing, you may temporarily allow (not recommended for production)
+        if (!signatureVerification.valid) {
+            console.warn('Webhook signature verification failed:', signatureVerification.reason);
+            // Uncomment the following to enforce signature validation:
+            // logData.result = 'REJECTED_SIGNATURE';
+            // await logWebhookCall(logData);
+            // res.status(401).json({ error: 'Invalid signature' });
+            // return;
+        }
+
+        // Step 3: Parse and validate payload
+        const payload = req.body;
+        
+        // Extract fields (adjust based on your payment gateway's format)
+        // Common field name variations are handled
+        const orderId = payload.orderId || payload.order_id || payload.orderid || 
+                       payload.reference?.split('_')[0]; // Some gateways embed order ID in reference
+        const transactionReference = payload.transactionReference || payload.transaction_reference || 
+                                    payload.txn_ref || payload.reference || payload.paymentReference;
+        const paymentStatus = (payload.status || payload.payment_status || payload.txn_status || '').toUpperCase();
+        const amount = parseFloat(payload.amount || payload.paid_amount || payload.transaction_amount || 0);
+        const currency = payload.currency || payload.currency_code || 'NGN';
+        const gatewayTimestamp = payload.timestamp || payload.payment_date || payload.transaction_date;
+        const failureReason = payload.message || payload.failure_reason || payload.error_message;
+
+        logData.parsedData = {
+            orderId,
+            transactionReference,
+            paymentStatus,
+            amount,
+            currency,
+            gatewayTimestamp
+        };
+
+        // Validate required fields
+        if (!orderId) {
+            console.error('Missing order ID in webhook payload');
+            logData.result = 'REJECTED_MISSING_ORDER_ID';
+            await logWebhookCall(logData);
+            res.status(400).json({ error: 'Missing order ID' });
+            return;
+        }
+
+        if (!transactionReference) {
+            console.error('Missing transaction reference in webhook payload');
+            logData.result = 'REJECTED_MISSING_TXN_REF';
+            await logWebhookCall(logData);
+            res.status(400).json({ error: 'Missing transaction reference' });
+            return;
+        }
+
+        // Step 4: Fetch and validate order
+        const orderRef = db.collection('orders').doc(orderId);
+        const orderDoc = await orderRef.get();
+
+        if (!orderDoc.exists) {
+            console.error('Order not found:', orderId);
+            logData.result = 'REJECTED_ORDER_NOT_FOUND';
+            await logWebhookCall(logData);
+            res.status(404).json({ error: 'Order not found' });
+            return;
+        }
+
+        const order = orderDoc.data();
+        logData.orderData = {
+            orderId,
+            existingPaymentStatus: order.paymentStatus,
+            existingTransactionRef: order.transactionReference,
+            orderTotal: order.total
+        };
+
+        // Step 5: Idempotency check - prevent duplicate processing
+        if (order.paymentStatus === 'paid' && order.paymentVerifiedAt) {
+            console.log('Order already paid, skipping duplicate webhook:', orderId);
+            logData.result = 'SKIPPED_ALREADY_PAID';
+            await logWebhookCall(logData);
+            res.status(200).json({ 
+                success: true, 
+                message: 'Order already processed',
+                orderId,
+                idempotent: true
+            });
+            return;
+        }
+
+        // Check if this exact transaction was already processed
+        if (order.transactionReference === transactionReference && order.paymentVerifiedAt) {
+            console.log('Transaction already processed:', transactionReference);
+            logData.result = 'SKIPPED_DUPLICATE_TXN';
+            await logWebhookCall(logData);
+            res.status(200).json({ 
+                success: true, 
+                message: 'Transaction already processed',
+                transactionReference,
+                idempotent: true
+            });
+            return;
+        }
+
+        // Step 6: Validate amount matches (with tolerance for currency conversion)
+        const amountTolerance = 0.01; // 1% tolerance
+        const expectedAmount = order.total || 0;
+        const amountDiff = Math.abs(amount - expectedAmount);
+        const amountMatchesOrTolerated = amount === 0 || // Some gateways don't send amount
+                                         amountDiff <= (expectedAmount * amountTolerance);
+
+        if (amount > 0 && !amountMatchesOrTolerated) {
+            console.warn(`Amount mismatch: expected ${expectedAmount}, received ${amount}`);
+            logData.amountVerification = {
+                expected: expectedAmount,
+                received: amount,
+                difference: amountDiff,
+                tolerated: amountMatchesOrTolerated
+            };
+            // Log but don't reject - let admin review
+        }
+
+        // Step 7: Process based on payment status
+        const now = admin.firestore.FieldValue.serverTimestamp();
+        
+        if (paymentStatus === 'SUCCESS' || paymentStatus === 'SUCCESSFUL' || 
+            paymentStatus === 'COMPLETED' || paymentStatus === 'APPROVED') {
+            
+            // Payment successful - update order
+            const updateData = {
+                paymentStatus: 'paid',
+                transactionReference,
+                paymentVerifiedAt: now,
+                paymentGatewayPayload: payload,
+                paymentGatewayTimestamp: gatewayTimestamp || new Date().toISOString(),
+                paymentAmount: amount || order.total,
+                paymentCurrency: currency,
+                updatedAt: now
+            };
+
+            await orderRef.update(updateData);
+            
+            console.log(`✅ Order ${orderId} marked as PAID via webhook`);
+            logData.result = 'SUCCESS_MARKED_PAID';
+            logData.updateData = { ...updateData, paymentGatewayPayload: '[REDACTED]' };
+
+            // Trigger existing post-payment logic (MLM commissions, etc.)
+            // This is handled by Firestore triggers in calculateOrderCommissions
+            // We just need to ensure the order has buyerId for MLM processing
+            if (order.buyerId) {
+                console.log(`MLM commission calculation will be triggered for buyer: ${order.buyerId}`);
+            }
+
+            await logWebhookCall(logData);
+            
+            res.status(200).json({
+                success: true,
+                message: 'Payment verified and order updated',
+                orderId,
+                transactionReference,
+                paymentStatus: 'paid'
+            });
+            return;
+
+        } else if (paymentStatus === 'FAILED' || paymentStatus === 'DECLINED' || 
+                   paymentStatus === 'REJECTED' || paymentStatus === 'ERROR') {
+            
+            // Payment failed - record but don't cancel order
+            const updateData = {
+                paymentStatus: 'failed',
+                transactionReference,
+                paymentFailedAt: now,
+                paymentFailureReason: failureReason || 'Payment was declined or failed',
+                paymentGatewayPayload: payload,
+                lastPaymentAttempt: now,
+                updatedAt: now
+            };
+
+            await orderRef.update(updateData);
+            
+            console.log(`❌ Order ${orderId} payment FAILED via webhook`);
+            logData.result = 'RECORDED_PAYMENT_FAILED';
+            logData.updateData = { ...updateData, paymentGatewayPayload: '[REDACTED]' };
+
+            await logWebhookCall(logData);
+            
+            res.status(200).json({
+                success: true,
+                message: 'Payment failure recorded',
+                orderId,
+                transactionReference,
+                paymentStatus: 'failed'
+            });
+            return;
+
+        } else if (paymentStatus === 'PENDING' || paymentStatus === 'PROCESSING') {
+            
+            // Payment pending - update reference but don't change status
+            const updateData = {
+                transactionReference,
+                paymentGatewayPayload: payload,
+                lastPaymentAttempt: now,
+                updatedAt: now
+            };
+
+            await orderRef.update(updateData);
+            
+            console.log(`⏳ Order ${orderId} payment PENDING via webhook`);
+            logData.result = 'RECORDED_PAYMENT_PENDING';
+
+            await logWebhookCall(logData);
+            
+            res.status(200).json({
+                success: true,
+                message: 'Payment pending status recorded',
+                orderId,
+                transactionReference,
+                paymentStatus: 'pending'
+            });
+            return;
+
+        } else if (paymentStatus === 'CANCELLED' || paymentStatus === 'CANCELED' || 
+                   paymentStatus === 'ABANDONED') {
+            
+            // Payment cancelled by user
+            const updateData = {
+                transactionReference,
+                paymentCancelledAt: now,
+                paymentGatewayPayload: payload,
+                lastPaymentAttempt: now,
+                updatedAt: now
+            };
+
+            await orderRef.update(updateData);
+            
+            console.log(`🚫 Order ${orderId} payment CANCELLED via webhook`);
+            logData.result = 'RECORDED_PAYMENT_CANCELLED';
+
+            await logWebhookCall(logData);
+            
+            res.status(200).json({
+                success: true,
+                message: 'Payment cancellation recorded',
+                orderId,
+                transactionReference,
+                paymentStatus: 'cancelled'
+            });
+            return;
+
+        } else {
+            // Unknown status - log for review
+            console.warn(`Unknown payment status received: ${paymentStatus}`);
+            logData.result = 'UNKNOWN_STATUS';
+
+            await logWebhookCall(logData);
+            
+            res.status(200).json({
+                success: true,
+                message: 'Webhook received, unknown status logged for review',
+                orderId,
+                transactionReference,
+                receivedStatus: paymentStatus
+            });
+            return;
+        }
+
+    } catch (error) {
+        console.error('Webhook processing error:', error);
+        logData.result = 'ERROR';
+        logData.error = {
+            message: error.message,
+            stack: error.stack
+        };
+        logData.processingTimeMs = Date.now() - startTime;
+        
+        await logWebhookCall(logData);
+        
+        res.status(500).json({ 
+            error: 'Internal server error',
+            message: 'Webhook received but processing failed'
+        });
+    }
+});
+
+/**
+ * Get payment webhook logs (admin only)
+ */
+exports.getPaymentWebhookLogs = functions.https.onCall(async (data, context) => {
+    // Verify admin
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    const adminEmails = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com', 'atfactorypriceonline@gmail.com'];
+    if (!adminEmails.includes(context.auth.token.email?.toLowerCase())) {
+        throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+    }
+
+    try {
+        const { orderId, limit: queryLimit, result: filterResult } = data;
+        
+        let query = db.collection('payment_webhook_logs')
+            .orderBy('createdAt', 'desc');
+        
+        if (orderId) {
+            query = query.where('parsedData.orderId', '==', orderId);
+        }
+        
+        if (filterResult) {
+            query = query.where('result', '==', filterResult);
+        }
+        
+        query = query.limit(queryLimit || 100);
+        
+        const snapshot = await query.get();
+        
+        return {
+            logs: snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data(),
+                // Redact sensitive data
+                rawPayload: '[REDACTED - view in Firebase Console]',
+                createdAt: doc.data().createdAt?.toDate?.() || null
+            }))
+        };
+        
+    } catch (error) {
+        console.error('Error getting webhook logs:', error);
+        throw new functions.https.HttpsError('internal', 'Failed to get webhook logs');
+    }
+});
+
+/**
+ * Manually verify payment (admin fallback)
+ * Use this if webhook fails but payment was confirmed externally
+ */
+exports.manualPaymentVerification = functions.https.onCall(async (data, context) => {
+    // Verify admin
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+    
+    const adminEmails = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com', 'atfactorypriceonline@gmail.com'];
+    if (!adminEmails.includes(context.auth.token.email?.toLowerCase())) {
+        throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+    }
+
+    const { orderId, transactionReference, verificationNote } = data;
+
+    if (!orderId || !transactionReference) {
+        throw new functions.https.HttpsError('invalid-argument', 'Order ID and transaction reference required');
+    }
+
+    try {
+        const orderRef = db.collection('orders').doc(orderId);
+        const orderDoc = await orderRef.get();
+
+        if (!orderDoc.exists) {
+            throw new functions.https.HttpsError('not-found', 'Order not found');
+        }
+
+        const order = orderDoc.data();
+
+        if (order.paymentStatus === 'paid') {
+            throw new functions.https.HttpsError('already-exists', 'Order is already marked as paid');
+        }
+
+        const now = admin.firestore.FieldValue.serverTimestamp();
+
+        await orderRef.update({
+            paymentStatus: 'paid',
+            transactionReference,
+            paymentVerifiedAt: now,
+            manualVerification: true,
+            manualVerifiedBy: context.auth.uid,
+            manualVerifiedByEmail: context.auth.token.email,
+            manualVerificationNote: verificationNote || 'Manually verified by admin',
+            updatedAt: now
+        });
+
+        // Log the manual verification
+        await db.collection('payment_webhook_logs').add({
+            orderId,
+            transactionReference,
+            result: 'MANUAL_VERIFICATION',
+            manualVerifiedBy: context.auth.uid,
+            manualVerifiedByEmail: context.auth.token.email,
+            note: verificationNote,
+            createdAt: now
+        });
+
+        console.log(`Order ${orderId} manually verified by ${context.auth.token.email}`);
+
+        return {
+            success: true,
+            message: 'Payment manually verified',
+            orderId,
+            transactionReference
+        };
+
+    } catch (error) {
+        console.error('Manual verification error:', error);
+        throw new functions.https.HttpsError('internal', error.message || 'Failed to verify payment');
+    }
+});

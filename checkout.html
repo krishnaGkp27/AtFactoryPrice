@@ -263,6 +263,58 @@
             background: #0077b5;
         }
 
+        .btn-bank {
+            background: linear-gradient(135deg, #1a5f7a 0%, #0d3d4d 100%);
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-bank:hover {
+            background: linear-gradient(135deg, #0d3d4d 0%, #1a5f7a 100%);
+        }
+
+        .btn-bank::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            animation: bankShine 3s infinite;
+        }
+
+        @keyframes bankShine {
+            0%, 100% { left: -100%; }
+            50% { left: 100%; }
+        }
+
+        .btn-bank .secure-badge {
+            font-size: 10px;
+            background: rgba(255,255,255,0.2);
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 8px;
+        }
+
+        .payment-divider {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 20px 0;
+            color: #999;
+            font-size: 12px;
+        }
+
+        .payment-divider::before,
+        .payment-divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: #e0e0e0;
+        }
+
         .btn-submit:disabled {
             opacity: 0.5;
             cursor: not-allowed;
@@ -396,6 +448,18 @@
 
                 <div class="submission-options">
                     <h3>Choose How to Complete Your Order</h3>
+                    
+                    <!-- Bank Payment Option (Primary) -->
+                    <button onclick="payWithBank()" class="btn-submit btn-bank">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
+                            <line x1="1" y1="10" x2="23" y2="10"></line>
+                        </svg>
+                        Pay Now with Bank Transfer
+                        <span class="secure-badge">🔒 Secure</span>
+                    </button>
+                    
+                    <div class="payment-divider">or order without payment</div>
                     
                     <button onclick="submitViaForm()" class="btn-submit btn-form">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -646,7 +710,7 @@
                 // For demo purposes, we can trigger commission calculation immediately
                 // In production, this should happen after payment confirmation
 
-                return { success: true, orderId: orderRef.id };
+                return { success: true, orderId: orderRef.id, total: total };
 
             } catch (error) {
                 console.error('Error saving order:', error);
@@ -744,6 +808,98 @@
                 const username = 'atfactoryprice';
                 const url = `https://t.me/${username}?text=${encodeURIComponent(message)}`;
                 window.open(url, '_blank');
+            }
+        }
+
+        // ===== PAY WITH BANK =====
+        // This initiates bank payment and redirects to payment gateway
+        async function payWithBank() {
+            const customer = getCustomerData();
+            
+            if (!validateCustomerData(customer)) return;
+
+            // Disable buttons during submission
+            document.querySelectorAll('.btn-submit').forEach(btn => btn.disabled = true);
+
+            try {
+                // Step 1: Save order to Firestore first
+                const result = await saveOrderToFirestore('bank_payment');
+
+                if (!result.success) {
+                    alert('There was an error creating your order. Please try again.');
+                    document.querySelectorAll('.btn-submit').forEach(btn => btn.disabled = false);
+                    return;
+                }
+
+                const orderId = result.orderId;
+                const orderTotal = result.total;
+
+                console.log('Order created for bank payment:', orderId, 'Total:', orderTotal);
+
+                // Step 2: Generate payment reference
+                // Format: ORDID_TIMESTAMP (ensures uniqueness)
+                const transactionReference = `${orderId}_${Date.now()}`;
+
+                // Step 3: Store payment initiation in order
+                await db.collection('orders').doc(orderId).update({
+                    paymentMethod: 'bank',
+                    paymentInitiatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    transactionReference: transactionReference
+                });
+
+                // Step 4: Redirect to payment gateway
+                // =================================================================
+                // IMPORTANT: Replace this URL with your actual bank payment gateway URL
+                // The bank will redirect back to: https://atfactoryprice.com/payment/redirect
+                // =================================================================
+                
+                // Example payment gateway URL structure (adjust based on your bank's API):
+                const paymentGatewayConfig = {
+                    // Base URL of your payment gateway
+                    baseUrl: 'https://your-payment-gateway.com/pay',
+                    // OR for testing, use a placeholder that will redirect back
+                    // baseUrl: '/payment/redirect', // Uncomment for testing
+                    
+                    // Parameters to send to payment gateway
+                    params: {
+                        merchant_id: 'YOUR_MERCHANT_ID', // Replace with your merchant ID
+                        order_id: orderId,
+                        amount: orderTotal,
+                        currency: 'NGN',
+                        reference: transactionReference,
+                        customer_name: customer.name,
+                        customer_email: customer.phone + '@atfactoryprice.com', // or actual email if collected
+                        customer_phone: customer.phone,
+                        description: `Order ${orderId.substring(0, 8)} - AtFactoryPrice`,
+                        redirect_url: 'https://atfactoryprice.com/payment/redirect',
+                        callback_url: 'https://us-central1-atfactoryprice-6ba8f.cloudfunctions.net/paymentWebhookHandler'
+                    }
+                };
+
+                // Build redirect URL with query parameters
+                const queryParams = new URLSearchParams(paymentGatewayConfig.params);
+                const paymentUrl = `${paymentGatewayConfig.baseUrl}?${queryParams.toString()}`;
+
+                console.log('Redirecting to payment gateway:', paymentUrl);
+
+                // For testing without a real payment gateway, redirect to our redirect page
+                // This simulates what happens after payment gateway redirects back
+                // REMOVE THIS IN PRODUCTION - use real gateway URL instead
+                const isTestMode = true; // Set to false in production
+                
+                if (isTestMode) {
+                    // Test mode: Go directly to redirect page with simulated params
+                    const testUrl = `/payment/redirect?orderId=${orderId}&transactionReference=${transactionReference}&status=PENDING`;
+                    window.location.href = testUrl;
+                } else {
+                    // Production: Redirect to actual payment gateway
+                    window.location.href = paymentUrl;
+                }
+
+            } catch (error) {
+                console.error('Error initiating bank payment:', error);
+                alert('There was an error processing your payment. Please try again or use WhatsApp.');
+                document.querySelectorAll('.btn-submit').forEach(btn => btn.disabled = false);
             }
         }
 

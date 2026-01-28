@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Logs - Admin Panel | AtFactoryPrice</title>
+    <link rel="icon" type="image/png" href="images/logo.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .admin-header {
+            background: linear-gradient(135deg, #1a5f7a 0%, #0d3d4d 100%);
+            color: white;
+            padding: 20px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .admin-header h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .admin-nav {
+            display: flex;
+            gap: 15px;
+        }
+
+        .admin-nav a {
+            color: rgba(255,255,255,0.8);
+            text-decoration: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            transition: all 0.3s;
+        }
+
+        .admin-nav a:hover,
+        .admin-nav a.active {
+            background: rgba(255,255,255,0.1);
+            color: white;
+        }
+
+        /* Main content */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 30px;
+        }
+
+        /* Stats cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .stat-card h3 {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .stat-card .value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #333;
+        }
+
+        .stat-card.success .value { color: #2e7d32; }
+        .stat-card.failed .value { color: #c62828; }
+        .stat-card.pending .value { color: #f57c00; }
+
+        /* Filters */
+        .filters {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .filter-group label {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .filter-group input,
+        .filter-group select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: #1a5f7a;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #0d3d4d;
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        /* Logs table */
+        .logs-container {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .logs-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .logs-table th,
+        .logs-table td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        .logs-table th {
+            background: #f8f8f8;
+            font-weight: 600;
+            color: #333;
+            font-size: 13px;
+            text-transform: uppercase;
+        }
+
+        .logs-table tbody tr:hover {
+            background: #f5f5f5;
+        }
+
+        /* Status badges */
+        .status-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .status-badge.success { background: #e8f5e9; color: #2e7d32; }
+        .status-badge.failed { background: #ffebee; color: #c62828; }
+        .status-badge.pending { background: #fff3e0; color: #f57c00; }
+        .status-badge.skipped { background: #e0e0e0; color: #666; }
+        .status-badge.error { background: #ffebee; color: #c62828; }
+
+        /* Log details modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: white;
+            border-radius: 12px;
+            max-width: 800px;
+            width: 90%;
+            max-height: 80vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h2 {
+            font-size: 18px;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #666;
+        }
+
+        .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .detail-row {
+            display: flex;
+            padding: 10px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+
+        .detail-label {
+            width: 180px;
+            font-weight: 500;
+            color: #666;
+        }
+
+        .detail-value {
+            flex: 1;
+            color: #333;
+            word-break: break-all;
+        }
+
+        pre.json-view {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 12px;
+            overflow-x: auto;
+            margin-top: 10px;
+        }
+
+        /* Loading state */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #ddd;
+            border-top-color: #1a5f7a;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+
+        .empty-state svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        /* Manual verification form */
+        .manual-verify-section {
+            background: #fff3e0;
+            border: 1px solid #ffcc02;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .manual-verify-section h3 {
+            color: #e65100;
+            margin-bottom: 15px;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .form-row input {
+            flex: 1;
+            min-width: 200px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+        }
+
+        @media (max-width: 768px) {
+            .admin-header {
+                flex-direction: column;
+                gap: 15px;
+            }
+
+            .filters {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .logs-table {
+                display: block;
+                overflow-x: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="admin-header">
+        <h1>💳 Payment Logs</h1>
+        <nav class="admin-nav">
+            <a href="admin.html">Products</a>
+            <a href="admin-orders.html">Orders</a>
+            <a href="admin-mlm.html">MLM</a>
+            <a href="admin-payments.html" class="active">Payments</a>
+        </nav>
+    </header>
+
+    <div class="container">
+        <!-- Stats -->
+        <div class="stats-grid">
+            <div class="stat-card success">
+                <h3>Successful Payments</h3>
+                <div class="value" id="successCount">—</div>
+            </div>
+            <div class="stat-card failed">
+                <h3>Failed Payments</h3>
+                <div class="value" id="failedCount">—</div>
+            </div>
+            <div class="stat-card pending">
+                <h3>Pending</h3>
+                <div class="value" id="pendingCount">—</div>
+            </div>
+            <div class="stat-card">
+                <h3>Total Webhooks (24h)</h3>
+                <div class="value" id="totalCount">—</div>
+            </div>
+        </div>
+
+        <!-- Manual Verification -->
+        <div class="manual-verify-section">
+            <h3>⚠️ Manual Payment Verification (Admin Fallback)</h3>
+            <p style="margin-bottom: 15px; font-size: 14px;">Use this only if webhook failed but payment was confirmed externally (e.g., bank statement).</p>
+            <div class="form-row">
+                <input type="text" id="manualOrderId" placeholder="Order ID">
+                <input type="text" id="manualTxnRef" placeholder="Transaction Reference">
+                <input type="text" id="manualNote" placeholder="Verification Note (optional)">
+                <button onclick="manualVerifyPayment()" class="btn btn-primary">Verify Payment</button>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters">
+            <div class="filter-group">
+                <label>Order ID</label>
+                <input type="text" id="filterOrderId" placeholder="Search by Order ID">
+            </div>
+            <div class="filter-group">
+                <label>Result</label>
+                <select id="filterResult">
+                    <option value="">All Results</option>
+                    <option value="SUCCESS_MARKED_PAID">Success - Paid</option>
+                    <option value="RECORDED_PAYMENT_FAILED">Failed</option>
+                    <option value="RECORDED_PAYMENT_PENDING">Pending</option>
+                    <option value="SKIPPED_ALREADY_PAID">Skipped - Already Paid</option>
+                    <option value="SKIPPED_DUPLICATE_TXN">Skipped - Duplicate</option>
+                    <option value="ERROR">Error</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Limit</label>
+                <select id="filterLimit">
+                    <option value="50">50 logs</option>
+                    <option value="100" selected>100 logs</option>
+                    <option value="200">200 logs</option>
+                </select>
+            </div>
+            <button onclick="loadLogs()" class="btn btn-primary">🔍 Search</button>
+            <button onclick="refreshLogs()" class="btn btn-secondary">🔄 Refresh</button>
+        </div>
+
+        <!-- Logs Table -->
+        <div class="logs-container">
+            <table class="logs-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Order ID</th>
+                        <th>Transaction Ref</th>
+                        <th>Status</th>
+                        <th>Result</th>
+                        <th>IP Address</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="logsTableBody">
+                    <tr>
+                        <td colspan="7" class="loading">Loading payment logs...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Log Details Modal -->
+    <div class="modal-overlay" id="logModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>Webhook Log Details</h2>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- Populated dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-functions-compat.js"></script>
+
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA3SzcQWEgWv51hA5CsNyj6WG1cp-sZYKA",
+            authDomain: "atfactoryprice-6ba8f.firebaseapp.com",
+            projectId: "atfactoryprice-6ba8f",
+            storageBucket: "atfactoryprice-6ba8f.firebasestorage.app",
+            messagingSenderId: "660895645396",
+            appId: "1:660895645396:web:a4ea1e8febc6e0b7f74541"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const functions = firebase.functions();
+
+        // Admin emails
+        const ADMIN_EMAILS = ['admin@atfactoryprice.com', 'hello@atfactoryprice.com', 'atfactorypriceonline@gmail.com'];
+
+        // Current logs
+        let currentLogs = [];
+
+        // Check admin access
+        auth.onAuthStateChanged(async (user) => {
+            if (!user) {
+                window.location.href = 'login.html?redirect=admin-payments.html';
+                return;
+            }
+
+            if (!ADMIN_EMAILS.includes(user.email?.toLowerCase())) {
+                alert('Access denied. Admin privileges required.');
+                window.location.href = 'index.html';
+                return;
+            }
+
+            // Load logs
+            loadLogs();
+        });
+
+        // Load payment webhook logs
+        async function loadLogs() {
+            const tbody = document.getElementById('logsTableBody');
+            tbody.innerHTML = '<tr><td colspan="7" class="loading">Loading payment logs...</td></tr>';
+
+            try {
+                const getPaymentWebhookLogs = functions.httpsCallable('getPaymentWebhookLogs');
+                
+                const filters = {
+                    orderId: document.getElementById('filterOrderId').value.trim() || undefined,
+                    result: document.getElementById('filterResult').value || undefined,
+                    limit: parseInt(document.getElementById('filterLimit').value) || 100
+                };
+
+                const response = await getPaymentWebhookLogs(filters);
+                currentLogs = response.data.logs || [];
+
+                renderLogs();
+                updateStats();
+
+            } catch (error) {
+                console.error('Error loading logs:', error);
+                tbody.innerHTML = `<tr><td colspan="7" class="empty-state">
+                    <p>Error loading logs: ${error.message}</p>
+                    <p style="margin-top: 10px; font-size: 12px;">Make sure Cloud Functions are deployed.</p>
+                </td></tr>`;
+            }
+        }
+
+        // Render logs table
+        function renderLogs() {
+            const tbody = document.getElementById('logsTableBody');
+
+            if (currentLogs.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" class="empty-state">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
+                        <line x1="1" y1="10" x2="23" y2="10"></line>
+                    </svg>
+                    <p>No payment webhook logs found</p>
+                    <p style="font-size: 14px; margin-top: 10px;">Logs will appear here when payment webhooks are received.</p>
+                </td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = currentLogs.map(log => {
+                const time = log.createdAt ? new Date(log.createdAt).toLocaleString('en-NG') : '—';
+                const orderId = log.parsedData?.orderId || '—';
+                const txnRef = log.parsedData?.transactionReference || '—';
+                const status = log.parsedData?.paymentStatus || '—';
+                const result = log.result || '—';
+                const ip = log.requestIP || '—';
+
+                const statusClass = getStatusClass(result);
+
+                return `
+                    <tr>
+                        <td>${time}</td>
+                        <td><code>${orderId.substring(0, 12)}...</code></td>
+                        <td><code>${txnRef.substring(0, 15)}...</code></td>
+                        <td>${status}</td>
+                        <td><span class="status-badge ${statusClass}">${formatResult(result)}</span></td>
+                        <td>${ip}</td>
+                        <td>
+                            <button onclick="viewLogDetails('${log.id}')" class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;">
+                                View Details
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // Get status class
+        function getStatusClass(result) {
+            if (result.includes('SUCCESS') || result.includes('PAID')) return 'success';
+            if (result.includes('FAILED') || result.includes('ERROR') || result.includes('REJECTED')) return 'failed';
+            if (result.includes('PENDING')) return 'pending';
+            if (result.includes('SKIPPED')) return 'skipped';
+            return '';
+        }
+
+        // Format result for display
+        function formatResult(result) {
+            const map = {
+                'SUCCESS_MARKED_PAID': '✓ Paid',
+                'RECORDED_PAYMENT_FAILED': '✗ Failed',
+                'RECORDED_PAYMENT_PENDING': '⏳ Pending',
+                'RECORDED_PAYMENT_CANCELLED': '🚫 Cancelled',
+                'SKIPPED_ALREADY_PAID': '⏭ Already Paid',
+                'SKIPPED_DUPLICATE_TXN': '⏭ Duplicate',
+                'ERROR': '⚠ Error',
+                'REJECTED_IP': '🛑 IP Rejected',
+                'REJECTED_SIGNATURE': '🛑 Sig Invalid',
+                'MANUAL_VERIFICATION': '👤 Manual'
+            };
+            return map[result] || result;
+        }
+
+        // Update stats
+        function updateStats() {
+            const stats = {
+                success: 0,
+                failed: 0,
+                pending: 0,
+                total: currentLogs.length
+            };
+
+            currentLogs.forEach(log => {
+                if (log.result?.includes('SUCCESS') || log.result?.includes('PAID')) {
+                    stats.success++;
+                } else if (log.result?.includes('FAILED') || log.result?.includes('ERROR') || log.result?.includes('REJECTED')) {
+                    stats.failed++;
+                } else if (log.result?.includes('PENDING')) {
+                    stats.pending++;
+                }
+            });
+
+            document.getElementById('successCount').textContent = stats.success;
+            document.getElementById('failedCount').textContent = stats.failed;
+            document.getElementById('pendingCount').textContent = stats.pending;
+            document.getElementById('totalCount').textContent = stats.total;
+        }
+
+        // View log details
+        function viewLogDetails(logId) {
+            const log = currentLogs.find(l => l.id === logId);
+            if (!log) return;
+
+            const modalBody = document.getElementById('modalBody');
+            
+            modalBody.innerHTML = `
+                <div class="detail-row">
+                    <div class="detail-label">Log ID</div>
+                    <div class="detail-value"><code>${log.id}</code></div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Received At</div>
+                    <div class="detail-value">${log.receivedAt || log.createdAt}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Request IP</div>
+                    <div class="detail-value">${log.requestIP || '—'}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Order ID</div>
+                    <div class="detail-value"><code>${log.parsedData?.orderId || '—'}</code></div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Transaction Ref</div>
+                    <div class="detail-value"><code>${log.parsedData?.transactionReference || '—'}</code></div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Payment Status</div>
+                    <div class="detail-value">${log.parsedData?.paymentStatus || '—'}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Amount</div>
+                    <div class="detail-value">₦${(log.parsedData?.amount || 0).toLocaleString()}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Result</div>
+                    <div class="detail-value"><span class="status-badge ${getStatusClass(log.result)}">${formatResult(log.result)}</span></div>
+                </div>
+                ${log.signatureVerification ? `
+                <div class="detail-row">
+                    <div class="detail-label">Signature Valid</div>
+                    <div class="detail-value">${log.signatureVerification.valid ? '✓ Yes' : '✗ No'} - ${log.signatureVerification.reason}</div>
+                </div>
+                ` : ''}
+                ${log.ipVerification ? `
+                <div class="detail-row">
+                    <div class="detail-label">IP Allowed</div>
+                    <div class="detail-value">${log.ipVerification.valid ? '✓ Yes' : '✗ No'} - ${log.ipVerification.reason}</div>
+                </div>
+                ` : ''}
+                ${log.error ? `
+                <div class="detail-row">
+                    <div class="detail-label">Error</div>
+                    <div class="detail-value" style="color: #c62828;">${log.error.message}</div>
+                </div>
+                ` : ''}
+                <div class="detail-row" style="flex-direction: column;">
+                    <div class="detail-label" style="margin-bottom: 10px;">Headers</div>
+                    <pre class="json-view">${JSON.stringify(log.headers || {}, null, 2)}</pre>
+                </div>
+            `;
+
+            document.getElementById('logModal').classList.add('active');
+        }
+
+        // Close modal
+        function closeModal() {
+            document.getElementById('logModal').classList.remove('active');
+        }
+
+        // Refresh logs
+        function refreshLogs() {
+            loadLogs();
+        }
+
+        // Manual payment verification
+        async function manualVerifyPayment() {
+            const orderId = document.getElementById('manualOrderId').value.trim();
+            const txnRef = document.getElementById('manualTxnRef').value.trim();
+            const note = document.getElementById('manualNote').value.trim();
+
+            if (!orderId || !txnRef) {
+                alert('Please enter Order ID and Transaction Reference');
+                return;
+            }
+
+            if (!confirm(`Are you sure you want to manually verify payment for order ${orderId}?\n\nThis should only be done if payment was confirmed externally.`)) {
+                return;
+            }
+
+            try {
+                const manualPaymentVerification = functions.httpsCallable('manualPaymentVerification');
+                
+                const response = await manualPaymentVerification({
+                    orderId,
+                    transactionReference: txnRef,
+                    verificationNote: note
+                });
+
+                if (response.data.success) {
+                    alert('✓ Payment verified successfully!\n\nOrder ' + orderId + ' is now marked as paid.');
+                    document.getElementById('manualOrderId').value = '';
+                    document.getElementById('manualTxnRef').value = '';
+                    document.getElementById('manualNote').value = '';
+                    loadLogs();
+                }
+
+            } catch (error) {
+                console.error('Manual verification error:', error);
+                alert('Error: ' + (error.message || 'Failed to verify payment'));
+            }
+        }
+
+        // Close modal on outside click
+        document.getElementById('logModal').addEventListener('click', (e) => {
+            if (e.target.classList.contains('modal-overlay')) {
+                closeModal();
+            }
+        });
+
+        // Close modal on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeModal();
+            }
+        });
+    </script>
+</body>
+</html>

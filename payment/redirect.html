@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Processing - AtFactoryPrice</title>
+    <link rel="icon" type="image/png" href="../images/logo.png">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .payment-container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+        
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 24px;
+        }
+        
+        .status-icon {
+            width: 80px;
+            height: 80px;
+            margin: 20px auto;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+        }
+        
+        .status-icon.processing {
+            background: #e3f2fd;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-icon.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        
+        .status-icon.failed {
+            background: #ffebee;
+            color: #c62828;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.05); opacity: 0.8; }
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #e0e0e0;
+            border-top-color: #1976d2;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        h1 {
+            color: #333;
+            font-size: 24px;
+            margin-bottom: 12px;
+        }
+        
+        .message {
+            color: #666;
+            font-size: 16px;
+            line-height: 1.6;
+            margin-bottom: 24px;
+        }
+        
+        .warning {
+            background: #fff3e0;
+            border: 1px solid #ffcc02;
+            border-radius: 8px;
+            padding: 12px 16px;
+            color: #e65100;
+            font-size: 14px;
+            margin-bottom: 24px;
+        }
+        
+        .order-info {
+            background: #f5f5f5;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 24px;
+            text-align: left;
+        }
+        
+        .order-info p {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e0e0e0;
+            font-size: 14px;
+        }
+        
+        .order-info p:last-child {
+            border-bottom: none;
+        }
+        
+        .order-info .label {
+            color: #666;
+        }
+        
+        .order-info .value {
+            color: #333;
+            font-weight: 600;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 14px 32px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: none;
+            margin: 8px;
+        }
+        
+        .btn-primary {
+            background: #1976d2;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #1565c0;
+        }
+        
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+        
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+        
+        .btn-success {
+            background: #2e7d32;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #1b5e20;
+        }
+        
+        .btn-retry {
+            background: #ff5722;
+            color: white;
+        }
+        
+        .btn-retry:hover {
+            background: #e64a19;
+        }
+        
+        .actions {
+            margin-top: 24px;
+        }
+        
+        .countdown {
+            font-size: 14px;
+            color: #999;
+            margin-top: 16px;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .error-details {
+            background: #ffebee;
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 16px;
+            font-size: 13px;
+            color: #c62828;
+            text-align: left;
+        }
+        
+        @media (max-width: 480px) {
+            .payment-container {
+                padding: 24px;
+            }
+            
+            h1 {
+                font-size: 20px;
+            }
+            
+            .btn {
+                display: block;
+                width: 100%;
+                margin: 8px 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="payment-container">
+        <img src="../images/logo.png" alt="AtFactoryPrice" class="logo">
+        
+        <!-- Processing State (Default) -->
+        <div id="processingState">
+            <div class="status-icon processing">
+                <div class="spinner"></div>
+            </div>
+            <h1>Processing Payment</h1>
+            <p class="message">Please wait while we verify your payment. This may take a few moments.</p>
+            <div class="warning">
+                ⚠️ Do not close this page or press the back button.
+            </div>
+            <div id="orderInfoProcessing" class="order-info hidden">
+                <p><span class="label">Order ID:</span> <span class="value" id="orderIdProcessing">—</span></p>
+                <p><span class="label">Transaction Ref:</span> <span class="value" id="txnRefProcessing">—</span></p>
+            </div>
+            <p class="countdown">Checking payment status... <span id="pollCount">0</span>/30</p>
+        </div>
+        
+        <!-- Success State -->
+        <div id="successState" class="hidden">
+            <div class="status-icon success">✓</div>
+            <h1>Payment Successful!</h1>
+            <p class="message">Your payment has been verified and your order is being processed.</p>
+            <div id="orderInfoSuccess" class="order-info">
+                <p><span class="label">Order ID:</span> <span class="value" id="orderIdSuccess">—</span></p>
+                <p><span class="label">Transaction Ref:</span> <span class="value" id="txnRefSuccess">—</span></p>
+                <p><span class="label">Amount Paid:</span> <span class="value" id="amountSuccess">—</span></p>
+                <p><span class="label">Payment Time:</span> <span class="value" id="timeSuccess">—</span></p>
+            </div>
+            <div class="actions">
+                <a href="/orders.html" class="btn btn-success">View My Orders</a>
+                <a href="/products.html" class="btn btn-secondary">Continue Shopping</a>
+            </div>
+            <p class="countdown">Redirecting to orders page in <span id="successCountdown">10</span> seconds...</p>
+        </div>
+        
+        <!-- Failed State -->
+        <div id="failedState" class="hidden">
+            <div class="status-icon failed">✗</div>
+            <h1>Payment Failed</h1>
+            <p class="message">We couldn't verify your payment. Your order has not been charged.</p>
+            <div id="orderInfoFailed" class="order-info">
+                <p><span class="label">Order ID:</span> <span class="value" id="orderIdFailed">—</span></p>
+                <p><span class="label">Transaction Ref:</span> <span class="value" id="txnRefFailed">—</span></p>
+                <p><span class="label">Status:</span> <span class="value" id="statusFailed">Failed</span></p>
+            </div>
+            <div id="errorDetails" class="error-details hidden"></div>
+            <div class="actions">
+                <button onclick="retryPayment()" class="btn btn-retry">Retry Payment</button>
+                <a href="/checkout.html" class="btn btn-secondary">Back to Checkout</a>
+            </div>
+        </div>
+        
+        <!-- Timeout State -->
+        <div id="timeoutState" class="hidden">
+            <div class="status-icon failed">⏱</div>
+            <h1>Verification Timeout</h1>
+            <p class="message">We couldn't verify your payment status in time. Don't worry – if your payment was successful, it will be processed automatically.</p>
+            <div id="orderInfoTimeout" class="order-info">
+                <p><span class="label">Order ID:</span> <span class="value" id="orderIdTimeout">—</span></p>
+                <p><span class="label">Transaction Ref:</span> <span class="value" id="txnRefTimeout">—</span></p>
+            </div>
+            <div class="warning">
+                ⚠️ If you were charged, your order will be updated automatically within a few minutes.
+            </div>
+            <div class="actions">
+                <a href="/orders.html" class="btn btn-primary">Check Order Status</a>
+                <a href="https://wa.me/2348138475360?text=Hi, I need help with my order" class="btn btn-secondary" target="_blank">Contact Support</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA3SzcQWEgWv51hA5CsNyj6WG1cp-sZYKA",
+            authDomain: "atfactoryprice-6ba8f.firebaseapp.com",
+            projectId: "atfactoryprice-6ba8f",
+            storageBucket: "atfactoryprice-6ba8f.firebasestorage.app",
+            messagingSenderId: "660895645396",
+            appId: "1:660895645396:web:a4ea1e8febc6e0b7f74541"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        // State variables
+        let orderId = null;
+        let transactionReference = null;
+        let pollInterval = null;
+        let pollCount = 0;
+        const MAX_POLLS = 30;
+        const POLL_INTERVAL_MS = 2000; // 2 seconds
+
+        // Parse URL parameters
+        function getUrlParams() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                orderId: params.get('orderId') || params.get('order_id') || params.get('orderid'),
+                transactionReference: params.get('transactionReference') || params.get('transaction_reference') || 
+                                     params.get('txn_ref') || params.get('reference') || params.get('ref'),
+                status: params.get('status') || params.get('payment_status'),
+                // Some banks use different parameter names
+                amount: params.get('amount'),
+                message: params.get('message') || params.get('msg')
+            };
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', async function() {
+            const params = getUrlParams();
+            
+            console.log('Payment redirect received:', params);
+            
+            // Store parameters
+            orderId = params.orderId;
+            transactionReference = params.transactionReference;
+            
+            // Update UI with available info
+            if (orderId) {
+                document.getElementById('orderIdProcessing').textContent = orderId;
+            }
+            if (transactionReference) {
+                document.getElementById('txnRefProcessing').textContent = transactionReference;
+                document.getElementById('orderInfoProcessing').classList.remove('hidden');
+            }
+            
+            // If no order ID, show error
+            if (!orderId) {
+                showState('failed');
+                document.getElementById('statusFailed').textContent = 'Missing order information';
+                document.getElementById('errorDetails').textContent = 'No order ID was provided in the redirect URL.';
+                document.getElementById('errorDetails').classList.remove('hidden');
+                return;
+            }
+            
+            // Start polling for payment status
+            startPaymentStatusPolling();
+        });
+
+        // Poll Firestore for payment status updates
+        function startPaymentStatusPolling() {
+            pollInterval = setInterval(async () => {
+                pollCount++;
+                document.getElementById('pollCount').textContent = pollCount;
+                
+                try {
+                    const orderDoc = await db.collection('orders').doc(orderId).get();
+                    
+                    if (!orderDoc.exists) {
+                        console.error('Order not found:', orderId);
+                        clearInterval(pollInterval);
+                        showState('failed');
+                        document.getElementById('statusFailed').textContent = 'Order not found';
+                        return;
+                    }
+                    
+                    const order = orderDoc.data();
+                    console.log('Order status check:', order.paymentStatus, order.paymentVerifiedAt);
+                    
+                    // Check if payment was verified by webhook
+                    if (order.paymentStatus === 'paid' && order.paymentVerifiedAt) {
+                        clearInterval(pollInterval);
+                        showPaymentSuccess(order);
+                        return;
+                    }
+                    
+                    // Check if payment explicitly failed
+                    if (order.paymentStatus === 'failed') {
+                        clearInterval(pollInterval);
+                        showPaymentFailed(order);
+                        return;
+                    }
+                    
+                    // Check timeout
+                    if (pollCount >= MAX_POLLS) {
+                        clearInterval(pollInterval);
+                        showPaymentTimeout();
+                        return;
+                    }
+                    
+                } catch (error) {
+                    console.error('Error checking payment status:', error);
+                    // Continue polling on error
+                }
+                
+            }, POLL_INTERVAL_MS);
+        }
+
+        // Show success state
+        function showPaymentSuccess(order) {
+            showState('success');
+            
+            document.getElementById('orderIdSuccess').textContent = orderId;
+            document.getElementById('txnRefSuccess').textContent = order.transactionReference || transactionReference || '—';
+            document.getElementById('amountSuccess').textContent = '₦' + (order.total || 0).toLocaleString();
+            
+            if (order.paymentVerifiedAt) {
+                const date = order.paymentVerifiedAt.toDate ? order.paymentVerifiedAt.toDate() : new Date(order.paymentVerifiedAt);
+                document.getElementById('timeSuccess').textContent = date.toLocaleString('en-NG');
+            } else {
+                document.getElementById('timeSuccess').textContent = new Date().toLocaleString('en-NG');
+            }
+            
+            // Auto-redirect countdown
+            let countdown = 10;
+            const countdownInterval = setInterval(() => {
+                countdown--;
+                document.getElementById('successCountdown').textContent = countdown;
+                if (countdown <= 0) {
+                    clearInterval(countdownInterval);
+                    window.location.href = '/orders.html';
+                }
+            }, 1000);
+        }
+
+        // Show failed state
+        function showPaymentFailed(order) {
+            showState('failed');
+            
+            document.getElementById('orderIdFailed').textContent = orderId;
+            document.getElementById('txnRefFailed').textContent = order.transactionReference || transactionReference || '—';
+            document.getElementById('statusFailed').textContent = order.paymentFailureReason || 'Payment Failed';
+            
+            if (order.paymentFailureReason) {
+                document.getElementById('errorDetails').textContent = order.paymentFailureReason;
+                document.getElementById('errorDetails').classList.remove('hidden');
+            }
+        }
+
+        // Show timeout state
+        function showPaymentTimeout() {
+            showState('timeout');
+            
+            document.getElementById('orderIdTimeout').textContent = orderId;
+            document.getElementById('txnRefTimeout').textContent = transactionReference || '—';
+        }
+
+        // Show specific state
+        function showState(state) {
+            document.getElementById('processingState').classList.add('hidden');
+            document.getElementById('successState').classList.add('hidden');
+            document.getElementById('failedState').classList.add('hidden');
+            document.getElementById('timeoutState').classList.add('hidden');
+            
+            document.getElementById(state + 'State').classList.remove('hidden');
+        }
+
+        // Retry payment
+        function retryPayment() {
+            // Store order ID for retry
+            sessionStorage.setItem('retryOrderId', orderId);
+            window.location.href = '/checkout.html?retry=' + orderId;
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+            }
+        });
+    </script>
+</body>
+</html>

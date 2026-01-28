@@ -326,5 +326,16 @@ service cloud.firestore {
       // No updates or deletes
       allow update, delete: if false;
     }
+    
+    // ===== PAYMENT WEBHOOK LOGS =====
+    // Audit trail for all payment webhook calls
+    match /payment_webhook_logs/{logId} {
+      // Only admin can read logs (via Cloud Function)
+      allow read: if isAdmin();
+      
+      // Only Cloud Functions can write logs
+      // NO CLIENT WRITES - ensures audit trail integrity
+      allow write: if false;
+    }
   }
 }
