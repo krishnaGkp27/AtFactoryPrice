@@ -1,0 +1,1083 @@
+/**
+ * AtFactoryPrice - UI Density & Elegance Refinement
+ * 
+ * Purpose: Improve layout density, reduce unnecessary whitespace,
+ *          enhance elegance while maintaining premium look
+ * 
+ * Design Philosophy:
+ * - Clean and confident
+ * - Compact but breathable
+ * - Information-rich without clutter
+ * - Touch-first and thumb-friendly
+ * - Premium but practical
+ * 
+ * Spacing System: 8px-based scale (4 / 8 / 12 / 16 / 24 / 32)
+ * 
+ * Cross-platform optimized for iOS and Android
+ */
+
+/* ===== BASE TYPOGRAPHY REFINEMENTS ===== */
+:root {
+    /* Spacing scale - 8px based */
+    --space-xs: 4px;
+    --space-sm: 8px;
+    --space-md: 12px;
+    --space-lg: 16px;
+    --space-xl: 24px;
+    --space-2xl: 32px;
+    --space-3xl: 48px;
+    
+    /* Refined typography */
+    --font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Roboto', sans-serif;
+    --line-height-tight: 1.25;
+    --line-height-normal: 1.5;
+    --line-height-relaxed: 1.6;
+    
+    /* Touch target minimum */
+    --touch-target-min: 44px;
+    
+    /* Border radius scale */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-xl: 20px;
+    
+    /* Shadows - refined for depth */
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.1);
+    
+    /* Transitions */
+    --transition-fast: 150ms ease;
+    --transition-normal: 200ms ease;
+}
+
+/* Tighter line-height for headings */
+h1, h2, h3, h4, h5, h6 {
+    line-height: var(--line-height-tight);
+}
+
+/* Body text optimization */
+p, li, span {
+    line-height: var(--line-height-normal);
+}
+
+/* ===== NAVIGATION REFINEMENTS ===== */
+/* Reduce navbar height */
+.nav-container {
+    padding: 12px 16px !important; /* Reduced from 1rem 2rem */
+}
+
+.logo-image {
+    height: 36px !important; /* Slightly smaller logo */
+    width: auto !important;
+}
+
+/* Compact nav links */
+.nav-links {
+    gap: 1.25rem !important; /* Reduced from 2rem */
+}
+
+.nav-link {
+    font-size: 0.9rem !important;
+    padding: 6px 0 !important;
+}
+
+/* ===== HERO SECTION REFINEMENTS ===== */
+/* Significantly reduce hero padding */
+.hero {
+    padding: 64px 16px 56px !important; /* Reduced from 120px 20px */
+}
+
+.hero-badge {
+    padding: 6px 14px !important;
+    margin-bottom: 1rem !important;
+    font-size: 0.8rem !important;
+}
+
+.hero-title {
+    font-size: 2.75rem !important; /* Reduced from 3.5rem */
+    margin-bottom: 0.875rem !important;
+    letter-spacing: -0.5px !important;
+}
+
+.hero-subtitle {
+    font-size: 1.1rem !important; /* Reduced from 1.25rem */
+    margin-bottom: 1.75rem !important; /* Reduced from 2.5rem */
+    line-height: 1.5 !important;
+}
+
+/* Compact hero buttons */
+.hero-cta {
+    gap: 12px !important;
+}
+
+.btn-primary, .btn-secondary {
+    padding: 12px 24px !important; /* Reduced from 1rem 2rem */
+    font-size: 0.95rem !important;
+    border-radius: var(--radius-md) !important;
+}
+
+/* ===== TRUST/FEATURES SECTION ===== */
+.trust-section {
+    padding: 32px 16px !important; /* Reduced from 48px 20px */
+}
+
+.trust-container {
+    gap: 16px !important; /* Reduced from 32px */
+}
+
+.trust-item {
+    padding: 14px 16px !important; /* Reduced from 20px 24px */
+    border-radius: var(--radius-md) !important;
+}
+
+.trust-icon {
+    width: 40px !important; /* Reduced from 48px */
+    height: 40px !important;
+    border-radius: var(--radius-sm) !important;
+}
+
+.trust-icon svg {
+    width: 20px !important;
+    height: 20px !important;
+}
+
+.trust-content h4 {
+    font-size: 0.9rem !important;
+    margin-bottom: 2px !important;
+}
+
+.trust-content p {
+    font-size: 0.8rem !important;
+}
+
+/* ===== SECTION HEADERS ===== */
+.categories-section,
+.featured-section,
+.about-section,
+section {
+    padding: 48px 16px !important; /* Reduced from 80px 20px */
+}
+
+.categories-header,
+.section-header {
+    margin-bottom: 32px !important; /* Reduced from 48px */
+}
+
+.categories-header h2,
+.section-title {
+    font-size: 1.75rem !important; /* Reduced from 2.25rem */
+    margin-bottom: 8px !important;
+}
+
+.categories-header p {
+    font-size: 0.95rem !important;
+}
+
+/* ===== CATEGORY CARDS ===== */
+.categories-grid {
+    gap: 16px !important; /* Reduced from 24px */
+}
+
+.category-card-home {
+    min-height: 220px !important; /* Reduced from 280px */
+    border-radius: var(--radius-lg) !important;
+}
+
+.category-card-content {
+    padding: 20px !important; /* Reduced from larger padding */
+}
+
+.category-card-content h3 {
+    font-size: 1.5rem !important;
+    margin-bottom: 6px !important;
+}
+
+.category-card-content p {
+    font-size: 0.85rem !important;
+    margin-bottom: 16px !important;
+}
+
+/* ===== PRODUCT CARDS ===== */
+.product-card {
+    border-radius: var(--radius-md) !important;
+    overflow: hidden;
+}
+
+.product-image-container {
+    aspect-ratio: 1/1;
+}
+
+.product-info {
+    padding: 12px !important; /* Compact info section */
+}
+
+.product-name {
+    font-size: 0.9rem !important;
+    font-weight: 600 !important;
+    margin-bottom: 4px !important;
+    line-height: 1.3 !important;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.product-price {
+    font-size: 1rem !important;
+    font-weight: 700 !important;
+}
+
+.product-unit {
+    font-size: 0.75rem !important;
+    color: #666 !important;
+}
+
+/* Product badges - compact */
+.product-badges {
+    gap: 4px !important;
+    margin-top: 6px !important;
+}
+
+.product-badge {
+    font-size: 0.65rem !important;
+    padding: 2px 6px !important;
+    border-radius: 4px !important;
+}
+
+/* ===== PRODUCT GRID OPTIMIZATION ===== */
+.products-grid {
+    gap: 12px !important; /* Tighter grid gap */
+}
+
+/* ===== FORM ELEMENTS ===== */
+input, select, textarea {
+    padding: 10px 14px !important;
+    font-size: 0.95rem !important;
+    border-radius: var(--radius-sm) !important;
+}
+
+.form-group {
+    margin-bottom: 14px !important;
+}
+
+.form-group label {
+    font-size: 0.85rem !important;
+    margin-bottom: 4px !important;
+}
+
+/* ===== BUTTONS - TOUCH OPTIMIZED ===== */
+button, .btn {
+    min-height: var(--touch-target-min);
+    padding: 10px 20px !important;
+    font-size: 0.9rem !important;
+    border-radius: var(--radius-md) !important;
+    font-weight: 600 !important;
+}
+
+/* ===== FOOTER REFINEMENTS ===== */
+.footer {
+    padding: 40px 16px 24px !important;
+}
+
+.footer-content {
+    gap: 24px !important;
+}
+
+.footer h3, .footer h4 {
+    font-size: 0.95rem !important;
+    margin-bottom: 12px !important;
+}
+
+.footer p, .footer a {
+    font-size: 0.85rem !important;
+    line-height: 1.6 !important;
+}
+
+.footer-bottom {
+    padding-top: 20px !important;
+    margin-top: 24px !important;
+}
+
+.footer-bottom p {
+    font-size: 0.8rem !important;
+}
+
+/* ===== MOBILE NAVIGATION (BOTTOM) ===== */
+.mobile-nav {
+    padding: 8px 0 !important;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom)) !important;
+}
+
+.mobile-nav a {
+    padding: 6px 12px !important;
+    font-size: 0.7rem !important;
+}
+
+.mobile-nav svg {
+    width: 20px !important;
+    height: 20px !important;
+}
+
+/* ===== CARDS & CONTAINERS ===== */
+.card {
+    border-radius: var(--radius-md) !important;
+    padding: 16px !important;
+    box-shadow: var(--shadow-sm) !important;
+}
+
+/* ===== MODALS ===== */
+.modal-content {
+    border-radius: var(--radius-lg) !important;
+    padding: 20px !important;
+}
+
+.modal-header {
+    padding-bottom: 12px !important;
+    margin-bottom: 16px !important;
+}
+
+.modal-header h2, .modal-header h3 {
+    font-size: 1.25rem !important;
+}
+
+/* ===== CHECKOUT REFINEMENTS ===== */
+.checkout-container {
+    gap: 20px !important;
+}
+
+.order-summary {
+    padding: 16px !important;
+    border-radius: var(--radius-md) !important;
+}
+
+.summary-item {
+    padding: 10px 0 !important;
+}
+
+/* ===== DASHBOARD REFINEMENTS ===== */
+.dashboard-header {
+    padding: 20px 16px !important;
+}
+
+.stats-grid {
+    gap: 12px !important;
+}
+
+.stat-card {
+    padding: 16px !important;
+    border-radius: var(--radius-md) !important;
+}
+
+.stat-card h3 {
+    font-size: 0.8rem !important;
+    margin-bottom: 4px !important;
+}
+
+.stat-card .value {
+    font-size: 1.5rem !important;
+}
+
+/* ===== ABOUT SECTION ===== */
+.about-section {
+    padding: 48px 16px !important;
+}
+
+.about-content h2 {
+    font-size: 1.75rem !important;
+    margin-bottom: 16px !important;
+}
+
+.about-content p {
+    font-size: 0.95rem !important;
+    margin-bottom: 12px !important;
+}
+
+.about-values {
+    gap: 16px !important;
+    margin-top: 24px !important;
+}
+
+.value-item {
+    padding: 16px !important;
+}
+
+.value-item h3 {
+    font-size: 1rem !important;
+    margin-bottom: 4px !important;
+}
+
+.value-item p {
+    font-size: 0.85rem !important;
+}
+
+/* ===== CTA SECTION ===== */
+.cta-section {
+    padding: 48px 16px !important;
+}
+
+.cta-section h2 {
+    font-size: 1.75rem !important;
+    margin-bottom: 8px !important;
+}
+
+.cta-section p {
+    font-size: 0.95rem !important;
+    margin-bottom: 20px !important;
+}
+
+/* =================================================================
+   MOBILE RESPONSIVE REFINEMENTS (max-width: 768px)
+   ================================================================= */
+@media (max-width: 768px) {
+    /* Even more compact on mobile */
+    .nav-container {
+        padding: 10px 12px !important;
+    }
+    
+    .logo-image {
+        height: 32px !important;
+    }
+    
+    .nav-links {
+        gap: 0.75rem !important;
+    }
+    
+    .nav-link {
+        font-size: 0.85rem !important;
+    }
+    
+    /* Hero - much more compact on mobile */
+    .hero {
+        padding: 40px 16px 36px !important;
+    }
+    
+    .hero-badge {
+        padding: 5px 12px !important;
+        font-size: 0.75rem !important;
+        margin-bottom: 0.75rem !important;
+    }
+    
+    .hero-title {
+        font-size: 1.75rem !important;
+        margin-bottom: 0.5rem !important;
+    }
+    
+    .hero-subtitle {
+        font-size: 0.95rem !important;
+        margin-bottom: 1.25rem !important;
+    }
+    
+    .hero-cta {
+        gap: 10px !important;
+    }
+    
+    .btn-primary, .btn-secondary {
+        padding: 12px 20px !important;
+        font-size: 0.9rem !important;
+        max-width: 100% !important;
+    }
+    
+    /* Trust section mobile */
+    .trust-section {
+        padding: 24px 12px !important;
+    }
+    
+    .trust-item {
+        padding: 12px 14px !important;
+    }
+    
+    .trust-icon {
+        width: 36px !important;
+        height: 36px !important;
+    }
+    
+    .trust-content h4 {
+        font-size: 0.85rem !important;
+    }
+    
+    .trust-content p {
+        font-size: 0.75rem !important;
+    }
+    
+    /* Sections mobile */
+    .categories-section,
+    .featured-section,
+    .about-section,
+    section {
+        padding: 36px 12px !important;
+    }
+    
+    .categories-header,
+    .section-header {
+        margin-bottom: 20px !important;
+    }
+    
+    .categories-header h2,
+    .section-title {
+        font-size: 1.5rem !important;
+    }
+    
+    .categories-header p {
+        font-size: 0.85rem !important;
+    }
+    
+    /* Category cards mobile */
+    .category-card-home {
+        min-height: 160px !important;
+    }
+    
+    .category-card-content {
+        padding: 16px !important;
+    }
+    
+    .category-card-content h3 {
+        font-size: 1.25rem !important;
+    }
+    
+    .category-card-content p {
+        font-size: 0.8rem !important;
+        margin-bottom: 12px !important;
+    }
+    
+    /* Product grid - 2 columns on mobile */
+    .products-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 10px !important;
+    }
+    
+    .product-info {
+        padding: 10px !important;
+    }
+    
+    .product-name {
+        font-size: 0.8rem !important;
+    }
+    
+    .product-price {
+        font-size: 0.9rem !important;
+    }
+    
+    /* Footer mobile */
+    .footer {
+        padding: 32px 12px 20px !important;
+    }
+    
+    .footer-content {
+        gap: 20px !important;
+    }
+    
+    /* About section mobile */
+    .about-content h2 {
+        font-size: 1.5rem !important;
+    }
+    
+    .about-content p {
+        font-size: 0.9rem !important;
+    }
+    
+    .value-item {
+        padding: 14px !important;
+    }
+    
+    /* CTA mobile */
+    .cta-section {
+        padding: 36px 12px !important;
+    }
+    
+    .cta-section h2 {
+        font-size: 1.5rem !important;
+    }
+    
+    /* Dashboard mobile */
+    .dashboard-header {
+        padding: 16px 12px !important;
+    }
+    
+    .stat-card {
+        padding: 14px !important;
+    }
+    
+    .stat-card .value {
+        font-size: 1.25rem !important;
+    }
+    
+    /* Form elements mobile */
+    input, select, textarea {
+        padding: 10px 12px !important;
+        font-size: 16px !important; /* Prevent iOS zoom */
+    }
+    
+    .form-group {
+        margin-bottom: 12px !important;
+    }
+}
+
+/* =================================================================
+   SMALL PHONES (max-width: 375px)
+   ================================================================= */
+@media (max-width: 375px) {
+    .hero {
+        padding: 32px 12px 28px !important;
+    }
+    
+    .hero-title {
+        font-size: 1.5rem !important;
+    }
+    
+    .hero-subtitle {
+        font-size: 0.875rem !important;
+    }
+    
+    .categories-header h2,
+    .section-title {
+        font-size: 1.25rem !important;
+    }
+    
+    .product-name {
+        font-size: 0.75rem !important;
+    }
+    
+    .product-price {
+        font-size: 0.85rem !important;
+    }
+}
+
+/* =================================================================
+   TABLETS (min-width: 769px and max-width: 1024px)
+   ================================================================= */
+@media (min-width: 769px) and (max-width: 1024px) {
+    .hero {
+        padding: 56px 20px 48px !important;
+    }
+    
+    .hero-title {
+        font-size: 2.25rem !important;
+    }
+    
+    .products-grid {
+        grid-template-columns: repeat(3, 1fr) !important;
+        gap: 14px !important;
+    }
+    
+    .categories-grid {
+        gap: 14px !important;
+    }
+    
+    .category-card-home {
+        min-height: 180px !important;
+    }
+}
+
+/* =================================================================
+   LARGE SCREENS (min-width: 1025px)
+   ================================================================= */
+@media (min-width: 1025px) {
+    .products-grid {
+        grid-template-columns: repeat(4, 1fr) !important;
+        gap: 16px !important;
+    }
+    
+    .hero {
+        padding: 72px 24px 64px !important;
+    }
+    
+    .hero-title {
+        font-size: 2.5rem !important;
+    }
+}
+
+/* =================================================================
+   UTILITY CLASSES
+   ================================================================= */
+.compact-section {
+    padding: 32px 16px !important;
+}
+
+.tight-spacing {
+    gap: 8px !important;
+}
+
+.no-margin-bottom {
+    margin-bottom: 0 !important;
+}
+
+/* =================================================================
+   ANIMATION REFINEMENTS - Subtle & Fast
+   ================================================================= */
+* {
+    transition-duration: var(--transition-fast);
+}
+
+/* Disable hover transforms on touch devices */
+@media (hover: none) {
+    .category-card-home:hover,
+    .product-card:hover,
+    .trust-item:hover,
+    .btn-primary:hover,
+    .btn-secondary:hover {
+        transform: none !important;
+    }
+}
+
+/* =================================================================
+   SAFE AREA INSETS (iOS notch support)
+   ================================================================= */
+@supports (padding: env(safe-area-inset-top)) {
+    .navbar {
+        padding-top: env(safe-area-inset-top);
+    }
+    
+    .mobile-nav {
+        padding-bottom: calc(8px + env(safe-area-inset-bottom));
+    }
+}
+
+/* =================================================================
+   PRODUCT LISTING PAGE SPECIFIC
+   ================================================================= */
+/* Category sidebar */
+.category-sidebar {
+    padding: 12px !important;
+}
+
+.category-sidebar h3 {
+    font-size: 0.9rem !important;
+    margin-bottom: 8px !important;
+}
+
+.category-list li {
+    padding: 8px 10px !important;
+    font-size: 0.85rem !important;
+    border-radius: var(--radius-sm) !important;
+}
+
+/* Product filters bar */
+.filters-bar {
+    padding: 10px 12px !important;
+    gap: 10px !important;
+}
+
+.filters-bar select {
+    padding: 8px 12px !important;
+    font-size: 0.85rem !important;
+}
+
+/* Search bar */
+.search-container {
+    padding: 8px 12px !important;
+}
+
+.search-container input {
+    padding: 10px 14px !important;
+    font-size: 0.9rem !important;
+}
+
+/* Product carousel */
+.product-carousel {
+    height: 220px !important;
+}
+
+.carousel-nav {
+    width: 32px !important;
+    height: 32px !important;
+}
+
+.carousel-dots {
+    gap: 6px !important;
+    padding: 6px !important;
+}
+
+.carousel-dot {
+    width: 6px !important;
+    height: 6px !important;
+}
+
+/* =================================================================
+   CHECKOUT PAGE SPECIFIC
+   ================================================================= */
+.checkout-page {
+    padding: 20px 12px !important;
+}
+
+.checkout-form {
+    padding: 16px !important;
+    border-radius: var(--radius-md) !important;
+}
+
+.checkout-form h2 {
+    font-size: 1.25rem !important;
+    margin-bottom: 16px !important;
+}
+
+.order-items {
+    max-height: 250px !important;
+}
+
+.order-item {
+    padding: 10px 0 !important;
+    gap: 10px !important;
+}
+
+.order-item-image {
+    width: 56px !important;
+    height: 56px !important;
+    border-radius: var(--radius-sm) !important;
+}
+
+.order-item-name {
+    font-size: 0.85rem !important;
+}
+
+.order-item-price {
+    font-size: 0.9rem !important;
+}
+
+.submission-options {
+    margin-top: 20px !important;
+}
+
+.submission-options h3 {
+    font-size: 1rem !important;
+    margin-bottom: 12px !important;
+}
+
+.btn-submit {
+    padding: 12px 16px !important;
+    font-size: 0.9rem !important;
+    margin-bottom: 8px !important;
+    border-radius: var(--radius-md) !important;
+}
+
+/* =================================================================
+   CART PAGE SPECIFIC
+   ================================================================= */
+.cart-page {
+    padding: 20px 12px !important;
+}
+
+.cart-item {
+    padding: 12px !important;
+    gap: 12px !important;
+    border-radius: var(--radius-md) !important;
+}
+
+.cart-item-image {
+    width: 72px !important;
+    height: 72px !important;
+}
+
+.cart-item-details h3 {
+    font-size: 0.9rem !important;
+    margin-bottom: 4px !important;
+}
+
+.quantity-controls {
+    gap: 6px !important;
+}
+
+.quantity-controls button {
+    width: 32px !important;
+    height: 32px !important;
+    font-size: 1rem !important;
+}
+
+.cart-summary {
+    padding: 16px !important;
+    border-radius: var(--radius-md) !important;
+}
+
+.cart-total {
+    font-size: 1.25rem !important;
+}
+
+/* =================================================================
+   AUTH PAGES (LOGIN/SIGNUP) SPECIFIC
+   ================================================================= */
+.auth-container {
+    padding: 32px 20px !important;
+}
+
+.auth-card {
+    padding: 24px !important;
+    border-radius: var(--radius-lg) !important;
+    max-width: 400px !important;
+}
+
+.auth-card h1,
+.auth-card h2 {
+    font-size: 1.5rem !important;
+    margin-bottom: 8px !important;
+}
+
+.auth-card p {
+    font-size: 0.9rem !important;
+    margin-bottom: 20px !important;
+}
+
+.auth-card .form-group {
+    margin-bottom: 14px !important;
+}
+
+.auth-card label {
+    font-size: 0.85rem !important;
+    margin-bottom: 4px !important;
+}
+
+.auth-card input {
+    padding: 12px 14px !important;
+}
+
+.auth-card .btn {
+    padding: 12px 20px !important;
+    font-size: 0.95rem !important;
+}
+
+/* Referral code section in signup */
+.referral-section {
+    padding: 14px !important;
+    margin-top: 16px !important;
+    border-radius: var(--radius-md) !important;
+}
+
+.referral-section h3,
+.referral-section h4 {
+    font-size: 0.9rem !important;
+    margin-bottom: 8px !important;
+}
+
+/* =================================================================
+   ORDERS PAGE SPECIFIC
+   ================================================================= */
+.orders-page {
+    padding: 20px 12px !important;
+}
+
+.order-card {
+    padding: 14px !important;
+    border-radius: var(--radius-md) !important;
+    margin-bottom: 12px !important;
+}
+
+.order-card-header {
+    margin-bottom: 10px !important;
+}
+
+.order-id {
+    font-size: 0.85rem !important;
+}
+
+.order-status {
+    padding: 4px 10px !important;
+    font-size: 0.75rem !important;
+    border-radius: 12px !important;
+}
+
+.order-items-preview {
+    font-size: 0.85rem !important;
+}
+
+.order-total {
+    font-size: 1rem !important;
+}
+
+/* =================================================================
+   PROFILE PAGE SPECIFIC
+   ================================================================= */
+.profile-page {
+    padding: 20px 12px !important;
+}
+
+.profile-card {
+    padding: 20px !important;
+    border-radius: var(--radius-md) !important;
+}
+
+.profile-avatar {
+    width: 64px !important;
+    height: 64px !important;
+}
+
+.profile-name {
+    font-size: 1.25rem !important;
+}
+
+.profile-email {
+    font-size: 0.85rem !important;
+}
+
+.profile-stats {
+    gap: 12px !important;
+    margin-top: 16px !important;
+}
+
+.profile-stat {
+    padding: 12px !important;
+}
+
+.profile-stat-value {
+    font-size: 1.25rem !important;
+}
+
+.profile-stat-label {
+    font-size: 0.75rem !important;
+}
+
+/* =================================================================
+   LIGHTBOX/MODAL REFINEMENTS
+   ================================================================= */
+.lightbox-content {
+    padding: 16px !important;
+    border-radius: var(--radius-lg) !important;
+}
+
+.lightbox-close {
+    width: 36px !important;
+    height: 36px !important;
+    font-size: 1.5rem !important;
+}
+
+/* =================================================================
+   LOADING STATES
+   ================================================================= */
+.loading-spinner {
+    width: 32px !important;
+    height: 32px !important;
+}
+
+.skeleton {
+    border-radius: var(--radius-sm) !important;
+}
+
+/* =================================================================
+   TOAST/NOTIFICATION REFINEMENTS
+   ================================================================= */
+.toast {
+    padding: 12px 16px !important;
+    font-size: 0.85rem !important;
+    border-radius: var(--radius-md) !important;
+}
+
+/* =================================================================
+   BADGE REFINEMENTS
+   ================================================================= */
+.badge {
+    padding: 3px 8px !important;
+    font-size: 0.7rem !important;
+    border-radius: 10px !important;
+}
+
+/* =================================================================
+   PRINT STYLES - Clean output
+   ================================================================= */
+@media print {
+    .hero {
+        padding: 20px !important;
+    }
+    
+    .mobile-nav,
+    .navbar {
+        display: none !important;
+    }
+}
