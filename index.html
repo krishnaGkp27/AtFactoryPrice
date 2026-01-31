@@ -131,6 +131,112 @@
             justify-content: center;
         }
 
+        /* ===== HOMEPAGE SLIDER ===== */
+        .hero-slider {
+            position: relative;
+            width: 100%;
+            overflow: hidden;
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+        }
+
+        .slider-container {
+            display: flex;
+            transition: transform 0.5s ease-in-out;
+        }
+
+        .slide {
+            min-width: 100%;
+            position: relative;
+            padding: 80px 20px;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 400px;
+        }
+
+        .slide-bg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-size: cover;
+            background-position: center;
+            opacity: 0.3;
+        }
+
+        .slide-content {
+            max-width: 800px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .slider-nav {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 8px;
+            z-index: 10;
+        }
+
+        .slider-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.2);
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .slider-dot.active {
+            background: #000;
+            transform: scale(1.2);
+        }
+
+        .slider-arrow {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 40px;
+            height: 40px;
+            background: rgba(255,255,255,0.9);
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            transition: all 0.3s;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .slider-arrow:hover {
+            background: #fff;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .slider-arrow.prev {
+            left: 20px;
+        }
+
+        .slider-arrow.next {
+            right: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .slider-arrow {
+                display: none;
+            }
+            .slide {
+                padding: 60px 16px;
+                min-height: 300px;
+            }
+        }
+
         /* ===== HERO SECTION - Enhanced 2026 Design ===== */
         .hero {
             background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
@@ -782,7 +888,49 @@
         </div>
     </nav>
 
-    <section class="hero">
+    <!-- Homepage Slider (Dynamic from Firestore) -->
+    <section class="hero-slider" id="heroSlider">
+        <div class="slider-container" id="sliderContainer">
+            <!-- Default slide (shown while loading or as fallback) -->
+            <div class="slide" data-slide-id="default">
+                <div class="slide-content">
+                    <span class="hero-badge">🏭 Direct from Factory</span>
+                    <h1 class="hero-title">Welcome to AtFactoryPrice</h1>
+                    <p class="hero-subtitle">Premium fabrics and garments directly from manufacturers in Lagos, Nigeria</p>
+                    <div class="hero-cta">
+                        <a href="products.html" class="btn-primary">
+                            Browse Products
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M5 12h14M12 5l7 7-7 7"/>
+                            </svg>
+                        </a>
+                        <a href="https://wa.me/2348138475360?text=Hi! I'm interested in your factory direct products" class="btn-secondary" target="_blank">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+                            </svg>
+                            WhatsApp
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Slider Navigation -->
+        <button class="slider-arrow prev" onclick="prevSlide()" aria-label="Previous slide">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M15 18l-6-6 6-6"/>
+            </svg>
+        </button>
+        <button class="slider-arrow next" onclick="nextSlide()" aria-label="Next slide">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 18l6-6-6-6"/>
+            </svg>
+        </button>
+        <div class="slider-nav" id="sliderNav"></div>
+    </section>
+
+    <!-- Original hero section hidden, kept for backward compatibility -->
+    <section class="hero" style="display:none;">
         <div class="hero-content">
             <span class="hero-badge">🏭 Direct from Factory</span>
             <h1 class="hero-title">Welcome to AtFactoryPrice</h1>
@@ -1016,37 +1164,168 @@
     </footer>
 
     <script>
-        // Slideshow functionality
-        let currentSlideIndex = 0;
-        const slides = document.querySelectorAll('.slide');
-        const dots = document.querySelectorAll('.dot');
+        // ===== HOMEPAGE SLIDER WITH FIRESTORE =====
+        let sliderCurrentIndex = 0;
+        let sliderSlides = [];
+        let sliderAutoPlay = null;
+        let sliderTouchStartX = 0;
+        let sliderTouchEndX = 0;
 
-        function showSlide(n) {
-            if (n >= slides.length) currentSlideIndex = 0;
-            if (n < 0) currentSlideIndex = slides.length - 1;
+        // Load slides from Firestore
+        async function loadSliderSlides() {
+            try {
+                // Wait for Firebase to initialize
+                if (typeof firebase === 'undefined' || !firebase.firestore) {
+                    console.log('Firebase not yet loaded, using default slide');
+                    return;
+                }
+
+                const db = firebase.firestore();
+                const snapshot = await db.collection('site_config')
+                    .doc('homepage_slider')
+                    .collection('slides')
+                    .where('active', '==', true)
+                    .orderBy('order', 'asc')
+                    .get();
+
+                if (snapshot.empty) {
+                    console.log('No active slides found, using default');
+                    initSliderNavigation();
+                    return;
+                }
+
+                sliderSlides = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                }));
+
+                renderSliderSlides();
+                initSliderNavigation();
+                startSliderAutoPlay();
+
+            } catch (error) {
+                console.log('Could not load slider slides:', error.message);
+                initSliderNavigation();
+            }
+        }
+
+        // Render slides from Firestore data
+        function renderSliderSlides() {
+            const container = document.getElementById('sliderContainer');
+            if (!container || sliderSlides.length === 0) return;
+
+            container.innerHTML = sliderSlides.map((slide, index) => `
+                <div class="slide" data-slide-id="${slide.id}">
+                    ${slide.imageUrl ? `<div class="slide-bg" style="background-image: url('${slide.imageUrl}')"></div>` : ''}
+                    <div class="slide-content">
+                        ${slide.badge ? `<span class="hero-badge">${slide.badge}</span>` : ''}
+                        <h1 class="hero-title">${slide.title || 'Welcome to AtFactoryPrice'}</h1>
+                        <p class="hero-subtitle">${slide.subtitle || ''}</p>
+                        ${slide.ctaLink ? `
+                        <div class="hero-cta">
+                            <a href="${slide.ctaLink}" class="btn-primary">
+                                ${slide.ctaText || 'Shop Now'}
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M5 12h14M12 5l7 7-7 7"/>
+                                </svg>
+                            </a>
+                        </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Initialize slider navigation dots
+        function initSliderNavigation() {
+            const container = document.getElementById('sliderContainer');
+            const navContainer = document.getElementById('sliderNav');
+            if (!container || !navContainer) return;
+
+            const slides = container.querySelectorAll('.slide');
+            const slideCount = slides.length;
+
+            // Hide arrows if only 1 slide
+            const arrows = document.querySelectorAll('.slider-arrow');
+            arrows.forEach(arrow => {
+                arrow.style.display = slideCount <= 1 ? 'none' : 'flex';
+            });
+
+            // Generate dots
+            navContainer.innerHTML = Array.from({length: slideCount}, (_, i) => 
+                `<div class="slider-dot ${i === 0 ? 'active' : ''}" onclick="goToSlide(${i})"></div>`
+            ).join('');
+
+            // Add touch support
+            container.addEventListener('touchstart', handleTouchStart, { passive: true });
+            container.addEventListener('touchend', handleTouchEnd, { passive: true });
+        }
+
+        // Navigate to specific slide
+        function goToSlide(index) {
+            const container = document.getElementById('sliderContainer');
+            const slides = container.querySelectorAll('.slide');
+            const dots = document.querySelectorAll('.slider-dot');
+
+            if (index < 0) index = slides.length - 1;
+            if (index >= slides.length) index = 0;
+
+            sliderCurrentIndex = index;
+            container.style.transform = `translateX(-${index * 100}%)`;
+
+            dots.forEach((dot, i) => {
+                dot.classList.toggle('active', i === index);
+            });
+        }
+
+        function nextSlide() {
+            goToSlide(sliderCurrentIndex + 1);
+        }
+
+        function prevSlide() {
+            goToSlide(sliderCurrentIndex - 1);
+        }
+
+        // Touch handlers for mobile swipe
+        function handleTouchStart(e) {
+            sliderTouchStartX = e.touches[0].clientX;
+        }
+
+        function handleTouchEnd(e) {
+            sliderTouchEndX = e.changedTouches[0].clientX;
+            const diff = sliderTouchStartX - sliderTouchEndX;
             
-            slides.forEach(slide => slide.classList.remove('active'));
-            dots.forEach(dot => dot.classList.remove('active'));
+            if (Math.abs(diff) > 50) {
+                if (diff > 0) {
+                    nextSlide();
+                } else {
+                    prevSlide();
+                }
+            }
+        }
+
+        // Auto-play functionality
+        function startSliderAutoPlay() {
+            stopSliderAutoPlay();
+            sliderAutoPlay = setInterval(() => {
+                nextSlide();
+            }, 5000);
+        }
+
+        function stopSliderAutoPlay() {
+            if (sliderAutoPlay) {
+                clearInterval(sliderAutoPlay);
+                sliderAutoPlay = null;
+            }
+        }
+
+        // Initialize slider when Firebase is loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            initSliderNavigation(); // Initialize with default slide first
             
-            slides[currentSlideIndex].classList.add('active');
-            dots[currentSlideIndex].classList.add('active');
-        }
-
-        function changeSlide(n) {
-            currentSlideIndex += n;
-            showSlide(currentSlideIndex);
-        }
-
-        function currentSlide(n) {
-            currentSlideIndex = n;
-            showSlide(currentSlideIndex);
-        }
-
-        // Auto-play slideshow
-        setInterval(() => {
-            currentSlideIndex++;
-            showSlide(currentSlideIndex);
-        }, 5000);
+            // Try to load dynamic slides after a short delay (for Firebase init)
+            setTimeout(loadSliderSlides, 500);
+        });
 
         // Update cart count
         function updateCartCount() {
