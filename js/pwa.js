@@ -223,6 +223,28 @@ function initMobileNavigation() {
   
   // Add padding to body for bottom nav
   document.body.style.paddingBottom = '70px';
+  
+  // Hide duplicate nav items from top navbar (Home, Products, Cart)
+  // These are now shown in the bottom mobile nav
+  hideDuplicateTopNavItems();
+}
+
+// Hide Home, Products, Cart from top navbar on mobile (bottom nav shows them)
+function hideDuplicateTopNavItems() {
+  const navLinks = document.querySelector('.nav-links');
+  if (!navLinks) return;
+  
+  // Hide Home link (index.html)
+  const homeLink = navLinks.querySelector('a[href="index.html"]');
+  if (homeLink) homeLink.style.cssText = 'display: none !important;';
+  
+  // Hide Products link
+  const productsLink = navLinks.querySelector('a[href="products.html"]');
+  if (productsLink) productsLink.style.cssText = 'display: none !important;';
+  
+  // Hide Cart link
+  const cartLink = navLinks.querySelector('a.cart-link, a[href="cart.html"]');
+  if (cartLink) cartLink.style.cssText = 'display: none !important;';
 }
 
 function updateMobileCartBadge() {
@@ -434,10 +456,27 @@ window.addEventListener('resize', () => {
   if (window.innerWidth > 768 && nav) {
     nav.remove();
     document.body.style.paddingBottom = '';
+    // Restore top nav items when switching to desktop
+    restoreTopNavItems();
   } else if (window.innerWidth <= 768 && !nav) {
     initMobileNavigation();
   }
 });
+
+// Restore top nav items when switching back to desktop
+function restoreTopNavItems() {
+  const navLinks = document.querySelector('.nav-links');
+  if (!navLinks) return;
+  
+  const homeLink = navLinks.querySelector('a[href="index.html"]');
+  if (homeLink) homeLink.style.cssText = '';
+  
+  const productsLink = navLinks.querySelector('a[href="products.html"]');
+  if (productsLink) productsLink.style.cssText = '';
+  
+  const cartLink = navLinks.querySelector('a.cart-link, a[href="cart.html"]');
+  if (cartLink) cartLink.style.cssText = '';
+}
 
 // Make functions globally available
 window.installPWA = installPWA;

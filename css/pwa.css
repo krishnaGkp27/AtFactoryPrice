@@ -298,11 +298,24 @@
 
 /* ===== HIDE DUPLICATE NAV ITEMS ON MOBILE ===== */
 /* When bottom nav is visible, hide Home/Products/Cart from top navbar */
+/* This prevents showing the same nav items twice (top + bottom) */
 @media (max-width: 768px) {
   .nav-links > a[href="index.html"],
   .nav-links > a[href="products.html"],
-  .nav-links > a.cart-link {
+  .nav-links > a.cart-link,
+  .navbar .nav-links > a[href="index.html"],
+  .navbar .nav-links > a[href="products.html"],
+  .navbar .nav-links > a.cart-link {
     display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    width: 0 !important;
+    height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    position: absolute !important;
+    left: -9999px !important;
   }
   
   /* Keep only logo and auth in top nav on mobile */

@@ -2205,27 +2205,41 @@
                 const subcat = subcats[key];
                 // Use precomputed counts instead of filtering
                 const count = categoryCounts.level2[`${level1}|${key}`] || 0;
-                const isEmpty = count === 0;
-                const countDisplay = isEmpty 
-                    ? '<span class="category-count coming-soon">Coming Soon</span>' 
-                    : `<span class="category-count">${count} Products</span>`;
+                
+                // Skip empty sub-categories - don't display them at all
+                if (count === 0) return;
                 
                 html += `
-                    <div class="category-card ${isEmpty ? 'empty-category' : ''}" onclick="navigateLevel2('${level1}', '${key}')">
+                    <div class="category-card" onclick="navigateLevel2('${level1}', '${key}')">
                         <div class="category-image"></div>
                         <div class="category-overlay">
                             <h2 class="category-name">${subcat.name}</h2>
-                            ${countDisplay}
+                            <span class="category-count">${count} Products</span>
                         </div>
                     </div>
                 `;
                 visibleCount++;
             });
 
-            html += '</div>';
+            // If no subcategories have products, show a message
+            if (visibleCount === 0) {
+                html = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 48px; height: 48px; margin-bottom: 16px; opacity: 0.5;">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M8 12h8M12 8v8"></path>
+                        </svg>
+                        <h3>Coming Soon</h3>
+                        <p>Products in this category are being added. Check back soon!</p>
+                    </div>
+                `;
+            } else {
+                html += '</div>';
+            }
+            
             container.innerHTML = html;
             const productCountEl2 = document.getElementById('productCount');
-            if (productCountEl2) productCountEl2.textContent = `${visibleCount} Subcategories`;
+            if (productCountEl2) productCountEl2.textContent = visibleCount > 0 ? `${visibleCount} Subcategories` : 'Coming Soon';
         }
 
         function renderLevel3Types(container, level1, level2) {
@@ -2237,27 +2251,41 @@
                 const type = types[key];
                 // Use precomputed counts instead of filtering
                 const count = categoryCounts.level3[`${level1}|${level2}|${key}`] || 0;
-                const isEmpty = count === 0;
-                const countDisplay = isEmpty 
-                    ? '<span class="category-count coming-soon">Coming Soon</span>' 
-                    : `<span class="category-count">${count} Products</span>`;
+                
+                // Skip empty types - don't display them at all
+                if (count === 0) return;
                 
                 html += `
-                    <div class="category-card ${isEmpty ? 'empty-category' : ''}" onclick="navigateLevel3('${level1}', '${level2}', '${key}')">
+                    <div class="category-card" onclick="navigateLevel3('${level1}', '${level2}', '${key}')">
                         <div class="category-image"></div>
                         <div class="category-overlay">
                             <h2 class="category-name">${type}</h2>
-                            ${countDisplay}
+                            <span class="category-count">${count} Products</span>
                         </div>
                     </div>
                 `;
                 visibleCount++;
             });
 
-            html += '</div>';
+            // If no types have products, show a message
+            if (visibleCount === 0) {
+                html = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 48px; height: 48px; margin-bottom: 16px; opacity: 0.5;">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M8 12h8M12 8v8"></path>
+                        </svg>
+                        <h3>Coming Soon</h3>
+                        <p>Products in this category are being added. Check back soon!</p>
+                    </div>
+                `;
+            } else {
+                html += '</div>';
+            }
+            
             container.innerHTML = html;
             const productCountEl3 = document.getElementById('productCount');
-            if (productCountEl3) productCountEl3.textContent = `${visibleCount} Types`;
+            if (productCountEl3) productCountEl3.textContent = visibleCount > 0 ? `${visibleCount} Types` : 'Coming Soon';
         }
 
         function renderProducts(container, level1, level2, level3) {

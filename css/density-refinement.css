@@ -448,6 +448,23 @@ button, .btn {
         font-size: 0.85rem !important;
     }
     
+    /* ===== HIDE DUPLICATE NAV ITEMS ON MOBILE ===== */
+    /* When bottom mobile nav is visible, hide Home/Products/Cart from top navbar */
+    .navbar .nav-container .nav-links > a[href="index.html"],
+    .navbar .nav-container .nav-links > a[href="products.html"],
+    .navbar .nav-container .nav-links > a.cart-link,
+    .nav-links > a[href="index.html"],
+    .nav-links > a[href="products.html"],
+    .nav-links > a.cart-link {
+        display: none !important;
+        visibility: hidden !important;
+        width: 0 !important;
+        height: 0 !important;
+        overflow: hidden !important;
+        position: absolute !important;
+        pointer-events: none !important;
+    }
+    
     /* Hero - much more compact on mobile */
     .hero {
         padding: 40px 16px 36px !important;
