@@ -245,6 +245,25 @@
             font-weight: 600;
         }
 
+        .category-count.coming-soon {
+            background: linear-gradient(135deg, rgba(251, 191, 36, 0.9), rgba(245, 158, 11, 0.9));
+            color: #000;
+            animation: pulse-glow 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 8px rgba(251, 191, 36, 0.4); }
+            50% { box-shadow: 0 0 16px rgba(251, 191, 36, 0.7); }
+        }
+
+        .category-card.empty-category {
+            opacity: 0.85;
+        }
+
+        .category-card.empty-category .category-overlay {
+            background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%);
+        }
+
         /* ===== ENHANCED PRODUCTS GRID - 2026 Design ===== */
         .products-grid {
             display: grid;
@@ -2148,79 +2167,97 @@
 
         function renderLevel1Categories(container) {
             let html = '<div class="category-grid">';
+            let visibleCount = 0;
 
             Object.keys(CATEGORIES).forEach(key => {
                 const cat = CATEGORIES[key];
                 // Use precomputed counts instead of filtering
                 const count = categoryCounts.level1[key] || 0;
+                const isEmpty = count === 0;
+                const countDisplay = isEmpty 
+                    ? '<span class="category-count coming-soon">Coming Soon</span>' 
+                    : `<span class="category-count">${count} Products</span>`;
                 
                 html += `
-                    <div class="category-card" onclick="navigateLevel1('${key}')">
+                    <div class="category-card ${isEmpty ? 'empty-category' : ''}" onclick="navigateLevel1('${key}')">
                         <div class="category-image"></div>
                         <div class="category-overlay">
                             <h2 class="category-name">${cat.name}</h2>
-                            <span class="category-count">${count} Products</span>
+                            ${countDisplay}
                         </div>
                     </div>
                 `;
+                visibleCount++;
             });
 
             html += '</div>';
             container.innerHTML = html;
             const productCountEl1 = document.getElementById('productCount');
-            if (productCountEl1) productCountEl1.textContent = `${Object.keys(CATEGORIES).length} Categories`;
+            if (productCountEl1) productCountEl1.textContent = `${visibleCount} Categories`;
         }
 
         function renderLevel2Categories(container, level1) {
             const subcats = CATEGORIES[level1].subcategories;
             let html = '<div class="category-grid">';
+            let visibleCount = 0;
 
             Object.keys(subcats).forEach(key => {
                 const subcat = subcats[key];
                 // Use precomputed counts instead of filtering
                 const count = categoryCounts.level2[`${level1}|${key}`] || 0;
+                const isEmpty = count === 0;
+                const countDisplay = isEmpty 
+                    ? '<span class="category-count coming-soon">Coming Soon</span>' 
+                    : `<span class="category-count">${count} Products</span>`;
                 
                 html += `
-                    <div class="category-card" onclick="navigateLevel2('${level1}', '${key}')">
+                    <div class="category-card ${isEmpty ? 'empty-category' : ''}" onclick="navigateLevel2('${level1}', '${key}')">
                         <div class="category-image"></div>
                         <div class="category-overlay">
                             <h2 class="category-name">${subcat.name}</h2>
-                            <span class="category-count">${count} Products</span>
+                            ${countDisplay}
                         </div>
                     </div>
                 `;
+                visibleCount++;
             });
 
             html += '</div>';
             container.innerHTML = html;
             const productCountEl2 = document.getElementById('productCount');
-            if (productCountEl2) productCountEl2.textContent = `${Object.keys(subcats).length} Subcategories`;
+            if (productCountEl2) productCountEl2.textContent = `${visibleCount} Subcategories`;
         }
 
         function renderLevel3Types(container, level1, level2) {
             const types = CATEGORIES[level1].subcategories[level2].types;
             let html = '<div class="category-grid">';
+            let visibleCount = 0;
 
             Object.keys(types).forEach(key => {
                 const type = types[key];
                 // Use precomputed counts instead of filtering
                 const count = categoryCounts.level3[`${level1}|${level2}|${key}`] || 0;
+                const isEmpty = count === 0;
+                const countDisplay = isEmpty 
+                    ? '<span class="category-count coming-soon">Coming Soon</span>' 
+                    : `<span class="category-count">${count} Products</span>`;
                 
                 html += `
-                    <div class="category-card" onclick="navigateLevel3('${level1}', '${level2}', '${key}')">
+                    <div class="category-card ${isEmpty ? 'empty-category' : ''}" onclick="navigateLevel3('${level1}', '${level2}', '${key}')">
                         <div class="category-image"></div>
                         <div class="category-overlay">
                             <h2 class="category-name">${type}</h2>
-                            <span class="category-count">${count} Products</span>
+                            ${countDisplay}
                         </div>
                     </div>
                 `;
+                visibleCount++;
             });
 
             html += '</div>';
             container.innerHTML = html;
             const productCountEl3 = document.getElementById('productCount');
-            if (productCountEl3) productCountEl3.textContent = `${Object.keys(types).length} Types`;
+            if (productCountEl3) productCountEl3.textContent = `${visibleCount} Types`;
         }
 
         function renderProducts(container, level1, level2, level3) {

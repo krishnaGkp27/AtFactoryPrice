@@ -296,6 +296,21 @@
   }
 }
 
+/* ===== HIDE DUPLICATE NAV ITEMS ON MOBILE ===== */
+/* When bottom nav is visible, hide Home/Products/Cart from top navbar */
+@media (max-width: 768px) {
+  .nav-links > a[href="index.html"],
+  .nav-links > a[href="products.html"],
+  .nav-links > a.cart-link {
+    display: none !important;
+  }
+  
+  /* Keep only logo and auth in top nav on mobile */
+  .nav-links {
+    gap: 8px;
+  }
+}
+
 @media (max-width: 480px) {
   .pwa-banner-content {
     flex-wrap: wrap;

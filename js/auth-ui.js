@@ -138,6 +138,32 @@ const authStyles = `
         justify-content: center;
         font-weight: 600;
         font-size: 0.85rem;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .user-avatar-img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        border-radius: 50%;
+    }
+
+    .user-avatar-initials-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.25);
+        color: rgba(255, 255, 255, 0.9);
+        font-weight: 700;
+        font-size: 0.75rem;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+        letter-spacing: 0.5px;
     }
 
     .user-name {
@@ -883,11 +909,24 @@ function updateNavbarAuth(fromCache = false) {
         const initials = getInitials(displayName);
         const firstName = displayName.split(' ')[0];
         const referralCode = currentUserData?.referralCode || '';
+        const profilePicture = currentUserData?.profilePicture || currentUser?.photoURL || '';
+        
+        // Avatar HTML - show profile pic with initials overlay, or just initials
+        let avatarHTML = '';
+        if (profilePicture) {
+            avatarHTML = `
+                <span class="user-avatar">
+                    <img src="${profilePicture}" alt="${displayName}" class="user-avatar-img" onerror="this.style.display='none'">
+                    <span class="user-avatar-initials-overlay">${initials}</span>
+                </span>`;
+        } else {
+            avatarHTML = `<span class="user-avatar">${initials}</span>`;
+        }
         
         authElement.innerHTML = `
             <div class="user-menu">
                 <button class="user-menu-trigger" onclick="toggleUserDropdown(event)">
-                    <span class="user-avatar">${initials}</span>
+                    ${avatarHTML}
                     <span class="user-name">${firstName}</span>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="6 9 12 15 18 9"></polyline>
