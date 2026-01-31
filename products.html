@@ -473,6 +473,51 @@
             color: #fff;
         }
 
+        /* ===== PRODUCT TAGS (New Arrival, Coming Soon) ===== */
+        .product-tag {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 10;
+            padding: 4px 10px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .tag-new-arrival {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: #fff;
+        }
+
+        .tag-coming-soon {
+            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+            color: #fff;
+        }
+
+        .tag-sale {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: #fff;
+        }
+
+        .tag-limited {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: #fff;
+        }
+
+        /* Multiple tags stack vertically */
+        .product-tags {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
         .product-name {
             font-size: 1.1rem;
             font-weight: 700;
@@ -2218,6 +2263,12 @@
                 const showFactoryBadge = true; // All products are factory direct
                 const showBestsellerBadge = product.bestSeller === true; // Read from Firestore field
                 
+                // Product Tags (New Arrival, Coming Soon)
+                const isNewArrival = product.tags?.includes('new_arrival') || product.isNewArrival === true;
+                const isComingSoon = product.tags?.includes('coming_soon') || product.isComingSoon === true;
+                const isOnSale = product.tags?.includes('sale') || product.isOnSale === true;
+                const isLimited = product.tags?.includes('limited') || product.isLimited === true;
+                
                 // B2B indicators - Read from Firestore product fields
                 // Fields: wholesaleAvailable (boolean), moqFriendly (boolean), bulkDiscount (boolean)
                 const showWholesale = product.wholesaleAvailable === true;
@@ -2240,11 +2291,23 @@
                 const carouselHTML = hasMultipleImages ? generateCarouselHTML(product, product.name) : null;
                 
                 // Image container HTML - carousel or single image
+                // Generate product tags HTML
+                let productTagsHTML = '';
+                if (isNewArrival || isComingSoon || isOnSale || isLimited) {
+                    productTagsHTML = '<div class="product-tags">';
+                    if (isNewArrival) productTagsHTML += '<span class="product-tag tag-new-arrival">New</span>';
+                    if (isComingSoon) productTagsHTML += '<span class="product-tag tag-coming-soon">Coming Soon</span>';
+                    if (isOnSale) productTagsHTML += '<span class="product-tag tag-sale">Sale</span>';
+                    if (isLimited) productTagsHTML += '<span class="product-tag tag-limited">Limited</span>';
+                    productTagsHTML += '</div>';
+                }
+
                 let imageContainerHTML;
                 if (carouselHTML) {
                     // Multi-image carousel
                     imageContainerHTML = `
                         <div class="product-image-container">
+                            ${productTagsHTML}
                             ${carouselHTML}
                             <!-- Premium zoom overlay for carousel -->
                             <div class="image-zoom-overlay" onclick="openCarouselLightbox('${product.id}', '${product.name.replace(/'/g, "\\'")}', '₦${basePrice.toLocaleString()}')">
@@ -2262,6 +2325,7 @@
                     // Single image (fallback)
                     imageContainerHTML = `
                         <div class="product-image-container" onclick="openLightbox('${optimizedImageUrl}', '${product.name.replace(/'/g, "\\'")}', '₦${basePrice.toLocaleString()}')">
+                            ${productTagsHTML}
                             <!-- Premium zoom overlay -->
                             <div class="image-zoom-overlay">
                                 <div class="zoom-icon">
