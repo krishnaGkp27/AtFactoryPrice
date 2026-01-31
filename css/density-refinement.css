@@ -735,6 +735,72 @@ button, .btn {
 }
 
 /* =================================================================
+   SEARCH PANEL FIX - Elegant, Non-floating
+   ================================================================= */
+/* Override sticky behavior - use static positioning */
+.search-section {
+    position: relative !important;
+    top: auto !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    margin-bottom: 16px !important;
+    padding: 0 !important;
+    z-index: 10 !important;
+}
+
+.search-container {
+    max-width: 100% !important;
+    margin: 0 0 12px !important;
+}
+
+.search-input-wrapper {
+    background: #fff !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: var(--radius-md) !important;
+    padding: 0 !important;
+    box-shadow: var(--shadow-sm) !important;
+    transition: all var(--transition-normal) !important;
+}
+
+.search-input-wrapper:focus-within {
+    border-color: #000 !important;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.1) !important;
+}
+
+.search-icon {
+    padding: 10px 12px !important;
+}
+
+.search-input {
+    padding: 10px 0 !important;
+    font-size: 0.9rem !important;
+}
+
+.search-btn {
+    padding: 8px 14px !important;
+    margin: 4px !important;
+    border-radius: var(--radius-sm) !important;
+    font-size: 0.85rem !important;
+}
+
+/* Search suggestions - compact */
+.search-suggestions {
+    border-radius: var(--radius-md) !important;
+    box-shadow: var(--shadow-lg) !important;
+    max-height: 300px !important;
+}
+
+.suggestion-item {
+    padding: 10px 14px !important;
+    font-size: 0.85rem !important;
+}
+
+.suggestion-section-title {
+    padding: 8px 14px !important;
+    font-size: 0.75rem !important;
+}
+
+/* =================================================================
    PRODUCT LISTING PAGE SPECIFIC
    ================================================================= */
 /* Category sidebar */

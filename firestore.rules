@@ -337,5 +337,37 @@ service cloud.firestore {
       // NO CLIENT WRITES - ensures audit trail integrity
       allow write: if false;
     }
+    
+    // ===== USER ADDRESSES SUBCOLLECTION =====
+    match /users/{userId}/addresses/{addressId} {
+      // Users can manage their own addresses
+      allow read, write: if isOwner(userId);
+      
+      // Admin can view for support
+      allow read: if isAdmin();
+    }
+    
+    // ===== HOMEPAGE SLIDER CONFIGURATION =====
+    match /site_config/homepage_slider {
+      // Anyone can read slider config
+      allow read: if true;
+      
+      // Only admin can update
+      allow write: if isAdmin();
+    }
+    
+    match /site_config/homepage_slider/slides/{slideId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    // ===== DELIVERY PIN CODES CONFIGURATION =====
+    match /delivery_config/{configId} {
+      // Anyone can read delivery config
+      allow read: if true;
+      
+      // Only admin can update
+      allow write: if isAdmin();
+    }
   }
 }

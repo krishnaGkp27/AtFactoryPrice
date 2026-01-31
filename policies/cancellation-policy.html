@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Cancellation Policy - AtFactoryPrice</title>
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="../images/logo.png">
+    <link rel="apple-touch-icon" href="../images/logo.png">
+    
+    <!-- Styles -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../css/density-refinement.css">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f8f9fa;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .navbar {
+            background: #fff;
+            padding: 12px 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #000;
+            text-decoration: none;
+        }
+
+        .back-link {
+            color: #666;
+            text-decoration: none;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .back-link:hover {
+            color: #000;
+        }
+
+        .policy-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 32px 20px 60px;
+        }
+
+        .policy-header {
+            text-align: center;
+            margin-bottom: 32px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .policy-header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #000;
+            margin-bottom: 8px;
+        }
+
+        .policy-header .last-updated {
+            font-size: 0.85rem;
+            color: #64748b;
+        }
+
+        .policy-content {
+            background: #fff;
+            border-radius: 12px;
+            padding: 32px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        }
+
+        .policy-section {
+            margin-bottom: 28px;
+        }
+
+        .policy-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .policy-section h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #000;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #f1f5f9;
+        }
+
+        .policy-section p {
+            margin-bottom: 12px;
+            color: #4a5568;
+        }
+
+        .policy-section ul, .policy-section ol {
+            margin: 12px 0;
+            padding-left: 24px;
+        }
+
+        .policy-section li {
+            margin-bottom: 8px;
+            color: #4a5568;
+        }
+
+        .highlight-box {
+            background: #f0f9ff;
+            border-left: 4px solid #0ea5e9;
+            padding: 16px;
+            border-radius: 0 8px 8px 0;
+            margin: 16px 0;
+        }
+
+        .highlight-box.warning {
+            background: #fef3c7;
+            border-color: #f59e0b;
+        }
+
+        .highlight-box.success {
+            background: #ecfdf5;
+            border-color: #10b981;
+        }
+
+        .highlight-box.danger {
+            background: #fef2f2;
+            border-color: #ef4444;
+        }
+
+        .highlight-box p {
+            margin: 0;
+            font-size: 0.9rem;
+        }
+
+        .timeline {
+            margin: 20px 0;
+        }
+
+        .timeline-item {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+            padding-bottom: 16px;
+            border-bottom: 1px dashed #e2e8f0;
+        }
+
+        .timeline-item:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+
+        .timeline-status {
+            width: 120px;
+            flex-shrink: 0;
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+
+        .timeline-status.green { color: #10b981; }
+        .timeline-status.yellow { color: #f59e0b; }
+        .timeline-status.red { color: #ef4444; }
+
+        .timeline-content {
+            flex: 1;
+        }
+
+        .timeline-content strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .timeline-content p {
+            margin: 0;
+            font-size: 0.9rem;
+        }
+
+        .contact-box {
+            background: #f8fafc;
+            border-radius: 12px;
+            padding: 24px;
+            margin-top: 32px;
+            text-align: center;
+        }
+
+        .contact-box h3 {
+            font-size: 1.1rem;
+            margin-bottom: 12px;
+        }
+
+        .contact-box p {
+            font-size: 0.9rem;
+            color: #64748b;
+            margin-bottom: 16px;
+        }
+
+        .contact-box a {
+            display: inline-block;
+            background: #000;
+            color: #fff;
+            padding: 10px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        .contact-box a:hover {
+            background: #333;
+        }
+
+        .policy-nav {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .policy-nav a {
+            padding: 8px 16px;
+            background: #f1f5f9;
+            color: #475569;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+
+        .policy-nav a:hover, .policy-nav a.active {
+            background: #000;
+            color: #fff;
+        }
+
+        @media (max-width: 768px) {
+            .policy-container {
+                padding: 20px 16px 40px;
+            }
+
+            .policy-header h1 {
+                font-size: 1.5rem;
+            }
+
+            .policy-content {
+                padding: 20px;
+            }
+
+            .policy-section h2 {
+                font-size: 1.1rem;
+            }
+
+            .timeline-item {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .timeline-status {
+                width: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="../index.html" class="logo">AtFactoryPrice</a>
+            <a href="../index.html" class="back-link">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 12H5M12 19l-7-7 7-7"/>
+                </svg>
+                Back to Home
+            </a>
+        </div>
+    </nav>
+
+    <div class="policy-container">
+        <div class="policy-header">
+            <h1>Cancellation Policy</h1>
+            <p class="last-updated">Last Updated: January 2024</p>
+        </div>
+
+        <div class="policy-content">
+            <div class="policy-section">
+                <h2>1. Order Cancellation Overview</h2>
+                <p>We understand plans change. You may cancel your order, but the cancellation conditions depend on the order status at the time of your request.</p>
+                <div class="highlight-box success">
+                    <p><strong>Quick Tip:</strong> Cancel as early as possible for the best outcome. Orders cancelled before processing receive full refunds.</p>
+                </div>
+            </div>
+
+            <div class="policy-section">
+                <h2>2. Cancellation by Order Status</h2>
+                <div class="timeline">
+                    <div class="timeline-item">
+                        <div class="timeline-status green">PENDING</div>
+                        <div class="timeline-content">
+                            <strong>Free Cancellation</strong>
+                            <p>Order not yet processed. Cancel anytime for a full refund within 24-48 hours.</p>
+                        </div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-status green">CONFIRMED</div>
+                        <div class="timeline-content">
+                            <strong>Free Cancellation</strong>
+                            <p>Order confirmed but not yet prepared. Cancel within 2 hours of confirmation for full refund.</p>
+                        </div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-status yellow">PROCESSING</div>
+                        <div class="timeline-content">
+                            <strong>Partial Refund</strong>
+                            <p>Order being prepared. Cancellation may result in a 10% processing fee deduction.</p>
+                        </div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-status yellow">PACKED</div>
+                        <div class="timeline-content">
+                            <strong>Partial Refund</strong>
+                            <p>Order packed and ready. Cancellation incurs a 15% handling fee.</p>
+                        </div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-status red">SHIPPED</div>
+                        <div class="timeline-content">
+                            <strong>Cannot Cancel</strong>
+                            <p>Order already dispatched. Please reject delivery or initiate a return after receiving.</p>
+                        </div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-status red">DELIVERED</div>
+                        <div class="timeline-content">
+                            <strong>Return Process</strong>
+                            <p>Cancellation not possible. Please see our <a href="return-policy.html" style="color: #0ea5e9;">Return Policy</a>.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="policy-section">
+                <h2>3. How to Cancel Your Order</h2>
+                <ol>
+                    <li>Check your order status in "My Orders" section</li>
+                    <li>Contact us immediately via WhatsApp with your Order ID</li>
+                    <li>Request cancellation and provide reason (optional)</li>
+                    <li>Our team will confirm cancellation eligibility</li>
+                    <li>If approved, refund will be processed within 3-5 business days</li>
+                </ol>
+                <div class="highlight-box warning">
+                    <p><strong>Important:</strong> For fastest processing, contact us within 2 hours of placing your order.</p>
+                </div>
+            </div>
+
+            <div class="policy-section">
+                <h2>4. Automatic Cancellation</h2>
+                <p>AtFactoryPrice reserves the right to cancel orders in the following situations:</p>
+                <ul>
+                    <li><strong>Payment Failure:</strong> Payment not received within 24 hours (for non-COD orders)</li>
+                    <li><strong>Out of Stock:</strong> Product becomes unavailable after ordering</li>
+                    <li><strong>Pricing Error:</strong> Obvious pricing mistakes on website</li>
+                    <li><strong>Verification Issues:</strong> Unable to verify payment or delivery details</li>
+                    <li><strong>Suspected Fraud:</strong> Unusual activity detected on account</li>
+                </ul>
+                <p>In all automatic cancellation cases, you will receive a full refund if any payment was made.</p>
+            </div>
+
+            <div class="policy-section">
+                <h2>5. Partial Order Cancellation</h2>
+                <p>If your order contains multiple items:</p>
+                <ul>
+                    <li>You may cancel specific items before the order is shipped</li>
+                    <li>Cancelled item amount will be refunded</li>
+                    <li>Shipping charge adjustment may apply if minimum order threshold is affected</li>
+                </ul>
+            </div>
+
+            <div class="policy-section">
+                <h2>6. Custom Orders</h2>
+                <p>For custom-made or specially ordered products:</p>
+                <div class="highlight-box danger">
+                    <p><strong>No Cancellation:</strong> Custom orders cannot be cancelled once production has started. A 50% deposit is non-refundable if cancellation is requested before production.</p>
+                </div>
+            </div>
+
+            <div class="policy-section">
+                <h2>7. Refund Processing</h2>
+                <p>After successful cancellation:</p>
+                <ul>
+                    <li>Refund will be processed to original payment method</li>
+                    <li>Processing takes 3-5 business days</li>
+                    <li>Bank reflection may take additional 2-5 days</li>
+                    <li>You will receive confirmation via WhatsApp/SMS</li>
+                </ul>
+                <p>See our <a href="refund-policy.html" style="color: #0ea5e9;">Refund Policy</a> for detailed information.</p>
+            </div>
+
+            <div class="contact-box">
+                <h3>Need to Cancel an Order?</h3>
+                <p>Contact us immediately for the fastest processing</p>
+                <a href="https://wa.me/2348138475360?text=Hi, I need to cancel my order" target="_blank">Cancel via WhatsApp</a>
+            </div>
+
+            <div class="policy-nav">
+                <a href="return-policy.html">Return Policy</a>
+                <a href="refund-policy.html">Refund Policy</a>
+                <a href="cancellation-policy.html" class="active">Cancellation Policy</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

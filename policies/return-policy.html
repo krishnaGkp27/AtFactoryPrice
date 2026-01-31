@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Return Policy - AtFactoryPrice</title>
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="../images/logo.png">
+    <link rel="apple-touch-icon" href="../images/logo.png">
+    
+    <!-- Styles -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../css/density-refinement.css">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f8f9fa;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .navbar {
+            background: #fff;
+            padding: 12px 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #000;
+            text-decoration: none;
+        }
+
+        .back-link {
+            color: #666;
+            text-decoration: none;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .back-link:hover {
+            color: #000;
+        }
+
+        .policy-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 32px 20px 60px;
+        }
+
+        .policy-header {
+            text-align: center;
+            margin-bottom: 32px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .policy-header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #000;
+            margin-bottom: 8px;
+        }
+
+        .policy-header .last-updated {
+            font-size: 0.85rem;
+            color: #64748b;
+        }
+
+        .policy-content {
+            background: #fff;
+            border-radius: 12px;
+            padding: 32px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        }
+
+        .policy-section {
+            margin-bottom: 28px;
+        }
+
+        .policy-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .policy-section h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #000;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #f1f5f9;
+        }
+
+        .policy-section p {
+            margin-bottom: 12px;
+            color: #4a5568;
+        }
+
+        .policy-section ul, .policy-section ol {
+            margin: 12px 0;
+            padding-left: 24px;
+        }
+
+        .policy-section li {
+            margin-bottom: 8px;
+            color: #4a5568;
+        }
+
+        .highlight-box {
+            background: #f0f9ff;
+            border-left: 4px solid #0ea5e9;
+            padding: 16px;
+            border-radius: 0 8px 8px 0;
+            margin: 16px 0;
+        }
+
+        .highlight-box.warning {
+            background: #fef3c7;
+            border-color: #f59e0b;
+        }
+
+        .highlight-box.success {
+            background: #ecfdf5;
+            border-color: #10b981;
+        }
+
+        .highlight-box p {
+            margin: 0;
+            font-size: 0.9rem;
+        }
+
+        .contact-box {
+            background: #f8fafc;
+            border-radius: 12px;
+            padding: 24px;
+            margin-top: 32px;
+            text-align: center;
+        }
+
+        .contact-box h3 {
+            font-size: 1.1rem;
+            margin-bottom: 12px;
+        }
+
+        .contact-box p {
+            font-size: 0.9rem;
+            color: #64748b;
+            margin-bottom: 16px;
+        }
+
+        .contact-box a {
+            display: inline-block;
+            background: #000;
+            color: #fff;
+            padding: 10px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        .contact-box a:hover {
+            background: #333;
+        }
+
+        .policy-nav {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .policy-nav a {
+            padding: 8px 16px;
+            background: #f1f5f9;
+            color: #475569;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+
+        .policy-nav a:hover, .policy-nav a.active {
+            background: #000;
+            color: #fff;
+        }
+
+        @media (max-width: 768px) {
+            .policy-container {
+                padding: 20px 16px 40px;
+            }
+
+            .policy-header h1 {
+                font-size: 1.5rem;
+            }
+
+            .policy-content {
+                padding: 20px;
+            }
+
+            .policy-section h2 {
+                font-size: 1.1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="../index.html" class="logo">AtFactoryPrice</a>
+            <a href="../index.html" class="back-link">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 12H5M12 19l-7-7 7-7"/>
+                </svg>
+                Back to Home
+            </a>
+        </div>
+    </nav>
+
+    <div class="policy-container">
+        <div class="policy-header">
+            <h1>Return Policy</h1>
+            <p class="last-updated">Last Updated: January 2024</p>
+        </div>
+
+        <div class="policy-content">
+            <div class="policy-section">
+                <h2>1. Return Eligibility</h2>
+                <p>At AtFactoryPrice, we want you to be completely satisfied with your purchase. You may return items within <strong>7 days</strong> of delivery under the following conditions:</p>
+                <ul>
+                    <li>Item must be unused, unworn, and in original packaging</li>
+                    <li>All tags and labels must be intact</li>
+                    <li>Fabric must not be cut, washed, or altered in any way</li>
+                    <li>Original receipt or order confirmation must be provided</li>
+                </ul>
+            </div>
+
+            <div class="policy-section">
+                <h2>2. Non-Returnable Items</h2>
+                <p>The following items cannot be returned:</p>
+                <ul>
+                    <li>Custom-made or specially ordered products</li>
+                    <li>Cut fabric (sold by the yard/meter)</li>
+                    <li>Items marked as "Final Sale" or "No Returns"</li>
+                    <li>Intimate apparel and undergarments</li>
+                    <li>Items damaged due to customer mishandling</li>
+                </ul>
+                <div class="highlight-box warning">
+                    <p><strong>Important:</strong> Please inspect all items immediately upon delivery. Report any defects or damages within 24 hours.</p>
+                </div>
+            </div>
+
+            <div class="policy-section">
+                <h2>3. How to Initiate a Return</h2>
+                <ol>
+                    <li>Contact our customer support via WhatsApp or email within 7 days of delivery</li>
+                    <li>Provide your order number and reason for return</li>
+                    <li>Our team will review your request and provide return instructions</li>
+                    <li>Pack the item securely in original packaging</li>
+                    <li>Ship the item to the address provided or arrange pickup (Lagos only)</li>
+                </ol>
+            </div>
+
+            <div class="policy-section">
+                <h2>4. Return Shipping</h2>
+                <p>Return shipping costs are the responsibility of the customer unless:</p>
+                <ul>
+                    <li>Wrong item was delivered</li>
+                    <li>Item arrived damaged or defective</li>
+                    <li>Item significantly differs from product description</li>
+                </ul>
+                <p>For Lagos customers, we may arrange free pickup for qualifying returns.</p>
+            </div>
+
+            <div class="policy-section">
+                <h2>5. Inspection & Processing</h2>
+                <p>Once we receive your return:</p>
+                <ul>
+                    <li>Items will be inspected within 2-3 business days</li>
+                    <li>You will be notified of approval or rejection via WhatsApp/email</li>
+                    <li>Approved returns will be processed for refund or exchange</li>
+                </ul>
+                <div class="highlight-box success">
+                    <p><strong>Tip:</strong> Take photos of items before shipping for your records.</p>
+                </div>
+            </div>
+
+            <div class="policy-section">
+                <h2>6. Exchange Option</h2>
+                <p>Instead of a refund, you may request an exchange for:</p>
+                <ul>
+                    <li>Different size (garments)</li>
+                    <li>Different color (if available)</li>
+                    <li>Different product of equal or greater value (pay difference)</li>
+                </ul>
+            </div>
+
+            <div class="contact-box">
+                <h3>Need Help with a Return?</h3>
+                <p>Our customer support team is ready to assist you</p>
+                <a href="https://wa.me/2348138475360?text=Hi, I need help with a return" target="_blank">Contact Support</a>
+            </div>
+
+            <div class="policy-nav">
+                <a href="return-policy.html" class="active">Return Policy</a>
+                <a href="refund-policy.html">Refund Policy</a>
+                <a href="cancellation-policy.html">Cancellation Policy</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

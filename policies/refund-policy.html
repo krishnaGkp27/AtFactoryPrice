@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Refund Policy - AtFactoryPrice</title>
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="../images/logo.png">
+    <link rel="apple-touch-icon" href="../images/logo.png">
+    
+    <!-- Styles -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../css/density-refinement.css">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f8f9fa;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .navbar {
+            background: #fff;
+            padding: 12px 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #000;
+            text-decoration: none;
+        }
+
+        .back-link {
+            color: #666;
+            text-decoration: none;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .back-link:hover {
+            color: #000;
+        }
+
+        .policy-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 32px 20px 60px;
+        }
+
+        .policy-header {
+            text-align: center;
+            margin-bottom: 32px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .policy-header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #000;
+            margin-bottom: 8px;
+        }
+
+        .policy-header .last-updated {
+            font-size: 0.85rem;
+            color: #64748b;
+        }
+
+        .policy-content {
+            background: #fff;
+            border-radius: 12px;
+            padding: 32px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        }
+
+        .policy-section {
+            margin-bottom: 28px;
+        }
+
+        .policy-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .policy-section h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #000;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #f1f5f9;
+        }
+
+        .policy-section p {
+            margin-bottom: 12px;
+            color: #4a5568;
+        }
+
+        .policy-section ul, .policy-section ol {
+            margin: 12px 0;
+            padding-left: 24px;
+        }
+
+        .policy-section li {
+            margin-bottom: 8px;
+            color: #4a5568;
+        }
+
+        .highlight-box {
+            background: #f0f9ff;
+            border-left: 4px solid #0ea5e9;
+            padding: 16px;
+            border-radius: 0 8px 8px 0;
+            margin: 16px 0;
+        }
+
+        .highlight-box.warning {
+            background: #fef3c7;
+            border-color: #f59e0b;
+        }
+
+        .highlight-box.success {
+            background: #ecfdf5;
+            border-color: #10b981;
+        }
+
+        .highlight-box p {
+            margin: 0;
+            font-size: 0.9rem;
+        }
+
+        .refund-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            font-size: 0.9rem;
+        }
+
+        .refund-table th, .refund-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .refund-table th {
+            background: #f8fafc;
+            font-weight: 600;
+            color: #334155;
+        }
+
+        .refund-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .contact-box {
+            background: #f8fafc;
+            border-radius: 12px;
+            padding: 24px;
+            margin-top: 32px;
+            text-align: center;
+        }
+
+        .contact-box h3 {
+            font-size: 1.1rem;
+            margin-bottom: 12px;
+        }
+
+        .contact-box p {
+            font-size: 0.9rem;
+            color: #64748b;
+            margin-bottom: 16px;
+        }
+
+        .contact-box a {
+            display: inline-block;
+            background: #000;
+            color: #fff;
+            padding: 10px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        .contact-box a:hover {
+            background: #333;
+        }
+
+        .policy-nav {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .policy-nav a {
+            padding: 8px 16px;
+            background: #f1f5f9;
+            color: #475569;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+
+        .policy-nav a:hover, .policy-nav a.active {
+            background: #000;
+            color: #fff;
+        }
+
+        @media (max-width: 768px) {
+            .policy-container {
+                padding: 20px 16px 40px;
+            }
+
+            .policy-header h1 {
+                font-size: 1.5rem;
+            }
+
+            .policy-content {
+                padding: 20px;
+            }
+
+            .policy-section h2 {
+                font-size: 1.1rem;
+            }
+
+            .refund-table {
+                font-size: 0.8rem;
+            }
+
+            .refund-table th, .refund-table td {
+                padding: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="../index.html" class="logo">AtFactoryPrice</a>
+            <a href="../index.html" class="back-link">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 12H5M12 19l-7-7 7-7"/>
+                </svg>
+                Back to Home
+            </a>
+        </div>
+    </nav>
+
+    <div class="policy-container">
+        <div class="policy-header">
+            <h1>Refund Policy</h1>
+            <p class="last-updated">Last Updated: January 2024</p>
+        </div>
+
+        <div class="policy-content">
+            <div class="policy-section">
+                <h2>1. Refund Eligibility</h2>
+                <p>Refunds are processed for approved returns that meet our <a href="return-policy.html" style="color: #0ea5e9;">Return Policy</a> conditions. You may be eligible for a refund if:</p>
+                <ul>
+                    <li>Your return request has been approved</li>
+                    <li>The item has been received and inspected by our team</li>
+                    <li>The item meets all return conditions (unused, original packaging, tags intact)</li>
+                </ul>
+            </div>
+
+            <div class="policy-section">
+                <h2>2. Refund Methods</h2>
+                <p>Refunds will be processed using the original payment method:</p>
+                <table class="refund-table">
+                    <thead>
+                        <tr>
+                            <th>Payment Method</th>
+                            <th>Refund Method</th>
+                            <th>Processing Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Bank Transfer</td>
+                            <td>Bank Transfer to original account</td>
+                            <td>3-5 business days</td>
+                        </tr>
+                        <tr>
+                            <td>Card Payment</td>
+                            <td>Reversal to original card</td>
+                            <td>5-10 business days</td>
+                        </tr>
+                        <tr>
+                            <td>Cash on Delivery</td>
+                            <td>Bank Transfer (provide details)</td>
+                            <td>3-5 business days</td>
+                        </tr>
+                        <tr>
+                            <td>Wallet Credit</td>
+                            <td>Wallet Credit</td>
+                            <td>1-2 business days</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="policy-section">
+                <h2>3. Refund Amount</h2>
+                <p>The refund amount depends on the reason for return:</p>
+                <ul>
+                    <li><strong>Our Error (wrong item, defective):</strong> Full refund including original shipping</li>
+                    <li><strong>Change of Mind:</strong> Product price minus 10% restocking fee</li>
+                    <li><strong>Size Exchange Not Available:</strong> Full product price refund</li>
+                </ul>
+                <div class="highlight-box warning">
+                    <p><strong>Note:</strong> Original shipping charges are non-refundable for change-of-mind returns.</p>
+                </div>
+            </div>
+
+            <div class="policy-section">
+                <h2>4. Partial Refunds</h2>
+                <p>Partial refunds may be issued in cases where:</p>
+                <ul>
+                    <li>Item shows signs of use or wear</li>
+                    <li>Item is returned without original packaging</li>
+                    <li>Tags or labels are missing</li>
+                    <li>Item is returned after the 7-day window (case-by-case basis)</li>
+                </ul>
+            </div>
+
+            <div class="policy-section">
+                <h2>5. Refund Timeline</h2>
+                <p>Here's what to expect after initiating a return:</p>
+                <ol>
+                    <li><strong>Day 1-3:</strong> Item received and inspected</li>
+                    <li><strong>Day 4:</strong> Refund approval notification sent</li>
+                    <li><strong>Day 5-10:</strong> Refund processed to your account</li>
+                </ol>
+                <div class="highlight-box">
+                    <p><strong>Bank Processing:</strong> Please allow additional 2-5 business days for your bank to reflect the refund, depending on your bank's policies.</p>
+                </div>
+            </div>
+
+            <div class="policy-section">
+                <h2>6. Store Credit Option</h2>
+                <p>Instead of a cash refund, you may opt for store credit which offers:</p>
+                <ul>
+                    <li>Instant processing (1-2 business days)</li>
+                    <li>Full product value (no restocking fee)</li>
+                    <li>Valid for 12 months from issue date</li>
+                    <li>Usable on any product including sale items</li>
+                </ul>
+                <div class="highlight-box success">
+                    <p><strong>Bonus:</strong> Store credit customers receive a 5% bonus on their credit amount!</p>
+                </div>
+            </div>
+
+            <div class="policy-section">
+                <h2>7. Non-Refundable Items</h2>
+                <p>The following cannot be refunded:</p>
+                <ul>
+                    <li>Custom-made or personalized items</li>
+                    <li>Cut fabric (by yard/meter)</li>
+                    <li>Items marked "Final Sale"</li>
+                    <li>Gift cards and store credits</li>
+                    <li>Delivery charges (for change-of-mind returns)</li>
+                </ul>
+            </div>
+
+            <div class="contact-box">
+                <h3>Questions About Refunds?</h3>
+                <p>Contact our team for assistance with your refund request</p>
+                <a href="https://wa.me/2348138475360?text=Hi, I have a question about my refund" target="_blank">Contact Support</a>
+            </div>
+
+            <div class="policy-nav">
+                <a href="return-policy.html">Return Policy</a>
+                <a href="refund-policy.html" class="active">Refund Policy</a>
+                <a href="cancellation-policy.html">Cancellation Policy</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
