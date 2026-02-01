@@ -3752,3 +3752,140 @@ exports.manualPaymentVerification = functions.https.onCall(async (data, context)
         throw new functions.https.HttpsError('internal', error.message || 'Failed to verify payment');
     }
 });
+
+/**
+ * Get cached products from Google Sheets sync
+ * Returns products in sheets_cache_products for admin review
+ */
+exports.getCachedProducts = functions.https.onCall(async (data, context) => {
+    // Authentication check
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+
+    try {
+        const snapshot = await db.collection('sheets_cache_products')
+            .orderBy('name')
+            .limit(500)
+            .get();
+
+        const products = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+
+        return {
+            success: true,
+            count: products.length,
+            products: products
+        };
+    } catch (error) {
+        console.error('Error getting cached products:', error);
+        throw new functions.https.HttpsError('internal', error.message || 'Failed to get cached products');
+    }
+});
+
+/**
+ * Publish cached products to main products collection
+ * Moves/copies products from sheets_cache_products to products collection
+ */
+exports.publishCachedProducts = functions.https.onCall(async (data, context) => {
+    // Authentication check
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    }
+
+    const { productIds, clearAfterPublish = false } = data;
+    
+    if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
+        throw new functions.https.HttpsError('invalid-argument', 'Product IDs array is required');
+    }
+
+    const results = {
+        published: 0,
+        failed: 0,
+        errors: []
+    };
+
+    try {
+        // Process in batches of 500
+        const batchSize = 500;
+        for (let i = 0; i < productIds.length; i += batchSize) {
+            const batch = db.batch();
+            const batchIds = productIds.slice(i, i + batchSize);
+
+            for (const productId of batchIds) {
+                try {
+                    // Get cached product
+                    const cachedDoc = await db.collection('sheets_cache_products').doc(productId).get();
+                    
+                    if (!cachedDoc.exists) {
+                        results.errors.push(`Product ${productId} not found in cache`);
+                        results.failed++;
+                        continue;
+                    }
+
+                    const cachedData = cachedDoc.data();
+                    
+                    // Transform cached data to product schema
+                    const productData = {
+                        name: cachedData.name || '',
+                        description: cachedData.description || '',
+                        price: parseFloat(cachedData.price) || 0,
+                        category: {
+                            level1: cachedData.category?.split('>')[0]?.trim().toLowerCase() || 'fabric',
+                            level2: cachedData.category?.split('>')[1]?.trim().toLowerCase() || '',
+                            level3: cachedData.category?.split('>')[2]?.trim().toLowerCase() || ''
+                        },
+                        imageUrl: cachedData.image || cachedData.imageUrl || '',
+                        pricingUnit: cachedData.unit || null,
+                        wholesaleAvailable: cachedData.wholesaleAvailable === true || cachedData.wholesaleAvailable === 'true',
+                        moqFriendly: cachedData.moqFriendly === true || cachedData.moqFriendly === 'true',
+                        bulkDiscount: cachedData.bulkDiscount === true || cachedData.bulkDiscount === 'true',
+                        bestSeller: cachedData.bestSeller === true || cachedData.bestSeller === 'true',
+                        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        importedFromSheets: true,
+                        sheetsCacheId: productId
+                    };
+
+                    // Create new product document
+                    const newProductRef = db.collection('products').doc();
+                    batch.set(newProductRef, productData);
+
+                    // Optionally delete from cache
+                    if (clearAfterPublish) {
+                        batch.delete(cachedDoc.ref);
+                    }
+
+                    results.published++;
+                } catch (itemError) {
+                    results.errors.push(`Error processing ${productId}: ${itemError.message}`);
+                    results.failed++;
+                }
+            }
+
+            await batch.commit();
+        }
+
+        // Log the publish action
+        await db.collection('sheets_sync_logs').add({
+            action: 'publish_to_products',
+            triggeredBy: context.auth.uid,
+            triggeredByEmail: context.auth.token.email,
+            results: results,
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        console.log(`Published ${results.published} products from cache by ${context.auth.token.email}`);
+
+        return {
+            success: true,
+            ...results
+        };
+
+    } catch (error) {
+        console.error('Error publishing cached products:', error);
+        throw new functions.https.HttpsError('internal', error.message || 'Failed to publish products');
+    }
+});

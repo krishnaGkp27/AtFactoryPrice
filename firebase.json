@@ -13,7 +13,23 @@
       "firebase.json",
       "**/.*",
       "**/node_modules/**",
-      "**/functions/**"
+      "**/functions/**",
+      "**/mobile/**",
+      "**/*.exe",
+      "**/*.dll",
+      "**/*.so",
+      "**/*.dylib",
+      "**/*.node",
+      "**/*.bat",
+      "**/*.sh",
+      "**/*.cmd",
+      "**/*.ps1",
+      "**/Makefile",
+      "**/*.md",
+      "**/*.txt",
+      "package*.json",
+      "firestore.rules",
+      "firestore.indexes.json"
     ],
     "rewrites": [
       {

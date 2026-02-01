@@ -1582,6 +1582,148 @@
                 background-position: -200% 0;
             }
         }
+
+        /* ===== PRODUCT VARIANT SELECTORS ===== */
+        .variant-section {
+            margin: 12px 0;
+            padding: 12px;
+            background: #f9fafb;
+            border-radius: 8px;
+        }
+
+        .variant-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #666;
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        .design-selector {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding-bottom: 4px;
+            margin-bottom: 12px;
+        }
+
+        .design-option {
+            flex-shrink: 0;
+            padding: 6px 12px;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            font-size: 12px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .design-option:hover {
+            border-color: #000;
+        }
+
+        .design-option.selected {
+            background: #000;
+            color: white;
+            border-color: #000;
+        }
+
+        .color-selector {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+
+        .color-swatch {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 0 1px #ddd;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .color-swatch:hover {
+            transform: scale(1.1);
+        }
+
+        .color-swatch.selected {
+            box-shadow: 0 0 0 2px #000;
+        }
+
+        .color-swatch.selected::after {
+            content: '✓';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 12px;
+            text-shadow: 0 0 2px rgba(0,0,0,0.5);
+        }
+
+        .size-selector {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .size-option {
+            padding: 6px 12px;
+            border: 1px solid #e5e7eb;
+            border-radius: 4px;
+            font-size: 12px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .size-option:hover {
+            border-color: #000;
+        }
+
+        .size-option.selected {
+            background: #000;
+            color: white;
+            border-color: #000;
+        }
+
+        .size-option.out-of-stock {
+            opacity: 0.4;
+            text-decoration: line-through;
+            cursor: not-allowed;
+        }
+
+        .variant-price-display {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px dashed #e5e7eb;
+        }
+
+        .variant-price {
+            font-weight: 700;
+            color: #16a34a;
+        }
+
+        .variant-stock {
+            font-size: 11px;
+            color: #666;
+        }
+
+        .variant-stock.low {
+            color: #f59e0b;
+        }
+
+        .variant-stock.out {
+            color: #dc2626;
+        }
     </style>
 </head>
 <body>
@@ -1904,6 +2046,10 @@
 
         // Products data
         let products = [];
+        
+        // Product variant data storage for variant selection functions
+        window.productVariantData = {};
+        window.variantSelections = {};
         
         // Precomputed category counts for faster rendering
         let categoryCounts = {
@@ -2355,6 +2501,15 @@
                 const hasMultipleImages = product.images && Array.isArray(product.images) && product.images.length >= 1;
                 const carouselHTML = hasMultipleImages ? generateCarouselHTML(product, product.name) : null;
                 
+                // Check for product variants
+                const hasVariants = product.hasVariants && product.designs && product.designs.length > 0;
+                let variantHTML = '';
+                if (hasVariants) {
+                    // Store product data for variant functions
+                    window.productVariantData[product.id] = product;
+                    variantHTML = generateVariantHTML(product);
+                }
+                
                 // Image container HTML - carousel or single image
                 // Generate product tags HTML
                 let productTagsHTML = '';
@@ -2433,6 +2588,9 @@
                                 ${showMOQ ? '<span class="b2b-badge moq">MOQ Friendly</span>' : ''}
                                 ${showBulkDiscount ? '<span class="b2b-badge bulk">Bulk Discount</span>' : ''}
                             </div>
+                            
+                            <!-- Product Variants (Design/Color/Size) -->
+                            ${variantHTML}
                             
                             <div class="product-footer">
                                 <div class="product-price-wrapper">
@@ -3046,6 +3204,229 @@
                     <span class="carousel-count">${optimizedImages.length} photos</span>
                 </div>
             `;
+        }
+
+        /**
+         * Generate variant selectors HTML for a product
+         * @param {Object} product - Product with variants
+         * @returns {string} Variant selectors HTML
+         */
+        function generateVariantHTML(product) {
+            if (!product.hasVariants || !product.designs || product.designs.length === 0) {
+                return '';
+            }
+
+            const productId = product.id;
+            const firstDesign = product.designs[0];
+            const firstColor = firstDesign.colors?.[0];
+            const firstSize = firstColor?.sizes?.[0];
+
+            // Store initial selection
+            if (!window.variantSelections) window.variantSelections = {};
+            window.variantSelections[productId] = {
+                designId: firstDesign.id,
+                colorId: firstColor?.id,
+                sizeId: firstSize?.id,
+                price: firstSize?.price || product.price,
+                stock: firstSize?.stock || 0
+            };
+
+            // Design selector (if multiple designs)
+            let designHTML = '';
+            if (product.designs.length > 1) {
+                designHTML = `
+                    <span class="variant-label">Design</span>
+                    <div class="design-selector">
+                        ${product.designs.map((d, i) => `
+                            <div class="design-option ${i === 0 ? 'selected' : ''}" 
+                                 onclick="selectVariantDesign('${productId}', '${d.id}')"
+                                 data-design-id="${d.id}">
+                                ${d.name}
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+
+            // Color selector for first design
+            let colorHTML = '';
+            if (firstDesign.colors && firstDesign.colors.length > 0) {
+                colorHTML = `
+                    <span class="variant-label">Color</span>
+                    <div class="color-selector" data-product-id="${productId}">
+                        ${firstDesign.colors.map((c, i) => `
+                            <div class="color-swatch ${i === 0 ? 'selected' : ''}" 
+                                 style="background: ${c.hexCode}"
+                                 onclick="selectVariantColor('${productId}', '${firstDesign.id}', '${c.id}')"
+                                 data-color-id="${c.id}"
+                                 title="${c.name}">
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+
+            // Size selector for first color
+            let sizeHTML = '';
+            if (firstColor?.sizes && firstColor.sizes.length > 0) {
+                sizeHTML = `
+                    <span class="variant-label">Size</span>
+                    <div class="size-selector" data-product-id="${productId}">
+                        ${firstColor.sizes.map((s, i) => `
+                            <div class="size-option ${i === 0 ? 'selected' : ''} ${s.stock === 0 ? 'out-of-stock' : ''}" 
+                                 onclick="selectVariantSize('${productId}', '${firstDesign.id}', '${firstColor.id}', '${s.id}')"
+                                 data-size-id="${s.id}">
+                                ${s.name}
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+
+            // Price and stock display
+            const priceDisplay = firstSize?.price || product.price;
+            const stockDisplay = firstSize?.stock || 0;
+            const stockClass = stockDisplay === 0 ? 'out' : stockDisplay < 10 ? 'low' : '';
+            const stockText = stockDisplay === 0 ? 'Out of stock' : `${stockDisplay} in stock`;
+
+            return `
+                <div class="variant-section" data-product-id="${productId}">
+                    ${designHTML}
+                    ${colorHTML}
+                    ${sizeHTML}
+                    <div class="variant-price-display">
+                        <span class="variant-price" data-price-display="${productId}">₦${priceDisplay.toLocaleString()}</span>
+                        <span class="variant-stock ${stockClass}" data-stock-display="${productId}">${stockText}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Store product data for variant lookups
+        window.productVariantData = {};
+
+        /**
+         * Select a design variant
+         */
+        function selectVariantDesign(productId, designId) {
+            const product = window.productVariantData[productId];
+            if (!product) return;
+
+            const design = product.designs.find(d => d.id === designId);
+            if (!design) return;
+
+            // Update design selection UI
+            const designOptions = document.querySelectorAll(`[data-product-id="${productId}"] .design-option, .variant-section[data-product-id="${productId}"] .design-option`);
+            designOptions.forEach(opt => {
+                opt.classList.toggle('selected', opt.dataset.designId === designId);
+            });
+
+            // Update color selector
+            const colorContainer = document.querySelector(`.color-selector[data-product-id="${productId}"]`);
+            if (colorContainer && design.colors) {
+                colorContainer.innerHTML = design.colors.map((c, i) => `
+                    <div class="color-swatch ${i === 0 ? 'selected' : ''}" 
+                         style="background: ${c.hexCode}"
+                         onclick="selectVariantColor('${productId}', '${designId}', '${c.id}')"
+                         data-color-id="${c.id}"
+                         title="${c.name}">
+                    </div>
+                `).join('');
+
+                // Auto-select first color
+                if (design.colors.length > 0) {
+                    selectVariantColor(productId, designId, design.colors[0].id);
+                }
+            }
+        }
+
+        /**
+         * Select a color variant
+         */
+        function selectVariantColor(productId, designId, colorId) {
+            const product = window.productVariantData[productId];
+            if (!product) return;
+
+            const design = product.designs.find(d => d.id === designId);
+            if (!design) return;
+
+            const color = design.colors.find(c => c.id === colorId);
+            if (!color) return;
+
+            // Update color selection UI
+            const colorSwatches = document.querySelectorAll(`.color-selector[data-product-id="${productId}"] .color-swatch`);
+            colorSwatches.forEach(swatch => {
+                swatch.classList.toggle('selected', swatch.dataset.colorId === colorId);
+            });
+
+            // Update size selector
+            const sizeContainer = document.querySelector(`.size-selector[data-product-id="${productId}"]`);
+            if (sizeContainer && color.sizes) {
+                sizeContainer.innerHTML = color.sizes.map((s, i) => `
+                    <div class="size-option ${i === 0 ? 'selected' : ''} ${s.stock === 0 ? 'out-of-stock' : ''}" 
+                         onclick="selectVariantSize('${productId}', '${designId}', '${colorId}', '${s.id}')"
+                         data-size-id="${s.id}">
+                        ${s.name}
+                    </div>
+                `).join('');
+
+                // Auto-select first available size
+                const firstAvailable = color.sizes.find(s => s.stock > 0) || color.sizes[0];
+                if (firstAvailable) {
+                    selectVariantSize(productId, designId, colorId, firstAvailable.id);
+                }
+            }
+        }
+
+        /**
+         * Select a size variant
+         */
+        function selectVariantSize(productId, designId, colorId, sizeId) {
+            const product = window.productVariantData[productId];
+            if (!product) return;
+
+            const design = product.designs.find(d => d.id === designId);
+            if (!design) return;
+
+            const color = design.colors.find(c => c.id === colorId);
+            if (!color) return;
+
+            const size = color.sizes.find(s => s.id === sizeId);
+            if (!size) return;
+
+            // Update size selection UI
+            const sizeOptions = document.querySelectorAll(`.size-selector[data-product-id="${productId}"] .size-option`);
+            sizeOptions.forEach(opt => {
+                opt.classList.toggle('selected', opt.dataset.sizeId === sizeId);
+            });
+
+            // Update price display
+            const priceEl = document.querySelector(`[data-price-display="${productId}"]`);
+            if (priceEl) {
+                priceEl.textContent = `₦${size.price.toLocaleString()}`;
+            }
+
+            // Update stock display
+            const stockEl = document.querySelector(`[data-stock-display="${productId}"]`);
+            if (stockEl) {
+                const stockClass = size.stock === 0 ? 'out' : size.stock < 10 ? 'low' : '';
+                const stockText = size.stock === 0 ? 'Out of stock' : `${size.stock} in stock`;
+                stockEl.textContent = stockText;
+                stockEl.className = `variant-stock ${stockClass}`;
+            }
+
+            // Store selection for cart
+            if (!window.variantSelections) window.variantSelections = {};
+            window.variantSelections[productId] = {
+                designId,
+                colorId,
+                sizeId,
+                designName: design.name,
+                colorName: color.name,
+                sizeName: size.name,
+                price: size.price,
+                stock: size.stock
+            };
         }
 
         /**

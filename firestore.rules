@@ -27,11 +27,6 @@ service cloud.firestore {
         ];
     }
     
-    // Check if this is the first write (create)
-    function isCreate() {
-      return resource == null;
-    }
-    
     // Check if field is unchanged
     function fieldUnchanged(field) {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny([field]);
