@@ -2,8 +2,107 @@
 User information not populated in fields like Name, email and phone number. Keep it static
 Delivery Address - ( Based on PIN code allowed ) , provide options to user. 
 Link home page slides with cloudinary in production.
+
+Link website with GlobalPay for Payment integration.
+
+Partner with GIG logistics.
+
 Profile picture upload, keep signup information frozen.
 Cache the user details flex box to avoid frequent loading.
 
+Provide sorting and filter option in admin panel based on Product, Category path , B2B badge and price. If it gets heavy with increase number of product than make some special arrangement to meet my requirement.
 
+Create dropdown for Personal information, change password, Your referral code and delete my account in Profile page.
+
+Create account page shows suggestion of Name , phone number, email and password, remove all make it blank.
+
+Search panel is floating when scrolling the page down. Fix it.
+
+Provide field in admin panel to show the MOQ prices of different quantiy when in wholesale mode.
+
+Provide options to add different categories and sub-categories.
+
+Provide tags like coming soon and new arrival.
+
+Get logistics details for shipping costs and VAT at checkout page.
+
+Different product has different product dimension so add it
+
+Add bulk upload features either using sheet or CSV.
+
+Integrate google sheet into order update and stock update and product removal in real-time.
+
+After integrating the google sheet analytical tool , Use analysis to source different product, work on QA and add the product as soon as possible.
+
+
+
+
+
+When adding new product in admin dashboard.
+
+Integrate the google sheet to manage the product details. Or find some other database or location.
+ 
+In product image , make it 
+
+URLs for Bank Configuration
+Type	URL
+Redirect URL	https://atfactoryprice.com/payment/redirect
+Webhook URL	https://us-central1-atfactoryprice-6ba8f.cloudfunctions.net/paymentWebhookHandler
+Files Created
+# Deploy everything
+firebase deploy
+
+# Or separately:
+firebase deploy --only functions
+firebase deploy --only firestore:rules
+firebase deploy --only hosting
+
+# Configure secret key (replace with your bank's key)
+firebase functions:config:set payment.secret_key="YOUR_SECRET_KEY"
+firebase deploy --only functions
+
+Next Steps
+Push changes: git push
+Deploy to Firebase: firebase deploy
+Configure your payment gateway with the URLs above
+Set secret key from your bank
+Test using test mode first, then with real payments
+
+
+=== COMPLETED FEATURES (Jan 2026) ===
+
+1. Admin Slider Management UI - DONE
+   - CRUD for homepage slides
+   - Cloudinary image upload
+   - Order, active status controls
+
+2. Bulk Product Upload - DONE
+   - CSV upload with Papa Parse
+   - Google Sheets import (requires service account setup)
+   - Preview table with validation
+   - Batch import to Firestore
+
+3. Product Variants System - DONE
+   - Design → Color → Size hierarchy
+   - Admin UI for managing variants
+   - Frontend selectors on products.html
+   - Dynamic price/stock updates
+
+=== PENDING FOR PRODUCTION ===
+
+1. Deploy Cloud Functions (requires billing):
+   - getCachedProducts
+   - publishCachedProducts
+   Command: firebase deploy --only functions
+
+2. Google Sheets Service Account:
+   - Configure service account credentials
+   - Share spreadsheet with service account email
+   - Test syncSheetsToFirestore function
+
+3. Test with Real Data:
+   - Create test products with variants
+   - Test bulk CSV upload
+   - Test slider management
+   - Verify variant selection on frontend
 
