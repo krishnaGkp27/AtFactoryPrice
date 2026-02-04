@@ -635,6 +635,184 @@
             background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
         }
 
+        /* Video Reel Styles for About Section */
+        .about-video-container {
+            position: relative;
+            width: 100%;
+            max-width: 280px;
+            margin: 0 auto;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            aspect-ratio: 9/16;
+        }
+
+        .about-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 20px;
+        }
+
+        .video-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.3);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border-radius: 20px;
+        }
+
+        .video-overlay:hover {
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        .video-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .play-button {
+            width: 70px;
+            height: 70px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.3s ease;
+        }
+
+        .video-overlay:hover .play-button {
+            transform: scale(1.1);
+        }
+
+        .play-button svg {
+            width: 30px;
+            height: 30px;
+            margin-left: 4px;
+        }
+
+        .video-badge {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .video-loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 14px;
+        }
+
+        /* Video Reel Styles for About Section */
+        .about-video-container {
+            position: relative;
+            width: 100%;
+            max-width: 280px;
+            margin: 0 auto;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            aspect-ratio: 9/16;
+        }
+
+        .about-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 20px;
+        }
+
+        .video-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.3);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border-radius: 20px;
+        }
+
+        .video-overlay:hover {
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        .video-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .play-button {
+            width: 70px;
+            height: 70px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.3s ease;
+        }
+
+        .video-overlay:hover .play-button {
+            transform: scale(1.1);
+        }
+
+        .play-button svg {
+            width: 30px;
+            height: 30px;
+            margin-left: 4px;
+        }
+
+        .video-badge {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .video-loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 14px;
+        }
+
         .about-title {
             font-size: 2.5rem;
             font-weight: 700;
@@ -1036,8 +1214,33 @@
     <section class="about-section">
         <div class="about-container">
             <div class="about-image">
-                <img src="images/brand.jpg" alt="About AtFactoryPrice"
-                     onerror="this.style.background='linear-gradient(135deg, #667eea 0%, #764ba2 100%)'">
+                <!-- Video Reel Container -->
+                <div class="about-video-container" id="aboutVideoContainer">
+                    <video 
+                        id="aboutVideo" 
+                        class="about-video" 
+                        playsinline 
+                        loop 
+                        muted
+                        poster="images/brand.jpg">
+                        <source id="aboutVideoSource" src="" type="video/mp4">
+                        Your browser does not support video.
+                    </video>
+                    <div class="video-overlay" id="videoOverlay" onclick="toggleAboutVideo()">
+                        <div class="play-button">
+                            <svg viewBox="0 0 24 24" fill="#000">
+                                <path d="M8 5v14l11-7z"/>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="video-badge">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+                        </svg>
+                        Our Story
+                    </div>
+                    <div class="video-loading" id="videoLoading" style="display: none;">Loading...</div>
+                </div>
             </div>
             <div class="about-content">
                 <h2 class="about-title">Our Story</h2>
@@ -1110,6 +1313,12 @@
                 <a href="products.html">Products</a>
                 <a href="cart.html">Cart</a>
                 <a href="checkout.html">Checkout</a>
+            </div>
+            <div class="footer-section">
+                <h4>Policies</h4>
+                <a href="policies/return-policy.html">Return Policy</a>
+                <a href="policies/refund-policy.html">Refund Policy</a>
+                <a href="policies/cancellation-policy.html">Cancellation Policy</a>
             </div>
             <div class="footer-section">
                 <h4>Contact</h4>
@@ -1289,7 +1498,96 @@
             
             // Try to load dynamic slides after a short delay (for Firebase init)
             setTimeout(loadSliderSlides, 500);
+            
+            // Load about video after Firebase initializes
+            setTimeout(loadAboutVideo, 600);
         });
+
+        // ===== ABOUT VIDEO REEL =====
+        let aboutVideoPlaying = false;
+
+        // Load video URL from Firestore
+        async function loadAboutVideo() {
+            try {
+                // Check if Firebase is initialized
+                if (typeof firebase === 'undefined' || !firebase.firestore) {
+                    console.log('Firebase not ready, retrying...');
+                    setTimeout(loadAboutVideo, 500);
+                    return;
+                }
+
+                const db = firebase.firestore();
+                const doc = await db.collection('site_config').doc('about_video').get();
+                
+                if (doc.exists) {
+                    const data = doc.data();
+                    if (data.videoUrl && data.active) {
+                        const videoSource = document.getElementById('aboutVideoSource');
+                        const video = document.getElementById('aboutVideo');
+                        
+                        if (videoSource && video) {
+                            videoSource.src = data.videoUrl;
+                            video.load();
+                            console.log('About video loaded:', data.videoUrl);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading about video:', error);
+            }
+        }
+
+        // Toggle video playback
+        function toggleAboutVideo() {
+            const video = document.getElementById('aboutVideo');
+            const overlay = document.getElementById('videoOverlay');
+            
+            if (!video) return;
+            
+            if (aboutVideoPlaying) {
+                video.pause();
+                video.muted = true;
+                overlay.classList.remove('hidden');
+                aboutVideoPlaying = false;
+            } else {
+                video.muted = false;
+                video.play().then(() => {
+                    overlay.classList.add('hidden');
+                    aboutVideoPlaying = true;
+                }).catch(err => {
+                    console.error('Video play failed:', err);
+                    // Try playing muted (autoplay policy)
+                    video.muted = true;
+                    video.play();
+                    overlay.classList.add('hidden');
+                    aboutVideoPlaying = true;
+                });
+            }
+        }
+
+        // Pause video when out of view
+        const videoObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (!entry.isIntersecting && aboutVideoPlaying) {
+                    const video = document.getElementById('aboutVideo');
+                    const overlay = document.getElementById('videoOverlay');
+                    if (video) {
+                        video.pause();
+                        video.muted = true;
+                        overlay?.classList.remove('hidden');
+                        aboutVideoPlaying = false;
+                    }
+                }
+            });
+        }, { threshold: 0.3 });
+
+        // Observe video container when DOM is ready
+        setTimeout(() => {
+            const videoContainer = document.getElementById('aboutVideoContainer');
+            if (videoContainer) {
+                videoObserver.observe(videoContainer);
+            }
+        }, 100);
 
         // Update cart count
         function updateCartCount() {

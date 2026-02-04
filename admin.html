@@ -2270,6 +2270,63 @@
                     </div>
                 </div>
 
+                <!-- ===== ABOUT VIDEO MANAGEMENT ===== -->
+                <div class="slider-management" style="margin-top: 20px;">
+                    <div class="slider-management-header">
+                        <h2>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                                <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                            </svg>
+                            About Story Video
+                        </h2>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="aboutVideoActive" onchange="toggleAboutVideoActive()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 200px 1fr; gap: 20px; align-items: start;">
+                        <!-- Video Preview -->
+                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 16px; aspect-ratio: 9/16; overflow: hidden; position: relative;">
+                            <video id="adminVideoPreview" style="width: 100%; height: 100%; object-fit: cover;" muted loop playsinline>
+                                <source id="adminVideoSource" src="" type="video/mp4">
+                            </video>
+                            <div id="adminVideoPlaceholder" style="position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; font-size: 14px; text-align: center; padding: 20px;">
+                                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom: 10px; opacity: 0.7;">
+                                    <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                                </svg>
+                                No video uploaded
+                            </div>
+                        </div>
+                        
+                        <!-- Upload Controls -->
+                        <div>
+                            <div class="form-group">
+                                <label>Video File (MP4)</label>
+                                <div class="upload-area" onclick="document.getElementById('aboutVideoInput').click()" style="padding: 30px;">
+                                    <p>Click to upload video</p>
+                                    <p style="font-size: 12px; color: #999; margin-top: 5px">MP4 format, max 50MB, vertical (9:16) recommended</p>
+                                </div>
+                                <input type="file" id="aboutVideoInput" accept="video/mp4" style="display: none" onchange="uploadAboutVideo(event)">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>Or paste Cloudinary URL</label>
+                                <input type="text" id="aboutVideoUrl" placeholder="https://res.cloudinary.com/..." onchange="previewAboutVideoUrl()">
+                            </div>
+                            
+                            <div style="display: flex; gap: 12px; margin-top: 16px;">
+                                <button class="btn btn-secondary" onclick="clearAboutVideo()">Clear Video</button>
+                                <button class="btn" onclick="saveAboutVideo()">Save Video</button>
+                            </div>
+                            
+                            <p id="aboutVideoStatus" style="font-size: 12px; color: #666; margin-top: 12px;"></p>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- ===== BULK UPLOAD SECTION ===== -->
                 <div class="bulk-upload-section">
                     <div class="bulk-upload-header">
