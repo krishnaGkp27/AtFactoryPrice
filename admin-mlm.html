@@ -2176,14 +2176,17 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
                 });
                 
                 allUsers.forEach(user => {
-                    const parentId = user.referredBy || null;
+                    const parentId = user.sponsorId || user.referredBy || null;
                     if (parentId) {
                         if (!childrenMap.has(parentId)) childrenMap.set(parentId, []);
                         childrenMap.get(parentId).push(user);
                     }
                 });
                 
-                const rootUsers = allUsers.filter(user => !user.referredBy || !userMap.has(user.referredBy));
+                const rootUsers = allUsers.filter(user => {
+                    const parentId = user.sponsorId || user.referredBy || null;
+                    return !parentId || !userMap.has(parentId);
+                });
                 treeCache.rootUsers = rootUsers;
                 treeCache.childrenMap = childrenMap;
                 
@@ -2220,7 +2223,8 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
         function renderTreeNode(user, level, childrenMap) {
             const children = childrenMap.get(user.id) || [];
             const hasChildren = children.length > 0;
-            const initials = (user.name || user.email || 'U').substring(0, 2).toUpperCase();
+            const displayName = user.name || user.displayName || (user.email ? user.email.split('@')[0] : 'User');
+            const initials = displayName.substring(0, 2).toUpperCase();
             const levelBadge = level <= 4 ? 'l' + (level + 1) : 'l5';
             const isRoot = level === 0;
             
@@ -2237,7 +2241,7 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
                     '</button>' +
                     '<div class="tree-user-avatar ' + (isRoot ? 'root' : '') + '">' + initials + '</div>' +
                     '<div class="tree-user-info">' +
-                        '<div class="tree-user-name">' + (user.name || 'Unknown User') + '</div>' +
+                        '<div class="tree-user-name">' + displayName + '</div>' +
                         '<div class="tree-user-meta"><span>' + (user.email || 'No email') + '</span><span>Code: <strong>' + (user.referralCode || 'N/A') + '</strong></span></div>' +
                     '</div>' +
                     '<div class="tree-user-stats">' +
@@ -2304,9 +2308,10 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
             if (!user) return;
             const path = [];
             let current = user;
-            while (current && current.referredBy) {
-                path.unshift(current.referredBy);
-                current = treeCache.users.get(current.referredBy);
+            while (current && (current.sponsorId || current.referredBy)) {
+                const parentId = current.sponsorId || current.referredBy;
+                path.unshift(parentId);
+                current = treeCache.users.get(parentId);
             }
             path.forEach(pathUserId => {
                 const childrenContainer = document.getElementById('tree-children-' + pathUserId);
