@@ -403,15 +403,15 @@
                 }
 
                 // Generate unique referral code for new user
+                // Check against referral_codes collection (publicly readable) instead of users collection
                 let newReferralCode = generateReferralCode();
                 let codeExists = true;
                 let attempts = 0;
                 while (codeExists && attempts < 10) {
-                    const check = await db.collection('users')
-                        .where('referralCode', '==', newReferralCode)
-                        .limit(1)
+                    const check = await db.collection('referral_codes')
+                        .doc(newReferralCode)
                         .get();
-                    if (check.empty) {
+                    if (!check.exists) {
                         codeExists = false;
                     } else {
                         newReferralCode = generateReferralCode();
