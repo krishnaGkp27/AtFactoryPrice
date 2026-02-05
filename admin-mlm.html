@@ -2510,10 +2510,10 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
             }
         }
 
-        // Fix tab switching
+        // Fix tab switching - NOTE: uses regex to strip ALL whitespace from textContent
         document.querySelectorAll('.nav-tab').forEach(tab => {
             tab.addEventListener('click', function() {
-                const tabName = this.textContent.toLowerCase().replace(' ', '');
+                const tabName = this.textContent.toLowerCase().replace(/\s+/g, '');
                 const tabMap = {
                     'overview': 'overview',
                     'rewardpointsnew': 'points',
@@ -2525,6 +2525,7 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
                     'usersearch': 'users',
                     'usernetwork': 'users',
                     'risk&fraud': 'fraud',
+                    'riskfraud': 'fraud',
                     'analytics': 'analytics',
                     'auditlog': 'audit',
                     'datasyncnew': 'sheets',
@@ -3627,7 +3628,7 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
                     'datasync': 'sheets',
                     'settings': 'config'
                 };
-                const tabName = t.textContent.toLowerCase().replace(' ', '').replace('&', '');
+                const tabName = t.textContent.toLowerCase().replace(/\s+/g, '').replace('&', '');
                 if (tabMap[tabName] === tabId) {
                     t.classList.add('active');
                 }
