@@ -433,6 +433,46 @@
         .level-badge.l1 { background: #d1fae5; color: #059669; }
         .level-badge.l2 { background: #ede9fe; color: #6366f1; }
         .level-badge.l3 { background: #fef3c7; color: #d97706; }
+        .level-badge.l4 { background: #fce7f3; color: #db2777; }
+        .level-badge.l5 { background: #e0f2fe; color: #0284c7; }
+
+        /* Full Tree View Styles */
+        .tree-view-container { padding: 20px; }
+        .tree-controls { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+        .tree-controls .btn { padding: 8px 16px; font-size: 0.85rem; }
+        .tree-stats { display: flex; gap: 20px; margin-left: auto; font-size: 0.85rem; color: #666; }
+        .tree-stats span { display: flex; align-items: center; gap: 6px; }
+        .full-tree { background: #f9fafb; border-radius: 12px; padding: 20px; min-height: 400px; max-height: 70vh; overflow-y: auto; }
+        .tree-root-list { list-style: none; padding: 0; margin: 0; }
+        .tree-item { position: relative; padding-left: 0; }
+        .tree-item-content { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: white; border-radius: 8px; margin-bottom: 6px; border: 1px solid #e5e7eb; transition: all 0.2s; cursor: pointer; }
+        .tree-item-content:hover { border-color: #9ca3af; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .tree-item-content.expanded { background: #f0fdf4; border-color: #86efac; }
+        .tree-expand-btn { width: 24px; height: 24px; border: none; background: #f3f4f6; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; flex-shrink: 0; }
+        .tree-expand-btn:hover { background: #e5e7eb; }
+        .tree-expand-btn.expanded { background: #059669; color: white; }
+        .tree-expand-btn.no-children { background: transparent; cursor: default; opacity: 0.3; }
+        .tree-expand-icon { transition: transform 0.2s; }
+        .tree-expand-btn.expanded .tree-expand-icon { transform: rotate(90deg); }
+        .tree-user-avatar { width: 36px; height: 36px; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 700; flex-shrink: 0; }
+        .tree-user-avatar.root { background: linear-gradient(135deg, #059669, #10b981); }
+        .tree-user-info { flex: 1; min-width: 0; }
+        .tree-user-name { font-weight: 600; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .tree-user-meta { font-size: 0.75rem; color: #666; display: flex; gap: 12px; flex-wrap: wrap; }
+        .tree-user-stats { display: flex; gap: 16px; font-size: 0.8rem; }
+        .tree-user-stats .stat { display: flex; flex-direction: column; align-items: center; padding: 4px 8px; background: #f3f4f6; border-radius: 6px; }
+        .tree-user-stats .stat-value { font-weight: 700; color: #059669; }
+        .tree-user-stats .stat-label { font-size: 0.65rem; color: #666; }
+        .tree-children { list-style: none; padding: 0; margin: 0 0 0 40px; border-left: 2px solid #e5e7eb; padding-left: 16px; display: none; }
+        .tree-children.expanded { display: block; }
+        .tree-loading { text-align: center; padding: 40px; color: #666; }
+        .tree-loading-spinner { width: 32px; height: 32px; border: 3px solid #e5e7eb; border-top-color: #059669; border-radius: 50%; animation: treeSpin 1s linear infinite; margin: 0 auto 12px; }
+        @keyframes treeSpin { to { transform: rotate(360deg); } }
+        .tree-empty { text-align: center; padding: 60px 20px; color: #666; }
+        .tree-empty svg { margin-bottom: 16px; opacity: 0.5; }
+        .tree-search-box { display: flex; gap: 8px; }
+        .tree-search-box input { flex: 1; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 0.9rem; }
+        .tree-search-box input:focus { outline: none; border-color: #059669; }
 
         /* Top Earners */
         .top-earner-item {
@@ -773,7 +813,13 @@
                     </button>
                     <button class="nav-tab" onclick="switchTab('rules')">Commission Rules</button>
                     <button class="nav-tab" onclick="switchTab('payouts')">Payouts</button>
-                    <button class="nav-tab" onclick="switchTab('users')">User Network</button>
+                    <button class="nav-tab" onclick="switchTab('tree')">
+                        <span style="display: inline-flex; align-items: center; gap: 6px;">
+                            Tree View
+                            <span style="background: linear-gradient(135deg, #10b981, #059669); color: white; padding: 2px 6px; border-radius: 8px; font-size: 0.65rem; font-weight: 700;">NEW</span>
+                        </span>
+                    </button>
+                    <button class="nav-tab" onclick="switchTab('users')">User Search</button>
                     <button class="nav-tab" onclick="switchTab('fraud')">Risk & Fraud</button>
                     <button class="nav-tab" onclick="switchTab('analytics')">Analytics</button>
                     <button class="nav-tab" onclick="switchTab('audit')">Audit Log</button>
@@ -890,6 +936,48 @@
                                     <tr><td colspan="6" class="loading">Loading...</td></tr>
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab: Full Tree View -->
+                <div class="tab-content" id="tab-tree">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px; vertical-align: middle;">
+                                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                    <circle cx="9" cy="7" r="4"></circle>
+                                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                                    <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                                </svg>
+                                Network Tree Visualization
+                            </h2>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary" onclick="collapseAllTreeNodes()">Collapse All</button>
+                                <button class="btn" onclick="loadFullTree()">Refresh Tree</button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="tree-view-container">
+                                <div class="tree-controls">
+                                    <div class="tree-search-box" style="flex: 1; max-width: 400px;">
+                                        <input type="text" id="treeSearchInput" placeholder="Search user in tree..." onkeypress="if(event.key==='Enter')searchInTree()">
+                                        <button class="btn btn-secondary" onclick="searchInTree()">Search</button>
+                                    </div>
+                                    <div class="tree-stats">
+                                        <span><strong id="treeStatRoots">0</strong> Root Users</span>
+                                        <span><strong id="treeStatTotal">0</strong> Total Users</span>
+                                        <span><strong id="treeStatMaxDepth">0</strong> Max Depth</span>
+                                    </div>
+                                </div>
+                                <div class="full-tree" id="fullTreeContainer">
+                                    <div class="tree-loading">
+                                        <div class="tree-loading-spinner"></div>
+                                        <p>Click "Refresh Tree" to load the network tree</p>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2056,6 +2144,183 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
             } else {
                 showStatus(result.error || 'Error processing payout', 'error');
             }
+        }
+
+        // ==========================================================
+        // FULL TREE VIEW FUNCTIONS
+        // ==========================================================
+        
+        const treeCache = { users: new Map(), rootUsers: [], childrenMap: null };
+        
+        async function loadFullTree() {
+            const container = document.getElementById('fullTreeContainer');
+            container.innerHTML = '<div class="tree-loading"><div class="tree-loading-spinner"></div><p>Loading network tree...</p></div>';
+            
+            try {
+                const usersSnapshot = await db.collection('users').orderBy('createdAt', 'desc').limit(500).get();
+                
+                if (usersSnapshot.empty) {
+                    container.innerHTML = '<div class="tree-empty"><h3>No Users Found</h3><p>No users in the MLM network yet.</p></div>';
+                    return;
+                }
+                
+                const allUsers = [];
+                const userMap = new Map();
+                const childrenMap = new Map();
+                
+                usersSnapshot.forEach(doc => {
+                    const userData = { id: doc.id, ...doc.data() };
+                    allUsers.push(userData);
+                    userMap.set(doc.id, userData);
+                    treeCache.users.set(doc.id, userData);
+                });
+                
+                allUsers.forEach(user => {
+                    const parentId = user.referredBy || null;
+                    if (parentId) {
+                        if (!childrenMap.has(parentId)) childrenMap.set(parentId, []);
+                        childrenMap.get(parentId).push(user);
+                    }
+                });
+                
+                const rootUsers = allUsers.filter(user => !user.referredBy || !userMap.has(user.referredBy));
+                treeCache.rootUsers = rootUsers;
+                treeCache.childrenMap = childrenMap;
+                
+                function getDepth(userId, depth = 0) {
+                    const children = childrenMap.get(userId) || [];
+                    if (children.length === 0) return depth;
+                    return Math.max(...children.map(c => getDepth(c.id, depth + 1)));
+                }
+                
+                let maxDepth = 0;
+                rootUsers.forEach(root => {
+                    const depth = getDepth(root.id, 0);
+                    if (depth > maxDepth) maxDepth = depth;
+                });
+                
+                document.getElementById('treeStatRoots').textContent = rootUsers.length;
+                document.getElementById('treeStatTotal').textContent = allUsers.length;
+                document.getElementById('treeStatMaxDepth').textContent = maxDepth;
+                
+                if (rootUsers.length === 0) {
+                    container.innerHTML = '<div class="tree-empty"><h3>No Root Users</h3><p>All users have a referrer.</p></div>';
+                    return;
+                }
+                
+                rootUsers.sort((a, b) => ((childrenMap.get(b.id) || []).length) - ((childrenMap.get(a.id) || []).length));
+                container.innerHTML = '<ul class="tree-root-list">' + rootUsers.map(user => renderTreeNode(user, 0, childrenMap)).join('') + '</ul>';
+                
+            } catch (error) {
+                console.error('Error loading tree:', error);
+                container.innerHTML = '<div class="tree-empty"><h3>Error Loading Tree</h3><p>' + error.message + '</p></div>';
+            }
+        }
+        
+        function renderTreeNode(user, level, childrenMap) {
+            const children = childrenMap.get(user.id) || [];
+            const hasChildren = children.length > 0;
+            const initials = (user.name || user.email || 'U').substring(0, 2).toUpperCase();
+            const levelBadge = level <= 4 ? 'l' + (level + 1) : 'l5';
+            const isRoot = level === 0;
+            
+            function getTotalDescendants(userId) {
+                const kids = childrenMap.get(userId) || [];
+                return kids.length + kids.reduce((sum, child) => sum + getTotalDescendants(child.id), 0);
+            }
+            const totalNetwork = getTotalDescendants(user.id);
+            
+            return '<li class="tree-item" data-user-id="' + user.id + '">' +
+                '<div class="tree-item-content" onclick="toggleTreeNode(\'' + user.id + '\')">' +
+                    '<button class="tree-expand-btn ' + (hasChildren ? '' : 'no-children') + '" ' + (!hasChildren ? 'disabled' : '') + '>' +
+                        '<svg class="tree-expand-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="9 18 15 12 9 6"></polyline></svg>' +
+                    '</button>' +
+                    '<div class="tree-user-avatar ' + (isRoot ? 'root' : '') + '">' + initials + '</div>' +
+                    '<div class="tree-user-info">' +
+                        '<div class="tree-user-name">' + (user.name || 'Unknown User') + '</div>' +
+                        '<div class="tree-user-meta"><span>' + (user.email || 'No email') + '</span><span>Code: <strong>' + (user.referralCode || 'N/A') + '</strong></span></div>' +
+                    '</div>' +
+                    '<div class="tree-user-stats">' +
+                        '<div class="stat"><div class="stat-value">' + children.length + '</div><div class="stat-label">Direct</div></div>' +
+                        '<div class="stat"><div class="stat-value">' + totalNetwork + '</div><div class="stat-label">Total</div></div>' +
+                    '</div>' +
+                    '<span class="level-badge ' + levelBadge + '">L' + (level + 1) + '</span>' +
+                '</div>' +
+                (hasChildren ? '<ul class="tree-children" id="tree-children-' + user.id + '">' + children.map(child => renderTreeNode(child, level + 1, childrenMap)).join('') + '</ul>' : '') +
+            '</li>';
+        }
+        
+        function toggleTreeNode(userId) {
+            const item = document.querySelector('.tree-item[data-user-id="' + userId + '"]');
+            if (!item) return;
+            const content = item.querySelector('.tree-item-content');
+            const expandBtn = item.querySelector('.tree-expand-btn');
+            const childrenContainer = document.getElementById('tree-children-' + userId);
+            if (!childrenContainer) return;
+            
+            const isExpanded = childrenContainer.classList.contains('expanded');
+            if (isExpanded) {
+                childrenContainer.classList.remove('expanded');
+                content.classList.remove('expanded');
+                expandBtn.classList.remove('expanded');
+            } else {
+                childrenContainer.classList.add('expanded');
+                content.classList.add('expanded');
+                expandBtn.classList.add('expanded');
+            }
+        }
+        
+        function collapseAllTreeNodes() {
+            document.querySelectorAll('.tree-children.expanded').forEach(el => el.classList.remove('expanded'));
+            document.querySelectorAll('.tree-item-content.expanded').forEach(el => el.classList.remove('expanded'));
+            document.querySelectorAll('.tree-expand-btn.expanded').forEach(el => el.classList.remove('expanded'));
+        }
+        
+        function searchInTree() {
+            const query = document.getElementById('treeSearchInput').value.trim().toLowerCase();
+            if (!query) return;
+            
+            document.querySelectorAll('.tree-item-content').forEach(el => { el.style.background = ''; el.style.borderColor = ''; });
+            
+            let found = false;
+            treeCache.users.forEach((user, userId) => {
+                if ((user.name || '').toLowerCase().includes(query) || (user.email || '').toLowerCase().includes(query) || (user.referralCode || '').toLowerCase().includes(query)) {
+                    found = true;
+                    expandPathToUser(userId);
+                    const item = document.querySelector('.tree-item[data-user-id="' + userId + '"] > .tree-item-content');
+                    if (item) {
+                        item.style.background = '#fef3c7';
+                        item.style.borderColor = '#f59e0b';
+                        item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                }
+            });
+            
+            if (!found) showStatus('No user found matching: ' + query, 'error');
+        }
+        
+        function expandPathToUser(userId) {
+            const user = treeCache.users.get(userId);
+            if (!user) return;
+            const path = [];
+            let current = user;
+            while (current && current.referredBy) {
+                path.unshift(current.referredBy);
+                current = treeCache.users.get(current.referredBy);
+            }
+            path.forEach(pathUserId => {
+                const childrenContainer = document.getElementById('tree-children-' + pathUserId);
+                if (childrenContainer && !childrenContainer.classList.contains('expanded')) {
+                    const item = document.querySelector('.tree-item[data-user-id="' + pathUserId + '"]');
+                    if (item) {
+                        const content = item.querySelector('.tree-item-content');
+                        const expandBtn = item.querySelector('.tree-expand-btn');
+                        childrenContainer.classList.add('expanded');
+                        if (content) content.classList.add('expanded');
+                        if (expandBtn) expandBtn.classList.add('expanded');
+                    }
+                }
+            });
         }
 
         // Search user
