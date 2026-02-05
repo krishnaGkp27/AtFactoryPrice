@@ -2520,6 +2520,9 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
                     'rewardpoints': 'points',
                     'commissionrules': 'rules',
                     'payouts': 'payouts',
+                    'treeviewnew': 'tree',
+                    'treeview': 'tree',
+                    'usersearch': 'users',
                     'usernetwork': 'users',
                     'risk&fraud': 'fraud',
                     'analytics': 'analytics',
@@ -3602,6 +3605,8 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
                 loadAnalyticsDashboard();
             } else if (tabId === 'sheets') {
                 loadSheetsStatus();
+            } else if (tabId === 'tree') {
+                loadFullTree();
             }
             
             // Update tabs manually since we added new ones
@@ -3611,6 +3616,9 @@ curl https://[REGION]-[PROJECT].cloudfunctions.net/initializeMLMConfig
                     'overview': 'overview',
                     'commissionrules': 'rules',
                     'payouts': 'payouts',
+                    'treeviewnew': 'tree',
+                    'treeview': 'tree',
+                    'usersearch': 'users',
                     'usernetwork': 'users',
                     'risk&fraud': 'fraud',
                     'analytics': 'analytics',
