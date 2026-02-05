@@ -22,7 +22,8 @@ service cloud.firestore {
         request.auth.token.email.lower() in [
           'admin@atfactoryprice.com', 
           'hello@atfactoryprice.com',
-          'atfactorypriceonline@gmail.com'
+          'atfactorypriceonline@gmail.com',
+          'johngn09@gmail.com'
           // Add more admin emails here as needed
         ];
     }
