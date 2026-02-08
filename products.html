@@ -1828,10 +1828,280 @@
         .variant-stock.out {
             color: #dc2626;
         }
+
+        /* ===== TEMU-STYLE PLP REDESIGN ===== */
+        
+        /* Override container for tighter layout */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 4px;
+        }
+
+        /* Temu-style compact search bar */
+        .temu-search-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #fff;
+            position: sticky;
+            top: 0;
+            z-index: 60;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        .temu-back-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 6px;
+            color: #333;
+            display: flex;
+            align-items: center;
+        }
+        .temu-search-input {
+            flex: 1;
+            height: 36px;
+            border: 1px solid #e2e8f0;
+            border-radius: 18px;
+            padding: 0 14px;
+            font-size: 0.85rem;
+            background: #f8f9fa;
+            outline: none;
+            font-family: inherit;
+        }
+        .temu-search-input:focus {
+            border-color: #000;
+            background: #fff;
+        }
+
+        /* Temu-style horizontal filter chips */
+        .temu-filters {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #fff;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        .temu-filters::-webkit-scrollbar { display: none; }
+        .temu-filter-chip {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 6px 12px;
+            border: 1px solid #e2e8f0;
+            border-radius: 20px;
+            background: #fff;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: #333;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.15s;
+            font-family: inherit;
+        }
+        .temu-filter-chip:hover { border-color: #000; }
+        .temu-filter-chip.active { background: #000; color: #fff; border-color: #000; }
+        .temu-filter-chip svg { width: 14px; height: 14px; flex-shrink: 0; }
+        .temu-filter-chip select {
+            appearance: none;
+            background: transparent;
+            border: none;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: inherit;
+            cursor: pointer;
+            outline: none;
+            padding: 0;
+            font-family: inherit;
+        }
+
+        /* Compact breadcrumb */
+        .temu-breadcrumb {
+            padding: 6px 12px;
+            font-size: 0.7rem;
+            color: #94a3b8;
+            background: #fff;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+        .temu-breadcrumb span { cursor: pointer; }
+        .temu-breadcrumb span:hover { color: #333; }
+        .temu-breadcrumb .sep { color: #cbd5e1; cursor: default; }
+        .temu-breadcrumb .current { color: #333; font-weight: 500; cursor: default; }
+
+        /* Promo banner */
+        .temu-promo-banner {
+            background: linear-gradient(135deg, #0d9488, #14b8a6);
+            color: #fff;
+            padding: 8px 16px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .temu-promo-banner svg { flex-shrink: 0; }
+
+        /* Override product grid for Temu-style tight spacing */
+        .products-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 3px;
+            padding: 3px 0;
+        }
+
+        /* Override product card for Temu-style */
+        .product-card {
+            background: #fff;
+            border-radius: 3px;
+            overflow: hidden;
+            transition: none;
+            box-shadow: none;
+            border: none;
+            cursor: pointer;
+        }
+        .product-card:hover {
+            transform: none;
+            box-shadow: none;
+        }
+
+        /* Temu-style card image - dominant */
+        .product-image-container {
+            position: relative;
+            width: 100%;
+            padding-top: 120%; /* Tall image ratio like Temu */
+            overflow: hidden;
+            background: #f1f5f9;
+        }
+        .product-image-container img,
+        .product-image-container .carousel-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        .product-image-container img {
+            object-fit: cover;
+        }
+        .product-card:hover .product-image {
+            transform: none;
+        }
+        .product-card:hover .image-zoom-overlay {
+            opacity: 0;
+        }
+
+        /* Temu-style card info - minimal */
+        .product-info {
+            padding: 8px;
+        }
+        .product-name {
+            font-size: 0.8rem;
+            font-weight: 500;
+            line-height: 1.3;
+            color: #333;
+            display: -webkit-box;
+            -webkit-line-clamp: 1;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            margin-bottom: 4px;
+        }
+
+        /* Hide elements moved to PDP */
+        .product-badges-inline,
+        .product-badges,
+        .product-description,
+        .b2b-indicators,
+        .variant-section,
+        .moq-highlight,
+        .bulk-pricing-table,
+        .wholesale-cta,
+        .bulk-helper,
+        .image-zoom-overlay,
+        .zoom-icon {
+            display: none !important;
+        }
+
+        /* Temu-style price + Buy Now row */
+        .product-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 2px;
+        }
+        .product-price-wrapper {
+            display: flex;
+            flex-direction: column;
+        }
+        .product-price-label {
+            display: none;
+        }
+        .product-price {
+            font-size: 1rem;
+            font-weight: 800;
+            color: #0f172a;
+        }
+        .btn-add-cart {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #f97316;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            flex-shrink: 0;
+            transition: background 0.15s;
+        }
+        .btn-add-cart:hover { background: #ea580c; }
+        .btn-add-cart svg { width: 16px; height: 16px; }
+
+        /* Hide old search/filter/wholesale sections */
+        .search-section,
+        .filters-bar,
+        .wholesale-toggle-container,
+        .view-toggle {
+            display: none !important;
+        }
+
+        /* Responsive: larger screens */
+        @media (min-width: 480px) {
+            .products-grid { grid-template-columns: repeat(2, 1fr); gap: 4px; }
+        }
+        @media (min-width: 768px) {
+            .products-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+            .product-image-container { padding-top: 110%; }
+            .container { padding: 0 8px; }
+        }
+        @media (min-width: 1024px) {
+            .products-grid { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+            .container { padding: 0 12px; }
+        }
+        @media (min-width: 1280px) {
+            .products-grid { grid-template-columns: repeat(5, 1fr); }
+        }
+        @media (max-width: 768px) {
+            .products-grid, .category-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 3px;
+            }
+        }
     </style>
 </head>
 <body>
-    <nav class="navbar">
+    <!-- Original navbar hidden on mobile, visible on desktop -->
+    <nav class="navbar" style="display: none;">
         <div class="nav-container">
             <h1 class="logo">
                 <a href="index.html">
@@ -1858,22 +2128,69 @@
         </div>
     </nav>
 
+    <!-- Temu-style Search Bar -->
+    <div class="temu-search-bar">
+        <button class="temu-back-btn" onclick="history.back()" title="Back">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M19 12H5"></path><polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+        </button>
+        <input type="text" class="temu-search-input" id="temuSearchInput" placeholder="Search fabrics, garments..." autocomplete="off">
+    </div>
+
+    <!-- Temu-style Filter Chips -->
+    <div class="temu-filters">
+        <div class="temu-filter-chip" onclick="toggleTemuFilterPanel()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="4" y1="6" x2="20" y2="6"></line>
+                <line x1="8" y1="12" x2="20" y2="12"></line>
+                <line x1="12" y1="18" x2="20" y2="18"></line>
+            </svg>
+            Filters
+        </div>
+        <div class="temu-filter-chip">
+            <select id="temuSortSelect" onchange="handleSort(this.value)">
+                <option value="recommended">Sort by</option>
+                <option value="name">A-Z</option>
+                <option value="price-low">Price: Low</option>
+                <option value="price-high">Price: High</option>
+                <option value="popular">Popular</option>
+            </select>
+        </div>
+        <div class="temu-filter-chip" id="temuCategoryChip" onclick="toggleTemuCategoryDropdown()">
+            <span id="temuCategoryLabel">Category</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+        <div class="temu-filter-chip" id="temuWholesaleChip" onclick="toggleWholesaleMode(); this.classList.toggle('active')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path>
+            </svg>
+            Wholesale
+        </div>
+    </div>
+
+    <!-- Compact Breadcrumb -->
+    <div class="temu-breadcrumb" id="temuBreadcrumb"></div>
+
+    <!-- Promo Banner -->
+    <div class="temu-promo-banner">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+        Factory Direct Pricing | Fast Delivery in Lagos
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="9 18 15 12 9 6"></polyline>
+        </svg>
+    </div>
+
     <main>
         <div class="container">
-            <nav class="breadcrumb" id="breadcrumb"></nav>
+            <nav class="breadcrumb" id="breadcrumb" style="display:none;"></nav>
 
-            <!-- Phase 3: Wholesale View Toggle (UI Only) -->
-            <div class="wholesale-toggle-container">
-                <span class="wholesale-toggle-label">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
-                        <path d="M2 17l10 5 10-5"></path>
-                        <path d="M2 12l10 5 10-5"></path>
-                    </svg>
-                    Wholesale View
-                </span>
+            <!-- Hidden: old controls kept for JS compatibility -->
+            <div class="wholesale-toggle-container" style="display:none;">
                 <div class="wholesale-toggle" id="wholesaleToggle" onclick="toggleWholesaleMode()"></div>
-                <span class="wholesale-toggle-hint">Toggle to see bulk pricing & MOQ info</span>
             </div>
 
             <!-- AI-Like Search Experience (UI Only) -->
@@ -2334,6 +2651,75 @@
             render();
         }
 
+        // Navigate to Product Detail Page
+        function navigateToProduct(productId, colorIndex) {
+            window.location.href = `product-detail.html?id=${productId}${colorIndex ? '&color=' + colorIndex : ''}`;
+        }
+
+        // ===== TEMU-STYLE SEARCH & FILTER HELPERS =====
+
+        // Wire up Temu search input
+        document.addEventListener('DOMContentLoaded', function() {
+            const temuInput = document.getElementById('temuSearchInput');
+            if (temuInput) {
+                temuInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        const query = this.value.toLowerCase().trim();
+                        if (!query) return;
+                        // Reuse existing search logic
+                        const searchResults = products.filter(p =>
+                            p.name?.toLowerCase().includes(query) ||
+                            p.description?.toLowerCase().includes(query) ||
+                            p.category?.level1?.toLowerCase().includes(query) ||
+                            p.category?.level2?.toLowerCase().includes(query) ||
+                            p.category?.level3?.toLowerCase().includes(query)
+                        );
+                        displaySearchResults(searchResults, query);
+                    }
+                });
+            }
+        });
+
+        // Update Temu breadcrumb (called from render)
+        function updateTemuBreadcrumb() {
+            const el = document.getElementById('temuBreadcrumb');
+            if (!el) return;
+            const { level1, level2, level3 } = navState;
+            let html = `<span onclick="navigateHome()">All</span>`;
+            if (level1 && CATEGORIES[level1]) {
+                html += `<span class="sep">›</span>`;
+                html += level2 ? `<span onclick="navigateLevel1('${level1}')">${CATEGORIES[level1].name}</span>` : `<span class="current">${CATEGORIES[level1].name}</span>`;
+            }
+            if (level2 && CATEGORIES[level1]?.subcategories?.[level2]) {
+                html += `<span class="sep">›</span>`;
+                html += level3 ? `<span onclick="navigateLevel2('${level1}','${level2}')">${CATEGORIES[level1].subcategories[level2].name}</span>` : `<span class="current">${CATEGORIES[level1].subcategories[level2].name}</span>`;
+            }
+            if (level3 && CATEGORIES[level1]?.subcategories?.[level2]?.types?.[level3]) {
+                html += `<span class="sep">›</span><span class="current">${CATEGORIES[level1].subcategories[level2].types[level3]}</span>`;
+            }
+            el.innerHTML = html;
+
+            // Update category chip label
+            const catLabel = document.getElementById('temuCategoryLabel');
+            if (catLabel) {
+                if (level3) catLabel.textContent = CATEGORIES[level1].subcategories[level2].types[level3];
+                else if (level2) catLabel.textContent = CATEGORIES[level1].subcategories[level2].name;
+                else if (level1) catLabel.textContent = CATEGORIES[level1].name;
+                else catLabel.textContent = 'Category';
+            }
+        }
+
+        // Placeholder for filter panel toggle (future enhancement)
+        function toggleTemuFilterPanel() {
+            // Future: open a slide-up filter panel
+            alert('Filters panel coming soon!');
+        }
+
+        function toggleTemuCategoryDropdown() {
+            // Simple: cycle back to home category view
+            navigateHome();
+        }
+
         // Render breadcrumb
         function renderBreadcrumb() {
             const breadcrumb = document.getElementById('breadcrumb');
@@ -2400,6 +2786,7 @@
         function render() {
             renderBreadcrumb();
             renderHeader();
+            updateTemuBreadcrumb();
             
             const { level1, level2, level3 } = navState;
             const container = document.getElementById('productsContainer');
@@ -2670,7 +3057,7 @@
                 }
                 
                 html += `
-                    <div class="product-card">
+                    <div class="product-card" onclick="navigateToProduct('${product.id}', 0)">
                         ${imageContainerHTML}
                         <div class="product-info">
                             <!-- Badges moved below image for cleaner look -->
@@ -2698,16 +3085,14 @@
                             
                             <div class="product-footer">
                                 <div class="product-price-wrapper">
-                                    <span class="product-price-label">Price${product.pricingUnit ? ' / ' + product.pricingUnit : ''}</span>
                                     <span class="product-price">₦${basePrice.toLocaleString()}</span>
                                 </div>
-                                <button class="btn-add-cart" onclick="addToCart('${product.id}')">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <button class="btn-add-cart" onclick="event.stopPropagation(); navigateToProduct('${product.id}', 0)" title="Buy Now">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                                         <circle cx="9" cy="21" r="1"></circle>
                                         <circle cx="20" cy="21" r="1"></circle>
                                         <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
                                     </svg>
-                                    Add
                                 </button>
                             </div>
                             

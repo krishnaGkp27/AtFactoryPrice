@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Product - AtFactoryPrice</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#000000">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="images/logo.png">
+    
+    <!-- PWA Styles -->
+    <link rel="stylesheet" href="css/pwa.css">
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        /* ===== CSS CUSTOM PROPERTIES (flexible theming) ===== */
+        :root {
+            --pdp-accent: #f97316;
+            --pdp-accent-light: #fff7ed;
+            --pdp-text: #0f172a;
+            --pdp-text-secondary: #64748b;
+            --pdp-border: #e2e8f0;
+            --pdp-bg: #ffffff;
+            --pdp-bg-page: #f8f9fa;
+            --pdp-success: #16a34a;
+            --pdp-danger: #dc2626;
+            --pdp-warning: #f59e0b;
+            --pdp-radius: 12px;
+            --pdp-radius-sm: 8px;
+            --pdp-gap: 16px;
+            --pdp-sticky-height: 64px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            line-height: 1.5;
+            color: var(--pdp-text);
+            background: var(--pdp-bg-page);
+            padding-bottom: calc(var(--pdp-sticky-height) + 70px); /* sticky bar + bottom nav */
+        }
+        a { text-decoration: none; color: inherit; }
+        img { max-width: 100%; height: auto; display: block; }
+
+        /* ===== NAVBAR (consistent with products.html) ===== */
+        .navbar {
+            background: #fff;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 16px;
+        }
+        .logo a { display: flex; align-items: center; }
+        .logo-image { width: 120px; height: 80px; }
+        .nav-links { display: flex; align-items: center; gap: 16px; }
+        .nav-link { color: var(--pdp-text-secondary); display: flex; align-items: center; gap: 4px; font-size: 0.9rem; font-weight: 500; }
+        .nav-link:hover, .nav-link.active { color: var(--pdp-text); }
+        .cart-link { position: relative; }
+        .cart-count { position: absolute; top: -6px; right: -8px; background: var(--pdp-accent); color: #fff; font-size: 0.65rem; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; }
+        .back-btn { background: none; border: none; cursor: pointer; padding: 8px; color: var(--pdp-text); display: flex; align-items: center; }
+
+        /* ===== IMAGE CAROUSEL ===== */
+        #pdp-image-carousel {
+            position: relative;
+            width: 100%;
+            background: #fff;
+            overflow: hidden;
+            /* ~60% of viewport on mobile, capped for desktop */
+            height: 60vw;
+            max-height: 500px;
+        }
+        .carousel-track {
+            display: flex;
+            height: 100%;
+            transition: transform 0.3s ease;
+        }
+        .carousel-slide {
+            min-width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f1f5f9;
+        }
+        .carousel-slide img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        .carousel-arrow {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            background: rgba(255,255,255,0.85);
+            border: none;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            z-index: 10;
+            transition: opacity 0.2s;
+        }
+        .carousel-arrow:hover { background: #fff; }
+        .carousel-arrow.prev { left: 12px; }
+        .carousel-arrow.next { right: 12px; }
+        .carousel-dots {
+            position: absolute;
+            bottom: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 6px;
+            z-index: 10;
+        }
+        .carousel-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.2);
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .carousel-dot.active { background: var(--pdp-accent); width: 20px; border-radius: 4px; }
+        .carousel-counter {
+            position: absolute;
+            bottom: 12px;
+            right: 12px;
+            background: rgba(0,0,0,0.5);
+            color: #fff;
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 10px;
+            z-index: 10;
+        }
+
+        /* ===== CONTENT AREA ===== */
+        .pdp-content { padding: 0 var(--pdp-gap); }
+
+        /* ===== COLOR SWATCHES ===== */
+        #pdp-color-swatches {
+            padding: 16px 0 8px;
+        }
+        .swatch-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .swatch-item {
+            position: relative;
+            cursor: pointer;
+        }
+        .swatch-circle {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+            box-shadow: inset 0 0 0 1px rgba(0,0,0,0.1);
+        }
+        .swatch-item.active .swatch-circle {
+            border-color: var(--pdp-text);
+            box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--pdp-text);
+        }
+        .swatch-badge {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            background: var(--pdp-accent);
+            color: #fff;
+            font-size: 10px;
+            font-weight: 700;
+            min-width: 18px;
+            height: 18px;
+            border-radius: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 4px;
+        }
+        .swatch-badge.hidden { display: none; }
+        .color-name {
+            margin-top: 8px;
+            font-size: 0.85rem;
+            color: var(--pdp-text-secondary);
+            font-weight: 500;
+        }
+
+        /* ===== PRODUCT INFO ===== */
+        #pdp-product-info {
+            padding: 12px 0;
+        }
+        .pdp-product-name {
+            font-size: 1.2rem;
+            font-weight: 700;
+            line-height: 1.3;
+            color: var(--pdp-text);
+        }
+        .pdp-price-row {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .pdp-price {
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: var(--pdp-text);
+        }
+        .pdp-price-unit {
+            font-size: 0.85rem;
+            color: var(--pdp-text-secondary);
+            font-weight: 400;
+        }
+        .pdp-tags {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        .pdp-tag {
+            font-size: 0.7rem;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+        .pdp-tag.factory { background: #000; color: #fff; }
+        .pdp-tag.bestseller { background: var(--pdp-accent); color: #fff; }
+        .pdp-tag.new { background: #10b981; color: #fff; }
+        .pdp-tag.sale { background: var(--pdp-danger); color: #fff; }
+        .pdp-tag.limited { background: var(--pdp-warning); color: #fff; }
+        .pdp-tag.coming { background: var(--pdp-text-secondary); color: #fff; }
+
+        /* ===== SIZE SELECTOR (conditional) ===== */
+        #pdp-size-selector {
+            padding: 12px 0;
+        }
+        #pdp-size-selector.hidden { display: none; }
+        .size-label { font-size: 0.85rem; font-weight: 600; margin-bottom: 8px; }
+        .size-options {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .size-btn {
+            min-width: 44px;
+            height: 38px;
+            padding: 0 14px;
+            border: 2px solid var(--pdp-border);
+            border-radius: var(--pdp-radius-sm);
+            background: #fff;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+            color: var(--pdp-text);
+        }
+        .size-btn:hover:not(.disabled) { border-color: var(--pdp-text); }
+        .size-btn.active { background: var(--pdp-text); color: #fff; border-color: var(--pdp-text); }
+        .size-btn.disabled {
+            background: #f1f5f9;
+            color: #cbd5e1;
+            border-color: #e2e8f0;
+            cursor: not-allowed;
+            text-decoration: line-through;
+        }
+        .stock-info {
+            margin-top: 8px;
+            font-size: 0.8rem;
+            color: var(--pdp-text-secondary);
+        }
+        .stock-info.low { color: var(--pdp-warning); }
+        .stock-info.out { color: var(--pdp-danger); }
+
+        /* ===== QUANTITY SELECTOR ===== */
+        #pdp-quantity-selector {
+            padding: 12px 0;
+        }
+        .qty-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .qty-btn {
+            width: 38px;
+            height: 38px;
+            border: 2px solid var(--pdp-border);
+            border-radius: var(--pdp-radius-sm);
+            background: #fff;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+            color: var(--pdp-text);
+        }
+        .qty-btn:hover:not(:disabled) { border-color: var(--pdp-text); }
+        .qty-btn:disabled { color: #cbd5e1; cursor: not-allowed; }
+        .qty-value {
+            width: 50px;
+            text-align: center;
+            font-size: 1.1rem;
+            font-weight: 700;
+            border: none;
+            background: transparent;
+        }
+
+        /* ===== PRODUCT DETAILS SECTION ===== */
+        #pdp-product-details {
+            padding: 16px 0;
+            border-top: 8px solid var(--pdp-bg-page);
+            margin-top: 8px;
+        }
+        .details-title {
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+        .details-description {
+            font-size: 0.9rem;
+            color: var(--pdp-text-secondary);
+            line-height: 1.7;
+            white-space: pre-line;
+        }
+        .details-breadcrumb {
+            margin-top: 16px;
+            font-size: 0.8rem;
+            color: var(--pdp-text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .details-breadcrumb span { color: var(--pdp-text-secondary); }
+        .details-breadcrumb .sep { color: #cbd5e1; }
+        .b2b-badges {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+        }
+        .b2b-badge {
+            font-size: 0.7rem;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: 600;
+            border: 1px solid;
+        }
+        .b2b-badge.wholesale { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
+        .b2b-badge.moq { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+        .b2b-badge.bulk { background: #f0fdf4; color: #166534; border-color: #bbf7d0; }
+
+        /* ===== STICKY BOTTOM BAR ===== */
+        #pdp-sticky-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #fff;
+            border-top: 1px solid var(--pdp-border);
+            padding: 10px 16px;
+            padding-bottom: calc(10px + env(safe-area-inset-bottom));
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            z-index: 99;
+            box-shadow: 0 -4px 16px rgba(0,0,0,0.08);
+            height: var(--pdp-sticky-height);
+        }
+        .sticky-summary {
+            font-size: 0.85rem;
+            color: var(--pdp-text-secondary);
+        }
+        .sticky-total {
+            font-size: 1.15rem;
+            font-weight: 800;
+            color: var(--pdp-text);
+        }
+        .sticky-add-btn {
+            background: var(--pdp-accent);
+            color: #fff;
+            border: none;
+            padding: 12px 28px;
+            border-radius: var(--pdp-radius-sm);
+            font-size: 0.95rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .sticky-add-btn:hover { background: #ea580c; }
+        .sticky-add-btn:disabled { background: #cbd5e1; cursor: not-allowed; }
+
+        /* ===== LOADING STATE ===== */
+        .pdp-loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 60vh;
+            font-size: 1rem;
+            color: var(--pdp-text-secondary);
+        }
+        .pdp-error {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--pdp-danger);
+        }
+
+        /* ===== TOAST ===== */
+        .pdp-toast {
+            position: fixed;
+            top: 80px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-20px);
+            background: var(--pdp-text);
+            color: #fff;
+            padding: 12px 24px;
+            border-radius: var(--pdp-radius-sm);
+            font-size: 0.9rem;
+            font-weight: 500;
+            z-index: 200;
+            opacity: 0;
+            transition: all 0.3s ease;
+            pointer-events: none;
+        }
+        .pdp-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+        /* ===== RESPONSIVE ===== */
+        @media (min-width: 768px) {
+            #pdp-image-carousel { height: 450px; }
+            .pdp-content { max-width: 600px; margin: 0 auto; }
+            #pdp-sticky-bar { max-width: 600px; left: 50%; transform: translateX(-50%); border-radius: var(--pdp-radius) var(--pdp-radius) 0 0; }
+        }
+        @media (max-width: 380px) {
+            .pdp-product-name { font-size: 1.05rem; }
+            .pdp-price { font-size: 1.3rem; }
+            .swatch-circle { width: 30px; height: 30px; }
+        }
+    </style>
+</head>
+<body>
+    <!-- NAVBAR -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <button class="back-btn" onclick="history.back()" title="Back">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <path d="M19 12H5"></path><polyline points="12 19 5 12 12 5"></polyline>
+                    </svg>
+                </button>
+                <h1 class="logo">
+                    <a href="index.html">
+                        <img src="images/logo.png" alt="AtFactoryPrice" class="logo-image" onerror="this.style.display='none'; this.parentElement.innerHTML='AtFactoryPrice'" style="width: 100px; height: 65px;">
+                    </a>
+                </h1>
+            </div>
+            <div class="nav-links">
+                <a href="products.html" class="nav-link">Products</a>
+                <a href="cart.html" class="nav-link cart-link" title="Cart">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle>
+                        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+                    </svg>
+                    <span class="cart-count" id="cartCount">0</span>
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- TOAST -->
+    <div class="pdp-toast" id="pdpToast"></div>
+
+    <!-- MAIN CONTENT (populated by JS) -->
+    <div id="pdp-root">
+        <div class="pdp-loading" id="pdpLoading">Loading product...</div>
+    </div>
+
+    <!-- STICKY BOTTOM BAR -->
+    <div id="pdp-sticky-bar" style="display: none;">
+        <div>
+            <div class="sticky-summary" id="stickySummary">Select items</div>
+            <div class="sticky-total" id="stickyTotal">₦0</div>
+        </div>
+        <button class="sticky-add-btn" id="stickyAddBtn" onclick="handleAddToCart()">Add to Cart</button>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
+    <!-- Auth UI Component (initializes Firebase) -->
+    <script src="js/auth-ui.js"></script>
+
+    <script>
+        // ===== PDP STATE =====
+        let product = null;
+        let activeDesignIndex = 0;
+        let activeColorIndex = 0;
+        let activeSizeIndex = -1; // -1 = none selected
+        let carouselIndex = 0;
+
+        // Per-color quantities: { "colorId": quantity }
+        let colorQuantities = {};
+
+        // Current quantity for active color
+        let currentQty = 0;
+
+        // ===== INIT =====
+        const db = firebase.firestore();
+
+        async function init() {
+            const params = new URLSearchParams(window.location.search);
+            const productId = params.get('id');
+            const initialColor = parseInt(params.get('color')) || 0;
+
+            if (!productId) {
+                showError('No product specified.');
+                return;
+            }
+
+            try {
+                const doc = await db.collection('products').doc(productId).get();
+                if (!doc.exists) {
+                    showError('Product not found.');
+                    return;
+                }
+
+                product = { id: doc.id, ...doc.data() };
+                document.title = `${product.name} - AtFactoryPrice`;
+
+                // Set initial color from URL parameter
+                if (product.hasVariants && product.designs && product.designs.length > 0) {
+                    const design = product.designs[activeDesignIndex];
+                    if (design && design.colors && initialColor < design.colors.length) {
+                        activeColorIndex = initialColor;
+                    }
+                }
+
+                renderPDP();
+            } catch (err) {
+                console.error('Error loading product:', err);
+                showError('Failed to load product. Please try again.');
+            }
+        }
+
+        function showError(msg) {
+            document.getElementById('pdpLoading').innerHTML = `<div class="pdp-error">${msg}<br><a href="products.html" style="color: var(--pdp-accent); font-weight: 600; margin-top: 12px; display: inline-block;">← Back to Products</a></div>`;
+        }
+
+        // ===== RENDER PDP =====
+        function renderPDP() {
+            const root = document.getElementById('pdp-root');
+            const hasVariants = product.hasVariants && product.designs && product.designs.length > 0;
+
+            let images = [];
+            let colors = [];
+            let sizes = [];
+            let currentPrice = product.price || 0;
+            let currentStock = 999; // unlimited for non-variant products
+
+            if (hasVariants) {
+                const design = product.designs[activeDesignIndex];
+                colors = design.colors || [];
+                const activeColor = colors[activeColorIndex];
+                if (activeColor) {
+                    // Collect images: color-specific image first, then product images
+                    if (activeColor.colorImage) images.push(activeColor.colorImage);
+                    sizes = activeColor.sizes || [];
+                    if (sizes.length > 0) {
+                        const activeSize = activeSizeIndex >= 0 ? sizes[activeSizeIndex] : sizes[0];
+                        if (activeSize) {
+                            currentPrice = activeSize.price || product.price;
+                            currentStock = activeSize.stock || 0;
+                        }
+                    }
+                }
+            }
+
+            // Fallback to product images
+            if (images.length === 0 && product.imageUrl) images.push(product.imageUrl);
+            if (product.images && product.images.length > 0) {
+                images = images.concat(product.images.filter(img => img && !images.includes(img)));
+            }
+            if (images.length === 0) images.push(''); // placeholder
+
+            // Build all carousel images (for variant products: one per color)
+            let carouselImages = images;
+            if (hasVariants && colors.length > 1) {
+                carouselImages = colors.map((c, i) => {
+                    if (c.colorImage) return c.colorImage;
+                    return product.imageUrl || '';
+                });
+                // Add extra images for the active color
+                if (colors[activeColorIndex] && colors[activeColorIndex].colorImage) {
+                    // Active color's extra images from product
+                    if (product.images) {
+                        carouselImages = [colors[activeColorIndex].colorImage, ...product.images.filter(img => img)];
+                    }
+                }
+                if (carouselImages.length === 0) carouselImages = images;
+            }
+
+            // Clamp carousel index
+            if (carouselIndex >= carouselImages.length) carouselIndex = 0;
+
+            const hasSizes = hasVariants && sizes.length > 0;
+            const pricingUnit = product.pricingUnit ? ` / ${product.pricingUnit}` : '';
+
+            // Build tags
+            const tags = [];
+            tags.push({ label: 'Factory Price', cls: 'factory' });
+            if (product.bestSeller) tags.push({ label: 'Best Seller', cls: 'bestseller' });
+            if (product.tags) {
+                if (product.tags.includes('new_arrival')) tags.push({ label: 'New', cls: 'new' });
+                if (product.tags.includes('sale')) tags.push({ label: 'Sale', cls: 'sale' });
+                if (product.tags.includes('limited')) tags.push({ label: 'Limited Stock', cls: 'limited' });
+                if (product.tags.includes('coming_soon')) tags.push({ label: 'Coming Soon', cls: 'coming' });
+            }
+
+            // Get active color qty
+            if (hasVariants && colors[activeColorIndex]) {
+                const cid = colors[activeColorIndex].id;
+                currentQty = colorQuantities[cid] || 0;
+            } else {
+                currentQty = colorQuantities['_default'] || 0;
+            }
+
+            root.innerHTML = `
+                <!-- IMAGE CAROUSEL -->
+                <div id="pdp-image-carousel">
+                    <div class="carousel-track" id="carouselTrack" style="transform: translateX(-${carouselIndex * 100}%)">
+                        ${carouselImages.map((img, i) => `
+                            <div class="carousel-slide">
+                                ${img ? `<img src="${img}" alt="${product.name}" loading="${i === 0 ? 'eager' : 'lazy'}">` : '<div style="color:#ccc;font-size:3rem;">📷</div>'}
+                            </div>
+                        `).join('')}
+                    </div>
+                    ${carouselImages.length > 1 ? `
+                        <button class="carousel-arrow prev" onclick="slideCarousel(-1)">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                        </button>
+                        <button class="carousel-arrow next" onclick="slideCarousel(1)">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                        </button>
+                        <div class="carousel-dots">
+                            ${carouselImages.map((_, i) => `<button class="carousel-dot ${i === carouselIndex ? 'active' : ''}" onclick="goToSlide(${i})"></button>`).join('')}
+                        </div>
+                    ` : ''}
+                    <div class="carousel-counter">${carouselIndex + 1}/${carouselImages.length}</div>
+                </div>
+
+                <div class="pdp-content">
+                    <!-- COLOR SWATCHES -->
+                    ${hasVariants && colors.length > 0 ? `
+                    <div id="pdp-color-swatches">
+                        <div class="swatch-row">
+                            ${colors.map((c, i) => {
+                                const qty = colorQuantities[c.id] || 0;
+                                return `
+                                <div class="swatch-item ${i === activeColorIndex ? 'active' : ''}" onclick="selectColor(${i})">
+                                    <div class="swatch-circle" style="background: ${c.hexCode || '#ccc'}"></div>
+                                    <span class="swatch-badge ${qty > 0 ? '' : 'hidden'}">${qty}</span>
+                                </div>`;
+                            }).join('')}
+                        </div>
+                        <div class="color-name">${colors[activeColorIndex] ? colors[activeColorIndex].name : ''}</div>
+                    </div>
+                    ` : ''}
+
+                    <!-- PRODUCT INFO -->
+                    <div id="pdp-product-info">
+                        <h1 class="pdp-product-name">${product.name}</h1>
+                        <div class="pdp-price-row">
+                            <span class="pdp-price">₦${currentPrice.toLocaleString()}</span>
+                            <span class="pdp-price-unit">${pricingUnit}</span>
+                        </div>
+                        <div class="pdp-tags">
+                            ${tags.map(t => `<span class="pdp-tag ${t.cls}">${t.label}</span>`).join('')}
+                        </div>
+                    </div>
+
+                    <!-- SIZE SELECTOR (conditional) -->
+                    <div id="pdp-size-selector" class="${hasSizes ? '' : 'hidden'}">
+                        ${hasSizes ? `
+                        <div class="size-label">Size</div>
+                        <div class="size-options">
+                            ${sizes.map((s, i) => {
+                                const isOut = s.stock <= 0;
+                                const isActive = i === activeSizeIndex || (activeSizeIndex === -1 && i === 0);
+                                return `<button class="size-btn ${isActive ? 'active' : ''} ${isOut ? 'disabled' : ''}" 
+                                         onclick="${isOut ? '' : `selectSize(${i})`}" ${isOut ? 'disabled' : ''}>${s.name}</button>`;
+                            }).join('')}
+                        </div>
+                        <div class="stock-info ${currentStock <= 5 && currentStock > 0 ? 'low' : ''} ${currentStock <= 0 ? 'out' : ''}">
+                            ${currentStock > 0 ? `${currentStock} available` : 'Out of stock'}
+                        </div>
+                        ` : ''}
+                    </div>
+
+                    <!-- QUANTITY SELECTOR -->
+                    <div id="pdp-quantity-selector">
+                        <div class="qty-row">
+                            <button class="qty-btn" onclick="changeQty(-1)" ${currentQty <= 0 ? 'disabled' : ''}>−</button>
+                            <span class="qty-value">${currentQty}</span>
+                            <button class="qty-btn" onclick="changeQty(1)" ${currentQty >= currentStock ? 'disabled' : ''}>+</button>
+                        </div>
+                    </div>
+
+                    <!-- PRODUCT DETAILS -->
+                    <div id="pdp-product-details">
+                        <div class="details-title">Product Details</div>
+                        <div class="details-description">${product.description || 'Premium quality product direct from factory.'}</div>
+                        ${product.category ? `
+                        <div class="details-breadcrumb">
+                            <span>${product.category.level1 || ''}</span>
+                            ${product.category.level2 ? `<span class="sep">›</span><span>${product.category.level2}</span>` : ''}
+                            ${product.category.level3 ? `<span class="sep">›</span><span>${product.category.level3}</span>` : ''}
+                        </div>
+                        ` : ''}
+                        <div class="b2b-badges">
+                            ${product.wholesaleAvailable ? '<span class="b2b-badge wholesale">Wholesale Available</span>' : ''}
+                            ${product.moqFriendly ? '<span class="b2b-badge moq">MOQ Friendly</span>' : ''}
+                            ${product.bulkDiscount ? '<span class="b2b-badge bulk">Bulk Discount</span>' : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Show sticky bar
+            updateStickyBar();
+            document.getElementById('pdp-sticky-bar').style.display = 'flex';
+        }
+
+        // ===== CAROUSEL =====
+        function slideCarousel(dir) {
+            const track = document.getElementById('carouselTrack');
+            if (!track) return;
+            const slideCount = track.children.length;
+            carouselIndex = (carouselIndex + dir + slideCount) % slideCount;
+            track.style.transform = `translateX(-${carouselIndex * 100}%)`;
+            updateCarouselUI();
+
+            // Sync color if variant product and carousel maps to colors
+            if (product.hasVariants && product.designs) {
+                const design = product.designs[activeDesignIndex];
+                if (design && design.colors && carouselIndex < design.colors.length) {
+                    if (carouselIndex !== activeColorIndex) {
+                        activeColorIndex = carouselIndex;
+                        activeSizeIndex = -1;
+                        renderPDP();
+                    }
+                }
+            }
+        }
+
+        function goToSlide(index) {
+            carouselIndex = index;
+            const track = document.getElementById('carouselTrack');
+            if (track) track.style.transform = `translateX(-${carouselIndex * 100}%)`;
+            updateCarouselUI();
+        }
+
+        function updateCarouselUI() {
+            document.querySelectorAll('.carousel-dot').forEach((dot, i) => {
+                dot.classList.toggle('active', i === carouselIndex);
+            });
+            const counter = document.querySelector('.carousel-counter');
+            if (counter) {
+                const total = document.querySelectorAll('.carousel-slide').length;
+                counter.textContent = `${carouselIndex + 1}/${total}`;
+            }
+        }
+
+        // Touch/swipe support for carousel
+        let touchStartX = 0;
+        let touchEndX = 0;
+        document.addEventListener('touchstart', (e) => {
+            const carousel = document.getElementById('pdp-image-carousel');
+            if (carousel && carousel.contains(e.target)) {
+                touchStartX = e.changedTouches[0].screenX;
+            }
+        }, { passive: true });
+        document.addEventListener('touchend', (e) => {
+            const carousel = document.getElementById('pdp-image-carousel');
+            if (carousel && carousel.contains(e.target)) {
+                touchEndX = e.changedTouches[0].screenX;
+                const diff = touchStartX - touchEndX;
+                if (Math.abs(diff) > 40) {
+                    slideCarousel(diff > 0 ? 1 : -1);
+                }
+            }
+        }, { passive: true });
+
+        // ===== COLOR SELECTION =====
+        function selectColor(index) {
+            // Save current qty for previous color
+            saveCurrentQty();
+            activeColorIndex = index;
+            activeSizeIndex = -1;
+            carouselIndex = index; // sync carousel to color
+            renderPDP();
+        }
+
+        // ===== SIZE SELECTION =====
+        function selectSize(index) {
+            activeSizeIndex = index;
+            renderPDP();
+        }
+
+        // ===== QUANTITY =====
+        function changeQty(delta) {
+            const hasVariants = product.hasVariants && product.designs && product.designs.length > 0;
+            let maxStock = 999;
+
+            if (hasVariants) {
+                const design = product.designs[activeDesignIndex];
+                const color = design.colors[activeColorIndex];
+                if (color && color.sizes && color.sizes.length > 0) {
+                    const sIdx = activeSizeIndex >= 0 ? activeSizeIndex : 0;
+                    maxStock = color.sizes[sIdx] ? color.sizes[sIdx].stock : 0;
+                }
+            }
+
+            currentQty = Math.max(0, Math.min(currentQty + delta, maxStock));
+
+            // Save to colorQuantities
+            if (hasVariants) {
+                const color = product.designs[activeDesignIndex].colors[activeColorIndex];
+                if (color) colorQuantities[color.id] = currentQty;
+            } else {
+                colorQuantities['_default'] = currentQty;
+            }
+
+            renderPDP();
+        }
+
+        function saveCurrentQty() {
+            const hasVariants = product.hasVariants && product.designs && product.designs.length > 0;
+            if (hasVariants) {
+                const color = product.designs[activeDesignIndex].colors[activeColorIndex];
+                if (color) colorQuantities[color.id] = currentQty;
+            } else {
+                colorQuantities['_default'] = currentQty;
+            }
+        }
+
+        // ===== STICKY BAR =====
+        function updateStickyBar() {
+            const hasVariants = product.hasVariants && product.designs && product.designs.length > 0;
+            let totalItems = 0;
+            let totalPrice = 0;
+
+            if (hasVariants) {
+                const design = product.designs[activeDesignIndex];
+                design.colors.forEach(color => {
+                    const qty = colorQuantities[color.id] || 0;
+                    if (qty > 0) {
+                        totalItems += qty;
+                        // Use first size price or product price
+                        const price = (color.sizes && color.sizes.length > 0) ? (color.sizes[0].price || product.price) : product.price;
+                        totalPrice += qty * price;
+                    }
+                });
+            } else {
+                const qty = colorQuantities['_default'] || 0;
+                totalItems = qty;
+                totalPrice = qty * (product.price || 0);
+            }
+
+            const summaryEl = document.getElementById('stickySummary');
+            const totalEl = document.getElementById('stickyTotal');
+            const addBtn = document.getElementById('stickyAddBtn');
+
+            if (totalItems > 0) {
+                summaryEl.textContent = `${totalItems} item${totalItems > 1 ? 's' : ''} selected`;
+                totalEl.textContent = `₦${totalPrice.toLocaleString()}`;
+                addBtn.disabled = false;
+            } else {
+                summaryEl.textContent = 'Select items';
+                totalEl.textContent = '₦0';
+                addBtn.disabled = true;
+            }
+        }
+
+        // ===== ADD TO CART =====
+        function handleAddToCart() {
+            saveCurrentQty();
+            const hasVariants = product.hasVariants && product.designs && product.designs.length > 0;
+            let cartItems = [];
+
+            if (hasVariants) {
+                const design = product.designs[activeDesignIndex];
+                design.colors.forEach(color => {
+                    const qty = colorQuantities[color.id] || 0;
+                    if (qty > 0) {
+                        const sizeInfo = (color.sizes && color.sizes.length > 0) ? color.sizes[0] : null;
+                        const sku = sizeInfo ? (sizeInfo.sku || `${design.id}-${color.id}-${sizeInfo.id}`) : `${design.id}-${color.id}`;
+                        cartItems.push({
+                            id: `${product.id}_${color.id}`, // Compatible with cart.html item.id
+                            productId: product.id,
+                            designId: design.id,
+                            colorId: color.id,
+                            colorName: color.name,
+                            size: sizeInfo ? sizeInfo.name : '',
+                            sku: sku,
+                            quantity: qty,
+                            price: sizeInfo ? sizeInfo.price : product.price,
+                            name: `${product.name} - ${color.name}`,
+                            image: color.colorImage || product.imageUrl, // cart.html uses 'image' field
+                            pricingUnit: product.pricingUnit || null
+                        });
+                    }
+                });
+            } else {
+                const qty = colorQuantities['_default'] || 0;
+                if (qty > 0) {
+                    cartItems.push({
+                        id: product.id, // Compatible with cart.html item.id
+                        quantity: qty,
+                        price: product.price,
+                        name: product.name,
+                        image: product.imageUrl, // cart.html uses 'image' field
+                        pricingUnit: product.pricingUnit || null
+                    });
+                }
+            }
+
+            if (cartItems.length === 0) {
+                showToast('Please select quantity first');
+                return;
+            }
+
+            // Add to localStorage cart (consistent with existing cart system)
+            let cart = JSON.parse(localStorage.getItem('cart') || '[]');
+            cartItems.forEach(item => {
+                const existingIndex = cart.findIndex(c => String(c.id) === String(item.id));
+                if (existingIndex >= 0) {
+                    cart[existingIndex].quantity += item.quantity;
+                } else {
+                    cart.push(item);
+                }
+            });
+            localStorage.setItem('cart', JSON.stringify(cart));
+
+            // Update cart count
+            const totalCount = cart.reduce((sum, c) => sum + (c.quantity || 1), 0);
+            const cartCountEl = document.getElementById('cartCount');
+            if (cartCountEl) cartCountEl.textContent = totalCount;
+
+            const totalItems = cartItems.reduce((sum, c) => sum + c.quantity, 0);
+            showToast(`${totalItems} item${totalItems > 1 ? 's' : ''} added to cart`);
+
+            // Reset quantities
+            colorQuantities = {};
+            currentQty = 0;
+            renderPDP();
+        }
+
+        // ===== TOAST =====
+        function showToast(msg) {
+            const toast = document.getElementById('pdpToast');
+            toast.textContent = msg;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 2500);
+        }
+
+        // ===== CART COUNT (on load) =====
+        function updateCartCount() {
+            const cart = JSON.parse(localStorage.getItem('cart') || '[]');
+            const count = cart.reduce((sum, c) => sum + (c.quantity || 1), 0);
+            const el = document.getElementById('cartCount');
+            if (el) el.textContent = count;
+        }
+
+        // ===== START =====
+        updateCartCount();
+        init();
+    </script>
+</body>
+</html>

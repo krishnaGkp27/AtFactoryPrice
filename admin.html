@@ -4577,6 +4577,23 @@
             renderVariants();
         }
 
+        // Generate human-readable SKU from design, color, and size names
+        function generateSKU(designName, colorName, sizeName) {
+            const sanitize = (str) => (str || '').toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 8);
+            return `${sanitize(designName)}-${sanitize(colorName)}-${sanitize(sizeName)}`;
+        }
+
+        // Regenerate all SKUs for a design (called after name changes)
+        function regenerateSKUs(designId) {
+            const design = productDesigns.find(d => d.id === designId);
+            if (!design) return;
+            design.colors.forEach(color => {
+                color.sizes.forEach(size => {
+                    size.sku = generateSKU(design.name, color.name, size.name);
+                });
+            });
+        }
+
         // Add a size to a color
         function addSize(designId, colorId) {
             const design = productDesigns.find(d => d.id === designId);
@@ -4586,11 +4603,13 @@
 
             const basePrice = parseFloat(document.getElementById('productPrice').value) || 0;
             const sizeId = 'size_' + Date.now();
+            const sizeName = 'M';
             color.sizes.push({
                 id: sizeId,
-                name: 'M',
+                name: sizeName,
                 price: basePrice,
-                stock: 0
+                stock: 0,
+                sku: generateSKU(design.name, color.name, sizeName)
             });
             renderVariants();
         }
@@ -4608,7 +4627,12 @@
         // Update design name
         function updateDesignName(designId, name) {
             const design = productDesigns.find(d => d.id === designId);
-            if (design) design.name = name;
+            if (design) {
+                design.name = name;
+                // Regenerate SKUs for all sizes under this design
+                regenerateSKUs(designId);
+                renderVariants();
+            }
         }
 
         // Update color
@@ -4620,6 +4644,11 @@
             if (field === 'hexCode') {
                 const swatch = document.querySelector(`[data-color-swatch="${colorId}"]`);
                 if (swatch) swatch.style.background = value;
+            }
+            // Regenerate SKUs when color name changes
+            if (field === 'name') {
+                regenerateSKUs(designId);
+                renderVariants();
             }
         }
 
@@ -4635,6 +4664,11 @@
                     size[field] = parseFloat(value) || 0;
                 } else {
                     size[field] = value;
+                }
+                // Regenerate SKU when size name changes
+                if (field === 'name') {
+                    size.sku = generateSKU(design.name, color.name, size.name);
+                    renderVariants();
                 }
             }
         }
@@ -4694,14 +4728,19 @@
                                         </div>
                                         <div class="sizes-list">
                                             ${color.sizes.map(size => `
-                                                <div class="size-chip">
-                                                    <input type="text" value="${size.name}" style="width: 30px; border: none; background: transparent; font-weight: 500;" 
-                                                           onchange="updateSize('${design.id}', '${color.id}', '${size.id}', 'name', this.value)">
-                                                    <span class="price">₦<input type="number" value="${size.price}" style="width: 60px; border: none; background: transparent; color: inherit;" 
-                                                           onchange="updateSize('${design.id}', '${color.id}', '${size.id}', 'price', this.value)"></span>
-                                                    <span class="stock">[<input type="number" value="${size.stock}" style="width: 40px; border: none; background: transparent; color: inherit;" 
-                                                           onchange="updateSize('${design.id}', '${color.id}', '${size.id}', 'stock', this.value)">]</span>
-                                                    <span class="size-remove" onclick="removeSize('${design.id}', '${color.id}', '${size.id}')">&times;</span>
+                                                <div class="size-chip" style="flex-direction: column; align-items: stretch; padding: 8px 10px; gap: 4px;">
+                                                    <div style="display: flex; align-items: center; gap: 6px;">
+                                                        <input type="text" value="${size.name}" style="width: 30px; border: none; background: transparent; font-weight: 600; font-size: 13px;" 
+                                                               onchange="updateSize('${design.id}', '${color.id}', '${size.id}', 'name', this.value)">
+                                                        <span class="price">₦<input type="number" value="${size.price}" style="width: 60px; border: none; background: transparent; color: inherit;" 
+                                                               onchange="updateSize('${design.id}', '${color.id}', '${size.id}', 'price', this.value)"></span>
+                                                        <span class="stock" style="background: ${size.stock > 0 ? '#dcfce7' : '#fee2e2'}; color: ${size.stock > 0 ? '#16a34a' : '#dc2626'}; padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 12px;">
+                                                            Qty: <input type="number" value="${size.stock}" style="width: 45px; border: none; background: transparent; color: inherit; font-weight: 600;" 
+                                                               onchange="updateSize('${design.id}', '${color.id}', '${size.id}', 'stock', this.value)">
+                                                        </span>
+                                                        <span class="size-remove" onclick="removeSize('${design.id}', '${color.id}', '${size.id}')">&times;</span>
+                                                    </div>
+                                                    <div style="font-size: 10px; color: #94a3b8; font-family: monospace; letter-spacing: 0.5px;">SKU: ${size.sku || generateSKU(design.name, color.name, size.name)}</div>
                                                 </div>
                                             `).join('')}
                                             <button class="add-btn-small" onclick="addSize('${design.id}', '${color.id}')" style="padding: 4px 8px;">+ Size</button>
@@ -4725,6 +4764,17 @@
             } else {
                 document.getElementById('variantsContainer').classList.remove('active');
             }
+            
+            // Backfill SKUs for existing products that don't have them
+            productDesigns.forEach(design => {
+                design.colors.forEach(color => {
+                    color.sizes.forEach(size => {
+                        if (!size.sku) {
+                            size.sku = generateSKU(design.name, color.name, size.name);
+                        }
+                    });
+                });
+            });
             
             renderVariants();
         }
