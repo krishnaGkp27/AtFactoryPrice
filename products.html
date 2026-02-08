@@ -1655,6 +1655,110 @@
             box-shadow: 0 0 0 2px #000;
         }
 
+        /* Per-color quantity badge on swatches */
+        .color-swatch .qty-badge {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            width: 18px;
+            height: 18px;
+            background: #dc2626;
+            color: white;
+            border-radius: 50%;
+            font-size: 0.6rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2;
+            border: 1.5px solid white;
+            pointer-events: none;
+        }
+
+        /* Per-color quantity selector */
+        .color-qty-selector {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 8px;
+            padding: 6px 10px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .color-qty-label {
+            font-size: 0.75rem;
+            color: #666;
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .color-qty-label strong {
+            color: #333;
+        }
+
+        .color-qty-controls {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .color-qty-btn {
+            width: 28px;
+            height: 28px;
+            border: none;
+            background: #f3f4f6;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            color: #333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s;
+        }
+
+        .color-qty-btn:hover:not(:disabled) {
+            background: #e5e7eb;
+        }
+
+        .color-qty-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .color-qty-value {
+            width: 32px;
+            text-align: center;
+            font-size: 0.85rem;
+            font-weight: 600;
+            background: white;
+            border-left: 1px solid #e5e7eb;
+            border-right: 1px solid #e5e7eb;
+            line-height: 28px;
+        }
+
+        /* Cart summary for multi-color selection */
+        .variant-cart-summary {
+            margin-top: 8px;
+            padding: 6px 10px;
+            background: #f0fdf4;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            color: #059669;
+            display: none;
+        }
+
+        .variant-cart-summary.visible {
+            display: block;
+        }
+
         .color-swatch.selected::after {
             content: '✓';
             position: absolute;
@@ -2688,35 +2792,8 @@
             lazyLoadCarouselImages();
         }
 
-        // Add to cart
-        function addToCart(productId) {
-            const product = products.find(p => p.id === productId);
-            
-            if (!product) {
-                alert('Product not found');
-                return;
-            }
-
-            let cart = JSON.parse(localStorage.getItem('cart') || '[]');
-            const existingItem = cart.find(item => item.id === productId);
-
-            if (existingItem) {
-                existingItem.quantity += 1;
-            } else {
-                cart.push({
-                    id: product.id,
-                    name: product.name,
-                    price: product.price,
-                    image: product.imageUrl,
-                    pricingUnit: product.pricingUnit || null, // Phase 6: Include pricing unit
-                    quantity: 1
-                });
-            }
-
-            localStorage.setItem('cart', JSON.stringify(cart));
-            updateCartCount();
-            alert('✅ Product added to cart!');
-        }
+        // NOTE: addToCart is now defined below with per-color quantity support
+        // (see "UPDATED ADD TO CART" section). Legacy behavior preserved via addToCartLegacy.
 
         // Update cart count
         function updateCartCount() {
@@ -3248,9 +3325,17 @@
                 `;
             }
 
-            // Color selector for first design
+            // Color selector for first design — with per-color quantity badges
             let colorHTML = '';
             if (firstDesign.colors && firstDesign.colors.length > 0) {
+                // Initialize per-color quantity state
+                if (!window.colorQuantities) window.colorQuantities = {};
+                window.colorQuantities[productId] = {};
+                firstDesign.colors.forEach(c => {
+                    const totalStock = c.sizes ? c.sizes.reduce((sum, s) => sum + (s.stock || 0), 0) : 0;
+                    window.colorQuantities[productId][c.id] = { qty: 0, stock: totalStock, name: c.name, hexCode: c.hexCode, imageUrl: c.imageUrl || null };
+                });
+
                 colorHTML = `
                     <span class="variant-label">Color</span>
                     <div class="color-selector" data-product-id="${productId}">
@@ -3260,9 +3345,21 @@
                                  onclick="selectVariantColor('${productId}', '${firstDesign.id}', '${c.id}')"
                                  data-color-id="${c.id}"
                                  title="${c.name}">
+                                 <span class="qty-badge" id="qty-badge-${productId}-${c.id}" style="display:none;">0</span>
                             </div>
                         `).join('')}
                     </div>
+                    <!-- Per-color quantity selector -->
+                    <div class="color-qty-selector" id="color-qty-${productId}">
+                        <span class="color-qty-label">Qty for <strong id="color-qty-name-${productId}">${firstDesign.colors[0]?.name || 'Color'}</strong></span>
+                        <div class="color-qty-controls">
+                            <button class="color-qty-btn" onclick="changeColorQty('${productId}', -1)" id="color-qty-minus-${productId}">−</button>
+                            <span class="color-qty-value" id="color-qty-val-${productId}">0</span>
+                            <button class="color-qty-btn" onclick="changeColorQty('${productId}', 1)" id="color-qty-plus-${productId}">+</button>
+                        </div>
+                    </div>
+                    <!-- Summary of selected colors -->
+                    <div class="variant-cart-summary" id="color-summary-${productId}"></div>
                 `;
             }
 
@@ -3321,17 +3418,29 @@
                 opt.classList.toggle('selected', opt.dataset.designId === designId);
             });
 
-            // Update color selector
+            // Update color selector — include qty badges
             const colorContainer = document.querySelector(`.color-selector[data-product-id="${productId}"]`);
             if (colorContainer && design.colors) {
+                // Re-initialize per-color quantities for new design
+                if (!window.colorQuantities) window.colorQuantities = {};
+                window.colorQuantities[productId] = {};
+                design.colors.forEach(c => {
+                    const totalStock = c.sizes ? c.sizes.reduce((sum, s) => sum + (s.stock || 0), 0) : 0;
+                    window.colorQuantities[productId][c.id] = { qty: 0, stock: totalStock, name: c.name, hexCode: c.hexCode, imageUrl: c.imageUrl || null };
+                });
+
                 colorContainer.innerHTML = design.colors.map((c, i) => `
                     <div class="color-swatch ${i === 0 ? 'selected' : ''}" 
                          style="background: ${c.hexCode}"
                          onclick="selectVariantColor('${productId}', '${designId}', '${c.id}')"
                          data-color-id="${c.id}"
                          title="${c.name}">
+                         <span class="qty-badge" id="qty-badge-${productId}-${c.id}" style="display:none;">0</span>
                     </div>
                 `).join('');
+
+                // Reset summary
+                updateColorCartSummary(productId);
 
                 // Auto-select first color
                 if (design.colors.length > 0) {
@@ -3342,6 +3451,7 @@
 
         /**
          * Select a color variant
+         * Extended: syncs image gallery, updates per-color quantity display
          */
         function selectVariantColor(productId, designId, colorId) {
             const product = window.productVariantData[productId];
@@ -3353,11 +3463,46 @@
             const color = design.colors.find(c => c.id === colorId);
             if (!color) return;
 
+            // Store active color for quantity operations
+            if (!window.activeColorSelection) window.activeColorSelection = {};
+            window.activeColorSelection[productId] = { designId, colorId };
+
             // Update color selection UI
             const colorSwatches = document.querySelectorAll(`.color-selector[data-product-id="${productId}"] .color-swatch`);
             colorSwatches.forEach(swatch => {
                 swatch.classList.toggle('selected', swatch.dataset.colorId === colorId);
             });
+
+            // === IMAGE GALLERY SYNC ===
+            // Update product card image when color has its own imageUrl
+            if (color.imageUrl) {
+                const card = document.querySelector(`.variant-section[data-product-id="${productId}"]`)?.closest('.product-card');
+                if (card) {
+                    const singleImg = card.querySelector('.product-image');
+                    if (singleImg && !card.querySelector('.carousel-container')) {
+                        singleImg.src = getCloudinaryUrl ? getCloudinaryUrl(color.imageUrl, 400) : color.imageUrl;
+                    }
+                    // For carousel: update first slide
+                    const firstSlideImg = card.querySelector('.carousel-slide:first-child img');
+                    if (firstSlideImg) {
+                        firstSlideImg.src = getCloudinaryUrl ? getCloudinaryUrl(color.imageUrl, 400) : color.imageUrl;
+                    }
+                }
+            }
+
+            // === PER-COLOR QUANTITY DISPLAY ===
+            // Update the quantity selector to show active color's quantity
+            const colorQtyState = window.colorQuantities?.[productId]?.[colorId];
+            if (colorQtyState !== undefined) {
+                const qtyVal = document.getElementById(`color-qty-val-${productId}`);
+                const qtyName = document.getElementById(`color-qty-name-${productId}`);
+                const qtyMinus = document.getElementById(`color-qty-minus-${productId}`);
+                const qtyPlus = document.getElementById(`color-qty-plus-${productId}`);
+                if (qtyVal) qtyVal.textContent = colorQtyState.qty;
+                if (qtyName) qtyName.textContent = color.name;
+                if (qtyMinus) qtyMinus.disabled = colorQtyState.qty <= 0;
+                if (qtyPlus) qtyPlus.disabled = colorQtyState.qty >= colorQtyState.stock;
+            }
 
             // Update size selector
             const sizeContainer = document.querySelector(`.size-selector[data-product-id="${productId}"]`);
@@ -3427,6 +3572,180 @@
                 price: size.price,
                 stock: size.stock
             };
+        }
+
+        // ==========================================================
+        // PER-COLOR QUANTITY FUNCTIONS
+        // ==========================================================
+
+        /**
+         * Change quantity for the currently active color variant.
+         * Updates badge on swatch, quantity display, and cart summary.
+         */
+        function changeColorQty(productId, delta) {
+            const activeColor = window.activeColorSelection?.[productId];
+            if (!activeColor) return;
+
+            const colorId = activeColor.colorId;
+            const colorState = window.colorQuantities?.[productId]?.[colorId];
+            if (!colorState) return;
+
+            // Calculate new quantity, clamped to [0, stock]
+            const newQty = Math.max(0, Math.min(colorState.stock, colorState.qty + delta));
+            colorState.qty = newQty;
+
+            // Update quantity display
+            const qtyVal = document.getElementById(`color-qty-val-${productId}`);
+            if (qtyVal) qtyVal.textContent = newQty;
+
+            // Update +/- button states
+            const qtyMinus = document.getElementById(`color-qty-minus-${productId}`);
+            const qtyPlus = document.getElementById(`color-qty-plus-${productId}`);
+            if (qtyMinus) qtyMinus.disabled = newQty <= 0;
+            if (qtyPlus) qtyPlus.disabled = newQty >= colorState.stock;
+
+            // Update badge on color swatch
+            const badge = document.getElementById(`qty-badge-${productId}-${colorId}`);
+            if (badge) {
+                if (newQty > 0) {
+                    badge.textContent = newQty;
+                    badge.style.display = 'flex';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+
+            // Update cart summary below swatches
+            updateColorCartSummary(productId);
+        }
+
+        /**
+         * Update the summary text showing selected colors and quantities.
+         */
+        function updateColorCartSummary(productId) {
+            const summaryEl = document.getElementById(`color-summary-${productId}`);
+            if (!summaryEl) return;
+
+            const quantities = window.colorQuantities?.[productId];
+            if (!quantities) return;
+
+            const selected = Object.entries(quantities)
+                .filter(([_, v]) => v.qty > 0)
+                .map(([_, v]) => `${v.name} (${v.qty})`)
+                .join(', ');
+
+            if (selected) {
+                summaryEl.textContent = `Selected: ${selected}`;
+                summaryEl.classList.add('visible');
+            } else {
+                summaryEl.textContent = '';
+                summaryEl.classList.remove('visible');
+            }
+        }
+
+        // ==========================================================
+        // UPDATED ADD TO CART — supports per-color quantities
+        // ==========================================================
+
+        // Add to cart
+        function addToCart(productId) {
+            const product = products.find(p => p.id === productId);
+            
+            if (!product) {
+                alert('Product not found');
+                return;
+            }
+
+            let cart = JSON.parse(localStorage.getItem('cart') || '[]');
+
+            // === Per-color quantity mode (variant products) ===
+            const colorQtys = window.colorQuantities?.[productId];
+            if (colorQtys) {
+                const selectedColors = Object.entries(colorQtys)
+                    .filter(([_, v]) => v.qty > 0)
+                    .map(([colorId, v]) => ({ colorId, colorName: v.name, hex: v.hexCode, quantity: v.qty }));
+
+                if (selectedColors.length === 0) {
+                    // Fallback: if user didn't use color qty selector, use legacy behavior
+                    addToCartLegacy(productId, product, cart);
+                    return;
+                }
+
+                // Add each color as a separate cart line (or group under same product)
+                let totalAdded = 0;
+                selectedColors.forEach(sc => {
+                    const cartKey = `${productId}_${sc.colorId}`;
+                    const existing = cart.find(item => item.id === cartKey);
+
+                    // Use variant price if available, otherwise base price
+                    const variantSelection = window.variantSelections?.[productId];
+                    const itemPrice = variantSelection?.price || product.price;
+
+                    if (existing) {
+                        existing.quantity += sc.quantity;
+                    } else {
+                        cart.push({
+                            id: cartKey,
+                            productId: product.id,
+                            name: `${product.name} - ${sc.colorName}`,
+                            price: itemPrice,
+                            image: product.imageUrl,
+                            pricingUnit: product.pricingUnit || null,
+                            quantity: sc.quantity,
+                            // Extended: variant color info
+                            selectedColor: {
+                                colorId: sc.colorId,
+                                colorName: sc.colorName,
+                                hex: sc.hex
+                            }
+                        });
+                    }
+                    totalAdded += sc.quantity;
+                });
+
+                localStorage.setItem('cart', JSON.stringify(cart));
+                updateCartCount();
+                alert(`✅ ${totalAdded} item${totalAdded > 1 ? 's' : ''} added to cart!`);
+
+                // Reset quantities after adding
+                Object.keys(colorQtys).forEach(cid => {
+                    colorQtys[cid].qty = 0;
+                    const badge = document.getElementById(`qty-badge-${productId}-${cid}`);
+                    if (badge) badge.style.display = 'none';
+                });
+                const qtyVal = document.getElementById(`color-qty-val-${productId}`);
+                if (qtyVal) qtyVal.textContent = '0';
+                updateColorCartSummary(productId);
+                return;
+            }
+
+            // === Legacy mode (non-variant products) ===
+            addToCartLegacy(productId, product, cart);
+        }
+
+        /**
+         * Legacy add-to-cart for products without color variant quantities.
+         * Preserves original behavior exactly.
+         */
+        function addToCartLegacy(productId, product, cart) {
+            const existingItem = cart.find(item => item.id === productId);
+
+            if (existingItem) {
+                existingItem.quantity += 1;
+            } else {
+                cart.push({
+                    id: product.id,
+                    name: product.name,
+                    price: product.price,
+                    image: product.imageUrl,
+                    pricingUnit: product.pricingUnit || null,
+                    quantity: 1
+                });
+            }
+
+            localStorage.setItem('cart', JSON.stringify(cart));
+            updateCartCount();
+            alert('✅ Product added to cart!');
         }
 
         /**
