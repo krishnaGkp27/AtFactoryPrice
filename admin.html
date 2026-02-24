@@ -4563,9 +4563,64 @@
                 id: colorId,
                 name: 'New Color',
                 hexCode: '#000000',
-                colorImage: '',
+                images: [],          // Array of image URLs (1 max for now)
+                colorImage: '',      // Backward compat (= images[0])
                 sizes: []
             });
+            renderVariants();
+        }
+
+        // Upload image for a specific color variant
+        async function uploadColorImage(designId, colorId) {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/jpeg,image/jpg,image/png,image/webp';
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const design = productDesigns.find(d => d.id === designId);
+                if (!design) return;
+                const color = design.colors.find(c => c.id === colorId);
+                if (!color) return;
+
+                // Check max limit (1 for now)
+                if (color.images && color.images.length >= 1) {
+                    alert('Maximum 1 image per color for now. Remove the existing image first.');
+                    return;
+                }
+
+                // Show uploading state
+                const uploadZone = document.getElementById(`color-upload-${colorId}`);
+                if (uploadZone) uploadZone.innerHTML = '<div style="padding: 20px; text-align: center; color: #64748b;">Uploading...</div>';
+
+                try {
+                    const result = await uploadSingleImage(file);
+                    if (result && result.url) {
+                        if (!color.images) color.images = [];
+                        color.images.push(result.url);
+                        color.colorImage = color.images[0]; // Backward compat
+                        renderVariants();
+                        showStatus('Color image uploaded!', 'success');
+                    }
+                } catch (err) {
+                    console.error('Color image upload failed:', err);
+                    showStatus('Failed to upload color image', 'error');
+                    renderVariants();
+                }
+            };
+            input.click();
+        }
+
+        // Remove a color image
+        function removeColorImage(designId, colorId, imageIndex) {
+            const design = productDesigns.find(d => d.id === designId);
+            if (!design) return;
+            const color = design.colors.find(c => c.id === colorId);
+            if (!color || !color.images) return;
+
+            color.images.splice(imageIndex, 1);
+            color.colorImage = color.images.length > 0 ? color.images[0] : '';
             renderVariants();
         }
 
@@ -4726,6 +4781,39 @@
                                                    class="color-picker-input" title="Pick color">
                                             <span class="color-remove" onclick="removeColor('${design.id}', '${color.id}')">&times;</span>
                                         </div>
+                                        <!-- Per-color image upload -->
+                                        <div style="padding: 8px 0; border-bottom: 1px solid #f1f5f9; margin-bottom: 8px;">
+                                            <div style="font-size: 11px; color: #64748b; margin-bottom: 6px; font-weight: 500;">
+                                                Color Image (${(color.images || []).length} of 1)
+                                            </div>
+                                            ${(color.images && color.images.length > 0) ? `
+                                                <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px;">
+                                                    ${color.images.map((img, imgIdx) => `
+                                                        <div style="position: relative; width: 64px; height: 64px; border-radius: 6px; overflow: hidden; border: 1px solid #e2e8f0;">
+                                                            <img src="${img}" style="width: 100%; height: 100%; object-fit: cover;">
+                                                            <button onclick="event.stopPropagation(); removeColorImage('${design.id}', '${color.id}', ${imgIdx})"
+                                                                    style="position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; background: #dc2626; color: #fff; border: none; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1;">&times;</button>
+                                                            ${imgIdx === 0 ? '<div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: #fff; font-size: 8px; text-align: center; padding: 1px;">Primary</div>' : ''}
+                                                        </div>
+                                                    `).join('')}
+                                                </div>
+                                            ` : ''}
+                                            ${(!color.images || color.images.length < 1) ? `
+                                                <div id="color-upload-${color.id}" 
+                                                     onclick="uploadColorImage('${design.id}', '${color.id}')"
+                                                     style="border: 2px dashed #e2e8f0; border-radius: 8px; padding: 12px; text-align: center; cursor: pointer; transition: all 0.15s; background: #fafafa;"
+                                                     onmouseover="this.style.borderColor='#94a3b8'; this.style.background='#f1f5f9'"
+                                                     onmouseout="this.style.borderColor='#e2e8f0'; this.style.background='#fafafa'">
+                                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" style="margin: 0 auto 4px;">
+                                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                                        <polyline points="17 8 12 3 7 8"></polyline>
+                                                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                                                    </svg>
+                                                    <div style="font-size: 11px; color: #94a3b8;">Click to upload image</div>
+                                                </div>
+                                            ` : ''}
+                                            <div style="font-size: 9px; color: #cbd5e1; margin-top: 4px;">First image shown on PLP carousel</div>
+                                        </div>
                                         <div class="sizes-list">
                                             ${color.sizes.map(size => `
                                                 <div class="size-chip" style="flex-direction: column; align-items: stretch; padding: 8px 10px; gap: 4px;">
@@ -4765,9 +4853,17 @@
                 document.getElementById('variantsContainer').classList.remove('active');
             }
             
-            // Backfill SKUs for existing products that don't have them
+            // Backfill for existing products
             productDesigns.forEach(design => {
                 design.colors.forEach(color => {
+                    // Migrate colorImage to images[] array
+                    if (!color.images) {
+                        color.images = color.colorImage ? [color.colorImage] : [];
+                    }
+                    // Ensure colorImage stays in sync
+                    color.colorImage = color.images.length > 0 ? color.images[0] : '';
+                    
+                    // Backfill SKUs
                     color.sizes.forEach(size => {
                         if (!size.sku) {
                             size.sku = generateSKU(design.name, color.name, size.name);
