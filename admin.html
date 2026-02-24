@@ -2075,6 +2075,26 @@
                     </div>
                 </div>
 
+                <!-- Operations Bot: Risk thresholds (Telegram inventory bot) -->
+                <div class="dashboard-section" id="opsBotSection">
+                    <div class="dashboard-section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        Operations Bot — Risk thresholds
+                    </div>
+                    <p style="font-size: 13px; color: #666; margin-bottom: 12px;">Configure limits for the Telegram inventory bot. Deductions above the large-deduction limit require admin approval. Stock below the low-stock threshold triggers alerts.</p>
+                    <div class="form-group" style="max-width: 400px;">
+                        <label style="font-size: 12px;">Large deduction limit (yards)</label>
+                        <input type="number" id="opsBotRiskThreshold" min="1" step="1" placeholder="300" style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px; margin-bottom: 10px;">
+                        <label style="font-size: 12px;">Low stock alert threshold (yards)</label>
+                        <input type="number" id="opsBotLowStockThreshold" min="0" step="1" placeholder="100" style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px; margin-bottom: 12px;">
+                        <button type="button" class="btn" id="opsBotSaveBtn" onclick="opsBotSaveSettings()">Save thresholds</button>
+                        <span id="opsBotStatus" style="margin-left: 10px; font-size: 13px;"></span>
+                    </div>
+                    <p id="opsBotHint" style="font-size: 12px; color: #999;">Set <code>CONFIG.opsBot.baseUrl</code> to your bot URL to load/save. Optional: <code>CONFIG.opsBot.apiKey</code> for saving.</p>
+                </div>
+
                 <!-- Phase 6: Reseller/Distributor Prep UI (Placeholders) -->
                 <div class="dashboard-section">
                     <div class="dashboard-section-title">
@@ -2851,6 +2871,11 @@
             cloudinary: {
                 cloudName: 'dpxwuty0f',
                 uploadPreset: 'atfactoryprice_products'
+            },
+            // Operations Bot (Telegram) — set after deploying the bot; optional apiKey for saving thresholds
+            opsBot: {
+                baseUrl: '', // e.g. 'https://your-bot.up.railway.app'
+                apiKey: ''  // optional: for PUT /api/settings
             }
         };
 
@@ -4269,7 +4294,51 @@
             if (priceInput) {
                 priceInput.addEventListener('input', updatePricingUnit);
             }
+
+            // Operations Bot: load risk thresholds if baseUrl is set
+            opsBotLoadSettings();
         });
+
+        function opsBotLoadSettings() {
+            const base = (CONFIG.opsBot && CONFIG.opsBot.baseUrl) ? CONFIG.opsBot.baseUrl.replace(/\/$/, '') : '';
+            if (!base) return;
+            const statusEl = document.getElementById('opsBotStatus');
+            const hintEl = document.getElementById('opsBotHint');
+            if (hintEl) hintEl.style.display = 'none';
+            fetch(base + '/api/settings').then(r => r.json()).then(data => {
+                if (data.ok) {
+                    const r = document.getElementById('opsBotRiskThreshold');
+                    const l = document.getElementById('opsBotLowStockThreshold');
+                    if (r) r.value = data.riskThreshold ?? 300;
+                    if (l) l.value = data.lowStockThreshold ?? 100;
+                }
+            }).catch(() => { if (statusEl) statusEl.textContent = 'Could not load (check bot URL).'; });
+        }
+
+        function opsBotSaveSettings() {
+            const base = (CONFIG.opsBot && CONFIG.opsBot.baseUrl) ? CONFIG.opsBot.baseUrl.replace(/\/$/, '') : '';
+            const statusEl = document.getElementById('opsBotStatus');
+            if (!base) {
+                if (statusEl) statusEl.textContent = 'Set CONFIG.opsBot.baseUrl first.';
+                return;
+            }
+            const risk = parseInt(document.getElementById('opsBotRiskThreshold').value, 10);
+            const low = parseInt(document.getElementById('opsBotLowStockThreshold').value, 10);
+            if (isNaN(risk) || isNaN(low) || risk < 1 || low < 0) {
+                if (statusEl) statusEl.textContent = 'Invalid numbers.';
+                return;
+            }
+            const headers = { 'Content-Type': 'application/json' };
+            if (CONFIG.opsBot && CONFIG.opsBot.apiKey) headers['X-API-Key'] = CONFIG.opsBot.apiKey;
+            if (statusEl) statusEl.textContent = 'Saving…';
+            fetch(base + '/api/settings', { method: 'PUT', headers, body: JSON.stringify({ riskThreshold: risk, lowStockThreshold: low }) })
+                .then(r => r.json())
+                .then(data => {
+                    if (statusEl) statusEl.textContent = data.ok ? 'Saved.' : (data.error || 'Failed');
+                    if (data.ok) setTimeout(() => { statusEl.textContent = ''; }, 2000);
+                })
+                .catch(() => { if (statusEl) statusEl.textContent = 'Request failed.'; });
+        }
 
         // ===== SLIDER MANAGEMENT =====
         let slides = [];

@@ -1,0 +1,67 @@
+/**
+ * Event handlers for approval workflow: notify admins, handle approve/reject.
+ */
+
+const config = require('../config');
+const inventoryService = require('../services/inventoryService');
+const logger = require('../utils/logger');
+
+/** Send approval request to each admin's private chat. */
+async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSummary, riskReason) {
+  const text = `🔔 *Approval required*\n\nRequest ID: \`${requestId}\`\nUser: ${userLabel}\nAction: ${actionSummary}\nReason: ${riskReason}\n\nUse buttons below to approve or reject.`;
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: '✅ Approve', callback_data: `approve:${requestId}` }, { text: '❌ Reject', callback_data: `reject:${requestId}` }],
+    ],
+  };
+  for (const adminId of config.access.adminIds) {
+    try {
+      await bot.sendMessage(adminId, text, { parse_mode: 'Markdown', reply_markup: keyboard });
+    } catch (e) {
+      logger.error('Failed to notify admin', adminId, e.message);
+    }
+  }
+}
+
+/** Handle callback from admin: approve or reject. */
+async function handleApprovalCallback(bot, callbackQuery, action) {
+  const data = callbackQuery.data || '';
+  const requestId = data.replace(/^(approve|reject):/, '');
+  const adminId = String(callbackQuery.from.id);
+  if (!config.access.adminIds.includes(adminId)) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only admins can approve.' });
+    return;
+  }
+  try {
+    if (action === 'approve') {
+      const result = await inventoryService.executeApprovedAction(requestId, adminId);
+      if (result.ok) {
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Approved.' });
+        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+          chat_id: callbackQuery.message.chat.id,
+          message_id: callbackQuery.message.message_id,
+        });
+        await bot.sendMessage(callbackQuery.message.chat.id, `✅ Request ${requestId} approved. Stock updated.`);
+      } else {
+        await bot.answerCallbackQuery(callbackQuery.id, { text: result.message || 'Failed.' });
+      }
+    } else {
+      const result = await inventoryService.rejectApproval(requestId, adminId);
+      if (result.ok) {
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Rejected.' });
+        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+          chat_id: callbackQuery.message.chat.id,
+          message_id: callbackQuery.message.message_id,
+        });
+        await bot.sendMessage(callbackQuery.message.chat.id, `❌ Request ${requestId} rejected.`);
+      } else {
+        await bot.answerCallbackQuery(callbackQuery.id, { text: result.message || 'Failed.' });
+      }
+    }
+  } catch (e) {
+    logger.error('Approval callback error', e);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Error processing request.' });
+  }
+}
+
+module.exports = { notifyAdminsApprovalRequest, handleApprovalCallback };
