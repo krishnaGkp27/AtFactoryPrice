@@ -63,6 +63,20 @@ async function findRowIndex(sheetName, columnIndex, matchValue) {
   return -1;
 }
 
+async function getSheetNames() {
+  const s = await getSheets();
+  const res = await s.spreadsheets.get({ spreadsheetId: spreadsheetId(), fields: 'sheets.properties.title' });
+  return (res.data.sheets || []).map((s) => s.properties.title);
+}
+
+async function addSheet(title) {
+  const s = await getSheets();
+  await s.spreadsheets.batchUpdate({
+    spreadsheetId: spreadsheetId(),
+    requestBody: { requests: [{ addSheet: { properties: { title } } }] },
+  });
+}
+
 module.exports = {
   getSheets,
   spreadsheetId,
@@ -70,4 +84,6 @@ module.exports = {
   appendRows,
   updateRange,
   findRowIndex,
+  getSheetNames,
+  addSheet,
 };

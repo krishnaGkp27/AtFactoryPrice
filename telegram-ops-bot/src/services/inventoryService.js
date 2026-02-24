@@ -9,6 +9,7 @@ const auditLogRepository = require('../repositories/auditLogRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const riskEvaluate = require('../risk/evaluate');
 const config = require('../config');
+const { bus: erpBus } = require('../events/erpEventBus');
 
 const CURRENCY = config.currency || 'NGN';
 
@@ -128,6 +129,7 @@ async function sellThan(packageNo, thanNo, customer, userId) {
     qty: than.yards, before: 'available', after: 'sold', status: 'completed',
   });
   await auditLogRepository.append('sell_than', { packageNo, thanNo, customer, yards: than.yards }, userId);
+  try { erpBus.emit('sale', { type: 'sell_than', packageNo, thanNo, customer, yards: than.yards, pricePerYard: than.pricePerYard, design: than.design, shade: than.shade, warehouse: than.warehouse, userId, txnId: `ST-${packageNo}-${thanNo}` }); } catch (_) {}
   return { status: 'completed', than: result };
 }
 
@@ -167,6 +169,7 @@ async function sellPackage(packageNo, customer, userId) {
     qty: totalYards, before: `${available.length} thans`, after: 'sold', status: 'completed',
   });
   await auditLogRepository.append('sell_package', { packageNo, customer, yards: totalYards, thans: results.length }, userId);
+  try { erpBus.emit('sale', { type: 'sell_package', packageNo, customer, yards: totalYards, pricePerYard: available[0]?.pricePerYard || 0, design: available[0]?.design, shade: available[0]?.shade, warehouse: available[0]?.warehouse, userId, txnId: `SP-${packageNo}` }); } catch (_) {}
   return { status: 'completed', soldThans: results.length, soldYards: totalYards };
 }
 
@@ -233,6 +236,7 @@ async function returnThan(packageNo, thanNo, userId) {
     qty: result.yards, before: 'sold', after: 'available', status: 'completed',
   });
   await auditLogRepository.append('return_than', { packageNo, thanNo, yards: result.yards }, userId);
+  try { erpBus.emit('return', { type: 'return_than', packageNo, thanNo, yards: result.yards, pricePerYard: result.pricePerYard, design: result.design, shade: result.shade, warehouse: result.warehouse, userId, txnId: `RT-${packageNo}-${thanNo}` }); } catch (_) {}
   return { status: 'completed', than: result };
 }
 
@@ -248,6 +252,7 @@ async function returnPackage(packageNo, userId) {
     qty: totalYards, before: 'sold', after: 'available', status: 'completed',
   });
   await auditLogRepository.append('return_package', { packageNo, thans: results.length, yards: totalYards }, userId);
+  try { erpBus.emit('return', { type: 'return_package', packageNo, yards: totalYards, pricePerYard: results[0]?.pricePerYard || 0, design: results[0]?.design, shade: results[0]?.shade, warehouse: results[0]?.warehouse, userId, txnId: `RP-${packageNo}` }); } catch (_) {}
   return { status: 'completed', returnedThans: results.length, returnedYards: totalYards };
 }
 
@@ -263,6 +268,7 @@ async function updatePrice(filters, newPrice, userId) {
     qty: count, before: '', after: `${newPrice}/yd`, status: 'completed',
   });
   await auditLogRepository.append('update_price', { filters, newPrice, rowsUpdated: count }, userId);
+  try { erpBus.emit('price_update', { label, newPrice, count, userId }); } catch (_) {}
   return { status: 'completed', updated: count, label, newPrice };
 }
 

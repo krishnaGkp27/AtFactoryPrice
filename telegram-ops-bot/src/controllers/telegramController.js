@@ -8,6 +8,8 @@ const approvalEvents = require('../events/approvalEvents');
 const auth = require('../middlewares/auth');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const analytics = require('../ai/analytics');
+const crmService = require('../services/crmService');
+const accountingService = require('../services/accountingService');
 const config = require('../config');
 
 const CURRENCY = config.currency || 'NGN';
@@ -210,6 +212,97 @@ async function handleMessage(bot, msg) {
         return;
       }
 
+      case 'add_customer': {
+        if (!intent.customer) { await bot.sendMessage(chatId, 'Customer name is required. e.g. "Add customer Ibrahim, phone +234..."'); return; }
+        const rawText = text;
+        const phoneMatch = rawText.match(/phone\s+([+\d\s-]+)/i);
+        const addressMatch = rawText.match(/address\s+([^,]+)/i);
+        const catMatch = rawText.match(/\b(wholesale|retail)\b/i);
+        const limitMatch = rawText.match(/credit\s*limit\s+(\d+)/i);
+        const termsMatch = rawText.match(/\b(net\s*\d+|cod|credit)\b/i);
+        const res = await crmService.addCustomer({
+          name: intent.customer,
+          phone: phoneMatch ? phoneMatch[1].trim() : '',
+          address: addressMatch ? addressMatch[1].trim() : '',
+          category: catMatch ? catMatch[1] : 'Retail',
+          credit_limit: limitMatch ? parseInt(limitMatch[1]) : 0,
+          payment_terms: termsMatch ? termsMatch[1] : 'COD',
+        });
+        if (res.status === 'exists') {
+          await bot.sendMessage(chatId, `Customer "${res.customer.name}" already exists (${res.customer.customer_id}).`);
+        } else {
+          await bot.sendMessage(chatId, `✅ Customer "${res.customer.name}" created (${res.customer.customer_id}).`);
+        }
+        return;
+      }
+
+      case 'check_customer': {
+        if (!intent.customer) { await bot.sendMessage(chatId, 'Which customer? e.g. "Show customer Ibrahim"'); return; }
+        const cust = await crmService.getCustomer(intent.customer);
+        if (!cust) { await bot.sendMessage(chatId, `Customer "${intent.customer}" not found.`); return; }
+        let r = `👤 *${cust.name}* (${cust.customer_id})\n`;
+        r += `Category: ${cust.category} | Status: ${cust.status}\n`;
+        if (cust.phone) r += `Phone: ${cust.phone}\n`;
+        if (cust.address) r += `Address: ${cust.address}\n`;
+        r += `Credit limit: ${fmtMoney(cust.credit_limit)}\n`;
+        r += `Outstanding: ${fmtMoney(cust.outstanding_balance)}\n`;
+        r += `Terms: ${cust.payment_terms}`;
+        await bot.sendMessage(chatId, r, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'check_balance': {
+        if (!intent.customer) { await bot.sendMessage(chatId, 'Which customer?'); return; }
+        const cb = await crmService.getCustomer(intent.customer);
+        if (!cb) { await bot.sendMessage(chatId, `Customer "${intent.customer}" not found.`); return; }
+        await bot.sendMessage(chatId, `💰 ${cb.name}: Outstanding balance ${fmtMoney(cb.outstanding_balance)} (limit: ${fmtMoney(cb.credit_limit)})`);
+        return;
+      }
+
+      case 'record_payment': {
+        if (!intent.customer) { await bot.sendMessage(chatId, 'From which customer?'); return; }
+        const amt = intent.price;
+        if (!amt || amt <= 0) { await bot.sendMessage(chatId, 'How much was paid? e.g. "Record payment 50000 from Ibrahim via bank"'); return; }
+        const methodMatch = text.match(/\b(bank|cash|transfer)\b/i);
+        const payRes = await crmService.recordPayment({ customer: intent.customer, amount: amt, method: methodMatch ? methodMatch[1] : 'cash', userId });
+        if (payRes.status === 'completed') {
+          await bot.sendMessage(chatId, `✅ Payment recorded: ${fmtMoney(payRes.paid)} from ${payRes.customer}.\nBalance: ${fmtMoney(payRes.previousBalance)} → ${fmtMoney(payRes.newBalance)}`);
+        } else {
+          await bot.sendMessage(chatId, payRes.message || 'Could not record payment.');
+        }
+        return;
+      }
+
+      case 'show_ledger': {
+        if (!auth.isAdmin(userId)) { await bot.sendMessage(chatId, 'Ledger access is admin-only.'); return; }
+        const today = new Date().toISOString().split('T')[0];
+        const entries = await accountingService.getDaybook(today);
+        if (!entries.length) { await bot.sendMessage(chatId, `No ledger entries for ${today}.`); return; }
+        let ledgerText = `📒 *Ledger — ${today}*\n\n`;
+        entries.forEach((e) => {
+          const dr = e.debit ? `DR ${fmtMoney(e.debit)}` : '';
+          const cr = e.credit ? `CR ${fmtMoney(e.credit)}` : '';
+          ledgerText += `${e.ledger_name}: ${dr}${cr} — ${e.narration}\n`;
+        });
+        await bot.sendMessage(chatId, ledgerText, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'trial_balance': {
+        if (!auth.isAdmin(userId)) { await bot.sendMessage(chatId, 'Trial balance is admin-only.'); return; }
+        const tb = await accountingService.getTrialBalance();
+        if (!tb.length) { await bot.sendMessage(chatId, 'No ledger entries yet.'); return; }
+        let tbText = `📊 *Trial Balance*\n\n`;
+        let totalDr = 0, totalCr = 0;
+        tb.forEach((a) => {
+          tbText += `${a.account_name}: DR ${fmtMoney(a.totalDebit)} | CR ${fmtMoney(a.totalCredit)}\n`;
+          totalDr += a.totalDebit; totalCr += a.totalCredit;
+        });
+        tbText += `\n*Totals: DR ${fmtMoney(totalDr)} | CR ${fmtMoney(totalCr)}*`;
+        await bot.sendMessage(chatId, tbText, { parse_mode: 'Markdown' });
+        return;
+      }
+
       default: {
         await bot.sendMessage(chatId, helpText());
       }
@@ -222,16 +315,26 @@ async function handleMessage(bot, msg) {
 function helpText() {
   return `Here's what I can do:
 
-📦 *Stock check:* "How much 44200 BLACK do we have?"
-📋 *List packages:* "Show packages for design 44200"
-🔍 *Package detail:* "Details of package 5801"
-💰 *Sell than:* "Sell than 3 from package 5801 to Ibrahim"
-📦 *Sell package:* "Sell package 5802 to Adamu"
-📦 *Sell batch:* "Sell packages 5801, 5802, 5803 to Ibrahim"
-↩️ *Return:* "Return than 2 from package 5801" or "Return package 5803"
-💲 *Update price:* "Update price of 44200 BLACK to 1500" (admin only)
-📊 *Analyze:* "Analyze stock" or "Who bought 44200?"
-🏭 *By warehouse:* "What's in Lagos warehouse?"`;
+*Inventory:*
+📦 "How much 44200 BLACK do we have?"
+📋 "Show packages for design 44200"
+🔍 "Details of package 5801"
+💰 "Sell than 3 from package 5801 to Ibrahim"
+📦 "Sell package 5802 to Adamu"
+📦 "Sell packages 5801, 5802, 5803 to Ibrahim"
+↩️ "Return than 2 from package 5801"
+💲 "Update price of 44200 BLACK to 1500"
+📊 "Analyze stock"
+
+*CRM:*
+👤 "Add customer Ibrahim, phone +234..., wholesale"
+🔍 "Show customer Ibrahim"
+💰 "Record payment 50000 from Ibrahim via bank"
+💳 "What is Ibrahim's outstanding?"
+
+*Accounting (admin):*
+📒 "Show ledger for today"
+📊 "Show trial balance"`;
 }
 
 async function handleCallbackQuery(bot, callbackQuery) {

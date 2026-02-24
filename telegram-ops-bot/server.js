@@ -10,6 +10,8 @@ const config = require('./src/config');
 const telegramController = require('./src/controllers/telegramController');
 const apiController = require('./src/controllers/apiController');
 const logger = require('./src/utils/logger');
+const schemaMapper = require('./src/services/schemaMapper');
+const erpEventBus = require('./src/events/erpEventBus');
 
 if (!config.telegram.token) {
   logger.warn('TELEGRAM_TOKEN not set. Bot will not start.');
@@ -53,6 +55,13 @@ app.post('/webhook', (req, res) => {
 });
 
 const PORT = config.port;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   logger.info(`Server listening on port ${PORT}. Webhook: ${config.baseUrl ? `${config.baseUrl}/webhook` : 'Set BASE_URL and run npm run set-webhook'}`);
+  try {
+    await schemaMapper.initialize();
+    erpEventBus.registerListeners();
+    logger.info('ERP modules initialized');
+  } catch (e) {
+    logger.error('ERP init error (bot still running):', e.message);
+  }
 });

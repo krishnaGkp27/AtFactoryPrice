@@ -43,6 +43,12 @@ ACTION RULES:
 - analyze: analytics (totals, trends, who bought what, revenue).
 - list_packages: list packages for a design/shade.
 - package_detail: show thans in a specific package.
+- add_customer: create/register a customer. Needs customer name; optional: phone, address, category, credit_limit, payment_terms.
+- check_customer: look up customer info. Needs customer name.
+- record_payment: record payment received from customer. Needs customer name, amount; optional: method (cash/bank).
+- check_balance: check customer outstanding balance. Needs customer name.
+- show_ledger: show accounting ledger/daybook. Optional: date.
+- trial_balance: show trial balance summary.
 
 CONFIDENCE RULES:
 - If selling and packageNo is missing → confidence < 0.75, ask which package.
@@ -66,7 +72,13 @@ User: "Sell packages 5801, 5802, 5803 to Ibrahim" → {"action":"sell_batch","de
 User: "Update price of 44200 BLACK to 1500" → {"action":"update_price","design":"44200","shade":"BLACK","packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":1500,"confidence":0.9,"clarification":null}
 User: "Return than 2 from package 5801" → {"action":"return_than","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":2,"customer":null,"warehouse":null,"confidence":0.9,"clarification":null}
 User: "Return package 5803" → {"action":"return_package","design":null,"shade":null,"packageNo":"5803","packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"confidence":0.9,"clarification":null}
-User: "Set price of package 5801 to 1200 per yard" → {"action":"update_price","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":1200,"confidence":0.9,"clarification":null}`;
+User: "Set price of package 5801 to 1200 per yard" → {"action":"update_price","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":1200,"confidence":0.9,"clarification":null}
+User: "Add customer Ibrahim, phone +2348012345678, wholesale, credit limit 500000" → {"action":"add_customer","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"confidence":0.9,"clarification":null}
+User: "Show customer Ibrahim" → {"action":"check_customer","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"confidence":0.9,"clarification":null}
+User: "Record payment 50000 from Ibrahim via bank" → {"action":"record_payment","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":50000,"confidence":0.9,"clarification":null}
+User: "What is Ibrahim's outstanding?" → {"action":"check_balance","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"confidence":0.9,"clarification":null}
+User: "Show ledger for today" → {"action":"show_ledger","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"confidence":0.9,"clarification":null}
+User: "Show trial balance" → {"action":"trial_balance","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"confidence":0.9,"clarification":null}`;
 
 async function parse(userMessage) {
   if (!openai) return fallbackParse(userMessage);
@@ -95,7 +107,11 @@ function extractJSON(text) {
   return {};
 }
 
-const VALID_ACTIONS = ['sell_than', 'sell_package', 'sell_batch', 'update_price', 'return_than', 'return_package', 'add', 'check', 'analyze', 'list_packages', 'package_detail'];
+const VALID_ACTIONS = [
+  'sell_than', 'sell_package', 'sell_batch', 'update_price', 'return_than', 'return_package',
+  'add', 'check', 'analyze', 'list_packages', 'package_detail',
+  'add_customer', 'check_customer', 'record_payment', 'check_balance', 'show_ledger', 'trial_balance',
+];
 
 function normalize(obj) {
   let packageNos = null;
