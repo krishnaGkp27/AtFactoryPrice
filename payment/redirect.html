@@ -331,17 +331,32 @@
         const MAX_POLLS = 30;
         const POLL_INTERVAL_MS = 2000; // 2 seconds
 
-        // Parse URL parameters
+        // Parse URL parameters (supports GlobalPay redirect params + generic params)
         function getUrlParams() {
             const params = new URLSearchParams(window.location.search);
+
+            // GlobalPay may return: txnRef, merchantTransactionReference, status, channel
+            // Our checkout passes orderId in the redirectUrl query string
+            let extractedOrderId = params.get('orderId') || params.get('order_id') || params.get('orderid');
+
+            // Fallback: extract orderId from merchantTransactionReference (format: orderId_timestamp)
+            if (!extractedOrderId) {
+                const merchantRef = params.get('merchantTransactionReference') || params.get('merchanttransactionreference');
+                if (merchantRef && merchantRef.includes('_')) {
+                    extractedOrderId = merchantRef.split('_')[0];
+                }
+            }
+
             return {
-                orderId: params.get('orderId') || params.get('order_id') || params.get('orderid'),
+                orderId: extractedOrderId,
                 transactionReference: params.get('transactionReference') || params.get('transaction_reference') || 
-                                     params.get('txn_ref') || params.get('reference') || params.get('ref'),
+                                     params.get('txnRef') || params.get('txn_ref') || params.get('reference') || params.get('ref'),
                 status: params.get('status') || params.get('payment_status'),
-                // Some banks use different parameter names
                 amount: params.get('amount'),
-                message: params.get('message') || params.get('msg')
+                message: params.get('message') || params.get('msg'),
+                // GlobalPay-specific
+                globalPayTxnRef: params.get('txnRef'),
+                channel: params.get('channel')
             };
         }
 

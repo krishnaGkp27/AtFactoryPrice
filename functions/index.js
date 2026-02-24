@@ -3365,24 +3365,31 @@ exports.paymentWebhookHandler = functions.https.onRequest(async (req, res) => {
         // Step 3: Parse and validate payload
         const payload = req.body;
         
-        // Extract fields (adjust based on your payment gateway's format)
-        // Common field name variations are handled
+        // GlobalPay sends: merchantTransactionReference (our orderId_timestamp), 
+        // transactionReference (GlobalPay's ref), status, amount, currency, channel
+        const merchantRef = payload.merchantTransactionReference || payload.merchant_transaction_reference || '';
+        
+        // Extract orderId: from merchantTransactionReference (format: orderId_timestamp) or direct fields
         const orderId = payload.orderId || payload.order_id || payload.orderid || 
-                       payload.reference?.split('_')[0]; // Some gateways embed order ID in reference
+                       (merchantRef.includes('_') ? merchantRef.split('_')[0] : null) ||
+                       payload.reference?.split('_')[0];
         const transactionReference = payload.transactionReference || payload.transaction_reference || 
-                                    payload.txn_ref || payload.reference || payload.paymentReference;
+                                    payload.txnRef || payload.txn_ref || payload.reference || payload.paymentReference;
         const paymentStatus = (payload.status || payload.payment_status || payload.txn_status || '').toUpperCase();
         const amount = parseFloat(payload.amount || payload.paid_amount || payload.transaction_amount || 0);
         const currency = payload.currency || payload.currency_code || 'NGN';
         const gatewayTimestamp = payload.timestamp || payload.payment_date || payload.transaction_date;
         const failureReason = payload.message || payload.failure_reason || payload.error_message;
+        const paymentChannel = payload.channel || payload.payment_channel || null;
 
         logData.parsedData = {
             orderId,
             transactionReference,
+            merchantTransactionReference: merchantRef,
             paymentStatus,
             amount,
             currency,
+            paymentChannel,
             gatewayTimestamp
         };
 
@@ -3473,7 +3480,7 @@ exports.paymentWebhookHandler = functions.https.onRequest(async (req, res) => {
         const now = admin.firestore.FieldValue.serverTimestamp();
         
         if (paymentStatus === 'SUCCESS' || paymentStatus === 'SUCCESSFUL' || 
-            paymentStatus === 'COMPLETED' || paymentStatus === 'APPROVED') {
+            paymentStatus === 'COMPLETED' || paymentStatus === 'APPROVED' || paymentStatus === 'PAID') {
             
             // Payment successful - update order
             const updateData = {
