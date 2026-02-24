@@ -136,6 +136,51 @@ async function getWarehouses() {
   return Array.from(set).sort();
 }
 
+async function markThanAvailable(packageNo, thanNo) {
+  const than = await findThan(packageNo, thanNo);
+  if (!than || than.status === 'available') return null;
+  const now = new Date().toISOString();
+  await sheets.updateRange(SHEET, `H${than.rowIndex}:P${than.rowIndex}`, [[
+    'available', than.warehouse, than.pricePerYard, than.dateReceived,
+    '', '', than.netMtrs, than.netWeight, now,
+  ]]);
+  return { ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now };
+}
+
+async function markPackageAvailable(packageNo) {
+  const thans = await findByPackage(packageNo);
+  const sold = thans.filter((t) => t.status === 'sold');
+  if (!sold.length) return [];
+  const now = new Date().toISOString();
+  const results = [];
+  for (const than of sold) {
+    await sheets.updateRange(SHEET, `H${than.rowIndex}:P${than.rowIndex}`, [[
+      'available', than.warehouse, than.pricePerYard, than.dateReceived,
+      '', '', than.netMtrs, than.netWeight, now,
+    ]]);
+    results.push({ ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now });
+  }
+  return results;
+}
+
+async function updatePrice(filters, newPrice) {
+  const all = await getAll();
+  const matches = all.filter((r) => {
+    if (filters.packageNo && r.packageNo !== str(filters.packageNo)) return false;
+    if (filters.design && upper(r.design) !== upper(filters.design)) return false;
+    if (filters.shade && upper(r.shade) !== upper(filters.shade)) return false;
+    return true;
+  });
+  const now = new Date().toISOString();
+  let count = 0;
+  for (const row of matches) {
+    await sheets.updateRange(SHEET, `J${row.rowIndex}`, [[newPrice]]);
+    await sheets.updateRange(SHEET, `P${row.rowIndex}`, [[now]]);
+    count++;
+  }
+  return count;
+}
+
 async function getDistinctDesigns() {
   const all = await getAll();
   const map = new Map();
@@ -155,6 +200,9 @@ module.exports = {
   findThan,
   markThanSold,
   markPackageSold,
+  markThanAvailable,
+  markPackageAvailable,
+  updatePrice,
   appendThans,
   getWarehouses,
   getDistinctDesigns,

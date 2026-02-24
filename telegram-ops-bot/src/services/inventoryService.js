@@ -202,6 +202,71 @@ async function addStock(packageData, userId) {
 }
 
 /**
+ * Batch sell: sell multiple packages at once to the same customer.
+ */
+async function sellBatch(packageNos, customer, userId) {
+  const results = [];
+  for (const pkgNo of packageNos) {
+    const result = await sellPackage(pkgNo, customer, userId);
+    results.push({ packageNo: pkgNo, ...result });
+  }
+  const completed = results.filter((r) => r.status === 'completed');
+  const totalYards = completed.reduce((s, r) => s + (r.soldYards || 0), 0);
+  const totalThans = completed.reduce((s, r) => s + (r.soldThans || 0), 0);
+  return {
+    status: 'completed',
+    totalPackages: completed.length,
+    totalThans,
+    totalYards,
+    details: results,
+  };
+}
+
+/**
+ * Return a sold than (undo sale, mark available again).
+ */
+async function returnThan(packageNo, thanNo, userId) {
+  const result = await inventoryRepository.markThanAvailable(packageNo, thanNo);
+  if (!result) return { status: 'not_found', message: `Than ${thanNo} in package ${packageNo} not found or already available.` };
+  await transactionsRepository.append({
+    user: userId, action: 'return_than', design: result.design, color: result.shade,
+    qty: result.yards, before: 'sold', after: 'available', status: 'completed',
+  });
+  await auditLogRepository.append('return_than', { packageNo, thanNo, yards: result.yards }, userId);
+  return { status: 'completed', than: result };
+}
+
+/**
+ * Return an entire package (undo all sold thans).
+ */
+async function returnPackage(packageNo, userId) {
+  const results = await inventoryRepository.markPackageAvailable(packageNo);
+  if (!results.length) return { status: 'not_found', message: `Package ${packageNo} has no sold thans to return.` };
+  const totalYards = results.reduce((s, t) => s + t.yards, 0);
+  await transactionsRepository.append({
+    user: userId, action: 'return_package', design: results[0].design, color: results[0].shade,
+    qty: totalYards, before: 'sold', after: 'available', status: 'completed',
+  });
+  await auditLogRepository.append('return_package', { packageNo, thans: results.length, yards: totalYards }, userId);
+  return { status: 'completed', returnedThans: results.length, returnedYards: totalYards };
+}
+
+/**
+ * Update price per yard for matching items (by packageNo or design+shade).
+ */
+async function updatePrice(filters, newPrice, userId) {
+  const count = await inventoryRepository.updatePrice(filters, newPrice);
+  if (count === 0) return { status: 'not_found', message: 'No matching items found to update.' };
+  const label = filters.packageNo ? `package ${filters.packageNo}` : `${filters.design || '?'} ${filters.shade || ''}`.trim();
+  await transactionsRepository.append({
+    user: userId, action: 'update_price', design: filters.design || '', color: filters.shade || '',
+    qty: count, before: '', after: `${newPrice}/yd`, status: 'completed',
+  });
+  await auditLogRepository.append('update_price', { filters, newPrice, rowsUpdated: count }, userId);
+  return { status: 'completed', updated: count, label, newPrice };
+}
+
+/**
  * Execute an approved action from the ApprovalQueue.
  */
 async function executeApprovedAction(requestId, approvedBy) {
@@ -252,6 +317,10 @@ module.exports = {
   listPackages,
   sellThan,
   sellPackage,
+  sellBatch,
+  returnThan,
+  returnPackage,
+  updatePrice,
   addStock,
   executeApprovedAction,
   rejectApproval,

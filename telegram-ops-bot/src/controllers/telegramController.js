@@ -142,6 +142,63 @@ async function handleMessage(bot, msg) {
         return;
       }
 
+      case 'sell_batch': {
+        if (!intent.packageNos || !intent.packageNos.length) { await bot.sendMessage(chatId, 'Which packages? e.g. "Sell packages 5801, 5802, 5803 to Ibrahim"'); return; }
+        if (!intent.customer) { await bot.sendMessage(chatId, 'Who is the customer?'); return; }
+        const batchResult = await inventoryService.sellBatch(intent.packageNos, intent.customer, userId);
+        let batchReply = `✅ Batch sale to ${intent.customer}:\n`;
+        batchResult.details.forEach((d) => {
+          const icon = d.status === 'completed' ? '✅' : '⚠️';
+          batchReply += `${icon} Pkg ${d.packageNo}: ${d.status === 'completed' ? `${d.soldThans} thans, ${fmtQty(d.soldYards)} yds` : (d.message || d.status)}\n`;
+        });
+        batchReply += `\n*Total: ${batchResult.totalPackages} packages, ${batchResult.totalThans} thans, ${fmtQty(batchResult.totalYards)} yards*`;
+        await bot.sendMessage(chatId, batchReply, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'return_than': {
+        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Return than 2 from package 5801"'); return; }
+        if (!intent.thanNo) { await bot.sendMessage(chatId, 'Which than number?'); return; }
+        const retThan = await inventoryService.returnThan(intent.packageNo, intent.thanNo, userId);
+        if (retThan.status === 'completed') {
+          await bot.sendMessage(chatId, `✅ Returned than ${intent.thanNo} from package ${intent.packageNo} (${fmtQty(retThan.than.yards)} yds) — now available.`);
+        } else {
+          await bot.sendMessage(chatId, retThan.message || 'Could not return.');
+        }
+        return;
+      }
+
+      case 'return_package': {
+        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Return package 5801"'); return; }
+        const retPkg = await inventoryService.returnPackage(intent.packageNo, userId);
+        if (retPkg.status === 'completed') {
+          await bot.sendMessage(chatId, `✅ Returned package ${intent.packageNo}: ${retPkg.returnedThans} thans, ${fmtQty(retPkg.returnedYards)} yards — now available.`);
+        } else {
+          await bot.sendMessage(chatId, retPkg.message || 'Could not return.');
+        }
+        return;
+      }
+
+      case 'update_price': {
+        if (!intent.price) { await bot.sendMessage(chatId, 'What is the new price per yard?'); return; }
+        if (!intent.packageNo && !intent.design) { await bot.sendMessage(chatId, 'Which package or design? e.g. "Update price of 44200 BLACK to 1500"'); return; }
+        if (!auth.isAdmin(userId)) {
+          await bot.sendMessage(chatId, 'Only admins can update prices.');
+          return;
+        }
+        const filters = {};
+        if (intent.packageNo) filters.packageNo = intent.packageNo;
+        if (intent.design) filters.design = intent.design;
+        if (intent.shade) filters.shade = intent.shade;
+        const priceResult = await inventoryService.updatePrice(filters, intent.price, userId);
+        if (priceResult.status === 'completed') {
+          await bot.sendMessage(chatId, `✅ Updated price for ${priceResult.label}: ${fmtMoney(priceResult.newPrice)}/yard (${priceResult.updated} rows).`);
+        } else {
+          await bot.sendMessage(chatId, priceResult.message || 'Could not update price.');
+        }
+        return;
+      }
+
       case 'add': {
         await bot.sendMessage(chatId, 'To add stock, use the CSV import or add data directly to the Inventory sheet. Bulk import: place CSV in the project folder and run the import script.');
         return;
@@ -170,6 +227,9 @@ function helpText() {
 🔍 *Package detail:* "Details of package 5801"
 💰 *Sell than:* "Sell than 3 from package 5801 to Ibrahim"
 📦 *Sell package:* "Sell package 5802 to Adamu"
+📦 *Sell batch:* "Sell packages 5801, 5802, 5803 to Ibrahim"
+↩️ *Return:* "Return than 2 from package 5801" or "Return package 5803"
+💲 *Update price:* "Update price of 44200 BLACK to 1500" (admin only)
 📊 *Analyze:* "Analyze stock" or "Who bought 44200?"
 🏭 *By warehouse:* "What's in Lagos warehouse?"`;
 }
