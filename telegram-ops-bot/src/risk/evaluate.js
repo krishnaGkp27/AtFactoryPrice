@@ -1,5 +1,5 @@
 /**
- * Risk evaluation for inventory actions.
+ * Risk evaluation for Package/Than inventory actions.
  * Returns { risk: 'safe' | 'approval_required', reason?: string }
  */
 
@@ -15,26 +15,19 @@ async function getThresholds() {
 }
 
 /**
- * Evaluate risk for a proposed action.
- * @param {Object} params - { action, qty, design, color, warehouse, beforeQty, isPriceChange, isEdit }
+ * Evaluate risk for sell_than or sell_package.
+ * @param {Object} params - { action, qty (yards), totalValue, packageNo, thanNo, isPriceChange, isEdit }
  */
 async function evaluate(params) {
-  const { action, qty = 0, beforeQty, isPriceChange, isEdit } = params;
+  const { action, qty = 0, totalValue = 0, isPriceChange, isEdit } = params;
   const thresholds = await getThresholds();
 
-  if (action === 'sell' || action === 'deduct') {
-    const deductQty = Math.abs(Number(qty));
-    if (deductQty > thresholds.deductionLimit) {
+  if (action === 'sell_than' || action === 'sell_package' || action === 'sell') {
+    const yards = Math.abs(Number(qty));
+    if (yards > thresholds.deductionLimit) {
       return {
         risk: 'approval_required',
-        reason: `Deduction (${deductQty} yards) exceeds limit of ${thresholds.deductionLimit} yards.`,
-      };
-    }
-    const afterQty = (parseFloat(beforeQty) || 0) - deductQty;
-    if (afterQty < 0) {
-      return {
-        risk: 'approval_required',
-        reason: `This would make stock negative (current: ${beforeQty}, deduct: ${deductQty}).`,
+        reason: `Sale of ${yards} yards exceeds the ${thresholds.deductionLimit}-yard limit.`,
       };
     }
   }

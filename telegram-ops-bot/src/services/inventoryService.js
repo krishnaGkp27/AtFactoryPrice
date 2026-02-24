@@ -1,5 +1,6 @@
 /**
- * Inventory business logic. Delegates to repository and risk engine.
+ * Inventory business logic — Package/Than ORM layer.
+ * Supports drill-down/up queries, per-than and per-package selling, and approval workflow.
  */
 
 const inventoryRepository = require('../repositories/inventoryRepository');
@@ -7,131 +8,238 @@ const transactionsRepository = require('../repositories/transactionsRepository')
 const auditLogRepository = require('../repositories/auditLogRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const riskEvaluate = require('../risk/evaluate');
-const analytics = require('../ai/analytics');
-const logger = require('../utils/logger');
+const config = require('../config');
+
+const CURRENCY = config.currency || 'NGN';
+
 function generateId() {
-  try {
-    return require('crypto').randomUUID();
-  } catch {
-    return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  }
+  try { return require('crypto').randomUUID(); }
+  catch { return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`; }
 }
 
-async function checkStock(design, color, warehouse) {
-  const all = await inventoryRepository.getAll();
-  const d = (design || '').toString().trim().toUpperCase();
-  const c = (color || '').toString().trim().toUpperCase();
-  const w = (warehouse || '').toString().trim();
-  const rows = all.filter(
-    (r) =>
-      (r.design || '').toUpperCase() === d &&
-      (r.color || '').toUpperCase() === c &&
-      (r.warehouse || '').trim() === w
-  );
-  const totalQty = rows.reduce((sum, r) => sum + r.qty, 0);
-  const price = rows[0]?.price ?? 0;
-  return { qty: totalQty, price, design: design || d, color: color || c, warehouse: w };
+function formatMoney(v) {
+  return `${CURRENCY} ${Number(v).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
 }
 
-async function deductStock(design, color, warehouse, qty, userId) {
-  const numQty = Math.abs(parseFloat(qty)) || 0;
-  if (numQty <= 0) throw new Error('Invalid quantity');
-  const current = await checkStock(design, color, warehouse);
-  const risk = await riskEvaluate.evaluate({
-    action: 'sell',
-    qty: numQty,
-    beforeQty: current.qty,
+/**
+ * Check stock with flexible filters: design, shade, warehouse, packageNo.
+ * Returns aggregated totals for available thans matching the filters.
+ */
+async function checkStock(filters = {}) {
+  const available = await inventoryRepository.findAvailable(filters);
+  const totalYards = available.reduce((s, r) => s + r.yards, 0);
+  const totalThans = available.length;
+  const packages = new Set(available.map((r) => r.packageNo));
+  const avgPrice = totalThans > 0 ? available.reduce((s, r) => s + r.pricePerYard, 0) / totalThans : 0;
+  return {
+    totalYards,
+    totalThans,
+    totalPackages: packages.size,
+    avgPricePerYard: avgPrice,
+    totalValue: available.reduce((s, r) => s + r.yards * r.pricePerYard, 0),
+    filters,
+    items: available,
+  };
+}
+
+/**
+ * Get package detail: all thans with status (available/sold), totals.
+ */
+async function getPackageSummary(packageNo) {
+  const thans = await inventoryRepository.findByPackage(packageNo);
+  if (!thans.length) return null;
+  const available = thans.filter((t) => t.status === 'available');
+  const sold = thans.filter((t) => t.status === 'sold');
+  return {
+    packageNo,
+    indent: thans[0].indent,
+    design: thans[0].design,
+    shade: thans[0].shade,
+    warehouse: thans[0].warehouse,
+    totalThans: thans.length,
+    availableThans: available.length,
+    soldThans: sold.length,
+    totalYards: thans.reduce((s, t) => s + t.yards, 0),
+    availableYards: available.reduce((s, t) => s + t.yards, 0),
+    soldYards: sold.reduce((s, t) => s + t.yards, 0),
+    pricePerYard: thans[0].pricePerYard,
+    thans: thans.map((t) => ({
+      thanNo: t.thanNo,
+      yards: t.yards,
+      status: t.status,
+      soldTo: t.soldTo || null,
+      soldDate: t.soldDate || null,
+    })),
+  };
+}
+
+/**
+ * List packages for a design+shade, grouped with available/sold counts.
+ */
+async function listPackages(design, shade) {
+  const rows = await inventoryRepository.findByDesign(design, shade);
+  const grouped = new Map();
+  rows.forEach((r) => {
+    if (!grouped.has(r.packageNo)) {
+      grouped.set(r.packageNo, {
+        packageNo: r.packageNo, indent: r.indent, design: r.design, shade: r.shade,
+        warehouse: r.warehouse, total: 0, available: 0, sold: 0, totalYards: 0, availableYards: 0,
+      });
+    }
+    const g = grouped.get(r.packageNo);
+    g.total++;
+    g.totalYards += r.yards;
+    if (r.status === 'available') { g.available++; g.availableYards += r.yards; }
+    else { g.sold++; }
   });
+  return Array.from(grouped.values());
+}
+
+/**
+ * Sell a single than. Risk-checks first; queues approval if needed.
+ */
+async function sellThan(packageNo, thanNo, customer, userId) {
+  const than = await inventoryRepository.findThan(packageNo, thanNo);
+  if (!than) return { status: 'not_found', message: `Than ${thanNo} in package ${packageNo} not found.` };
+  if (than.status === 'sold') return { status: 'already_sold', message: `Than ${thanNo} in package ${packageNo} is already sold.` };
+
+  const risk = await riskEvaluate.evaluate({
+    action: 'sell_than',
+    qty: than.yards,
+    totalValue: than.yards * than.pricePerYard,
+    packageNo,
+    thanNo,
+  });
+
   if (risk.risk === 'approval_required') {
     const requestId = generateId();
     await approvalQueueRepository.append({
-      requestId,
-      user: userId,
-      actionJSON: { action: 'sell', design, color, warehouse, qty: numQty, beforeQty: current.qty },
-      riskReason: risk.reason,
-      status: 'pending',
+      requestId, user: userId,
+      actionJSON: { action: 'sell_than', packageNo, thanNo, customer, yards: than.yards, design: than.design, shade: than.shade },
+      riskReason: risk.reason, status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
     return { status: 'approval_required', requestId, reason: risk.reason };
   }
-  const newQty = current.qty - numQty;
-  await inventoryRepository.updateQty(design, color, warehouse, newQty);
+
+  const result = await inventoryRepository.markThanSold(packageNo, thanNo, customer);
   await transactionsRepository.append({
-    user: userId,
-    action: 'sell',
-    design,
-    color,
-    qty: numQty,
-    before: current.qty,
-    after: newQty,
-    status: 'completed',
+    user: userId, action: 'sell_than', design: than.design, color: than.shade,
+    qty: than.yards, before: 'available', after: 'sold', status: 'completed',
   });
-  await auditLogRepository.append('inventory_deduct', { design, color, warehouse, qty: numQty, before: current.qty, after: newQty }, userId);
-  return { status: 'completed', before: current.qty, after: newQty };
+  await auditLogRepository.append('sell_than', { packageNo, thanNo, customer, yards: than.yards }, userId);
+  return { status: 'completed', than: result };
 }
 
-async function addStock(design, color, warehouse, qty, userId) {
-  const numQty = Math.abs(parseFloat(qty)) || 0;
-  if (numQty <= 0) throw new Error('Invalid quantity');
-  const current = await checkStock(design, color, warehouse);
-  const newQty = current.qty + numQty;
-  await inventoryRepository.updateQty(design, color, warehouse, newQty);
-  await transactionsRepository.append({
-    user: userId,
-    action: 'add',
-    design,
-    color,
-    qty: numQty,
-    before: current.qty,
-    after: newQty,
-    status: 'completed',
+/**
+ * Sell an entire package. Risk-checks based on total value of available thans.
+ */
+async function sellPackage(packageNo, customer, userId) {
+  const thans = await inventoryRepository.findByPackage(packageNo);
+  if (!thans.length) return { status: 'not_found', message: `Package ${packageNo} not found.` };
+  const available = thans.filter((t) => t.status === 'available');
+  if (!available.length) return { status: 'already_sold', message: `Package ${packageNo} is fully sold.` };
+
+  const totalYards = available.reduce((s, t) => s + t.yards, 0);
+  const totalValue = available.reduce((s, t) => s + t.yards * t.pricePerYard, 0);
+
+  const risk = await riskEvaluate.evaluate({
+    action: 'sell_package',
+    qty: totalYards,
+    totalValue,
+    packageNo,
   });
-  await auditLogRepository.append('inventory_add', { design, color, warehouse, qty: numQty, before: current.qty, after: newQty }, userId);
-  return { status: 'completed', before: current.qty, after: newQty };
+
+  if (risk.risk === 'approval_required') {
+    const requestId = generateId();
+    await approvalQueueRepository.append({
+      requestId, user: userId,
+      actionJSON: { action: 'sell_package', packageNo, customer, yards: totalYards, thans: available.length, design: available[0].design, shade: available[0].shade },
+      riskReason: risk.reason, status: 'pending',
+    });
+    await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
+    return { status: 'approval_required', requestId, reason: risk.reason };
+  }
+
+  const results = await inventoryRepository.markPackageSold(packageNo, customer);
+  await transactionsRepository.append({
+    user: userId, action: 'sell_package', design: available[0].design, color: available[0].shade,
+    qty: totalYards, before: `${available.length} thans`, after: 'sold', status: 'completed',
+  });
+  await auditLogRepository.append('sell_package', { packageNo, customer, yards: totalYards, thans: results.length }, userId);
+  return { status: 'completed', soldThans: results.length, soldYards: totalYards };
 }
 
+/**
+ * Add stock: append new package thans to the sheet.
+ * packageData = { packageNo, indent, csNo, design, shade, warehouse, pricePerYard, dateReceived, thans: [{ yards, netMtrs?, netWeight? }] }
+ */
+async function addStock(packageData, userId) {
+  const thanRows = packageData.thans.map((t, i) => ({
+    packageNo: packageData.packageNo,
+    indent: packageData.indent || '',
+    csNo: packageData.csNo || '',
+    design: packageData.design,
+    shade: packageData.shade,
+    thanNo: i + 1,
+    yards: t.yards || 0,
+    status: 'available',
+    warehouse: packageData.warehouse || '',
+    pricePerYard: packageData.pricePerYard || 0,
+    dateReceived: packageData.dateReceived || new Date().toISOString().split('T')[0],
+    soldTo: '', soldDate: '',
+    netMtrs: t.netMtrs || '', netWeight: t.netWeight || '',
+    updatedAt: new Date().toISOString(),
+  }));
+  const count = await inventoryRepository.appendThans(thanRows);
+  const totalYards = thanRows.reduce((s, t) => s + t.yards, 0);
+  await transactionsRepository.append({
+    user: userId, action: 'add_package', design: packageData.design, color: packageData.shade,
+    qty: totalYards, before: '', after: `${count} thans`, status: 'completed',
+  });
+  await auditLogRepository.append('add_package', { packageNo: packageData.packageNo, thans: count, yards: totalYards }, userId);
+  return { status: 'completed', thansAdded: count, totalYards };
+}
+
+/**
+ * Execute an approved action from the ApprovalQueue.
+ */
 async function executeApprovedAction(requestId, approvedBy) {
   const pending = await approvalQueueRepository.getAllPending();
   const item = pending.find((p) => p.requestId === requestId);
-  if (!item) return { ok: false, message: 'Request not found or already resolved' };
-  const { action, design, color, warehouse, qty, beforeQty } = item.actionJSON || {};
-  if (action !== 'sell') return { ok: false, message: 'Only sell actions are supported for approval' };
-  const newQty = (beforeQty || 0) - (parseFloat(qty) || 0);
-  await inventoryRepository.updateQty(design, color, warehouse, newQty);
-  await transactionsRepository.append({
-    user: item.user,
-    action: 'sell',
-    design,
-    color,
-    qty,
-    before: beforeQty,
-    after: newQty,
-    status: 'approved',
-  });
+  if (!item) return { ok: false, message: 'Request not found or already resolved.' };
+  const aj = item.actionJSON || {};
+
+  if (aj.action === 'sell_than') {
+    const result = await inventoryRepository.markThanSold(aj.packageNo, aj.thanNo, aj.customer);
+    if (!result) return { ok: false, message: 'Than not found.' };
+    await transactionsRepository.append({
+      user: item.user, action: 'sell_than', design: aj.design, color: aj.shade,
+      qty: aj.yards, before: 'available', after: 'sold', status: 'approved',
+    });
+  } else if (aj.action === 'sell_package') {
+    const results = await inventoryRepository.markPackageSold(aj.packageNo, aj.customer);
+    if (!results.length) return { ok: false, message: 'Package already sold.' };
+    await transactionsRepository.append({
+      user: item.user, action: 'sell_package', design: aj.design, color: aj.shade,
+      qty: aj.yards, before: `${aj.thans} thans`, after: 'sold', status: 'approved',
+    });
+  } else {
+    return { ok: false, message: 'Unknown action type.' };
+  }
+
   await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString());
-  await auditLogRepository.append('approval_approved', { requestId, approvedBy, design, color, qty }, approvedBy);
-  return { ok: true, after: newQty };
+  await auditLogRepository.append('approval_approved', { requestId, approvedBy }, approvedBy);
+  return { ok: true };
 }
 
 async function rejectApproval(requestId, rejectedBy) {
   const pending = await approvalQueueRepository.getAllPending();
   const item = pending.find((p) => p.requestId === requestId);
-  if (!item) return { ok: false, message: 'Request not found or already resolved' };
+  if (!item) return { ok: false, message: 'Request not found or already resolved.' };
   await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString());
   await auditLogRepository.append('approval_rejected', { requestId, rejectedBy }, rejectedBy);
   return { ok: true };
-}
-
-async function analyzeStock() {
-  return analytics.getAnalysisSummary();
-}
-
-async function getDeadStock(noMovementDays = 90) {
-  return analytics.getDeadStock(noMovementDays);
-}
-
-async function getFastMoving(lastXDays = 30) {
-  return analytics.getFastMovingDesigns(lastXDays);
 }
 
 async function getWarehouses() {
@@ -140,12 +248,13 @@ async function getWarehouses() {
 
 module.exports = {
   checkStock,
-  deductStock,
+  getPackageSummary,
+  listPackages,
+  sellThan,
+  sellPackage,
   addStock,
   executeApprovedAction,
   rejectApproval,
-  analyzeStock,
-  getDeadStock,
-  getFastMoving,
   getWarehouses,
+  formatMoney,
 };

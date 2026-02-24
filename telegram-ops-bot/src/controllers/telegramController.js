@@ -1,26 +1,20 @@
 /**
- * Telegram message and callback handler. Passes structured intent to service layer.
+ * Telegram message and callback handler — Package/Than model.
  */
 
 const intentParser = require('../ai/intentParser');
 const inventoryService = require('../services/inventoryService');
-const riskEvaluate = require('../risk/evaluate');
 const approvalEvents = require('../events/approvalEvents');
 const auth = require('../middlewares/auth');
-const validate = require('../middlewares/validate');
 const auditLogRepository = require('../repositories/auditLogRepository');
-const logger = require('../utils/logger');
+const analytics = require('../ai/analytics');
 const config = require('../config');
 
 const CURRENCY = config.currency || 'NGN';
 
-function formatQty(n) {
-  return Number(n).toLocaleString('en-NG', { maximumFractionDigits: 2 });
-}
+function fmtQty(n) { return Number(n).toLocaleString('en-NG', { maximumFractionDigits: 2 }); }
+function fmtMoney(n) { return `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`; }
 
-/**
- * Handle incoming text message from Telegram.
- */
 async function handleMessage(bot, msg) {
   const chatId = msg.chat?.id;
   const userId = String(msg.from?.id || '');
@@ -34,98 +28,152 @@ async function handleMessage(bot, msg) {
   await auditLogRepository.append('telegram_message', { chatId, text: text.slice(0, 200) }, userId);
 
   if (!text) {
-    await bot.sendMessage(chatId, 'Send a command like: "Sell 100 yards design ABC red from Main" or "Check stock for blue" or "Analyze stock".');
+    await bot.sendMessage(chatId, helpText());
     return;
   }
 
   const intent = await intentParser.parse(text);
 
   if (intent.confidence < 0.75 && intent.clarification) {
-    await bot.sendMessage(chatId, `Need a bit more info: ${intent.clarification}`);
+    await bot.sendMessage(chatId, `Need more info: ${intent.clarification}`);
     return;
   }
 
-  switch (intent.action) {
-    case 'check': {
-      const design = intent.design || null;
-      const color = intent.color || null;
-      const warehouse = intent.warehouse || null;
-      const stock = await inventoryService.checkStock(design, color, warehouse);
-      const label = [stock.design || 'Any', stock.color || 'Any', stock.warehouse || 'Any'].filter(Boolean).join(' / ');
-      let reply = `📦 Stock (${label}): ${formatQty(stock.qty)} yards. Price: ${CURRENCY} ${Number(stock.price).toLocaleString('en-NG')}.`;
-      const thresholds = await riskEvaluate.getThresholds();
-      if (stock.qty > 0 && stock.qty < thresholds.lowStockThreshold) {
-        reply += `\n⚠️ Low stock (below ${thresholds.lowStockThreshold} yards).`;
-      } else if (stock.qty <= 0) {
-        reply += '\n⚠️ Out of stock.';
-      }
-      await bot.sendMessage(chatId, reply);
-      return;
-    }
+  try {
+    switch (intent.action) {
 
-    case 'sell': {
-      const qVal = validate.validateQty(intent.qty);
-      if (!qVal.valid) {
-        await bot.sendMessage(chatId, qVal.message);
+      case 'check': {
+        const filters = {};
+        if (intent.design) filters.design = intent.design;
+        if (intent.shade) filters.shade = intent.shade;
+        if (intent.warehouse) filters.warehouse = intent.warehouse;
+        if (intent.packageNo) filters.packageNo = intent.packageNo;
+        const stock = await inventoryService.checkStock(filters);
+        const label = [
+          intent.design ? `Design: ${intent.design}` : null,
+          intent.shade ? `Shade: ${intent.shade}` : null,
+          intent.warehouse ? `Warehouse: ${intent.warehouse}` : null,
+        ].filter(Boolean).join(', ') || 'All stock';
+        let reply = `📦 *${label}*\n`;
+        reply += `Available: ${fmtQty(stock.totalYards)} yards across ${stock.totalThans} thans in ${stock.totalPackages} packages\n`;
+        reply += `Value: ${fmtMoney(stock.totalValue)}`;
+        if (stock.totalThans === 0) reply += '\n⚠️ No available stock matching these filters.';
+        await bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
         return;
       }
-      const dVal = validate.validateRequired(intent.design, 'design');
-      const cVal = validate.validateRequired(intent.color, 'color');
-      const wVal = validate.validateRequired(intent.warehouse, 'warehouse');
-      if (!dVal.valid || !cVal.valid || !wVal.valid) {
-        await bot.sendMessage(chatId, dVal.message || cVal.message || wVal.message);
+
+      case 'list_packages': {
+        if (!intent.design) {
+          await bot.sendMessage(chatId, 'Which design? e.g. "Show packages for design 44200"');
+          return;
+        }
+        const packages = await inventoryService.listPackages(intent.design, intent.shade);
+        if (!packages.length) {
+          await bot.sendMessage(chatId, `No packages found for design ${intent.design}${intent.shade ? ' ' + intent.shade : ''}.`);
+          return;
+        }
+        let reply = `📋 *Packages for ${intent.design}${intent.shade ? ' ' + intent.shade : ''}:*\n\n`;
+        packages.forEach((p) => {
+          reply += `Pkg ${p.packageNo} (${p.warehouse}): ${p.available}/${p.total} thans avail, ${fmtQty(p.availableYards)} yds\n`;
+        });
+        const totalAvail = packages.reduce((s, p) => s + p.availableYards, 0);
+        reply += `\n*Total available: ${fmtQty(totalAvail)} yards*`;
+        await bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
         return;
       }
-      const result = await inventoryService.deductStock(dVal.value, cVal.value, wVal.value, qVal.value, userId);
-      if (result.status === 'approval_required') {
-        await bot.sendMessage(chatId, `⏳ This action needs admin approval. Request ID: ${result.requestId}. You will be notified when it is reviewed.`);
-        const userLabel = msg.from?.username ? `@${msg.from.username}` : userId;
-        const actionSummary = `Sell ${qVal.value} yd ${dVal.value} ${cVal.value} @ ${wVal.value}`;
-        await approvalEvents.notifyAdminsApprovalRequest(bot, result.requestId, userLabel, actionSummary, result.reason);
-      } else {
-        await bot.sendMessage(chatId, `✅ Sold ${formatQty(qVal.value)} yards. Stock: ${formatQty(result.before)} → ${formatQty(result.after)}.`);
-      }
-      return;
-    }
 
-    case 'add': {
-      const qVal = validate.validateQty(intent.qty);
-      if (!qVal.valid) {
-        await bot.sendMessage(chatId, qVal.message);
+      case 'package_detail': {
+        if (!intent.packageNo) {
+          await bot.sendMessage(chatId, 'Which package? e.g. "Details of package 5801"');
+          return;
+        }
+        const summary = await inventoryService.getPackageSummary(intent.packageNo);
+        if (!summary) {
+          await bot.sendMessage(chatId, `Package ${intent.packageNo} not found.`);
+          return;
+        }
+        let reply = `📦 *Package ${summary.packageNo}*\n`;
+        reply += `Design: ${summary.design} | Shade: ${summary.shade}\n`;
+        reply += `Indent: ${summary.indent} | Warehouse: ${summary.warehouse}\n`;
+        reply += `Price: ${fmtMoney(summary.pricePerYard)}/yard\n\n`;
+        reply += `Thans (${summary.availableThans}/${summary.totalThans} available):\n`;
+        summary.thans.forEach((t) => {
+          const icon = t.status === 'available' ? '🟢' : '🔴';
+          const sold = t.soldTo ? ` → ${t.soldTo} (${t.soldDate})` : '';
+          reply += `${icon} Than ${t.thanNo}: ${fmtQty(t.yards)} yds${sold}\n`;
+        });
+        reply += `\n*Available: ${fmtQty(summary.availableYards)} yds | Sold: ${fmtQty(summary.soldYards)} yds*`;
+        await bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
         return;
       }
-      const dVal = validate.validateRequired(intent.design, 'design');
-      const cVal = validate.validateRequired(intent.color, 'color');
-      const wVal = validate.validateRequired(intent.warehouse, 'warehouse');
-      if (!dVal.valid || !cVal.valid || !wVal.valid) {
-        await bot.sendMessage(chatId, dVal.message || cVal.message || wVal.message);
+
+      case 'sell_than': {
+        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Sell than 3 from package 5801 to Ibrahim"'); return; }
+        if (!intent.thanNo) { await bot.sendMessage(chatId, 'Which than number? e.g. "Sell than 3 from package 5801 to Ibrahim"'); return; }
+        if (!intent.customer) { await bot.sendMessage(chatId, 'Who is the customer? e.g. "Sell than 3 from package 5801 to Ibrahim"'); return; }
+        const result = await inventoryService.sellThan(intent.packageNo, intent.thanNo, intent.customer, userId);
+        if (result.status === 'approval_required') {
+          await bot.sendMessage(chatId, `⏳ Needs admin approval (${result.reason}). Request: ${result.requestId}`);
+          const userLabel = msg.from?.username ? `@${msg.from.username}` : userId;
+          await approvalEvents.notifyAdminsApprovalRequest(bot, result.requestId, userLabel,
+            `Sell than ${intent.thanNo} from pkg ${intent.packageNo} to ${intent.customer}`, result.reason);
+        } else if (result.status === 'completed') {
+          await bot.sendMessage(chatId, `✅ Sold than ${intent.thanNo} from package ${intent.packageNo} (${fmtQty(result.than.yards)} yds) to ${intent.customer}.`);
+        } else {
+          await bot.sendMessage(chatId, result.message || 'Could not complete the sale.');
+        }
         return;
       }
-      const result = await inventoryService.addStock(dVal.value, cVal.value, wVal.value, qVal.value, userId);
-      await bot.sendMessage(chatId, `✅ Added ${formatQty(qVal.value)} yards. Stock: ${formatQty(result.before)} → ${formatQty(result.after)}.`);
-      return;
-    }
 
-    case 'analyze': {
-      const summary = await inventoryService.analyzeStock();
-      await bot.sendMessage(chatId, summary, { parse_mode: 'Markdown' });
-      return;
-    }
+      case 'sell_package': {
+        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Sell package 5801 to Adamu"'); return; }
+        if (!intent.customer) { await bot.sendMessage(chatId, 'Who is the customer? e.g. "Sell package 5801 to Adamu"'); return; }
+        const result = await inventoryService.sellPackage(intent.packageNo, intent.customer, userId);
+        if (result.status === 'approval_required') {
+          await bot.sendMessage(chatId, `⏳ Needs admin approval (${result.reason}). Request: ${result.requestId}`);
+          const userLabel = msg.from?.username ? `@${msg.from.username}` : userId;
+          await approvalEvents.notifyAdminsApprovalRequest(bot, result.requestId, userLabel,
+            `Sell package ${intent.packageNo} to ${intent.customer}`, result.reason);
+        } else if (result.status === 'completed') {
+          await bot.sendMessage(chatId, `✅ Sold package ${intent.packageNo}: ${result.soldThans} thans, ${fmtQty(result.soldYards)} yards to ${intent.customer}.`);
+        } else {
+          await bot.sendMessage(chatId, result.message || 'Could not complete the sale.');
+        }
+        return;
+      }
 
-    case 'modify': {
-      await bot.sendMessage(chatId, 'Modifying past transactions requires admin approval. Please contact an admin.');
-      return;
-    }
+      case 'add': {
+        await bot.sendMessage(chatId, 'To add stock, use the CSV import or add data directly to the Inventory sheet. Bulk import: place CSV in the project folder and run the import script.');
+        return;
+      }
 
-    default: {
-      await bot.sendMessage(chatId, 'I didn’t understand. Try: "Check stock for red", "Sell 50 design X blue Main", or "Analyze stock".');
+      case 'analyze': {
+        const summary = await analytics.getAnalysisSummary(intent.design, intent.shade);
+        await bot.sendMessage(chatId, summary, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      default: {
+        await bot.sendMessage(chatId, helpText());
+      }
     }
+  } catch (err) {
+    await bot.sendMessage(chatId, `Error: ${err.message || 'Something went wrong. Please try again.'}`);
   }
 }
 
-/**
- * Handle inline button callbacks (approve/reject).
- */
+function helpText() {
+  return `Here's what I can do:
+
+📦 *Stock check:* "How much 44200 BLACK do we have?"
+📋 *List packages:* "Show packages for design 44200"
+🔍 *Package detail:* "Details of package 5801"
+💰 *Sell than:* "Sell than 3 from package 5801 to Ibrahim"
+📦 *Sell package:* "Sell package 5802 to Adamu"
+📊 *Analyze:* "Analyze stock" or "Who bought 44200?"
+🏭 *By warehouse:* "What's in Lagos warehouse?"`;
+}
+
 async function handleCallbackQuery(bot, callbackQuery) {
   const data = (callbackQuery.data || '').trim();
   if (data.startsWith('approve:')) {

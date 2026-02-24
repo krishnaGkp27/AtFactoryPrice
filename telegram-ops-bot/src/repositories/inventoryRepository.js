@@ -1,82 +1,164 @@
 /**
- * Data access for Inventory sheet.
- * Sheet columns: Design | Color | Bale | Qty | Price | Warehouse | UpdatedAt
+ * Data access for Inventory sheet — Package/Than model.
+ * Columns: PackageNo | Indent | CSNo | Design | Shade | ThanNo | Yards | Status |
+ *          Warehouse | PricePerYard | DateReceived | SoldTo | SoldDate | NetMtrs | NetWeight | UpdatedAt
  */
 
 const sheets = require('./sheetsClient');
 
 const SHEET = 'Inventory';
-const HEADERS = ['Design', 'Color', 'Bale', 'Qty', 'Price', 'Warehouse', 'UpdatedAt'];
+const COL_COUNT = 16;
+const HEADERS = [
+  'PackageNo', 'Indent', 'CSNo', 'Design', 'Shade', 'ThanNo', 'Yards', 'Status',
+  'Warehouse', 'PricePerYard', 'DateReceived', 'SoldTo', 'SoldDate', 'NetMtrs', 'NetWeight', 'UpdatedAt',
+];
 
-async function getAll() {
-  const rows = await sheets.readRange(SHEET, 'A2:G');
-  return rows.map((r) => ({
-    design: (r[0] || '').toString().trim(),
-    color: (r[1] || '').toString().trim(),
-    bale: (r[2] || '').toString().trim(),
-    qty: parseFloat(r[3]) || 0,
-    price: parseFloat(r[4]) || 0,
-    warehouse: (r[5] || '').toString().trim(),
-    updatedAt: (r[6] || '').toString().trim(),
-  })).filter((r) => r.design || r.warehouse);
+function str(v) { return (v ?? '').toString().trim(); }
+function num(v) { return parseFloat(v) || 0; }
+function upper(v) { return str(v).toUpperCase(); }
+
+function parseRow(r, rowIndex) {
+  return {
+    rowIndex,
+    packageNo: str(r[0]),
+    indent: str(r[1]),
+    csNo: str(r[2]),
+    design: str(r[3]),
+    shade: str(r[4]),
+    thanNo: num(r[5]),
+    yards: num(r[6]),
+    status: str(r[7]).toLowerCase() || 'available',
+    warehouse: str(r[8]),
+    pricePerYard: num(r[9]),
+    dateReceived: str(r[10]),
+    soldTo: str(r[11]),
+    soldDate: str(r[12]),
+    netMtrs: num(r[13]),
+    netWeight: num(r[14]),
+    updatedAt: str(r[15]),
+  };
+}
+
+function toRow(o) {
+  return [
+    o.packageNo ?? '', o.indent ?? '', o.csNo ?? '', o.design ?? '', o.shade ?? '',
+    o.thanNo ?? '', o.yards ?? 0, o.status ?? 'available',
+    o.warehouse ?? '', o.pricePerYard ?? 0, o.dateReceived ?? '',
+    o.soldTo ?? '', o.soldDate ?? '', o.netMtrs ?? '', o.netWeight ?? '',
+    o.updatedAt ?? '',
+  ];
 }
 
 async function ensureHeader() {
-  const rows = await sheets.readRange(SHEET, 'A1:G1');
-  if (!rows.length || rows[0].length < 7) {
-    await sheets.updateRange(SHEET, 'A1:G1', [HEADERS]);
+  const rows = await sheets.readRange(SHEET, 'A1:P1');
+  if (!rows.length || rows[0].length < COL_COUNT) {
+    await sheets.updateRange(SHEET, 'A1:P1', [HEADERS]);
   }
 }
 
-async function findRow(design, color, warehouse) {
-  const rows = await sheets.readRange(SHEET, 'A2:G');
-  const d = (design || '').toString().trim().toUpperCase();
-  const c = (color || '').toString().trim().toUpperCase();
-  const w = (warehouse || '').toString().trim();
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const rowDesign = (row[0] || '').toString().trim().toUpperCase();
-    const rowColor = (row[1] || '').toString().trim().toUpperCase();
-    const rowWarehouse = (row[5] || '').toString().trim();
-    if (rowDesign === d && rowColor === c && rowWarehouse === w) {
-      return { rowIndex: i + 2, row }; // 1-based + header
-    }
-  }
-  return null;
+async function getAll() {
+  const rows = await sheets.readRange(SHEET, 'A2:P');
+  return rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.packageNo || r.design);
 }
 
-async function updateQty(design, color, warehouse, newQty) {
-  const found = await findRow(design, color, warehouse);
-  const updatedAt = new Date().toISOString();
-  if (found) {
-    const { rowIndex } = found;
-    const row = found.row;
-    const qty = parseFloat(newQty);
-    const price = parseFloat(row[4]) || 0;
-    await sheets.updateRange(SHEET, `D${rowIndex}:G${rowIndex}`, [[qty, price, warehouse, updatedAt]]);
-    return { design, color, warehouse, qty, price, updatedAt };
-  }
-  // Append new row
-  await ensureHeader();
-  await sheets.appendRows(SHEET, [[design, color, '', newQty, 0, warehouse, updatedAt]]);
-  return { design, color, warehouse, qty: parseFloat(newQty), price: 0, updatedAt };
+async function findByDesign(design, shade) {
+  const all = await getAll();
+  const d = upper(design);
+  const s = shade ? upper(shade) : null;
+  return all.filter((r) => upper(r.design) === d && (!s || upper(r.shade) === s));
 }
 
-/** Get distinct warehouse names from sheet (dynamic). */
-async function getWarehouses() {
-  const rows = await sheets.readRange(SHEET, 'F2:F');
-  const set = new Set();
-  rows.forEach((r) => {
-    const w = (r[0] || '').toString().trim();
-    if (w) set.add(w);
+async function findByPackage(packageNo) {
+  const all = await getAll();
+  const p = str(packageNo);
+  return all.filter((r) => r.packageNo === p);
+}
+
+async function findAvailable(filters = {}) {
+  const all = await getAll();
+  return all.filter((r) => {
+    if (r.status !== 'available') return false;
+    if (filters.design && upper(r.design) !== upper(filters.design)) return false;
+    if (filters.shade && upper(r.shade) !== upper(filters.shade)) return false;
+    if (filters.warehouse && upper(r.warehouse) !== upper(filters.warehouse)) return false;
+    if (filters.packageNo && r.packageNo !== str(filters.packageNo)) return false;
+    return true;
   });
+}
+
+async function findThan(packageNo, thanNo) {
+  const all = await getAll();
+  const p = str(packageNo);
+  const t = num(thanNo);
+  return all.find((r) => r.packageNo === p && r.thanNo === t) || null;
+}
+
+async function markThanSold(packageNo, thanNo, customer) {
+  const than = await findThan(packageNo, thanNo);
+  if (!than) return null;
+  const now = new Date().toISOString();
+  const soldDate = new Date().toISOString().split('T')[0];
+  await sheets.updateRange(SHEET, `H${than.rowIndex}:P${than.rowIndex}`, [[
+    'sold', than.warehouse, than.pricePerYard, than.dateReceived,
+    customer || '', soldDate, than.netMtrs, than.netWeight, now,
+  ]]);
+  return { ...than, status: 'sold', soldTo: customer, soldDate, updatedAt: now };
+}
+
+async function markPackageSold(packageNo, customer) {
+  const thans = await findByPackage(packageNo);
+  const available = thans.filter((t) => t.status === 'available');
+  if (!available.length) return [];
+  const now = new Date().toISOString();
+  const soldDate = new Date().toISOString().split('T')[0];
+  const results = [];
+  for (const than of available) {
+    await sheets.updateRange(SHEET, `H${than.rowIndex}:P${than.rowIndex}`, [[
+      'sold', than.warehouse, than.pricePerYard, than.dateReceived,
+      customer || '', soldDate, than.netMtrs, than.netWeight, now,
+    ]]);
+    results.push({ ...than, status: 'sold', soldTo: customer, soldDate, updatedAt: now });
+  }
+  return results;
+}
+
+async function appendThans(thanRows) {
+  await ensureHeader();
+  const rows = thanRows.map(toRow);
+  await sheets.appendRows(SHEET, rows);
+  return thanRows.length;
+}
+
+async function getWarehouses() {
+  const all = await getAll();
+  const set = new Set();
+  all.forEach((r) => { if (r.warehouse) set.add(r.warehouse); });
   return Array.from(set).sort();
 }
 
+async function getDistinctDesigns() {
+  const all = await getAll();
+  const map = new Map();
+  all.forEach((r) => {
+    const key = `${upper(r.design)}|${upper(r.shade)}`;
+    if (!map.has(key)) map.set(key, { design: r.design, shade: r.shade });
+  });
+  return Array.from(map.values());
+}
+
 module.exports = {
+  HEADERS,
   getAll,
-  findRow,
-  updateQty,
+  findByDesign,
+  findByPackage,
+  findAvailable,
+  findThan,
+  markThanSold,
+  markPackageSold,
+  appendThans,
   getWarehouses,
+  getDistinctDesigns,
   ensureHeader,
+  parseRow,
+  toRow,
 };

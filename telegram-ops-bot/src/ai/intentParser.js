@@ -1,6 +1,6 @@
 /**
- * OpenAI-powered intent parser: natural language → structured JSON.
- * If confidence < 0.75, we ask for clarification.
+ * OpenAI-powered intent parser for Package/Than textile inventory.
+ * Natural language → structured JSON with package, than, customer awareness.
  */
 
 const OpenAI = require('openai');
@@ -8,36 +8,57 @@ const config = require('../config');
 
 const openai = config.openai.apiKey ? new OpenAI({ apiKey: config.openai.apiKey }) : null;
 
-const SCHEMA = {
-  action: 'sell | add | check | analyze | modify',
-  design: 'string or null',
-  color: 'string or null',
-  qty: 'number or null',
-  warehouse: 'string or null',
-  confidence: 'number 0-1',
-  clarification: 'string or null - what to ask user if ambiguous',
-};
+const SYSTEM = `You are an intent parser for a textile inventory bot that tracks fabric in packages and thans (pieces).
 
-const SYSTEM = `You are an intent parser for a textile inventory bot. User messages are in natural language.
-Reply with ONLY a valid JSON object (no markdown, no code block) with these exact keys:
-${JSON.stringify(SCHEMA)}
+INVENTORY STRUCTURE:
+- Each package (identified by PackageNo like 5801) contains multiple "thans" (fabric pieces numbered 1-7).
+- Each than has a certain number of yards.
+- Packages have: design (LOT/DGN number like 44200), shade (color like BLACK, RED), warehouse location.
+- A than can be sold individually, or a whole package can be sold at once.
 
-Rules:
-- action: one of sell, add, check, analyze, modify. "sell" includes deductions/sales. "check" = stock inquiry. "analyze" = analytics (fast moving, dead stock, trends, revenue).
-- design, color, warehouse: extract if mentioned; otherwise null.
-- qty: number if mentioned (e.g. 50 yards, 100); otherwise null.
-- confidence: 0-1. Use < 0.75 if design/color/warehouse/qty is missing when needed for the action, or message is ambiguous.
-- clarification: if confidence < 0.75, set one short question to ask the user (e.g. "Which design and color?"); otherwise null.
+Reply with ONLY a valid JSON object (no markdown, no code block) with these keys:
+{
+  "action": "sell_than | sell_package | add | check | analyze | list_packages | package_detail",
+  "design": "string or null",
+  "shade": "string or null",
+  "packageNo": "string or null",
+  "thanNo": "number or null",
+  "customer": "string or null",
+  "warehouse": "string or null",
+  "confidence": 0-1,
+  "clarification": "string or null"
+}
 
-Examples:
-User: "Sell 200 yards of design ABC red from main warehouse" → {"action":"sell","design":"ABC","color":"red","qty":200,"warehouse":"main","confidence":0.95,"clarification":null}
-User: "How much blue do we have?" → {"action":"check","design":null,"color":"blue","qty":null,"warehouse":null,"confidence":0.8,"clarification":null}
-User: "Add 50" → {"action":"add","design":null,"color":null,"qty":50,"warehouse":null,"confidence":0.4,"clarification":"Which design, color, and warehouse?"}`;
+ACTION RULES:
+- sell_than: selling a specific than from a package. Needs packageNo, thanNo, customer.
+- sell_package: selling an entire package. Needs packageNo, customer.
+- add: adding new stock/package.
+- check: stock inquiry. Can filter by design, shade, warehouse, or packageNo.
+- analyze: analytics (totals, trends, who bought what, revenue).
+- list_packages: list packages for a design/shade.
+- package_detail: show thans in a specific package.
+
+CONFIDENCE RULES:
+- If selling and packageNo is missing → confidence < 0.75, ask which package.
+- If selling than and thanNo is missing → confidence < 0.75, ask which than.
+- If selling and customer is missing → confidence < 0.75, ask customer name.
+- General inquiries like "how much X do we have" → check with high confidence.
+- If message is vague → confidence < 0.75.
+
+EXAMPLES:
+User: "Sell than 3 from package 5801 to Ibrahim" → {"action":"sell_than","design":null,"shade":null,"packageNo":"5801","thanNo":3,"customer":"Ibrahim","warehouse":null,"confidence":0.95,"clarification":null}
+User: "Sell package 5802 to Adamu" → {"action":"sell_package","design":null,"shade":null,"packageNo":"5802","thanNo":null,"customer":"Adamu","warehouse":null,"confidence":0.95,"clarification":null}
+User: "How much 44200 BLACK do we have?" → {"action":"check","design":"44200","shade":"BLACK","packageNo":null,"thanNo":null,"customer":null,"warehouse":null,"confidence":0.9,"clarification":null}
+User: "Show packages for design 44200" → {"action":"list_packages","design":"44200","shade":null,"packageNo":null,"thanNo":null,"customer":null,"warehouse":null,"confidence":0.9,"clarification":null}
+User: "Details of package 5801" → {"action":"package_detail","design":null,"shade":null,"packageNo":"5801","thanNo":null,"customer":null,"warehouse":null,"confidence":0.95,"clarification":null}
+User: "What's in Lagos warehouse?" → {"action":"check","design":null,"shade":null,"packageNo":null,"thanNo":null,"customer":null,"warehouse":"Lagos","confidence":0.9,"clarification":null}
+User: "Sell package 5801" → {"action":"sell_package","design":null,"shade":null,"packageNo":"5801","thanNo":null,"customer":null,"warehouse":null,"confidence":0.6,"clarification":"Who is the customer?"}
+User: "Analyze stock" → {"action":"analyze","design":null,"shade":null,"packageNo":null,"thanNo":null,"customer":null,"warehouse":null,"confidence":0.9,"clarification":null}
+User: "Who bought design 44200?" → {"action":"analyze","design":"44200","shade":null,"packageNo":null,"thanNo":null,"customer":null,"warehouse":null,"confidence":0.9,"clarification":null}
+User: "Check stock for red" → {"action":"check","design":null,"shade":"RED","packageNo":null,"thanNo":null,"customer":null,"warehouse":null,"confidence":0.85,"clarification":null}`;
 
 async function parse(userMessage) {
-  if (!openai) {
-    return fallbackParse(userMessage);
-  }
+  if (!openai) return fallbackParse(userMessage);
   try {
     const completion = await openai.chat.completions.create({
       model: config.openai.model,
@@ -49,34 +70,30 @@ async function parse(userMessage) {
       max_tokens: 300,
     });
     const text = completion.choices[0]?.message?.content?.trim() || '';
-    const json = extractJSON(text);
-    return normalize(json);
-  } catch (err) {
+    return normalize(extractJSON(text));
+  } catch {
     return fallbackParse(userMessage);
   }
 }
 
 function extractJSON(text) {
   const stripped = text.replace(/^```\w*\n?|\n?```$/g, '').trim();
-  try {
-    return JSON.parse(stripped);
-  } catch {
-    const match = stripped.match(/\{[\s\S]*\}/);
-    if (match) {
-      try {
-        return JSON.parse(match[0]);
-      } catch (_) {}
-    }
-  }
+  try { return JSON.parse(stripped); } catch { /* try regex */ }
+  const match = stripped.match(/\{[\s\S]*\}/);
+  if (match) { try { return JSON.parse(match[0]); } catch { /* give up */ } }
   return {};
 }
 
+const VALID_ACTIONS = ['sell_than', 'sell_package', 'add', 'check', 'analyze', 'list_packages', 'package_detail'];
+
 function normalize(obj) {
   return {
-    action: ['sell', 'add', 'check', 'analyze', 'modify'].includes(obj.action) ? obj.action : 'check',
+    action: VALID_ACTIONS.includes(obj.action) ? obj.action : 'check',
     design: obj.design != null ? String(obj.design).trim() : null,
-    color: obj.color != null ? String(obj.color).trim() : null,
-    qty: typeof obj.qty === 'number' ? obj.qty : (parseFloat(obj.qty) || null),
+    shade: obj.shade != null ? String(obj.shade).trim() : null,
+    packageNo: obj.packageNo != null ? String(obj.packageNo).trim() : null,
+    thanNo: typeof obj.thanNo === 'number' ? obj.thanNo : (parseInt(obj.thanNo) || null),
+    customer: obj.customer != null ? String(obj.customer).trim() : null,
     warehouse: obj.warehouse != null ? String(obj.warehouse).trim() : null,
     confidence: typeof obj.confidence === 'number' ? Math.max(0, Math.min(1, obj.confidence)) : 0.5,
     clarification: obj.clarification != null ? String(obj.clarification).trim() : null,
@@ -86,19 +103,28 @@ function normalize(obj) {
 function fallbackParse(msg) {
   const m = (msg || '').toLowerCase();
   let action = 'check';
-  if (/\b(sell|deduct|sold)\b/.test(m)) action = 'sell';
+  if (/\bsell\s+than\b/.test(m)) action = 'sell_than';
+  else if (/\bsell\s+package\b|\bsell\s+pkg\b/.test(m)) action = 'sell_package';
+  else if (/\b(sell|deduct|sold)\b/.test(m)) action = 'sell_package';
   else if (/\b(add|restock|received)\b/.test(m)) action = 'add';
-  else if (/\b(analyze|report|trend|fast|dead|revenue)\b/.test(m)) action = 'analyze';
-  else if (/\b(modify|edit|change)\b/.test(m)) action = 'modify';
-  const qtyMatch = m.match(/(\d+(?:\.\d+)?)\s*(?:yards?|yds?)?/);
+  else if (/\b(analyze|report|trend|revenue|who bought)\b/.test(m)) action = 'analyze';
+  else if (/\blist\s+package|\bshow\s+package|\bpackages\s+for\b/.test(m)) action = 'list_packages';
+  else if (/\bdetail|\binfo\b.*package/.test(m)) action = 'package_detail';
+
+  const pkgMatch = m.match(/package\s+(\d+)/);
+  const thanMatch = m.match(/than\s+(\d+)/);
+  const designMatch = m.match(/design\s+(\w+)/i) || m.match(/(\d{4,6})/);
+
   return {
     action,
-    design: null,
-    color: null,
-    qty: qtyMatch ? parseFloat(qtyMatch[1]) : null,
+    design: designMatch ? designMatch[1] : null,
+    shade: null,
+    packageNo: pkgMatch ? pkgMatch[1] : null,
+    thanNo: thanMatch ? parseInt(thanMatch[1]) : null,
+    customer: null,
     warehouse: null,
     confidence: 0.5,
-    clarification: 'Please specify design, color, and quantity so I can help.',
+    clarification: 'Please provide more details (package number, than number, customer name, etc.).',
   };
 }
 
