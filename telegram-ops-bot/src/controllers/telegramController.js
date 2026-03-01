@@ -253,9 +253,13 @@ async function handleMessage(bot, msg) {
         if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Transfer than 3 from package 5801 to Kano"'); return; }
         if (!intent.thanNo) { await bot.sendMessage(chatId, 'Which than number?'); return; }
         if (!intent.warehouse) { await bot.sendMessage(chatId, 'To which warehouse? e.g. "Transfer than 3 from package 5801 to Kano"'); return; }
+        const ttInfo = await inventoryService.getPackageSummary(intent.packageNo);
+        const ttThan = ttInfo?.thans?.find((t) => t.thanNo === intent.thanNo);
+        const ttFrom = ttInfo?.warehouse || '?';
+        const ttDetail = `Transfer Than\nPackage: ${intent.packageNo}\nThan: ${intent.thanNo} (${ttThan ? fmtQty(ttThan.yards) + ' yds' : '?'})\nDesign: ${ttInfo?.design || '?'} ${ttInfo?.shade || ''}\nFrom: ${ttFrom}\nTo: ${intent.warehouse}`;
         const ttQueued = await requireApproval(bot, chatId, msg, userId, 'transfer_than',
           { action: 'transfer_than', packageNo: intent.packageNo, thanNo: intent.thanNo, toWarehouse: intent.warehouse },
-          `Transfer than ${intent.thanNo} from pkg ${intent.packageNo} to ${intent.warehouse}`);
+          ttDetail);
         if (ttQueued) return;
         const ttRes = await inventoryService.transferThan(intent.packageNo, intent.thanNo, intent.warehouse, userId);
         if (ttRes.status === 'completed') {
@@ -269,9 +273,12 @@ async function handleMessage(bot, msg) {
       case 'transfer_package': {
         if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Transfer package 5801 to Kano"'); return; }
         if (!intent.warehouse) { await bot.sendMessage(chatId, 'To which warehouse?'); return; }
+        const tpInfo = await inventoryService.getPackageSummary(intent.packageNo);
+        const tpFrom = tpInfo?.warehouse || '?';
+        const tpDetail = `Transfer Package\nPackage: ${intent.packageNo}\nDesign: ${tpInfo?.design || '?'} ${tpInfo?.shade || ''}\nThans: ${tpInfo?.availableThans || '?'} available\nYards: ${tpInfo ? fmtQty(tpInfo.availableYards) : '?'}\nFrom: ${tpFrom}\nTo: ${intent.warehouse}`;
         const tpQueued = await requireApproval(bot, chatId, msg, userId, 'transfer_package',
           { action: 'transfer_package', packageNo: intent.packageNo, toWarehouse: intent.warehouse },
-          `Transfer package ${intent.packageNo} to ${intent.warehouse}`);
+          tpDetail);
         if (tpQueued) return;
         const tpRes = await inventoryService.transferPackage(intent.packageNo, intent.warehouse, userId);
         if (tpRes.status === 'completed') {
@@ -285,9 +292,22 @@ async function handleMessage(bot, msg) {
       case 'transfer_batch': {
         if (!intent.packageNos || !intent.packageNos.length) { await bot.sendMessage(chatId, 'Which packages? e.g. "Transfer packages 5801, 5802, 5803 to Kano"'); return; }
         if (!intent.warehouse) { await bot.sendMessage(chatId, 'To which warehouse?'); return; }
+        let batchDetail = `Transfer Batch\nPackages: ${intent.packageNos.join(', ')}\nTo: ${intent.warehouse}\n\nDetails:\n`;
+        let batchTotalThans = 0, batchTotalYards = 0;
+        for (const pkgNo of intent.packageNos) {
+          const pkgInfo = await inventoryService.getPackageSummary(pkgNo);
+          if (pkgInfo) {
+            batchDetail += `  Pkg ${pkgNo}: ${pkgInfo.design} ${pkgInfo.shade}, ${pkgInfo.availableThans} thans, ${fmtQty(pkgInfo.availableYards)} yds (from ${pkgInfo.warehouse})\n`;
+            batchTotalThans += pkgInfo.availableThans;
+            batchTotalYards += pkgInfo.availableYards;
+          } else {
+            batchDetail += `  Pkg ${pkgNo}: not found\n`;
+          }
+        }
+        batchDetail += `\nTotal: ${batchTotalThans} thans, ${fmtQty(batchTotalYards)} yards`;
         const tbQueued = await requireApproval(bot, chatId, msg, userId, 'transfer_batch',
           { action: 'transfer_batch', packageNos: intent.packageNos, toWarehouse: intent.warehouse },
-          `Transfer packages ${intent.packageNos.join(', ')} to ${intent.warehouse}`);
+          batchDetail);
         if (tbQueued) return;
         const tbRes = await inventoryService.transferBatch(intent.packageNos, intent.warehouse, userId);
         let tbReply = `✅ Batch transfer to ${intent.warehouse}:\n`;

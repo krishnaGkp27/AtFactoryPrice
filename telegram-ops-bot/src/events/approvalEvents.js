@@ -39,6 +39,14 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only admins can approve.' });
     return;
   }
+  const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+  let requestingUser = null;
+  try {
+    const pending = await approvalQueueRepository.getAllPending();
+    const item = pending.find((p) => p.requestId === requestId);
+    if (item) requestingUser = item.user;
+  } catch (_) {}
+
   try {
     if (action === 'approve') {
       const result = await inventoryService.executeApprovedAction(requestId, adminId);
@@ -48,7 +56,10 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
           chat_id: callbackQuery.message.chat.id,
           message_id: callbackQuery.message.message_id,
         });
-        await bot.sendMessage(callbackQuery.message.chat.id, `✅ Request ${requestId} approved. Stock updated.`);
+        await bot.sendMessage(callbackQuery.message.chat.id, `✅ Request ${requestId} approved. Changes applied.`);
+        if (requestingUser && requestingUser !== adminId) {
+          try { await bot.sendMessage(requestingUser, `✅ Your request (${requestId}) has been approved by admin. Changes applied.`); } catch (_) {}
+        }
       } else {
         await bot.answerCallbackQuery(callbackQuery.id, { text: result.message || 'Failed.' });
       }
@@ -61,6 +72,9 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
           message_id: callbackQuery.message.message_id,
         });
         await bot.sendMessage(callbackQuery.message.chat.id, `❌ Request ${requestId} rejected.`);
+        if (requestingUser && requestingUser !== adminId) {
+          try { await bot.sendMessage(requestingUser, `❌ Your request (${requestId}) has been rejected by admin.`); } catch (_) {}
+        }
       } else {
         await bot.answerCallbackQuery(callbackQuery.id, { text: result.message || 'Failed.' });
       }
