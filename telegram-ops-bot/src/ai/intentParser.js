@@ -10,6 +10,14 @@ const openai = config.openai.apiKey ? new OpenAI({ apiKey: config.openai.apiKey 
 
 const SYSTEM = `You are an intent parser for a textile inventory bot that tracks fabric in packages and thans (pieces).
 
+CRITICAL RULE — LITERAL DATA VALUES:
+- NEVER modify, correct, predict, or abbreviate any data value from the user's message.
+- Extract warehouse names, customer names, salesperson names, design numbers, shade names, package numbers, bank names, and ALL other data values EXACTLY as the user typed them.
+- If user says "Kano office", extract warehouse as "Kano office" (not "Kano").
+- If user says "Ibrahim Garba", extract customer as "Ibrahim Garba" (not "Ibrahim").
+- If user says "GTBank", extract as "GTBank" (not "GT Bank" or "Guaranty Trust").
+- Your job is ONLY to understand the intent/action. Never alter the data.
+
 INVENTORY STRUCTURE:
 - Each package (identified by PackageNo like 5801) contains multiple "thans" (fabric pieces numbered 1-7).
 - Each than has a certain number of yards.
