@@ -1,10 +1,21 @@
 /**
- * Risk evaluation for Package/Than inventory actions.
- * Returns { risk: 'safe' | 'approval_required', reason?: string }
+ * Risk evaluation for inventory and financial actions.
+ * ALL write operations by non-admin users require admin approval.
+ * Admin users execute directly.
  */
 
 const settingsRepository = require('../repositories/settingsRepository');
 const config = require('../config');
+const auth = require('../middlewares/auth');
+
+const WRITE_ACTIONS = [
+  'sell_than', 'sell_package', 'sell_batch', 'sell',
+  'return_than', 'return_package',
+  'update_price',
+  'add', 'add_stock',
+  'record_payment',
+  'add_customer',
+];
 
 async function getThresholds() {
   const settings = await settingsRepository.getAll();
@@ -15,32 +26,35 @@ async function getThresholds() {
 }
 
 /**
- * Evaluate risk for sell_than or sell_package.
- * @param {Object} params - { action, qty (yards), totalValue, packageNo, thanNo, isPriceChange, isEdit }
+ * Evaluate risk for any action.
+ * Non-admin users always need approval for write operations.
+ * Admin users always get 'safe'.
  */
 async function evaluate(params) {
-  const { action, qty = 0, totalValue = 0, isPriceChange, isEdit } = params;
-  const thresholds = await getThresholds();
+  const { action, userId } = params;
 
-  if (action === 'sell_than' || action === 'sell_package' || action === 'sell') {
-    const yards = Math.abs(Number(qty));
-    if (yards > thresholds.deductionLimit) {
-      return {
-        risk: 'approval_required',
-        reason: `Sale of ${yards} yards exceeds the ${thresholds.deductionLimit}-yard limit.`,
-      };
-    }
+  if (userId && auth.isAdmin(userId)) {
+    return { risk: 'safe' };
   }
 
-  if (isPriceChange) {
-    return { risk: 'approval_required', reason: 'Price change requires admin approval.' };
-  }
-
-  if (isEdit) {
-    return { risk: 'approval_required', reason: 'Editing past transactions requires admin approval.' };
+  if (WRITE_ACTIONS.includes(action)) {
+    return {
+      risk: 'approval_required',
+      reason: `All ${formatAction(action)} operations require admin approval.`,
+    };
   }
 
   return { risk: 'safe' };
 }
 
-module.exports = { evaluate, getThresholds };
+function formatAction(action) {
+  const map = {
+    sell_than: 'sale', sell_package: 'sale', sell_batch: 'sale', sell: 'sale',
+    return_than: 'return', return_package: 'return',
+    update_price: 'price update', add: 'stock addition', add_stock: 'stock addition',
+    record_payment: 'payment', add_customer: 'customer creation',
+  };
+  return map[action] || action;
+}
+
+module.exports = { evaluate, getThresholds, WRITE_ACTIONS };

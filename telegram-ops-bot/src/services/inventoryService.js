@@ -110,6 +110,7 @@ async function sellThan(packageNo, thanNo, customer, userId) {
     totalValue: than.yards * than.pricePerYard,
     packageNo,
     thanNo,
+    userId,
   });
 
   if (risk.risk === 'approval_required') {
@@ -150,6 +151,7 @@ async function sellPackage(packageNo, customer, userId) {
     qty: totalYards,
     totalValue,
     packageNo,
+    userId,
   });
 
   if (risk.risk === 'approval_required') {
@@ -288,6 +290,7 @@ async function executeApprovedAction(requestId, approvedBy) {
       user: item.user, action: 'sell_than', design: aj.design, color: aj.shade,
       qty: aj.yards, before: 'available', after: 'sold', status: 'approved',
     });
+    try { erpBus.emit('sale', { type: 'sell_than', packageNo: aj.packageNo, thanNo: aj.thanNo, customer: aj.customer, yards: aj.yards, pricePerYard: 0, design: aj.design, shade: aj.shade, userId: item.user, txnId: `ST-${aj.packageNo}-${aj.thanNo}` }); } catch (_) {}
   } else if (aj.action === 'sell_package') {
     const results = await inventoryRepository.markPackageSold(aj.packageNo, aj.customer);
     if (!results.length) return { ok: false, message: 'Package already sold.' };
@@ -295,6 +298,37 @@ async function executeApprovedAction(requestId, approvedBy) {
       user: item.user, action: 'sell_package', design: aj.design, color: aj.shade,
       qty: aj.yards, before: `${aj.thans} thans`, after: 'sold', status: 'approved',
     });
+    try { erpBus.emit('sale', { type: 'sell_package', packageNo: aj.packageNo, customer: aj.customer, yards: aj.yards, pricePerYard: 0, design: aj.design, shade: aj.shade, userId: item.user, txnId: `SP-${aj.packageNo}` }); } catch (_) {}
+  } else if (aj.action === 'return_than') {
+    const result = await inventoryRepository.markThanAvailable(aj.packageNo, aj.thanNo);
+    if (!result) return { ok: false, message: 'Than not found or already available.' };
+    await transactionsRepository.append({
+      user: item.user, action: 'return_than', design: result.design, color: result.shade,
+      qty: result.yards, before: 'sold', after: 'available', status: 'approved',
+    });
+    try { erpBus.emit('return', { type: 'return_than', packageNo: aj.packageNo, thanNo: aj.thanNo, yards: result.yards, design: result.design, shade: result.shade, userId: item.user, txnId: `RT-${aj.packageNo}-${aj.thanNo}` }); } catch (_) {}
+  } else if (aj.action === 'return_package') {
+    const results = await inventoryRepository.markPackageAvailable(aj.packageNo);
+    if (!results.length) return { ok: false, message: 'No sold thans to return.' };
+    const totalYards = results.reduce((s, t) => s + t.yards, 0);
+    await transactionsRepository.append({
+      user: item.user, action: 'return_package', design: results[0]?.design, color: results[0]?.shade,
+      qty: totalYards, before: 'sold', after: 'available', status: 'approved',
+    });
+    try { erpBus.emit('return', { type: 'return_package', packageNo: aj.packageNo, yards: totalYards, design: results[0]?.design, shade: results[0]?.shade, userId: item.user, txnId: `RP-${aj.packageNo}` }); } catch (_) {}
+  } else if (aj.action === 'update_price') {
+    const count = await inventoryRepository.updatePrice(aj.filters || {}, aj.price);
+    await transactionsRepository.append({
+      user: item.user, action: 'update_price', design: (aj.filters?.design) || '', color: (aj.filters?.shade) || '',
+      qty: count, before: '', after: `${aj.price}/yd`, status: 'approved',
+    });
+  } else if (aj.action === 'record_payment') {
+    const crmService = require('./crmService');
+    const payRes = await crmService.recordPayment({ customer: aj.customer, amount: aj.amount, method: aj.method, userId: item.user });
+    if (payRes.status !== 'completed') return { ok: false, message: payRes.message || 'Payment failed.' };
+  } else if (aj.action === 'add_customer') {
+    const crmService = require('./crmService');
+    await crmService.addCustomer({ name: aj.name, phone: aj.phone, address: aj.address, category: aj.category, credit_limit: aj.credit_limit, payment_terms: aj.payment_terms });
   } else {
     return { ok: false, message: 'Unknown action type.' };
   }

@@ -6,11 +6,32 @@ const intentParser = require('../ai/intentParser');
 const inventoryService = require('../services/inventoryService');
 const approvalEvents = require('../events/approvalEvents');
 const auth = require('../middlewares/auth');
+const riskEvaluate = require('../risk/evaluate');
+const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const analytics = require('../ai/analytics');
 const crmService = require('../services/crmService');
 const accountingService = require('../services/accountingService');
 const config = require('../config');
+
+function genId() {
+  try { return require('crypto').randomUUID(); }
+  catch { return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`; }
+}
+
+async function requireApproval(bot, chatId, msg, userId, action, actionJSON, summary) {
+  const risk = await riskEvaluate.evaluate({ action, userId });
+  if (risk.risk !== 'approval_required') return false;
+  const requestId = genId();
+  await approvalQueueRepository.append({
+    requestId, user: userId, actionJSON, riskReason: risk.reason, status: 'pending',
+  });
+  await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
+  await bot.sendMessage(chatId, `⏳ Needs admin approval (${risk.reason}). Request: ${requestId}`);
+  const userLabel = msg.from?.username ? `@${msg.from.username}` : userId;
+  await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, risk.reason);
+  return true;
+}
 
 const CURRENCY = config.currency || 'NGN';
 
@@ -161,6 +182,10 @@ async function handleMessage(bot, msg) {
       case 'return_than': {
         if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Return than 2 from package 5801"'); return; }
         if (!intent.thanNo) { await bot.sendMessage(chatId, 'Which than number?'); return; }
+        const rtQueued = await requireApproval(bot, chatId, msg, userId, 'return_than',
+          { action: 'return_than', packageNo: intent.packageNo, thanNo: intent.thanNo },
+          `Return than ${intent.thanNo} from pkg ${intent.packageNo}`);
+        if (rtQueued) return;
         const retThan = await inventoryService.returnThan(intent.packageNo, intent.thanNo, userId);
         if (retThan.status === 'completed') {
           await bot.sendMessage(chatId, `✅ Returned than ${intent.thanNo} from package ${intent.packageNo} (${fmtQty(retThan.than.yards)} yds) — now available.`);
@@ -172,6 +197,10 @@ async function handleMessage(bot, msg) {
 
       case 'return_package': {
         if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Return package 5801"'); return; }
+        const rpQueued = await requireApproval(bot, chatId, msg, userId, 'return_package',
+          { action: 'return_package', packageNo: intent.packageNo },
+          `Return package ${intent.packageNo}`);
+        if (rpQueued) return;
         const retPkg = await inventoryService.returnPackage(intent.packageNo, userId);
         if (retPkg.status === 'completed') {
           await bot.sendMessage(chatId, `✅ Returned package ${intent.packageNo}: ${retPkg.returnedThans} thans, ${fmtQty(retPkg.returnedYards)} yards — now available.`);
@@ -184,14 +213,14 @@ async function handleMessage(bot, msg) {
       case 'update_price': {
         if (!intent.price) { await bot.sendMessage(chatId, 'What is the new price per yard?'); return; }
         if (!intent.packageNo && !intent.design) { await bot.sendMessage(chatId, 'Which package or design? e.g. "Update price of 44200 BLACK to 1500"'); return; }
-        if (!auth.isAdmin(userId)) {
-          await bot.sendMessage(chatId, 'Only admins can update prices.');
-          return;
-        }
         const filters = {};
         if (intent.packageNo) filters.packageNo = intent.packageNo;
         if (intent.design) filters.design = intent.design;
         if (intent.shade) filters.shade = intent.shade;
+        const upQueued = await requireApproval(bot, chatId, msg, userId, 'update_price',
+          { action: 'update_price', filters, price: intent.price },
+          `Update price ${filters.design || filters.packageNo || '?'} to ${intent.price}/yd`);
+        if (upQueued) return;
         const priceResult = await inventoryService.updatePrice(filters, intent.price, userId);
         if (priceResult.status === 'completed') {
           await bot.sendMessage(chatId, `✅ Updated price for ${priceResult.label}: ${fmtMoney(priceResult.newPrice)}/yard (${priceResult.updated} rows).`);
@@ -220,14 +249,19 @@ async function handleMessage(bot, msg) {
         const catMatch = rawText.match(/\b(wholesale|retail)\b/i);
         const limitMatch = rawText.match(/credit\s*limit\s+(\d+)/i);
         const termsMatch = rawText.match(/\b(net\s*\d+|cod|credit)\b/i);
-        const res = await crmService.addCustomer({
+        const custData = {
           name: intent.customer,
           phone: phoneMatch ? phoneMatch[1].trim() : '',
           address: addressMatch ? addressMatch[1].trim() : '',
           category: catMatch ? catMatch[1] : 'Retail',
           credit_limit: limitMatch ? parseInt(limitMatch[1]) : 0,
           payment_terms: termsMatch ? termsMatch[1] : 'COD',
-        });
+        };
+        const acQueued = await requireApproval(bot, chatId, msg, userId, 'add_customer',
+          { action: 'add_customer', ...custData },
+          `Add customer ${intent.customer}`);
+        if (acQueued) return;
+        const res = await crmService.addCustomer(custData);
         if (res.status === 'exists') {
           await bot.sendMessage(chatId, `Customer "${res.customer.name}" already exists (${res.customer.customer_id}).`);
         } else {
@@ -264,7 +298,12 @@ async function handleMessage(bot, msg) {
         const amt = intent.price;
         if (!amt || amt <= 0) { await bot.sendMessage(chatId, 'How much was paid? e.g. "Record payment 50000 from Ibrahim via bank"'); return; }
         const methodMatch = text.match(/\b(bank|cash|transfer)\b/i);
-        const payRes = await crmService.recordPayment({ customer: intent.customer, amount: amt, method: methodMatch ? methodMatch[1] : 'cash', userId });
+        const payMethod = methodMatch ? methodMatch[1] : 'cash';
+        const rpQueued2 = await requireApproval(bot, chatId, msg, userId, 'record_payment',
+          { action: 'record_payment', customer: intent.customer, amount: amt, method: payMethod },
+          `Record payment ${fmtMoney(amt)} from ${intent.customer} via ${payMethod}`);
+        if (rpQueued2) return;
+        const payRes = await crmService.recordPayment({ customer: intent.customer, amount: amt, method: payMethod, userId });
         if (payRes.status === 'completed') {
           await bot.sendMessage(chatId, `✅ Payment recorded: ${fmtMoney(payRes.paid)} from ${payRes.customer}.\nBalance: ${fmtMoney(payRes.previousBalance)} → ${fmtMoney(payRes.newBalance)}`);
         } else {
