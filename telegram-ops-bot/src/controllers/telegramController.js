@@ -571,9 +571,10 @@ async function executeSale(bot, chatId, userId) {
   if (!session) return;
   const details = salesFlow.getSaleDetails(session);
 
+  const sDate = details.salesDate || new Date().toISOString().split('T')[0];
   for (const item of session.items) {
     if (item.type === 'package') {
-      const result = await inventoryService.sellPackage(item.packageNo, session.collected.customer, userId);
+      const result = await inventoryService.sellPackage(item.packageNo, session.collected.customer, userId, sDate);
       if (result.status === 'approval_required') {
         const userLabel = userId;
         const info = await inventoryService.getPackageSummary(item.packageNo);
@@ -586,7 +587,7 @@ async function executeSale(bot, chatId, userId) {
         await bot.sendMessage(chatId, `⚠️ Pkg ${item.packageNo}: ${result.message || 'failed'}`);
       }
     } else if (item.type === 'than') {
-      const result = await inventoryService.sellThan(item.packageNo, item.thanNo, session.collected.customer, userId);
+      const result = await inventoryService.sellThan(item.packageNo, item.thanNo, session.collected.customer, userId, sDate);
       if (result.status === 'approval_required') {
         const detailText = `Sale\nPackage: ${item.packageNo} Than: ${item.thanNo}\nCustomer: ${session.collected.customer}\nSalesperson: ${details.salesPerson}\nPayment: ${details.paymentMode}\nDate: ${details.salesDate}`;
         await approvalEvents.notifyAdminsApprovalRequest(bot, result.requestId, userId, detailText, result.reason);

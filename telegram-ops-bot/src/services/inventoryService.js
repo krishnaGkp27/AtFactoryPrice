@@ -99,7 +99,7 @@ async function listPackages(design, shade) {
 /**
  * Sell a single than. Risk-checks first; queues approval if needed.
  */
-async function sellThan(packageNo, thanNo, customer, userId) {
+async function sellThan(packageNo, thanNo, customer, userId, salesDate) {
   const than = await inventoryRepository.findThan(packageNo, thanNo);
   if (!than) return { status: 'not_found', message: `Than ${thanNo} in package ${packageNo} not found.` };
   if (than.status === 'sold') return { status: 'already_sold', message: `Than ${thanNo} in package ${packageNo} is already sold.` };
@@ -117,14 +117,14 @@ async function sellThan(packageNo, thanNo, customer, userId) {
     const requestId = generateId();
     await approvalQueueRepository.append({
       requestId, user: userId,
-      actionJSON: { action: 'sell_than', packageNo, thanNo, customer, yards: than.yards, design: than.design, shade: than.shade },
+      actionJSON: { action: 'sell_than', packageNo, thanNo, customer, yards: than.yards, design: than.design, shade: than.shade, salesDate: salesDate || null },
       riskReason: risk.reason, status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
     return { status: 'approval_required', requestId, reason: risk.reason };
   }
 
-  const result = await inventoryRepository.markThanSold(packageNo, thanNo, customer);
+  const result = await inventoryRepository.markThanSold(packageNo, thanNo, customer, salesDate);
   await transactionsRepository.append({
     user: userId, action: 'sell_than', design: than.design, color: than.shade,
     qty: than.yards, before: 'available', after: 'sold', status: 'completed',
@@ -137,7 +137,7 @@ async function sellThan(packageNo, thanNo, customer, userId) {
 /**
  * Sell an entire package. Risk-checks based on total value of available thans.
  */
-async function sellPackage(packageNo, customer, userId) {
+async function sellPackage(packageNo, customer, userId, salesDate) {
   const thans = await inventoryRepository.findByPackage(packageNo);
   if (!thans.length) return { status: 'not_found', message: `Package ${packageNo} not found.` };
   const available = thans.filter((t) => t.status === 'available');
@@ -158,14 +158,14 @@ async function sellPackage(packageNo, customer, userId) {
     const requestId = generateId();
     await approvalQueueRepository.append({
       requestId, user: userId,
-      actionJSON: { action: 'sell_package', packageNo, customer, yards: totalYards, thans: available.length, design: available[0].design, shade: available[0].shade },
+      actionJSON: { action: 'sell_package', packageNo, customer, yards: totalYards, thans: available.length, design: available[0].design, shade: available[0].shade, salesDate: salesDate || null },
       riskReason: risk.reason, status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
     return { status: 'approval_required', requestId, reason: risk.reason };
   }
 
-  const results = await inventoryRepository.markPackageSold(packageNo, customer);
+  const results = await inventoryRepository.markPackageSold(packageNo, customer, salesDate);
   await transactionsRepository.append({
     user: userId, action: 'sell_package', design: available[0].design, color: available[0].shade,
     qty: totalYards, before: `${available.length} thans`, after: 'sold', status: 'completed',
@@ -284,7 +284,7 @@ async function executeApprovedAction(requestId, approvedBy) {
   const aj = item.actionJSON || {};
 
   if (aj.action === 'sell_than') {
-    const result = await inventoryRepository.markThanSold(aj.packageNo, aj.thanNo, aj.customer);
+    const result = await inventoryRepository.markThanSold(aj.packageNo, aj.thanNo, aj.customer, aj.salesDate);
     if (!result) return { ok: false, message: 'Than not found.' };
     await transactionsRepository.append({
       user: item.user, action: 'sell_than', design: aj.design, color: aj.shade,
@@ -292,7 +292,7 @@ async function executeApprovedAction(requestId, approvedBy) {
     });
     try { erpBus.emit('sale', { type: 'sell_than', packageNo: aj.packageNo, thanNo: aj.thanNo, customer: aj.customer, yards: aj.yards, pricePerYard: 0, design: aj.design, shade: aj.shade, userId: item.user, txnId: `ST-${aj.packageNo}-${aj.thanNo}` }); } catch (_) {}
   } else if (aj.action === 'sell_package') {
-    const results = await inventoryRepository.markPackageSold(aj.packageNo, aj.customer);
+    const results = await inventoryRepository.markPackageSold(aj.packageNo, aj.customer, aj.salesDate);
     if (!results.length) return { ok: false, message: 'Package already sold.' };
     await transactionsRepository.append({
       user: item.user, action: 'sell_package', design: aj.design, color: aj.shade,

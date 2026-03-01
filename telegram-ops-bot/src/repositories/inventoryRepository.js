@@ -93,11 +93,11 @@ async function findThan(packageNo, thanNo) {
   return all.find((r) => r.packageNo === p && r.thanNo === t) || null;
 }
 
-async function markThanSold(packageNo, thanNo, customer) {
+async function markThanSold(packageNo, thanNo, customer, soldDateOverride) {
   const than = await findThan(packageNo, thanNo);
   if (!than) return null;
   const now = new Date().toISOString();
-  const soldDate = new Date().toISOString().split('T')[0];
+  const soldDate = soldDateOverride || new Date().toISOString().split('T')[0];
   await sheets.updateRange(SHEET, `H${than.rowIndex}:P${than.rowIndex}`, [[
     'sold', than.warehouse, than.pricePerYard, than.dateReceived,
     customer || '', soldDate, than.netMtrs, than.netWeight, now,
@@ -105,12 +105,12 @@ async function markThanSold(packageNo, thanNo, customer) {
   return { ...than, status: 'sold', soldTo: customer, soldDate, updatedAt: now };
 }
 
-async function markPackageSold(packageNo, customer) {
+async function markPackageSold(packageNo, customer, soldDateOverride) {
   const thans = await findByPackage(packageNo);
   const available = thans.filter((t) => t.status === 'available');
   if (!available.length) return [];
   const now = new Date().toISOString();
-  const soldDate = new Date().toISOString().split('T')[0];
+  const soldDate = soldDateOverride || new Date().toISOString().split('T')[0];
   const updates = available.map((than) => ({
     range: `H${than.rowIndex}:P${than.rowIndex}`,
     values: [['sold', than.warehouse, than.pricePerYard, than.dateReceived, customer || '', soldDate, than.netMtrs, than.netWeight, now]],
