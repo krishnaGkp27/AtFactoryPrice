@@ -19,6 +19,25 @@ function genId() {
   catch { return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`; }
 }
 
+async function sendLong(bot, chatId, text, opts = {}) {
+  const MAX = 4000;
+  if (text.length <= MAX) {
+    await bot.sendMessage(chatId, text, opts);
+    return;
+  }
+  const lines = text.split('\n');
+  let chunk = '';
+  for (const line of lines) {
+    if ((chunk + '\n' + line).length > MAX && chunk) {
+      await bot.sendMessage(chatId, chunk, opts);
+      chunk = line;
+    } else {
+      chunk = chunk ? chunk + '\n' + line : line;
+    }
+  }
+  if (chunk) await bot.sendMessage(chatId, chunk, opts);
+}
+
 async function requireApproval(bot, chatId, msg, userId, action, actionJSON, summary) {
   const risk = await riskEvaluate.evaluate({ action, userId });
   if (risk.risk !== 'approval_required') return false;
@@ -81,7 +100,7 @@ async function handleMessage(bot, msg) {
         reply += `Available: ${fmtQty(stock.totalYards)} yards across ${stock.totalThans} thans in ${stock.totalPackages} packages\n`;
         reply += `Value: ${fmtMoney(stock.totalValue)}`;
         if (stock.totalThans === 0) reply += '\n⚠️ No available stock matching these filters.';
-        await bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
+        await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
         return;
       }
 
@@ -101,7 +120,7 @@ async function handleMessage(bot, msg) {
         });
         const totalAvail = packages.reduce((s, p) => s + p.availableYards, 0);
         reply += `\n*Total available: ${fmtQty(totalAvail)} yards*`;
-        await bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
+        await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
         return;
       }
 
@@ -126,7 +145,7 @@ async function handleMessage(bot, msg) {
           reply += `${icon} Than ${t.thanNo}: ${fmtQty(t.yards)} yds${sold}\n`;
         });
         reply += `\n*Available: ${fmtQty(summary.availableYards)} yds | Sold: ${fmtQty(summary.soldYards)} yds*`;
-        await bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
+        await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
         return;
       }
 
@@ -175,7 +194,7 @@ async function handleMessage(bot, msg) {
           batchReply += `${icon} Pkg ${d.packageNo}: ${d.status === 'completed' ? `${d.soldThans} thans, ${fmtQty(d.soldYards)} yds` : (d.message || d.status)}\n`;
         });
         batchReply += `\n*Total: ${batchResult.totalPackages} packages, ${batchResult.totalThans} thans, ${fmtQty(batchResult.totalYards)} yards*`;
-        await bot.sendMessage(chatId, batchReply, { parse_mode: 'Markdown' });
+        await sendLong(bot, chatId, batchReply, { parse_mode: 'Markdown' });
         return;
       }
 
@@ -237,7 +256,7 @@ async function handleMessage(bot, msg) {
 
       case 'analyze': {
         const summary = await analytics.getAnalysisSummary(intent.design, intent.shade);
-        await bot.sendMessage(chatId, summary, { parse_mode: 'Markdown' });
+        await sendLong(bot, chatId, summary, { parse_mode: 'Markdown' });
         return;
       }
 
@@ -323,7 +342,7 @@ async function handleMessage(bot, msg) {
           const cr = e.credit ? `CR ${fmtMoney(e.credit)}` : '';
           ledgerText += `${e.ledger_name}: ${dr}${cr} — ${e.narration}\n`;
         });
-        await bot.sendMessage(chatId, ledgerText, { parse_mode: 'Markdown' });
+        await sendLong(bot, chatId, ledgerText, { parse_mode: 'Markdown' });
         return;
       }
 
@@ -338,7 +357,7 @@ async function handleMessage(bot, msg) {
           totalDr += a.totalDebit; totalCr += a.totalCredit;
         });
         tbText += `\n*Totals: DR ${fmtMoney(totalDr)} | CR ${fmtMoney(totalCr)}*`;
-        await bot.sendMessage(chatId, tbText, { parse_mode: 'Markdown' });
+        await sendLong(bot, chatId, tbText, { parse_mode: 'Markdown' });
         return;
       }
 
