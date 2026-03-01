@@ -43,6 +43,9 @@ ACTION RULES:
 - analyze: analytics (totals, trends, who bought what, revenue).
 - list_packages: list packages for a design/shade.
 - package_detail: show thans in a specific package.
+- transfer_than: move a specific than to another warehouse. Needs packageNo, thanNo, warehouse (destination).
+- transfer_package: move an entire package to another warehouse. Needs packageNo, warehouse (destination).
+- transfer_batch: move multiple packages to another warehouse. Needs packageNos (array), warehouse (destination).
 - add_customer: create/register a customer. Needs customer name; optional: phone, address, category, credit_limit, payment_terms.
 - check_customer: look up customer info. Needs customer name.
 - record_payment: record payment received from customer. Needs customer name, amount; optional: method (cash/bank).
@@ -73,6 +76,10 @@ User: "Update price of 44200 BLACK to 1500" → {"action":"update_price","design
 User: "Return than 2 from package 5801" → {"action":"return_than","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":2,"customer":null,"warehouse":null,"confidence":0.9,"clarification":null}
 User: "Return package 5803" → {"action":"return_package","design":null,"shade":null,"packageNo":"5803","packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"confidence":0.9,"clarification":null}
 User: "Set price of package 5801 to 1200 per yard" → {"action":"update_price","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":1200,"confidence":0.9,"clarification":null}
+User: "Transfer package 5801 to Kano" → {"action":"transfer_package","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":null,"customer":null,"warehouse":"Kano","price":null,"confidence":0.95,"clarification":null}
+User: "Transfer packages 5801, 5802, 5803 to Kano" → {"action":"transfer_batch","design":null,"shade":null,"packageNo":null,"packageNos":["5801","5802","5803"],"thanNo":null,"customer":null,"warehouse":"Kano","price":null,"confidence":0.95,"clarification":null}
+User: "Transfer than 3 from package 5801 to Kano" → {"action":"transfer_than","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":3,"customer":null,"warehouse":"Kano","price":null,"confidence":0.95,"clarification":null}
+User: "Move package 5804 to Lagos warehouse" → {"action":"transfer_package","design":null,"shade":null,"packageNo":"5804","packageNos":null,"thanNo":null,"customer":null,"warehouse":"Lagos","price":null,"confidence":0.95,"clarification":null}
 User: "Add customer Ibrahim, phone +2348012345678, wholesale, credit limit 500000" → {"action":"add_customer","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"confidence":0.9,"clarification":null}
 User: "Show customer Ibrahim" → {"action":"check_customer","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"confidence":0.9,"clarification":null}
 User: "Record payment 50000 from Ibrahim via bank" → {"action":"record_payment","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":50000,"confidence":0.9,"clarification":null}
@@ -109,6 +116,7 @@ function extractJSON(text) {
 
 const VALID_ACTIONS = [
   'sell_than', 'sell_package', 'sell_batch', 'update_price', 'return_than', 'return_package',
+  'transfer_than', 'transfer_package', 'transfer_batch',
   'add', 'check', 'analyze', 'list_packages', 'package_detail',
   'add_customer', 'check_customer', 'record_payment', 'check_balance', 'show_ledger', 'trial_balance',
 ];

@@ -181,6 +181,32 @@ async function updatePrice(filters, newPrice) {
   return count;
 }
 
+async function transferThan(packageNo, thanNo, toWarehouse) {
+  const than = await findThan(packageNo, thanNo);
+  if (!than) return null;
+  if (than.status !== 'available') return null;
+  const now = new Date().toISOString();
+  const fromWarehouse = than.warehouse;
+  await sheets.updateRange(SHEET, `I${than.rowIndex}`, [[toWarehouse]]);
+  await sheets.updateRange(SHEET, `P${than.rowIndex}`, [[now]]);
+  return { ...than, warehouse: toWarehouse, fromWarehouse, updatedAt: now };
+}
+
+async function transferPackage(packageNo, toWarehouse) {
+  const thans = await findByPackage(packageNo);
+  const available = thans.filter((t) => t.status === 'available');
+  if (!available.length) return [];
+  const now = new Date().toISOString();
+  const results = [];
+  for (const than of available) {
+    const fromWarehouse = than.warehouse;
+    await sheets.updateRange(SHEET, `I${than.rowIndex}`, [[toWarehouse]]);
+    await sheets.updateRange(SHEET, `P${than.rowIndex}`, [[now]]);
+    results.push({ ...than, warehouse: toWarehouse, fromWarehouse, updatedAt: now });
+  }
+  return results;
+}
+
 async function getDistinctDesigns() {
   const all = await getAll();
   const map = new Map();
@@ -203,6 +229,8 @@ module.exports = {
   markThanAvailable,
   markPackageAvailable,
   updatePrice,
+  transferThan,
+  transferPackage,
   appendThans,
   getWarehouses,
   getDistinctDesigns,

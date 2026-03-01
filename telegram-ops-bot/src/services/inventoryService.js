@@ -329,6 +329,20 @@ async function executeApprovedAction(requestId, approvedBy) {
   } else if (aj.action === 'add_customer') {
     const crmService = require('./crmService');
     await crmService.addCustomer({ name: aj.name, phone: aj.phone, address: aj.address, category: aj.category, credit_limit: aj.credit_limit, payment_terms: aj.payment_terms });
+  } else if (aj.action === 'transfer_than') {
+    const result = await inventoryRepository.transferThan(aj.packageNo, aj.thanNo, aj.toWarehouse);
+    if (!result) return { ok: false, message: 'Than not found or not available.' };
+    await transactionsRepository.append({ user: item.user, action: 'transfer_than', design: result.design, color: result.shade, qty: result.yards, before: result.fromWarehouse, after: aj.toWarehouse, status: 'approved' });
+  } else if (aj.action === 'transfer_package') {
+    const results = await inventoryRepository.transferPackage(aj.packageNo, aj.toWarehouse);
+    if (!results.length) return { ok: false, message: 'Package not found or no available thans.' };
+    const totalYards = results.reduce((s, t) => s + t.yards, 0);
+    await transactionsRepository.append({ user: item.user, action: 'transfer_package', design: results[0]?.design, color: results[0]?.shade, qty: totalYards, before: results[0]?.fromWarehouse, after: aj.toWarehouse, status: 'approved' });
+  } else if (aj.action === 'transfer_batch') {
+    for (const pkgNo of (aj.packageNos || [])) {
+      await inventoryRepository.transferPackage(pkgNo, aj.toWarehouse);
+    }
+    await transactionsRepository.append({ user: item.user, action: 'transfer_batch', design: '', color: '', qty: (aj.packageNos || []).length, before: '', after: aj.toWarehouse, status: 'approved' });
   } else {
     return { ok: false, message: 'Unknown action type.' };
   }
@@ -347,6 +361,49 @@ async function rejectApproval(requestId, rejectedBy) {
   return { ok: true };
 }
 
+async function transferThan(packageNo, thanNo, toWarehouse, userId) {
+  const result = await inventoryRepository.transferThan(packageNo, thanNo, toWarehouse);
+  if (!result) return { status: 'not_found', message: `Than ${thanNo} in package ${packageNo} not found or not available.` };
+  await transactionsRepository.append({
+    user: userId, action: 'transfer_than', design: result.design, color: result.shade,
+    qty: result.yards, before: result.fromWarehouse, after: toWarehouse, status: 'completed',
+  });
+  await auditLogRepository.append('transfer_than', { packageNo, thanNo, from: result.fromWarehouse, to: toWarehouse, yards: result.yards }, userId);
+  try { erpBus.emit('transfer', { type: 'transfer_than', packageNo, thanNo, fromWarehouse: result.fromWarehouse, toWarehouse, yards: result.yards, design: result.design, shade: result.shade, userId }); } catch (_) {}
+  return { status: 'completed', than: result };
+}
+
+async function transferPackage(packageNo, toWarehouse, userId) {
+  const results = await inventoryRepository.transferPackage(packageNo, toWarehouse);
+  if (!results.length) return { status: 'not_found', message: `Package ${packageNo} not found or has no available thans.` };
+  const totalYards = results.reduce((s, t) => s + t.yards, 0);
+  const fromWarehouse = results[0].fromWarehouse;
+  await transactionsRepository.append({
+    user: userId, action: 'transfer_package', design: results[0].design, color: results[0].shade,
+    qty: totalYards, before: fromWarehouse, after: toWarehouse, status: 'completed',
+  });
+  await auditLogRepository.append('transfer_package', { packageNo, from: fromWarehouse, to: toWarehouse, thans: results.length, yards: totalYards }, userId);
+  try { erpBus.emit('transfer', { type: 'transfer_package', packageNo, fromWarehouse, toWarehouse, yards: totalYards, design: results[0].design, shade: results[0].shade, userId }); } catch (_) {}
+  return { status: 'completed', transferredThans: results.length, totalYards, fromWarehouse, toWarehouse };
+}
+
+async function transferBatch(packageNos, toWarehouse, userId) {
+  const results = [];
+  for (const pkgNo of packageNos) {
+    const result = await transferPackage(pkgNo, toWarehouse, userId);
+    results.push({ packageNo: pkgNo, ...result });
+  }
+  const completed = results.filter((r) => r.status === 'completed');
+  return {
+    status: 'completed',
+    totalPackages: completed.length,
+    totalThans: completed.reduce((s, r) => s + (r.transferredThans || 0), 0),
+    totalYards: completed.reduce((s, r) => s + (r.totalYards || 0), 0),
+    toWarehouse,
+    details: results,
+  };
+}
+
 async function getWarehouses() {
   return inventoryRepository.getWarehouses();
 }
@@ -362,6 +419,9 @@ module.exports = {
   returnPackage,
   updatePrice,
   addStock,
+  transferThan,
+  transferPackage,
+  transferBatch,
   executeApprovedAction,
   rejectApproval,
   getWarehouses,

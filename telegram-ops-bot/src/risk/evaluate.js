@@ -15,6 +15,7 @@ const WRITE_ACTIONS = [
   'add', 'add_stock',
   'record_payment',
   'add_customer',
+  'transfer_than', 'transfer_package', 'transfer_batch',
 ];
 
 async function getThresholds() {

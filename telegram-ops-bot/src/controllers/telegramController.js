@@ -249,6 +249,57 @@ async function handleMessage(bot, msg) {
         return;
       }
 
+      case 'transfer_than': {
+        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Transfer than 3 from package 5801 to Kano"'); return; }
+        if (!intent.thanNo) { await bot.sendMessage(chatId, 'Which than number?'); return; }
+        if (!intent.warehouse) { await bot.sendMessage(chatId, 'To which warehouse? e.g. "Transfer than 3 from package 5801 to Kano"'); return; }
+        const ttQueued = await requireApproval(bot, chatId, msg, userId, 'transfer_than',
+          { action: 'transfer_than', packageNo: intent.packageNo, thanNo: intent.thanNo, toWarehouse: intent.warehouse },
+          `Transfer than ${intent.thanNo} from pkg ${intent.packageNo} to ${intent.warehouse}`);
+        if (ttQueued) return;
+        const ttRes = await inventoryService.transferThan(intent.packageNo, intent.thanNo, intent.warehouse, userId);
+        if (ttRes.status === 'completed') {
+          await bot.sendMessage(chatId, `✅ Transferred than ${intent.thanNo} from package ${intent.packageNo} (${fmtQty(ttRes.than.yards)} yds): ${ttRes.than.fromWarehouse} → ${intent.warehouse}`);
+        } else {
+          await bot.sendMessage(chatId, ttRes.message || 'Could not transfer.');
+        }
+        return;
+      }
+
+      case 'transfer_package': {
+        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Transfer package 5801 to Kano"'); return; }
+        if (!intent.warehouse) { await bot.sendMessage(chatId, 'To which warehouse?'); return; }
+        const tpQueued = await requireApproval(bot, chatId, msg, userId, 'transfer_package',
+          { action: 'transfer_package', packageNo: intent.packageNo, toWarehouse: intent.warehouse },
+          `Transfer package ${intent.packageNo} to ${intent.warehouse}`);
+        if (tpQueued) return;
+        const tpRes = await inventoryService.transferPackage(intent.packageNo, intent.warehouse, userId);
+        if (tpRes.status === 'completed') {
+          await bot.sendMessage(chatId, `✅ Transferred package ${intent.packageNo}: ${tpRes.transferredThans} thans, ${fmtQty(tpRes.totalYards)} yds — ${tpRes.fromWarehouse} → ${intent.warehouse}`);
+        } else {
+          await bot.sendMessage(chatId, tpRes.message || 'Could not transfer.');
+        }
+        return;
+      }
+
+      case 'transfer_batch': {
+        if (!intent.packageNos || !intent.packageNos.length) { await bot.sendMessage(chatId, 'Which packages? e.g. "Transfer packages 5801, 5802, 5803 to Kano"'); return; }
+        if (!intent.warehouse) { await bot.sendMessage(chatId, 'To which warehouse?'); return; }
+        const tbQueued = await requireApproval(bot, chatId, msg, userId, 'transfer_batch',
+          { action: 'transfer_batch', packageNos: intent.packageNos, toWarehouse: intent.warehouse },
+          `Transfer packages ${intent.packageNos.join(', ')} to ${intent.warehouse}`);
+        if (tbQueued) return;
+        const tbRes = await inventoryService.transferBatch(intent.packageNos, intent.warehouse, userId);
+        let tbReply = `✅ Batch transfer to ${intent.warehouse}:\n`;
+        tbRes.details.forEach((d) => {
+          const icon = d.status === 'completed' ? '✅' : '⚠️';
+          tbReply += `${icon} Pkg ${d.packageNo}: ${d.status === 'completed' ? `${d.transferredThans} thans, ${fmtQty(d.totalYards)} yds` : (d.message || d.status)}\n`;
+        });
+        tbReply += `\n*Total: ${tbRes.totalPackages} packages, ${tbRes.totalThans} thans, ${fmtQty(tbRes.totalYards)} yards*`;
+        await sendLong(bot, chatId, tbReply, { parse_mode: 'Markdown' });
+        return;
+      }
+
       case 'add': {
         await bot.sendMessage(chatId, 'To add stock, use the CSV import or add data directly to the Inventory sheet. Bulk import: place CSV in the project folder and run the import script.');
         return;
@@ -381,6 +432,9 @@ function helpText() {
 📦 "Sell package 5802 to Adamu"
 📦 "Sell packages 5801, 5802, 5803 to Ibrahim"
 ↩️ "Return than 2 from package 5801"
+🔄 "Transfer package 5801 to Kano"
+🔄 "Transfer packages 5801, 5802 to Kano"
+🔄 "Transfer than 3 from package 5801 to Kano"
 💲 "Update price of 44200 BLACK to 1500"
 📊 "Analyze stock"
 
