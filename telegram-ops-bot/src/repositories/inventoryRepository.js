@@ -111,15 +111,12 @@ async function markPackageSold(packageNo, customer) {
   if (!available.length) return [];
   const now = new Date().toISOString();
   const soldDate = new Date().toISOString().split('T')[0];
-  const results = [];
-  for (const than of available) {
-    await sheets.updateRange(SHEET, `H${than.rowIndex}:P${than.rowIndex}`, [[
-      'sold', than.warehouse, than.pricePerYard, than.dateReceived,
-      customer || '', soldDate, than.netMtrs, than.netWeight, now,
-    ]]);
-    results.push({ ...than, status: 'sold', soldTo: customer, soldDate, updatedAt: now });
-  }
-  return results;
+  const updates = available.map((than) => ({
+    range: `H${than.rowIndex}:P${than.rowIndex}`,
+    values: [['sold', than.warehouse, than.pricePerYard, than.dateReceived, customer || '', soldDate, than.netMtrs, than.netWeight, now]],
+  }));
+  await sheets.batchUpdateRanges(SHEET, updates);
+  return available.map((than) => ({ ...than, status: 'sold', soldTo: customer, soldDate, updatedAt: now }));
 }
 
 async function appendThans(thanRows) {
@@ -152,15 +149,12 @@ async function markPackageAvailable(packageNo) {
   const sold = thans.filter((t) => t.status === 'sold');
   if (!sold.length) return [];
   const now = new Date().toISOString();
-  const results = [];
-  for (const than of sold) {
-    await sheets.updateRange(SHEET, `H${than.rowIndex}:P${than.rowIndex}`, [[
-      'available', than.warehouse, than.pricePerYard, than.dateReceived,
-      '', '', than.netMtrs, than.netWeight, now,
-    ]]);
-    results.push({ ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now });
-  }
-  return results;
+  const updates = sold.map((than) => ({
+    range: `H${than.rowIndex}:P${than.rowIndex}`,
+    values: [['available', than.warehouse, than.pricePerYard, than.dateReceived, '', '', than.netMtrs, than.netWeight, now]],
+  }));
+  await sheets.batchUpdateRanges(SHEET, updates);
+  return sold.map((than) => ({ ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now }));
 }
 
 async function updatePrice(filters, newPrice) {
@@ -171,14 +165,15 @@ async function updatePrice(filters, newPrice) {
     if (filters.shade && upper(r.shade) !== upper(filters.shade)) return false;
     return true;
   });
+  if (!matches.length) return 0;
   const now = new Date().toISOString();
-  let count = 0;
+  const updates = [];
   for (const row of matches) {
-    await sheets.updateRange(SHEET, `J${row.rowIndex}`, [[newPrice]]);
-    await sheets.updateRange(SHEET, `P${row.rowIndex}`, [[now]]);
-    count++;
+    updates.push({ range: `J${row.rowIndex}`, values: [[newPrice]] });
+    updates.push({ range: `P${row.rowIndex}`, values: [[now]] });
   }
-  return count;
+  await sheets.batchUpdateRanges(SHEET, updates);
+  return matches.length;
 }
 
 async function transferThan(packageNo, thanNo, toWarehouse) {
@@ -187,8 +182,10 @@ async function transferThan(packageNo, thanNo, toWarehouse) {
   if (than.status !== 'available') return null;
   const now = new Date().toISOString();
   const fromWarehouse = than.warehouse;
-  await sheets.updateRange(SHEET, `I${than.rowIndex}`, [[toWarehouse]]);
-  await sheets.updateRange(SHEET, `P${than.rowIndex}`, [[now]]);
+  await sheets.batchUpdateRanges(SHEET, [
+    { range: `I${than.rowIndex}`, values: [[toWarehouse]] },
+    { range: `P${than.rowIndex}`, values: [[now]] },
+  ]);
   return { ...than, warehouse: toWarehouse, fromWarehouse, updatedAt: now };
 }
 
@@ -197,14 +194,13 @@ async function transferPackage(packageNo, toWarehouse) {
   const available = thans.filter((t) => t.status === 'available');
   if (!available.length) return [];
   const now = new Date().toISOString();
-  const results = [];
+  const updates = [];
   for (const than of available) {
-    const fromWarehouse = than.warehouse;
-    await sheets.updateRange(SHEET, `I${than.rowIndex}`, [[toWarehouse]]);
-    await sheets.updateRange(SHEET, `P${than.rowIndex}`, [[now]]);
-    results.push({ ...than, warehouse: toWarehouse, fromWarehouse, updatedAt: now });
+    updates.push({ range: `I${than.rowIndex}`, values: [[toWarehouse]] });
+    updates.push({ range: `P${than.rowIndex}`, values: [[now]] });
   }
-  return results;
+  await sheets.batchUpdateRanges(SHEET, updates);
+  return available.map((than) => ({ ...than, warehouse: toWarehouse, fromWarehouse: than.warehouse, updatedAt: now }));
 }
 
 async function getDistinctDesigns() {

@@ -69,6 +69,18 @@ async function getSheetNames() {
   return (res.data.sheets || []).map((s) => s.properties.title);
 }
 
+async function batchUpdateRanges(sheetName, updates) {
+  const s = await getSheets();
+  const data = updates.map((u) => ({
+    range: `${sheetName}!${u.range}`,
+    values: u.values,
+  }));
+  await s.spreadsheets.values.batchUpdate({
+    spreadsheetId: spreadsheetId(),
+    requestBody: { valueInputOption: 'USER_ENTERED', data },
+  });
+}
+
 async function addSheet(title) {
   const s = await getSheets();
   await s.spreadsheets.batchUpdate({
@@ -84,6 +96,7 @@ module.exports = {
   appendRows,
   updateRange,
   findRowIndex,
+  batchUpdateRanges,
   getSheetNames,
   addSheet,
 };
