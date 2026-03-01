@@ -12,6 +12,9 @@ const auditLogRepository = require('../repositories/auditLogRepository');
 const analytics = require('../ai/analytics');
 const crmService = require('../services/crmService');
 const accountingService = require('../services/accountingService');
+const salesFlow = require('../services/salesFlowService');
+const sessionStore = require('../utils/sessionStore');
+const settingsRepo = require('../repositories/settingsRepository');
 const config = require('../config');
 
 function genId() {
@@ -72,6 +75,13 @@ async function handleMessage(bot, msg) {
   if (!text) {
     await bot.sendMessage(chatId, helpText());
     return;
+  }
+
+  // Handle active sale flow sessions (guided step-by-step)
+  const activeSession = salesFlow.getSession(userId);
+  if (activeSession) {
+    const handled = await handleSaleSession(bot, chatId, msg, userId, text, activeSession);
+    if (handled) return;
   }
 
   const intent = await intentParser.parse(text);
@@ -151,50 +161,23 @@ async function handleMessage(bot, msg) {
 
       case 'sell_than': {
         if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Sell than 3 from package 5801 to Ibrahim"'); return; }
-        if (!intent.thanNo) { await bot.sendMessage(chatId, 'Which than number? e.g. "Sell than 3 from package 5801 to Ibrahim"'); return; }
-        if (!intent.customer) { await bot.sendMessage(chatId, 'Who is the customer? e.g. "Sell than 3 from package 5801 to Ibrahim"'); return; }
-        const result = await inventoryService.sellThan(intent.packageNo, intent.thanNo, intent.customer, userId);
-        if (result.status === 'approval_required') {
-          await bot.sendMessage(chatId, `⏳ Needs admin approval (${result.reason}). Request: ${result.requestId}`);
-          const userLabel = msg.from?.username ? `@${msg.from.username}` : userId;
-          await approvalEvents.notifyAdminsApprovalRequest(bot, result.requestId, userLabel,
-            `Sell than ${intent.thanNo} from pkg ${intent.packageNo} to ${intent.customer}`, result.reason);
-        } else if (result.status === 'completed') {
-          await bot.sendMessage(chatId, `✅ Sold than ${intent.thanNo} from package ${intent.packageNo} (${fmtQty(result.than.yards)} yds) to ${intent.customer}.`);
-        } else {
-          await bot.sendMessage(chatId, result.message || 'Could not complete the sale.');
-        }
+        if (!intent.thanNo) { await bot.sendMessage(chatId, 'Which than number?'); return; }
+        const items = [{ type: 'than', packageNo: intent.packageNo, thanNo: intent.thanNo }];
+        await startSaleFlow(bot, chatId, msg, userId, 'sell_than', items, intent);
         return;
       }
 
       case 'sell_package': {
         if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Sell package 5801 to Adamu"'); return; }
-        if (!intent.customer) { await bot.sendMessage(chatId, 'Who is the customer? e.g. "Sell package 5801 to Adamu"'); return; }
-        const result = await inventoryService.sellPackage(intent.packageNo, intent.customer, userId);
-        if (result.status === 'approval_required') {
-          await bot.sendMessage(chatId, `⏳ Needs admin approval (${result.reason}). Request: ${result.requestId}`);
-          const userLabel = msg.from?.username ? `@${msg.from.username}` : userId;
-          await approvalEvents.notifyAdminsApprovalRequest(bot, result.requestId, userLabel,
-            `Sell package ${intent.packageNo} to ${intent.customer}`, result.reason);
-        } else if (result.status === 'completed') {
-          await bot.sendMessage(chatId, `✅ Sold package ${intent.packageNo}: ${result.soldThans} thans, ${fmtQty(result.soldYards)} yards to ${intent.customer}.`);
-        } else {
-          await bot.sendMessage(chatId, result.message || 'Could not complete the sale.');
-        }
+        const items = [{ type: 'package', packageNo: intent.packageNo }];
+        await startSaleFlow(bot, chatId, msg, userId, 'sell_package', items, intent);
         return;
       }
 
       case 'sell_batch': {
         if (!intent.packageNos || !intent.packageNos.length) { await bot.sendMessage(chatId, 'Which packages? e.g. "Sell packages 5801, 5802, 5803 to Ibrahim"'); return; }
-        if (!intent.customer) { await bot.sendMessage(chatId, 'Who is the customer?'); return; }
-        const batchResult = await inventoryService.sellBatch(intent.packageNos, intent.customer, userId);
-        let batchReply = `✅ Batch sale to ${intent.customer}:\n`;
-        batchResult.details.forEach((d) => {
-          const icon = d.status === 'completed' ? '✅' : '⚠️';
-          batchReply += `${icon} Pkg ${d.packageNo}: ${d.status === 'completed' ? `${d.soldThans} thans, ${fmtQty(d.soldYards)} yds` : (d.message || d.status)}\n`;
-        });
-        batchReply += `\n*Total: ${batchResult.totalPackages} packages, ${batchResult.totalThans} thans, ${fmtQty(batchResult.totalYards)} yards*`;
-        await sendLong(bot, chatId, batchReply, { parse_mode: 'Markdown' });
+        const items = intent.packageNos.map((p) => ({ type: 'package', packageNo: p }));
+        await startSaleFlow(bot, chatId, msg, userId, 'sell_batch', items, intent);
         return;
       }
 
@@ -432,6 +415,41 @@ async function handleMessage(bot, msg) {
         return;
       }
 
+      case 'add_bank': {
+        if (!auth.isAdmin(userId)) { await bot.sendMessage(chatId, 'Only admin can manage banks.'); return; }
+        if (!intent.bankName) { await bot.sendMessage(chatId, 'Which bank? e.g. "Add bank GTBank"'); return; }
+        const all = await settingsRepo.getAll();
+        const banks = (all.BANK_LIST || '').split(',').map((b) => b.trim()).filter(Boolean);
+        if (banks.map((b) => b.toLowerCase()).includes(intent.bankName.toLowerCase())) {
+          await bot.sendMessage(chatId, `Bank "${intent.bankName}" already exists.`);
+          return;
+        }
+        banks.push(intent.bankName);
+        await settingsRepo.set('BANK_LIST', banks.join(','));
+        await bot.sendMessage(chatId, `✅ Bank "${intent.bankName}" added. Banks: ${banks.join(', ')}`);
+        return;
+      }
+
+      case 'remove_bank': {
+        if (!auth.isAdmin(userId)) { await bot.sendMessage(chatId, 'Only admin can manage banks.'); return; }
+        if (!intent.bankName) { await bot.sendMessage(chatId, 'Which bank? e.g. "Remove bank GTBank"'); return; }
+        const allS = await settingsRepo.getAll();
+        let banksList = (allS.BANK_LIST || '').split(',').map((b) => b.trim()).filter(Boolean);
+        const before = banksList.length;
+        banksList = banksList.filter((b) => b.toLowerCase() !== intent.bankName.toLowerCase());
+        if (banksList.length === before) { await bot.sendMessage(chatId, `Bank "${intent.bankName}" not found.`); return; }
+        await settingsRepo.set('BANK_LIST', banksList.join(','));
+        await bot.sendMessage(chatId, `✅ Bank "${intent.bankName}" removed. Banks: ${banksList.join(', ') || 'none'}`);
+        return;
+      }
+
+      case 'list_banks': {
+        const allB = await settingsRepo.getAll();
+        const bankList = (allB.BANK_LIST || '').split(',').map((b) => b.trim()).filter(Boolean);
+        await bot.sendMessage(chatId, bankList.length ? `Registered banks: ${bankList.join(', ')}` : 'No banks registered. Admin can add with "Add bank GTBank".');
+        return;
+      }
+
       default: {
         await bot.sendMessage(chatId, helpText());
       }
@@ -448,9 +466,9 @@ function helpText() {
 📦 "How much 44200 BLACK do we have?"
 📋 "Show packages for design 44200"
 🔍 "Details of package 5801"
-💰 "Sell than 3 from package 5801 to Ibrahim"
-📦 "Sell package 5802 to Adamu"
-📦 "Sell packages 5801, 5802, 5803 to Ibrahim"
+💰 "Sell than 3 from package 5801 to Ibrahim, salesperson Abdul, cash, date today"
+📦 "Sell package 5802 to Adamu, salesperson Yarima, via GTBank"
+📦 "Sell packages 5801, 5802 to Ibrahim, salesperson Abdul, cash"
 ↩️ "Return than 2 from package 5801"
 🔄 "Transfer package 5801 to Kano"
 🔄 "Transfer packages 5801, 5802 to Kano"
@@ -466,7 +484,114 @@ function helpText() {
 
 *Accounting (admin):*
 📒 "Show ledger for today"
-📊 "Show trial balance"`;
+📊 "Show trial balance"
+🏦 "Add bank GTBank" / "List banks" (admin)`;
+
+}
+
+/**
+ * Start a sale flow: collect all required fields, then show summary for confirmation.
+ */
+async function startSaleFlow(bot, chatId, msg, userId, saleType, items, intent) {
+  salesFlow.startSession(userId, saleType, items, intent);
+  const session = salesFlow.getSession(userId);
+  const missing = salesFlow.getMissingFields(session.collected);
+
+  if (!missing.length) {
+    session.awaitingConfirmation = true;
+    sessionStore.set(userId, session);
+    const summary = await salesFlow.buildSummary(session);
+    const keyboard = { inline_keyboard: [[
+      { text: '✅ Confirm', callback_data: `confirm_sale:${userId}` },
+      { text: '❌ Cancel', callback_data: `cancel_sale:${userId}` },
+    ]] };
+    await bot.sendMessage(chatId, summary, { reply_markup: keyboard });
+    return;
+  }
+
+  const payOpts = await salesFlow.getPaymentOptions();
+  session.pendingField = missing[0];
+  sessionStore.set(userId, session);
+  await bot.sendMessage(chatId, salesFlow.getNextQuestion(missing[0], payOpts));
+}
+
+/**
+ * Handle responses during an active sale flow session.
+ */
+async function handleSaleSession(bot, chatId, msg, userId, text, session) {
+  if (text.toLowerCase() === 'cancel') {
+    sessionStore.clear(userId);
+    await bot.sendMessage(chatId, 'Sale cancelled.');
+    return true;
+  }
+
+  if (!session.pendingField) return false;
+
+  const validation = await salesFlow.validateField(session.pendingField, text);
+  if (!validation.valid) {
+    await bot.sendMessage(chatId, validation.message);
+    return true;
+  }
+
+  session.collected[session.pendingField] = validation.value;
+  session.pendingField = null;
+  const missing = salesFlow.getMissingFields(session.collected);
+
+  if (missing.length) {
+    const payOpts = await salesFlow.getPaymentOptions();
+    session.pendingField = missing[0];
+    sessionStore.set(userId, session);
+    await bot.sendMessage(chatId, salesFlow.getNextQuestion(missing[0], payOpts));
+    return true;
+  }
+
+  session.awaitingConfirmation = true;
+  sessionStore.set(userId, session);
+  const summary = await salesFlow.buildSummary(session);
+  const keyboard = { inline_keyboard: [[
+    { text: '✅ Confirm', callback_data: `confirm_sale:${userId}` },
+    { text: '❌ Cancel', callback_data: `cancel_sale:${userId}` },
+  ]] };
+  await bot.sendMessage(chatId, summary, { reply_markup: keyboard });
+  return true;
+}
+
+/**
+ * Execute a confirmed sale (after user taps Confirm).
+ */
+async function executeSale(bot, chatId, userId) {
+  const session = salesFlow.getSession(userId);
+  if (!session) return;
+  const details = salesFlow.getSaleDetails(session);
+
+  for (const item of session.items) {
+    if (item.type === 'package') {
+      const result = await inventoryService.sellPackage(item.packageNo, session.collected.customer, userId);
+      if (result.status === 'approval_required') {
+        const userLabel = userId;
+        const info = await inventoryService.getPackageSummary(item.packageNo);
+        const detailText = `Sale\nPackage: ${item.packageNo}\nDesign: ${info?.design || '?'} ${info?.shade || ''}\nCustomer: ${session.collected.customer}\nSalesperson: ${details.salesPerson}\nPayment: ${details.paymentMode}\nDate: ${details.salesDate}`;
+        await approvalEvents.notifyAdminsApprovalRequest(bot, result.requestId, userLabel, detailText, result.reason);
+        await bot.sendMessage(chatId, `⏳ Pkg ${item.packageNo}: needs admin approval. Request: ${result.requestId}`);
+      } else if (result.status === 'completed') {
+        await bot.sendMessage(chatId, `✅ Pkg ${item.packageNo}: sold ${result.soldThans} thans, ${fmtQty(result.soldYards)} yds to ${session.collected.customer}`);
+      } else {
+        await bot.sendMessage(chatId, `⚠️ Pkg ${item.packageNo}: ${result.message || 'failed'}`);
+      }
+    } else if (item.type === 'than') {
+      const result = await inventoryService.sellThan(item.packageNo, item.thanNo, session.collected.customer, userId);
+      if (result.status === 'approval_required') {
+        const detailText = `Sale\nPackage: ${item.packageNo} Than: ${item.thanNo}\nCustomer: ${session.collected.customer}\nSalesperson: ${details.salesPerson}\nPayment: ${details.paymentMode}\nDate: ${details.salesDate}`;
+        await approvalEvents.notifyAdminsApprovalRequest(bot, result.requestId, userId, detailText, result.reason);
+        await bot.sendMessage(chatId, `⏳ Pkg ${item.packageNo} Than ${item.thanNo}: needs admin approval. Request: ${result.requestId}`);
+      } else if (result.status === 'completed') {
+        await bot.sendMessage(chatId, `✅ Pkg ${item.packageNo} Than ${item.thanNo}: sold ${fmtQty(result.than.yards)} yds to ${session.collected.customer}`);
+      } else {
+        await bot.sendMessage(chatId, `⚠️ Pkg ${item.packageNo} Than ${item.thanNo}: ${result.message || 'failed'}`);
+      }
+    }
+  }
+  sessionStore.clear(userId);
 }
 
 async function handleCallbackQuery(bot, callbackQuery) {
@@ -475,6 +600,23 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'approve');
   } else if (data.startsWith('reject:')) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'reject');
+  } else if (data.startsWith('confirm_sale:')) {
+    const saleUserId = data.replace('confirm_sale:', '');
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Processing sale...' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+      chat_id: callbackQuery.message.chat.id,
+      message_id: callbackQuery.message.message_id,
+    });
+    await executeSale(bot, callbackQuery.message.chat.id, saleUserId);
+  } else if (data.startsWith('cancel_sale:')) {
+    const cancelUserId = data.replace('cancel_sale:', '');
+    sessionStore.clear(cancelUserId);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+      chat_id: callbackQuery.message.chat.id,
+      message_id: callbackQuery.message.message_id,
+    });
+    await bot.sendMessage(callbackQuery.message.chat.id, 'Sale cancelled.');
   } else {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Unknown action.' });
   }

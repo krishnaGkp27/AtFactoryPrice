@@ -57,6 +57,37 @@ async function initialize() {
     }
   }
 
+  // Extend Transactions sheet with sale detail columns if missing
+  if (existing.includes('Transactions')) {
+    try {
+      const txnHeader = await sheets.readRange('Transactions', 'A1:O1');
+      const h = txnHeader[0] || [];
+      if (h.length < 15 && !h.includes('SalesDate')) {
+        const extCols = ['SalesDate', 'Warehouse', 'CustomerName', 'SalesPerson', 'PaymentMode', 'SaleRefId'];
+        const nextCol = colLetter(h.length + 1);
+        const endCol = colLetter(h.length + extCols.length);
+        await sheets.updateRange('Transactions', `${nextCol}1:${endCol}1`, [extCols]);
+        logger.info('SchemaMapper: extended Transactions with sale detail columns');
+      }
+    } catch (e) {
+      logger.warn('SchemaMapper: could not extend Transactions —', e.message);
+    }
+  }
+
+  // Seed BANK_LIST in Settings if not present
+  if (existing.includes('Settings')) {
+    try {
+      const settingsRepo = require('../repositories/settingsRepository');
+      const all = await settingsRepo.getAll();
+      if (!all.BANK_LIST) {
+        await settingsRepo.set('BANK_LIST', 'GTBank,Zenith,FirstBank,Access,UBA');
+        logger.info('SchemaMapper: seeded default BANK_LIST in Settings');
+      }
+    } catch (e) {
+      logger.warn('SchemaMapper: could not seed BANK_LIST —', e.message);
+    }
+  }
+
   if (existing.includes('AuditLog')) {
     try {
       const headerRow = await sheets.readRange('AuditLog', 'A1:F1');

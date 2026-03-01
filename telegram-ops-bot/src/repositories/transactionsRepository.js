@@ -1,17 +1,19 @@
 /**
  * Data access for Transactions sheet.
- * Columns: Timestamp | User | Action | Design | Color | Qty | Before | After | Status
+ * Columns A-I (original): Timestamp | User | Action | Design | Color | Qty | Before | After | Status
+ * Columns J-O (extended): SalesDate | Warehouse | CustomerName | SalesPerson | PaymentMode | SaleRefId
  */
 
 const sheets = require('./sheetsClient');
 
 const SHEET = 'Transactions';
-const HEADERS = ['Timestamp', 'User', 'Action', 'Design', 'Color', 'Qty', 'Before', 'After', 'Status'];
+const HEADERS = ['Timestamp', 'User', 'Action', 'Design', 'Color', 'Qty', 'Before', 'After', 'Status',
+  'SalesDate', 'Warehouse', 'CustomerName', 'SalesPerson', 'PaymentMode', 'SaleRefId'];
 
 async function ensureHeader() {
-  const rows = await sheets.readRange(SHEET, 'A1:I1');
-  if (!rows.length || rows[0].length < 9) {
-    await sheets.updateRange(SHEET, 'A1:I1', [HEADERS]);
+  const rows = await sheets.readRange(SHEET, 'A1:O1');
+  if (!rows.length || rows[0].length < 15) {
+    await sheets.updateRange(SHEET, 'A1:O1', [HEADERS]);
   }
 }
 
@@ -27,9 +29,15 @@ async function append(record) {
     record.before ?? '',
     record.after ?? '',
     record.status ?? 'completed',
+    record.salesDate ?? '',
+    record.warehouse ?? '',
+    record.customerName ?? '',
+    record.salesPerson ?? '',
+    record.paymentMode ?? '',
+    record.saleRefId ?? '',
   ];
   await sheets.appendRows(SHEET, [row]);
   return record;
 }
 
-module.exports = { append, ensureHeader };
+module.exports = { append, ensureHeader, HEADERS };

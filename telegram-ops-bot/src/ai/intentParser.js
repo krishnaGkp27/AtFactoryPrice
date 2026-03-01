@@ -18,15 +18,19 @@ INVENTORY STRUCTURE:
 
 Reply with ONLY a valid JSON object (no markdown, no code block) with these keys:
 {
-  "action": "sell_than | sell_package | sell_batch | update_price | return_than | return_package | add | check | analyze | list_packages | package_detail",
+  "action": "sell_than | sell_package | sell_batch | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks",
   "design": "string or null",
   "shade": "string or null",
   "packageNo": "string or null",
-  "packageNos": "array of strings or null (for sell_batch)",
+  "packageNos": "array of strings or null (for sell_batch/transfer_batch)",
   "thanNo": "number or null",
   "customer": "string or null",
   "warehouse": "string or null",
-  "price": "number or null (for update_price)",
+  "price": "number or null (for update_price or record_payment amount)",
+  "salesperson": "string or null (for sales)",
+  "paymentMode": "string or null (Cash/Credit/BankName for sales)",
+  "salesDate": "string or null (date for sales, e.g. 25-02-2026 or today)",
+  "bankName": "string or null (for add_bank/remove_bank)",
   "confidence": 0-1,
   "clarification": "string or null"
 }
@@ -52,6 +56,16 @@ ACTION RULES:
 - check_balance: check customer outstanding balance. Needs customer name.
 - show_ledger: show accounting ledger/daybook. Optional: date.
 - trial_balance: show trial balance summary.
+- add_bank: admin adds a bank to the allowed list. Needs bankName.
+- remove_bank: admin removes a bank. Needs bankName.
+- list_banks: show all registered banks.
+
+SALE DETAIL RULES:
+- When selling, also extract salesperson, paymentMode, and salesDate if mentioned.
+- salesperson: a person's name after "salesperson" or "sold by" (e.g. "salesperson Abdul").
+- paymentMode: "cash", "credit", or a bank name (e.g. "GTBank", "via Zenith").
+- salesDate: a date mentioned after "date" or "on" (e.g. "date 25-02-2026" or "today").
+- These are optional in the sell action. If missing, they will be asked in a follow-up conversation.
 
 CONFIDENCE RULES:
 - If selling and packageNo is missing → confidence < 0.75, ask which package.
@@ -85,7 +99,12 @@ User: "Show customer Ibrahim" → {"action":"check_customer","design":null,"shad
 User: "Record payment 50000 from Ibrahim via bank" → {"action":"record_payment","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":50000,"confidence":0.9,"clarification":null}
 User: "What is Ibrahim's outstanding?" → {"action":"check_balance","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"confidence":0.9,"clarification":null}
 User: "Show ledger for today" → {"action":"show_ledger","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"confidence":0.9,"clarification":null}
-User: "Show trial balance" → {"action":"trial_balance","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"confidence":0.9,"clarification":null}`;
+User: "Show trial balance" → {"action":"trial_balance","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":null,"confidence":0.9,"clarification":null}
+User: "Sell package 5801 to Ibrahim, salesperson Abdul, cash, date 25-02-2026" → {"action":"sell_package","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"salesperson":"Abdul","paymentMode":"Cash","salesDate":"25-02-2026","bankName":null,"confidence":0.95,"clarification":null}
+User: "Sell packages 5801, 5802 to Ibrahim, sold by Yarima, via GTBank, date today" → {"action":"sell_batch","design":null,"shade":null,"packageNo":null,"packageNos":["5801","5802"],"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"salesperson":"Yarima","paymentMode":"GTBank","salesDate":"today","bankName":null,"confidence":0.95,"clarification":null}
+User: "Add bank Zenith" → {"action":"add_bank","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":"Zenith","confidence":0.95,"clarification":null}
+User: "Remove bank Access" → {"action":"remove_bank","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":"Access","confidence":0.95,"clarification":null}
+User: "List banks" → {"action":"list_banks","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":null,"confidence":0.95,"clarification":null}`;
 
 async function parse(userMessage) {
   if (!openai) return fallbackParse(userMessage);
@@ -119,6 +138,7 @@ const VALID_ACTIONS = [
   'transfer_than', 'transfer_package', 'transfer_batch',
   'add', 'check', 'analyze', 'list_packages', 'package_detail',
   'add_customer', 'check_customer', 'record_payment', 'check_balance', 'show_ledger', 'trial_balance',
+  'add_bank', 'remove_bank', 'list_banks',
 ];
 
 function normalize(obj) {
@@ -137,6 +157,10 @@ function normalize(obj) {
     customer: obj.customer != null ? String(obj.customer).trim() : null,
     warehouse: obj.warehouse != null ? String(obj.warehouse).trim() : null,
     price: typeof obj.price === 'number' ? obj.price : (parseFloat(obj.price) || null),
+    salesperson: obj.salesperson != null ? String(obj.salesperson).trim() : null,
+    paymentMode: obj.paymentMode != null ? String(obj.paymentMode).trim() : null,
+    salesDate: obj.salesDate != null ? String(obj.salesDate).trim() : null,
+    bankName: obj.bankName != null ? String(obj.bankName).trim() : null,
     confidence: typeof obj.confidence === 'number' ? Math.max(0, Math.min(1, obj.confidence)) : 0.5,
     clarification: obj.clarification != null ? String(obj.clarification).trim() : null,
   };
