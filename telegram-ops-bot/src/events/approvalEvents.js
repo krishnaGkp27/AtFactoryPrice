@@ -8,7 +8,8 @@ const logger = require('../utils/logger');
 
 /** Send approval request to each admin's private chat. */
 async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSummary, riskReason) {
-  const text = `🔔 *Approval required*\n\nRequest ID: \`${requestId}\`\nUser: ${userLabel}\nAction: ${actionSummary}\nReason: ${riskReason}\n\nUse buttons below to approve or reject.`;
+  const esc = (s) => (s || '').replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+  const text = `🔔 *Approval required*\n\nRequest ID: \`${requestId}\`\nUser: ${esc(userLabel)}\nAction: ${esc(actionSummary)}\nReason: ${esc(riskReason)}\n\nUse buttons below to approve or reject\\.`;
   const keyboard = {
     inline_keyboard: [
       [{ text: '✅ Approve', callback_data: `approve:${requestId}` }, { text: '❌ Reject', callback_data: `reject:${requestId}` }],
@@ -16,9 +17,15 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
   };
   for (const adminId of config.access.adminIds) {
     try {
-      await bot.sendMessage(adminId, text, { parse_mode: 'Markdown', reply_markup: keyboard });
+      await bot.sendMessage(adminId, text, { parse_mode: 'MarkdownV2', reply_markup: keyboard });
     } catch (e) {
       logger.error('Failed to notify admin', adminId, e.message);
+      try {
+        const plain = `🔔 Approval required\n\nRequest ID: ${requestId}\nUser: ${userLabel}\nAction: ${actionSummary}\nReason: ${riskReason}\n\nUse buttons below to approve or reject.`;
+        await bot.sendMessage(adminId, plain, { reply_markup: keyboard });
+      } catch (e2) {
+        logger.error('Failed to notify admin (plain fallback)', adminId, e2.message);
+      }
     }
   }
 }

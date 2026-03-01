@@ -7,6 +7,7 @@
 const settingsRepository = require('../repositories/settingsRepository');
 const config = require('../config');
 const auth = require('../middlewares/auth');
+const logger = require('../utils/logger');
 
 const WRITE_ACTIONS = [
   'sell_than', 'sell_package', 'sell_batch', 'sell',
@@ -34,7 +35,10 @@ async function getThresholds() {
 async function evaluate(params) {
   const { action, userId } = params;
 
-  if (userId && auth.isAdmin(userId)) {
+  const isAdm = userId && auth.isAdmin(userId);
+  logger.info(`Risk evaluate: action=${action}, userId=${userId}, isAdmin=${isAdm}`);
+
+  if (isAdm) {
     return { risk: 'safe' };
   }
 
@@ -54,8 +58,9 @@ function formatAction(action) {
     return_than: 'return', return_package: 'return',
     update_price: 'price update', add: 'stock addition', add_stock: 'stock addition',
     record_payment: 'payment', add_customer: 'customer creation',
+    transfer_than: 'transfer', transfer_package: 'transfer', transfer_batch: 'transfer',
   };
-  return map[action] || action;
+  return map[action] || action.replace(/_/g, ' ');
 }
 
 module.exports = { evaluate, getThresholds, WRITE_ACTIONS };
