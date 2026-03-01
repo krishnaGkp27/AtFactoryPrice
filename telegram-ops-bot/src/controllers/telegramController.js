@@ -181,6 +181,13 @@ async function handleMessage(bot, msg) {
         return;
       }
 
+      case 'sell_mixed': {
+        if (!intent.thanItems || !intent.thanItems.length) { await bot.sendMessage(chatId, 'Which thans? e.g. "Sell than 1 from 5801, than 2 from 5804 to Customer"'); return; }
+        const mixedItems = intent.thanItems.map((t) => ({ type: 'than', packageNo: t.packageNo, thanNo: t.thanNo }));
+        await startSaleFlow(bot, chatId, msg, userId, 'sell_mixed', mixedItems, intent);
+        return;
+      }
+
       case 'return_than': {
         if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Return than 2 from package 5801"'); return; }
         if (!intent.thanNo) { await bot.sendMessage(chatId, 'Which than number?'); return; }

@@ -10,7 +10,7 @@ const auth = require('../middlewares/auth');
 const logger = require('../utils/logger');
 
 const WRITE_ACTIONS = [
-  'sell_than', 'sell_package', 'sell_batch', 'sell',
+  'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell',
   'return_than', 'return_package',
   'update_price',
   'add', 'add_stock',
@@ -54,7 +54,7 @@ async function evaluate(params) {
 
 function formatAction(action) {
   const map = {
-    sell_than: 'sale', sell_package: 'sale', sell_batch: 'sale', sell: 'sale',
+    sell_than: 'sale', sell_package: 'sale', sell_batch: 'sale', sell_mixed: 'sale', sell: 'sale',
     return_than: 'return', return_package: 'return',
     update_price: 'price update', add: 'stock addition', add_stock: 'stock addition',
     record_payment: 'payment', add_customer: 'customer creation',

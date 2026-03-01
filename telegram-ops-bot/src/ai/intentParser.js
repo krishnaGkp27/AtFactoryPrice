@@ -18,11 +18,12 @@ INVENTORY STRUCTURE:
 
 Reply with ONLY a valid JSON object (no markdown, no code block) with these keys:
 {
-  "action": "sell_than | sell_package | sell_batch | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks",
+  "action": "sell_than | sell_package | sell_batch | sell_mixed | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks",
   "design": "string or null",
   "shade": "string or null",
   "packageNo": "string or null",
   "packageNos": "array of strings or null (for sell_batch/transfer_batch)",
+  "thanItems": "array of {packageNo, thanNo} or null (for sell_mixed - multiple thans from different packages)",
   "thanNo": "number or null",
   "customer": "string or null",
   "warehouse": "string or null",
@@ -38,7 +39,8 @@ Reply with ONLY a valid JSON object (no markdown, no code block) with these keys
 ACTION RULES:
 - sell_than: selling a specific than from a package. Needs packageNo, thanNo, customer.
 - sell_package: selling an entire package. Needs packageNo, customer.
-- sell_batch: selling multiple packages at once. Needs packageNos (array), customer.
+- sell_batch: selling multiple whole packages at once. Needs packageNos (array), customer.
+- sell_mixed: selling individual thans from DIFFERENT packages in one transaction. Needs thanItems (array of {packageNo, thanNo}), customer. Use this when user says things like "sell than 1 from 5801, than 2 from 5804, than 1 from 5805 to Customer".
 - update_price: update selling price per yard. Needs design+shade OR packageNo, and price.
 - return_than: undo sale of a than (mark available again). Needs packageNo, thanNo.
 - return_package: undo sale of entire package. Needs packageNo.
@@ -101,6 +103,8 @@ User: "What is Ibrahim's outstanding?" → {"action":"check_balance","design":nu
 User: "Show ledger for today" → {"action":"show_ledger","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"confidence":0.9,"clarification":null}
 User: "Show trial balance" → {"action":"trial_balance","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":null,"confidence":0.9,"clarification":null}
 User: "Sell package 5801 to Ibrahim, salesperson Abdul, cash, date 25-02-2026" → {"action":"sell_package","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"salesperson":"Abdul","paymentMode":"Cash","salesDate":"25-02-2026","bankName":null,"confidence":0.95,"clarification":null}
+User: "Sell than 1 from 5801, than 2 from 5804, than 1 from 5805 to Karibulla, salesperson Abdul, cash, date today" → {"action":"sell_mixed","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanItems":[{"packageNo":"5801","thanNo":1},{"packageNo":"5804","thanNo":2},{"packageNo":"5805","thanNo":1}],"thanNo":null,"customer":"Karibulla","warehouse":null,"price":null,"salesperson":"Abdul","paymentMode":"Cash","salesDate":"today","bankName":null,"confidence":0.95,"clarification":null}
+User: "Sell than 3 from 5802 and than 5 from 5807 to Ibrahim" → {"action":"sell_mixed","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanItems":[{"packageNo":"5802","thanNo":3},{"packageNo":"5807","thanNo":5}],"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":null,"confidence":0.9,"clarification":null}
 User: "Sell packages 5801, 5802 to Ibrahim, sold by Yarima, via GTBank, date today" → {"action":"sell_batch","design":null,"shade":null,"packageNo":null,"packageNos":["5801","5802"],"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"salesperson":"Yarima","paymentMode":"GTBank","salesDate":"today","bankName":null,"confidence":0.95,"clarification":null}
 User: "Add bank Zenith" → {"action":"add_bank","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":"Zenith","confidence":0.95,"clarification":null}
 User: "Remove bank Access" → {"action":"remove_bank","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":"Access","confidence":0.95,"clarification":null}
@@ -134,7 +138,7 @@ function extractJSON(text) {
 }
 
 const VALID_ACTIONS = [
-  'sell_than', 'sell_package', 'sell_batch', 'update_price', 'return_than', 'return_package',
+  'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'update_price', 'return_than', 'return_package',
   'transfer_than', 'transfer_package', 'transfer_batch',
   'add', 'check', 'analyze', 'list_packages', 'package_detail',
   'add_customer', 'check_customer', 'record_payment', 'check_balance', 'show_ledger', 'trial_balance',
@@ -153,6 +157,7 @@ function normalize(obj) {
     shade: obj.shade != null ? String(obj.shade).trim() : null,
     packageNo: obj.packageNo != null ? String(obj.packageNo).trim() : null,
     packageNos,
+    thanItems: Array.isArray(obj.thanItems) ? obj.thanItems.map((t) => ({ packageNo: String(t.packageNo || '').trim(), thanNo: parseInt(t.thanNo) || 0 })).filter((t) => t.packageNo && t.thanNo) : null,
     thanNo: typeof obj.thanNo === 'number' ? obj.thanNo : (parseInt(obj.thanNo) || null),
     customer: obj.customer != null ? String(obj.customer).trim() : null,
     warehouse: obj.warehouse != null ? String(obj.warehouse).trim() : null,
