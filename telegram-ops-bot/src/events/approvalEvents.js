@@ -47,41 +47,40 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
     if (item) requestingUser = item.user;
   } catch (_) {}
 
+  const chatIdCb = callbackQuery.message.chat.id;
+  const msgIdCb = callbackQuery.message.message_id;
+
   try {
     if (action === 'approve') {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Approving...' });
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatIdCb, message_id: msgIdCb });
+
       const result = await inventoryService.executeApprovedAction(requestId, adminId);
       if (result.ok) {
-        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Approved.' });
-        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
-          chat_id: callbackQuery.message.chat.id,
-          message_id: callbackQuery.message.message_id,
-        });
-        await bot.sendMessage(callbackQuery.message.chat.id, `✅ Request ${requestId} approved. Changes applied.`);
+        await bot.sendMessage(chatIdCb, `✅ Request ${requestId} approved. Changes applied.`);
         if (requestingUser && requestingUser !== adminId) {
           try { await bot.sendMessage(requestingUser, `✅ Your request (${requestId}) has been approved by admin. Changes applied.`); } catch (_) {}
         }
       } else {
-        await bot.answerCallbackQuery(callbackQuery.id, { text: result.message || 'Failed.' });
+        await bot.sendMessage(chatIdCb, `⚠️ Approved but execution failed: ${result.message || 'Unknown error'}`);
       }
     } else {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Rejecting...' });
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatIdCb, message_id: msgIdCb });
+
       const result = await inventoryService.rejectApproval(requestId, adminId);
       if (result.ok) {
-        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Rejected.' });
-        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
-          chat_id: callbackQuery.message.chat.id,
-          message_id: callbackQuery.message.message_id,
-        });
-        await bot.sendMessage(callbackQuery.message.chat.id, `❌ Request ${requestId} rejected.`);
+        await bot.sendMessage(chatIdCb, `❌ Request ${requestId} rejected.`);
         if (requestingUser && requestingUser !== adminId) {
           try { await bot.sendMessage(requestingUser, `❌ Your request (${requestId}) has been rejected by admin.`); } catch (_) {}
         }
       } else {
-        await bot.answerCallbackQuery(callbackQuery.id, { text: result.message || 'Failed.' });
+        await bot.sendMessage(chatIdCb, `⚠️ Rejection failed: ${result.message || 'Unknown error'}`);
       }
     }
   } catch (e) {
     logger.error('Approval callback error', e);
-    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Error processing request.' });
+    try { await bot.sendMessage(chatIdCb, `⚠️ Error processing request ${requestId}: ${e.message}`); } catch (_) {}
   }
 }
 

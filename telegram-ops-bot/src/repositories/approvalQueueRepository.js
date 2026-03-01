@@ -50,7 +50,8 @@ async function updateStatus(requestId, status, resolvedAt) {
   const idx = rows.findIndex((r) => String(r[0]) === String(requestId));
   if (idx === -1) return false;
   const rowIndex = idx + 2;
-  await sheets.updateRange(SHEET, `E${rowIndex}:G${rowIndex}`, [[status, resolvedAt || new Date().toISOString(), resolvedAt || '']]);
+  const createdAt = rows[idx][5] || '';
+  await sheets.updateRange(SHEET, `E${rowIndex}:G${rowIndex}`, [[status, createdAt, resolvedAt || new Date().toISOString()]]);
   return true;
 }
 
