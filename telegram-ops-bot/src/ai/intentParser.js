@@ -69,6 +69,17 @@ ACTION RULES:
 - add_bank: admin adds a bank to the allowed list. Needs bankName.
 - remove_bank: admin removes a bank. Needs bankName.
 - list_banks: show all registered banks.
+- report_stock: stock summary by design/shade.
+- report_valuation: total stock value.
+- report_sales: sales report. Extract period from message (today/this week/this month/all time) into salesDate field.
+- report_customers: customer report ranked by purchases.
+- report_warehouses: warehouse comparison.
+- report_fast_moving: fastest selling designs.
+- report_dead_stock: designs with no sales.
+- report_indents: indent/shipment status. Optional: specific indent in design field.
+- report_low_stock: designs below threshold.
+- report_aging: unsold stock older than N days.
+- ask_data: FREE-FORM data question that doesn't fit any predefined report. Use this for custom/complex questions like "compare Lagos vs Kano", "which shade sells fastest", "what percentage is unsold", "show me all buyers of 44200 in descending order", etc.
 
 SALE DETAIL RULES:
 - When selling, also extract salesperson, paymentMode, and salesDate if mentioned.
@@ -116,7 +127,25 @@ User: "Sell than 3 from 5802 and than 5 from 5807 to Ibrahim" → {"action":"sel
 User: "Sell packages 5801, 5802 to Ibrahim, sold by Yarima, via GTBank, date today" → {"action":"sell_batch","design":null,"shade":null,"packageNo":null,"packageNos":["5801","5802"],"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"salesperson":"Yarima","paymentMode":"GTBank","salesDate":"today","bankName":null,"confidence":0.95,"clarification":null}
 User: "Add bank Zenith" → {"action":"add_bank","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":"Zenith","confidence":0.95,"clarification":null}
 User: "Remove bank Access" → {"action":"remove_bank","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":"Access","confidence":0.95,"clarification":null}
-User: "List banks" → {"action":"list_banks","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":null,"confidence":0.95,"clarification":null}`;
+User: "List banks" → {"action":"list_banks","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":null,"confidence":0.95,"clarification":null}
+User: "Stock summary" → {"action":"report_stock","confidence":0.95,"clarification":null}
+User: "Stock valuation" → {"action":"report_valuation","confidence":0.95,"clarification":null}
+User: "Sales report today" → {"action":"report_sales","salesDate":"today","confidence":0.95,"clarification":null}
+User: "Sales this week" → {"action":"report_sales","salesDate":"this week","confidence":0.95,"clarification":null}
+User: "Sales this month" → {"action":"report_sales","salesDate":"this month","confidence":0.95,"clarification":null}
+User: "Customer report" → {"action":"report_customers","confidence":0.95,"clarification":null}
+User: "Top customers" → {"action":"report_customers","confidence":0.95,"clarification":null}
+User: "Warehouse summary" → {"action":"report_warehouses","confidence":0.95,"clarification":null}
+User: "Compare warehouses" → {"action":"report_warehouses","confidence":0.95,"clarification":null}
+User: "Fast moving designs" → {"action":"report_fast_moving","confidence":0.95,"clarification":null}
+User: "Dead stock" → {"action":"report_dead_stock","confidence":0.95,"clarification":null}
+User: "Indent status" → {"action":"report_indents","confidence":0.95,"clarification":null}
+User: "Low stock alert" → {"action":"report_low_stock","confidence":0.95,"clarification":null}
+User: "Aging stock" → {"action":"report_aging","confidence":0.95,"clarification":null}
+User: "Show me all buyers of 44200 in descending order" → {"action":"ask_data","design":"44200","confidence":0.95,"clarification":null}
+User: "Compare Lagos vs Kano warehouse" → {"action":"ask_data","confidence":0.95,"clarification":null}
+User: "Which shade of 44200 sells fastest?" → {"action":"ask_data","design":"44200","confidence":0.95,"clarification":null}
+User: "What percentage of stock is unsold?" → {"action":"ask_data","confidence":0.95,"clarification":null}`;
 
 async function parse(userMessage) {
   if (!openai) return fallbackParse(userMessage);
@@ -151,6 +180,9 @@ const VALID_ACTIONS = [
   'add', 'check', 'analyze', 'list_packages', 'package_detail',
   'add_customer', 'check_customer', 'record_payment', 'check_balance', 'show_ledger', 'trial_balance',
   'add_bank', 'remove_bank', 'list_banks',
+  'report_stock', 'report_valuation', 'report_sales', 'report_customers', 'report_warehouses',
+  'report_fast_moving', 'report_dead_stock', 'report_indents', 'report_low_stock', 'report_aging',
+  'ask_data',
 ];
 
 function normalize(obj) {

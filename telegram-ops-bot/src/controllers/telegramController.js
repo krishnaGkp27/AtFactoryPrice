@@ -10,6 +10,7 @@ const riskEvaluate = require('../risk/evaluate');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const analytics = require('../ai/analytics');
+const queryEngine = require('../services/queryEngine');
 const crmService = require('../services/crmService');
 const accountingService = require('../services/accountingService');
 const salesFlow = require('../services/salesFlowService');
@@ -321,6 +322,54 @@ async function handleMessage(bot, msg) {
         return;
       }
 
+      case 'report_stock': {
+        await sendLong(bot, chatId, await queryEngine.stockSummary(), { parse_mode: 'Markdown' });
+        return;
+      }
+      case 'report_valuation': {
+        await sendLong(bot, chatId, await queryEngine.stockValuation(), { parse_mode: 'Markdown' });
+        return;
+      }
+      case 'report_sales': {
+        const period = intent.salesDate || 'all';
+        await sendLong(bot, chatId, await queryEngine.salesReport(period), { parse_mode: 'Markdown' });
+        return;
+      }
+      case 'report_customers': {
+        await sendLong(bot, chatId, await queryEngine.customerReport(), { parse_mode: 'Markdown' });
+        return;
+      }
+      case 'report_warehouses': {
+        await sendLong(bot, chatId, await queryEngine.warehouseSummary(), { parse_mode: 'Markdown' });
+        return;
+      }
+      case 'report_fast_moving': {
+        await sendLong(bot, chatId, await queryEngine.fastMovingReport(), { parse_mode: 'Markdown' });
+        return;
+      }
+      case 'report_dead_stock': {
+        await sendLong(bot, chatId, await queryEngine.deadStockReport(), { parse_mode: 'Markdown' });
+        return;
+      }
+      case 'report_indents': {
+        await sendLong(bot, chatId, await queryEngine.indentStatus(intent.design), { parse_mode: 'Markdown' });
+        return;
+      }
+      case 'report_low_stock': {
+        await sendLong(bot, chatId, await queryEngine.lowStockAlert(), { parse_mode: 'Markdown' });
+        return;
+      }
+      case 'report_aging': {
+        await sendLong(bot, chatId, await queryEngine.agingStock(), { parse_mode: 'Markdown' });
+        return;
+      }
+      case 'ask_data': {
+        await bot.sendMessage(chatId, '🔍 Analyzing your data...');
+        const answer = await queryEngine.freeFormQuery(text);
+        await sendLong(bot, chatId, answer);
+        return;
+      }
+
       case 'add_customer': {
         if (!intent.customer) { await bot.sendMessage(chatId, 'Customer name is required. e.g. "Add customer Ibrahim, phone +234..."'); return; }
         const rawText = text;
@@ -482,6 +531,16 @@ function helpText() {
 🔄 "Transfer than 3 from package 5801 to Kano"
 💲 "Update price of 44200 BLACK to 1500"
 📊 "Analyze stock"
+
+*Reports:*
+📦 "Stock summary" / "Stock valuation"
+📊 "Sales report today" / "Sales this week"
+👥 "Customer report" / "Top customers"
+🏭 "Warehouse summary" / "Compare warehouses"
+🔥 "Fast moving designs" / "Dead stock"
+📋 "Indent status" / "Low stock alert"
+📅 "Aging stock"
+🔍 Ask anything: "Show all buyers of 44200 in descending order"
 
 *CRM:*
 👤 "Add customer Ibrahim, phone +234..., wholesale"
