@@ -84,21 +84,26 @@ async function getAnalysisSummary(design, shade) {
   const designs = await stockByDesign();
   const warehouses = await stockByWarehouse();
 
+  const availPkgs = new Set(available.map((r) => r.packageNo)).size;
+  const soldPkgs = new Set(sold.map((r) => r.packageNo)).size;
+  const totalPkgs = new Set(all.map((r) => r.packageNo)).size;
+
   let text = `📊 *Inventory Analysis*\n\n`;
-  text += `*Total:* ${fmtQty(totalThans)} thans (${fmtQty(totalAvailYards + totalSoldYards)} yards)\n`;
-  text += `*Available:* ${fmtQty(available.length)} thans, ${fmtQty(totalAvailYards)} yards (${fmtMoney(stockValue)})\n`;
-  text += `*Sold:* ${fmtQty(sold.length)} thans, ${fmtQty(totalSoldYards)} yards (${fmtMoney(salesValue)})\n\n`;
+  text += `*Total:* ${totalPkgs} packages (${fmtQty(totalThans)} thans), ${fmtQty(totalAvailYards + totalSoldYards)} yards\n`;
+  text += `*Available:* ${availPkgs} packages (${fmtQty(available.length)} thans), ${fmtQty(totalAvailYards)} yards (${fmtMoney(stockValue)})\n`;
+  text += `*Sold:* ${soldPkgs} packages (${fmtQty(sold.length)} thans), ${fmtQty(totalSoldYards)} yards (${fmtMoney(salesValue)})\n\n`;
 
   text += `*By Design (top 5):*\n`;
   designs.sort((a, b) => b.availableYards - a.availableYards);
   designs.slice(0, 5).forEach((d) => {
-    text += `  ${d.design} ${d.shade}: ${fmtQty(d.availableYards)} yds avail, ${fmtQty(d.soldYards)} yds sold\n`;
+    const dPkgs = Math.ceil(d.available / 5) || 0;
+    text += `  ${d.design} ${d.shade}: ${fmtQty(d.available)} thans, ${fmtQty(d.availableYards)} yds avail | ${fmtQty(d.sold)} thans sold\n`;
   });
 
   if (warehouses.length > 1) {
     text += `\n*By Warehouse:*\n`;
     warehouses.forEach((w) => {
-      text += `  ${w.warehouse || 'Unassigned'}: ${fmtQty(w.availableYards)} yds (${fmtMoney(w.value)})\n`;
+      text += `  ${w.warehouse || 'Unassigned'}: ${w.available} thans, ${fmtQty(w.availableYards)} yds (${fmtMoney(w.value)})\n`;
     });
   }
 

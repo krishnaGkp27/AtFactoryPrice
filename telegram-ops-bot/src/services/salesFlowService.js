@@ -152,7 +152,8 @@ async function buildSummary(session) {
       }
     }
   }
-  text += `\n  Total: ${totalThans} thans, ${fmtQty(totalYards)} yards, ${fmtMoney(totalValue)}`;
+  const totalPkgs = new Set(items.map((i) => i.packageNo)).size;
+  text += `\n  Total: ${totalPkgs} packages (${totalThans} thans), ${fmtQty(totalYards)} yards, ${fmtMoney(totalValue)}`;
   return text;
 }
 

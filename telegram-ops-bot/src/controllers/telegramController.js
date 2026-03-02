@@ -107,7 +107,7 @@ async function handleMessage(bot, msg) {
           intent.warehouse ? `Warehouse: ${intent.warehouse}` : null,
         ].filter(Boolean).join(', ') || 'All stock';
         let reply = `📦 *${label}*\n`;
-        reply += `Available: ${fmtQty(stock.totalYards)} yards across ${stock.totalThans} thans in ${stock.totalPackages} packages\n`;
+        reply += `Available: ${stock.totalPackages} packages (${stock.totalThans} thans), ${fmtQty(stock.totalYards)} yards\n`;
         reply += `Value: ${fmtMoney(stock.totalValue)}`;
         if (stock.totalThans === 0) reply += '\n⚠️ No available stock matching these filters.';
         await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
@@ -129,7 +129,7 @@ async function handleMessage(bot, msg) {
           reply += `Pkg ${p.packageNo} (${p.warehouse}): ${p.available}/${p.total} thans avail, ${fmtQty(p.availableYards)} yds\n`;
         });
         const totalAvail = packages.reduce((s, p) => s + p.availableYards, 0);
-        reply += `\n*Total available: ${fmtQty(totalAvail)} yards*`;
+        reply += `\n*Total: ${packages.length} packages, ${fmtQty(totalAvail)} yards*`;
         await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
         return;
       }
@@ -154,7 +154,7 @@ async function handleMessage(bot, msg) {
           const sold = t.soldTo ? ` → ${t.soldTo} (${t.soldDate})` : '';
           reply += `${icon} Than ${t.thanNo}: ${fmtQty(t.yards)} yds${sold}\n`;
         });
-        reply += `\n*Available: ${fmtQty(summary.availableYards)} yds | Sold: ${fmtQty(summary.soldYards)} yds*`;
+        reply += `\n*Available: ${summary.availableThans} thans, ${fmtQty(summary.availableYards)} yds | Sold: ${summary.soldThans} thans, ${fmtQty(summary.soldYards)} yds*`;
         await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
         return;
       }
@@ -212,7 +212,7 @@ async function handleMessage(bot, msg) {
         if (rpQueued) return;
         const retPkg = await inventoryService.returnPackage(intent.packageNo, userId);
         if (retPkg.status === 'completed') {
-          await bot.sendMessage(chatId, `✅ Returned package ${intent.packageNo}: ${retPkg.returnedThans} thans, ${fmtQty(retPkg.returnedYards)} yards — now available.`);
+          await bot.sendMessage(chatId, `✅ Returned package ${intent.packageNo}: 1 package (${retPkg.returnedThans} thans), ${fmtQty(retPkg.returnedYards)} yards — now available.`);
         } else {
           await bot.sendMessage(chatId, retPkg.message || 'Could not return.');
         }
@@ -272,7 +272,7 @@ async function handleMessage(bot, msg) {
         if (tpQueued) return;
         const tpRes = await inventoryService.transferPackage(intent.packageNo, intent.warehouse, userId);
         if (tpRes.status === 'completed') {
-          await bot.sendMessage(chatId, `✅ Transferred package ${intent.packageNo}: ${tpRes.transferredThans} thans, ${fmtQty(tpRes.totalYards)} yds — ${tpRes.fromWarehouse} → ${intent.warehouse}`);
+          await bot.sendMessage(chatId, `✅ Transferred package ${intent.packageNo}: 1 package (${tpRes.transferredThans} thans), ${fmtQty(tpRes.totalYards)} yds — ${tpRes.fromWarehouse} → ${intent.warehouse}`);
         } else {
           await bot.sendMessage(chatId, tpRes.message || 'Could not transfer.');
         }
@@ -294,7 +294,7 @@ async function handleMessage(bot, msg) {
             batchDetail += `  Pkg ${pkgNo}: not found\n`;
           }
         }
-        batchDetail += `\nTotal: ${batchTotalThans} thans, ${fmtQty(batchTotalYards)} yards`;
+        batchDetail += `\nTotal: ${intent.packageNos.length} packages (${batchTotalThans} thans), ${fmtQty(batchTotalYards)} yards`;
         const tbQueued = await requireApproval(bot, chatId, msg, userId, 'transfer_batch',
           { action: 'transfer_batch', packageNos: intent.packageNos, toWarehouse: intent.warehouse },
           batchDetail);
@@ -305,7 +305,7 @@ async function handleMessage(bot, msg) {
           const icon = d.status === 'completed' ? '✅' : '⚠️';
           tbReply += `${icon} Pkg ${d.packageNo}: ${d.status === 'completed' ? `${d.transferredThans} thans, ${fmtQty(d.totalYards)} yds` : (d.message || d.status)}\n`;
         });
-        tbReply += `\n*Total: ${tbRes.totalPackages} packages, ${tbRes.totalThans} thans, ${fmtQty(tbRes.totalYards)} yards*`;
+        tbReply += `\n*Total: ${tbRes.totalPackages} packages (${tbRes.totalThans} thans), ${fmtQty(tbRes.totalYards)} yards*`;
         await sendLong(bot, chatId, tbReply, { parse_mode: 'Markdown' });
         return;
       }
@@ -593,7 +593,8 @@ async function executeSale(bot, chatId, userId) {
         totalYards += t ? t.yards : 0;
       }
     }
-    detailText += `\nTotal: ${totalThans} thans, ${fmtQty(totalYards)} yards`;
+    const totalPkgs = new Set(session.items.map((i) => i.packageNo)).size;
+    detailText += `\nTotal: ${totalPkgs} packages (${totalThans} thans), ${fmtQty(totalYards)} yards`;
 
     await approvalQueueRepository.append({
       requestId, user: userId,
@@ -604,23 +605,24 @@ async function executeSale(bot, chatId, userId) {
 
     const userLabel = session.collected.salesperson || userId;
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, detailText, risk.reason);
-    await bot.sendMessage(chatId, `⏳ Sale submitted for admin approval. Request: ${requestId}\n${totalThans} thans, ${fmtQty(totalYards)} yards to ${session.collected.customer}`);
+    await bot.sendMessage(chatId, `⏳ Sale submitted for admin approval. Request: ${requestId}\n${totalPkgs} packages (${totalThans} thans), ${fmtQty(totalYards)} yards to ${session.collected.customer}`);
     sessionStore.clear(userId);
     return;
   }
 
   // Admin: execute all items directly in sequence
-  let soldCount = 0, totalYards = 0;
+  let soldThans = 0, totalYards = 0;
+  const soldPkgs = new Set();
   for (const item of session.items) {
     if (item.type === 'package') {
       const result = await inventoryService.sellPackage(item.packageNo, session.collected.customer, userId, sDate);
-      if (result.status === 'completed') { soldCount += result.soldThans; totalYards += result.soldYards; }
+      if (result.status === 'completed') { soldThans += result.soldThans; totalYards += result.soldYards; soldPkgs.add(item.packageNo); }
     } else if (item.type === 'than') {
       const result = await inventoryService.sellThan(item.packageNo, item.thanNo, session.collected.customer, userId, sDate);
-      if (result.status === 'completed') { soldCount += 1; totalYards += result.than?.yards || 0; }
+      if (result.status === 'completed') { soldThans += 1; totalYards += result.than?.yards || 0; soldPkgs.add(item.packageNo); }
     }
   }
-  await bot.sendMessage(chatId, `✅ Sale complete: ${soldCount} thans, ${fmtQty(totalYards)} yards to ${session.collected.customer}`);
+  await bot.sendMessage(chatId, `✅ Sale complete: ${soldPkgs.size} packages (${soldThans} thans), ${fmtQty(totalYards)} yards to ${session.collected.customer}`);
   sessionStore.clear(userId);
 }
 
