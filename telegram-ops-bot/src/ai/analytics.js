@@ -15,14 +15,14 @@ async function stockByDesign() {
   const map = new Map();
   all.forEach((r) => {
     const key = `${r.design}|${r.shade}`;
-    if (!map.has(key)) map.set(key, { design: r.design, shade: r.shade, total: 0, available: 0, sold: 0, totalYards: 0, availableYards: 0, soldYards: 0, value: 0 });
+    if (!map.has(key)) map.set(key, { design: r.design, shade: r.shade, total: 0, available: 0, sold: 0, totalYards: 0, availableYards: 0, soldYards: 0, value: 0, availPkgs: new Set(), soldPkgs: new Set() });
     const g = map.get(key);
     g.total++;
     g.totalYards += r.yards;
-    if (r.status === 'available') { g.available++; g.availableYards += r.yards; g.value += r.yards * r.pricePerYard; }
-    else { g.sold++; g.soldYards += r.yards; }
+    if (r.status === 'available') { g.available++; g.availableYards += r.yards; g.value += r.yards * r.pricePerYard; g.availPkgs.add(r.packageNo); }
+    else { g.sold++; g.soldYards += r.yards; g.soldPkgs.add(r.packageNo); }
   });
-  return Array.from(map.values());
+  return Array.from(map.values()).map((g) => ({ ...g, availPkgs: g.availPkgs.size, soldPkgs: g.soldPkgs.size }));
 }
 
 /** Stock summary grouped by warehouse. */
@@ -30,12 +30,12 @@ async function stockByWarehouse() {
   const all = await inventoryRepository.getAll();
   const map = new Map();
   all.forEach((r) => {
-    if (!map.has(r.warehouse)) map.set(r.warehouse, { warehouse: r.warehouse, total: 0, available: 0, availableYards: 0, value: 0 });
+    if (!map.has(r.warehouse)) map.set(r.warehouse, { warehouse: r.warehouse, total: 0, available: 0, availableYards: 0, value: 0, availPkgs: new Set() });
     const g = map.get(r.warehouse);
     g.total++;
-    if (r.status === 'available') { g.available++; g.availableYards += r.yards; g.value += r.yards * r.pricePerYard; }
+    if (r.status === 'available') { g.available++; g.availableYards += r.yards; g.value += r.yards * r.pricePerYard; g.availPkgs.add(r.packageNo); }
   });
-  return Array.from(map.values());
+  return Array.from(map.values()).map((g) => ({ ...g, availPkgs: g.availPkgs.size }));
 }
 
 /** Who bought a specific design (or all designs). */
@@ -96,14 +96,13 @@ async function getAnalysisSummary(design, shade) {
   text += `*By Design (top 5):*\n`;
   designs.sort((a, b) => b.availableYards - a.availableYards);
   designs.slice(0, 5).forEach((d) => {
-    const dPkgs = Math.ceil(d.available / 5) || 0;
-    text += `  ${d.design} ${d.shade}: ${fmtQty(d.available)} thans, ${fmtQty(d.availableYards)} yds avail | ${fmtQty(d.sold)} thans sold\n`;
+    text += `  ${d.design} ${d.shade}: ${d.availPkgs} pkgs (${fmtQty(d.available)} thans), ${fmtQty(d.availableYards)} yds avail | ${d.soldPkgs} pkgs sold\n`;
   });
 
   if (warehouses.length > 1) {
     text += `\n*By Warehouse:*\n`;
     warehouses.forEach((w) => {
-      text += `  ${w.warehouse || 'Unassigned'}: ${w.available} thans, ${fmtQty(w.availableYards)} yds (${fmtMoney(w.value)})\n`;
+      text += `  ${w.warehouse || 'Unassigned'}: ${w.availPkgs} pkgs (${w.available} thans), ${fmtQty(w.availableYards)} yds (${fmtMoney(w.value)})\n`;
     });
   }
 
