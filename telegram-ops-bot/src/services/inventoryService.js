@@ -343,6 +343,29 @@ async function executeApprovedAction(requestId, approvedBy) {
       await inventoryRepository.transferPackage(pkgNo, aj.toWarehouse);
     }
     await transactionsRepository.append({ user: item.user, action: 'transfer_batch', design: '', color: '', qty: (aj.packageNos || []).length, before: '', after: aj.toWarehouse, status: 'approved' });
+  } else if (aj.action === 'sale_bundle') {
+    let totalYards = 0, totalThans = 0;
+    for (const si of (aj.items || [])) {
+      if (si.type === 'package') {
+        const results = await inventoryRepository.markPackageSold(si.packageNo, aj.customer, aj.salesDate);
+        totalThans += results.length;
+        totalYards += results.reduce((s, t) => s + t.yards, 0);
+      } else if (si.type === 'than') {
+        const result = await inventoryRepository.markThanSold(si.packageNo, si.thanNo, aj.customer, aj.salesDate);
+        if (result) { totalThans += 1; totalYards += result.yards; }
+      }
+    }
+    await transactionsRepository.append({
+      user: item.user, action: 'sale_bundle', design: '', color: '',
+      qty: totalYards, before: `${totalThans} thans`, after: 'sold', status: 'approved',
+      salesDate: aj.salesDate || '', customerName: aj.customer || '',
+      salesPerson: aj.salesPerson || '', paymentMode: aj.paymentMode || '',
+      saleRefId: requestId,
+    });
+    try {
+      erpBus.emit('sale', { type: 'sale_bundle', customer: aj.customer, yards: totalYards, pricePerYard: 0,
+        design: '', shade: '', userId: item.user, txnId: requestId });
+    } catch (_) {}
   } else {
     return { ok: false, message: 'Unknown action type.' };
   }

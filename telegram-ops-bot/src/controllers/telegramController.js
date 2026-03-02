@@ -564,41 +564,63 @@ async function handleSaleSession(bot, chatId, msg, userId, text, session) {
 }
 
 /**
- * Execute a confirmed sale (after user taps Confirm).
+ * Execute a confirmed sale: if admin, execute directly in batch.
+ * If employee, create ONE consolidated approval request for the entire sale.
  */
 async function executeSale(bot, chatId, userId) {
   const session = salesFlow.getSession(userId);
   if (!session) return;
   const details = salesFlow.getSaleDetails(session);
-
   const sDate = details.salesDate || new Date().toISOString().split('T')[0];
+
+  const risk = await riskEvaluate.evaluate({ action: 'sell_batch', userId });
+
+  if (risk.risk === 'approval_required') {
+    // Create ONE approval request for the entire sale
+    const requestId = genId();
+    let detailText = `Sale Request\nCustomer: ${session.collected.customer}\nSalesperson: ${details.salesPerson}\nPayment: ${details.paymentMode}\nDate: ${sDate}\n\nItems:\n`;
+    let totalYards = 0, totalThans = 0;
+    for (const item of session.items) {
+      const info = await inventoryService.getPackageSummary(item.packageNo);
+      if (item.type === 'package' && info) {
+        detailText += `  Pkg ${item.packageNo}: ${info.design} ${info.shade}, ${info.availableThans} thans, ${fmtQty(info.availableYards)} yds (${info.warehouse})\n`;
+        totalThans += info.availableThans;
+        totalYards += info.availableYards;
+      } else if (item.type === 'than' && info) {
+        const t = info.thans?.find((th) => th.thanNo === item.thanNo);
+        detailText += `  Pkg ${item.packageNo} Than ${item.thanNo}: ${info.design} ${info.shade}, ${t ? fmtQty(t.yards) + ' yds' : '?'} (${info.warehouse})\n`;
+        totalThans += 1;
+        totalYards += t ? t.yards : 0;
+      }
+    }
+    detailText += `\nTotal: ${totalThans} thans, ${fmtQty(totalYards)} yards`;
+
+    await approvalQueueRepository.append({
+      requestId, user: userId,
+      actionJSON: { action: 'sale_bundle', items: session.items, customer: session.collected.customer, salesDate: sDate, salesPerson: details.salesPerson, paymentMode: details.paymentMode },
+      riskReason: risk.reason, status: 'pending',
+    });
+    await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
+
+    const userLabel = session.collected.salesperson || userId;
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, detailText, risk.reason);
+    await bot.sendMessage(chatId, `⏳ Sale submitted for admin approval. Request: ${requestId}\n${totalThans} thans, ${fmtQty(totalYards)} yards to ${session.collected.customer}`);
+    sessionStore.clear(userId);
+    return;
+  }
+
+  // Admin: execute all items directly in sequence
+  let soldCount = 0, totalYards = 0;
   for (const item of session.items) {
     if (item.type === 'package') {
       const result = await inventoryService.sellPackage(item.packageNo, session.collected.customer, userId, sDate);
-      if (result.status === 'approval_required') {
-        const userLabel = userId;
-        const info = await inventoryService.getPackageSummary(item.packageNo);
-        const detailText = `Sale\nPackage: ${item.packageNo}\nDesign: ${info?.design || '?'} ${info?.shade || ''}\nCustomer: ${session.collected.customer}\nSalesperson: ${details.salesPerson}\nPayment: ${details.paymentMode}\nDate: ${details.salesDate}`;
-        await approvalEvents.notifyAdminsApprovalRequest(bot, result.requestId, userLabel, detailText, result.reason);
-        await bot.sendMessage(chatId, `⏳ Pkg ${item.packageNo}: needs admin approval. Request: ${result.requestId}`);
-      } else if (result.status === 'completed') {
-        await bot.sendMessage(chatId, `✅ Pkg ${item.packageNo}: sold ${result.soldThans} thans, ${fmtQty(result.soldYards)} yds to ${session.collected.customer}`);
-      } else {
-        await bot.sendMessage(chatId, `⚠️ Pkg ${item.packageNo}: ${result.message || 'failed'}`);
-      }
+      if (result.status === 'completed') { soldCount += result.soldThans; totalYards += result.soldYards; }
     } else if (item.type === 'than') {
       const result = await inventoryService.sellThan(item.packageNo, item.thanNo, session.collected.customer, userId, sDate);
-      if (result.status === 'approval_required') {
-        const detailText = `Sale\nPackage: ${item.packageNo} Than: ${item.thanNo}\nCustomer: ${session.collected.customer}\nSalesperson: ${details.salesPerson}\nPayment: ${details.paymentMode}\nDate: ${details.salesDate}`;
-        await approvalEvents.notifyAdminsApprovalRequest(bot, result.requestId, userId, detailText, result.reason);
-        await bot.sendMessage(chatId, `⏳ Pkg ${item.packageNo} Than ${item.thanNo}: needs admin approval. Request: ${result.requestId}`);
-      } else if (result.status === 'completed') {
-        await bot.sendMessage(chatId, `✅ Pkg ${item.packageNo} Than ${item.thanNo}: sold ${fmtQty(result.than.yards)} yds to ${session.collected.customer}`);
-      } else {
-        await bot.sendMessage(chatId, `⚠️ Pkg ${item.packageNo} Than ${item.thanNo}: ${result.message || 'failed'}`);
-      }
+      if (result.status === 'completed') { soldCount += 1; totalYards += result.than?.yards || 0; }
     }
   }
+  await bot.sendMessage(chatId, `✅ Sale complete: ${soldCount} thans, ${fmtQty(totalYards)} yards to ${session.collected.customer}`);
   sessionStore.clear(userId);
 }
 
