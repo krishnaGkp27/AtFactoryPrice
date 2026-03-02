@@ -46,14 +46,15 @@ async function customerAnalysis(design) {
   const map = new Map();
   filtered.forEach((r) => {
     const key = r.soldTo;
-    if (!map.has(key)) map.set(key, { customer: key, thans: 0, yards: 0, value: 0, designs: new Set() });
+    if (!map.has(key)) map.set(key, { customer: key, thans: 0, yards: 0, value: 0, designs: new Set(), pkgs: new Set() });
     const g = map.get(key);
     g.thans++;
     g.yards += r.yards;
     g.value += r.yards * r.pricePerYard;
     g.designs.add(`${r.design} ${r.shade}`);
+    g.pkgs.add(r.packageNo);
   });
-  return Array.from(map.values()).map((c) => ({ ...c, designs: Array.from(c.designs) }));
+  return Array.from(map.values()).map((c) => ({ ...c, designs: Array.from(c.designs), pkgs: c.pkgs.size }));
 }
 
 /** Fast moving: designs with most sold thans. */
@@ -111,7 +112,7 @@ async function getAnalysisSummary(design, shade) {
     text += `\n*Top Buyers${design ? ' for ' + design : ''}:*\n`;
     topCustomers.sort((a, b) => b.yards - a.yards);
     topCustomers.slice(0, 5).forEach((c) => {
-      text += `  ${c.customer}: ${fmtQty(c.yards)} yds, ${fmtMoney(c.value)}\n`;
+      text += `  ${c.customer}: ${c.pkgs} pkgs (${c.thans} thans), ${fmtQty(c.yards)} yds, ${fmtMoney(c.value)}\n`;
     });
   }
 
