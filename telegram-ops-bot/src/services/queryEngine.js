@@ -84,6 +84,24 @@ async function customerReport() {
   return text;
 }
 
+/** Supply (sold) by customer for a specific design. Totals computed in code only. */
+async function supplyByCustomerByDesign(design) {
+  if (!design || !String(design).trim()) return 'Please specify a design, e.g. "Supply to customers for design 44200".';
+  const customers = await analytics.customerAnalysis(String(design).trim());
+  customers.sort((a, b) => b.yards - a.yards);
+  if (!customers.length) return `No supply recorded for design ${design}.`;
+  let totalPkgs = 0, totalThans = 0, totalYards = 0;
+  let text = `📤 *Supply to customers — design ${design}*\n\n`;
+  customers.forEach((c, i) => {
+    text += `${i + 1}. ${c.customer}: ${c.pkgs} pkgs (${c.thans} thans, ${fmtQty(c.yards)} yds)\n`;
+    totalPkgs += c.pkgs;
+    totalThans += c.thans;
+    totalYards += c.yards;
+  });
+  text += `\n*Total supply: ${totalPkgs} pkgs (${totalThans} thans, ${fmtQty(totalYards)} yds)*`;
+  return text;
+}
+
 async function warehouseSummary() {
   const warehouses = await analytics.stockByWarehouse();
   let text = `🏭 *Warehouse Summary*\n\n`;
@@ -242,6 +260,7 @@ TOTAL RECORDS: ${all.length} thans across ${new Set(all.map((r) => r.packageNo))
 
 module.exports = {
   stockSummary, stockValuation, salesReport, customerReport,
+  supplyByCustomerByDesign,
   warehouseSummary, fastMovingReport, deadStockReport,
   indentStatus, lowStockAlert, agingStock, freeFormQuery,
 };

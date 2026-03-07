@@ -363,6 +363,15 @@ async function handleMessage(bot, msg) {
         await sendLong(bot, chatId, await queryEngine.agingStock(), { parse_mode: 'Markdown' });
         return;
       }
+      case 'report_supply_by_design': {
+        if (!intent.design || !String(intent.design).trim()) {
+          await bot.sendMessage(chatId, 'Please specify a design, e.g. "Supply to customers for design 44200".');
+          return;
+        }
+        const supplyReport = await queryEngine.supplyByCustomerByDesign(intent.design);
+        await sendLong(bot, chatId, supplyReport, { parse_mode: 'Markdown' });
+        return;
+      }
       case 'ask_data': {
         await bot.sendMessage(chatId, '🔍 Analyzing your data...');
         const answer = await queryEngine.freeFormQuery(text);

@@ -26,7 +26,7 @@ INVENTORY STRUCTURE:
 
 Reply with ONLY a valid JSON object (no markdown, no code block) with these keys:
 {
-  "action": "sell_than | sell_package | sell_batch | sell_mixed | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks",
+  "action": "sell_than | sell_package | sell_batch | sell_mixed | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks | report_supply_by_design",
   "design": "string or null",
   "shade": "string or null",
   "packageNo": "string or null",
@@ -79,6 +79,7 @@ ACTION RULES:
 - report_indents: indent/shipment status. Optional: specific indent in design field.
 - report_low_stock: designs below threshold.
 - report_aging: unsold stock older than N days.
+- report_supply_by_design: summary of supply (sold) to customers for a specific design. Requires design. Use for "supply to customers for design X", "summary of supply for design X", "who did we supply design X to", "supply made to customer for design X".
 - ask_data: FREE-FORM data question that doesn't fit any predefined report. Use this for custom/complex questions like "compare Lagos vs Kano", "which shade sells fastest", "what percentage is unsold", "show me all buyers of 44200 in descending order", etc.
 
 SALE DETAIL RULES:
@@ -142,6 +143,8 @@ User: "Dead stock" → {"action":"report_dead_stock","confidence":0.95,"clarific
 User: "Indent status" → {"action":"report_indents","confidence":0.95,"clarification":null}
 User: "Low stock alert" → {"action":"report_low_stock","confidence":0.95,"clarification":null}
 User: "Aging stock" → {"action":"report_aging","confidence":0.95,"clarification":null}
+User: "Provide summary of supply made to customer for design 44200" → {"action":"report_supply_by_design","design":"44200","confidence":0.95,"clarification":null}
+User: "Who did we supply design 44200 to?" → {"action":"report_supply_by_design","design":"44200","confidence":0.95,"clarification":null}
 User: "Show me all buyers of 44200 in descending order" → {"action":"ask_data","design":"44200","confidence":0.95,"clarification":null}
 User: "Compare Lagos vs Kano warehouse" → {"action":"ask_data","confidence":0.95,"clarification":null}
 User: "Which shade of 44200 sells fastest?" → {"action":"ask_data","design":"44200","confidence":0.95,"clarification":null}
@@ -181,7 +184,7 @@ const VALID_ACTIONS = [
   'add_customer', 'check_customer', 'record_payment', 'check_balance', 'show_ledger', 'trial_balance',
   'add_bank', 'remove_bank', 'list_banks',
   'report_stock', 'report_valuation', 'report_sales', 'report_customers', 'report_warehouses',
-  'report_fast_moving', 'report_dead_stock', 'report_indents', 'report_low_stock', 'report_aging',
+  'report_fast_moving', 'report_dead_stock', 'report_indents', 'report_low_stock', 'report_aging', 'report_supply_by_design',
   'ask_data',
 ];
 
