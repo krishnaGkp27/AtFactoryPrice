@@ -16,7 +16,21 @@ const accountingService = require('../services/accountingService');
 const salesFlow = require('../services/salesFlowService');
 const sessionStore = require('../utils/sessionStore');
 const settingsRepo = require('../repositories/settingsRepository');
+const usersRepository = require('../repositories/usersRepository');
 const config = require('../config');
+
+/** Resolve userId to display name: Users sheet name, then Telegram first_name/username, then ID. */
+async function getRequesterDisplayName(userId, msgOrNull) {
+  try {
+    const u = await usersRepository.findByUserId(userId);
+    if (u && u.name) return u.name;
+  } catch (_) {}
+  if (msgOrNull && msgOrNull.from) {
+    if (msgOrNull.from.first_name) return msgOrNull.from.first_name;
+    if (msgOrNull.from.username) return `@${msgOrNull.from.username}`;
+  }
+  return String(userId);
+}
 
 function genId() {
   try { return require('crypto').randomUUID(); }
@@ -51,7 +65,7 @@ async function requireApproval(bot, chatId, msg, userId, action, actionJSON, sum
   });
   await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
   await bot.sendMessage(chatId, `⏳ Needs admin approval (${risk.reason}). Request: ${requestId}`);
-  const userLabel = msg.from?.username ? `@${msg.from.username}` : userId;
+  const userLabel = await getRequesterDisplayName(userId, msg);
   await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, risk.reason);
   return true;
 }
@@ -372,6 +386,11 @@ async function handleMessage(bot, msg) {
         await sendLong(bot, chatId, supplyReport, { parse_mode: 'Markdown' });
         return;
       }
+      case 'report_sold': {
+        const soldReportText = await queryEngine.soldReport(intent.warehouse, intent.customer, intent.salesDate || 'all');
+        await sendLong(bot, chatId, soldReportText, { parse_mode: 'Markdown' });
+        return;
+      }
       case 'ask_data': {
         await bot.sendMessage(chatId, '🔍 Analyzing your data...');
         const answer = await queryEngine.freeFormQuery(text);
@@ -452,6 +471,23 @@ async function handleMessage(bot, msg) {
 
       case 'show_ledger': {
         if (!auth.isAdmin(userId)) { await bot.sendMessage(chatId, 'Ledger access is admin-only.'); return; }
+        const customer = intent.customer || (text.match(/ledger\s+for\s+(.+)/i) || [])[1];
+        if (customer && String(customer).trim()) {
+          const { entries: custEntries, totalDebit, totalCredit, outstanding } = await accountingService.getCustomerLedger(String(customer).trim());
+          if (!custEntries.length) {
+            await bot.sendMessage(chatId, `No ledger entries found for "${customer}".`);
+            return;
+          }
+          let ledgerText = `📒 *Ledger for ${customer}*\n\n`;
+          custEntries.forEach((e) => {
+            const dr = e.debit ? `DR ${fmtMoney(e.debit)}` : '';
+            const cr = e.credit ? `CR ${fmtMoney(e.credit)}` : '';
+            ledgerText += `${e.date} | ${dr}${cr} | Bal ${fmtMoney(e.running)}\n  ${e.narration}\n`;
+          });
+          ledgerText += `\n*Total DR: ${fmtMoney(totalDebit)} | Total CR: ${fmtMoney(totalCredit)} | Outstanding: ${fmtMoney(outstanding)}*`;
+          await sendLong(bot, chatId, ledgerText, { parse_mode: 'Markdown' });
+          return;
+        }
         const today = new Date().toISOString().split('T')[0];
         const entries = await accountingService.getDaybook(today);
         if (!entries.length) { await bot.sendMessage(chatId, `No ledger entries for ${today}.`); return; }
@@ -512,6 +548,133 @@ async function handleMessage(bot, msg) {
         const allB = await settingsRepo.getAll();
         const bankList = (allB.BANK_LIST || '').split(',').map((b) => b.trim()).filter(Boolean);
         await bot.sendMessage(chatId, bankList.length ? `Registered banks: ${bankList.join(', ')}` : 'No banks registered. Admin can add with "Add bank GTBank".');
+        return;
+      }
+
+      case 'assign_task': {
+        if (!config.access.adminIds.includes(userId)) {
+          await bot.sendMessage(chatId, 'Only admins can assign tasks.');
+          return;
+        }
+        const title = intent.taskTitle || intent.design || text.replace(/^assign\s+task\s+/i, '').trim();
+        const assigneeName = intent.customer;
+        if (!title || !assigneeName) {
+          await bot.sendMessage(chatId, 'Please specify task title and assignee. Example: "Assign task Deliver order to Abdul".');
+          return;
+        }
+        const tasksRepo = require('../repositories/tasksRepository');
+        const users = await usersRepository.getAll();
+        const assignee = users.find((u) => u.name.toLowerCase() === assigneeName.toLowerCase());
+        if (!assignee) {
+          await bot.sendMessage(chatId, `User "${assigneeName}" not found in Users. Add them first.`);
+          return;
+        }
+        const created = await tasksRepo.append({ title, description: '', assigned_to: assignee.user_id, assigned_by: userId, status: 'pending' });
+        await bot.sendMessage(chatId, `✅ Task assigned: "${title}" to ${assignee.name} (ID: ${created.task_id}). They can view with "My tasks" and mark done when finished.`);
+        return;
+      }
+
+      case 'my_tasks': {
+        const tasksRepo = require('../repositories/tasksRepository');
+        const list = await tasksRepo.getByAssignedTo(userId);
+        if (!list.length) {
+          await bot.sendMessage(chatId, 'You have no assigned tasks.');
+          return;
+        }
+        let out = '📋 *Your tasks*\n\n';
+        for (const t of list) {
+          const statusLabel = t.status === 'completed' ? '✅' : t.status === 'submitted' ? '⏳ (pending admin approval)' : '📌';
+          out += `${statusLabel} ${t.task_id}: ${t.title}\n  Status: ${t.status}${t.completed_at ? `, completed ${t.completed_at.slice(0, 10)}` : ''}\n\n`;
+        }
+        out += 'To mark a task done, say: "Mark task <task_id> done" (e.g. Mark task ' + list[0].task_id + ' done)';
+        await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'add_contact': {
+        const name = intent.customer || intent.salesperson || '';
+        const typeMatch = text.match(/\b(worker|customer|agent|supplier|other)\b/i);
+        const contactType = (intent.design && /^(worker|customer|agent|supplier|other)$/i.test(intent.design)) ? intent.design : (typeMatch ? typeMatch[1] : 'other');
+        const phoneMatch = text.match(/phone\s*[:\s]*([+\d\s\-]+)/i) || text.match(/(\+\d[\d\s\-]+)/);
+        const phone = phoneMatch ? phoneMatch[1].trim() : '';
+        const addressMatch = text.match(/address\s*[:\s]*([^,]+)/i);
+        const address = addressMatch ? addressMatch[1].trim() : '';
+        if (!name) {
+          await bot.sendMessage(chatId, 'Please provide contact name and type. Example: "Add contact Ibrahim, worker, phone +2348012345678".');
+          return;
+        }
+        const contactsRepo = require('../repositories/contactsRepository');
+        await contactsRepo.append({ name, phone, type: contactType, address, notes: '' });
+        await bot.sendMessage(chatId, `✅ Contact added: ${name} (${contactType})${phone ? ', ' + phone : ''}.`);
+        return;
+      }
+
+      case 'list_contacts': {
+        const contactsRepo = require('../repositories/contactsRepository');
+        const filterType = intent.design && /^(worker|customer|agent|supplier|other)$/i.test(intent.design) ? intent.design : null;
+        const list = filterType ? await contactsRepo.getByType(filterType) : await contactsRepo.getAll();
+        if (!list.length) {
+          await bot.sendMessage(chatId, filterType ? `No ${filterType} contacts.` : 'Phonebook is empty.');
+          return;
+        }
+        let out = filterType ? `📇 *${filterType} contacts*\n\n` : '📇 *Phonebook*\n\n';
+        list.slice(0, 30).forEach((c) => { out += `${c.name} (${c.type})${c.phone ? ' — ' + c.phone : ''}\n`; });
+        if (list.length > 30) out += `\n... and ${list.length - 30} more.`;
+        await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'search_contact': {
+        const q = intent.customer || text.replace(/find|in phonebook|search/gi, '').trim();
+        if (!q) {
+          await bot.sendMessage(chatId, 'Who do you want to find? Example: "Find Ibrahim in phonebook".');
+          return;
+        }
+        const contactsRepo = require('../repositories/contactsRepository');
+        const found = await contactsRepo.searchByName(q);
+        if (!found.length) {
+          await bot.sendMessage(chatId, `No contact found for "${q}".`);
+          return;
+        }
+        let out = `📇 *Contacts matching "${q}"*\n\n`;
+        found.forEach((c) => { out += `${c.name} — ${c.type}${c.phone ? ', ' + c.phone : ''}${c.address ? ', ' + c.address : ''}\n`; });
+        await bot.sendMessage(chatId, out, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'mark_task_done': {
+        const taskId = intent.taskId || (text.match(/TASK-\d{8}-\d{3}/) || [])[0];
+        if (!taskId) {
+          await bot.sendMessage(chatId, 'Please specify task ID. Example: "Mark task TASK-20260224-001 done".');
+          return;
+        }
+        const tasksRepo = require('../repositories/tasksRepository');
+        const task = await tasksRepo.getById(taskId);
+        if (!task) {
+          await bot.sendMessage(chatId, `Task ${taskId} not found.`);
+          return;
+        }
+        if (task.assigned_to !== userId) {
+          await bot.sendMessage(chatId, 'You can only mark your own tasks as done.');
+          return;
+        }
+        if (task.status === 'completed') {
+          await bot.sendMessage(chatId, 'This task is already completed.');
+          return;
+        }
+        await tasksRepo.updateStatus(taskId, 'submitted', new Date().toISOString());
+        const requesterName = await getRequesterDisplayName(userId, msg);
+        const esc = (s) => (s || '').replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+        const notifText = `📋 *Task submitted for approval*\n\nTask: ${esc(task.title)}\nID: \`${taskId}\`\nMarked done by: ${esc(requesterName)}\n\nApprove to mark as complete for the employee\\.`;
+        const keyboard = { inline_keyboard: [[{ text: '✅ Approve completion', callback_data: `approve_task:${taskId}` }]] };
+        for (const adminId of config.access.adminIds) {
+          try {
+            await bot.sendMessage(adminId, notifText, { parse_mode: 'MarkdownV2', reply_markup: keyboard });
+          } catch (e) {
+            try { await bot.sendMessage(adminId, `Task submitted: ${task.title} (${taskId}) by ${requesterName}. Approve completion?`, { reply_markup: keyboard }); } catch (_) {}
+          }
+        }
+        await bot.sendMessage(chatId, `⏳ Task "${task.title}" submitted for admin approval. You'll be notified when it's approved.`);
         return;
       }
 
@@ -602,8 +765,72 @@ async function handleSaleSession(bot, chatId, msg, userId, text, session) {
 
   if (!session.pendingField) return false;
 
+  if (session.pendingNewCustomer) {
+    if (session.pendingField === 'new_customer_name') {
+      session.collected.newCustomerName = text.trim();
+      session.pendingField = 'new_customer_phone';
+      sessionStore.set(userId, session);
+      await bot.sendMessage(chatId, 'Phone number?');
+      return true;
+    }
+    if (session.pendingField === 'new_customer_phone') {
+      session.collected.newCustomerPhone = text.trim();
+      session.pendingField = 'new_customer_address';
+      sessionStore.set(userId, session);
+      await bot.sendMessage(chatId, 'Address? (or type Skip)');
+      return true;
+    }
+    if (session.pendingField === 'new_customer_address') {
+      session.collected.newCustomerAddress = text.trim().toLowerCase() === 'skip' ? '' : text.trim();
+      const name = session.collected.newCustomerName;
+      try {
+        await crmService.addCustomer({
+          name,
+          phone: session.collected.newCustomerPhone || '',
+          address: session.collected.newCustomerAddress || '',
+          category: 'Retail',
+          credit_limit: 0,
+          payment_terms: 'COD',
+        });
+      } catch (e) {
+        await bot.sendMessage(chatId, `Could not add customer: ${e.message}. Try again or use existing customer.`);
+        return true;
+      }
+      session.collected.customer = name;
+      delete session.collected.newCustomerName;
+      delete session.collected.newCustomerPhone;
+      delete session.collected.newCustomerAddress;
+      session.pendingNewCustomer = false;
+      session.pendingField = null;
+      const missing = salesFlow.getMissingFields(session.collected);
+      if (missing.length) {
+        const payOpts = await salesFlow.getPaymentOptions();
+        session.pendingField = missing[0];
+        sessionStore.set(userId, session);
+        await bot.sendMessage(chatId, `✅ Customer "${name}" added.\n\n${salesFlow.getNextQuestion(missing[0], payOpts)}`);
+        return true;
+      }
+      session.awaitingConfirmation = true;
+      sessionStore.set(userId, session);
+      const summary = await salesFlow.buildSummary(session);
+      const keyboard = { inline_keyboard: [[
+        { text: '✅ Confirm', callback_data: `confirm_sale:${userId}` },
+        { text: '❌ Cancel', callback_data: `cancel_sale:${userId}` },
+      ]] };
+      await bot.sendMessage(chatId, summary, { reply_markup: keyboard });
+      return true;
+    }
+  }
+
   const validation = await salesFlow.validateField(session.pendingField, text);
   if (!validation.valid) {
+    if (validation.message === '__NEW_CUSTOMER__') {
+      session.pendingNewCustomer = true;
+      session.pendingField = 'new_customer_name';
+      sessionStore.set(userId, session);
+      await bot.sendMessage(chatId, 'Enter new customer full name.');
+      return true;
+    }
     await bot.sendMessage(chatId, validation.message);
     return true;
   }
@@ -646,7 +873,15 @@ async function executeSale(bot, chatId, userId) {
   if (risk.risk === 'approval_required') {
     // Create ONE approval request for the entire sale
     const requestId = genId();
-    let detailText = `Sale Request\nCustomer: ${session.collected.customer}\nSalesperson: ${details.salesPerson}\nPayment: ${details.paymentMode}\nDate: ${sDate}\n\nItems:\n`;
+    let detailText = `Sale Request\nCustomer: ${session.collected.customer}`;
+    try {
+      const cust = await crmService.getCustomer(session.collected.customer);
+      if (cust && (cust.phone || cust.address)) {
+        if (cust.phone) detailText += `\nPhone: ${cust.phone}`;
+        if (cust.address) detailText += `\nAddress: ${cust.address}`;
+      }
+    } catch (_) {}
+    detailText += `\nSalesperson: ${details.salesPerson}\nPayment: ${details.paymentMode}\nDate: ${sDate}\n\nItems:\n`;
     let totalYards = 0, totalThans = 0;
     for (const item of session.items) {
       const info = await inventoryService.getPackageSummary(item.packageNo);
@@ -671,7 +906,7 @@ async function executeSale(bot, chatId, userId) {
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
 
-    const userLabel = session.collected.salesperson || userId;
+    const userLabel = await getRequesterDisplayName(userId, null);
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, detailText, risk.reason);
     await bot.sendMessage(chatId, `⏳ Sale submitted for admin approval. Request: ${requestId}\n${totalPkgs} packages (${totalThans} thans), ${fmtQty(totalYards)} yards to ${session.collected.customer}`);
     sessionStore.clear(userId);
@@ -717,6 +952,29 @@ async function handleCallbackQuery(bot, callbackQuery) {
       message_id: callbackQuery.message.message_id,
     });
     await bot.sendMessage(callbackQuery.message.chat.id, 'Sale cancelled.');
+  } else if (data.startsWith('approve_task:')) {
+    const taskId = data.replace('approve_task:', '');
+    const adminId = String(callbackQuery.from.id);
+    if (!config.access.adminIds.includes(adminId)) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only admins can approve task completion.' });
+      return;
+    }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Approving...' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+      chat_id: callbackQuery.message.chat.id,
+      message_id: callbackQuery.message.message_id,
+    });
+    const tasksRepo = require('../repositories/tasksRepository');
+    const task = await tasksRepo.getById(taskId);
+    if (!task) {
+      await bot.sendMessage(callbackQuery.message.chat.id, `Task ${taskId} not found.`);
+      return;
+    }
+    await tasksRepo.updateStatus(taskId, 'completed', new Date().toISOString());
+    await bot.sendMessage(callbackQuery.message.chat.id, `✅ Task "${task.title}" (${taskId}) marked complete. Employee has been notified.`);
+    try {
+      await bot.sendMessage(task.assigned_to, `✅ Your task "${task.title}" (${taskId}) has been approved by admin and marked complete.`);
+    } catch (_) {}
   } else {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Unknown action.' });
   }

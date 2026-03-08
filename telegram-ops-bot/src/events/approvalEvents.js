@@ -61,6 +61,16 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
         if (requestingUser && requestingUser !== adminId) {
           try { await bot.sendMessage(requestingUser, `✅ Your request (${requestId}) has been approved by admin. Changes applied.`); } catch (_) {}
         }
+        const customer = item && item.actionJSON && (item.actionJSON.customer || item.actionJSON.customerName);
+        if (customer) {
+          try {
+            const accountingService = require('../services/accountingService');
+            const config = require('../config');
+            const { totalDebit, totalCredit, outstanding } = await accountingService.getCustomerLedger(customer);
+            const fmt = (n) => `${config.currency || 'NGN'} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
+            await bot.sendMessage(chatIdCb, `📒 *${customer}* — Sales DR ${fmt(totalDebit)} | Payments CR ${fmt(totalCredit)} | Outstanding: ${fmt(outstanding)}`);
+          } catch (_) {}
+        }
       } else {
         await bot.sendMessage(chatIdCb, `⚠️ Approved but execution failed: ${result.message || 'Unknown error'}`);
       }

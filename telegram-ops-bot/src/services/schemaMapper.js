@@ -32,6 +32,12 @@ const REQUIRED_SHEETS = {
   Users: {
     headers: ['user_id', 'name', 'role', 'branch', 'access_level', 'status', 'created_at'],
   },
+  Tasks: {
+    headers: ['task_id', 'title', 'description', 'assigned_to', 'assigned_by', 'status', 'created_at', 'submitted_at', 'completed_at'],
+  },
+  Contacts: {
+    headers: ['contact_id', 'name', 'phone', 'type', 'address', 'notes', 'created_at'],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];

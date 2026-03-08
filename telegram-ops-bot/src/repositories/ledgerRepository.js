@@ -58,4 +58,11 @@ async function findByDateRange(from, to) {
   return all.filter((e) => e.date >= from && e.date <= to);
 }
 
-module.exports = { getAll, append, appendPair, findByTxnId, findByAccount, findByDateRange, SHEET };
+async function findByNarrationContaining(customerName) {
+  const all = await getAll();
+  const q = (customerName || '').toLowerCase();
+  if (!q) return [];
+  return all.filter((e) => (e.narration || '').toLowerCase().includes(q));
+}
+
+module.exports = { getAll, append, appendPair, findByTxnId, findByAccount, findByDateRange, findByNarrationContaining, SHEET };

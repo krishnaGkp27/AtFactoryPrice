@@ -26,7 +26,7 @@ INVENTORY STRUCTURE:
 
 Reply with ONLY a valid JSON object (no markdown, no code block) with these keys:
 {
-  "action": "sell_than | sell_package | sell_batch | sell_mixed | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks | report_supply_by_design",
+  "action": "sell_than | sell_package | sell_batch | sell_mixed | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks | assign_task | my_tasks | mark_task_done | add_contact | list_contacts | search_contact | report_supply_by_design | report_sold",
   "design": "string or null",
   "shade": "string or null",
   "packageNo": "string or null",
@@ -40,6 +40,8 @@ Reply with ONLY a valid JSON object (no markdown, no code block) with these keys
   "paymentMode": "string or null (Cash/Credit/BankName for sales)",
   "salesDate": "string or null (date for sales, e.g. 25-02-2026 or today)",
   "bankName": "string or null (for add_bank/remove_bank)",
+  "taskId": "string or null (for mark_task_done, e.g. TASK-20260224-001)",
+  "taskTitle": "string or null (for assign_task)",
   "confidence": 0-1,
   "clarification": "string or null"
 }
@@ -69,6 +71,12 @@ ACTION RULES:
 - add_bank: admin adds a bank to the allowed list. Needs bankName.
 - remove_bank: admin removes a bank. Needs bankName.
 - list_banks: show all registered banks.
+- assign_task: admin assigns a task to an employee. Needs task title; use "customer" field for assignee name (e.g. "Assign task Deliver order to Abdul"). Optional: description.
+- my_tasks: employee lists their assigned tasks.
+- mark_task_done: employee marks a task as done (submitted for admin approval). Needs task_id (e.g. "Mark task TASK-20260224-001 done").
+- add_contact: add phonebook entry. Needs name, type (worker/customer/agent/supplier/other), optional phone and address.
+- list_contacts: list phonebook entries. Optional: type (e.g. "Show workers", "Show agents").
+- search_contact: find contact by name (e.g. "Find Ibrahim in phonebook").
 - report_stock: stock summary by design/shade.
 - report_valuation: total stock value.
 - report_sales: sales report. Extract period from message (today/this week/this month/all time) into salesDate field.
@@ -80,6 +88,7 @@ ACTION RULES:
 - report_low_stock: designs below threshold.
 - report_aging: unsold stock older than N days.
 - report_supply_by_design: summary of supply (sold) to customers for a specific design. Requires design. Use for "supply to customers for design X", "summary of supply for design X", "who did we supply design X to", "supply made to customer for design X".
+- report_sold: sold stock report. Optional: warehouse (e.g. "sold from Kano office"), customer (e.g. "sold to Ibrahim"), salesDate/period (today/this week/this month). Use for "How many sold from Kano?", "What did we sell this week?", "Show sold packages to Ibrahim", "Total thans sold from Kano office".
 - ask_data: FREE-FORM data question that doesn't fit any predefined report. Use this for custom/complex questions like "compare Lagos vs Kano", "which shade sells fastest", "what percentage is unsold", "show me all buyers of 44200 in descending order", etc.
 
 SALE DETAIL RULES:
@@ -121,6 +130,7 @@ User: "Show customer Ibrahim" → {"action":"check_customer","design":null,"shad
 User: "Record payment 50000 from Ibrahim via bank" → {"action":"record_payment","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":50000,"confidence":0.9,"clarification":null}
 User: "What is Ibrahim's outstanding?" → {"action":"check_balance","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"confidence":0.9,"clarification":null}
 User: "Show ledger for today" → {"action":"show_ledger","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"confidence":0.9,"clarification":null}
+User: "Show ledger for Ibrahim" → {"action":"show_ledger","customer":"Ibrahim","confidence":0.9,"clarification":null}
 User: "Show trial balance" → {"action":"trial_balance","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":null,"confidence":0.9,"clarification":null}
 User: "Sell package 5801 to Ibrahim, salesperson Abdul, cash, date 25-02-2026" → {"action":"sell_package","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"salesperson":"Abdul","paymentMode":"Cash","salesDate":"25-02-2026","bankName":null,"confidence":0.95,"clarification":null}
 User: "Sell than 1 from 5801, than 2 from 5804, than 1 from 5805 to Karibulla, salesperson Abdul, cash, date today" → {"action":"sell_mixed","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanItems":[{"packageNo":"5801","thanNo":1},{"packageNo":"5804","thanNo":2},{"packageNo":"5805","thanNo":1}],"thanNo":null,"customer":"Karibulla","warehouse":null,"price":null,"salesperson":"Abdul","paymentMode":"Cash","salesDate":"today","bankName":null,"confidence":0.95,"clarification":null}
@@ -129,6 +139,12 @@ User: "Sell packages 5801, 5802 to Ibrahim, sold by Yarima, via GTBank, date tod
 User: "Add bank Zenith" → {"action":"add_bank","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":"Zenith","confidence":0.95,"clarification":null}
 User: "Remove bank Access" → {"action":"remove_bank","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":"Access","confidence":0.95,"clarification":null}
 User: "List banks" → {"action":"list_banks","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":null,"confidence":0.95,"clarification":null}
+User: "Assign task Deliver order to Abdul" → {"action":"assign_task","taskTitle":"Deliver order","customer":"Abdul","confidence":0.9,"clarification":null}
+User: "My tasks" → {"action":"my_tasks","confidence":0.95,"clarification":null}
+User: "Mark task TASK-20260224-001 done" → {"action":"mark_task_done","taskId":"TASK-20260224-001","confidence":0.95,"clarification":null}
+User: "Add contact Ibrahim, worker, phone +2348012345678" → {"action":"add_contact","customer":"Ibrahim","confidence":0.9,"clarification":null}
+User: "Show workers" → {"action":"list_contacts","design":"worker","confidence":0.95,"clarification":null}
+User: "Find Ibrahim in phonebook" → {"action":"search_contact","customer":"Ibrahim","confidence":0.95,"clarification":null}
 User: "Stock summary" → {"action":"report_stock","confidence":0.95,"clarification":null}
 User: "Stock valuation" → {"action":"report_valuation","confidence":0.95,"clarification":null}
 User: "Sales report today" → {"action":"report_sales","salesDate":"today","confidence":0.95,"clarification":null}
@@ -145,6 +161,9 @@ User: "Low stock alert" → {"action":"report_low_stock","confidence":0.95,"clar
 User: "Aging stock" → {"action":"report_aging","confidence":0.95,"clarification":null}
 User: "Provide summary of supply made to customer for design 44200" → {"action":"report_supply_by_design","design":"44200","confidence":0.95,"clarification":null}
 User: "Who did we supply design 44200 to?" → {"action":"report_supply_by_design","design":"44200","confidence":0.95,"clarification":null}
+User: "How many sold from Kano office?" → {"action":"report_sold","warehouse":"Kano office","confidence":0.95,"clarification":null}
+User: "What did we sell this week?" → {"action":"report_sold","salesDate":"this week","confidence":0.95,"clarification":null}
+User: "Show sold packages to Ibrahim" → {"action":"report_sold","customer":"Ibrahim","confidence":0.95,"clarification":null}
 User: "Show me all buyers of 44200 in descending order" → {"action":"ask_data","design":"44200","confidence":0.95,"clarification":null}
 User: "Compare Lagos vs Kano warehouse" → {"action":"ask_data","confidence":0.95,"clarification":null}
 User: "Which shade of 44200 sells fastest?" → {"action":"ask_data","design":"44200","confidence":0.95,"clarification":null}
@@ -183,8 +202,10 @@ const VALID_ACTIONS = [
   'add', 'check', 'analyze', 'list_packages', 'package_detail',
   'add_customer', 'check_customer', 'record_payment', 'check_balance', 'show_ledger', 'trial_balance',
   'add_bank', 'remove_bank', 'list_banks',
+  'assign_task', 'my_tasks', 'mark_task_done',
+  'add_contact', 'list_contacts', 'search_contact',
   'report_stock', 'report_valuation', 'report_sales', 'report_customers', 'report_warehouses',
-  'report_fast_moving', 'report_dead_stock', 'report_indents', 'report_low_stock', 'report_aging', 'report_supply_by_design',
+  'report_fast_moving', 'report_dead_stock', 'report_indents', 'report_low_stock', 'report_aging', 'report_supply_by_design', 'report_sold',
   'ask_data',
 ];
 
@@ -209,6 +230,8 @@ function normalize(obj) {
     paymentMode: obj.paymentMode != null ? String(obj.paymentMode).trim() : null,
     salesDate: obj.salesDate != null ? String(obj.salesDate).trim() : null,
     bankName: obj.bankName != null ? String(obj.bankName).trim() : null,
+    taskId: obj.taskId != null ? String(obj.taskId).trim() : null,
+    taskTitle: obj.taskTitle != null ? String(obj.taskTitle).trim() : null,
     confidence: typeof obj.confidence === 'number' ? Math.max(0, Math.min(1, obj.confidence)) : 0.5,
     clarification: obj.clarification != null ? String(obj.clarification).trim() : null,
   };

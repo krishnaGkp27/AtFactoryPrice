@@ -33,7 +33,7 @@ function getMissingFields(collected) {
 
 function getNextQuestion(missingField, paymentOptions) {
   switch (missingField) {
-    case 'customer': return 'Who is the customer?';
+    case 'customer': return 'Customer? Type an existing customer name, say **List** to see customers, or **New customer** to add one with details.';
     case 'salesperson': return 'Salesperson name?';
     case 'paymentMode': return `Payment mode? (${paymentOptions.join(' / ')})`;
     case 'salesDate': return 'Sales date? (type a date like 25-02-2026 or "today")';
@@ -47,8 +47,14 @@ async function validateField(field, value) {
 
   switch (field) {
     case 'customer': {
+      if (/^new\s+customer$/i.test(v)) return { valid: false, message: '__NEW_CUSTOMER__' };
+      if (/^list$/i.test(v)) {
+        const list = await customersRepo.getAll();
+        const names = list.filter((c) => (c.status || 'Active').toLowerCase() === 'active').slice(0, 20).map((c) => c.name);
+        return { valid: false, message: names.length ? `Existing customers: ${names.join(', ')}. Type a name or say New customer.` : 'No customers yet. Say New customer to add one.' };
+      }
       const cust = await customersRepo.findByName(v);
-      if (!cust) return { valid: false, message: `Customer "${v}" not found. Add them first with "Add customer ${v}".` };
+      if (!cust) return { valid: false, message: `Customer "${v}" not found. Type another name or say New customer.` };
       return { valid: true, value: cust.name };
     }
     case 'salesperson': {
@@ -125,6 +131,13 @@ async function buildSummary(session) {
   const { saleType, items, collected } = session;
   let text = 'Sale Summary:\n';
   text += `  Customer: ${collected.customer}\n`;
+  try {
+    const cust = await customersRepo.findByName(collected.customer);
+    if (cust) {
+      if (cust.phone) text += `  Phone: ${cust.phone}\n`;
+      if (cust.address) text += `  Address: ${cust.address}\n`;
+    }
+  } catch (_) {}
   text += `  Salesperson: ${collected.salesperson}\n`;
   text += `  Payment: ${collected.paymentMode}\n`;
   text += `  Date: ${collected.salesDate}\n\n`;

@@ -188,6 +188,43 @@ async function agingStock(days) {
   return text;
 }
 
+/** Sold stock report: filter by warehouse, customer, and/or period. Totals in code. */
+async function soldReport(warehouse, customer, period) {
+  const all = await inventoryRepository.getAll();
+  let sold = all.filter((r) => r.status === 'sold' && r.soldDate);
+  if (warehouse && String(warehouse).trim()) {
+    const wh = String(warehouse).trim().toLowerCase();
+    sold = sold.filter((r) => (r.warehouse || '').toLowerCase() === wh || (r.warehouse || '').toLowerCase().includes(wh) || wh.includes((r.warehouse || '').toLowerCase()));
+  }
+  if (customer && String(customer).trim()) {
+    const cust = String(customer).trim().toLowerCase();
+    sold = sold.filter((r) => (r.soldTo || '').toLowerCase() === cust || (r.soldTo || '').toLowerCase().includes(cust) || cust.includes((r.soldTo || '').toLowerCase()));
+  }
+  const now = new Date();
+  let from;
+  let label;
+  if (period === 'today') { from = now.toISOString().split('T')[0]; label = 'Today'; }
+  else if (period === 'this week' || period === 'week') {
+    const d = new Date(now); d.setDate(d.getDate() - 7);
+    from = d.toISOString().split('T')[0]; label = 'This Week';
+  } else if (period === 'this month' || period === 'month') {
+    from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`; label = 'This Month';
+  } else { from = '2000-01-01'; label = 'All Time'; }
+  const filtered = sold.filter((r) => r.soldDate >= from);
+  const pkgs = new Set(filtered.map((r) => r.packageNo)).size;
+  const thans = filtered.length;
+  const yards = filtered.reduce((s, r) => s + r.yards, 0);
+  const value = filtered.reduce((s, r) => s + r.yards * r.pricePerYard, 0);
+  const parts = [];
+  if (warehouse && String(warehouse).trim()) parts.push(`warehouse "${warehouse}"`);
+  if (customer && String(customer).trim()) parts.push(`customer "${customer}"`);
+  const sub = parts.length ? ` (${parts.join(', ')} — ${label})` : ` — ${label}`;
+  let text = `📤 *Sold Report${sub}*\n\n`;
+  text += `Sold: ${pkgs} packages (${thans} thans), ${fmtQty(yards)} yards\n`;
+  text += `Value: ${fmtMoney(value)}`;
+  return text;
+}
+
 // ─── TIER 2: Free-form AI Analyst ───
 
 async function freeFormQuery(userQuestion) {
@@ -260,7 +297,7 @@ TOTAL RECORDS: ${all.length} thans across ${new Set(all.map((r) => r.packageNo))
 
 module.exports = {
   stockSummary, stockValuation, salesReport, customerReport,
-  supplyByCustomerByDesign,
+  supplyByCustomerByDesign, soldReport,
   warehouseSummary, fastMovingReport, deadStockReport,
   indentStatus, lowStockAlert, agingStock, freeFormQuery,
 };

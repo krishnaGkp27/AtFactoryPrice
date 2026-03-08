@@ -81,4 +81,17 @@ async function getDaybook(date) {
   return ledgerRepo.findByDateRange(target, target);
 }
 
-module.exports = { recordSale, recordReturn, recordPaymentReceived, getLedgerBalance, getTrialBalance, getDaybook };
+async function getCustomerLedger(customerName) {
+  const entries = await ledgerRepo.findByNarrationContaining(customerName);
+  entries.sort((a, b) => (a.date + (a.created_at || '')).localeCompare(b.date + (b.created_at || '')));
+  let running = 0;
+  const rows = entries.map((e) => {
+    running += (e.debit || 0) - (e.credit || 0);
+    return { ...e, running };
+  });
+  const totalDebit = entries.reduce((s, e) => s + (e.debit || 0), 0);
+  const totalCredit = entries.reduce((s, e) => s + (e.credit || 0), 0);
+  return { entries: rows, totalDebit, totalCredit, outstanding: totalDebit - totalCredit };
+}
+
+module.exports = { recordSale, recordReturn, recordPaymentReceived, getLedgerBalance, getTrialBalance, getDaybook, getCustomerLedger };
