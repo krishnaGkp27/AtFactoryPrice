@@ -16,6 +16,7 @@ const WRITE_ACTIONS = [
   'add', 'add_stock',
   'record_payment',
   'add_customer',
+  'add_contact',
   'transfer_than', 'transfer_package', 'transfer_batch',
 ];
 
@@ -57,7 +58,7 @@ function formatAction(action) {
     sell_than: 'sale', sell_package: 'sale', sell_batch: 'sale', sell_mixed: 'sale', sell: 'sale',
     return_than: 'return', return_package: 'return',
     update_price: 'price update', add: 'stock addition', add_stock: 'stock addition',
-    record_payment: 'payment', add_customer: 'customer creation',
+    record_payment: 'payment', add_customer: 'customer creation', add_contact: 'contact creation',
     transfer_than: 'transfer', transfer_package: 'transfer', transfer_batch: 'transfer',
   };
   return map[action] || action.replace(/_/g, ' ');

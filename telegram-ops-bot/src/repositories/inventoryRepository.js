@@ -163,6 +163,7 @@ async function updatePrice(filters, newPrice) {
     if (filters.packageNo && r.packageNo !== str(filters.packageNo)) return false;
     if (filters.design && upper(r.design) !== upper(filters.design)) return false;
     if (filters.shade && upper(r.shade) !== upper(filters.shade)) return false;
+    if (filters.warehouse && upper(r.warehouse) !== upper(filters.warehouse)) return false;
     return true;
   });
   if (!matches.length) return 0;

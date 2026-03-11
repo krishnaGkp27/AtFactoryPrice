@@ -329,6 +329,12 @@ async function executeApprovedAction(requestId, approvedBy) {
   } else if (aj.action === 'add_customer') {
     const crmService = require('./crmService');
     await crmService.addCustomer({ name: aj.name, phone: aj.phone, address: aj.address, category: aj.category, credit_limit: aj.credit_limit, payment_terms: aj.payment_terms });
+  } else if (aj.action === 'add_contact') {
+    const contactsRepository = require('../repositories/contactsRepository');
+    await contactsRepository.append({
+      name: aj.name || '', phone: aj.phone || '', type: aj.type || 'other',
+      address: aj.address || '', notes: aj.notes || '',
+    });
   } else if (aj.action === 'transfer_than') {
     const result = await inventoryRepository.transferThan(aj.packageNo, aj.thanNo, aj.toWarehouse);
     if (!result) return { ok: false, message: 'Than not found or not available.' };

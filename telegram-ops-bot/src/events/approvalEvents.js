@@ -40,10 +40,11 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
     return;
   }
   const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+  let item = null;
   let requestingUser = null;
   try {
     const pending = await approvalQueueRepository.getAllPending();
-    const item = pending.find((p) => p.requestId === requestId);
+    item = pending.find((p) => p.requestId === requestId);
     if (item) requestingUser = item.user;
   } catch (_) {}
 

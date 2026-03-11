@@ -236,14 +236,20 @@ async function handleMessage(bot, msg) {
 
       case 'update_price': {
         if (!intent.price) { await bot.sendMessage(chatId, 'What is the new price per yard?'); return; }
-        if (!intent.packageNo && !intent.design) { await bot.sendMessage(chatId, 'Which package or design? e.g. "Update price of 44200 BLACK to 1500"'); return; }
+        if (!intent.packageNo && !intent.design) { await bot.sendMessage(chatId, 'Which package or design? e.g. "Update price of 44200 BLACK to 1500" or "Set price for design 44200 at Kano to 1500"'); return; }
         const filters = {};
         if (intent.packageNo) filters.packageNo = intent.packageNo;
         if (intent.design) filters.design = intent.design;
         if (intent.shade) filters.shade = intent.shade;
+        if (intent.warehouse) filters.warehouse = intent.warehouse;
+        // Setting price by warehouse (design+warehouse) is admin-only
+        if (filters.warehouse && !config.access.adminIds.includes(userId)) {
+          await bot.sendMessage(chatId, 'Only admin can set price per warehouse. Use design and warehouse (e.g. Set price for design 44200 at Kano to 1500).');
+          return;
+        }
         const upQueued = await requireApproval(bot, chatId, msg, userId, 'update_price',
           { action: 'update_price', filters, price: intent.price },
-          `Update price ${filters.design || filters.packageNo || '?'} to ${intent.price}/yd`);
+          `Update price ${filters.design || filters.packageNo || '?'}${filters.warehouse ? ' at ' + filters.warehouse : ''} to ${intent.price}/yd`);
         if (upQueued) return;
         const priceResult = await inventoryService.updatePrice(filters, intent.price, userId);
         if (priceResult.status === 'completed') {
@@ -551,6 +557,34 @@ async function handleMessage(bot, msg) {
         return;
       }
 
+      case 'add_user': {
+        if (!config.access.adminIds.includes(userId)) {
+          await bot.sendMessage(chatId, 'Only admin can add users.');
+          return;
+        }
+        const telegramId = intent.price != null ? String(Math.floor(Number(intent.price))) : null;
+        const newUserName = intent.customer || intent.salesperson || '';
+        if (!telegramId || telegramId === 'NaN' || !newUserName) {
+          await bot.sendMessage(chatId, 'Usage: Add user <telegram_id> as <name>. Example: Add user 123456789 as Yarima. (Get Telegram ID from the user when they message the bot or from your logs.)');
+          return;
+        }
+        const existing = await usersRepository.findByUserId(telegramId);
+        if (existing) {
+          await bot.sendMessage(chatId, `User with ID ${telegramId} already exists: ${existing.name}.`);
+          return;
+        }
+        await usersRepository.append({
+          user_id: telegramId,
+          name: newUserName.trim(),
+          role: 'employee',
+          branch: '',
+          access_level: 'branch_only',
+          status: 'active',
+        });
+        await bot.sendMessage(chatId, `✅ User added: ${newUserName} (ID: ${telegramId}). You can now assign tasks to them.`);
+        return;
+      }
+
       case 'assign_task': {
         if (!config.access.adminIds.includes(userId)) {
           await bot.sendMessage(chatId, 'Only admins can assign tasks.');
@@ -599,12 +633,18 @@ async function handleMessage(bot, msg) {
         const phone = phoneMatch ? phoneMatch[1].trim() : '';
         const addressMatch = text.match(/address\s*[:\s]*([^,]+)/i);
         const address = addressMatch ? addressMatch[1].trim() : '';
+        const notesMatch = text.match(/notes?\s*[:\s]*([^,]+)/i);
+        const notes = notesMatch ? notesMatch[1].trim() : '';
         if (!name) {
-          await bot.sendMessage(chatId, 'Please provide contact name and type. Example: "Add contact Ibrahim, worker, phone +2348012345678".');
+          await bot.sendMessage(chatId, 'Please provide contact name and type. Example: "Add contact Ibrahim, worker, phone +2348012345678, address Kano".');
           return;
         }
+        const actionJSON = { action: 'add_contact', name, phone, type: contactType, address, notes };
+        const summary = `Add contact: ${name} (${contactType})${phone ? ', ' + phone : ''}${address ? ', ' + address : ''}`;
+        const addContactQueued = await requireApproval(bot, chatId, msg, userId, 'add_contact', actionJSON, summary);
+        if (addContactQueued) return;
         const contactsRepo = require('../repositories/contactsRepository');
-        await contactsRepo.append({ name, phone, type: contactType, address, notes: '' });
+        await contactsRepo.append({ name, phone, type: contactType, address, notes });
         await bot.sendMessage(chatId, `✅ Contact added: ${name} (${contactType})${phone ? ', ' + phone : ''}.`);
         return;
       }

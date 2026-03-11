@@ -26,7 +26,7 @@ INVENTORY STRUCTURE:
 
 Reply with ONLY a valid JSON object (no markdown, no code block) with these keys:
 {
-  "action": "sell_than | sell_package | sell_batch | sell_mixed | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks | assign_task | my_tasks | mark_task_done | add_contact | list_contacts | search_contact | report_supply_by_design | report_sold",
+  "action": "sell_than | sell_package | sell_batch | sell_mixed | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks | assign_task | my_tasks | mark_task_done | add_contact | list_contacts | search_contact | add_user | report_supply_by_design | report_sold",
   "design": "string or null",
   "shade": "string or null",
   "packageNo": "string or null",
@@ -51,7 +51,7 @@ ACTION RULES:
 - sell_package: selling an entire package. Needs packageNo, customer.
 - sell_batch: selling multiple whole packages at once. Needs packageNos (array), customer.
 - sell_mixed: selling individual thans from DIFFERENT packages in one transaction. Needs thanItems (array of {packageNo, thanNo}), customer. Use this when user says things like "sell than 1 from 5801, than 2 from 5804, than 1 from 5805 to Customer".
-- update_price: update selling price per yard. Needs design+shade OR packageNo, and price.
+- update_price: update selling price per yard. Needs design+shade OR packageNo, and price. For different price per warehouse (admin only): use design and warehouse, e.g. "Set price for design 44200 at Kano to 1500". Optional shade.
 - return_than: undo sale of a than (mark available again). Needs packageNo, thanNo.
 - return_package: undo sale of entire package. Needs packageNo.
 - add: adding new stock/package.
@@ -72,6 +72,7 @@ ACTION RULES:
 - remove_bank: admin removes a bank. Needs bankName.
 - list_banks: show all registered banks.
 - assign_task: admin assigns a task to an employee. Needs task title; use "customer" field for assignee name (e.g. "Assign task Deliver order to Abdul"). Optional: description.
+- add_user: admin adds a user to the Users list (for task assignment and display names). Needs the new user's Telegram numeric ID and name. Example: "Add user 123456789 as Yarima". Extract the numeric ID (use "price" field for the ID number) and the name after "as" (use "customer" field).
 - my_tasks: employee lists their assigned tasks.
 - mark_task_done: employee marks a task as done (submitted for admin approval). Needs task_id (e.g. "Mark task TASK-20260224-001 done").
 - add_contact: add phonebook entry. Needs name, type (worker/customer/agent/supplier/other), optional phone and address.
@@ -121,6 +122,8 @@ User: "Update price of 44200 BLACK to 1500" → {"action":"update_price","design
 User: "Return than 2 from package 5801" → {"action":"return_than","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":2,"customer":null,"warehouse":null,"confidence":0.9,"clarification":null}
 User: "Return package 5803" → {"action":"return_package","design":null,"shade":null,"packageNo":"5803","packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"confidence":0.9,"clarification":null}
 User: "Set price of package 5801 to 1200 per yard" → {"action":"update_price","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":1200,"confidence":0.9,"clarification":null}
+User: "Set price for design 44200 at Kano to 1500" → {"action":"update_price","design":"44200","shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":"Kano","price":1500,"confidence":0.9,"clarification":null}
+User: "Set price for design 44200 BLACK at Lagos to 1200" → {"action":"update_price","design":"44200","shade":"BLACK","packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":"Lagos","price":1200,"confidence":0.9,"clarification":null}
 User: "Transfer package 5801 to Kano" → {"action":"transfer_package","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":null,"customer":null,"warehouse":"Kano","price":null,"confidence":0.95,"clarification":null}
 User: "Transfer packages 5801, 5802, 5803 to Kano" → {"action":"transfer_batch","design":null,"shade":null,"packageNo":null,"packageNos":["5801","5802","5803"],"thanNo":null,"customer":null,"warehouse":"Kano","price":null,"confidence":0.95,"clarification":null}
 User: "Transfer than 3 from package 5801 to Kano" → {"action":"transfer_than","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":3,"customer":null,"warehouse":"Kano","price":null,"confidence":0.95,"clarification":null}
@@ -145,6 +148,7 @@ User: "Mark task TASK-20260224-001 done" → {"action":"mark_task_done","taskId"
 User: "Add contact Ibrahim, worker, phone +2348012345678" → {"action":"add_contact","customer":"Ibrahim","confidence":0.9,"clarification":null}
 User: "Show workers" → {"action":"list_contacts","design":"worker","confidence":0.95,"clarification":null}
 User: "Find Ibrahim in phonebook" → {"action":"search_contact","customer":"Ibrahim","confidence":0.95,"clarification":null}
+User: "Add user 123456789 as Yarima" → {"action":"add_user","customer":"Yarima","price":123456789,"confidence":0.95,"clarification":null}
 User: "Stock summary" → {"action":"report_stock","confidence":0.95,"clarification":null}
 User: "Stock valuation" → {"action":"report_valuation","confidence":0.95,"clarification":null}
 User: "Sales report today" → {"action":"report_sales","salesDate":"today","confidence":0.95,"clarification":null}
@@ -203,7 +207,7 @@ const VALID_ACTIONS = [
   'add_customer', 'check_customer', 'record_payment', 'check_balance', 'show_ledger', 'trial_balance',
   'add_bank', 'remove_bank', 'list_banks',
   'assign_task', 'my_tasks', 'mark_task_done',
-  'add_contact', 'list_contacts', 'search_contact',
+  'add_contact', 'list_contacts', 'search_contact', 'add_user',
   'report_stock', 'report_valuation', 'report_sales', 'report_customers', 'report_warehouses',
   'report_fast_moving', 'report_dead_stock', 'report_indents', 'report_low_stock', 'report_aging', 'report_supply_by_design', 'report_sold',
   'ask_data',
