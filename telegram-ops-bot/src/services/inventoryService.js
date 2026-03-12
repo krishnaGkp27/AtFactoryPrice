@@ -278,7 +278,11 @@ async function updatePrice(filters, newPrice, userId) {
 function getPricePerYard(enrichment, design) {
   if (!enrichment || !enrichment.ratePerUnitByDesign) return 0;
   const rates = enrichment.ratePerUnitByDesign;
+  const d = String(design || '').trim();
   if (rates[design] != null) return Number(rates[design]) || 0;
+  if (d && rates[d] != null) return Number(rates[d]) || 0;
+  const key = Object.keys(rates).find((k) => String(k).trim() === d || String(k).trim() === String(design));
+  if (key) return Number(rates[key]) || 0;
   const first = Object.values(rates)[0];
   return typeof first === 'number' ? first : Number(first) || 0;
 }
@@ -417,10 +421,13 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       salesPerson: aj.salesPerson || '', paymentMode: enrichment?.paymentMode || aj.paymentMode || '',
       saleRefId: requestId, pricePerYard: firstPrice || '', amountPaid: enrichment?.amountPaid ?? '',
     });
-    for (const [design, yards] of Object.entries(byDesign)) {
+    // Post sale to ledger so customer has DR (receivable) = yards * rate; outstanding = previous + this sale - payments
+    const designsToEmit = Object.keys(byDesign).length ? Object.entries(byDesign) : [['', totalYards]];
+    for (const [design, yards] of designsToEmit) {
+      if (!yards || yards <= 0) continue;
       const pricePerYard = getPricePerYard(enrichment, design);
       try {
-        erpBus.emit('sale', { type: 'sale_bundle', customer: aj.customer, yards, pricePerYard, design, shade: '', userId: item.user, txnId: `${requestId}-${design}` });
+        erpBus.emit('sale', { type: 'sale_bundle', customer: aj.customer, yards, pricePerYard, design: design || undefined, shade: '', userId: item.user, txnId: `${requestId}-${design || 'sale'}` });
       } catch (_) {}
     }
     if (enrichment?.amountPaid > 0) {
