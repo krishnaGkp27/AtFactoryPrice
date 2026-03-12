@@ -9,7 +9,7 @@ const auditLogRepository = require('../repositories/auditLogRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const riskEvaluate = require('../risk/evaluate');
 const config = require('../config');
-const { bus: erpBus } = require('../events/erpEventBus');
+const { bus: erpBus, emitAsync: erpEmitAsync } = require('../events/erpEventBus');
 
 const CURRENCY = config.currency || 'NGN';
 
@@ -426,8 +426,9 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     for (const [design, yards] of designsToEmit) {
       if (!yards || yards <= 0) continue;
       const pricePerYard = getPricePerYard(enrichment, design);
+      const payload = { type: 'sale_bundle', customer: aj.customer, yards, pricePerYard, design: design || undefined, shade: '', userId: item.user, txnId: `${requestId}-${design || 'sale'}` };
       try {
-        erpBus.emit('sale', { type: 'sale_bundle', customer: aj.customer, yards, pricePerYard, design: design || undefined, shade: '', userId: item.user, txnId: `${requestId}-${design || 'sale'}` });
+        await erpEmitAsync('sale', payload);
       } catch (_) {}
     }
     if (enrichment?.amountPaid > 0) {

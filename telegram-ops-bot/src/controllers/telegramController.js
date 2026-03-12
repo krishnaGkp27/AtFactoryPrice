@@ -564,10 +564,12 @@ async function handleMessage(bot, msg) {
         }
         lastTxns = lastTxns.slice(0, n);
         if (!lastTxns.length) { await bot.sendMessage(chatId, intent.customer ? `No transactions found for "${intent.customer}".` : 'No transactions yet.'); return; }
-        let out = `📋 *Last ${lastTxns.length} transaction(s)${intent.customer ? ` for ${intent.customer}` : ''}*\n\n`;
+        const escapeMd = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/_/g, '\\_').replace(/\*/g, '\\*');
+        let out = `📋 *Last ${lastTxns.length} transaction(s)${intent.customer ? ` for ${escapeMd(intent.customer)}` : ''}*\n\n`;
         lastTxns.forEach((t, i) => {
           const userName = userById.get(String(t.user)) || t.user || '—';
-          out += `${i + 1}. ${t.timestamp.slice(0, 10)} | *${userName}* | ${t.action} | ${t.design || ''} ${t.color || ''} | Qty ${t.qty} | ${t.customerName || ''} | ${t.status}\n`;
+          const ts = (t.timestamp || '').toString().slice(0, 10);
+          out += `${i + 1}. ${ts} | *${escapeMd(userName)}* | ${escapeMd(t.action)} | ${escapeMd(t.design || '')} ${escapeMd(t.color || '')} | Qty ${t.qty} | ${escapeMd(t.customerName || '')} | ${escapeMd(t.status)}\n`;
         });
         out += `\n_User column in sheet stores Telegram ID; here we show name from Users._`;
         await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });

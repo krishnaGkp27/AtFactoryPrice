@@ -56,4 +56,10 @@ function registerListeners() {
   logger.info('ERP event listeners registered');
 }
 
-module.exports = { bus, registerListeners };
+/** Run all listeners for an event with data and return a promise that resolves when all complete. Use when caller needs to wait for ledger/ERP updates. */
+function emitAsync(event, data) {
+  const listeners = bus.listeners(event);
+  return Promise.all(listeners.map((fn) => Promise.resolve(fn(data))));
+}
+
+module.exports = { bus, registerListeners, emitAsync };
