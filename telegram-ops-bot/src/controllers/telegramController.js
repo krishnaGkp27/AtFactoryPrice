@@ -75,6 +75,17 @@ const CURRENCY = config.currency || 'NGN';
 function fmtQty(n) { return Number(n).toLocaleString('en-NG', { maximumFractionDigits: 2 }); }
 function fmtMoney(n) { return `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`; }
 
+/** Parse date string to YYYY-MM-DD for ledger range. Supports YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY. */
+function parseLedgerDate(str) {
+  if (!str || typeof str !== 'string') return null;
+  const s = str.trim();
+  const ymd = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
+  if (ymd) return `${ymd[1]}-${ymd[2].padStart(2, '0')}-${ymd[3].padStart(2, '0')}`;
+  const dmy = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  return null;
+}
+
 async function handleMessage(bot, msg) {
   const chatId = msg.chat?.id;
   const userId = String(msg.from?.id || '');
@@ -90,6 +101,12 @@ async function handleMessage(bot, msg) {
   if (!text) {
     await bot.sendMessage(chatId, helpText());
     return;
+  }
+
+  // Post-approval enrichment: admin entering rate, payment mode, amount paid for a sale
+  if (config.access.adminIds.includes(userId)) {
+    const handled = await approvalEvents.handleEnrichmentMessage(bot, chatId, userId, text);
+    if (handled) return;
   }
 
   // Handle active sale flow sessions (guided step-by-step)
@@ -477,20 +494,30 @@ async function handleMessage(bot, msg) {
 
       case 'show_ledger': {
         if (!auth.isAdmin(userId)) { await bot.sendMessage(chatId, 'Ledger access is admin-only.'); return; }
-        const customer = intent.customer || (text.match(/ledger\s+for\s+(.+)/i) || [])[1];
+        const customer = intent.customer || (text.match(/ledger\s+for\s+(.+?)(?:\s+from\s|\s+to\s|$)/i) || [])[1];
+        const fromMatch = text.match(/from\s+(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{4})/i);
+        const toMatch = text.match(/to\s+(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{4})/i);
+        let fromDate = intent.fromDate || (fromMatch && parseLedgerDate(fromMatch[1]));
+        let toDate = intent.toDate || (toMatch && parseLedgerDate(toMatch[1]));
+        if (!fromDate || !toDate) { fromDate = null; toDate = null; }
         if (customer && String(customer).trim()) {
-          const { entries: custEntries, totalDebit, totalCredit, outstanding } = await accountingService.getCustomerLedger(String(customer).trim());
+          const custName = String(customer).trim();
+          const { entries: custEntries, totalDebit, totalCredit, outstanding, outstandingAsOfToday } = await accountingService.getCustomerLedger(custName, fromDate, toDate);
           if (!custEntries.length) {
-            await bot.sendMessage(chatId, `No ledger entries found for "${customer}".`);
+            await bot.sendMessage(chatId, fromDate && toDate
+              ? `No ledger entries for "${custName}" between ${fromDate} and ${toDate}.`
+              : `No ledger entries found for "${custName}".`);
             return;
           }
-          let ledgerText = `📒 *Ledger for ${customer}*\n\n`;
+          const rangeLabel = fromDate && toDate ? ` (${fromDate} to ${toDate})` : '';
+          let ledgerText = `📒 *Ledger for ${custName}${rangeLabel}*\n\n`;
           custEntries.forEach((e) => {
             const dr = e.debit ? `DR ${fmtMoney(e.debit)}` : '';
             const cr = e.credit ? `CR ${fmtMoney(e.credit)}` : '';
             ledgerText += `${e.date} | ${dr}${cr} | Bal ${fmtMoney(e.running)}\n  ${e.narration}\n`;
           });
-          ledgerText += `\n*Total DR: ${fmtMoney(totalDebit)} | Total CR: ${fmtMoney(totalCredit)} | Outstanding: ${fmtMoney(outstanding)}*`;
+          ledgerText += `\n*Total DR: ${fmtMoney(totalDebit)} | Total CR: ${fmtMoney(totalCredit)} | Outstanding (${fromDate && toDate ? 'end of range' : 'total'}): ${fmtMoney(outstanding)}*`;
+          ledgerText += `\n*Outstanding as of today: ${fmtMoney(outstandingAsOfToday)}*`;
           await sendLong(bot, chatId, ledgerText, { parse_mode: 'Markdown' });
           return;
         }
@@ -519,6 +546,52 @@ async function handleMessage(bot, msg) {
         });
         tbText += `\n*Totals: DR ${fmtMoney(totalDr)} | CR ${fmtMoney(totalCr)}*`;
         await sendLong(bot, chatId, tbText, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'report_last_transactions': {
+        if (!auth.isAdmin(userId)) { await bot.sendMessage(chatId, 'Only admin can view transactions.'); return; }
+        const transactionsRepo = require('../repositories/transactionsRepository');
+        const n = Math.min(parseInt(intent.price, 10) || 10, 30);
+        let lastTxns = await transactionsRepo.getLast(Math.max(n, 50));
+        const users = await usersRepository.getAll();
+        const userById = new Map(users.map((u) => [String(u.user_id), u.name]));
+        const userByName = new Map(users.map((u) => [u.name.toLowerCase(), u.user_id]));
+        if (intent.customer && String(intent.customer).trim()) {
+          const uid = userByName.get(String(intent.customer).trim().toLowerCase());
+          if (uid) lastTxns = lastTxns.filter((t) => String(t.user) === String(uid));
+          else lastTxns = lastTxns.filter((t) => (userById.get(String(t.user)) || '').toLowerCase().includes(String(intent.customer).toLowerCase()));
+        }
+        lastTxns = lastTxns.slice(0, n);
+        if (!lastTxns.length) { await bot.sendMessage(chatId, intent.customer ? `No transactions found for "${intent.customer}".` : 'No transactions yet.'); return; }
+        let out = `📋 *Last ${lastTxns.length} transaction(s)${intent.customer ? ` for ${intent.customer}` : ''}*\n\n`;
+        lastTxns.forEach((t, i) => {
+          const userName = userById.get(String(t.user)) || t.user || '—';
+          out += `${i + 1}. ${t.timestamp.slice(0, 10)} | *${userName}* | ${t.action} | ${t.design || ''} ${t.color || ''} | Qty ${t.qty} | ${t.customerName || ''} | ${t.status}\n`;
+        });
+        out += `\n_User column in sheet stores Telegram ID; here we show name from Users._`;
+        await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'revert_last_transaction': {
+        if (!auth.isAdmin(userId)) { await bot.sendMessage(chatId, 'Only admin can revert transactions.'); return; }
+        const transactionsRepo = require('../repositories/transactionsRepository');
+        const lastTxns = await transactionsRepo.getLast(1);
+        if (!lastTxns.length) { await bot.sendMessage(chatId, 'No transactions to revert.'); return; }
+        const t = lastTxns[0];
+        if (t.status === 'reverted') { await bot.sendMessage(chatId, 'Last transaction is already reverted.'); return; }
+        if (t.action !== 'sale_bundle' || !t.saleRefId) {
+          await bot.sendMessage(chatId, `Last transaction is "${t.action}" (no SaleRefId). Only sale_bundle (approved sales) can be reverted.`);
+          return;
+        }
+        const result = await inventoryService.revertSaleBundle(t.saleRefId, userId);
+        if (!result.ok) {
+          await bot.sendMessage(chatId, `Revert failed: ${result.message}`);
+          return;
+        }
+        await transactionsRepo.setStatusReverted(t.timestamp, t.user, t.action);
+        await bot.sendMessage(chatId, `✅ Last transaction reverted. ${result.revertedThans} thans marked available again; ledger reversed.`);
         return;
       }
 

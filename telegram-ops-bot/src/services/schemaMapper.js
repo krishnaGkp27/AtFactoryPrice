@@ -66,7 +66,7 @@ async function initialize() {
   // Extend Transactions sheet with sale detail columns if missing
   if (existing.includes('Transactions')) {
     try {
-      const txnHeader = await sheets.readRange('Transactions', 'A1:O1');
+      const txnHeader = await sheets.readRange('Transactions', 'A1:Q1');
       const h = txnHeader[0] || [];
       if (h.length < 15 && !h.includes('SalesDate')) {
         const extCols = ['SalesDate', 'Warehouse', 'CustomerName', 'SalesPerson', 'PaymentMode', 'SaleRefId'];
@@ -74,6 +74,12 @@ async function initialize() {
         const endCol = colLetter(h.length + extCols.length);
         await sheets.updateRange('Transactions', `${nextCol}1:${endCol}1`, [extCols]);
         logger.info('SchemaMapper: extended Transactions with sale detail columns');
+      }
+      if (h.length < 17 && !h.includes('PricePerYard')) {
+        const nextCol = colLetter(h.length + 1);
+        const endCol = colLetter(h.length + 2);
+        await sheets.updateRange('Transactions', `${nextCol}1:${endCol}1`, [['PricePerYard', 'AmountPaid']]);
+        logger.info('SchemaMapper: extended Transactions with PricePerYard, AmountPaid');
       }
     } catch (e) {
       logger.warn('SchemaMapper: could not extend Transactions —', e.message);

@@ -274,31 +274,62 @@ async function updatePrice(filters, newPrice, userId) {
   return { status: 'completed', updated: count, label, newPrice };
 }
 
+/** Get price per unit from enrichment. Unit foundation: yard for now; enrichment.unit can be extended (e.g. metre, piece). */
+function getPricePerYard(enrichment, design) {
+  if (!enrichment || !enrichment.ratePerUnitByDesign) return 0;
+  const rates = enrichment.ratePerUnitByDesign;
+  if (rates[design] != null) return Number(rates[design]) || 0;
+  const first = Object.values(rates)[0];
+  return typeof first === 'number' ? first : Number(first) || 0;
+}
+
 /**
  * Execute an approved action from the ApprovalQueue.
+ * For sale actions, optional enrichment = { unit, ratePerUnitByDesign, paymentMode, amountPaid }.
  */
-async function executeApprovedAction(requestId, approvedBy) {
+async function executeApprovedAction(requestId, approvedBy, enrichment) {
   const pending = await approvalQueueRepository.getAllPending();
   const item = pending.find((p) => p.requestId === requestId);
   if (!item) return { ok: false, message: 'Request not found or already resolved.' };
   const aj = item.actionJSON || {};
+  const accountingService = require('./accountingService');
 
   if (aj.action === 'sell_than') {
     const result = await inventoryRepository.markThanSold(aj.packageNo, aj.thanNo, aj.customer, aj.salesDate);
     if (!result) return { ok: false, message: 'Than not found.' };
+    const pricePerYard = getPricePerYard(enrichment, aj.design);
+    if (pricePerYard > 0) await inventoryRepository.updatePrice({ packageNo: aj.packageNo }, pricePerYard);
     await transactionsRepository.append({
       user: item.user, action: 'sell_than', design: aj.design, color: aj.shade,
       qty: aj.yards, before: 'available', after: 'sold', status: 'approved',
+      salesDate: aj.salesDate || '', customerName: aj.customer || '', paymentMode: enrichment?.paymentMode || '',
+      saleRefId: requestId, pricePerYard: pricePerYard || '', amountPaid: enrichment?.amountPaid ?? '',
     });
-    try { erpBus.emit('sale', { type: 'sell_than', packageNo: aj.packageNo, thanNo: aj.thanNo, customer: aj.customer, yards: aj.yards, pricePerYard: 0, design: aj.design, shade: aj.shade, userId: item.user, txnId: `ST-${aj.packageNo}-${aj.thanNo}` }); } catch (_) {}
+    try { erpBus.emit('sale', { type: 'sell_than', packageNo: aj.packageNo, thanNo: aj.thanNo, customer: aj.customer, yards: aj.yards, pricePerYard, design: aj.design, shade: aj.shade, userId: item.user, txnId: `ST-${aj.packageNo}-${aj.thanNo}` }); } catch (_) {}
+    if (enrichment?.amountPaid > 0) {
+      try {
+        const crmService = require('./crmService');
+        await crmService.recordPayment({ customer: aj.customer, amount: enrichment.amountPaid, method: enrichment.paymentMode || 'Cash', userId: approvedBy });
+      } catch (_) {}
+    }
   } else if (aj.action === 'sell_package') {
     const results = await inventoryRepository.markPackageSold(aj.packageNo, aj.customer, aj.salesDate);
     if (!results.length) return { ok: false, message: 'Package already sold.' };
+    const pricePerYard = getPricePerYard(enrichment, aj.design);
+    if (pricePerYard > 0) await inventoryRepository.updatePrice({ packageNo: aj.packageNo }, pricePerYard);
     await transactionsRepository.append({
       user: item.user, action: 'sell_package', design: aj.design, color: aj.shade,
       qty: aj.yards, before: `${aj.thans} thans`, after: 'sold', status: 'approved',
+      salesDate: aj.salesDate || '', customerName: aj.customer || '', paymentMode: enrichment?.paymentMode || '',
+      saleRefId: requestId, pricePerYard: pricePerYard || '', amountPaid: enrichment?.amountPaid ?? '',
     });
-    try { erpBus.emit('sale', { type: 'sell_package', packageNo: aj.packageNo, customer: aj.customer, yards: aj.yards, pricePerYard: 0, design: aj.design, shade: aj.shade, userId: item.user, txnId: `SP-${aj.packageNo}` }); } catch (_) {}
+    try { erpBus.emit('sale', { type: 'sell_package', packageNo: aj.packageNo, customer: aj.customer, yards: aj.yards, pricePerYard, design: aj.design, shade: aj.shade, userId: item.user, txnId: `SP-${aj.packageNo}` }); } catch (_) {}
+    if (enrichment?.amountPaid > 0) {
+      try {
+        const crmService = require('./crmService');
+        await crmService.recordPayment({ customer: aj.customer, amount: enrichment.amountPaid, method: enrichment.paymentMode || 'Cash', userId: approvedBy });
+      } catch (_) {}
+    }
   } else if (aj.action === 'return_than') {
     const result = await inventoryRepository.markThanAvailable(aj.packageNo, aj.thanNo);
     if (!result) return { ok: false, message: 'Than not found or already available.' };
@@ -350,28 +381,54 @@ async function executeApprovedAction(requestId, approvedBy) {
     }
     await transactionsRepository.append({ user: item.user, action: 'transfer_batch', design: '', color: '', qty: (aj.packageNos || []).length, before: '', after: aj.toWarehouse, status: 'approved' });
   } else if (aj.action === 'sale_bundle') {
+    const byDesign = {};
     let totalYards = 0, totalThans = 0;
     for (const si of (aj.items || [])) {
       if (si.type === 'package') {
         const results = await inventoryRepository.markPackageSold(si.packageNo, aj.customer, aj.salesDate);
         totalThans += results.length;
-        totalYards += results.reduce((s, t) => s + t.yards, 0);
+        const pkgYards = results.reduce((s, t) => s + t.yards, 0);
+        totalYards += pkgYards;
+        const design = results[0]?.design || '';
+        if (design) byDesign[design] = (byDesign[design] || 0) + pkgYards;
+        if (enrichment?.ratePerUnitByDesign && results[0]) {
+          const rate = getPricePerYard(enrichment, design);
+          if (rate > 0) await inventoryRepository.updatePrice({ packageNo: si.packageNo }, rate);
+        }
       } else if (si.type === 'than') {
         const result = await inventoryRepository.markThanSold(si.packageNo, si.thanNo, aj.customer, aj.salesDate);
-        if (result) { totalThans += 1; totalYards += result.yards; }
+        if (result) {
+          totalThans += 1;
+          totalYards += result.yards;
+          const design = result.design || '';
+          if (design) byDesign[design] = (byDesign[design] || 0) + result.yards;
+          if (enrichment?.ratePerUnitByDesign && result.design) {
+            const rate = getPricePerYard(enrichment, result.design);
+            if (rate > 0) await inventoryRepository.updatePrice({ packageNo: si.packageNo }, rate);
+          }
+        }
       }
     }
+    const firstPrice = enrichment ? (Object.values(enrichment.ratePerUnitByDesign || {})[0] || 0) : 0;
     await transactionsRepository.append({
       user: item.user, action: 'sale_bundle', design: '', color: '',
       qty: totalYards, before: `${totalThans} thans`, after: 'sold', status: 'approved',
       salesDate: aj.salesDate || '', customerName: aj.customer || '',
-      salesPerson: aj.salesPerson || '', paymentMode: aj.paymentMode || '',
-      saleRefId: requestId,
+      salesPerson: aj.salesPerson || '', paymentMode: enrichment?.paymentMode || aj.paymentMode || '',
+      saleRefId: requestId, pricePerYard: firstPrice || '', amountPaid: enrichment?.amountPaid ?? '',
     });
-    try {
-      erpBus.emit('sale', { type: 'sale_bundle', customer: aj.customer, yards: totalYards, pricePerYard: 0,
-        design: '', shade: '', userId: item.user, txnId: requestId });
-    } catch (_) {}
+    for (const [design, yards] of Object.entries(byDesign)) {
+      const pricePerYard = getPricePerYard(enrichment, design);
+      try {
+        erpBus.emit('sale', { type: 'sale_bundle', customer: aj.customer, yards, pricePerYard, design, shade: '', userId: item.user, txnId: `${requestId}-${design}` });
+      } catch (_) {}
+    }
+    if (enrichment?.amountPaid > 0) {
+      try {
+        const crmService = require('./crmService');
+        await crmService.recordPayment({ customer: aj.customer, amount: enrichment.amountPaid, method: enrichment.paymentMode || 'Cash', userId: approvedBy });
+      } catch (_) {}
+    }
   } else {
     return { ok: false, message: 'Unknown action type.' };
   }
@@ -388,6 +445,53 @@ async function rejectApproval(requestId, rejectedBy) {
   await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString());
   await auditLogRepository.append('approval_rejected', { requestId, rejectedBy }, rejectedBy);
   return { ok: true };
+}
+
+/**
+ * Revert a sale_bundle by requestId: mark items available again and reverse ledger.
+ * Used when reverting the last transaction that was a sale_bundle.
+ */
+async function revertSaleBundle(requestId, userId) {
+  const approvalRow = await approvalQueueRepository.getByRequestId(requestId);
+  if (!approvalRow || !approvalRow.actionJSON) return { ok: false, message: 'Approval request not found.' };
+  const aj = approvalRow.actionJSON;
+  if (aj.action !== 'sale_bundle' || !Array.isArray(aj.items)) return { ok: false, message: 'Not a sale_bundle or no items.' };
+  const customer = aj.customer || '';
+  const returnedThans = [];
+  for (const si of aj.items) {
+    if (si.type === 'package') {
+      const sold = await inventoryRepository.findByPackage(si.packageNo);
+      const soldThans = sold.filter((t) => t.status === 'sold');
+      if (soldThans.length) {
+        const undone = await inventoryRepository.markPackageAvailable(si.packageNo);
+        returnedThans.push(...undone);
+      }
+    } else if (si.type === 'than') {
+      const than = await inventoryRepository.findThan(si.packageNo, si.thanNo);
+      if (than && than.status === 'sold') {
+        const undone = await inventoryRepository.markThanAvailable(si.packageNo, si.thanNo);
+        if (undone) returnedThans.push(undone);
+      }
+    }
+  }
+  if (!returnedThans.length) return { ok: false, message: 'No sold items found to revert.' };
+  const byDesign = {};
+  for (const t of returnedThans) {
+    const key = (t.design || '').trim() || 'unknown';
+    if (!byDesign[key]) byDesign[key] = { yards: 0, pricePerYard: t.pricePerYard || 0, packageNo: t.packageNo, shade: t.shade || '' };
+    byDesign[key].yards += t.yards || 0;
+  }
+  const accountingService = require('./accountingService');
+  for (const [design, g] of Object.entries(byDesign)) {
+    if (g.yards > 0) {
+      try {
+        await accountingService.recordReturn({ yards: g.yards, pricePerYard: g.pricePerYard, packageNo: g.packageNo, design, shade: g.shade, userId, txnId: `REVERT-${requestId}-${design}` });
+      } catch (e) {
+        // continue with other designs
+      }
+    }
+  }
+  return { ok: true, revertedThans: returnedThans.length };
 }
 
 async function transferThan(packageNo, thanNo, toWarehouse, userId) {
@@ -453,6 +557,7 @@ module.exports = {
   transferBatch,
   executeApprovedAction,
   rejectApproval,
+  revertSaleBundle,
   getWarehouses,
   formatMoney,
 };

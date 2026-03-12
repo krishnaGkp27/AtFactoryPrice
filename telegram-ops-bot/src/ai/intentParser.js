@@ -26,7 +26,7 @@ INVENTORY STRUCTURE:
 
 Reply with ONLY a valid JSON object (no markdown, no code block) with these keys:
 {
-  "action": "sell_than | sell_package | sell_batch | sell_mixed | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks | assign_task | my_tasks | mark_task_done | add_contact | list_contacts | search_contact | add_user | report_supply_by_design | report_sold",
+  "action": "sell_than | sell_package | sell_batch | sell_mixed | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks | assign_task | my_tasks | mark_task_done | add_contact | list_contacts | search_contact | add_user | report_supply_by_design | report_sold | report_last_transactions | revert_last_transaction",
   "design": "string or null",
   "shade": "string or null",
   "packageNo": "string or null",
@@ -66,7 +66,7 @@ ACTION RULES:
 - check_customer: look up customer info. Needs customer name.
 - record_payment: record payment received from customer. Needs customer name, amount; optional: method (cash/bank).
 - check_balance: check customer outstanding balance. Needs customer name.
-- show_ledger: show accounting ledger/daybook. Optional: date.
+- show_ledger: show accounting ledger/daybook. Optional: customer name; optional date range (from YYYY-MM-DD to YYYY-MM-DD).
 - trial_balance: show trial balance summary.
 - add_bank: admin adds a bank to the allowed list. Needs bankName.
 - remove_bank: admin removes a bank. Needs bankName.
@@ -90,6 +90,8 @@ ACTION RULES:
 - report_aging: unsold stock older than N days.
 - report_supply_by_design: summary of supply (sold) to customers for a specific design. Requires design. Use for "supply to customers for design X", "summary of supply for design X", "who did we supply design X to", "supply made to customer for design X".
 - report_sold: sold stock report. Optional: warehouse (e.g. "sold from Kano office"), customer (e.g. "sold to Ibrahim"), salesDate/period (today/this week/this month). Use for "How many sold from Kano?", "What did we sell this week?", "Show sold packages to Ibrahim", "Total thans sold from Kano office".
+- report_last_transactions: show last N transactions (admin). Use for "Last transactions", "Show last 10 transactions", "Transactions for Neha" (show recent with user names).
+- revert_last_transaction: revert the most recent transaction (admin, sale_bundle only). Use for "Revert last transaction", "Undo last sale".
 - ask_data: FREE-FORM data question that doesn't fit any predefined report. Use this for custom/complex questions like "compare Lagos vs Kano", "which shade sells fastest", "what percentage is unsold", "show me all buyers of 44200 in descending order", etc.
 
 SALE DETAIL RULES:
@@ -134,6 +136,7 @@ User: "Record payment 50000 from Ibrahim via bank" → {"action":"record_payment
 User: "What is Ibrahim's outstanding?" → {"action":"check_balance","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"confidence":0.9,"clarification":null}
 User: "Show ledger for today" → {"action":"show_ledger","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"confidence":0.9,"clarification":null}
 User: "Show ledger for Ibrahim" → {"action":"show_ledger","customer":"Ibrahim","confidence":0.9,"clarification":null}
+User: "Show ledger for Ibrahim from 2026-01-01 to 2026-02-28" → {"action":"show_ledger","customer":"Ibrahim","confidence":0.9,"clarification":null}
 User: "Show trial balance" → {"action":"trial_balance","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":null,"salesperson":null,"paymentMode":null,"salesDate":null,"bankName":null,"confidence":0.9,"clarification":null}
 User: "Sell package 5801 to Ibrahim, salesperson Abdul, cash, date 25-02-2026" → {"action":"sell_package","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":null,"customer":"Ibrahim","warehouse":null,"price":null,"salesperson":"Abdul","paymentMode":"Cash","salesDate":"25-02-2026","bankName":null,"confidence":0.95,"clarification":null}
 User: "Sell than 1 from 5801, than 2 from 5804, than 1 from 5805 to Karibulla, salesperson Abdul, cash, date today" → {"action":"sell_mixed","design":null,"shade":null,"packageNo":null,"packageNos":null,"thanItems":[{"packageNo":"5801","thanNo":1},{"packageNo":"5804","thanNo":2},{"packageNo":"5805","thanNo":1}],"thanNo":null,"customer":"Karibulla","warehouse":null,"price":null,"salesperson":"Abdul","paymentMode":"Cash","salesDate":"today","bankName":null,"confidence":0.95,"clarification":null}
@@ -149,6 +152,9 @@ User: "Add contact Ibrahim, worker, phone +2348012345678" → {"action":"add_con
 User: "Show workers" → {"action":"list_contacts","design":"worker","confidence":0.95,"clarification":null}
 User: "Find Ibrahim in phonebook" → {"action":"search_contact","customer":"Ibrahim","confidence":0.95,"clarification":null}
 User: "Add user 123456789 as Yarima" → {"action":"add_user","customer":"Yarima","price":123456789,"confidence":0.95,"clarification":null}
+User: "Last 10 transactions" → {"action":"report_last_transactions","price":10,"confidence":0.9,"clarification":null}
+User: "Transactions for Neha" → {"action":"report_last_transactions","customer":"Neha","confidence":0.9,"clarification":null}
+User: "Revert last transaction" → {"action":"revert_last_transaction","confidence":0.95,"clarification":null}
 User: "Stock summary" → {"action":"report_stock","confidence":0.95,"clarification":null}
 User: "Stock valuation" → {"action":"report_valuation","confidence":0.95,"clarification":null}
 User: "Sales report today" → {"action":"report_sales","salesDate":"today","confidence":0.95,"clarification":null}
@@ -210,6 +216,7 @@ const VALID_ACTIONS = [
   'add_contact', 'list_contacts', 'search_contact', 'add_user',
   'report_stock', 'report_valuation', 'report_sales', 'report_customers', 'report_warehouses',
   'report_fast_moving', 'report_dead_stock', 'report_indents', 'report_low_stock', 'report_aging', 'report_supply_by_design', 'report_sold',
+  'report_last_transactions', 'revert_last_transaction',
   'ask_data',
 ];
 

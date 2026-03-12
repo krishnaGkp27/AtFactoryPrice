@@ -55,6 +55,22 @@ async function updateStatus(requestId, status, resolvedAt) {
   return true;
 }
 
+/** Get one approval queue row by requestId (any status). */
+async function getByRequestId(requestId) {
+  const rows = await sheets.readRange(SHEET, 'A2:G');
+  const r = rows.find((row) => String(row[0]) === String(requestId));
+  if (!r) return null;
+  return {
+    requestId: r[0],
+    user: r[1],
+    actionJSON: safeParse(r[2]),
+    riskReason: r[3],
+    status: r[4],
+    createdAt: r[5],
+    resolvedAt: r[6],
+  };
+}
+
 function safeParse(str) {
   try {
     return JSON.parse(str || '{}');
@@ -63,4 +79,4 @@ function safeParse(str) {
   }
 }
 
-module.exports = { append, getAllPending, updateStatus, ensureHeader };
+module.exports = { append, getAllPending, updateStatus, getByRequestId, ensureHeader };

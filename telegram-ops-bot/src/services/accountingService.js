@@ -81,17 +81,43 @@ async function getDaybook(date) {
   return ledgerRepo.findByDateRange(target, target);
 }
 
-async function getCustomerLedger(customerName) {
-  const entries = await ledgerRepo.findByNarrationContaining(customerName);
-  entries.sort((a, b) => (a.date + (a.created_at || '')).localeCompare(b.date + (b.created_at || '')));
-  let running = 0;
-  const rows = entries.map((e) => {
-    running += (e.debit || 0) - (e.credit || 0);
-    return { ...e, running };
+/**
+ * Get customer ledger. Optional fromDate, toDate (YYYY-MM-DD) filter entries to that range.
+ * Always returns outstandingAsOfToday (full ledger balance). For range view, outstanding = balance at end of range.
+ */
+async function getCustomerLedger(customerName, fromDate, toDate) {
+  const allEntries = await ledgerRepo.findByNarrationContaining(customerName);
+  allEntries.sort((a, b) => (a.date + (a.created_at || '')).localeCompare(b.date + (b.created_at || '')));
+  let runningFull = 0;
+  const withRunning = allEntries.map((e) => {
+    runningFull += (e.debit || 0) - (e.credit || 0);
+    return { ...e, running: runningFull };
   });
-  const totalDebit = entries.reduce((s, e) => s + (e.debit || 0), 0);
-  const totalCredit = entries.reduce((s, e) => s + (e.credit || 0), 0);
-  return { entries: rows, totalDebit, totalCredit, outstanding: totalDebit - totalCredit };
+  const outstandingAsOfToday = runningFull;
+
+  if (fromDate && toDate) {
+    const filtered = withRunning.filter((e) => e.date >= fromDate && e.date <= toDate);
+    const totalDebit = filtered.reduce((s, e) => s + (e.debit || 0), 0);
+    const totalCredit = filtered.reduce((s, e) => s + (e.credit || 0), 0);
+    const lastInRange = filtered[filtered.length - 1];
+    const outstandingAtEndOfRange = lastInRange ? lastInRange.running : 0;
+    return {
+      entries: filtered,
+      totalDebit,
+      totalCredit,
+      outstanding: outstandingAtEndOfRange,
+      outstandingAsOfToday,
+    };
+  }
+  const totalDebit = allEntries.reduce((s, e) => s + (e.debit || 0), 0);
+  const totalCredit = allEntries.reduce((s, e) => s + (e.credit || 0), 0);
+  return {
+    entries: withRunning,
+    totalDebit,
+    totalCredit,
+    outstanding: totalDebit - totalCredit,
+    outstandingAsOfToday,
+  };
 }
 
 module.exports = { recordSale, recordReturn, recordPaymentReceived, getLedgerBalance, getTrialBalance, getDaybook, getCustomerLedger };
