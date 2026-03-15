@@ -1,5 +1,6 @@
 /**
- * Double-entry accounting service. Creates balanced debit/credit pairs in Ledger_Entries.
+ * Accounting service. Sales and returns: single entry (Customer Receivable only).
+ * Payments: double entry (Cash/Bank DR, Receivable CR). Sales Revenue in trial balance derived from receivable sale debits (Option B).
  */
 
 const ledgerRepo = require('../repositories/ledgerRepository');
@@ -8,37 +9,42 @@ const idGen = require('../utils/idGenerator');
 const config = require('../config');
 
 const CURRENCY = config.currency || 'NGN';
+const RECEIVABLE_CODE = '1100';
+const REVENUE_CODE = '3001';
 
 async function getAccountCode(name) {
   const acc = await chartRepo.findByName(name);
   return acc ? acc.account_code : null;
 }
 
-async function recordSale({ customer, yards, pricePerYard, packageNo, design, shade, userId, txnId }) {
+/** Single entry: one row to Customer Receivable (debit). Narration includes payment status at time of sale. */
+async function recordSale({ customer, yards, pricePerYard, packageNo, design, shade, userId, txnId, paymentMode, amountPaid }) {
   const amount = (yards || 0) * (pricePerYard || 0);
   if (amount <= 0) return;
   const date = new Date().toISOString().split('T')[0];
-  const debitCode = await getAccountCode('Customer Receivable') || '1100';
-  const creditCode = await getAccountCode('Sales Revenue') || '3001';
-  const narration = `Sale: ${yards} yds ${design || ''} ${shade || ''} pkg ${packageNo || ''} to ${customer || 'unknown'}`;
-  await ledgerRepo.appendPair(
-    { entry_id: idGen.ledgerEntry(), txn_id: txnId || '', date, account_code: debitCode, ledger_name: 'Customer Receivable', debit: amount, narration, created_by: userId || '' },
-    { entry_id: idGen.ledgerEntry(), txn_id: txnId || '', date, account_code: creditCode, ledger_name: 'Sales Revenue', credit: amount, narration, created_by: userId || '' },
-  );
+  const debitCode = await getAccountCode('Customer Receivable') || RECEIVABLE_CODE;
+  const payMode = (paymentMode || '').trim() || 'Not yet paid';
+  const paid = Number(amountPaid) || 0;
+  const paymentDetail = paid > 0 ? ` | ${payMode} ${CURRENCY} ${paid}` : ` | ${payMode}`;
+  const narration = `Sale: ${yards} yds ${design || ''} ${shade || ''} pkg ${packageNo || ''} to ${customer || 'unknown'}${paymentDetail}`;
+  await ledgerRepo.append({
+    entry_id: idGen.ledgerEntry(), txn_id: txnId || '', date, account_code: debitCode, ledger_name: 'Customer Receivable',
+    debit: amount, credit: 0, narration, created_by: userId || '',
+  });
   return { amount, narration };
 }
 
+/** Single entry: one row to Customer Receivable (credit). */
 async function recordReturn({ yards, pricePerYard, packageNo, design, shade, userId, txnId }) {
   const amount = (yards || 0) * (pricePerYard || 0);
   if (amount <= 0) return;
   const date = new Date().toISOString().split('T')[0];
-  const debitCode = await getAccountCode('Sales Revenue') || '3001';
-  const creditCode = await getAccountCode('Customer Receivable') || '1100';
+  const creditCode = await getAccountCode('Customer Receivable') || RECEIVABLE_CODE;
   const narration = `Return: ${yards} yds ${design || ''} ${shade || ''} pkg ${packageNo || ''}`;
-  await ledgerRepo.appendPair(
-    { entry_id: idGen.ledgerEntry(), txn_id: txnId || '', date, account_code: debitCode, ledger_name: 'Sales Revenue', debit: amount, narration, created_by: userId || '' },
-    { entry_id: idGen.ledgerEntry(), txn_id: txnId || '', date, account_code: creditCode, ledger_name: 'Customer Receivable', credit: amount, narration, created_by: userId || '' },
-  );
+  await ledgerRepo.append({
+    entry_id: idGen.ledgerEntry(), txn_id: txnId || '', date, account_code: creditCode, ledger_name: 'Customer Receivable',
+    debit: 0, credit: amount, narration, created_by: userId || '',
+  });
 }
 
 async function recordPaymentReceived({ customer, amount, method, userId, txnId }) {
@@ -61,14 +67,23 @@ async function getLedgerBalance(accountCode) {
   return { accountCode, totalDebit, totalCredit, balance: totalDebit - totalCredit };
 }
 
+/** Trial balance. Sales Revenue (3001): derived from Customer Receivable debits where narration starts with "Sale:" (Option B). */
 async function getTrialBalance() {
   const accounts = await chartRepo.getAll();
   const all = await ledgerRepo.getAll();
+  const receivableCode = await getAccountCode('Customer Receivable') || RECEIVABLE_CODE;
+  const revenueCode = await getAccountCode('Sales Revenue') || REVENUE_CODE;
+  const derivedRevenue = all
+    .filter((e) => e.account_code === receivableCode && (e.narration || '').trim().startsWith('Sale:'))
+    .reduce((s, e) => s + (e.debit || 0), 0);
   const results = [];
   for (const acc of accounts) {
     const entries = all.filter((e) => e.account_code === acc.account_code);
-    const debit = entries.reduce((s, e) => s + e.debit, 0);
-    const credit = entries.reduce((s, e) => s + e.credit, 0);
+    let debit = entries.reduce((s, e) => s + (e.debit || 0), 0);
+    let credit = entries.reduce((s, e) => s + (e.credit || 0), 0);
+    if (acc.account_code === revenueCode) {
+      credit += derivedRevenue;
+    }
     if (debit || credit) {
       results.push({ ...acc, totalDebit: debit, totalCredit: credit, balance: debit - credit });
     }
@@ -82,11 +97,14 @@ async function getDaybook(date) {
 }
 
 /**
- * Get customer ledger. Optional fromDate, toDate (YYYY-MM-DD) filter entries to that range.
+ * Get customer ledger (Customer Receivable only). Optional fromDate, toDate (YYYY-MM-DD) filter entries to that range.
  * Always returns outstandingAsOfToday (full ledger balance). For range view, outstanding = balance at end of range.
  */
 async function getCustomerLedger(customerName, fromDate, toDate) {
-  const allEntries = await ledgerRepo.findByNarrationContaining(customerName);
+  const receivableCode = await getAccountCode('Customer Receivable') || RECEIVABLE_CODE;
+  const receivableEntries = await ledgerRepo.findByAccount(receivableCode);
+  const q = (customerName || '').toLowerCase();
+  const allEntries = q ? receivableEntries.filter((e) => (e.narration || '').toLowerCase().includes(q)) : [];
   allEntries.sort((a, b) => (a.date + (a.created_at || '')).localeCompare(b.date + (b.created_at || '')));
   let runningFull = 0;
   const withRunning = allEntries.map((e) => {

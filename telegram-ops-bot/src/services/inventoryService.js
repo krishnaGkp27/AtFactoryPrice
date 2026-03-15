@@ -309,7 +309,9 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       salesDate: aj.salesDate || '', customerName: aj.customer || '', paymentMode: enrichment?.paymentMode || '',
       saleRefId: requestId, pricePerYard: pricePerYard || '', amountPaid: enrichment?.amountPaid ?? '',
     });
-    try { erpBus.emit('sale', { type: 'sell_than', packageNo: aj.packageNo, thanNo: aj.thanNo, customer: aj.customer, yards: aj.yards, pricePerYard, design: aj.design, shade: aj.shade, userId: item.user, txnId: `ST-${aj.packageNo}-${aj.thanNo}` }); } catch (_) {}
+    try {
+      await erpEmitAsync('sale', { type: 'sell_than', packageNo: aj.packageNo, thanNo: aj.thanNo, customer: aj.customer, yards: aj.yards, pricePerYard, design: aj.design, shade: aj.shade, userId: item.user, txnId: `ST-${aj.packageNo}-${aj.thanNo}`, paymentMode: enrichment?.paymentMode ?? '', amountPaid: enrichment?.amountPaid ?? 0 });
+    } catch (_) {}
     if (enrichment?.amountPaid > 0) {
       try {
         const crmService = require('./crmService');
@@ -327,7 +329,9 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       salesDate: aj.salesDate || '', customerName: aj.customer || '', paymentMode: enrichment?.paymentMode || '',
       saleRefId: requestId, pricePerYard: pricePerYard || '', amountPaid: enrichment?.amountPaid ?? '',
     });
-    try { erpBus.emit('sale', { type: 'sell_package', packageNo: aj.packageNo, customer: aj.customer, yards: aj.yards, pricePerYard, design: aj.design, shade: aj.shade, userId: item.user, txnId: `SP-${aj.packageNo}` }); } catch (_) {}
+    try {
+      await erpEmitAsync('sale', { type: 'sell_package', packageNo: aj.packageNo, customer: aj.customer, yards: aj.yards, pricePerYard, design: aj.design, shade: aj.shade, userId: item.user, txnId: `SP-${aj.packageNo}`, paymentMode: enrichment?.paymentMode ?? '', amountPaid: enrichment?.amountPaid ?? 0 });
+    } catch (_) {}
     if (enrichment?.amountPaid > 0) {
       try {
         const crmService = require('./crmService');
@@ -426,7 +430,7 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     for (const [design, yards] of designsToEmit) {
       if (!yards || yards <= 0) continue;
       const pricePerYard = getPricePerYard(enrichment, design);
-      const payload = { type: 'sale_bundle', customer: aj.customer, yards, pricePerYard, design: design || undefined, shade: '', userId: item.user, txnId: `${requestId}-${design || 'sale'}` };
+      const payload = { type: 'sale_bundle', customer: aj.customer, yards, pricePerYard, design: design || undefined, shade: '', userId: item.user, txnId: `${requestId}-${design || 'sale'}`, paymentMode: enrichment?.paymentMode ?? '', amountPaid: enrichment?.amountPaid ?? 0 };
       try {
         await erpEmitAsync('sale', payload);
       } catch (_) {}

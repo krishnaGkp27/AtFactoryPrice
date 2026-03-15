@@ -103,6 +103,41 @@ async function handleMessage(bot, msg) {
     return;
   }
 
+  // Industry-standard ledger commands (new architecture: LedgerTransactions + BalanceCache)
+  const ledgerCommands = require('../commands/ledgerCommands');
+  if (text.startsWith('/ledger ')) {
+    try {
+      await ledgerCommands.handleLedger(bot, chatId, userId, text.replace(/^\/ledger\s+/i, '').trim());
+    } catch (e) {
+      await bot.sendMessage(chatId, `Ledger error: ${e.message || 'Unknown error'}`);
+    }
+    return;
+  }
+  if (text.startsWith('/balance ')) {
+    try {
+      await ledgerCommands.handleBalance(bot, chatId, userId, text.replace(/^\/balance\s+/i, '').trim());
+    } catch (e) {
+      await bot.sendMessage(chatId, `Balance error: ${e.message || 'Unknown error'}`);
+    }
+    return;
+  }
+  if (text.startsWith('/payment ')) {
+    try {
+      await ledgerCommands.handlePayment(bot, chatId, userId, text.replace(/^\/payment\s+/i, '').trim());
+    } catch (e) {
+      await bot.sendMessage(chatId, `Payment error: ${e.message || 'Unknown error'}`);
+    }
+    return;
+  }
+  if (text.startsWith('/addledgercustomer ')) {
+    try {
+      await ledgerCommands.handleAddLedgerCustomer(bot, chatId, userId, text.replace(/^\/addledgercustomer\s+/i, '').trim());
+    } catch (e) {
+      await bot.sendMessage(chatId, `Add customer error: ${e.message || 'Unknown error'}`);
+    }
+    return;
+  }
+
   // Post-approval enrichment: admin entering rate, payment mode, amount paid for a sale
   if (config.access.adminIds.includes(userId)) {
     const handled = await approvalEvents.handleEnrichmentMessage(bot, chatId, userId, text);
@@ -838,7 +873,13 @@ function helpText() {
 *Accounting (admin):*
 📒 "Show ledger for today"
 📊 "Show trial balance"
-🏦 "Add bank GTBank" / "List banks" (admin)`;
+🏦 "Add bank GTBank" / "List banks" (admin)
+
+*Ledger commands (admin, Ledger_Customers):*
+/addledgercustomer <name> [phone] [credit_limit]
+/ledger <customer_id> — Customer ledger (paginated)
+/balance <customer_id> — Current balance
+/payment <customer_id> <amount> — Record payment`;
 
 }
 

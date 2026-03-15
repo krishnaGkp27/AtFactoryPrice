@@ -1,5 +1,6 @@
 /**
- * Data access for Ledger_Entries sheet (append-only double-entry journal).
+ * Data access for Ledger_Entries sheet (append-only journal).
+ * Sales/returns: single entry (Customer Receivable). Payments: pair (Cash/Bank DR, Receivable CR).
  */
 
 const sheets = require('./sheetsClient');

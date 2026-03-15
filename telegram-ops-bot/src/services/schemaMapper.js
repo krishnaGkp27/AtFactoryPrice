@@ -38,6 +38,16 @@ const REQUIRED_SHEETS = {
   Contacts: {
     headers: ['contact_id', 'name', 'phone', 'type', 'address', 'notes', 'created_at'],
   },
+  // Industry-standard customer ledger architecture (scalable for invoices, analytics, reports)
+  Ledger_Customers: {
+    headers: ['customer_id', 'customer_name', 'phone', 'credit_limit', 'created_at', 'status'],
+  },
+  LedgerTransactions: {
+    headers: ['txn_id', 'timestamp', 'customer_id', 'txn_type', 'direction', 'amount', 'description', 'reference', 'created_by', 'status'],
+  },
+  LedgerBalanceCache: {
+    headers: ['customer_id', 'balance', 'last_updated'],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];

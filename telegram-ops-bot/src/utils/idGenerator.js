@@ -19,5 +19,6 @@ module.exports = {
   stockLedger: () => generate('SL'),
   customer: () => generate('CUST'),
   user: () => generate('USR'),
+  transaction: () => generate('TXN'),
   generate,
 };
