@@ -138,6 +138,63 @@ async function handleMessage(bot, msg) {
     return;
   }
 
+  // ─── Manufacturing commands (/mfg_*) ─────────────────────────────────────────
+  const mfgCommands = require('../commands/manufacturingCommands');
+
+  // Manufacturing guided flow: if user has an active mfg session, consume reply
+  const mfgFlowHandled = await mfgCommands.handleFlowReply(bot, chatId, userId, text);
+  if (mfgFlowHandled) return;
+
+  // Manufacturing slash commands
+  const MFG_STAGE_CMDS = { '/mfg_fabric': 'fabric', '/mfg_emb_out': 'emb_out', '/mfg_emb_in': 'emb_in', '/mfg_stitch': 'stitch', '/mfg_threadcut': 'threadcut', '/mfg_iron': 'iron', '/mfg_qc': 'qc', '/mfg_package': 'packaging' };
+  for (const [cmd, stage] of Object.entries(MFG_STAGE_CMDS)) {
+    if (text.toLowerCase().startsWith(cmd)) {
+      try { await mfgCommands.handleStageCommand(bot, chatId, userId, stage, text.replace(new RegExp(`^${cmd.replace('/', '\\/')}\\s*`, 'i'), '').trim()); }
+      catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+      return;
+    }
+  }
+  if (text.startsWith('/mfg_approve_article')) {
+    try { await mfgCommands.handleApproveArticle(bot, chatId, userId, text.replace(/^\/mfg_approve_article\s*/i, '').trim()); }
+    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+    return;
+  }
+  if (text === '/mfg_pending') {
+    try { await mfgCommands.handlePending(bot, chatId, userId); }
+    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+    return;
+  }
+  if (text.startsWith('/mfg_status')) {
+    try { await mfgCommands.handleStatus(bot, chatId, userId, text.replace(/^\/mfg_status\s*/i, '').trim()); }
+    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+    return;
+  }
+  if (text === '/mfg_pipeline') {
+    try { await mfgCommands.handlePipeline(bot, chatId, userId); }
+    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+    return;
+  }
+  if (text.startsWith('/mfg_add_vendor')) {
+    try { await mfgCommands.handleAddVendor(bot, chatId, userId, text.replace(/^\/mfg_add_vendor\s*/i, '').trim()); }
+    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+    return;
+  }
+  if (text.startsWith('/mfg_remove_vendor')) {
+    try { await mfgCommands.handleRemoveVendor(bot, chatId, userId, text.replace(/^\/mfg_remove_vendor\s*/i, '').trim()); }
+    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+    return;
+  }
+  if (text.startsWith('/mfg_vendors')) {
+    try { await mfgCommands.handleListVendors(bot, chatId, userId, text.replace(/^\/mfg_vendors\s*/i, '').trim()); }
+    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+    return;
+  }
+  if (text.startsWith('/mfg_rejections')) {
+    try { await mfgCommands.handleRejections(bot, chatId, userId, text.replace(/^\/mfg_rejections\s*/i, '').trim()); }
+    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+    return;
+  }
+
   // Post-approval enrichment: admin entering rate, payment mode, amount paid for a sale
   if (config.access.adminIds.includes(userId)) {
     const handled = await approvalEvents.handleEnrichmentMessage(bot, chatId, userId, text);
@@ -879,7 +936,27 @@ function helpText() {
 /addledgercustomer <name> [phone] [credit_limit]
 /ledger <customer_id> — Customer ledger (paginated)
 /balance <customer_id> — Current balance
-/payment <customer_id> <amount> — Record payment`;
+/payment <customer_id> <amount> — Record payment
+
+*Manufacturing (stage updates):*
+/mfg_fabric <article_no> — Fabric & cutting
+/mfg_emb_out <article_no> — Dispatch to EMB
+/mfg_emb_in <article_no> — Receive from EMB
+/mfg_stitch <article_no> — Stitching
+/mfg_threadcut <article_no> — Thread cutting
+/mfg_iron <article_no> — Ironing
+/mfg_qc <article_no> — Quality check
+/mfg_package <article_no> — Final packaging
+
+*Manufacturing (admin):*
+/mfg_approve_article <article_no>
+/mfg_pending — Pending approvals
+/mfg_status <article_no> — Article status
+/mfg_pipeline — All in-progress articles
+/mfg_add_vendor <fabric|emb> <code> <name>
+/mfg_remove_vendor <fabric|emb> <code>
+/mfg_vendors [fabric|emb]
+/mfg_rejections [article_no]`;
 
 }
 
@@ -1131,6 +1208,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
     try {
       await bot.sendMessage(task.assigned_to, `✅ Your task "${task.title}" (${taskId}) has been approved by admin and marked complete.`);
     } catch (_) {}
+  } else if (data.startsWith('mfg_approve:') || data.startsWith('mfg_reject:')) {
+    const mfgCommands = require('../commands/manufacturingCommands');
+    const mfgAction = data.startsWith('mfg_approve:') ? 'approve' : 'reject';
+    await mfgCommands.handleApprovalCallback(bot, callbackQuery, mfgAction);
   } else {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Unknown action.' });
   }

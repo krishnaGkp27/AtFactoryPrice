@@ -48,6 +48,34 @@ const REQUIRED_SHEETS = {
   LedgerBalanceCache: {
     headers: ['customer_id', 'balance', 'last_updated'],
   },
+  // Manufacturing production pipeline
+  Production: {
+    headers: [
+      'article_no', 'description', 'created_by', 'created_at', 'article_status', 'current_stage',
+      'fabric_vendor', 'fabric_receive_date', 'fabric_weight_kg', 'cut_weight_kg', 'waste_weight_kg', 'cut_pieces', 'cut_start_date', 'cut_end_date', 'cut_hours',
+      'emb_vendor', 'emb_qty_dispatched', 'emb_dispatch_date', 'emb_qty_received', 'emb_receive_date', 'emb_duration_days', 'emb_hours',
+      'stitch_start_date', 'stitch_end_date', 'stitch_qty', 'stitch_hours',
+      'threadcut_date', 'threadcut_qty', 'threadcut_hours',
+      'iron_start_date', 'iron_end_date', 'iron_qty', 'iron_hours',
+      'qc_qty_passed', 'qc_qty_rejected', 'qc_date',
+      'pkg_dimension', 'size_breakdown', 'final_stock', 'pkg_date',
+    ],
+  },
+  Fabric_Vendors: {
+    headers: ['vendor_code', 'vendor_name', 'contact', 'status', 'created_at'],
+  },
+  EMB_Vendors: {
+    headers: ['vendor_code', 'vendor_name', 'contact', 'status', 'created_at'],
+  },
+  MFG_Approvals: {
+    headers: ['approval_id', 'article_no', 'stage', 'data_json', 'submitted_by', 'status', 'reviewed_by', 'created_at', 'reviewed_at'],
+  },
+  MFG_Rejections: {
+    headers: ['rejection_id', 'article_no', 'qty', 'reason', 'from_stage', 'to_stage', 'status', 'approved_by', 'created_by', 'created_at', 'resolved_at'],
+  },
+  MFG_Activity_Log: {
+    headers: ['log_id', 'timestamp', 'article_no', 'stage', 'action', 'field', 'old_value', 'new_value', 'user_id', 'status'],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];
