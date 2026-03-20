@@ -4,7 +4,7 @@
  * Uses googleSheetsRepository for all I/O. No business logic here.
  */
 
-const gs = require('./googleSheetsRepository');
+const gs = require('./mfgGoogleSheetsRepository');
 
 const SHEET = 'Production';
 

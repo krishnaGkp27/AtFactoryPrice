@@ -3,7 +3,7 @@
  * Tracks who, what, which article, which stage, old/new values, timestamp.
  */
 
-const gs = require('./googleSheetsRepository');
+const gs = require('./mfgGoogleSheetsRepository');
 
 const SHEET = 'MFG_Activity_Log';
 const HEADERS = ['log_id', 'timestamp', 'article_no', 'stage', 'action', 'field', 'old_value', 'new_value', 'user_id', 'status'];

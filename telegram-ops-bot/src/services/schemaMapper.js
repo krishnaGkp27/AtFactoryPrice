@@ -48,7 +48,10 @@ const REQUIRED_SHEETS = {
   LedgerBalanceCache: {
     headers: ['customer_id', 'balance', 'last_updated'],
   },
-  // Manufacturing production pipeline
+};
+
+/** Manufacturing sheets — created in the NYN spreadsheet (MFG_GOOGLE_SHEET_ID). */
+const MFG_REQUIRED_SHEETS = {
   Production: {
     headers: [
       'article_no', 'description', 'created_by', 'created_at', 'article_status', 'current_stage',
@@ -153,6 +156,31 @@ async function initialize() {
     }
   }
 
+  // ─── Manufacturing sheets in NYN spreadsheet (MFG_GOOGLE_SHEET_ID) ──────────
+  const config = require('../config');
+  const mfgSheetId = config.sheets.mfgSheetId;
+  if (mfgSheetId) {
+    const mfgSheets = require('../repositories/mfgSheetsClient');
+    try {
+      const mfgExisting = await mfgSheets.getSheetNames();
+      logger.info(`SchemaMapper [NYN]: found sheets: ${mfgExisting.join(', ')}`);
+      for (const [name, def] of Object.entries(MFG_REQUIRED_SHEETS)) {
+        if (mfgExisting.includes(name)) {
+          logger.info(`SchemaMapper [NYN]: sheet "${name}" exists — reusing`);
+        } else {
+          logger.info(`SchemaMapper [NYN]: creating sheet "${name}"`);
+          await mfgSheets.addSheet(name);
+          await mfgSheets.updateRange(name, `A1:${colLetter(def.headers.length)}1`, [def.headers]);
+        }
+      }
+      logger.info('SchemaMapper [NYN]: manufacturing sheets initialized');
+    } catch (e) {
+      logger.error('SchemaMapper [NYN]: MFG sheet init error —', e.message);
+    }
+  } else {
+    logger.warn('SchemaMapper: MFG_GOOGLE_SHEET_ID not set — manufacturing sheets will not be initialized. Set it to use a separate spreadsheet for NYN.');
+  }
+
   schemaCache = { existing, initialized: true };
   logger.info('SchemaMapper: initialization complete');
   return schemaCache;
@@ -170,4 +198,4 @@ function colLetter(n) {
 
 function getCache() { return schemaCache; }
 
-module.exports = { initialize, getCache, REQUIRED_SHEETS };
+module.exports = { initialize, getCache, REQUIRED_SHEETS, MFG_REQUIRED_SHEETS };

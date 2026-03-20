@@ -3,7 +3,7 @@
  * Each row: approval_id, article_no, stage, data_json (serialized field values), submitted_by, status, reviewed_by, created_at, reviewed_at.
  */
 
-const gs = require('./googleSheetsRepository');
+const gs = require('./mfgGoogleSheetsRepository');
 
 const SHEET = 'MFG_Approvals';
 const HEADERS = ['approval_id', 'article_no', 'stage', 'data_json', 'submitted_by', 'status', 'reviewed_by', 'created_at', 'reviewed_at'];

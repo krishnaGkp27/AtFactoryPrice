@@ -45,6 +45,7 @@ const config = {
 
   sheets: {
     sheetId: process.env.GOOGLE_SHEET_ID || '',
+    mfgSheetId: process.env.MFG_GOOGLE_SHEET_ID || '',
     credentials: parseCredentials(),
   },
 

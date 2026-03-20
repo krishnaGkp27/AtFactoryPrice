@@ -2,7 +2,7 @@
  * Repository: MFG_Rejections sheet — tracks pieces rejected at QC and their re-entry into manufacturing.
  */
 
-const gs = require('./googleSheetsRepository');
+const gs = require('./mfgGoogleSheetsRepository');
 
 const SHEET = 'MFG_Rejections';
 const HEADERS = ['rejection_id', 'article_no', 'qty', 'reason', 'from_stage', 'to_stage', 'status', 'approved_by', 'created_by', 'created_at', 'resolved_at'];

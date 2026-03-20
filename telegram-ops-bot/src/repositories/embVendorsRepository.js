@@ -2,7 +2,7 @@
  * Repository: EMB_Vendors sheet. Admin-managed list of embroidery vendor codes.
  */
 
-const gs = require('./googleSheetsRepository');
+const gs = require('./mfgGoogleSheetsRepository');
 
 const SHEET = 'EMB_Vendors';
 const HEADERS = ['vendor_code', 'vendor_name', 'contact', 'status', 'created_at'];

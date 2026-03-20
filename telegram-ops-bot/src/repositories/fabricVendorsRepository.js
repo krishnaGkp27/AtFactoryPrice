@@ -2,7 +2,7 @@
  * Repository: Fabric_Vendors sheet. Admin-managed list of fabric vendor codes.
  */
 
-const gs = require('./googleSheetsRepository');
+const gs = require('./mfgGoogleSheetsRepository');
 
 const SHEET = 'Fabric_Vendors';
 const HEADERS = ['vendor_code', 'vendor_name', 'contact', 'status', 'created_at'];
