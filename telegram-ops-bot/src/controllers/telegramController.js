@@ -885,6 +885,67 @@ async function handleMessage(bot, msg) {
         return;
       }
 
+      // ─── Manufacturing intents (natural language → guided flow) ───────────
+      case 'mfg_fabric':
+      case 'mfg_emb_out':
+      case 'mfg_emb_in':
+      case 'mfg_stitch':
+      case 'mfg_threadcut':
+      case 'mfg_iron':
+      case 'mfg_qc':
+      case 'mfg_package': {
+        const stageName = intent.action.replace('mfg_', '');
+        const artNo = intent.articleNo;
+        if (!artNo) { await bot.sendMessage(chatId, 'Which article? e.g. "Update fabric for ART-001"'); return; }
+        try { await mfgCommands.handleStageCommand(bot, chatId, userId, stageName, artNo); }
+        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+        return;
+      }
+      case 'mfg_approve_article': {
+        if (!intent.articleNo) { await bot.sendMessage(chatId, 'Which article? e.g. "Approve article ART-001"'); return; }
+        try { await mfgCommands.handleApproveArticle(bot, chatId, userId, intent.articleNo); }
+        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+        return;
+      }
+      case 'mfg_pending': {
+        try { await mfgCommands.handlePending(bot, chatId, userId); }
+        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+        return;
+      }
+      case 'mfg_status': {
+        if (!intent.articleNo) { await bot.sendMessage(chatId, 'Which article? e.g. "Status of ART-001"'); return; }
+        try { await mfgCommands.handleStatus(bot, chatId, userId, intent.articleNo); }
+        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+        return;
+      }
+      case 'mfg_pipeline': {
+        try { await mfgCommands.handlePipeline(bot, chatId, userId); }
+        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+        return;
+      }
+      case 'mfg_add_vendor': {
+        const vArgs = [intent.vendorType || '', intent.vendorCode || '', intent.vendorName || ''].join(' ').trim();
+        try { await mfgCommands.handleAddVendor(bot, chatId, userId, vArgs); }
+        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+        return;
+      }
+      case 'mfg_remove_vendor': {
+        const rvArgs = [intent.vendorType || '', intent.vendorCode || ''].join(' ').trim();
+        try { await mfgCommands.handleRemoveVendor(bot, chatId, userId, rvArgs); }
+        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+        return;
+      }
+      case 'mfg_vendors': {
+        try { await mfgCommands.handleListVendors(bot, chatId, userId, intent.vendorType || ''); }
+        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+        return;
+      }
+      case 'mfg_rejections': {
+        try { await mfgCommands.handleRejections(bot, chatId, userId, intent.articleNo || ''); }
+        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
+        return;
+      }
+
       default: {
         await bot.sendMessage(chatId, helpText());
       }
