@@ -30,7 +30,9 @@ async function getActive() {
 }
 
 async function findByCode(code) {
-  return (await getAll()).find((v) => v.vendor_code === String(code).trim()) || null;
+  const q = String(code).trim().toLowerCase();
+  const all = await getAll();
+  return all.find((v) => v.vendor_code.toLowerCase() === q) || all.find((v) => v.vendor_name.toLowerCase() === q) || null;
 }
 
 async function append(vendor) {
@@ -41,7 +43,7 @@ async function append(vendor) {
 async function deactivate(code) {
   const rows = await gs.readSheet(SHEET, 'A2:E');
   for (let i = 0; i < rows.length; i++) {
-    if (str(rows[i][0]) === String(code).trim()) {
+    if (str(rows[i][0]).toLowerCase() === String(code).trim().toLowerCase()) {
       await gs.updateRow(SHEET, `D${i + 2}`, [['Inactive']]);
       return true;
     }

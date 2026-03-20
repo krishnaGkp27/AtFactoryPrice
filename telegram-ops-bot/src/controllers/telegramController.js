@@ -894,7 +894,8 @@ async function handleMessage(bot, msg) {
       case 'mfg_iron':
       case 'mfg_qc':
       case 'mfg_package': {
-        const stageName = intent.action.replace('mfg_', '');
+        const STAGE_MAP = { 'package': 'packaging' };
+        const stageName = STAGE_MAP[intent.action.replace('mfg_', '')] || intent.action.replace('mfg_', '');
         const artNo = intent.articleNo;
         if (!artNo) { await bot.sendMessage(chatId, 'Which article? e.g. "Update fabric for ART-001"'); return; }
         try { await mfgCommands.handleStageCommand(bot, chatId, userId, stageName, artNo); }

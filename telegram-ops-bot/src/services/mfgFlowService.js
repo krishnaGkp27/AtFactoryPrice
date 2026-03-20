@@ -150,10 +150,18 @@ async function buildPrompt(session) {
 
   if (field.type === 'vendor_fabric') {
     const vendors = await fabricVendorsRepo.getActive();
-    if (vendors.length) prompt += `\n\nAvailable: ${vendors.map((v) => v.vendor_code).join(', ')}`;
+    if (vendors.length) {
+      prompt += `\n\nAvailable: ${vendors.map((v) => `${v.vendor_code} (${v.vendor_name})`).join(', ')}`;
+    } else {
+      prompt += `\n\n⚠️ No fabric vendors added yet. Ask admin: "Add fabric vendor FV001 Vendor Name"`;
+    }
   } else if (field.type === 'vendor_emb') {
     const vendors = await embVendorsRepo.getActive();
-    if (vendors.length) prompt += `\n\nAvailable: ${vendors.map((v) => v.vendor_code).join(', ')}`;
+    if (vendors.length) {
+      prompt += `\n\nAvailable: ${vendors.map((v) => `${v.vendor_code} (${v.vendor_name})`).join(', ')}`;
+    } else {
+      prompt += `\n\n⚠️ No EMB vendors added yet. Ask admin: "Add emb vendor EV001 Vendor Name"`;
+    }
   }
 
   if (field.type.startsWith('date') && session.suggestedStart && field.key.includes('start')) {
@@ -190,12 +198,22 @@ async function processReply(userId, rawText) {
   if (!field) return { ok: false, message: 'No field to fill.' };
 
   if (field.type === 'vendor_fabric') {
+    const vendors = await fabricVendorsRepo.getActive();
+    if (!vendors.length) return { ok: false, message: 'No fabric vendors configured. Ask admin to add one first: "Add fabric vendor FV001 Name"' };
     const vendor = await fabricVendorsRepo.findByCode(rawText.trim());
-    if (!vendor) return { ok: false, message: `Vendor "${rawText.trim()}" not found. Check /mfg_vendors fabric.` };
+    if (!vendor) {
+      const available = vendors.map((v) => `${v.vendor_code} (${v.vendor_name})`).join(', ');
+      return { ok: false, message: `Vendor "${rawText.trim()}" not found.\n\nAvailable: ${available}\n\nType the vendor code or name.` };
+    }
     session.data[field.key] = vendor.vendor_code;
   } else if (field.type === 'vendor_emb') {
+    const vendors = await embVendorsRepo.getActive();
+    if (!vendors.length) return { ok: false, message: 'No EMB vendors configured. Ask admin to add one first: "Add emb vendor EV001 Name"' };
     const vendor = await embVendorsRepo.findByCode(rawText.trim());
-    if (!vendor) return { ok: false, message: `Vendor "${rawText.trim()}" not found. Check /mfg_vendors emb.` };
+    if (!vendor) {
+      const available = vendors.map((v) => `${v.vendor_code} (${v.vendor_name})`).join(', ');
+      return { ok: false, message: `Vendor "${rawText.trim()}" not found.\n\nAvailable: ${available}\n\nType the vendor code or name.` };
+    }
     session.data[field.key] = vendor.vendor_code;
   } else {
     const result = validateField(field, rawText, session.data);
