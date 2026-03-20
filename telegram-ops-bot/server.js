@@ -32,7 +32,7 @@ app.use((req, res, next) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json({ ok: true, service: 'telegram-ops-bot' });
+  res.json({ ok: true, service: 'telegram-ops-bot', mode: config.botMode || 'full' });
 });
 
 app.get('/api/settings', apiController.getSettings);
@@ -59,9 +59,14 @@ app.listen(PORT, async () => {
   logger.info(`Server listening on port ${PORT}. Webhook: ${config.baseUrl ? `${config.baseUrl}/webhook` : 'Set BASE_URL and run npm run set-webhook'}`);
   try {
     await schemaMapper.initialize();
-    erpEventBus.registerListeners();
-    logger.info('ERP modules initialized');
+    if (config.botMode !== 'manufacturing') {
+      erpEventBus.registerListeners();
+      logger.info('ERP modules initialized');
+    } else {
+      logger.info('Manufacturing mode — ERP event bus skipped');
+    }
+    logger.info(`Bot mode: ${config.botMode || 'full'}`);
   } catch (e) {
-    logger.error('ERP init error (bot still running):', e.message);
+    logger.error('Init error (bot still running):', e.message);
   }
 });
