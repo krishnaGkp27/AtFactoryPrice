@@ -11,11 +11,59 @@ const inventoryRepository = require('../repositories/inventoryRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 
 const SALE_ACTIONS = ['sell_than', 'sell_package', 'sale_bundle'];
-/** Default sale unit (foundation for future: metre, piece, etc.) */
 const DEFAULT_SALE_UNIT = 'yard';
 
-/** Admin enrichment state: adminId -> { requestId, step, item, requestingUser, designs, ratePerUnitByDesign?, paymentMode?, amountPaid?, unit? } */
 const pendingEnrichment = new Map();
+
+/**
+ * Send a notification to the employee who raised the request.
+ * Uses direct ID lookup (getByRequestId) as primary, falls back to provided userId.
+ * Logs failures instead of silently swallowing them.
+ */
+async function notifyEmployee(bot, requestingUser, requestId, message) {
+  let userId = requestingUser;
+  if (!userId) {
+    try {
+      const row = await approvalQueueRepository.getByRequestId(requestId);
+      if (row && row.user) userId = row.user;
+    } catch (e) {
+      logger.error(`notifyEmployee: failed to look up user for request ${requestId}`, e.message);
+    }
+  }
+  if (!userId) {
+    logger.warn(`notifyEmployee: no user ID found for request ${requestId} — cannot notify employee`);
+    return false;
+  }
+  try {
+    await bot.sendMessage(userId, message);
+    return true;
+  } catch (e) {
+    logger.error(`notifyEmployee: failed to send message to user ${userId} for request ${requestId}`, e.message);
+    return false;
+  }
+}
+
+/** Resolve the approval queue item and requesting user, with fallback. */
+async function resolveRequest(requestId) {
+  let item = null;
+  let requestingUser = null;
+  try {
+    item = await approvalQueueRepository.getByRequestId(requestId);
+    if (item) requestingUser = item.user;
+  } catch (e) {
+    logger.error(`resolveRequest: failed to fetch request ${requestId}`, e.message);
+  }
+  if (!item) {
+    try {
+      const pending = await approvalQueueRepository.getAllPending();
+      item = pending.find((p) => p.requestId === requestId);
+      if (item) requestingUser = item.user;
+    } catch (e) {
+      logger.error(`resolveRequest: fallback getAllPending also failed for ${requestId}`, e.message);
+    }
+  }
+  return { item, requestingUser };
+}
 
 async function getDesignsForSale(item) {
   const aj = item?.actionJSON || {};
@@ -33,7 +81,6 @@ async function getDesignsForSale(item) {
   return [];
 }
 
-/** Start post-approval enrichment for a sale: admin will enter rate, payment mode, amount paid. */
 async function startApprovalEnrichment(bot, adminId, chatId, requestId, item, requestingUser) {
   const designs = await getDesignsForSale(item);
   const unit = DEFAULT_SALE_UNIT;
@@ -44,7 +91,6 @@ async function startApprovalEnrichment(bot, adminId, chatId, requestId, item, re
   await bot.sendMessage(chatId, `📋 *Confirm sale details*\n\nDesign(s): ${designList}\nUnit: ${unit} (Naira per ${unit})\n\n*Step 1 — Rate:* Reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\``);
 }
 
-/** Handle admin text reply during enrichment. Returns true if message was consumed. */
 async function handleEnrichmentMessage(bot, chatId, adminId, text) {
   const state = pendingEnrichment.get(adminId);
   if (!state || !text) return false;
@@ -129,9 +175,7 @@ async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, it
     const result = await inventoryService.executeApprovedAction(requestId, adminId, enrichment);
     if (result.ok) {
       await bot.sendMessage(chatId, `✅ Request ${requestId} approved. Sale and ledger updated.`);
-      if (requestingUser && requestingUser !== adminId) {
-        try { await bot.sendMessage(requestingUser, `✅ Your request (${requestId}) has been approved by admin. Sale and ledger updated.`); } catch (_) {}
-      }
+      await notifyEmployee(bot, requestingUser, requestId, `✅ Your request (${requestId}) has been approved by admin. Sale and ledger updated.`);
       const customer = item?.actionJSON?.customer || item?.actionJSON?.customerName;
       if (customer) {
         try {
@@ -142,14 +186,15 @@ async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, it
       }
     } else {
       await bot.sendMessage(chatId, `⚠️ Approved but execution failed: ${result.message || 'Unknown error'}`);
+      await notifyEmployee(bot, requestingUser, requestId, `⚠️ Your request (${requestId}) was approved but could not be completed. Admin has been notified. Please follow up.`);
     }
   } catch (e) {
     logger.error('Enrichment execution error', e);
     await bot.sendMessage(chatId, `⚠️ Error: ${e.message}`);
+    await notifyEmployee(bot, requestingUser, requestId, `⚠️ Your request (${requestId}) encountered an error during processing. Admin has been notified. Please follow up.`);
   }
 }
 
-/** Send approval request to each admin's private chat. */
 async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSummary, riskReason) {
   const esc = (s) => (s || '').replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
   const text = `🔔 *Approval required*\n\nRequest ID: \`${requestId}\`\nUser: ${esc(userLabel)}\nAction: ${esc(actionSummary)}\nReason: ${esc(riskReason)}\n\nUse buttons below to approve or reject\\.`;
@@ -173,7 +218,6 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
   }
 }
 
-/** Handle callback from admin: approve or reject. */
 async function handleApprovalCallback(bot, callbackQuery, action) {
   const data = callbackQuery.data || '';
   const requestId = data.replace(/^(approve|reject):/, '');
@@ -182,14 +226,8 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only admins can approve.' });
     return;
   }
-  const approvalQueueRepository = require('../repositories/approvalQueueRepository');
-  let item = null;
-  let requestingUser = null;
-  try {
-    const pending = await approvalQueueRepository.getAllPending();
-    item = pending.find((p) => p.requestId === requestId);
-    if (item) requestingUser = item.user;
-  } catch (_) {}
+
+  const { item, requestingUser } = await resolveRequest(requestId);
 
   const chatIdCb = callbackQuery.message.chat.id;
   const msgIdCb = callbackQuery.message.message_id;
@@ -208,9 +246,7 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
       const result = await inventoryService.executeApprovedAction(requestId, adminId);
       if (result.ok) {
         await bot.sendMessage(chatIdCb, `✅ Request ${requestId} approved. Changes applied.`);
-        if (requestingUser && requestingUser !== adminId) {
-          try { await bot.sendMessage(requestingUser, `✅ Your request (${requestId}) has been approved by admin. Changes applied.`); } catch (_) {}
-        }
+        await notifyEmployee(bot, requestingUser, requestId, `✅ Your request (${requestId}) has been approved by admin. Changes applied.`);
         const customer = item && item.actionJSON && (item.actionJSON.customer || item.actionJSON.customerName);
         if (customer) {
           try {
@@ -222,6 +258,7 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
         }
       } else {
         await bot.sendMessage(chatIdCb, `⚠️ Approved but execution failed: ${result.message || 'Unknown error'}`);
+        await notifyEmployee(bot, requestingUser, requestId, `⚠️ Your request (${requestId}) was approved but could not be completed. Admin has been notified. Please follow up.`);
       }
     } else {
       await bot.answerCallbackQuery(callbackQuery.id, { text: 'Rejecting...' });
@@ -230,9 +267,7 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
       const result = await inventoryService.rejectApproval(requestId, adminId);
       if (result.ok) {
         await bot.sendMessage(chatIdCb, `❌ Request ${requestId} rejected.`);
-        if (requestingUser && requestingUser !== adminId) {
-          try { await bot.sendMessage(requestingUser, `❌ Your request (${requestId}) has been rejected by admin.`); } catch (_) {}
-        }
+        await notifyEmployee(bot, requestingUser, requestId, `❌ Your request (${requestId}) has been rejected by admin.`);
       } else {
         await bot.sendMessage(chatIdCb, `⚠️ Rejection failed: ${result.message || 'Unknown error'}`);
       }
@@ -240,6 +275,7 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
   } catch (e) {
     logger.error('Approval callback error', e);
     try { await bot.sendMessage(chatIdCb, `⚠️ Error processing request ${requestId}: ${e.message}`); } catch (_) {}
+    await notifyEmployee(bot, requestingUser, requestId, `⚠️ Your request (${requestId}) encountered an error during processing. Admin has been notified. Please follow up.`);
   }
 }
 

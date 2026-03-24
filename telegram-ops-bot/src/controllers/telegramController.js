@@ -1123,10 +1123,17 @@ async function handleCallbackQuery(bot, callbackQuery) {
       return;
     }
     await tasksRepo.updateStatus(taskId, 'completed', new Date().toISOString());
-    await bot.sendMessage(callbackQuery.message.chat.id, `✅ Task "${task.title}" (${taskId}) marked complete. Employee has been notified.`);
+    let employeeNotified = false;
     try {
       await bot.sendMessage(task.assigned_to, `✅ Your task "${task.title}" (${taskId}) has been approved by admin and marked complete.`);
-    } catch (_) {}
+      employeeNotified = true;
+    } catch (notifErr) {
+      const logger = require('../utils/logger');
+      logger.error(`Failed to notify employee ${task.assigned_to} about task ${taskId} approval`, notifErr.message);
+    }
+    await bot.sendMessage(callbackQuery.message.chat.id, employeeNotified
+      ? `✅ Task "${task.title}" (${taskId}) marked complete. Employee has been notified.`
+      : `✅ Task "${task.title}" (${taskId}) marked complete. ⚠️ Could not notify the employee — please inform them manually.`);
   } else {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Unknown action.' });
   }
