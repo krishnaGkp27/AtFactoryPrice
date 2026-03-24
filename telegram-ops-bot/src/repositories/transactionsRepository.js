@@ -88,15 +88,31 @@ async function setStatusReverted(timestamp, user, action) {
 }
 
 async function getCustomersByDesign(design) {
-  await ensureHeader();
-  const rows = await sheets.readRange(SHEET, 'A2:Q');
   const d = (design || '').toString().toUpperCase().trim();
   const customers = new Set();
-  for (const r of rows) {
-    const rowDesign = (r[3] || '').toString().toUpperCase().trim();
-    const customer = (r[11] || '').toString().trim();
-    if (rowDesign === d && customer) customers.add(customer);
-  }
+
+  // Source 1: Inventory sheet — SoldTo column for sold items with matching design
+  try {
+    const invRows = await sheets.readRange('Inventory', 'A2:P');
+    for (const r of invRows) {
+      const rowDesign = (r[3] || '').toString().toUpperCase().trim();
+      const soldTo = (r[11] || '').toString().trim();
+      const status = (r[7] || '').toString().toLowerCase().trim();
+      if (rowDesign === d && status === 'sold' && soldTo) customers.add(soldTo);
+    }
+  } catch (_) {}
+
+  // Source 2: Transactions sheet — CustomerName column for matching design
+  try {
+    await ensureHeader();
+    const txnRows = await sheets.readRange(SHEET, 'A2:Q');
+    for (const r of txnRows) {
+      const rowDesign = (r[3] || '').toString().toUpperCase().trim();
+      const customer = (r[11] || '').toString().trim();
+      if (rowDesign === d && customer) customers.add(customer);
+    }
+  } catch (_) {}
+
   return Array.from(customers);
 }
 

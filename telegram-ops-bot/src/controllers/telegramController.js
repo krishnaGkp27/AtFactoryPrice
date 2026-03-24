@@ -1332,16 +1332,23 @@ async function handleCallbackQuery(bot, callbackQuery) {
     session.shade = '';
     session.step = 'customer';
     sessionStore.set(uid, session);
-    const pastCustomers = await transactionsRepo.getCustomersByDesign(design);
+    let customerNames = await transactionsRepo.getCustomersByDesign(design);
+    let label = 'past buyers shown';
+    if (!customerNames.length) {
+      const customersRepo = require('../repositories/customersRepository');
+      const allCust = await customersRepo.getAll();
+      customerNames = allCust.filter((c) => c.status === 'Active' && c.name).map((c) => c.name);
+      if (customerNames.length) label = 'registered customers shown';
+    }
     const rows = [];
-    for (let i = 0; i < pastCustomers.length; i += 2) {
-      const row = [{ text: pastCustomers[i], callback_data: `oc:${pastCustomers[i].slice(0, 50)}` }];
-      if (pastCustomers[i + 1]) row.push({ text: pastCustomers[i + 1], callback_data: `oc:${pastCustomers[i + 1].slice(0, 50)}` });
+    for (let i = 0; i < customerNames.length; i += 2) {
+      const row = [{ text: customerNames[i], callback_data: `oc:${customerNames[i].slice(0, 50)}` }];
+      if (customerNames[i + 1]) row.push({ text: customerNames[i + 1], callback_data: `oc:${customerNames[i + 1].slice(0, 50)}` });
       rows.push(row);
     }
     if (rows.length > 20) rows.splice(20);
     rows.push([{ text: '➕ New customer', callback_data: 'oc:__new__' }]);
-    await bot.sendMessage(callbackQuery.message.chat.id, `Design: *${design}*\n\nSelect customer (past buyers shown):`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+    await bot.sendMessage(callbackQuery.message.chat.id, `Design: *${design}*\n\nSelect customer (${label}):`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 
   } else if (data.startsWith('oc:')) {
     const val = data.slice(3);
