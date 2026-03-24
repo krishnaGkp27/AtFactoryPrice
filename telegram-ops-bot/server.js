@@ -101,6 +101,68 @@ async function checkSampleFollowups() {
   }
 }
 
+async function checkCustomerFollowups() {
+  if (!bot) return;
+  try {
+    const followupsRepo = require('./src/repositories/customerFollowupsRepository');
+    const pending = await followupsRepo.getPendingReminders();
+    for (const f of pending) {
+      for (const adminId of config.access.adminIds) {
+        try {
+          await bot.sendMessage(adminId,
+            `📅 *Follow-up Reminder: ${f.customer}*\n\nReason: ${f.reason}\nScheduled: ${f.followup_date}\nID: ${f.followup_id}\n\nPlease reach out to the customer.`,
+            { parse_mode: 'Markdown' });
+        } catch (e) {
+          logger.error(`Failed to send followup reminder to admin ${adminId}`, e.message);
+        }
+      }
+      await followupsRepo.markReminderSent(f.followup_id);
+      logger.info(`Follow-up reminder sent for ${f.followup_id} (customer: ${f.customer})`);
+    }
+  } catch (e) {
+    logger.error('Customer followup check failed:', e.message);
+  }
+}
+
+let lastColdAlertDay = '';
+async function checkColdCustomerAlerts() {
+  if (!bot) return;
+  const today = new Date().toISOString().split('T')[0];
+  const dayOfWeek = new Date().getDay();
+  if (dayOfWeek !== 1 || lastColdAlertDay === today) return;
+  lastColdAlertDay = today;
+  try {
+    const inventoryRepository = require('./src/repositories/inventoryRepository');
+    const allInv = await inventoryRepository.getAll();
+    const sold = allInv.filter((r) => r.status === 'sold' && r.soldTo);
+    const customers = new Map();
+    for (const r of sold) {
+      if (!customers.has(r.soldTo)) customers.set(r.soldTo, '');
+      if (r.soldDate > customers.get(r.soldTo)) customers.set(r.soldTo, r.soldDate);
+    }
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    const cutoffStr = cutoff.toISOString().split('T')[0];
+    const inactive = [...customers.entries()]
+      .filter(([, lastDate]) => lastDate && lastDate < cutoffStr)
+      .map(([name, lastDate]) => ({ name, lastDate, daysAgo: Math.floor((Date.now() - new Date(lastDate).getTime()) / 86400000) }))
+      .sort((a, b) => b.daysAgo - a.daysAgo);
+    if (!inactive.length) return;
+    let msg = `⚠️ *Weekly Cold Customer Alert*\n_${inactive.length} customers inactive for 30+ days_\n\n`;
+    for (const c of inactive.slice(0, 15)) {
+      msg += `👤 *${c.name}* — Last activity: ${c.daysAgo}d ago (${c.lastDate})\n`;
+    }
+    if (inactive.length > 15) msg += `\n_... and ${inactive.length - 15} more_`;
+    msg += `\n\nConsider reaching out. Use "Customer history <name>" for details.`;
+    for (const adminId of config.access.adminIds) {
+      try { await bot.sendMessage(adminId, msg, { parse_mode: 'Markdown' }); } catch (_) {}
+    }
+    logger.info(`Cold customer alert sent: ${inactive.length} inactive customers`);
+  } catch (e) {
+    logger.error('Cold customer alert failed:', e.message);
+  }
+}
+
 const PORT = config.port;
 app.listen(PORT, async () => {
   logger.info(`Server listening on port ${PORT}. Webhook: ${config.baseUrl ? `${config.baseUrl}/webhook` : 'Set BASE_URL and run npm run set-webhook'}`);
@@ -108,8 +170,8 @@ app.listen(PORT, async () => {
     await schemaMapper.initialize();
     erpEventBus.registerListeners();
     logger.info('ERP modules initialized');
-    setInterval(() => { checkOrderReminders(); checkSampleFollowups(); }, REMINDER_INTERVAL_MS);
-    logger.info('Reminder scheduler started (hourly): orders + sample follow-ups');
+    setInterval(() => { checkOrderReminders(); checkSampleFollowups(); checkCustomerFollowups(); checkColdCustomerAlerts(); }, REMINDER_INTERVAL_MS);
+    logger.info('Scheduler started (hourly): orders, samples, follow-ups, cold alerts');
   } catch (e) {
     logger.error('Init error (bot still running):', e.message);
   }

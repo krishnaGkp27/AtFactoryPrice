@@ -62,6 +62,12 @@ const REQUIRED_SHEETS = {
       'created_at', 'updated_at', 'notes', 'reminder_sent',
     ],
   },
+  CustomerFollowups: {
+    headers: ['followup_id', 'customer', 'reason', 'followup_date', 'status', 'created_by', 'created_at', 'reminder_sent'],
+  },
+  CustomerNotes: {
+    headers: ['note_id', 'customer', 'note', 'created_by', 'created_at'],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];

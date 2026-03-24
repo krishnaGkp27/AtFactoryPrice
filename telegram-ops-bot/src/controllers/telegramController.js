@@ -20,6 +20,8 @@ const usersRepository = require('../repositories/usersRepository');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const ordersRepo = require('../repositories/ordersRepository');
 const samplesRepo = require('../repositories/samplesRepository');
+const customerFollowupsRepo = require('../repositories/customerFollowupsRepository');
+const customerNotesRepo = require('../repositories/customerNotesRepository');
 const transactionsRepo = require('../repositories/transactionsRepository');
 const config = require('../config');
 const logger = require('../utils/logger');
@@ -360,6 +362,108 @@ function buildSalesCustomerReport(sold, periodLabel) {
 }
 
 // ─── End Inventory & Sales Reports ──────────────────────────────────────────
+
+// ─── Customer CRM Suite ─────────────────────────────────────────────────────
+
+async function buildCustomerTimeline(customerName) {
+  const allInv = await inventoryRepository.getAll();
+  const sold = allInv.filter((r) => r.status === 'sold' && r.soldTo && r.soldTo.toLowerCase() === customerName.toLowerCase());
+  const events = [];
+
+  for (const r of sold) {
+    events.push({ date: r.soldDate || r.updatedAt?.slice(0, 10) || '', type: 'Sale', detail: `${r.design} Shade ${r.shade || '-'} | Pkg ${r.packageNo} | ${fmtQty(r.yards)} yds — ${fmtMoney(r.yards * r.pricePerYard)}` });
+  }
+
+  try {
+    const orders = await ordersRepo.getAll();
+    for (const o of orders) {
+      if (o.customer.toLowerCase() === customerName.toLowerCase()) {
+        events.push({ date: o.created_at?.slice(0, 10) || '', type: `Order (${o.status})`, detail: `${o.order_id} | ${o.design} | Qty: ${o.quantity}` });
+      }
+    }
+  } catch (_) {}
+
+  try {
+    const samples = await samplesRepo.getAll();
+    for (const s of samples) {
+      if (s.customer.toLowerCase() === customerName.toLowerCase()) {
+        events.push({ date: s.date_given || s.created_at?.slice(0, 10) || '', type: `Sample (${s.status})`, detail: `${s.sample_id} | ${s.design} Shade ${s.shade || '-'} | Type ${s.sample_type} | ${s.quantity} pcs` });
+      }
+    }
+  } catch (_) {}
+
+  try {
+    const ledgerRepo = require('../repositories/ledgerRepository');
+    const ledgerRows = await ledgerRepo.getAll();
+    for (const e of ledgerRows) {
+      if (e.ledger_name && e.ledger_name.toLowerCase() === customerName.toLowerCase() && e.credit > 0) {
+        events.push({ date: e.date || '', type: 'Payment', detail: `${fmtMoney(e.credit)} — ${e.narration || ''}` });
+      }
+    }
+  } catch (_) {}
+
+  events.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  return events;
+}
+
+async function buildCustomerRanking() {
+  const allInv = await inventoryRepository.getAll();
+  const sold = allInv.filter((r) => r.status === 'sold' && r.soldTo);
+  const customers = new Map();
+  for (const r of sold) {
+    const name = r.soldTo;
+    if (!customers.has(name)) customers.set(name, { pkgs: new Set(), thans: 0, yards: 0, value: 0, lastDate: '', txns: 0 });
+    const c = customers.get(name);
+    c.pkgs.add(r.packageNo); c.thans++; c.yards += r.yards; c.value += r.yards * r.pricePerYard; c.txns++;
+    if (r.soldDate > c.lastDate) c.lastDate = r.soldDate;
+  }
+  return [...customers.entries()].sort((a, b) => b[1].value - a[1].value);
+}
+
+async function buildCustomerPattern(customerName) {
+  const allInv = await inventoryRepository.getAll();
+  const sold = allInv.filter((r) => r.status === 'sold' && r.soldTo && r.soldTo.toLowerCase() === customerName.toLowerCase());
+  if (!sold.length) return null;
+
+  const byDS = new Map();
+  let totalPkgs = new Set(), totalYards = 0, totalValue = 0, firstDate = '9999', lastDate = '';
+  for (const r of sold) {
+    const key = `${r.design}|${r.shade || '-'}`;
+    if (!byDS.has(key)) byDS.set(key, { design: r.design, shade: r.shade || '-', pkgs: new Set(), thans: 0, yards: 0, value: 0 });
+    const ds = byDS.get(key);
+    ds.pkgs.add(r.packageNo); ds.thans++; ds.yards += r.yards; ds.value += r.yards * r.pricePerYard;
+    totalPkgs.add(r.packageNo); totalYards += r.yards; totalValue += r.yards * r.pricePerYard;
+    if (r.soldDate && r.soldDate < firstDate) firstDate = r.soldDate;
+    if (r.soldDate && r.soldDate > lastDate) lastDate = r.soldDate;
+  }
+
+  return {
+    items: [...byDS.values()].sort((a, b) => b.value - a.value),
+    totalPkgs: totalPkgs.size, totalYards, totalValue, totalThans: sold.length,
+    firstDate: firstDate === '9999' ? '-' : firstDate, lastDate: lastDate || '-',
+  };
+}
+
+async function getInactiveCustomers(daysThreshold = 30) {
+  const allInv = await inventoryRepository.getAll();
+  const sold = allInv.filter((r) => r.status === 'sold' && r.soldTo);
+  const customers = new Map();
+  for (const r of sold) {
+    const name = r.soldTo;
+    if (!customers.has(name)) customers.set(name, { lastDate: '', lastAction: 'Sale' });
+    const c = customers.get(name);
+    if (r.soldDate > c.lastDate) { c.lastDate = r.soldDate; c.lastAction = 'Sale'; }
+  }
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - daysThreshold);
+  const cutoffStr = cutoff.toISOString().split('T')[0];
+  return [...customers.entries()]
+    .filter(([, c]) => c.lastDate && c.lastDate < cutoffStr)
+    .map(([name, c]) => ({ name, lastDate: c.lastDate, lastAction: c.lastAction, daysAgo: Math.floor((Date.now() - new Date(c.lastDate).getTime()) / 86400000) }))
+    .sort((a, b) => b.daysAgo - a.daysAgo);
+}
+
+// ─── End Customer CRM Suite ─────────────────────────────────────────────────
 
 // ─── Sample Flow Helpers ────────────────────────────────────────────────────
 
@@ -1376,6 +1480,98 @@ async function handleMessage(bot, msg) {
         return;
       }
 
+      case 'customer_history': {
+        if (!intent.customer) { await bot.sendMessage(chatId, 'Which customer? e.g. "Customer history CJE"'); return; }
+        const events = await buildCustomerTimeline(intent.customer);
+        if (!events.length) { await bot.sendMessage(chatId, `No interaction history found for "${intent.customer}".`); return; }
+        const lastAgo = events[0].date ? Math.floor((Date.now() - new Date(events[0].date).getTime()) / 86400000) : '?';
+        let out = `📋 *Customer Timeline — ${intent.customer}*\n_Last activity: ${lastAgo} days ago_\n\n`;
+        const shown = events.slice(0, 20);
+        for (const e of shown) {
+          const icon = e.type.startsWith('Sale') ? '💰' : e.type.startsWith('Payment') ? '💳' : e.type.startsWith('Order') ? '📦' : e.type.startsWith('Sample') ? '🧪' : '📌';
+          out += `${icon} *${e.date || '-'}* — ${e.type}\n   ${e.detail}\n\n`;
+        }
+        if (events.length > 20) out += `_... and ${events.length - 20} more interactions_\n`;
+        out += `*Total: ${events.length} interactions*`;
+        await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'customer_ranking': {
+        if (!config.access.adminIds.includes(userId)) { await bot.sendMessage(chatId, 'Customer ranking is admin-only.'); return; }
+        const ranked = await buildCustomerRanking();
+        if (!ranked.length) { await bot.sendMessage(chatId, 'No sales data found.'); return; }
+        let out = `🏆 *Customer Ranking — Top ${Math.min(ranked.length, 20)} by Value*\n\n`;
+        let rank = 0;
+        const medals = ['🥇', '🥈', '🥉'];
+        for (const [name, c] of ranked.slice(0, 20)) {
+          const medal = rank < 3 ? medals[rank] : `${rank + 1}.`;
+          const daysAgo = c.lastDate ? Math.floor((Date.now() - new Date(c.lastDate).getTime()) / 86400000) : '?';
+          out += `${medal} *${name}*\n`;
+          out += `   ${c.pkgs.size} pkgs, ${c.thans} thans, ${fmtQty(c.yards)} yds\n`;
+          out += `   Value: ${fmtMoney(c.value)} | Last: ${daysAgo}d ago\n`;
+          out += `   ${fmtBar(c.value, ranked[0][1].value)}\n\n`;
+          rank++;
+        }
+        const grandValue = ranked.reduce((s, [, c]) => s + c.value, 0);
+        out += `*Total Customers: ${ranked.length} | Total Value: ${fmtMoney(grandValue)}*`;
+        await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'customer_pattern': {
+        if (!intent.customer) { await bot.sendMessage(chatId, 'Which customer? e.g. "What does CJE buy"'); return; }
+        const pattern = await buildCustomerPattern(intent.customer);
+        if (!pattern) { await bot.sendMessage(chatId, `No purchase data found for "${intent.customer}".`); return; }
+        let out = `🔍 *Purchase Pattern — ${intent.customer}*\n\n`;
+        out += `📅 First purchase: ${pattern.firstDate} | Last: ${pattern.lastDate}\n`;
+        out += `📊 Lifetime: ${pattern.totalPkgs} pkgs, ${pattern.totalThans} thans, ${fmtQty(pattern.totalYards)} yds — ${fmtMoney(pattern.totalValue)}\n\n`;
+        out += `*Preferred Items (by value):*\n`;
+        let rank = 0;
+        for (const ds of pattern.items) {
+          rank++;
+          const pct = Math.round((ds.value / pattern.totalValue) * 100);
+          out += `${rank}. ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} pkgs, ${fmtQty(ds.yards)} yds — ${fmtMoney(ds.value)} (${pct}%)\n`;
+        }
+        out += `\n*Top design: ${pattern.items[0].design} Shade ${pattern.items[0].shade} (${Math.round((pattern.items[0].value / pattern.totalValue) * 100)}% of total)*`;
+        await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'add_followup': {
+        if (!config.access.adminIds.includes(userId)) { await bot.sendMessage(chatId, 'Only admin can schedule follow-ups.'); return; }
+        if (!intent.customer) { await bot.sendMessage(chatId, 'Which customer? e.g. "Follow up with CJE on 28-02-2026 about payment"'); return; }
+        const fDate = intent.salesDate ? parseLedgerDate(intent.salesDate) : null;
+        if (!fDate) { await bot.sendMessage(chatId, 'Please include a date. e.g. "Follow up with CJE on 28-02-2026 about pending payment"'); return; }
+        const reasonMatch = text.match(/\b(?:about|for|regarding|re)\s+(.+)/i);
+        const reason = reasonMatch ? reasonMatch[1].trim() : text.replace(/follow\s*up\s*(with)?\s*/i, '').replace(intent.customer, '').replace(intent.salesDate || '', '').replace(/on\s*/i, '').trim() || 'General follow-up';
+        const saved = await customerFollowupsRepo.append({ customer: intent.customer, reason, followup_date: fDate, created_by: userId });
+        await bot.sendMessage(chatId, `✅ Follow-up scheduled: *${saved.followup_id}*\n\nCustomer: ${intent.customer}\nDate: ${fDate}\nReason: ${reason}\n\nYou'll be reminded on ${fDate}.`, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'add_customer_note': {
+        if (!intent.customer) { await bot.sendMessage(chatId, 'Which customer? e.g. "Note for CJE: wants bulk discount"'); return; }
+        const noteText = text.replace(/^note\s*(for)?\s*/i, '').replace(new RegExp(intent.customer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), '').replace(/^[\s:]+/, '').trim();
+        if (!noteText) { await bot.sendMessage(chatId, 'What is the note? e.g. "Note for CJE: prefers Shade 3"'); return; }
+        const saved = await customerNotesRepo.append({ customer: intent.customer, note: noteText, created_by: userId });
+        await bot.sendMessage(chatId, `✅ Note saved for *${intent.customer}*: ${noteText}`, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'show_customer_notes': {
+        if (!intent.customer) { await bot.sendMessage(chatId, 'Which customer? e.g. "Show notes for CJE"'); return; }
+        const notes = await customerNotesRepo.getByCustomer(intent.customer);
+        if (!notes.length) { await bot.sendMessage(chatId, `No notes found for "${intent.customer}". Add with: "Note for ${intent.customer}: your note here"`); return; }
+        let out = `📝 *Notes for ${intent.customer}* (${notes.length})\n\n`;
+        for (const n of notes.slice(-15)) {
+          out += `• ${n.created_at?.slice(0, 10) || '-'}: ${n.note}\n`;
+        }
+        if (notes.length > 15) out += `\n_Showing last 15 of ${notes.length} notes_`;
+        await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+        return;
+      }
+
       case 'inventory_details': {
         if (!config.access.adminIds.includes(userId)) {
           await bot.sendMessage(chatId, 'Inventory details is admin-only.');
@@ -1529,6 +1725,14 @@ function helpText() {
 📒 "Show ledger for today"
 📊 "Show trial balance"
 🏦 "Add bank GTBank" / "List banks" (admin)
+
+*Customer CRM:*
+📋 "Customer history CJE" — Full interaction timeline
+🏆 "Customer ranking" — Top customers by value
+🔍 "What does CJE buy" — Purchase patterns
+📅 "Follow up with CJE on 28-02-2026 about payment"
+📝 "Note for CJE: wants bulk discount"
+📝 "Show notes for CJE"
 
 *Samples:*
 🧪 "Give sample of 44200 Shade 3 to CJE" — Submit sample request

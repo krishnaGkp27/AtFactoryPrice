@@ -22,5 +22,7 @@ module.exports = {
   transaction: () => generate('TXN'),
   order: () => generate('ORD'),
   sample: () => generate('SMP'),
+  followup: () => generate('FUP'),
+  note: () => generate('NOTE'),
   generate,
 };

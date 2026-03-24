@@ -104,6 +104,12 @@ ACTION RULES:
 - create_order: admin creates a supply order. Use for "Create order", "New order", "Make an order", "Create supply order".
 - my_orders: employee views their assigned orders. Use for "My orders", "Show my orders", "Pending orders", "My supply orders".
 - mark_order_delivered: employee marks an order as delivered. Needs orderId. Use for "Mark order ORD-xxx delivered", "Order ORD-xxx done", "Delivered ORD-xxx".
+- customer_history: view chronological interaction timeline for a customer. Needs customer name. Use for "Customer history CJE", "Show history for Ibrahim", "What happened with CJE", "CJE timeline", "Customer interactions CJE".
+- customer_ranking: view top customers ranked by purchase value. Use for "Top customers", "Customer ranking", "Best customers", "Customer dashboard", "Customer leaderboard".
+- customer_pattern: view purchase patterns for a specific customer (preferred designs, shades, quantities). Needs customer name. Use for "What does CJE buy", "CJE purchase pattern", "CJE preferences", "What does Ibrahim order".
+- add_followup: schedule a follow-up reminder for a customer. Needs customer name. Use for "Follow up with CJE on 28-02-2026 about payment", "Remind me about Ibrahim on Monday", "Schedule followup for CJE".
+- add_customer_note: add a note to a customer. Needs customer name. Use for "Note for CJE: wants bulk discount", "Add note for Ibrahim: prefers Shade 3", "Customer note CJE promised delivery".
+- show_customer_notes: view notes for a customer. Needs customer name. Use for "Show notes for CJE", "Notes for Ibrahim", "Customer notes CJE".
 - ask_data: FREE-FORM data question that doesn't fit any predefined report. Use this for custom/complex questions like "compare Lagos vs Kano", "which shade sells fastest", "what percentage is unsold", "show me all buyers of 44200 in descending order", etc.
 
 SALE DETAIL RULES:
@@ -199,6 +205,15 @@ User: "Sample SMP-20260221-001 converted" → {"action":"update_sample","sampleI
 User: "Sample status" → {"action":"sample_status","confidence":0.95,"clarification":null}
 User: "Samples for 44200" → {"action":"sample_status","design":"44200","confidence":0.95,"clarification":null}
 User: "Where are our samples" → {"action":"sample_status","confidence":0.95,"clarification":null}
+User: "Customer history CJE" → {"action":"customer_history","customer":"CJE","confidence":0.95,"clarification":null}
+User: "Show history for Ibrahim" → {"action":"customer_history","customer":"Ibrahim","confidence":0.95,"clarification":null}
+User: "Top customers" → {"action":"customer_ranking","confidence":0.95,"clarification":null}
+User: "Customer ranking" → {"action":"customer_ranking","confidence":0.95,"clarification":null}
+User: "What does CJE buy" → {"action":"customer_pattern","customer":"CJE","confidence":0.95,"clarification":null}
+User: "CJE purchase pattern" → {"action":"customer_pattern","customer":"CJE","confidence":0.95,"clarification":null}
+User: "Follow up with CJE on 28-02-2026 about payment" → {"action":"add_followup","customer":"CJE","salesDate":"28-02-2026","confidence":0.95,"clarification":null}
+User: "Note for CJE: wants bulk discount" → {"action":"add_customer_note","customer":"CJE","confidence":0.95,"clarification":null}
+User: "Show notes for CJE" → {"action":"show_customer_notes","customer":"CJE","confidence":0.95,"clarification":null}
 User: "Inventory details" → {"action":"inventory_details","confidence":0.95,"clarification":null}
 User: "Stock details" → {"action":"inventory_details","confidence":0.95,"clarification":null}
 User: "Show inventory" → {"action":"inventory_details","confidence":0.95,"clarification":null}
@@ -257,6 +272,8 @@ const VALID_ACTIONS = [
   'ask_data',
   'give_sample', 'return_sample', 'update_sample', 'sample_status',
   'inventory_details', 'sales_report_interactive',
+  'customer_history', 'customer_ranking', 'customer_pattern',
+  'add_followup', 'add_customer_note', 'show_customer_notes',
   'supply_details', 'create_order', 'my_orders', 'mark_order_delivered',
 ];
 
