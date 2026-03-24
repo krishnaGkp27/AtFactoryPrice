@@ -441,6 +441,18 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
         await crmService.recordPayment({ customer: aj.customer, amount: enrichment.amountPaid, method: enrichment.paymentMode || 'Cash', userId: approvedBy });
       } catch (_) {}
     }
+  } else if (aj.action === 'give_sample') {
+    const samplesRepo = require('../repositories/samplesRepository');
+    await samplesRepo.append({
+      design: aj.design || '',
+      shade: aj.shade || '',
+      sample_type: aj.sample_type || '',
+      customer: aj.customer || '',
+      quantity: aj.quantity || '1',
+      followup_date: aj.followup_date || '',
+      status: 'with_customer',
+      updated_by: approvedBy,
+    });
   } else {
     return { ok: false, message: 'Unknown action type.' };
   }

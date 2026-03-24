@@ -55,6 +55,13 @@ const REQUIRED_SHEETS = {
       'status', 'created_by', 'created_at', 'accepted_at', 'delivered_at', 'reminder_sent',
     ],
   },
+  Samples: {
+    headers: [
+      'sample_id', 'design', 'shade', 'sample_type', 'customer', 'quantity',
+      'date_given', 'followup_date', 'status', 'updated_by',
+      'created_at', 'updated_at', 'notes', 'reminder_sent',
+    ],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];

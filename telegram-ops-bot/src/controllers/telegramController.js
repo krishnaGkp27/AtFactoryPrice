@@ -19,6 +19,7 @@ const settingsRepo = require('../repositories/settingsRepository');
 const usersRepository = require('../repositories/usersRepository');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const ordersRepo = require('../repositories/ordersRepository');
+const samplesRepo = require('../repositories/samplesRepository');
 const transactionsRepo = require('../repositories/transactionsRepository');
 const config = require('../config');
 const logger = require('../utils/logger');
@@ -206,6 +207,87 @@ function buildWarehouseWiseReport(sold) {
 
 // ─── End Supply Details Reports ─────────────────────────────────────────────
 
+// ─── Sample Flow Helpers ────────────────────────────────────────────────────
+
+async function handleSampleFlowText(bot, chatId, userId, text) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'sample_flow') return false;
+
+  if (text.toLowerCase() === 'cancel') {
+    sessionStore.clear(userId);
+    await bot.sendMessage(chatId, 'Sample request cancelled.');
+    return true;
+  }
+
+  if (session.step === 'customer_new') {
+    session.customer = text.trim();
+    session.step = 'quantity';
+    sessionStore.set(userId, session);
+    await bot.sendMessage(chatId, `Customer: *${session.customer}*\n\nHow many sample pieces?`, { parse_mode: 'Markdown' });
+    return true;
+  }
+
+  if (session.step === 'quantity') {
+    const qty = text.trim();
+    if (!qty || isNaN(Number(qty)) || Number(qty) <= 0) {
+      await bot.sendMessage(chatId, 'Please enter a valid positive number.');
+      return true;
+    }
+    session.quantity = qty;
+    session.step = 'followup';
+    sessionStore.set(userId, session);
+    await bot.sendMessage(chatId, 'Follow-up date (DD-MM-YYYY or YYYY-MM-DD):');
+    return true;
+  }
+
+  if (session.step === 'followup') {
+    const parsed = parseLedgerDate(text.trim());
+    if (!parsed) {
+      await bot.sendMessage(chatId, 'Could not parse date. Use DD-MM-YYYY or YYYY-MM-DD.');
+      return true;
+    }
+    session.followup_date = parsed;
+    session.step = 'confirm';
+    sessionStore.set(userId, session);
+    let summary = `*Sample Request Summary*\n\n`;
+    summary += `Design: ${session.design}${session.shade ? ' Shade ' + session.shade : ''}\n`;
+    summary += `Type: ${session.sample_type}\n`;
+    summary += `Customer: ${session.customer}\n`;
+    summary += `Quantity: ${session.quantity} pcs\n`;
+    summary += `Follow-up: ${session.followup_date}\n`;
+    const keyboard = { inline_keyboard: [[
+      { text: '✅ Submit for Approval', callback_data: 'smpconf:1' },
+      { text: '❌ Cancel', callback_data: 'smpcanc:1' },
+    ]] };
+    await bot.sendMessage(chatId, summary, { parse_mode: 'Markdown', reply_markup: keyboard });
+    return true;
+  }
+
+  return false;
+}
+
+function buildSampleStatusReport(samples, title) {
+  if (!samples.length) return `${title}\n\nNo active samples found.`;
+  const byCustomer = new Map();
+  for (const s of samples) {
+    if (!byCustomer.has(s.customer)) byCustomer.set(s.customer, []);
+    byCustomer.get(s.customer).push(s);
+  }
+  let text = `${title}\n\n`;
+  for (const [customer, list] of byCustomer) {
+    text += `👤 *${customer}*\n`;
+    for (const s of list) {
+      const daysAgo = Math.floor((Date.now() - new Date(s.date_given).getTime()) / 86400000);
+      text += `  ${s.sample_id}: ${s.design}${s.shade ? ' Shade ' + s.shade : ''} | Type ${s.sample_type} | ${s.quantity} pcs | ${daysAgo}d ago | Follow-up: ${s.followup_date || '-'}\n`;
+    }
+    text += '\n';
+  }
+  text += `*Total: ${samples.length} active samples with ${byCustomer.size} customers*`;
+  return text;
+}
+
+// ─── End Sample Flow Helpers ────────────────────────────────────────────────
+
 /** Handle text replies during an active order creation session. Returns true if consumed. */
 async function handleOrderFlowText(bot, chatId, userId, text) {
   const session = sessionStore.get(userId);
@@ -340,6 +422,9 @@ async function handleMessage(bot, msg) {
 
   const orderFlowHandled = await handleOrderFlowText(bot, chatId, userId, text);
   if (orderFlowHandled) return;
+
+  const sampleFlowHandled = await handleSampleFlowText(bot, chatId, userId, text);
+  if (sampleFlowHandled) return;
 
   if (text.toLowerCase() === '/create_order' || text.toLowerCase() === 'create order') {
     if (!config.access.adminIds.includes(userId)) {
@@ -492,28 +577,39 @@ async function handleMessage(bot, msg) {
       }
 
       case 'update_price': {
-        if (!intent.price) { await bot.sendMessage(chatId, 'What is the new price per yard?'); return; }
-        if (!intent.packageNo && !intent.design) { await bot.sendMessage(chatId, 'Which package or design? e.g. "Update price of 44200 BLACK to 1500" or "Set price for design 44200 at Kano to 1500"'); return; }
-        const filters = {};
-        if (intent.packageNo) filters.packageNo = intent.packageNo;
-        if (intent.design) filters.design = intent.design;
-        if (intent.shade) filters.shade = intent.shade;
-        if (intent.warehouse) filters.warehouse = intent.warehouse;
-        // Setting price by warehouse (design+warehouse) is admin-only
-        if (filters.warehouse && !config.access.adminIds.includes(userId)) {
-          await bot.sendMessage(chatId, 'Only admin can set price per warehouse. Use design and warehouse (e.g. Set price for design 44200 at Kano to 1500).');
+        if (!config.access.adminIds.includes(userId)) {
+          await bot.sendMessage(chatId, 'Only admin can update prices.');
           return;
         }
-        const upQueued = await requireApproval(bot, chatId, msg, userId, 'update_price',
-          { action: 'update_price', filters, price: intent.price },
-          `Update price ${filters.design || filters.packageNo || '?'}${filters.warehouse ? ' at ' + filters.warehouse : ''} to ${intent.price}/yd`);
-        if (upQueued) return;
-        const priceResult = await inventoryService.updatePrice(filters, intent.price, userId);
-        if (priceResult.status === 'completed') {
-          await bot.sendMessage(chatId, `✅ Updated price for ${priceResult.label}: ${fmtMoney(priceResult.newPrice)}/yard (${priceResult.updated} rows).`);
-        } else {
-          await bot.sendMessage(chatId, priceResult.message || 'Could not update price.');
+        if (!intent.price) { await bot.sendMessage(chatId, 'What is the new price per yard? e.g. "Update price of 44200 Shade 3 to 1500"'); return; }
+        if (!intent.design) { await bot.sendMessage(chatId, 'Which design? e.g. "Update price of 44200 Shade 3 to 1500"'); return; }
+        const filters = {};
+        filters.design = intent.design;
+        if (intent.shade) filters.shade = intent.shade;
+        if (intent.packageNo) filters.packageNo = intent.packageNo;
+        if (intent.warehouse) filters.warehouse = intent.warehouse;
+        const label = `${filters.design}${filters.shade ? ' Shade ' + filters.shade : ''}${filters.warehouse ? ' at ' + filters.warehouse : ''}`;
+        const requestId = genId();
+        await approvalQueueRepository.append({
+          requestId, user: userId,
+          actionJSON: { action: 'update_price', filters, price: intent.price },
+          riskReason: '2nd admin approval required for price update', status: 'pending',
+        });
+        await auditLogRepository.append('approval_queued', { requestId, reason: 'price_update_approval' }, userId);
+        const userLabel = await getRequesterDisplayName(userId, msg);
+        const summary = `Price Update Request\n${label}\nNew price: ${fmtMoney(intent.price)}/yard\nRequested by: ${userLabel}`;
+        const otherAdmins = config.access.adminIds.filter((id) => id !== userId);
+        if (!otherAdmins.length) {
+          const priceResult = await inventoryService.updatePrice(filters, intent.price, userId);
+          if (priceResult.status === 'completed') {
+            await bot.sendMessage(chatId, `✅ Updated price for ${priceResult.label}: ${fmtMoney(priceResult.newPrice)}/yard (${priceResult.updated} rows). (Only 1 admin configured — auto-approved)`);
+          } else {
+            await bot.sendMessage(chatId, priceResult.message || 'Could not update price.');
+          }
+          return;
         }
+        await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, '2nd admin approval required');
+        await bot.sendMessage(chatId, `⏳ Price update for ${label} to ${fmtMoney(intent.price)}/yard submitted for 2nd admin approval.\nRequest: ${requestId}`);
         return;
       }
 
@@ -1033,6 +1129,99 @@ async function handleMessage(bot, msg) {
         return;
       }
 
+      case 'give_sample': {
+        if (!intent.design) {
+          await bot.sendMessage(chatId, 'Which design? e.g. "Give sample of 44200 Shade 3 to CJE"');
+          return;
+        }
+        sessionStore.set(userId, {
+          type: 'sample_flow', step: 'customer', design: intent.design, shade: intent.shade || '',
+          requestedBy: userId,
+        });
+        if (intent.customer) {
+          const session = sessionStore.get(userId);
+          session.customer = intent.customer;
+          session.step = 'type';
+          sessionStore.set(userId, session);
+          await bot.sendMessage(chatId, `Design: *${intent.design}*${intent.shade ? ' Shade ' + intent.shade : ''}\nCustomer: *${intent.customer}*\n\nSelect sample type:`, {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[
+              { text: 'Type A', callback_data: 'smpt:A' },
+              { text: 'Type B', callback_data: 'smpt:B' },
+              { text: 'Type C', callback_data: 'smpt:C' },
+            ]] },
+          });
+        } else {
+          const pastCustomers = await transactionsRepo.getCustomersByDesign(intent.design);
+          let customerNames = pastCustomers;
+          if (!customerNames.length) {
+            const customersRepo = require('../repositories/customersRepository');
+            const allCust = await customersRepo.getAll();
+            customerNames = allCust.filter((c) => c.status === 'Active' && c.name).map((c) => c.name);
+          }
+          const rows = [];
+          for (let i = 0; i < customerNames.length; i += 2) {
+            const row = [{ text: customerNames[i], callback_data: `smpc:${customerNames[i].slice(0, 50)}` }];
+            if (customerNames[i + 1]) row.push({ text: customerNames[i + 1], callback_data: `smpc:${customerNames[i + 1].slice(0, 50)}` });
+            rows.push(row);
+          }
+          if (rows.length > 20) rows.splice(20);
+          rows.push([{ text: '➕ New customer', callback_data: 'smpc:__new__' }]);
+          await bot.sendMessage(chatId, `Design: *${intent.design}*${intent.shade ? ' Shade ' + intent.shade : ''}\n\nSelect customer:`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+        }
+        return;
+      }
+
+      case 'return_sample': {
+        const sid = intent.sampleId || (text.match(/SMP-\d{8}-\d{3}/) || [])[0];
+        if (!sid) { await bot.sendMessage(chatId, 'Which sample? e.g. "Sample SMP-20260221-001 returned"'); return; }
+        const sample = await samplesRepo.getById(sid);
+        if (!sample) { await bot.sendMessage(chatId, `Sample ${sid} not found.`); return; }
+        if (sample.status !== 'with_customer') { await bot.sendMessage(chatId, `Sample ${sid} status is already: ${sample.status}`); return; }
+        await samplesRepo.updateStatus(sid, 'returned', userId);
+        await bot.sendMessage(chatId, `✅ Sample *${sid}* marked as returned.\n\nDesign: ${sample.design}${sample.shade ? ' Shade ' + sample.shade : ''}\nCustomer: ${sample.customer}\nType: ${sample.sample_type}`, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'update_sample': {
+        const sid = intent.sampleId || (text.match(/SMP-\d{8}-\d{3}/) || [])[0];
+        if (!sid) { await bot.sendMessage(chatId, 'Which sample? e.g. "Sample SMP-xxx lost" or "Sample SMP-xxx converted"'); return; }
+        const sample = await samplesRepo.getById(sid);
+        if (!sample) { await bot.sendMessage(chatId, `Sample ${sid} not found.`); return; }
+        if (sample.status !== 'with_customer') { await bot.sendMessage(chatId, `Sample ${sid} status is already: ${sample.status}`); return; }
+        const lowerText = text.toLowerCase();
+        let newStatus = 'with_customer';
+        if (lowerText.includes('lost')) newStatus = 'lost';
+        else if (lowerText.includes('convert')) newStatus = 'converted_to_order';
+        else {
+          await bot.sendMessage(chatId, `What status? Say "${sid} lost" or "${sid} converted".`);
+          return;
+        }
+        await samplesRepo.updateStatus(sid, newStatus, userId);
+        await bot.sendMessage(chatId, `✅ Sample *${sid}* marked as *${newStatus}*.\n\nDesign: ${sample.design}${sample.shade ? ' Shade ' + sample.shade : ''}\nCustomer: ${sample.customer}`, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'sample_status': {
+        if (!config.access.adminIds.includes(userId)) {
+          await bot.sendMessage(chatId, 'Sample status report is admin-only.');
+          return;
+        }
+        let samples;
+        let title;
+        if (intent.design) {
+          samples = await samplesRepo.getByDesign(intent.design);
+          samples = samples.filter((s) => s.status === 'with_customer');
+          title = `📋 *Sample Status — Design ${intent.design}*`;
+        } else {
+          samples = await samplesRepo.getActive();
+          title = '📋 *Sample Status — All Active*';
+        }
+        const report = buildSampleStatusReport(samples, title);
+        await sendLong(bot, chatId, report, { parse_mode: 'Markdown' });
+        return;
+      }
+
       case 'supply_details': {
         if (!config.access.adminIds.includes(userId)) {
           await bot.sendMessage(chatId, 'Supply details is admin-only.');
@@ -1156,6 +1345,11 @@ function helpText() {
 📒 "Show ledger for today"
 📊 "Show trial balance"
 🏦 "Add bank GTBank" / "List banks" (admin)
+
+*Samples:*
+🧪 "Give sample of 44200 Shade 3 to CJE" — Submit sample request
+↩️ "Sample SMP-xxx returned" — Mark returned
+📋 "Sample status" — Active samples report (admin)
 
 *Supply Details (admin):*
 📊 "Supply details" — Design / Customer / Warehouse wise sold reports
@@ -1448,6 +1642,69 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.sendMessage(callbackQuery.message.chat.id, employeeNotified
       ? `✅ Task "${task.title}" (${taskId}) marked complete. Employee has been notified.`
       : `✅ Task "${task.title}" (${taskId}) marked complete. ⚠️ Could not notify the employee — please inform them manually.`);
+  } else if (data.startsWith('smpc:')) {
+    const val = data.slice(5);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'sample_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    if (val === '__new__') {
+      session.step = 'customer_new';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(callbackQuery.message.chat.id, 'Enter new customer name:');
+    } else {
+      session.customer = val;
+      session.step = 'type';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(callbackQuery.message.chat.id, `Customer: *${val}*\n\nSelect sample type:`, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[
+          { text: 'Type A', callback_data: 'smpt:A' },
+          { text: 'Type B', callback_data: 'smpt:B' },
+          { text: 'Type C', callback_data: 'smpt:C' },
+        ]] },
+      });
+    }
+
+  } else if (data.startsWith('smpt:')) {
+    const sType = data.slice(5);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'sample_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    session.sample_type = sType;
+    session.step = 'quantity';
+    sessionStore.set(uid, session);
+    await bot.sendMessage(callbackQuery.message.chat.id, `Type: *${sType}*\n\nHow many sample pieces?`, { parse_mode: 'Markdown' });
+
+  } else if (data.startsWith('smpconf:')) {
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'sample_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Submitting...' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    const requestId = genId();
+    const summary = `Sample Request\nDesign: ${session.design}${session.shade ? ' Shade ' + session.shade : ''}\nType: ${session.sample_type}\nCustomer: ${session.customer}\nQty: ${session.quantity} pcs\nFollow-up: ${session.followup_date}`;
+    await approvalQueueRepository.append({
+      requestId, user: uid,
+      actionJSON: { action: 'give_sample', design: session.design, shade: session.shade, sample_type: session.sample_type, customer: session.customer, quantity: session.quantity, followup_date: session.followup_date },
+      riskReason: 'Admin approval required for sample', status: 'pending',
+    });
+    await auditLogRepository.append('approval_queued', { requestId, reason: 'sample_approval' }, uid);
+    const userLabel = await getRequesterDisplayName(uid, null);
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'Sample requires admin approval');
+    await bot.sendMessage(callbackQuery.message.chat.id, `⏳ Sample request submitted for admin approval.\nRequest: ${requestId}`);
+    sessionStore.clear(uid);
+
+  } else if (data.startsWith('smpcanc:')) {
+    const uid = String(callbackQuery.from.id);
+    sessionStore.clear(uid);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    await bot.sendMessage(callbackQuery.message.chat.id, 'Sample request cancelled.');
+
   } else if (data.startsWith('sd:')) {
     const view = data.slice(3);
     const uid = String(callbackQuery.from.id);

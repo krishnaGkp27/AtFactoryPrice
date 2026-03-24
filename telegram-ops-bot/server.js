@@ -77,6 +77,30 @@ async function checkOrderReminders() {
   }
 }
 
+async function checkSampleFollowups() {
+  if (!bot) return;
+  try {
+    const samplesRepo = require('./src/repositories/samplesRepository');
+    const pending = await samplesRepo.getPendingFollowups();
+    for (const sample of pending) {
+      const daysAgo = Math.floor((Date.now() - new Date(sample.date_given).getTime()) / 86400000);
+      for (const adminId of config.access.adminIds) {
+        try {
+          await bot.sendMessage(adminId,
+            `🔔 *Sample Follow-up: ${sample.sample_id}*\n\nDesign: ${sample.design}${sample.shade ? ' Shade ' + sample.shade : ''}\nType: ${sample.sample_type}\nCustomer: ${sample.customer}\nQty: ${sample.quantity} pcs\nGiven: ${sample.date_given} (${daysAgo} days ago)\n\nPlease follow up with the customer. Update with:\n"Sample ${sample.sample_id} returned" or "Sample ${sample.sample_id} converted"`,
+            { parse_mode: 'Markdown' });
+        } catch (e) {
+          logger.error(`Failed to send sample followup to admin ${adminId}`, e.message);
+        }
+      }
+      await samplesRepo.markReminderSent(sample.sample_id);
+      logger.info(`Sample followup sent for ${sample.sample_id} (customer: ${sample.customer})`);
+    }
+  } catch (e) {
+    logger.error('Sample followup check failed:', e.message);
+  }
+}
+
 const PORT = config.port;
 app.listen(PORT, async () => {
   logger.info(`Server listening on port ${PORT}. Webhook: ${config.baseUrl ? `${config.baseUrl}/webhook` : 'Set BASE_URL and run npm run set-webhook'}`);
@@ -84,8 +108,8 @@ app.listen(PORT, async () => {
     await schemaMapper.initialize();
     erpEventBus.registerListeners();
     logger.info('ERP modules initialized');
-    setInterval(checkOrderReminders, REMINDER_INTERVAL_MS);
-    logger.info('Order reminder scheduler started (hourly)');
+    setInterval(() => { checkOrderReminders(); checkSampleFollowups(); }, REMINDER_INTERVAL_MS);
+    logger.info('Reminder scheduler started (hourly): orders + sample follow-ups');
   } catch (e) {
     logger.error('Init error (bot still running):', e.message);
   }

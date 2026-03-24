@@ -28,6 +28,7 @@ Reply with ONLY a valid JSON object (no markdown, no code block) with these keys
 {
   "action": "sell_than | sell_package | sell_batch | sell_mixed | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks | assign_task | my_tasks | mark_task_done | add_contact | list_contacts | search_contact | add_user | report_supply_by_design | report_sold | report_last_transactions | revert_last_transaction | create_order | my_orders | mark_order_delivered",
   "orderId": "string or null (for mark_order_delivered, e.g. ORD-20260221-001)",
+  "sampleId": "string or null (for return_sample/update_sample, e.g. SMP-20260221-001)",
   "design": "string or null",
   "shade": "string or null",
   "packageNo": "string or null",
@@ -93,6 +94,10 @@ ACTION RULES:
 - report_sold: sold stock report. Optional: warehouse (e.g. "sold from Kano office"), customer (e.g. "sold to Ibrahim"), salesDate/period (today/this week/this month). Use for "How many sold from Kano?", "What did we sell this week?", "Show sold packages to Ibrahim", "Total thans sold from Kano office".
 - report_last_transactions: show last N transactions (admin). Use for "Last transactions", "Show last 10 transactions", "Transactions for Neha" (show recent with user names).
 - revert_last_transaction: revert the most recent transaction (admin, sale_bundle only). Use for "Revert last transaction", "Undo last sale".
+- give_sample: give a sample to a customer. Needs design (and optionally shade). Use for "Give sample of 44200 to CJE", "Sample 44200 Shade 3 to Ibrahim", "Send sample of 9031-D to customer".
+- return_sample: mark a sample as returned. Needs sampleId (e.g. SMP-20260221-001). Use for "Sample SMP-xxx returned", "Return sample SMP-xxx".
+- update_sample: update sample status (lost or converted_to_order). Needs sampleId. Use for "Sample SMP-xxx lost", "Sample SMP-xxx converted", "Mark sample SMP-xxx converted to order".
+- sample_status: view active samples report. Optional design filter. Use for "Sample status", "Show samples", "Samples for 44200", "Sample report", "Where are our samples".
 - supply_details: admin views supply/sold details with interactive options (design wise, customer wise, warehouse wise). Use for "Supply details", "Show supply details", "Supply report", "Supplied details", "What did we supply", "Supply summary".
 - create_order: admin creates a supply order. Use for "Create order", "New order", "Make an order", "Create supply order".
 - my_orders: employee views their assigned orders. Use for "My orders", "Show my orders", "Pending orders", "My supply orders".
@@ -184,6 +189,14 @@ User: "Compare Lagos vs Kano warehouse" → {"action":"ask_data","confidence":0.
 User: "Which shade of 44200 sells fastest?" → {"action":"ask_data","design":"44200","confidence":0.95,"clarification":null}
 User: "What percentage of stock is unsold?" → {"action":"ask_data","confidence":0.95,"clarification":null}
 User: "What percentage of stock is unsold?" → {"action":"ask_data","confidence":0.95,"clarification":null}
+User: "Give sample of 44200 to CJE" → {"action":"give_sample","design":"44200","customer":"CJE","confidence":0.95,"clarification":null}
+User: "Sample 44200 Shade 3 to Ibrahim" → {"action":"give_sample","design":"44200","shade":"3","customer":"Ibrahim","confidence":0.95,"clarification":null}
+User: "Sample SMP-20260221-001 returned" → {"action":"return_sample","sampleId":"SMP-20260221-001","confidence":0.95,"clarification":null}
+User: "Sample SMP-20260221-001 lost" → {"action":"update_sample","sampleId":"SMP-20260221-001","confidence":0.95,"clarification":null}
+User: "Sample SMP-20260221-001 converted" → {"action":"update_sample","sampleId":"SMP-20260221-001","confidence":0.95,"clarification":null}
+User: "Sample status" → {"action":"sample_status","confidence":0.95,"clarification":null}
+User: "Samples for 44200" → {"action":"sample_status","design":"44200","confidence":0.95,"clarification":null}
+User: "Where are our samples" → {"action":"sample_status","confidence":0.95,"clarification":null}
 User: "Supply details" → {"action":"supply_details","confidence":0.95,"clarification":null}
 User: "Show supply details" → {"action":"supply_details","confidence":0.95,"clarification":null}
 User: "Supply report" → {"action":"supply_details","confidence":0.95,"clarification":null}
@@ -233,6 +246,7 @@ const VALID_ACTIONS = [
   'report_fast_moving', 'report_dead_stock', 'report_indents', 'report_low_stock', 'report_aging', 'report_supply_by_design', 'report_sold',
   'report_last_transactions', 'revert_last_transaction',
   'ask_data',
+  'give_sample', 'return_sample', 'update_sample', 'sample_status',
   'supply_details', 'create_order', 'my_orders', 'mark_order_delivered',
 ];
 
@@ -260,6 +274,7 @@ function normalize(obj) {
     taskId: obj.taskId != null ? String(obj.taskId).trim() : null,
     taskTitle: obj.taskTitle != null ? String(obj.taskTitle).trim() : null,
     orderId: obj.orderId != null ? String(obj.orderId).trim() : null,
+    sampleId: obj.sampleId != null ? String(obj.sampleId).trim() : null,
     confidence: typeof obj.confidence === 'number' ? Math.max(0, Math.min(1, obj.confidence)) : 0.5,
     clarification: obj.clarification != null ? String(obj.clarification).trim() : null,
   };

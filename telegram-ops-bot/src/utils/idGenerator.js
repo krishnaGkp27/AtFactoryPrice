@@ -21,5 +21,6 @@ module.exports = {
   user: () => generate('USR'),
   transaction: () => generate('TXN'),
   order: () => generate('ORD'),
+  sample: () => generate('SMP'),
   generate,
 };
