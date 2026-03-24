@@ -93,6 +93,7 @@ ACTION RULES:
 - report_sold: sold stock report. Optional: warehouse (e.g. "sold from Kano office"), customer (e.g. "sold to Ibrahim"), salesDate/period (today/this week/this month). Use for "How many sold from Kano?", "What did we sell this week?", "Show sold packages to Ibrahim", "Total thans sold from Kano office".
 - report_last_transactions: show last N transactions (admin). Use for "Last transactions", "Show last 10 transactions", "Transactions for Neha" (show recent with user names).
 - revert_last_transaction: revert the most recent transaction (admin, sale_bundle only). Use for "Revert last transaction", "Undo last sale".
+- supply_details: admin views supply/sold details with interactive options (design wise, customer wise, warehouse wise). Use for "Supply details", "Show supply details", "Supply report", "Supplied details", "What did we supply", "Supply summary".
 - create_order: admin creates a supply order. Use for "Create order", "New order", "Make an order", "Create supply order".
 - my_orders: employee views their assigned orders. Use for "My orders", "Show my orders", "Pending orders", "My supply orders".
 - mark_order_delivered: employee marks an order as delivered. Needs orderId. Use for "Mark order ORD-xxx delivered", "Order ORD-xxx done", "Delivered ORD-xxx".
@@ -183,6 +184,9 @@ User: "Compare Lagos vs Kano warehouse" → {"action":"ask_data","confidence":0.
 User: "Which shade of 44200 sells fastest?" → {"action":"ask_data","design":"44200","confidence":0.95,"clarification":null}
 User: "What percentage of stock is unsold?" → {"action":"ask_data","confidence":0.95,"clarification":null}
 User: "What percentage of stock is unsold?" → {"action":"ask_data","confidence":0.95,"clarification":null}
+User: "Supply details" → {"action":"supply_details","confidence":0.95,"clarification":null}
+User: "Show supply details" → {"action":"supply_details","confidence":0.95,"clarification":null}
+User: "Supply report" → {"action":"supply_details","confidence":0.95,"clarification":null}
 User: "Create order" → {"action":"create_order","confidence":0.95,"clarification":null}
 User: "New order" → {"action":"create_order","confidence":0.95,"clarification":null}
 User: "My orders" → {"action":"my_orders","confidence":0.95,"clarification":null}
@@ -229,7 +233,7 @@ const VALID_ACTIONS = [
   'report_fast_moving', 'report_dead_stock', 'report_indents', 'report_low_stock', 'report_aging', 'report_supply_by_design', 'report_sold',
   'report_last_transactions', 'revert_last_transaction',
   'ask_data',
-  'create_order', 'my_orders', 'mark_order_delivered',
+  'supply_details', 'create_order', 'my_orders', 'mark_order_delivered',
 ];
 
 function normalize(obj) {

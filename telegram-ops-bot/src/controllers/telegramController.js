@@ -98,6 +98,114 @@ function nextWeekday(dayOfWeek) {
   return d.toISOString().split('T')[0];
 }
 
+// ─── Supply Details Reports ─────────────────────────────────────────────────
+
+async function getSoldItems() {
+  const all = await inventoryRepository.getAll();
+  return all.filter((r) => r.status === 'sold' && r.soldTo);
+}
+
+function buildDesignWiseReport(sold) {
+  const designs = new Map();
+  for (const r of sold) {
+    const key = r.design || 'Unknown';
+    if (!designs.has(key)) designs.set(key, { shades: new Map(), totalPkgs: new Set(), totalThans: 0, totalYards: 0, totalValue: 0, buyers: new Map() });
+    const dg = designs.get(key);
+    const sk = r.shade || '-';
+    if (!dg.shades.has(sk)) dg.shades.set(sk, { pkgs: new Set(), thans: 0, yards: 0, value: 0 });
+    const sh = dg.shades.get(sk);
+    sh.pkgs.add(r.packageNo); sh.thans++; sh.yards += r.yards; sh.value += r.yards * r.pricePerYard;
+    dg.totalPkgs.add(r.packageNo); dg.totalThans++; dg.totalYards += r.yards; dg.totalValue += r.yards * r.pricePerYard;
+    dg.buyers.set(r.soldTo, (dg.buyers.get(r.soldTo) || 0) + r.yards);
+  }
+  const sorted = [...designs.entries()].sort((a, b) => b[1].totalValue - a[1].totalValue);
+  let text = `📊 *Supply Details — Design Wise*\n\n`;
+  let grandPkgs = new Set(), grandThans = 0, grandYards = 0, grandValue = 0;
+  for (const [design, dg] of sorted) {
+    text += `📦 *${design}*\n`;
+    const shadesSorted = [...dg.shades.entries()].sort((a, b) => b[1].yards - a[1].yards);
+    for (const [shade, sh] of shadesSorted) {
+      text += `  Shade ${shade}: ${sh.pkgs.size} pkgs, ${sh.thans} thans, ${fmtQty(sh.yards)} yds — ${fmtMoney(sh.value)}\n`;
+    }
+    const topBuyer = [...dg.buyers.entries()].sort((a, b) => b[1] - a[1])[0];
+    text += `  *Total: ${dg.totalPkgs.size} pkgs, ${dg.totalThans} thans, ${fmtQty(dg.totalYards)} yds — ${fmtMoney(dg.totalValue)}*\n`;
+    if (topBuyer) text += `  Top buyer: ${topBuyer[0]} (${fmtQty(topBuyer[1])} yds)\n`;
+    text += '\n';
+    for (const p of dg.totalPkgs) grandPkgs.add(p);
+    grandThans += dg.totalThans; grandYards += dg.totalYards; grandValue += dg.totalValue;
+  }
+  text += `*Grand Total: ${grandPkgs.size} pkgs, ${grandThans} thans, ${fmtQty(grandYards)} yds — ${fmtMoney(grandValue)}*`;
+  return text;
+}
+
+function buildCustomerWiseReport(sold) {
+  const customers = new Map();
+  for (const r of sold) {
+    const key = r.soldTo;
+    if (!customers.has(key)) customers.set(key, { items: [], totalPkgs: new Set(), totalThans: 0, totalYards: 0, totalValue: 0 });
+    const cg = customers.get(key);
+    cg.items.push(r);
+    cg.totalPkgs.add(r.packageNo); cg.totalThans++; cg.totalYards += r.yards; cg.totalValue += r.yards * r.pricePerYard;
+  }
+  const sorted = [...customers.entries()].sort((a, b) => b[1].totalValue - a[1].totalValue);
+  let text = `📊 *Supply Details — Customer Wise*\n\n`;
+  let grandPkgs = new Set(), grandThans = 0, grandYards = 0, grandValue = 0;
+  for (const [customer, cg] of sorted) {
+    text += `👤 *${customer}*\n`;
+    const byDS = new Map();
+    for (const r of cg.items) {
+      const key = `${r.design}|${r.shade || '-'}`;
+      if (!byDS.has(key)) byDS.set(key, { design: r.design, shade: r.shade || '-', pkgs: new Set(), thans: 0, yards: 0, value: 0 });
+      const ds = byDS.get(key);
+      ds.pkgs.add(r.packageNo); ds.thans++; ds.yards += r.yards; ds.value += r.yards * r.pricePerYard;
+    }
+    const dsSorted = [...byDS.values()].sort((a, b) => b.yards - a.yards);
+    for (const ds of dsSorted) {
+      text += `  ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} pkgs, ${ds.thans} thans, ${fmtQty(ds.yards)} yds — ${fmtMoney(ds.value)}\n`;
+    }
+    text += `  *Total: ${cg.totalPkgs.size} pkgs, ${cg.totalThans} thans, ${fmtQty(cg.totalYards)} yds — ${fmtMoney(cg.totalValue)}*\n\n`;
+    for (const p of cg.totalPkgs) grandPkgs.add(p);
+    grandThans += cg.totalThans; grandYards += cg.totalYards; grandValue += cg.totalValue;
+  }
+  text += `*Grand Total: ${grandPkgs.size} pkgs, ${grandThans} thans, ${fmtQty(grandYards)} yds — ${fmtMoney(grandValue)}*`;
+  return text;
+}
+
+function buildWarehouseWiseReport(sold) {
+  const warehouses = new Map();
+  for (const r of sold) {
+    const key = r.warehouse || 'Unknown';
+    if (!warehouses.has(key)) warehouses.set(key, { items: [], totalPkgs: new Set(), totalThans: 0, totalYards: 0, totalValue: 0 });
+    const wg = warehouses.get(key);
+    wg.items.push(r);
+    wg.totalPkgs.add(r.packageNo); wg.totalThans++; wg.totalYards += r.yards; wg.totalValue += r.yards * r.pricePerYard;
+  }
+  const sorted = [...warehouses.entries()].sort((a, b) => b[1].totalValue - a[1].totalValue);
+  let text = `📊 *Supply Details — Warehouse Wise*\n\n`;
+  let grandPkgs = new Set(), grandThans = 0, grandYards = 0, grandValue = 0;
+  for (const [wh, wg] of sorted) {
+    text += `🏭 *${wh}*\n`;
+    const byDS = new Map();
+    for (const r of wg.items) {
+      const key = `${r.design}|${r.shade || '-'}`;
+      if (!byDS.has(key)) byDS.set(key, { design: r.design, shade: r.shade || '-', pkgs: new Set(), thans: 0, yards: 0, value: 0 });
+      const ds = byDS.get(key);
+      ds.pkgs.add(r.packageNo); ds.thans++; ds.yards += r.yards; ds.value += r.yards * r.pricePerYard;
+    }
+    const dsSorted = [...byDS.values()].sort((a, b) => b.yards - a.yards);
+    for (const ds of dsSorted) {
+      text += `  ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} pkgs, ${ds.thans} thans, ${fmtQty(ds.yards)} yds — ${fmtMoney(ds.value)}\n`;
+    }
+    text += `  *Total: ${wg.totalPkgs.size} pkgs, ${wg.totalThans} thans, ${fmtQty(wg.totalYards)} yds — ${fmtMoney(wg.totalValue)}*\n\n`;
+    for (const p of wg.totalPkgs) grandPkgs.add(p);
+    grandThans += wg.totalThans; grandYards += wg.totalYards; grandValue += wg.totalValue;
+  }
+  text += `*Grand Total: ${grandPkgs.size} pkgs, ${grandThans} thans, ${fmtQty(grandYards)} yds — ${fmtMoney(grandValue)}*`;
+  return text;
+}
+
+// ─── End Supply Details Reports ─────────────────────────────────────────────
+
 /** Handle text replies during an active order creation session. Returns true if consumed. */
 async function handleOrderFlowText(bot, chatId, userId, text) {
   const session = sessionStore.get(userId);
@@ -925,6 +1033,22 @@ async function handleMessage(bot, msg) {
         return;
       }
 
+      case 'supply_details': {
+        if (!config.access.adminIds.includes(userId)) {
+          await bot.sendMessage(chatId, 'Supply details is admin-only.');
+          return;
+        }
+        await bot.sendMessage(chatId, '📊 *Supply Details*\n\nSelect view:', {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [
+            [{ text: '📦 Design / Product wise', callback_data: 'sd:design' }],
+            [{ text: '👤 Customer wise', callback_data: 'sd:customer' }],
+            [{ text: '🏭 Warehouse wise', callback_data: 'sd:warehouse' }],
+          ] },
+        });
+        return;
+      }
+
       case 'create_order': {
         if (!config.access.adminIds.includes(userId)) {
           await bot.sendMessage(chatId, 'Only admin can create orders.');
@@ -1032,6 +1156,9 @@ function helpText() {
 📒 "Show ledger for today"
 📊 "Show trial balance"
 🏦 "Add bank GTBank" / "List banks" (admin)
+
+*Supply Details (admin):*
+📊 "Supply details" — Design / Customer / Warehouse wise sold reports
 
 *Supply Orders (admin):*
 📦 "Create order" — Guided order creation
@@ -1321,6 +1448,29 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.sendMessage(callbackQuery.message.chat.id, employeeNotified
       ? `✅ Task "${task.title}" (${taskId}) marked complete. Employee has been notified.`
       : `✅ Task "${task.title}" (${taskId}) marked complete. ⚠️ Could not notify the employee — please inform them manually.`);
+  } else if (data.startsWith('sd:')) {
+    const view = data.slice(3);
+    const uid = String(callbackQuery.from.id);
+    if (!config.access.adminIds.includes(uid)) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Generating report...' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    try {
+      const sold = await getSoldItems();
+      if (!sold.length) {
+        await bot.sendMessage(callbackQuery.message.chat.id, 'No sold items found in inventory.');
+        return;
+      }
+      let report;
+      if (view === 'design') report = buildDesignWiseReport(sold);
+      else if (view === 'customer') report = buildCustomerWiseReport(sold);
+      else if (view === 'warehouse') report = buildWarehouseWiseReport(sold);
+      else { await bot.sendMessage(callbackQuery.message.chat.id, 'Unknown view.'); return; }
+      await sendLong(bot, callbackQuery.message.chat.id, report, { parse_mode: 'Markdown' });
+    } catch (e) {
+      logger.error('Supply details report error', e);
+      await bot.sendMessage(callbackQuery.message.chat.id, `Report error: ${e.message}`);
+    }
+
   } else if (data.startsWith('od:')) {
     const design = data.slice(3);
     const uid = String(callbackQuery.from.id);
