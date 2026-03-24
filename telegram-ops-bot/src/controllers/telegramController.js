@@ -17,7 +17,11 @@ const salesFlow = require('../services/salesFlowService');
 const sessionStore = require('../utils/sessionStore');
 const settingsRepo = require('../repositories/settingsRepository');
 const usersRepository = require('../repositories/usersRepository');
+const inventoryRepository = require('../repositories/inventoryRepository');
+const ordersRepo = require('../repositories/ordersRepository');
+const transactionsRepo = require('../repositories/transactionsRepository');
 const config = require('../config');
+const logger = require('../utils/logger');
 
 /** Resolve userId to display name: Users sheet name, then Telegram first_name/username, then ID. */
 async function getRequesterDisplayName(userId, msgOrNull) {
@@ -86,6 +90,90 @@ function parseLedgerDate(str) {
   return null;
 }
 
+/** Compute next occurrence of a weekday (1=Mon..5=Fri) as YYYY-MM-DD. */
+function nextWeekday(dayOfWeek) {
+  const d = new Date();
+  const diff = (dayOfWeek - d.getDay() + 7) % 7 || 7;
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().split('T')[0];
+}
+
+/** Handle text replies during an active order creation session. Returns true if consumed. */
+async function handleOrderFlowText(bot, chatId, userId, text) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'order_flow') return false;
+
+  if (text.toLowerCase() === 'cancel') {
+    sessionStore.clear(userId);
+    await bot.sendMessage(chatId, 'Order creation cancelled.');
+    return true;
+  }
+
+  if (session.step === 'customer_new') {
+    session.customer = text.trim();
+    session.step = 'quantity';
+    sessionStore.set(userId, session);
+    await bot.sendMessage(chatId, `Customer: *${session.customer}*\n\nEnter quantity:`, { parse_mode: 'Markdown' });
+    return true;
+  }
+
+  if (session.step === 'quantity') {
+    const qty = text.trim();
+    if (!qty || isNaN(Number(qty)) || Number(qty) <= 0) {
+      await bot.sendMessage(chatId, 'Please enter a valid positive number for quantity.');
+      return true;
+    }
+    session.quantity = qty;
+    session.step = 'salesperson';
+    sessionStore.set(userId, session);
+    const users = await usersRepository.getAll();
+    const active = users.filter((u) => u.status === 'active');
+    if (!active.length) {
+      await bot.sendMessage(chatId, 'No active employees found in Users sheet. Add employees first.');
+      sessionStore.clear(userId);
+      return true;
+    }
+    const rows = [];
+    for (let i = 0; i < active.length; i += 2) {
+      const row = [{ text: active[i].name, callback_data: `os:${active[i].user_id}` }];
+      if (active[i + 1]) row.push({ text: active[i + 1].name, callback_data: `os:${active[i + 1].user_id}` });
+      rows.push(row);
+    }
+    await bot.sendMessage(chatId, 'Select salesperson:', { reply_markup: { inline_keyboard: rows } });
+    return true;
+  }
+
+  if (session.step === 'date_custom') {
+    const parsed = parseLedgerDate(text.trim());
+    if (!parsed) {
+      await bot.sendMessage(chatId, 'Could not parse date. Use DD-MM-YYYY or YYYY-MM-DD format.');
+      return true;
+    }
+    session.scheduled_date = parsed;
+    session.step = 'confirm';
+    sessionStore.set(userId, session);
+    await showOrderSummary(bot, chatId, session);
+    return true;
+  }
+
+  return false;
+}
+
+async function showOrderSummary(bot, chatId, session) {
+  let summary = `*Supply Order Summary*\n\n`;
+  summary += `Design: ${session.design}${session.shade ? ' ' + session.shade : ''}\n`;
+  summary += `Customer: ${session.customer}\n`;
+  summary += `Quantity: ${session.quantity}\n`;
+  summary += `Salesperson: ${session.salesperson_name}\n`;
+  summary += `Payment: ${session.payment_status}\n`;
+  summary += `Scheduled Date: ${session.scheduled_date}\n`;
+  const keyboard = { inline_keyboard: [[
+    { text: '✅ Confirm Order', callback_data: `oconf:1` },
+    { text: '❌ Cancel', callback_data: `ocanc:1` },
+  ]] };
+  await bot.sendMessage(chatId, summary, { parse_mode: 'Markdown', reply_markup: keyboard });
+}
+
 async function handleMessage(bot, msg) {
   const chatId = msg.chat?.id;
   const userId = String(msg.from?.id || '');
@@ -140,6 +228,18 @@ async function handleMessage(bot, msg) {
   if (config.access.adminIds.includes(userId)) {
     const handled = await approvalEvents.handleEnrichmentMessage(bot, chatId, userId, text);
     if (handled) return;
+  }
+
+  const orderFlowHandled = await handleOrderFlowText(bot, chatId, userId, text);
+  if (orderFlowHandled) return;
+
+  if (text.toLowerCase() === '/create_order' || text.toLowerCase() === 'create order') {
+    if (!config.access.adminIds.includes(userId)) {
+      await bot.sendMessage(chatId, 'Only admin can create orders.');
+      return;
+    }
+    await startOrderFlow(bot, chatId, userId);
+    return;
   }
 
   const activeSession = salesFlow.getSession(userId);
@@ -825,6 +925,67 @@ async function handleMessage(bot, msg) {
         return;
       }
 
+      case 'create_order': {
+        if (!config.access.adminIds.includes(userId)) {
+          await bot.sendMessage(chatId, 'Only admin can create orders.');
+          return;
+        }
+        await startOrderFlow(bot, chatId, userId);
+        return;
+      }
+
+      case 'my_orders': {
+        const orders = await ordersRepo.getByAssignee(userId);
+        if (!orders.length) {
+          await bot.sendMessage(chatId, 'You have no pending supply orders.');
+          return;
+        }
+        let out = '📋 *Your Supply Orders*\n\n';
+        for (const o of orders) {
+          const icon = o.status === 'accepted' ? '✅' : '⏳';
+          out += `${icon} *${o.order_id}*\n  Design: ${o.design} | Customer: ${o.customer}\n  Qty: ${o.quantity} | Date: ${o.scheduled_date}\n  Payment: ${o.payment_status} | Status: ${o.status}\n\n`;
+        }
+        const accepted = orders.filter((o) => o.status === 'accepted');
+        if (accepted.length) {
+          out += `To mark delivered: "Mark order ${accepted[0].order_id} delivered"`;
+        }
+        await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      case 'mark_order_delivered': {
+        const oid = intent.orderId || (text.match(/ORD-\d{8}-\d{3}/) || [])[0];
+        if (!oid) {
+          await bot.sendMessage(chatId, 'Please specify order ID. Example: "Mark order ORD-20260221-001 delivered".');
+          return;
+        }
+        const order = await ordersRepo.getById(oid);
+        if (!order) {
+          await bot.sendMessage(chatId, `Order ${oid} not found.`);
+          return;
+        }
+        if (order.salesperson_id !== userId) {
+          await bot.sendMessage(chatId, 'You can only mark your own assigned orders as delivered.');
+          return;
+        }
+        if (order.status === 'delivered') {
+          await bot.sendMessage(chatId, `Order ${oid} is already marked as delivered.`);
+          return;
+        }
+        if (order.status !== 'accepted') {
+          await bot.sendMessage(chatId, `Order ${oid} must be accepted before it can be marked delivered. Current status: ${order.status}`);
+          return;
+        }
+        await ordersRepo.updateStatus(oid, 'delivered', { delivered_at: new Date().toISOString() });
+        await bot.sendMessage(chatId, `✅ Order ${oid} marked as delivered.`);
+        for (const adminId of config.access.adminIds) {
+          try {
+            await bot.sendMessage(adminId, `📦 Order *${oid}* has been delivered.\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQty: ${order.quantity}\nDelivered by: ${order.salesperson_name}`, { parse_mode: 'Markdown' });
+          } catch (_) {}
+        }
+        return;
+      }
+
       default: {
         await bot.sendMessage(chatId, helpText());
       }
@@ -871,6 +1032,11 @@ function helpText() {
 📒 "Show ledger for today"
 📊 "Show trial balance"
 🏦 "Add bank GTBank" / "List banks" (admin)
+
+*Supply Orders (admin):*
+📦 "Create order" — Guided order creation
+📋 "My orders" — View assigned orders (employee)
+✅ "Mark order ORD-xxx delivered" — Mark as delivered
 
 *Ledger commands (admin, Ledger_Customers):*
 /addledgercustomer <name> [phone] [credit_limit]
@@ -1081,6 +1247,27 @@ async function executeSale(bot, chatId, userId) {
   sessionStore.clear(userId);
 }
 
+/** Start the order creation flow — show available designs as inline buttons. */
+async function startOrderFlow(bot, chatId, userId) {
+  const designs = await inventoryRepository.getDistinctDesigns();
+  const designNums = [...new Set(designs.map((d) => d.design.trim()).filter(Boolean))].sort();
+  if (!designNums.length) {
+    await bot.sendMessage(chatId, 'No designs available in inventory.');
+    return;
+  }
+  sessionStore.set(userId, { type: 'order_flow', step: 'design', createdBy: userId });
+  const rows = [];
+  for (let i = 0; i < designNums.length; i += 3) {
+    const row = [];
+    for (let j = i; j < i + 3 && j < designNums.length; j++) {
+      row.push({ text: designNums[j], callback_data: `od:${designNums[j].slice(0, 50)}` });
+    }
+    rows.push(row);
+  }
+  if (rows.length > 30) rows.splice(30);
+  await bot.sendMessage(chatId, '📦 *Create Supply Order*\n\nSelect a design:', { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
 async function handleCallbackQuery(bot, callbackQuery) {
   const data = (callbackQuery.data || '').trim();
   if (data.startsWith('approve:')) {
@@ -1134,6 +1321,179 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.sendMessage(callbackQuery.message.chat.id, employeeNotified
       ? `✅ Task "${task.title}" (${taskId}) marked complete. Employee has been notified.`
       : `✅ Task "${task.title}" (${taskId}) marked complete. ⚠️ Could not notify the employee — please inform them manually.`);
+  } else if (data.startsWith('od:')) {
+    const design = data.slice(3);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'order_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    session.design = design;
+    session.shade = '';
+    session.step = 'customer';
+    sessionStore.set(uid, session);
+    const pastCustomers = await transactionsRepo.getCustomersByDesign(design);
+    const rows = [];
+    for (let i = 0; i < pastCustomers.length; i += 2) {
+      const row = [{ text: pastCustomers[i], callback_data: `oc:${pastCustomers[i].slice(0, 50)}` }];
+      if (pastCustomers[i + 1]) row.push({ text: pastCustomers[i + 1], callback_data: `oc:${pastCustomers[i + 1].slice(0, 50)}` });
+      rows.push(row);
+    }
+    if (rows.length > 20) rows.splice(20);
+    rows.push([{ text: '➕ New customer', callback_data: 'oc:__new__' }]);
+    await bot.sendMessage(callbackQuery.message.chat.id, `Design: *${design}*\n\nSelect customer (past buyers shown):`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+
+  } else if (data.startsWith('oc:')) {
+    const val = data.slice(3);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'order_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    if (val === '__new__') {
+      session.step = 'customer_new';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(callbackQuery.message.chat.id, 'Enter new customer name:');
+    } else {
+      session.customer = val;
+      session.step = 'quantity';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(callbackQuery.message.chat.id, `Customer: *${val}*\n\nEnter quantity:`, { parse_mode: 'Markdown' });
+    }
+
+  } else if (data.startsWith('os:')) {
+    const spId = data.slice(3);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'order_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    const spUser = await usersRepository.findByUserId(spId);
+    session.salesperson_id = spId;
+    session.salesperson_name = spUser ? spUser.name : spId;
+    session.step = 'payment';
+    sessionStore.set(uid, session);
+    await bot.sendMessage(callbackQuery.message.chat.id, `Salesperson: *${session.salesperson_name}*\n\nPayment status:`, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [[{ text: '💰 PAID', callback_data: 'op:PAID' }, { text: '📝 UNPAID', callback_data: 'op:UNPAID' }]] },
+    });
+
+  } else if (data.startsWith('op:')) {
+    const pay = data.slice(3);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'order_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    session.payment_status = pay;
+    session.step = 'date';
+    sessionStore.set(uid, session);
+    const nextMon = nextWeekday(1);
+    const nextFri = nextWeekday(5);
+    const today = new Date().toISOString().split('T')[0];
+    await bot.sendMessage(callbackQuery.message.chat.id, 'Schedule supply date:', {
+      reply_markup: { inline_keyboard: [
+        [{ text: `📅 Today (${today})`, callback_data: 'odt:today' }],
+        [{ text: `📅 Next Monday (${nextMon})`, callback_data: 'odt:mon' }, { text: `📅 Next Friday (${nextFri})`, callback_data: 'odt:fri' }],
+        [{ text: '✏️ Custom date', callback_data: 'odt:custom' }],
+      ] },
+    });
+
+  } else if (data.startsWith('odt:')) {
+    const val = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'order_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    if (val === 'today') {
+      session.scheduled_date = new Date().toISOString().split('T')[0];
+    } else if (val === 'mon') {
+      session.scheduled_date = nextWeekday(1);
+    } else if (val === 'fri') {
+      session.scheduled_date = nextWeekday(5);
+    } else {
+      session.step = 'date_custom';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(callbackQuery.message.chat.id, 'Enter date (DD-MM-YYYY or YYYY-MM-DD):');
+      return;
+    }
+    session.step = 'confirm';
+    sessionStore.set(uid, session);
+    await showOrderSummary(bot, callbackQuery.message.chat.id, session);
+
+  } else if (data.startsWith('oconf:')) {
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'order_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Creating order...' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    const saved = await ordersRepo.append({
+      design: session.design,
+      shade: session.shade || '',
+      customer: session.customer,
+      quantity: session.quantity,
+      salesperson_id: session.salesperson_id,
+      salesperson_name: session.salesperson_name,
+      payment_status: session.payment_status,
+      scheduled_date: session.scheduled_date,
+      status: 'pending_accept',
+      created_by: uid,
+    });
+    sessionStore.clear(uid);
+    await bot.sendMessage(callbackQuery.message.chat.id, `✅ Order *${saved.order_id}* created and sent to ${session.salesperson_name} for acceptance.`, { parse_mode: 'Markdown' });
+    try {
+      const orderMsg = `📦 *New Supply Order Assigned*\n\nOrder: *${saved.order_id}*\nDesign: ${session.design}\nCustomer: ${session.customer}\nQuantity: ${session.quantity}\nPayment: ${session.payment_status}\nScheduled Date: ${session.scheduled_date}\n\nPlease accept this order:`;
+      await bot.sendMessage(session.salesperson_id, orderMsg, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: '✅ Accept Order', callback_data: `oacc:${saved.order_id}` }]] },
+      });
+    } catch (e) {
+      logger.error(`Failed to notify employee ${session.salesperson_id} about order ${saved.order_id}`, e.message);
+      await bot.sendMessage(callbackQuery.message.chat.id, `⚠️ Could not notify ${session.salesperson_name}. Please inform them manually about order ${saved.order_id}.`);
+    }
+
+  } else if (data.startsWith('ocanc:')) {
+    const uid = String(callbackQuery.from.id);
+    sessionStore.clear(uid);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    await bot.sendMessage(callbackQuery.message.chat.id, 'Order creation cancelled.');
+
+  } else if (data.startsWith('oacc:')) {
+    const orderId = data.slice(5);
+    const uid = String(callbackQuery.from.id);
+    const order = await ordersRepo.getById(orderId);
+    if (!order) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Order not found.' }); return; }
+    if (order.salesperson_id !== uid) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'This order is not assigned to you.' }); return; }
+    if (order.status !== 'pending_accept') { await bot.answerCallbackQuery(callbackQuery.id, { text: `Order already ${order.status}.` }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Accepting...' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    await ordersRepo.updateStatus(orderId, 'accepted', { accepted_at: new Date().toISOString() });
+    await bot.sendMessage(callbackQuery.message.chat.id, `✅ You accepted order *${orderId}*.\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQty: ${order.quantity}\nScheduled: ${order.scheduled_date}\n\nYou'll get a reminder 1 day before. Mark delivered with: "Mark order ${orderId} delivered"`, { parse_mode: 'Markdown' });
+    for (const adminId of config.access.adminIds) {
+      try {
+        await bot.sendMessage(adminId, `✅ *${order.salesperson_name}* accepted order *${orderId}*\n\nDesign: ${order.design} | Customer: ${order.customer}\nQty: ${order.quantity} | Date: ${order.scheduled_date}`, { parse_mode: 'Markdown' });
+      } catch (_) {}
+    }
+
+  } else if (data.startsWith('odel:')) {
+    const orderId = data.slice(5);
+    const uid = String(callbackQuery.from.id);
+    const order = await ordersRepo.getById(orderId);
+    if (!order) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Order not found.' }); return; }
+    if (order.salesperson_id !== uid) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Not your order.' }); return; }
+    if (order.status !== 'accepted') { await bot.answerCallbackQuery(callbackQuery.id, { text: `Order must be accepted first. Status: ${order.status}` }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Marking delivered...' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    await ordersRepo.updateStatus(orderId, 'delivered', { delivered_at: new Date().toISOString() });
+    await bot.sendMessage(callbackQuery.message.chat.id, `✅ Order *${orderId}* marked as delivered.`, { parse_mode: 'Markdown' });
+    for (const adminId of config.access.adminIds) {
+      try {
+        await bot.sendMessage(adminId, `📦 Order *${orderId}* has been delivered.\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQty: ${order.quantity}\nDelivered by: ${order.salesperson_name}`, { parse_mode: 'Markdown' });
+      } catch (_) {}
+    }
+
   } else {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Unknown action.' });
   }

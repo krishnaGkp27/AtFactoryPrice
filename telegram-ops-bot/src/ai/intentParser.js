@@ -26,7 +26,8 @@ INVENTORY STRUCTURE:
 
 Reply with ONLY a valid JSON object (no markdown, no code block) with these keys:
 {
-  "action": "sell_than | sell_package | sell_batch | sell_mixed | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks | assign_task | my_tasks | mark_task_done | add_contact | list_contacts | search_contact | add_user | report_supply_by_design | report_sold | report_last_transactions | revert_last_transaction",
+  "action": "sell_than | sell_package | sell_batch | sell_mixed | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks | assign_task | my_tasks | mark_task_done | add_contact | list_contacts | search_contact | add_user | report_supply_by_design | report_sold | report_last_transactions | revert_last_transaction | create_order | my_orders | mark_order_delivered",
+  "orderId": "string or null (for mark_order_delivered, e.g. ORD-20260221-001)",
   "design": "string or null",
   "shade": "string or null",
   "packageNo": "string or null",
@@ -92,6 +93,9 @@ ACTION RULES:
 - report_sold: sold stock report. Optional: warehouse (e.g. "sold from Kano office"), customer (e.g. "sold to Ibrahim"), salesDate/period (today/this week/this month). Use for "How many sold from Kano?", "What did we sell this week?", "Show sold packages to Ibrahim", "Total thans sold from Kano office".
 - report_last_transactions: show last N transactions (admin). Use for "Last transactions", "Show last 10 transactions", "Transactions for Neha" (show recent with user names).
 - revert_last_transaction: revert the most recent transaction (admin, sale_bundle only). Use for "Revert last transaction", "Undo last sale".
+- create_order: admin creates a supply order. Use for "Create order", "New order", "Make an order", "Create supply order".
+- my_orders: employee views their assigned orders. Use for "My orders", "Show my orders", "Pending orders", "My supply orders".
+- mark_order_delivered: employee marks an order as delivered. Needs orderId. Use for "Mark order ORD-xxx delivered", "Order ORD-xxx done", "Delivered ORD-xxx".
 - ask_data: FREE-FORM data question that doesn't fit any predefined report. Use this for custom/complex questions like "compare Lagos vs Kano", "which shade sells fastest", "what percentage is unsold", "show me all buyers of 44200 in descending order", etc.
 
 SALE DETAIL RULES:
@@ -178,7 +182,13 @@ User: "Show me all buyers of 44200 in descending order" → {"action":"ask_data"
 User: "Compare Lagos vs Kano warehouse" → {"action":"ask_data","confidence":0.95,"clarification":null}
 User: "Which shade of 44200 sells fastest?" → {"action":"ask_data","design":"44200","confidence":0.95,"clarification":null}
 User: "What percentage of stock is unsold?" → {"action":"ask_data","confidence":0.95,"clarification":null}
-User: "What percentage of stock is unsold?" → {"action":"ask_data","confidence":0.95,"clarification":null}`;
+User: "What percentage of stock is unsold?" → {"action":"ask_data","confidence":0.95,"clarification":null}
+User: "Create order" → {"action":"create_order","confidence":0.95,"clarification":null}
+User: "New order" → {"action":"create_order","confidence":0.95,"clarification":null}
+User: "My orders" → {"action":"my_orders","confidence":0.95,"clarification":null}
+User: "Show my orders" → {"action":"my_orders","confidence":0.95,"clarification":null}
+User: "Mark order ORD-20260221-001 delivered" → {"action":"mark_order_delivered","orderId":"ORD-20260221-001","confidence":0.95,"clarification":null}
+User: "Order ORD-20260221-001 done" → {"action":"mark_order_delivered","orderId":"ORD-20260221-001","confidence":0.95,"clarification":null}`;
 
 async function parse(userMessage) {
   if (!openai) return fallbackParse(userMessage);
@@ -219,6 +229,7 @@ const VALID_ACTIONS = [
   'report_fast_moving', 'report_dead_stock', 'report_indents', 'report_low_stock', 'report_aging', 'report_supply_by_design', 'report_sold',
   'report_last_transactions', 'revert_last_transaction',
   'ask_data',
+  'create_order', 'my_orders', 'mark_order_delivered',
 ];
 
 function normalize(obj) {
@@ -244,6 +255,7 @@ function normalize(obj) {
     bankName: obj.bankName != null ? String(obj.bankName).trim() : null,
     taskId: obj.taskId != null ? String(obj.taskId).trim() : null,
     taskTitle: obj.taskTitle != null ? String(obj.taskTitle).trim() : null,
+    orderId: obj.orderId != null ? String(obj.orderId).trim() : null,
     confidence: typeof obj.confidence === 'number' ? Math.max(0, Math.min(1, obj.confidence)) : 0.5,
     clarification: obj.clarification != null ? String(obj.clarification).trim() : null,
   };

@@ -48,6 +48,13 @@ const REQUIRED_SHEETS = {
   LedgerBalanceCache: {
     headers: ['customer_id', 'balance', 'last_updated'],
   },
+  Orders: {
+    headers: [
+      'order_id', 'design', 'shade', 'customer', 'quantity',
+      'salesperson_id', 'salesperson_name', 'payment_status', 'scheduled_date',
+      'status', 'created_by', 'created_at', 'accepted_at', 'delivered_at', 'reminder_sent',
+    ],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];

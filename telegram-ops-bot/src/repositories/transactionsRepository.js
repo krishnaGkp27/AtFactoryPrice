@@ -87,4 +87,17 @@ async function setStatusReverted(timestamp, user, action) {
   return false;
 }
 
-module.exports = { append, ensureHeader, HEADERS, getLast, parseRow, setStatusReverted };
+async function getCustomersByDesign(design) {
+  await ensureHeader();
+  const rows = await sheets.readRange(SHEET, 'A2:Q');
+  const d = (design || '').toString().toUpperCase().trim();
+  const customers = new Set();
+  for (const r of rows) {
+    const rowDesign = (r[3] || '').toString().toUpperCase().trim();
+    const customer = (r[11] || '').toString().trim();
+    if (rowDesign === d && customer) customers.add(customer);
+  }
+  return Array.from(customers);
+}
+
+module.exports = { append, ensureHeader, HEADERS, getLast, parseRow, setStatusReverted, getCustomersByDesign };

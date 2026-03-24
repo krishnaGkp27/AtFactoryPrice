@@ -54,6 +54,29 @@ app.post('/webhook', (req, res) => {
   }
 });
 
+const REMINDER_INTERVAL_MS = 60 * 60 * 1000;
+
+async function checkOrderReminders() {
+  if (!bot) return;
+  try {
+    const ordersRepo = require('./src/repositories/ordersRepository');
+    const pending = await ordersRepo.getPendingReminders();
+    for (const order of pending) {
+      try {
+        await bot.sendMessage(order.salesperson_id,
+          `⏰ *Reminder: Supply order ${order.order_id}*\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQuantity: ${order.quantity}\nScheduled: *${order.scheduled_date}* (tomorrow)\nPayment: ${order.payment_status}\n\nPlease prepare for delivery. Mark done with: "Mark order ${order.order_id} delivered"`,
+          { parse_mode: 'Markdown' });
+        await ordersRepo.updateStatus(order.order_id, 'accepted', { reminder_sent: 'true' });
+        logger.info(`Reminder sent for order ${order.order_id} to ${order.salesperson_name}`);
+      } catch (e) {
+        logger.error(`Failed to send reminder for order ${order.order_id}`, e.message);
+      }
+    }
+  } catch (e) {
+    logger.error('Order reminder check failed:', e.message);
+  }
+}
+
 const PORT = config.port;
 app.listen(PORT, async () => {
   logger.info(`Server listening on port ${PORT}. Webhook: ${config.baseUrl ? `${config.baseUrl}/webhook` : 'Set BASE_URL and run npm run set-webhook'}`);
@@ -61,6 +84,8 @@ app.listen(PORT, async () => {
     await schemaMapper.initialize();
     erpEventBus.registerListeners();
     logger.info('ERP modules initialized');
+    setInterval(checkOrderReminders, REMINDER_INTERVAL_MS);
+    logger.info('Order reminder scheduler started (hourly)');
   } catch (e) {
     logger.error('Init error (bot still running):', e.message);
   }

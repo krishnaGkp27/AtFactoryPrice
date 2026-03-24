@@ -20,5 +20,6 @@ module.exports = {
   customer: () => generate('CUST'),
   user: () => generate('USR'),
   transaction: () => generate('TXN'),
+  order: () => generate('ORD'),
   generate,
 };
