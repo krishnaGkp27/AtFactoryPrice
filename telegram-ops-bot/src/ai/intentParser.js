@@ -98,6 +98,8 @@ ACTION RULES:
 - return_sample: mark a sample as returned. Needs sampleId (e.g. SMP-20260221-001). Use for "Sample SMP-xxx returned", "Return sample SMP-xxx".
 - update_sample: update sample status (lost or converted_to_order). Needs sampleId. Use for "Sample SMP-xxx lost", "Sample SMP-xxx converted", "Mark sample SMP-xxx converted to order".
 - sample_status: view active samples report. Optional design filter. Use for "Sample status", "Show samples", "Samples for 44200", "Sample report", "Where are our samples".
+- inventory_details: admin views inventory stock details (warehouse wise or design wise) with total, sold, balance. Use for "Inventory details", "Stock details", "Show inventory", "Inventory report", "Warehouse stock", "Design stock".
+- sales_report_interactive: admin views sales report with period selection and grouping. Use for "Sales report", "Show sales", "Sales summary", "Sales details", "Revenue report". NOT for simple one-line queries like "How many sold from Kano" (use report_sold for those).
 - supply_details: admin views supply/sold details with interactive options (design wise, customer wise, warehouse wise). Use for "Supply details", "Show supply details", "Supply report", "Supplied details", "What did we supply", "Supply summary".
 - create_order: admin creates a supply order. Use for "Create order", "New order", "Make an order", "Create supply order".
 - my_orders: employee views their assigned orders. Use for "My orders", "Show my orders", "Pending orders", "My supply orders".
@@ -197,6 +199,13 @@ User: "Sample SMP-20260221-001 converted" → {"action":"update_sample","sampleI
 User: "Sample status" → {"action":"sample_status","confidence":0.95,"clarification":null}
 User: "Samples for 44200" → {"action":"sample_status","design":"44200","confidence":0.95,"clarification":null}
 User: "Where are our samples" → {"action":"sample_status","confidence":0.95,"clarification":null}
+User: "Inventory details" → {"action":"inventory_details","confidence":0.95,"clarification":null}
+User: "Stock details" → {"action":"inventory_details","confidence":0.95,"clarification":null}
+User: "Show inventory" → {"action":"inventory_details","confidence":0.95,"clarification":null}
+User: "Sales report" → {"action":"sales_report_interactive","confidence":0.95,"clarification":null}
+User: "Show sales" → {"action":"sales_report_interactive","confidence":0.95,"clarification":null}
+User: "Sales summary" → {"action":"sales_report_interactive","confidence":0.95,"clarification":null}
+User: "Revenue report" → {"action":"sales_report_interactive","confidence":0.95,"clarification":null}
 User: "Supply details" → {"action":"supply_details","confidence":0.95,"clarification":null}
 User: "Show supply details" → {"action":"supply_details","confidence":0.95,"clarification":null}
 User: "Supply report" → {"action":"supply_details","confidence":0.95,"clarification":null}
@@ -247,6 +256,7 @@ const VALID_ACTIONS = [
   'report_last_transactions', 'revert_last_transaction',
   'ask_data',
   'give_sample', 'return_sample', 'update_sample', 'sample_status',
+  'inventory_details', 'sales_report_interactive',
   'supply_details', 'create_order', 'my_orders', 'mark_order_delivered',
 ];
 
