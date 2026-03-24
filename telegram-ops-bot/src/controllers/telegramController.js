@@ -98,132 +98,60 @@ async function handleMessage(bot, msg) {
 
   await auditLogRepository.append('telegram_message', { chatId, text: text.slice(0, 200) }, userId);
 
-  const isMfgMode = config.botMode === 'manufacturing';
-
   if (!text) {
     await bot.sendMessage(chatId, helpText());
     return;
   }
 
-  // Industry-standard ledger commands — skip in manufacturing mode
-  if (!isMfgMode) {
-    const ledgerCommands = require('../commands/ledgerCommands');
-    if (text.startsWith('/ledger ')) {
-      try {
-        await ledgerCommands.handleLedger(bot, chatId, userId, text.replace(/^\/ledger\s+/i, '').trim());
-      } catch (e) {
-        await bot.sendMessage(chatId, `Ledger error: ${e.message || 'Unknown error'}`);
-      }
-      return;
+  const ledgerCommands = require('../commands/ledgerCommands');
+  if (text.startsWith('/ledger ')) {
+    try {
+      await ledgerCommands.handleLedger(bot, chatId, userId, text.replace(/^\/ledger\s+/i, '').trim());
+    } catch (e) {
+      await bot.sendMessage(chatId, `Ledger error: ${e.message || 'Unknown error'}`);
     }
-    if (text.startsWith('/balance ')) {
-      try {
-        await ledgerCommands.handleBalance(bot, chatId, userId, text.replace(/^\/balance\s+/i, '').trim());
-      } catch (e) {
-        await bot.sendMessage(chatId, `Balance error: ${e.message || 'Unknown error'}`);
-      }
-      return;
+    return;
+  }
+  if (text.startsWith('/balance ')) {
+    try {
+      await ledgerCommands.handleBalance(bot, chatId, userId, text.replace(/^\/balance\s+/i, '').trim());
+    } catch (e) {
+      await bot.sendMessage(chatId, `Balance error: ${e.message || 'Unknown error'}`);
     }
-    if (text.startsWith('/payment ')) {
-      try {
-        await ledgerCommands.handlePayment(bot, chatId, userId, text.replace(/^\/payment\s+/i, '').trim());
-      } catch (e) {
-        await bot.sendMessage(chatId, `Payment error: ${e.message || 'Unknown error'}`);
-      }
-      return;
+    return;
+  }
+  if (text.startsWith('/payment ')) {
+    try {
+      await ledgerCommands.handlePayment(bot, chatId, userId, text.replace(/^\/payment\s+/i, '').trim());
+    } catch (e) {
+      await bot.sendMessage(chatId, `Payment error: ${e.message || 'Unknown error'}`);
     }
-    if (text.startsWith('/addledgercustomer ')) {
-      try {
-        await ledgerCommands.handleAddLedgerCustomer(bot, chatId, userId, text.replace(/^\/addledgercustomer\s+/i, '').trim());
-      } catch (e) {
-        await bot.sendMessage(chatId, `Add customer error: ${e.message || 'Unknown error'}`);
-      }
-      return;
+    return;
+  }
+  if (text.startsWith('/addledgercustomer ')) {
+    try {
+      await ledgerCommands.handleAddLedgerCustomer(bot, chatId, userId, text.replace(/^\/addledgercustomer\s+/i, '').trim());
+    } catch (e) {
+      await bot.sendMessage(chatId, `Add customer error: ${e.message || 'Unknown error'}`);
     }
-  }
-
-  // ─── Manufacturing commands (/mfg_*) ─────────────────────────────────────────
-  const mfgCommands = require('../commands/manufacturingCommands');
-
-  // Manufacturing guided flow: if user has an active mfg session, consume reply
-  const mfgFlowHandled = await mfgCommands.handleFlowReply(bot, chatId, userId, text);
-  if (mfgFlowHandled) return;
-
-  // Manufacturing slash commands
-  const MFG_STAGE_CMDS = { '/mfg_fabric': 'fabric', '/mfg_emb_out': 'emb_out', '/mfg_emb_in': 'emb_in', '/mfg_stitch': 'stitch', '/mfg_threadcut': 'threadcut', '/mfg_iron': 'iron', '/mfg_qc': 'qc', '/mfg_package': 'packaging' };
-  for (const [cmd, stage] of Object.entries(MFG_STAGE_CMDS)) {
-    if (text.toLowerCase().startsWith(cmd)) {
-      try { await mfgCommands.handleStageCommand(bot, chatId, userId, stage, text.replace(new RegExp(`^${cmd.replace('/', '\\/')}\\s*`, 'i'), '').trim()); }
-      catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-      return;
-    }
-  }
-  if (text.startsWith('/mfg_approve_article')) {
-    try { await mfgCommands.handleApproveArticle(bot, chatId, userId, text.replace(/^\/mfg_approve_article\s*/i, '').trim()); }
-    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-    return;
-  }
-  if (text === '/mfg_pending') {
-    try { await mfgCommands.handlePending(bot, chatId, userId); }
-    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-    return;
-  }
-  if (text.startsWith('/mfg_status')) {
-    try { await mfgCommands.handleStatus(bot, chatId, userId, text.replace(/^\/mfg_status\s*/i, '').trim()); }
-    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-    return;
-  }
-  if (text === '/mfg_pipeline') {
-    try { await mfgCommands.handlePipeline(bot, chatId, userId); }
-    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-    return;
-  }
-  if (text.startsWith('/mfg_add_vendor')) {
-    try { await mfgCommands.handleAddVendor(bot, chatId, userId, text.replace(/^\/mfg_add_vendor\s*/i, '').trim()); }
-    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-    return;
-  }
-  if (text.startsWith('/mfg_remove_vendor')) {
-    try { await mfgCommands.handleRemoveVendor(bot, chatId, userId, text.replace(/^\/mfg_remove_vendor\s*/i, '').trim()); }
-    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-    return;
-  }
-  if (text.startsWith('/mfg_vendors')) {
-    try { await mfgCommands.handleListVendors(bot, chatId, userId, text.replace(/^\/mfg_vendors\s*/i, '').trim()); }
-    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-    return;
-  }
-  if (text.startsWith('/mfg_rejections')) {
-    try { await mfgCommands.handleRejections(bot, chatId, userId, text.replace(/^\/mfg_rejections\s*/i, '').trim()); }
-    catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
     return;
   }
 
-  // Post-approval enrichment — skip in manufacturing mode
-  if (!isMfgMode && config.access.adminIds.includes(userId)) {
+  if (config.access.adminIds.includes(userId)) {
     const handled = await approvalEvents.handleEnrichmentMessage(bot, chatId, userId, text);
     if (handled) return;
   }
 
-  // Handle active sale flow sessions — skip in manufacturing mode
-  if (!isMfgMode) {
-    const activeSession = salesFlow.getSession(userId);
-    if (activeSession) {
-      const handled = await handleSaleSession(bot, chatId, msg, userId, text, activeSession);
-      if (handled) return;
-    }
+  const activeSession = salesFlow.getSession(userId);
+  if (activeSession) {
+    const handled = await handleSaleSession(bot, chatId, msg, userId, text, activeSession);
+    if (handled) return;
   }
 
   const intent = await intentParser.parse(text);
 
   if (intent.confidence < 0.75 && intent.clarification) {
     await bot.sendMessage(chatId, `Need more info: ${intent.clarification}`);
-    return;
-  }
-
-  // In manufacturing mode, only allow mfg_* intents; send help for everything else
-  if (isMfgMode && !intent.action.startsWith('mfg_')) {
-    await bot.sendMessage(chatId, helpText());
     return;
   }
 
@@ -897,68 +825,6 @@ async function handleMessage(bot, msg) {
         return;
       }
 
-      // ─── Manufacturing intents (natural language → guided flow) ───────────
-      case 'mfg_fabric':
-      case 'mfg_emb_out':
-      case 'mfg_emb_in':
-      case 'mfg_stitch':
-      case 'mfg_threadcut':
-      case 'mfg_iron':
-      case 'mfg_qc':
-      case 'mfg_package': {
-        const STAGE_MAP = { 'package': 'packaging' };
-        const stageName = STAGE_MAP[intent.action.replace('mfg_', '')] || intent.action.replace('mfg_', '');
-        const artNo = intent.articleNo;
-        if (!artNo) { await bot.sendMessage(chatId, 'Which article? e.g. "Update fabric for ART-001"'); return; }
-        try { await mfgCommands.handleStageCommand(bot, chatId, userId, stageName, artNo); }
-        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-        return;
-      }
-      case 'mfg_approve_article': {
-        if (!intent.articleNo) { await bot.sendMessage(chatId, 'Which article? e.g. "Approve article ART-001"'); return; }
-        try { await mfgCommands.handleApproveArticle(bot, chatId, userId, intent.articleNo); }
-        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-        return;
-      }
-      case 'mfg_pending': {
-        try { await mfgCommands.handlePending(bot, chatId, userId); }
-        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-        return;
-      }
-      case 'mfg_status': {
-        if (!intent.articleNo) { await bot.sendMessage(chatId, 'Which article? e.g. "Status of ART-001"'); return; }
-        try { await mfgCommands.handleStatus(bot, chatId, userId, intent.articleNo); }
-        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-        return;
-      }
-      case 'mfg_pipeline': {
-        try { await mfgCommands.handlePipeline(bot, chatId, userId); }
-        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-        return;
-      }
-      case 'mfg_add_vendor': {
-        const vArgs = [intent.vendorType || '', intent.vendorCode || '', intent.vendorName || ''].join(' ').trim();
-        try { await mfgCommands.handleAddVendor(bot, chatId, userId, vArgs); }
-        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-        return;
-      }
-      case 'mfg_remove_vendor': {
-        const rvArgs = [intent.vendorType || '', intent.vendorCode || ''].join(' ').trim();
-        try { await mfgCommands.handleRemoveVendor(bot, chatId, userId, rvArgs); }
-        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-        return;
-      }
-      case 'mfg_vendors': {
-        try { await mfgCommands.handleListVendors(bot, chatId, userId, intent.vendorType || ''); }
-        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-        return;
-      }
-      case 'mfg_rejections': {
-        try { await mfgCommands.handleRejections(bot, chatId, userId, intent.articleNo || ''); }
-        catch (e) { await bot.sendMessage(chatId, `MFG error: ${e.message}`); }
-        return;
-      }
-
       default: {
         await bot.sendMessage(chatId, helpText());
       }
@@ -969,7 +835,6 @@ async function handleMessage(bot, msg) {
 }
 
 function helpText() {
-  if (config.botMode === 'manufacturing') return mfgHelpText();
   return `Here's what I can do:
 
 *Inventory:*
@@ -1011,54 +876,7 @@ function helpText() {
 /addledgercustomer <name> [phone] [credit_limit]
 /ledger <customer_id> — Customer ledger (paginated)
 /balance <customer_id> — Current balance
-/payment <customer_id> <amount> — Record payment
-
-*Manufacturing (stage updates):*
-/mfg_fabric <article_no> — Fabric & cutting
-/mfg_emb_out <article_no> — Dispatch to EMB
-/mfg_emb_in <article_no> — Receive from EMB
-/mfg_stitch <article_no> — Stitching
-/mfg_threadcut <article_no> — Thread cutting
-/mfg_iron <article_no> — Ironing
-/mfg_qc <article_no> — Quality check
-/mfg_package <article_no> — Final packaging
-
-*Manufacturing (admin):*
-/mfg_approve_article <article_no>
-/mfg_pending — Pending approvals
-/mfg_status <article_no> — Article status
-/mfg_pipeline — All in-progress articles
-/mfg_add_vendor <fabric|emb> <code> <name>
-/mfg_remove_vendor <fabric|emb> <code>
-/mfg_vendors [fabric|emb]
-/mfg_rejections [article_no]`;
-
-}
-
-function mfgHelpText() {
-  return `🏭 *NYN Manufacturing Bot*
-
-*Stage Updates (employee):*
-"Update fabric for ART-001" — Fabric receipt & cutting
-"Send ART-001 to embroidery" — EMB dispatch
-"Received ART-001 from embroidery" — EMB receive
-"Start stitching ART-001" — Stitching
-"Thread cutting for ART-001" — Thread cutting
-"Ironing for ART-001" — Ironing / press
-"QC for ART-001" — Quality check
-"Final packaging ART-001" — Packaging & stock
-
-*Admin:*
-"Approve article ART-001" — 2nd admin approval
-"MFG pending" — Pending approvals
-"Status of ART-001" — Article status
-"Production pipeline" — All in-progress articles
-"Add fabric vendor FV001 Raj Textiles"
-"Add emb vendor EV001 Star EMB"
-"Show vendors" — List vendors
-"Show rejections" — Pending rejections
-
-Each stage update is a guided conversation — the bot asks for each field. After confirmation, it goes to admin for approval.`;
+/payment <customer_id> <amount> — Record payment`;
 }
 
 /**
@@ -1309,10 +1127,6 @@ async function handleCallbackQuery(bot, callbackQuery) {
     try {
       await bot.sendMessage(task.assigned_to, `✅ Your task "${task.title}" (${taskId}) has been approved by admin and marked complete.`);
     } catch (_) {}
-  } else if (data.startsWith('mfg_approve:') || data.startsWith('mfg_reject:')) {
-    const mfgCommands = require('../commands/manufacturingCommands');
-    const mfgAction = data.startsWith('mfg_approve:') ? 'approve' : 'reject';
-    await mfgCommands.handleApprovalCallback(bot, callbackQuery, mfgAction);
   } else {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Unknown action.' });
   }

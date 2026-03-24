@@ -45,7 +45,6 @@ const config = {
 
   sheets: {
     sheetId: process.env.GOOGLE_SHEET_ID || '',
-    mfgSheetId: process.env.MFG_GOOGLE_SHEET_ID || '',
     credentials: parseCredentials(),
   },
 
@@ -62,9 +61,6 @@ const config = {
   },
 
   currency: process.env.CURRENCY || 'NGN',
-
-  /** BOT_MODE: 'full' (default, all features) or 'manufacturing' (only mfg commands) */
-  botMode: (process.env.BOT_MODE || 'full').toLowerCase(),
 
   /** Optional: set BOT_API_KEY so admin page can update settings with X-API-Key header */
   botApiKey: process.env.BOT_API_KEY || '',

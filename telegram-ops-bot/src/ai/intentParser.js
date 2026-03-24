@@ -26,11 +26,7 @@ INVENTORY STRUCTURE:
 
 Reply with ONLY a valid JSON object (no markdown, no code block) with these keys:
 {
-  "action": "sell_than | sell_package | sell_batch | sell_mixed | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks | assign_task | my_tasks | mark_task_done | add_contact | list_contacts | search_contact | add_user | report_supply_by_design | report_sold | report_last_transactions | revert_last_transaction | mfg_fabric | mfg_emb_out | mfg_emb_in | mfg_stitch | mfg_threadcut | mfg_iron | mfg_qc | mfg_package | mfg_approve_article | mfg_pending | mfg_status | mfg_pipeline | mfg_add_vendor | mfg_remove_vendor | mfg_vendors | mfg_rejections",
-  "articleNo": "string or null (article number for manufacturing, e.g. ART-001)",
-  "vendorType": "string or null (fabric or emb, for vendor commands)",
-  "vendorCode": "string or null (vendor code for add/remove vendor)",
-  "vendorName": "string or null (vendor name for add vendor)",
+  "action": "sell_than | sell_package | sell_batch | sell_mixed | update_price | return_than | return_package | transfer_than | transfer_package | transfer_batch | add | check | analyze | list_packages | package_detail | add_customer | check_customer | record_payment | check_balance | show_ledger | trial_balance | add_bank | remove_bank | list_banks | assign_task | my_tasks | mark_task_done | add_contact | list_contacts | search_contact | add_user | report_supply_by_design | report_sold | report_last_transactions | revert_last_transaction",
   "design": "string or null",
   "shade": "string or null",
   "packageNo": "string or null",
@@ -97,24 +93,6 @@ ACTION RULES:
 - report_last_transactions: show last N transactions (admin). Use for "Last transactions", "Show last 10 transactions", "Transactions for Neha" (show recent with user names).
 - revert_last_transaction: revert the most recent transaction (admin, sale_bundle only). Use for "Revert last transaction", "Undo last sale".
 - ask_data: FREE-FORM data question that doesn't fit any predefined report. Use this for custom/complex questions like "compare Lagos vs Kano", "which shade sells fastest", "what percentage is unsold", "show me all buyers of 44200 in descending order", etc.
-
-MANUFACTURING ACTIONS (garment production pipeline):
-- mfg_fabric: start fabric receipt & cutting for an article. Needs articleNo. Use for "Update fabric for ART-001", "Fabric entry for ART-001", "Record fabric and cutting for ART-001", "Start cutting ART-001".
-- mfg_emb_out: dispatch article to embroidery. Needs articleNo. Use for "Send ART-001 to embroidery", "Dispatch ART-001 to EMB", "EMB dispatch for ART-001".
-- mfg_emb_in: receive article back from embroidery. Needs articleNo. Use for "Received ART-001 from embroidery", "EMB receive ART-001", "Embroidery received for ART-001".
-- mfg_stitch: record stitching for an article. Needs articleNo. Use for "Start stitching ART-001", "Stitching for ART-001", "Update stitching ART-001".
-- mfg_threadcut: record thread cutting for an article. Needs articleNo. Use for "Thread cutting for ART-001", "Thread cut ART-001", "Cut threads ART-001".
-- mfg_iron: record ironing/pressing for an article. Needs articleNo. Use for "Ironing for ART-001", "Press ART-001", "Iron ART-001".
-- mfg_qc: record quality check for an article. Needs articleNo. Use for "QC for ART-001", "Quality check ART-001", "Packaging check ART-001".
-- mfg_package: record final packaging & stock for an article. Needs articleNo. Use for "Package ART-001", "Final packaging ART-001", "Packing ART-001".
-- mfg_approve_article: admin approves a new article (2nd admin). Needs articleNo. Use for "Approve article ART-001", "Approve ART-001".
-- mfg_pending: list pending manufacturing approvals. Use for "Show pending manufacturing approvals", "MFG pending", "Manufacturing pending".
-- mfg_status: show article production status. Needs articleNo. Use for "Status of ART-001", "Where is ART-001", "Article status ART-001", "Production status ART-001".
-- mfg_pipeline: show all in-progress articles. Use for "Production pipeline", "Show pipeline", "All articles in production", "Factory status".
-- mfg_add_vendor: admin adds a vendor. Needs vendorType (fabric/emb), vendorCode, vendorName. Use for "Add fabric vendor FV001 Raj Textiles", "Add emb vendor EV002 Star EMB".
-- mfg_remove_vendor: admin removes a vendor. Needs vendorType (fabric/emb), vendorCode. Use for "Remove fabric vendor FV001", "Deactivate emb vendor EV002".
-- mfg_vendors: list vendors. Optional vendorType. Use for "Show vendors", "List fabric vendors", "Show EMB vendors".
-- mfg_rejections: view rejections. Optional articleNo. Use for "Show rejections", "Rejections for ART-001".
 
 SALE DETAIL RULES:
 - When selling, also extract salesperson, paymentMode, and salesDate if mentioned.
@@ -200,37 +178,7 @@ User: "Show me all buyers of 44200 in descending order" → {"action":"ask_data"
 User: "Compare Lagos vs Kano warehouse" → {"action":"ask_data","confidence":0.95,"clarification":null}
 User: "Which shade of 44200 sells fastest?" → {"action":"ask_data","design":"44200","confidence":0.95,"clarification":null}
 User: "What percentage of stock is unsold?" → {"action":"ask_data","confidence":0.95,"clarification":null}
-User: "Update fabric for ART-001" → {"action":"mfg_fabric","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Record fabric and cutting for ART-001" → {"action":"mfg_fabric","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Start cutting ART-001" → {"action":"mfg_fabric","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Send ART-001 to embroidery" → {"action":"mfg_emb_out","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Dispatch ART-001 to EMB" → {"action":"mfg_emb_out","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Received ART-001 from embroidery" → {"action":"mfg_emb_in","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "EMB receive ART-001" → {"action":"mfg_emb_in","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Start stitching ART-001" → {"action":"mfg_stitch","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Stitching for ART-001" → {"action":"mfg_stitch","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Thread cutting for ART-001" → {"action":"mfg_threadcut","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Cut threads ART-001" → {"action":"mfg_threadcut","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Ironing for ART-001" → {"action":"mfg_iron","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Press ART-001" → {"action":"mfg_iron","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "QC for ART-001" → {"action":"mfg_qc","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Quality check ART-001" → {"action":"mfg_qc","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Final packaging ART-001" → {"action":"mfg_package","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Package ART-001" → {"action":"mfg_package","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Approve article ART-001" → {"action":"mfg_approve_article","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Show pending manufacturing approvals" → {"action":"mfg_pending","confidence":0.95,"clarification":null}
-User: "MFG pending" → {"action":"mfg_pending","confidence":0.95,"clarification":null}
-User: "Status of ART-001" → {"action":"mfg_status","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Where is ART-001 in production?" → {"action":"mfg_status","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Production pipeline" → {"action":"mfg_pipeline","confidence":0.95,"clarification":null}
-User: "Factory status" → {"action":"mfg_pipeline","confidence":0.95,"clarification":null}
-User: "Add fabric vendor FV001 Raj Textiles" → {"action":"mfg_add_vendor","vendorType":"fabric","vendorCode":"FV001","vendorName":"Raj Textiles","confidence":0.95,"clarification":null}
-User: "Add emb vendor EV002 Star EMB" → {"action":"mfg_add_vendor","vendorType":"emb","vendorCode":"EV002","vendorName":"Star EMB","confidence":0.95,"clarification":null}
-User: "Remove fabric vendor FV001" → {"action":"mfg_remove_vendor","vendorType":"fabric","vendorCode":"FV001","confidence":0.95,"clarification":null}
-User: "Show vendors" → {"action":"mfg_vendors","confidence":0.95,"clarification":null}
-User: "List fabric vendors" → {"action":"mfg_vendors","vendorType":"fabric","confidence":0.95,"clarification":null}
-User: "Show rejections for ART-001" → {"action":"mfg_rejections","articleNo":"ART-001","confidence":0.95,"clarification":null}
-User: "Pending rejections" → {"action":"mfg_rejections","confidence":0.95,"clarification":null}`;
+User: "What percentage of stock is unsold?" → {"action":"ask_data","confidence":0.95,"clarification":null}`;
 
 async function parse(userMessage) {
   if (!openai) return fallbackParse(userMessage);
@@ -271,9 +219,6 @@ const VALID_ACTIONS = [
   'report_fast_moving', 'report_dead_stock', 'report_indents', 'report_low_stock', 'report_aging', 'report_supply_by_design', 'report_sold',
   'report_last_transactions', 'revert_last_transaction',
   'ask_data',
-  'mfg_fabric', 'mfg_emb_out', 'mfg_emb_in', 'mfg_stitch', 'mfg_threadcut', 'mfg_iron', 'mfg_qc', 'mfg_package',
-  'mfg_approve_article', 'mfg_pending', 'mfg_status', 'mfg_pipeline',
-  'mfg_add_vendor', 'mfg_remove_vendor', 'mfg_vendors', 'mfg_rejections',
 ];
 
 function normalize(obj) {
@@ -299,10 +244,6 @@ function normalize(obj) {
     bankName: obj.bankName != null ? String(obj.bankName).trim() : null,
     taskId: obj.taskId != null ? String(obj.taskId).trim() : null,
     taskTitle: obj.taskTitle != null ? String(obj.taskTitle).trim() : null,
-    articleNo: obj.articleNo != null ? String(obj.articleNo).trim() : null,
-    vendorType: obj.vendorType != null ? String(obj.vendorType).trim().toLowerCase() : null,
-    vendorCode: obj.vendorCode != null ? String(obj.vendorCode).trim() : null,
-    vendorName: obj.vendorName != null ? String(obj.vendorName).trim() : null,
     confidence: typeof obj.confidence === 'number' ? Math.max(0, Math.min(1, obj.confidence)) : 0.5,
     clarification: obj.clarification != null ? String(obj.clarification).trim() : null,
   };

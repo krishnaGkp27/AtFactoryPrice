@@ -20,8 +20,5 @@ module.exports = {
   customer: () => generate('CUST'),
   user: () => generate('USR'),
   transaction: () => generate('TXN'),
-  mfgApproval: () => generate('MFA'),
-  mfgRejection: () => generate('MFR'),
-  mfgLog: () => generate('MFL'),
   generate,
 };
