@@ -13,6 +13,11 @@ const HEADERS = [
   'Warehouse', 'PricePerYard', 'DateReceived', 'SoldTo', 'SoldDate', 'NetMtrs', 'NetWeight', 'UpdatedAt',
 ];
 
+/** Short-lived cache for getAll() to avoid hammering the API during batch ops. */
+let _allCache = null;
+let _allCacheTs = 0;
+const CACHE_TTL_MS = 5000;
+
 function str(v) { return (v ?? '').toString().trim(); }
 function num(v) { return parseFloat(v) || 0; }
 function upper(v) { return str(v).toUpperCase(); }
@@ -57,8 +62,17 @@ async function ensureHeader() {
 }
 
 async function getAll() {
+  const now = Date.now();
+  if (_allCache && (now - _allCacheTs) < CACHE_TTL_MS) return _allCache;
   const rows = await sheets.readRange(SHEET, 'A2:P');
-  return rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.packageNo || r.design);
+  _allCache = rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.packageNo || r.design);
+  _allCacheTs = Date.now();
+  return _allCache;
+}
+
+function invalidateCache() {
+  _allCache = null;
+  _allCacheTs = 0;
 }
 
 async function findByDesign(design, shade) {
@@ -102,6 +116,7 @@ async function markThanSold(packageNo, thanNo, customer, soldDateOverride) {
     'sold', than.warehouse, than.pricePerYard, than.dateReceived,
     customer || '', soldDate, than.netMtrs, than.netWeight, now,
   ]]);
+  invalidateCache();
   return { ...than, status: 'sold', soldTo: customer, soldDate, updatedAt: now };
 }
 
@@ -116,6 +131,7 @@ async function markPackageSold(packageNo, customer, soldDateOverride) {
     values: [['sold', than.warehouse, than.pricePerYard, than.dateReceived, customer || '', soldDate, than.netMtrs, than.netWeight, now]],
   }));
   await sheets.batchUpdateRanges(SHEET, updates);
+  invalidateCache();
   return available.map((than) => ({ ...than, status: 'sold', soldTo: customer, soldDate, updatedAt: now }));
 }
 
@@ -123,6 +139,7 @@ async function appendThans(thanRows) {
   await ensureHeader();
   const rows = thanRows.map(toRow);
   await sheets.appendRows(SHEET, rows);
+  invalidateCache();
   return thanRows.length;
 }
 
@@ -141,6 +158,7 @@ async function markThanAvailable(packageNo, thanNo) {
     'available', than.warehouse, than.pricePerYard, than.dateReceived,
     '', '', than.netMtrs, than.netWeight, now,
   ]]);
+  invalidateCache();
   return { ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now };
 }
 
@@ -154,6 +172,7 @@ async function markPackageAvailable(packageNo) {
     values: [['available', than.warehouse, than.pricePerYard, than.dateReceived, '', '', than.netMtrs, than.netWeight, now]],
   }));
   await sheets.batchUpdateRanges(SHEET, updates);
+  invalidateCache();
   return sold.map((than) => ({ ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now }));
 }
 
@@ -174,6 +193,7 @@ async function updatePrice(filters, newPrice) {
     updates.push({ range: `P${row.rowIndex}`, values: [[now]] });
   }
   await sheets.batchUpdateRanges(SHEET, updates);
+  invalidateCache();
   return matches.length;
 }
 
@@ -187,6 +207,7 @@ async function transferThan(packageNo, thanNo, toWarehouse) {
     { range: `I${than.rowIndex}`, values: [[toWarehouse]] },
     { range: `P${than.rowIndex}`, values: [[now]] },
   ]);
+  invalidateCache();
   return { ...than, warehouse: toWarehouse, fromWarehouse, updatedAt: now };
 }
 
@@ -201,6 +222,7 @@ async function transferPackage(packageNo, toWarehouse) {
     updates.push({ range: `P${than.rowIndex}`, values: [[now]] });
   }
   await sheets.batchUpdateRanges(SHEET, updates);
+  invalidateCache();
   return available.map((than) => ({ ...than, warehouse: toWarehouse, fromWarehouse: than.warehouse, updatedAt: now }));
 }
 
@@ -234,4 +256,5 @@ module.exports = {
   ensureHeader,
   parseRow,
   toRow,
+  invalidateCache,
 };
