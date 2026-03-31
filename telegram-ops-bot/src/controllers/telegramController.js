@@ -111,7 +111,11 @@ async function getSoldItems() {
   return all.filter((r) => r.status === 'sold' && r.soldTo);
 }
 
-function buildDesignWiseReport(sold) {
+function valStr(value, isAdmin) {
+  return isAdmin ? ` — ${fmtMoney(value)}` : '';
+}
+
+function buildDesignWiseReport(sold, isAdmin) {
   const designs = new Map();
   for (const r of sold) {
     const key = r.design || 'Unknown';
@@ -125,26 +129,71 @@ function buildDesignWiseReport(sold) {
     dg.buyers.set(r.soldTo, (dg.buyers.get(r.soldTo) || 0) + r.yards);
   }
   const sorted = [...designs.entries()].sort((a, b) => b[1].totalValue - a[1].totalValue);
-  let text = `📊 *Supply Details — Design Wise*\n\n`;
+  let text = `📊 *Supply Details — Design Wise (Summary)*\n\n`;
   let grandPkgs = new Set(), grandThans = 0, grandYards = 0, grandValue = 0;
   for (const [design, dg] of sorted) {
     text += `📦 *${design}*\n`;
     const shadesSorted = [...dg.shades.entries()].sort((a, b) => b[1].yards - a[1].yards);
     for (const [shade, sh] of shadesSorted) {
-      text += `  Shade ${shade}: ${sh.pkgs.size} pkgs, ${sh.thans} thans, ${fmtQty(sh.yards)} yds — ${fmtMoney(sh.value)}\n`;
+      text += `  Shade ${shade}: ${sh.pkgs.size} pkgs, ${sh.thans} thans, ${fmtQty(sh.yards)} yds${valStr(sh.value, isAdmin)}\n`;
     }
     const topBuyer = [...dg.buyers.entries()].sort((a, b) => b[1] - a[1])[0];
-    text += `  *Total: ${dg.totalPkgs.size} pkgs, ${dg.totalThans} thans, ${fmtQty(dg.totalYards)} yds — ${fmtMoney(dg.totalValue)}*\n`;
+    text += `  *Total: ${dg.totalPkgs.size} pkgs, ${dg.totalThans} thans, ${fmtQty(dg.totalYards)} yds${valStr(dg.totalValue, isAdmin)}*\n`;
     if (topBuyer) text += `  Top buyer: ${topBuyer[0]} (${fmtQty(topBuyer[1])} yds)\n`;
     text += '\n';
     for (const p of dg.totalPkgs) grandPkgs.add(p);
     grandThans += dg.totalThans; grandYards += dg.totalYards; grandValue += dg.totalValue;
   }
-  text += `*Grand Total: ${grandPkgs.size} pkgs, ${grandThans} thans, ${fmtQty(grandYards)} yds — ${fmtMoney(grandValue)}*`;
+  text += `*Grand Total: ${grandPkgs.size} pkgs, ${grandThans} thans, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
   return text;
 }
 
-function buildCustomerWiseReport(sold) {
+function buildDesignDateWiseReport(sold, isAdmin) {
+  const designs = new Map();
+  for (const r of sold) {
+    const key = r.design || 'Unknown';
+    if (!designs.has(key)) designs.set(key, []);
+    designs.get(key).push(r);
+  }
+
+  const designTotals = [...designs.entries()].map(([design, items]) => {
+    const totalValue = items.reduce((s, r) => s + r.yards * r.pricePerYard, 0);
+    return { design, items, totalValue };
+  }).sort((a, b) => b.totalValue - a.totalValue);
+
+  let text = `📊 *Supply Details — Design Wise (Date-wise)*\n\n`;
+  let grandPkgs = new Set(), grandThans = 0, grandYards = 0, grandValue = 0;
+
+  for (const { design, items } of designTotals) {
+    const byDateCust = new Map();
+    for (const r of items) {
+      const date = r.soldDate || 'Unknown';
+      const cust = r.soldTo || 'Unknown';
+      const shade = r.shade || '-';
+      const key = `${date}|${cust}|${shade}`;
+      if (!byDateCust.has(key)) byDateCust.set(key, { date, customer: cust, shade, pkgs: new Set(), thans: 0, yards: 0, value: 0 });
+      const grp = byDateCust.get(key);
+      grp.pkgs.add(r.packageNo); grp.thans++; grp.yards += r.yards; grp.value += r.yards * r.pricePerYard;
+    }
+    const rows = [...byDateCust.values()].sort((a, b) => a.date.localeCompare(b.date));
+
+    let dTotal = { pkgs: new Set(), thans: 0, yards: 0, value: 0 };
+    text += `📦 *${design}*\n`;
+    for (const row of rows) {
+      const d = row.date.length >= 10 ? row.date.slice(5) : row.date;
+      text += `  ${d}  ${row.customer}  Sh ${row.shade}  ${row.pkgs.size}pkg ${row.thans}th ${fmtQty(row.yards)}yd${valStr(row.value, isAdmin)}\n`;
+      for (const p of row.pkgs) dTotal.pkgs.add(p);
+      dTotal.thans += row.thans; dTotal.yards += row.yards; dTotal.value += row.value;
+    }
+    text += `  *Total: ${dTotal.pkgs.size} pkgs, ${dTotal.thans} thans, ${fmtQty(dTotal.yards)} yds${valStr(dTotal.value, isAdmin)}*\n\n`;
+    for (const p of dTotal.pkgs) grandPkgs.add(p);
+    grandThans += dTotal.thans; grandYards += dTotal.yards; grandValue += dTotal.value;
+  }
+  text += `*Grand Total: ${grandPkgs.size} pkgs, ${grandThans} thans, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
+  return text;
+}
+
+function buildCustomerWiseReport(sold, isAdmin) {
   const customers = new Map();
   for (const r of sold) {
     const key = r.soldTo;
@@ -167,17 +216,17 @@ function buildCustomerWiseReport(sold) {
     }
     const dsSorted = [...byDS.values()].sort((a, b) => b.yards - a.yards);
     for (const ds of dsSorted) {
-      text += `  ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} pkgs, ${ds.thans} thans, ${fmtQty(ds.yards)} yds — ${fmtMoney(ds.value)}\n`;
+      text += `  ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} pkgs, ${ds.thans} thans, ${fmtQty(ds.yards)} yds${valStr(ds.value, isAdmin)}\n`;
     }
-    text += `  *Total: ${cg.totalPkgs.size} pkgs, ${cg.totalThans} thans, ${fmtQty(cg.totalYards)} yds — ${fmtMoney(cg.totalValue)}*\n\n`;
+    text += `  *Total: ${cg.totalPkgs.size} pkgs, ${cg.totalThans} thans, ${fmtQty(cg.totalYards)} yds${valStr(cg.totalValue, isAdmin)}*\n\n`;
     for (const p of cg.totalPkgs) grandPkgs.add(p);
     grandThans += cg.totalThans; grandYards += cg.totalYards; grandValue += cg.totalValue;
   }
-  text += `*Grand Total: ${grandPkgs.size} pkgs, ${grandThans} thans, ${fmtQty(grandYards)} yds — ${fmtMoney(grandValue)}*`;
+  text += `*Grand Total: ${grandPkgs.size} pkgs, ${grandThans} thans, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
   return text;
 }
 
-function buildWarehouseWiseReport(sold) {
+function buildWarehouseWiseReport(sold, isAdmin) {
   const warehouses = new Map();
   for (const r of sold) {
     const key = r.warehouse || 'Unknown';
@@ -200,13 +249,13 @@ function buildWarehouseWiseReport(sold) {
     }
     const dsSorted = [...byDS.values()].sort((a, b) => b.yards - a.yards);
     for (const ds of dsSorted) {
-      text += `  ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} pkgs, ${ds.thans} thans, ${fmtQty(ds.yards)} yds — ${fmtMoney(ds.value)}\n`;
+      text += `  ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} pkgs, ${ds.thans} thans, ${fmtQty(ds.yards)} yds${valStr(ds.value, isAdmin)}\n`;
     }
-    text += `  *Total: ${wg.totalPkgs.size} pkgs, ${wg.totalThans} thans, ${fmtQty(wg.totalYards)} yds — ${fmtMoney(wg.totalValue)}*\n\n`;
+    text += `  *Total: ${wg.totalPkgs.size} pkgs, ${wg.totalThans} thans, ${fmtQty(wg.totalYards)} yds${valStr(wg.totalValue, isAdmin)}*\n\n`;
     for (const p of wg.totalPkgs) grandPkgs.add(p);
     grandThans += wg.totalThans; grandYards += wg.totalYards; grandValue += wg.totalValue;
   }
-  text += `*Grand Total: ${grandPkgs.size} pkgs, ${grandThans} thans, ${fmtQty(grandYards)} yds — ${fmtMoney(grandValue)}*`;
+  text += `*Grand Total: ${grandPkgs.size} pkgs, ${grandThans} thans, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
   return text;
 }
 
@@ -1791,10 +1840,6 @@ async function handleMessage(bot, msg) {
       }
 
       case 'supply_details': {
-        if (!config.access.adminIds.includes(userId)) {
-          await bot.sendMessage(chatId, 'Supply details is admin-only.');
-          return;
-        }
         await bot.sendMessage(chatId, '📊 *Supply Details*\n\nSelect view:', {
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: [
@@ -2364,7 +2409,40 @@ async function handleCallbackQuery(bot, callbackQuery) {
   } else if (data.startsWith('sd:')) {
     const view = data.slice(3);
     const uid = String(callbackQuery.from.id);
-    if (!config.access.adminIds.includes(uid)) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' }); return; }
+    const isAdminUser = config.access.adminIds.includes(uid);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: view === 'design' ? 'Select sub-view...' : 'Generating report...' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+
+    if (view === 'design') {
+      await bot.sendMessage(callbackQuery.message.chat.id, '📦 *Design Wise — Select view:*', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [
+          [{ text: '📦 Summary', callback_data: 'sdv:design_summary' }, { text: '📅 Date-wise', callback_data: 'sdv:design_datewise' }],
+        ] },
+      });
+      return;
+    }
+
+    try {
+      const sold = await getSoldItems();
+      if (!sold.length) {
+        await bot.sendMessage(callbackQuery.message.chat.id, 'No sold items found in inventory.');
+        return;
+      }
+      let report;
+      if (view === 'customer') report = buildCustomerWiseReport(sold, isAdminUser);
+      else if (view === 'warehouse') report = buildWarehouseWiseReport(sold, isAdminUser);
+      else { await bot.sendMessage(callbackQuery.message.chat.id, 'Unknown view.'); return; }
+      await sendLong(bot, callbackQuery.message.chat.id, report, { parse_mode: 'Markdown' });
+    } catch (e) {
+      logger.error('Supply details report error', e);
+      await bot.sendMessage(callbackQuery.message.chat.id, `Report error: ${e.message}`);
+    }
+
+  } else if (data.startsWith('sdv:')) {
+    const subView = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const isAdminUser = config.access.adminIds.includes(uid);
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Generating report...' });
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
     try {
@@ -2374,9 +2452,8 @@ async function handleCallbackQuery(bot, callbackQuery) {
         return;
       }
       let report;
-      if (view === 'design') report = buildDesignWiseReport(sold);
-      else if (view === 'customer') report = buildCustomerWiseReport(sold);
-      else if (view === 'warehouse') report = buildWarehouseWiseReport(sold);
+      if (subView === 'design_summary') report = buildDesignWiseReport(sold, isAdminUser);
+      else if (subView === 'design_datewise') report = buildDesignDateWiseReport(sold, isAdminUser);
       else { await bot.sendMessage(callbackQuery.message.chat.id, 'Unknown view.'); return; }
       await sendLong(bot, callbackQuery.message.chat.id, report, { parse_mode: 'Markdown' });
     } catch (e) {
