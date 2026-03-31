@@ -23,6 +23,9 @@ const samplesRepo = require('../repositories/samplesRepository');
 const customerFollowupsRepo = require('../repositories/customerFollowupsRepository');
 const customerNotesRepo = require('../repositories/customerNotesRepository');
 const transactionsRepo = require('../repositories/transactionsRepository');
+const receiptsRepo = require('../repositories/receiptsRepository');
+const driveClient = require('../repositories/driveClient');
+const idGenerator = require('../utils/idGenerator');
 const config = require('../config');
 const logger = require('../utils/logger');
 
@@ -622,6 +625,183 @@ async function showOrderSummary(bot, chatId, session) {
   await bot.sendMessage(chatId, summary, { parse_mode: 'Markdown', reply_markup: keyboard });
 }
 
+// ─── Receipt Upload Flow ────────────────────────────────────────────────────
+
+async function downloadTelegramFile(bot, fileId) {
+  const file = await bot.getFile(fileId);
+  const url = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
+  const https = require('https');
+  return new Promise((resolve, reject) => {
+    https.get(url, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ buffer: Buffer.concat(chunks), filePath: file.file_path }));
+      res.on('error', reject);
+    }).on('error', reject);
+  });
+}
+
+async function startReceiptFlow(bot, chatId, userId) {
+  const customersRepoLocal = require('../repositories/customersRepository');
+  const allCust = await customersRepoLocal.getAll();
+  const active = allCust.filter((c) => (c.status || 'Active').toLowerCase() === 'active' && c.name);
+  const rows = [];
+  for (let i = 0; i < active.length; i += 2) {
+    const row = [{ text: active[i].name, callback_data: `rcc:${active[i].name.slice(0, 50)}` }];
+    if (active[i + 1]) row.push({ text: active[i + 1].name, callback_data: `rcc:${active[i + 1].name.slice(0, 50)}` });
+    rows.push(row);
+  }
+  if (rows.length > 20) rows.splice(20);
+  rows.push([{ text: '➕ Register New Customer', callback_data: 'rcc:__new__' }]);
+  sessionStore.set(userId, { type: 'receipt_flow', step: 'customer', createdBy: userId });
+  await bot.sendMessage(chatId, '🧾 *Upload Payment Receipt*\n\nSelect customer:', { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function handleReceiptFlowText(bot, chatId, userId, text) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'receipt_flow') return false;
+
+  if (text.toLowerCase() === 'cancel') {
+    sessionStore.clear(userId);
+    await bot.sendMessage(chatId, 'Receipt upload cancelled.');
+    return true;
+  }
+
+  if (session.step === 'customer_new') {
+    session.customer = text.trim();
+    session.step = 'amount';
+    sessionStore.set(userId, session);
+    await bot.sendMessage(chatId, `Customer: *${session.customer}*\n\nEnter the payment amount received (NGN):`, { parse_mode: 'Markdown' });
+    return true;
+  }
+
+  if (session.step === 'amount') {
+    const amount = parseFloat(text.replace(/[,]/g, ''));
+    if (isNaN(amount) || amount <= 0) {
+      await bot.sendMessage(chatId, 'Please enter a valid positive amount (e.g. 50000).');
+      return true;
+    }
+    session.amount = amount;
+    session.step = 'bank';
+    sessionStore.set(userId, session);
+    const allSettings = await settingsRepo.getAll();
+    const banks = (allSettings.BANK_LIST || '').split(',').map((b) => b.trim()).filter(Boolean);
+    const bankRows = [];
+    const allBankOpts = [...banks, 'Cash'];
+    for (let i = 0; i < allBankOpts.length; i += 3) {
+      const row = [];
+      for (let j = i; j < i + 3 && j < allBankOpts.length; j++) {
+        row.push({ text: allBankOpts[j], callback_data: `rcb:${allBankOpts[j].slice(0, 50)}` });
+      }
+      bankRows.push(row);
+    }
+    await bot.sendMessage(chatId, `Amount: *NGN ${fmtQty(amount)}*\n\nPayment received in which account?`, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: bankRows },
+    });
+    return true;
+  }
+
+  if (session.step === 'file') {
+    await bot.sendMessage(chatId, 'Please send a *photo* or *PDF document* of the receipt.', { parse_mode: 'Markdown' });
+    return true;
+  }
+
+  return false;
+}
+
+function showReceiptSummary(bot, chatId, userId, session) {
+  const fileLabel = session.file_type === 'document' ? '📄 PDF attached' : '📷 Photo attached';
+  const summary = `🧾 *Payment Receipt Summary*\n\n` +
+    `👤 Customer: *${session.customer}*\n` +
+    `💰 Amount: *NGN ${fmtQty(session.amount)}*\n` +
+    `🏦 Account: *${session.bank_account}*\n` +
+    `📎 File: ${fileLabel}\n` +
+    `👷 Uploaded by: ${session.uploaded_by_name} (${session.uploaded_by_id})\n` +
+    `📅 Date: ${new Date().toISOString().split('T')[0]}\n\n` +
+    `Confirm and submit for approval?`;
+  const keyboard = { inline_keyboard: [[
+    { text: '✅ Confirm & Submit', callback_data: 'rcconf:1' },
+    { text: '❌ Cancel', callback_data: 'rccanc:1' },
+  ]] };
+  return bot.sendMessage(chatId, summary, { parse_mode: 'Markdown', reply_markup: keyboard });
+}
+
+/**
+ * Handle incoming photo or document messages.
+ * Routes to active receipt_flow or sale_flow sessions that await a file.
+ */
+async function handleFileMessage(bot, msg) {
+  const chatId = msg.chat?.id;
+  const userId = String(msg.from?.id || '');
+
+  if (!auth.isAllowed(userId)) {
+    await bot.sendMessage(chatId, 'You are not authorized to use this bot.');
+    return;
+  }
+
+  const session = sessionStore.get(userId);
+
+  if (session && session.type === 'receipt_flow' && session.step === 'file') {
+    let telegramFileId, fileType, mimeType;
+    if (msg.photo && msg.photo.length) {
+      const largest = msg.photo[msg.photo.length - 1];
+      telegramFileId = largest.file_id;
+      fileType = 'image';
+      mimeType = 'image/jpeg';
+    } else if (msg.document) {
+      telegramFileId = msg.document.file_id;
+      fileType = 'document';
+      mimeType = msg.document.mime_type || 'application/pdf';
+    } else {
+      await bot.sendMessage(chatId, 'Please send a photo or PDF file.');
+      return;
+    }
+    session.telegram_file_id = telegramFileId;
+    session.file_type = fileType;
+    session.mime_type = mimeType;
+    session.step = 'confirm';
+    sessionStore.set(userId, session);
+    await showReceiptSummary(bot, chatId, userId, session);
+    return;
+  }
+
+  if (session && session.type === 'sale_flow' && session.awaitingDocument) {
+    let telegramFileId, fileType, mimeType;
+    if (msg.photo && msg.photo.length) {
+      const largest = msg.photo[msg.photo.length - 1];
+      telegramFileId = largest.file_id;
+      fileType = 'image';
+      mimeType = 'image/jpeg';
+    } else if (msg.document) {
+      telegramFileId = msg.document.file_id;
+      fileType = 'document';
+      mimeType = msg.document.mime_type || 'application/pdf';
+    } else {
+      await bot.sendMessage(chatId, 'Please send a photo or PDF file of the sales bill.');
+      return;
+    }
+    session.sale_doc_file_id = telegramFileId;
+    session.sale_doc_type = fileType;
+    session.sale_doc_mime = mimeType;
+    session.awaitingDocument = false;
+    session.awaitingConfirmation = true;
+    sessionStore.set(userId, session);
+    const summary = await salesFlow.buildSummary(session);
+    const docLabel = fileType === 'document' ? '📄 PDF attached' : '📷 Photo attached';
+    const keyboard = { inline_keyboard: [[
+      { text: '✅ Confirm', callback_data: `confirm_sale:${userId}` },
+      { text: '❌ Cancel', callback_data: `cancel_sale:${userId}` },
+    ]] };
+    await bot.sendMessage(chatId, `${summary}\n\n📎 Sales bill: ${docLabel}`, { reply_markup: keyboard });
+    return;
+  }
+
+  await bot.sendMessage(chatId, 'To upload a receipt, first type "Upload receipt" to start the process.');
+}
+
+// ─── End Receipt Upload Flow ────────────────────────────────────────────────
+
 async function handleMessage(bot, msg) {
   const chatId = msg.chat?.id;
   const userId = String(msg.from?.id || '');
@@ -683,6 +863,9 @@ async function handleMessage(bot, msg) {
 
   const sampleFlowHandled = await handleSampleFlowText(bot, chatId, userId, text);
   if (sampleFlowHandled) return;
+
+  const receiptFlowHandled = await handleReceiptFlowText(bot, chatId, userId, text);
+  if (receiptFlowHandled) return;
 
   if (text.toLowerCase() === '/create_order' || text.toLowerCase() === 'create order') {
     if (!config.access.adminIds.includes(userId)) {
@@ -1572,6 +1755,11 @@ async function handleMessage(bot, msg) {
         return;
       }
 
+      case 'upload_receipt': {
+        await startReceiptFlow(bot, chatId, userId);
+        return;
+      }
+
       case 'inventory_details': {
         if (!config.access.adminIds.includes(userId)) {
           await bot.sendMessage(chatId, 'Inventory details is admin-only.');
@@ -1751,6 +1939,9 @@ function helpText() {
 📋 "My orders" — View assigned orders (employee)
 ✅ "Mark order ORD-xxx delivered" — Mark as delivered
 
+*Receipts:*
+🧾 "Upload receipt" — Upload payment receipt (guided flow)
+
 *Ledger commands (admin, Ledger_Customers):*
 /addledgercustomer <name> [phone] [credit_limit]
 /ledger <customer_id> — Customer ledger (paginated)
@@ -1767,14 +1958,10 @@ async function startSaleFlow(bot, chatId, msg, userId, saleType, items, intent) 
   const missing = salesFlow.getMissingFields(session.collected);
 
   if (!missing.length) {
-    session.awaitingConfirmation = true;
+    session.awaitingDocument = true;
+    session.pendingField = null;
     sessionStore.set(userId, session);
-    const summary = await salesFlow.buildSummary(session);
-    const keyboard = { inline_keyboard: [[
-      { text: '✅ Confirm', callback_data: `confirm_sale:${userId}` },
-      { text: '❌ Cancel', callback_data: `cancel_sale:${userId}` },
-    ]] };
-    await bot.sendMessage(chatId, summary, { reply_markup: keyboard });
+    await bot.sendMessage(chatId, '📎 Please send the *sales bill photo or PDF* to attach with this sale.', { parse_mode: 'Markdown' });
     return;
   }
 
@@ -1791,6 +1978,11 @@ async function handleSaleSession(bot, chatId, msg, userId, text, session) {
   if (text.toLowerCase() === 'cancel') {
     sessionStore.clear(userId);
     await bot.sendMessage(chatId, 'Sale cancelled.');
+    return true;
+  }
+
+  if (session.awaitingDocument) {
+    await bot.sendMessage(chatId, '📎 Please send a *photo* or *PDF document* of the sales bill. Type "cancel" to abort.', { parse_mode: 'Markdown' });
     return true;
   }
 
@@ -1841,14 +2033,9 @@ async function handleSaleSession(bot, chatId, msg, userId, text, session) {
         await bot.sendMessage(chatId, `✅ Customer "${name}" added.\n\n${salesFlow.getNextQuestion(missing[0], payOpts)}`);
         return true;
       }
-      session.awaitingConfirmation = true;
+      session.awaitingDocument = true;
       sessionStore.set(userId, session);
-      const summary = await salesFlow.buildSummary(session);
-      const keyboard = { inline_keyboard: [[
-        { text: '✅ Confirm', callback_data: `confirm_sale:${userId}` },
-        { text: '❌ Cancel', callback_data: `cancel_sale:${userId}` },
-      ]] };
-      await bot.sendMessage(chatId, summary, { reply_markup: keyboard });
+      await bot.sendMessage(chatId, `✅ Customer "${name}" added.\n\n📎 Please send the *sales bill photo or PDF* to attach with this sale.`, { parse_mode: 'Markdown' });
       return true;
     }
   }
@@ -1878,14 +2065,9 @@ async function handleSaleSession(bot, chatId, msg, userId, text, session) {
     return true;
   }
 
-  session.awaitingConfirmation = true;
+  session.awaitingDocument = true;
   sessionStore.set(userId, session);
-  const summary = await salesFlow.buildSummary(session);
-  const keyboard = { inline_keyboard: [[
-    { text: '✅ Confirm', callback_data: `confirm_sale:${userId}` },
-    { text: '❌ Cancel', callback_data: `cancel_sale:${userId}` },
-  ]] };
-  await bot.sendMessage(chatId, summary, { reply_markup: keyboard });
+  await bot.sendMessage(chatId, '📎 Please send the *sales bill photo or PDF* to attach with this sale.', { parse_mode: 'Markdown' });
   return true;
 }
 
@@ -1930,15 +2112,30 @@ async function executeSale(bot, chatId, userId) {
     const totalPkgs = new Set(session.items.map((i) => i.packageNo)).size;
     detailText += `\nTotal: ${totalPkgs} packages (${totalThans} thans), ${fmtQty(totalYards)} yards`;
 
+    const saleDocInfo = session.sale_doc_file_id
+      ? { sale_doc_file_id: session.sale_doc_file_id, sale_doc_type: session.sale_doc_type, sale_doc_mime: session.sale_doc_mime }
+      : {};
     await approvalQueueRepository.append({
       requestId, user: userId,
-      actionJSON: { action: 'sale_bundle', items: session.items, customer: session.collected.customer, salesDate: sDate, salesPerson: details.salesPerson, paymentMode: details.paymentMode },
+      actionJSON: { action: 'sale_bundle', items: session.items, customer: session.collected.customer, salesDate: sDate, salesPerson: details.salesPerson, paymentMode: details.paymentMode, ...saleDocInfo },
       riskReason: risk.reason, status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
 
     const userLabel = await getRequesterDisplayName(userId, null);
+    if (session.sale_doc_file_id) detailText += '\n📎 Sales bill attached (see below)';
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, detailText, risk.reason);
+    if (session.sale_doc_file_id) {
+      for (const adminId of config.access.adminIds) {
+        try {
+          if (session.sale_doc_type === 'document') {
+            await bot.sendDocument(adminId, session.sale_doc_file_id, { caption: `📄 Sales bill for request ${requestId}` });
+          } else {
+            await bot.sendPhoto(adminId, session.sale_doc_file_id, { caption: `📷 Sales bill for request ${requestId}` });
+          }
+        } catch (e) { logger.error(`Failed to send sale doc to admin ${adminId}`, e.message); }
+      }
+    }
     await bot.sendMessage(chatId, `⏳ Sale submitted for admin approval. Request: ${requestId}\n${totalPkgs} packages (${totalThans} thans), ${fmtQty(totalYards)} yards to ${session.collected.customer}`);
     sessionStore.clear(userId);
     return;
@@ -1956,7 +2153,19 @@ async function executeSale(bot, chatId, userId) {
       if (result.status === 'completed') { soldThans += 1; totalYards += result.than?.yards || 0; soldPkgs.add(item.packageNo); }
     }
   }
-  await bot.sendMessage(chatId, `✅ Sale complete: ${soldPkgs.size} packages (${soldThans} thans), ${fmtQty(totalYards)} yards to ${session.collected.customer}`);
+  let saleMsg = `✅ Sale complete: ${soldPkgs.size} packages (${soldThans} thans), ${fmtQty(totalYards)} yards to ${session.collected.customer}`;
+  if (session.sale_doc_file_id) {
+    try {
+      const { buffer, filePath } = await downloadTelegramFile(bot, session.sale_doc_file_id);
+      const ext = filePath.split('.').pop() || (session.sale_doc_type === 'document' ? 'pdf' : 'jpg');
+      const customer = (session.collected.customer || 'unknown').replace(/\s+/g, '_');
+      const fileName = `sale_bill_${customer}_${new Date().toISOString().slice(0, 10)}.${ext}`;
+      const mimeType = session.sale_doc_type === 'document' ? 'application/pdf' : 'image/jpeg';
+      const driveRes = await driveClient.uploadFile(buffer, fileName, mimeType);
+      saleMsg += `\n📎 [View Sales Bill](${driveRes.webViewLink})`;
+    } catch (e) { logger.error('Failed to upload sale doc to Drive (admin direct)', e.message); }
+  }
+  await bot.sendMessage(chatId, saleMsg, { parse_mode: 'Markdown', disable_web_page_preview: true });
   sessionStore.clear(userId);
 }
 
@@ -2355,9 +2564,158 @@ async function handleCallbackQuery(bot, callbackQuery) {
       } catch (_) {}
     }
 
+  // ─── Receipt Flow Callbacks ─────────────────────────────────────────────
+  } else if (data.startsWith('rcc:')) {
+    const val = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'receipt_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    if (val === '__new__') {
+      session.step = 'customer_new';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(callbackQuery.message.chat.id, 'Enter new customer name:');
+    } else {
+      session.customer = val;
+      session.step = 'amount';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(callbackQuery.message.chat.id, `Customer: *${val}*\n\nEnter the payment amount received (NGN):`, { parse_mode: 'Markdown' });
+    }
+
+  } else if (data.startsWith('rcb:')) {
+    const bank = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'receipt_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    session.bank_account = bank;
+    session.step = 'file';
+    const displayName = await getRequesterDisplayName(uid, null);
+    session.uploaded_by_id = uid;
+    session.uploaded_by_name = displayName;
+    sessionStore.set(uid, session);
+    await bot.sendMessage(callbackQuery.message.chat.id, `Account: *${bank}*\n\nNow please send the *receipt photo or PDF*.`, { parse_mode: 'Markdown' });
+
+  } else if (data.startsWith('rcconf:')) {
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'receipt_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Submitting...' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+
+    const receiptId = idGenerator.receipt();
+    await receiptsRepo.append({
+      receipt_id: receiptId,
+      customer: session.customer,
+      amount: session.amount,
+      bank_account: session.bank_account,
+      uploaded_by_id: session.uploaded_by_id,
+      uploaded_by_name: session.uploaded_by_name,
+      telegram_file_id: session.telegram_file_id,
+      file_type: session.file_type,
+      status: 'pending',
+    });
+
+    const isAdmin = config.access.adminIds.includes(uid);
+    const otherAdmins = config.access.adminIds.filter((id) => id !== uid);
+    const summary = `🧾 Receipt Approval Pending: ${receiptId}\n\nCustomer: ${session.customer}\nAmount: NGN ${fmtQty(session.amount)}\nAccount: ${session.bank_account}\nUploaded by: ${session.uploaded_by_name} (${session.uploaded_by_id})`;
+
+    if (isAdmin && otherAdmins.length) {
+      const keyboard = { inline_keyboard: [[
+        { text: '✅ Approve', callback_data: `rcapr:${receiptId}` },
+        { text: '❌ Reject', callback_data: `rcrej:${receiptId}` },
+      ]] };
+      for (const adminId of otherAdmins) {
+        try {
+          await bot.sendMessage(adminId, summary, { reply_markup: keyboard });
+          if (session.file_type === 'document') {
+            await bot.sendDocument(adminId, session.telegram_file_id, { caption: `📄 Receipt for ${receiptId}` });
+          } else {
+            await bot.sendPhoto(adminId, session.telegram_file_id, { caption: `📷 Receipt for ${receiptId}` });
+          }
+        } catch (e) { logger.error(`Failed to notify admin ${adminId} for receipt ${receiptId}`, e.message); }
+      }
+      await bot.sendMessage(callbackQuery.message.chat.id, `⏳ Receipt ${receiptId} submitted for 2nd admin approval.`);
+    } else {
+      const keyboard = { inline_keyboard: [[
+        { text: '✅ Approve', callback_data: `rcapr:${receiptId}` },
+        { text: '❌ Reject', callback_data: `rcrej:${receiptId}` },
+      ]] };
+      for (const adminId of config.access.adminIds) {
+        try {
+          await bot.sendMessage(adminId, summary, { reply_markup: keyboard });
+          if (session.file_type === 'document') {
+            await bot.sendDocument(adminId, session.telegram_file_id, { caption: `📄 Receipt for ${receiptId}` });
+          } else {
+            await bot.sendPhoto(adminId, session.telegram_file_id, { caption: `📷 Receipt for ${receiptId}` });
+          }
+        } catch (e) { logger.error(`Failed to notify admin ${adminId} for receipt ${receiptId}`, e.message); }
+      }
+      await bot.sendMessage(callbackQuery.message.chat.id, `⏳ Receipt ${receiptId} submitted for admin approval.`);
+    }
+    sessionStore.clear(uid);
+
+  } else if (data.startsWith('rccanc:')) {
+    const uid = String(callbackQuery.from.id);
+    sessionStore.clear(uid);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    await bot.sendMessage(callbackQuery.message.chat.id, 'Receipt upload cancelled.');
+
+  } else if (data.startsWith('rcapr:')) {
+    const receiptId = data.slice(6);
+    const adminId = String(callbackQuery.from.id);
+    if (!config.access.adminIds.includes(adminId)) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only admins can approve.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Approving receipt...' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+
+    const receipt = await receiptsRepo.getById(receiptId);
+    if (!receipt) { await bot.sendMessage(callbackQuery.message.chat.id, `Receipt ${receiptId} not found.`); return; }
+    if (receipt.status === 'approved') { await bot.sendMessage(callbackQuery.message.chat.id, `Receipt ${receiptId} already approved.`); return; }
+
+    try {
+      const { buffer, filePath } = await downloadTelegramFile(bot, receipt.telegram_file_id);
+      const ext = filePath.split('.').pop() || (receipt.file_type === 'document' ? 'pdf' : 'jpg');
+      const fileName = `receipt_${receipt.customer.replace(/\s+/g, '_')}_${receiptId}.${ext}`;
+      const mimeType = receipt.file_type === 'document' ? 'application/pdf' : 'image/jpeg';
+      const { fileId: driveFileId, webViewLink } = await driveClient.uploadFile(buffer, fileName, mimeType);
+      await receiptsRepo.updateDriveInfo(receiptId, driveFileId, webViewLink, adminId);
+
+      await bot.sendMessage(callbackQuery.message.chat.id,
+        `✅ Receipt ${receiptId} approved.\n\n👤 ${receipt.customer}\n💰 NGN ${fmtQty(receipt.amount)}\n🏦 ${receipt.bank_account}\n📎 [View Receipt](${webViewLink})`,
+        { parse_mode: 'Markdown', disable_web_page_preview: true });
+
+      try {
+        await bot.sendMessage(receipt.uploaded_by_id,
+          `✅ Your receipt (${receiptId}) for ${receipt.customer} — NGN ${fmtQty(receipt.amount)} has been approved.`);
+      } catch (e) { logger.error(`Failed to notify employee ${receipt.uploaded_by_id} about receipt ${receiptId}`, e.message); }
+    } catch (e) {
+      logger.error(`Receipt approval error for ${receiptId}`, e);
+      await bot.sendMessage(callbackQuery.message.chat.id, `⚠️ Error processing receipt ${receiptId}: ${e.message}`);
+    }
+
+  } else if (data.startsWith('rcrej:')) {
+    const receiptId = data.slice(6);
+    const adminId = String(callbackQuery.from.id);
+    if (!config.access.adminIds.includes(adminId)) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only admins can reject.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Rejecting...' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+
+    await receiptsRepo.updateStatus(receiptId, 'rejected');
+    await bot.sendMessage(callbackQuery.message.chat.id, `❌ Receipt ${receiptId} rejected.`);
+
+    const receipt = await receiptsRepo.getById(receiptId);
+    if (receipt) {
+      try {
+        await bot.sendMessage(receipt.uploaded_by_id, `❌ Your receipt (${receiptId}) for ${receipt.customer} — NGN ${fmtQty(receipt.amount)} has been rejected by admin.`);
+      } catch (e) { logger.error(`Failed to notify employee ${receipt.uploaded_by_id} about receipt ${receiptId} rejection`, e.message); }
+    }
+
   } else {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Unknown action.' });
   }
 }
 
-module.exports = { handleMessage, handleCallbackQuery };
+module.exports = { handleMessage, handleCallbackQuery, handleFileMessage };

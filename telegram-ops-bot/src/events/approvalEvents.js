@@ -9,6 +9,7 @@ const inventoryService = require('../services/inventoryService');
 const logger = require('../utils/logger');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+const driveClient = require('../repositories/driveClient');
 
 const SALE_ACTIONS = ['sell_than', 'sell_package', 'sale_bundle'];
 const DEFAULT_SALE_UNIT = 'yard';
@@ -170,11 +171,41 @@ async function handleEnrichmentMessage(bot, chatId, adminId, text) {
   return false;
 }
 
+async function uploadSaleDocToDrive(bot, item, requestId) {
+  const aj = item?.actionJSON || {};
+  if (!aj.sale_doc_file_id) return null;
+  try {
+    const file = await bot.getFile(aj.sale_doc_file_id);
+    const url = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
+    const https = require('https');
+    const buffer = await new Promise((resolve, reject) => {
+      https.get(url, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+        res.on('error', reject);
+      }).on('error', reject);
+    });
+    const ext = file.file_path.split('.').pop() || (aj.sale_doc_type === 'document' ? 'pdf' : 'jpg');
+    const customer = (aj.customer || 'unknown').replace(/\s+/g, '_');
+    const fileName = `sale_bill_${customer}_${requestId.slice(0, 12)}.${ext}`;
+    const mimeType = aj.sale_doc_type === 'document' ? 'application/pdf' : 'image/jpeg';
+    return await driveClient.uploadFile(buffer, fileName, mimeType);
+  } catch (e) {
+    logger.error(`Failed to upload sale doc for ${requestId}`, e.message);
+    return null;
+  }
+}
+
 async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, item, requestingUser, enrichment, fmt) {
   try {
     const result = await inventoryService.executeApprovedAction(requestId, adminId, enrichment);
     if (result.ok) {
-      await bot.sendMessage(chatId, `✅ Request ${requestId} approved. Sale and ledger updated.`);
+      let driveInfo = null;
+      try { driveInfo = await uploadSaleDocToDrive(bot, item, requestId); } catch (_) {}
+      let msg = `✅ Request ${requestId} approved. Sale and ledger updated.`;
+      if (driveInfo) msg += `\n📎 [View Sales Bill](${driveInfo.webViewLink})`;
+      await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', disable_web_page_preview: true });
       await notifyEmployee(bot, requestingUser, requestId, `✅ Your request (${requestId}) has been approved by admin. Sale and ledger updated.`);
       const customer = item?.actionJSON?.customer || item?.actionJSON?.customerName;
       if (customer) {

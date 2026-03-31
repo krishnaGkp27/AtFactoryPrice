@@ -51,6 +51,8 @@ app.post('/webhook', (req, res) => {
   const msg = body.message;
   if (msg && msg.text) {
     if (bot) telegramController.handleMessage(bot, msg).catch((e) => logger.error('Message error', e));
+  } else if (msg && (msg.photo || msg.document)) {
+    if (bot) telegramController.handleFileMessage(bot, msg).catch((e) => logger.error('File message error', e));
   }
 });
 

@@ -62,6 +62,10 @@ const config = {
 
   currency: process.env.CURRENCY || 'NGN',
 
+  drive: {
+    folderId: process.env.GOOGLE_DRIVE_FOLDER_ID || '',
+  },
+
   /** Optional: set BOT_API_KEY so admin page can update settings with X-API-Key header */
   botApiKey: process.env.BOT_API_KEY || '',
 };

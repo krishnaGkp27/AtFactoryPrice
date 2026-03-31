@@ -68,6 +68,14 @@ const REQUIRED_SHEETS = {
   CustomerNotes: {
     headers: ['note_id', 'customer', 'note', 'created_by', 'created_at'],
   },
+  Receipts: {
+    headers: [
+      'receipt_id', 'customer', 'amount', 'bank_account',
+      'uploaded_by_id', 'uploaded_by_name', 'telegram_file_id', 'file_type',
+      'drive_file_id', 'drive_url', 'status', 'approved_by',
+      'upload_date', 'created_at', 'notes',
+    ],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];

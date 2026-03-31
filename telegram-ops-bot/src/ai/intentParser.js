@@ -110,6 +110,7 @@ ACTION RULES:
 - add_followup: schedule a follow-up reminder for a customer. Needs customer name. Use for "Follow up with CJE on 28-02-2026 about payment", "Remind me about Ibrahim on Monday", "Schedule followup for CJE".
 - add_customer_note: add a note to a customer. Needs customer name. Use for "Note for CJE: wants bulk discount", "Add note for Ibrahim: prefers Shade 3", "Customer note CJE promised delivery".
 - show_customer_notes: view notes for a customer. Needs customer name. Use for "Show notes for CJE", "Notes for Ibrahim", "Customer notes CJE".
+- upload_receipt: start the payment receipt upload workflow. Use for "Upload receipt", "Log payment receipt", "Submit receipt", "Receipt upload", "Payment receipt", "Send receipt".
 - ask_data: FREE-FORM data question that doesn't fit any predefined report. Use this for custom/complex questions like "compare Lagos vs Kano", "which shade sells fastest", "what percentage is unsold", "show me all buyers of 44200 in descending order", etc.
 
 SALE DETAIL RULES:
@@ -221,6 +222,9 @@ User: "Sales report" → {"action":"sales_report_interactive","confidence":0.95,
 User: "Show sales" → {"action":"sales_report_interactive","confidence":0.95,"clarification":null}
 User: "Sales summary" → {"action":"sales_report_interactive","confidence":0.95,"clarification":null}
 User: "Revenue report" → {"action":"sales_report_interactive","confidence":0.95,"clarification":null}
+User: "Upload receipt" → {"action":"upload_receipt","confidence":0.95,"clarification":null}
+User: "Log payment receipt" → {"action":"upload_receipt","confidence":0.95,"clarification":null}
+User: "Submit receipt" → {"action":"upload_receipt","confidence":0.95,"clarification":null}
 User: "Supply details" → {"action":"supply_details","confidence":0.95,"clarification":null}
 User: "Show supply details" → {"action":"supply_details","confidence":0.95,"clarification":null}
 User: "Supply report" → {"action":"supply_details","confidence":0.95,"clarification":null}
@@ -275,6 +279,7 @@ const VALID_ACTIONS = [
   'customer_history', 'customer_ranking', 'customer_pattern',
   'add_followup', 'add_customer_note', 'show_customer_notes',
   'supply_details', 'create_order', 'my_orders', 'mark_order_delivered',
+  'upload_receipt',
 ];
 
 function normalize(obj) {
