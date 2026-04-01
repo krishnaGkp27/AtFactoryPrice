@@ -148,6 +148,31 @@ function buildDesignWiseReport(sold, isAdmin) {
   return text;
 }
 
+const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function normalizeDate(raw) {
+  if (!raw) return { sort: '9999-99-99', display: '—' };
+  const s = String(raw).trim();
+  const ymd = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
+  if (ymd) {
+    const [, y, m, d] = ymd;
+    const mm = parseInt(m, 10); const dd = parseInt(d, 10);
+    return { sort: `${y}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`, display: `${String(dd).padStart(2,'0')}-${MONTH_SHORT[mm - 1] || m}` };
+  }
+  const dmy = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    const mm = parseInt(m, 10); const dd = parseInt(d, 10);
+    return { sort: `${y}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`, display: `${String(dd).padStart(2,'0')}-${MONTH_SHORT[mm - 1] || m}` };
+  }
+  const longDate = new Date(s);
+  if (!isNaN(longDate.getTime())) {
+    const y = longDate.getFullYear(); const mm = longDate.getMonth(); const dd = longDate.getDate();
+    return { sort: `${y}-${String(mm + 1).padStart(2,'0')}-${String(dd).padStart(2,'0')}`, display: `${String(dd).padStart(2,'0')}-${MONTH_SHORT[mm]}` };
+  }
+  return { sort: s, display: s.slice(0, 6) };
+}
+
 function buildDesignDateWiseReport(sold, isAdmin) {
   const designs = new Map();
   for (const r of sold) {
@@ -165,31 +190,36 @@ function buildDesignDateWiseReport(sold, isAdmin) {
   let grandPkgs = new Set(), grandThans = 0, grandYards = 0, grandValue = 0;
 
   for (const { design, items } of designTotals) {
+    const shades = new Set(items.map((r) => r.shade || '-'));
+    const shadeLabel = shades.size === 1 ? ` ${[...shades][0]}` : '';
+
     const byDateCust = new Map();
     for (const r of items) {
-      const date = r.soldDate || 'Unknown';
+      const nd = normalizeDate(r.soldDate);
       const cust = r.soldTo || 'Unknown';
       const shade = r.shade || '-';
-      const key = `${date}|${cust}|${shade}`;
-      if (!byDateCust.has(key)) byDateCust.set(key, { date, customer: cust, shade, pkgs: new Set(), thans: 0, yards: 0, value: 0 });
+      const key = `${nd.sort}|${cust}|${shade}`;
+      if (!byDateCust.has(key)) byDateCust.set(key, { sortDate: nd.sort, displayDate: nd.display, customer: cust, shade, pkgs: new Set(), thans: 0, yards: 0, value: 0 });
       const grp = byDateCust.get(key);
       grp.pkgs.add(r.packageNo); grp.thans++; grp.yards += r.yards; grp.value += r.yards * r.pricePerYard;
     }
-    const rows = [...byDateCust.values()].sort((a, b) => a.date.localeCompare(b.date));
+    const rows = [...byDateCust.values()].sort((a, b) => a.sortDate.localeCompare(b.sortDate) || a.customer.localeCompare(b.customer));
 
     let dTotal = { pkgs: new Set(), thans: 0, yards: 0, value: 0 };
-    text += `📦 *${design}*\n`;
+    text += `📦 *${design}${shadeLabel}*\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
     for (const row of rows) {
-      const d = row.date.length >= 10 ? row.date.slice(5) : row.date;
-      text += `  ${d}  ${row.customer}  Sh ${row.shade}  ${row.pkgs.size}pkg ${row.thans}th ${fmtQty(row.yards)}yd${valStr(row.value, isAdmin)}\n`;
+      const shPart = shades.size > 1 ? `  ${row.shade}` : '';
+      text += `  ${row.displayDate}  ${row.customer}${shPart}  ${row.pkgs.size} pkg, ${row.thans} th, ${fmtQty(row.yards)} yds${valStr(row.value, isAdmin)}\n`;
       for (const p of row.pkgs) dTotal.pkgs.add(p);
       dTotal.thans += row.thans; dTotal.yards += row.yards; dTotal.value += row.value;
     }
-    text += `  *Total: ${dTotal.pkgs.size} pkgs, ${dTotal.thans} thans, ${fmtQty(dTotal.yards)} yds${valStr(dTotal.value, isAdmin)}*\n\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    text += `*Total: ${dTotal.pkgs.size} pkg, ${dTotal.thans} th, ${fmtQty(dTotal.yards)} yds${valStr(dTotal.value, isAdmin)}*\n\n`;
     for (const p of dTotal.pkgs) grandPkgs.add(p);
     grandThans += dTotal.thans; grandYards += dTotal.yards; grandValue += dTotal.value;
   }
-  text += `*Grand Total: ${grandPkgs.size} pkgs, ${grandThans} thans, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
+  text += `*Grand Total: ${grandPkgs.size} pkg, ${grandThans} th, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
   return text;
 }
 
