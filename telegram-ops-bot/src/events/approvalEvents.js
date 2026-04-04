@@ -11,7 +11,7 @@ const inventoryRepository = require('../repositories/inventoryRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const driveClient = require('../repositories/driveClient');
 
-const SALE_ACTIONS = ['sell_than', 'sell_package', 'sale_bundle'];
+const SALE_ACTIONS = ['sell_than', 'sell_package', 'sale_bundle', 'supply_request'];
 const DEFAULT_SALE_UNIT = 'yard';
 
 const pendingEnrichment = new Map();
@@ -68,7 +68,7 @@ async function resolveRequest(requestId) {
 
 async function getDesignsForSale(item) {
   const aj = item?.actionJSON || {};
-  if (aj.action === 'sell_than' || aj.action === 'sell_package') {
+  if (aj.action === 'sell_than' || aj.action === 'sell_package' || aj.action === 'supply_request') {
     return aj.design ? [String(aj.design).trim()] : [];
   }
   if (aj.action === 'sale_bundle' && Array.isArray(aj.items)) {

@@ -24,7 +24,7 @@ const WRITE_ACTIONS = [
 
 const ALWAYS_APPROVAL_ACTIONS = [
   'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell',
-  'record_payment', 'update_price',
+  'record_payment', 'update_price', 'supply_request',
 ];
 
 async function getThresholds() {
