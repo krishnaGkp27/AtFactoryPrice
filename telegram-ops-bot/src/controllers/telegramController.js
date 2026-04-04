@@ -963,12 +963,12 @@ async function handleMessage(bot, msg) {
     if (handled) return;
   }
 
-  if (text.startsWith('/revert_packages ')) {
+  if (/^\/revert_package[s]?\s/i.test(text)) {
     if (!config.access.adminIds.includes(userId)) {
       await bot.sendMessage(chatId, 'Only admin can revert packages.');
       return;
     }
-    const pkgNos = text.replace(/^\/revert_packages\s+/i, '').split(/[\s,]+/).filter(Boolean);
+    const pkgNos = text.replace(/^\/revert_package[s]?\s+/i, '').split(/[\s,]+/).filter(Boolean);
     if (!pkgNos.length) {
       await bot.sendMessage(chatId, 'Usage: /revert_packages 6422 6423 6424 ...');
       return;
