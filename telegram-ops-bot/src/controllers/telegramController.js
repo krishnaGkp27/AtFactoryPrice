@@ -963,6 +963,31 @@ async function handleMessage(bot, msg) {
     if (handled) return;
   }
 
+  if (text.startsWith('/revert_packages ')) {
+    if (!config.access.adminIds.includes(userId)) {
+      await bot.sendMessage(chatId, 'Only admin can revert packages.');
+      return;
+    }
+    const pkgNos = text.replace(/^\/revert_packages\s+/i, '').split(/[\s,]+/).filter(Boolean);
+    if (!pkgNos.length) {
+      await bot.sendMessage(chatId, 'Usage: /revert_packages 6422 6423 6424 ...');
+      return;
+    }
+    let restored = 0;
+    const results = [];
+    for (const p of pkgNos) {
+      try {
+        const reverted = await inventoryRepository.markPackageAvailable(p);
+        restored += reverted.length;
+        results.push(`✅ ${p}: ${reverted.length} thans restored`);
+      } catch (e) {
+        results.push(`⚠️ ${p}: ${e.message}`);
+      }
+    }
+    await bot.sendMessage(chatId, `📦 *Revert Packages*\n\n${results.join('\n')}\n\nTotal: ${restored} thans restored to available.`, { parse_mode: 'Markdown' });
+    return;
+  }
+
   const ledgerCommands = require('../commands/ledgerCommands');
   if (text.startsWith('/ledger ')) {
     try {
