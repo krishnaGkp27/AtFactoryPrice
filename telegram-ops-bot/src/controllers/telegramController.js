@@ -25,6 +25,9 @@ const customerNotesRepo = require('../repositories/customerNotesRepository');
 const transactionsRepo = require('../repositories/transactionsRepository');
 const receiptsRepo = require('../repositories/receiptsRepository');
 const driveClient = require('../repositories/driveClient');
+const departmentsRepo = require('../repositories/departmentsRepository');
+const activityRegistry = require('../services/activityRegistry');
+const customersRepo = require('../repositories/customersRepository');
 const idGenerator = require('../utils/idGenerator');
 const config = require('../config');
 const logger = require('../utils/logger');
@@ -876,7 +879,31 @@ async function handleFileMessage(bot, msg) {
     return;
   }
 
-  await bot.sendMessage(chatId, 'To upload a receipt, first type "Upload receipt" to start the process.');
+  if (session && session.type === 'supply_req_flow' && session.awaitingDocument) {
+    let telegramFileId, fileType, mimeType;
+    if (msg.photo && msg.photo.length) {
+      const largest = msg.photo[msg.photo.length - 1];
+      telegramFileId = largest.file_id;
+      fileType = 'image';
+      mimeType = 'image/jpeg';
+    } else if (msg.document) {
+      telegramFileId = msg.document.file_id;
+      fileType = 'document';
+      mimeType = msg.document.mime_type || 'application/pdf';
+    } else {
+      await bot.sendMessage(chatId, 'Please send a photo or PDF file of the sales bill.');
+      return;
+    }
+    session.docFileId = telegramFileId;
+    session.docType = fileType;
+    session.docMime = mimeType;
+    session.awaitingDocument = false;
+    sessionStore.set(userId, session);
+    await finalizeSupplyRequest(bot, chatId, userId);
+    return;
+  }
+
+  await bot.sendMessage(chatId, 'To upload a receipt, first type "Upload receipt" to start the process.\nFor a supply request, tap "Supply Request" from the menu.');
 }
 
 // ─── End Receipt Upload Flow ────────────────────────────────────────────────
@@ -894,8 +921,43 @@ async function handleMessage(bot, msg) {
   await auditLogRepository.append('telegram_message', { chatId, text: text.slice(0, 200) }, userId);
 
   if (!text) {
-    await bot.sendMessage(chatId, helpText());
+    await buildGreetingMenu(bot, chatId, userId);
     return;
+  }
+
+  if (GREETINGS.test(text.trim())) {
+    await buildGreetingMenu(bot, chatId, userId);
+    return;
+  }
+
+  if (text.toLowerCase() === 'cancel') {
+    const s = sessionStore.get(userId);
+    if (s && (s.type === 'supply_req_flow' || s.type === 'adm_flow')) {
+      sessionStore.clear(userId);
+      await bot.sendMessage(chatId, '❌ Cancelled.');
+      return;
+    }
+  }
+
+  const srfSession = sessionStore.get(userId);
+  if (srfSession && srfSession.type === 'supply_req_flow') {
+    if (srfSession.awaitingDocument) {
+      await bot.sendMessage(chatId, '📎 Please send a *photo* or *PDF* of the sales bill, or tap *Skip*.', { parse_mode: 'Markdown' });
+      return;
+    }
+    if (srfSession.step === 'new_customer_name') {
+      const name = text.trim();
+      if (!name) { await bot.sendMessage(chatId, 'Please enter a customer name.'); return; }
+      srfSession.customer = name;
+      srfSession.step = 'salesperson';
+      sessionStore.set(userId, srfSession);
+      await showSupplySalespersonPicker(bot, chatId);
+      return;
+    }
+  }
+  if (srfSession && srfSession.type === 'adm_flow') {
+    const handled = await handleAdminFlowText(bot, chatId, userId, text, srfSession);
+    if (handled) return;
   }
 
   const ledgerCommands = require('../commands/ledgerCommands');
@@ -1839,6 +1901,34 @@ async function handleMessage(bot, msg) {
         return;
       }
 
+      case 'supply_request': {
+        await startSupplyRequestFlow(bot, chatId, userId);
+        return;
+      }
+
+      case 'manage_users': {
+        if (!config.access.adminIds.includes(userId)) {
+          await bot.sendMessage(chatId, 'Only admin can manage users.');
+          return;
+        }
+        await showUserManagement(bot, chatId);
+        return;
+      }
+
+      case 'manage_departments': {
+        if (!config.access.adminIds.includes(userId)) {
+          await bot.sendMessage(chatId, 'Only admin can manage departments.');
+          return;
+        }
+        const depts = await departmentsRepo.getAll();
+        let text = '🏢 *Departments*\n\n';
+        for (const d of depts) {
+          text += `*${d.dept_name}* (${d.dept_id})\n  Activities: ${d.allowed_activities.join(', ')}\n  Status: ${d.status}\n\n`;
+        }
+        await sendLong(bot, chatId, text, { parse_mode: 'Markdown' });
+        return;
+      }
+
       case 'inventory_details': {
         if (!config.access.adminIds.includes(userId)) {
           await bot.sendMessage(chatId, 'Inventory details is admin-only.');
@@ -1952,76 +2042,353 @@ async function handleMessage(bot, msg) {
 }
 
 function helpText() {
-  return `Here's what I can do:
+  return `Type *hi* to see your personalized activity menu.
 
-*Inventory:*
-📦 "How much 44200 BLACK do we have?"
-📋 "Show packages for design 44200"
-🔍 "Details of package 5801"
-💰 "Sell than 3 from package 5801 to Ibrahim, salesperson Abdul, cash, date today"
-📦 "Sell package 5802 to Adamu, salesperson Yarima, via GTBank"
-📦 "Sell packages 5801, 5802 to Ibrahim, salesperson Abdul, cash"
+*Quick Commands:*
+
+📦 *Supply Request* — Guided tappable flow (warehouse → design → customer → date)
+📦 "Sell 5801, 5802 to Ibrahim, salesperson Abdul, cash, date today" — Text-based supply
 ↩️ "Return than 2 from package 5801"
 🔄 "Transfer package 5801 to Kano"
-🔄 "Transfer packages 5801, 5802 to Kano"
-🔄 "Transfer than 3 from package 5801 to Kano"
 💲 "Update price of 44200 BLACK to 1500"
-📊 "Analyze stock"
+📦 "How much 44200 BLACK do we have?"
+📋 "Show packages for design 44200"
 
 *Reports:*
-📦 "Stock summary" / "Stock valuation"
-📊 "Sales report today" / "Sales this week"
-👥 "Customer report" / "Top customers"
-🏭 "Warehouse summary" / "Compare warehouses"
-🔥 "Fast moving designs" / "Dead stock"
-📋 "Indent status" / "Low stock alert"
-📅 "Aging stock"
-🔍 Ask anything: "Show all buyers of 44200 in descending order"
+📊 "Supply details" / "Sales report" / "Inventory details"
+📦 "Stock summary" / "Customer ranking"
 
 *CRM:*
-👤 "Add customer Ibrahim, phone +234..., wholesale"
-🔍 "Show customer Ibrahim"
-💰 "Record payment 50000 from Ibrahim via bank"
-💳 "What is Ibrahim's outstanding?"
-
-*Accounting (admin):*
-📒 "Show ledger for today"
-📊 "Show trial balance"
-🏦 "Add bank GTBank" / "List banks" (admin)
-
-*Customer CRM:*
-📋 "Customer history CJE" — Full interaction timeline
-🏆 "Customer ranking" — Top customers by value
-🔍 "What does CJE buy" — Purchase patterns
-📅 "Follow up with CJE on 28-02-2026 about payment"
+👤 "Add customer Ibrahim" / "Customer history CJE"
 📝 "Note for CJE: wants bulk discount"
-📝 "Show notes for CJE"
 
-*Samples:*
-🧪 "Give sample of 44200 Shade 3 to CJE" — Submit sample request
-↩️ "Sample SMP-xxx returned" — Mark returned
-📋 "Sample status" — Active samples report (admin)
-
-*Inventory & Sales (admin):*
-📦 "Inventory details" — Warehouse / Design wise stock with balance
-📊 "Sales report" — Period + Design / Customer wise sales
-
-*Supply Details (admin):*
-📊 "Supply details" — Design / Customer / Warehouse wise sold reports
-
-*Supply Orders (admin):*
-📦 "Create order" — Guided order creation
-📋 "My orders" — View assigned orders (employee)
-✅ "Mark order ORD-xxx delivered" — Mark as delivered
+*Samples & Orders:*
+🧪 "Give sample of 44200 to CJE" / "Sample status"
+📦 "Create order" / "My orders"
 
 *Receipts:*
-🧾 "Upload receipt" — Upload payment receipt (guided flow)
+🧾 "Upload receipt" — Upload payment receipt
 
-*Ledger commands (admin, Ledger_Customers):*
-/addledgercustomer <name> [phone] [credit_limit]
-/ledger <customer_id> — Customer ledger (paginated)
-/balance <customer_id> — Current balance
-/payment <customer_id> <amount> — Record payment`;
+*Admin:*
+👥 "Manage users" — Assign departments & warehouses
+🏢 "Manage departments" — View department activities
+
+*Ledger (admin):*
+/ledger <customer_id> / /balance <customer_id> / /payment <customer_id> <amount>`;
+}
+
+/* ─── GREETING MENU ─── */
+
+const GREETINGS = /^(hi|hello|hey|start|menu|home|main\s*menu)$/i;
+
+async function buildGreetingMenu(bot, chatId, userId) {
+  const isAdminUser = config.access.adminIds.includes(userId);
+  const user = await usersRepository.findByUserId(userId);
+  const deptName = (user && user.department) || (isAdminUser ? 'Admin' : '');
+
+  let allowed = [];
+  if (isAdminUser) {
+    allowed = activityRegistry.getAll();
+  } else if (deptName) {
+    const dept = await departmentsRepo.findByName(deptName);
+    if (dept) allowed = activityRegistry.filterByCodes(dept.allowed_activities);
+  }
+
+  if (!allowed.length) {
+    await bot.sendMessage(chatId,
+      '👋 Welcome! You have no activities assigned yet.\nPlease ask your admin to assign you to a department.');
+    return;
+  }
+
+  const name = (user && user.name) || 'there';
+  const rows = [];
+  for (let i = 0; i < allowed.length; i += 2) {
+    const row = [{ text: `${allowed[i].icon} ${allowed[i].label}`, callback_data: allowed[i].callback }];
+    if (allowed[i + 1]) {
+      row.push({ text: `${allowed[i + 1].icon} ${allowed[i + 1].label}`, callback_data: allowed[i + 1].callback });
+    }
+    rows.push(row);
+  }
+
+  const deptBadge = deptName ? ` (${deptName})` : '';
+  await bot.sendMessage(chatId,
+    `👋 Hi *${name}*${deptBadge}! What would you like to do?`, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: rows },
+    });
+}
+
+/* ─── FUTURE-ONLY DATE PICKER ─── */
+
+function buildDatePicker(callbackPrefix, monthOffset = 0) {
+  const today = new Date();
+  const viewDate = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDay = viewDate.getDay();
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'];
+
+  const rows = [];
+  rows.push([{ text: `◀️`, callback_data: `${callbackPrefix}nav:${monthOffset - 1}` },
+    { text: `${monthNames[month]} ${year}`, callback_data: 'noop' },
+    { text: `▶️`, callback_data: `${callbackPrefix}nav:${monthOffset + 1}` }]);
+  rows.push(['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map((d) => ({ text: d, callback_data: 'noop' })));
+
+  let week = [];
+  const mondayOffset = firstDay === 0 ? 6 : firstDay - 1;
+  for (let i = 0; i < mondayOffset; i++) week.push({ text: ' ', callback_data: 'noop' });
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const d = new Date(year, month, day);
+    const isFuture = d >= new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    if (isFuture) {
+      week.push({ text: String(day), callback_data: `${callbackPrefix}pick:${dateStr}` });
+    } else {
+      week.push({ text: `·`, callback_data: 'noop' });
+    }
+    if (week.length === 7) { rows.push(week); week = []; }
+  }
+  if (week.length) {
+    while (week.length < 7) week.push({ text: ' ', callback_data: 'noop' });
+    rows.push(week);
+  }
+  rows.push([{ text: '📅 Today', callback_data: `${callbackPrefix}pick:${today.toISOString().split('T')[0]}` }]);
+  return rows;
+}
+
+/* ─── TAPPABLE SUPPLY REQUEST FLOW ─── */
+
+async function startSupplyRequestFlow(bot, chatId, userId) {
+  const user = await usersRepository.findByUserId(userId);
+  const warehouses = user && user.warehouses.length ? user.warehouses : [];
+
+  if (!warehouses.length) {
+    const isAdminUser = config.access.adminIds.includes(userId);
+    if (isAdminUser) {
+      const allWarehouses = await inventoryRepository.getWarehouses();
+      if (!allWarehouses.length) {
+        await bot.sendMessage(chatId, '⚠️ No warehouses found in inventory.');
+        return;
+      }
+      const rows = allWarehouses.map((w) => [{ text: `🏭 ${w}`, callback_data: `srf_wh:${w}` }]);
+      await bot.sendMessage(chatId, '📦 *Supply Request*\n\nSelect warehouse:', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: rows },
+      });
+      return;
+    }
+    await bot.sendMessage(chatId, '⚠️ You have no warehouses assigned. Ask your admin to assign you.');
+    return;
+  }
+
+  if (warehouses.length === 1) {
+    await showDesignsForWarehouse(bot, chatId, userId, warehouses[0]);
+    return;
+  }
+
+  const rows = warehouses.map((w) => [{ text: `🏭 ${w}`, callback_data: `srf_wh:${w}` }]);
+  await bot.sendMessage(chatId, '📦 *Supply Request*\n\nSelect warehouse:', {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
+}
+
+async function showDesignsForWarehouse(bot, chatId, userId, warehouse) {
+  const all = await inventoryRepository.getAll();
+  const available = all.filter((r) => r.warehouse === warehouse && r.status === 'available');
+  const designMap = new Map();
+  for (const r of available) {
+    const key = `${r.design}|${r.shade}`;
+    if (!designMap.has(key)) designMap.set(key, { design: r.design, shade: r.shade, count: 0 });
+    designMap.get(key).count++;
+  }
+  const designs = Array.from(designMap.values()).sort((a, b) => b.count - a.count);
+  if (!designs.length) {
+    await bot.sendMessage(chatId, `⚠️ No available stock in warehouse *${warehouse}*.`, { parse_mode: 'Markdown' });
+    return;
+  }
+
+  sessionStore.set(userId, { type: 'supply_req_flow', warehouse, step: 'design' });
+
+  const rows = [];
+  for (let i = 0; i < designs.length; i += 2) {
+    const row = [{ text: `${designs[i].design} ${designs[i].shade} (${designs[i].count})`, callback_data: `srf_dg:${designs[i].design}|${designs[i].shade}` }];
+    if (designs[i + 1]) {
+      row.push({ text: `${designs[i + 1].design} ${designs[i + 1].shade} (${designs[i + 1].count})`, callback_data: `srf_dg:${designs[i + 1].design}|${designs[i + 1].shade}` });
+    }
+    rows.push(row);
+  }
+  await bot.sendMessage(chatId, `📦 *Warehouse: ${warehouse}*\n\nSelect design to supply:`, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
+}
+
+async function showPackagesForDesign(bot, chatId, userId, design, shade, warehouse) {
+  const all = await inventoryRepository.getAll();
+  const available = all.filter((r) =>
+    r.warehouse === warehouse && r.design === design && r.shade === shade && r.status === 'available');
+
+  const pkgMap = new Map();
+  for (const r of available) {
+    if (!pkgMap.has(r.packageNo)) pkgMap.set(r.packageNo, { packageNo: r.packageNo, thans: 0, yards: 0 });
+    const pkg = pkgMap.get(r.packageNo);
+    pkg.thans++;
+    pkg.yards += r.yards || 0;
+  }
+  const pkgs = Array.from(pkgMap.values()).sort((a, b) => Number(a.packageNo) - Number(b.packageNo));
+
+  if (!pkgs.length) {
+    await bot.sendMessage(chatId, `⚠️ No available packages for ${design} ${shade} in ${warehouse}.`);
+    return;
+  }
+
+  const session = sessionStore.get(userId);
+  if (session && session.type === 'supply_req_flow') {
+    session.design = design;
+    session.shade = shade;
+    session.step = 'packages';
+    session.selectedPackages = [];
+    sessionStore.set(userId, session);
+  }
+
+  const rows = [];
+  for (let i = 0; i < pkgs.length; i += 3) {
+    const row = [];
+    for (let j = i; j < Math.min(i + 3, pkgs.length); j++) {
+      row.push({ text: `📦 ${pkgs[j].packageNo} (${pkgs[j].thans}th)`, callback_data: `srf_pk:${pkgs[j].packageNo}` });
+    }
+    rows.push(row);
+  }
+  rows.push([{ text: '✅ Select All', callback_data: 'srf_pk:__all__' }]);
+  rows.push([{ text: '➡️ Done Selecting', callback_data: 'srf_pk:__done__' }]);
+
+  await bot.sendMessage(chatId, `📦 *${design} ${shade}* in *${warehouse}*\n\nTap packages to select (tap again to deselect):`, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
+}
+
+async function showSupplyCustomerPicker(bot, chatId, userId) {
+  const allCust = await customersRepo.getAll();
+  const active = allCust.filter((c) => (c.status || 'Active').toLowerCase() === 'active');
+  const rows = [];
+  for (let i = 0; i < active.length; i += 2) {
+    const row = [{ text: `👤 ${active[i].name}`, callback_data: `srf_cu:${active[i].name}` }];
+    if (active[i + 1]) row.push({ text: `👤 ${active[i + 1].name}`, callback_data: `srf_cu:${active[i + 1].name}` });
+    rows.push(row);
+  }
+  rows.push([{ text: '➕ New Customer', callback_data: 'srf_cu:__new__' }]);
+  await bot.sendMessage(chatId, '👤 Select customer:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function showSupplySalespersonPicker(bot, chatId) {
+  const users = await usersRepository.getAll();
+  const rows = [];
+  for (let i = 0; i < users.length; i += 2) {
+    const row = [{ text: `🧑 ${users[i].name || users[i].user_id}`, callback_data: `srf_sp:${users[i].name || users[i].user_id}` }];
+    if (users[i + 1]) row.push({ text: `🧑 ${users[i + 1].name || users[i + 1].user_id}`, callback_data: `srf_sp:${users[i + 1].name || users[i + 1].user_id}` });
+    rows.push(row);
+  }
+  await bot.sendMessage(chatId, '🧑 Select salesperson:', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function showSupplyPaymentPicker(bot, chatId) {
+  const options = await salesFlow.getPaymentOptions();
+  const rows = [];
+  for (let i = 0; i < options.length; i += 3) {
+    const row = [];
+    for (let j = i; j < Math.min(i + 3, options.length); j++) {
+      row.push({ text: `💳 ${options[j]}`, callback_data: `srf_pm:${options[j]}` });
+    }
+    rows.push(row);
+  }
+  await bot.sendMessage(chatId, '💳 Select payment mode:', { reply_markup: { inline_keyboard: rows } });
+}
+
+function showSupplyDatePicker(bot, chatId) {
+  const rows = buildDatePicker('srf_dt', 0);
+  return bot.sendMessage(chatId, '📅 Select supply date (future dates only):', { reply_markup: { inline_keyboard: rows } });
+}
+
+async function showSupplyConfirmation(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'supply_req_flow') return;
+
+  const pkgList = (session.selectedPackages || []).join(', ');
+  let text = `📦 *Supply Request Summary*\n\n`;
+  text += `🏭 Warehouse: *${session.warehouse}*\n`;
+  text += `📦 Design: *${session.design} ${session.shade}*\n`;
+  text += `📦 Packages: *${pkgList}*\n`;
+  text += `👤 Customer: *${session.customer}*\n`;
+  text += `🧑 Salesperson: *${session.salesperson}*\n`;
+  text += `💳 Payment: *${session.paymentMode}*\n`;
+  text += `📅 Date: *${session.supplyDate}*\n\n`;
+  text += `📎 Please send a *photo* or *PDF* of the sales bill, or tap Skip.`;
+
+  session.step = 'document';
+  session.awaitingDocument = true;
+  sessionStore.set(userId, session);
+
+  await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [
+      [{ text: '⏭️ Skip Document', callback_data: 'srf_doc:skip' }],
+      [{ text: '❌ Cancel', callback_data: 'srf_doc:cancel' }],
+    ] },
+  });
+}
+
+async function finalizeSupplyRequest(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'supply_req_flow') return;
+
+  session.step = 'confirm';
+  session.awaitingDocument = false;
+  sessionStore.set(userId, session);
+
+  let text = `✅ *Confirm Supply Request*\n\n`;
+  text += `🏭 ${session.warehouse}\n`;
+  text += `📦 ${session.design} ${session.shade}\n`;
+  text += `📦 Packages: ${(session.selectedPackages || []).join(', ')}\n`;
+  text += `👤 ${session.customer}\n`;
+  text += `🧑 ${session.salesperson}\n`;
+  text += `💳 ${session.paymentMode}\n`;
+  text += `📅 ${session.supplyDate}\n`;
+  if (session.docFileId) text += `📎 Document attached\n`;
+  text += `\nTap Confirm to submit.`;
+
+  await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [
+      [{ text: '✅ Confirm & Submit', callback_data: 'srf_conf:yes' }],
+      [{ text: '❌ Cancel', callback_data: 'srf_conf:cancel' }],
+    ] },
+  });
+}
+
+/* ─── ADMIN CONTROLS ─── */
+
+async function showUserManagement(bot, chatId) {
+  const users = await usersRepository.getAll();
+  let text = '👥 *User Management*\n\n';
+  for (const u of users) {
+    const dept = u.department || '-';
+    const wh = u.warehouses.length ? u.warehouses.join(', ') : '-';
+    text += `• *${u.name || u.user_id}* (${u.user_id})\n  Dept: ${dept} | Warehouses: ${wh}\n`;
+  }
+  text += '\nSelect action:';
+  await sendLong(bot, chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [
+      [{ text: '🏢 Assign Department', callback_data: 'adm:assign_dept' }],
+      [{ text: '🏭 Assign Warehouses', callback_data: 'adm:assign_wh' }],
+      [{ text: '➕ Add New User', callback_data: 'adm:add_user' }],
+    ] },
+  });
 }
 
 /**
@@ -2820,9 +3187,470 @@ async function handleCallbackQuery(bot, callbackQuery) {
       } catch (e) { logger.error(`Failed to notify employee ${receipt.uploaded_by_id} about receipt ${receiptId} rejection`, e.message); }
     }
 
+  /* ─── NOOP (calendar headers etc.) ─── */
+  } else if (data === 'noop') {
+    await bot.answerCallbackQuery(callbackQuery.id);
+
+  /* ─── GREETING MENU ACTIVITY TAP ─── */
+  } else if (data.startsWith('act:')) {
+    const actCode = data.slice(4);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+    switch (actCode) {
+      case 'supply_request': await startSupplyRequestFlow(bot, chatId, uid); break;
+      case 'upload_receipt': await startReceiptFlow(bot, chatId, uid); break;
+      case 'my_orders': {
+        const orders = await ordersRepo.getByAssignee(uid);
+        if (!orders.length) { await bot.sendMessage(chatId, 'You have no pending supply orders.'); break; }
+        let out = '📋 *Your Supply Orders*\n\n';
+        for (const o of orders) {
+          const icon = o.status === 'accepted' ? '✅' : '⏳';
+          out += `${icon} *${o.order_id}*\n  Design: ${o.design} | Customer: ${o.customer}\n  Qty: ${o.quantity} | Date: ${o.scheduled_date}\n  Payment: ${o.payment_status} | Status: ${o.status}\n\n`;
+        }
+        await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+        break;
+      }
+      case 'mark_delivered':
+        await bot.sendMessage(chatId, 'Type: "Mark order ORD-XXXXXXXX-XXX delivered"');
+        break;
+      case 'give_sample':
+        await bot.sendMessage(chatId, 'Type: "Give sample of DESIGN to CUSTOMER"');
+        break;
+      case 'supply_details':
+        await bot.sendMessage(chatId, '📊 *Supply Details*\n\nSelect view:', {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [
+            [{ text: '📦 Design / Product wise', callback_data: 'sd:design' }],
+            [{ text: '👤 Customer wise', callback_data: 'sd:customer' }],
+            [{ text: '🏭 Warehouse wise', callback_data: 'sd:warehouse' }],
+          ] },
+        });
+        break;
+      case 'customer_history':
+        await bot.sendMessage(chatId, 'Type: "Customer history CUSTOMER_NAME"');
+        break;
+      case 'customer_pattern':
+        await bot.sendMessage(chatId, 'Type: "What does CUSTOMER buy" or "CUSTOMER purchase pattern"');
+        break;
+      case 'customer_notes':
+        await bot.sendMessage(chatId, 'Type: "Show notes for CUSTOMER_NAME"');
+        break;
+      case 'check_stock':
+        await bot.sendMessage(chatId, 'Type: "How much DESIGN SHADE do we have?" or "Stock in WAREHOUSE"');
+        break;
+      case 'list_packages':
+        await bot.sendMessage(chatId, 'Type: "Show packages for design DESIGN_NUMBER"');
+        break;
+      case 'inventory_details': {
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        await bot.sendMessage(chatId, '📦 *Inventory Details*\n\nSelect view:', {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [
+            [{ text: '🏭 Warehouse wise', callback_data: 'inv:wh' }],
+            [{ text: '📦 Design wise', callback_data: 'inv:design' }],
+          ] },
+        });
+        break;
+      }
+      case 'sales_report': {
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        await bot.sendMessage(chatId, '📊 *Sales Report*\n\nSelect period:', {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [
+            [{ text: '📅 Weekly (7 days)', callback_data: 'sr:7' }, { text: '📅 Monthly (30 days)', callback_data: 'sr:30' }],
+            [{ text: '📅 Quarterly (90 days)', callback_data: 'sr:90' }, { text: '📅 Yearly (365 days)', callback_data: 'sr:365' }],
+          ] },
+        });
+        break;
+      }
+      case 'customer_ranking': {
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        await bot.sendMessage(chatId, 'Type: "Customer ranking" or "Top customers"');
+        break;
+      }
+      case 'create_order': {
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        await startOrderFlow(bot, chatId, uid);
+        break;
+      }
+      case 'sample_status': {
+        await bot.sendMessage(chatId, 'Type: "Sample status" to see active samples.');
+        break;
+      }
+      case 'manage_users': {
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        await showUserManagement(bot, chatId);
+        break;
+      }
+      case 'manage_depts': {
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        const depts = await departmentsRepo.getAll();
+        let text = '🏢 *Departments*\n\n';
+        for (const d of depts) {
+          text += `*${d.dept_name}* (${d.dept_id})\n  Activities: ${d.allowed_activities.join(', ')}\n  Status: ${d.status}\n\n`;
+        }
+        await sendLong(bot, chatId, text, { parse_mode: 'Markdown' });
+        break;
+      }
+      case 'manage_wh': {
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        const whs = await inventoryRepository.getWarehouses();
+        let text = '🏭 *Warehouses*\n\n';
+        for (const w of whs) text += `• ${w}\n`;
+        text += '\nTo assign a warehouse to a user, use 👥 Manage Users.';
+        await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+        break;
+      }
+      case 'manage_banks':
+        await bot.sendMessage(chatId, 'Type: "Add bank BANK_NAME" or "List banks"');
+        break;
+      case 'add_customer':
+        await bot.sendMessage(chatId, 'Type: "Add customer NAME, phone NUMBER, ..."');
+        break;
+      default:
+        await bot.sendMessage(chatId, 'Feature coming soon.');
+    }
+
+  /* ─── SUPPLY REQUEST FLOW: WAREHOUSE ─── */
+  } else if (data.startsWith('srf_wh:')) {
+    const warehouse = data.slice(7);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+    sessionStore.set(uid, { type: 'supply_req_flow', warehouse, step: 'design' });
+    await showDesignsForWarehouse(bot, chatId, uid, warehouse);
+
+  /* ─── SUPPLY REQUEST FLOW: DESIGN ─── */
+  } else if (data.startsWith('srf_dg:')) {
+    const [design, shade] = data.slice(7).split('|');
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+    const session = sessionStore.get(uid);
+    const wh = session ? session.warehouse : '';
+    await showPackagesForDesign(bot, chatId, uid, design, shade, wh);
+
+  /* ─── SUPPLY REQUEST FLOW: PACKAGE SELECTION ─── */
+  } else if (data.startsWith('srf_pk:')) {
+    const val = data.slice(7);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'supply_req_flow') {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired. Start again.' });
+      return;
+    }
+
+    if (val === '__done__') {
+      if (!session.selectedPackages || !session.selectedPackages.length) {
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Please select at least one package.' });
+        return;
+      }
+      await bot.answerCallbackQuery(callbackQuery.id);
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+      session.step = 'customer';
+      sessionStore.set(uid, session);
+      await showSupplyCustomerPicker(bot, chatId, uid);
+    } else if (val === '__all__') {
+      const all = await inventoryRepository.getAll();
+      const available = all.filter((r) =>
+        r.warehouse === session.warehouse && r.design === session.design && r.shade === session.shade && r.status === 'available');
+      const pkgNos = [...new Set(available.map((r) => r.packageNo))];
+      session.selectedPackages = pkgNos;
+      sessionStore.set(uid, session);
+      await bot.answerCallbackQuery(callbackQuery.id, { text: `Selected all ${pkgNos.length} packages.` });
+    } else {
+      if (!session.selectedPackages) session.selectedPackages = [];
+      const idx = session.selectedPackages.indexOf(val);
+      if (idx >= 0) {
+        session.selectedPackages.splice(idx, 1);
+        await bot.answerCallbackQuery(callbackQuery.id, { text: `Deselected ${val}. Total: ${session.selectedPackages.length}` });
+      } else {
+        session.selectedPackages.push(val);
+        await bot.answerCallbackQuery(callbackQuery.id, { text: `Selected ${val}. Total: ${session.selectedPackages.length}` });
+      }
+      sessionStore.set(uid, session);
+    }
+
+  /* ─── SUPPLY REQUEST FLOW: CUSTOMER ─── */
+  } else if (data.startsWith('srf_cu:')) {
+    const val = data.slice(7);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'supply_req_flow') return;
+
+    if (val === '__new__') {
+      session.step = 'new_customer_name';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(chatId, 'Type the new customer name:');
+      return;
+    }
+    session.customer = val;
+    session.step = 'salesperson';
+    sessionStore.set(uid, session);
+    await showSupplySalespersonPicker(bot, chatId);
+
+  /* ─── SUPPLY REQUEST FLOW: SALESPERSON ─── */
+  } else if (data.startsWith('srf_sp:')) {
+    const val = data.slice(7);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'supply_req_flow') return;
+
+    session.salesperson = val;
+    session.step = 'payment';
+    sessionStore.set(uid, session);
+    await showSupplyPaymentPicker(bot, chatId);
+
+  /* ─── SUPPLY REQUEST FLOW: PAYMENT ─── */
+  } else if (data.startsWith('srf_pm:')) {
+    const val = data.slice(7);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'supply_req_flow') return;
+
+    session.paymentMode = val;
+    session.step = 'date';
+    sessionStore.set(uid, session);
+    await showSupplyDatePicker(bot, chatId);
+
+  /* ─── SUPPLY REQUEST FLOW: DATE PICKER ─── */
+  } else if (data.startsWith('srf_dt')) {
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+
+    if (data.startsWith('srf_dtnav:')) {
+      const offset = parseInt(data.replace('srf_dtnav:', ''));
+      const rows = buildDatePicker('srf_dt', offset);
+      await bot.answerCallbackQuery(callbackQuery.id);
+      await bot.editMessageReplyMarkup({ inline_keyboard: rows }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+    } else if (data.startsWith('srf_dtpick:')) {
+      const dateStr = data.replace('srf_dtpick:', '');
+      await bot.answerCallbackQuery(callbackQuery.id, { text: `Date: ${dateStr}` });
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+      if (session && session.type === 'supply_req_flow') {
+        session.supplyDate = dateStr;
+        sessionStore.set(uid, session);
+        await showSupplyConfirmation(bot, chatId, uid);
+      }
+    }
+
+  /* ─── SUPPLY REQUEST FLOW: DOCUMENT ─── */
+  } else if (data.startsWith('srf_doc:')) {
+    const val = data.slice(8);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'supply_req_flow') return;
+
+    if (val === 'cancel') {
+      sessionStore.clear(uid);
+      await bot.sendMessage(chatId, '❌ Supply request cancelled.');
+      return;
+    }
+    await finalizeSupplyRequest(bot, chatId, uid);
+
+  /* ─── SUPPLY REQUEST FLOW: CONFIRM ─── */
+  } else if (data.startsWith('srf_conf:')) {
+    const val = data.slice(9);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: val === 'yes' ? 'Submitting...' : 'Cancelled.' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+    if (val === 'cancel') {
+      sessionStore.clear(uid);
+      await bot.sendMessage(chatId, '❌ Supply request cancelled.');
+      return;
+    }
+
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'supply_req_flow') return;
+
+    const items = (session.selectedPackages || []).map((p) => ({ type: 'package', packageNo: p }));
+    const intent = {
+      customer: session.customer,
+      salesperson: session.salesperson,
+      paymentMode: session.paymentMode,
+      salesDate: session.supplyDate,
+    };
+    sessionStore.clear(uid);
+
+    salesFlow.startSession(uid, 'sell_batch', items, intent);
+    const sfSession = salesFlow.getSession(uid);
+    if (sfSession) {
+      sfSession.sale_doc_file_id = session.docFileId || null;
+      sfSession.sale_doc_type = session.docType || null;
+      sfSession.sale_doc_mime = session.docMime || null;
+      sfSession.awaitingDocument = false;
+      sfSession.awaitingConfirmation = true;
+      sessionStore.set(uid, sfSession);
+    }
+    await executeSale(bot, chatId, uid);
+
+  /* ─── ADMIN: ASSIGN DEPT / WAREHOUSE ─── */
+  } else if (data.startsWith('adm:')) {
+    const action = data.slice(4);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    if (!config.access.adminIds.includes(uid)) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' });
+      return;
+    }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+    if (action === 'assign_dept') {
+      const users = await usersRepository.getAll();
+      const rows = users.map((u) => [{ text: `${u.name || u.user_id} (${u.department || 'none'})`, callback_data: `adm_du:${u.user_id}` }]);
+      sessionStore.set(uid, { type: 'adm_flow', action: 'assign_dept', step: 'pick_user' });
+      await bot.sendMessage(chatId, '🏢 Select user to assign department:', { reply_markup: { inline_keyboard: rows } });
+    } else if (action === 'assign_wh') {
+      const users = await usersRepository.getAll();
+      const rows = users.map((u) => [{ text: `${u.name || u.user_id} (${u.warehouses.join(', ') || 'none'})`, callback_data: `adm_wu:${u.user_id}` }]);
+      sessionStore.set(uid, { type: 'adm_flow', action: 'assign_wh', step: 'pick_user' });
+      await bot.sendMessage(chatId, '🏭 Select user to assign warehouse:', { reply_markup: { inline_keyboard: rows } });
+    } else if (action === 'add_user') {
+      sessionStore.set(uid, { type: 'adm_flow', action: 'add_user', step: 'enter_id' });
+      await bot.sendMessage(chatId, 'Enter the new user Telegram ID (numeric):');
+    }
+
+  } else if (data.startsWith('adm_du:')) {
+    const targetUserId = data.slice(7);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+    const depts = await departmentsRepo.getAll();
+    const rows = depts.filter((d) => d.status === 'active').map((d) => [{ text: `🏢 ${d.dept_name}`, callback_data: `adm_dd:${targetUserId}|${d.dept_name}` }]);
+    await bot.sendMessage(chatId, `Select department for user ${targetUserId}:`, { reply_markup: { inline_keyboard: rows } });
+
+  } else if (data.startsWith('adm_dd:')) {
+    const [targetUserId, deptName] = data.slice(7).split('|');
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Assigning...' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+    const ok = await usersRepository.updateDepartment(targetUserId, deptName);
+    if (ok) {
+      await bot.sendMessage(chatId, `✅ User ${targetUserId} assigned to department *${deptName}*.`, { parse_mode: 'Markdown' });
+    } else {
+      await bot.sendMessage(chatId, `⚠️ User ${targetUserId} not found in Users sheet. Add them first.`);
+    }
+    sessionStore.clear(uid);
+
+  } else if (data.startsWith('adm_wu:')) {
+    const targetUserId = data.slice(7);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+    const warehouses = await inventoryRepository.getWarehouses();
+    const user = await usersRepository.findByUserId(targetUserId);
+    const current = user ? user.warehouses : [];
+    const rows = warehouses.map((w) => {
+      const has = current.includes(w);
+      return [{ text: `${has ? '✅' : '⬜'} ${w}`, callback_data: `adm_wt:${targetUserId}|${w}` }];
+    });
+    rows.push([{ text: '💾 Save', callback_data: `adm_ws:${targetUserId}` }]);
+    sessionStore.set(uid, { type: 'adm_flow', action: 'assign_wh', targetUserId, pendingWarehouses: [...current] });
+    await bot.sendMessage(chatId, `🏭 Toggle warehouses for ${user ? user.name : targetUserId}:`, { reply_markup: { inline_keyboard: rows } });
+
+  } else if (data.startsWith('adm_wt:')) {
+    const [targetUserId, wh] = data.slice(7).split('|');
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'adm_flow') return;
+
+    if (!session.pendingWarehouses) session.pendingWarehouses = [];
+    const idx = session.pendingWarehouses.indexOf(wh);
+    if (idx >= 0) { session.pendingWarehouses.splice(idx, 1); }
+    else { session.pendingWarehouses.push(wh); }
+    sessionStore.set(uid, session);
+
+    const warehouses = await inventoryRepository.getWarehouses();
+    const rows = warehouses.map((w) => {
+      const has = session.pendingWarehouses.includes(w);
+      return [{ text: `${has ? '✅' : '⬜'} ${w}`, callback_data: `adm_wt:${targetUserId}|${w}` }];
+    });
+    rows.push([{ text: '💾 Save', callback_data: `adm_ws:${targetUserId}` }]);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: `${idx >= 0 ? 'Removed' : 'Added'} ${wh}` });
+    await bot.editMessageReplyMarkup({ inline_keyboard: rows }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+  } else if (data.startsWith('adm_ws:')) {
+    const targetUserId = data.slice(7);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'adm_flow') return;
+
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Saving...' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+    const ok = await usersRepository.updateWarehouses(targetUserId, session.pendingWarehouses || []);
+    if (ok) {
+      await bot.sendMessage(chatId, `✅ Warehouses for ${targetUserId} updated: ${(session.pendingWarehouses || []).join(', ') || 'none'}`, { parse_mode: 'Markdown' });
+    } else {
+      await bot.sendMessage(chatId, `⚠️ User ${targetUserId} not found.`);
+    }
+    sessionStore.clear(uid);
+
   } else {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Unknown action.' });
   }
+}
+
+async function handleAdminFlowText(bot, chatId, userId, text, session) {
+  if (session.action === 'add_user' && session.step === 'enter_id') {
+    const numId = text.trim();
+    if (!/^\d+$/.test(numId)) {
+      await bot.sendMessage(chatId, 'Please enter a valid numeric Telegram ID.');
+      return true;
+    }
+    session.newUserId = numId;
+    session.step = 'enter_name';
+    sessionStore.set(userId, session);
+    await bot.sendMessage(chatId, 'Enter the user name:');
+    return true;
+  }
+  if (session.action === 'add_user' && session.step === 'enter_name') {
+    const name = text.trim();
+    if (!name) {
+      await bot.sendMessage(chatId, 'Please enter a name.');
+      return true;
+    }
+    await usersRepository.append({ user_id: session.newUserId, name, role: 'employee' });
+    sessionStore.clear(userId);
+    await bot.sendMessage(chatId, `✅ User *${name}* (${session.newUserId}) added successfully. Assign department and warehouses via 👥 Manage Users.`, { parse_mode: 'Markdown' });
+    return true;
+  }
+  return false;
 }
 
 module.exports = { handleMessage, handleCallbackQuery, handleFileMessage };

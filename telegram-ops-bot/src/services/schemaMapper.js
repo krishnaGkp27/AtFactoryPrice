@@ -30,7 +30,15 @@ const REQUIRED_SHEETS = {
     headers: ['customer_id', 'name', 'phone', 'address', 'category', 'credit_limit', 'outstanding_balance', 'payment_terms', 'notes', 'status', 'created_at', 'updated_at'],
   },
   Users: {
-    headers: ['user_id', 'name', 'role', 'branch', 'access_level', 'status', 'created_at'],
+    headers: ['user_id', 'name', 'role', 'branch', 'access_level', 'status', 'created_at', 'department', 'warehouses'],
+  },
+  Departments: {
+    headers: ['dept_id', 'dept_name', 'allowed_activities', 'status', 'created_at'],
+    seed: [
+      ['DEPT-001', 'Sales', 'supply_request,upload_receipt,my_orders,give_sample,supply_details,customer_history,customer_pattern,show_customer_notes', 'active'],
+      ['DEPT-002', 'Dispatch', 'mark_order_delivered,my_orders', 'active'],
+      ['DEPT-003', 'Admin', '__all__', 'active'],
+    ],
   },
   Tasks: {
     headers: ['task_id', 'title', 'description', 'assigned_to', 'assigned_by', 'status', 'created_at', 'submitted_at', 'completed_at'],
@@ -121,6 +129,21 @@ async function initialize() {
       }
     } catch (e) {
       logger.warn('SchemaMapper: could not extend Transactions —', e.message);
+    }
+  }
+
+  if (existing.includes('Users')) {
+    try {
+      const userHeader = await sheets.readRange('Users', 'A1:I1');
+      const h = userHeader[0] || [];
+      if (!h.includes('department')) {
+        const nextCol = colLetter(h.length + 1);
+        const endCol = colLetter(h.length + 2);
+        await sheets.updateRange('Users', `${nextCol}1:${endCol}1`, [['department', 'warehouses']]);
+        logger.info('SchemaMapper: extended Users with department, warehouses columns');
+      }
+    } catch (e) {
+      logger.warn('SchemaMapper: could not extend Users —', e.message);
     }
   }
 

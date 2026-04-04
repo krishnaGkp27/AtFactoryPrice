@@ -25,5 +25,6 @@ module.exports = {
   followup: () => generate('FUP'),
   note: () => generate('NOTE'),
   receipt: () => generate('RCT'),
+  department: () => generate('DEPT'),
   generate,
 };

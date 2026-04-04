@@ -111,6 +111,9 @@ ACTION RULES:
 - add_customer_note: add a note to a customer. Needs customer name. Use for "Note for CJE: wants bulk discount", "Add note for Ibrahim: prefers Shade 3", "Customer note CJE promised delivery".
 - show_customer_notes: view notes for a customer. Needs customer name. Use for "Show notes for CJE", "Notes for Ibrahim", "Customer notes CJE".
 - upload_receipt: start the payment receipt upload workflow. Use for "Upload receipt", "Log payment receipt", "Submit receipt", "Receipt upload", "Payment receipt", "Send receipt".
+- supply_request: start the guided supply request flow (tappable). Use for "Supply request", "New supply", "Start supply", "Supply", "Create supply request".
+- manage_users: admin manages users (assign dept, warehouse). Use for "Manage users", "User management", "Assign department", "Assign warehouse".
+- manage_departments: admin manages departments. Use for "Manage departments", "Department management", "Show departments".
 - ask_data: FREE-FORM data question that doesn't fit any predefined report. Use this for custom/complex questions like "compare Lagos vs Kano", "which shade sells fastest", "what percentage is unsold", "show me all buyers of 44200 in descending order", etc.
 
 SALE DETAIL RULES:
@@ -225,6 +228,12 @@ User: "Revenue report" → {"action":"sales_report_interactive","confidence":0.9
 User: "Upload receipt" → {"action":"upload_receipt","confidence":0.95,"clarification":null}
 User: "Log payment receipt" → {"action":"upload_receipt","confidence":0.95,"clarification":null}
 User: "Submit receipt" → {"action":"upload_receipt","confidence":0.95,"clarification":null}
+User: "Supply request" → {"action":"supply_request","confidence":0.95,"clarification":null}
+User: "New supply" → {"action":"supply_request","confidence":0.95,"clarification":null}
+User: "Create supply request" → {"action":"supply_request","confidence":0.95,"clarification":null}
+User: "Manage users" → {"action":"manage_users","confidence":0.95,"clarification":null}
+User: "Assign department" → {"action":"manage_users","confidence":0.95,"clarification":null}
+User: "Manage departments" → {"action":"manage_departments","confidence":0.95,"clarification":null}
 User: "Supply details" → {"action":"supply_details","confidence":0.95,"clarification":null}
 User: "Show supply details" → {"action":"supply_details","confidence":0.95,"clarification":null}
 User: "Supply report" → {"action":"supply_details","confidence":0.95,"clarification":null}
@@ -279,7 +288,8 @@ const VALID_ACTIONS = [
   'customer_history', 'customer_ranking', 'customer_pattern',
   'add_followup', 'add_customer_note', 'show_customer_notes',
   'supply_details', 'create_order', 'my_orders', 'mark_order_delivered',
-  'upload_receipt',
+  'upload_receipt', 'supply_request',
+  'manage_users', 'manage_departments',
 ];
 
 function normalize(obj) {
