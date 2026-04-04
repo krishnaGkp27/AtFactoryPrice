@@ -2201,11 +2201,13 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse) {
   const available = all.filter((r) => r.warehouse === warehouse && r.status === 'available');
   const designMap = new Map();
   for (const r of available) {
-    const key = `${r.design}|${r.shade}`;
-    if (!designMap.has(key)) designMap.set(key, { design: r.design, shade: r.shade, count: 0 });
-    designMap.get(key).count++;
+    const d = r.design;
+    if (!designMap.has(d)) designMap.set(d, { design: d, pkgs: new Set(), thans: 0 });
+    const entry = designMap.get(d);
+    entry.pkgs.add(r.packageNo);
+    entry.thans++;
   }
-  const designs = Array.from(designMap.values()).sort((a, b) => b.count - a.count);
+  const designs = Array.from(designMap.values()).sort((a, b) => b.thans - a.thans);
   if (!designs.length) {
     await bot.sendMessage(chatId, `⚠️ No available stock in warehouse *${warehouse}*.`, { parse_mode: 'Markdown' });
     return;
@@ -2213,15 +2215,47 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse) {
 
   sessionStore.set(userId, { type: 'supply_req_flow', warehouse, step: 'design' });
 
-  const rows = [];
-  for (let i = 0; i < designs.length; i += 2) {
-    const row = [{ text: `${designs[i].design} ${designs[i].shade} (${designs[i].count})`, callback_data: `srf_dg:${designs[i].design}|${designs[i].shade}` }];
-    if (designs[i + 1]) {
-      row.push({ text: `${designs[i + 1].design} ${designs[i + 1].shade} (${designs[i + 1].count})`, callback_data: `srf_dg:${designs[i + 1].design}|${designs[i + 1].shade}` });
-    }
-    rows.push(row);
+  const rows = designs.map((d) => [{ text: `${d.design} — ${d.pkgs.size} pkgs, ${d.thans} thans`, callback_data: `srf_dg:${d.design}` }]);
+  await bot.sendMessage(chatId, `📦 *Warehouse: ${warehouse}*\n\nSelect design:`, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
+}
+
+async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
+  const all = await inventoryRepository.getAll();
+  const available = all.filter((r) => r.warehouse === warehouse && r.design === design && r.status === 'available');
+  const shadeMap = new Map();
+  for (const r of available) {
+    const s = r.shade || 'DEFAULT';
+    if (!shadeMap.has(s)) shadeMap.set(s, { shade: s, pkgs: new Set(), thans: 0 });
+    const entry = shadeMap.get(s);
+    entry.pkgs.add(r.packageNo);
+    entry.thans++;
   }
-  await bot.sendMessage(chatId, `📦 *Warehouse: ${warehouse}*\n\nSelect design to supply:`, {
+  const shades = Array.from(shadeMap.values()).sort((a, b) => b.thans - a.thans);
+  if (!shades.length) {
+    await bot.sendMessage(chatId, `⚠️ No available stock for ${design} in ${warehouse}.`);
+    return;
+  }
+
+  if (shades.length === 1) {
+    await showPackagesForDesign(bot, chatId, userId, design, shades[0].shade, warehouse);
+    return;
+  }
+
+  const session = sessionStore.get(userId);
+  if (session && session.type === 'supply_req_flow') {
+    session.design = design;
+    session.step = 'shade';
+    sessionStore.set(userId, session);
+  }
+
+  const rows = shades.map((s) => [{
+    text: `${s.shade} — ${s.pkgs.size} pkgs, ${s.thans} thans`,
+    callback_data: `srf_sh:${design}|${s.shade}`,
+  }]);
+  await bot.sendMessage(chatId, `📦 *${design}* in *${warehouse}*\n\nSelect shade:`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
@@ -2229,16 +2263,28 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse) {
 
 async function showPackagesForDesign(bot, chatId, userId, design, shade, warehouse) {
   const all = await inventoryRepository.getAll();
-  const available = all.filter((r) =>
-    r.warehouse === warehouse && r.design === design && r.shade === shade && r.status === 'available');
+  const whRows = all.filter((r) => r.warehouse === warehouse && r.design === design && r.shade === shade);
+  const available = whRows.filter((r) => r.status === 'available');
+
+  const totalThansPerPkg = new Map();
+  for (const r of whRows) {
+    totalThansPerPkg.set(r.packageNo, (totalThansPerPkg.get(r.packageNo) || 0) + 1);
+  }
 
   const pkgMap = new Map();
   for (const r of available) {
-    if (!pkgMap.has(r.packageNo)) pkgMap.set(r.packageNo, { packageNo: r.packageNo, thans: 0, yards: 0 });
+    if (!pkgMap.has(r.packageNo)) pkgMap.set(r.packageNo, { packageNo: r.packageNo, availThans: 0, yards: 0 });
     const pkg = pkgMap.get(r.packageNo);
-    pkg.thans++;
+    pkg.availThans++;
     pkg.yards += r.yards || 0;
   }
+
+  for (const [pkgNo, pkg] of pkgMap) {
+    const total = totalThansPerPkg.get(pkgNo) || pkg.availThans;
+    pkg.totalThans = total;
+    pkg.isPartial = pkg.availThans < total;
+  }
+
   const pkgs = Array.from(pkgMap.values()).sort((a, b) => Number(a.packageNo) - Number(b.packageNo));
 
   if (!pkgs.length) {
@@ -2252,24 +2298,68 @@ async function showPackagesForDesign(bot, chatId, userId, design, shade, warehou
     session.shade = shade;
     session.step = 'packages';
     session.selectedPackages = [];
+    session.selectedThans = [];
     sessionStore.set(userId, session);
   }
 
   const rows = [];
-  for (let i = 0; i < pkgs.length; i += 3) {
+  for (let i = 0; i < pkgs.length; i += 2) {
     const row = [];
-    for (let j = i; j < Math.min(i + 3, pkgs.length); j++) {
-      row.push({ text: `📦 ${pkgs[j].packageNo} (${pkgs[j].thans}th)`, callback_data: `srf_pk:${pkgs[j].packageNo}` });
+    for (let j = i; j < Math.min(i + 2, pkgs.length); j++) {
+      const p = pkgs[j];
+      const yds = fmtQty(p.yards);
+      if (p.isPartial) {
+        row.push({ text: `⚠️ ${p.packageNo} — ${yds} yds (${p.availThans}/${p.totalThans} th)`, callback_data: `srf_pk:${p.packageNo}` });
+      } else {
+        row.push({ text: `📦 ${p.packageNo} — ${yds} yds`, callback_data: `srf_pk:${p.packageNo}` });
+      }
     }
     rows.push(row);
   }
   rows.push([{ text: '✅ Select All', callback_data: 'srf_pk:__all__' }]);
   rows.push([{ text: '➡️ Done Selecting', callback_data: 'srf_pk:__done__' }]);
 
-  await bot.sendMessage(chatId, `📦 *${design} ${shade}* in *${warehouse}*\n\nTap packages to select (tap again to deselect):`, {
-    parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: rows },
-  });
+  const totalAvailPkgs = pkgs.length;
+  const totalAvailThans = pkgs.reduce((s, p) => s + p.availThans, 0);
+  await bot.sendMessage(chatId,
+    `📦 *${design} ${shade}* in *${warehouse}*\n${totalAvailPkgs} pkgs, ${totalAvailThans} thans available\n\nTap to select (⚠️ = partial pkg):`, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: rows },
+    });
+}
+
+async function showThansForPackage(bot, chatId, userId, packageNo) {
+  const all = await inventoryRepository.getAll();
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'supply_req_flow') return;
+
+  const pkgRows = all.filter((r) =>
+    r.warehouse === session.warehouse && r.design === session.design &&
+    r.shade === session.shade && r.packageNo === packageNo);
+
+  const rows = [];
+  for (const r of pkgRows.sort((a, b) => (a.thanNo || 0) - (b.thanNo || 0))) {
+    const thanNo = r.thanNo || r.rowIndex;
+    const yds = fmtQty(r.yards || 0);
+    if (r.status === 'available') {
+      rows.push([{ text: `🟢 Than ${thanNo} — ${yds} yds`, callback_data: `srf_th:${packageNo}|${thanNo}` }]);
+    } else {
+      rows.push([{ text: `🔴 Than ${thanNo} — SOLD`, callback_data: 'noop' }]);
+    }
+  }
+  rows.push([{ text: '✅ Select All Available', callback_data: `srf_th:${packageNo}|__all__` }]);
+  rows.push([{ text: '⬅️ Back to Packages', callback_data: 'srf_th:__back__' }]);
+
+  session.step = 'thans';
+  session.currentPartialPkg = packageNo;
+  sessionStore.set(userId, session);
+
+  const avail = pkgRows.filter((r) => r.status === 'available');
+  await bot.sendMessage(chatId,
+    `⚠️ *Package ${packageNo}* — ${avail.length}/${pkgRows.length} thans available\n\nSelect thans to supply:`, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: rows },
+    });
 }
 
 async function showSupplyCustomerPicker(bot, chatId, userId) {
@@ -2314,15 +2404,31 @@ function showSupplyDatePicker(bot, chatId) {
   return bot.sendMessage(chatId, '📅 Select supply date (future dates only):', { reply_markup: { inline_keyboard: rows } });
 }
 
+function buildSelectionSummary(session) {
+  const fullPkgs = session.selectedPackages || [];
+  const thans = session.selectedThans || [];
+  const parts = [];
+  if (fullPkgs.length) parts.push(`📦 Full: ${fullPkgs.join(', ')}`);
+  const thansByPkg = new Map();
+  for (const t of thans) {
+    if (!thansByPkg.has(t.packageNo)) thansByPkg.set(t.packageNo, []);
+    thansByPkg.get(t.packageNo).push(t.thanNo);
+  }
+  for (const [pkg, tns] of thansByPkg) {
+    parts.push(`⚠️ ${pkg}: Than ${tns.join(', ')}`);
+  }
+  return parts.join('\n');
+}
+
 async function showSupplyConfirmation(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== 'supply_req_flow') return;
 
-  const pkgList = (session.selectedPackages || []).join(', ');
+  const selectionText = buildSelectionSummary(session);
   let text = `📦 *Supply Request Summary*\n\n`;
   text += `🏭 Warehouse: *${session.warehouse}*\n`;
   text += `📦 Design: *${session.design} ${session.shade}*\n`;
-  text += `📦 Packages: *${pkgList}*\n`;
+  text += `${selectionText}\n`;
   text += `👤 Customer: *${session.customer}*\n`;
   text += `🧑 Salesperson: *${session.salesperson}*\n`;
   text += `💳 Payment: *${session.paymentMode}*\n`;
@@ -2350,10 +2456,11 @@ async function finalizeSupplyRequest(bot, chatId, userId) {
   session.awaitingDocument = false;
   sessionStore.set(userId, session);
 
+  const selectionText = buildSelectionSummary(session);
   let text = `✅ *Confirm Supply Request*\n\n`;
   text += `🏭 ${session.warehouse}\n`;
   text += `📦 ${session.design} ${session.shade}\n`;
-  text += `📦 Packages: ${(session.selectedPackages || []).join(', ')}\n`;
+  text += `${selectionText}\n`;
   text += `👤 ${session.customer}\n`;
   text += `🧑 ${session.salesperson}\n`;
   text += `💳 ${session.paymentMode}\n`;
@@ -3326,6 +3433,17 @@ async function handleCallbackQuery(bot, callbackQuery) {
 
   /* ─── SUPPLY REQUEST FLOW: DESIGN ─── */
   } else if (data.startsWith('srf_dg:')) {
+    const design = data.slice(7);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+    const session = sessionStore.get(uid);
+    const wh = session ? session.warehouse : '';
+    await showShadesForDesign(bot, chatId, uid, design, wh);
+
+  /* ─── SUPPLY REQUEST FLOW: SHADE ─── */
+  } else if (data.startsWith('srf_sh:')) {
     const [design, shade] = data.slice(7).split('|');
     const chatId = callbackQuery.message.chat.id;
     const uid = String(callbackQuery.from.id);
@@ -3347,8 +3465,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
 
     if (val === '__done__') {
-      if (!session.selectedPackages || !session.selectedPackages.length) {
-        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Please select at least one package.' });
+      const hasPkgs = session.selectedPackages && session.selectedPackages.length;
+      const hasThans = session.selectedThans && session.selectedThans.length;
+      if (!hasPkgs && !hasThans) {
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Please select at least one package or than.' });
         return;
       }
       await bot.answerCallbackQuery(callbackQuery.id);
@@ -3362,9 +3482,25 @@ async function handleCallbackQuery(bot, callbackQuery) {
         r.warehouse === session.warehouse && r.design === session.design && r.shade === session.shade && r.status === 'available');
       const pkgNos = [...new Set(available.map((r) => r.packageNo))];
       session.selectedPackages = pkgNos;
+      session.selectedThans = [];
       sessionStore.set(uid, session);
       await bot.answerCallbackQuery(callbackQuery.id, { text: `Selected all ${pkgNos.length} packages.` });
     } else {
+      const all = await inventoryRepository.getAll();
+      const pkgRows = all.filter((r) =>
+        r.warehouse === session.warehouse && r.design === session.design &&
+        r.shade === session.shade && r.packageNo === val);
+      const totalThans = pkgRows.length;
+      const availThans = pkgRows.filter((r) => r.status === 'available').length;
+      const isPartial = availThans < totalThans;
+
+      if (isPartial) {
+        await bot.answerCallbackQuery(callbackQuery.id);
+        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+        await showThansForPackage(bot, chatId, uid, val);
+        return;
+      }
+
       if (!session.selectedPackages) session.selectedPackages = [];
       const idx = session.selectedPackages.indexOf(val);
       if (idx >= 0) {
@@ -3376,6 +3512,65 @@ async function handleCallbackQuery(bot, callbackQuery) {
       }
       sessionStore.set(uid, session);
     }
+
+  /* ─── SUPPLY REQUEST FLOW: THAN SELECTION (partial packages) ─── */
+  } else if (data.startsWith('srf_th:')) {
+    const val = data.slice(7);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'supply_req_flow') {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' });
+      return;
+    }
+
+    if (val === '__back__') {
+      await bot.answerCallbackQuery(callbackQuery.id);
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+      session.step = 'packages';
+      session.currentPartialPkg = null;
+      sessionStore.set(uid, session);
+      await showPackagesForDesign(bot, chatId, uid, session.design, session.shade, session.warehouse);
+      return;
+    }
+
+    const [pkgNo, thanVal] = val.split('|');
+    if (!session.selectedThans) session.selectedThans = [];
+
+    if (thanVal === '__all__') {
+      const all = await inventoryRepository.getAll();
+      const avail = all.filter((r) =>
+        r.warehouse === session.warehouse && r.design === session.design &&
+        r.shade === session.shade && r.packageNo === pkgNo && r.status === 'available');
+      session.selectedThans = session.selectedThans.filter((t) => t.packageNo !== pkgNo);
+      for (const r of avail) {
+        session.selectedThans.push({ packageNo: pkgNo, thanNo: r.thanNo || r.rowIndex });
+      }
+      sessionStore.set(uid, session);
+      await bot.answerCallbackQuery(callbackQuery.id, { text: `All ${avail.length} available thans selected from ${pkgNo}.` });
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+      session.step = 'packages';
+      session.currentPartialPkg = null;
+      sessionStore.set(uid, session);
+      await showPackagesForDesign(bot, chatId, uid, session.design, session.shade, session.warehouse);
+      return;
+    }
+
+    const thanNoNum = parseInt(thanVal);
+    const idx = session.selectedThans.findIndex((t) => t.packageNo === pkgNo && t.thanNo === thanNoNum);
+    if (idx >= 0) {
+      session.selectedThans.splice(idx, 1);
+      await bot.answerCallbackQuery(callbackQuery.id, { text: `Deselected Than ${thanNoNum} from ${pkgNo}.` });
+    } else {
+      session.selectedThans.push({ packageNo: pkgNo, thanNo: thanNoNum });
+      await bot.answerCallbackQuery(callbackQuery.id, { text: `Selected Than ${thanNoNum} from ${pkgNo}.` });
+    }
+    sessionStore.set(uid, session);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+    session.step = 'packages';
+    session.currentPartialPkg = null;
+    sessionStore.set(uid, session);
+    await showPackagesForDesign(bot, chatId, uid, session.design, session.shade, session.warehouse);
 
   /* ─── SUPPLY REQUEST FLOW: CUSTOMER ─── */
   } else if (data.startsWith('srf_cu:')) {
@@ -3489,21 +3684,32 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'supply_req_flow') return;
 
-    const items = (session.selectedPackages || []).map((p) => ({ type: 'package', packageNo: p }));
+    const items = [];
+    for (const p of (session.selectedPackages || [])) {
+      items.push({ type: 'package', packageNo: p });
+    }
+    for (const t of (session.selectedThans || [])) {
+      if (!(session.selectedPackages || []).includes(t.packageNo)) {
+        items.push({ type: 'than', packageNo: t.packageNo, thanNo: t.thanNo });
+      }
+    }
+
+    const saleType = items.some((i) => i.type === 'than') ? 'sell_mixed' : 'sell_batch';
     const intent = {
       customer: session.customer,
       salesperson: session.salesperson,
       paymentMode: session.paymentMode,
       salesDate: session.supplyDate,
     };
+    const docInfo = { fileId: session.docFileId, type: session.docType, mime: session.docMime };
     sessionStore.clear(uid);
 
-    salesFlow.startSession(uid, 'sell_batch', items, intent);
+    salesFlow.startSession(uid, saleType, items, intent);
     const sfSession = salesFlow.getSession(uid);
     if (sfSession) {
-      sfSession.sale_doc_file_id = session.docFileId || null;
-      sfSession.sale_doc_type = session.docType || null;
-      sfSession.sale_doc_mime = session.docMime || null;
+      sfSession.sale_doc_file_id = docInfo.fileId || null;
+      sfSession.sale_doc_type = docInfo.type || null;
+      sfSession.sale_doc_mime = docInfo.mime || null;
       sfSession.awaitingDocument = false;
       sfSession.awaitingConfirmation = true;
       sessionStore.set(uid, sfSession);
