@@ -1,7 +1,9 @@
 /**
  * Risk evaluation for inventory and financial actions.
- * ALL write operations by non-admin users require admin approval.
- * Admin users execute directly.
+ * Sale/supply and ledger-impacting actions ALWAYS require approval:
+ *   Employee → Admin approval
+ *   Admin → 2nd Admin approval
+ * Other write actions: employees need admin approval, admins execute directly.
  */
 
 const settingsRepository = require('../repositories/settingsRepository');
@@ -20,6 +22,11 @@ const WRITE_ACTIONS = [
   'transfer_than', 'transfer_package', 'transfer_batch',
 ];
 
+const ALWAYS_APPROVAL_ACTIONS = [
+  'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell',
+  'record_payment', 'update_price',
+];
+
 async function getThresholds() {
   const settings = await settingsRepository.getAll();
   return {
@@ -30,14 +37,22 @@ async function getThresholds() {
 
 /**
  * Evaluate risk for any action.
- * Non-admin users always need approval for write operations.
- * Admin users always get 'safe'.
+ * Sale/supply/payment/price actions ALWAYS need approval (even admins → 2nd admin).
+ * Other write actions: employee → admin approval; admin → safe.
  */
 async function evaluate(params) {
   const { action, userId } = params;
 
   const isAdm = userId && auth.isAdmin(userId);
   logger.info(`Risk evaluate: action=${action}, userId=${userId}, isAdmin=${isAdm}`);
+
+  if (ALWAYS_APPROVAL_ACTIONS.includes(action)) {
+    const who = isAdm ? '2nd admin' : 'admin';
+    return {
+      risk: 'approval_required',
+      reason: `All ${formatAction(action)} operations require ${who} approval.`,
+    };
+  }
 
   if (isAdm) {
     return { risk: 'safe' };

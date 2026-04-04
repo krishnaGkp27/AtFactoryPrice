@@ -77,9 +77,12 @@ async function requireApproval(bot, chatId, msg, userId, action, actionJSON, sum
     requestId, user: userId, actionJSON, riskReason: risk.reason, status: 'pending',
   });
   await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
-  await bot.sendMessage(chatId, `⏳ Needs admin approval (${risk.reason}). Request: ${requestId}`);
+  const isAdm = config.access.adminIds.includes(userId);
+  const approverLabel = isAdm ? '2nd admin' : 'admin';
+  await bot.sendMessage(chatId, `⏳ Needs ${approverLabel} approval (${risk.reason}). Request: ${requestId}`);
   const userLabel = await getRequesterDisplayName(userId, msg);
-  await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, risk.reason);
+  const excludeId = isAdm ? userId : undefined;
+  await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, risk.reason, excludeId);
   return true;
 }
 
@@ -2672,10 +2675,13 @@ async function executeSale(bot, chatId, userId) {
     await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
 
     const userLabel = await getRequesterDisplayName(userId, null);
+    const isSubmitterAdmin = config.access.adminIds.includes(userId);
+    const excludeId = isSubmitterAdmin ? userId : undefined;
     if (session.sale_doc_file_id) detailText += '\n📎 Sales bill attached (see below)';
-    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, detailText, risk.reason);
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, detailText, risk.reason, excludeId);
     if (session.sale_doc_file_id) {
       for (const adminId of config.access.adminIds) {
+        if (excludeId && String(adminId) === String(excludeId)) continue;
         try {
           if (session.sale_doc_type === 'document') {
             await bot.sendDocument(adminId, session.sale_doc_file_id, { caption: `📄 Sales bill for request ${requestId}` });
@@ -2685,7 +2691,8 @@ async function executeSale(bot, chatId, userId) {
         } catch (e) { logger.error(`Failed to send sale doc to admin ${adminId}`, e.message); }
       }
     }
-    await bot.sendMessage(chatId, `⏳ Sale submitted for admin approval. Request: ${requestId}\n${totalPkgs} packages (${totalThans} thans), ${fmtQty(totalYards)} yards to ${session.collected.customer}`);
+    const approverLabel = isSubmitterAdmin ? '2nd admin' : 'admin';
+    await bot.sendMessage(chatId, `⏳ Supply request submitted for ${approverLabel} approval. Request: ${requestId}\n${totalPkgs} packages (${totalThans} thans), ${fmtQty(totalYards)} yards to ${session.collected.customer}`);
     sessionStore.clear(userId);
     return;
   }

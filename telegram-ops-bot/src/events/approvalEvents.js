@@ -226,7 +226,7 @@ async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, it
   }
 }
 
-async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSummary, riskReason) {
+async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSummary, riskReason, excludeUserId) {
   const esc = (s) => (s || '').replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
   const text = `🔔 *Approval required*\n\nRequest ID: \`${requestId}\`\nUser: ${esc(userLabel)}\nAction: ${esc(actionSummary)}\nReason: ${esc(riskReason)}\n\nUse buttons below to approve or reject\\.`;
   const keyboard = {
@@ -235,6 +235,7 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
     ],
   };
   for (const adminId of config.access.adminIds) {
+    if (excludeUserId && String(adminId) === String(excludeUserId)) continue;
     try {
       await bot.sendMessage(adminId, text, { parse_mode: 'MarkdownV2', reply_markup: keyboard });
     } catch (e) {
