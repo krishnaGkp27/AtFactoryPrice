@@ -29,6 +29,7 @@ const driveClient = require('../repositories/driveClient');
 const departmentsRepo = require('../repositories/departmentsRepository');
 const activityRegistry = require('../services/activityRegistry');
 const customersRepo = require('../repositories/customersRepository');
+const userPrefsRepo = require('../repositories/userPrefsRepository');
 const idGenerator = require('../utils/idGenerator');
 const config = require('../config');
 const logger = require('../utils/logger');
@@ -2176,7 +2177,7 @@ function helpText() {
 
 const GREETINGS = /^(hi|hello|hey|start|menu|home|main\s*menu)$/i;
 
-async function buildGreetingMenu(bot, chatId, userId) {
+async function buildGreetingMenu(bot, chatId, userId, showAll = false) {
   const isAdminUser = config.access.adminIds.includes(userId);
   const user = await usersRepository.findByUserId(userId);
   const deptName = (user && user.department) || (isAdminUser ? 'Admin' : '');
@@ -2195,14 +2196,23 @@ async function buildGreetingMenu(bot, chatId, userId) {
     return;
   }
 
+  const counts = await userPrefsRepo.getCountsForUser(userId);
+  const sorted = userPrefsRepo.sortActivitiesByFrequency(allowed, counts);
+
+  const MAX_MENU = 6;
+  const visible = showAll ? sorted : sorted.slice(0, MAX_MENU);
+
   const name = (user && user.name) || 'there';
   const rows = [];
-  for (let i = 0; i < allowed.length; i += 2) {
-    const row = [{ text: `${allowed[i].icon} ${allowed[i].label}`, callback_data: allowed[i].callback }];
-    if (allowed[i + 1]) {
-      row.push({ text: `${allowed[i + 1].icon} ${allowed[i + 1].label}`, callback_data: allowed[i + 1].callback });
+  for (let i = 0; i < visible.length; i += 2) {
+    const row = [{ text: `${visible[i].icon} ${visible[i].label}`, callback_data: visible[i].callback }];
+    if (visible[i + 1]) {
+      row.push({ text: `${visible[i + 1].icon} ${visible[i + 1].label}`, callback_data: visible[i + 1].callback });
     }
     rows.push(row);
+  }
+  if (!showAll && sorted.length > MAX_MENU) {
+    rows.push([{ text: `📋 More Options (${sorted.length - MAX_MENU})`, callback_data: 'act:__more__' }]);
   }
 
   const deptBadge = deptName ? ` (${deptName})` : '';
@@ -2351,9 +2361,23 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse) {
   }
 
   const cShort = labels.container_short;
-  const rows = designs.map((d) => [{ text: `${d.design} — ${d.totalPkgs} ${cShort} avail`, callback_data: `srf_dg:${d.design}` }]);
+  const MAX_VISIBLE = 8;
+  const page = (session && session.designPage) || 0;
+  const start = page * MAX_VISIBLE;
+  const visible = designs.slice(start, start + MAX_VISIBLE);
+  const rows = [];
+  for (let i = 0; i < visible.length; i += 2) {
+    const row = [{ text: `${visible[i].design} (${visible[i].totalPkgs} ${cShort})`, callback_data: `srf_dg:${visible[i].design}` }];
+    if (visible[i + 1]) row.push({ text: `${visible[i + 1].design} (${visible[i + 1].totalPkgs} ${cShort})`, callback_data: `srf_dg:${visible[i + 1].design}` });
+    rows.push(row);
+  }
+  const nav = [];
+  if (page > 0) nav.push({ text: '⬅️ Prev', callback_data: 'srf_dgpg:prev' });
+  if (start + MAX_VISIBLE < designs.length) nav.push({ text: `More (${designs.length - start - MAX_VISIBLE}) ➡️`, callback_data: 'srf_dgpg:next' });
+  if (nav.length) rows.push(nav);
   const cartNote = cart.length ? `\n🛒 Cart: ${cart.length} item(s)` : '';
-  await bot.sendMessage(chatId, `📦 *Warehouse: ${warehouse}*${cartNote}\n\nSelect design:`, {
+  const pageNote = designs.length > MAX_VISIBLE ? ` (${start + 1}–${Math.min(start + MAX_VISIBLE, designs.length)} of ${designs.length})` : '';
+  await bot.sendMessage(chatId, `📦 *Warehouse: ${warehouse}*${cartNote}\n\nSelect design:${pageNote}`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
@@ -2392,10 +2416,12 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   }
 
   const cShort = labels.container_short;
-  const rows = shades.map((s) => [{
-    text: `${s.shade} — ${s.availPkgs} ${cShort} avail`,
-    callback_data: `srf_sh:${design}|${s.shade}|${s.availPkgs}`,
-  }]);
+  const rows = [];
+  for (let i = 0; i < shades.length; i += 2) {
+    const row = [{ text: `${shades[i].shade} (${shades[i].availPkgs} ${cShort})`, callback_data: `srf_sh:${design}|${shades[i].shade}|${shades[i].availPkgs}` }];
+    if (shades[i + 1]) row.push({ text: `${shades[i + 1].shade} (${shades[i + 1].availPkgs} ${cShort})`, callback_data: `srf_sh:${design}|${shades[i + 1].shade}|${shades[i + 1].availPkgs}` });
+    rows.push(row);
+  }
   await bot.sendMessage(chatId, `📦 *${design}* in *${warehouse}*\n\nSelect shade:`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
@@ -2461,10 +2487,8 @@ async function showCartSummary(bot, chatId, userId) {
 
   const text = await buildCartText(session);
   const rows = [
-    [{ text: '➕ Add More', callback_data: 'srf_cart:add' }],
-    [{ text: '🗑️ Remove Item', callback_data: 'srf_cart:remove' }],
-    [{ text: '➡️ Proceed to Checkout', callback_data: 'srf_cart:proceed' }],
-    [{ text: '❌ Cancel', callback_data: 'srf_cart:cancel' }],
+    [{ text: '➕ Add More', callback_data: 'srf_cart:add' }, { text: '🗑️ Remove', callback_data: 'srf_cart:remove' }],
+    [{ text: '➡️ Checkout', callback_data: 'srf_cart:proceed' }, { text: '❌ Cancel', callback_data: 'srf_cart:cancel' }],
   ];
   await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
@@ -2521,14 +2545,17 @@ async function showSupplyCustomerPicker(bot, chatId, userId) {
   }
 }
 
-async function showSupplySalespersonPicker(bot, chatId) {
+async function showSupplySalespersonPicker(bot, chatId, showAll = false) {
   const users = await usersRepository.getAll();
+  const MAX_SP = 6;
+  const visible = showAll ? users : users.slice(0, MAX_SP);
   const rows = [];
-  for (let i = 0; i < users.length; i += 2) {
-    const row = [{ text: `🧑 ${users[i].name || users[i].user_id}`, callback_data: `srf_sp:${users[i].name || users[i].user_id}` }];
-    if (users[i + 1]) row.push({ text: `🧑 ${users[i + 1].name || users[i + 1].user_id}`, callback_data: `srf_sp:${users[i + 1].name || users[i + 1].user_id}` });
+  for (let i = 0; i < visible.length; i += 2) {
+    const row = [{ text: `🧑 ${visible[i].name || visible[i].user_id}`, callback_data: `srf_sp:${visible[i].name || visible[i].user_id}` }];
+    if (visible[i + 1]) row.push({ text: `🧑 ${visible[i + 1].name || visible[i + 1].user_id}`, callback_data: `srf_sp:${visible[i + 1].name || visible[i + 1].user_id}` });
     rows.push(row);
   }
+  if (!showAll && users.length > MAX_SP) rows.push([{ text: `📋 See All (${users.length})`, callback_data: 'srf_sp:__more__' }]);
   await bot.sendMessage(chatId, '🧑 Select salesperson:', { reply_markup: { inline_keyboard: rows } });
 }
 
@@ -2546,8 +2573,20 @@ async function showSupplyPaymentPicker(bot, chatId) {
 }
 
 function showSupplyDatePicker(bot, chatId) {
-  const rows = buildDatePicker('srf_dt', 0);
-  return bot.sendMessage(chatId, '📅 Select supply date (future dates only):', { reply_markup: { inline_keyboard: rows } });
+  const today = new Date().toISOString().split('T')[0];
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+  const nextMon = nextWeekday(1);
+  const nextFri = nextWeekday(5);
+  const rows = [
+    [{ text: `📅 Today (${fmtDate(today)})`, callback_data: `srf_dtpick:${today}` }],
+    [{ text: `📅 Tomorrow (${fmtDate(tomorrow)})`, callback_data: `srf_dtpick:${tomorrow}` }],
+    [
+      { text: `Mon (${fmtDate(nextMon)})`, callback_data: `srf_dtpick:${nextMon}` },
+      { text: `Fri (${fmtDate(nextFri)})`, callback_data: `srf_dtpick:${nextFri}` },
+    ],
+    [{ text: '🗓️ Pick from calendar', callback_data: 'srf_dtcal:0' }],
+  ];
+  return bot.sendMessage(chatId, '📅 Select supply date:', { reply_markup: { inline_keyboard: rows } });
 }
 
 async function showSupplyConfirmation(bot, chatId, userId) {
@@ -3440,6 +3479,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.answerCallbackQuery(callbackQuery.id);
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
 
+    if (actCode === '__more__') {
+      await buildGreetingMenu(bot, chatId, uid, true);
+      return;
+    }
+
+    userPrefsRepo.incrementActivity(uid, actCode).catch(() => {});
+
     switch (actCode) {
       case 'supply_request': await startSupplyRequestFlow(bot, chatId, uid); break;
       case 'upload_receipt': await startReceiptFlow(bot, chatId, uid); break;
@@ -3564,6 +3610,21 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
     sessionStore.set(uid, { type: 'supply_req_flow', warehouse, cart: [], step: 'design' });
     await showDesignsForWarehouse(bot, chatId, uid, warehouse);
+
+  /* ─── SUPPLY REQUEST FLOW: DESIGN PAGE NAV ─── */
+  } else if (data.startsWith('srf_dgpg:')) {
+    const dir = data.slice(9);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+    const session = sessionStore.get(uid);
+    if (session && session.type === 'supply_req_flow') {
+      session.designPage = (session.designPage || 0) + (dir === 'next' ? 1 : -1);
+      if (session.designPage < 0) session.designPage = 0;
+      sessionStore.set(uid, session);
+      await showDesignsForWarehouse(bot, chatId, uid, session.warehouse);
+    }
 
   /* ─── SUPPLY REQUEST FLOW: DESIGN ─── */
   } else if (data.startsWith('srf_dg:')) {
@@ -3737,6 +3798,11 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'supply_req_flow') return;
 
+    if (val === '__more__') {
+      await showSupplySalespersonPicker(bot, chatId, true);
+      return;
+    }
+
     session.salesperson = val;
     session.step = 'payment';
     sessionStore.set(uid, session);
@@ -3764,7 +3830,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const uid = String(callbackQuery.from.id);
     const session = sessionStore.get(uid);
 
-    if (data.startsWith('srf_dtnav:')) {
+    if (data.startsWith('srf_dtcal:')) {
+      const offset = parseInt(data.replace('srf_dtcal:', '') || '0');
+      const rows = buildDatePicker('srf_dt', offset);
+      await bot.answerCallbackQuery(callbackQuery.id);
+      await bot.editMessageReplyMarkup({ inline_keyboard: rows }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+    } else if (data.startsWith('srf_dtnav:')) {
       const offset = parseInt(data.replace('srf_dtnav:', ''));
       const rows = buildDatePicker('srf_dt', offset);
       await bot.answerCallbackQuery(callbackQuery.id);

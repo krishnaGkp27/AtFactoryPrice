@@ -92,6 +92,9 @@ const REQUIRED_SHEETS = {
       ['innerwear', 'Innerwear', 'Carton', 'ctn', 'Dozen', 'pcs', 'yes', 'active'],
     ],
   },
+  UserPrefs: {
+    headers: ['user_id', 'activity_counts', 'updated_at'],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];
