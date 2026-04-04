@@ -92,6 +92,8 @@ const CURRENCY = config.currency || 'NGN';
 function fmtQty(n) { return Number(n).toLocaleString('en-NG', { maximumFractionDigits: 2 }); }
 function fmtMoney(n) { return `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`; }
 
+const getMaterialInfo = productTypesRepo.getMaterialInfo;
+
 /** Parse date string to YYYY-MM-DD for ledger range. Supports YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY. */
 function parseLedgerDate(str) {
   if (!str || typeof str !== 'string') return null;
@@ -966,13 +968,60 @@ async function handleMessage(bot, msg) {
       await showCartSummary(bot, chatId, userId);
       return;
     }
-    if (srfSession.step === 'new_customer_name') {
+    if (srfSession.step === 'new_srf_customer_name') {
       const name = text.trim();
-      if (!name) { await bot.sendMessage(chatId, 'Please enter a customer name.'); return; }
-      srfSession.customer = name;
-      srfSession.step = 'salesperson';
+      if (!name) { await bot.sendMessage(chatId, 'Please enter a valid customer name.'); return; }
+      const existing = await customersRepo.findByName(name);
+      if (existing) {
+        srfSession.customer = existing.name;
+        srfSession.step = 'salesperson';
+        sessionStore.set(userId, srfSession);
+        await bot.sendMessage(chatId, `👤 Customer "${existing.name}" already exists. Continuing...`);
+        await showSupplySalespersonPicker(bot, chatId);
+        return;
+      }
+      srfSession.newCustomerName = name;
+      srfSession.step = 'new_srf_customer_phone';
       sessionStore.set(userId, srfSession);
-      await showSupplySalespersonPicker(bot, chatId);
+      await bot.sendMessage(chatId, '📱 Enter customer phone number:');
+      return;
+    }
+    if (srfSession.step === 'new_srf_customer_phone') {
+      const phone = text.trim();
+      if (!phone) { await bot.sendMessage(chatId, 'Please enter a phone number.'); return; }
+      const name = srfSession.newCustomerName;
+      const custId = idGenerator.customer();
+      await customersRepo.append({
+        customer_id: custId, name, phone, status: 'Pending',
+        category: 'Retail', notes: `Registered during supply request by ${userId}`,
+      });
+      srfSession.step = 'awaiting_customer_approval';
+      srfSession.pendingCustomerId = custId;
+      srfSession.pendingCustomerName = name;
+      sessionStore.set(userId, srfSession);
+      const requestId = require('crypto').randomUUID();
+      srfSession.customerApprovalId = requestId;
+      sessionStore.set(userId, srfSession);
+      const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+      await approvalQueueRepository.append({
+        requestId,
+        user: userId,
+        actionJSON: { action: 'new_customer', customer_id: custId, customer_name: name, phone, requesterUserId: userId },
+        riskReason: 'New customer registration requires admin approval',
+        status: 'pending',
+      });
+      const approvalEvents = require('../events/approvalEvents');
+      const userLabel = await getRequesterDisplayName(userId, null);
+      await approvalEvents.notifyAdminsApprovalRequest(
+        bot, requestId, userLabel,
+        `New customer: "${name}" (${phone})`,
+        'New customer registration requires admin approval',
+        null,
+      );
+      await bot.sendMessage(chatId,
+        `⏳ Customer "*${name}*" registered as *Pending*.\n\nWaiting for admin approval before proceeding. You'll be notified once approved.`,
+        { parse_mode: 'Markdown' },
+      );
       return;
     }
   }
@@ -2396,8 +2445,10 @@ async function buildCartText(session) {
   if (!cart.length) return '🛒 Cart is empty.';
   const labels = await productTypesRepo.getLabels(session.productType || 'fabric');
   const cShort = labels.container_short;
-  const lines = cart.map((c, i) =>
-    `${i + 1}. 📌 ${c.design} │ Shade: ${c.shade} │ ×${c.quantity} ${cShort}`);
+  const lines = cart.map((c) => {
+    const m = getMaterialInfo(c.design);
+    return `${m.icon} ${c.design} [${m.name}] │ Shade: ${c.shade} │ ×${c.quantity} ${cShort}`;
+  });
   const total = cart.reduce((s, c) => s + c.quantity, 0);
   const containerPlural = productTypesRepo.pluralize(labels.container_label, total).toLowerCase();
   return `🛒 *Supply Cart* — 🏭 ${session.warehouse}\n━━━━━━━━━━━━━━━━━━━━━━\n${lines.join('\n')}\n━━━━━━━━━━━━━━━━━━━━━━\n📦 Total: ${total} ${containerPlural}`;
@@ -2419,17 +2470,56 @@ async function showCartSummary(bot, chatId, userId) {
   await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
+async function getTopBuyersForDesigns(designs) {
+  const allInv = await inventoryRepository.getAll();
+  const designSet = new Set(designs.map((d) => String(d).toUpperCase()));
+  const sold = allInv.filter((r) => r.status === 'sold' && r.soldTo && designSet.has(String(r.design).toUpperCase()));
+  const buyerMap = new Map();
+  for (const r of sold) {
+    const name = r.soldTo;
+    if (!buyerMap.has(name)) buyerMap.set(name, 0);
+    buyerMap.set(name, buyerMap.get(name) + (r.yards * r.pricePerYard));
+  }
+  return [...buyerMap.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
+}
+
 async function showSupplyCustomerPicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  const cart = (session && session.cart) || [];
+  const cartDesigns = [...new Set(cart.map((c) => c.design))];
+
   const allCust = await customersRepo.getAll();
   const active = allCust.filter((c) => (c.status || 'Active').toLowerCase() === 'active');
+  const activeNames = new Set(active.map((c) => c.name));
+
+  const topBuyers = await getTopBuyersForDesigns(cartDesigns);
+  const suggested = topBuyers.filter((n) => activeNames.has(n)).slice(0, 6);
+  const suggestedSet = new Set(suggested);
+
   const rows = [];
-  for (let i = 0; i < active.length; i += 2) {
-    const row = [{ text: `👤 ${active[i].name}`, callback_data: `srf_cu:${active[i].name}` }];
-    if (active[i + 1]) row.push({ text: `👤 ${active[i + 1].name}`, callback_data: `srf_cu:${active[i + 1].name}` });
-    rows.push(row);
+  if (suggested.length) {
+    const designLabel = cartDesigns.length <= 3 ? cartDesigns.join(', ') : `${cartDesigns.length} designs`;
+    let headerText = `👤 Select customer:\n━━━━━━━━━━━━━━━━━━━━━━\n⭐ *Top buyers of ${designLabel}:*`;
+    for (let i = 0; i < suggested.length; i += 2) {
+      const row = [{ text: `⭐ ${suggested[i]}`, callback_data: `srf_cu:${suggested[i]}` }];
+      if (suggested[i + 1]) row.push({ text: `⭐ ${suggested[i + 1]}`, callback_data: `srf_cu:${suggested[i + 1]}` });
+      rows.push(row);
+    }
+    const remaining = active.filter((c) => !suggestedSet.has(c.name));
+    if (remaining.length) {
+      rows.push([{ text: '📋 See More Customers', callback_data: 'srf_cu:__more__' }]);
+    }
+    rows.push([{ text: '➕ Add New Customer', callback_data: 'srf_cu:__new__' }]);
+    await bot.sendMessage(chatId, headerText, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+  } else {
+    for (let i = 0; i < active.length; i += 2) {
+      const row = [{ text: `👤 ${active[i].name}`, callback_data: `srf_cu:${active[i].name}` }];
+      if (active[i + 1]) row.push({ text: `👤 ${active[i + 1].name}`, callback_data: `srf_cu:${active[i + 1].name}` });
+      rows.push(row);
+    }
+    rows.push([{ text: '➕ Add New Customer', callback_data: 'srf_cu:__new__' }]);
+    await bot.sendMessage(chatId, '👤 Select customer:', { reply_markup: { inline_keyboard: rows } });
   }
-  rows.push([{ text: '➕ New Customer', callback_data: 'srf_cu:__new__' }]);
-  await bot.sendMessage(chatId, '👤 Select customer:', { reply_markup: { inline_keyboard: rows } });
 }
 
 async function showSupplySalespersonPicker(bot, chatId) {
@@ -3607,10 +3697,29 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'supply_req_flow') return;
 
+    if (val === '__more__') {
+      const allCust = await customersRepo.getAll();
+      const active = allCust.filter((c) => (c.status || 'Active').toLowerCase() === 'active');
+      const cart = session.cart || [];
+      const cartDesigns = [...new Set(cart.map((c) => c.design))];
+      const topBuyers = await getTopBuyersForDesigns(cartDesigns);
+      const suggestedSet = new Set(topBuyers.slice(0, 6));
+      const remaining = active.filter((c) => !suggestedSet.has(c.name));
+      const rows = [];
+      for (let i = 0; i < remaining.length; i += 2) {
+        const row = [{ text: `👤 ${remaining[i].name}`, callback_data: `srf_cu:${remaining[i].name}` }];
+        if (remaining[i + 1]) row.push({ text: `👤 ${remaining[i + 1].name}`, callback_data: `srf_cu:${remaining[i + 1].name}` });
+        rows.push(row);
+      }
+      rows.push([{ text: '➕ Add New Customer', callback_data: 'srf_cu:__new__' }]);
+      await bot.sendMessage(chatId, '👤 All other customers:', { reply_markup: { inline_keyboard: rows } });
+      return;
+    }
+
     if (val === '__new__') {
-      session.step = 'new_customer_name';
+      session.step = 'new_srf_customer_name';
       sessionStore.set(uid, session);
-      await bot.sendMessage(chatId, 'Type the new customer name:');
+      await bot.sendMessage(chatId, '📝 Enter new customer *full name*:', { parse_mode: 'Markdown' });
       return;
     }
     session.customer = val;
@@ -3737,8 +3846,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const userLabel = await getRequesterDisplayName(uid, null);
     const labels = await productTypesRepo.getLabels(session.productType || 'fabric');
     const cShort = labels.container_short;
-    const cartLines = cart.map((c) =>
-      `📌 ${c.design} │ Shade: ${c.shade} │ ×${c.quantity} ${cShort}`).join('\n');
+    const cartLines = cart.map((c) => {
+      const m = getMaterialInfo(c.design);
+      return `${m.icon} ${c.design} [${m.name}] │ Shade: ${c.shade} │ ×${c.quantity} ${cShort}`;
+    }).join('\n');
     const totalPkgs = cart.reduce((s, c) => s + c.quantity, 0);
     const containerPlural = productTypesRepo.pluralize(labels.container_label, totalPkgs).toLowerCase();
 

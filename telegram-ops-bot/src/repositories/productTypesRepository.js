@@ -80,6 +80,12 @@ function fmtQtyShort(count, labels) {
   return `${count} ${labels.container_short}`;
 }
 
+function getMaterialInfo(design) {
+  const d = String(design).trim();
+  if (d === '44200') return { icon: '🧣', name: 'Cashmere' };
+  return { icon: '🧵', name: 'Senator' };
+}
+
 module.exports = {
   getAll,
   findById,
@@ -88,5 +94,6 @@ module.exports = {
   pluralize,
   fmtQty,
   fmtQtyShort,
+  getMaterialInfo,
   HEADERS,
 };

@@ -270,6 +270,12 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
       await bot.answerCallbackQuery(callbackQuery.id, { text: 'Approving...' });
       await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatIdCb, message_id: msgIdCb });
 
+      const isNewCustomer = item && item.actionJSON && item.actionJSON.action === 'new_customer';
+      if (isNewCustomer) {
+        await handleNewCustomerApproval(bot, chatIdCb, requestId, item, requestingUser, true);
+        return;
+      }
+
       const isSupplyReq = item && item.actionJSON && item.actionJSON.action === 'supply_request';
       if (isSupplyReq) {
         await showWarehouseBoyPicker(bot, chatIdCb, requestId, item, requestingUser);
@@ -303,6 +309,12 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
       await bot.answerCallbackQuery(callbackQuery.id, { text: 'Rejecting...' });
       await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatIdCb, message_id: msgIdCb });
 
+      const isNewCustReject = item && item.actionJSON && item.actionJSON.action === 'new_customer';
+      if (isNewCustReject) {
+        await handleNewCustomerApproval(bot, chatIdCb, requestId, item, requestingUser, false);
+        return;
+      }
+
       const result = await inventoryService.rejectApproval(requestId, adminId);
       if (result.ok) {
         await bot.sendMessage(chatIdCb, `❌ Request ${requestId} rejected.`);
@@ -332,8 +344,10 @@ async function showWarehouseBoyPicker(bot, chatId, requestId, item, requestingUs
   const productTypesRepo = require('../repositories/productTypesRepository');
   const labels = await productTypesRepo.getLabels(aj.productType || 'fabric');
   const cShort = labels.container_short;
-  const cartLines = (aj.cart || []).map((ci) =>
-    `📌 ${ci.design} │ Shade: ${ci.shade} │ ×${ci.quantity} ${cShort}`).join('\n');
+  const cartLines = (aj.cart || []).map((ci) => {
+    const m = productTypesRepo.getMaterialInfo(ci.design);
+    return `${m.icon} ${ci.design} [${m.name}] │ Shade: ${ci.shade} │ ×${ci.quantity} ${cShort}`;
+  }).join('\n');
   const totalQty = (aj.cart || []).reduce((s, c) => s + c.quantity, 0);
   const containerPlural = productTypesRepo.pluralize(labels.container_label, totalQty).toLowerCase();
   let summary = `✅ Supply request approved.\n\n`;
@@ -389,8 +403,10 @@ async function handleSupplyAssign(bot, callbackQuery) {
   const productTypesRepo = require('../repositories/productTypesRepository');
   const labels = await productTypesRepo.getLabels(aj.productType || 'fabric');
   const cShort = labels.container_short;
-  const cartLines = (aj.cart || []).map((ci) =>
-    `📌 ${ci.design} │ Shade: ${ci.shade} │ ×${ci.quantity} ${cShort}`).join('\n');
+  const cartLines = (aj.cart || []).map((ci) => {
+    const m = productTypesRepo.getMaterialInfo(ci.design);
+    return `${m.icon} ${ci.design} [${m.name}] │ Shade: ${ci.shade} │ ×${ci.quantity} ${cShort}`;
+  }).join('\n');
   const totalQty = (aj.cart || []).reduce((s, c) => s + c.quantity, 0);
   const containerPlural = productTypesRepo.pluralize(labels.container_label, totalQty).toLowerCase();
   let intimation = `📦 *New Supply Assignment*\n\n`;
@@ -423,6 +439,85 @@ async function handleSupplyAssign(bot, callbackQuery) {
   await bot.sendMessage(chatId, `✅ Supply request ${requestId} approved and assigned to *${assigneeName}*.`, { parse_mode: 'Markdown' });
   await notifyEmployee(bot, requestingUser, requestId,
     `✅ Your supply request (${requestId}) has been approved and assigned to ${assigneeName} for dispatch.`);
+}
+
+async function handleNewCustomerApproval(bot, chatId, requestId, item, requestingUser, approved) {
+  const aj = item.actionJSON || {};
+  const custName = aj.customer_name || 'Unknown';
+  const custId = aj.customer_id;
+  const requesterUserId = aj.requesterUserId || requestingUser;
+
+  await approvalQueueRepository.updateStatus(requestId, approved ? 'approved' : 'rejected', new Date().toISOString());
+
+  if (approved) {
+    if (custId) {
+      const customersRepo = require('../repositories/customersRepository');
+      await customersRepo.updateRow(custId, { status: 'Active' });
+    }
+    await bot.sendMessage(chatId, `✅ Customer "${custName}" approved and activated.`);
+
+    const sessionStore = require('../services/sessionStore');
+    const session = sessionStore.get(requesterUserId);
+    if (session && session.type === 'supply_req_flow' && session.step === 'awaiting_customer_approval') {
+      session.customer = custName;
+      session.step = 'salesperson';
+      delete session.pendingCustomerId;
+      delete session.pendingCustomerName;
+      delete session.customerApprovalId;
+      sessionStore.set(requesterUserId, session);
+
+      try {
+        await bot.sendMessage(requesterUserId,
+          `✅ Customer "*${custName}*" has been approved\\!\n\nContinuing your supply request\\.\\.\\. Select salesperson:`,
+          { parse_mode: 'MarkdownV2' },
+        );
+        const telegramUsers = await usersRepository.getAll();
+        const rows = [];
+        for (let i = 0; i < telegramUsers.length; i += 2) {
+          const row = [{ text: `🧑 ${telegramUsers[i].name || telegramUsers[i].user_id}`, callback_data: `srf_sp:${telegramUsers[i].name || telegramUsers[i].user_id}` }];
+          if (telegramUsers[i + 1]) row.push({ text: `🧑 ${telegramUsers[i + 1].name || telegramUsers[i + 1].user_id}`, callback_data: `srf_sp:${telegramUsers[i + 1].name || telegramUsers[i + 1].user_id}` });
+          rows.push(row);
+        }
+        await bot.sendMessage(requesterUserId, '🧑 Select salesperson:', { reply_markup: { inline_keyboard: rows } });
+      } catch (e) {
+        logger.error('Failed to resume supply flow for user after customer approval', e);
+      }
+    } else {
+      await notifyEmployee(bot, requesterUserId, requestId, `✅ Customer "${custName}" has been approved by admin.`);
+    }
+  } else {
+    await bot.sendMessage(chatId, `❌ Customer "${custName}" registration rejected.`);
+
+    const sessionStore = require('../services/sessionStore');
+    const session = sessionStore.get(requesterUserId);
+    if (session && session.type === 'supply_req_flow' && session.step === 'awaiting_customer_approval') {
+      session.step = 'customer';
+      delete session.pendingCustomerId;
+      delete session.pendingCustomerName;
+      delete session.customerApprovalId;
+      sessionStore.set(requesterUserId, session);
+      try {
+        await bot.sendMessage(requesterUserId,
+          `❌ Customer "${custName}" was rejected by admin.\n\nPlease select a different customer:`,
+        );
+        const customersRepo = require('../repositories/customersRepository');
+        const allCust = await customersRepo.getAll();
+        const active = allCust.filter((c) => (c.status || 'Active').toLowerCase() === 'active');
+        const rows = [];
+        for (let i = 0; i < active.length; i += 2) {
+          const row = [{ text: `👤 ${active[i].name}`, callback_data: `srf_cu:${active[i].name}` }];
+          if (active[i + 1]) row.push({ text: `👤 ${active[i + 1].name}`, callback_data: `srf_cu:${active[i + 1].name}` });
+          rows.push(row);
+        }
+        rows.push([{ text: '➕ Add New Customer', callback_data: 'srf_cu:__new__' }]);
+        await bot.sendMessage(requesterUserId, '👤 Select customer:', { reply_markup: { inline_keyboard: rows } });
+      } catch (e) {
+        logger.error('Failed to resume supply flow for user after customer rejection', e);
+      }
+    } else {
+      await notifyEmployee(bot, requesterUserId, requestId, `❌ Customer "${custName}" registration was rejected by admin.`);
+    }
+  }
 }
 
 async function handleSupplyAcknowledge(bot, callbackQuery) {
