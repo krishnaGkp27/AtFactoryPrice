@@ -9,9 +9,10 @@ const inventoryService = require('../services/inventoryService');
 const logger = require('../utils/logger');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+const usersRepository = require('../repositories/usersRepository');
 const driveClient = require('../repositories/driveClient');
 
-const SALE_ACTIONS = ['sell_than', 'sell_package', 'sale_bundle', 'supply_request'];
+const SALE_ACTIONS = ['sell_than', 'sell_package', 'sale_bundle'];
 const DEFAULT_SALE_UNIT = 'yard';
 
 const pendingEnrichment = new Map();
@@ -68,7 +69,7 @@ async function resolveRequest(requestId) {
 
 async function getDesignsForSale(item) {
   const aj = item?.actionJSON || {};
-  if (aj.action === 'sell_than' || aj.action === 'sell_package' || aj.action === 'supply_request') {
+  if (aj.action === 'sell_than' || aj.action === 'sell_package') {
     return aj.design ? [String(aj.design).trim()] : [];
   }
   if (aj.action === 'sale_bundle' && Array.isArray(aj.items)) {
@@ -269,6 +270,12 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
       await bot.answerCallbackQuery(callbackQuery.id, { text: 'Approving...' });
       await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatIdCb, message_id: msgIdCb });
 
+      const isSupplyReq = item && item.actionJSON && item.actionJSON.action === 'supply_request';
+      if (isSupplyReq) {
+        await showWarehouseBoyPicker(bot, chatIdCb, requestId, item, requestingUser);
+        return;
+      }
+
       const isSale = item && item.actionJSON && SALE_ACTIONS.includes(item.actionJSON.action);
       if (isSale) {
         await startApprovalEnrichment(bot, adminId, chatIdCb, requestId, item, requestingUser);
@@ -311,4 +318,116 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
   }
 }
 
-module.exports = { notifyAdminsApprovalRequest, handleApprovalCallback, handleEnrichmentMessage };
+async function showWarehouseBoyPicker(bot, chatId, requestId, item, requestingUser) {
+  const aj = item?.actionJSON || {};
+  const warehouse = aj.warehouse || '';
+  const allUsers = await usersRepository.getAll();
+  const dispatchUsers = allUsers.filter((u) => {
+    const dept = (u.department || '').toLowerCase();
+    const whs = u.warehouses || [];
+    return (dept === 'dispatch' || dept === 'warehouse' || dept === 'logistics')
+      && (!warehouse || whs.includes(warehouse));
+  });
+
+  const cartLines = (aj.cart || []).map((ci) => `🎨 ${ci.design} ${ci.shade} × ${ci.quantity} pkgs`).join('\n');
+  let summary = `✅ Supply request approved.\n\n`;
+  summary += `🏭 Warehouse: ${warehouse}\n`;
+  summary += `${cartLines}\n`;
+  summary += `👤 Customer: ${aj.customer || '-'}\n`;
+  summary += `📅 Date: ${aj.salesDate || '-'}\n\n`;
+  summary += `Assign to a warehouse boy:`;
+
+  if (!dispatchUsers.length) {
+    const allWithWh = allUsers.filter((u) => (u.warehouses || []).includes(warehouse));
+    const fallback = allWithWh.length ? allWithWh : allUsers;
+    const rows = fallback.map((u) => [{
+      text: `🧑 ${u.name || u.user_id}`,
+      callback_data: `srf_assign:${requestId}|${u.user_id}`,
+    }]);
+    await bot.sendMessage(chatId, summary, { reply_markup: { inline_keyboard: rows } });
+    return;
+  }
+
+  const rows = dispatchUsers.map((u) => [{
+    text: `🧑 ${u.name || u.user_id}`,
+    callback_data: `srf_assign:${requestId}|${u.user_id}`,
+  }]);
+  await bot.sendMessage(chatId, summary, { reply_markup: { inline_keyboard: rows } });
+}
+
+async function handleSupplyAssign(bot, callbackQuery) {
+  const data = callbackQuery.data || '';
+  const [requestId, assigneeId] = data.replace('srf_assign:', '').split('|');
+  const adminId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+
+  if (!config.access.adminIds.includes(adminId)) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' });
+    return;
+  }
+  await bot.answerCallbackQuery(callbackQuery.id, { text: 'Assigning...' });
+  await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+  const { item, requestingUser } = await resolveRequest(requestId);
+  if (!item) {
+    await bot.sendMessage(chatId, `⚠️ Request ${requestId} not found.`);
+    return;
+  }
+
+  await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString());
+
+  const aj = item.actionJSON || {};
+  const cartLines = (aj.cart || []).map((ci) => `🎨 ${ci.design} ${ci.shade} × ${ci.quantity} pkgs`).join('\n');
+  let intimation = `📦 *New Supply Assignment*\n\n`;
+  intimation += `🏭 Warehouse: *${aj.warehouse || '-'}*\n`;
+  intimation += `${cartLines}\n`;
+  intimation += `👤 Customer: *${aj.customer || '-'}*\n`;
+  intimation += `🧑 Salesperson: *${aj.salesperson || '-'}*\n`;
+  intimation += `💳 Payment: *${aj.paymentMode || '-'}*\n`;
+  intimation += `📅 Date: *${aj.salesDate || '-'}*\n`;
+  intimation += `\n🔔 Assigned by admin. Tap below to acknowledge.`;
+
+  try {
+    await bot.sendMessage(assigneeId, intimation, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [
+        [{ text: '✅ Acknowledge', callback_data: `srf_ack:${requestId}` }],
+      ] },
+    });
+  } catch (e) {
+    logger.error(`Failed to notify warehouse boy ${assigneeId}`, e.message);
+    await bot.sendMessage(chatId, `⚠️ Could not send message to user ${assigneeId}. They may need to start the bot first.`);
+    return;
+  }
+
+  const assignee = await usersRepository.findByUserId(assigneeId);
+  const assigneeName = assignee ? assignee.name : assigneeId;
+  await bot.sendMessage(chatId, `✅ Supply request ${requestId} approved and assigned to *${assigneeName}*.`, { parse_mode: 'Markdown' });
+  await notifyEmployee(bot, requestingUser, requestId,
+    `✅ Your supply request (${requestId}) has been approved and assigned to ${assigneeName} for dispatch.`);
+}
+
+async function handleSupplyAcknowledge(bot, callbackQuery) {
+  const data = callbackQuery.data || '';
+  const requestId = data.replace('srf_ack:', '');
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+
+  await bot.answerCallbackQuery(callbackQuery.id, { text: 'Acknowledged!' });
+  await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+  await bot.sendMessage(chatId, `✅ You acknowledged supply request ${requestId}. Proceed to the warehouse for dispatch.`);
+
+  const user = await usersRepository.findByUserId(userId);
+  const userName = user ? user.name : userId;
+  for (const adminId of config.access.adminIds) {
+    try {
+      await bot.sendMessage(adminId, `✅ *${userName}* acknowledged supply request \`${requestId}\`.`, { parse_mode: 'Markdown' });
+    } catch (_) {}
+  }
+}
+
+module.exports = {
+  notifyAdminsApprovalRequest, handleApprovalCallback, handleEnrichmentMessage,
+  handleSupplyAssign, handleSupplyAcknowledge,
+};

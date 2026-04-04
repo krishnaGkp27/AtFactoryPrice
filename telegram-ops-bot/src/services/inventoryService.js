@@ -442,50 +442,7 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       } catch (_) {}
     }
   } else if (aj.action === 'supply_request') {
-    const all = await inventoryRepository.getAll();
-    const candidates = all.filter((r) =>
-      r.warehouse === aj.warehouse && r.design === aj.design &&
-      r.shade === aj.shade && r.status === 'available');
-    const pkgGroups = new Map();
-    for (const r of candidates) {
-      if (!pkgGroups.has(r.packageNo)) pkgGroups.set(r.packageNo, []);
-      pkgGroups.get(r.packageNo).push(r);
-    }
-    const pkgNos = Array.from(pkgGroups.keys()).slice(0, aj.quantity);
-    if (pkgNos.length < aj.quantity) {
-      return { ok: false, message: `Only ${pkgNos.length} packages available, requested ${aj.quantity}.` };
-    }
-    let totalYards = 0, totalThans = 0;
-    const pricePerYard = getPricePerYard(enrichment, aj.design);
-    for (const pkgNo of pkgNos) {
-      const results = await inventoryRepository.markPackageSold(pkgNo, aj.customer, aj.salesDate);
-      totalThans += results.length;
-      totalYards += results.reduce((s, t) => s + t.yards, 0);
-      if (pricePerYard > 0) await inventoryRepository.updatePrice({ packageNo: pkgNo }, pricePerYard);
-    }
-    await transactionsRepository.append({
-      user: item.user, action: 'supply_request', design: aj.design, color: aj.shade,
-      qty: totalYards, before: `${totalThans} thans (${pkgNos.length} pkgs)`, after: 'sold',
-      status: 'approved', salesDate: aj.salesDate || '', customerName: aj.customer || '',
-      salesPerson: aj.salesperson || '', paymentMode: enrichment?.paymentMode || aj.paymentMode || '',
-      saleRefId: requestId, pricePerYard: pricePerYard || '', amountPaid: enrichment?.amountPaid ?? '',
-    });
-    if (totalYards > 0 && pricePerYard > 0) {
-      try {
-        await erpEmitAsync('sale', {
-          type: 'supply_request', customer: aj.customer, yards: totalYards,
-          pricePerYard, design: aj.design, shade: aj.shade, userId: item.user,
-          txnId: `${requestId}-supply`, paymentMode: enrichment?.paymentMode ?? '',
-          amountPaid: enrichment?.amountPaid ?? 0,
-        });
-      } catch (_) {}
-    }
-    if (enrichment?.amountPaid > 0) {
-      try {
-        const crmService = require('./crmService');
-        await crmService.recordPayment({ customer: aj.customer, amount: enrichment.amountPaid, method: enrichment.paymentMode || 'Cash', userId: approvedBy });
-      } catch (_) {}
-    }
+    // Intimation only — no inventory changes. Approval + assignment handled in approvalEvents.
   } else if (aj.action === 'give_sample') {
     const samplesRepo = require('../repositories/samplesRepository');
     await samplesRepo.append({

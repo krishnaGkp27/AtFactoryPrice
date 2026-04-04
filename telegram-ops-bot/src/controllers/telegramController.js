@@ -954,14 +954,13 @@ async function handleMessage(bot, msg) {
         await bot.sendMessage(chatId, '⚠️ Enter a valid number (minimum 1).');
         return;
       }
-      if (qty > srfSession.availablePkgs) {
-        await bot.sendMessage(chatId, `⚠️ Only ${srfSession.availablePkgs} packages available. Enter a lower number.`);
+      if (qty > srfSession.currentAvailPkgs) {
+        await bot.sendMessage(chatId, `⚠️ Only ${srfSession.currentAvailPkgs} packages available. Enter a lower number.`);
         return;
       }
-      srfSession.quantity = qty;
-      srfSession.step = 'customer';
+      addToCart(srfSession, srfSession.currentDesign, srfSession.currentShade, qty);
       sessionStore.set(userId, srfSession);
-      await showSupplyCustomerPicker(bot, chatId, userId);
+      await showCartSummary(bot, chatId, userId);
       return;
     }
     if (srfSession.step === 'new_customer_name') {
@@ -2203,7 +2202,34 @@ function buildDatePicker(callbackPrefix, monthOffset = 0) {
   return rows;
 }
 
-/* ─── TAPPABLE SUPPLY REQUEST FLOW ─── */
+/* ─── TAPPABLE SUPPLY REQUEST FLOW (MULTI-ITEM CART) ─── */
+
+function getCartQtyForDesignShade(cart, design, shade) {
+  const entry = (cart || []).find((c) => c.design === design && c.shade === shade);
+  return entry ? entry.quantity : 0;
+}
+
+function getCartQtyForDesign(cart, design) {
+  return (cart || []).filter((c) => c.design === design).reduce((s, c) => s + c.quantity, 0);
+}
+
+async function getAdjustedAvailability(warehouse, cart) {
+  const all = await inventoryRepository.getAll();
+  const available = all.filter((r) => r.warehouse === warehouse && r.status === 'available');
+  const designMap = new Map();
+  for (const r of available) {
+    const key = `${r.design}||${r.shade || 'DEFAULT'}`;
+    if (!designMap.has(key)) designMap.set(key, { design: r.design, shade: r.shade || 'DEFAULT', pkgs: new Set() });
+    designMap.get(key).pkgs.add(r.packageNo);
+  }
+  const result = [];
+  for (const [, entry] of designMap) {
+    const inCart = getCartQtyForDesignShade(cart, entry.design, entry.shade);
+    const remaining = entry.pkgs.size - inCart;
+    if (remaining > 0) result.push({ design: entry.design, shade: entry.shade, availPkgs: remaining });
+  }
+  return result;
+}
 
 async function startSupplyRequestFlow(bot, chatId, userId) {
   const user = await usersRepository.findByUserId(userId);
@@ -2229,6 +2255,7 @@ async function startSupplyRequestFlow(bot, chatId, userId) {
   }
 
   if (warehouses.length === 1) {
+    sessionStore.set(userId, { type: 'supply_req_flow', warehouse: warehouses[0], cart: [], step: 'design' });
     await showDesignsForWarehouse(bot, chatId, userId, warehouses[0]);
     return;
   }
@@ -2241,72 +2268,74 @@ async function startSupplyRequestFlow(bot, chatId, userId) {
 }
 
 async function showDesignsForWarehouse(bot, chatId, userId, warehouse) {
-  const all = await inventoryRepository.getAll();
-  const available = all.filter((r) => r.warehouse === warehouse && r.status === 'available');
-  const designMap = new Map();
-  for (const r of available) {
-    const d = r.design;
-    if (!designMap.has(d)) designMap.set(d, { design: d, pkgs: new Set(), thans: 0 });
-    const entry = designMap.get(d);
-    entry.pkgs.add(r.packageNo);
-    entry.thans++;
+  const session = sessionStore.get(userId);
+  const cart = session ? session.cart || [] : [];
+  const avail = await getAdjustedAvailability(warehouse, cart);
+
+  const designAgg = new Map();
+  for (const a of avail) {
+    if (!designAgg.has(a.design)) designAgg.set(a.design, { design: a.design, totalPkgs: 0 });
+    designAgg.get(a.design).totalPkgs += a.availPkgs;
   }
-  const designs = Array.from(designMap.values()).sort((a, b) => b.thans - a.thans);
+  const designs = Array.from(designAgg.values()).sort((a, b) => b.totalPkgs - a.totalPkgs);
+
   if (!designs.length) {
-    await bot.sendMessage(chatId, `⚠️ No available stock in warehouse *${warehouse}*.`, { parse_mode: 'Markdown' });
+    if (cart.length) {
+      await bot.sendMessage(chatId, '⚠️ All available stock is already in your cart.');
+      await showCartSummary(bot, chatId, userId);
+    } else {
+      await bot.sendMessage(chatId, `⚠️ No available stock in warehouse *${warehouse}*.`, { parse_mode: 'Markdown' });
+    }
     return;
   }
 
-  sessionStore.set(userId, { type: 'supply_req_flow', warehouse, step: 'design' });
+  if (session && session.type === 'supply_req_flow') {
+    session.step = 'design';
+    sessionStore.set(userId, session);
+  }
 
-  const rows = designs.map((d) => [{ text: `${d.design} — ${d.pkgs.size} pkgs, ${d.thans} thans`, callback_data: `srf_dg:${d.design}` }]);
-  await bot.sendMessage(chatId, `📦 *Warehouse: ${warehouse}*\n\nSelect design:`, {
+  const rows = designs.map((d) => [{ text: `${d.design} — ${d.totalPkgs} pkgs avail`, callback_data: `srf_dg:${d.design}` }]);
+  const cartNote = cart.length ? `\n🛒 Cart: ${cart.length} item(s)` : '';
+  await bot.sendMessage(chatId, `📦 *Warehouse: ${warehouse}*${cartNote}\n\nSelect design:`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
 }
 
 async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
-  const all = await inventoryRepository.getAll();
-  const available = all.filter((r) => r.warehouse === warehouse && r.design === design && r.status === 'available');
-  const shadeMap = new Map();
-  for (const r of available) {
-    const s = r.shade || 'DEFAULT';
-    if (!shadeMap.has(s)) shadeMap.set(s, { shade: s, pkgs: new Set(), thans: 0 });
-    const entry = shadeMap.get(s);
-    entry.pkgs.add(r.packageNo);
-    entry.thans++;
-  }
-  const shades = Array.from(shadeMap.values()).sort((a, b) => b.thans - a.thans);
+  const session = sessionStore.get(userId);
+  const cart = session ? session.cart || [] : [];
+  const avail = await getAdjustedAvailability(warehouse, cart);
+  const shades = avail.filter((a) => a.design === design).sort((a, b) => b.availPkgs - a.availPkgs);
+
   if (!shades.length) {
-    await bot.sendMessage(chatId, `⚠️ No available stock for ${design} in ${warehouse}.`);
+    await bot.sendMessage(chatId, `⚠️ No remaining stock for ${design} in ${warehouse}.`);
+    if (cart.length) await showCartSummary(bot, chatId, userId);
     return;
   }
 
   if (shades.length === 1) {
     const s = shades[0];
-    const session = sessionStore.get(userId);
     if (session && session.type === 'supply_req_flow') {
-      session.design = design;
-      session.shade = s.shade;
-      session.availablePkgs = s.pkgs.size;
+      session.currentDesign = design;
+      session.currentShade = s.shade;
+      session.currentAvailPkgs = s.availPkgs;
       session.step = 'quantity';
       sessionStore.set(userId, session);
     }
-    await showQuantityPicker(bot, chatId, design, s.shade, warehouse, s.pkgs.size);
+    await showQuantityPicker(bot, chatId, design, s.shade, warehouse, s.availPkgs);
     return;
   }
 
-  const session = sessionStore.get(userId);
   if (session && session.type === 'supply_req_flow') {
-    session.design = design;
+    session.currentDesign = design;
     session.step = 'shade';
     sessionStore.set(userId, session);
   }
 
   const rows = shades.map((s) => [{
-    text: `${s.shade} — ${s.pkgs.size} pkgs, ${s.thans} thans`,
-    callback_data: `srf_sh:${design}|${s.shade}|${s.pkgs.size}`,
+    text: `${s.shade} — ${s.availPkgs} pkgs avail`,
+    callback_data: `srf_sh:${design}|${s.shade}|${s.availPkgs}`,
   }]);
   await bot.sendMessage(chatId, `📦 *${design}* in *${warehouse}*\n\nSelect shade:`, {
     parse_mode: 'Markdown',
@@ -2336,6 +2365,40 @@ async function showQuantityPicker(bot, chatId, design, shade, warehouse, availPk
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: rows },
     });
+}
+
+function addToCart(session, design, shade, quantity) {
+  if (!session.cart) session.cart = [];
+  const existing = session.cart.find((c) => c.design === design && c.shade === shade);
+  if (existing) {
+    existing.quantity += quantity;
+  } else {
+    session.cart.push({ design, shade, quantity });
+  }
+}
+
+function buildCartText(session) {
+  const cart = session.cart || [];
+  if (!cart.length) return '🛒 Cart is empty.';
+  const lines = cart.map((c, i) => `${i + 1}. 🎨 ${c.design} ${c.shade} × ${c.quantity} pkgs`);
+  const total = cart.reduce((s, c) => s + c.quantity, 0);
+  return `🛒 *Supply Cart* — 🏭 ${session.warehouse}\n━━━━━━━━━━━━━━━\n${lines.join('\n')}\n━━━━━━━━━━━━━━━\nTotal: ${total} packages`;
+}
+
+async function showCartSummary(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'supply_req_flow') return;
+  session.step = 'cart';
+  sessionStore.set(userId, session);
+
+  const text = buildCartText(session);
+  const rows = [
+    [{ text: '➕ Add More', callback_data: 'srf_cart:add' }],
+    [{ text: '🗑️ Remove Item', callback_data: 'srf_cart:remove' }],
+    [{ text: '➡️ Proceed to Checkout', callback_data: 'srf_cart:proceed' }],
+    [{ text: '❌ Cancel', callback_data: 'srf_cart:cancel' }],
+  ];
+  await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
 async function showSupplyCustomerPicker(bot, chatId, userId) {
@@ -2380,19 +2443,13 @@ function showSupplyDatePicker(bot, chatId) {
   return bot.sendMessage(chatId, '📅 Select supply date (future dates only):', { reply_markup: { inline_keyboard: rows } });
 }
 
-function buildSelectionSummary(session) {
-  return `📦 Qty: ${session.quantity} packages`;
-}
-
 async function showSupplyConfirmation(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== 'supply_req_flow') return;
 
-  const selectionText = buildSelectionSummary(session);
+  const cartText = buildCartText(session);
   let text = `📦 *Supply Request Summary*\n\n`;
-  text += `🏭 Warehouse: *${session.warehouse}*\n`;
-  text += `📦 Design: *${session.design} ${session.shade}*\n`;
-  text += `${selectionText}\n`;
+  text += `${cartText}\n\n`;
   text += `👤 Customer: *${session.customer}*\n`;
   text += `🧑 Salesperson: *${session.salesperson}*\n`;
   text += `💳 Payment: *${session.paymentMode}*\n`;
@@ -2420,11 +2477,9 @@ async function finalizeSupplyRequest(bot, chatId, userId) {
   session.awaitingDocument = false;
   sessionStore.set(userId, session);
 
-  const selectionText = buildSelectionSummary(session);
+  const cartText = buildCartText(session);
   let text = `✅ *Confirm Supply Request*\n\n`;
-  text += `🏭 ${session.warehouse}\n`;
-  text += `📦 ${session.design} ${session.shade}\n`;
-  text += `${selectionText}\n`;
+  text += `${cartText}\n\n`;
   text += `👤 ${session.customer}\n`;
   text += `🧑 ${session.salesperson}\n`;
   text += `💳 ${session.paymentMode}\n`;
@@ -2713,6 +2768,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'approve');
   } else if (data.startsWith('reject:')) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'reject');
+  } else if (data.startsWith('srf_assign:')) {
+    await approvalEvents.handleSupplyAssign(bot, callbackQuery);
+  } else if (data.startsWith('srf_ack:')) {
+    await approvalEvents.handleSupplyAcknowledge(bot, callbackQuery);
   } else if (data.startsWith('confirm_sale:')) {
     const saleUserId = data.replace('confirm_sale:', '');
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Processing sale...' });
@@ -3396,7 +3455,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const uid = String(callbackQuery.from.id);
     await bot.answerCallbackQuery(callbackQuery.id);
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
-    sessionStore.set(uid, { type: 'supply_req_flow', warehouse, step: 'design' });
+    sessionStore.set(uid, { type: 'supply_req_flow', warehouse, cart: [], step: 'design' });
     await showDesignsForWarehouse(bot, chatId, uid, warehouse);
 
   /* ─── SUPPLY REQUEST FLOW: DESIGN ─── */
@@ -3422,9 +3481,9 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'supply_req_flow') return;
-    session.design = design;
-    session.shade = shade;
-    session.availablePkgs = availPkgs;
+    session.currentDesign = design;
+    session.currentShade = shade;
+    session.currentAvailPkgs = availPkgs;
     session.step = 'quantity';
     sessionStore.set(uid, session);
     await showQuantityPicker(bot, chatId, design, shade, session.warehouse, availPkgs);
@@ -3445,21 +3504,77 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
       session.step = 'custom_quantity';
       sessionStore.set(uid, session);
-      await bot.sendMessage(chatId, `Type the number of packages (max ${session.availablePkgs}):`);
+      await bot.sendMessage(chatId, `Type the number of packages (max ${session.currentAvailPkgs}):`);
       return;
     }
 
     const qty = parseInt(val);
-    if (isNaN(qty) || qty < 1 || qty > session.availablePkgs) {
-      await bot.answerCallbackQuery(callbackQuery.id, { text: `Invalid. Choose 1 – ${session.availablePkgs}.` });
+    if (isNaN(qty) || qty < 1 || qty > session.currentAvailPkgs) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: `Invalid. Choose 1 – ${session.currentAvailPkgs}.` });
       return;
     }
-    await bot.answerCallbackQuery(callbackQuery.id, { text: `${qty} package(s) selected.` });
+    await bot.answerCallbackQuery(callbackQuery.id, { text: `${qty} pkg(s) of ${session.currentDesign} ${session.currentShade} added.` });
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
-    session.quantity = qty;
-    session.step = 'customer';
+    addToCart(session, session.currentDesign, session.currentShade, qty);
     sessionStore.set(uid, session);
-    await showSupplyCustomerPicker(bot, chatId, uid);
+    await showCartSummary(bot, chatId, uid);
+
+  /* ─── SUPPLY REQUEST FLOW: CART ACTIONS ─── */
+  } else if (data.startsWith('srf_cart:')) {
+    const action = data.slice(9);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'supply_req_flow') return;
+
+    if (action === 'add') {
+      await showDesignsForWarehouse(bot, chatId, uid, session.warehouse);
+    } else if (action === 'remove') {
+      if (!session.cart || !session.cart.length) {
+        await bot.sendMessage(chatId, '🛒 Cart is empty.');
+        return;
+      }
+      const rows = session.cart.map((c, i) => [{
+        text: `🗑️ ${c.design} ${c.shade} × ${c.quantity}`,
+        callback_data: `srf_rm:${i}`,
+      }]);
+      rows.push([{ text: '⬅️ Back', callback_data: 'srf_cart:back' }]);
+      await bot.sendMessage(chatId, 'Tap an item to remove:', { reply_markup: { inline_keyboard: rows } });
+    } else if (action === 'proceed') {
+      if (!session.cart || !session.cart.length) {
+        await bot.sendMessage(chatId, '⚠️ Add at least one item to proceed.');
+        await showCartSummary(bot, chatId, uid);
+        return;
+      }
+      session.step = 'customer';
+      sessionStore.set(uid, session);
+      await showSupplyCustomerPicker(bot, chatId, uid);
+    } else if (action === 'cancel') {
+      sessionStore.clear(uid);
+      await bot.sendMessage(chatId, '❌ Supply request cancelled.');
+    } else if (action === 'back') {
+      await showCartSummary(bot, chatId, uid);
+    }
+
+  /* ─── SUPPLY REQUEST FLOW: REMOVE CART ITEM ─── */
+  } else if (data.startsWith('srf_rm:')) {
+    const idx = parseInt(data.slice(7));
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'supply_req_flow') return;
+
+    if (session.cart && idx >= 0 && idx < session.cart.length) {
+      const removed = session.cart.splice(idx, 1)[0];
+      await bot.answerCallbackQuery(callbackQuery.id, { text: `Removed ${removed.design} ${removed.shade}.` });
+    } else {
+      await bot.answerCallbackQuery(callbackQuery.id);
+    }
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+    sessionStore.set(uid, session);
+    await showCartSummary(bot, chatId, uid);
 
   /* ─── SUPPLY REQUEST FLOW: CUSTOMER ─── */
   } else if (data.startsWith('srf_cu:')) {
@@ -3573,24 +3688,16 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'supply_req_flow') return;
 
-    const intent = {
+    const docInfo = { fileId: session.docFileId, type: session.docType, mime: session.docMime };
+    const cart = session.cart || [];
+    const actionJSON = {
+      action: 'supply_request',
+      warehouse: session.warehouse,
+      cart,
       customer: session.customer,
       salesperson: session.salesperson,
       paymentMode: session.paymentMode,
       salesDate: session.supplyDate,
-    };
-    const docInfo = { fileId: session.docFileId, type: session.docType, mime: session.docMime };
-
-    const actionJSON = {
-      action: 'supply_request',
-      warehouse: session.warehouse,
-      design: session.design,
-      shade: session.shade,
-      quantity: session.quantity,
-      customer: intent.customer,
-      salesperson: intent.salesperson,
-      paymentMode: intent.paymentMode,
-      salesDate: intent.salesDate,
       sale_doc_file_id: docInfo.fileId || null,
       sale_doc_type: docInfo.type || null,
       sale_doc_mime: docInfo.mime || null,
@@ -3607,10 +3714,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await auditLogRepository.append('approval_queued', { requestId, reason: approvalReason }, uid);
 
     const userLabel = await getRequesterDisplayName(uid, null);
+    const cartLines = cart.map((c) => `🎨 ${c.design} ${c.shade} × ${c.quantity} pkgs`).join('\n');
+    const totalPkgs = cart.reduce((s, c) => s + c.quantity, 0);
     let summary = `Supply Request\n`;
     summary += `🏭 ${actionJSON.warehouse}\n`;
-    summary += `🎨 ${actionJSON.design} ${actionJSON.shade}\n`;
-    summary += `📦 ${actionJSON.quantity} packages\n`;
+    summary += `${cartLines}\n`;
+    summary += `📦 Total: ${totalPkgs} packages\n`;
     summary += `👤 ${actionJSON.customer}\n`;
     summary += `🧑 ${actionJSON.salesperson}\n`;
     summary += `💳 ${actionJSON.paymentMode}\n`;
@@ -3635,7 +3744,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
 
     const approverLabel = isAdmin ? '2nd admin' : 'admin';
     await bot.sendMessage(chatId,
-      `✅ Supply request submitted.\n\n📦 ${actionJSON.design} ${actionJSON.shade} × ${actionJSON.quantity} pkgs\n👤 ${actionJSON.customer}\n🏭 ${actionJSON.warehouse}\n📅 ${actionJSON.salesDate}\n\n⏳ Waiting for ${approverLabel} approval.\nRequest: ${requestId}`, {
+      `✅ Supply request submitted.\n\n🏭 ${actionJSON.warehouse}\n${cartLines}\n📦 Total: ${totalPkgs} pkgs\n👤 ${actionJSON.customer}\n📅 ${actionJSON.salesDate}\n\n⏳ Waiting for ${approverLabel} approval.\nRequest: ${requestId}`, {
         parse_mode: 'Markdown',
       });
 
