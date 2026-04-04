@@ -329,10 +329,19 @@ async function showWarehouseBoyPicker(bot, chatId, requestId, item, requestingUs
       && (!warehouse || whs.includes(warehouse));
   });
 
-  const cartLines = (aj.cart || []).map((ci) => `🎨 ${ci.design} ${ci.shade} × ${ci.quantity} pkgs`).join('\n');
+  const productTypesRepo = require('../repositories/productTypesRepository');
+  const labels = await productTypesRepo.getLabels(aj.productType || 'fabric');
+  const cShort = labels.container_short;
+  const cartLines = (aj.cart || []).map((ci) =>
+    `📌 ${ci.design} │ Shade: ${ci.shade} │ ×${ci.quantity} ${cShort}`).join('\n');
+  const totalQty = (aj.cart || []).reduce((s, c) => s + c.quantity, 0);
+  const containerPlural = productTypesRepo.pluralize(labels.container_label, totalQty).toLowerCase();
   let summary = `✅ Supply request approved.\n\n`;
   summary += `🏭 Warehouse: ${warehouse}\n`;
+  summary += `━━━━━━━━━━━━━━━━━━━━━━\n`;
   summary += `${cartLines}\n`;
+  summary += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+  summary += `📦 Total: ${totalQty} ${containerPlural}\n`;
   summary += `👤 Customer: ${aj.customer || '-'}\n`;
   summary += `📅 Date: ${aj.salesDate || '-'}\n\n`;
   summary += `Assign to a warehouse boy:`;
@@ -377,10 +386,19 @@ async function handleSupplyAssign(bot, callbackQuery) {
   await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString());
 
   const aj = item.actionJSON || {};
-  const cartLines = (aj.cart || []).map((ci) => `🎨 ${ci.design} ${ci.shade} × ${ci.quantity} pkgs`).join('\n');
+  const productTypesRepo = require('../repositories/productTypesRepository');
+  const labels = await productTypesRepo.getLabels(aj.productType || 'fabric');
+  const cShort = labels.container_short;
+  const cartLines = (aj.cart || []).map((ci) =>
+    `📌 ${ci.design} │ Shade: ${ci.shade} │ ×${ci.quantity} ${cShort}`).join('\n');
+  const totalQty = (aj.cart || []).reduce((s, c) => s + c.quantity, 0);
+  const containerPlural = productTypesRepo.pluralize(labels.container_label, totalQty).toLowerCase();
   let intimation = `📦 *New Supply Assignment*\n\n`;
   intimation += `🏭 Warehouse: *${aj.warehouse || '-'}*\n`;
+  intimation += `━━━━━━━━━━━━━━━━━━━━━━\n`;
   intimation += `${cartLines}\n`;
+  intimation += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+  intimation += `📦 Total: *${totalQty} ${containerPlural}*\n\n`;
   intimation += `👤 Customer: *${aj.customer || '-'}*\n`;
   intimation += `🧑 Salesperson: *${aj.salesperson || '-'}*\n`;
   intimation += `💳 Payment: *${aj.paymentMode || '-'}*\n`;

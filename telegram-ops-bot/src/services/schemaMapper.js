@@ -84,6 +84,14 @@ const REQUIRED_SHEETS = {
       'upload_date', 'created_at', 'notes',
     ],
   },
+  ProductTypes: {
+    headers: ['type_id', 'type_name', 'container_label', 'container_short', 'subunit_label', 'measure_unit', 'has_subunits', 'status'],
+    seed: [
+      ['fabric', 'Fabric Rolls', 'Bale', 'bls', 'Than', 'yards', 'yes', 'active'],
+      ['garment', 'Garments', 'Box', 'box', 'Piece', 'pcs', 'yes', 'active'],
+      ['innerwear', 'Innerwear', 'Carton', 'ctn', 'Dozen', 'pcs', 'yes', 'active'],
+    ],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];
@@ -144,6 +152,20 @@ async function initialize() {
       }
     } catch (e) {
       logger.warn('SchemaMapper: could not extend Users —', e.message);
+    }
+  }
+
+  if (existing.includes('Inventory')) {
+    try {
+      const invHeader = await sheets.readRange('Inventory', 'A1:Q1');
+      const h = invHeader[0] || [];
+      if (!h.includes('ProductType')) {
+        const nextCol = colLetter(h.length + 1);
+        await sheets.updateRange('Inventory', `${nextCol}1:${nextCol}1`, [['ProductType']]);
+        logger.info('SchemaMapper: extended Inventory with ProductType column');
+      }
+    } catch (e) {
+      logger.warn('SchemaMapper: could not extend Inventory —', e.message);
     }
   }
 

@@ -7,10 +7,11 @@
 const sheets = require('./sheetsClient');
 
 const SHEET = 'Inventory';
-const COL_COUNT = 16;
+const COL_COUNT = 17;
 const HEADERS = [
   'PackageNo', 'Indent', 'CSNo', 'Design', 'Shade', 'ThanNo', 'Yards', 'Status',
   'Warehouse', 'PricePerYard', 'DateReceived', 'SoldTo', 'SoldDate', 'NetMtrs', 'NetWeight', 'UpdatedAt',
+  'ProductType',
 ];
 
 /** Short-lived cache for getAll() to avoid hammering the API during batch ops. */
@@ -41,6 +42,7 @@ function parseRow(r, rowIndex) {
     netMtrs: num(r[13]),
     netWeight: num(r[14]),
     updatedAt: str(r[15]),
+    productType: str(r[16]) || 'fabric',
   };
 }
 
@@ -50,21 +52,21 @@ function toRow(o) {
     o.thanNo ?? '', o.yards ?? 0, o.status ?? 'available',
     o.warehouse ?? '', o.pricePerYard ?? 0, o.dateReceived ?? '',
     o.soldTo ?? '', o.soldDate ?? '', o.netMtrs ?? '', o.netWeight ?? '',
-    o.updatedAt ?? '',
+    o.updatedAt ?? '', o.productType ?? 'fabric',
   ];
 }
 
 async function ensureHeader() {
-  const rows = await sheets.readRange(SHEET, 'A1:P1');
+  const rows = await sheets.readRange(SHEET, 'A1:Q1');
   if (!rows.length || rows[0].length < COL_COUNT) {
-    await sheets.updateRange(SHEET, 'A1:P1', [HEADERS]);
+    await sheets.updateRange(SHEET, 'A1:Q1', [HEADERS]);
   }
 }
 
 async function getAll() {
   const now = Date.now();
   if (_allCache && (now - _allCacheTs) < CACHE_TTL_MS) return _allCache;
-  const rows = await sheets.readRange(SHEET, 'A2:P');
+  const rows = await sheets.readRange(SHEET, 'A2:Q');
   _allCache = rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.packageNo || r.design);
   _allCacheTs = Date.now();
   return _allCache;
