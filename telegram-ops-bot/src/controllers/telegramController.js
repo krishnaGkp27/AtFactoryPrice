@@ -2289,7 +2289,7 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   });
 }
 
-async function showPackagesForDesign(bot, chatId, userId, design, shade, warehouse) {
+async function getPackageListData(design, shade, warehouse) {
   const all = await inventoryRepository.getAll();
   const whRows = all.filter((r) => r.warehouse === warehouse && r.design === design && r.shade === shade);
   const available = whRows.filter((r) => r.status === 'available');
@@ -2313,7 +2313,43 @@ async function showPackagesForDesign(bot, chatId, userId, design, shade, warehou
     pkg.isPartial = pkg.availThans < total;
   }
 
-  const pkgs = Array.from(pkgMap.values()).sort((a, b) => Number(a.packageNo) - Number(b.packageNo));
+  return Array.from(pkgMap.values()).sort((a, b) => Number(a.packageNo) - Number(b.packageNo));
+}
+
+function buildPackageKeyboard(pkgs, selectedPackages, selectedThans) {
+  const selSet = new Set(selectedPackages || []);
+  const thanPkgs = new Set((selectedThans || []).map((t) => t.packageNo));
+  const totalSelected = selSet.size + thanPkgs.size;
+
+  const rows = [];
+  for (let i = 0; i < pkgs.length; i += 2) {
+    const row = [];
+    for (let j = i; j < Math.min(i + 2, pkgs.length); j++) {
+      const p = pkgs[j];
+      const yds = fmtQty(p.yards);
+      const isSelected = selSet.has(p.packageNo);
+      const hasThanSelection = thanPkgs.has(p.packageNo);
+
+      if (isSelected) {
+        row.push({ text: `✅ ${p.packageNo} — ${yds} yds`, callback_data: `srf_pk:${p.packageNo}` });
+      } else if (hasThanSelection) {
+        const count = (selectedThans || []).filter((t) => t.packageNo === p.packageNo).length;
+        row.push({ text: `✅ ${p.packageNo} — ${count}/${p.availThans} th`, callback_data: `srf_pk:${p.packageNo}` });
+      } else if (p.isPartial) {
+        row.push({ text: `⚠️ ${p.packageNo} — ${yds} yds (${p.availThans}/${p.totalThans} th)`, callback_data: `srf_pk:${p.packageNo}` });
+      } else {
+        row.push({ text: `📦 ${p.packageNo} — ${yds} yds`, callback_data: `srf_pk:${p.packageNo}` });
+      }
+    }
+    rows.push(row);
+  }
+  rows.push([{ text: '✅ Select All', callback_data: 'srf_pk:__all__' }]);
+  rows.push([{ text: `➡️ Done Selecting (${totalSelected} selected)`, callback_data: 'srf_pk:__done__' }]);
+  return rows;
+}
+
+async function showPackagesForDesign(bot, chatId, userId, design, shade, warehouse, messageId) {
+  const pkgs = await getPackageListData(design, shade, warehouse);
 
   if (!pkgs.length) {
     await bot.sendMessage(chatId, `⚠️ No available packages for ${design} ${shade} in ${warehouse}.`);
@@ -2325,35 +2361,28 @@ async function showPackagesForDesign(bot, chatId, userId, design, shade, warehou
     session.design = design;
     session.shade = shade;
     session.step = 'packages';
-    session.selectedPackages = [];
-    session.selectedThans = [];
+    if (!session.selectedPackages) session.selectedPackages = [];
+    if (!session.selectedThans) session.selectedThans = [];
     sessionStore.set(userId, session);
   }
 
-  const rows = [];
-  for (let i = 0; i < pkgs.length; i += 2) {
-    const row = [];
-    for (let j = i; j < Math.min(i + 2, pkgs.length); j++) {
-      const p = pkgs[j];
-      const yds = fmtQty(p.yards);
-      if (p.isPartial) {
-        row.push({ text: `⚠️ ${p.packageNo} — ${yds} yds (${p.availThans}/${p.totalThans} th)`, callback_data: `srf_pk:${p.packageNo}` });
-      } else {
-        row.push({ text: `📦 ${p.packageNo} — ${yds} yds`, callback_data: `srf_pk:${p.packageNo}` });
-      }
-    }
-    rows.push(row);
-  }
-  rows.push([{ text: '✅ Select All', callback_data: 'srf_pk:__all__' }]);
-  rows.push([{ text: '➡️ Done Selecting', callback_data: 'srf_pk:__done__' }]);
-
+  const keyboard = buildPackageKeyboard(pkgs, session?.selectedPackages, session?.selectedThans);
   const totalAvailPkgs = pkgs.length;
   const totalAvailThans = pkgs.reduce((s, p) => s + p.availThans, 0);
-  await bot.sendMessage(chatId,
-    `📦 *${design} ${shade}* in *${warehouse}*\n${totalAvailPkgs} pkgs, ${totalAvailThans} thans available\n\nTap to select (⚠️ = partial pkg):`, {
+  const text = `📦 *${design} ${shade}* in *${warehouse}*\n${totalAvailPkgs} pkgs, ${totalAvailThans} thans available\n\nTap to select (⚠️ = partial pkg):`;
+
+  if (messageId) {
+    await bot.editMessageText(text, {
+      chat_id: chatId, message_id: messageId,
       parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: rows },
+      reply_markup: { inline_keyboard: keyboard },
+    }).catch(() => {});
+  } else {
+    await bot.sendMessage(chatId, text, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: keyboard },
     });
+  }
 }
 
 async function showThansForPackage(bot, chatId, userId, packageNo) {
@@ -3489,6 +3518,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
   } else if (data.startsWith('srf_pk:')) {
     const val = data.slice(7);
     const chatId = callbackQuery.message.chat.id;
+    const msgId = callbackQuery.message.message_id;
     const uid = String(callbackQuery.from.id);
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'supply_req_flow') {
@@ -3504,7 +3534,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         return;
       }
       await bot.answerCallbackQuery(callbackQuery.id);
-      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: msgId }).catch(() => {});
       session.step = 'customer';
       sessionStore.set(uid, session);
       await showSupplyCustomerPicker(bot, chatId, uid);
@@ -3517,6 +3547,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
       session.selectedThans = [];
       sessionStore.set(uid, session);
       await bot.answerCallbackQuery(callbackQuery.id, { text: `Selected all ${pkgNos.length} packages.` });
+      await showPackagesForDesign(bot, chatId, uid, session.design, session.shade, session.warehouse, msgId);
     } else {
       const all = await inventoryRepository.getAll();
       const pkgRows = all.filter((r) =>
@@ -3528,7 +3559,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
 
       if (isPartial) {
         await bot.answerCallbackQuery(callbackQuery.id);
-        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: msgId }).catch(() => {});
         await showThansForPackage(bot, chatId, uid, val);
         return;
       }
@@ -3537,12 +3568,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
       const idx = session.selectedPackages.indexOf(val);
       if (idx >= 0) {
         session.selectedPackages.splice(idx, 1);
-        await bot.answerCallbackQuery(callbackQuery.id, { text: `Deselected ${val}. Total: ${session.selectedPackages.length}` });
+        await bot.answerCallbackQuery(callbackQuery.id, { text: `Deselected ${val}` });
       } else {
         session.selectedPackages.push(val);
-        await bot.answerCallbackQuery(callbackQuery.id, { text: `Selected ${val}. Total: ${session.selectedPackages.length}` });
+        await bot.answerCallbackQuery(callbackQuery.id, { text: `Selected ${val}` });
       }
       sessionStore.set(uid, session);
+      await showPackagesForDesign(bot, chatId, uid, session.design, session.shade, session.warehouse, msgId);
     }
 
   /* ─── SUPPLY REQUEST FLOW: THAN SELECTION (partial packages) ─── */
