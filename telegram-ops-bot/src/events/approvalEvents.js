@@ -11,6 +11,7 @@ const inventoryRepository = require('../repositories/inventoryRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const usersRepository = require('../repositories/usersRepository');
 const driveClient = require('../repositories/driveClient');
+const fmtDate = require('../utils/formatDate');
 
 const SALE_ACTIONS = ['sell_than', 'sell_package', 'sale_bundle'];
 const DEFAULT_SALE_UNIT = 'yard';
@@ -357,7 +358,7 @@ async function showWarehouseBoyPicker(bot, chatId, requestId, item, requestingUs
   summary += `━━━━━━━━━━━━━━━━━━━━━━\n`;
   summary += `📦 Total: ${totalQty} ${containerPlural}\n`;
   summary += `👤 Customer: ${aj.customer || '-'}\n`;
-  summary += `📅 Date: ${aj.salesDate || '-'}\n\n`;
+  summary += `📅 Date: ${fmtDate(aj.salesDate)}\n\n`;
   summary += `Assign to a warehouse boy:`;
 
   if (!dispatchUsers.length) {
@@ -418,7 +419,7 @@ async function handleSupplyAssign(bot, callbackQuery) {
   intimation += `👤 Customer: *${aj.customer || '-'}*\n`;
   intimation += `🧑 Salesperson: *${aj.salesperson || '-'}*\n`;
   intimation += `💳 Payment: *${aj.paymentMode || '-'}*\n`;
-  intimation += `📅 Date: *${aj.salesDate || '-'}*\n`;
+  intimation += `📅 Date: *${fmtDate(aj.salesDate)}*\n`;
   intimation += `\n🔔 Assigned by admin. Tap below to acknowledge.`;
 
   try {

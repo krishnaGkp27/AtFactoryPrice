@@ -93,6 +93,7 @@ function fmtQty(n) { return Number(n).toLocaleString('en-NG', { maximumFractionD
 function fmtMoney(n) { return `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`; }
 
 const getMaterialInfo = productTypesRepo.getMaterialInfo;
+const fmtDate = require('../utils/formatDate');
 
 /** Parse date string to YYYY-MM-DD for ledger range. Supports YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY. */
 function parseLedgerDate(str) {
@@ -157,8 +158,6 @@ function buildDesignWiseReport(sold, isAdmin) {
   return text;
 }
 
-const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
 function normalizeDate(raw) {
   if (!raw) return { sort: '9999-99-99', display: '—' };
   const s = String(raw).trim();
@@ -166,20 +165,20 @@ function normalizeDate(raw) {
   if (ymd) {
     const [, y, m, d] = ymd;
     const mm = parseInt(m, 10); const dd = parseInt(d, 10);
-    return { sort: `${y}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`, display: `${String(dd).padStart(2,'0')}-${MONTH_SHORT[mm - 1] || m}` };
+    return { sort: `${y}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`, display: fmtDate(s) };
   }
   const dmy = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
   if (dmy) {
     const [, d, m, y] = dmy;
     const mm = parseInt(m, 10); const dd = parseInt(d, 10);
-    return { sort: `${y}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`, display: `${String(dd).padStart(2,'0')}-${MONTH_SHORT[mm - 1] || m}` };
+    return { sort: `${y}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`, display: fmtDate(s) };
   }
   const longDate = new Date(s);
   if (!isNaN(longDate.getTime())) {
     const y = longDate.getFullYear(); const mm = longDate.getMonth(); const dd = longDate.getDate();
-    return { sort: `${y}-${String(mm + 1).padStart(2,'0')}-${String(dd).padStart(2,'0')}`, display: `${String(dd).padStart(2,'0')}-${MONTH_SHORT[mm]}` };
+    return { sort: `${y}-${String(mm + 1).padStart(2,'0')}-${String(dd).padStart(2,'0')}`, display: fmtDate(s) };
   }
-  return { sort: s, display: s.slice(0, 6) };
+  return { sort: s, display: s };
 }
 
 function buildDesignDateWiseReport(sold, isAdmin) {
@@ -806,7 +805,7 @@ function showReceiptSummary(bot, chatId, userId, session) {
     `🏦 Account: *${session.bank_account}*\n` +
     `📎 File: ${fileLabel}\n` +
     `👷 Uploaded by: ${session.uploaded_by_name} (${session.uploaded_by_id})\n` +
-    `📅 Date: ${new Date().toISOString().split('T')[0]}\n\n` +
+    `📅 Date: ${fmtDate(new Date().toISOString())}\n\n` +
     `Confirm and submit for approval?`;
   const keyboard = { inline_keyboard: [[
     { text: '✅ Confirm & Submit', callback_data: 'rcconf:1' },
@@ -1186,7 +1185,7 @@ async function handleMessage(bot, msg) {
         reply += `Thans (${summary.availableThans}/${summary.totalThans} available):\n`;
         summary.thans.forEach((t) => {
           const icon = t.status === 'available' ? '🟢' : '🔴';
-          const sold = t.soldTo ? ` → ${t.soldTo} (${t.soldDate})` : '';
+          const sold = t.soldTo ? ` → ${t.soldTo} (${fmtDate(t.soldDate)})` : '';
           reply += `${icon} Than ${t.thanNo}: ${fmtQty(t.yards)} yds${sold}\n`;
         });
         reply += `\n*Available: ${summary.availableThans} thans, ${fmtQty(summary.availableYards)} yds | Sold: ${summary.soldThans} thans, ${fmtQty(summary.soldYards)} yds*`;
@@ -1537,8 +1536,8 @@ async function handleMessage(bot, msg) {
         }
         const today = new Date().toISOString().split('T')[0];
         const entries = await accountingService.getDaybook(today);
-        if (!entries.length) { await bot.sendMessage(chatId, `No ledger entries for ${today}.`); return; }
-        let ledgerText = `📒 *Ledger — ${today}*\n\n`;
+        if (!entries.length) { await bot.sendMessage(chatId, `No ledger entries for ${fmtDate(today)}.`); return; }
+        let ledgerText = `📒 *Ledger — ${fmtDate(today)}*\n\n`;
         entries.forEach((e) => {
           const dr = e.debit ? `DR ${fmtMoney(e.debit)}` : '';
           const cr = e.credit ? `CR ${fmtMoney(e.credit)}` : '';
@@ -1582,7 +1581,7 @@ async function handleMessage(bot, msg) {
         let out = `📋 *Last ${lastTxns.length} transaction(s)${intent.customer ? ` for ${escapeMd(intent.customer)}` : ''}*\n\n`;
         lastTxns.forEach((t, i) => {
           const userName = userById.get(String(t.user)) || t.user || '—';
-          const ts = (t.timestamp || '').toString().slice(0, 10);
+          const ts = fmtDate(t.timestamp);
           out += `${i + 1}. ${ts} | *${escapeMd(userName)}* | ${escapeMd(t.action)} | ${escapeMd(t.design || '')} ${escapeMd(t.color || '')} | Qty ${t.qty} | ${escapeMd(t.customerName || '')} | ${escapeMd(t.status)}\n`;
         });
         out += `\n_User column in sheet stores Telegram ID; here we show name from Users._`;
@@ -1707,7 +1706,7 @@ async function handleMessage(bot, msg) {
         let out = '📋 *Your tasks*\n\n';
         for (const t of list) {
           const statusLabel = t.status === 'completed' ? '✅' : t.status === 'submitted' ? '⏳ (pending admin approval)' : '📌';
-          out += `${statusLabel} ${t.task_id}: ${t.title}\n  Status: ${t.status}${t.completed_at ? `, completed ${t.completed_at.slice(0, 10)}` : ''}\n\n`;
+          out += `${statusLabel} ${t.task_id}: ${t.title}\n  Status: ${t.status}${t.completed_at ? `, completed ${fmtDate(t.completed_at)}` : ''}\n\n`;
         }
         out += 'To mark a task done, say: "Mark task <task_id> done" (e.g. Mark task ' + list[0].task_id + ' done)';
         await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
@@ -1909,7 +1908,7 @@ async function handleMessage(bot, msg) {
         const shown = events.slice(0, 20);
         for (const e of shown) {
           const icon = e.type.startsWith('Sale') ? '💰' : e.type.startsWith('Payment') ? '💳' : e.type.startsWith('Order') ? '📦' : e.type.startsWith('Sample') ? '🧪' : '📌';
-          out += `${icon} *${e.date || '-'}* — ${e.type}\n   ${e.detail}\n\n`;
+          out += `${icon} *${fmtDate(e.date) || '-'}* — ${e.type}\n   ${e.detail}\n\n`;
         }
         if (events.length > 20) out += `_... and ${events.length - 20} more interactions_\n`;
         out += `*Total: ${events.length} interactions*`;
@@ -1966,7 +1965,7 @@ async function handleMessage(bot, msg) {
         const reasonMatch = text.match(/\b(?:about|for|regarding|re)\s+(.+)/i);
         const reason = reasonMatch ? reasonMatch[1].trim() : text.replace(/follow\s*up\s*(with)?\s*/i, '').replace(intent.customer, '').replace(intent.salesDate || '', '').replace(/on\s*/i, '').trim() || 'General follow-up';
         const saved = await customerFollowupsRepo.append({ customer: intent.customer, reason, followup_date: fDate, created_by: userId });
-        await bot.sendMessage(chatId, `✅ Follow-up scheduled: *${saved.followup_id}*\n\nCustomer: ${intent.customer}\nDate: ${fDate}\nReason: ${reason}\n\nYou'll be reminded on ${fDate}.`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, `✅ Follow-up scheduled: *${saved.followup_id}*\n\nCustomer: ${intent.customer}\nDate: ${fmtDate(fDate)}\nReason: ${reason}\n\nYou'll be reminded on ${fmtDate(fDate)}.`, { parse_mode: 'Markdown' });
         return;
       }
 
@@ -1985,7 +1984,7 @@ async function handleMessage(bot, msg) {
         if (!notes.length) { await bot.sendMessage(chatId, `No notes found for "${intent.customer}". Add with: "Note for ${intent.customer}: your note here"`); return; }
         let out = `📝 *Notes for ${intent.customer}* (${notes.length})\n\n`;
         for (const n of notes.slice(-15)) {
-          out += `• ${n.created_at?.slice(0, 10) || '-'}: ${n.note}\n`;
+          out += `• ${fmtDate(n.created_at) || '-'}: ${n.note}\n`;
         }
         if (notes.length > 15) out += `\n_Showing last 15 of ${notes.length} notes_`;
         await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
@@ -2561,7 +2560,7 @@ async function showSupplyConfirmation(bot, chatId, userId) {
   text += `👤 Customer: *${session.customer}*\n`;
   text += `🧑 Salesperson: *${session.salesperson}*\n`;
   text += `💳 Payment: *${session.paymentMode}*\n`;
-  text += `📅 Date: *${session.supplyDate}*\n\n`;
+  text += `📅 Date: *${fmtDate(session.supplyDate)}*\n\n`;
   text += `📎 Please send a *photo* or *PDF* of the sales bill, or tap Skip.`;
 
   session.step = 'document';
@@ -2591,7 +2590,7 @@ async function finalizeSupplyRequest(bot, chatId, userId) {
   text += `👤 ${session.customer}\n`;
   text += `🧑 ${session.salesperson}\n`;
   text += `💳 ${session.paymentMode}\n`;
-  text += `📅 ${session.supplyDate}\n`;
+  text += `📅 ${fmtDate(session.supplyDate)}\n`;
   if (session.docFileId) text += `📎 Document attached\n`;
   text += `\nTap Confirm to submit.`;
 
@@ -3862,7 +3861,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     summary += `👤 ${actionJSON.customer}\n`;
     summary += `🧑 ${actionJSON.salesperson}\n`;
     summary += `💳 ${actionJSON.paymentMode}\n`;
-    summary += `📅 ${actionJSON.salesDate}`;
+    summary += `📅 ${fmtDate(actionJSON.salesDate)}`;
     if (actionJSON.sale_doc_file_id) summary += `\n📎 Document attached`;
 
     const excludeId = isAdmin ? uid : undefined;
@@ -3883,7 +3882,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
 
     const approverLabel = isAdmin ? '2nd admin' : 'admin';
     await bot.sendMessage(chatId,
-      `✅ Supply request submitted.\n\n🏭 ${actionJSON.warehouse}\n━━━━━━━━━━━━━━━━━━━━━━\n${cartLines}\n━━━━━━━━━━━━━━━━━━━━━━\n📦 Total: ${totalPkgs} ${containerPlural}\n👤 ${actionJSON.customer}\n📅 ${actionJSON.salesDate}\n\n⏳ Waiting for ${approverLabel} approval.\nRequest: ${requestId}`, {
+      `✅ Supply request submitted.\n\n🏭 ${actionJSON.warehouse}\n━━━━━━━━━━━━━━━━━━━━━━\n${cartLines}\n━━━━━━━━━━━━━━━━━━━━━━\n📦 Total: ${totalPkgs} ${containerPlural}\n👤 ${actionJSON.customer}\n📅 ${fmtDate(actionJSON.salesDate)}\n\n⏳ Waiting for ${approverLabel} approval.\nRequest: ${requestId}`, {
         parse_mode: 'Markdown',
       });
 
