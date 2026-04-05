@@ -2546,17 +2546,27 @@ async function showSupplyCustomerPicker(bot, chatId, userId) {
 }
 
 async function showSupplySalespersonPicker(bot, chatId, showAll = false) {
-  const users = await usersRepository.getAll();
+  const allUsers = await usersRepository.getAll();
+  const adminIds = new Set(config.access.adminIds || []);
+  const salesUsers = allUsers.filter((u) => {
+    if (adminIds.has(u.user_id)) return true;
+    const dept = (u.department || '').toLowerCase();
+    return dept === 'sales';
+  });
+  if (!salesUsers.length) {
+    await bot.sendMessage(chatId, '⚠️ No salespersons found. Please ask admin to assign users to the Sales department.');
+    return;
+  }
   const MAX_SP = 6;
-  const visible = showAll ? users : users.slice(0, MAX_SP);
+  const visible = showAll ? salesUsers : salesUsers.slice(0, MAX_SP);
   const rows = [];
   for (let i = 0; i < visible.length; i += 2) {
     const row = [{ text: `🧑 ${visible[i].name || visible[i].user_id}`, callback_data: `srf_sp:${visible[i].name || visible[i].user_id}` }];
     if (visible[i + 1]) row.push({ text: `🧑 ${visible[i + 1].name || visible[i + 1].user_id}`, callback_data: `srf_sp:${visible[i + 1].name || visible[i + 1].user_id}` });
     rows.push(row);
   }
-  if (!showAll && users.length > MAX_SP) rows.push([{ text: `📋 See All (${users.length})`, callback_data: 'srf_sp:__more__' }]);
-  await bot.sendMessage(chatId, '🧑 Select salesperson:', { reply_markup: { inline_keyboard: rows } });
+  if (!showAll && salesUsers.length > MAX_SP) rows.push([{ text: `📋 See All (${salesUsers.length})`, callback_data: 'srf_sp:__more__' }]);
+  await bot.sendMessage(chatId, '🧑 Select salesperson (order collected by):', { reply_markup: { inline_keyboard: rows } });
 }
 
 async function showSupplyPaymentPicker(bot, chatId) {
@@ -2600,7 +2610,7 @@ async function showSupplyConfirmation(bot, chatId, userId) {
   text += `🧑 Salesperson: *${session.salesperson}*\n`;
   text += `💳 Payment: *${session.paymentMode}*\n`;
   text += `📅 Date: *${fmtDate(session.supplyDate)}*\n\n`;
-  text += `📎 Please send a *photo* or *PDF* of the sales bill, or tap Skip.`;
+  text += `📎 If payment was already received, send the *receipt photo or PDF*.\nOtherwise tap Skip.`;
 
   session.step = 'document';
   session.awaitingDocument = true;
@@ -2609,8 +2619,7 @@ async function showSupplyConfirmation(bot, chatId, userId) {
   await bot.sendMessage(chatId, text, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [
-      [{ text: '⏭️ Skip Document', callback_data: 'srf_doc:skip' }],
-      [{ text: '❌ Cancel', callback_data: 'srf_doc:cancel' }],
+      [{ text: '⏭️ Skip (No receipt)', callback_data: 'srf_doc:skip' }, { text: '❌ Cancel', callback_data: 'srf_doc:cancel' }],
     ] },
   });
 }
