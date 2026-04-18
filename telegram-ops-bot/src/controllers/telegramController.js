@@ -2177,7 +2177,15 @@ function helpText() {
 
 const GREETINGS = /^(hi|hello|hey|start|menu|home|main\s*menu)$/i;
 
-async function buildGreetingMenu(bot, chatId, userId, showAll = false) {
+/**
+ * Build the hub-based greeting menu.
+ * Activities belonging to a hub are collapsed behind a single hub button;
+ * only standalone activities (hub === null) remain at top level alongside
+ * the hubs. Hubs are sorted by aggregated sub-activity usage; standalones
+ * by their own usage. A hub containing only one allowed sub-activity is
+ * auto-promoted to top level (no redundant single-item drilldown).
+ */
+async function buildGreetingMenuMarkup(userId, showAll = false) {
   const isAdminUser = config.access.adminIds.includes(userId);
   const user = await usersRepository.findByUserId(userId);
   const deptName = (user && user.department) || (isAdminUser ? 'Admin' : '');
@@ -2191,36 +2199,161 @@ async function buildGreetingMenu(bot, chatId, userId, showAll = false) {
   }
 
   if (!allowed.length) {
-    await bot.sendMessage(chatId,
-      '👋 Welcome! You have no activities assigned yet.\nPlease ask your admin to assign you to a department.');
+    return {
+      empty: true,
+      text: '👋 Welcome! You have no activities assigned yet.\nPlease ask your admin to assign you to a department.',
+      reply_markup: { inline_keyboard: [] },
+    };
+  }
+
+  const counts = await userPrefsRepo.getCountsForUser(userId);
+  const { hubs, standalone } = activityRegistry.groupByHub(allowed);
+
+  // Build a unified list of entries (hub OR standalone activity),
+  // each with an aggregated usage count for sorting.
+  const entries = [];
+  for (const { hub, activities } of hubs) {
+    if (activities.length === 1) {
+      // Promote a single-item hub directly to top level.
+      const a = activities[0];
+      entries.push({ kind: 'activity', activity: a, count: counts[a.code] || 0 });
+    } else {
+      const agg = activities.reduce((s, a) => s + (counts[a.code] || 0), 0);
+      entries.push({ kind: 'hub', hub, activities, count: agg });
+    }
+  }
+  for (const a of standalone) {
+    entries.push({ kind: 'activity', activity: a, count: counts[a.code] || 0 });
+  }
+
+  entries.sort((a, b) => b.count - a.count);
+
+  const MAX_MENU = 6;
+  const visible = showAll ? entries : entries.slice(0, MAX_MENU);
+
+  const rows = [];
+  for (let i = 0; i < visible.length; i += 2) {
+    const row = [entryToButton(visible[i])];
+    if (visible[i + 1]) row.push(entryToButton(visible[i + 1]));
+    rows.push(row);
+  }
+  if (!showAll && entries.length > MAX_MENU) {
+    rows.push([{ text: `📋 More Options (${entries.length - MAX_MENU})`, callback_data: 'act:__more__' }]);
+  }
+
+  const name = (user && user.name) || 'there';
+  const deptBadge = deptName ? ` (${deptName})` : '';
+  return {
+    empty: false,
+    text: `👋 Hi *${name}*${deptBadge}! What would you like to do?`,
+    reply_markup: { inline_keyboard: rows },
+  };
+}
+
+function entryToButton(entry) {
+  if (entry.kind === 'hub') {
+    return {
+      text: `${entry.hub.icon} ${entry.hub.label}`,
+      callback_data: `act:__hub__:${entry.hub.id}`,
+    };
+  }
+  const a = entry.activity;
+  return { text: `${a.icon} ${a.label}`, callback_data: a.callback };
+}
+
+async function buildGreetingMenu(bot, chatId, userId, showAll = false) {
+  const markup = await buildGreetingMenuMarkup(userId, showAll);
+  if (markup.empty) {
+    await bot.sendMessage(chatId, markup.text);
+    return;
+  }
+  await bot.sendMessage(chatId, markup.text, {
+    parse_mode: 'Markdown',
+    reply_markup: markup.reply_markup,
+  });
+}
+
+/**
+ * Render a hub's sub-activities in place (editing the tapped message).
+ * Sub-activities are ordered by the user's individual usage counts.
+ */
+async function renderHubSubmenu(bot, chatId, messageId, userId, hubId) {
+  const hub = activityRegistry.getHub(hubId);
+  if (!hub) {
+    await bot.sendMessage(chatId, 'Unknown menu section.');
+    return;
+  }
+
+  const isAdminUser = config.access.adminIds.includes(userId);
+  const user = await usersRepository.findByUserId(userId);
+  const deptName = (user && user.department) || (isAdminUser ? 'Admin' : '');
+
+  let allowed = [];
+  if (isAdminUser) {
+    allowed = activityRegistry.getAll();
+  } else if (deptName) {
+    const dept = await departmentsRepo.findByName(deptName);
+    if (dept) allowed = activityRegistry.filterByCodes(dept.allowed_activities);
+  }
+  const subs = allowed.filter((a) => a.hub === hubId);
+
+  if (!subs.length) {
+    await bot.editMessageText(`${hub.icon} *${hub.label}*\n\n_No actions available in this section._`, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [[{ text: '⬅ Back', callback_data: 'act:__back__' }]] },
+    }).catch(() => {});
     return;
   }
 
   const counts = await userPrefsRepo.getCountsForUser(userId);
-  const sorted = userPrefsRepo.sortActivitiesByFrequency(allowed, counts);
+  const sorted = [...subs].sort((a, b) => (counts[b.code] || 0) - (counts[a.code] || 0));
 
-  const MAX_MENU = 6;
-  const visible = showAll ? sorted : sorted.slice(0, MAX_MENU);
-
-  const name = (user && user.name) || 'there';
   const rows = [];
-  for (let i = 0; i < visible.length; i += 2) {
-    const row = [{ text: `${visible[i].icon} ${visible[i].label}`, callback_data: visible[i].callback }];
-    if (visible[i + 1]) {
-      row.push({ text: `${visible[i + 1].icon} ${visible[i + 1].label}`, callback_data: visible[i + 1].callback });
+  for (let i = 0; i < sorted.length; i += 2) {
+    const row = [{ text: `${sorted[i].icon} ${sorted[i].label}`, callback_data: sorted[i].callback }];
+    if (sorted[i + 1]) {
+      row.push({ text: `${sorted[i + 1].icon} ${sorted[i + 1].label}`, callback_data: sorted[i + 1].callback });
     }
     rows.push(row);
   }
-  if (!showAll && sorted.length > MAX_MENU) {
-    rows.push([{ text: `📋 More Options (${sorted.length - MAX_MENU})`, callback_data: 'act:__more__' }]);
-  }
+  rows.push([{ text: '⬅ Back', callback_data: 'act:__back__' }]);
 
-  const deptBadge = deptName ? ` (${deptName})` : '';
-  await bot.sendMessage(chatId,
-    `👋 Hi *${name}*${deptBadge}! What would you like to do?`, {
+  await bot.editMessageText(`${hub.icon} *${hub.label}*\n\nPick an action:`, {
+    chat_id: chatId,
+    message_id: messageId,
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  }).catch(async () => {
+    // Fallback if edit fails (original message too old / deleted).
+    await bot.sendMessage(chatId, `${hub.icon} *${hub.label}*\n\nPick an action:`, {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: rows },
     });
+  });
+}
+
+/**
+ * Edit an existing message back to the greeting menu (used by ⬅ Back).
+ */
+async function renderGreetingMenuEdit(bot, chatId, messageId, userId, showAll = false) {
+  const markup = await buildGreetingMenuMarkup(userId, showAll);
+  if (markup.empty) {
+    await bot.sendMessage(chatId, markup.text);
+    return;
+  }
+  await bot.editMessageText(markup.text, {
+    chat_id: chatId,
+    message_id: messageId,
+    parse_mode: 'Markdown',
+    reply_markup: markup.reply_markup,
+  }).catch(async () => {
+    await bot.sendMessage(chatId, markup.text, {
+      parse_mode: 'Markdown',
+      reply_markup: markup.reply_markup,
+    });
+  });
 }
 
 /* ─── FUTURE-ONLY DATE PICKER ─── */
@@ -3484,16 +3617,37 @@ async function handleCallbackQuery(bot, callbackQuery) {
   } else if (data.startsWith('act:')) {
     const actCode = data.slice(4);
     const chatId = callbackQuery.message.chat.id;
+    const messageId = callbackQuery.message.message_id;
     const uid = String(callbackQuery.from.id);
     await bot.answerCallbackQuery(callbackQuery.id);
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+    // Hub tap → expand sub-activities in place (no keyboard wipe).
+    if (actCode.startsWith('__hub__:')) {
+      const hubId = actCode.slice('__hub__:'.length);
+      await renderHubSubmenu(bot, chatId, messageId, uid, hubId);
+      return;
+    }
+
+    // Back tap → restore greeting menu in place.
+    if (actCode === '__back__') {
+      await renderGreetingMenuEdit(bot, chatId, messageId, uid, false);
+      return;
+    }
+
+    // Any other tap ends the menu lifecycle → wipe the keyboard so the
+    // stale message can't be tapped again.
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
 
     if (actCode === '__more__') {
       await buildGreetingMenu(bot, chatId, uid, true);
       return;
     }
 
-    userPrefsRepo.incrementActivity(uid, actCode).catch(() => {});
+    // Normalize count key to the activity's canonical `code` (some
+    // callbacks differ from their code, e.g. act:mark_delivered ↔ mark_order_delivered).
+    const tappedActivity = activityRegistry.getByCallback(`act:${actCode}`);
+    const countKey = tappedActivity ? tappedActivity.code : actCode;
+    userPrefsRepo.incrementActivity(uid, countKey).catch(() => {});
 
     switch (actCode) {
       case 'supply_request': await startSupplyRequestFlow(bot, chatId, uid); break;
