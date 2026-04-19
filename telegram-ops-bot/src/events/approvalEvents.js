@@ -496,13 +496,40 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
           `✅ Customer "*${custName}*" approved.\n\nContinuing your sample request…`,
           { parse_mode: 'Markdown' },
         );
-        // Re-render the sample picker in place (or as a new message if flowMessageId lost).
         const telegramController = require('../controllers/telegramController');
         if (typeof telegramController.showSampleQuantityPicker === 'function') {
           await telegramController.showSampleQuantityPicker(bot, requesterUserId, requesterUserId);
         }
       } catch (e) {
         logger.error('Failed to resume sample flow for user after customer approval', e);
+      }
+    } else if (session && session.type === 'order_flow' && session.step === 'awaiting_customer_approval') {
+      // Resume Create Order flow at the quantity step (qty picker shown below).
+      session.customer = custName;
+      session.step = 'quantity';
+      delete session.pendingCustomerId;
+      delete session.pendingCustomerName;
+      delete session.customerApprovalId;
+      sessionStore.set(requesterUserId, session);
+      try {
+        await bot.sendMessage(requesterUserId,
+          `✅ Customer "*${custName}*" approved. Continuing your order…\n\nPick quantity:`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [
+              [
+                { text: '1 pkg',  callback_data: 'oq:1' },
+                { text: '2 pkgs', callback_data: 'oq:2' },
+                { text: '5 pkgs', callback_data: 'oq:5' },
+                { text: '10 pkgs', callback_data: 'oq:10' },
+              ],
+              [{ text: '✏️ Custom', callback_data: 'oq:__custom__' }],
+              [{ text: '❌ Cancel', callback_data: 'ocanc:1' }],
+            ] },
+          },
+        );
+      } catch (e) {
+        logger.error('Failed to resume order flow for user after customer approval', e);
       }
     } else {
       await notifyEmployee(bot, requesterUserId, requestId, `✅ Customer "${custName}" has been approved by admin.`);
@@ -537,7 +564,6 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
         logger.error('Failed to resume supply flow for user after customer rejection', e);
       }
     } else if (session && session.type === 'sample_flow' && session.step === 'awaiting_customer_approval') {
-      // Sample flow: reset to customer step so user can re-pick.
       session.step = 'customer';
       delete session.pendingCustomerId;
       delete session.pendingCustomerName;
@@ -553,6 +579,15 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
         }
       } catch (e) {
         logger.error('Failed to resume sample flow for user after customer rejection', e);
+      }
+    } else if (session && session.type === 'order_flow' && session.step === 'awaiting_customer_approval') {
+      sessionStore.clear(requesterUserId);
+      try {
+        await bot.sendMessage(requesterUserId,
+          `❌ Customer "${custName}" was rejected by admin.\n\nYour order has been cancelled. Please start again with a different customer.`,
+        );
+      } catch (e) {
+        logger.error('Failed to notify user after order-flow customer rejection', e);
       }
     } else {
       await notifyEmployee(bot, requesterUserId, requestId, `❌ Customer "${custName}" registration was rejected by admin.`);

@@ -1720,6 +1720,32 @@ async function showMarkDeliveredPicker(bot, chatId, userId) {
 }
 
 /** Handle text replies during an active order creation session. Returns true if consumed. */
+async function showOrderSalespersonPicker(bot, chatId, userId) {
+  const users = await usersRepository.getAll();
+  const adminIds = new Set(config.access.adminIds || []);
+  const active = users.filter((u) => {
+    if (u.status !== 'active') return false;
+    if (adminIds.has(u.user_id)) return true;
+    return (u.department || '').toLowerCase() === 'sales';
+  });
+  if (!active.length) {
+    await bot.sendMessage(chatId, '⚠️ No salespersons found (Sales dept or admin). Ask admin to assign users.');
+    sessionStore.clear(userId);
+    return;
+  }
+  const rows = [];
+  for (let i = 0; i < active.length; i += 2) {
+    const row = [{ text: `🧑 ${active[i].name}`, callback_data: `os:${active[i].user_id}` }];
+    if (active[i + 1]) row.push({ text: `🧑 ${active[i + 1].name}`, callback_data: `os:${active[i + 1].user_id}` });
+    rows.push(row);
+  }
+  rows.push([{ text: '❌ Cancel', callback_data: 'ocanc:1' }]);
+  await bot.sendMessage(chatId, '🧑 *Select salesperson:*', {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
+}
+
 async function handleOrderFlowText(bot, chatId, userId, text) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== 'order_flow') return false;
@@ -1730,6 +1756,78 @@ async function handleOrderFlowText(bot, chatId, userId, text) {
     return true;
   }
 
+  /* ─── Proper new-customer flow with approval gate (Batch 5) ─── */
+  if (session.step === 'new_order_customer_name') {
+    const name = text.trim();
+    if (name.length < 2) {
+      await bot.sendMessage(chatId, 'Name too short, please re-enter:');
+      return true;
+    }
+    session.pendingCustomerName = name;
+    session.step = 'new_order_customer_phone';
+    sessionStore.set(userId, session);
+    await bot.sendMessage(chatId, `Got it: *${name}*\n\nEnter phone number (or type "skip"):`, { parse_mode: 'Markdown' });
+    return true;
+  }
+
+  if (session.step === 'new_order_customer_phone') {
+    const raw = text.trim();
+    const phone = raw.toLowerCase() === 'skip' ? '' : raw;
+    const name = session.pendingCustomerName;
+
+    const customerId = `C-${Date.now().toString(36).toUpperCase()}`;
+    const customersRepo2 = require('../repositories/customersRepository');
+    await customersRepo2.append({
+      customer_id: customerId, name, phone, address: '', category: '',
+      credit_limit: 0, payment_terms: '', notes: 'Added via order flow',
+      status: 'Pending',
+    });
+
+    const requestId = genId();
+    await approvalQueueRepository.append({
+      requestId, user: userId,
+      actionJSON: {
+        action: 'new_customer_registration',
+        customer_id: customerId, customer_name: name, phone,
+        requesterUserId: userId, from: 'order_flow',
+      },
+      riskReason: 'New customer registration requires admin approval',
+      status: 'pending',
+    });
+    await auditLogRepository.append('approval_queued', { requestId, reason: 'new_customer', from: 'order_flow' }, userId);
+
+    session.pendingCustomerId = customerId;
+    session.customerApprovalId = requestId;
+    session.step = 'awaiting_customer_approval';
+    sessionStore.set(userId, session);
+
+    const userLabel = await getRequesterDisplayName(userId, null);
+    await approvalEvents.notifyAdminsApprovalRequest(
+      bot, requestId, userLabel,
+      `New Customer Registration\nName: ${name}\nPhone: ${phone || '—'}\n(from order flow)`,
+      'New customer requires admin approval',
+    );
+    await bot.sendMessage(chatId,
+      `⏳ Customer "*${name}*" sent for admin approval.\n\nYour order is *paused* — it will resume automatically once a second admin approves the new customer.`,
+      { parse_mode: 'Markdown' });
+    return true;
+  }
+
+  /* ─── Custom quantity (tapped "Custom" in presets) ─── */
+  if (session.step === 'quantity_custom') {
+    const qty = text.trim();
+    if (!qty || isNaN(Number(qty)) || Number(qty) <= 0) {
+      await bot.sendMessage(chatId, 'Please enter a valid positive number for quantity.');
+      return true;
+    }
+    session.quantity = qty;
+    session.step = 'salesperson';
+    sessionStore.set(userId, session);
+    await showOrderSalespersonPicker(bot, chatId, userId);
+    return true;
+  }
+
+  /* ─── Legacy text step kept for back-compat with any stale sessions ─── */
   if (session.step === 'customer_new') {
     session.customer = text.trim();
     session.step = 'quantity';
@@ -1747,20 +1845,7 @@ async function handleOrderFlowText(bot, chatId, userId, text) {
     session.quantity = qty;
     session.step = 'salesperson';
     sessionStore.set(userId, session);
-    const users = await usersRepository.getAll();
-    const active = users.filter((u) => u.status === 'active');
-    if (!active.length) {
-      await bot.sendMessage(chatId, 'No active employees found in Users sheet. Add employees first.');
-      sessionStore.clear(userId);
-      return true;
-    }
-    const rows = [];
-    for (let i = 0; i < active.length; i += 2) {
-      const row = [{ text: active[i].name, callback_data: `os:${active[i].user_id}` }];
-      if (active[i + 1]) row.push({ text: active[i + 1].name, callback_data: `os:${active[i + 1].user_id}` });
-      rows.push(row);
-    }
-    await bot.sendMessage(chatId, 'Select salesperson:', { reply_markup: { inline_keyboard: rows } });
+    await showOrderSalespersonPicker(bot, chatId, userId);
     return true;
   }
 
@@ -4632,20 +4717,54 @@ async function handleCallbackQuery(bot, callbackQuery) {
   } else if (data.startsWith('oc:')) {
     const val = data.slice(3);
     const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'order_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
     await bot.answerCallbackQuery(callbackQuery.id);
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id });
     if (val === '__new__') {
-      session.step = 'customer_new';
+      session.step = 'new_order_customer_name';
       sessionStore.set(uid, session);
-      await bot.sendMessage(callbackQuery.message.chat.id, 'Enter new customer name:');
+      await bot.sendMessage(chatId,
+        '📝 Enter *new customer name* (will be sent for 2-admin approval):',
+        { parse_mode: 'Markdown' });
     } else {
       session.customer = val;
       session.step = 'quantity';
       sessionStore.set(uid, session);
-      await bot.sendMessage(callbackQuery.message.chat.id, `Customer: *${val}*\n\nEnter quantity:`, { parse_mode: 'Markdown' });
+      await bot.sendMessage(chatId, `Customer: *${val}*\n\nPick quantity:`, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [
+          [
+            { text: '1 pkg',  callback_data: 'oq:1' },
+            { text: '2 pkgs', callback_data: 'oq:2' },
+            { text: '5 pkgs', callback_data: 'oq:5' },
+            { text: '10 pkgs', callback_data: 'oq:10' },
+          ],
+          [{ text: '✏️ Custom', callback_data: 'oq:__custom__' }],
+          [{ text: '❌ Cancel', callback_data: 'ocanc:1' }],
+        ] },
+      });
     }
+
+  } else if (data.startsWith('oq:')) {
+    const val = data.slice(3);
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'order_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+    if (val === '__custom__') {
+      session.step = 'quantity_custom';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(chatId, 'Enter custom quantity (number of packages):');
+      return;
+    }
+    session.quantity = val;
+    session.step = 'salesperson';
+    sessionStore.set(uid, session);
+    await showOrderSalespersonPicker(bot, chatId, uid);
 
   } else if (data.startsWith('os:')) {
     const spId = data.slice(3);
@@ -4688,25 +4807,60 @@ async function handleCallbackQuery(bot, callbackQuery) {
   } else if (data.startsWith('odt:')) {
     const val = data.slice(4);
     const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'order_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
     await bot.answerCallbackQuery(callbackQuery.id);
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
     if (val === 'today') {
       session.scheduled_date = new Date().toISOString().split('T')[0];
     } else if (val === 'mon') {
       session.scheduled_date = nextWeekday(1);
     } else if (val === 'fri') {
       session.scheduled_date = nextWeekday(5);
-    } else {
-      session.step = 'date_custom';
-      sessionStore.set(uid, session);
-      await bot.sendMessage(callbackQuery.message.chat.id, 'Enter date (DD-MM-YYYY or YYYY-MM-DD):');
+    } else if (val === 'custom') {
+      // Show calendar picker instead of free-text date prompt.
+      const rows = buildDatePicker('odc', 0);
+      rows.push([{ text: '❌ Cancel', callback_data: 'ocanc:1' }]);
+      await bot.editMessageText('📅 Pick scheduled supply date:', {
+        chat_id: chatId, message_id: callbackQuery.message.message_id,
+        reply_markup: { inline_keyboard: rows },
+      }).catch(async () => {
+        await bot.sendMessage(chatId, '📅 Pick scheduled supply date:', { reply_markup: { inline_keyboard: rows } });
+      });
       return;
     }
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
     session.step = 'confirm';
     sessionStore.set(uid, session);
-    await showOrderSummary(bot, callbackQuery.message.chat.id, session);
+    await showOrderSummary(bot, chatId, session);
+
+  } else if (data.startsWith('odcnav:')) {
+    // Calendar month navigation for order-flow date picker.
+    const offset = parseInt(data.replace('odcnav:', ''));
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'order_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    const rows = buildDatePicker('odc', offset);
+    rows.push([{ text: '❌ Cancel', callback_data: 'ocanc:1' }]);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: rows }, {
+      chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id,
+    }).catch(() => {});
+
+  } else if (data.startsWith('odcpick:')) {
+    const dateStr = data.slice(8);
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'order_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: `Date: ${dateStr}` });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+      chat_id: chatId, message_id: callbackQuery.message.message_id,
+    }).catch(() => {});
+    session.scheduled_date = dateStr;
+    session.step = 'confirm';
+    sessionStore.set(uid, session);
+    await showOrderSummary(bot, chatId, session);
 
   } else if (data.startsWith('oconf:')) {
     const uid = String(callbackQuery.from.id);
