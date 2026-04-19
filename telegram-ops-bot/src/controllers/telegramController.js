@@ -637,6 +637,162 @@ function buildSampleStatusReport(samples, title) {
 
 // ─── End Sample Flow Helpers ────────────────────────────────────────────────
 
+/* ─── Reusable Report Senders ──────────────────────────────────────────────
+ * These wrap the report-building helpers above so the same logic can be
+ * invoked from BOTH typed text intents AND inline-keyboard callbacks.
+ * Keeping them here (co-located with the builders) avoids duplicating the
+ * rendering logic across `handleMessage` and `handleCallbackQuery`.
+ */
+
+async function sendCustomerHistoryReport(bot, chatId, customerName) {
+  const events = await buildCustomerTimeline(customerName);
+  if (!events.length) {
+    await bot.sendMessage(chatId, `No interaction history found for "${customerName}".`);
+    return;
+  }
+  const lastAgo = events[0].date
+    ? Math.floor((Date.now() - new Date(events[0].date).getTime()) / 86400000)
+    : '?';
+  let out = `📋 *Customer Timeline — ${customerName}*\n_Last activity: ${lastAgo} days ago_\n\n`;
+  const shown = events.slice(0, 20);
+  for (const e of shown) {
+    const icon = e.type.startsWith('Sale') ? '💰'
+      : e.type.startsWith('Payment') ? '💳'
+      : e.type.startsWith('Order') ? '📦'
+      : e.type.startsWith('Sample') ? '🧪' : '📌';
+    out += `${icon} *${fmtDate(e.date) || '-'}* — ${e.type}\n   ${e.detail}\n\n`;
+  }
+  if (events.length > 20) out += `_... and ${events.length - 20} more interactions_\n`;
+  out += `*Total: ${events.length} interactions*`;
+  await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+}
+
+async function sendCustomerPatternReport(bot, chatId, customerName) {
+  const pattern = await buildCustomerPattern(customerName);
+  if (!pattern) {
+    await bot.sendMessage(chatId, `No purchase data found for "${customerName}".`);
+    return;
+  }
+  let out = `🔍 *Purchase Pattern — ${customerName}*\n\n`;
+  out += `📅 First purchase: ${pattern.firstDate} | Last: ${pattern.lastDate}\n`;
+  out += `📊 Lifetime: ${pattern.totalPkgs} pkgs, ${pattern.totalThans} thans, ${fmtQty(pattern.totalYards)} yds — ${fmtMoney(pattern.totalValue)}\n\n`;
+  out += `*Preferred Items (by value):*\n`;
+  let rank = 0;
+  for (const ds of pattern.items) {
+    rank++;
+    const pct = Math.round((ds.value / pattern.totalValue) * 100);
+    out += `${rank}. ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} pkgs, ${fmtQty(ds.yards)} yds — ${fmtMoney(ds.value)} (${pct}%)\n`;
+  }
+  out += `\n*Top design: ${pattern.items[0].design} Shade ${pattern.items[0].shade} (${Math.round((pattern.items[0].value / pattern.totalValue) * 100)}% of total)*`;
+  await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+}
+
+async function sendCustomerNotesReport(bot, chatId, customerName) {
+  const notes = await customerNotesRepo.getByCustomer(customerName);
+  if (!notes.length) {
+    await bot.sendMessage(chatId,
+      `No notes found for "${customerName}". Add with: "Note for ${customerName}: your note here"`);
+    return;
+  }
+  let out = `📝 *Notes for ${customerName}* (${notes.length})\n\n`;
+  for (const n of notes.slice(-15)) {
+    out += `• ${fmtDate(n.created_at) || '-'}: ${n.note}\n`;
+  }
+  if (notes.length > 15) out += `\n_Showing last 15 of ${notes.length} notes_`;
+  await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+}
+
+async function sendCustomerRankingReport(bot, chatId) {
+  const ranked = await buildCustomerRanking();
+  if (!ranked.length) {
+    await bot.sendMessage(chatId, 'No sales data found.');
+    return;
+  }
+  let out = `🏆 *Customer Ranking — Top ${Math.min(ranked.length, 20)} by Value*\n\n`;
+  let rank = 0;
+  const medals = ['🥇', '🥈', '🥉'];
+  for (const [name, c] of ranked.slice(0, 20)) {
+    const medal = rank < 3 ? medals[rank] : `${rank + 1}.`;
+    const daysAgo = c.lastDate
+      ? Math.floor((Date.now() - new Date(c.lastDate).getTime()) / 86400000)
+      : '?';
+    out += `${medal} *${name}*\n`;
+    out += `   ${c.pkgs.size} pkgs, ${c.thans} thans, ${fmtQty(c.yards)} yds\n`;
+    out += `   Value: ${fmtMoney(c.value)} | Last: ${daysAgo}d ago\n`;
+    out += `   ${fmtBar(c.value, ranked[0][1].value)}\n\n`;
+    rank++;
+  }
+  const grandValue = ranked.reduce((s, [, c]) => s + c.value, 0);
+  out += `*Total Customers: ${ranked.length} | Total Value: ${fmtMoney(grandValue)}*`;
+  await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+}
+
+async function sendSampleStatusReport(bot, chatId, design = null) {
+  let samples;
+  let title;
+  if (design) {
+    samples = await samplesRepo.getByDesign(design);
+    samples = samples.filter((s) => s.status === 'with_customer');
+    title = `📋 *Sample Status — Design ${design}*`;
+  } else {
+    samples = await samplesRepo.getActive();
+    title = '📋 *Sample Status — All Active*';
+  }
+  const report = buildSampleStatusReport(samples, title);
+  await sendLong(bot, chatId, report, { parse_mode: 'Markdown' });
+}
+
+/* ─── Customer Picker for Report Buttons ──────────────────────────────────
+ * Shared picker used by button-triggered reports (history / pattern / notes).
+ * Emits callback_data `rpt:<reportType>:<customerName>` on selection and
+ * `rpt:<reportType>:__more__` to expand the full list.
+ *
+ * We send customer names directly in callback_data (same pattern as
+ * showSupplyCustomerPicker). Telegram's 64-byte limit on callback_data
+ * means customer names longer than ~50 bytes would fail; in practice this
+ * codebase's customers are short (CJE, Christ, BLESSING, etc.). If long
+ * names ever appear, switch to an index-based scheme.
+ */
+const REPORT_PICKER_PROMPTS = {
+  history: { icon: '📋', label: 'Customer History', prompt: 'Pick a customer to see their timeline:' },
+  pattern: { icon: '🔍', label: 'Customer Pattern', prompt: 'Pick a customer to see their buying pattern:' },
+  notes:   { icon: '📝', label: 'Customer Notes',   prompt: 'Pick a customer to see their notes:' },
+};
+
+async function showCustomerPickerForReport(bot, chatId, reportType, showAll = false) {
+  const meta = REPORT_PICKER_PROMPTS[reportType];
+  if (!meta) return;
+
+  const allCust = await customersRepo.getAll();
+  const active = allCust
+    .filter((c) => (c.status || 'Active').toLowerCase() === 'active' && c.name)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  if (!active.length) {
+    await bot.sendMessage(chatId, 'No active customers found.');
+    return;
+  }
+
+  const MAX_VISIBLE = 8;
+  const visible = showAll ? active : active.slice(0, MAX_VISIBLE);
+  const rows = [];
+  for (let i = 0; i < visible.length; i += 2) {
+    const row = [{ text: `👤 ${visible[i].name}`, callback_data: `rpt:${reportType}:${visible[i].name}` }];
+    if (visible[i + 1]) {
+      row.push({ text: `👤 ${visible[i + 1].name}`, callback_data: `rpt:${reportType}:${visible[i + 1].name}` });
+    }
+    rows.push(row);
+  }
+  if (!showAll && active.length > MAX_VISIBLE) {
+    rows.push([{ text: `📋 See All (${active.length})`, callback_data: `rpt:${reportType}:__more__` }]);
+  }
+
+  await bot.sendMessage(chatId, `${meta.icon} *${meta.label}*\n\n${meta.prompt}`, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
+}
+
 /** Handle text replies during an active order creation session. Returns true if consumed. */
 async function handleOrderFlowText(bot, chatId, userId, text) {
   const session = sessionStore.get(userId);
@@ -1885,76 +2041,25 @@ async function handleMessage(bot, msg) {
           await bot.sendMessage(chatId, 'Sample status report is admin-only.');
           return;
         }
-        let samples;
-        let title;
-        if (intent.design) {
-          samples = await samplesRepo.getByDesign(intent.design);
-          samples = samples.filter((s) => s.status === 'with_customer');
-          title = `📋 *Sample Status — Design ${intent.design}*`;
-        } else {
-          samples = await samplesRepo.getActive();
-          title = '📋 *Sample Status — All Active*';
-        }
-        const report = buildSampleStatusReport(samples, title);
-        await sendLong(bot, chatId, report, { parse_mode: 'Markdown' });
+        await sendSampleStatusReport(bot, chatId, intent.design || null);
         return;
       }
 
       case 'customer_history': {
         if (!intent.customer) { await bot.sendMessage(chatId, 'Which customer? e.g. "Customer history CJE"'); return; }
-        const events = await buildCustomerTimeline(intent.customer);
-        if (!events.length) { await bot.sendMessage(chatId, `No interaction history found for "${intent.customer}".`); return; }
-        const lastAgo = events[0].date ? Math.floor((Date.now() - new Date(events[0].date).getTime()) / 86400000) : '?';
-        let out = `📋 *Customer Timeline — ${intent.customer}*\n_Last activity: ${lastAgo} days ago_\n\n`;
-        const shown = events.slice(0, 20);
-        for (const e of shown) {
-          const icon = e.type.startsWith('Sale') ? '💰' : e.type.startsWith('Payment') ? '💳' : e.type.startsWith('Order') ? '📦' : e.type.startsWith('Sample') ? '🧪' : '📌';
-          out += `${icon} *${fmtDate(e.date) || '-'}* — ${e.type}\n   ${e.detail}\n\n`;
-        }
-        if (events.length > 20) out += `_... and ${events.length - 20} more interactions_\n`;
-        out += `*Total: ${events.length} interactions*`;
-        await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+        await sendCustomerHistoryReport(bot, chatId, intent.customer);
         return;
       }
 
       case 'customer_ranking': {
         if (!config.access.adminIds.includes(userId)) { await bot.sendMessage(chatId, 'Customer ranking is admin-only.'); return; }
-        const ranked = await buildCustomerRanking();
-        if (!ranked.length) { await bot.sendMessage(chatId, 'No sales data found.'); return; }
-        let out = `🏆 *Customer Ranking — Top ${Math.min(ranked.length, 20)} by Value*\n\n`;
-        let rank = 0;
-        const medals = ['🥇', '🥈', '🥉'];
-        for (const [name, c] of ranked.slice(0, 20)) {
-          const medal = rank < 3 ? medals[rank] : `${rank + 1}.`;
-          const daysAgo = c.lastDate ? Math.floor((Date.now() - new Date(c.lastDate).getTime()) / 86400000) : '?';
-          out += `${medal} *${name}*\n`;
-          out += `   ${c.pkgs.size} pkgs, ${c.thans} thans, ${fmtQty(c.yards)} yds\n`;
-          out += `   Value: ${fmtMoney(c.value)} | Last: ${daysAgo}d ago\n`;
-          out += `   ${fmtBar(c.value, ranked[0][1].value)}\n\n`;
-          rank++;
-        }
-        const grandValue = ranked.reduce((s, [, c]) => s + c.value, 0);
-        out += `*Total Customers: ${ranked.length} | Total Value: ${fmtMoney(grandValue)}*`;
-        await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+        await sendCustomerRankingReport(bot, chatId);
         return;
       }
 
       case 'customer_pattern': {
         if (!intent.customer) { await bot.sendMessage(chatId, 'Which customer? e.g. "What does CJE buy"'); return; }
-        const pattern = await buildCustomerPattern(intent.customer);
-        if (!pattern) { await bot.sendMessage(chatId, `No purchase data found for "${intent.customer}".`); return; }
-        let out = `🔍 *Purchase Pattern — ${intent.customer}*\n\n`;
-        out += `📅 First purchase: ${pattern.firstDate} | Last: ${pattern.lastDate}\n`;
-        out += `📊 Lifetime: ${pattern.totalPkgs} pkgs, ${pattern.totalThans} thans, ${fmtQty(pattern.totalYards)} yds — ${fmtMoney(pattern.totalValue)}\n\n`;
-        out += `*Preferred Items (by value):*\n`;
-        let rank = 0;
-        for (const ds of pattern.items) {
-          rank++;
-          const pct = Math.round((ds.value / pattern.totalValue) * 100);
-          out += `${rank}. ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} pkgs, ${fmtQty(ds.yards)} yds — ${fmtMoney(ds.value)} (${pct}%)\n`;
-        }
-        out += `\n*Top design: ${pattern.items[0].design} Shade ${pattern.items[0].shade} (${Math.round((pattern.items[0].value / pattern.totalValue) * 100)}% of total)*`;
-        await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+        await sendCustomerPatternReport(bot, chatId, intent.customer);
         return;
       }
 
@@ -1981,14 +2086,7 @@ async function handleMessage(bot, msg) {
 
       case 'show_customer_notes': {
         if (!intent.customer) { await bot.sendMessage(chatId, 'Which customer? e.g. "Show notes for CJE"'); return; }
-        const notes = await customerNotesRepo.getByCustomer(intent.customer);
-        if (!notes.length) { await bot.sendMessage(chatId, `No notes found for "${intent.customer}". Add with: "Note for ${intent.customer}: your note here"`); return; }
-        let out = `📝 *Notes for ${intent.customer}* (${notes.length})\n\n`;
-        for (const n of notes.slice(-15)) {
-          out += `• ${fmtDate(n.created_at) || '-'}: ${n.note}\n`;
-        }
-        if (notes.length > 15) out += `\n_Showing last 15 of ${notes.length} notes_`;
-        await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+        await sendCustomerNotesReport(bot, chatId, intent.customer);
         return;
       }
 
@@ -3613,6 +3711,42 @@ async function handleCallbackQuery(bot, callbackQuery) {
   } else if (data === 'noop') {
     await bot.answerCallbackQuery(callbackQuery.id);
 
+  /* ─── REPORT CUSTOMER PICKER (rpt:<type>:<customerName>) ─── */
+  } else if (data.startsWith('rpt:')) {
+    const rest = data.slice(4);
+    const sepIdx = rest.indexOf(':');
+    if (sepIdx < 0) { await bot.answerCallbackQuery(callbackQuery.id); return; }
+    const reportType = rest.slice(0, sepIdx);
+    const payload = rest.slice(sepIdx + 1);
+
+    const chatId = callbackQuery.message.chat.id;
+    const messageId = callbackQuery.message.message_id;
+    await bot.answerCallbackQuery(callbackQuery.id);
+
+    if (payload === '__more__') {
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+        { chat_id: chatId, message_id: messageId }).catch(() => {});
+      await showCustomerPickerForReport(bot, chatId, reportType, true);
+      return;
+    }
+
+    // Wipe the picker's keyboard so it can't be re-tapped, then run the report.
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+      { chat_id: chatId, message_id: messageId }).catch(() => {});
+
+    // Note: activity counts were already incremented when the user tapped
+    // the hub sub-button (handled in the act: branch below). No double-count here.
+    const customerName = payload;
+    if (reportType === 'history') {
+      await sendCustomerHistoryReport(bot, chatId, customerName);
+    } else if (reportType === 'pattern') {
+      await sendCustomerPatternReport(bot, chatId, customerName);
+    } else if (reportType === 'notes') {
+      await sendCustomerNotesReport(bot, chatId, customerName);
+    } else {
+      await bot.sendMessage(chatId, 'Unknown report type.');
+    }
+
   /* ─── GREETING MENU ACTIVITY TAP ─── */
   } else if (data.startsWith('act:')) {
     const actCode = data.slice(4);
@@ -3680,13 +3814,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
         });
         break;
       case 'customer_history':
-        await bot.sendMessage(chatId, 'Type: "Customer history CUSTOMER_NAME"');
+        await showCustomerPickerForReport(bot, chatId, 'history');
         break;
       case 'customer_pattern':
-        await bot.sendMessage(chatId, 'Type: "What does CUSTOMER buy" or "CUSTOMER purchase pattern"');
+        await showCustomerPickerForReport(bot, chatId, 'pattern');
         break;
       case 'customer_notes':
-        await bot.sendMessage(chatId, 'Type: "Show notes for CUSTOMER_NAME"');
+        await showCustomerPickerForReport(bot, chatId, 'notes');
         break;
       case 'check_stock':
         await bot.sendMessage(chatId, 'Type: "How much DESIGN SHADE do we have?" or "Stock in WAREHOUSE"');
@@ -3718,7 +3852,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
       }
       case 'customer_ranking': {
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
-        await bot.sendMessage(chatId, 'Type: "Customer ranking" or "Top customers"');
+        await sendCustomerRankingReport(bot, chatId);
         break;
       }
       case 'create_order': {
@@ -3727,7 +3861,8 @@ async function handleCallbackQuery(bot, callbackQuery) {
         break;
       }
       case 'sample_status': {
-        await bot.sendMessage(chatId, 'Type: "Sample status" to see active samples.');
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Sample status report is admin-only.'); break; }
+        await sendSampleStatusReport(bot, chatId);
         break;
       }
       case 'manage_users': {
