@@ -483,6 +483,27 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
       } catch (e) {
         logger.error('Failed to resume supply flow for user after customer approval', e);
       }
+    } else if (session && session.type === 'sample_flow' && session.step === 'awaiting_customer_approval') {
+      // Resume Give Sample flow at the quantity step.
+      session.customer = custName;
+      session.step = 'quantity';
+      delete session.pendingCustomerId;
+      delete session.pendingCustomerName;
+      delete session.customerApprovalId;
+      sessionStore.set(requesterUserId, session);
+      try {
+        await bot.sendMessage(requesterUserId,
+          `✅ Customer "*${custName}*" approved.\n\nContinuing your sample request…`,
+          { parse_mode: 'Markdown' },
+        );
+        // Re-render the sample picker in place (or as a new message if flowMessageId lost).
+        const telegramController = require('../controllers/telegramController');
+        if (typeof telegramController.showSampleQuantityPicker === 'function') {
+          await telegramController.showSampleQuantityPicker(bot, requesterUserId, requesterUserId);
+        }
+      } catch (e) {
+        logger.error('Failed to resume sample flow for user after customer approval', e);
+      }
     } else {
       await notifyEmployee(bot, requesterUserId, requestId, `✅ Customer "${custName}" has been approved by admin.`);
     }
@@ -514,6 +535,24 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
         await bot.sendMessage(requesterUserId, '👤 Select customer:', { reply_markup: { inline_keyboard: rows } });
       } catch (e) {
         logger.error('Failed to resume supply flow for user after customer rejection', e);
+      }
+    } else if (session && session.type === 'sample_flow' && session.step === 'awaiting_customer_approval') {
+      // Sample flow: reset to customer step so user can re-pick.
+      session.step = 'customer';
+      delete session.pendingCustomerId;
+      delete session.pendingCustomerName;
+      delete session.customerApprovalId;
+      sessionStore.set(requesterUserId, session);
+      try {
+        await bot.sendMessage(requesterUserId,
+          `❌ Customer "${custName}" was rejected by admin.\n\nPlease pick a different customer for the sample request.`,
+        );
+        const telegramController = require('../controllers/telegramController');
+        if (typeof telegramController.showSampleCustomerPicker === 'function') {
+          await telegramController.showSampleCustomerPicker(bot, requesterUserId, requesterUserId);
+        }
+      } catch (e) {
+        logger.error('Failed to resume sample flow for user after customer rejection', e);
       }
     } else {
       await notifyEmployee(bot, requesterUserId, requestId, `❌ Customer "${custName}" registration was rejected by admin.`);

@@ -590,6 +590,78 @@ async function handleSampleFlowText(bot, chatId, userId, text) {
     return true;
   }
 
+  /* ─── Button-flow text steps: new customer name / phone, custom qty ─── */
+  if (session.step === 'sample_new_cust_name') {
+    const name = text.trim();
+    if (name.length < 2) {
+      await bot.sendMessage(chatId, 'Name too short, please re-enter:');
+      return true;
+    }
+    session.pendingCustomerName = name;
+    session.step = 'sample_new_cust_phone';
+    sessionStore.set(userId, session);
+    await bot.sendMessage(chatId, `Got it: *${name}*\n\nEnter phone number (or type "skip"):`, { parse_mode: 'Markdown' });
+    return true;
+  }
+
+  if (session.step === 'sample_new_cust_phone') {
+    const raw = text.trim();
+    const phone = raw.toLowerCase() === 'skip' ? '' : raw;
+    const name = session.pendingCustomerName;
+
+    // Queue new-customer approval and pause the sample flow.
+    const customerId = `C-${Date.now().toString(36).toUpperCase()}`;
+    const customersRepo2 = require('../repositories/customersRepository');
+    await customersRepo2.append({
+      customer_id: customerId, name, phone, address: '', category: '',
+      credit_limit: 0, payment_terms: '', notes: 'Added via sample flow',
+      status: 'Pending',
+    });
+
+    const requestId = genId();
+    await approvalQueueRepository.append({
+      requestId, user: userId,
+      actionJSON: {
+        action: 'new_customer_registration',
+        customer_id: customerId, customer_name: name, phone,
+        requesterUserId: userId, from: 'sample_flow',
+      },
+      riskReason: 'New customer registration requires admin approval',
+      status: 'pending',
+    });
+    await auditLogRepository.append('approval_queued', { requestId, reason: 'new_customer', from: 'sample_flow' }, userId);
+
+    session.pendingCustomerId = customerId;
+    session.customerApprovalId = requestId;
+    session.step = 'awaiting_customer_approval';
+    sessionStore.set(userId, session);
+
+    const userLabel = await getRequesterDisplayName(userId, null);
+    await approvalEvents.notifyAdminsApprovalRequest(
+      bot, requestId, userLabel,
+      `New Customer Registration\nName: ${name}\nPhone: ${phone || '—'}\n(from sample flow)`,
+      'New customer requires admin approval',
+    );
+    await bot.sendMessage(chatId,
+      `⏳ Customer "*${name}*" sent for admin approval.\n\nYour sample request is *paused* — it will resume automatically once a second admin approves the new customer.`,
+      { parse_mode: 'Markdown' });
+    return true;
+  }
+
+  if (session.step === 'quantity_custom') {
+    const qty = text.trim();
+    if (!qty || isNaN(Number(qty)) || Number(qty) <= 0) {
+      await bot.sendMessage(chatId, 'Please enter a valid positive number.');
+      return true;
+    }
+    session.quantity = qty;
+    session.step = 'type';
+    sessionStore.set(userId, session);
+    await showSampleTypePicker(bot, chatId, userId);
+    return true;
+  }
+
+  /* ─── Legacy text-flow steps (text intent starts the flow) ─── */
   if (session.step === 'customer_new') {
     session.customer = text.trim();
     session.step = 'quantity';
@@ -927,6 +999,184 @@ async function sendSampleStatusReport(bot, chatId, options = {}) {
   }
   const report = buildSampleStatusReport(samples, title);
   await sendLong(bot, chatId, report, { parse_mode: 'Markdown' });
+}
+
+/* ─── Give Sample Button Flow ─────────────────────────────────────────────
+ * Full tap-driven flow: design → shade → customer → qty → type → follow-up
+ * → confirm. Uses a single evolving message that carries a breadcrumb header
+ * so the user never loses context of what's been picked so far.
+ *
+ * Session shape: { type: 'sample_flow', step, design, shade, customer,
+ *                  quantity, sample_type, followup_date, requestedBy,
+ *                  flowMessageId (for in-place editing) }
+ */
+
+function _sampleHeader(session) {
+  const lines = ['🧪 *Give Sample*'];
+  if (session.design) lines.push(`✓ Design: *${session.design}*${session.shade ? ' Shade ' + session.shade : ''}`);
+  if (session.customer) lines.push(`✓ Customer: *${session.customer}*`);
+  if (session.quantity) lines.push(`✓ Qty: *${session.quantity} pcs*`);
+  if (session.sample_type) lines.push(`✓ Type: *${session.sample_type}*`);
+  if (session.followup_date) lines.push(`✓ Follow-up: *${fmtDate(session.followup_date) || session.followup_date}*`);
+  return lines.join('\n');
+}
+
+async function _sampleRender(bot, chatId, userId, prompt, rows) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const text = _sampleHeader(session) + '\n\n' + prompt;
+  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
+  const mid = session.flowMessageId;
+  if (mid) {
+    try {
+      await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
+      return;
+    } catch (_) { /* fall through to send */ }
+  }
+  const sent = await bot.sendMessage(chatId, text, opts);
+  session.flowMessageId = sent.message_id;
+  sessionStore.set(userId, session);
+}
+
+async function startSampleFlowButton(bot, chatId, userId, messageId = null) {
+  sessionStore.set(userId, {
+    type: 'sample_flow', step: 'design', requestedBy: userId,
+    flowMessageId: messageId || null,
+  });
+  await showSampleDesignPicker(bot, chatId, userId);
+}
+
+async function showSampleDesignPicker(bot, chatId, userId, showAll = false) {
+  const raw = await inventoryRepository.getDistinctDesigns();
+  const designs = [...new Set(raw.map((d) => (d.design || '').trim()).filter(Boolean))].sort();
+  if (!designs.length) {
+    await bot.sendMessage(chatId, 'No designs found in inventory.');
+    sessionStore.clear(userId);
+    return;
+  }
+  const MAX_VISIBLE = 12;
+  const visible = showAll ? designs : designs.slice(0, MAX_VISIBLE);
+  const rows = [];
+  for (let i = 0; i < visible.length; i += 3) {
+    const row = [];
+    for (let j = i; j < i + 3 && j < visible.length; j++) {
+      row.push({ text: visible[j], callback_data: `smd:${visible[j].slice(0, 55)}` });
+    }
+    rows.push(row);
+  }
+  if (!showAll && designs.length > MAX_VISIBLE) {
+    rows.push([{ text: `📋 See All (${designs.length})`, callback_data: 'smd:__more__' }]);
+  }
+  rows.push([{ text: '❌ Cancel', callback_data: 'smcanc:0' }]);
+  await _sampleRender(bot, chatId, userId, 'Pick a design:', rows);
+}
+
+async function showSampleShadePicker(bot, chatId, userId, design) {
+  const allInv = await inventoryRepository.getAll();
+  const shades = [...new Set(
+    allInv.filter((r) => r.design === design).map((r) => r.shade || '-'),
+  )].sort();
+  if (!shades.length) {
+    await bot.sendMessage(chatId, `No shades found for design ${design}.`);
+    sessionStore.clear(userId);
+    return;
+  }
+  const rows = [];
+  for (let i = 0; i < shades.length; i += 2) {
+    const row = [{ text: `🎨 ${shades[i]}`, callback_data: `smsh:${shades[i].slice(0, 55)}` }];
+    if (shades[i + 1]) row.push({ text: `🎨 ${shades[i + 1]}`, callback_data: `smsh:${shades[i + 1].slice(0, 55)}` });
+    rows.push(row);
+  }
+  rows.push([{ text: '❌ Cancel', callback_data: 'smcanc:0' }]);
+  await _sampleRender(bot, chatId, userId, 'Pick a shade:', rows);
+}
+
+async function showSampleCustomerPicker(bot, chatId, userId, showAll = false) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+
+  const allCust = await customersRepo.getAll();
+  const active = allCust.filter((c) => (c.status || 'Active').toLowerCase() === 'active' && c.name);
+
+  const topBuyers = await getTopBuyersForDesigns([session.design]);
+  const suggestedSet = new Set(topBuyers.slice(0, 6));
+  const suggested = active.filter((c) => suggestedSet.has(c.name));
+  const remaining = active.filter((c) => !suggestedSet.has(c.name)).sort((a, b) => a.name.localeCompare(b.name));
+
+  const list = showAll ? remaining : (suggested.length ? suggested : active.slice(0, 6));
+  const rows = [];
+  for (let i = 0; i < list.length; i += 2) {
+    const icon = showAll ? '👤' : '⭐';
+    const row = [{ text: `${icon} ${list[i].name}`, callback_data: `smcu:${list[i].name.slice(0, 55)}` }];
+    if (list[i + 1]) row.push({ text: `${icon} ${list[i + 1].name}`, callback_data: `smcu:${list[i + 1].name.slice(0, 55)}` });
+    rows.push(row);
+  }
+  if (!showAll && remaining.length) {
+    rows.push([{ text: '📋 See More Customers', callback_data: 'smcu:__more__' }]);
+  }
+  rows.push([{ text: '➕ Add New Customer', callback_data: 'smcu:__new__' }]);
+  rows.push([{ text: '❌ Cancel', callback_data: 'smcanc:0' }]);
+
+  const prompt = showAll ? 'All other customers:' : 'Who is this sample for?\n(⭐ top buyers of this design)';
+  await _sampleRender(bot, chatId, userId, prompt, rows);
+}
+
+async function showSampleQuantityPicker(bot, chatId, userId) {
+  const rows = [
+    [
+      { text: '1 pc',  callback_data: 'smq:1' },
+      { text: '2 pcs', callback_data: 'smq:2' },
+      { text: '3 pcs', callback_data: 'smq:3' },
+      { text: '5 pcs', callback_data: 'smq:5' },
+    ],
+    [{ text: '✏️ Custom', callback_data: 'smq:__custom__' }],
+    [{ text: '❌ Cancel', callback_data: 'smcanc:0' }],
+  ];
+  await _sampleRender(bot, chatId, userId, 'How many sample pieces?', rows);
+}
+
+async function showSampleTypePicker(bot, chatId, userId) {
+  const rows = [
+    [
+      { text: 'Type A', callback_data: 'smpt:A' },
+      { text: 'Type B', callback_data: 'smpt:B' },
+      { text: 'Type C', callback_data: 'smpt:C' },
+    ],
+    [{ text: '❌ Cancel', callback_data: 'smcanc:0' }],
+  ];
+  await _sampleRender(bot, chatId, userId, 'Select sample type:', rows);
+}
+
+async function showSampleFollowupPicker(bot, chatId, userId) {
+  const now = new Date();
+  const mkDate = (d) => d.toISOString().slice(0, 10);
+  const d3 = mkDate(new Date(now.getTime() + 3 * 86400000));
+  const d7 = mkDate(new Date(now.getTime() + 7 * 86400000));
+  const d14 = mkDate(new Date(now.getTime() + 14 * 86400000));
+  const rows = [
+    [
+      { text: `📅 ${fmtDate(d3)} (+3d)`,  callback_data: `smfq:${d3}` },
+      { text: `📅 ${fmtDate(d7)} (+7d)`,  callback_data: `smfq:${d7}` },
+    ],
+    [
+      { text: `📅 ${fmtDate(d14)} (+14d)`, callback_data: `smfq:${d14}` },
+      { text: '🗓️ Pick from calendar',    callback_data: 'smfcal:0' },
+    ],
+    [{ text: '❌ Cancel', callback_data: 'smcanc:0' }],
+  ];
+  await _sampleRender(bot, chatId, userId, 'When to follow up with customer?', rows);
+}
+
+async function showSampleConfirmation(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const rows = [
+    [
+      { text: '✅ Submit for Approval', callback_data: 'smpconf:1' },
+      { text: '❌ Cancel', callback_data: 'smcanc:0' },
+    ],
+  ];
+  await _sampleRender(bot, chatId, userId, '*Confirm and submit?*', rows);
 }
 
 /** Date-range picker shown when user taps the Sample Status button. */
@@ -3605,6 +3855,121 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await bot.sendMessage(callbackQuery.message.chat.id, `Report error: ${e.message}`);
     }
 
+  /* ─── SAMPLE BUTTON FLOW: DESIGN ─── */
+  } else if (data.startsWith('smd:')) {
+    const val = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'sample_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    if (val === '__more__') { await showSampleDesignPicker(bot, callbackQuery.message.chat.id, uid, true); return; }
+    session.design = val;
+    session.step = 'shade';
+    sessionStore.set(uid, session);
+    await showSampleShadePicker(bot, callbackQuery.message.chat.id, uid, val);
+
+  /* ─── SAMPLE BUTTON FLOW: SHADE ─── */
+  } else if (data.startsWith('smsh:')) {
+    const val = data.slice(5);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'sample_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    session.shade = val === '-' ? '' : val;
+    session.step = 'customer';
+    sessionStore.set(uid, session);
+    await showSampleCustomerPicker(bot, callbackQuery.message.chat.id, uid);
+
+  /* ─── SAMPLE BUTTON FLOW: CUSTOMER ─── */
+  } else if (data.startsWith('smcu:')) {
+    const val = data.slice(5);
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'sample_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+
+    if (val === '__more__') { await showSampleCustomerPicker(bot, chatId, uid, true); return; }
+    if (val === '__new__') {
+      session.step = 'sample_new_cust_name';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(chatId, '📝 Enter new customer *full name*:', { parse_mode: 'Markdown' });
+      return;
+    }
+    session.customer = val;
+    session.step = 'quantity';
+    sessionStore.set(uid, session);
+    await showSampleQuantityPicker(bot, chatId, uid);
+
+  /* ─── SAMPLE BUTTON FLOW: QUANTITY ─── */
+  } else if (data.startsWith('smq:')) {
+    const val = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'sample_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    if (val === '__custom__') {
+      session.step = 'quantity_custom';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(chatId, 'Enter custom quantity (number of pieces):');
+      return;
+    }
+    session.quantity = val;
+    session.step = 'type';
+    sessionStore.set(uid, session);
+    await showSampleTypePicker(bot, chatId, uid);
+
+  /* ─── SAMPLE BUTTON FLOW: FOLLOW-UP QUICK ─── */
+  } else if (data.startsWith('smfq:')) {
+    const dateStr = data.slice(5);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'sample_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: `Follow-up: ${dateStr}` });
+    session.followup_date = dateStr;
+    session.step = 'confirm';
+    sessionStore.set(uid, session);
+    await showSampleConfirmation(bot, callbackQuery.message.chat.id, uid);
+
+  /* ─── SAMPLE BUTTON FLOW: CALENDAR (entry + nav + pick) ─── */
+  } else if (data.startsWith('smfcal:') || data.startsWith('smfnav:')) {
+    const offset = parseInt(data.split(':')[1] || '0');
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'sample_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    const rows = buildDatePicker('smf', offset);
+    rows.push([{ text: '❌ Cancel', callback_data: 'smcanc:0' }]);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await _sampleRender(bot, callbackQuery.message.chat.id, uid, 'Pick follow-up date:', rows);
+
+  } else if (data.startsWith('smfpick:')) {
+    const dateStr = data.slice(8);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'sample_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: `Follow-up: ${dateStr}` });
+    session.followup_date = dateStr;
+    session.step = 'confirm';
+    sessionStore.set(uid, session);
+    await showSampleConfirmation(bot, callbackQuery.message.chat.id, uid);
+
+  /* ─── SAMPLE BUTTON FLOW: CANCEL ─── */
+  } else if (data.startsWith('smcanc:')) {
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
+    if (session && session.flowMessageId) {
+      await bot.editMessageText('❌ Sample request cancelled.', {
+        chat_id: callbackQuery.message.chat.id,
+        message_id: session.flowMessageId,
+      }).catch(() => {});
+    } else {
+      await bot.sendMessage(callbackQuery.message.chat.id, '❌ Sample request cancelled.');
+    }
+    sessionStore.clear(uid);
+
+  /* ─── LEGACY: existing text-started sample flow customer pick (kept for back-compat) ─── */
   } else if (data.startsWith('smpc:')) {
     const val = data.slice(5);
     const uid = String(callbackQuery.from.id);
@@ -3636,18 +4001,37 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'sample_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
     await bot.answerCallbackQuery(callbackQuery.id);
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+
     session.sample_type = sType;
-    session.step = 'quantity';
     sessionStore.set(uid, session);
-    await bot.sendMessage(callbackQuery.message.chat.id, `Type: *${sType}*\n\nHow many sample pieces?`, { parse_mode: 'Markdown' });
+
+    // Button-flow path → after type → follow-up picker (edit in place)
+    if (session.flowMessageId) {
+      session.step = 'followup';
+      sessionStore.set(uid, session);
+      await showSampleFollowupPicker(bot, callbackQuery.message.chat.id, uid);
+    } else {
+      // Legacy text-flow path → ask for qty in text
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id }).catch(() => {});
+      session.step = 'quantity';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(callbackQuery.message.chat.id, `Type: *${sType}*\n\nHow many sample pieces?`, { parse_mode: 'Markdown' });
+    }
 
   } else if (data.startsWith('smpconf:')) {
     const uid = String(callbackQuery.from.id);
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'sample_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Submitting...' });
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    if (session.flowMessageId) {
+      await bot.editMessageText(`🧪 *Give Sample — submitted*\n\n${_sampleHeader(session)}\n\n⏳ Waiting for admin approval.`, {
+        chat_id: callbackQuery.message.chat.id,
+        message_id: session.flowMessageId,
+        parse_mode: 'Markdown',
+      }).catch(() => {});
+    } else {
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id }).catch(() => {});
+    }
     const requestId = genId();
     const summary = `Sample Request\nDesign: ${session.design}${session.shade ? ' Shade ' + session.shade : ''}\nType: ${session.sample_type}\nCustomer: ${session.customer}\nQty: ${session.quantity} pcs\nFollow-up: ${session.followup_date}`;
     await approvalQueueRepository.append({
@@ -4199,7 +4583,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         await showMarkDeliveredPicker(bot, chatId, uid);
         break;
       case 'give_sample':
-        await bot.sendMessage(chatId, 'Type: "Give sample of DESIGN to CUSTOMER"');
+        await startSampleFlowButton(bot, chatId, uid, messageId);
         break;
       case 'supply_details':
         await editOrSend(bot, chatId, messageId, '📊 *Supply Details*\n\nSelect view:', {
@@ -4804,4 +5188,11 @@ async function handleAdminFlowText(bot, chatId, userId, text, session) {
   return false;
 }
 
-module.exports = { handleMessage, handleCallbackQuery, handleFileMessage };
+module.exports = {
+  handleMessage,
+  handleCallbackQuery,
+  handleFileMessage,
+  // Exposed for cross-module flow resumption (e.g. approval events).
+  showSampleQuantityPicker,
+  showSampleCustomerPicker,
+};
