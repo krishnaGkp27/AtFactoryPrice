@@ -2599,7 +2599,7 @@ async function handleMessage(bot, msg) {
         srfSession.step = 'salesperson';
         sessionStore.set(userId, srfSession);
         await bot.sendMessage(chatId, `👤 Customer "${existing.name}" already exists. Continuing...`);
-        await showSupplySalespersonPicker(bot, chatId);
+        await showSupplySalespersonPicker(bot, chatId, false, srfSession.flowMessageId || null);
         return;
       }
       srfSession.newCustomerName = name;
@@ -4004,7 +4004,7 @@ async function startSupplyRequestFlow(bot, chatId, userId) {
   });
 }
 
-async function showDesignsForWarehouse(bot, chatId, userId, warehouse) {
+async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId = null) {
   const session = sessionStore.get(userId);
   const cart = session ? session.cart || [] : [];
   const avail = await getAdjustedAvailability(warehouse, cart);
@@ -4024,7 +4024,7 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse) {
       await bot.sendMessage(chatId, '⚠️ All available stock is already in your cart.');
       await showCartSummary(bot, chatId, userId);
     } else {
-      await bot.sendMessage(chatId, `⚠️ No available stock in warehouse *${warehouse}*.`, { parse_mode: 'Markdown' });
+      await editOrSend(bot, chatId, messageId, `⚠️ No available stock in warehouse *${warehouse}*.`, { parse_mode: 'Markdown' });
     }
     return;
   }
@@ -4052,10 +4052,17 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse) {
   if (nav.length) rows.push(nav);
   const cartNote = cart.length ? `\n🛒 Cart: ${cart.length} item(s)` : '';
   const pageNote = designs.length > MAX_VISIBLE ? ` (${start + 1}–${Math.min(start + MAX_VISIBLE, designs.length)} of ${designs.length})` : '';
-  await bot.sendMessage(chatId, `📦 *Warehouse: ${warehouse}*${cartNote}\n\nSelect design:${pageNote}`, {
+  const resolvedMsgId = messageId || (session && session.flowMessageId) || null;
+  const sent = await editOrSend(bot, chatId, resolvedMsgId,
+    `📦 *Warehouse: ${warehouse}*${cartNote}\n\nSelect design:${pageNote}`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
+  // Capture flow-scoped message id on first render so later pickers can edit in place.
+  if (session && session.type === 'supply_req_flow' && !session.flowMessageId && sent && sent.message_id) {
+    session.flowMessageId = sent.message_id;
+    sessionStore.set(userId, session);
+  }
 }
 
 async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
@@ -4064,9 +4071,10 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   const avail = await getAdjustedAvailability(warehouse, cart);
   const shades = avail.filter((a) => a.design === design).sort((a, b) => b.availPkgs - a.availPkgs);
   const labels = await productTypesRepo.getLabels(session?.productType || 'fabric');
+  const msgId = session && session.flowMessageId;
 
   if (!shades.length) {
-    await bot.sendMessage(chatId, `⚠️ No remaining stock for ${design} in ${warehouse}.`);
+    await editOrSend(bot, chatId, msgId, `⚠️ No remaining stock for ${design} in ${warehouse}.`, {});
     if (cart.length) await showCartSummary(bot, chatId, userId);
     return;
   }
@@ -4080,7 +4088,7 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
       session.step = 'quantity';
       sessionStore.set(userId, session);
     }
-    await showQuantityPicker(bot, chatId, design, s.shade, warehouse, s.availPkgs, labels);
+    await showQuantityPicker(bot, chatId, userId, design, s.shade, warehouse, s.availPkgs, labels);
     return;
   }
 
@@ -4097,15 +4105,17 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
     if (shades[i + 1]) row.push({ text: `${shades[i + 1].shade} (${shades[i + 1].availPkgs} ${cShort})`, callback_data: `srf_sh:${design}|${shades[i + 1].shade}|${shades[i + 1].availPkgs}` });
     rows.push(row);
   }
-  await bot.sendMessage(chatId, `📦 *${design}* in *${warehouse}*\n\nSelect shade:`, {
+  await editOrSend(bot, chatId, msgId, `📦 *${design}* in *${warehouse}*\n\nSelect shade:`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
 }
 
-async function showQuantityPicker(bot, chatId, design, shade, warehouse, availPkgs, labelsOverride) {
+async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse, availPkgs, labelsOverride) {
   const labels = labelsOverride || await productTypesRepo.getLabels('fabric');
   const containerPlural = productTypesRepo.pluralize(labels.container_label, availPkgs).toLowerCase();
+  const session = sessionStore.get(userId);
+  const msgId = session && session.flowMessageId;
 
   const quickNums = [];
   for (let n = 1; n <= Math.min(availPkgs, 10); n++) quickNums.push(n);
@@ -4123,7 +4133,7 @@ async function showQuantityPicker(bot, chatId, design, shade, warehouse, availPk
   }
   rows.push([{ text: '✏️ Custom Quantity', callback_data: 'srf_qty:__custom__' }]);
 
-  await bot.sendMessage(chatId,
+  await editOrSend(bot, chatId, msgId,
     `📦 *${design}* │ Shade: *${shade}* │ 🏭 *${warehouse}*\n${availPkgs} ${containerPlural} available\n\nHow many ${containerPlural} to supply?`, {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: rows },
@@ -4165,7 +4175,7 @@ async function showCartSummary(bot, chatId, userId) {
     [{ text: '➕ Add More', callback_data: 'srf_cart:add' }, { text: '🗑️ Remove', callback_data: 'srf_cart:remove' }],
     [{ text: '➡️ Checkout', callback_data: 'srf_cart:proceed' }, { text: '❌ Cancel', callback_data: 'srf_cart:cancel' }],
   ];
-  await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+  await editOrSend(bot, chatId, session.flowMessageId, text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
 async function getTopBuyersForDesigns(designs) {
@@ -4185,6 +4195,7 @@ async function showSupplyCustomerPicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   const cart = (session && session.cart) || [];
   const cartDesigns = [...new Set(cart.map((c) => c.design))];
+  const msgId = session && session.flowMessageId;
 
   const allCust = await customersRepo.getAll();
   const active = allCust.filter((c) => (c.status || 'Active').toLowerCase() === 'active');
@@ -4208,7 +4219,7 @@ async function showSupplyCustomerPicker(bot, chatId, userId) {
       rows.push([{ text: '📋 See More Customers', callback_data: 'srf_cu:__more__' }]);
     }
     rows.push([{ text: '➕ Add New Customer', callback_data: 'srf_cu:__new__' }]);
-    await bot.sendMessage(chatId, headerText, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+    await editOrSend(bot, chatId, msgId, headerText, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
   } else {
     for (let i = 0; i < active.length; i += 2) {
       const row = [{ text: `👤 ${active[i].name}`, callback_data: `srf_cu:${active[i].name}` }];
@@ -4216,7 +4227,7 @@ async function showSupplyCustomerPicker(bot, chatId, userId) {
       rows.push(row);
     }
     rows.push([{ text: '➕ Add New Customer', callback_data: 'srf_cu:__new__' }]);
-    await bot.sendMessage(chatId, '👤 Select customer:', { reply_markup: { inline_keyboard: rows } });
+    await editOrSend(bot, chatId, msgId, '👤 Select customer:', { reply_markup: { inline_keyboard: rows } });
   }
 }
 
@@ -4246,7 +4257,9 @@ async function showSupplySalespersonPicker(bot, chatId, showAll = false, message
   });
 }
 
-async function showSupplyPaymentPicker(bot, chatId) {
+async function showSupplyPaymentPicker(bot, chatId, userId) {
+  const session = userId ? sessionStore.get(userId) : null;
+  const msgId = session && session.flowMessageId;
   const options = await salesFlow.getPaymentOptions();
   const rows = [];
   for (let i = 0; i < options.length; i += 3) {
@@ -4256,10 +4269,12 @@ async function showSupplyPaymentPicker(bot, chatId) {
     }
     rows.push(row);
   }
-  await bot.sendMessage(chatId, '💳 Select payment mode:', { reply_markup: { inline_keyboard: rows } });
+  await editOrSend(bot, chatId, msgId, '💳 Select payment mode:', { reply_markup: { inline_keyboard: rows } });
 }
 
-function showSupplyDatePicker(bot, chatId) {
+async function showSupplyDatePicker(bot, chatId, userId) {
+  const session = userId ? sessionStore.get(userId) : null;
+  const msgId = session && session.flowMessageId;
   const today = new Date().toISOString().split('T')[0];
   const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
   const nextMon = nextWeekday(1);
@@ -4273,7 +4288,7 @@ function showSupplyDatePicker(bot, chatId) {
     ],
     [{ text: '🗓️ Pick from calendar', callback_data: 'srf_dtcal:0' }],
   ];
-  return bot.sendMessage(chatId, '📅 Select supply date:', { reply_markup: { inline_keyboard: rows } });
+  return editOrSend(bot, chatId, msgId, '📅 Select supply date:', { reply_markup: { inline_keyboard: rows } });
 }
 
 async function showSupplyConfirmation(bot, chatId, userId) {
@@ -4293,7 +4308,7 @@ async function showSupplyConfirmation(bot, chatId, userId) {
   session.awaitingDocument = true;
   sessionStore.set(userId, session);
 
-  await bot.sendMessage(chatId, text, {
+  await editOrSend(bot, chatId, session.flowMessageId, text, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [
       [{ text: '⏭️ Skip (No receipt)', callback_data: 'srf_doc:skip' }, { text: '❌ Cancel', callback_data: 'srf_doc:cancel' }],
@@ -4319,7 +4334,7 @@ async function finalizeSupplyRequest(bot, chatId, userId) {
   if (session.docFileId) text += `📎 Document attached\n`;
   text += `\nTap Confirm to submit.`;
 
-  await bot.sendMessage(chatId, text, {
+  await editOrSend(bot, chatId, session.flowMessageId, text, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [
       [{ text: '✅ Confirm & Submit', callback_data: 'srf_conf:yes' }],
@@ -6133,7 +6148,6 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const chatId = callbackQuery.message.chat.id;
     const uid = String(callbackQuery.from.id);
     await bot.answerCallbackQuery(callbackQuery.id);
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'supply_req_flow') return;
     session.currentDesign = design;
@@ -6141,7 +6155,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     session.currentAvailPkgs = availPkgs;
     session.step = 'quantity';
     sessionStore.set(uid, session);
-    await showQuantityPicker(bot, chatId, design, shade, session.warehouse, availPkgs);
+    await showQuantityPicker(bot, chatId, uid, design, shade, session.warehouse, availPkgs);
 
   /* ─── SUPPLY REQUEST FLOW: QUANTITY SELECTION ─── */
   } else if (data.startsWith('srf_qty:')) {
@@ -6265,19 +6279,16 @@ async function handleCallbackQuery(bot, callbackQuery) {
       return;
     }
 
-    // Non-expand branches proceed to the next step → wipe the picker keyboard.
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
-
     if (val === '__new__') {
       session.step = 'new_srf_customer_name';
       sessionStore.set(uid, session);
-      await bot.sendMessage(chatId, '📝 Enter new customer *full name*:', { parse_mode: 'Markdown' });
+      await editOrSend(bot, chatId, messageId, '📝 Enter new customer *full name*:', { parse_mode: 'Markdown' });
       return;
     }
     session.customer = val;
     session.step = 'salesperson';
     sessionStore.set(uid, session);
-    await showSupplySalespersonPicker(bot, chatId);
+    await showSupplySalespersonPicker(bot, chatId, false, messageId);
 
   /* ─── SUPPLY REQUEST FLOW: SALESPERSON ─── */
   } else if (data.startsWith('srf_sp:')) {
@@ -6295,13 +6306,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
       return;
     }
 
-    // Non-expand branch proceeds to payment → wipe picker keyboard.
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
-
     session.salesperson = val;
     session.step = 'payment';
     sessionStore.set(uid, session);
-    await showSupplyPaymentPicker(bot, chatId);
+    await showSupplyPaymentPicker(bot, chatId, uid);
 
   /* ─── SUPPLY REQUEST FLOW: PAYMENT ─── */
   } else if (data.startsWith('srf_pm:')) {
@@ -6309,7 +6317,6 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const chatId = callbackQuery.message.chat.id;
     const uid = String(callbackQuery.from.id);
     await bot.answerCallbackQuery(callbackQuery.id);
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
 
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'supply_req_flow') return;
@@ -6317,7 +6324,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     session.paymentMode = val;
     session.step = 'date';
     sessionStore.set(uid, session);
-    await showSupplyDatePicker(bot, chatId);
+    await showSupplyDatePicker(bot, chatId, uid);
 
   /* ─── SUPPLY REQUEST FLOW: DATE PICKER ─── */
   } else if (data.startsWith('srf_dt')) {
