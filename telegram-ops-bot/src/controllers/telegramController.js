@@ -322,6 +322,28 @@ function fmtBar(value, total, label = 'sold') {
   return '▓'.repeat(filled) + '░'.repeat(10 - filled) + ` ${pct}% ${label}`;
 }
 
+/**
+ * Edit an existing message in place if messageId is provided, otherwise send
+ * a new message. On edit failure (e.g. message too old or identical content),
+ * silently falls back to sendMessage so the user always sees the update.
+ *
+ * opts may include parse_mode and reply_markup (standard Telegram options).
+ */
+async function editOrSend(bot, chatId, messageId, text, opts = {}) {
+  if (messageId) {
+    try {
+      return await bot.editMessageText(text, {
+        chat_id: chatId,
+        message_id: messageId,
+        ...opts,
+      });
+    } catch (_) {
+      // fall through
+    }
+  }
+  return bot.sendMessage(chatId, text, opts);
+}
+
 function buildInventoryWarehouseReport(allItems) {
   const warehouses = new Map();
   for (const r of allItems) {
@@ -3097,7 +3119,7 @@ async function showSupplyCustomerPicker(bot, chatId, userId) {
   }
 }
 
-async function showSupplySalespersonPicker(bot, chatId, showAll = false) {
+async function showSupplySalespersonPicker(bot, chatId, showAll = false, messageId = null) {
   const allUsers = await usersRepository.getAll();
   const adminIds = new Set(config.access.adminIds || []);
   const salesUsers = allUsers.filter((u) => {
@@ -3106,7 +3128,7 @@ async function showSupplySalespersonPicker(bot, chatId, showAll = false) {
     return dept === 'sales';
   });
   if (!salesUsers.length) {
-    await bot.sendMessage(chatId, '⚠️ No salespersons found. Please ask admin to assign users to the Sales department.');
+    await editOrSend(bot, chatId, messageId, '⚠️ No salespersons found. Please ask admin to assign users to the Sales department.');
     return;
   }
   const MAX_SP = 6;
@@ -3118,7 +3140,9 @@ async function showSupplySalespersonPicker(bot, chatId, showAll = false) {
     rows.push(row);
   }
   if (!showAll && salesUsers.length > MAX_SP) rows.push([{ text: `📋 See All (${salesUsers.length})`, callback_data: 'srf_sp:__more__' }]);
-  await bot.sendMessage(chatId, '🧑 Select salesperson (order collected by):', { reply_markup: { inline_keyboard: rows } });
+  await editOrSend(bot, chatId, messageId, '🧑 Select salesperson (order collected by):', {
+    reply_markup: { inline_keyboard: rows },
+  });
 }
 
 async function showSupplyPaymentPicker(bot, chatId) {
@@ -3547,11 +3571,11 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const uid = String(callbackQuery.from.id);
     if (!config.access.adminIds.includes(uid)) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' }); return; }
     await bot.answerCallbackQuery(callbackQuery.id);
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
     sessionStore.set(uid, { type: 'sales_report_period', days });
     const labels = { 7: 'Weekly', 30: 'Monthly', 90: 'Quarterly', 365: 'Yearly' };
     const periodLabel = labels[days] || `Last ${days} days`;
-    await bot.sendMessage(callbackQuery.message.chat.id, `📊 *${periodLabel} Sales Report*\n\nGroup by:`, {
+    await editOrSend(bot, callbackQuery.message.chat.id, callbackQuery.message.message_id,
+      `📊 *${periodLabel} Sales Report*\n\nGroup by:`, {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: [
         [{ text: '📦 Design wise', callback_data: 'srg:design' }],
@@ -3649,10 +3673,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const uid = String(callbackQuery.from.id);
     const isAdminUser = config.access.adminIds.includes(uid);
     await bot.answerCallbackQuery(callbackQuery.id, { text: view === 'design' ? 'Select sub-view...' : 'Generating report...' });
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
 
     if (view === 'design') {
-      await bot.sendMessage(callbackQuery.message.chat.id, '📦 *Design Wise — Select view:*', {
+      await editOrSend(bot, callbackQuery.message.chat.id, callbackQuery.message.message_id,
+        '📦 *Design Wise — Select view:*', {
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [
           [{ text: '📦 Summary', callback_data: 'sdv:design_summary' }, { text: '📅 Date-wise', callback_data: 'sdv:design_datewise' }],
@@ -3660,6 +3684,11 @@ async function handleCallbackQuery(bot, callbackQuery) {
       });
       return;
     }
+
+    // Terminal view: wipe the keyboard so the selector can't be re-tapped;
+    // the actual (long) report will post as a new message below.
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+      { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id }).catch(() => {});
 
     try {
       const sold = await getSoldItems();
@@ -4173,7 +4202,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         await bot.sendMessage(chatId, 'Type: "Give sample of DESIGN to CUSTOMER"');
         break;
       case 'supply_details':
-        await bot.sendMessage(chatId, '📊 *Supply Details*\n\nSelect view:', {
+        await editOrSend(bot, chatId, messageId, '📊 *Supply Details*\n\nSelect view:', {
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: [
             [{ text: '📦 Design / Product wise', callback_data: 'sd:design' }],
@@ -4199,7 +4228,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         break;
       case 'inventory_details': {
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
-        await bot.sendMessage(chatId, '📦 *Inventory Details*\n\nSelect view:', {
+        await editOrSend(bot, chatId, messageId, '📦 *Inventory Details*\n\nSelect view:', {
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: [
             [{ text: '🏭 Warehouse wise', callback_data: 'inv:wh' }],
@@ -4210,7 +4239,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
       }
       case 'sales_report': {
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
-        await bot.sendMessage(chatId, '📊 *Sales Report*\n\nSelect period:', {
+        await editOrSend(bot, chatId, messageId, '📊 *Sales Report*\n\nSelect period:', {
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: [
             [{ text: '📅 Weekly (7 days)', callback_data: 'sr:7' }, { text: '📅 Monthly (30 days)', callback_data: 'sr:30' }],
@@ -4417,9 +4446,9 @@ async function handleCallbackQuery(bot, callbackQuery) {
   } else if (data.startsWith('srf_cu:')) {
     const val = data.slice(7);
     const chatId = callbackQuery.message.chat.id;
+    const messageId = callbackQuery.message.message_id;
     const uid = String(callbackQuery.from.id);
     await bot.answerCallbackQuery(callbackQuery.id);
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
 
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'supply_req_flow') return;
@@ -4439,9 +4468,14 @@ async function handleCallbackQuery(bot, callbackQuery) {
         rows.push(row);
       }
       rows.push([{ text: '➕ Add New Customer', callback_data: 'srf_cu:__new__' }]);
-      await bot.sendMessage(chatId, '👤 All other customers:', { reply_markup: { inline_keyboard: rows } });
+      await editOrSend(bot, chatId, messageId, '👤 All other customers:', {
+        reply_markup: { inline_keyboard: rows },
+      });
       return;
     }
+
+    // Non-expand branches proceed to the next step → wipe the picker keyboard.
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
 
     if (val === '__new__') {
       session.step = 'new_srf_customer_name';
@@ -4458,17 +4492,20 @@ async function handleCallbackQuery(bot, callbackQuery) {
   } else if (data.startsWith('srf_sp:')) {
     const val = data.slice(7);
     const chatId = callbackQuery.message.chat.id;
+    const messageId = callbackQuery.message.message_id;
     const uid = String(callbackQuery.from.id);
     await bot.answerCallbackQuery(callbackQuery.id);
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
 
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'supply_req_flow') return;
 
     if (val === '__more__') {
-      await showSupplySalespersonPicker(bot, chatId, true);
+      await showSupplySalespersonPicker(bot, chatId, true, messageId);
       return;
     }
+
+    // Non-expand branch proceeds to payment → wipe picker keyboard.
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
 
     session.salesperson = val;
     session.step = 'payment';
