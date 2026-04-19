@@ -31,6 +31,9 @@ const ACTIVITIES = [
   { code: 'check_stock',           label: 'Check Stock',               icon: '📦', callback: 'act:check_stock',        hub: 'stock' },
   { code: 'list_packages',         label: 'List Packages',             icon: '📋', callback: 'act:list_packages',      hub: 'stock' },
   { code: 'inventory_details',     label: 'Inventory Details',         icon: '🏭', callback: 'act:inventory_details',  hub: 'stock' },
+  { code: 'transfer_package',      label: 'Transfer Package',          icon: '🚚', callback: 'act:transfer_package',   hub: 'stock' },
+  { code: 'transfer_than',         label: 'Transfer Than',             icon: '↔️', callback: 'act:transfer_than',      hub: 'stock' },
+  { code: 'return_than',           label: 'Return Than',               icon: '↩️', callback: 'act:return_than',        hub: 'stock' },
 
   { code: 'customer_history',      label: 'Customer History',          icon: '📋', callback: 'act:customer_history',   hub: 'customers' },
   { code: 'customer_pattern',      label: 'Customer Pattern',          icon: '🔍', callback: 'act:customer_pattern',   hub: 'customers' },
@@ -45,6 +48,7 @@ const ACTIVITIES = [
   { code: 'sales_report',          label: 'Sales Report',              icon: '📊', callback: 'act:sales_report',       hub: 'reports' },
   { code: 'supply_details',        label: 'Supply Details',            icon: '📦', callback: 'act:supply_details',     hub: 'reports' },
 
+  { code: 'update_price',          label: 'Update Price',              icon: '💲', callback: 'act:update_price',       hub: 'admin' },
   { code: 'manage_users',          label: 'Manage Users',              icon: '👥', callback: 'act:manage_users',       hub: 'admin' },
   { code: 'manage_departments',    label: 'Manage Departments',        icon: '🏢', callback: 'act:manage_depts',       hub: 'admin' },
   { code: 'manage_warehouses',     label: 'Manage Warehouses',         icon: '🏭', callback: 'act:manage_wh',          hub: 'admin' },

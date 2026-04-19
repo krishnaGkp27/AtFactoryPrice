@@ -580,6 +580,30 @@ async function getInactiveCustomers(daysThreshold = 30) {
 
 // ─── Sample Flow Helpers ────────────────────────────────────────────────────
 
+async function handleUpdatePriceFlowText(bot, chatId, userId, text) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'update_price_flow') return false;
+  const trimmed = text.trim();
+  if (trimmed.toLowerCase() === 'cancel') {
+    sessionStore.clear(userId);
+    await bot.sendMessage(chatId, '❌ Update Price cancelled.');
+    return true;
+  }
+  if (session.step === 'price_custom') {
+    const n = parseFloat(trimmed.replace(/[^\d.]/g, ''));
+    if (!Number.isFinite(n) || n <= 0) {
+      await bot.sendMessage(chatId, 'Please enter a valid positive number (e.g. 1500):');
+      return true;
+    }
+    session.newPrice = n;
+    session.step = 'confirm';
+    sessionStore.set(userId, session);
+    await showUpdatePriceConfirm(bot, chatId, userId);
+    return true;
+  }
+  return false;
+}
+
 async function handleAddNoteFlowText(bot, chatId, userId, text) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== 'add_note_flow') return false;
@@ -1502,6 +1526,323 @@ async function showBankRemoveConfirm(bot, chatId, bankName, messageId = null) {
   });
 }
 
+/* ─── Update Price tap flow ──────────────────────────────────────────────
+ * Design pick → Shade pick (or All) → nudge presets → confirm → queue approval.
+ * Session: { type: 'update_price_flow', design, shade, currentPrice, newPrice, flowMessageId }
+ */
+async function startUpdatePriceFlow(bot, chatId, userId, messageId = null) {
+  const designs = await inventoryRepository.getDistinctDesigns();
+  const uniqDesigns = [...new Set(designs.map((d) => String(d.design || '').trim()).filter(Boolean))].sort();
+  if (!uniqDesigns.length) {
+    await editOrSend(bot, chatId, messageId, 'No designs in inventory.', {});
+    return;
+  }
+  sessionStore.set(userId, { type: 'update_price_flow', step: 'design', flowMessageId: messageId || null });
+  const rows = [];
+  for (let i = 0; i < uniqDesigns.length; i += 3) {
+    rows.push(uniqDesigns.slice(i, i + 3).map((d) => ({ text: d, callback_data: `upd:${d.slice(0, 50)}` })));
+  }
+  if (rows.length > 15) rows.splice(15);
+  rows.push([{ text: '❌ Cancel', callback_data: 'upcanc:0' }]);
+  await editOrSend(bot, chatId, messageId,
+    '💲 *Update Price*\n\nSelect the design:',
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showUpdatePriceShadePicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const all = await inventoryRepository.getAll();
+  const shades = [...new Set(all
+    .filter((r) => String(r.design || '').trim().toUpperCase() === String(session.design).toUpperCase())
+    .map((r) => String(r.shade || '').trim())
+    .filter(Boolean))].sort();
+  const rows = [[{ text: '🎨 All shades', callback_data: 'ups:__all__' }]];
+  for (let i = 0; i < shades.length; i += 3) {
+    rows.push(shades.slice(i, i + 3).map((s) => ({ text: `🎨 ${s}`, callback_data: `ups:${s.slice(0, 50)}` })));
+  }
+  if (rows.length > 15) rows.splice(15);
+  rows.push([{ text: '❌ Cancel', callback_data: 'upcanc:0' }]);
+  const text = `💲 *Update Price*\n\n✓ Design: *${session.design}*\n\nSelect shade:`;
+  await editOrSend(bot, chatId, session.flowMessageId, text,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showUpdatePriceNudgePicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  // Find current price (most recent) for the filter.
+  const all = await inventoryRepository.getAll();
+  const matches = all.filter((r) => {
+    if (String(r.design || '').trim().toUpperCase() !== String(session.design).toUpperCase()) return false;
+    if (session.shade !== '__all__' && String(r.shade || '').trim().toUpperCase() !== String(session.shade).toUpperCase()) return false;
+    return true;
+  });
+  const prices = matches.map((r) => Number(r.pricePerYard)).filter((n) => Number.isFinite(n) && n > 0);
+  const currentPrice = prices.length ? prices[prices.length - 1] : 0;
+  session.currentPrice = currentPrice;
+  sessionStore.set(userId, session);
+
+  const base = currentPrice || 1000;
+  const mk = (d) => ({ text: `${d >= 0 ? '+' : ''}${d}`, callback_data: `upn:${base + d}` });
+  const rows = [
+    [mk(-20), mk(-10), mk(-5), mk(5), mk(10), mk(20)],
+    [{ text: '✏️ Custom price', callback_data: 'upn:__custom__' }],
+    [{ text: '❌ Cancel', callback_data: 'upcanc:0' }],
+  ];
+  const shadeLabel = session.shade === '__all__' ? 'All shades' : session.shade;
+  const text = `💲 *Update Price*\n\n✓ Design: *${session.design}*\n✓ Shade: *${shadeLabel}*\n` +
+               `💰 Current price: *${currentPrice ? fmtMoney(currentPrice) : '—'}/yard*\n\nPick a nudge or enter custom:`;
+  await editOrSend(bot, chatId, session.flowMessageId, text,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showUpdatePriceConfirm(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const shadeLabel = session.shade === '__all__' ? 'All shades' : session.shade;
+  const text = `💲 *Confirm Price Update*\n\nDesign: *${session.design}*\nShade: *${shadeLabel}*\n` +
+               `Before: *${session.currentPrice ? fmtMoney(session.currentPrice) : '—'}/yard*\n` +
+               `After:  *${fmtMoney(session.newPrice)}/yard*\n\n_Will be queued for 2-admin approval._`;
+  await editOrSend(bot, chatId, session.flowMessageId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [[
+      { text: '✅ Submit for Approval', callback_data: 'upconf:1' },
+      { text: '❌ Cancel', callback_data: 'upcanc:0' },
+    ]] },
+  });
+}
+
+/* ─── Transfer Package tap flow ─────────────────────────────────────────── */
+async function startTransferPackageFlow(bot, chatId, userId, messageId = null) {
+  const all = await inventoryRepository.getAll();
+  // Packages with at least one available than.
+  const byPkg = new Map();
+  all.forEach((r) => {
+    if (r.status !== 'available') return;
+    const key = String(r.packageNo || '').trim();
+    if (!key) return;
+    if (!byPkg.has(key)) byPkg.set(key, { pkg: key, design: r.design, shade: r.shade, warehouse: r.warehouse, count: 0 });
+    byPkg.get(key).count += 1;
+  });
+  const pkgs = [...byPkg.values()].sort((a, b) => String(a.pkg).localeCompare(String(b.pkg)));
+  if (!pkgs.length) {
+    await editOrSend(bot, chatId, messageId, 'No packages with available thans to transfer.', {});
+    return;
+  }
+  sessionStore.set(userId, { type: 'transfer_package_flow', step: 'package', flowMessageId: messageId || null });
+  const rows = [];
+  pkgs.slice(0, 30).forEach((p) => {
+    rows.push([{ text: `📦 ${p.pkg} · ${p.design}${p.shade ? ' ' + p.shade : ''} (${p.count}) · ${p.warehouse}`, callback_data: `tpp:${p.pkg.slice(0, 50)}` }]);
+  });
+  rows.push([{ text: '❌ Cancel', callback_data: 'tpcanc:0' }]);
+  await editOrSend(bot, chatId, messageId,
+    '🚚 *Transfer Package*\n\nSelect the package to transfer:',
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showTransferPackageWarehousePicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const info = await inventoryService.getPackageSummary(session.packageNo);
+  session.fromWh = info?.warehouse || '?';
+  session.design = info?.design || '';
+  session.shade = info?.shade || '';
+  session.availableThans = info?.availableThans || 0;
+  session.availableYards = info?.availableYards || 0;
+  sessionStore.set(userId, session);
+
+  const whs = await inventoryRepository.getWarehouses();
+  const options = whs.filter((w) => String(w).trim() && String(w).trim() !== String(session.fromWh).trim());
+  if (!options.length) {
+    await editOrSend(bot, chatId, session.flowMessageId, 'No other warehouses available.', {});
+    return;
+  }
+  const rows = [];
+  for (let i = 0; i < options.length; i += 2) {
+    const row = [{ text: `🏭 ${options[i]}`, callback_data: `tpw:${String(options[i]).slice(0, 50)}` }];
+    if (options[i + 1]) row.push({ text: `🏭 ${options[i + 1]}`, callback_data: `tpw:${String(options[i + 1]).slice(0, 50)}` });
+    rows.push(row);
+  }
+  rows.push([{ text: '❌ Cancel', callback_data: 'tpcanc:0' }]);
+  const text = `🚚 *Transfer Package*\n\n✓ Package: *${session.packageNo}*\n` +
+               `Design: ${session.design}${session.shade ? ' ' + session.shade : ''}\n` +
+               `Thans: ${session.availableThans} · Yards: ${fmtQty(session.availableYards)}\n` +
+               `From: *${session.fromWh}*\n\nSelect destination warehouse:`;
+  await editOrSend(bot, chatId, session.flowMessageId, text,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showTransferPackageConfirm(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const text = `🚚 *Confirm Transfer Package*\n\nPackage: *${session.packageNo}*\n` +
+               `Design: ${session.design}${session.shade ? ' ' + session.shade : ''}\n` +
+               `Thans: ${session.availableThans} · Yards: ${fmtQty(session.availableYards)}\n` +
+               `From: *${session.fromWh}*  →  To: *${session.toWh}*\n\n_Queues 2-admin approval._`;
+  await editOrSend(bot, chatId, session.flowMessageId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [[
+      { text: '✅ Submit for Approval', callback_data: 'tpconf:1' },
+      { text: '❌ Cancel', callback_data: 'tpcanc:0' },
+    ]] },
+  });
+}
+
+/* ─── Transfer Than tap flow ─────────────────────────────────────────── */
+async function startTransferThanFlow(bot, chatId, userId, messageId = null) {
+  const all = await inventoryRepository.getAll();
+  const byPkg = new Map();
+  all.forEach((r) => {
+    if (r.status !== 'available') return;
+    const key = String(r.packageNo || '').trim();
+    if (!key) return;
+    if (!byPkg.has(key)) byPkg.set(key, { pkg: key, design: r.design, shade: r.shade, warehouse: r.warehouse, count: 0 });
+    byPkg.get(key).count += 1;
+  });
+  const pkgs = [...byPkg.values()].sort((a, b) => String(a.pkg).localeCompare(String(b.pkg)));
+  if (!pkgs.length) {
+    await editOrSend(bot, chatId, messageId, 'No packages with available thans to transfer.', {});
+    return;
+  }
+  sessionStore.set(userId, { type: 'transfer_than_flow', step: 'package', flowMessageId: messageId || null });
+  const rows = [];
+  pkgs.slice(0, 30).forEach((p) => {
+    rows.push([{ text: `📦 ${p.pkg} · ${p.design}${p.shade ? ' ' + p.shade : ''} (${p.count}) · ${p.warehouse}`, callback_data: `ttp:${p.pkg.slice(0, 50)}` }]);
+  });
+  rows.push([{ text: '❌ Cancel', callback_data: 'ttcanc:0' }]);
+  await editOrSend(bot, chatId, messageId,
+    '↔️ *Transfer Than*\n\nSelect the package:',
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showTransferThanThanPicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const info = await inventoryService.getPackageSummary(session.packageNo);
+  session.fromWh = info?.warehouse || '?';
+  session.design = info?.design || '';
+  session.shade = info?.shade || '';
+  sessionStore.set(userId, session);
+  const availableThans = (info?.thans || []).filter((t) => t.status === 'available');
+  if (!availableThans.length) {
+    await editOrSend(bot, chatId, session.flowMessageId, 'No available thans in this package.', {});
+    return;
+  }
+  const rows = [];
+  for (let i = 0; i < availableThans.length; i += 3) {
+    rows.push(availableThans.slice(i, i + 3).map((t) => ({
+      text: `#${t.thanNo} · ${fmtQty(t.yards)}y`, callback_data: `tth:${t.thanNo}`,
+    })));
+  }
+  rows.push([{ text: '❌ Cancel', callback_data: 'ttcanc:0' }]);
+  const text = `↔️ *Transfer Than*\n\n✓ Package: *${session.packageNo}* (${session.design}${session.shade ? ' ' + session.shade : ''})\nFrom: *${session.fromWh}*\n\nSelect the than to transfer:`;
+  await editOrSend(bot, chatId, session.flowMessageId, text,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showTransferThanWarehousePicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const whs = await inventoryRepository.getWarehouses();
+  const options = whs.filter((w) => String(w).trim() && String(w).trim() !== String(session.fromWh).trim());
+  if (!options.length) {
+    await editOrSend(bot, chatId, session.flowMessageId, 'No other warehouses available.', {});
+    return;
+  }
+  const rows = [];
+  for (let i = 0; i < options.length; i += 2) {
+    const row = [{ text: `🏭 ${options[i]}`, callback_data: `ttw:${String(options[i]).slice(0, 50)}` }];
+    if (options[i + 1]) row.push({ text: `🏭 ${options[i + 1]}`, callback_data: `ttw:${String(options[i + 1]).slice(0, 50)}` });
+    rows.push(row);
+  }
+  rows.push([{ text: '❌ Cancel', callback_data: 'ttcanc:0' }]);
+  const text = `↔️ *Transfer Than*\n\n✓ Package: *${session.packageNo}*\n✓ Than: *#${session.thanNo}*\nFrom: *${session.fromWh}*\n\nSelect destination warehouse:`;
+  await editOrSend(bot, chatId, session.flowMessageId, text,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showTransferThanConfirm(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const text = `↔️ *Confirm Transfer Than*\n\nPackage: *${session.packageNo}*\nThan: *#${session.thanNo}*\nDesign: ${session.design}${session.shade ? ' ' + session.shade : ''}\nFrom: *${session.fromWh}*  →  To: *${session.toWh}*\n\n_Queues 2-admin approval._`;
+  await editOrSend(bot, chatId, session.flowMessageId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [[
+      { text: '✅ Submit for Approval', callback_data: 'ttconf:1' },
+      { text: '❌ Cancel', callback_data: 'ttcanc:0' },
+    ]] },
+  });
+}
+
+/* ─── Return Than tap flow ──────────────────────────────────────────────
+ * List packages that have at least one SOLD than; pick package → pick sold
+ * than → confirm → queue approval (mark than available again).
+ */
+async function startReturnThanFlow(bot, chatId, userId, messageId = null) {
+  const all = await inventoryRepository.getAll();
+  const byPkg = new Map();
+  all.forEach((r) => {
+    if (r.status !== 'sold') return;
+    const key = String(r.packageNo || '').trim();
+    if (!key) return;
+    if (!byPkg.has(key)) byPkg.set(key, { pkg: key, design: r.design, shade: r.shade, count: 0 });
+    byPkg.get(key).count += 1;
+  });
+  const pkgs = [...byPkg.values()].sort((a, b) => String(a.pkg).localeCompare(String(b.pkg)));
+  if (!pkgs.length) {
+    await editOrSend(bot, chatId, messageId, 'No sold thans to return.', {});
+    return;
+  }
+  sessionStore.set(userId, { type: 'return_than_flow', step: 'package', flowMessageId: messageId || null });
+  const rows = [];
+  pkgs.slice(0, 30).forEach((p) => {
+    rows.push([{ text: `📦 ${p.pkg} · ${p.design}${p.shade ? ' ' + p.shade : ''} (${p.count} sold)`, callback_data: `rtp:${p.pkg.slice(0, 50)}` }]);
+  });
+  rows.push([{ text: '❌ Cancel', callback_data: 'rtcanc:0' }]);
+  await editOrSend(bot, chatId, messageId,
+    '↩️ *Return Than*\n\nSelect the package containing the than to return:',
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showReturnThanThanPicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const info = await inventoryService.getPackageSummary(session.packageNo);
+  session.design = info?.design || '';
+  session.shade = info?.shade || '';
+  sessionStore.set(userId, session);
+  const soldThans = (info?.thans || []).filter((t) => t.status === 'sold');
+  if (!soldThans.length) {
+    await editOrSend(bot, chatId, session.flowMessageId, 'No sold thans in this package.', {});
+    return;
+  }
+  const rows = [];
+  for (let i = 0; i < soldThans.length; i += 2) {
+    const mk = (t) => ({ text: `#${t.thanNo} · ${fmtQty(t.yards)}y · ${t.soldTo || '—'}`, callback_data: `rth:${t.thanNo}` });
+    const row = [mk(soldThans[i])];
+    if (soldThans[i + 1]) row.push(mk(soldThans[i + 1]));
+    rows.push(row);
+  }
+  rows.push([{ text: '❌ Cancel', callback_data: 'rtcanc:0' }]);
+  const text = `↩️ *Return Than*\n\n✓ Package: *${session.packageNo}* (${session.design}${session.shade ? ' ' + session.shade : ''})\n\nSelect the sold than to return:`;
+  await editOrSend(bot, chatId, session.flowMessageId, text,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showReturnThanConfirm(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const text = `↩️ *Confirm Return Than*\n\nPackage: *${session.packageNo}*\nThan: *#${session.thanNo}*\nDesign: ${session.design}${session.shade ? ' ' + session.shade : ''}\n\n_Will mark the than available again. Queues 2-admin approval._`;
+  await editOrSend(bot, chatId, session.flowMessageId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [[
+      { text: '✅ Submit for Approval', callback_data: 'rtconf:1' },
+      { text: '❌ Cancel', callback_data: 'rtcanc:0' },
+    ]] },
+  });
+}
+
 /** Date-range picker shown when user taps the Sample Status button. */
 async function showSampleStatusDatePicker(bot, chatId, messageId = null) {
   const text = '🧪 *Sample Status*\n\nPick a time window:';
@@ -2389,6 +2730,9 @@ async function handleMessage(bot, msg) {
 
   const addNoteFlowHandled = await handleAddNoteFlowText(bot, chatId, userId, text);
   if (addNoteFlowHandled) return;
+
+  const updatePriceFlowHandled = await handleUpdatePriceFlowText(bot, chatId, userId, text);
+  if (updatePriceFlowHandled) return;
 
   const receiptFlowHandled = await handleReceiptFlowText(bot, chatId, userId, text);
   if (receiptFlowHandled) return;
@@ -4659,6 +5003,272 @@ async function handleCallbackQuery(bot, callbackQuery) {
       'Bank removal requires admin approval',
     );
 
+  /* ─── UPDATE PRICE TAP FLOW ─── */
+  } else if (data.startsWith('upcanc:')) {
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
+    if (session && session.flowMessageId) {
+      await bot.editMessageText('❌ Update Price cancelled.', {
+        chat_id: callbackQuery.message.chat.id, message_id: session.flowMessageId,
+      }).catch(() => {});
+    }
+    sessionStore.clear(uid);
+
+  } else if (data.startsWith('upd:')) {
+    const design = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'update_price_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    session.design = design;
+    session.step = 'shade';
+    sessionStore.set(uid, session);
+    await showUpdatePriceShadePicker(bot, callbackQuery.message.chat.id, uid);
+
+  } else if (data.startsWith('ups:')) {
+    const shade = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'update_price_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    session.shade = shade;
+    session.step = 'nudge';
+    sessionStore.set(uid, session);
+    await showUpdatePriceNudgePicker(bot, callbackQuery.message.chat.id, uid);
+
+  } else if (data.startsWith('upn:')) {
+    const val = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'update_price_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    if (val === '__custom__') {
+      session.step = 'price_custom';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(chatId, 'Enter the new price per yard (number, e.g. 1500):');
+      return;
+    }
+    const n = parseFloat(val);
+    if (!Number.isFinite(n) || n <= 0) { await bot.sendMessage(chatId, 'Invalid price.'); return; }
+    session.newPrice = n;
+    session.step = 'confirm';
+    sessionStore.set(uid, session);
+    await showUpdatePriceConfirm(bot, chatId, uid);
+
+  } else if (data.startsWith('upconf:')) {
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'update_price_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Submitting...' });
+    const filters = { design: session.design };
+    if (session.shade && session.shade !== '__all__') filters.shade = session.shade;
+    const requestId = genId();
+    await approvalQueueRepository.append({
+      requestId, user: uid,
+      actionJSON: { action: 'update_price', filters, price: session.newPrice },
+      riskReason: '2nd admin approval required for price update', status: 'pending',
+    });
+    await auditLogRepository.append('approval_queued', { requestId, reason: 'price_update_approval', via: 'tap_flow' }, uid);
+    const shadeLabel = session.shade === '__all__' ? 'All shades' : session.shade;
+    if (session.flowMessageId) {
+      await bot.editMessageText(
+        `💲 *Update Price — submitted*\n\nDesign: *${session.design}*\nShade: *${shadeLabel}*\nNew: *${fmtMoney(session.newPrice)}/yard*\n\n⏳ Waiting for 2nd-admin approval.\nRequest: \`${requestId}\``,
+        { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
+      ).catch(() => {});
+    }
+    const userLabel = await getRequesterDisplayName(uid, null);
+    const summary = `Price Update Request\n${session.design}${session.shade !== '__all__' ? ' Shade ' + session.shade : ''}\nNew price: ${fmtMoney(session.newPrice)}/yard\nRequested by: ${userLabel}`;
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, '2nd admin approval required');
+    sessionStore.clear(uid);
+
+  /* ─── TRANSFER PACKAGE TAP FLOW ─── */
+  } else if (data.startsWith('tpcanc:')) {
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
+    if (session && session.flowMessageId) {
+      await bot.editMessageText('❌ Transfer Package cancelled.', {
+        chat_id: callbackQuery.message.chat.id, message_id: session.flowMessageId,
+      }).catch(() => {});
+    }
+    sessionStore.clear(uid);
+
+  } else if (data.startsWith('tpp:')) {
+    const pkg = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'transfer_package_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    session.packageNo = pkg;
+    session.step = 'warehouse';
+    sessionStore.set(uid, session);
+    await showTransferPackageWarehousePicker(bot, callbackQuery.message.chat.id, uid);
+
+  } else if (data.startsWith('tpw:')) {
+    const wh = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'transfer_package_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    session.toWh = wh;
+    session.step = 'confirm';
+    sessionStore.set(uid, session);
+    await showTransferPackageConfirm(bot, callbackQuery.message.chat.id, uid);
+
+  } else if (data.startsWith('tpconf:')) {
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'transfer_package_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Submitting...' });
+    const requestId = genId();
+    await approvalQueueRepository.append({
+      requestId, user: uid,
+      actionJSON: { action: 'transfer_package', packageNo: session.packageNo, toWarehouse: session.toWh },
+      riskReason: 'Package transfer requires admin approval', status: 'pending',
+    });
+    await auditLogRepository.append('approval_queued', { requestId, reason: 'transfer_package', via: 'tap_flow' }, uid);
+    if (session.flowMessageId) {
+      await bot.editMessageText(
+        `🚚 *Transfer Package — submitted*\n\nPackage: *${session.packageNo}*\n${session.fromWh} → *${session.toWh}*\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
+        { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
+      ).catch(() => {});
+    }
+    const userLabel = await getRequesterDisplayName(uid, null);
+    const summary = `Transfer Package\nPackage: ${session.packageNo}\nDesign: ${session.design || '?'} ${session.shade || ''}\nThans: ${session.availableThans} · Yards: ${fmtQty(session.availableYards)}\nFrom: ${session.fromWh}\nTo: ${session.toWh}`;
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'Package transfer requires admin approval');
+    sessionStore.clear(uid);
+
+  /* ─── TRANSFER THAN TAP FLOW ─── */
+  } else if (data.startsWith('ttcanc:')) {
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
+    if (session && session.flowMessageId) {
+      await bot.editMessageText('❌ Transfer Than cancelled.', {
+        chat_id: callbackQuery.message.chat.id, message_id: session.flowMessageId,
+      }).catch(() => {});
+    }
+    sessionStore.clear(uid);
+
+  } else if (data.startsWith('ttp:')) {
+    const pkg = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'transfer_than_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    session.packageNo = pkg;
+    session.step = 'than';
+    sessionStore.set(uid, session);
+    await showTransferThanThanPicker(bot, callbackQuery.message.chat.id, uid);
+
+  } else if (data.startsWith('tth:')) {
+    const thanNo = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'transfer_than_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    session.thanNo = thanNo;
+    session.step = 'warehouse';
+    sessionStore.set(uid, session);
+    await showTransferThanWarehousePicker(bot, callbackQuery.message.chat.id, uid);
+
+  } else if (data.startsWith('ttw:')) {
+    const wh = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'transfer_than_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    session.toWh = wh;
+    session.step = 'confirm';
+    sessionStore.set(uid, session);
+    await showTransferThanConfirm(bot, callbackQuery.message.chat.id, uid);
+
+  } else if (data.startsWith('ttconf:')) {
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'transfer_than_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Submitting...' });
+    const requestId = genId();
+    await approvalQueueRepository.append({
+      requestId, user: uid,
+      actionJSON: { action: 'transfer_than', packageNo: session.packageNo, thanNo: session.thanNo, toWarehouse: session.toWh },
+      riskReason: 'Than transfer requires admin approval', status: 'pending',
+    });
+    await auditLogRepository.append('approval_queued', { requestId, reason: 'transfer_than', via: 'tap_flow' }, uid);
+    if (session.flowMessageId) {
+      await bot.editMessageText(
+        `↔️ *Transfer Than — submitted*\n\nPackage: *${session.packageNo}* · Than: *#${session.thanNo}*\n${session.fromWh} → *${session.toWh}*\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
+        { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
+      ).catch(() => {});
+    }
+    const userLabel = await getRequesterDisplayName(uid, null);
+    const summary = `Transfer Than\nPackage: ${session.packageNo}\nThan: ${session.thanNo}\nDesign: ${session.design || '?'} ${session.shade || ''}\nFrom: ${session.fromWh}\nTo: ${session.toWh}`;
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'Than transfer requires admin approval');
+    sessionStore.clear(uid);
+
+  /* ─── RETURN THAN TAP FLOW ─── */
+  } else if (data.startsWith('rtcanc:')) {
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
+    if (session && session.flowMessageId) {
+      await bot.editMessageText('❌ Return Than cancelled.', {
+        chat_id: callbackQuery.message.chat.id, message_id: session.flowMessageId,
+      }).catch(() => {});
+    }
+    sessionStore.clear(uid);
+
+  } else if (data.startsWith('rtp:')) {
+    const pkg = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'return_than_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    session.packageNo = pkg;
+    session.step = 'than';
+    sessionStore.set(uid, session);
+    await showReturnThanThanPicker(bot, callbackQuery.message.chat.id, uid);
+
+  } else if (data.startsWith('rth:')) {
+    const thanNo = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'return_than_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    session.thanNo = thanNo;
+    session.step = 'confirm';
+    sessionStore.set(uid, session);
+    await showReturnThanConfirm(bot, callbackQuery.message.chat.id, uid);
+
+  } else if (data.startsWith('rtconf:')) {
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'return_than_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Submitting...' });
+    const requestId = genId();
+    await approvalQueueRepository.append({
+      requestId, user: uid,
+      actionJSON: { action: 'return_than', packageNo: session.packageNo, thanNo: session.thanNo },
+      riskReason: 'Than return requires admin approval', status: 'pending',
+    });
+    await auditLogRepository.append('approval_queued', { requestId, reason: 'return_than', via: 'tap_flow' }, uid);
+    if (session.flowMessageId) {
+      await bot.editMessageText(
+        `↩️ *Return Than — submitted*\n\nPackage: *${session.packageNo}* · Than: *#${session.thanNo}*\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
+        { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
+      ).catch(() => {});
+    }
+    const userLabel = await getRequesterDisplayName(uid, null);
+    const summary = `Return Than\nPackage: ${session.packageNo}\nThan: ${session.thanNo}\nDesign: ${session.design || '?'} ${session.shade || ''}`;
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'Than return requires admin approval');
+    sessionStore.clear(uid);
+
   /* ─── LEGACY: existing text-started sample flow customer pick (kept for back-compat) ─── */
   } else if (data.startsWith('smpc:')) {
     const val = data.slice(5);
@@ -5457,6 +6067,19 @@ async function handleCallbackQuery(bot, callbackQuery) {
       case 'manage_banks':
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
         await showBankManager(bot, chatId, uid, messageId);
+        break;
+      case 'update_price':
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        await startUpdatePriceFlow(bot, chatId, uid, messageId);
+        break;
+      case 'transfer_package':
+        await startTransferPackageFlow(bot, chatId, uid, messageId);
+        break;
+      case 'transfer_than':
+        await startTransferThanFlow(bot, chatId, uid, messageId);
+        break;
+      case 'return_than':
+        await startReturnThanFlow(bot, chatId, uid, messageId);
         break;
       case 'add_customer':
         await startAddCustomerFlow(bot, chatId, uid, messageId);
