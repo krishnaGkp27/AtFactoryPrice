@@ -580,6 +580,84 @@ async function getInactiveCustomers(daysThreshold = 30) {
 
 // ─── Sample Flow Helpers ────────────────────────────────────────────────────
 
+async function handleAddCustomerFlowText(bot, chatId, userId, text) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'add_customer_flow') return false;
+
+  const trimmed = text.trim();
+
+  if (trimmed.toLowerCase() === 'cancel') {
+    sessionStore.clear(userId);
+    if (session.flowMessageId) {
+      await bot.editMessageText('❌ Add-customer flow cancelled.', {
+        chat_id: chatId, message_id: session.flowMessageId,
+      }).catch(() => {});
+    } else {
+      await bot.sendMessage(chatId, '❌ Add-customer flow cancelled.');
+    }
+    return true;
+  }
+
+  if (session.step === 'name') {
+    if (trimmed.length < 2) {
+      await bot.sendMessage(chatId, 'Name too short, please re-enter:');
+      return true;
+    }
+    session.name = trimmed;
+    session.step = 'phone';
+    sessionStore.set(userId, session);
+    await showAddCustomerPhoneStep(bot, chatId, userId);
+    return true;
+  }
+
+  if (session.step === 'phone') {
+    session.phone = trimmed;
+    session.step = 'address';
+    sessionStore.set(userId, session);
+    await showAddCustomerAddressStep(bot, chatId, userId);
+    return true;
+  }
+
+  if (session.step === 'address') {
+    session.address = trimmed;
+    session.step = 'category';
+    sessionStore.set(userId, session);
+    await showAddCustomerCategoryPicker(bot, chatId, userId);
+    return true;
+  }
+
+  if (session.step === 'credit_custom') {
+    const n = parseInt(trimmed.replace(/[^\d]/g, ''), 10);
+    if (!Number.isFinite(n) || n < 0) {
+      await bot.sendMessage(chatId, 'Please enter a valid non-negative number (e.g. 75000):');
+      return true;
+    }
+    session.credit_limit = n;
+    session.step = 'payment_terms';
+    sessionStore.set(userId, session);
+    await showAddCustomerPaymentTermsStep(bot, chatId, userId);
+    return true;
+  }
+
+  if (session.step === 'payment_terms_custom') {
+    session.payment_terms = trimmed || 'COD';
+    session.step = 'notes';
+    sessionStore.set(userId, session);
+    await showAddCustomerNotesStep(bot, chatId, userId);
+    return true;
+  }
+
+  if (session.step === 'notes') {
+    session.notes = trimmed;
+    session.step = 'confirm';
+    sessionStore.set(userId, session);
+    await showAddCustomerConfirmation(bot, chatId, userId);
+    return true;
+  }
+
+  return false;
+}
+
 async function handleSampleFlowText(bot, chatId, userId, text) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== 'sample_flow') return false;
@@ -1177,6 +1255,138 @@ async function showSampleConfirmation(bot, chatId, userId) {
     ],
   ];
   await _sampleRender(bot, chatId, userId, '*Confirm and submit?*', rows);
+}
+
+/* ─── Add Customer Button Flow ────────────────────────────────────────────
+ * name (text) → phone (text/skip) → address (text/skip) → category (tap)
+ * → credit limit (tap preset or custom) → payment terms (text)
+ * → notes (text/skip) → confirm (tap) → 2-admin approval queue.
+ *
+ * Session shape: { type: 'add_customer_flow', step, name, phone, address,
+ *                  category, credit_limit, payment_terms, notes,
+ *                  flowMessageId }
+ */
+
+const CUSTOMER_CATEGORIES = ['Wholesale', 'Retail', 'Distributor', 'Wholesaler'];
+const CREDIT_PRESETS = [0, 50000, 100000, 200000, 500000];
+
+function _acHeader(session) {
+  const lines = ['👥 *Add Customer*'];
+  if (session.name) lines.push(`✓ Name: *${session.name}*`);
+  if (session.phone) lines.push(`✓ Phone: *${session.phone}*`);
+  if (session.phone === '') lines.push(`✓ Phone: _skipped_`);
+  if (session.address) lines.push(`✓ Address: *${session.address}*`);
+  if (session.address === '') lines.push(`✓ Address: _skipped_`);
+  if (session.category) lines.push(`✓ Category: *${session.category}*`);
+  if (session.credit_limit !== undefined && session.credit_limit !== null) {
+    lines.push(`✓ Credit limit: *${fmtMoney(session.credit_limit)}*`);
+  }
+  if (session.payment_terms) lines.push(`✓ Payment terms: *${session.payment_terms}*`);
+  if (session.notes) lines.push(`✓ Notes: *${session.notes}*`);
+  if (session.notes === '') lines.push(`✓ Notes: _skipped_`);
+  return lines.join('\n');
+}
+
+async function _acRender(bot, chatId, userId, prompt, rows) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const text = _acHeader(session) + '\n\n' + prompt;
+  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
+  const mid = session.flowMessageId;
+  if (mid) {
+    try {
+      await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
+      return;
+    } catch (_) { /* fall through */ }
+  }
+  const sent = await bot.sendMessage(chatId, text, opts);
+  session.flowMessageId = sent.message_id;
+  sessionStore.set(userId, session);
+}
+
+async function startAddCustomerFlow(bot, chatId, userId, messageId = null) {
+  sessionStore.set(userId, {
+    type: 'add_customer_flow', step: 'name', requestedBy: userId,
+    flowMessageId: messageId || null,
+  });
+  // Entry screen: explain flow, offer Cancel. Name is captured via free text.
+  const rows = [[{ text: '❌ Cancel', callback_data: 'accanc:0' }]];
+  await _acRender(bot, chatId, userId, 'Enter the customer *full name* (reply in chat):', rows);
+}
+
+async function showAddCustomerPhoneStep(bot, chatId, userId) {
+  const rows = [
+    [{ text: '⏭ Skip phone', callback_data: 'acskip:phone' }],
+    [{ text: '❌ Cancel', callback_data: 'accanc:0' }],
+  ];
+  await _acRender(bot, chatId, userId, 'Enter *phone number* (or tap Skip):', rows);
+}
+
+async function showAddCustomerAddressStep(bot, chatId, userId) {
+  const rows = [
+    [{ text: '⏭ Skip address', callback_data: 'acskip:address' }],
+    [{ text: '❌ Cancel', callback_data: 'accanc:0' }],
+  ];
+  await _acRender(bot, chatId, userId, 'Enter *address* (or tap Skip):', rows);
+}
+
+async function showAddCustomerCategoryPicker(bot, chatId, userId) {
+  const rows = [];
+  for (let i = 0; i < CUSTOMER_CATEGORIES.length; i += 2) {
+    const row = [{ text: `🏷 ${CUSTOMER_CATEGORIES[i]}`, callback_data: `accat:${CUSTOMER_CATEGORIES[i]}` }];
+    if (CUSTOMER_CATEGORIES[i + 1]) row.push({ text: `🏷 ${CUSTOMER_CATEGORIES[i + 1]}`, callback_data: `accat:${CUSTOMER_CATEGORIES[i + 1]}` });
+    rows.push(row);
+  }
+  rows.push([{ text: '❌ Cancel', callback_data: 'accanc:0' }]);
+  await _acRender(bot, chatId, userId, 'Pick *category*:', rows);
+}
+
+async function showAddCustomerCreditPicker(bot, chatId, userId) {
+  const rows = [];
+  // 3-per-row grid: 0 / 50k / 100k, 200k / 500k / Custom
+  const cells = [
+    ...CREDIT_PRESETS.map((v) => ({ text: v === 0 ? '₦ 0' : `₦ ${(v / 1000).toFixed(0)}k`, callback_data: `accred:${v}` })),
+    { text: '✏️ Custom', callback_data: 'accred:__custom__' },
+  ];
+  for (let i = 0; i < cells.length; i += 3) {
+    rows.push(cells.slice(i, i + 3));
+  }
+  rows.push([{ text: '❌ Cancel', callback_data: 'accanc:0' }]);
+  await _acRender(bot, chatId, userId, 'Pick *credit limit*:', rows);
+}
+
+async function showAddCustomerPaymentTermsStep(bot, chatId, userId) {
+  // Payment terms stays as free-text (Q3 answer). Offer common hint + cancel.
+  const rows = [
+    [
+      { text: 'COD',    callback_data: 'acpt:COD' },
+      { text: 'Net 7',  callback_data: 'acpt:Net 7' },
+      { text: 'Net 14', callback_data: 'acpt:Net 14' },
+    ],
+    [
+      { text: 'Net 30', callback_data: 'acpt:Net 30' },
+      { text: 'Credit', callback_data: 'acpt:Credit' },
+      { text: '✏️ Custom', callback_data: 'acpt:__custom__' },
+    ],
+    [{ text: '❌ Cancel', callback_data: 'accanc:0' }],
+  ];
+  await _acRender(bot, chatId, userId, 'Pick *payment terms*:', rows);
+}
+
+async function showAddCustomerNotesStep(bot, chatId, userId) {
+  const rows = [
+    [{ text: '⏭ Skip notes', callback_data: 'acskip:notes' }],
+    [{ text: '❌ Cancel', callback_data: 'accanc:0' }],
+  ];
+  await _acRender(bot, chatId, userId, 'Add any *notes* (or tap Skip):', rows);
+}
+
+async function showAddCustomerConfirmation(bot, chatId, userId) {
+  const rows = [[
+    { text: '✅ Submit for Approval', callback_data: 'acconf:1' },
+    { text: '❌ Cancel', callback_data: 'accanc:0' },
+  ]];
+  await _acRender(bot, chatId, userId, '*Confirm and submit for admin approval?*', rows);
 }
 
 /** Date-range picker shown when user taps the Sample Status button. */
@@ -1882,6 +2092,9 @@ async function handleMessage(bot, msg) {
 
   const sampleFlowHandled = await handleSampleFlowText(bot, chatId, userId, text);
   if (sampleFlowHandled) return;
+
+  const addCustFlowHandled = await handleAddCustomerFlowText(bot, chatId, userId, text);
+  if (addCustFlowHandled) return;
 
   const receiptFlowHandled = await handleReceiptFlowText(bot, chatId, userId, text);
   if (receiptFlowHandled) return;
@@ -3969,6 +4182,130 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
     sessionStore.clear(uid);
 
+  /* ─── ADD CUSTOMER BUTTON FLOW ─── */
+  } else if (data.startsWith('accanc:')) {
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
+    if (session && session.flowMessageId) {
+      await bot.editMessageText('❌ Add-customer flow cancelled.', {
+        chat_id: callbackQuery.message.chat.id,
+        message_id: session.flowMessageId,
+      }).catch(() => {});
+    }
+    sessionStore.clear(uid);
+
+  } else if (data.startsWith('acskip:')) {
+    const field = data.slice(7);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'add_customer_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Skipped.' });
+    if (field === 'phone') {
+      session.phone = '';
+      session.step = 'address';
+      sessionStore.set(uid, session);
+      await showAddCustomerAddressStep(bot, callbackQuery.message.chat.id, uid);
+    } else if (field === 'address') {
+      session.address = '';
+      session.step = 'category';
+      sessionStore.set(uid, session);
+      await showAddCustomerCategoryPicker(bot, callbackQuery.message.chat.id, uid);
+    } else if (field === 'notes') {
+      session.notes = '';
+      session.step = 'confirm';
+      sessionStore.set(uid, session);
+      await showAddCustomerConfirmation(bot, callbackQuery.message.chat.id, uid);
+    }
+
+  } else if (data.startsWith('accat:')) {
+    const cat = data.slice(6);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'add_customer_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    session.category = cat;
+    session.step = 'credit_limit';
+    sessionStore.set(uid, session);
+    await showAddCustomerCreditPicker(bot, callbackQuery.message.chat.id, uid);
+
+  } else if (data.startsWith('accred:')) {
+    const val = data.slice(7);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'add_customer_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    if (val === '__custom__') {
+      session.step = 'credit_custom';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(callbackQuery.message.chat.id, 'Enter custom credit limit (number, e.g. 75000):');
+      return;
+    }
+    session.credit_limit = parseInt(val, 10) || 0;
+    session.step = 'payment_terms';
+    sessionStore.set(uid, session);
+    await showAddCustomerPaymentTermsStep(bot, callbackQuery.message.chat.id, uid);
+
+  } else if (data.startsWith('acpt:')) {
+    const val = data.slice(5);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'add_customer_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    if (val === '__custom__') {
+      session.step = 'payment_terms_custom';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(callbackQuery.message.chat.id, 'Enter custom payment terms (e.g. "Net 45", "50% advance"):');
+      return;
+    }
+    session.payment_terms = val;
+    session.step = 'notes';
+    sessionStore.set(uid, session);
+    await showAddCustomerNotesStep(bot, callbackQuery.message.chat.id, uid);
+
+  } else if (data.startsWith('acconf:')) {
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'add_customer_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Submitting...' });
+
+    const custData = {
+      name: session.name,
+      phone: session.phone || '',
+      address: session.address || '',
+      category: session.category || 'Retail',
+      credit_limit: session.credit_limit || 0,
+      payment_terms: session.payment_terms || 'COD',
+      notes: session.notes || '',
+    };
+
+    // Queue for 2-admin approval (same pattern as existing add_customer text flow).
+    const requestId = genId();
+    await approvalQueueRepository.append({
+      requestId, user: uid,
+      actionJSON: { action: 'add_customer', ...custData },
+      riskReason: 'New customer registration requires admin approval',
+      status: 'pending',
+    });
+    await auditLogRepository.append('approval_queued', { requestId, reason: 'add_customer' }, uid);
+
+    if (session.flowMessageId) {
+      await bot.editMessageText(
+        `👥 *Add Customer — submitted*\n\n${_acHeader(session)}\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
+        { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
+      ).catch(() => {});
+    }
+
+    const userLabel = await getRequesterDisplayName(uid, null);
+    const summary =
+      `Add Customer\nName: ${custData.name}\nPhone: ${custData.phone || '—'}\nAddress: ${custData.address || '—'}\n` +
+      `Category: ${custData.category}\nCredit limit: ${fmtMoney(custData.credit_limit)}\n` +
+      `Payment terms: ${custData.payment_terms}\nNotes: ${custData.notes || '—'}`;
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'New customer requires admin approval');
+
+    sessionStore.clear(uid);
+
   /* ─── LEGACY: existing text-started sample flow customer pick (kept for back-compat) ─── */
   } else if (data.startsWith('smpc:')) {
     const val = data.slice(5);
@@ -4675,7 +5012,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         await bot.sendMessage(chatId, 'Type: "Add bank BANK_NAME" or "List banks"');
         break;
       case 'add_customer':
-        await bot.sendMessage(chatId, 'Type: "Add customer NAME, phone NUMBER, ..."');
+        await startAddCustomerFlow(bot, chatId, uid, messageId);
         break;
       default:
         await bot.sendMessage(chatId, 'Feature coming soon.');

@@ -367,7 +367,11 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     if (payRes.status !== 'completed') return { ok: false, message: payRes.message || 'Payment failed.' };
   } else if (aj.action === 'add_customer') {
     const crmService = require('./crmService');
-    await crmService.addCustomer({ name: aj.name, phone: aj.phone, address: aj.address, category: aj.category, credit_limit: aj.credit_limit, payment_terms: aj.payment_terms });
+    await crmService.addCustomer({
+      name: aj.name, phone: aj.phone, address: aj.address,
+      category: aj.category, credit_limit: aj.credit_limit,
+      payment_terms: aj.payment_terms, notes: aj.notes,
+    });
   } else if (aj.action === 'add_contact') {
     const contactsRepository = require('../repositories/contactsRepository');
     await contactsRepository.append({
