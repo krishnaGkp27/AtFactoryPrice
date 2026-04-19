@@ -372,6 +372,23 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       category: aj.category, credit_limit: aj.credit_limit,
       payment_terms: aj.payment_terms, notes: aj.notes,
     });
+  } else if (aj.action === 'add_bank') {
+    const settingsRepo2 = require('../repositories/settingsRepository');
+    const all = await settingsRepo2.getAll();
+    const banks = (all.BANK_LIST || '').split(',').map((b) => b.trim()).filter(Boolean);
+    if (banks.map((b) => b.toLowerCase()).includes(String(aj.bank_name || '').toLowerCase())) {
+      return { ok: false, message: `Bank "${aj.bank_name}" already exists.` };
+    }
+    banks.push(aj.bank_name);
+    await settingsRepo2.set('BANK_LIST', banks.join(','));
+  } else if (aj.action === 'remove_bank') {
+    const settingsRepo2 = require('../repositories/settingsRepository');
+    const all = await settingsRepo2.getAll();
+    let banks = (all.BANK_LIST || '').split(',').map((b) => b.trim()).filter(Boolean);
+    const before = banks.length;
+    banks = banks.filter((b) => b.toLowerCase() !== String(aj.bank_name || '').toLowerCase());
+    if (banks.length === before) return { ok: false, message: `Bank "${aj.bank_name}" not found.` };
+    await settingsRepo2.set('BANK_LIST', banks.join(','));
   } else if (aj.action === 'add_contact') {
     const contactsRepository = require('../repositories/contactsRepository');
     await contactsRepository.append({

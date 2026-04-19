@@ -580,6 +580,55 @@ async function getInactiveCustomers(daysThreshold = 30) {
 
 // ─── Sample Flow Helpers ────────────────────────────────────────────────────
 
+async function handleAddBankFlowText(bot, chatId, userId, text) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'add_bank_flow') return false;
+  const trimmed = text.trim();
+  if (trimmed.toLowerCase() === 'cancel') {
+    sessionStore.clear(userId);
+    if (session.flowMessageId) {
+      await showBankManager(bot, chatId, userId, session.flowMessageId);
+    }
+    return true;
+  }
+  if (session.step === 'name') {
+    if (trimmed.length < 2) {
+      await bot.sendMessage(chatId, 'Bank name too short, please re-enter:');
+      return true;
+    }
+    // Dedupe check against current list before queuing approval.
+    const all = await settingsRepo.getAll();
+    const existing = (all.BANK_LIST || '').split(',').map((b) => b.trim().toLowerCase()).filter(Boolean);
+    if (existing.includes(trimmed.toLowerCase())) {
+      await bot.sendMessage(chatId, `⚠️ "${trimmed}" already exists. Enter a different name or type "cancel".`);
+      return true;
+    }
+
+    const requestId = genId();
+    await approvalQueueRepository.append({
+      requestId, user: userId,
+      actionJSON: { action: 'add_bank', bank_name: trimmed },
+      riskReason: 'New bank addition requires admin approval', status: 'pending',
+    });
+    await auditLogRepository.append('approval_queued', { requestId, reason: 'add_bank', bank: trimmed }, userId);
+
+    if (session.flowMessageId) {
+      await bot.editMessageText(
+        `🏦 *Add Bank — submitted*\n\nBank: *${trimmed}*\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
+        { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
+      ).catch(() => {});
+    }
+    const userLabel = await getRequesterDisplayName(userId, null);
+    await approvalEvents.notifyAdminsApprovalRequest(
+      bot, requestId, userLabel, `Add Bank\nBank: ${trimmed}`,
+      'New bank addition requires admin approval',
+    );
+    sessionStore.clear(userId);
+    return true;
+  }
+  return false;
+}
+
 async function handleAddCustomerFlowText(bot, chatId, userId, text) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== 'add_customer_flow') return false;
@@ -1389,6 +1438,46 @@ async function showAddCustomerConfirmation(bot, chatId, userId) {
   await _acRender(bot, chatId, userId, '*Confirm and submit for admin approval?*', rows);
 }
 
+/* ─── Bank Manager (admin-only, tap-based) ────────────────────────────────
+ * Shows current banks as tappable buttons; taps trigger a remove-confirm.
+ * An "➕ Add New Bank" button asks for a bank name (free-text, only this
+ * one text input in the flow). All mutations go through 2-admin approval.
+ */
+
+async function showBankManager(bot, chatId, userId, messageId = null) {
+  const all = await settingsRepo.getAll();
+  const banks = (all.BANK_LIST || '').split(',').map((b) => b.trim()).filter(Boolean);
+
+  const rows = [];
+  if (banks.length) {
+    for (let i = 0; i < banks.length; i += 2) {
+      const row = [{ text: `🏦 ${banks[i]}  ✕`, callback_data: `bkrm:${banks[i].slice(0, 50)}` }];
+      if (banks[i + 1]) row.push({ text: `🏦 ${banks[i + 1]}  ✕`, callback_data: `bkrm:${banks[i + 1].slice(0, 50)}` });
+      rows.push(row);
+    }
+  }
+  rows.push([{ text: '➕ Add New Bank', callback_data: 'bkadd:0' }]);
+  rows.push([{ text: '⬅ Back', callback_data: 'act:__back__' }]);
+
+  const text = `🏦 *Bank Manager*\n\nRegistered banks: ${banks.length}\n_Tap a bank to remove it. Changes go to 2-admin approval._`;
+  await editOrSend(bot, chatId, messageId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
+}
+
+async function showBankRemoveConfirm(bot, chatId, bankName, messageId = null) {
+  const rows = [[
+    { text: '✅ Confirm Remove', callback_data: `bkrmc:${bankName.slice(0, 50)}` },
+    { text: '❌ Cancel',         callback_data: 'bkback:0' },
+  ]];
+  const text = `🏦 *Remove Bank*\n\nBank: *${bankName}*\n\n_This will queue a 2-admin approval to remove it from the payment options._`;
+  await editOrSend(bot, chatId, messageId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
+}
+
 /** Date-range picker shown when user taps the Sample Status button. */
 async function showSampleStatusDatePicker(bot, chatId, messageId = null) {
   const text = '🧪 *Sample Status*\n\nPick a time window:';
@@ -2095,6 +2184,9 @@ async function handleMessage(bot, msg) {
 
   const addCustFlowHandled = await handleAddCustomerFlowText(bot, chatId, userId, text);
   if (addCustFlowHandled) return;
+
+  const addBankFlowHandled = await handleAddBankFlowText(bot, chatId, userId, text);
+  if (addBankFlowHandled) return;
 
   const receiptFlowHandled = await handleReceiptFlowText(bot, chatId, userId, text);
   if (receiptFlowHandled) return;
@@ -4306,6 +4398,65 @@ async function handleCallbackQuery(bot, callbackQuery) {
 
     sessionStore.clear(uid);
 
+  /* ─── BANK MANAGER: Add New Bank (prompt for text) ─── */
+  } else if (data.startsWith('bkadd:')) {
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    if (!config.access.adminIds.includes(uid)) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    sessionStore.set(uid, {
+      type: 'add_bank_flow', step: 'name',
+      flowMessageId: callbackQuery.message.message_id,
+    });
+    await editOrSend(bot, chatId, callbackQuery.message.message_id,
+      '🏦 *Add New Bank*\n\nEnter the bank name (reply in chat), or tap Cancel.', {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'bkback:0' }]] },
+    });
+
+  /* ─── BANK MANAGER: back to manager screen ─── */
+  } else if (data.startsWith('bkback:')) {
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    await bot.answerCallbackQuery(callbackQuery.id);
+    sessionStore.clear(uid);
+    await showBankManager(bot, chatId, uid, callbackQuery.message.message_id);
+
+  /* ─── BANK MANAGER: tap existing bank → confirm remove ─── */
+  } else if (data.startsWith('bkrm:')) {
+    const bankName = data.slice(5);
+    const uid = String(callbackQuery.from.id);
+    if (!config.access.adminIds.includes(uid)) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await showBankRemoveConfirm(bot, callbackQuery.message.chat.id, bankName, callbackQuery.message.message_id);
+
+  /* ─── BANK MANAGER: confirm remove → queue approval ─── */
+  } else if (data.startsWith('bkrmc:')) {
+    const bankName = data.slice(6);
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    if (!config.access.adminIds.includes(uid)) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Submitting...' });
+
+    const requestId = genId();
+    await approvalQueueRepository.append({
+      requestId, user: uid,
+      actionJSON: { action: 'remove_bank', bank_name: bankName },
+      riskReason: 'Bank removal requires admin approval', status: 'pending',
+    });
+    await auditLogRepository.append('approval_queued', { requestId, reason: 'remove_bank', bank: bankName }, uid);
+
+    await editOrSend(bot, chatId, callbackQuery.message.message_id,
+      `🏦 *Remove Bank — submitted*\n\nBank: *${bankName}*\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``, {
+      parse_mode: 'Markdown',
+    });
+    const userLabel = await getRequesterDisplayName(uid, null);
+    await approvalEvents.notifyAdminsApprovalRequest(
+      bot, requestId, userLabel,
+      `Remove Bank\nBank: ${bankName}`,
+      'Bank removal requires admin approval',
+    );
+
   /* ─── LEGACY: existing text-started sample flow customer pick (kept for back-compat) ─── */
   } else if (data.startsWith('smpc:')) {
     const val = data.slice(5);
@@ -5009,7 +5160,8 @@ async function handleCallbackQuery(bot, callbackQuery) {
         break;
       }
       case 'manage_banks':
-        await bot.sendMessage(chatId, 'Type: "Add bank BANK_NAME" or "List banks"');
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        await showBankManager(bot, chatId, uid, messageId);
         break;
       case 'add_customer':
         await startAddCustomerFlow(bot, chatId, uid, messageId);
