@@ -504,7 +504,6 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
         logger.error('Failed to resume sample flow for user after customer approval', e);
       }
     } else if (session && session.type === 'order_flow' && session.step === 'awaiting_customer_approval') {
-      // Resume Create Order flow at the quantity step (qty picker shown below).
       session.customer = custName;
       session.step = 'quantity';
       delete session.pendingCustomerId;
@@ -530,6 +529,21 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
         );
       } catch (e) {
         logger.error('Failed to resume order flow for user after customer approval', e);
+      }
+    } else if (session && session.type === 'receipt_flow' && session.step === 'awaiting_customer_approval') {
+      session.customer = custName;
+      session.step = 'amount';
+      delete session.pendingCustomerId;
+      delete session.pendingCustomerName;
+      delete session.customerApprovalId;
+      sessionStore.set(requesterUserId, session);
+      try {
+        await bot.sendMessage(requesterUserId,
+          `✅ Customer "*${custName}*" approved. Continuing your receipt upload…\n\nEnter the payment *amount* received (NGN):`,
+          { parse_mode: 'Markdown' },
+        );
+      } catch (e) {
+        logger.error('Failed to resume receipt flow after customer approval', e);
       }
     } else {
       await notifyEmployee(bot, requesterUserId, requestId, `✅ Customer "${custName}" has been approved by admin.`);
@@ -588,6 +602,15 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
         );
       } catch (e) {
         logger.error('Failed to notify user after order-flow customer rejection', e);
+      }
+    } else if (session && session.type === 'receipt_flow' && session.step === 'awaiting_customer_approval') {
+      sessionStore.clear(requesterUserId);
+      try {
+        await bot.sendMessage(requesterUserId,
+          `❌ Customer "${custName}" was rejected by admin.\n\nReceipt upload cancelled. Please restart with a different customer.`,
+        );
+      } catch (e) {
+        logger.error('Failed to notify user after receipt-flow customer rejection', e);
       }
     } else {
       await notifyEmployee(bot, requesterUserId, requestId, `❌ Customer "${custName}" registration was rejected by admin.`);

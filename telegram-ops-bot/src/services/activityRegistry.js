@@ -35,6 +35,7 @@ const ACTIVITIES = [
   { code: 'customer_history',      label: 'Customer History',          icon: '📋', callback: 'act:customer_history',   hub: 'customers' },
   { code: 'customer_pattern',      label: 'Customer Pattern',          icon: '🔍', callback: 'act:customer_pattern',   hub: 'customers' },
   { code: 'show_customer_notes',   label: 'Customer Notes',            icon: '📝', callback: 'act:customer_notes',     hub: 'customers' },
+  { code: 'add_customer_note',     label: 'Add Note',                  icon: '✏️', callback: 'act:add_note',           hub: 'customers' },
   { code: 'customer_ranking',      label: 'Customer Ranking',          icon: '🏆', callback: 'act:customer_ranking',   hub: 'customers' },
   { code: 'add_customer',          label: 'Add Customer',              icon: '➕', callback: 'act:add_customer',       hub: 'customers' },
 

@@ -580,6 +580,30 @@ async function getInactiveCustomers(daysThreshold = 30) {
 
 // ─── Sample Flow Helpers ────────────────────────────────────────────────────
 
+async function handleAddNoteFlowText(bot, chatId, userId, text) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'add_note_flow') return false;
+  const trimmed = text.trim();
+  if (trimmed.toLowerCase() === 'cancel') {
+    sessionStore.clear(userId);
+    await bot.sendMessage(chatId, '❌ Note cancelled.');
+    return true;
+  }
+  if (session.step === 'note_text') {
+    if (trimmed.length < 2) {
+      await bot.sendMessage(chatId, 'Note is too short. Type the note or "cancel":');
+      return true;
+    }
+    await customerNotesRepo.append({ customer: session.customer, note: trimmed, created_by: userId });
+    sessionStore.clear(userId);
+    await bot.sendMessage(chatId,
+      `✅ Note added for *${session.customer}*:\n_${trimmed}_`,
+      { parse_mode: 'Markdown' });
+    return true;
+  }
+  return false;
+}
+
 async function handleAddBankFlowText(bot, chatId, userId, text) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== 'add_bank_flow') return false;
@@ -1515,10 +1539,16 @@ async function showSampleStatusDatePicker(bot, chatId, messageId = null) {
  * names ever appear, switch to an index-based scheme.
  */
 const REPORT_PICKER_PROMPTS = {
-  history: { icon: '📋', label: 'Customer History', prompt: 'Pick a customer to see their timeline:' },
-  pattern: { icon: '🔍', label: 'Customer Pattern', prompt: 'Pick a customer to see their buying pattern:' },
-  notes:   { icon: '📝', label: 'Customer Notes',   prompt: 'Pick a customer to see their notes:' },
+  history:   { icon: '📋', label: 'Customer History', prompt: 'Pick a customer to see their timeline:' },
+  pattern:   { icon: '🔍', label: 'Customer Pattern', prompt: 'Pick a customer to see their buying pattern:' },
+  notes:     { icon: '📝', label: 'Customer Notes',   prompt: 'Pick a customer to see their notes:' },
+  writenote: { icon: '✏️', label: 'Add Note',         prompt: 'Pick a customer to add a note for:' },
 };
+
+/** Entry point for the Add Note activity (tap-driven). */
+async function startAddNoteFlow(bot, chatId, userId, messageId = null) {
+  await showCustomerPickerForReport(bot, chatId, 'writenote', false, messageId);
+}
 
 async function showCustomerPickerForReport(bot, chatId, reportType, showAll = false, messageId = null) {
   const meta = REPORT_PICKER_PROMPTS[reportType];
@@ -1896,20 +1926,50 @@ async function downloadTelegramFile(bot, fileId) {
   });
 }
 
-async function startReceiptFlow(bot, chatId, userId) {
+async function startReceiptFlow(bot, chatId, userId, messageId = null) {
+  sessionStore.set(userId, { type: 'receipt_flow', step: 'customer', createdBy: userId });
+  await showReceiptCustomerPicker(bot, chatId, userId, false, messageId);
+}
+
+/** Customer picker for the receipt flow, top-buyers-first with See-More pagination. */
+async function showReceiptCustomerPicker(bot, chatId, userId, showAll = false, messageId = null) {
   const customersRepoLocal = require('../repositories/customersRepository');
   const allCust = await customersRepoLocal.getAll();
   const active = allCust.filter((c) => (c.status || 'Active').toLowerCase() === 'active' && c.name);
+
+  // Rank by recent purchase volume if transactions repo has data.
+  let ranked = active;
+  try {
+    const txs = await transactionsRepo.getAll();
+    const totals = {};
+    txs.forEach((t) => {
+      const name = (t.customer || '').trim();
+      if (!name) return;
+      totals[name] = (totals[name] || 0) + (Number(t.qty) || 0);
+    });
+    ranked = [...active].sort((a, b) => (totals[b.name] || 0) - (totals[a.name] || 0));
+  } catch (_) { /* keep unsorted if transactions fetch fails */ }
+
+  const CAP = showAll ? ranked.length : 10;
+  const visible = ranked.slice(0, CAP);
   const rows = [];
-  for (let i = 0; i < active.length; i += 2) {
-    const row = [{ text: active[i].name, callback_data: `rcc:${active[i].name.slice(0, 50)}` }];
-    if (active[i + 1]) row.push({ text: active[i + 1].name, callback_data: `rcc:${active[i + 1].name.slice(0, 50)}` });
+  for (let i = 0; i < visible.length; i += 2) {
+    const row = [{ text: `👤 ${visible[i].name}`, callback_data: `rcc:${visible[i].name.slice(0, 50)}` }];
+    if (visible[i + 1]) row.push({ text: `👤 ${visible[i + 1].name}`, callback_data: `rcc:${visible[i + 1].name.slice(0, 50)}` });
     rows.push(row);
   }
-  if (rows.length > 20) rows.splice(20);
+  if (!showAll && ranked.length > CAP) {
+    rows.push([{ text: `📋 See all ${ranked.length} customers`, callback_data: 'rcc:__more__' }]);
+  }
   rows.push([{ text: '➕ Register New Customer', callback_data: 'rcc:__new__' }]);
-  sessionStore.set(userId, { type: 'receipt_flow', step: 'customer', createdBy: userId });
-  await bot.sendMessage(chatId, '🧾 *Upload Payment Receipt*\n\nSelect customer:', { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+  rows.push([{ text: '❌ Cancel', callback_data: 'rccanc:0' }]);
+
+  const label = showAll ? 'All customers' : 'Top customers (by volume)';
+  const text = `🧾 *Upload Payment Receipt*\n\nSelect customer — ${label}:`;
+  await editOrSend(bot, chatId, messageId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
 }
 
 async function handleReceiptFlowText(bot, chatId, userId, text) {
@@ -1922,6 +1982,60 @@ async function handleReceiptFlowText(bot, chatId, userId, text) {
     return true;
   }
 
+  /* ─── Approval-gated new-customer registration from receipt flow (Batch 6) ─── */
+  if (session.step === 'receipt_new_cust_name') {
+    const name = text.trim();
+    if (name.length < 2) {
+      await bot.sendMessage(chatId, 'Name too short, please re-enter:');
+      return true;
+    }
+    session.pendingCustomerName = name;
+    session.step = 'receipt_new_cust_phone';
+    sessionStore.set(userId, session);
+    await bot.sendMessage(chatId, `Got it: *${name}*\n\nEnter phone number (or type "skip"):`, { parse_mode: 'Markdown' });
+    return true;
+  }
+
+  if (session.step === 'receipt_new_cust_phone') {
+    const raw = text.trim();
+    const phone = raw.toLowerCase() === 'skip' ? '' : raw;
+    const name = session.pendingCustomerName;
+    const customerId = `C-${Date.now().toString(36).toUpperCase()}`;
+    const customersRepo2 = require('../repositories/customersRepository');
+    await customersRepo2.append({
+      customer_id: customerId, name, phone, address: '', category: '',
+      credit_limit: 0, payment_terms: '', notes: 'Added via receipt flow',
+      status: 'Pending',
+    });
+    const requestId = genId();
+    await approvalQueueRepository.append({
+      requestId, user: userId,
+      actionJSON: {
+        action: 'new_customer_registration',
+        customer_id: customerId, customer_name: name, phone,
+        requesterUserId: userId, from: 'receipt_flow',
+      },
+      riskReason: 'New customer registration requires admin approval',
+      status: 'pending',
+    });
+    await auditLogRepository.append('approval_queued', { requestId, reason: 'new_customer', from: 'receipt_flow' }, userId);
+    session.pendingCustomerId = customerId;
+    session.customerApprovalId = requestId;
+    session.step = 'awaiting_customer_approval';
+    sessionStore.set(userId, session);
+    const userLabel = await getRequesterDisplayName(userId, null);
+    await approvalEvents.notifyAdminsApprovalRequest(
+      bot, requestId, userLabel,
+      `New Customer Registration\nName: ${name}\nPhone: ${phone || '—'}\n(from receipt flow)`,
+      'New customer requires admin approval',
+    );
+    await bot.sendMessage(chatId,
+      `⏳ Customer "*${name}*" sent for admin approval.\n\nYour receipt upload is *paused* — it will resume once the new customer is approved.`,
+      { parse_mode: 'Markdown' });
+    return true;
+  }
+
+  /* ─── Legacy step kept for back-compat ─── */
   if (session.step === 'customer_new') {
     session.customer = text.trim();
     session.step = 'amount';
@@ -2272,6 +2386,9 @@ async function handleMessage(bot, msg) {
 
   const addBankFlowHandled = await handleAddBankFlowText(bot, chatId, userId, text);
   if (addBankFlowHandled) return;
+
+  const addNoteFlowHandled = await handleAddNoteFlowText(bot, chatId, userId, text);
+  if (addNoteFlowHandled) return;
 
   const receiptFlowHandled = await handleReceiptFlowText(bot, chatId, userId, text);
   if (receiptFlowHandled) return;
@@ -4938,20 +5055,35 @@ async function handleCallbackQuery(bot, callbackQuery) {
   } else if (data.startsWith('rcc:')) {
     const val = data.slice(4);
     const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'receipt_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
     await bot.answerCallbackQuery(callbackQuery.id);
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    if (val === '__more__') {
+      // In-place expand to full customer list.
+      await showReceiptCustomerPicker(bot, chatId, uid, true, callbackQuery.message.message_id);
+      return;
+    }
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
     if (val === '__new__') {
-      session.step = 'customer_new';
+      session.step = 'receipt_new_cust_name';
       sessionStore.set(uid, session);
-      await bot.sendMessage(callbackQuery.message.chat.id, 'Enter new customer name:');
+      await bot.sendMessage(chatId, '📝 Enter *new customer name* (will be sent for 2-admin approval):', { parse_mode: 'Markdown' });
     } else {
       session.customer = val;
       session.step = 'amount';
       sessionStore.set(uid, session);
-      await bot.sendMessage(callbackQuery.message.chat.id, `Customer: *${val}*\n\nEnter the payment amount received (NGN):`, { parse_mode: 'Markdown' });
+      await bot.sendMessage(chatId, `Customer: *${val}*\n\nEnter the payment amount received (NGN):`, { parse_mode: 'Markdown' });
     }
+
+  } else if (data.startsWith('rccanc:')) {
+    const uid = String(callbackQuery.from.id);
+    sessionStore.clear(uid);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
+    await bot.editMessageText('❌ Receipt upload cancelled.', {
+      chat_id: callbackQuery.message.chat.id,
+      message_id: callbackQuery.message.message_id,
+    }).catch(() => {});
 
   } else if (data.startsWith('rcb:')) {
     const bank = data.slice(4);
@@ -5117,6 +5249,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await sendCustomerPatternReport(bot, chatId, customerName);
     } else if (reportType === 'notes') {
       await sendCustomerNotesReport(bot, chatId, customerName);
+    } else if (reportType === 'writenote') {
+      const uid = String(callbackQuery.from.id);
+      sessionStore.set(uid, { type: 'add_note_flow', step: 'note_text', customer: customerName });
+      await bot.sendMessage(chatId,
+        `✏️ *Add Note for ${customerName}*\n\nType the note (e.g. "prefers Shade 3", "wants bulk discount"):`,
+        { parse_mode: 'Markdown' });
     } else {
       await bot.sendMessage(chatId, 'Unknown report type.');
     }
@@ -5245,6 +5383,9 @@ async function handleCallbackQuery(bot, callbackQuery) {
         break;
       case 'customer_notes':
         await showCustomerPickerForReport(bot, chatId, 'notes');
+        break;
+      case 'add_note':
+        await startAddNoteFlow(bot, chatId, uid, messageId);
         break;
       case 'check_stock':
         await showDesignPickerForReport(bot, chatId, 'cks');
