@@ -315,11 +315,11 @@ function aggregateShadeRows(items) {
   return [...byDS.values()].sort((a, b) => b.balYards - a.balYards);
 }
 
-function fmtBar(sold, total) {
+function fmtBar(value, total, label = 'sold') {
   if (!total) return '';
-  const pct = Math.round((sold / total) * 100);
+  const pct = Math.round((value / total) * 100);
   const filled = Math.round(pct / 10);
-  return '▓'.repeat(filled) + '░'.repeat(10 - filled) + ` ${pct}% sold`;
+  return '▓'.repeat(filled) + '░'.repeat(10 - filled) + ` ${pct}% ${label}`;
 }
 
 function buildInventoryWarehouseReport(allItems) {
@@ -644,26 +644,158 @@ function buildSampleStatusReport(samples, title) {
  * rendering logic across `handleMessage` and `handleCallbackQuery`.
  */
 
+function _hist_monthKey(dateStr) {
+  if (!dateStr) return 'unknown';
+  if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) return dateStr.slice(0, 7);
+  const t = new Date(dateStr);
+  if (!isNaN(t.getTime())) return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`;
+  return 'unknown';
+}
+function _hist_dayOf(dateStr) {
+  if (!dateStr) return '--';
+  if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) return dateStr.slice(8, 10);
+  const t = new Date(dateStr);
+  if (!isNaN(t.getTime())) return String(t.getDate()).padStart(2, '0');
+  return '--';
+}
+
 async function sendCustomerHistoryReport(bot, chatId, customerName) {
   const events = await buildCustomerTimeline(customerName);
   if (!events.length) {
     await bot.sendMessage(chatId, `No interaction history found for "${customerName}".`);
     return;
   }
-  const lastAgo = events[0].date
-    ? Math.floor((Date.now() - new Date(events[0].date).getTime()) / 86400000)
-    : '?';
-  let out = `📋 *Customer Timeline — ${customerName}*\n_Last activity: ${lastAgo} days ago_\n\n`;
-  const shown = events.slice(0, 20);
-  for (const e of shown) {
-    const icon = e.type.startsWith('Sale') ? '💰'
-      : e.type.startsWith('Payment') ? '💳'
-      : e.type.startsWith('Order') ? '📦'
-      : e.type.startsWith('Sample') ? '🧪' : '📌';
-    out += `${icon} *${fmtDate(e.date) || '-'}* — ${e.type}\n   ${e.detail}\n\n`;
+
+  // Pull raw sales rows so we can (a) compute accurate lifetime/recent totals
+  // and (b) collapse multi-package same-day buys into a single line.
+  const allInv = await inventoryRepository.getAll();
+  const sold = allInv.filter(
+    (r) => r.status === 'sold' && r.soldTo && r.soldTo.toLowerCase() === customerName.toLowerCase(),
+  );
+
+  const totalPkgs = new Set(sold.map((r) => r.packageNo)).size;
+  const totalYards = sold.reduce((s, r) => s + (r.yards || 0), 0);
+  const totalValue = sold.reduce((s, r) => s + (r.yards || 0) * (r.pricePerYard || 0), 0);
+
+  const cutoff30 = Date.now() - 30 * 86400000;
+  const recentSold = sold.filter((r) => {
+    const t = r.soldDate ? new Date(r.soldDate).getTime() : NaN;
+    return Number.isFinite(t) && t >= cutoff30;
+  });
+  const recentYards = recentSold.reduce((s, r) => s + (r.yards || 0), 0);
+  const recentValue = recentSold.reduce((s, r) => s + (r.yards || 0) * (r.pricePerYard || 0), 0);
+  const recentTrips = new Set(recentSold.map((r) => r.soldDate)).size;
+
+  const soldDates = sold.map((r) => r.soldDate).filter(Boolean).sort();
+  const firstSoldDate = soldDates[0];
+  const lastSoldDate = soldDates[soldDates.length - 1];
+
+  const lastMs = events[0].date ? new Date(events[0].date).getTime() : NaN;
+  const lastAgo = Number.isFinite(lastMs)
+    ? `${Math.floor((Date.now() - lastMs) / 86400000)} days ago`
+    : '—';
+
+  // ─── Header: at-a-glance summary ─────────────────────────────────────────
+  let out = `👤 *${customerName}*\n`;
+  if (firstSoldDate && lastSoldDate) {
+    out += `🗓 Active: ${fmtDate(firstSoldDate)} → ${fmtDate(lastSoldDate)}\n`;
   }
-  if (events.length > 20) out += `_... and ${events.length - 20} more interactions_\n`;
-  out += `*Total: ${events.length} interactions*`;
+  out += `💰 Lifetime: ${totalPkgs} pkgs, ${fmtQty(totalYards)} yds`;
+  out += totalValue > 0 ? ` — ${fmtMoney(totalValue)}\n` : `\n`;
+  if (recentSold.length > 0) {
+    out += `📈 Last 30d: ${recentTrips} trip${recentTrips > 1 ? 's' : ''}, ${fmtQty(recentYards)} yds`;
+    out += recentValue > 0 ? ` — ${fmtMoney(recentValue)}\n` : `\n`;
+  }
+  out += `⏰ Last activity: ${lastAgo}\n\n`;
+
+  // ─── Collapse sales: one line per (date + design + shade) ────────────────
+  const soldByKey = new Map();
+  for (const r of sold) {
+    const key = `${r.soldDate}|${r.design}|${r.shade || '-'}`;
+    if (!soldByKey.has(key)) {
+      soldByKey.set(key, { date: r.soldDate, design: r.design, shade: r.shade || '-', pkgs: new Set(), yards: 0, value: 0 });
+    }
+    const g = soldByKey.get(key);
+    g.pkgs.add(r.packageNo);
+    g.yards += r.yards || 0;
+    g.value += (r.yards || 0) * (r.pricePerYard || 0);
+  }
+  const collapsedSales = [...soldByKey.values()].map((g) => {
+    const pkgTxt = `${g.pkgs.size} pkg${g.pkgs.size > 1 ? 's' : ''}`;
+    const valueTxt = g.value > 0 ? ` — ${fmtMoney(g.value)}` : '';
+    return {
+      date: g.date,
+      kind: 'sale',
+      text: `Bought ${pkgTxt} of ${g.design} Shade ${g.shade} — ${fmtQty(g.yards)} yds${valueTxt}`,
+    };
+  });
+
+  // ─── Non-sale events in plain language ───────────────────────────────────
+  const otherEvents = events
+    .filter((e) => !e.type.startsWith('Sale'))
+    .map((e) => {
+      let kind, text;
+      if (e.type.startsWith('Payment')) { kind = 'pay'; text = `Paid ${e.detail}`; }
+      else if (e.type.startsWith('Order')) {
+        const status = (e.type.match(/\(([^)]+)\)/) || [])[1] || 'pending';
+        const verb = status === 'delivered' ? 'Order delivered'
+                   : status === 'accepted' ? 'Order accepted'
+                   : status === 'cancelled' ? 'Order cancelled'
+                   : 'Order placed';
+        kind = 'order';
+        text = `${verb} — ${e.detail}`;
+      } else if (e.type.startsWith('Sample')) {
+        const status = (e.type.match(/\(([^)]+)\)/) || [])[1] || 'given';
+        kind = 'sample';
+        text = `Sample ${status} — ${e.detail}`;
+      } else {
+        kind = 'other';
+        text = `${e.type}: ${e.detail}`;
+      }
+      return { date: e.date, kind, text };
+    });
+
+  const allItems = [...collapsedSales, ...otherEvents]
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  // ─── Group by month for easy scanning ────────────────────────────────────
+  const byMonth = new Map();
+  for (const item of allItems) {
+    const mk = _hist_monthKey(item.date);
+    if (!byMonth.has(mk)) byMonth.set(mk, []);
+    byMonth.get(mk).push(item);
+  }
+
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const MAX_ITEMS = 30;
+  let shown = 0;
+  for (const [mk, items] of byMonth) {
+    if (shown >= MAX_ITEMS) break;
+    let label;
+    if (mk === 'unknown') {
+      label = 'Older';
+    } else {
+      const [y, m] = mk.split('-');
+      label = `${MONTHS[parseInt(m, 10) - 1]} ${y}`;
+    }
+    out += `━━━ *${label}* ━━━\n`;
+    for (const item of items) {
+      if (shown >= MAX_ITEMS) break;
+      const icon = item.kind === 'sale' ? '💰'
+        : item.kind === 'pay' ? '💳'
+        : item.kind === 'order' ? '📦'
+        : item.kind === 'sample' ? '🧪'
+        : '📌';
+      out += `${icon} ${_hist_dayOf(item.date)}  ${item.text}\n`;
+      shown++;
+    }
+    out += `\n`;
+  }
+
+  const totalItems = allItems.length;
+  if (totalItems > MAX_ITEMS) out += `_...and ${totalItems - MAX_ITEMS} earlier interaction${totalItems - MAX_ITEMS > 1 ? 's' : ''}_\n`;
+  out += `*${totalItems} total interaction${totalItems > 1 ? 's' : ''}*`;
+
   await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
 }
 
@@ -673,17 +805,29 @@ async function sendCustomerPatternReport(bot, chatId, customerName) {
     await bot.sendMessage(chatId, `No purchase data found for "${customerName}".`);
     return;
   }
+  const hasPrices = pattern.totalValue > 0;
+  const rankBasis = hasPrices ? pattern.totalValue : pattern.totalYards;
+  const sortedItems = hasPrices
+    ? pattern.items
+    : [...pattern.items].sort((a, b) => b.yards - a.yards);
+
   let out = `🔍 *Purchase Pattern — ${customerName}*\n\n`;
-  out += `📅 First purchase: ${pattern.firstDate} | Last: ${pattern.lastDate}\n`;
-  out += `📊 Lifetime: ${pattern.totalPkgs} pkgs, ${pattern.totalThans} thans, ${fmtQty(pattern.totalYards)} yds — ${fmtMoney(pattern.totalValue)}\n\n`;
-  out += `*Preferred Items (by value):*\n`;
+  out += `📅 First purchase: ${fmtDate(pattern.firstDate) || pattern.firstDate} | Last: ${fmtDate(pattern.lastDate) || pattern.lastDate}\n`;
+  out += `📊 Lifetime: ${pattern.totalPkgs} pkgs, ${pattern.totalThans} thans, ${fmtQty(pattern.totalYards)} yds`;
+  out += hasPrices ? ` — ${fmtMoney(pattern.totalValue)}\n\n` : `\n_(no price data available for these sales)_\n\n`;
+  out += hasPrices ? `*Preferred Items (by value):*\n` : `*Preferred Items (by volume):*\n`;
   let rank = 0;
-  for (const ds of pattern.items) {
+  for (const ds of sortedItems) {
     rank++;
-    const pct = Math.round((ds.value / pattern.totalValue) * 100);
-    out += `${rank}. ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} pkgs, ${fmtQty(ds.yards)} yds — ${fmtMoney(ds.value)} (${pct}%)\n`;
+    const thisMetric = hasPrices ? ds.value : ds.yards;
+    const pct = rankBasis > 0 ? Math.round((thisMetric / rankBasis) * 100) : 0;
+    const valueStr = hasPrices ? ` — ${fmtMoney(ds.value)}` : '';
+    out += `${rank}. ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} pkgs, ${fmtQty(ds.yards)} yds${valueStr} (${pct}%)\n`;
   }
-  out += `\n*Top design: ${pattern.items[0].design} Shade ${pattern.items[0].shade} (${Math.round((pattern.items[0].value / pattern.totalValue) * 100)}% of total)*`;
+  const top = sortedItems[0];
+  const topMetric = hasPrices ? top.value : top.yards;
+  const topPct = rankBasis > 0 ? Math.round((topMetric / rankBasis) * 100) : 0;
+  out += `\n*Top design: ${top.design} Shade ${top.shade} (${topPct}% of ${hasPrices ? 'value' : 'volume'})*`;
   await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
 }
 
@@ -708,18 +852,21 @@ async function sendCustomerRankingReport(bot, chatId) {
     await bot.sendMessage(chatId, 'No sales data found.');
     return;
   }
-  let out = `🏆 *Customer Ranking — Top ${Math.min(ranked.length, 20)} by Value*\n\n`;
+  const topValue = ranked[0][1].value;
+  let out = `🏆 *Customer Ranking — Top ${Math.min(ranked.length, 20)} by Value*\n`;
+  out += `_Bar shows each customer's value as % of #1 buyer (${fmtMoney(topValue)})_\n\n`;
   let rank = 0;
   const medals = ['🥇', '🥈', '🥉'];
   for (const [name, c] of ranked.slice(0, 20)) {
     const medal = rank < 3 ? medals[rank] : `${rank + 1}.`;
-    const daysAgo = c.lastDate
-      ? Math.floor((Date.now() - new Date(c.lastDate).getTime()) / 86400000)
-      : '?';
+    const lastMs = c.lastDate ? new Date(c.lastDate).getTime() : NaN;
+    const daysAgo = Number.isFinite(lastMs)
+      ? `${Math.floor((Date.now() - lastMs) / 86400000)}d ago`
+      : (c.lastDate ? fmtDate(c.lastDate) : '—');
     out += `${medal} *${name}*\n`;
     out += `   ${c.pkgs.size} pkgs, ${c.thans} thans, ${fmtQty(c.yards)} yds\n`;
-    out += `   Value: ${fmtMoney(c.value)} | Last: ${daysAgo}d ago\n`;
-    out += `   ${fmtBar(c.value, ranked[0][1].value)}\n\n`;
+    out += `   Value: ${fmtMoney(c.value)} | Last: ${daysAgo}\n`;
+    out += `   ${fmtBar(c.value, topValue, 'of #1')}\n\n`;
     rank++;
   }
   const grandValue = ranked.reduce((s, [, c]) => s + c.value, 0);
@@ -727,7 +874,11 @@ async function sendCustomerRankingReport(bot, chatId) {
   await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
 }
 
-async function sendSampleStatusReport(bot, chatId, design = null) {
+async function sendSampleStatusReport(bot, chatId, options = {}) {
+  // Back-compat: a plain string arg used to mean `design`.
+  if (typeof options === 'string') options = { design: options };
+  const { design = null, daysBack = null } = options || {};
+
   let samples;
   let title;
   if (design) {
@@ -736,10 +887,49 @@ async function sendSampleStatusReport(bot, chatId, design = null) {
     title = `📋 *Sample Status — Design ${design}*`;
   } else {
     samples = await samplesRepo.getActive();
-    title = '📋 *Sample Status — All Active*';
+    if (daysBack && Number.isFinite(daysBack)) {
+      const cutoff = Date.now() - daysBack * 86400000;
+      samples = samples.filter((s) => {
+        const t = s.date_given ? new Date(s.date_given).getTime() : NaN;
+        return Number.isFinite(t) && t >= cutoff;
+      });
+      title = `📋 *Sample Status — Last ${daysBack} days*`;
+    } else {
+      title = '📋 *Sample Status — All Active*';
+    }
+  }
+  if (!samples.length) {
+    const hint = daysBack ? ` in the last ${daysBack} days` : '';
+    await bot.sendMessage(chatId, `No active samples found${hint}.`);
+    return;
   }
   const report = buildSampleStatusReport(samples, title);
   await sendLong(bot, chatId, report, { parse_mode: 'Markdown' });
+}
+
+/** Date-range picker shown when user taps the Sample Status button. */
+async function showSampleStatusDatePicker(bot, chatId, messageId = null) {
+  const text = '🧪 *Sample Status*\n\nPick a time window:';
+  const markup = {
+    inline_keyboard: [
+      [
+        { text: '📅 Last 7 days',  callback_data: 'smsd:7' },
+        { text: '📅 Last 30 days', callback_data: 'smsd:30' },
+      ],
+      [
+        { text: '📅 Last 90 days', callback_data: 'smsd:90' },
+        { text: '📋 All active',   callback_data: 'smsd:all' },
+      ],
+    ],
+  };
+  const opts = { parse_mode: 'Markdown', reply_markup: markup };
+  if (messageId) {
+    await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...opts }).catch(async () => {
+      await bot.sendMessage(chatId, text, opts);
+    });
+  } else {
+    await bot.sendMessage(chatId, text, opts);
+  }
 }
 
 /* ─── Customer Picker for Report Buttons ──────────────────────────────────
@@ -759,7 +949,7 @@ const REPORT_PICKER_PROMPTS = {
   notes:   { icon: '📝', label: 'Customer Notes',   prompt: 'Pick a customer to see their notes:' },
 };
 
-async function showCustomerPickerForReport(bot, chatId, reportType, showAll = false) {
+async function showCustomerPickerForReport(bot, chatId, reportType, showAll = false, messageId = null) {
   const meta = REPORT_PICKER_PROMPTS[reportType];
   if (!meta) return;
 
@@ -769,7 +959,11 @@ async function showCustomerPickerForReport(bot, chatId, reportType, showAll = fa
     .sort((a, b) => a.name.localeCompare(b.name));
 
   if (!active.length) {
-    await bot.sendMessage(chatId, 'No active customers found.');
+    if (messageId) {
+      await bot.editMessageText('No active customers found.', { chat_id: chatId, message_id: messageId }).catch(() => {});
+    } else {
+      await bot.sendMessage(chatId, 'No active customers found.');
+    }
     return;
   }
 
@@ -787,10 +981,171 @@ async function showCustomerPickerForReport(bot, chatId, reportType, showAll = fa
     rows.push([{ text: `📋 See All (${active.length})`, callback_data: `rpt:${reportType}:__more__` }]);
   }
 
-  await bot.sendMessage(chatId, `${meta.icon} *${meta.label}*\n\n${meta.prompt}`, {
-    parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: rows },
+  const text = `${meta.icon} *${meta.label}*\n\n${meta.prompt}`;
+  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
+
+  if (messageId) {
+    await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...opts }).catch(async () => {
+      await bot.sendMessage(chatId, text, opts);
+    });
+  } else {
+    await bot.sendMessage(chatId, text, opts);
+  }
+}
+
+/* ─── Design Picker for Report Buttons ────────────────────────────────────
+ * Shared picker used by button-triggered reports that need a design pick
+ * (list_packages, check_stock). Emits callback_data `<prefix>:<design>` and
+ * `<prefix>:__more__` to expand the full list. In-place edits supported.
+ */
+const DESIGN_PICKER_PROMPTS = {
+  lpk: { icon: '📋', label: 'List Packages', prompt: 'Pick a design to see its packages:' },
+  cks: { icon: '📦', label: 'Check Stock',   prompt: 'Pick a design to see available stock:' },
+};
+
+async function showDesignPickerForReport(bot, chatId, prefix, showAll = false, messageId = null) {
+  const meta = DESIGN_PICKER_PROMPTS[prefix];
+  if (!meta) return;
+
+  const raw = await inventoryRepository.getDistinctDesigns();
+  const designs = [...new Set(raw.map((d) => (d.design || '').trim()).filter(Boolean))].sort();
+
+  if (!designs.length) {
+    const msg = 'No designs found in inventory.';
+    if (messageId) {
+      await bot.editMessageText(msg, { chat_id: chatId, message_id: messageId }).catch(() => {});
+    } else {
+      await bot.sendMessage(chatId, msg);
+    }
+    return;
+  }
+
+  const MAX_VISIBLE = 12;
+  const visible = showAll ? designs : designs.slice(0, MAX_VISIBLE);
+  const rows = [];
+  for (let i = 0; i < visible.length; i += 3) {
+    const row = [];
+    for (let j = i; j < i + 3 && j < visible.length; j++) {
+      row.push({ text: visible[j], callback_data: `${prefix}:${visible[j].slice(0, 55)}` });
+    }
+    rows.push(row);
+  }
+  if (!showAll && designs.length > MAX_VISIBLE) {
+    rows.push([{ text: `📋 See All (${designs.length})`, callback_data: `${prefix}:__more__` }]);
+  }
+
+  const text = `${meta.icon} *${meta.label}*\n\n${meta.prompt}`;
+  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
+
+  if (messageId) {
+    await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...opts }).catch(async () => {
+      await bot.sendMessage(chatId, text, opts);
+    });
+  } else {
+    await bot.sendMessage(chatId, text, opts);
+  }
+}
+
+/** Reusable List Packages report — mirrors the text intent handler. */
+async function sendListPackagesReport(bot, chatId, design, shade = null) {
+  const packages = await inventoryService.listPackages(design, shade);
+  if (!packages.length) {
+    await bot.sendMessage(chatId, `No packages found for design ${design}${shade ? ' ' + shade : ''}.`);
+    return;
+  }
+  let reply = `📋 *Packages for ${design}${shade ? ' ' + shade : ''}:*\n\n`;
+  packages.forEach((p) => {
+    reply += `Pkg ${p.packageNo} (${p.warehouse}): ${p.available}/${p.total} thans avail, ${fmtQty(p.availableYards)} yds\n`;
   });
+  const totalAvail = packages.reduce((s, p) => s + p.availableYards, 0);
+  reply += `\n*Total: ${packages.length} packages, ${fmtQty(totalAvail)} yards*`;
+  await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
+}
+
+/** Reusable Check Stock report — shows totals + shade/warehouse breakdown. */
+async function sendCheckStockReport(bot, chatId, design) {
+  const stock = await inventoryService.checkStock({ design });
+  if (!stock || stock.totalThans === 0) {
+    await bot.sendMessage(chatId, `⚠️ No available stock for design ${design}.`);
+    return;
+  }
+  let reply = `📦 *Stock — Design ${design}*\n`;
+  const labels = await productTypesRepo.getLabels('fabric');
+  reply += `Available: ${stock.totalPackages} ${productTypesRepo.pluralize(labels.container_label, stock.totalPackages).toLowerCase()} `;
+  reply += `(${stock.totalThans} ${productTypesRepo.pluralize(labels.subunit_label, stock.totalThans).toLowerCase()}), `;
+  reply += `${fmtQty(stock.totalYards)} ${labels.measure_unit}\n`;
+  reply += `Value: ${fmtMoney(stock.totalValue)}\n`;
+
+  // Break down by shade + warehouse for a richer picture
+  const allInv = await inventoryRepository.getAll();
+  const avail = allInv.filter((r) => r.status === 'available' && r.design === design);
+  if (avail.length) {
+    const byShade = new Map();
+    for (const r of avail) {
+      const sh = r.shade || '-';
+      if (!byShade.has(sh)) byShade.set(sh, { pkgs: new Set(), yards: 0, warehouses: new Map() });
+      const s = byShade.get(sh);
+      s.pkgs.add(r.packageNo);
+      s.yards += r.yards || 0;
+      s.warehouses.set(r.warehouse, (s.warehouses.get(r.warehouse) || 0) + 1);
+    }
+    reply += `\n*By shade:*\n`;
+    for (const [sh, s] of [...byShade.entries()].sort((a, b) => b[1].yards - a[1].yards)) {
+      const whList = [...s.warehouses.keys()].join(', ');
+      reply += `  Shade ${sh}: ${s.pkgs.size} pkgs, ${fmtQty(s.yards)} yds (${whList})\n`;
+    }
+  }
+  await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
+}
+
+/** Reusable Mark-Order-Delivered executor — shared by text intent and button. */
+async function executeMarkOrderDelivered(bot, chatId, userId, orderId) {
+  const order = await ordersRepo.getById(orderId);
+  if (!order) {
+    await bot.sendMessage(chatId, `Order ${orderId} not found.`);
+    return;
+  }
+  if (order.salesperson_id !== userId) {
+    await bot.sendMessage(chatId, 'You can only mark your own assigned orders as delivered.');
+    return;
+  }
+  if (order.status === 'delivered') {
+    await bot.sendMessage(chatId, `Order ${orderId} is already marked as delivered.`);
+    return;
+  }
+  if (order.status !== 'accepted') {
+    await bot.sendMessage(chatId, `Order ${orderId} must be accepted before it can be marked delivered. Current status: ${order.status}`);
+    return;
+  }
+  await ordersRepo.updateStatus(orderId, 'delivered', { delivered_at: new Date().toISOString() });
+  await bot.sendMessage(chatId, `✅ Order ${orderId} marked as delivered.`);
+  for (const adminId of config.access.adminIds) {
+    try {
+      await bot.sendMessage(adminId, `📦 Order *${orderId}* has been delivered.\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQty: ${order.quantity}\nDelivered by: ${order.salesperson_name}`, { parse_mode: 'Markdown' });
+    } catch (_) {}
+  }
+}
+
+/** Picker showing the user's own pending (accepted, not delivered) orders. */
+async function showMarkDeliveredPicker(bot, chatId, userId) {
+  const all = await ordersRepo.getAll();
+  const mine = all.filter((o) => o.salesperson_id === userId && o.status === 'accepted');
+  if (!mine.length) {
+    await bot.sendMessage(chatId, 'You have no accepted orders awaiting delivery.');
+    return;
+  }
+  mine.sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
+
+  let header = '📦 *Mark Order Delivered*\n\nPick an order to mark as delivered:\n\n';
+  const rows = [];
+  const MAX = 10;
+  for (const o of mine.slice(0, MAX)) {
+    const date = fmtDate(o.created_at) || (o.created_at || '').slice(0, 10);
+    header += `• *${o.order_id}* — ${o.design}${o.shade ? ' ' + o.shade : ''} | ${o.customer} | Qty ${o.quantity} | ${date}\n`;
+    rows.push([{ text: `✅ ${o.order_id} — ${o.customer}`, callback_data: `mdo:${o.order_id}` }]);
+  }
+  if (mine.length > MAX) header += `\n_Showing first ${MAX} of ${mine.length}_`;
+  await bot.sendMessage(chatId, header, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
 /** Handle text replies during an active order creation session. Returns true if consumed. */
@@ -1310,18 +1665,7 @@ async function handleMessage(bot, msg) {
           await bot.sendMessage(chatId, 'Which design? e.g. "Show packages for design 44200"');
           return;
         }
-        const packages = await inventoryService.listPackages(intent.design, intent.shade);
-        if (!packages.length) {
-          await bot.sendMessage(chatId, `No packages found for design ${intent.design}${intent.shade ? ' ' + intent.shade : ''}.`);
-          return;
-        }
-        let reply = `📋 *Packages for ${intent.design}${intent.shade ? ' ' + intent.shade : ''}:*\n\n`;
-        packages.forEach((p) => {
-          reply += `Pkg ${p.packageNo} (${p.warehouse}): ${p.available}/${p.total} thans avail, ${fmtQty(p.availableYards)} yds\n`;
-        });
-        const totalAvail = packages.reduce((s, p) => s + p.availableYards, 0);
-        reply += `\n*Total: ${packages.length} packages, ${fmtQty(totalAvail)} yards*`;
-        await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
+        await sendListPackagesReport(bot, chatId, intent.design, intent.shade || null);
         return;
       }
 
@@ -2199,30 +2543,7 @@ async function handleMessage(bot, msg) {
           await bot.sendMessage(chatId, 'Please specify order ID. Example: "Mark order ORD-20260221-001 delivered".');
           return;
         }
-        const order = await ordersRepo.getById(oid);
-        if (!order) {
-          await bot.sendMessage(chatId, `Order ${oid} not found.`);
-          return;
-        }
-        if (order.salesperson_id !== userId) {
-          await bot.sendMessage(chatId, 'You can only mark your own assigned orders as delivered.');
-          return;
-        }
-        if (order.status === 'delivered') {
-          await bot.sendMessage(chatId, `Order ${oid} is already marked as delivered.`);
-          return;
-        }
-        if (order.status !== 'accepted') {
-          await bot.sendMessage(chatId, `Order ${oid} must be accepted before it can be marked delivered. Current status: ${order.status}`);
-          return;
-        }
-        await ordersRepo.updateStatus(oid, 'delivered', { delivered_at: new Date().toISOString() });
-        await bot.sendMessage(chatId, `✅ Order ${oid} marked as delivered.`);
-        for (const adminId of config.access.adminIds) {
-          try {
-            await bot.sendMessage(adminId, `📦 Order *${oid}* has been delivered.\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQty: ${order.quantity}\nDelivered by: ${order.salesperson_name}`, { parse_mode: 'Markdown' });
-          } catch (_) {}
-        }
+        await executeMarkOrderDelivered(bot, chatId, userId, oid);
         return;
       }
 
@@ -3724,9 +4045,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.answerCallbackQuery(callbackQuery.id);
 
     if (payload === '__more__') {
-      await bot.editMessageReplyMarkup({ inline_keyboard: [] },
-        { chat_id: chatId, message_id: messageId }).catch(() => {});
-      await showCustomerPickerForReport(bot, chatId, reportType, true);
+      await showCustomerPickerForReport(bot, chatId, reportType, true, messageId);
       return;
     }
 
@@ -3746,6 +4065,56 @@ async function handleCallbackQuery(bot, callbackQuery) {
     } else {
       await bot.sendMessage(chatId, 'Unknown report type.');
     }
+
+  /* ─── SAMPLE STATUS DATE WINDOW ─── */
+  } else if (data.startsWith('smsd:')) {
+    const val = data.slice(5);
+    const chatId = callbackQuery.message.chat.id;
+    const messageId = callbackQuery.message.message_id;
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+      { chat_id: chatId, message_id: messageId }).catch(() => {});
+    const opts = val === 'all' ? {} : { daysBack: parseInt(val, 10) };
+    await sendSampleStatusReport(bot, chatId, opts);
+
+  /* ─── LIST PACKAGES: DESIGN PICK ─── */
+  } else if (data.startsWith('lpk:')) {
+    const design = data.slice(4);
+    const chatId = callbackQuery.message.chat.id;
+    const messageId = callbackQuery.message.message_id;
+    await bot.answerCallbackQuery(callbackQuery.id);
+    if (design === '__more__') {
+      await showDesignPickerForReport(bot, chatId, 'lpk', true, messageId);
+      return;
+    }
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+      { chat_id: chatId, message_id: messageId }).catch(() => {});
+    await sendListPackagesReport(bot, chatId, design);
+
+  /* ─── CHECK STOCK: DESIGN PICK ─── */
+  } else if (data.startsWith('cks:')) {
+    const design = data.slice(4);
+    const chatId = callbackQuery.message.chat.id;
+    const messageId = callbackQuery.message.message_id;
+    await bot.answerCallbackQuery(callbackQuery.id);
+    if (design === '__more__') {
+      await showDesignPickerForReport(bot, chatId, 'cks', true, messageId);
+      return;
+    }
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+      { chat_id: chatId, message_id: messageId }).catch(() => {});
+    await sendCheckStockReport(bot, chatId, design);
+
+  /* ─── MARK ORDER DELIVERED: ORDER PICK ─── */
+  } else if (data.startsWith('mdo:')) {
+    const oid = data.slice(4);
+    const chatId = callbackQuery.message.chat.id;
+    const messageId = callbackQuery.message.message_id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+      { chat_id: chatId, message_id: messageId }).catch(() => {});
+    await executeMarkOrderDelivered(bot, chatId, uid, oid);
 
   /* ─── GREETING MENU ACTIVITY TAP ─── */
   } else if (data.startsWith('act:')) {
@@ -3798,7 +4167,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         break;
       }
       case 'mark_delivered':
-        await bot.sendMessage(chatId, 'Type: "Mark order ORD-XXXXXXXX-XXX delivered"');
+        await showMarkDeliveredPicker(bot, chatId, uid);
         break;
       case 'give_sample':
         await bot.sendMessage(chatId, 'Type: "Give sample of DESIGN to CUSTOMER"');
@@ -3823,10 +4192,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
         await showCustomerPickerForReport(bot, chatId, 'notes');
         break;
       case 'check_stock':
-        await bot.sendMessage(chatId, 'Type: "How much DESIGN SHADE do we have?" or "Stock in WAREHOUSE"');
+        await showDesignPickerForReport(bot, chatId, 'cks');
         break;
       case 'list_packages':
-        await bot.sendMessage(chatId, 'Type: "Show packages for design DESIGN_NUMBER"');
+        await showDesignPickerForReport(bot, chatId, 'lpk');
         break;
       case 'inventory_details': {
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
@@ -3862,7 +4231,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
       }
       case 'sample_status': {
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Sample status report is admin-only.'); break; }
-        await sendSampleStatusReport(bot, chatId);
+        await showSampleStatusDatePicker(bot, chatId);
         break;
       }
       case 'manage_users': {
