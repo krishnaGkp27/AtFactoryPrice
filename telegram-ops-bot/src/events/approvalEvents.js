@@ -205,10 +205,32 @@ async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, it
     if (result.ok) {
       let driveInfo = null;
       try { driveInfo = await uploadSaleDocToDrive(bot, item, requestId); } catch (_) {}
-      let msg = `✅ Request ${requestId} approved. Sale and ledger updated.`;
+      // Fix B — if any items silently failed inside the bundle, show them
+      // loudly to both the approving admin and the requesting employee.
+      const rep = result.bundleReport;
+      const partial = rep && rep.failedItems && rep.failedItems.length > 0;
+      let partialTail = '';
+      if (partial) {
+        const lines = rep.failedItems.map((f) => {
+          const base = f.type === 'than'
+            ? `Bale ${f.packageNo} Than ${f.thanNo}`
+            : `Bale ${f.packageNo}`;
+          return `  • ${base}: ${f.reason}`;
+        }).join('\n');
+        const balesWord = rep.appliedPkgCount === 1 ? 'Bale' : 'Bales';
+        partialTail = `\n\n⚠️ Partial apply — ${rep.failedItems.length} of ${rep.requestedItems} item(s) did NOT apply (${rep.appliedPkgCount} ${balesWord} / ${rep.appliedThans} thans / ${rep.appliedYards} yds were recorded):\n${lines}`;
+      }
+      const balesWordMsg = rep && rep.appliedPkgCount === 1 ? 'Bale' : 'Bales';
+      let msg = partial
+        ? `⚠️ Request ${requestId} approved, but applied only ${rep.appliedPkgCount} of ${rep.requestedItems} ${balesWordMsg}. Ledger updated for what was applied.`
+        : `✅ Request ${requestId} approved. Sale and ledger updated.`;
+      msg += partialTail;
       if (driveInfo) msg += `\n📎 [View Sales Bill](${driveInfo.webViewLink})`;
       await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', disable_web_page_preview: true });
-      await notifyEmployee(bot, requestingUser, requestId, `✅ Your request (${requestId}) has been approved by admin. Sale and ledger updated.`);
+      const employeeMsg = partial
+        ? `⚠️ Your request (${requestId}) was approved, but only ${rep.appliedPkgCount} of ${rep.requestedItems} ${balesWordMsg} could be applied. ${rep.failedItems.length} item(s) were stale/invalid and skipped. Please check with admin.${partialTail}`
+        : `✅ Your request (${requestId}) has been approved by admin. Sale and ledger updated.`;
+      await notifyEmployee(bot, requestingUser, requestId, employeeMsg);
       const customer = item?.actionJSON?.customer || item?.actionJSON?.customerName;
       if (customer) {
         try {
@@ -517,10 +539,10 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: [
               [
-                { text: '1 pkg',  callback_data: 'oq:1' },
-                { text: '2 pkgs', callback_data: 'oq:2' },
-                { text: '5 pkgs', callback_data: 'oq:5' },
-                { text: '10 pkgs', callback_data: 'oq:10' },
+                { text: '1 Bale',  callback_data: 'oq:1' },
+                { text: '2 Bales', callback_data: 'oq:2' },
+                { text: '5 Bales', callback_data: 'oq:5' },
+                { text: '10 Bales', callback_data: 'oq:10' },
               ],
               [{ text: '✏️ Custom', callback_data: 'oq:__custom__' }],
               [{ text: '❌ Cancel', callback_data: 'ocanc:1' }],

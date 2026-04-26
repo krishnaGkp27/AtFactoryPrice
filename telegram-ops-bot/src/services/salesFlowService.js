@@ -147,18 +147,18 @@ async function buildSummary(session) {
     if (item.type === 'package') {
       const info = await inventoryService.getPackageSummary(item.packageNo);
       if (info) {
-        text += `  Pkg ${item.packageNo}: ${info.design} ${info.shade}, ${info.availableThans} thans, ${fmtQty(info.availableYards)} yds (${info.warehouse})\n`;
+        text += `  Bale ${item.packageNo}: ${info.design} ${info.shade}, ${info.availableThans} thans, ${fmtQty(info.availableYards)} yds (${info.warehouse})\n`;
         totalThans += info.availableThans;
         totalYards += info.availableYards;
         totalValue += info.availableYards * info.pricePerYard;
       } else {
-        text += `  Pkg ${item.packageNo}: not found\n`;
+        text += `  Bale ${item.packageNo}: not found\n`;
       }
     } else if (item.type === 'than') {
       const info = await inventoryService.getPackageSummary(item.packageNo);
       const than = info?.thans?.find((t) => t.thanNo === item.thanNo);
       if (than) {
-        text += `  Pkg ${item.packageNo} Than ${item.thanNo}: ${fmtQty(than.yards)} yds\n`;
+        text += `  Bale ${item.packageNo} Than ${item.thanNo}: ${fmtQty(than.yards)} yds\n`;
         totalThans += 1;
         totalYards += than.yards;
         totalValue += than.yards * (info.pricePerYard || 0);
@@ -166,7 +166,7 @@ async function buildSummary(session) {
     }
   }
   const totalPkgs = new Set(items.map((i) => i.packageNo)).size;
-  text += `\n  Total: ${totalPkgs} packages (${totalThans} thans), ${fmtQty(totalYards)} yards, ${fmtMoney(totalValue)}`;
+  text += `\n  Total: ${totalPkgs} Bale${totalPkgs === 1 ? '' : 's'} (${totalThans} thans), ${fmtQty(totalYards)} yards, ${fmtMoney(totalValue)}`;
   return text;
 }
 

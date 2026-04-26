@@ -146,7 +146,7 @@ async function indentStatus(indent) {
   let text = `📋 *Indent Status${indent ? ' — ' + indent : ''}*\n\n`;
   Array.from(map.values()).forEach((g) => {
     const pct = g.total > 0 ? Math.round((g.sold / g.total) * 100) : 0;
-    text += `${g.indent}: ${g.pkgs.size} pkgs, ${g.available}/${g.total} thans avail, ${fmtQty(g.availYards)} yds remaining (${pct}% sold)\n`;
+    text += `${g.indent}: ${g.pkgs.size} Bales, ${g.available}/${g.total} thans avail, ${fmtQty(g.availYards)} yds remaining (${pct}% sold)\n`;
   });
   if (!map.size) text += 'No indent data found.';
   return text;
@@ -261,7 +261,7 @@ async function freeFormQuery(userQuestion) {
   const designSummary = Array.from(byDesign.values()).map((d) => `${d.design} ${d.shade}: ${d.availPkgs.size} pkgs avail (${d.availThans} thans, ${d.availYards} yds, ${CURRENCY}${d.value}), ${d.soldPkgs.size} pkgs sold (${d.soldThans} thans, ${d.soldYards} yds), buyers: ${Array.from(d.customers).join(', ') || 'none'}`).join('\n');
   const whSummary = Array.from(byWarehouse.entries()).map(([w, g]) => `${w || 'Unassigned'}: ${g.availPkgs.size} pkgs (${g.availThans} thans, ${g.availYards} yds, ${CURRENCY}${g.value})`).join('\n');
   const custSummary = Array.from(byCustomer.entries()).map(([c, g]) => `${c}: ${g.pkgs.size} pkgs (${g.thans} thans, ${g.yards} yds, ${CURRENCY}${g.value}), designs: ${Array.from(g.designs).join(', ')}`).join('\n');
-  const indentSummary = Array.from(byIndent.entries()).map(([i, g]) => `${i}: ${g.pkgs.size} pkgs, ${g.avail}/${g.total} thans avail (${Math.round(g.sold / g.total * 100)}% sold)`).join('\n');
+  const indentSummary = Array.from(byIndent.entries()).map(([i, g]) => `${i}: ${g.pkgs.size} Bales, ${g.avail}/${g.total} thans avail (${Math.round(g.sold / g.total * 100)}% sold)`).join('\n');
 
   const dataContext = `INVENTORY DATA SUMMARY (currency: ${CURRENCY}):
 

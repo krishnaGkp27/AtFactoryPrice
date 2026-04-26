@@ -326,14 +326,14 @@ function fallbackParse(msg) {
   const m = (msg || '').toLowerCase();
   let action = 'check';
   if (/\bsell\s+than\b/.test(m)) action = 'sell_than';
-  else if (/\bsell\s+package\b|\bsell\s+pkg\b/.test(m)) action = 'sell_package';
+  else if (/\bsell\s+package\b|\bsell\s+pkg\b|\bsell\s+bale\b/.test(m)) action = 'sell_package';
   else if (/\b(sell|deduct|sold)\b/.test(m)) action = 'sell_package';
   else if (/\b(add|restock|received)\b/.test(m)) action = 'add';
   else if (/\b(analyze|report|trend|revenue|who bought)\b/.test(m)) action = 'analyze';
-  else if (/\blist\s+package|\bshow\s+package|\bpackages\s+for\b/.test(m)) action = 'list_packages';
-  else if (/\bdetail|\binfo\b.*package/.test(m)) action = 'package_detail';
+  else if (/\blist\s+package|\bshow\s+package|\bpackages\s+for\b|\blist\s+bale|\bshow\s+bale|\bbales\s+for\b/.test(m)) action = 'list_packages';
+  else if (/\bdetail|\binfo\b.*(package|bale)/.test(m)) action = 'package_detail';
 
-  const pkgMatch = m.match(/package\s+(\d+)/);
+  const pkgMatch = m.match(/(?:package|bale)\s+(\d+)/i);
   const thanMatch = m.match(/than\s+(\d+)/);
   const designMatch = m.match(/design\s+(\w+)/i) || m.match(/(\d{4,6})/);
 
@@ -346,7 +346,7 @@ function fallbackParse(msg) {
     customer: null,
     warehouse: null,
     confidence: 0.5,
-    clarification: 'Please provide more details (package number, than number, customer name, etc.).',
+    clarification: 'Please provide more details (Bale number, than number, customer name, etc.).',
   };
 }
 

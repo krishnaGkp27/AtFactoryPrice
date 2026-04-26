@@ -101,8 +101,8 @@ async function listPackages(design, shade) {
  */
 async function sellThan(packageNo, thanNo, customer, userId, salesDate) {
   const than = await inventoryRepository.findThan(packageNo, thanNo);
-  if (!than) return { status: 'not_found', message: `Than ${thanNo} in package ${packageNo} not found.` };
-  if (than.status === 'sold') return { status: 'already_sold', message: `Than ${thanNo} in package ${packageNo} is already sold.` };
+  if (!than) return { status: 'not_found', message: `Than ${thanNo} in Bale ${packageNo} not found.` };
+  if (than.status === 'sold') return { status: 'already_sold', message: `Than ${thanNo} in Bale ${packageNo} is already sold.` };
 
   const risk = await riskEvaluate.evaluate({
     action: 'sell_than',
@@ -139,9 +139,9 @@ async function sellThan(packageNo, thanNo, customer, userId, salesDate) {
  */
 async function sellPackage(packageNo, customer, userId, salesDate) {
   const thans = await inventoryRepository.findByPackage(packageNo);
-  if (!thans.length) return { status: 'not_found', message: `Package ${packageNo} not found.` };
+  if (!thans.length) return { status: 'not_found', message: `Bale ${packageNo} not found.` };
   const available = thans.filter((t) => t.status === 'available');
-  if (!available.length) return { status: 'already_sold', message: `Package ${packageNo} is fully sold.` };
+  if (!available.length) return { status: 'already_sold', message: `Bale ${packageNo} is fully sold.` };
 
   const totalYards = available.reduce((s, t) => s + t.yards, 0);
   const totalValue = available.reduce((s, t) => s + t.yards * t.pricePerYard, 0);
@@ -232,7 +232,7 @@ async function sellBatch(packageNos, customer, userId) {
  */
 async function returnThan(packageNo, thanNo, userId) {
   const result = await inventoryRepository.markThanAvailable(packageNo, thanNo);
-  if (!result) return { status: 'not_found', message: `Than ${thanNo} in package ${packageNo} not found or already available.` };
+  if (!result) return { status: 'not_found', message: `Than ${thanNo} in Bale ${packageNo} not found or already available.` };
   await transactionsRepository.append({
     user: userId, action: 'return_than', design: result.design, color: result.shade,
     qty: result.yards, before: 'sold', after: 'available', status: 'completed',
@@ -247,7 +247,7 @@ async function returnThan(packageNo, thanNo, userId) {
  */
 async function returnPackage(packageNo, userId) {
   const results = await inventoryRepository.markPackageAvailable(packageNo);
-  if (!results.length) return { status: 'not_found', message: `Package ${packageNo} has no sold thans to return.` };
+  if (!results.length) return { status: 'not_found', message: `Bale ${packageNo} has no sold thans to return.` };
   const totalYards = results.reduce((s, t) => s + t.yards, 0);
   await transactionsRepository.append({
     user: userId, action: 'return_package', design: results[0].design, color: results[0].shade,
@@ -264,7 +264,7 @@ async function returnPackage(packageNo, userId) {
 async function updatePrice(filters, newPrice, userId) {
   const count = await inventoryRepository.updatePrice(filters, newPrice);
   if (count === 0) return { status: 'not_found', message: 'No matching items found to update.' };
-  const label = filters.packageNo ? `package ${filters.packageNo}` : `${filters.design || '?'} ${filters.shade || ''}`.trim();
+  const label = filters.packageNo ? `Bale ${filters.packageNo}` : `${filters.design || '?'} ${filters.shade || ''}`.trim();
   await transactionsRepository.append({
     user: userId, action: 'update_price', design: filters.design || '', color: filters.shade || '',
     qty: count, before: '', after: `${newPrice}/yd`, status: 'completed',
@@ -297,6 +297,9 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
   if (!item) return { ok: false, message: 'Request not found or already resolved.' };
   const aj = item.actionJSON || {};
   const accountingService = require('./accountingService');
+  // Fix B — captured by the sale_bundle branch so the caller can surface
+  // partially-applied sales.
+  let bundleReport = null;
 
   if (aj.action === 'sell_than') {
     const result = await inventoryRepository.markThanSold(aj.packageNo, aj.thanNo, aj.customer, aj.salesDate);
@@ -320,7 +323,7 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     }
   } else if (aj.action === 'sell_package') {
     const results = await inventoryRepository.markPackageSold(aj.packageNo, aj.customer, aj.salesDate);
-    if (!results.length) return { ok: false, message: 'Package already sold.' };
+    if (!results.length) return { ok: false, message: 'Bale already sold.' };
     const pricePerYard = getPricePerYard(enrichment, aj.design);
     if (pricePerYard > 0) await inventoryRepository.updatePrice({ packageNo: aj.packageNo }, pricePerYard);
     await transactionsRepository.append({
@@ -401,7 +404,7 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     await transactionsRepository.append({ user: item.user, action: 'transfer_than', design: result.design, color: result.shade, qty: result.yards, before: result.fromWarehouse, after: aj.toWarehouse, status: 'approved' });
   } else if (aj.action === 'transfer_package') {
     const results = await inventoryRepository.transferPackage(aj.packageNo, aj.toWarehouse);
-    if (!results.length) return { ok: false, message: 'Package not found or no available thans.' };
+    if (!results.length) return { ok: false, message: 'Bale not found or no available thans.' };
     const totalYards = results.reduce((s, t) => s + t.yards, 0);
     await transactionsRepository.append({ user: item.user, action: 'transfer_package', design: results[0]?.design, color: results[0]?.shade, qty: totalYards, before: results[0]?.fromWarehouse, after: aj.toWarehouse, status: 'approved' });
   } else if (aj.action === 'transfer_batch') {
@@ -412,12 +415,21 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
   } else if (aj.action === 'sale_bundle') {
     const byDesign = {};
     let totalYards = 0, totalThans = 0;
+    // Fix B — track every item that silently fails to apply so the caller
+    // (approvalEvents) can surface it back to the admin AND the requester.
+    const appliedPkgs = new Set();
+    const failedItems = [];
     for (const si of (aj.items || [])) {
       if (si.type === 'package') {
         const results = await inventoryRepository.markPackageSold(si.packageNo, aj.customer, aj.salesDate);
+        if (!results.length) {
+          failedItems.push({ packageNo: si.packageNo, type: 'package', reason: 'not found or no available thans' });
+          continue;
+        }
         totalThans += results.length;
         const pkgYards = results.reduce((s, t) => s + t.yards, 0);
         totalYards += pkgYards;
+        appliedPkgs.add(si.packageNo);
         const design = results[0]?.design || '';
         if (design) byDesign[design] = (byDesign[design] || 0) + pkgYards;
         if (enrichment?.ratePerUnitByDesign && results[0]) {
@@ -426,17 +438,34 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
         }
       } else if (si.type === 'than') {
         const result = await inventoryRepository.markThanSold(si.packageNo, si.thanNo, aj.customer, aj.salesDate);
-        if (result) {
-          totalThans += 1;
-          totalYards += result.yards;
-          const design = result.design || '';
-          if (design) byDesign[design] = (byDesign[design] || 0) + result.yards;
-          if (enrichment?.ratePerUnitByDesign && result.design) {
-            const rate = getPricePerYard(enrichment, result.design);
-            if (rate > 0) await inventoryRepository.updatePrice({ packageNo: si.packageNo }, rate);
-          }
+        if (!result) {
+          failedItems.push({ packageNo: si.packageNo, thanNo: si.thanNo, type: 'than', reason: 'not found or not available' });
+          continue;
         }
+        totalThans += 1;
+        totalYards += result.yards;
+        appliedPkgs.add(si.packageNo);
+        const design = result.design || '';
+        if (design) byDesign[design] = (byDesign[design] || 0) + result.yards;
+        if (enrichment?.ratePerUnitByDesign && result.design) {
+          const rate = getPricePerYard(enrichment, result.design);
+          if (rate > 0) await inventoryRepository.updatePrice({ packageNo: si.packageNo }, rate);
+        }
+      } else {
+        failedItems.push({ packageNo: si.packageNo, thanNo: si.thanNo, type: si.type || 'unknown', reason: `unknown item type "${si.type}"` });
       }
+    }
+    bundleReport = {
+      requestedItems: (aj.items || []).length,
+      appliedPkgCount: appliedPkgs.size,
+      appliedThans: totalThans,
+      appliedYards: totalYards,
+      failedItems,
+    };
+    if (failedItems.length) {
+      try {
+        await auditLogRepository.append('sale_bundle_partial', { requestId, failedItems }, approvedBy);
+      } catch (_) {}
     }
     const firstPrice = enrichment ? (Object.values(enrichment.ratePerUnitByDesign || {})[0] || 0) : 0;
     await transactionsRepository.append({
@@ -482,7 +511,7 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
 
   await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString());
   await auditLogRepository.append('approval_approved', { requestId, approvedBy }, approvedBy);
-  return { ok: true };
+  return { ok: true, bundleReport };
 }
 
 async function rejectApproval(requestId, rejectedBy) {

@@ -95,6 +95,7 @@ function fmtMoney(n) { return `${CURRENCY} ${Number(n).toLocaleString('en-NG', {
 
 const getMaterialInfo = productTypesRepo.getMaterialInfo;
 const fmtDate = require('../utils/formatDate');
+const { compareWithToday, daysBeforeToday, todayInLagos } = require('../utils/dates');
 
 /** Parse date string to YYYY-MM-DD for ledger range. Supports YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY. */
 function parseLedgerDate(str) {
@@ -146,16 +147,16 @@ function buildDesignWiseReport(sold, isAdmin) {
     text += `📦 *${design}*\n`;
     const shadesSorted = [...dg.shades.entries()].sort((a, b) => b[1].yards - a[1].yards);
     for (const [shade, sh] of shadesSorted) {
-      text += `  Shade ${shade}: ${sh.pkgs.size} pkgs, ${sh.thans} thans, ${fmtQty(sh.yards)} yds${valStr(sh.value, isAdmin)}\n`;
+      text += `  Shade ${shade}: ${sh.pkgs.size} Bales, ${sh.thans} thans, ${fmtQty(sh.yards)} yds${valStr(sh.value, isAdmin)}\n`;
     }
     const topBuyer = [...dg.buyers.entries()].sort((a, b) => b[1] - a[1])[0];
-    text += `  *Total: ${dg.totalPkgs.size} pkgs, ${dg.totalThans} thans, ${fmtQty(dg.totalYards)} yds${valStr(dg.totalValue, isAdmin)}*\n`;
+    text += `  *Total: ${dg.totalPkgs.size} Bales, ${dg.totalThans} thans, ${fmtQty(dg.totalYards)} yds${valStr(dg.totalValue, isAdmin)}*\n`;
     if (topBuyer) text += `  Top buyer: ${topBuyer[0]} (${fmtQty(topBuyer[1])} yds)\n`;
     text += '\n';
     for (const p of dg.totalPkgs) grandPkgs.add(p);
     grandThans += dg.totalThans; grandYards += dg.totalYards; grandValue += dg.totalValue;
   }
-  text += `*Grand Total: ${grandPkgs.size} pkgs, ${grandThans} thans, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
+  text += `*Grand Total: ${grandPkgs.size} Bales, ${grandThans} thans, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
   return text;
 }
 
@@ -219,16 +220,16 @@ function buildDesignDateWiseReport(sold, isAdmin) {
     text += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
     for (const row of rows) {
       const shPart = shades.size > 1 ? `  ${row.shade}` : '';
-      text += `  ${row.displayDate}  ${row.customer}${shPart}  ${row.pkgs.size} pkg, ${row.thans} th, ${fmtQty(row.yards)} yds${valStr(row.value, isAdmin)}\n`;
+      text += `  ${row.displayDate}  ${row.customer}${shPart}  ${row.pkgs.size} Bales, ${row.thans} th, ${fmtQty(row.yards)} yds${valStr(row.value, isAdmin)}\n`;
       for (const p of row.pkgs) dTotal.pkgs.add(p);
       dTotal.thans += row.thans; dTotal.yards += row.yards; dTotal.value += row.value;
     }
     text += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    text += `*Total: ${dTotal.pkgs.size} pkg, ${dTotal.thans} th, ${fmtQty(dTotal.yards)} yds${valStr(dTotal.value, isAdmin)}*\n\n`;
+    text += `*Total: ${dTotal.pkgs.size} Bales, ${dTotal.thans} th, ${fmtQty(dTotal.yards)} yds${valStr(dTotal.value, isAdmin)}*\n\n`;
     for (const p of dTotal.pkgs) grandPkgs.add(p);
     grandThans += dTotal.thans; grandYards += dTotal.yards; grandValue += dTotal.value;
   }
-  text += `*Grand Total: ${grandPkgs.size} pkg, ${grandThans} th, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
+  text += `*Grand Total: ${grandPkgs.size} Bales, ${grandThans} th, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
   return text;
 }
 
@@ -255,13 +256,13 @@ function buildCustomerWiseReport(sold, isAdmin) {
     }
     const dsSorted = [...byDS.values()].sort((a, b) => b.yards - a.yards);
     for (const ds of dsSorted) {
-      text += `  ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} pkgs, ${ds.thans} thans, ${fmtQty(ds.yards)} yds${valStr(ds.value, isAdmin)}\n`;
+      text += `  ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} Bales, ${ds.thans} thans, ${fmtQty(ds.yards)} yds${valStr(ds.value, isAdmin)}\n`;
     }
-    text += `  *Total: ${cg.totalPkgs.size} pkgs, ${cg.totalThans} thans, ${fmtQty(cg.totalYards)} yds${valStr(cg.totalValue, isAdmin)}*\n\n`;
+    text += `  *Total: ${cg.totalPkgs.size} Bales, ${cg.totalThans} thans, ${fmtQty(cg.totalYards)} yds${valStr(cg.totalValue, isAdmin)}*\n\n`;
     for (const p of cg.totalPkgs) grandPkgs.add(p);
     grandThans += cg.totalThans; grandYards += cg.totalYards; grandValue += cg.totalValue;
   }
-  text += `*Grand Total: ${grandPkgs.size} pkgs, ${grandThans} thans, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
+  text += `*Grand Total: ${grandPkgs.size} Bales, ${grandThans} thans, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
   return text;
 }
 
@@ -288,13 +289,13 @@ function buildWarehouseWiseReport(sold, isAdmin) {
     }
     const dsSorted = [...byDS.values()].sort((a, b) => b.yards - a.yards);
     for (const ds of dsSorted) {
-      text += `  ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} pkgs, ${ds.thans} thans, ${fmtQty(ds.yards)} yds${valStr(ds.value, isAdmin)}\n`;
+      text += `  ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} Bales, ${ds.thans} thans, ${fmtQty(ds.yards)} yds${valStr(ds.value, isAdmin)}\n`;
     }
-    text += `  *Total: ${wg.totalPkgs.size} pkgs, ${wg.totalThans} thans, ${fmtQty(wg.totalYards)} yds${valStr(wg.totalValue, isAdmin)}*\n\n`;
+    text += `  *Total: ${wg.totalPkgs.size} Bales, ${wg.totalThans} thans, ${fmtQty(wg.totalYards)} yds${valStr(wg.totalValue, isAdmin)}*\n\n`;
     for (const p of wg.totalPkgs) grandPkgs.add(p);
     grandThans += wg.totalThans; grandYards += wg.totalYards; grandValue += wg.totalValue;
   }
-  text += `*Grand Total: ${grandPkgs.size} pkgs, ${grandThans} thans, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
+  text += `*Grand Total: ${grandPkgs.size} Bales, ${grandThans} thans, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
   return text;
 }
 
@@ -358,17 +359,17 @@ function buildInventoryWarehouseReport(allItems) {
     let whTotalYards = 0, whSoldYards = 0, whBalYards = 0, whBalPkgs = new Set(), whTotalPkgs = new Set();
     text += `🏭 *${wh}*\n`;
     for (const ds of rows) {
-      text += `  ${ds.design} Shade ${ds.shade}: ${ds.balPkgs.size} pkgs, ${fmtQty(ds.balYards)} yds avail | ${fmtQty(ds.totalYards)} total | ${fmtBar(ds.soldYards, ds.totalYards)}\n`;
+      text += `  ${ds.design} Shade ${ds.shade}: ${ds.balPkgs.size} Bales, ${fmtQty(ds.balYards)} yds avail | ${fmtQty(ds.totalYards)} total | ${fmtBar(ds.soldYards, ds.totalYards)}\n`;
       whTotalYards += ds.totalYards; whSoldYards += ds.soldYards; whBalYards += ds.balYards;
       for (const p of ds.balPkgs) whBalPkgs.add(p);
       for (const p of ds.totalPkgs) whTotalPkgs.add(p);
     }
-    text += `  *${wh} Total: ${whTotalPkgs.size} pkgs | ${fmtQty(whTotalYards)} yds total | ${fmtQty(whSoldYards)} sold | Balance: ${whBalPkgs.size} pkgs, ${fmtQty(whBalYards)} yds*\n\n`;
+    text += `  *${wh} Total: ${whTotalPkgs.size} Bales | ${fmtQty(whTotalYards)} yds total | ${fmtQty(whSoldYards)} sold | Balance: ${whBalPkgs.size} Bales, ${fmtQty(whBalYards)} yds*\n\n`;
     gTotalYards += whTotalYards; gSoldYards += whSoldYards; gBalYards += whBalYards;
     for (const p of whBalPkgs) gBalPkgs.add(p);
     for (const p of whTotalPkgs) gTotalPkgs.add(p);
   }
-  text += `*Grand Total: ${gTotalPkgs.size} pkgs | ${fmtQty(gTotalYards)} yds total | ${fmtQty(gSoldYards)} sold | Balance: ${gBalPkgs.size} pkgs, ${fmtQty(gBalYards)} yds*`;
+  text += `*Grand Total: ${gTotalPkgs.size} Bales | ${fmtQty(gTotalYards)} yds total | ${fmtQty(gSoldYards)} sold | Balance: ${gBalPkgs.size} Bales, ${fmtQty(gBalYards)} yds*`;
   return `📦 *Inventory Details — Warehouse Wise*\n\n` + text;
 }
 
@@ -391,17 +392,17 @@ function buildInventoryDesignReport(allItems) {
     let dTotalYards = 0, dSoldYards = 0, dBalYards = 0, dBalPkgs = new Set(), dTotalPkgs = new Set();
     text += `📦 *${design}*\n`;
     for (const ds of rows) {
-      text += `  Shade ${ds.shade}: ${ds.balPkgs.size} pkgs, ${fmtQty(ds.balYards)} yds avail | ${fmtQty(ds.totalYards)} total | ${fmtBar(ds.soldYards, ds.totalYards)}\n`;
+      text += `  Shade ${ds.shade}: ${ds.balPkgs.size} Bales, ${fmtQty(ds.balYards)} yds avail | ${fmtQty(ds.totalYards)} total | ${fmtBar(ds.soldYards, ds.totalYards)}\n`;
       dTotalYards += ds.totalYards; dSoldYards += ds.soldYards; dBalYards += ds.balYards;
       for (const p of ds.balPkgs) dBalPkgs.add(p);
       for (const p of ds.totalPkgs) dTotalPkgs.add(p);
     }
-    text += `  *Total: ${dTotalPkgs.size} pkgs | ${fmtQty(dTotalYards)} yds total | ${fmtQty(dSoldYards)} sold | Balance: ${dBalPkgs.size} pkgs, ${fmtQty(dBalYards)} yds*\n\n`;
+    text += `  *Total: ${dTotalPkgs.size} Bales | ${fmtQty(dTotalYards)} yds total | ${fmtQty(dSoldYards)} sold | Balance: ${dBalPkgs.size} Bales, ${fmtQty(dBalYards)} yds*\n\n`;
     gTotalYards += dTotalYards; gSoldYards += dSoldYards; gBalYards += dBalYards;
     for (const p of dBalPkgs) gBalPkgs.add(p);
     for (const p of dTotalPkgs) gTotalPkgs.add(p);
   }
-  text += `*Grand Total: ${gTotalPkgs.size} pkgs | ${fmtQty(gTotalYards)} yds total | ${fmtQty(gSoldYards)} sold | Balance: ${gBalPkgs.size} pkgs, ${fmtQty(gBalYards)} yds*`;
+  text += `*Grand Total: ${gTotalPkgs.size} Bales | ${fmtQty(gTotalYards)} yds total | ${fmtQty(gSoldYards)} sold | Balance: ${gBalPkgs.size} Bales, ${fmtQty(gBalYards)} yds*`;
   return `📦 *Inventory Details — Design Wise*\n\n` + text;
 }
 
@@ -430,11 +431,11 @@ function buildSalesDesignReport(sold, periodLabel) {
   for (const ds of sorted) {
     rank++;
     text += `${rank}. *${ds.design}* Shade ${ds.shade}\n`;
-    text += `   ${ds.pkgs.size} pkgs, ${ds.thans} thans, ${fmtQty(ds.yards)} yds — ${fmtMoney(ds.value)}\n`;
+    text += `   ${ds.pkgs.size} Bales, ${ds.thans} thans, ${fmtQty(ds.yards)} yds — ${fmtMoney(ds.value)}\n`;
     for (const p of ds.pkgs) gPkgs.add(p);
     gThans += ds.thans; gYards += ds.yards; gValue += ds.value;
   }
-  text += `\n*Grand Total: ${gPkgs.size} pkgs, ${gThans} thans, ${fmtQty(gYards)} yds — ${fmtMoney(gValue)}*`;
+  text += `\n*Grand Total: ${gPkgs.size} Bales, ${gThans} thans, ${fmtQty(gYards)} yds — ${fmtMoney(gValue)}*`;
   return text;
 }
 
@@ -464,13 +465,13 @@ function buildSalesCustomerReport(sold, periodLabel) {
     }
     const dsSorted = [...byDS.values()].sort((a, b) => b.value - a.value);
     for (const ds of dsSorted) {
-      text += `   ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} pkgs, ${ds.thans} thans, ${fmtQty(ds.yards)} yds — ${fmtMoney(ds.value)}\n`;
+      text += `   ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} Bales, ${ds.thans} thans, ${fmtQty(ds.yards)} yds — ${fmtMoney(ds.value)}\n`;
     }
-    text += `   *Total: ${cg.pkgs.size} pkgs, ${cg.thans} thans, ${fmtQty(cg.yards)} yds — ${fmtMoney(cg.value)}*\n\n`;
+    text += `   *Total: ${cg.pkgs.size} Bales, ${cg.thans} thans, ${fmtQty(cg.yards)} yds — ${fmtMoney(cg.value)}*\n\n`;
     for (const p of cg.pkgs) gPkgs.add(p);
     gThans += cg.thans; gYards += cg.yards; gValue += cg.value;
   }
-  text += `*Grand Total: ${gPkgs.size} pkgs, ${gThans} thans, ${fmtQty(gYards)} yds — ${fmtMoney(gValue)}*`;
+  text += `*Grand Total: ${gPkgs.size} Bales, ${gThans} thans, ${fmtQty(gYards)} yds — ${fmtMoney(gValue)}*`;
   return text;
 }
 
@@ -484,7 +485,7 @@ async function buildCustomerTimeline(customerName) {
   const events = [];
 
   for (const r of sold) {
-    events.push({ date: r.soldDate || r.updatedAt?.slice(0, 10) || '', type: 'Sale', detail: `${r.design} Shade ${r.shade || '-'} | Pkg ${r.packageNo} | ${fmtQty(r.yards)} yds — ${fmtMoney(r.yards * r.pricePerYard)}` });
+    events.push({ date: r.soldDate || r.updatedAt?.slice(0, 10) || '', type: 'Sale', detail: `${r.design} Shade ${r.shade || '-'} | Bale ${r.packageNo} | ${fmtQty(r.yards)} yds — ${fmtMoney(r.yards * r.pricePerYard)}` });
   }
 
   try {
@@ -969,7 +970,7 @@ async function sendCustomerHistoryReport(bot, chatId, customerName) {
   if (firstSoldDate && lastSoldDate) {
     out += `🗓 Active: ${fmtDate(firstSoldDate)} → ${fmtDate(lastSoldDate)}\n`;
   }
-  out += `💰 Lifetime: ${totalPkgs} pkgs, ${fmtQty(totalYards)} yds`;
+  out += `💰 Lifetime: ${totalPkgs} Bales, ${fmtQty(totalYards)} yds`;
   out += totalValue > 0 ? ` — ${fmtMoney(totalValue)}\n` : `\n`;
   if (recentSold.length > 0) {
     out += `📈 Last 30d: ${recentTrips} trip${recentTrips > 1 ? 's' : ''}, ${fmtQty(recentYards)} yds`;
@@ -990,7 +991,7 @@ async function sendCustomerHistoryReport(bot, chatId, customerName) {
     g.value += (r.yards || 0) * (r.pricePerYard || 0);
   }
   const collapsedSales = [...soldByKey.values()].map((g) => {
-    const pkgTxt = `${g.pkgs.size} pkg${g.pkgs.size > 1 ? 's' : ''}`;
+    const pkgTxt = `${g.pkgs.size} Bale${g.pkgs.size > 1 ? 's' : ''}`;
     const valueTxt = g.value > 0 ? ` — ${fmtMoney(g.value)}` : '';
     return {
       date: g.date,
@@ -1082,7 +1083,7 @@ async function sendCustomerPatternReport(bot, chatId, customerName) {
 
   let out = `🔍 *Purchase Pattern — ${customerName}*\n\n`;
   out += `📅 First purchase: ${fmtDate(pattern.firstDate) || pattern.firstDate} | Last: ${fmtDate(pattern.lastDate) || pattern.lastDate}\n`;
-  out += `📊 Lifetime: ${pattern.totalPkgs} pkgs, ${pattern.totalThans} thans, ${fmtQty(pattern.totalYards)} yds`;
+  out += `📊 Lifetime: ${pattern.totalPkgs} Bales, ${pattern.totalThans} thans, ${fmtQty(pattern.totalYards)} yds`;
   out += hasPrices ? ` — ${fmtMoney(pattern.totalValue)}\n\n` : `\n_(no price data available for these sales)_\n\n`;
   out += hasPrices ? `*Preferred Items (by value):*\n` : `*Preferred Items (by volume):*\n`;
   let rank = 0;
@@ -1091,7 +1092,7 @@ async function sendCustomerPatternReport(bot, chatId, customerName) {
     const thisMetric = hasPrices ? ds.value : ds.yards;
     const pct = rankBasis > 0 ? Math.round((thisMetric / rankBasis) * 100) : 0;
     const valueStr = hasPrices ? ` — ${fmtMoney(ds.value)}` : '';
-    out += `${rank}. ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} pkgs, ${fmtQty(ds.yards)} yds${valueStr} (${pct}%)\n`;
+    out += `${rank}. ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} Bales, ${fmtQty(ds.yards)} yds${valueStr} (${pct}%)\n`;
   }
   const top = sortedItems[0];
   const topMetric = hasPrices ? top.value : top.yards;
@@ -1133,7 +1134,7 @@ async function sendCustomerRankingReport(bot, chatId) {
       ? `${Math.floor((Date.now() - lastMs) / 86400000)}d ago`
       : (c.lastDate ? fmtDate(c.lastDate) : '—');
     out += `${medal} *${name}*\n`;
-    out += `   ${c.pkgs.size} pkgs, ${c.thans} thans, ${fmtQty(c.yards)} yds\n`;
+    out += `   ${c.pkgs.size} Bales, ${c.thans} thans, ${fmtQty(c.yards)} yds\n`;
     out += `   Value: ${fmtMoney(c.value)} | Last: ${daysAgo}\n`;
     out += `   ${fmtBar(c.value, topValue, 'of #1')}\n\n`;
     rank++;
@@ -1617,7 +1618,7 @@ async function showUpdatePriceConfirm(bot, chatId, userId) {
 async function startTransferPackageFlow(bot, chatId, userId, messageId = null) {
   const all = await inventoryRepository.getAll();
   // Packages with at least one available than.
-  const byPkg = new Map();
+  const byBale = new Map();
   all.forEach((r) => {
     if (r.status !== 'available') return;
     const key = String(r.packageNo || '').trim();
@@ -1627,7 +1628,7 @@ async function startTransferPackageFlow(bot, chatId, userId, messageId = null) {
   });
   const pkgs = [...byPkg.values()].sort((a, b) => String(a.pkg).localeCompare(String(b.pkg)));
   if (!pkgs.length) {
-    await editOrSend(bot, chatId, messageId, 'No packages with available thans to transfer.', {});
+    await editOrSend(bot, chatId, messageId, 'No Bales with available thans to transfer.', {});
     return;
   }
   sessionStore.set(userId, { type: 'transfer_package_flow', step: 'package', flowMessageId: messageId || null });
@@ -1637,7 +1638,7 @@ async function startTransferPackageFlow(bot, chatId, userId, messageId = null) {
   });
   rows.push([{ text: '❌ Cancel', callback_data: 'tpcanc:0' }]);
   await editOrSend(bot, chatId, messageId,
-    '🚚 *Transfer Package*\n\nSelect the package to transfer:',
+    '🚚 *Transfer Bale*\n\nSelect the Bale to transfer:',
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
@@ -1665,7 +1666,7 @@ async function showTransferPackageWarehousePicker(bot, chatId, userId) {
     rows.push(row);
   }
   rows.push([{ text: '❌ Cancel', callback_data: 'tpcanc:0' }]);
-  const text = `🚚 *Transfer Package*\n\n✓ Package: *${session.packageNo}*\n` +
+  const text = `🚚 *Transfer Bale*\n\n✓ Bale: *${session.packageNo}*\n` +
                `Design: ${session.design}${session.shade ? ' ' + session.shade : ''}\n` +
                `Thans: ${session.availableThans} · Yards: ${fmtQty(session.availableYards)}\n` +
                `From: *${session.fromWh}*\n\nSelect destination warehouse:`;
@@ -1676,7 +1677,7 @@ async function showTransferPackageWarehousePicker(bot, chatId, userId) {
 async function showTransferPackageConfirm(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const text = `🚚 *Confirm Transfer Package*\n\nPackage: *${session.packageNo}*\n` +
+  const text = `🚚 *Confirm Transfer Bale*\n\nBale: *${session.packageNo}*\n` +
                `Design: ${session.design}${session.shade ? ' ' + session.shade : ''}\n` +
                `Thans: ${session.availableThans} · Yards: ${fmtQty(session.availableYards)}\n` +
                `From: *${session.fromWh}*  →  To: *${session.toWh}*\n\n_Queues 2-admin approval._`;
@@ -1692,7 +1693,7 @@ async function showTransferPackageConfirm(bot, chatId, userId) {
 /* ─── Transfer Than tap flow ─────────────────────────────────────────── */
 async function startTransferThanFlow(bot, chatId, userId, messageId = null) {
   const all = await inventoryRepository.getAll();
-  const byPkg = new Map();
+  const byBale = new Map();
   all.forEach((r) => {
     if (r.status !== 'available') return;
     const key = String(r.packageNo || '').trim();
@@ -1702,7 +1703,7 @@ async function startTransferThanFlow(bot, chatId, userId, messageId = null) {
   });
   const pkgs = [...byPkg.values()].sort((a, b) => String(a.pkg).localeCompare(String(b.pkg)));
   if (!pkgs.length) {
-    await editOrSend(bot, chatId, messageId, 'No packages with available thans to transfer.', {});
+    await editOrSend(bot, chatId, messageId, 'No Bales with available thans to transfer.', {});
     return;
   }
   sessionStore.set(userId, { type: 'transfer_than_flow', step: 'package', flowMessageId: messageId || null });
@@ -1712,7 +1713,7 @@ async function startTransferThanFlow(bot, chatId, userId, messageId = null) {
   });
   rows.push([{ text: '❌ Cancel', callback_data: 'ttcanc:0' }]);
   await editOrSend(bot, chatId, messageId,
-    '↔️ *Transfer Than*\n\nSelect the package:',
+    '↔️ *Transfer Than*\n\nSelect the Bale:',
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
@@ -1726,7 +1727,7 @@ async function showTransferThanThanPicker(bot, chatId, userId) {
   sessionStore.set(userId, session);
   const availableThans = (info?.thans || []).filter((t) => t.status === 'available');
   if (!availableThans.length) {
-    await editOrSend(bot, chatId, session.flowMessageId, 'No available thans in this package.', {});
+    await editOrSend(bot, chatId, session.flowMessageId, 'No available thans in this Bale.', {});
     return;
   }
   const rows = [];
@@ -1736,7 +1737,7 @@ async function showTransferThanThanPicker(bot, chatId, userId) {
     })));
   }
   rows.push([{ text: '❌ Cancel', callback_data: 'ttcanc:0' }]);
-  const text = `↔️ *Transfer Than*\n\n✓ Package: *${session.packageNo}* (${session.design}${session.shade ? ' ' + session.shade : ''})\nFrom: *${session.fromWh}*\n\nSelect the than to transfer:`;
+  const text = `↔️ *Transfer Than*\n\n✓ Bale: *${session.packageNo}* (${session.design}${session.shade ? ' ' + session.shade : ''})\nFrom: *${session.fromWh}*\n\nSelect the than to transfer:`;
   await editOrSend(bot, chatId, session.flowMessageId, text,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
@@ -1757,7 +1758,7 @@ async function showTransferThanWarehousePicker(bot, chatId, userId) {
     rows.push(row);
   }
   rows.push([{ text: '❌ Cancel', callback_data: 'ttcanc:0' }]);
-  const text = `↔️ *Transfer Than*\n\n✓ Package: *${session.packageNo}*\n✓ Than: *#${session.thanNo}*\nFrom: *${session.fromWh}*\n\nSelect destination warehouse:`;
+  const text = `↔️ *Transfer Than*\n\n✓ Bale: *${session.packageNo}*\n✓ Than: *#${session.thanNo}*\nFrom: *${session.fromWh}*\n\nSelect destination warehouse:`;
   await editOrSend(bot, chatId, session.flowMessageId, text,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
@@ -1765,7 +1766,7 @@ async function showTransferThanWarehousePicker(bot, chatId, userId) {
 async function showTransferThanConfirm(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const text = `↔️ *Confirm Transfer Than*\n\nPackage: *${session.packageNo}*\nThan: *#${session.thanNo}*\nDesign: ${session.design}${session.shade ? ' ' + session.shade : ''}\nFrom: *${session.fromWh}*  →  To: *${session.toWh}*\n\n_Queues 2-admin approval._`;
+  const text = `↔️ *Confirm Transfer Than*\n\nBale: *${session.packageNo}*\nThan: *#${session.thanNo}*\nDesign: ${session.design}${session.shade ? ' ' + session.shade : ''}\nFrom: *${session.fromWh}*  →  To: *${session.toWh}*\n\n_Queues 2-admin approval._`;
   await editOrSend(bot, chatId, session.flowMessageId, text, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [[
@@ -1776,12 +1777,12 @@ async function showTransferThanConfirm(bot, chatId, userId) {
 }
 
 /* ─── Return Than tap flow ──────────────────────────────────────────────
- * List packages that have at least one SOLD than; pick package → pick sold
+ * List packages that have at least one SOLD than; pick Bale → pick sold
  * than → confirm → queue approval (mark than available again).
  */
 async function startReturnThanFlow(bot, chatId, userId, messageId = null) {
   const all = await inventoryRepository.getAll();
-  const byPkg = new Map();
+  const byBale = new Map();
   all.forEach((r) => {
     if (r.status !== 'sold') return;
     const key = String(r.packageNo || '').trim();
@@ -1801,7 +1802,7 @@ async function startReturnThanFlow(bot, chatId, userId, messageId = null) {
   });
   rows.push([{ text: '❌ Cancel', callback_data: 'rtcanc:0' }]);
   await editOrSend(bot, chatId, messageId,
-    '↩️ *Return Than*\n\nSelect the package containing the than to return:',
+    '↩️ *Return Than*\n\nSelect the Bale containing the than to return:',
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
@@ -1814,7 +1815,7 @@ async function showReturnThanThanPicker(bot, chatId, userId) {
   sessionStore.set(userId, session);
   const soldThans = (info?.thans || []).filter((t) => t.status === 'sold');
   if (!soldThans.length) {
-    await editOrSend(bot, chatId, session.flowMessageId, 'No sold thans in this package.', {});
+    await editOrSend(bot, chatId, session.flowMessageId, 'No sold thans in this Bale.', {});
     return;
   }
   const rows = [];
@@ -1825,7 +1826,7 @@ async function showReturnThanThanPicker(bot, chatId, userId) {
     rows.push(row);
   }
   rows.push([{ text: '❌ Cancel', callback_data: 'rtcanc:0' }]);
-  const text = `↩️ *Return Than*\n\n✓ Package: *${session.packageNo}* (${session.design}${session.shade ? ' ' + session.shade : ''})\n\nSelect the sold than to return:`;
+  const text = `↩️ *Return Than*\n\n✓ Bale: *${session.packageNo}* (${session.design}${session.shade ? ' ' + session.shade : ''})\n\nSelect the sold than to return:`;
   await editOrSend(bot, chatId, session.flowMessageId, text,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
@@ -1833,7 +1834,7 @@ async function showReturnThanThanPicker(bot, chatId, userId) {
 async function showReturnThanConfirm(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const text = `↩️ *Confirm Return Than*\n\nPackage: *${session.packageNo}*\nThan: *#${session.thanNo}*\nDesign: ${session.design}${session.shade ? ' ' + session.shade : ''}\n\n_Will mark the than available again. Queues 2-admin approval._`;
+  const text = `↩️ *Confirm Return Than*\n\nBale: *${session.packageNo}*\nThan: *#${session.thanNo}*\nDesign: ${session.design}${session.shade ? ' ' + session.shade : ''}\n\n_Will mark the than available again. Queues 2-admin approval._`;
   await editOrSend(bot, chatId, session.flowMessageId, text, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [[
@@ -1941,7 +1942,7 @@ async function showCustomerPickerForReport(bot, chatId, reportType, showAll = fa
  * `<prefix>:__more__` to expand the full list. In-place edits supported.
  */
 const DESIGN_PICKER_PROMPTS = {
-  lpk: { icon: '📋', label: 'List Packages', prompt: 'Pick a design to see its packages:' },
+  lpk: { icon: '📋', label: 'List Bales', prompt: 'Pick a design to see its Bales:' },
   cks: { icon: '📦', label: 'Check Stock',   prompt: 'Pick a design to see available stock:' },
 };
 
@@ -1992,15 +1993,15 @@ async function showDesignPickerForReport(bot, chatId, prefix, showAll = false, m
 async function sendListPackagesReport(bot, chatId, design, shade = null) {
   const packages = await inventoryService.listPackages(design, shade);
   if (!packages.length) {
-    await bot.sendMessage(chatId, `No packages found for design ${design}${shade ? ' ' + shade : ''}.`);
+    await bot.sendMessage(chatId, `No Bales found for design ${design}${shade ? ' ' + shade : ''}.`);
     return;
   }
-  let reply = `📋 *Packages for ${design}${shade ? ' ' + shade : ''}:*\n\n`;
+    let reply = `📋 *Bales for ${design}${shade ? ' ' + shade : ''}:*\n\n`;
   packages.forEach((p) => {
-    reply += `Pkg ${p.packageNo} (${p.warehouse}): ${p.available}/${p.total} thans avail, ${fmtQty(p.availableYards)} yds\n`;
+    reply += `Bale ${p.packageNo} (${p.warehouse}): ${p.available}/${p.total} thans avail, ${fmtQty(p.availableYards)} yds\n`;
   });
   const totalAvail = packages.reduce((s, p) => s + p.availableYards, 0);
-  reply += `\n*Total: ${packages.length} packages, ${fmtQty(totalAvail)} yards*`;
+  reply += `\n*Total: ${packages.length} Bale${packages.length === 1 ? '' : 's'}, ${fmtQty(totalAvail)} yards*`;
   await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
 }
 
@@ -2034,7 +2035,7 @@ async function sendCheckStockReport(bot, chatId, design) {
     reply += `\n*By shade:*\n`;
     for (const [sh, s] of [...byShade.entries()].sort((a, b) => b[1].yards - a[1].yards)) {
       const whList = [...s.warehouses.keys()].join(', ');
-      reply += `  Shade ${sh}: ${s.pkgs.size} pkgs, ${fmtQty(s.yards)} yds (${whList})\n`;
+      reply += `  Shade ${sh}: ${s.pkgs.size} Bales, ${fmtQty(s.yards)} yds (${whList})\n`;
     }
   }
   await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
@@ -2654,7 +2655,7 @@ async function handleMessage(bot, msg) {
 
   if (/^\/revert_package[s]?\s/i.test(text)) {
     if (!config.access.adminIds.includes(userId)) {
-      await bot.sendMessage(chatId, 'Only admin can revert packages.');
+      await bot.sendMessage(chatId, 'Only admin can revert Bales.');
       return;
     }
     const pkgNos = text.replace(/^\/revert_package[s]?\s+/i, '').split(/[\s,]+/).filter(Boolean);
@@ -2673,7 +2674,7 @@ async function handleMessage(bot, msg) {
         results.push(`⚠️ ${p}: ${e.message}`);
       }
     }
-    await bot.sendMessage(chatId, `📦 *Revert Packages*\n\n${results.join('\n')}\n\nTotal: ${restored} thans restored to available.`, { parse_mode: 'Markdown' });
+    await bot.sendMessage(chatId, `📦 *Revert Bales*\n\n${results.join('\n')}\n\nTotal: ${restored} thans restored to available.`, { parse_mode: 'Markdown' });
     return;
   }
 
@@ -2785,7 +2786,7 @@ async function handleMessage(bot, msg) {
 
       case 'list_packages': {
         if (!intent.design) {
-          await bot.sendMessage(chatId, 'Which design? e.g. "Show packages for design 44200"');
+          await bot.sendMessage(chatId, 'Which design? e.g. "Show Bales for design 44200"');
           return;
         }
         await sendListPackagesReport(bot, chatId, intent.design, intent.shade || null);
@@ -2794,15 +2795,15 @@ async function handleMessage(bot, msg) {
 
       case 'package_detail': {
         if (!intent.packageNo) {
-          await bot.sendMessage(chatId, 'Which package? e.g. "Details of package 5801"');
+          await bot.sendMessage(chatId, 'Which package? e.g. "Details of Bale 5801"');
           return;
         }
         const summary = await inventoryService.getPackageSummary(intent.packageNo);
         if (!summary) {
-          await bot.sendMessage(chatId, `Package ${intent.packageNo} not found.`);
+          await bot.sendMessage(chatId, `Bale ${intent.packageNo} not found.`);
           return;
         }
-        let reply = `📦 *Package ${summary.packageNo}*\n`;
+        let reply = `📦 *Bale ${summary.packageNo}*\n`;
         reply += `Design: ${summary.design} | Shade: ${summary.shade}\n`;
         reply += `Indent: ${summary.indent} | Warehouse: ${summary.warehouse}\n`;
         reply += `Price: ${fmtMoney(summary.pricePerYard)}/yard\n\n`;
@@ -2818,7 +2819,7 @@ async function handleMessage(bot, msg) {
       }
 
       case 'sell_than': {
-        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Sell than 3 from package 5801 to Ibrahim"'); return; }
+        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Sell than 3 from Bale 5801 to Ibrahim"'); return; }
         if (!intent.thanNo) { await bot.sendMessage(chatId, 'Which than number?'); return; }
         const items = [{ type: 'than', packageNo: intent.packageNo, thanNo: intent.thanNo }];
         await startSaleFlow(bot, chatId, msg, userId, 'sell_than', items, intent);
@@ -2826,14 +2827,14 @@ async function handleMessage(bot, msg) {
       }
 
       case 'sell_package': {
-        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Sell package 5801 to Adamu"'); return; }
+        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Sell Bale 5801 to Adamu"'); return; }
         const items = [{ type: 'package', packageNo: intent.packageNo }];
         await startSaleFlow(bot, chatId, msg, userId, 'sell_package', items, intent);
         return;
       }
 
       case 'sell_batch': {
-        if (!intent.packageNos || !intent.packageNos.length) { await bot.sendMessage(chatId, 'Which packages? e.g. "Sell packages 5801, 5802, 5803 to Ibrahim"'); return; }
+        if (!intent.packageNos || !intent.packageNos.length) { await bot.sendMessage(chatId, 'Which Bales? e.g. "Sell Bales 5801, 5802, 5803 to Ibrahim"'); return; }
         const items = intent.packageNos.map((p) => ({ type: 'package', packageNo: p }));
         await startSaleFlow(bot, chatId, msg, userId, 'sell_batch', items, intent);
         return;
@@ -2847,15 +2848,15 @@ async function handleMessage(bot, msg) {
       }
 
       case 'return_than': {
-        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Return than 2 from package 5801"'); return; }
+        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Return than 2 from Bale 5801"'); return; }
         if (!intent.thanNo) { await bot.sendMessage(chatId, 'Which than number?'); return; }
         const rtQueued = await requireApproval(bot, chatId, msg, userId, 'return_than',
           { action: 'return_than', packageNo: intent.packageNo, thanNo: intent.thanNo },
-          `Return than ${intent.thanNo} from pkg ${intent.packageNo}`);
+          `Return than ${intent.thanNo} from Bale ${intent.packageNo}`);
         if (rtQueued) return;
         const retThan = await inventoryService.returnThan(intent.packageNo, intent.thanNo, userId);
         if (retThan.status === 'completed') {
-          await bot.sendMessage(chatId, `✅ Returned than ${intent.thanNo} from package ${intent.packageNo} (${fmtQty(retThan.than.yards)} yds) — now available.`);
+          await bot.sendMessage(chatId, `✅ Returned than ${intent.thanNo} from Bale ${intent.packageNo} (${fmtQty(retThan.than.yards)} yds) — now available.`);
         } else {
           await bot.sendMessage(chatId, retThan.message || 'Could not return.');
         }
@@ -2863,14 +2864,14 @@ async function handleMessage(bot, msg) {
       }
 
       case 'return_package': {
-        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Return package 5801"'); return; }
+        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Return Bale 5801"'); return; }
         const rpQueued = await requireApproval(bot, chatId, msg, userId, 'return_package',
           { action: 'return_package', packageNo: intent.packageNo },
-          `Return package ${intent.packageNo}`);
+          `Return Bale ${intent.packageNo}`);
         if (rpQueued) return;
-        const retPkg = await inventoryService.returnPackage(intent.packageNo, userId);
+        const retBale = await inventoryService.returnPackage(intent.packageNo, userId);
         if (retPkg.status === 'completed') {
-          await bot.sendMessage(chatId, `✅ Returned package ${intent.packageNo}: 1 package (${retPkg.returnedThans} thans), ${fmtQty(retPkg.returnedYards)} yards — now available.`);
+          await bot.sendMessage(chatId, `✅ Returned Bale ${intent.packageNo}: 1 Bale (${retPkg.returnedThans} thans), ${fmtQty(retPkg.returnedYards)} yards — now available.`);
         } else {
           await bot.sendMessage(chatId, retPkg.message || 'Could not return.');
         }
@@ -2915,20 +2916,20 @@ async function handleMessage(bot, msg) {
       }
 
       case 'transfer_than': {
-        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Transfer than 3 from package 5801 to Kano"'); return; }
+        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Transfer than 3 from Bale 5801 to Kano"'); return; }
         if (!intent.thanNo) { await bot.sendMessage(chatId, 'Which than number?'); return; }
-        if (!intent.warehouse) { await bot.sendMessage(chatId, 'To which warehouse? e.g. "Transfer than 3 from package 5801 to Kano"'); return; }
+        if (!intent.warehouse) { await bot.sendMessage(chatId, 'To which warehouse? e.g. "Transfer than 3 from Bale 5801 to Kano"'); return; }
         const ttInfo = await inventoryService.getPackageSummary(intent.packageNo);
         const ttThan = ttInfo?.thans?.find((t) => t.thanNo === intent.thanNo);
         const ttFrom = ttInfo?.warehouse || '?';
-        const ttDetail = `Transfer Than\nPackage: ${intent.packageNo}\nThan: ${intent.thanNo} (${ttThan ? fmtQty(ttThan.yards) + ' yds' : '?'})\nDesign: ${ttInfo?.design || '?'} ${ttInfo?.shade || ''}\nFrom: ${ttFrom}\nTo: ${intent.warehouse}`;
+        const ttDetail = `Transfer Than\nBale: ${intent.packageNo}\nThan: ${intent.thanNo} (${ttThan ? fmtQty(ttThan.yards) + ' yds' : '?'})\nDesign: ${ttInfo?.design || '?'} ${ttInfo?.shade || ''}\nFrom: ${ttFrom}\nTo: ${intent.warehouse}`;
         const ttQueued = await requireApproval(bot, chatId, msg, userId, 'transfer_than',
           { action: 'transfer_than', packageNo: intent.packageNo, thanNo: intent.thanNo, toWarehouse: intent.warehouse },
           ttDetail);
         if (ttQueued) return;
         const ttRes = await inventoryService.transferThan(intent.packageNo, intent.thanNo, intent.warehouse, userId);
         if (ttRes.status === 'completed') {
-          await bot.sendMessage(chatId, `✅ Transferred than ${intent.thanNo} from package ${intent.packageNo} (${fmtQty(ttRes.than.yards)} yds): ${ttRes.than.fromWarehouse} → ${intent.warehouse}`);
+          await bot.sendMessage(chatId, `✅ Transferred than ${intent.thanNo} from Bale ${intent.packageNo} (${fmtQty(ttRes.than.yards)} yds): ${ttRes.than.fromWarehouse} → ${intent.warehouse}`);
         } else {
           await bot.sendMessage(chatId, ttRes.message || 'Could not transfer.');
         }
@@ -2936,18 +2937,18 @@ async function handleMessage(bot, msg) {
       }
 
       case 'transfer_package': {
-        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Transfer package 5801 to Kano"'); return; }
+        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Transfer Bale 5801 to Kano"'); return; }
         if (!intent.warehouse) { await bot.sendMessage(chatId, 'To which warehouse?'); return; }
         const tpInfo = await inventoryService.getPackageSummary(intent.packageNo);
         const tpFrom = tpInfo?.warehouse || '?';
-        const tpDetail = `Transfer Package\nPackage: ${intent.packageNo}\nDesign: ${tpInfo?.design || '?'} ${tpInfo?.shade || ''}\nThans: ${tpInfo?.availableThans || '?'} available\nYards: ${tpInfo ? fmtQty(tpInfo.availableYards) : '?'}\nFrom: ${tpFrom}\nTo: ${intent.warehouse}`;
+        const tpDetail = `Transfer Bale\nBale: ${intent.packageNo}\nDesign: ${tpInfo?.design || '?'} ${tpInfo?.shade || ''}\nThans: ${tpInfo?.availableThans || '?'} available\nYards: ${tpInfo ? fmtQty(tpInfo.availableYards) : '?'}\nFrom: ${tpFrom}\nTo: ${intent.warehouse}`;
         const tpQueued = await requireApproval(bot, chatId, msg, userId, 'transfer_package',
           { action: 'transfer_package', packageNo: intent.packageNo, toWarehouse: intent.warehouse },
           tpDetail);
         if (tpQueued) return;
         const tpRes = await inventoryService.transferPackage(intent.packageNo, intent.warehouse, userId);
         if (tpRes.status === 'completed') {
-          await bot.sendMessage(chatId, `✅ Transferred package ${intent.packageNo}: 1 package (${tpRes.transferredThans} thans), ${fmtQty(tpRes.totalYards)} yds — ${tpRes.fromWarehouse} → ${intent.warehouse}`);
+          await bot.sendMessage(chatId, `✅ Transferred Bale ${intent.packageNo}: 1 Bale (${tpRes.transferredThans} thans), ${fmtQty(tpRes.totalYards)} yds — ${tpRes.fromWarehouse} → ${intent.warehouse}`);
         } else {
           await bot.sendMessage(chatId, tpRes.message || 'Could not transfer.');
         }
@@ -2955,21 +2956,21 @@ async function handleMessage(bot, msg) {
       }
 
       case 'transfer_batch': {
-        if (!intent.packageNos || !intent.packageNos.length) { await bot.sendMessage(chatId, 'Which packages? e.g. "Transfer packages 5801, 5802, 5803 to Kano"'); return; }
+        if (!intent.packageNos || !intent.packageNos.length) { await bot.sendMessage(chatId, 'Which Bales? e.g. "Transfer Bales 5801, 5802, 5803 to Kano"'); return; }
         if (!intent.warehouse) { await bot.sendMessage(chatId, 'To which warehouse?'); return; }
-        let batchDetail = `Transfer Batch\nPackages: ${intent.packageNos.join(', ')}\nTo: ${intent.warehouse}\n\nDetails:\n`;
+        let batchDetail = `Transfer Batch\nBales: ${intent.packageNos.join(', ')}\nTo: ${intent.warehouse}\n\nDetails:\n`;
         let batchTotalThans = 0, batchTotalYards = 0;
         for (const pkgNo of intent.packageNos) {
           const pkgInfo = await inventoryService.getPackageSummary(pkgNo);
           if (pkgInfo) {
-            batchDetail += `  Pkg ${pkgNo}: ${pkgInfo.design} ${pkgInfo.shade}, ${pkgInfo.availableThans} thans, ${fmtQty(pkgInfo.availableYards)} yds (from ${pkgInfo.warehouse})\n`;
+            batchDetail += `  Bale ${pkgNo}: ${pkgInfo.design} ${pkgInfo.shade}, ${pkgInfo.availableThans} thans, ${fmtQty(pkgInfo.availableYards)} yds (from ${pkgInfo.warehouse})\n`;
             batchTotalThans += pkgInfo.availableThans;
             batchTotalYards += pkgInfo.availableYards;
           } else {
-            batchDetail += `  Pkg ${pkgNo}: not found\n`;
+            batchDetail += `  Bale ${pkgNo}: not found\n`;
           }
         }
-        batchDetail += `\nTotal: ${intent.packageNos.length} packages (${batchTotalThans} thans), ${fmtQty(batchTotalYards)} yards`;
+        batchDetail += `\nTotal: ${intent.packageNos.length} Bales (${batchTotalThans} thans), ${fmtQty(batchTotalYards)} yards`;
         const tbQueued = await requireApproval(bot, chatId, msg, userId, 'transfer_batch',
           { action: 'transfer_batch', packageNos: intent.packageNos, toWarehouse: intent.warehouse },
           batchDetail);
@@ -2978,9 +2979,9 @@ async function handleMessage(bot, msg) {
         let tbReply = `✅ Batch transfer to ${intent.warehouse}:\n`;
         tbRes.details.forEach((d) => {
           const icon = d.status === 'completed' ? '✅' : '⚠️';
-          tbReply += `${icon} Pkg ${d.packageNo}: ${d.status === 'completed' ? `${d.transferredThans} thans, ${fmtQty(d.totalYards)} yds` : (d.message || d.status)}\n`;
+          tbReply += `${icon} Bale ${d.packageNo}: ${d.status === 'completed' ? `${d.transferredThans} thans, ${fmtQty(d.totalYards)} yds` : (d.message || d.status)}\n`;
         });
-        tbReply += `\n*Total: ${tbRes.totalPackages} packages (${tbRes.totalThans} thans), ${fmtQty(tbRes.totalYards)} yards*`;
+        tbReply += `\n*Total: ${tbRes.totalPackages} Bales (${tbRes.totalThans} thans), ${fmtQty(tbRes.totalYards)} yards*`;
         await sendLong(bot, chatId, tbReply, { parse_mode: 'Markdown' });
         return;
       }
@@ -3686,11 +3687,11 @@ function helpText() {
 
 📦 *Supply Request* — Guided tappable flow (warehouse → design → customer → date)
 📦 "Sell 5801, 5802 to Ibrahim, salesperson Abdul, cash, date today" — Text-based supply
-↩️ "Return than 2 from package 5801"
-🔄 "Transfer package 5801 to Kano"
+↩️ "Return than 2 from Bale 5801"
+🔄 "Transfer Bale 5801 to Kano"
 💲 "Update price of 44200 BLACK to 1500"
 📦 "How much 44200 BLACK do we have?"
-📋 "Show packages for design 44200"
+📋 "Show Bales for design 44200"
 
 *Reports:*
 📊 "Supply details" / "Sales report" / "Inventory details"
@@ -4494,14 +4495,65 @@ async function executeSale(bot, chatId, userId) {
   const session = salesFlow.getSession(userId);
   if (!session) return;
   const details = salesFlow.getSaleDetails(session);
-  const sDate = details.salesDate || new Date().toISOString().split('T')[0];
+  const sDate = details.salesDate || todayInLagos();
+
+  // Date gating (Lagos TZ):
+  //   future → block (those belong in Supply Request with scheduling)
+  //   past   → force 2-admin approval even for admins, flag as BACKDATED
+  //   today  → proceed as normal
+  const cmp = compareWithToday(sDate);
+  if (cmp > 0) {
+    await bot.sendMessage(chatId,
+      `⚠️ *Future-dated sales aren't allowed.* The sale date ${fmtDate(sDate)} is ahead of today (${fmtDate(todayInLagos())}).\n\nUse *Supply Request* for scheduled future deliveries.`,
+      { parse_mode: 'Markdown' },
+    );
+    return;
+  }
+  const isBackdated = cmp < 0;
+  const daysBack = isBackdated ? daysBeforeToday(sDate) : 0;
+
+  // Fix C — Validate cart at submit-time. Reject if ANY item can't be
+  // resolved or has no available thans, so phantoms never enter the queue.
+  const cartIssues = [];
+  for (const item of session.items) {
+    const info = await inventoryService.getPackageSummary(item.packageNo);
+    if (!info) {
+      cartIssues.push(`• Bale ${item.packageNo}: not found in inventory`);
+      continue;
+    }
+    if (item.type === 'package') {
+      if (!info.availableThans || info.availableThans < 1) {
+        cartIssues.push(`• Bale ${item.packageNo}: already sold / no available thans`);
+      }
+    } else if (item.type === 'than') {
+      const t = info.thans?.find((th) => th.thanNo === item.thanNo);
+      if (!t) {
+        cartIssues.push(`• Bale ${item.packageNo} Than ${item.thanNo}: than not found`);
+      } else if (String(t.status || '').toLowerCase() !== 'available') {
+        cartIssues.push(`• Bale ${item.packageNo} Than ${item.thanNo}: not available (${t.status || 'unknown'})`);
+      }
+    } else {
+      cartIssues.push(`• Bale ${item.packageNo}: unknown item type "${item.type}"`);
+    }
+  }
+  if (cartIssues.length) {
+    await bot.sendMessage(chatId,
+      `⚠️ *Cart has ${cartIssues.length} stale/invalid item${cartIssues.length > 1 ? 's' : ''}.* Submission blocked.\n\n${cartIssues.join('\n')}\n\nPlease remove these items and re-submit, or restart the sale.`,
+      { parse_mode: 'Markdown' },
+    );
+    return;
+  }
 
   const risk = await riskEvaluate.evaluate({ action: 'sell_batch', userId });
+  const needsApproval = risk.risk === 'approval_required' || isBackdated;
 
-  if (risk.risk === 'approval_required') {
+  if (needsApproval) {
     // Create ONE approval request for the entire sale
     const requestId = genId();
     let detailText = `Sale Request\nCustomer: ${session.collected.customer}`;
+    if (isBackdated) {
+      detailText = `⚠️ BACKDATED — sale date is ${daysBack} day${daysBack === 1 ? '' : 's'} in the past. Verify the date and inventory are correct before approving.\n\n` + detailText;
+    }
     try {
       const cust = await crmService.getCustomer(session.collected.customer);
       if (cust && (cust.phone || cust.address)) {
@@ -4510,30 +4562,43 @@ async function executeSale(bot, chatId, userId) {
       }
     } catch (_) {}
     detailText += `\nSalesperson: ${details.salesPerson}\nPayment: ${details.paymentMode}\nDate: ${sDate}\n\nItems:\n`;
+    // Fix A — count only items actually rendered; surface any phantom that
+    // slipped through (defence-in-depth; Fix C should prevent this entirely).
     let totalYards = 0, totalThans = 0;
+    const renderedPkgs = new Set();
+    const phantomLines = [];
     for (const item of session.items) {
       const info = await inventoryService.getPackageSummary(item.packageNo);
       if (item.type === 'package' && info) {
-        detailText += `  Pkg ${item.packageNo}: ${info.design} ${info.shade}, ${info.availableThans} thans, ${fmtQty(info.availableYards)} yds (${info.warehouse})\n`;
+        detailText += `  Bale ${item.packageNo}: ${info.design} ${info.shade}, ${info.availableThans} thans, ${fmtQty(info.availableYards)} yds (${info.warehouse})\n`;
         totalThans += info.availableThans;
         totalYards += info.availableYards;
+        renderedPkgs.add(item.packageNo);
       } else if (item.type === 'than' && info) {
         const t = info.thans?.find((th) => th.thanNo === item.thanNo);
-        detailText += `  Pkg ${item.packageNo} Than ${item.thanNo}: ${info.design} ${info.shade}, ${t ? fmtQty(t.yards) + ' yds' : '?'} (${info.warehouse})\n`;
+        detailText += `  Bale ${item.packageNo} Than ${item.thanNo}: ${info.design} ${info.shade}, ${t ? fmtQty(t.yards) + ' yds' : '?'} (${info.warehouse})\n`;
         totalThans += 1;
         totalYards += t ? t.yards : 0;
+        renderedPkgs.add(item.packageNo);
+      } else {
+        phantomLines.push(`  ⚠️ Bale ${item.packageNo}${item.type === 'than' ? ` Than ${item.thanNo}` : ''}: UNRESOLVED (skipped)`);
       }
     }
-    const totalPkgs = new Set(session.items.map((i) => i.packageNo)).size;
-    detailText += `\nTotal: ${totalPkgs} packages (${totalThans} thans), ${fmtQty(totalYards)} yards`;
+    const totalPkgs = renderedPkgs.size;
+    detailText += `\nTotal: ${totalPkgs} Bale${totalPkgs === 1 ? '' : 's'} (${totalThans} thans), ${fmtQty(totalYards)} yards`;
+    if (phantomLines.length) {
+      detailText += `\n\n⚠️ ${phantomLines.length} item${phantomLines.length > 1 ? 's' : ''} could not be resolved and will NOT be applied:\n${phantomLines.join('\n')}`;
+    }
 
     const saleDocInfo = session.sale_doc_file_id
       ? { sale_doc_file_id: session.sale_doc_file_id, sale_doc_type: session.sale_doc_type, sale_doc_mime: session.sale_doc_mime }
       : {};
+    const backdatedNote = isBackdated ? `Backdated sale (${daysBack} day${daysBack === 1 ? '' : 's'} in past). ` : '';
+    const effectiveRiskReason = backdatedNote + (risk.reason || (isBackdated ? 'All backdated sales require admin approval.' : 'All sale operations require admin approval.'));
     await approvalQueueRepository.append({
       requestId, user: userId,
-      actionJSON: { action: 'sale_bundle', items: session.items, customer: session.collected.customer, salesDate: sDate, salesPerson: details.salesPerson, paymentMode: details.paymentMode, ...saleDocInfo },
-      riskReason: risk.reason, status: 'pending',
+      actionJSON: { action: 'sale_bundle', items: session.items, customer: session.collected.customer, salesDate: sDate, salesPerson: details.salesPerson, paymentMode: details.paymentMode, backdated: isBackdated, daysBack, ...saleDocInfo },
+      riskReason: effectiveRiskReason, status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
 
@@ -4541,7 +4606,7 @@ async function executeSale(bot, chatId, userId) {
     const isSubmitterAdmin = config.access.adminIds.includes(userId);
     const excludeId = isSubmitterAdmin ? userId : undefined;
     if (session.sale_doc_file_id) detailText += '\n📎 Sales bill attached (see below)';
-    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, detailText, risk.reason, excludeId);
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, detailText, effectiveRiskReason, excludeId);
     if (session.sale_doc_file_id) {
       for (const adminId of config.access.adminIds) {
         if (excludeId && String(adminId) === String(excludeId)) continue;
@@ -4555,24 +4620,33 @@ async function executeSale(bot, chatId, userId) {
       }
     }
     const approverLabel = isSubmitterAdmin ? '2nd admin' : 'admin';
-    await bot.sendMessage(chatId, `⏳ Supply request submitted for ${approverLabel} approval. Request: ${requestId}\n${totalPkgs} packages (${totalThans} thans), ${fmtQty(totalYards)} yards to ${session.collected.customer}`);
+    await bot.sendMessage(chatId, `⏳ Supply request submitted for ${approverLabel} approval. Request: ${requestId}\n${totalPkgs} Bale${totalPkgs === 1 ? '' : 's'} (${totalThans} thans), ${fmtQty(totalYards)} yards to ${session.collected.customer}`);
     sessionStore.clear(userId);
     return;
   }
 
-  // Admin: execute all items directly in sequence
+  // Admin: execute all items directly in sequence. Fix B — track any items
+  // that silently fail so the operator is told exactly what DID NOT apply.
   let soldThans = 0, totalYards = 0;
   const soldPkgs = new Set();
+  const failedItems = [];
   for (const item of session.items) {
     if (item.type === 'package') {
       const result = await inventoryService.sellPackage(item.packageNo, session.collected.customer, userId, sDate);
       if (result.status === 'completed') { soldThans += result.soldThans; totalYards += result.soldYards; soldPkgs.add(item.packageNo); }
+      else failedItems.push(`Bale ${item.packageNo}: ${result.status}${result.message ? ' — ' + result.message : ''}`);
     } else if (item.type === 'than') {
       const result = await inventoryService.sellThan(item.packageNo, item.thanNo, session.collected.customer, userId, sDate);
       if (result.status === 'completed') { soldThans += 1; totalYards += result.than?.yards || 0; soldPkgs.add(item.packageNo); }
+      else failedItems.push(`Bale ${item.packageNo} Than ${item.thanNo}: ${result.status}${result.message ? ' — ' + result.message : ''}`);
+    } else {
+      failedItems.push(`Bale ${item.packageNo}: unknown item type "${item.type}"`);
     }
   }
-  let saleMsg = `✅ Sale complete: ${soldPkgs.size} packages (${soldThans} thans), ${fmtQty(totalYards)} yards to ${session.collected.customer}`;
+  let saleMsg = `✅ Sale complete: ${soldPkgs.size} Bale${soldPkgs.size === 1 ? '' : 's'} (${soldThans} thans), ${fmtQty(totalYards)} yards to ${session.collected.customer}`;
+  if (failedItems.length) {
+    saleMsg += `\n\n⚠️ ${failedItems.length} of ${session.items.length} item${session.items.length > 1 ? 's' : ''} did NOT apply:\n${failedItems.map((l) => '  • ' + l).join('\n')}`;
+  }
   if (session.sale_doc_file_id) {
     try {
       const { buffer, filePath } = await downloadTelegramFile(bot, session.sale_doc_file_id);
@@ -5105,7 +5179,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const session = sessionStore.get(uid);
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
     if (session && session.flowMessageId) {
-      await bot.editMessageText('❌ Transfer Package cancelled.', {
+      await bot.editMessageText('❌ Transfer Bale cancelled.', {
         chat_id: callbackQuery.message.chat.id, message_id: session.flowMessageId,
       }).catch(() => {});
     }
@@ -5143,18 +5217,18 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await approvalQueueRepository.append({
       requestId, user: uid,
       actionJSON: { action: 'transfer_package', packageNo: session.packageNo, toWarehouse: session.toWh },
-      riskReason: 'Package transfer requires admin approval', status: 'pending',
+      riskReason: 'Bale transfer requires admin approval', status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: 'transfer_package', via: 'tap_flow' }, uid);
     if (session.flowMessageId) {
       await bot.editMessageText(
-        `🚚 *Transfer Package — submitted*\n\nPackage: *${session.packageNo}*\n${session.fromWh} → *${session.toWh}*\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
+        `🚚 *Transfer Bale — submitted*\n\nBale: *${session.packageNo}*\n${session.fromWh} → *${session.toWh}*\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
         { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
       ).catch(() => {});
     }
     const userLabel = await getRequesterDisplayName(uid, null);
-    const summary = `Transfer Package\nPackage: ${session.packageNo}\nDesign: ${session.design || '?'} ${session.shade || ''}\nThans: ${session.availableThans} · Yards: ${fmtQty(session.availableYards)}\nFrom: ${session.fromWh}\nTo: ${session.toWh}`;
-    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'Package transfer requires admin approval');
+    const summary = `Transfer Bale\nBale: ${session.packageNo}\nDesign: ${session.design || '?'} ${session.shade || ''}\nThans: ${session.availableThans} · Yards: ${fmtQty(session.availableYards)}\nFrom: ${session.fromWh}\nTo: ${session.toWh}`;
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'Bale transfer requires admin approval');
     sessionStore.clear(uid);
 
   /* ─── TRANSFER THAN TAP FLOW ─── */
@@ -5217,12 +5291,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await auditLogRepository.append('approval_queued', { requestId, reason: 'transfer_than', via: 'tap_flow' }, uid);
     if (session.flowMessageId) {
       await bot.editMessageText(
-        `↔️ *Transfer Than — submitted*\n\nPackage: *${session.packageNo}* · Than: *#${session.thanNo}*\n${session.fromWh} → *${session.toWh}*\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
+        `↔️ *Transfer Than — submitted*\n\nBale: *${session.packageNo}* · Than: *#${session.thanNo}*\n${session.fromWh} → *${session.toWh}*\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
         { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
       ).catch(() => {});
     }
     const userLabel = await getRequesterDisplayName(uid, null);
-    const summary = `Transfer Than\nPackage: ${session.packageNo}\nThan: ${session.thanNo}\nDesign: ${session.design || '?'} ${session.shade || ''}\nFrom: ${session.fromWh}\nTo: ${session.toWh}`;
+    const summary = `Transfer Than\nBale: ${session.packageNo}\nThan: ${session.thanNo}\nDesign: ${session.design || '?'} ${session.shade || ''}\nFrom: ${session.fromWh}\nTo: ${session.toWh}`;
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'Than transfer requires admin approval');
     sessionStore.clear(uid);
 
@@ -5275,12 +5349,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await auditLogRepository.append('approval_queued', { requestId, reason: 'return_than', via: 'tap_flow' }, uid);
     if (session.flowMessageId) {
       await bot.editMessageText(
-        `↩️ *Return Than — submitted*\n\nPackage: *${session.packageNo}* · Than: *#${session.thanNo}*\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
+        `↩️ *Return Than — submitted*\n\nBale: *${session.packageNo}* · Than: *#${session.thanNo}*\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
         { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
       ).catch(() => {});
     }
     const userLabel = await getRequesterDisplayName(uid, null);
-    const summary = `Return Than\nPackage: ${session.packageNo}\nThan: ${session.thanNo}\nDesign: ${session.design || '?'} ${session.shade || ''}`;
+    const summary = `Return Than\nBale: ${session.packageNo}\nThan: ${session.thanNo}\nDesign: ${session.design || '?'} ${session.shade || ''}`;
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'Than return requires admin approval');
     sessionStore.clear(uid);
 
@@ -5478,10 +5552,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [
           [
-            { text: '1 pkg',  callback_data: 'oq:1' },
-            { text: '2 pkgs', callback_data: 'oq:2' },
-            { text: '5 pkgs', callback_data: 'oq:5' },
-            { text: '10 pkgs', callback_data: 'oq:10' },
+            { text: '1 Bale',  callback_data: 'oq:1' },
+            { text: '2 Bales', callback_data: 'oq:2' },
+            { text: '5 Bales', callback_data: 'oq:5' },
+            { text: '10 Bales', callback_data: 'oq:10' },
           ],
           [{ text: '✏️ Custom', callback_data: 'oq:__custom__' }],
           [{ text: '❌ Cancel', callback_data: 'ocanc:1' }],
@@ -5500,7 +5574,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (val === '__custom__') {
       session.step = 'quantity_custom';
       sessionStore.set(uid, session);
-      await bot.sendMessage(chatId, 'Enter custom quantity (number of packages):');
+      await bot.sendMessage(chatId, 'Enter custom quantity (number of Bales):');
       return;
     }
     session.quantity = val;
