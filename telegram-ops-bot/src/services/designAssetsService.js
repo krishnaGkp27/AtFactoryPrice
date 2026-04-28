@@ -54,24 +54,41 @@ function safeName(s) {
  * @param {object} params
  * @param {string} params.design               (required)
  * @param {Buffer} params.rawBuffer            (required) raw photo bytes
- * @param {number} params.shadeCount           (>=1)
- * @param {string[]} params.shadeNames         length === shadeCount
- * @param {string} params.uploadedBy           Telegram user id
- * @param {string} [params.notes]
+ * @param {Array<{number:number,name:string}>} [params.shades]
+ *        Preferred: array of {number, name} pairs (numbers may be non-sequential, e.g. 3..11).
+ * @param {number}   [params.shadeCount]       Required only if `shades` is omitted (legacy path).
+ * @param {string[]} [params.shadeNames]       Legacy path — auto-numbered 1..N.
+ * @param {string}   params.uploadedBy         Telegram user id
+ * @param {string}   [params.notes]
  * @returns {{
- *   design, productType, shadeCount, shadeNames,
+ *   design, productType, shadeCount, shades, shadeNames,
  *   rawDriveFileId, rawDriveUrl, labeledDriveFileId, labeledDriveUrl,
  *   labeledBuffer
  * }}
  */
-async function stageUpload({ design, rawBuffer, shadeCount, shadeNames, uploadedBy, notes }) {
+async function stageUpload({ design, rawBuffer, shades, shadeCount, shadeNames, uploadedBy, notes }) {
   if (!design) throw new Error('design is required');
   if (!Buffer.isBuffer(rawBuffer) || rawBuffer.length === 0) {
     throw new Error('rawBuffer is required');
   }
-  if (!shadeCount || shadeCount < 1) throw new Error('shadeCount must be >= 1');
-  const names = Array.isArray(shadeNames) ? shadeNames.slice(0, shadeCount) : [];
-  while (names.length < shadeCount) names.push(`Shade ${names.length + 1}`);
+
+  // Resolve to canonical [{number, name}] list, preferring `shades` when given.
+  let canonical;
+  if (Array.isArray(shades) && shades.length) {
+    canonical = shades
+      .map((s) => ({ number: parseInt(s.number, 10), name: String(s.name || '').trim() }))
+      .filter((s) => Number.isFinite(s.number) && s.number > 0);
+  } else {
+    if (!shadeCount || shadeCount < 1) throw new Error('shadeCount must be >= 1 when `shades` not provided');
+    const names = Array.isArray(shadeNames) ? shadeNames.slice(0, shadeCount) : [];
+    while (names.length < shadeCount) names.push(`Shade ${names.length + 1}`);
+    canonical = names.map((n, i) => ({ number: i + 1, name: n }));
+  }
+  if (!canonical.length) throw new Error('At least one shade is required');
+  // De-duplicate by number, keep first.
+  const seen = new Set();
+  canonical = canonical.filter((s) => { if (seen.has(s.number)) return false; seen.add(s.number); return true; });
+  canonical.sort((a, b) => a.number - b.number);
 
   const productType = await detectProductType(design);
 
@@ -117,8 +134,9 @@ async function stageUpload({ design, rawBuffer, shadeCount, shadeNames, uploaded
   return {
     design: String(design).trim(),
     productType,
-    shadeCount,
-    shadeNames: names,
+    shadeCount: canonical.length,
+    shades: canonical,
+    shadeNames: canonical.map((s) => s.name),
     rawDriveFileId, rawDriveUrl,
     labeledDriveFileId, labeledDriveUrl,
     labeledBuffer,
@@ -137,6 +155,7 @@ async function persistPending(staged, approvalRequestId) {
     design: staged.design,
     productType: staged.productType,
     shadeCount: staged.shadeCount,
+    shades: staged.shades,
     shadeNames: staged.shadeNames,
     rawDriveFileId: staged.rawDriveFileId,
     rawDriveUrl: staged.rawDriveUrl,
@@ -209,6 +228,7 @@ async function getPhotoForSend(design) {
       design: row.design,
       productType: row.productType,
       shadeCount: row.shadeCount,
+      shades: row.shades || [],
       shadeNames: row.shadeNames,
       photo: row.telegramFileId,
       photoSource: 'telegram_file_id',
@@ -227,6 +247,7 @@ async function getPhotoForSend(design) {
     design: row.design,
     productType: row.productType,
     shadeCount: row.shadeCount,
+    shades: row.shades || [],
     shadeNames: row.shadeNames,
     photo: url,
     photoSource: 'drive_url',
@@ -279,15 +300,20 @@ async function sendShadePicker({ bot, chatId, design, captionPrefix, buildShadeB
   if (!asset) return false;
   const perRow = Math.max(1, Math.min(4, buttonsPerRow || 3));
 
-  const names = (asset.shadeNames && asset.shadeNames.length)
-    ? asset.shadeNames
-    : Array.from({ length: asset.shadeCount || 1 }, (_, i) => `Shade ${i + 1}`);
+  // Prefer the structured {number, name} list so buttons reflect the
+  // physical tab numbers stamped on the bale card. Fall back to legacy
+  // sequential numbering only if the asset has no structured shades.
+  const items = (Array.isArray(asset.shades) && asset.shades.length)
+    ? asset.shades.map((s) => ({ number: s.number, name: s.name }))
+    : (asset.shadeNames && asset.shadeNames.length)
+      ? asset.shadeNames.map((n, i) => ({ number: i + 1, name: n }))
+      : Array.from({ length: asset.shadeCount || 1 }, (_, i) => ({ number: i + 1, name: `Shade ${i + 1}` }));
 
   const rows = [];
-  for (let i = 0; i < names.length; i += perRow) {
+  for (let i = 0; i < items.length; i += perRow) {
     const row = [];
-    for (let j = i; j < Math.min(i + perRow, names.length); j++) {
-      row.push(buildShadeButton(names[j], j));
+    for (let j = i; j < Math.min(i + perRow, items.length); j++) {
+      row.push(buildShadeButton(items[j].name, j, items[j].number));
     }
     rows.push(row);
   }

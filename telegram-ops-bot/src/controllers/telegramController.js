@@ -6843,13 +6843,77 @@ async function showDesignAssetShadeNamesPrompt(bot, chatId, userId) {
   if (!session) return;
   session.step = 'shade_names';
   sessionStore.set(userId, session);
-  const exampleNames = Array.from({ length: session.shadeCount }, (_, i) => ['White', 'Beige', 'Brown', 'Olive', 'Burgundy', 'Purple', 'Sky', 'Cream', 'Navy', 'Forest', 'Off-white', 'Black', 'Gold', 'Silver', 'Wine', 'Teal', 'Coral', 'Mint', 'Charcoal', 'Tan'][i] || `Shade${i + 1}`).slice(0, session.shadeCount).join(', ');
+  const SAMPLE_NAMES = ['White', 'Beige', 'Brown', 'Olive', 'Burgundy', 'Purple', 'Sky', 'Cream', 'Navy', 'Forest', 'Off-white', 'Black', 'Gold', 'Silver', 'Wine', 'Teal', 'Coral', 'Mint', 'Charcoal', 'Tan'];
+  const numberedExample = Array.from({ length: session.shadeCount }, (_, i) =>
+    `${i + 1}:${SAMPLE_NAMES[i] || `Shade${i + 1}`}`
+  ).join(', ');
+  const plainExample = Array.from({ length: session.shadeCount }, (_, i) =>
+    SAMPLE_NAMES[i] || `Shade${i + 1}`
+  ).join(', ');
   await editOrSend(bot, chatId, session.flowMessageId,
-    `📷 *Upload Product Photo*\n\n✓ Design: *${session.design}*\n✓ Shades: *${session.shadeCount}*\n\nStep 3 / 4 — *Enter shade names*, comma-separated, in left-to-right order matching the photo.\n\nExample for ${session.shadeCount} shades:\n\`${exampleNames}\`\n\nOr type *skip* to use generic names (Shade 1, Shade 2, …).`,
+    `📷 *Upload Product Photo*\n\n` +
+    `✓ Design: *${session.design}*\n` +
+    `✓ Shades: *${session.shadeCount}*\n\n` +
+    `Step 3 / 4 — *Enter shade numbers + names*, comma-separated, in left-to-right order matching the photo.\n\n` +
+    `🅰 *Numbered* (use the physical tab numbers visible on the bale card):\n` +
+    `\`${numberedExample}\`\n\n` +
+    `🅱 *Or plain names* (sequential 1…N is auto-assigned):\n` +
+    `\`${plainExample}\`\n\n` +
+    `Or type *skip* to use generic names (Shade 1, Shade 2, …).`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
       [{ text: '⏭ Skip — use generic names', callback_data: 'dap:skipnames' }],
       [{ text: '❌ Cancel', callback_data: 'dap:cancel' }],
     ] } });
+}
+
+/**
+ * Parse the user's shade-names reply into canonical [{number, name}].
+ *
+ * Supported formats (auto-detected per entry):
+ *   - "3:Dark Green"     → {number: 3,  name: "Dark Green"}
+ *   - "3=Dark Green"     → {number: 3,  name: "Dark Green"}
+ *   - "Dark Green"       → {number: i+1, name: "Dark Green"}   (positional fallback)
+ *
+ * Returns { ok: true, shades: [...] } or { ok: false, reason: "…" }.
+ */
+function parseShadeReply(text, expectedCount) {
+  const parts = text.split(',').map((s) => s.trim()).filter(Boolean);
+  if (!parts.length) return { ok: false, reason: 'Got an empty list — please send shade names.' };
+  const shades = [];
+  const seen = new Set();
+  for (let i = 0; i < parts.length; i++) {
+    const raw = parts[i];
+    const m = raw.match(/^\s*(\d+)\s*[:=]\s*(.+?)\s*$/);
+    let number, name;
+    if (m) {
+      number = parseInt(m[1], 10);
+      name = m[2];
+    } else {
+      number = i + 1;
+      name = raw;
+    }
+    if (!Number.isFinite(number) || number <= 0) {
+      return { ok: false, reason: `Entry "${raw}" has an invalid number.` };
+    }
+    if (seen.has(number)) {
+      return { ok: false, reason: `Number ${number} is repeated — each tab number must appear only once.` };
+    }
+    if (!name) {
+      return { ok: false, reason: `Entry "${raw}" is missing a name.` };
+    }
+    seen.add(number);
+    shades.push({ number, name: name.slice(0, 30) });
+  }
+  if (Number.isFinite(expectedCount) && expectedCount > 0 && shades.length !== expectedCount) {
+    return { ok: false, reason: `Got ${shades.length} entries but expected ${expectedCount} (you said ${expectedCount} shades).` };
+  }
+  shades.sort((a, b) => a.number - b.number);
+  return { ok: true, shades };
+}
+
+function formatShadesPreview(shades) {
+  if (!Array.isArray(shades) || !shades.length) return '_(none)_';
+  return shades.map((s) => `${s.number}. ${s.name}`).join(' • ');
 }
 
 async function showDesignAssetPhotoPrompt(bot, chatId, userId) {
@@ -6857,9 +6921,14 @@ async function showDesignAssetPhotoPrompt(bot, chatId, userId) {
   if (!session) return;
   session.step = 'photo';
   sessionStore.set(userId, session);
-  const namesPreview = (session.shadeNames || []).slice(0, 6).join(', ') + (session.shadeNames.length > 6 ? `, …+${session.shadeNames.length - 6}` : '');
+  const list = (session.shades || []).slice(0, 6).map((s) => `${s.number}:${s.name}`).join(', ');
+  const more = (session.shades || []).length > 6 ? `, …+${session.shades.length - 6}` : '';
   await editOrSend(bot, chatId, session.flowMessageId,
-    `📷 *Upload Product Photo*\n\n✓ Design: *${session.design}*\n✓ Shades: *${session.shadeCount}* — ${namesPreview}\n\nStep 4 / 4 — *Send the product photo* now (as a Telegram photo, not a file).\n\n💡 Tip: Lay shades left → right in the same order as the names you entered. Tabbing each shade with paper labels (1, 2, 3 …) makes the photo unambiguous for everyone.`,
+    `📷 *Upload Product Photo*\n\n` +
+    `✓ Design: *${session.design}*\n` +
+    `✓ Shades: *${session.shadeCount}* — ${list}${more}\n\n` +
+    `Step 4 / 4 — *Send the product photo* now (as a Telegram photo, not a file).\n\n` +
+    `💡 Tip: Tab numbers in the photo should match the numbers you entered above so users can correlate.`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'dap:cancel' }]] } });
 }
 
@@ -6884,8 +6953,7 @@ async function processDesignAssetPhoto(bot, chatId, userId, telegramFileId) {
     staged = await designAssetsService.stageUpload({
       design: session.design,
       rawBuffer: dl.buffer,
-      shadeCount: session.shadeCount,
-      shadeNames: session.shadeNames,
+      shades: session.shades,
       uploadedBy: userId,
     });
   } catch (e) {
@@ -6900,6 +6968,7 @@ async function processDesignAssetPhoto(bot, chatId, userId, telegramFileId) {
     design: staged.design,
     productType: staged.productType,
     shadeCount: staged.shadeCount,
+    shades: staged.shades,
     shadeNames: staged.shadeNames,
     rawDriveFileId: staged.rawDriveFileId,
     rawDriveUrl: staged.rawDriveUrl,
@@ -6910,19 +6979,37 @@ async function processDesignAssetPhoto(bot, chatId, userId, telegramFileId) {
   };
   session.step = 'preview';
   sessionStore.set(userId, session);
+  await sendDesignAssetPreview(bot, chatId, userId);
+}
 
-  // Send the labeled preview directly from the buffer (Drive may not be
-  // public-readable yet to Telegram). Capture file_id to reuse if user
-  // re-previews.
+/**
+ * Send (or re-send) the labeled preview with action buttons. Used after a
+ * fresh photo is processed and after an in-place edit of shade metadata.
+ */
+async function sendDesignAssetPreview(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || !session.staged) return;
+  const staged = session.staged;
+  const previewLines = formatShadesPreview(staged.shades);
+  const caption = `📷 *Preview — ${staged.design}* (${staged.shadeCount} shades)\n\n${previewLines}\n\nSubmit for admin approval, edit the numbers/names, or retake the photo.`;
+  const kb = { inline_keyboard: [
+    [{ text: '✅ Submit for approval',          callback_data: 'dap:submit' }],
+    [{ text: '✏️ Edit shade numbers / names',   callback_data: 'dap:editmeta' }],
+    [{ text: '🔁 Retake photo',                  callback_data: 'dap:retake' }],
+    [{ text: '❌ Cancel',                        callback_data: 'dap:cancel' }],
+  ] };
+  // First time: send the labeled buffer directly (Drive may not be public-readable yet to Telegram).
+  // Subsequent edits: prefer the cached previewFileId for instant resend.
+  const photoSrc = session.previewFileId
+    || (staged.labeledDriveFileId ? `https://drive.google.com/uc?export=download&id=${staged.labeledDriveFileId}` : null);
+  // If we have neither, the upload pipeline failed earlier — bail.
+  if (!photoSrc && !session._labeledBuffer) {
+    await bot.sendMessage(chatId, '⚠️ Preview unavailable. Tap retake or cancel.', { parse_mode: 'Markdown' });
+    return;
+  }
   try {
-    const sent = await bot.sendPhoto(chatId, staged.labeledBuffer, {
-      caption: `📷 *Preview — ${staged.design}* (${staged.shadeCount} shades)\n\n${staged.shadeNames.map((n, i) => `${i + 1}. ${n}`).join('  •  ')}\n\nSubmit for admin approval, or retake the photo.`,
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: [
-        [{ text: '✅ Submit for approval', callback_data: 'dap:submit' }],
-        [{ text: '🔁 Retake photo',           callback_data: 'dap:retake' }],
-        [{ text: '❌ Cancel',                 callback_data: 'dap:cancel' }],
-      ] },
+    const sent = await bot.sendPhoto(chatId, photoSrc || session._labeledBuffer, {
+      caption, parse_mode: 'Markdown', reply_markup: kb,
     });
     if (sent && sent.photo && sent.photo.length) {
       session.previewFileId = sent.photo[sent.photo.length - 1].file_id;
@@ -6930,7 +7017,7 @@ async function processDesignAssetPhoto(bot, chatId, userId, telegramFileId) {
     }
   } catch (e) {
     logger.error('design_asset_flow: preview send failed', e.message);
-    await bot.sendMessage(chatId, '⚠️ Preview could not be sent, but the photo was processed. Reply *submit* to send for approval, or *cancel* to abort.', { parse_mode: 'Markdown' });
+    await bot.sendMessage(chatId, '⚠️ Preview could not be sent, but the photo was processed. Reply *submit* to send for approval, *edit* to redo names, or *cancel* to abort.', { parse_mode: 'Markdown' });
   }
 }
 
@@ -6948,6 +7035,7 @@ async function submitDesignAssetForApproval(bot, chatId, userId, msg) {
       design: staged.design,
       productType: staged.productType,
       shadeCount: staged.shadeCount,
+      shades: staged.shades,
       shadeNames: staged.shadeNames,
       rawDriveFileId: staged.rawDriveFileId,
       rawDriveUrl: staged.rawDriveUrl,
@@ -6971,6 +7059,7 @@ async function submitDesignAssetForApproval(bot, chatId, userId, msg) {
       design: staged.design,
       productType: staged.productType,
       shadeCount: staged.shadeCount,
+      shades: staged.shades,
       shadeNames: staged.shadeNames,
       labeledDriveUrl: staged.labeledDriveUrl,
       uploaderUserId: userId,
@@ -6984,11 +7073,12 @@ async function submitDesignAssetForApproval(bot, chatId, userId, msg) {
   const isAdm = config.access.adminIds.includes(userId);
   const summary = `Product photo: ${staged.design} (${staged.shadeCount} shades)`;
   const previewPhoto = session.previewFileId || (staged.labeledDriveFileId ? `https://drive.google.com/uc?export=download&id=${staged.labeledDriveFileId}` : null);
+  const previewLines = formatShadesPreview(staged.shades);
   await approvalEvents.notifyAdminsApprovalRequest(
     bot, requestId, userLabel, summary,
     'Product-photo asset must be approved before it appears to consumers.',
     isAdm ? userId : undefined,
-    previewPhoto ? { previewPhoto, previewCaption: `📷 *${staged.design}* — preview\n${staged.shadeNames.map((n, i) => `${i + 1}. ${n}`).join('  •  ')}` } : {},
+    previewPhoto ? { previewPhoto, previewCaption: `📷 *${staged.design}* — preview\n${previewLines}` } : {},
   );
 
   sessionStore.clear(userId);
@@ -7024,39 +7114,77 @@ async function handleDesignAssetTextStep(bot, chatId, userId, text) {
     return true;
   }
   if (session.step === 'shade_names') {
-    let names;
+    let shades;
     if (text.toLowerCase() === 'skip') {
-      names = Array.from({ length: session.shadeCount }, (_, i) => `Shade ${i + 1}`);
+      shades = Array.from({ length: session.shadeCount }, (_, i) => ({ number: i + 1, name: `Shade ${i + 1}` }));
     } else {
-      names = text.split(',').map((s) => s.trim()).filter(Boolean);
-      if (names.length !== session.shadeCount) {
+      const parsed = parseShadeReply(text, session.shadeCount);
+      if (!parsed.ok) {
         await bot.sendMessage(chatId,
-          `⚠️ Got ${names.length} names but expected ${session.shadeCount} (you said ${session.shadeCount} shades). Send a comma-separated list with exactly ${session.shadeCount} entries, or *skip*.`,
+          `⚠️ ${parsed.reason}\n\nUse *N:name* (e.g. \`3:Dark Green, 4:Beige, …\`) or plain names. Or tap *Skip*.`,
           { parse_mode: 'Markdown' });
         return true;
       }
-      // Cap each name to 30 chars to fit Telegram button labels.
-      names = names.map((n) => n.slice(0, 30));
+      shades = parsed.shades;
     }
-    session.shadeNames = names;
+    session.shades = shades;
+    session.shadeNames = shades.map((s) => s.name);   // legacy mirror
+    session.shadeCount = shades.length;
     sessionStore.set(userId, session);
     await showDesignAssetPhotoPrompt(bot, chatId, userId);
     return true;
   }
-  if (session.step === 'edit_names' && session.editingDesign) {
-    let names = text.split(',').map((s) => s.trim()).filter(Boolean);
-    if (!names.length) {
-      await bot.sendMessage(chatId, '⚠️ Enter at least one name.');
-      return true;
+  if (session.step === 'edit_meta' && session.staged) {
+    // In-flow edit before submission: photo already processed, just rewrite shades.
+    if (text.toLowerCase() === 'skip') {
+      session.staged.shades = Array.from({ length: session.staged.shadeCount }, (_, i) =>
+        ({ number: i + 1, name: `Shade ${i + 1}` })
+      );
+      session.staged.shadeNames = session.staged.shades.map((s) => s.name);
+    } else {
+      const parsed = parseShadeReply(text, null); // count may change on edit
+      if (!parsed.ok) {
+        await bot.sendMessage(chatId,
+          `⚠️ ${parsed.reason}\n\nUse *N:name* or plain names, comma-separated.`,
+          { parse_mode: 'Markdown' });
+        return true;
+      }
+      session.staged.shades = parsed.shades;
+      session.staged.shadeCount = parsed.shades.length;
+      session.staged.shadeNames = parsed.shades.map((s) => s.name);
     }
-    names = names.map((n) => n.slice(0, 30));
+    session.step = 'preview';
+    sessionStore.set(userId, session);
+    await bot.sendMessage(chatId, '✅ Updated. Re-rendering preview…');
+    await sendDesignAssetPreview(bot, chatId, userId);
+    return true;
+  }
+  if (session.step === 'edit_names' && session.editingDesign) {
+    // Manage-hub edit (post-approval): touches the persisted active asset.
+    let shades;
+    if (text.toLowerCase() === 'skip') {
+      const row = await designAssetsRepo.findActive(session.editingDesign);
+      if (!row) { await bot.sendMessage(chatId, `⚠️ No active asset for ${session.editingDesign}.`); sessionStore.clear(userId); return true; }
+      shades = Array.from({ length: row.shadeCount || 1 }, (_, i) => ({ number: i + 1, name: `Shade ${i + 1}` }));
+    } else {
+      const parsed = parseShadeReply(text, null);
+      if (!parsed.ok) {
+        await bot.sendMessage(chatId,
+          `⚠️ ${parsed.reason}\n\nUse *N:name* or plain names, comma-separated. Type *cancel* to abort.`,
+          { parse_mode: 'Markdown' });
+        return true;
+      }
+      shades = parsed.shades;
+    }
     try {
       const row = await designAssetsRepo.findActive(session.editingDesign);
       if (!row) {
         await bot.sendMessage(chatId, `⚠️ No active asset for ${session.editingDesign}.`);
       } else {
-        await designAssetsRepo.setShadeNames(row.rowIndex, names);
-        await bot.sendMessage(chatId, `✅ Shade names updated for *${session.editingDesign}*.\nNew names: ${names.join(', ')}`, { parse_mode: 'Markdown' });
+        await designAssetsRepo.setShades(row.rowIndex, shades);
+        await bot.sendMessage(chatId,
+          `✅ Shades updated for *${session.editingDesign}*.\n${formatShadesPreview(shades)}`,
+          { parse_mode: 'Markdown' });
       }
     } catch (e) {
       await bot.sendMessage(chatId, `⚠️ Update failed: ${e.message}`);
@@ -7122,7 +7250,7 @@ async function showDesignAssetDetail(bot, chatId, userId, design) {
   const photoSrc = row.telegramFileId
     ? row.telegramFileId
     : (row.labeledDriveFileId ? `https://drive.google.com/uc?export=download&id=${row.labeledDriveFileId}` : '');
-  const caption = `📷 *${row.design}* — ${row.productType}\nShades (${row.shadeCount}): ${row.shadeNames.join(', ') || '_(generic)_'}\nUploaded by: ${row.uploadedBy} • ${fmtDate(row.uploadedAt) || row.uploadedAt}\nApproved by: ${row.approvedBy || '_(legacy)_'}`;
+  const caption = `📷 *${row.design}* — ${row.productType}\nShades (${row.shadeCount}):\n${formatShadesPreview(row.shades || [])}\nUploaded by: ${row.uploadedBy} • ${fmtDate(row.uploadedAt) || row.uploadedAt}\nApproved by: ${row.approvedBy || '_(legacy)_'}`;
   const kb = { inline_keyboard: [
     [{ text: '🔁 Replace photo', callback_data: `dam:replace:${row.design.slice(0, 30)}` }],
     [{ text: '✏️ Edit shade names', callback_data: `dam:editnames:${row.design.slice(0, 30)}` }],
@@ -7204,10 +7332,32 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
       await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' });
       return true;
     }
-    session.shadeNames = Array.from({ length: session.shadeCount }, (_, i) => `Shade ${i + 1}`);
+    session.shades = Array.from({ length: session.shadeCount }, (_, i) =>
+      ({ number: i + 1, name: `Shade ${i + 1}` })
+    );
+    session.shadeNames = session.shades.map((s) => s.name);
     sessionStore.set(uid, session);
     await bot.answerCallbackQuery(callbackQuery.id);
     await showDesignAssetPhotoPrompt(bot, chatId, uid);
+    return true;
+  }
+  if (data === 'dap:editmeta') {
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'design_asset_flow' || !session.staged) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' });
+      return true;
+    }
+    session.step = 'edit_meta';
+    sessionStore.set(uid, session);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    const current = formatShadesPreview(session.staged.shades);
+    await bot.sendMessage(chatId,
+      `✏️ *Edit shade numbers / names — ${session.staged.design}*\n\n` +
+      `Current:\n${current}\n\n` +
+      `Reply with the corrected list, comma-separated. Use *N:name* to set the physical tab number, e.g.\n` +
+      `\`3:Dark Green, 4:Beige, 5:Dark Brown, 6:Olive, 7:Purple, 8:Sky Blue, 9:Cream, 10:Navy, 11:Green, 12:White\`\n\n` +
+      `Or plain names if numbering should stay 1…N. Type *skip* for generic names.`,
+      { parse_mode: 'Markdown' });
     return true;
   }
   if (data === 'dap:retake') {
@@ -7268,9 +7418,13 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
     await bot.answerCallbackQuery(callbackQuery.id);
     sessionStore.set(uid, { type: 'design_asset_flow', step: 'edit_names', editingDesign: design, shadeNames: [], ttlMs: DESIGN_ASSET_TTL_MS });
     const row = await designAssetsRepo.findActive(design);
-    const cur = row ? row.shadeNames.join(', ') : '';
+    const cur = row ? formatShadesPreview(row.shades || []) : '_(none)_';
     await bot.sendMessage(chatId,
-      `✏️ *Edit shade names — ${design}*\n\nCurrent: ${cur || '_(none)_'}\n\nReply with the new comma-separated names. Type *cancel* to abort.`,
+      `✏️ *Edit shade numbers / names — ${design}*\n\n` +
+      `Current:\n${cur}\n\n` +
+      `Reply with the new list, comma-separated. Use *N:name* to set the physical tab number, e.g.\n` +
+      `\`3:Dark Green, 4:Beige, 5:Dark Brown, …\`\n\n` +
+      `Or plain names if numbering should stay 1…N. Type *cancel* to abort.`,
       { parse_mode: 'Markdown' });
     return true;
   }
