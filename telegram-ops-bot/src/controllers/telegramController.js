@@ -2575,6 +2575,28 @@ async function handleMessage(bot, msg) {
     }
   }
 
+  // Orphan-flow detection: if the user just posted a reply that *looks* like
+  // it was meant for a recently expired flow (e.g. comma-separated shade
+  // names while the design_asset_flow session timed out), send a clear
+  // "session expired — please restart" message instead of letting the AI
+  // intent parser hallucinate a clarification.
+  {
+    const hint = sessionStore.getLastSessionHint(userId);
+    if (hint && hint.type === 'design_asset_flow') {
+      const looksLikeFlowReply =
+        (hint.step === 'shade_names' && (text.includes(',') || /^skip$/i.test(text))) ||
+        (hint.step === 'design_typing' && text.length > 0 && text.length <= 30) ||
+        (hint.step === 'edit_names' && text.includes(','));
+      if (looksLikeFlowReply) {
+        sessionStore.clearLastSessionHint(userId);
+        await bot.sendMessage(chatId,
+          '⏳ Your *Upload Product Photo* session expired before this reply arrived.\n\nPlease restart from 📷 *Catalog → Upload Product Photo* — your input was not lost, just not connected to a live flow.',
+          { parse_mode: 'Markdown' });
+        return;
+      }
+    }
+  }
+
   if (text.toLowerCase() === 'cancel') {
     const s = sessionStore.get(userId);
     if (s && (s.type === 'supply_req_flow' || s.type === 'adm_flow')) {
@@ -6739,12 +6761,18 @@ async function handleAdminFlowText(bot, chatId, userId, text, session) {
 const DAP_MAX_SHADES = 20;
 const DAP_MAX_DESIGN_LEN = 30;
 
+// 30 minutes — photo upload involves stepping away to take pictures, so the
+// usual 5-min default is far too tight. Carried forward by sessionStore.set
+// as long as the session is read-modify-written (the pattern this flow uses).
+const DESIGN_ASSET_TTL_MS = 30 * 60 * 1000;
+
 async function startDesignAssetUploadFlow(bot, chatId, userId) {
   sessionStore.clear(userId);
   sessionStore.set(userId, {
     type: 'design_asset_flow',
     step: 'design',
     shadeNames: [],
+    ttlMs: DESIGN_ASSET_TTL_MS,
   });
   await showDesignAssetDesignPicker(bot, chatId, userId);
 }
@@ -7227,7 +7255,7 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
     }
     await bot.answerCallbackQuery(callbackQuery.id);
     sessionStore.clear(uid);
-    sessionStore.set(uid, { type: 'design_asset_flow', step: 'shade_count', design, shadeNames: [] });
+    sessionStore.set(uid, { type: 'design_asset_flow', step: 'shade_count', design, shadeNames: [], ttlMs: DESIGN_ASSET_TTL_MS });
     await showDesignAssetShadeCountPicker(bot, chatId, uid);
     return true;
   }
@@ -7238,7 +7266,7 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
       return true;
     }
     await bot.answerCallbackQuery(callbackQuery.id);
-    sessionStore.set(uid, { type: 'design_asset_flow', step: 'edit_names', editingDesign: design, shadeNames: [] });
+    sessionStore.set(uid, { type: 'design_asset_flow', step: 'edit_names', editingDesign: design, shadeNames: [], ttlMs: DESIGN_ASSET_TTL_MS });
     const row = await designAssetsRepo.findActive(design);
     const cur = row ? row.shadeNames.join(', ') : '';
     await bot.sendMessage(chatId,
