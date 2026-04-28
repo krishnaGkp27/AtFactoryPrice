@@ -7061,6 +7061,11 @@ async function submitDesignAssetForApproval(bot, chatId, userId, msg) {
       rawDriveUrl: staged.rawDriveUrl,
       labeledDriveFileId: staged.labeledDriveFileId,
       labeledDriveUrl: staged.labeledDriveUrl,
+      // Persist the Telegram file_id captured during the upload preview.
+      // This makes the asset serveable even when Drive uploads have
+      // failed (e.g. Drive API disabled). Without this, getPhotoForSend
+      // has no Drive id to download from and the picker shows nothing.
+      telegramFileId: session.previewFileId || '',
       uploadedBy: staged.uploadedBy,
       uploadedAt: staged.uploadedAt,
     }, requestId);

@@ -116,19 +116,24 @@ async function stageUpload({ design, rawBuffer, shades, shadeCount, shadeNames, 
   }
 
   // 3. Upload both to Drive (best-effort — if one fails, return whatever we have).
+  //    On failure, the caller can still persist the asset using a Telegram
+  //    file_id captured from the preview send. So Drive loss degrades gracefully.
   let rawDriveFileId = '', rawDriveUrl = '';
   let labeledDriveFileId = '', labeledDriveUrl = '';
   try {
     const r = await driveClient.uploadFile(normalizedRaw, `design_${safe}_raw_${ts}.jpg`, 'image/jpeg');
     rawDriveFileId = r.fileId; rawDriveUrl = r.webViewLink;
   } catch (e) {
-    logger.error(`Drive upload (raw) failed for ${design}`, e.message);
+    logger.error(`Drive upload (raw) failed for ${design}: ${e.message}`);
   }
   try {
     const l = await driveClient.uploadFile(labeledBuffer, `design_${safe}_labeled_${ts}.jpg`, 'image/jpeg');
     labeledDriveFileId = l.fileId; labeledDriveUrl = l.webViewLink;
   } catch (e) {
-    logger.error(`Drive upload (labeled) failed for ${design}`, e.message);
+    logger.error(`Drive upload (labeled) failed for ${design}: ${e.message}`);
+  }
+  if (!rawDriveFileId && !labeledDriveFileId) {
+    logger.warn(`stageUpload(${design}): Drive uploads BOTH failed. Asset will rely on the Telegram file_id captured at preview-send time. Verify Drive API is enabled + the service account has Editor access to the configured folder.`);
   }
 
   return {
@@ -151,6 +156,11 @@ async function stageUpload({ design, rawBuffer, shades, shadeCount, shadeNames, 
  * sheet in 'pending' state, linked to an approval request id.
  */
 async function persistPending(staged, approvalRequestId) {
+  // We accept staged.telegramFileId so the controller can pass through
+  // the file_id captured when the labeled preview was sent at upload
+  // time. This makes the asset serveable from Telegram alone, even when
+  // Drive uploads fail (e.g. Drive API disabled, quota exhausted,
+  // service-account permission gap). Defense-in-depth.
   await designAssetsRepo.append({
     design: staged.design,
     productType: staged.productType,
@@ -161,7 +171,7 @@ async function persistPending(staged, approvalRequestId) {
     rawDriveUrl: staged.rawDriveUrl,
     labeledDriveFileId: staged.labeledDriveFileId,
     labeledDriveUrl: staged.labeledDriveUrl,
-    telegramFileId: '',
+    telegramFileId: staged.telegramFileId || '',
     status: 'pending',
     uploadedBy: staged.uploadedBy,
     uploadedAt: staged.uploadedAt,
