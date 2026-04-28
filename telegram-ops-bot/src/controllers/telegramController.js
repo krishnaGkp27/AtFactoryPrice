@@ -7283,10 +7283,11 @@ async function showDesignAssetDetail(bot, chatId, userId, design) {
     : (row.labeledDriveFileId ? `https://drive.google.com/uc?export=download&id=${row.labeledDriveFileId}` : '');
   const caption = `📷 *${row.design}* — ${row.productType}\nShades (${row.shadeCount}):\n${formatShadesPreview(row.shades || [])}\nUploaded by: ${row.uploadedBy} • ${fmtDate(row.uploadedAt) || row.uploadedAt}\nApproved by: ${row.approvedBy || '_(legacy)_'}`;
   const kb = { inline_keyboard: [
-    [{ text: '🔁 Replace photo', callback_data: `dam:replace:${row.design.slice(0, 30)}` }],
-    [{ text: '✏️ Edit shade names', callback_data: `dam:editnames:${row.design.slice(0, 30)}` }],
-    [{ text: '🗑️ Deactivate',     callback_data: `dam:deact:${row.design.slice(0, 30)}` }],
-    [{ text: '◀️ Back',            callback_data: 'dam:back' }],
+    [{ text: '🔁 Replace photo',         callback_data: `dam:replace:${row.design.slice(0, 30)}` }],
+    [{ text: '✏️ Edit shade names',      callback_data: `dam:editnames:${row.design.slice(0, 30)}` }],
+    [{ text: '🔍 Diagnose dispatch',     callback_data: `dam:diag:${row.design.slice(0, 30)}` }],
+    [{ text: '🗑️ Deactivate',            callback_data: `dam:deact:${row.design.slice(0, 30)}` }],
+    [{ text: '◀️ Back',                  callback_data: 'dam:back' }],
   ] };
   if (photoSrc) {
     try {
@@ -7453,6 +7454,16 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
       { parse_mode: 'Markdown' });
     return true;
   }
+  if (data.startsWith('dam:diag:')) {
+    const design = data.slice('dam:diag:'.length);
+    if (!config.access.adminIds.includes(uid)) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' });
+      return true;
+    }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Running…' });
+    await runDesignAssetDiagnostic(bot, chatId, design);
+    return true;
+  }
   if (data.startsWith('dam:deact:')) {
     const design = data.slice('dam:deact:'.length);
     if (!config.access.adminIds.includes(uid)) {
@@ -7500,6 +7511,94 @@ async function maybeSendDesignPreview(bot, chatId, design, captionExtra) {
     logger.warn(`maybeSendDesignPreview failed for ${design}: ${e.message}`);
     return false;
   }
+}
+
+/**
+ * Admin diagnostic — given a design number, walk through every step of
+ * the photo dispatch pipeline and report exactly where it succeeds or
+ * fails. Used to debug "I approved but no photo appears" reports.
+ */
+async function runDesignAssetDiagnostic(bot, chatId, design) {
+  const lines = [];
+  const tag = (icon, msg) => lines.push(`${icon} ${msg}`);
+  tag('🔍', `*Diagnostic — ${design}*`);
+  lines.push('');
+
+  // 1. Sheet read.
+  let allRows;
+  try {
+    allRows = await designAssetsRepo.getAll();
+    tag('✅', `DesignAssets sheet read: ${allRows.length} total row${allRows.length === 1 ? '' : 's'}`);
+  } catch (e) {
+    tag('❌', `DesignAssets sheet read failed: ${e.message}`);
+    await sendLong(bot, chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+    return;
+  }
+
+  // 2. Filter for this design.
+  const matching = allRows.filter((r) => String(r.design).toUpperCase() === String(design).toUpperCase());
+  if (!matching.length) {
+    tag('❌', `No row matches design *${design}* (case-insensitive).`);
+    tag('💡', 'Either the upload was never persisted, or the Design column has different text. Check the DesignAssets sheet directly.');
+    await sendLong(bot, chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+    return;
+  }
+  tag('✅', `Found ${matching.length} row${matching.length === 1 ? '' : 's'} for ${design}:`);
+  for (const r of matching) {
+    const tfid = r.telegramFileId ? `cached(${r.telegramFileId.slice(0, 12)}…)` : '(none)';
+    const drv = r.labeledDriveFileId ? `labeled(${r.labeledDriveFileId.slice(0, 12)}…)` : (r.rawDriveFileId ? `raw(${r.rawDriveFileId.slice(0, 12)}…)` : '(no drive id)');
+    lines.push(`  • row ${r.rowIndex}: status=*${r.status}*, shades=${r.shadeCount}, telegram_file_id=${tfid}, drive=${drv}`);
+  }
+
+  // 3. findActive.
+  const active = matching.find((r) => r.status === 'active');
+  if (!active) {
+    tag('❌', 'No row has status *active*. Pickers will not show a photo.');
+    tag('💡', 'If this is supposed to be approved, an admin can run 🖼️ Manage Product Photos and confirm the latest row is marked active. If row exists but is "pending", the approval execution failed — check the bot logs.');
+    await sendLong(bot, chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+    return;
+  }
+  tag('✅', `Active row: row ${active.rowIndex}`);
+
+  // 4. Try the dispatch pipeline.
+  let dispatchInfo;
+  try {
+    dispatchInfo = await designAssetsService.getPhotoForSend(design);
+  } catch (e) {
+    tag('❌', `getPhotoForSend threw: ${e.message}`);
+    await sendLong(bot, chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+    return;
+  }
+  if (!dispatchInfo) {
+    tag('❌', 'getPhotoForSend returned null — neither cached file_id nor Drive download succeeded.');
+    tag('💡', 'Check the bot logs for "Drive download failed" — usually means the GOOGLE_CREDENTIALS_JSON service account does not have read access to the Drive folder.');
+    await sendLong(bot, chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+    return;
+  }
+  tag('✅', `Dispatch path: *${dispatchInfo.photoSource}*` + (dispatchInfo.photoSource === 'drive_buffer' ? ` (${(dispatchInfo.photo && dispatchInfo.photo.length) || 0} bytes)` : ''));
+
+  // 5. Actually try to send the photo and report.
+  try {
+    const sent = await bot.sendPhoto(chatId, dispatchInfo.photo, {
+      caption: `📷 *${design}* — diagnostic test send (source: ${dispatchInfo.photoSource})`,
+      parse_mode: 'Markdown',
+    });
+    tag('✅', 'sendPhoto succeeded.');
+    if (dispatchInfo.photoSource !== 'telegram_file_id' && sent && sent.photo && sent.photo.length) {
+      const fid = sent.photo[sent.photo.length - 1].file_id;
+      try {
+        await designAssetsRepo.setTelegramFileId(active.rowIndex, fid);
+        tag('💾', `Cached new file_id (${fid.slice(0, 12)}…) — subsequent sends will be instant.`);
+      } catch (e) {
+        tag('⚠️', `Send worked but file_id cache write failed: ${e.message}`);
+      }
+    }
+  } catch (e) {
+    tag('❌', `sendPhoto failed: ${e.message}`);
+    tag('💡', 'Common causes: bot has no permission for this chat; Drive URL returns HTML interstitial (use Buffer path); image too large.');
+  }
+
+  await sendLong(bot, chatId, lines.join('\n'), { parse_mode: 'Markdown' });
 }
 
 /* ─── DESIGN ASSET FLOW: View-on-demand button (Reports / Stock) ───
