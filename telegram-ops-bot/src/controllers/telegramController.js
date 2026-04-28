@@ -6808,7 +6808,7 @@ async function showDesignAssetDesignPicker(bot, chatId, userId) {
   rows.push([{ text: '✏️ Type a design number', callback_data: 'dap:dtype' }]);
   rows.push([{ text: '❌ Cancel', callback_data: 'dap:cancel' }]);
 
-  const text = '📷 *Upload Product Photo*\n\nStep 1 / 4 — Pick a design number.\n_(✓ = photo already exists; submitting again will replace it after admin approval)_';
+  const text = '📷 *Upload Product Photo*\n\nStep 1 / 3 — Pick a design number.\n_(✓ = photo already exists; submitting again will replace it after admin approval)_';
   const sent = await bot.sendMessage(chatId, text, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
@@ -6819,51 +6819,22 @@ async function showDesignAssetDesignPicker(bot, chatId, userId) {
   }
 }
 
-async function showDesignAssetShadeCountPicker(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  if (!session) return;
-  session.step = 'shade_count';
-  sessionStore.set(userId, session);
-  const rows = [];
-  for (let i = 1; i <= DAP_MAX_SHADES; i += 5) {
-    const row = [];
-    for (let j = i; j < Math.min(i + 5, DAP_MAX_SHADES + 1); j++) {
-      row.push({ text: String(j), callback_data: `dap:cnt:${j}` });
-    }
-    rows.push(row);
-  }
-  rows.push([{ text: '❌ Cancel', callback_data: 'dap:cancel' }]);
-  await editOrSend(bot, chatId, session.flowMessageId,
-    `📷 *Upload Product Photo*\n\n✓ Design: *${session.design}*\n\nStep 2 / 4 — How many shades are visible in the photo?`,
-    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
-}
-
-async function showDesignAssetShadeNamesPrompt(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  if (!session) return;
-  session.step = 'shade_names';
-  sessionStore.set(userId, session);
+/**
+ * Build the canonical example shade-list strings shown in the prompt.
+ * If the asset already has structured shades (replace flow), seed the
+ * example with those numbers so the employee can simply edit. Otherwise
+ * fall back to a generic 1..N sample.
+ */
+function _buildShadeExamples(seedShades) {
   const SAMPLE_NAMES = ['White', 'Beige', 'Brown', 'Olive', 'Burgundy', 'Purple', 'Sky', 'Cream', 'Navy', 'Forest', 'Off-white', 'Black', 'Gold', 'Silver', 'Wine', 'Teal', 'Coral', 'Mint', 'Charcoal', 'Tan'];
-  const numberedExample = Array.from({ length: session.shadeCount }, (_, i) =>
-    `${i + 1}:${SAMPLE_NAMES[i] || `Shade${i + 1}`}`
-  ).join(', ');
-  const plainExample = Array.from({ length: session.shadeCount }, (_, i) =>
-    SAMPLE_NAMES[i] || `Shade${i + 1}`
-  ).join(', ');
-  await editOrSend(bot, chatId, session.flowMessageId,
-    `📷 *Upload Product Photo*\n\n` +
-    `✓ Design: *${session.design}*\n` +
-    `✓ Shades: *${session.shadeCount}*\n\n` +
-    `Step 3 / 4 — *Enter shade numbers + names*, comma-separated, in left-to-right order matching the photo.\n\n` +
-    `🅰 *Numbered* (use the physical tab numbers visible on the bale card):\n` +
-    `\`${numberedExample}\`\n\n` +
-    `🅱 *Or plain names* (sequential 1…N is auto-assigned):\n` +
-    `\`${plainExample}\`\n\n` +
-    `Or type *skip* to use generic names (Shade 1, Shade 2, …).`,
-    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
-      [{ text: '⏭ Skip — use generic names', callback_data: 'dap:skipnames' }],
-      [{ text: '❌ Cancel', callback_data: 'dap:cancel' }],
-    ] } });
+  const fallbackCount = 8;
+  if (Array.isArray(seedShades) && seedShades.length) {
+    const numbered = seedShades.map((s, i) => `${s.number}:${s.name || SAMPLE_NAMES[i] || ('Shade' + (i + 1))}`).join(', ');
+    return { numbered, plain: seedShades.map((s, i) => s.name || SAMPLE_NAMES[i] || ('Shade' + (i + 1))).join(', ') };
+  }
+  const numbered = Array.from({ length: fallbackCount }, (_, i) => `${i + 1}:${SAMPLE_NAMES[i] || ('Shade' + (i + 1))}`).join(', ');
+  const plain    = Array.from({ length: fallbackCount }, (_, i) => SAMPLE_NAMES[i] || ('Shade' + (i + 1))).join(', ');
+  return { numbered, plain };
 }
 
 /**
@@ -6921,15 +6892,41 @@ async function showDesignAssetPhotoPrompt(bot, chatId, userId) {
   if (!session) return;
   session.step = 'photo';
   sessionStore.set(userId, session);
-  const list = (session.shades || []).slice(0, 6).map((s) => `${s.number}:${s.name}`).join(', ');
-  const more = (session.shades || []).length > 6 ? `, …+${session.shades.length - 6}` : '';
   await editOrSend(bot, chatId, session.flowMessageId,
     `📷 *Upload Product Photo*\n\n` +
-    `✓ Design: *${session.design}*\n` +
-    `✓ Shades: *${session.shadeCount}* — ${list}${more}\n\n` +
-    `Step 4 / 4 — *Send the product photo* now (as a Telegram photo, not a file).\n\n` +
-    `💡 Tip: Tab numbers in the photo should match the numbers you entered above so users can correlate.`,
+    `✓ Design: *${session.design}*\n\n` +
+    `Step 2 / 3 — *Send the product photo* now (as a Telegram photo, not a file).\n\n` +
+    `💡 Lay shades L→R with paper tabs (numbers/letters) visible on each — you'll map them to colours in the next step using the photo as reference.`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'dap:cancel' }]] } });
+}
+
+/**
+ * Step 3/3 — after the photo has been processed and shown, prompt the
+ * employee to map physical tab numbers to shade names. The labeled photo
+ * sits directly above this prompt in the chat, so the employee can
+ * read tab numbers off it directly.
+ */
+async function showDesignAssetShadeNamesPromptAfterPhoto(bot, chatId, userId, seedShades) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'shade_names';
+  sessionStore.set(userId, session);
+  const ex = _buildShadeExamples(seedShades);
+  await bot.sendMessage(chatId,
+    `📷 *Upload Product Photo*\n\n` +
+    `✓ Design: *${session.design}*\n` +
+    `✓ Photo received\n\n` +
+    `Step 3 / 3 — *Enter shade numbers + names*, comma-separated, in the order they appear in the photo above.\n\n` +
+    `🅰 *Numbered* (use the physical tab numbers visible on the photo):\n` +
+    `\`${ex.numbered}\`\n\n` +
+    `🅱 *Or plain names* (sequential 1…N is auto-assigned):\n` +
+    `\`${ex.plain}\`\n\n` +
+    `Tip: count is taken from your input — no need to specify it separately.\n` +
+    `Or type *skip* for generic names (Shade 1, Shade 2, …).`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
+      [{ text: '⏭ Skip — use generic names', callback_data: 'dap:skipnames' }],
+      [{ text: '❌ Cancel', callback_data: 'dap:cancel' }],
+    ] } });
 }
 
 /** After a photo is received, generate the labeled preview and ask for confirmation. */
@@ -6948,12 +6945,16 @@ async function processDesignAssetPhoto(bot, chatId, userId, telegramFileId) {
     return;
   }
 
+  // Stage upload uses a placeholder shade list ([{1, "Shade 1"}]) — the
+  // real list will arrive in step 3/3 and replace this. The photo itself,
+  // Drive uploads, and the labeled Sharp render are produced now so the
+  // employee can see the labeled photo while typing shade names.
   let staged;
   try {
     staged = await designAssetsService.stageUpload({
       design: session.design,
       rawBuffer: dl.buffer,
-      shades: session.shades,
+      shades: [{ number: 1, name: 'Shade 1' }],   // placeholder, overwritten in step 3/3
       uploadedBy: userId,
     });
   } catch (e) {
@@ -6977,9 +6978,28 @@ async function processDesignAssetPhoto(bot, chatId, userId, telegramFileId) {
     uploadedBy: staged.uploadedBy,
     uploadedAt: staged.uploadedAt,
   };
-  session.step = 'preview';
+  // Send the labeled photo (no buttons) so the employee can read tab
+  // numbers off it while typing shade names. Cache the file_id so the
+  // preview message in step 3/3 can use it instantly.
+  try {
+    const sent = await bot.sendPhoto(chatId, staged.labeledBuffer, {
+      caption: `📷 *${staged.design}* — photo ready. Read off the tab numbers and type the shade list below.`,
+      parse_mode: 'Markdown',
+    });
+    if (sent && sent.photo && sent.photo.length) {
+      session.previewFileId = sent.photo[sent.photo.length - 1].file_id;
+    }
+  } catch (e) {
+    logger.warn('design_asset_flow: labeled photo send failed', e.message);
+  }
+  // Seed example numbers from any prior asset for this design (replace flow).
+  let seed = null;
+  try {
+    const prior = await designAssetsRepo.findActive(session.design);
+    if (prior && prior.shades && prior.shades.length) seed = prior.shades;
+  } catch (_) {}
   sessionStore.set(userId, session);
-  await sendDesignAssetPreview(bot, chatId, userId);
+  await showDesignAssetShadeNamesPromptAfterPhoto(bot, chatId, userId, seed);
 }
 
 /**
@@ -7110,15 +7130,25 @@ async function handleDesignAssetTextStep(bot, chatId, userId, text) {
     }
     session.design = d;
     sessionStore.set(userId, session);
-    await showDesignAssetShadeCountPicker(bot, chatId, userId);
+    await showDesignAssetPhotoPrompt(bot, chatId, userId);
     return true;
   }
   if (session.step === 'shade_names') {
+    // Step 3/3 — photo already staged. Update shades on the staged record
+    // and jump straight to the final preview.
+    if (!session.staged) {
+      // Defensive: if step is shade_names but no staged photo, restart at photo step.
+      await bot.sendMessage(chatId, '⚠️ The photo step was missed. Please send the photo first.');
+      session.step = 'photo';
+      sessionStore.set(userId, session);
+      return true;
+    }
     let shades;
     if (text.toLowerCase() === 'skip') {
-      shades = Array.from({ length: session.shadeCount }, (_, i) => ({ number: i + 1, name: `Shade ${i + 1}` }));
+      // Default to a single placeholder shade; admin can edit before submit.
+      shades = [{ number: 1, name: 'Shade 1' }];
     } else {
-      const parsed = parseShadeReply(text, session.shadeCount);
+      const parsed = parseShadeReply(text, null); // count derived from input
       if (!parsed.ok) {
         await bot.sendMessage(chatId,
           `⚠️ ${parsed.reason}\n\nUse *N:name* (e.g. \`3:Dark Green, 4:Beige, …\`) or plain names. Or tap *Skip*.`,
@@ -7127,11 +7157,12 @@ async function handleDesignAssetTextStep(bot, chatId, userId, text) {
       }
       shades = parsed.shades;
     }
-    session.shades = shades;
-    session.shadeNames = shades.map((s) => s.name);   // legacy mirror
-    session.shadeCount = shades.length;
+    session.staged.shades = shades;
+    session.staged.shadeCount = shades.length;
+    session.staged.shadeNames = shades.map((s) => s.name);
+    session.step = 'preview';
     sessionStore.set(userId, session);
-    await showDesignAssetPhotoPrompt(bot, chatId, userId);
+    await sendDesignAssetPreview(bot, chatId, userId);
     return true;
   }
   if (session.step === 'edit_meta' && session.staged) {
@@ -7296,7 +7327,7 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
     sessionStore.set(uid, session);
     await bot.answerCallbackQuery(callbackQuery.id);
     await editOrSend(bot, chatId, session.flowMessageId,
-      `📷 *Upload Product Photo*\n\nStep 1 / 4 — Type the design number (e.g. \`9006\`).`,
+      `📷 *Upload Product Photo*\n\nStep 1 / 3 — Type the design number (e.g. \`9006\`).`,
       { parse_mode: 'Markdown' });
     return true;
   }
@@ -7310,35 +7341,23 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
     session.design = design;
     sessionStore.set(uid, session);
     await bot.answerCallbackQuery(callbackQuery.id);
-    await showDesignAssetShadeCountPicker(bot, chatId, uid);
-    return true;
-  }
-  if (data.startsWith('dap:cnt:')) {
-    const n = parseInt(data.slice('dap:cnt:'.length), 10);
-    const session = sessionStore.get(uid);
-    if (!session || session.type !== 'design_asset_flow' || isNaN(n) || n < 1) {
-      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' });
-      return true;
-    }
-    session.shadeCount = n;
-    sessionStore.set(uid, session);
-    await bot.answerCallbackQuery(callbackQuery.id);
-    await showDesignAssetShadeNamesPrompt(bot, chatId, uid);
+    await showDesignAssetPhotoPrompt(bot, chatId, uid);
     return true;
   }
   if (data === 'dap:skipnames') {
     const session = sessionStore.get(uid);
-    if (!session || session.type !== 'design_asset_flow') {
+    if (!session || session.type !== 'design_asset_flow' || !session.staged) {
       await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' });
       return true;
     }
-    session.shades = Array.from({ length: session.shadeCount }, (_, i) =>
-      ({ number: i + 1, name: `Shade ${i + 1}` })
-    );
-    session.shadeNames = session.shades.map((s) => s.name);
+    // Single placeholder shade — admin can edit before submitting.
+    session.staged.shades = [{ number: 1, name: 'Shade 1' }];
+    session.staged.shadeCount = 1;
+    session.staged.shadeNames = ['Shade 1'];
+    session.step = 'preview';
     sessionStore.set(uid, session);
     await bot.answerCallbackQuery(callbackQuery.id);
-    await showDesignAssetPhotoPrompt(bot, chatId, uid);
+    await sendDesignAssetPreview(bot, chatId, uid);
     return true;
   }
   if (data === 'dap:editmeta') {
@@ -7405,8 +7424,14 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
     }
     await bot.answerCallbackQuery(callbackQuery.id);
     sessionStore.clear(uid);
-    sessionStore.set(uid, { type: 'design_asset_flow', step: 'shade_count', design, shadeNames: [], ttlMs: DESIGN_ASSET_TTL_MS });
-    await showDesignAssetShadeCountPicker(bot, chatId, uid);
+    sessionStore.set(uid, { type: 'design_asset_flow', step: 'photo', design, shadeNames: [], ttlMs: DESIGN_ASSET_TTL_MS });
+    // Send a fresh prompt instance so showDesignAssetPhotoPrompt has a flowMessageId to edit.
+    const sent = await bot.sendMessage(chatId, '📷 *Upload Product Photo*\n\nLoading…', { parse_mode: 'Markdown' });
+    if (sent && sent.message_id) {
+      const s = sessionStore.get(uid);
+      if (s) { s.flowMessageId = sent.message_id; sessionStore.set(uid, s); }
+    }
+    await showDesignAssetPhotoPrompt(bot, chatId, uid);
     return true;
   }
   if (data.startsWith('dam:editnames:')) {
