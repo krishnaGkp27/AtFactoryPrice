@@ -202,59 +202,66 @@ async function rejectByApprovalRequestId(approvalRequestId, rejectedBy) {
 /**
  * Get the active asset for a design, in a form ready for `bot.sendPhoto(...)`.
  *
+ * Photo dispatch strategy (in priority order):
+ *   1. Cached telegramFileId  → instant, no network.
+ *   2. Buffer from Drive      → reliable, captures a fresh file_id on first send.
+ *   3. Drive direct URL       → last-resort fallback (Telegram fetches the URL).
+ *
  * @param {string} design
  * @returns {Promise<null | {
- *   rowIndex: number,
- *   design: string,
- *   productType: string,
- *   shadeCount: number,
- *   shadeNames: string[],
- *   photo: string,            // value to pass to sendPhoto: telegramFileId or driveUrl or driveFileId-as-url
- *   photoSource: 'telegram_file_id' | 'drive_url',
- *   telegramFileId: string,
- *   labeledDriveUrl: string,
- *   labeledDriveFileId: string,
+ *   rowIndex, design, productType, shadeCount, shades, shadeNames,
+ *   photo,                           // value passed to sendPhoto
+ *   photoSource: 'telegram_file_id' | 'drive_buffer' | 'drive_url',
+ *   telegramFileId, labeledDriveUrl, labeledDriveFileId
  * }>}
  */
 async function getPhotoForSend(design) {
   if (!design) return null;
   const row = await designAssetsRepo.findActive(design);
-  if (!row) return null;
-
-  // Prefer the cached Telegram file_id (instant); otherwise use the labeled Drive URL.
-  if (row.telegramFileId) {
-    return {
-      rowIndex: row.rowIndex,
-      design: row.design,
-      productType: row.productType,
-      shadeCount: row.shadeCount,
-      shades: row.shades || [],
-      shadeNames: row.shadeNames,
-      photo: row.telegramFileId,
-      photoSource: 'telegram_file_id',
-      telegramFileId: row.telegramFileId,
-      labeledDriveUrl: row.labeledDriveUrl,
-      labeledDriveFileId: row.labeledDriveFileId,
-    };
+  if (!row) {
+    logger.info(`getPhotoForSend(${design}): no active asset`);
+    return null;
   }
-  // Drive direct-download URL (works for sendPhoto if file is shared with anyone).
-  const url = row.labeledDriveUrl
-    ? toDirectDownloadUrl(row.labeledDriveFileId)
-    : (row.rawDriveFileId ? toDirectDownloadUrl(row.rawDriveFileId) : '');
-  if (!url) return null;
-  return {
+
+  const baseInfo = {
     rowIndex: row.rowIndex,
     design: row.design,
     productType: row.productType,
     shadeCount: row.shadeCount,
     shades: row.shades || [],
     shadeNames: row.shadeNames,
-    photo: url,
-    photoSource: 'drive_url',
-    telegramFileId: '',
+    telegramFileId: row.telegramFileId || '',
     labeledDriveUrl: row.labeledDriveUrl,
     labeledDriveFileId: row.labeledDriveFileId,
   };
+
+  // 1. Cached file_id wins — instant subsequent sends.
+  if (row.telegramFileId) {
+    return { ...baseInfo, photo: row.telegramFileId, photoSource: 'telegram_file_id' };
+  }
+
+  // 2. Download from Drive into a Buffer. Telegram will fetch directly from
+  //    bytes we hand it, sidestepping any Drive URL-fetch quirks.
+  const fileId = row.labeledDriveFileId || row.rawDriveFileId;
+  if (fileId) {
+    try {
+      const buffer = await driveClient.downloadFile(fileId);
+      logger.info(`getPhotoForSend(${design}): downloaded ${buffer.length}B from Drive (${fileId})`);
+      return { ...baseInfo, photo: buffer, photoSource: 'drive_buffer' };
+    } catch (e) {
+      logger.warn(`getPhotoForSend(${design}): Drive download failed (${e.message}); falling back to Drive URL`);
+    }
+  }
+
+  // 3. Last-resort Drive direct-download URL.
+  const url = row.labeledDriveFileId
+    ? toDirectDownloadUrl(row.labeledDriveFileId)
+    : (row.rawDriveFileId ? toDirectDownloadUrl(row.rawDriveFileId) : '');
+  if (!url) {
+    logger.warn(`getPhotoForSend(${design}): asset has no Drive file ids — cannot serve`);
+    return null;
+  }
+  return { ...baseInfo, photo: url, photoSource: 'drive_url' };
 }
 
 function toDirectDownloadUrl(fileId) {
@@ -331,9 +338,10 @@ async function sendShadePicker({ bot, chatId, design, captionPrefix, buildShadeB
       const fid = sent.photo[sent.photo.length - 1].file_id;
       cacheTelegramFileId(asset.rowIndex, fid).catch(() => {});
     }
+    logger.info(`sendShadePicker(${design}): sent via ${asset.photoSource}`);
     return true;
   } catch (e) {
-    logger.warn(`sendShadePicker failed for ${design}: ${e.message} — falling back to text picker`);
+    logger.warn(`sendShadePicker failed for ${design} (source=${asset.photoSource}): ${e.message}`);
     return false;
   }
 }
@@ -357,9 +365,10 @@ async function sendDesignPhoto({ bot, chatId, design, caption, extraRows }) {
       const fid = sent.photo[sent.photo.length - 1].file_id;
       cacheTelegramFileId(asset.rowIndex, fid).catch(() => {});
     }
+    logger.info(`sendDesignPhoto(${design}): sent via ${asset.photoSource}`);
     return true;
   } catch (e) {
-    logger.warn(`sendDesignPhoto failed for ${design}: ${e.message}`);
+    logger.warn(`sendDesignPhoto failed for ${design} (source=${asset.photoSource}): ${e.message}`);
     return false;
   }
 }

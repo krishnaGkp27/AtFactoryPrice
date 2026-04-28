@@ -62,4 +62,28 @@ async function uploadFile(fileBuffer, fileName, mimeType) {
   return { fileId, webViewLink };
 }
 
-module.exports = { uploadFile };
+/**
+ * Download a file's content from Drive as a Buffer.
+ * Useful when re-serving an uploaded asset (e.g. product photos) to Telegram
+ * directly, instead of relying on Telegram to fetch a shared Drive URL —
+ * which is occasionally rate-limited or blocked depending on file metadata.
+ *
+ * @param {string} fileId
+ * @returns {Promise<Buffer>}
+ */
+async function downloadFile(fileId) {
+  if (!fileId) throw new Error('downloadFile: fileId is required');
+  const d = await getDrive();
+  const res = await d.files.get(
+    { fileId, alt: 'media' },
+    { responseType: 'arraybuffer' },
+  );
+  // googleapis returns ArrayBuffer or Buffer depending on transport — normalize.
+  const data = res.data;
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (data && typeof data === 'object' && data.byteLength != null) return Buffer.from(data);
+  return Buffer.from(data);
+}
+
+module.exports = { uploadFile, downloadFile };

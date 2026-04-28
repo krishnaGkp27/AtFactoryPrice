@@ -339,6 +339,30 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
       if (result.ok) {
         await bot.sendMessage(chatIdCb, `✅ Request ${requestId} approved. Changes applied.`);
         await notifyEmployee(bot, requestingUser, requestId, `✅ Your request (${requestId}) has been approved by admin. Changes applied.`);
+
+        // For design_asset_upload, send the now-active photo to the
+        // approving admin as a confirmation. This warms up the Telegram
+        // file_id cache (first send produces a Buffer→Telegram upload;
+        // the captured file_id is cached on the asset row, so every
+        // subsequent consumer access is instant).
+        const isDesignAsset = item && item.actionJSON && item.actionJSON.action === 'design_asset_upload';
+        if (isDesignAsset) {
+          try {
+            const designAssetsService = require('../services/designAssetsService');
+            const aj = item.actionJSON;
+            const lines = (aj.shades && aj.shades.length)
+              ? aj.shades.map((s) => `${s.number}. ${s.name}`).join(' • ')
+              : (aj.shadeNames || []).map((n, i) => `${i + 1}. ${n}`).join(' • ');
+            const ok = await designAssetsService.sendDesignPhoto({
+              bot, chatId: chatIdCb, design: aj.design,
+              caption: `✅ *${aj.design}* — photo activated\n${lines}\n\nNow visible in Supply Request, Sample, Order, Update Price, and Stock pickers.`,
+            });
+            if (!ok) logger.warn(`approval design_asset_upload: post-approval photo send failed for ${aj.design}`);
+          } catch (e) {
+            logger.warn('post-approval design_asset send failed', e.message);
+          }
+        }
+
         const customer = item && item.actionJSON && (item.actionJSON.customer || item.actionJSON.customerName);
         if (customer) {
           try {

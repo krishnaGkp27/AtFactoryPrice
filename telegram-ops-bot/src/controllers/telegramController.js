@@ -7490,10 +7490,12 @@ async function maybeSendDesignPreview(bot, chatId, design, captionExtra) {
   try {
     if (!design) return false;
     const captionPrefix = captionExtra ? `${captionExtra}\n` : '';
-    return await designAssetsService.sendDesignPhoto({
+    const ok = await designAssetsService.sendDesignPhoto({
       bot, chatId, design,
       caption: `${captionPrefix}📷 *${design}*`,
     });
+    if (!ok) logger.info(`maybeSendDesignPreview(${design}): no active asset or send failed`);
+    return ok;
   } catch (e) {
     logger.warn(`maybeSendDesignPreview failed for ${design}: ${e.message}`);
     return false;
