@@ -30,6 +30,9 @@ const departmentsRepo = require('../repositories/departmentsRepository');
 const activityRegistry = require('../services/activityRegistry');
 const customersRepo = require('../repositories/customersRepository');
 const userPrefsRepo = require('../repositories/userPrefsRepository');
+const designAssetsRepo = require('../repositories/designAssetsRepository');
+const designAssetsService = require('../services/designAssetsService');
+const { downloadTelegramFile } = require('../utils/telegramFiles');
 const idGenerator = require('../utils/idGenerator');
 const config = require('../config');
 const logger = require('../utils/logger');
@@ -1965,11 +1968,21 @@ async function showDesignPickerForReport(bot, chatId, prefix, showAll = false, m
 
   const MAX_VISIBLE = 12;
   const visible = showAll ? designs : designs.slice(0, MAX_VISIBLE);
+
+  // Decorate designs that have an active photo with a 🖼 view button.
+  let activeDesigns = new Set();
+  try {
+    const active = await designAssetsRepo.list('active');
+    activeDesigns = new Set(active.map((a) => String(a.design).toUpperCase()));
+  } catch (_) { /* graceful */ }
+
   const rows = [];
   for (let i = 0; i < visible.length; i += 3) {
     const row = [];
     for (let j = i; j < i + 3 && j < visible.length; j++) {
-      row.push({ text: visible[j], callback_data: `${prefix}:${visible[j].slice(0, 55)}` });
+      const d = visible[j];
+      const hasPhoto = activeDesigns.has(d.toUpperCase());
+      row.push({ text: hasPhoto ? `🖼 ${d}` : d, callback_data: `${prefix}:${d.slice(0, 55)}` });
     }
     rows.push(row);
   }
@@ -1977,7 +1990,7 @@ async function showDesignPickerForReport(bot, chatId, prefix, showAll = false, m
     rows.push([{ text: `📋 See All (${designs.length})`, callback_data: `${prefix}:__more__` }]);
   }
 
-  const text = `${meta.icon} *${meta.label}*\n\n${meta.prompt}`;
+  const text = `${meta.icon} *${meta.label}*\n\n${meta.prompt}${activeDesigns.size ? '\n\n_🖼 = product photo on file. Tap to use; tap and hold to copy the design number._' : ''}`;
   const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
 
   if (messageId) {
@@ -2253,20 +2266,8 @@ async function showOrderSummary(bot, chatId, session) {
 }
 
 // ─── Receipt Upload Flow ────────────────────────────────────────────────────
-
-async function downloadTelegramFile(bot, fileId) {
-  const file = await bot.getFile(fileId);
-  const url = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
-  const https = require('https');
-  return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => resolve({ buffer: Buffer.concat(chunks), filePath: file.file_path }));
-      res.on('error', reject);
-    }).on('error', reject);
-  });
-}
+// (downloadTelegramFile is now imported from ../utils/telegramFiles — used by
+// receipt, sale-doc, and design-asset upload flows.)
 
 async function startReceiptFlow(bot, chatId, userId, messageId = null) {
   sessionStore.set(userId, { type: 'receipt_flow', step: 'customer', createdBy: userId });
@@ -2453,6 +2454,11 @@ async function handleFileMessage(bot, msg) {
 
   const session = sessionStore.get(userId);
 
+  if (session && session.type === 'design_asset_flow' && session.step === 'photo') {
+    const handled = await handleDesignAssetPhotoMessage(bot, chatId, userId, msg);
+    if (handled) return;
+  }
+
   if (session && session.type === 'receipt_flow' && session.step === 'file') {
     let telegramFileId, fileType, mimeType;
     if (msg.photo && msg.photo.length) {
@@ -2557,6 +2563,16 @@ async function handleMessage(bot, msg) {
   if (GREETINGS.test(text.trim())) {
     await buildGreetingMenu(bot, chatId, userId);
     return;
+  }
+
+  // Catalog: design-asset upload/edit text steps. Self-contained — handles
+  // its own cancel.
+  {
+    const dapSession = sessionStore.get(userId);
+    if (dapSession && dapSession.type === 'design_asset_flow') {
+      const handled = await handleDesignAssetTextStep(bot, chatId, userId, text);
+      if (handled) return;
+    }
   }
 
   if (text.toLowerCase() === 'cancel') {
@@ -4685,6 +4701,18 @@ async function startOrderFlow(bot, chatId, userId) {
 
 async function handleCallbackQuery(bot, callbackQuery) {
   const data = (callbackQuery.data || '').trim();
+
+  // Catalog hub: design-asset upload flow / manage flow / view-on-demand.
+  // Routed first to keep these self-contained and avoid prefix collisions.
+  if (data.startsWith('dap:') || data.startsWith('dam:')) {
+    const handled = await handleDesignAssetCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+  if (data.startsWith('dav:')) {
+    const handled = await handleDesignAssetViewCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
   if (data.startsWith('approve:')) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'approve');
   } else if (data.startsWith('reject:')) {
@@ -4806,6 +4834,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     session.design = val;
     session.step = 'shade';
     sessionStore.set(uid, session);
+    await maybeSendDesignPreview(bot, callbackQuery.message.chat.id, val);
     await showSampleShadePicker(bot, callbackQuery.message.chat.id, uid, val);
 
   /* ─── SAMPLE BUTTON FLOW: SHADE ─── */
@@ -5113,6 +5142,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     session.design = design;
     session.step = 'shade';
     sessionStore.set(uid, session);
+    await maybeSendDesignPreview(bot, callbackQuery.message.chat.id, design);
     await showUpdatePriceShadePicker(bot, callbackQuery.message.chat.id, uid);
 
   } else if (data.startsWith('ups:')) {
@@ -5512,6 +5542,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     session.shade = '';
     session.step = 'customer';
     sessionStore.set(uid, session);
+    await maybeSendDesignPreview(bot, callbackQuery.message.chat.id, design);
     let customerNames = await transactionsRepo.getCustomersByDesign(design);
     let label = 'past buyers shown';
     if (!customerNames.length) {
@@ -5981,6 +6012,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
     await bot.editMessageReplyMarkup({ inline_keyboard: [] },
       { chat_id: chatId, message_id: messageId }).catch(() => {});
+    await maybeSendDesignPreview(bot, chatId, design);
     await sendListPackagesReport(bot, chatId, design);
 
   /* ─── CHECK STOCK: DESIGN PICK ─── */
@@ -5995,6 +6027,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
     await bot.editMessageReplyMarkup({ inline_keyboard: [] },
       { chat_id: chatId, message_id: messageId }).catch(() => {});
+    await maybeSendDesignPreview(bot, chatId, design);
     await sendCheckStockReport(bot, chatId, design);
 
   /* ─── MARK ORDER DELIVERED: ORDER PICK ─── */
@@ -6173,6 +6206,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
       case 'add_customer':
         await startAddCustomerFlow(bot, chatId, uid, messageId);
         break;
+      case 'upload_design_photo':
+        await startDesignAssetUploadFlow(bot, chatId, uid);
+        break;
+      case 'manage_design_photos':
+        await startManageDesignPhotos(bot, chatId, uid, messageId);
+        break;
       default:
         await bot.sendMessage(chatId, 'Feature coming soon.');
     }
@@ -6211,6 +6250,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
     const session = sessionStore.get(uid);
     const wh = session ? session.warehouse : '';
+    await maybeSendDesignPreview(bot, chatId, design);
     await showShadesForDesign(bot, chatId, uid, design, wh);
 
   /* ─── SUPPLY REQUEST FLOW: SHADE ─── */
@@ -6674,6 +6714,601 @@ async function handleAdminFlowText(bot, chatId, userId, text, session) {
     return true;
   }
   return false;
+}
+
+/* ─── DESIGN ASSET FLOW (Catalog hub) ─────────────────────────────────────
+ * Anyone with the activity can submit a product photo for a design. The
+ * upload is queued for 2-admin approval (admin → 2nd admin). On approval,
+ * the labeled photo becomes the "active" asset and is served to consumer
+ * pickers (sample / supply / order / update price / reports / stock).
+ *
+ * Session shape (sessionStore):
+ *   {
+ *     type: 'design_asset_flow',
+ *     step: 'design' | 'shade_count' | 'shade_names' | 'photo' | 'preview',
+ *     design, shadeCount, shadeNames[],
+ *     rawBufferB64, labeledBufferB64,        // encoded buffers (memory-only TTL session)
+ *     stagedRequestId,
+ *     flowMessageId,
+ *   }
+ *
+ * Callback prefixes: dap:* (design-asset-photo).
+ * Manage hub callback prefixes: dam:* (design-asset-manage).
+ */
+
+const DAP_MAX_SHADES = 20;
+const DAP_MAX_DESIGN_LEN = 30;
+
+async function startDesignAssetUploadFlow(bot, chatId, userId) {
+  sessionStore.clear(userId);
+  sessionStore.set(userId, {
+    type: 'design_asset_flow',
+    step: 'design',
+    shadeNames: [],
+  });
+  await showDesignAssetDesignPicker(bot, chatId, userId);
+}
+
+async function showDesignAssetDesignPicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  let designs = [];
+  try {
+    const raw = await inventoryRepository.getDistinctDesigns();
+    designs = [...new Set(raw.map((d) => (d.design || '').trim()).filter(Boolean))].sort();
+  } catch (_) { /* ignore — show free-text fallback */ }
+
+  // Already-photographed designs are not blocked, but we mark them so admins
+  // know they're replacing the existing photo.
+  let activeDesigns = new Set();
+  try {
+    const active = await designAssetsRepo.list('active');
+    activeDesigns = new Set(active.map((a) => String(a.design).toUpperCase()));
+  } catch (_) {}
+
+  const visible = designs.slice(0, 24);
+  const rows = [];
+  for (let i = 0; i < visible.length; i += 3) {
+    const row = [];
+    for (let j = i; j < Math.min(i + 3, visible.length); j++) {
+      const d = visible[j];
+      const tick = activeDesigns.has(d.toUpperCase()) ? '✓ ' : '';
+      row.push({ text: `${tick}${d}`, callback_data: `dap:dpick:${d.slice(0, DAP_MAX_DESIGN_LEN)}` });
+    }
+    rows.push(row);
+  }
+  rows.push([{ text: '✏️ Type a design number', callback_data: 'dap:dtype' }]);
+  rows.push([{ text: '❌ Cancel', callback_data: 'dap:cancel' }]);
+
+  const text = '📷 *Upload Product Photo*\n\nStep 1 / 4 — Pick a design number.\n_(✓ = photo already exists; submitting again will replace it after admin approval)_';
+  const sent = await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
+  if (sent && sent.message_id) {
+    session.flowMessageId = sent.message_id;
+    sessionStore.set(userId, session);
+  }
+}
+
+async function showDesignAssetShadeCountPicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'shade_count';
+  sessionStore.set(userId, session);
+  const rows = [];
+  for (let i = 1; i <= DAP_MAX_SHADES; i += 5) {
+    const row = [];
+    for (let j = i; j < Math.min(i + 5, DAP_MAX_SHADES + 1); j++) {
+      row.push({ text: String(j), callback_data: `dap:cnt:${j}` });
+    }
+    rows.push(row);
+  }
+  rows.push([{ text: '❌ Cancel', callback_data: 'dap:cancel' }]);
+  await editOrSend(bot, chatId, session.flowMessageId,
+    `📷 *Upload Product Photo*\n\n✓ Design: *${session.design}*\n\nStep 2 / 4 — How many shades are visible in the photo?`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showDesignAssetShadeNamesPrompt(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'shade_names';
+  sessionStore.set(userId, session);
+  const exampleNames = Array.from({ length: session.shadeCount }, (_, i) => ['White', 'Beige', 'Brown', 'Olive', 'Burgundy', 'Purple', 'Sky', 'Cream', 'Navy', 'Forest', 'Off-white', 'Black', 'Gold', 'Silver', 'Wine', 'Teal', 'Coral', 'Mint', 'Charcoal', 'Tan'][i] || `Shade${i + 1}`).slice(0, session.shadeCount).join(', ');
+  await editOrSend(bot, chatId, session.flowMessageId,
+    `📷 *Upload Product Photo*\n\n✓ Design: *${session.design}*\n✓ Shades: *${session.shadeCount}*\n\nStep 3 / 4 — *Enter shade names*, comma-separated, in left-to-right order matching the photo.\n\nExample for ${session.shadeCount} shades:\n\`${exampleNames}\`\n\nOr type *skip* to use generic names (Shade 1, Shade 2, …).`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
+      [{ text: '⏭ Skip — use generic names', callback_data: 'dap:skipnames' }],
+      [{ text: '❌ Cancel', callback_data: 'dap:cancel' }],
+    ] } });
+}
+
+async function showDesignAssetPhotoPrompt(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'photo';
+  sessionStore.set(userId, session);
+  const namesPreview = (session.shadeNames || []).slice(0, 6).join(', ') + (session.shadeNames.length > 6 ? `, …+${session.shadeNames.length - 6}` : '');
+  await editOrSend(bot, chatId, session.flowMessageId,
+    `📷 *Upload Product Photo*\n\n✓ Design: *${session.design}*\n✓ Shades: *${session.shadeCount}* — ${namesPreview}\n\nStep 4 / 4 — *Send the product photo* now (as a Telegram photo, not a file).\n\n💡 Tip: Lay shades left → right in the same order as the names you entered. Tabbing each shade with paper labels (1, 2, 3 …) makes the photo unambiguous for everyone.`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'dap:cancel' }]] } });
+}
+
+/** After a photo is received, generate the labeled preview and ask for confirmation. */
+async function processDesignAssetPhoto(bot, chatId, userId, telegramFileId) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'design_asset_flow') return;
+
+  await bot.sendMessage(chatId, '⏳ Processing photo (downloading + stamping design number)…');
+
+  let dl;
+  try {
+    dl = await downloadTelegramFile(bot, telegramFileId);
+  } catch (e) {
+    logger.error('design_asset_flow: download failed', e.message);
+    await bot.sendMessage(chatId, `⚠️ Could not download photo: ${e.message}\n\nPlease try sending it again, or type "cancel" to abort.`);
+    return;
+  }
+
+  let staged;
+  try {
+    staged = await designAssetsService.stageUpload({
+      design: session.design,
+      rawBuffer: dl.buffer,
+      shadeCount: session.shadeCount,
+      shadeNames: session.shadeNames,
+      uploadedBy: userId,
+    });
+  } catch (e) {
+    logger.error('design_asset_flow: stageUpload failed', e.message);
+    await bot.sendMessage(chatId, `⚠️ Could not process photo: ${e.message}\n\nPlease try a different image, or type "cancel" to abort.`);
+    return;
+  }
+
+  // Stash the staged result on the session (without buffers — we re-fetch
+  // from Drive at preview/submit time using the file ids).
+  session.staged = {
+    design: staged.design,
+    productType: staged.productType,
+    shadeCount: staged.shadeCount,
+    shadeNames: staged.shadeNames,
+    rawDriveFileId: staged.rawDriveFileId,
+    rawDriveUrl: staged.rawDriveUrl,
+    labeledDriveFileId: staged.labeledDriveFileId,
+    labeledDriveUrl: staged.labeledDriveUrl,
+    uploadedBy: staged.uploadedBy,
+    uploadedAt: staged.uploadedAt,
+  };
+  session.step = 'preview';
+  sessionStore.set(userId, session);
+
+  // Send the labeled preview directly from the buffer (Drive may not be
+  // public-readable yet to Telegram). Capture file_id to reuse if user
+  // re-previews.
+  try {
+    const sent = await bot.sendPhoto(chatId, staged.labeledBuffer, {
+      caption: `📷 *Preview — ${staged.design}* (${staged.shadeCount} shades)\n\n${staged.shadeNames.map((n, i) => `${i + 1}. ${n}`).join('  •  ')}\n\nSubmit for admin approval, or retake the photo.`,
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [
+        [{ text: '✅ Submit for approval', callback_data: 'dap:submit' }],
+        [{ text: '🔁 Retake photo',           callback_data: 'dap:retake' }],
+        [{ text: '❌ Cancel',                 callback_data: 'dap:cancel' }],
+      ] },
+    });
+    if (sent && sent.photo && sent.photo.length) {
+      session.previewFileId = sent.photo[sent.photo.length - 1].file_id;
+      sessionStore.set(userId, session);
+    }
+  } catch (e) {
+    logger.error('design_asset_flow: preview send failed', e.message);
+    await bot.sendMessage(chatId, '⚠️ Preview could not be sent, but the photo was processed. Reply *submit* to send for approval, or *cancel* to abort.', { parse_mode: 'Markdown' });
+  }
+}
+
+async function submitDesignAssetForApproval(bot, chatId, userId, msg) {
+  const session = sessionStore.get(userId);
+  if (!session || !session.staged) {
+    await bot.sendMessage(chatId, '⚠️ No staged upload to submit. Start again with "Upload Product Photo".');
+    return;
+  }
+  const staged = session.staged;
+  const requestId = require('crypto').randomUUID();
+
+  try {
+    await designAssetsService.persistPending({
+      design: staged.design,
+      productType: staged.productType,
+      shadeCount: staged.shadeCount,
+      shadeNames: staged.shadeNames,
+      rawDriveFileId: staged.rawDriveFileId,
+      rawDriveUrl: staged.rawDriveUrl,
+      labeledDriveFileId: staged.labeledDriveFileId,
+      labeledDriveUrl: staged.labeledDriveUrl,
+      uploadedBy: staged.uploadedBy,
+      uploadedAt: staged.uploadedAt,
+    }, requestId);
+  } catch (e) {
+    logger.error('design_asset_flow: persistPending failed', e.message);
+    await bot.sendMessage(chatId, `⚠️ Could not save the asset: ${e.message}`);
+    return;
+  }
+
+  // Risk: design_asset_upload always requires 2-admin approval (anyone uploads).
+  await approvalQueueRepository.append({
+    requestId,
+    user: userId,
+    actionJSON: {
+      action: 'design_asset_upload',
+      design: staged.design,
+      productType: staged.productType,
+      shadeCount: staged.shadeCount,
+      shadeNames: staged.shadeNames,
+      labeledDriveUrl: staged.labeledDriveUrl,
+      uploaderUserId: userId,
+    },
+    riskReason: 'Product-photo asset must be approved before it appears to consumers.',
+    status: 'pending',
+  });
+  await auditLogRepository.append('approval_queued', { requestId, action: 'design_asset_upload', design: staged.design }, userId);
+
+  const userLabel = await getRequesterDisplayName(userId, msg);
+  const isAdm = config.access.adminIds.includes(userId);
+  const summary = `Product photo: ${staged.design} (${staged.shadeCount} shades)`;
+  const previewPhoto = session.previewFileId || (staged.labeledDriveFileId ? `https://drive.google.com/uc?export=download&id=${staged.labeledDriveFileId}` : null);
+  await approvalEvents.notifyAdminsApprovalRequest(
+    bot, requestId, userLabel, summary,
+    'Product-photo asset must be approved before it appears to consumers.',
+    isAdm ? userId : undefined,
+    previewPhoto ? { previewPhoto, previewCaption: `📷 *${staged.design}* — preview\n${staged.shadeNames.map((n, i) => `${i + 1}. ${n}`).join('  •  ')}` } : {},
+  );
+
+  sessionStore.clear(userId);
+  const approverLabel = isAdm ? '2nd admin' : 'admin';
+  await bot.sendMessage(chatId,
+    `✅ *Submitted for approval*\n\nDesign: *${staged.design}*\nShades: *${staged.shadeCount}*\nRequest ID: \`${requestId}\`\n\n⏳ Waiting for ${approverLabel}. You'll be notified when the photo goes live.`,
+    { parse_mode: 'Markdown' });
+}
+
+/** Handle text input during design_asset_flow. Returns true if handled. */
+async function handleDesignAssetTextStep(bot, chatId, userId, text) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'design_asset_flow') return false;
+
+  if (text.toLowerCase() === 'cancel') {
+    sessionStore.clear(userId);
+    await bot.sendMessage(chatId, '❌ Upload cancelled.');
+    return true;
+  }
+  if (session.step === 'preview' && text.toLowerCase() === 'submit') {
+    await submitDesignAssetForApproval(bot, chatId, userId, null);
+    return true;
+  }
+  if (session.step === 'design_typing') {
+    const d = text.trim();
+    if (!d || d.length > DAP_MAX_DESIGN_LEN) {
+      await bot.sendMessage(chatId, `⚠️ Enter a non-empty design number (≤ ${DAP_MAX_DESIGN_LEN} chars).`);
+      return true;
+    }
+    session.design = d;
+    sessionStore.set(userId, session);
+    await showDesignAssetShadeCountPicker(bot, chatId, userId);
+    return true;
+  }
+  if (session.step === 'shade_names') {
+    let names;
+    if (text.toLowerCase() === 'skip') {
+      names = Array.from({ length: session.shadeCount }, (_, i) => `Shade ${i + 1}`);
+    } else {
+      names = text.split(',').map((s) => s.trim()).filter(Boolean);
+      if (names.length !== session.shadeCount) {
+        await bot.sendMessage(chatId,
+          `⚠️ Got ${names.length} names but expected ${session.shadeCount} (you said ${session.shadeCount} shades). Send a comma-separated list with exactly ${session.shadeCount} entries, or *skip*.`,
+          { parse_mode: 'Markdown' });
+        return true;
+      }
+      // Cap each name to 30 chars to fit Telegram button labels.
+      names = names.map((n) => n.slice(0, 30));
+    }
+    session.shadeNames = names;
+    sessionStore.set(userId, session);
+    await showDesignAssetPhotoPrompt(bot, chatId, userId);
+    return true;
+  }
+  if (session.step === 'edit_names' && session.editingDesign) {
+    let names = text.split(',').map((s) => s.trim()).filter(Boolean);
+    if (!names.length) {
+      await bot.sendMessage(chatId, '⚠️ Enter at least one name.');
+      return true;
+    }
+    names = names.map((n) => n.slice(0, 30));
+    try {
+      const row = await designAssetsRepo.findActive(session.editingDesign);
+      if (!row) {
+        await bot.sendMessage(chatId, `⚠️ No active asset for ${session.editingDesign}.`);
+      } else {
+        await designAssetsRepo.setShadeNames(row.rowIndex, names);
+        await bot.sendMessage(chatId, `✅ Shade names updated for *${session.editingDesign}*.\nNew names: ${names.join(', ')}`, { parse_mode: 'Markdown' });
+      }
+    } catch (e) {
+      await bot.sendMessage(chatId, `⚠️ Update failed: ${e.message}`);
+    }
+    sessionStore.clear(userId);
+    return true;
+  }
+  return false;
+}
+
+/** Handle photo upload for design_asset_flow. Returns true if handled. */
+async function handleDesignAssetPhotoMessage(bot, chatId, userId, msg) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'design_asset_flow' || session.step !== 'photo') return false;
+  if (!msg.photo || !msg.photo.length) {
+    await bot.sendMessage(chatId, '⚠️ Please send the image as a *photo* (not a file/document).', { parse_mode: 'Markdown' });
+    return true;
+  }
+  const largest = msg.photo[msg.photo.length - 1];
+  await processDesignAssetPhoto(bot, chatId, userId, largest.file_id);
+  return true;
+}
+
+/* ─── MANAGE PRODUCT PHOTOS (admin) ─── */
+
+async function startManageDesignPhotos(bot, chatId, userId, messageId) {
+  if (!config.access.adminIds.includes(userId)) {
+    await bot.sendMessage(chatId, 'Admin only.');
+    return;
+  }
+  let actives = [];
+  try { actives = await designAssetsRepo.list('active'); } catch (e) { logger.warn('manage_design_photos list failed', e.message); }
+  let pending = [];
+  try { pending = await designAssetsRepo.list('pending'); } catch (_) {}
+  if (!actives.length && !pending.length) {
+    await editOrSend(bot, chatId, messageId,
+      '🖼️ *Manage Product Photos*\n\n_No photos uploaded yet._\n\nAsk a teammate to use 📷 Upload Product Photo from the Catalog hub.',
+      { parse_mode: 'Markdown' });
+    return;
+  }
+  const rows = [];
+  for (const a of actives.slice(0, 24)) {
+    rows.push([{ text: `📷 ${a.design} — ${a.shadeCount} shades`, callback_data: `dam:view:${String(a.design).slice(0, 30)}` }]);
+  }
+  if (pending.length) {
+    rows.push([{ text: `⏳ ${pending.length} pending approval`, callback_data: 'dam:noop' }]);
+  }
+  await editOrSend(bot, chatId, messageId,
+    `🖼️ *Manage Product Photos*\n\nActive: *${actives.length}* • Pending approval: *${pending.length}*\n\nTap a design to view, replace, or deactivate.`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showDesignAssetDetail(bot, chatId, userId, design) {
+  if (!config.access.adminIds.includes(userId)) {
+    await bot.sendMessage(chatId, 'Admin only.');
+    return;
+  }
+  const row = await designAssetsRepo.findActive(design);
+  if (!row) {
+    await bot.sendMessage(chatId, `⚠️ No active photo for ${design}.`);
+    return;
+  }
+  const photoSrc = row.telegramFileId
+    ? row.telegramFileId
+    : (row.labeledDriveFileId ? `https://drive.google.com/uc?export=download&id=${row.labeledDriveFileId}` : '');
+  const caption = `📷 *${row.design}* — ${row.productType}\nShades (${row.shadeCount}): ${row.shadeNames.join(', ') || '_(generic)_'}\nUploaded by: ${row.uploadedBy} • ${fmtDate(row.uploadedAt) || row.uploadedAt}\nApproved by: ${row.approvedBy || '_(legacy)_'}`;
+  const kb = { inline_keyboard: [
+    [{ text: '🔁 Replace photo', callback_data: `dam:replace:${row.design.slice(0, 30)}` }],
+    [{ text: '✏️ Edit shade names', callback_data: `dam:editnames:${row.design.slice(0, 30)}` }],
+    [{ text: '🗑️ Deactivate',     callback_data: `dam:deact:${row.design.slice(0, 30)}` }],
+    [{ text: '◀️ Back',            callback_data: 'dam:back' }],
+  ] };
+  if (photoSrc) {
+    try {
+      const sent = await bot.sendPhoto(chatId, photoSrc, { caption, parse_mode: 'Markdown', reply_markup: kb });
+      // Cache file_id on first send
+      if (!row.telegramFileId && sent && sent.photo && sent.photo.length) {
+        designAssetsService.cacheTelegramFileId(row.rowIndex, sent.photo[sent.photo.length - 1].file_id).catch(() => {});
+      }
+      return;
+    } catch (e) {
+      logger.warn(`showDesignAssetDetail sendPhoto failed: ${e.message}`);
+    }
+  }
+  await bot.sendMessage(chatId, caption, { parse_mode: 'Markdown', reply_markup: kb });
+}
+
+/** Handle dap:* and dam:* callbacks. Returns true if handled. */
+async function handleDesignAssetCallback(bot, callbackQuery) {
+  const data = callbackQuery.data || '';
+  const uid = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+
+  /* DAP — upload flow */
+  if (data === 'dap:cancel') {
+    sessionStore.clear(uid);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+    await bot.sendMessage(chatId, '❌ Upload cancelled.');
+    return true;
+  }
+  if (data === 'dap:dtype') {
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'design_asset_flow') {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' });
+      return true;
+    }
+    session.step = 'design_typing';
+    sessionStore.set(uid, session);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await editOrSend(bot, chatId, session.flowMessageId,
+      `📷 *Upload Product Photo*\n\nStep 1 / 4 — Type the design number (e.g. \`9006\`).`,
+      { parse_mode: 'Markdown' });
+    return true;
+  }
+  if (data.startsWith('dap:dpick:')) {
+    const design = data.slice('dap:dpick:'.length);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'design_asset_flow') {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' });
+      return true;
+    }
+    session.design = design;
+    sessionStore.set(uid, session);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await showDesignAssetShadeCountPicker(bot, chatId, uid);
+    return true;
+  }
+  if (data.startsWith('dap:cnt:')) {
+    const n = parseInt(data.slice('dap:cnt:'.length), 10);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'design_asset_flow' || isNaN(n) || n < 1) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' });
+      return true;
+    }
+    session.shadeCount = n;
+    sessionStore.set(uid, session);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await showDesignAssetShadeNamesPrompt(bot, chatId, uid);
+    return true;
+  }
+  if (data === 'dap:skipnames') {
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'design_asset_flow') {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' });
+      return true;
+    }
+    session.shadeNames = Array.from({ length: session.shadeCount }, (_, i) => `Shade ${i + 1}`);
+    sessionStore.set(uid, session);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await showDesignAssetPhotoPrompt(bot, chatId, uid);
+    return true;
+  }
+  if (data === 'dap:retake') {
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'design_asset_flow') {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' });
+      return true;
+    }
+    session.step = 'photo';
+    delete session.staged;
+    delete session.previewFileId;
+    sessionStore.set(uid, session);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.sendMessage(chatId, '📷 Send the new photo now.');
+    return true;
+  }
+  if (data === 'dap:submit') {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Submitting...' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+    await submitDesignAssetForApproval(bot, chatId, uid, callbackQuery.message);
+    return true;
+  }
+
+  /* DAM — manage flow (admin) */
+  if (data === 'dam:back') {
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await startManageDesignPhotos(bot, chatId, uid, null);
+    return true;
+  }
+  if (data === 'dam:noop') {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Pending items appear in the admin approval feed.' });
+    return true;
+  }
+  if (data.startsWith('dam:view:')) {
+    const design = data.slice('dam:view:'.length);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await showDesignAssetDetail(bot, chatId, uid, design);
+    return true;
+  }
+  if (data.startsWith('dam:replace:')) {
+    const design = data.slice('dam:replace:'.length);
+    if (!config.access.adminIds.includes(uid)) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' });
+      return true;
+    }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    sessionStore.clear(uid);
+    sessionStore.set(uid, { type: 'design_asset_flow', step: 'shade_count', design, shadeNames: [] });
+    await showDesignAssetShadeCountPicker(bot, chatId, uid);
+    return true;
+  }
+  if (data.startsWith('dam:editnames:')) {
+    const design = data.slice('dam:editnames:'.length);
+    if (!config.access.adminIds.includes(uid)) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' });
+      return true;
+    }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    sessionStore.set(uid, { type: 'design_asset_flow', step: 'edit_names', editingDesign: design, shadeNames: [] });
+    const row = await designAssetsRepo.findActive(design);
+    const cur = row ? row.shadeNames.join(', ') : '';
+    await bot.sendMessage(chatId,
+      `✏️ *Edit shade names — ${design}*\n\nCurrent: ${cur || '_(none)_'}\n\nReply with the new comma-separated names. Type *cancel* to abort.`,
+      { parse_mode: 'Markdown' });
+    return true;
+  }
+  if (data.startsWith('dam:deact:')) {
+    const design = data.slice('dam:deact:'.length);
+    if (!config.access.adminIds.includes(uid)) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' });
+      return true;
+    }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Deactivating...' });
+    try {
+      const row = await designAssetsRepo.findActive(design);
+      if (row) {
+        await designAssetsRepo.updateStatus(row.rowIndex, 'inactive', uid);
+        await bot.sendMessage(chatId, `🗑️ Photo for *${design}* deactivated. Pickers will fall back to text-only until a new photo is uploaded.`, { parse_mode: 'Markdown' });
+      } else {
+        await bot.sendMessage(chatId, `⚠️ No active photo for ${design}.`);
+      }
+    } catch (e) {
+      await bot.sendMessage(chatId, `⚠️ Deactivate failed: ${e.message}`);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Best-effort: send the active product photo as a *preview* message before
+ * the next picker step (shade / quantity). Decorative only — never blocks
+ * or interferes with the existing in-place edit flow. Falls back silently
+ * if no photo is on file or sending fails.
+ *
+ * Called from design-tap callback sites in supply-request, sample,
+ * update-price, and order flows.
+ */
+async function maybeSendDesignPreview(bot, chatId, design, captionExtra) {
+  try {
+    if (!design) return false;
+    const captionPrefix = captionExtra ? `${captionExtra}\n` : '';
+    return await designAssetsService.sendDesignPhoto({
+      bot, chatId, design,
+      caption: `${captionPrefix}📷 *${design}*`,
+    });
+  } catch (e) {
+    logger.warn(`maybeSendDesignPreview failed for ${design}: ${e.message}`);
+    return false;
+  }
+}
+
+/* ─── DESIGN ASSET FLOW: View-on-demand button (Reports / Stock) ───
+ * Consumers in list views show a 🖼 View button per design. Tapping it
+ * sends the photo as a follow-up message without disturbing the report.
+ */
+async function handleDesignAssetViewCallback(bot, callbackQuery) {
+  const data = callbackQuery.data || '';
+  if (!data.startsWith('dav:')) return false;
+  const design = data.slice('dav:'.length);
+  const uid = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  await bot.answerCallbackQuery(callbackQuery.id, { text: 'Loading photo…' });
+  const ok = await designAssetsService.sendDesignPhoto({ bot, chatId, design });
+  if (!ok) {
+    await bot.sendMessage(chatId, `📷 No product photo on file for ${design}. An admin can add one via 📷 Catalog → Upload Product Photo.`);
+  }
+  return true;
 }
 
 module.exports = {

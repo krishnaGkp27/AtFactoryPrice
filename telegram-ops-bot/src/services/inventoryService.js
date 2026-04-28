@@ -493,6 +493,13 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     }
   } else if (aj.action === 'supply_request') {
     // Intimation only — no inventory changes. Approval + assignment handled in approvalEvents.
+  } else if (aj.action === 'design_asset_upload') {
+    // Activate the staged DesignAssets row keyed by this requestId. Any
+    // older active asset for the same design is automatically marked
+    // 'replaced' so consumers always read the freshest photo.
+    const designAssetsService = require('./designAssetsService');
+    const r = await designAssetsService.activateByApprovalRequestId(requestId, approvedBy);
+    if (!r.ok) return { ok: false, message: r.message || 'Could not activate design photo asset.' };
   } else if (aj.action === 'give_sample') {
     const samplesRepo = require('../repositories/samplesRepository');
     await samplesRepo.append({
@@ -518,6 +525,14 @@ async function rejectApproval(requestId, rejectedBy) {
   const pending = await approvalQueueRepository.getAllPending();
   const item = pending.find((p) => p.requestId === requestId);
   if (!item) return { ok: false, message: 'Request not found or already resolved.' };
+  // Type-specific cleanup before marking rejected.
+  const aj = item.actionJSON || {};
+  if (aj.action === 'design_asset_upload') {
+    try {
+      const designAssetsService = require('./designAssetsService');
+      await designAssetsService.rejectByApprovalRequestId(requestId, rejectedBy);
+    } catch (_) { /* non-fatal: row stays pending; admin can clean up via Manage hub */ }
+  }
   await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString());
   await auditLogRepository.append('approval_rejected', { requestId, rejectedBy }, rejectedBy);
   return { ok: true };

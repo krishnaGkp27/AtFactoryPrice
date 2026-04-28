@@ -17,6 +17,7 @@ const HUBS = [
   { id: 'stock',      label: 'Stock',                icon: '📦' },
   { id: 'customers',  label: 'Customers',            icon: '👤' },
   { id: 'samples',    label: 'Samples',              icon: '🧪' },
+  { id: 'catalog',    label: 'Catalog',              icon: '📷' },
   { id: 'reports',    label: 'Reports',              icon: '📊' },
   { id: 'admin',      label: 'Admin Settings',       icon: '⚙️' },
 ];
@@ -44,6 +45,9 @@ const ACTIVITIES = [
 
   { code: 'give_sample',           label: 'Give Sample',               icon: '🧪', callback: 'act:give_sample',        hub: 'samples' },
   { code: 'sample_status',         label: 'Sample Status',             icon: '📊', callback: 'act:sample_status',      hub: 'samples' },
+
+  { code: 'upload_design_photo',   label: 'Upload Product Photo',      icon: '📷', callback: 'act:upload_design_photo', hub: 'catalog' },
+  { code: 'manage_design_photos',  label: 'Manage Product Photos',     icon: '🖼️', callback: 'act:manage_design_photos', hub: 'catalog' },
 
   { code: 'sales_report',          label: 'Sales Report',              icon: '📊', callback: 'act:sales_report',       hub: 'reports' },
   { code: 'supply_details',        label: 'Supply Details',            icon: '📦', callback: 'act:supply_details',     hub: 'reports' },

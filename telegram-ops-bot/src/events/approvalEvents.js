@@ -250,7 +250,20 @@ async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, it
   }
 }
 
-async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSummary, riskReason, excludeUserId) {
+/**
+ * Notify all admins (excluding the one who raised the request, if applicable)
+ * that an approval is pending.
+ *
+ * @param {object} bot
+ * @param {string} requestId
+ * @param {string} userLabel
+ * @param {string} actionSummary
+ * @param {string} riskReason
+ * @param {string} [excludeUserId]
+ * @param {object} [opts]                  optional decoration
+ * @param {string} [opts.previewPhoto]     Telegram file_id or HTTPS URL — shown above the approval message
+ */
+async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSummary, riskReason, excludeUserId, opts = {}) {
   const esc = (s) => (s || '').replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
   const text = `🔔 *Approval required*\n\nRequest ID: \`${requestId}\`\nUser: ${esc(userLabel)}\nAction: ${esc(actionSummary)}\nReason: ${esc(riskReason)}\n\nUse buttons below to approve or reject\\.`;
   const keyboard = {
@@ -260,6 +273,17 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
   };
   for (const adminId of config.access.adminIds) {
     if (excludeUserId && String(adminId) === String(excludeUserId)) continue;
+    // Best-effort photo preview (e.g. for design_asset_upload). Never blocks the text notification.
+    if (opts && opts.previewPhoto) {
+      try {
+        await bot.sendPhoto(adminId, opts.previewPhoto, {
+          caption: opts.previewCaption || `📷 Preview for request \`${requestId}\``,
+          parse_mode: 'Markdown',
+        });
+      } catch (e) {
+        logger.warn(`Failed to send preview photo to admin ${adminId} for ${requestId}`, e.message);
+      }
+    }
     try {
       await bot.sendMessage(adminId, text, { parse_mode: 'MarkdownV2', reply_markup: keyboard });
     } catch (e) {
