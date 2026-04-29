@@ -360,9 +360,13 @@ async function sendShadePicker({ bot, chatId, design, captionPrefix, buildShadeB
  * Send the product photo *only* (no shade buttons), useful for design-only
  * pickers (e.g. order flow where shade isn't selected).
  *
- * @returns {Promise<boolean>} true if photo sent
+ * Returns either `true`/`false` (legacy) or the sent Message object when
+ * `returnSentMessage: true` is passed — callers that want to track the
+ * photo's message_id so they can delete it later use the latter.
+ *
+ * @returns {Promise<boolean | object>}
  */
-async function sendDesignPhoto({ bot, chatId, design, caption, extraRows }) {
+async function sendDesignPhoto({ bot, chatId, design, caption, extraRows, returnSentMessage }) {
   const asset = await getPhotoForSend(design);
   if (!asset) return false;
   try {
@@ -376,7 +380,7 @@ async function sendDesignPhoto({ bot, chatId, design, caption, extraRows }) {
       cacheTelegramFileId(asset.rowIndex, fid).catch(() => {});
     }
     logger.info(`sendDesignPhoto(${design}): sent via ${asset.photoSource}`);
-    return true;
+    return returnSentMessage ? sent : true;
   } catch (e) {
     logger.warn(`sendDesignPhoto failed for ${design} (source=${asset.photoSource}): ${e.message}`);
     return false;
