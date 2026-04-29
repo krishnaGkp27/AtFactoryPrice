@@ -15,6 +15,7 @@ const crmService = require('../services/crmService');
 const accountingService = require('../services/accountingService');
 const salesFlow = require('../services/salesFlowService');
 const sessionStore = require('../utils/sessionStore');
+const { buildShadeNameMap, buildShadeLabel, layoutShadeRows } = require('../utils/shadeButtons');
 const settingsRepo = require('../repositories/settingsRepository');
 const usersRepository = require('../repositories/usersRepository');
 const inventoryRepository = require('../repositories/inventoryRepository');
@@ -32,6 +33,7 @@ const customersRepo = require('../repositories/customersRepository');
 const userPrefsRepo = require('../repositories/userPrefsRepository');
 const designAssetsRepo = require('../repositories/designAssetsRepository');
 const designAssetsService = require('../services/designAssetsService');
+const colorDetector = require('../ai/colorDetector');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
 const idGenerator = require('../utils/idGenerator');
 const config = require('../config');
@@ -1252,20 +1254,39 @@ async function showSampleDesignPicker(bot, chatId, userId, showAll = false) {
 
 async function showSampleShadePicker(bot, chatId, userId, design) {
   const allInv = await inventoryRepository.getAll();
-  const shades = [...new Set(
-    allInv.filter((r) => r.design === design).map((r) => r.shade || '-'),
-  )].sort();
+  // Group: shade → Set of distinct *available* packageNo. Available rows
+  // are "currently in stock and not sold/scrapped"; this matches what the
+  // sales side sees for the same shade.
+  const shadeBales = new Map();
+  for (const r of allInv) {
+    if (r.design !== design) continue;
+    if (r.status !== 'available') continue;
+    const k = r.shade || '-';
+    if (!shadeBales.has(k)) shadeBales.set(k, new Set());
+    shadeBales.get(k).add(r.packageNo);
+  }
+  const shades = [...shadeBales.keys()].sort();
   if (!shades.length) {
     await bot.sendMessage(chatId, `No shades found for design ${design}.`);
     sessionStore.clear(userId);
     return;
   }
-  const rows = [];
-  for (let i = 0; i < shades.length; i += 2) {
-    const row = [{ text: `🎨 ${shades[i]}`, callback_data: `smsh:${shades[i].slice(0, 55)}` }];
-    if (shades[i + 1]) row.push({ text: `🎨 ${shades[i + 1]}`, callback_data: `smsh:${shades[i + 1].slice(0, 55)}` });
-    rows.push(row);
+
+  // Catalog name lookup so we can render "<#> - <name> (<qty> bales)".
+  let nameMap;
+  try {
+    const asset = await designAssetsRepo.findActive(design);
+    nameMap = buildShadeNameMap(asset);
+  } catch (_) {
+    nameMap = new Map();
   }
+
+  // Sample flow doesn't carry a productType yet — fabric defaults to "bale/bales".
+  const buttons = shades.map((s) => ({
+    text: buildShadeLabel(s, nameMap, shadeBales.get(s).size),
+    callback_data: `smsh:${s.slice(0, 55)}`,
+  }));
+  const rows = layoutShadeRows(buttons);
   rows.push([{ text: '❌ Cancel', callback_data: 'smcanc:0' }]);
   await _sampleRender(bot, chatId, userId, 'Pick a shade:', rows);
 }
@@ -1557,16 +1578,37 @@ async function showUpdatePriceShadePicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
   const all = await inventoryRepository.getAll();
-  const shades = [...new Set(all
-    .filter((r) => String(r.design || '').trim().toUpperCase() === String(session.design).toUpperCase())
-    .map((r) => String(r.shade || '').trim())
-    .filter(Boolean))].sort();
-  const rows = [[{ text: '🎨 All shades', callback_data: 'ups:__all__' }]];
-  for (let i = 0; i < shades.length; i += 3) {
-    rows.push(shades.slice(i, i + 3).map((s) => ({ text: `🎨 ${s}`, callback_data: `ups:${s.slice(0, 50)}` })));
+  // Group: shade → Set of distinct *available* packageNo for this design.
+  const designUC = String(session.design).toUpperCase();
+  const shadeBales = new Map();
+  for (const r of all) {
+    if (String(r.design || '').trim().toUpperCase() !== designUC) continue;
+    const k = String(r.shade || '').trim();
+    if (!k) continue;
+    if (!shadeBales.has(k)) shadeBales.set(k, new Set());
+    if (r.status === 'available') shadeBales.get(k).add(r.packageNo);
   }
+  const shades = [...shadeBales.keys()].sort();
+
+  // Catalog name lookup for "<#> - <name>" display.
+  let nameMap;
+  try {
+    const asset = await designAssetsRepo.findActive(session.design);
+    nameMap = buildShadeNameMap(asset);
+  } catch (_) {
+    nameMap = new Map();
+  }
+
+  const shadeButtons = shades.map((s) => ({
+    text: buildShadeLabel(s, nameMap, shadeBales.get(s).size),
+    callback_data: `ups:${s.slice(0, 50)}`,
+  }));
+
+  const rows = [[{ text: '🎨 All shades', callback_data: 'ups:__all__' }]];
+  for (const r of layoutShadeRows(shadeButtons)) rows.push(r);
   if (rows.length > 15) rows.splice(15);
   rows.push([{ text: '❌ Cancel', callback_data: 'upcanc:0' }]);
+
   const text = `💲 *Update Price*\n\n✓ Design: *${session.design}*\n\nSelect shade:`;
   await editOrSend(bot, chatId, session.flowMessageId, text,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
@@ -4137,13 +4179,29 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
     sessionStore.set(userId, session);
   }
 
-  const cShort = labels.container_short;
-  const rows = [];
-  for (let i = 0; i < shades.length; i += 2) {
-    const row = [{ text: `${shades[i].shade} (${shades[i].availPkgs} ${cShort})`, callback_data: `srf_sh:${design}|${shades[i].shade}|${shades[i].availPkgs}` }];
-    if (shades[i + 1]) row.push({ text: `${shades[i + 1].shade} (${shades[i + 1].availPkgs} ${cShort})`, callback_data: `srf_sh:${design}|${shades[i + 1].shade}|${shades[i + 1].availPkgs}` });
-    rows.push(row);
+  // Look up the design's catalog asset (if any) so we can render
+  // shade buttons as "<#> - <name> (<qty> bales)". Falls back gracefully
+  // to "<#> (<qty> bales)" when there's no catalog photo. The unit
+  // ("bales" vs e.g. "boxes" for future garment products) comes from
+  // the product-type config, so this stays correct for non-fabric items.
+  let nameMap;
+  try {
+    const asset = await designAssetsRepo.findActive(design);
+    nameMap = buildShadeNameMap(asset);
+  } catch (_) {
+    nameMap = new Map();
   }
+  const unit = {
+    singular: labels.container_label.toLowerCase(),
+    plural: productTypesRepo.pluralize(labels.container_label, 2).toLowerCase(),
+  };
+
+  const buttons = shades.map((s) => ({
+    text: buildShadeLabel(s.shade, nameMap, s.availPkgs, unit),
+    callback_data: `srf_sh:${design}|${s.shade}|${s.availPkgs}`,
+  }));
+  const rows = layoutShadeRows(buttons);
+
   await editOrSend(bot, chatId, msgId, `📦 *${design}* in *${warehouse}*\n\nSelect shade:`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
@@ -4856,7 +4914,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     session.design = val;
     session.step = 'shade';
     sessionStore.set(uid, session);
-    await maybeSendDesignPreview(bot, callbackQuery.message.chat.id, val);
+    await maybeSendDesignPreview(bot, callbackQuery.message.chat.id, val, null, uid);
     await showSampleShadePicker(bot, callbackQuery.message.chat.id, uid, val);
 
   /* ─── SAMPLE BUTTON FLOW: SHADE ─── */
@@ -5164,7 +5222,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     session.design = design;
     session.step = 'shade';
     sessionStore.set(uid, session);
-    await maybeSendDesignPreview(bot, callbackQuery.message.chat.id, design);
+    await maybeSendDesignPreview(bot, callbackQuery.message.chat.id, design, null, uid);
     await showUpdatePriceShadePicker(bot, callbackQuery.message.chat.id, uid);
 
   } else if (data.startsWith('ups:')) {
@@ -5564,7 +5622,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     session.shade = '';
     session.step = 'customer';
     sessionStore.set(uid, session);
-    await maybeSendDesignPreview(bot, callbackQuery.message.chat.id, design);
+    await maybeSendDesignPreview(bot, callbackQuery.message.chat.id, design, null, uid);
     let customerNames = await transactionsRepo.getCustomersByDesign(design);
     let label = 'past buyers shown';
     if (!customerNames.length) {
@@ -6272,7 +6330,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
     const session = sessionStore.get(uid);
     const wh = session ? session.warehouse : '';
-    await maybeSendDesignPreview(bot, chatId, design);
+    await maybeSendDesignPreview(bot, chatId, design, null, uid);
     await showShadesForDesign(bot, chatId, uid, design, wh);
 
   /* ─── SUPPLY REQUEST FLOW: SHADE ─── */
@@ -6983,7 +7041,7 @@ async function processDesignAssetPhoto(bot, chatId, userId, telegramFileId) {
   // preview message in step 3/3 can use it instantly.
   try {
     const sent = await bot.sendPhoto(chatId, staged.labeledBuffer, {
-      caption: `📷 *${staged.design}* — photo ready. Read off the tab numbers and type the shade list below.`,
+      caption: `📷 *${staged.design}* — photo ready.`,
       parse_mode: 'Markdown',
     });
     if (sent && sent.photo && sent.photo.length) {
@@ -6999,7 +7057,62 @@ async function processDesignAssetPhoto(bot, chatId, userId, telegramFileId) {
     if (prior && prior.shades && prior.shades.length) seed = prior.shades;
   } catch (_) {}
   sessionStore.set(userId, session);
+
+  // ── AUTO-DETECT shades using OpenAI Vision ─────────────────────────────
+  // This is an *optional* convenience layered on top of the existing
+  // manual-input flow. If the model returns a high-confidence list, we
+  // show the employee a "Looks right — proceed" button. Otherwise (or
+  // on any failure) we silently fall back to manual N:name input.
+  let detection = null;
+  try {
+    const statusMsg = await bot.sendMessage(chatId, '🤖 Auto-detecting shades from the photo…').catch(() => null);
+    detection = await colorDetector.detectShadesFromPhoto(dl.buffer, 'image/jpeg');
+    if (statusMsg && statusMsg.message_id) {
+      bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+    }
+  } catch (e) {
+    logger.warn(`design_asset_flow: auto-detect failed for ${session.design}: ${e.message}`);
+    detection = null;
+  }
+
+  if (detection && detection.shades && detection.shades.length && detection.confidence >= 0.5) {
+    // Stash the proposal on the session so the "Proceed" callback can
+    // commit it. We don't overwrite session.staged.shades yet — the
+    // employee must explicitly accept first.
+    session.detectedShades = detection.shades;
+    session.detectionConfidence = detection.confidence;
+    session.step = 'awaiting_detection_confirm';
+    sessionStore.set(userId, session);
+    await showDesignAssetDetectionProposal(bot, chatId, userId);
+    return;
+  }
+
+  // Detection unavailable or low-confidence → fall through to manual input.
   await showDesignAssetShadeNamesPromptAfterPhoto(bot, chatId, userId, seed);
+}
+
+/**
+ * Step 3a / 3 — show the auto-detected shade proposal with two choices:
+ *   ✅ Proceed (use these shades as-is) → jumps directly to preview
+ *   ✏️ Type manually                    → falls into the existing N:name flow
+ */
+async function showDesignAssetDetectionProposal(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || !session.detectedShades) return;
+  const lines = formatShadesPreview(session.detectedShades);
+  const conf = Math.round((session.detectionConfidence || 0) * 100);
+  await bot.sendMessage(chatId,
+    `🤖 *Auto-detected ${session.detectedShades.length} shade${session.detectedShades.length === 1 ? '' : 's'}* (confidence ${conf}%)\n\n` +
+    `${lines}\n\n` +
+    `If this matches the photo, tap *Proceed*. Otherwise tap *Type manually* to enter the list yourself.`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [
+        [{ text: '✅ Proceed — looks right',     callback_data: 'dap:autoaccept' }],
+        [{ text: '✏️ Type manually',              callback_data: 'dap:manual' }],
+        [{ text: '❌ Cancel',                     callback_data: 'dap:cancel' }],
+      ] },
+    });
 }
 
 /**
@@ -7126,6 +7239,20 @@ async function handleDesignAssetTextStep(bot, chatId, userId, text) {
   if (session.step === 'preview' && text.toLowerCase() === 'submit') {
     await submitDesignAssetForApproval(bot, chatId, userId, null);
     return true;
+  }
+  // If the user types while we're waiting for them to tap "Proceed" or
+  // "Type manually" on the auto-detection card, treat the typing as an
+  // implicit "type manually" and route them into the standard
+  // shade-names handler with their text already in hand.
+  if (session.step === 'awaiting_detection_confirm') {
+    const seed = session.detectedShades || null;
+    delete session.detectedShades;
+    delete session.detectionConfidence;
+    session.step = 'shade_names';
+    sessionStore.set(userId, session);
+    // Fall through to shade_names handling below by re-invoking ourselves
+    // — this avoids duplicating the parse / validation logic.
+    return await handleDesignAssetTextStep(bot, chatId, userId, text);
   }
   if (session.step === 'design_typing') {
     const d = text.trim();
@@ -7366,6 +7493,47 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
     await sendDesignAssetPreview(bot, chatId, uid);
     return true;
   }
+  // ── AUTO-DETECT: accept the model's shade proposal verbatim and skip
+  // straight to the preview step. The employee can still hit "Edit shade
+  // numbers / names" on the preview if they spot any small mismatch.
+  if (data === 'dap:autoaccept') {
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'design_asset_flow' || !session.staged || !session.detectedShades) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' });
+      return true;
+    }
+    const shades = session.detectedShades;
+    session.staged.shades = shades;
+    session.staged.shadeCount = shades.length;
+    session.staged.shadeNames = shades.map((s) => s.name);
+    session.step = 'preview';
+    delete session.detectedShades;
+    delete session.detectionConfidence;
+    sessionStore.set(uid, session);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Using detected shades' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+    await sendDesignAssetPreview(bot, chatId, uid);
+    return true;
+  }
+  // ── AUTO-DETECT: reject the proposal and fall through to manual N:name
+  // input. The proposal is still useful as a "starting point" — we seed
+  // the manual prompt's example block with it.
+  if (data === 'dap:manual') {
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'design_asset_flow') {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' });
+      return true;
+    }
+    const seed = session.detectedShades || null;
+    delete session.detectedShades;
+    delete session.detectionConfidence;
+    session.step = 'shade_names';
+    sessionStore.set(uid, session);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+    await showDesignAssetShadeNamesPromptAfterPhoto(bot, chatId, uid, seed);
+    return true;
+  }
   if (data === 'dap:editmeta') {
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'design_asset_flow' || !session.staged) {
@@ -7499,10 +7667,19 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
  * or interferes with the existing in-place edit flow. Falls back silently
  * if no photo is on file or sending fails.
  *
+ * When `userId` is given and the photo lands successfully, we also clear
+ * `session.flowMessageId`. This is critical: in-place edits target an
+ * existing message at its original chronological slot; if we leave the
+ * old flowMessageId in place, the *edited* picker stays above the freshly
+ * sent photo. Clearing it forces the next picker render to be a brand-new
+ * send, so the chat order becomes (photo) → (picker) — which is what the
+ * user expects.
+ *
  * Called from design-tap callback sites in supply-request, sample,
- * update-price, and order flows.
+ * update-price, order, and report flows. Reports pass no userId and
+ * are unaffected (they don't use flowMessageId anyway).
  */
-async function maybeSendDesignPreview(bot, chatId, design, captionExtra) {
+async function maybeSendDesignPreview(bot, chatId, design, captionExtra, userId) {
   try {
     if (!design) return false;
     const captionPrefix = captionExtra ? `${captionExtra}\n` : '';
@@ -7510,8 +7687,18 @@ async function maybeSendDesignPreview(bot, chatId, design, captionExtra) {
       bot, chatId, design,
       caption: `${captionPrefix}📷 *${design}*`,
     });
-    if (!ok) logger.info(`maybeSendDesignPreview(${design}): no active asset or send failed`);
-    return ok;
+    if (!ok) {
+      logger.info(`maybeSendDesignPreview(${design}): no active asset or send failed`);
+      return false;
+    }
+    if (userId) {
+      const session = sessionStore.get(userId);
+      if (session && session.flowMessageId) {
+        session.flowMessageId = null;
+        sessionStore.set(userId, session);
+      }
+    }
+    return true;
   } catch (e) {
     logger.warn(`maybeSendDesignPreview failed for ${design}: ${e.message}`);
     return false;
