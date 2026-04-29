@@ -121,9 +121,27 @@ function layoutShadeRows(buttons) {
   return rows;
 }
 
+/**
+ * Format a "shade reference" for headers and inline text — the form
+ * "<#> - <name>" when a name is known, plain "<#>" otherwise. Used in
+ * picker headers, cart summaries, and admin notifications so the user
+ * can still tell what color they picked once the photo is gone.
+ *
+ * @param {string|number} shade
+ * @param {string} [name]
+ * @returns {string}
+ */
+function formatShadeRef(shade, name) {
+  const s = String(shade == null ? '' : shade).trim();
+  if (!s) return '';
+  const n = String(name == null ? '' : name).trim();
+  return n ? `${s} - ${n}` : s;
+}
+
 module.exports = {
   buildShadeNameMap,
   buildShadeLabel,
   pickColumns,
   layoutShadeRows,
+  formatShadeRef,
 };

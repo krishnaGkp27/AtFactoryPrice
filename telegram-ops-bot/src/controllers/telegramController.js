@@ -15,7 +15,7 @@ const crmService = require('../services/crmService');
 const accountingService = require('../services/accountingService');
 const salesFlow = require('../services/salesFlowService');
 const sessionStore = require('../utils/sessionStore');
-const { buildShadeNameMap, buildShadeLabel, layoutShadeRows } = require('../utils/shadeButtons');
+const { buildShadeNameMap, buildShadeLabel, layoutShadeRows, formatShadeRef } = require('../utils/shadeButtons');
 const settingsRepo = require('../repositories/settingsRepository');
 const usersRepository = require('../repositories/usersRepository');
 const inventoryRepository = require('../repositories/inventoryRepository');
@@ -4195,11 +4195,27 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
     return;
   }
 
+  // Load the catalog asset (if any) BEFORE the single-shade branch so
+  // we can stamp the shade name onto the session no matter which path
+  // we take. The shade name persists into every subsequent step
+  // (quantity picker, cart, customer, …, admin notification) so the
+  // user can still tell which color they picked once the photo bubble
+  // is gone.
+  let asset = null;
+  let nameMap;
+  try {
+    asset = await designAssetsRepo.findActive(design);
+    nameMap = buildShadeNameMap(asset);
+  } catch (_) {
+    nameMap = new Map();
+  }
+
   if (shades.length === 1) {
     const s = shades[0];
     if (session && session.type === 'supply_req_flow') {
       session.currentDesign = design;
       session.currentShade = s.shade;
+      session.currentShadeName = nameMap.get(String(s.shade)) || '';
       session.currentAvailPkgs = s.availPkgs;
       session.step = 'quantity';
       sessionStore.set(userId, session);
@@ -4212,20 +4228,6 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
     session.currentDesign = design;
     session.step = 'shade';
     sessionStore.set(userId, session);
-  }
-
-  // Look up the design's catalog asset (if any) so we can render
-  // shade buttons as "<#> - <name> (<qty> bales)". Falls back gracefully
-  // to "<#> (<qty> bales)" when there's no catalog photo. The unit
-  // ("bales" vs e.g. "boxes" for future garment products) comes from
-  // the product-type config, so this stays correct for non-fabric items.
-  let asset = null;
-  let nameMap;
-  try {
-    asset = await designAssetsRepo.findActive(design);
-    nameMap = buildShadeNameMap(asset);
-  } catch (_) {
-    nameMap = new Map();
   }
   const unit = {
     singular: labels.container_label.toLowerCase(),
@@ -4287,6 +4289,12 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
 async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse, availPkgs, labelsOverride) {
   const labels = labelsOverride || await productTypesRepo.getLabels('fabric');
   const containerPlural = productTypesRepo.pluralize(labels.container_label, availPkgs).toLowerCase();
+  const session = sessionStore.get(userId);
+  // Look the name up by shade key on the active session — set when the
+  // user tapped the shade combo (or when single-shade auto-pick fired
+  // in showShadesForDesign). If the design has no catalog asset, this
+  // is empty and the header degrades to plain "Shade: 3".
+  const shadeRef = formatShadeRef(shade, session && session.currentShadeName);
 
   const quickNums = [];
   for (let n = 1; n <= Math.min(availPkgs, 10); n++) quickNums.push(n);
@@ -4306,7 +4314,7 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
   rows.push([{ text: '⬅️ Back to shades', callback_data: 'srf_back:shade' }]);
 
   await editOrSendAnchored(bot, chatId, userId,
-    `📦 *${design}* │ Shade: *${shade}* │ 🏭 *${warehouse}*\n${availPkgs} ${containerPlural} available\n\nHow many ${containerPlural} to supply?`, {
+    `📦 *${design}* │ Shade: *${shadeRef}* │ 🏭 *${warehouse}*\n${availPkgs} ${containerPlural} available\n\nHow many ${containerPlural} to supply?`, {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: rows },
     });
@@ -4314,11 +4322,17 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
 
 function addToCart(session, design, shade, quantity) {
   if (!session.cart) session.cart = [];
+  // Capture the shade name (from session.currentShadeName, set when the
+  // shade was picked) on every cart line. This is what lets cart text,
+  // confirmation summaries, and admin notifications all show the shade
+  // color even though the photo bubble is no longer in the chat.
+  const shadeName = (session.currentShadeName || '').trim();
   const existing = session.cart.find((c) => c.design === design && c.shade === shade);
   if (existing) {
     existing.quantity += quantity;
+    if (!existing.shadeName && shadeName) existing.shadeName = shadeName;
   } else {
-    session.cart.push({ design, shade, quantity });
+    session.cart.push({ design, shade, shadeName, quantity });
   }
 }
 
@@ -4329,7 +4343,8 @@ async function buildCartText(session) {
   const cShort = labels.container_short;
   const lines = cart.map((c) => {
     const m = getMaterialInfo(c.design);
-    return `${m.icon} ${c.design} [${m.name}] │ Shade: ${c.shade} │ ×${c.quantity} ${cShort}`;
+    const shadeRef = formatShadeRef(c.shade, c.shadeName);
+    return `${m.icon} ${c.design} [${m.name}] │ Shade: ${shadeRef} │ ×${c.quantity} ${cShort}`;
   });
   const total = cart.reduce((s, c) => s + c.quantity, 0);
   const containerPlural = productTypesRepo.pluralize(labels.container_label, total).toLowerCase();
@@ -6414,6 +6429,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
       session.step = 'design';
       delete session.currentDesign;
       delete session.currentShade;
+      delete session.currentShadeName;
       delete session.currentAvailPkgs;
       sessionStore.set(uid, session);
       // The current preview photo (if any) is for the design we're
@@ -6424,6 +6440,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     } else if (target === 'shade') {
       session.step = 'shade';
       delete session.currentShade;
+      delete session.currentShadeName;
       delete session.currentAvailPkgs;
       // The currently-live message is the text quantity picker
       // (flowMessageId). Deleting it lets the new shade picker — which
@@ -6507,6 +6524,18 @@ async function handleCallbackQuery(bot, callbackQuery) {
     session.currentDesign = design;
     session.currentShade = shade;
     session.currentAvailPkgs = availPkgs;
+    // Resolve the shade name from the catalog so the quantity picker
+    // (and every step after — cart, customer, …, admin notification)
+    // can show "Shade: 3 - Beige" instead of just "Shade: 3". The photo
+    // bubble is about to be deleted, so this is what carries the color
+    // forward visually.
+    try {
+      const asset = await designAssetsRepo.findActive(design);
+      const nameMap = buildShadeNameMap(asset);
+      session.currentShadeName = nameMap.get(String(shade)) || '';
+    } catch (_) {
+      session.currentShadeName = '';
+    }
     session.step = 'quantity';
     sessionStore.set(uid, session);
     // The shade picker was a photo-and-buttons combo (or a text-only
@@ -6542,7 +6571,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await bot.answerCallbackQuery(callbackQuery.id, { text: `Invalid. Choose 1 – ${session.currentAvailPkgs}.` });
       return;
     }
-    await bot.answerCallbackQuery(callbackQuery.id, { text: `${qty} added: ${session.currentDesign} ${session.currentShade}` });
+    await bot.answerCallbackQuery(callbackQuery.id, { text: `${qty} added: ${session.currentDesign} ${formatShadeRef(session.currentShade, session.currentShadeName)}` });
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
     addToCart(session, session.currentDesign, session.currentShade, qty);
     sessionStore.set(uid, session);
@@ -6566,7 +6595,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         return;
       }
       const rows = session.cart.map((c, i) => [{
-        text: `🗑️ ${c.design} ${c.shade} × ${c.quantity}`,
+        text: `🗑️ ${c.design} ${formatShadeRef(c.shade, c.shadeName)} × ${c.quantity}`,
         callback_data: `srf_rm:${i}`,
       }]);
       rows.push([{ text: '⬅️ Back', callback_data: 'srf_cart:back' }]);
@@ -6782,7 +6811,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const cShort = labels.container_short;
     const cartLines = cart.map((c) => {
       const m = getMaterialInfo(c.design);
-      return `${m.icon} ${c.design} [${m.name}] │ Shade: ${c.shade} │ ×${c.quantity} ${cShort}`;
+      return `${m.icon} ${c.design} [${m.name}] │ Shade: ${formatShadeRef(c.shade, c.shadeName)} │ ×${c.quantity} ${cShort}`;
     }).join('\n');
     const totalPkgs = cart.reduce((s, c) => s + c.quantity, 0);
     const containerPlural = productTypesRepo.pluralize(labels.container_label, totalPkgs).toLowerCase();
