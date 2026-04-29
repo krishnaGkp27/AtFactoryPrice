@@ -13,11 +13,11 @@
  *    user explicitly asked for. The unit "bales" is consistent with the
  *    package→Bale rename done earlier.
  *
- *  - Responsive row layout: pick column count from the longest label on
- *    the page so we never produce buttons that wrap on narrow phones.
- *      ≤ 10 chars → 3 columns (e.g. "1 (10 bales)" — short)
- *      ≤ 18 chars → 2 columns (e.g. "1 - White (10 bales)" — medium)
- *      else       → 1 column  (e.g. "11 - Off White (10 bales)" — long)
+ *  - Layout: 2 buttons side-by-side by default. We drop to 1-per-row
+ *    only when the longest label would clearly wrap on a typical phone
+ *    (>28 chars — e.g. unusually long color names). 3-column packing
+ *    used to be applied for very short labels, but 2-column is the
+ *    visually consistent default the user prefers, so we hold there.
  *
  *  - Build a quick `Map<shadeNumberAsString, name>` from a DesignAssets
  *    asset record so the picker can look up names by the inventory's
@@ -86,20 +86,22 @@ function buildShadeLabel(shadeKey, nameMap, qty, unit) {
 
 /**
  * Pick a column count for an inline-keyboard page based on the longest
- * label. Tuned for typical mobile Telegram width (~36–40 chars per row
- * including padding) so buttons rarely wrap.
+ * label. Default is 2 columns side-by-side. Falls to 1-per-row only
+ * when a label would clearly overflow on a typical phone width.
  *
  * @param {string[]} labels
- * @returns {1|2|3}
+ * @returns {1|2}
  */
 function pickColumns(labels) {
   let max = 0;
   for (const l of labels) {
     if (l && l.length > max) max = l.length;
   }
-  if (max <= 10) return 3;
-  if (max <= 18) return 2;
-  return 1;
+  // 28 chars per button × 2 buttons + padding still fits 360 px phones.
+  // Beyond that, drop to single-column rather than risk text wrapping
+  // mid-button which looks cluttered.
+  if (max > 28) return 1;
+  return 2;
 }
 
 /**
