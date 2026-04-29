@@ -4185,6 +4185,10 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   const shades = avail.filter((a) => a.design === design).sort((a, b) => b.availPkgs - a.availPkgs);
   const labels = await productTypesRepo.getLabels(session?.productType || 'fabric');
 
+  // Always start fresh: any prior preview/combo from another design is
+  // stale once we render a new shade picker.
+  await clearDesignPreview(bot, chatId, userId);
+
   if (!shades.length) {
     await editOrSendAnchored(bot, chatId, userId, `⚠️ No remaining stock for ${design} in ${warehouse}.`, {});
     if (cart.length) await showCartSummary(bot, chatId, userId);
@@ -4215,9 +4219,10 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   // to "<#> (<qty> bales)" when there's no catalog photo. The unit
   // ("bales" vs e.g. "boxes" for future garment products) comes from
   // the product-type config, so this stays correct for non-fabric items.
+  let asset = null;
   let nameMap;
   try {
-    const asset = await designAssetsRepo.findActive(design);
+    asset = await designAssetsRepo.findActive(design);
     nameMap = buildShadeNameMap(asset);
   } catch (_) {
     nameMap = new Map();
@@ -4234,6 +4239,45 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   const rows = layoutShadeRows(buttons);
   rows.push([{ text: '⬅️ Back to designs', callback_data: 'srf_back:design' }]);
 
+  // ── Path A: catalog photo exists → send a single photo+caption+buttons
+  // message so the shade buttons sit directly under the image with no
+  // separator text in between. We track its message_id on the session
+  // (previewMessageId) so the next step can delete it cleanly. flowMessageId
+  // is nulled because Telegram doesn't allow editMessageText on photo
+  // messages — the next text-only step (quantity) will land as a fresh send
+  // and re-anchor flowMessageId itself.
+  let comboSent = null;
+  if (asset && session) {
+    try {
+      const photoAsset = await designAssetsService.getPhotoForSend(design);
+      if (photoAsset && photoAsset.photo) {
+        comboSent = await bot.sendPhoto(chatId, photoAsset.photo, {
+          caption: `📷 *${design}* — *${warehouse}*`,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: rows },
+        });
+        // Cache the Telegram file_id (best effort) so subsequent sends
+        // for this design hit the fast path immediately.
+        if (photoAsset.photoSource !== 'telegram_file_id' && comboSent && comboSent.photo && comboSent.photo.length) {
+          const fid = comboSent.photo[comboSent.photo.length - 1].file_id;
+          designAssetsService.cacheTelegramFileId(photoAsset.rowIndex, fid).catch(() => {});
+        }
+      }
+    } catch (e) {
+      logger.warn(`showShadesForDesign(${design}): photo+combo send failed, falling back to text picker — ${e.message}`);
+      comboSent = null;
+    }
+  }
+
+  if (comboSent && comboSent.message_id) {
+    session.previewMessageId = comboSent.message_id;
+    session.flowMessageId = null;
+    sessionStore.set(userId, session);
+    return;
+  }
+
+  // ── Path B: no catalog photo (or send failed) → text-only shade picker
+  // edited in place, exactly as before.
   await editOrSendAnchored(bot, chatId, userId, `📦 *${design}* in *${warehouse}*\n\nSelect shade:`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
@@ -6381,6 +6425,14 @@ async function handleCallbackQuery(bot, callbackQuery) {
       session.step = 'shade';
       delete session.currentShade;
       delete session.currentAvailPkgs;
+      // The currently-live message is the text quantity picker
+      // (flowMessageId). Deleting it lets the new shade picker — which
+      // is a fresh photo+buttons combo when a catalog asset exists —
+      // take its place without leaving the quantity message stranded.
+      if (session.flowMessageId) {
+        await bot.deleteMessage(chatId, session.flowMessageId).catch(() => {});
+        session.flowMessageId = null;
+      }
       sessionStore.set(uid, session);
       await showShadesForDesign(bot, chatId, uid, session.currentDesign, session.warehouse);
     } else if (target === 'cart') {
@@ -6423,10 +6475,22 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const chatId = callbackQuery.message.chat.id;
     const uid = String(callbackQuery.from.id);
     await bot.answerCallbackQuery(callbackQuery.id);
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+    // Delete the design picker outright (instead of just wiping its
+    // keyboard) so the chat doesn't carry a stale "Select design: …"
+    // tombstone above the photo. If the user taps "Back to designs"
+    // later we'll send a brand-new picker.
     const session = sessionStore.get(uid);
+    if (session) {
+      await bot.deleteMessage(chatId, callbackQuery.message.message_id).catch(() => {});
+      if (session.flowMessageId === callbackQuery.message.message_id) {
+        session.flowMessageId = null;
+        sessionStore.set(uid, session);
+      }
+    }
     const wh = session ? session.warehouse : '';
-    await maybeSendDesignPreview(bot, chatId, design, null, uid);
+    // showShadesForDesign now sends photo+shade buttons as ONE combo
+    // message (when a catalog asset exists), so we no longer pre-send
+    // a separate preview photo here.
     await showShadesForDesign(bot, chatId, uid, design, wh);
 
   /* ─── SUPPLY REQUEST FLOW: SHADE ─── */
@@ -6445,6 +6509,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
     session.currentAvailPkgs = availPkgs;
     session.step = 'quantity';
     sessionStore.set(uid, session);
+    // The shade picker was a photo-and-buttons combo (or a text-only
+    // fallback). Either way, drop it so the next text-only step is the
+    // only "live" message in the flow.
+    await clearDesignPreview(bot, chatId, uid);
     await showQuantityPicker(bot, chatId, uid, design, shade, session.warehouse, availPkgs);
 
   /* ─── SUPPLY REQUEST FLOW: QUANTITY SELECTION ─── */
