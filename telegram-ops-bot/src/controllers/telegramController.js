@@ -8706,7 +8706,7 @@ async function startManageDesignPhotos(bot, chatId, userId, messageId) {
   await showManageDesignPhotosPage(bot, chatId, userId, 0, messageId);
 }
 
-async function showDesignAssetDetail(bot, chatId, userId, design) {
+async function showDesignAssetDetail(bot, chatId, userId, design, callerMessageId) {
   if (!config.access.adminIds.includes(userId)) {
     await bot.sendMessage(chatId, 'Admin only.');
     return;
@@ -8716,6 +8716,19 @@ async function showDesignAssetDetail(bot, chatId, userId, design) {
     await bot.sendMessage(chatId, `⚠️ No active photo for ${design}.`);
     return;
   }
+
+  // Clean up any previous detail photo and wipe the list keyboard.
+  const session = sessionStore.get(userId);
+  if (session && session.damPhotoId) {
+    await bot.deleteMessage(chatId, session.damPhotoId).catch(() => {});
+    session.damPhotoId = null;
+    sessionStore.set(userId, session);
+  }
+  if (callerMessageId) {
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+      { chat_id: chatId, message_id: callerMessageId }).catch(() => {});
+  }
+
   const photoSrc = row.telegramFileId
     ? row.telegramFileId
     : (row.labeledDriveFileId ? `https://drive.google.com/uc?export=download&id=${row.labeledDriveFileId}` : '');
@@ -8730,7 +8743,7 @@ async function showDesignAssetDetail(bot, chatId, userId, design) {
   if (photoSrc) {
     try {
       const sent = await bot.sendPhoto(chatId, photoSrc, { caption, parse_mode: 'Markdown', reply_markup: kb });
-      // Cache file_id on first send
+      if (session) { session.damPhotoId = sent.message_id; sessionStore.set(userId, session); }
       if (!row.telegramFileId && sent && sent.photo && sent.photo.length) {
         designAssetsService.cacheTelegramFileId(row.rowIndex, sent.photo[sent.photo.length - 1].file_id).catch(() => {});
       }
@@ -8739,7 +8752,8 @@ async function showDesignAssetDetail(bot, chatId, userId, design) {
       logger.warn(`showDesignAssetDetail sendPhoto failed: ${e.message}`);
     }
   }
-  await bot.sendMessage(chatId, caption, { parse_mode: 'Markdown', reply_markup: kb });
+  const sent = await bot.sendMessage(chatId, caption, { parse_mode: 'Markdown', reply_markup: kb });
+  if (session && sent) { session.damPhotoId = sent.message_id; sessionStore.set(userId, session); }
 }
 
 /** Handle dap:* and dam:* callbacks. Returns true if handled. */
@@ -8883,6 +8897,13 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
   /* DAM — manage flow (admin) */
   if (data === 'dam:back') {
     await bot.answerCallbackQuery(callbackQuery.id);
+    // Delete the photo message we're backing out of.
+    const session = sessionStore.get(uid);
+    if (session && session.damPhotoId) {
+      await bot.deleteMessage(chatId, session.damPhotoId).catch(() => {});
+      session.damPhotoId = null;
+      sessionStore.set(uid, session);
+    }
     await startManageDesignPhotos(bot, chatId, uid, null);
     return true;
   }
@@ -8911,7 +8932,7 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
   if (data.startsWith('dam:view:')) {
     const design = data.slice('dam:view:'.length);
     await bot.answerCallbackQuery(callbackQuery.id);
-    await showDesignAssetDetail(bot, chatId, uid, design);
+    await showDesignAssetDetail(bot, chatId, uid, design, callbackQuery.message.message_id);
     return true;
   }
   if (data.startsWith('dam:replace:')) {
@@ -9176,6 +9197,15 @@ async function startBrowseCatalog(bot, chatId, userId, messageId) {
 }
 
 async function showCatalogBrowsePage(bot, chatId, userId, page, messageId) {
+  const session = sessionStore.get(userId);
+
+  // Delete any lingering photo message from a previous detail view.
+  if (session && session.photoMessageId) {
+    await bot.deleteMessage(chatId, session.photoMessageId).catch(() => {});
+    session.photoMessageId = null;
+    sessionStore.set(userId, session);
+  }
+
   let actives = [];
   try { actives = await designAssetsRepo.list('active'); } catch (_) {}
   if (!actives.length) {
@@ -9185,7 +9215,6 @@ async function showCatalogBrowsePage(bot, chatId, userId, page, messageId) {
     return;
   }
 
-  const session = sessionStore.get(userId);
   let filtered = actives;
   if (session && session.filter) {
     const f = session.filter.toLowerCase();
@@ -9230,16 +9259,28 @@ async function showCatalogBrowsePage(bot, chatId, userId, page, messageId) {
   const header = `📖 *Browse Catalog*${filterLabel}\n\n` +
     `${filtered.length} design${filtered.length === 1 ? '' : 's'} with photos — page ${page + 1}/${totalPages}\n\n` +
     `Tap a design to view its photo and shades.`;
-  await editOrSend(bot, chatId, messageId, header,
+  const sent = await editOrSend(bot, chatId, messageId, header,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+  if (session && sent && sent.message_id) {
+    session.flowMessageId = sent.message_id;
+    sessionStore.set(userId, session);
+  }
 }
 
-async function showCatalogBrowseDetail(bot, chatId, userId, design) {
+async function showCatalogBrowseDetail(bot, chatId, userId, design, callerMessageId) {
+  const session = sessionStore.get(userId);
   const row = await designAssetsRepo.findActive(design);
   if (!row) {
     await bot.sendMessage(chatId, `⚠️ No active photo for *${design}*.`, { parse_mode: 'Markdown' });
     return;
   }
+
+  // Wipe the picker keyboard so the list doesn't remain interactive.
+  if (callerMessageId) {
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+      { chat_id: chatId, message_id: callerMessageId }).catch(() => {});
+  }
+
   const shadesText = formatShadesPreview(row.shades || []);
   const caption = `📖 *${row.design}* — ${row.productType || 'fabric'}\n` +
     `Shades (${row.shadeCount}): ${shadesText}`;
@@ -9253,6 +9294,10 @@ async function showCatalogBrowseDetail(bot, chatId, userId, design) {
   if (photoSrc) {
     try {
       const sent = await bot.sendPhoto(chatId, photoSrc, { caption, parse_mode: 'Markdown', reply_markup: kb });
+      if (session) {
+        session.photoMessageId = sent.message_id;
+        sessionStore.set(userId, session);
+      }
       if (!row.telegramFileId && sent && sent.photo && sent.photo.length) {
         designAssetsService.cacheTelegramFileId(row.rowIndex, sent.photo[sent.photo.length - 1].file_id).catch(() => {});
       }
@@ -9261,12 +9306,21 @@ async function showCatalogBrowseDetail(bot, chatId, userId, design) {
       logger.warn(`showCatalogBrowseDetail sendPhoto failed: ${e.message}`);
     }
   }
-  await bot.sendMessage(chatId, caption, { parse_mode: 'Markdown', reply_markup: kb });
+  const sent = await bot.sendMessage(chatId, caption, { parse_mode: 'Markdown', reply_markup: kb });
+  if (session && sent) {
+    session.photoMessageId = sent.message_id;
+    sessionStore.set(userId, session);
+  }
 }
 
 /* ─── SEARCH DESIGN PHOTO ─── */
 
 async function startSearchDesignPhoto(bot, chatId, userId, messageId) {
+  const prev = sessionStore.get(userId);
+  // Clean up any photo from a prior search result.
+  if (prev && prev.photoMessageId) {
+    await bot.deleteMessage(chatId, prev.photoMessageId).catch(() => {});
+  }
   sessionStore.clear(userId);
   sessionStore.set(userId, { type: 'catalog_search_flow', step: 'awaiting_query' });
 
@@ -9305,6 +9359,11 @@ async function handleCatalogSearchTextStep(bot, chatId, userId, text) {
   if (!session || session.type !== 'catalog_search_flow') return false;
 
   if (text.toLowerCase() === 'cancel') {
+    // Wipe flow message keyboard.
+    if (session.flowMessageId) {
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+        { chat_id: chatId, message_id: session.flowMessageId }).catch(() => {});
+    }
     sessionStore.clear(userId);
     await bot.sendMessage(chatId, '❌ Search cancelled.');
     return true;
@@ -9316,11 +9375,29 @@ async function handleCatalogSearchTextStep(bot, chatId, userId, text) {
     return true;
   }
 
+  // Wipe the prompt keyboard since we're showing results now.
+  if (session.flowMessageId) {
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+      { chat_id: chatId, message_id: session.flowMessageId }).catch(() => {});
+  }
+
   await showCatalogSearchResult(bot, chatId, userId, query);
   return true;
 }
 
+async function _cleanupSearchPhoto(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (session && session.photoMessageId) {
+    await bot.deleteMessage(chatId, session.photoMessageId).catch(() => {});
+    session.photoMessageId = null;
+    sessionStore.set(userId, session);
+  }
+}
+
 async function showCatalogSearchResult(bot, chatId, userId, query) {
+  // Delete any previous search-result photo so we don't pile up.
+  await _cleanupSearchPhoto(bot, chatId, userId);
+
   let allActive = [];
   try { allActive = await designAssetsRepo.list('active'); } catch (_) {}
 
@@ -9328,6 +9405,8 @@ async function showCatalogSearchResult(bot, chatId, userId, query) {
   const partials = exact
     ? []
     : allActive.filter((a) => a.design.toUpperCase().includes(query)).slice(0, 8);
+
+  const session = sessionStore.get(userId);
 
   if (exact) {
     const shadesText = formatShadesPreview(exact.shades || []);
@@ -9341,6 +9420,7 @@ async function showCatalogSearchResult(bot, chatId, userId, query) {
     if (photoSrc) {
       try {
         const sent = await bot.sendPhoto(chatId, photoSrc, { caption, parse_mode: 'Markdown', reply_markup: kb });
+        if (session) { session.photoMessageId = sent.message_id; sessionStore.set(userId, session); }
         if (!exact.telegramFileId && sent && sent.photo && sent.photo.length) {
           designAssetsService.cacheTelegramFileId(exact.rowIndex, sent.photo[sent.photo.length - 1].file_id).catch(() => {});
         }
@@ -9349,7 +9429,8 @@ async function showCatalogSearchResult(bot, chatId, userId, query) {
         logger.warn(`showCatalogSearchResult sendPhoto failed: ${e.message}`);
       }
     }
-    await bot.sendMessage(chatId, caption, { parse_mode: 'Markdown', reply_markup: kb });
+    const sent = await bot.sendMessage(chatId, caption, { parse_mode: 'Markdown', reply_markup: kb });
+    if (session && sent) { session.photoMessageId = sent.message_id; sessionStore.set(userId, session); }
     return;
   }
 
@@ -9363,17 +9444,19 @@ async function showCatalogSearchResult(bot, chatId, userId, query) {
       rows.push(row);
     }
     rows.push([{ text: '🔎 Search another', callback_data: 'das:again' }]);
-    await bot.sendMessage(chatId,
+    const sent = await bot.sendMessage(chatId,
       `🔎 No exact match for *${query}*, but found ${partials.length} similar:\n\nTap one to view its photo.`,
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+    if (session && sent) { session.photoMessageId = sent.message_id; sessionStore.set(userId, session); }
     return;
   }
 
-  await bot.sendMessage(chatId,
+  const sent = await bot.sendMessage(chatId,
     `🔎 No design photo found for *${query}*.\n\nMake sure the design has an approved photo in the catalog.`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
       [{ text: '🔎 Search another', callback_data: 'das:again' }],
     ] } });
+  if (session && sent) { session.photoMessageId = sent.message_id; sessionStore.set(userId, session); }
 }
 
 /* ─── CATALOG STATS ─── */
@@ -9505,8 +9588,16 @@ async function handleCatalogBrowseSearchCallback(bot, callbackQuery) {
   /* DAB — browse catalog */
   if (data === 'dab:back') {
     await bot.answerCallbackQuery(callbackQuery.id);
+    // Delete the photo we're returning from.
     const session = sessionStore.get(uid);
+    if (session && session.photoMessageId) {
+      await bot.deleteMessage(chatId, session.photoMessageId).catch(() => {});
+      session.photoMessageId = null;
+      sessionStore.set(uid, session);
+    }
     const page = (session && session.type === 'catalog_browse') ? (session.page || 0) : 0;
+    // Re-render the browse list as a fresh message (the old text message's
+    // keyboard was wiped when we showed the photo).
     await showCatalogBrowsePage(bot, chatId, uid, page, null);
     return true;
   }
@@ -9524,7 +9615,7 @@ async function handleCatalogBrowseSearchCallback(bot, callbackQuery) {
   if (data.startsWith('dab:view:')) {
     const design = data.slice('dab:view:'.length);
     await bot.answerCallbackQuery(callbackQuery.id);
-    await showCatalogBrowseDetail(bot, chatId, uid, design);
+    await showCatalogBrowseDetail(bot, chatId, uid, design, messageId);
     return true;
   }
   if (data.startsWith('dab:filter:')) {
@@ -9540,6 +9631,10 @@ async function handleCatalogBrowseSearchCallback(bot, callbackQuery) {
 
   /* DAS — search design photo */
   if (data === 'das:cancel') {
+    const session = sessionStore.get(uid);
+    if (session && session.photoMessageId) {
+      await bot.deleteMessage(chatId, session.photoMessageId).catch(() => {});
+    }
     sessionStore.clear(uid);
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled' });
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
@@ -9547,12 +9642,21 @@ async function handleCatalogBrowseSearchCallback(bot, callbackQuery) {
   }
   if (data === 'das:again') {
     await bot.answerCallbackQuery(callbackQuery.id);
+    // Delete the current photo/result message, then re-show the search prompt.
+    const session = sessionStore.get(uid);
+    if (session && session.photoMessageId) {
+      await bot.deleteMessage(chatId, session.photoMessageId).catch(() => {});
+      session.photoMessageId = null;
+      sessionStore.set(uid, session);
+    }
     await startSearchDesignPhoto(bot, chatId, uid, null);
     return true;
   }
   if (data.startsWith('das:pick:')) {
     const design = data.slice('das:pick:'.length);
     await bot.answerCallbackQuery(callbackQuery.id);
+    // Wipe the picker's keyboard before showing the result.
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
     await showCatalogSearchResult(bot, chatId, uid, design.toUpperCase());
     return true;
   }
@@ -9566,12 +9670,12 @@ async function handleCatalogBrowseSearchCallback(bot, callbackQuery) {
   }
   if (data === 'dat:browse') {
     await bot.answerCallbackQuery(callbackQuery.id);
-    await startBrowseCatalog(bot, chatId, uid, null);
+    await startBrowseCatalog(bot, chatId, uid, messageId);
     return true;
   }
   if (data === 'dat:search') {
     await bot.answerCallbackQuery(callbackQuery.id);
-    await startSearchDesignPhoto(bot, chatId, uid, null);
+    await startSearchDesignPhoto(bot, chatId, uid, messageId);
     return true;
   }
 
