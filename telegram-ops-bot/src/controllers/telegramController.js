@@ -154,84 +154,6 @@ function buildReportLegend(parts, hasMoney) {
   return `_${xs.join(' · ')}_\n`;
 }
 
-/**
- * Render rows as a monospace table inside a Markdown code block.
- * This is how reports get the "grid" look in Telegram — `parse_mode:
- * 'Markdown'` makes triple-backtick blocks render in a fixed-width
- * font, so column alignment via space-padding actually holds up.
- *
- * Supports a "merged cell" effect by suppressing repeated values in a
- * column across consecutive rows (used to collapse Date or Customer
- * cells without actual rowspan, since Telegram has no real tables).
- *
- * @param {Array<{label:string, align?:'L'|'R'}>} columns
- * @param {Array<Array<string|number>>} rows  Plain values per row.
- * @param {object} [opts]
- *   - mergeColumns: number[]   Indexes of columns where a value equal
- *                              to the previous row's renders blank.
- *   - footerRow: Array         Optional totals row (separator above it).
- *   - separatorEvery: number   Insert a divider every N rows for
- *                              long tables (0 = none, default 0).
- * @returns {string}
- */
-function renderMonoTable(columns, rows, opts = {}) {
-  const merge = new Set(opts.mergeColumns || []);
-  const cellGap = '  ';
-  const widths = columns.map((c, i) => {
-    let w = c.label.length;
-    for (const r of rows) w = Math.max(w, String(r[i] == null ? '' : r[i]).length);
-    if (opts.footerRow) w = Math.max(w, String(opts.footerRow[i] == null ? '' : opts.footerRow[i]).length);
-    return w;
-  });
-  const align = (val, width, alignType) => {
-    const s = String(val == null ? '' : val);
-    return alignType === 'R' ? s.padStart(width) : s.padEnd(width);
-  };
-  const sepLine = widths.map((w) => '─'.repeat(w)).join(cellGap);
-  let out = '```\n';
-  out += columns.map((c, i) => align(c.label, widths[i], c.align || 'L')).join(cellGap) + '\n';
-  out += sepLine + '\n';
-  let prev = null;
-  rows.forEach((row, idx) => {
-    const cells = row.map((v, i) => {
-      const display = (merge.has(i) && prev && String(prev[i]) === String(v)) ? '' : v;
-      return align(display, widths[i], columns[i].align || 'L');
-    });
-    out += cells.join(cellGap) + '\n';
-    if (opts.separatorEvery && (idx + 1) % opts.separatorEvery === 0 && idx < rows.length - 1) {
-      out += sepLine + '\n';
-    }
-    prev = row;
-  });
-  if (opts.footerRow) {
-    out += sepLine + '\n';
-    out += opts.footerRow.map((v, i) => align(v, widths[i], columns[i].align || 'L')).join(cellGap) + '\n';
-  }
-  out += '```';
-  return out;
-}
-
-/**
- * Build the "view toggle" button row. The compact reports default to
- * monospace-table view; users opt into a more verbose hierarchical
- * "list" view via a single button. Returns an inline_keyboard ROW
- * (array), suitable for splatting into an existing keyboard.
- *
- * @param {string} reportType  e.g. "inv_w", "sales_d"
- * @param {string} payload     URL-safe payload (warehouse name, days, …)
- * @param {'table'|'list'} currentView
- * @returns {Array}
- */
-function buildViewToggleRow(reportType, payload, currentView) {
-  const otherView = currentView === 'table' ? 'list' : 'table';
-  const label = currentView === 'table' ? '📝 List view' : '📊 Table view';
-  // Encode view via a "::v=…" suffix so the rxw: handler can parse it
-  // without disturbing existing payload values (which may contain colons
-  // for nested keys like "<days>|<customer>"). The double-colon prefix
-  // marks the view flag unambiguously.
-  return [{ text: label, callback_data: `rxw:${reportType}:${payload}::v=${otherView[0]}` }];
-}
-
 const getMaterialInfo = productTypesRepo.getMaterialInfo;
 const fmtDate = require('../utils/formatDate');
 const { compareWithToday, daysBeforeToday, todayInLagos } = require('../utils/dates');
@@ -271,7 +193,11 @@ function valStrShort(value, isAdmin) {
 }
 
 function buildDesignWiseReport(sold, isAdmin, opts = {}) {
-  const view = opts.view === 'list' ? 'list' : 'table';
+  // Per-design "summary" already groups by Design → Shade naturally,
+  // so promotion just means rendering Design as a top-level header
+  // with shades indented underneath. No code blocks; plain markdown
+  // renders reliably and avoids the multi-fence parser bug.
+  const _ = opts; // (no view modes — list-only)
   const designs = new Map();
   for (const r of sold) {
     const key = r.design || 'Unknown';
@@ -292,36 +218,16 @@ function buildDesignWiseReport(sold, isAdmin, opts = {}) {
   for (const [design, dg] of sorted) {
     const shadesSorted = [...dg.shades.entries()].sort((a, b) => b[1].yards - a[1].yards);
     const topBuyer = [...dg.buyers.entries()].sort((a, b) => b[1] - a[1])[0];
-    text += `📦 *${design}*${topBuyer ? `  · top: ${topBuyer[0]}` : ''}\n`;
-
-    if (view === 'table') {
-      const cols = [
-        { label: 'Shade', align: 'L' },
-        { label: 'Qty',   align: 'R' },
-        { label: 'Thans', align: 'R' },
-        { label: 'Yards', align: 'R' },
-      ];
-      if (isAdmin) cols.push({ label: '₦', align: 'R' });
-      const rows = shadesSorted.map(([shade, sh]) => {
-        const r = [shade, sh.pkgs.size, sh.thans, fmtQty(sh.yards)];
-        if (isAdmin) r.push(fmtMoneyShort(sh.value));
-        return r;
-      });
-      const footer = ['Total', dg.totalPkgs.size, dg.totalThans, fmtQty(dg.totalYards)];
-      if (isAdmin) footer.push(fmtMoneyShort(dg.totalValue));
-      text += renderMonoTable(cols, rows, { footerRow: footer }) + '\n\n';
-    } else {
-      for (const [shade, sh] of shadesSorted) {
-        text += `   Shade ${shade}: ${sh.pkgs.size} · ${sh.thans} thans · ${fmtQty(sh.yards)} yds${valStrShort(sh.value, isAdmin)}\n`;
-      }
-      text += `   *Total: ${dg.totalPkgs.size} · ${dg.totalThans} thans · ${fmtQty(dg.totalYards)} yds${valStrShort(dg.totalValue, isAdmin)}*\n\n`;
+    text += `📦 *${design}*${topBuyer ? `  · top buyer: ${topBuyer[0]}` : ''}\n`;
+    for (const [shade, sh] of shadesSorted) {
+      text += `   Shade ${shade}: ${sh.pkgs.size} Bales · ${sh.thans} thans · ${fmtQty(sh.yards)} yds${valStrShort(sh.value, isAdmin)}\n`;
     }
+    text += `   *Subtotal: ${dg.totalPkgs.size} Bales · ${dg.totalThans} thans · ${fmtQty(dg.totalYards)} yds${valStrShort(dg.totalValue, isAdmin)}*\n\n`;
     for (const p of dg.totalPkgs) grandPkgs.add(p);
     grandThans += dg.totalThans; grandYards += dg.totalYards; grandValue += dg.totalValue;
   }
-  text += `🧮 *Grand Total: ${grandPkgs.size} · ${grandThans} thans · ${fmtQty(grandYards)} yds${valStrShort(grandValue, isAdmin)}*`;
-  const keyboard = { inline_keyboard: [buildViewToggleRow('supply_ds', '', view)] };
-  return { text, keyboard };
+  text += `🧮 *Grand Total: ${grandPkgs.size} Bales · ${grandThans} thans · ${fmtQty(grandYards)} yds${valStrShort(grandValue, isAdmin)}*`;
+  return { text, keyboard: null };
 }
 
 function normalizeDate(raw) {
@@ -348,12 +254,22 @@ function normalizeDate(raw) {
 }
 
 /**
- * Date-wise per-design supply report. Default view is a monospace
- * table (image #2 layout); a "📝 List view" button toggles to a
- * hierarchical text rendering. Both views show the same numbers.
+ * Date-wise per-design supply report. List rendering with two
+ * promotions:
+ *   1. If a design has only one customer in the period, the customer
+ *      gets pulled UP into the design header (no longer repeated on
+ *      every row).
+ *   2. The DATE is always promoted into a sub-header: rows for the
+ *      same date are grouped under it instead of repeating the date
+ *      on every line. This is the "push up the order" the user asked
+ *      for — keeps the original column ordering, just removes the
+ *      visual duplication.
+ *
+ * No code blocks (avoids the multi-fence Markdown parser bug); regular
+ * Markdown renders reliably across all Telegram clients.
  */
 function buildDesignDateWiseReport(sold, isAdmin, opts = {}) {
-  const view = opts.view === 'list' ? 'list' : 'table';
+  const _ = opts;
   const designs = new Map();
   for (const r of sold) {
     const key = r.design || 'Unknown';
@@ -387,8 +303,9 @@ function buildDesignDateWiseReport(sold, isAdmin, opts = {}) {
     }
     const rows = [...byDateCust.values()].sort((a, b) => a.sortDate.localeCompare(b.sortDate) || a.customer.localeCompare(b.customer));
 
-    // Discover whether we need the Customer column at all (single-
-    // customer reports drop it for cleaner layout).
+    // If only one customer ever appears in this design's period,
+    // promote that customer into the design header so per-row
+    // repetition disappears.
     const customers = new Set(rows.map((r) => r.customer));
     const onlyCustomer = customers.size === 1 ? [...customers][0] : null;
 
@@ -398,67 +315,45 @@ function buildDesignDateWiseReport(sold, isAdmin, opts = {}) {
       dTotal.thans += row.thans; dTotal.yards += row.yards; dTotal.value += row.value;
     }
 
-    // Header line — design + (if applicable) customer/shade context.
     const headerCtx = [];
     if (onlyCustomer) headerCtx.push(`Customer: ${onlyCustomer}`);
     if (onlyShade) headerCtx.push(`Shade: ${onlyShade}`);
     text += `📦 *${design}*${headerCtx.length ? `  (${headerCtx.join(' · ')})` : ''}\n`;
 
-    if (view === 'table') {
-      // Build column set dynamically: skip Customer column if uniform,
-      // skip Shade column if uniform. Date is always merge-suppressed.
-      const cols = [{ label: 'Date', align: 'L' }];
-      const mergeCols = [0];
-      if (!onlyCustomer) { cols.push({ label: 'Customer', align: 'L' }); mergeCols.push(1); }
-      if (!onlyShade) cols.push({ label: 'Sh', align: 'R' });
-      cols.push(
-        { label: 'Qty', align: 'R' },
-        { label: 'Thans', align: 'R' },
-        { label: 'Yards', align: 'R' },
-      );
-      if (isAdmin) cols.push({ label: '₦', align: 'R' });
-
-      const tableRows = rows.map((row) => {
-        const cells = [row.displayDate];
-        if (!onlyCustomer) cells.push(row.customer);
-        if (!onlyShade) cells.push(row.shade);
-        cells.push(row.pkgs.size, row.thans, fmtQty(row.yards));
-        if (isAdmin) cells.push(fmtMoneyShort(row.value));
-        return cells;
-      });
-      const footer = ['Total'];
-      if (!onlyCustomer) footer.push('');
-      if (!onlyShade) footer.push('');
-      footer.push(dTotal.pkgs.size, dTotal.thans, fmtQty(dTotal.yards));
-      if (isAdmin) footer.push(fmtMoneyShort(dTotal.value));
-      text += renderMonoTable(cols, tableRows, { mergeColumns: mergeCols, footerRow: footer }) + '\n\n';
-    } else {
-      // List view: hierarchical, grouped by date.
-      const byDate = new Map();
-      for (const row of rows) {
-        if (!byDate.has(row.displayDate)) byDate.set(row.displayDate, []);
-        byDate.get(row.displayDate).push(row);
-      }
-      for (const [date, dateRows] of byDate) {
-        text += `📅 *${date}*\n`;
-        let dt = { pkgs: new Set(), thans: 0, yards: 0, value: 0 };
-        for (const row of dateRows) {
-          const custPart = onlyCustomer ? '' : `${row.customer} · `;
-          const shadePart = onlyShade ? '' : `Shade ${row.shade} · `;
-          text += `   ${custPart}${shadePart}${row.pkgs.size} · ${row.thans} thans · ${fmtQty(row.yards)} yds${valStrShort(row.value, isAdmin)}\n`;
-          for (const p of row.pkgs) dt.pkgs.add(p);
-          dt.thans += row.thans; dt.yards += row.yards; dt.value += row.value;
-        }
-        text += `   _Subtotal: ${dt.pkgs.size} · ${dt.thans} thans · ${fmtQty(dt.yards)} yds${valStrShort(dt.value, isAdmin)}_\n\n`;
-      }
-      text += `*Total: ${dTotal.pkgs.size} · ${dTotal.thans} thans · ${fmtQty(dTotal.yards)} yds${valStrShort(dTotal.value, isAdmin)}*\n\n`;
+    // Group by date and render each date as a sub-header. Within a
+    // date, any field still varying (customer when there's >1, shade
+    // when there's >1) is shown on its own row.
+    const byDate = new Map();
+    for (const row of rows) {
+      if (!byDate.has(row.displayDate)) byDate.set(row.displayDate, []);
+      byDate.get(row.displayDate).push(row);
     }
+    for (const [date, dateRows] of byDate) {
+      text += `📅 ${date}\n`;
+      let dt = { pkgs: new Set(), thans: 0, yards: 0, value: 0 };
+      for (const row of dateRows) {
+        const parts = [];
+        if (!onlyCustomer) parts.push(row.customer);
+        if (!onlyShade) parts.push(`Shade ${row.shade}`);
+        const lead = parts.length ? `${parts.join(' · ')}: ` : '';
+        text += `   ${lead}${row.pkgs.size} Bales · ${row.thans} thans · ${fmtQty(row.yards)} yds${valStrShort(row.value, isAdmin)}\n`;
+        for (const p of row.pkgs) dt.pkgs.add(p);
+        dt.thans += row.thans; dt.yards += row.yards; dt.value += row.value;
+      }
+      // Per-date subtotal — only emitted when there are multiple
+      // dates AND multiple rows on this date. Single-row dates don't
+      // need a subtotal because the row IS the subtotal.
+      if (byDate.size > 1 && dateRows.length > 1) {
+        text += `   _Subtotal: ${dt.pkgs.size} Bales · ${dt.thans} thans · ${fmtQty(dt.yards)} yds${valStrShort(dt.value, isAdmin)}_\n`;
+      }
+      text += '\n';
+    }
+    text += `*Total ${design}: ${dTotal.pkgs.size} Bales · ${dTotal.thans} thans · ${fmtQty(dTotal.yards)} yds${valStrShort(dTotal.value, isAdmin)}*\n\n`;
     for (const p of dTotal.pkgs) grandPkgs.add(p);
     grandThans += dTotal.thans; grandYards += dTotal.yards; grandValue += dTotal.value;
   }
-  text += `🧮 *Grand Total: ${grandPkgs.size} · ${grandThans} thans · ${fmtQty(grandYards)} yds${valStrShort(grandValue, isAdmin)}*`;
-  const keyboard = { inline_keyboard: [buildViewToggleRow('supply_dd', '', view)] };
-  return { text, keyboard };
+  text += `🧮 *Grand Total: ${grandPkgs.size} Bales · ${grandThans} thans · ${fmtQty(grandYards)} yds${valStrShort(grandValue, isAdmin)}*`;
+  return { text, keyboard: null };
 }
 
 /**
@@ -486,11 +381,13 @@ function _supplyDetailsGroupBlock(items, isAdmin, expandAll) {
 }
 
 /**
- * Build a per-group design block for Customer/Warehouse wise reports.
- * Returns either a list rendition (compact top-3 + "… more") or a
- * full monospace table rendition, with the chosen view honored.
+ * Render a per-group block of design+shade rows. The Design value is
+ * promoted ("pushed up") when consecutive rows share it: only the
+ * first row spells the design out; subsequent rows on the same design
+ * just show the shade. Compact top-N + "… and N more" + drill-down
+ * stays as before.
  */
-function _supplyGroupRender({ items, isAdmin, expandAll, view }) {
+function _supplyGroupRender({ items, isAdmin, expandAll }) {
   const byDS = new Map();
   for (const r of items) {
     const key = `${r.design}|${r.shade || '-'}`;
@@ -499,35 +396,25 @@ function _supplyGroupRender({ items, isAdmin, expandAll, view }) {
     ds.pkgs.add(r.packageNo); ds.thans++; ds.yards += r.yards; ds.value += r.yards * r.pricePerYard;
   }
   const dsSorted = [...byDS.values()].sort((a, b) => b.yards - a.yards);
-  const limit = (expandAll || view === 'table') ? dsSorted.length : Math.min(3, dsSorted.length);
+  const limit = expandAll ? dsSorted.length : Math.min(3, dsSorted.length);
   const visible = dsSorted.slice(0, limit);
   const restCount = dsSorted.length - limit;
-
-  if (view === 'table') {
-    const cols = [
-      { label: 'Design', align: 'L' },
-      { label: 'Shade', align: 'L' },
-      { label: 'Qty', align: 'R' },
-      { label: 'Thans', align: 'R' },
-      { label: 'Yards', align: 'R' },
-    ];
-    if (isAdmin) cols.push({ label: '₦', align: 'R' });
-    const rows = visible.map((ds) => {
-      const row = [ds.design, ds.shade, ds.pkgs.size, ds.thans, fmtQty(ds.yards)];
-      if (isAdmin) row.push(fmtMoneyShort(ds.value));
-      return row;
-    });
-    return { block: renderMonoTable(cols, rows, { mergeColumns: [0] }), restCount, totalDesigns: dsSorted.length };
-  }
-  // List view (compact top-N).
-  const lines = visible.map((ds) =>
-    `   ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} · ${ds.thans} thans · ${fmtQty(ds.yards)} yds${valStrShort(ds.value, isAdmin)}`,
-  );
+  // Promote the Design column when the same design repeats across
+  // consecutive visible rows. The first row of a run prints the
+  // design; followers indent further and show only their shade.
+  let prevDesign = null;
+  const lines = visible.map((ds) => {
+    const sameAsPrev = ds.design === prevDesign;
+    prevDesign = ds.design;
+    if (sameAsPrev) {
+      return `      Shade ${ds.shade}: ${ds.pkgs.size} Bales · ${ds.thans} thans · ${fmtQty(ds.yards)} yds${valStrShort(ds.value, isAdmin)}`;
+    }
+    return `   ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} Bales · ${ds.thans} thans · ${fmtQty(ds.yards)} yds${valStrShort(ds.value, isAdmin)}`;
+  });
   return { block: lines.join('\n'), restCount, totalDesigns: dsSorted.length };
 }
 
 function buildCustomerWiseReport(sold, isAdmin, opts = {}) {
-  const view = opts.view === 'list' ? 'list' : 'table';
   const expandKey = (opts.expand || '').trim().toLowerCase();
   const customers = new Map();
   for (const r of sold) {
@@ -544,26 +431,23 @@ function buildCustomerWiseReport(sold, isAdmin, opts = {}) {
   const buttons = [];
   let grandPkgs = new Set(), grandThans = 0, grandYards = 0, grandValue = 0;
   for (const [customer, cg] of sorted) {
-    text += `👤 *${customer}* — ${cg.totalPkgs.size} · ${cg.totalThans} thans · ${fmtQty(cg.totalYards)} yds${valStrShort(cg.totalValue, isAdmin)}\n`;
+    text += `👤 *${customer}* — ${cg.totalPkgs.size} Bales · ${cg.totalThans} thans · ${fmtQty(cg.totalYards)} yds${valStrShort(cg.totalValue, isAdmin)}\n`;
     const expandThis = expandKey === customer.toLowerCase();
-    const block = _supplyGroupRender({ items: cg.items, isAdmin, expandAll: expandThis, view });
+    const block = _supplyGroupRender({ items: cg.items, isAdmin, expandAll: expandThis });
     if (block.block) text += block.block + '\n';
-    // List view: surface "show all" only when compact is in effect.
-    if (view === 'list' && block.restCount > 0) {
-      text += `  _… and ${block.restCount} more design${block.restCount > 1 ? 's' : ''}_\n`;
+    if (block.restCount > 0) {
+      text += `   _… and ${block.restCount} more design${block.restCount > 1 ? 's' : ''}_\n`;
       buttons.push([{ text: `🔍 ${customer} — show all (${block.totalDesigns})`, callback_data: `rxw:supply_c:${customer.slice(0, 50)}` }]);
     }
     text += '\n';
     for (const p of cg.totalPkgs) grandPkgs.add(p);
     grandThans += cg.totalThans; grandYards += cg.totalYards; grandValue += cg.totalValue;
   }
-  text += `🧮 *Grand Total: ${grandPkgs.size} · ${grandThans} thans · ${fmtQty(grandYards)} yds${valStrShort(grandValue, isAdmin)}*`;
-  buttons.push(buildViewToggleRow('supply_c', '', view));
-  return { text, keyboard: { inline_keyboard: buttons } };
+  text += `🧮 *Grand Total: ${grandPkgs.size} Bales · ${grandThans} thans · ${fmtQty(grandYards)} yds${valStrShort(grandValue, isAdmin)}*`;
+  return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
 function buildWarehouseWiseReport(sold, isAdmin, opts = {}) {
-  const view = opts.view === 'list' ? 'list' : 'table';
   const expandKey = (opts.expand || '').trim().toLowerCase();
   const warehouses = new Map();
   for (const r of sold) {
@@ -580,21 +464,20 @@ function buildWarehouseWiseReport(sold, isAdmin, opts = {}) {
   const buttons = [];
   let grandPkgs = new Set(), grandThans = 0, grandYards = 0, grandValue = 0;
   for (const [wh, wg] of sorted) {
-    text += `🏭 *${wh}* — ${wg.totalPkgs.size} · ${wg.totalThans} thans · ${fmtQty(wg.totalYards)} yds${valStrShort(wg.totalValue, isAdmin)}\n`;
+    text += `🏭 *${wh}* — ${wg.totalPkgs.size} Bales · ${wg.totalThans} thans · ${fmtQty(wg.totalYards)} yds${valStrShort(wg.totalValue, isAdmin)}\n`;
     const expandThis = expandKey === wh.toLowerCase();
-    const block = _supplyGroupRender({ items: wg.items, isAdmin, expandAll: expandThis, view });
+    const block = _supplyGroupRender({ items: wg.items, isAdmin, expandAll: expandThis });
     if (block.block) text += block.block + '\n';
-    if (view === 'list' && block.restCount > 0) {
-      text += `  _… and ${block.restCount} more design${block.restCount > 1 ? 's' : ''}_\n`;
+    if (block.restCount > 0) {
+      text += `   _… and ${block.restCount} more design${block.restCount > 1 ? 's' : ''}_\n`;
       buttons.push([{ text: `🔍 ${wh} — show all (${block.totalDesigns})`, callback_data: `rxw:supply_w:${wh.slice(0, 50)}` }]);
     }
     text += '\n';
     for (const p of wg.totalPkgs) grandPkgs.add(p);
     grandThans += wg.totalThans; grandYards += wg.totalYards; grandValue += wg.totalValue;
   }
-  text += `🧮 *Grand Total: ${grandPkgs.size} · ${grandThans} thans · ${fmtQty(grandYards)} yds${valStrShort(grandValue, isAdmin)}*`;
-  buttons.push(buildViewToggleRow('supply_w', '', view));
-  return { text, keyboard: { inline_keyboard: buttons } };
+  text += `🧮 *Grand Total: ${grandPkgs.size} Bales · ${grandThans} thans · ${fmtQty(grandYards)} yds${valStrShort(grandValue, isAdmin)}*`;
+  return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
 // ─── End Supply Details Reports ─────────────────────────────────────────────
@@ -711,60 +594,7 @@ function _invSummaryLine(s) {
   return `${s.balPkgs.size}/${s.totalPkgs.size} Bales · ${fmtQty(s.balYards)}/${fmtQty(s.totalYards)} yds · ${fmtBar(s.soldYards, s.totalYards)}`;
 }
 
-/**
- * Build a per-group inventory block in either table or list view.
- * The "noSales" branch flattens the avail/total split into a single
- * column when all stock is fresh (no sold yards anywhere in the group).
- */
-function _invGroupRender({ rows, headFn, expandAll, view }) {
-  const noSales = rows.every((ds) => (ds.soldYards || 0) === 0);
-  const limit = (expandAll || view === 'table') ? rows.length : Math.min(3, rows.length);
-  const visible = rows.slice(0, limit);
-  const restCount = rows.length - limit;
-
-  if (view === 'table') {
-    const cols = noSales
-      ? [
-          { label: 'Design', align: 'L' },
-          { label: 'Shade', align: 'L' },
-          { label: 'Bales', align: 'R' },
-          { label: 'Yards', align: 'R' },
-        ]
-      : [
-          { label: 'Design', align: 'L' },
-          { label: 'Shade', align: 'L' },
-          { label: 'Avail', align: 'R' },
-          { label: 'Total', align: 'R' },
-          { label: 'Yds-Av', align: 'R' },
-          { label: 'Yds-Tot', align: 'R' },
-          { label: '%', align: 'R' },
-        ];
-    const trows = visible.map((ds) => {
-      const head = headFn(ds);
-      // Split the head label "9006 Shade 3" or "Shade 3" back into
-      // its design + shade parts when possible, else collapse into
-      // a single column.
-      let design = head;
-      let shade = '';
-      if (ds.design && ds.shade) {
-        design = ds.design;
-        shade = String(ds.shade);
-      }
-      if (noSales) {
-        return [design, shade, ds.balPkgs.size, fmtQty(ds.balYards)];
-      }
-      const pct = ds.totalYards > 0 ? Math.round((ds.soldYards / ds.totalYards) * 100) : 0;
-      return [design, shade, ds.balPkgs.size, ds.totalPkgs.size, fmtQty(ds.balYards), fmtQty(ds.totalYards), `${pct}%`];
-    });
-    return { block: renderMonoTable(cols, trows, { mergeColumns: [0] }), restCount };
-  }
-  // List view (compact: top-N).
-  const lines = visible.map((ds) => _invShadeLineCompact(ds, headFn(ds)));
-  return { block: lines.join('\n'), restCount };
-}
-
 function buildInventoryWarehouseReport(allItems, opts = {}) {
-  const view = opts.view === 'list' ? 'list' : 'table';
   const expandKey = (opts.expand || '').trim().toLowerCase();
   const warehouses = new Map();
   for (const r of allItems) {
@@ -782,15 +612,20 @@ function buildInventoryWarehouseReport(allItems, opts = {}) {
     const summary = _invGroupSummary(rows);
     text += `🏭 *${wh}* — ${_invSummaryLine(summary)}\n`;
     const expandThis = expandKey === wh.toLowerCase();
-    const block = _invGroupRender({
-      rows,
-      headFn: (ds) => `${ds.design} Shade ${ds.shade}`,
-      expandAll: expandThis,
-      view,
-    });
-    if (block.block) text += block.block + '\n';
-    if (view === 'list' && block.restCount > 0) {
-      text += `  _… and ${block.restCount} more shade${block.restCount > 1 ? 's' : ''}_\n`;
+    const limit = expandThis ? rows.length : Math.min(3, rows.length);
+    // Promote the Design value when consecutive shade rows share it.
+    let prevDesign = null;
+    for (let i = 0; i < limit; i++) {
+      const ds = rows[i];
+      const head = ds.design === prevDesign
+        ? `      Shade ${ds.shade}`
+        : `   ${ds.design} Shade ${ds.shade}`;
+      text += _invShadeLineCompact(ds, head) + '\n';
+      prevDesign = ds.design;
+    }
+    const restCount = rows.length - limit;
+    if (restCount > 0) {
+      text += `   _… and ${restCount} more shade${restCount > 1 ? 's' : ''}_\n`;
       buttons.push([{ text: `🔍 ${wh} — show all (${rows.length})`, callback_data: `rxw:inv_w:${wh.slice(0, 50)}` }]);
     }
     text += '\n';
@@ -800,12 +635,10 @@ function buildInventoryWarehouseReport(allItems, opts = {}) {
   }
   const grand = { totalYards: gTotalYards, soldYards: gSoldYards, balYards: gBalYards, balPkgs: gBalPkgs, totalPkgs: gTotalPkgs };
   text += `🧮 *Grand Total: ${_invSummaryLine(grand)}*`;
-  buttons.push(buildViewToggleRow('inv_w', '', view));
-  return { text, keyboard: { inline_keyboard: buttons } };
+  return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
 function buildInventoryDesignReport(allItems, opts = {}) {
-  const view = opts.view === 'list' ? 'list' : 'table';
   const expandKey = (opts.expand || '').trim().toLowerCase();
   const designs = new Map();
   for (const r of allItems) {
@@ -826,17 +659,18 @@ function buildInventoryDesignReport(allItems, opts = {}) {
   for (const [design, items] of sortedDesigns) {
     const rows = aggregateShadeRows(items);
     const summary = _invGroupSummary(rows);
+    // Design is the group header — already promoted, so per-row only
+    // shows shades.
     text += `📦 *${design}* — ${_invSummaryLine(summary)}\n`;
     const expandThis = expandKey === design.toLowerCase();
-    const block = _invGroupRender({
-      rows,
-      headFn: (ds) => `Shade ${ds.shade}`,
-      expandAll: expandThis,
-      view,
-    });
-    if (block.block) text += block.block + '\n';
-    if (view === 'list' && block.restCount > 0) {
-      text += `  _… and ${block.restCount} more shade${block.restCount > 1 ? 's' : ''}_\n`;
+    const limit = expandThis ? rows.length : Math.min(3, rows.length);
+    for (let i = 0; i < limit; i++) {
+      const ds = rows[i];
+      text += _invShadeLineCompact(ds, `   Shade ${ds.shade}`) + '\n';
+    }
+    const restCount = rows.length - limit;
+    if (restCount > 0) {
+      text += `   _… and ${restCount} more shade${restCount > 1 ? 's' : ''}_\n`;
       buttons.push([{ text: `🔍 ${design} — show all (${rows.length})`, callback_data: `rxw:inv_d:${design.slice(0, 50)}` }]);
     }
     text += '\n';
@@ -846,8 +680,7 @@ function buildInventoryDesignReport(allItems, opts = {}) {
   }
   const grand = { totalYards: gTotalYards, soldYards: gSoldYards, balYards: gBalYards, balPkgs: gBalPkgs, totalPkgs: gTotalPkgs };
   text += `🧮 *Grand Total: ${_invSummaryLine(grand)}*`;
-  buttons.push(buildViewToggleRow('inv_d', '', view));
-  return { text, keyboard: { inline_keyboard: buttons } };
+  return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
 // ─── Sales Report (Interactive) ─────────────────────────────────────────────
@@ -860,7 +693,6 @@ function filterSoldByPeriod(sold, periodDays) {
 }
 
 function buildSalesDesignReport(sold, periodLabel, opts = {}) {
-  const view = opts.view === 'list' ? 'list' : 'table';
   const expandAll = !!opts.expand;
   const byDS = new Map();
   for (const r of sold) {
@@ -874,52 +706,36 @@ function buildSalesDesignReport(sold, periodLabel, opts = {}) {
   text += buildReportLegend(['Bales · thans · yds · value'], true);
   text += '\n';
   if (!sorted.length) {
-    return { text: text + 'No sales in this period.', keyboard: { inline_keyboard: [buildViewToggleRow('sales_d', opts.periodKey || '', view)] } };
+    return { text: text + 'No sales in this period.', keyboard: null };
   }
-  // Table view always shows full list (the table compactly handles
-  // density on its own); list view honors top-3 + "show all".
-  const limit = (view === 'table' || expandAll) ? sorted.length : Math.min(3, sorted.length);
+  const limit = expandAll ? sorted.length : Math.min(3, sorted.length);
   let gPkgs = new Set(), gThans = 0, gYards = 0, gValue = 0;
   for (const ds of sorted) {
     for (const p of ds.pkgs) gPkgs.add(p);
     gThans += ds.thans; gYards += ds.yards; gValue += ds.value;
   }
-  if (view === 'table') {
-    const cols = [
-      { label: '#',     align: 'R' },
-      { label: 'Design', align: 'L' },
-      { label: 'Sh',     align: 'R' },
-      { label: 'Qty',    align: 'R' },
-      { label: 'Thans',  align: 'R' },
-      { label: 'Yards',  align: 'R' },
-      { label: '₦',      align: 'R' },
-    ];
-    const rows = sorted.slice(0, limit).map((ds, i) =>
-      [i + 1, ds.design, ds.shade, ds.pkgs.size, ds.thans, fmtQty(ds.yards), fmtMoneyShort(ds.value)],
-    );
-    const footer = ['', 'Total', '', gPkgs.size, gThans, fmtQty(gYards), fmtMoneyShort(gValue)];
-    text += renderMonoTable(cols, rows, { footerRow: footer }) + '\n';
-  } else {
-    for (let i = 0; i < limit; i++) {
-      const ds = sorted[i];
-      text += `${i + 1}. *${ds.design}* Shade ${ds.shade} — ${ds.pkgs.size} · ${ds.thans} thans · ${fmtQty(ds.yards)} yds · ${fmtMoneyShort(ds.value)}\n`;
+  // Promote the Design value when consecutive ranked rows share it.
+  let prevDesign = null;
+  for (let i = 0; i < limit; i++) {
+    const ds = sorted[i];
+    if (ds.design === prevDesign) {
+      text += `   ${i + 1}. Shade ${ds.shade} — ${ds.pkgs.size} Bales · ${ds.thans} thans · ${fmtQty(ds.yards)} yds · ${fmtMoneyShort(ds.value)}\n`;
+    } else {
+      text += `${i + 1}. *${ds.design}* Shade ${ds.shade} — ${ds.pkgs.size} Bales · ${ds.thans} thans · ${fmtQty(ds.yards)} yds · ${fmtMoneyShort(ds.value)}\n`;
     }
-    const restCount = sorted.length - limit;
-    if (restCount > 0) {
-      text += `\n_… and ${restCount} more design${restCount > 1 ? 's' : ''}_\n`;
-    }
-    text += `\n🧮 *Grand Total: ${gPkgs.size} · ${gThans} thans · ${fmtQty(gYards)} yds · ${fmtMoneyShort(gValue)}*`;
+    prevDesign = ds.design;
   }
+  const restCount = sorted.length - limit;
   const buttons = [];
-  if (view === 'list' && sorted.length > limit) {
+  if (restCount > 0) {
+    text += `\n_… and ${restCount} more design${restCount > 1 ? 's' : ''}_\n`;
     buttons.push([{ text: `🔍 Show all (${sorted.length})`, callback_data: `rxw:sales_d:${opts.periodKey || ''}` }]);
   }
-  buttons.push(buildViewToggleRow('sales_d', opts.periodKey || '', view));
-  return { text, keyboard: { inline_keyboard: buttons } };
+  text += `\n🧮 *Grand Total: ${gPkgs.size} Bales · ${gThans} thans · ${fmtQty(gYards)} yds · ${fmtMoneyShort(gValue)}*`;
+  return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
 function buildSalesCustomerReport(sold, periodLabel, opts = {}) {
-  const view = opts.view === 'list' ? 'list' : 'table';
   const expandKey = (opts.expand || '').trim().toLowerCase();
   const customers = new Map();
   for (const r of sold) {
@@ -934,18 +750,18 @@ function buildSalesCustomerReport(sold, periodLabel, opts = {}) {
   text += buildReportLegend(['Bales · thans · yds · value'], true);
   text += '\n';
   if (!sorted.length) {
-    return { text: text + 'No sales in this period.', keyboard: { inline_keyboard: [buildViewToggleRow('sales_c', opts.periodKey || '', view)] } };
+    return { text: text + 'No sales in this period.', keyboard: null };
   }
   const buttons = [];
   let gPkgs = new Set(), gThans = 0, gYards = 0, gValue = 0;
   let rank = 0;
   for (const [customer, cg] of sorted) {
     rank++;
-    text += `${rank}. 👤 *${customer}* — ${cg.pkgs.size} · ${cg.thans} thans · ${fmtQty(cg.yards)} yds · ${fmtMoneyShort(cg.value)}\n`;
+    text += `${rank}. 👤 *${customer}* — ${cg.pkgs.size} Bales · ${cg.thans} thans · ${fmtQty(cg.yards)} yds · ${fmtMoneyShort(cg.value)}\n`;
     const expandThis = expandKey === customer.toLowerCase();
-    const block = _supplyGroupRender({ items: cg.items, isAdmin: true, expandAll: expandThis, view });
+    const block = _supplyGroupRender({ items: cg.items, isAdmin: true, expandAll: expandThis });
     if (block.block) text += block.block + '\n';
-    if (view === 'list' && block.restCount > 0) {
+    if (block.restCount > 0) {
       text += `   _… and ${block.restCount} more design${block.restCount > 1 ? 's' : ''}_\n`;
       buttons.push([{ text: `🔍 ${customer} — show all (${block.totalDesigns})`, callback_data: `rxw:sales_c:${(opts.periodKey || '')}|${customer.slice(0, 40)}` }]);
     }
@@ -953,9 +769,8 @@ function buildSalesCustomerReport(sold, periodLabel, opts = {}) {
     for (const p of cg.pkgs) gPkgs.add(p);
     gThans += cg.thans; gYards += cg.yards; gValue += cg.value;
   }
-  text += `🧮 *Grand Total: ${gPkgs.size} · ${gThans} thans · ${fmtQty(gYards)} yds · ${fmtMoneyShort(gValue)}*`;
-  buttons.push(buildViewToggleRow('sales_c', opts.periodKey || '', view));
-  return { text, keyboard: { inline_keyboard: buttons } };
+  text += `🧮 *Grand Total: ${gPkgs.size} Bales · ${gThans} thans · ${fmtQty(gYards)} yds · ${fmtMoneyShort(gValue)}*`;
+  return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
 // ─── End Inventory & Sales Reports ──────────────────────────────────────────
@@ -7139,34 +6954,26 @@ async function handleCallbackQuery(bot, callbackQuery) {
    * concise reference.
    */
   } else if (data.startsWith('rxw:')) {
-    // Callback grammar:  rxw:<reportType>:<payload>[::v=t|l]
-    // The "::v=…" tail is the optional view flag (table or list).
-    // We split on the double-colon delimiter so a payload that itself
-    // contains single colons (e.g. nested "<days>|<customer>") still
-    // parses cleanly.
+    // Callback grammar:  rxw:<reportType>:<payload>
+    // Used for "Show all" drill-down on the compact reports. (The
+    // older view-toggle syntax `::v=t|l` is gracefully accepted but
+    // ignored — we no longer support a separate table view.)
     const rest = data.slice(4);
     const dblIdx = rest.indexOf('::');
     const head = dblIdx >= 0 ? rest.slice(0, dblIdx) : rest;
-    const tail = dblIdx >= 0 ? rest.slice(dblIdx + 2) : '';
     const sepIdx = head.indexOf(':');
     const reportType = sepIdx >= 0 ? head.slice(0, sepIdx) : head;
     const payload = sepIdx >= 0 ? head.slice(sepIdx + 1) : '';
-    let view; // undefined → builder default (table)
-    if (tail.startsWith('v=')) {
-      const v = tail.slice(2);
-      view = v === 'l' ? 'list' : v === 't' ? 'table' : undefined;
-    }
-    const isToggle = view !== undefined;
     const chatId = callbackQuery.message.chat.id;
     const uid = String(callbackQuery.from.id);
     const isAdminUser = config.access.adminIds.includes(uid);
-    await bot.answerCallbackQuery(callbackQuery.id, { text: isToggle ? 'Switching view…' : 'Expanding…' });
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Expanding…' });
 
     try {
       switch (reportType) {
         case 'inv_w': {
           const allItems = await inventoryRepository.getAll();
-          const expanded = buildInventoryWarehouseReport(allItems, { expand: isToggle ? '' : payload, view });
+          const expanded = buildInventoryWarehouseReport(allItems, { expand: payload });
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
             ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
@@ -7175,7 +6982,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         }
         case 'inv_d': {
           const allItems = await inventoryRepository.getAll();
-          const expanded = buildInventoryDesignReport(allItems, { expand: isToggle ? '' : payload, view });
+          const expanded = buildInventoryDesignReport(allItems, { expand: payload });
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
             ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
@@ -7189,7 +6996,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
           const filtered = filterSoldByPeriod(sold, days);
           const labels = { 7: 'Last 7 Days', 30: 'Last 30 Days', 90: 'Last 90 Days', 365: 'Last 365 Days' };
           const periodLabel = labels[days] || `Last ${days} Days`;
-          const expanded = buildSalesDesignReport(filtered, periodLabel, { expand: !isToggle, periodKey: payload, view });
+          const expanded = buildSalesDesignReport(filtered, periodLabel, { expand: true, periodKey: payload });
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
             ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
@@ -7205,7 +7012,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
           const filtered = filterSoldByPeriod(sold, days);
           const labels = { 7: 'Last 7 Days', 30: 'Last 30 Days', 90: 'Last 90 Days', 365: 'Last 365 Days' };
           const periodLabel = labels[days] || `Last ${days} Days`;
-          const expanded = buildSalesCustomerReport(filtered, periodLabel, { expand: isToggle ? '' : customer, periodKey: String(days), view });
+          const expanded = buildSalesCustomerReport(filtered, periodLabel, { expand: customer, periodKey: String(days) });
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
             ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
@@ -7214,7 +7021,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         }
         case 'supply_c': {
           const sold = await getSoldItems();
-          const expanded = buildCustomerWiseReport(sold, isAdminUser, { expand: isToggle ? '' : payload, view });
+          const expanded = buildCustomerWiseReport(sold, isAdminUser, { expand: payload });
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
             ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
@@ -7223,7 +7030,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         }
         case 'supply_w': {
           const sold = await getSoldItems();
-          const expanded = buildWarehouseWiseReport(sold, isAdminUser, { expand: isToggle ? '' : payload, view });
+          const expanded = buildWarehouseWiseReport(sold, isAdminUser, { expand: payload });
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
             ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
@@ -7232,7 +7039,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         }
         case 'supply_ds': {
           const sold = await getSoldItems();
-          const expanded = buildDesignWiseReport(sold, isAdminUser, { view });
+          const expanded = buildDesignWiseReport(sold, isAdminUser);
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
             ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
@@ -7241,7 +7048,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         }
         case 'supply_dd': {
           const sold = await getSoldItems();
-          const expanded = buildDesignDateWiseReport(sold, isAdminUser, { view });
+          const expanded = buildDesignDateWiseReport(sold, isAdminUser);
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
             ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
