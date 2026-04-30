@@ -530,6 +530,66 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       status: 'with_customer',
       updated_by: approvedBy,
     });
+  } else if (aj.action === 'register_marketer') {
+    const marketersRepo = require('../repositories/marketersRepository');
+    const row = await marketersRepo.findByApprovalRequestId(requestId);
+    if (!row) return { ok: false, message: 'Marketer record not found.' };
+    await marketersRepo.updateStatus(row.rowIndex, 'active', approvedBy);
+  } else if (aj.action === 'catalog_supply' || aj.action === 'catalog_loan') {
+    const catalogStockRepo = require('../repositories/catalogStockRepository');
+    const catalogLedgerRepo = require('../repositories/catalogLedgerRepository');
+    const stockRow = await catalogStockRepo.find(aj.design, aj.catalogSize, aj.warehouse);
+    if (!stockRow) return { ok: false, message: `No catalog stock found for ${aj.design} ${aj.catalogSize} at ${aj.warehouse}.` };
+    const qty = parseInt(aj.quantity, 10) || 1;
+    if (stockRow.inOfficeQty < qty) return { ok: false, message: `Insufficient stock: only ${stockRow.inOfficeQty} available.` };
+    const isLoan = aj.action === 'catalog_loan';
+    await catalogStockRepo.updateQty(
+      stockRow.rowIndex,
+      stockRow.inOfficeQty - qty,
+      isLoan ? stockRow.withCustomersQty : stockRow.withCustomersQty + qty,
+      isLoan ? stockRow.withMarketersQty + qty : stockRow.withMarketersQty,
+    );
+    await catalogLedgerRepo.append({
+      design: aj.design,
+      catalogSize: aj.catalogSize,
+      warehouse: aj.warehouse,
+      quantity: qty,
+      action: isLoan ? 'loan' : 'supply',
+      recipientType: isLoan ? 'marketer' : 'customer',
+      recipientName: aj.recipientName,
+      status: 'active',
+      dateOut: new Date().toISOString(),
+      requestedBy: item.user,
+      approvedBy,
+      approvalRequestId: requestId,
+      notes: aj.notes || '',
+    });
+    catalogStockRepo.invalidateCache();
+    catalogLedgerRepo.invalidateCache();
+  } else if (aj.action === 'catalog_return') {
+    const catalogStockRepo = require('../repositories/catalogStockRepository');
+    const catalogLedgerRepo = require('../repositories/catalogLedgerRepository');
+    const returnItems = aj.returnItems || [];
+    for (const ri of returnItems) {
+      const ledgerRow = (await catalogLedgerRepo.getAll()).find(
+        (r) => r.ledgerId === ri.ledgerId && r.status === 'active'
+      );
+      if (!ledgerRow) continue;
+      await catalogLedgerRepo.markReturned(ledgerRow.rowIndex, approvedBy, new Date().toISOString());
+      const returnWarehouse = aj.returnWarehouse || ledgerRow.warehouse;
+      const stockRow = await catalogStockRepo.find(ledgerRow.design, ledgerRow.catalogSize, returnWarehouse);
+      if (stockRow) {
+        const isMarketer = ledgerRow.recipientType === 'marketer';
+        await catalogStockRepo.updateQty(
+          stockRow.rowIndex,
+          stockRow.inOfficeQty + ledgerRow.quantity,
+          isMarketer ? stockRow.withCustomersQty : stockRow.withCustomersQty - ledgerRow.quantity,
+          isMarketer ? stockRow.withMarketersQty - ledgerRow.quantity : stockRow.withMarketersQty,
+        );
+      }
+    }
+    catalogStockRepo.invalidateCache();
+    catalogLedgerRepo.invalidateCache();
   } else {
     return { ok: false, message: 'Unknown action type.' };
   }

@@ -95,6 +95,15 @@ const REQUIRED_SHEETS = {
   UserPrefs: {
     headers: ['user_id', 'activity_counts', 'updated_at'],
   },
+  CatalogStock: {
+    headers: ['Design', 'CatalogSize', 'Warehouse', 'TotalQty', 'InOfficeQty', 'WithCustomersQty', 'WithMarketersQty', 'UpdatedAt'],
+  },
+  CatalogLedger: {
+    headers: ['LedgerId', 'Design', 'CatalogSize', 'Warehouse', 'Quantity', 'Action', 'RecipientType', 'RecipientName', 'Status', 'DateOut', 'DateReturned', 'RequestedBy', 'ApprovedBy', 'ApprovalRequestId', 'Notes', 'CreatedAt'],
+  },
+  Marketers: {
+    headers: ['MarketerId', 'Name', 'Phone', 'Area', 'PersonPhotoFileId', 'PersonPhotoDriveId', 'CatalogPhotoFileId', 'CatalogPhotoDriveId', 'Status', 'ApprovedBy', 'ApprovalRequestId', 'Notes', 'CreatedAt'],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];
