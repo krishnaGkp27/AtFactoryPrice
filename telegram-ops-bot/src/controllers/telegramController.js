@@ -1856,7 +1856,7 @@ async function showTransferThanConfirm(bot, chatId, userId) {
  */
 async function startReturnThanFlow(bot, chatId, userId, messageId = null) {
   const all = await inventoryRepository.getAll();
-  const byBale = new Map();
+  const byPkg = new Map();
   all.forEach((r) => {
     if (r.status !== 'sold') return;
     const key = String(r.packageNo || '').trim();
@@ -2976,12 +2976,12 @@ async function handleMessage(bot, msg) {
       }
 
       case 'return_package': {
-        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Return Bale 5801"'); return; }
+        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which Bale? e.g. "Return Bale 5801"'); return; }
         const rpQueued = await requireApproval(bot, chatId, msg, userId, 'return_package',
           { action: 'return_package', packageNo: intent.packageNo },
           `Return Bale ${intent.packageNo}`);
         if (rpQueued) return;
-        const retBale = await inventoryService.returnPackage(intent.packageNo, userId);
+        const retPkg = await inventoryService.returnPackage(intent.packageNo, userId);
         if (retPkg.status === 'completed') {
           await bot.sendMessage(chatId, `✅ Returned Bale ${intent.packageNo}: 1 Bale (${retPkg.returnedThans} thans), ${fmtQty(retPkg.returnedYards)} yards — now available.`);
         } else {
