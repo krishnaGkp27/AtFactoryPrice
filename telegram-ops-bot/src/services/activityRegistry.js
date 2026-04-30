@@ -56,6 +56,7 @@ const ACTIVITIES = [
   { code: 'return_catalog',        label: 'Return Catalog',            icon: '↩️', callback: 'act:return_catalog',       hub: 'catalog' },
   { code: 'register_marketer',     label: 'Register Marketer',         icon: '🧑‍💼', callback: 'act:register_marketer',    hub: 'catalog' },
   { code: 'catalog_tracker',       label: 'Catalog Tracker',           icon: '📊', callback: 'act:catalog_tracker',      hub: 'catalog' },
+  { code: 'manage_catalog_stock', label: 'Manage Catalog Stock',      icon: '🗂️', callback: 'act:manage_catalog_stock', hub: 'catalog' },
 
   { code: 'sales_report',          label: 'Sales Report',              icon: '📊', callback: 'act:sales_report',       hub: 'reports' },
   { code: 'supply_details',        label: 'Supply Details',            icon: '📦', callback: 'act:supply_details',     hub: 'reports' },

@@ -3108,6 +3108,15 @@ async function handleMessage(bot, msg) {
     }
   }
 
+  // Manage catalog stock (admin): add/set quantity text input.
+  {
+    const cmsSession = sessionStore.get(userId);
+    if (cmsSession && ['cms_add_flow', 'cms_setqt_flow'].includes(cmsSession.type)) {
+      const handled = await catalogFlows.handleCmsTextStep(bot, chatId, userId, text);
+      if (handled) return;
+    }
+  }
+
   // Orphan-flow detection: if the user just posted a reply that *looks* like
   // it was meant for a recently expired flow (e.g. comma-separated shade
   // names while the design_asset_flow session timed out), send a clear
@@ -5403,6 +5412,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const handled = await catalogFlows.handleCatalogFlowCallback(bot, callbackQuery);
     if (handled) return;
   }
+  if (data.startsWith('cms:')) {
+    const handled = await catalogFlows.handleCmsCallback(bot, callbackQuery);
+    if (handled) return;
+  }
 
   if (data.startsWith('approve:')) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'approve');
@@ -7443,6 +7456,9 @@ async function handleCallbackQuery(bot, callbackQuery) {
         break;
       case 'catalog_tracker':
         await catalogFlows.startCatalogTracker(bot, chatId, uid, messageId);
+        break;
+      case 'manage_catalog_stock':
+        await catalogFlows.startManageCatalogStock(bot, chatId, uid, messageId);
         break;
       default:
         await bot.sendMessage(chatId, 'Feature coming soon.');

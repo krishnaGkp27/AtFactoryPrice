@@ -1265,13 +1265,504 @@ async function handleCatalogFlowPhotoStep(bot, chatId, userId, msg) {
   return false;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * MANAGE CATALOG STOCK (admin) — prefix `cms:`
+ * Add / view / adjust physical catalog inventory per design×size×warehouse.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+const CMS_PAGE_SIZE = 10;
+
+async function startManageCatalogStock(bot, chatId, userId, messageId) {
+  if (!config.access.adminIds.includes(userId)) {
+    await bot.sendMessage(chatId, 'Admin only.');
+    return;
+  }
+  await showCmsMainMenu(bot, chatId, userId, messageId);
+}
+
+async function showCmsMainMenu(bot, chatId, userId, messageId) {
+  const rows = [
+    [{ text: '➕ Add Catalog Stock', callback_data: 'cms:add' }],
+    [{ text: '📋 View / Edit Stock', callback_data: 'cms:list' }],
+    [{ text: '📊 Stock Summary', callback_data: 'cms:summary' }],
+  ];
+  await editOrSend(bot, chatId, messageId,
+    '🗂️ *Manage Catalog Stock*\n\nAdd new catalog entries, view current stock, or adjust quantities.',
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showCmsAddDesignPrompt(bot, chatId, userId, messageId) {
+  sessionStore.clear(userId);
+  saveSession(userId, { type: 'cms_add_flow', step: 'design' });
+
+  let designs = [];
+  try {
+    const raw = await inventoryRepo.getDistinctDesigns();
+    designs = [...new Set(raw.map((d) => (d.design || '').trim()).filter(Boolean))].sort();
+  } catch (_) {}
+
+  const visible = designs.slice(0, 18);
+  const rows = [];
+  for (let i = 0; i < visible.length; i += 3) {
+    const row = [];
+    for (let j = i; j < Math.min(i + 3, visible.length); j++) {
+      row.push({ text: visible[j], callback_data: cbSafe(`cms:adg:${visible[j]}`) });
+    }
+    rows.push(row);
+  }
+  rows.push([{ text: '✏️ Type a design number', callback_data: 'cms:adtype' }]);
+  rows.push([{ text: '◀️ Back', callback_data: 'cms:back' }]);
+
+  const sent = await editOrSend(bot, chatId, messageId,
+    '➕ *Add Catalog Stock*\n\nStep 1/4 — Pick a design number:',
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+  const s = sessionStore.get(userId);
+  if (s && sent) trackMsg(s, sent);
+  if (s) saveSession(userId, s);
+}
+
+async function showCmsAddSizePicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'size';
+  saveSession(userId, session);
+
+  const rows = [
+    [{ text: '📘 Big', callback_data: 'cms:asz:Big' }, { text: '📗 Small', callback_data: 'cms:asz:Small' }],
+    [{ text: '◀️ Back', callback_data: 'cms:aback:design' }],
+  ];
+  await editOrSend(bot, chatId, session.flowMessageId,
+    `➕ *Add Catalog Stock*\n\n✓ Design: *${session.design}*\n\nStep 2/4 — Pick catalog size:`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showCmsAddWarehousePicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'warehouse';
+  saveSession(userId, session);
+
+  let warehouses = [];
+  try { warehouses = await inventoryRepo.getWarehouses(); } catch (_) {}
+  if (!warehouses.length) {
+    await editOrSend(bot, chatId, session.flowMessageId,
+      '⚠️ No warehouses found in inventory.', { parse_mode: 'Markdown' });
+    return;
+  }
+
+  const rows = warehouses.map((w) => [{ text: `🏭 ${w}`, callback_data: cbSafe(`cms:awh:${w}`) }]);
+  rows.push([{ text: '◀️ Back', callback_data: 'cms:aback:size' }]);
+
+  await editOrSend(bot, chatId, session.flowMessageId,
+    `➕ *Add Catalog Stock*\n\n✓ Design: *${session.design}*\n✓ Size: *${session.catalogSize}*\n\nStep 3/4 — Pick warehouse:`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showCmsAddQuantityPicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'quantity';
+  saveSession(userId, session);
+
+  const existing = await catalogStockRepo.find(session.design, session.catalogSize, session.warehouse);
+  const existNote = existing ? `\n\n_Existing stock: ${existing.inOfficeQty} in office_` : '';
+
+  const rows = [
+    [
+      { text: '5', callback_data: 'cms:aqt:5' },
+      { text: '10', callback_data: 'cms:aqt:10' },
+      { text: '20', callback_data: 'cms:aqt:20' },
+      { text: '50', callback_data: 'cms:aqt:50' },
+    ],
+    [{ text: '✏️ Custom', callback_data: 'cms:aqt:__custom__' }],
+    [{ text: '◀️ Back', callback_data: 'cms:aback:warehouse' }],
+  ];
+
+  await editOrSend(bot, chatId, session.flowMessageId,
+    `➕ *Add Catalog Stock*\n\n✓ Design: *${session.design}*\n✓ Size: *${session.catalogSize}*\n✓ Warehouse: *${session.warehouse}*\n\nStep 4/4 — How many catalogs to add?${existNote}`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function submitCmsAdd(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+
+  const qty = parseInt(session.quantity, 10) || 0;
+  if (qty <= 0) {
+    await bot.sendMessage(chatId, '⚠️ Quantity must be greater than 0.');
+    return;
+  }
+
+  const existing = await catalogStockRepo.find(session.design, session.catalogSize, session.warehouse);
+  if (existing) {
+    await catalogStockRepo.updateQty(
+      existing.rowIndex,
+      existing.inOfficeQty + qty,
+      existing.withCustomersQty,
+      existing.withMarketersQty,
+    );
+  } else {
+    await catalogStockRepo.append({
+      design: session.design,
+      catalogSize: session.catalogSize,
+      warehouse: session.warehouse,
+      totalQty: qty,
+      inOfficeQty: qty,
+      withCustomersQty: 0,
+      withMarketersQty: 0,
+    });
+  }
+  catalogStockRepo.invalidateCache();
+
+  const action = existing ? 'Updated' : 'Added';
+  const newTotal = existing ? existing.inOfficeQty + qty : qty;
+
+  await safeDelete(bot, chatId, session.flowMessageId);
+  sessionStore.clear(userId);
+
+  const rows = [
+    [{ text: '➕ Add more', callback_data: 'cms:add' }],
+    [{ text: '📋 View stock', callback_data: 'cms:list' }],
+    [{ text: '◀️ Back to menu', callback_data: 'cms:back' }],
+  ];
+
+  await bot.sendMessage(chatId,
+    `✅ *${action} Catalog Stock*\n\n` +
+    `Design: *${session.design}*\n` +
+    `Size: *${session.catalogSize}*\n` +
+    `Warehouse: *${session.warehouse}*\n` +
+    `Added: *${qty}*\n` +
+    `New in-office total: *${newTotal}*`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showCmsStockList(bot, chatId, userId, page, messageId) {
+  let all = [];
+  try { all = await catalogStockRepo.getAll(); } catch (_) {}
+
+  if (!all.length) {
+    const rows = [[{ text: '➕ Add Catalog Stock', callback_data: 'cms:add' }], [{ text: '◀️ Back', callback_data: 'cms:back' }]];
+    await editOrSend(bot, chatId, messageId,
+      '📋 *Catalog Stock*\n\n_No catalog stock entries yet._\n\nTap "Add Catalog Stock" to get started.',
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+    return;
+  }
+
+  all.sort((a, b) => a.design.localeCompare(b.design, undefined, { numeric: true }) || a.catalogSize.localeCompare(b.catalogSize) || a.warehouse.localeCompare(b.warehouse));
+
+  const totalPages = Math.max(1, Math.ceil(all.length / CMS_PAGE_SIZE));
+  if (page < 0) page = 0;
+  if (page >= totalPages) page = totalPages - 1;
+
+  const slice = all.slice(page * CMS_PAGE_SIZE, (page + 1) * CMS_PAGE_SIZE);
+  const rows = [];
+  for (const s of slice) {
+    const icon = s.catalogSize === 'Big' ? '📘' : '📗';
+    const label = `${icon} ${s.design} ${s.catalogSize} · ${s.warehouse} — ${s.inOfficeQty} in`;
+    rows.push([{ text: label, callback_data: cbSafe(`cms:edit:${s.design}|${s.catalogSize}|${s.warehouse}`) }]);
+  }
+
+  const nav = [];
+  if (page > 0) nav.push({ text: '⬅️ Prev', callback_data: `cms:pg:${page - 1}` });
+  if (page < totalPages - 1) nav.push({ text: 'Next ➡️', callback_data: `cms:pg:${page + 1}` });
+  if (nav.length) rows.push(nav);
+  rows.push([{ text: '➕ Add new', callback_data: 'cms:add' }]);
+  rows.push([{ text: '◀️ Back', callback_data: 'cms:back' }]);
+
+  await editOrSend(bot, chatId, messageId,
+    `📋 *Catalog Stock* — ${all.length} entries, page ${page + 1}/${totalPages}\n\nTap an entry to view details or adjust quantity.`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showCmsEditEntry(bot, chatId, userId, design, catalogSize, warehouse, messageId) {
+  const entry = await catalogStockRepo.find(design, catalogSize, warehouse);
+  if (!entry) {
+    await bot.sendMessage(chatId, `⚠️ Stock entry not found for ${design} ${catalogSize} at ${warehouse}.`);
+    return;
+  }
+
+  const icon = catalogSize === 'Big' ? '📘' : '📗';
+  const total = entry.inOfficeQty + entry.withCustomersQty + entry.withMarketersQty;
+  const text = `${icon} *${design} — ${catalogSize}*\n🏭 ${warehouse}\n\n` +
+    `📦 In office: *${entry.inOfficeQty}*\n` +
+    `👤 With customers: *${entry.withCustomersQty}*\n` +
+    `🧑‍💼 With marketers: *${entry.withMarketersQty}*\n` +
+    `━━━━━━━━━━━━━━\n` +
+    `Total: *${total}*`;
+
+  const cb = `${design}|${catalogSize}|${warehouse}`;
+  const rows = [
+    [
+      { text: '➕ Add +5', callback_data: cbSafe(`cms:adj:+5|${cb}`) },
+      { text: '➕ Add +10', callback_data: cbSafe(`cms:adj:+10|${cb}`) },
+      { text: '➕ Add +20', callback_data: cbSafe(`cms:adj:+20|${cb}`) },
+    ],
+    [
+      { text: '➖ Remove -1', callback_data: cbSafe(`cms:adj:-1|${cb}`) },
+      { text: '➖ Remove -5', callback_data: cbSafe(`cms:adj:-5|${cb}`) },
+    ],
+    [{ text: '✏️ Set exact quantity', callback_data: cbSafe(`cms:setqt|${cb}`) }],
+    [{ text: '◀️ Back to list', callback_data: 'cms:list' }],
+  ];
+
+  await editOrSend(bot, chatId, messageId, text,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showCmsSummary(bot, chatId, userId, messageId) {
+  let all = [];
+  try { all = await catalogStockRepo.getAll(); } catch (_) {}
+
+  if (!all.length) {
+    await editOrSend(bot, chatId, messageId,
+      '📊 *Stock Summary*\n\n_No catalog stock entries yet._',
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '◀️ Back', callback_data: 'cms:back' }]] } });
+    return;
+  }
+
+  const warehouses = [...new Set(all.map((s) => s.warehouse))].sort();
+  const designs = [...new Set(all.map((s) => s.design))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+  let totalInOffice = 0, totalWithCust = 0, totalWithMkt = 0;
+  for (const s of all) {
+    totalInOffice += s.inOfficeQty;
+    totalWithCust += s.withCustomersQty;
+    totalWithMkt += s.withMarketersQty;
+  }
+
+  let text = `📊 *Catalog Stock Summary*\n\n` +
+    `*Overall*\n` +
+    `  📦 In office: *${totalInOffice}*\n` +
+    `  👤 With customers: *${totalWithCust}*\n` +
+    `  🧑‍💼 With marketers: *${totalWithMkt}*\n` +
+    `  Total: *${totalInOffice + totalWithCust + totalWithMkt}*\n` +
+    `  Designs: *${designs.length}* · Warehouses: *${warehouses.length}*\n`;
+
+  for (const wh of warehouses) {
+    const whStock = all.filter((s) => s.warehouse === wh);
+    const whIn = whStock.reduce((s, r) => s + r.inOfficeQty, 0);
+    const whOut = whStock.reduce((s, r) => s + r.withCustomersQty + r.withMarketersQty, 0);
+    text += `\n🏭 *${wh}*: ${whIn} in office, ${whOut} out\n`;
+    for (const s of whStock) {
+      const icon = s.catalogSize === 'Big' ? '📘' : '📗';
+      text += `  ${icon} ${s.design} ${s.catalogSize}: ${s.inOfficeQty} in / ${s.withCustomersQty + s.withMarketersQty} out\n`;
+    }
+  }
+
+  await editOrSend(bot, chatId, messageId, text,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
+      [{ text: '🔄 Refresh', callback_data: 'cms:summary' }],
+      [{ text: '◀️ Back', callback_data: 'cms:back' }],
+    ] } });
+}
+
+async function handleCmsCallback(bot, callbackQuery) {
+  const data = callbackQuery.data || '';
+  if (!data.startsWith('cms:')) return false;
+  const uid = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+
+  if (!config.access.adminIds.includes(uid)) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' });
+    return true;
+  }
+
+  await bot.answerCallbackQuery(callbackQuery.id);
+
+  if (data === 'cms:back') {
+    sessionStore.clear(uid);
+    await showCmsMainMenu(bot, chatId, uid, messageId);
+    return true;
+  }
+  if (data === 'cms:add') {
+    await showCmsAddDesignPrompt(bot, chatId, uid, messageId);
+    return true;
+  }
+  if (data === 'cms:adtype') {
+    const s = sessionStore.get(uid);
+    if (!s || s.type !== 'cms_add_flow') return true;
+    s.step = 'design_typing';
+    saveSession(uid, s);
+    await editOrSend(bot, chatId, s.flowMessageId,
+      '➕ *Add Catalog Stock*\n\nType the design number:',
+      { parse_mode: 'Markdown' });
+    return true;
+  }
+  if (data.startsWith('cms:adg:')) {
+    const design = data.slice('cms:adg:'.length);
+    const s = sessionStore.get(uid) || { type: 'cms_add_flow' };
+    s.design = design;
+    saveSession(uid, s);
+    await showCmsAddSizePicker(bot, chatId, uid);
+    return true;
+  }
+  if (data.startsWith('cms:asz:')) {
+    const size = data.slice('cms:asz:'.length);
+    const s = sessionStore.get(uid);
+    if (!s) return true;
+    s.catalogSize = size;
+    saveSession(uid, s);
+    await showCmsAddWarehousePicker(bot, chatId, uid);
+    return true;
+  }
+  if (data.startsWith('cms:awh:')) {
+    const wh = data.slice('cms:awh:'.length);
+    const s = sessionStore.get(uid);
+    if (!s) return true;
+    s.warehouse = wh;
+    saveSession(uid, s);
+    await showCmsAddQuantityPicker(bot, chatId, uid);
+    return true;
+  }
+  if (data.startsWith('cms:aqt:')) {
+    const val = data.slice('cms:aqt:'.length);
+    const s = sessionStore.get(uid);
+    if (!s) return true;
+    if (val === '__custom__') {
+      s.step = 'custom_qty';
+      saveSession(uid, s);
+      await editOrSend(bot, chatId, s.flowMessageId,
+        `➕ *Add Catalog Stock*\n\n✓ Design: *${s.design}*\n✓ Size: *${s.catalogSize}*\n✓ Warehouse: *${s.warehouse}*\n\nType the quantity to add:`,
+        { parse_mode: 'Markdown' });
+      return true;
+    }
+    s.quantity = parseInt(val, 10);
+    saveSession(uid, s);
+    await submitCmsAdd(bot, chatId, uid);
+    return true;
+  }
+  if (data.startsWith('cms:aback:')) {
+    const target = data.slice('cms:aback:'.length);
+    const s = sessionStore.get(uid);
+    if (!s) { await showCmsMainMenu(bot, chatId, uid, messageId); return true; }
+    if (target === 'design') { await showCmsAddDesignPrompt(bot, chatId, uid, s.flowMessageId); }
+    else if (target === 'size') { await showCmsAddSizePicker(bot, chatId, uid); }
+    else if (target === 'warehouse') { await showCmsAddWarehousePicker(bot, chatId, uid); }
+    return true;
+  }
+  if (data === 'cms:list') {
+    await showCmsStockList(bot, chatId, uid, 0, messageId);
+    return true;
+  }
+  if (data.startsWith('cms:pg:')) {
+    const page = parseInt(data.slice('cms:pg:'.length), 10) || 0;
+    await showCmsStockList(bot, chatId, uid, page, messageId);
+    return true;
+  }
+  if (data.startsWith('cms:edit:')) {
+    const parts = data.slice('cms:edit:'.length).split('|');
+    if (parts.length >= 3) {
+      await showCmsEditEntry(bot, chatId, uid, parts[0], parts[1], parts[2], messageId);
+    }
+    return true;
+  }
+  if (data.startsWith('cms:adj:')) {
+    const rest = data.slice('cms:adj:'.length);
+    const pipeIdx = rest.indexOf('|');
+    if (pipeIdx < 0) return true;
+    const delta = parseInt(rest.slice(0, pipeIdx), 10);
+    const parts = rest.slice(pipeIdx + 1).split('|');
+    if (parts.length < 3 || !delta) return true;
+    const [design, catalogSize, warehouse] = parts;
+    const entry = await catalogStockRepo.find(design, catalogSize, warehouse);
+    if (!entry) { await bot.sendMessage(chatId, '⚠️ Stock entry not found.'); return true; }
+    const newInOffice = Math.max(0, entry.inOfficeQty + delta);
+    await catalogStockRepo.updateQty(entry.rowIndex, newInOffice, entry.withCustomersQty, entry.withMarketersQty);
+    catalogStockRepo.invalidateCache();
+    await showCmsEditEntry(bot, chatId, uid, design, catalogSize, warehouse, messageId);
+    return true;
+  }
+  if (data.startsWith('cms:setqt|')) {
+    const parts = data.slice('cms:setqt|'.length).split('|');
+    if (parts.length < 3) return true;
+    const s = sessionStore.get(uid) || {};
+    s.type = 'cms_setqt_flow';
+    s.step = 'set_qty';
+    s.design = parts[0];
+    s.catalogSize = parts[1];
+    s.warehouse = parts[2];
+    s.flowMessageId = messageId;
+    saveSession(uid, s);
+    await editOrSend(bot, chatId, messageId,
+      `✏️ *Set Quantity*\n\n${parts[0]} ${parts[1]} at ${parts[2]}\n\nType the new in-office quantity:`,
+      { parse_mode: 'Markdown' });
+    return true;
+  }
+  if (data === 'cms:summary') {
+    catalogStockRepo.invalidateCache();
+    await showCmsSummary(bot, chatId, uid, messageId);
+    return true;
+  }
+
+  return true;
+}
+
+function handleCmsTextStep(bot, chatId, userId, text) {
+  return _handleCmsText(bot, chatId, userId, text);
+}
+
+async function _handleCmsText(bot, chatId, userId, text) {
+  const session = sessionStore.get(userId);
+  if (!session) return false;
+
+  if (text.toLowerCase() === 'cancel') {
+    sessionStore.clear(userId);
+    await bot.sendMessage(chatId, '❌ Cancelled.');
+    return true;
+  }
+
+  if (session.type === 'cms_add_flow' && session.step === 'design_typing') {
+    const d = text.trim();
+    if (!d) { await bot.sendMessage(chatId, '⚠️ Enter a design number.'); return true; }
+    session.design = d;
+    saveSession(userId, session);
+    await showCmsAddSizePicker(bot, chatId, userId);
+    return true;
+  }
+
+  if (session.type === 'cms_add_flow' && session.step === 'custom_qty') {
+    const qty = parseInt(text.trim(), 10);
+    if (!qty || qty <= 0) { await bot.sendMessage(chatId, '⚠️ Enter a valid positive number.'); return true; }
+    session.quantity = qty;
+    saveSession(userId, session);
+    await submitCmsAdd(bot, chatId, userId);
+    return true;
+  }
+
+  if (session.type === 'cms_setqt_flow' && session.step === 'set_qty') {
+    const qty = parseInt(text.trim(), 10);
+    if (qty == null || qty < 0 || !Number.isFinite(qty)) {
+      await bot.sendMessage(chatId, '⚠️ Enter a valid non-negative number.');
+      return true;
+    }
+    const entry = await catalogStockRepo.find(session.design, session.catalogSize, session.warehouse);
+    if (!entry) { await bot.sendMessage(chatId, '⚠️ Stock entry not found.'); sessionStore.clear(userId); return true; }
+    await catalogStockRepo.updateQty(entry.rowIndex, qty, entry.withCustomersQty, entry.withMarketersQty);
+    catalogStockRepo.invalidateCache();
+    sessionStore.clear(userId);
+    await bot.sendMessage(chatId,
+      `✅ Updated *${session.design} ${session.catalogSize}* at *${session.warehouse}* — in-office: *${qty}*`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
+        [{ text: '📋 View stock', callback_data: 'cms:list' }],
+        [{ text: '◀️ Back to menu', callback_data: 'cms:back' }],
+      ] } });
+    return true;
+  }
+
+  return false;
+}
+
 module.exports = {
   startSupplyCatalogFlow,
   startLoanCatalogFlow,
   startReturnCatalogFlow,
   startRegisterMarketerFlow,
   startCatalogTracker,
+  startManageCatalogStock,
   handleCatalogFlowCallback,
   handleCatalogFlowTextStep,
   handleCatalogFlowPhotoStep,
+  handleCmsCallback,
+  handleCmsTextStep,
 };
