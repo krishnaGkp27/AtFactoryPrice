@@ -79,4 +79,25 @@ function safeParse(str) {
   }
 }
 
-module.exports = { append, getAllPending, updateStatus, getByRequestId, ensureHeader };
+/**
+ * Merge `patch` into the row's actionJSON and persist. Used by the
+ * multi-stage supply-request flow to record stage transitions
+ * (confirmedByDispatch, dispatchDecline, etc.) without bloating the
+ * sheet schema. Returns true if the row was found and updated.
+ *
+ * @param {string} requestId
+ * @param {object} patch
+ * @returns {Promise<boolean>}
+ */
+async function updateActionJSON(requestId, patch) {
+  const rows = await sheets.readRange(SHEET, 'A2:G');
+  const idx = rows.findIndex((r) => String(r[0]) === String(requestId));
+  if (idx === -1) return false;
+  const rowIndex = idx + 2;
+  const existing = safeParse(rows[idx][2]);
+  const merged = { ...existing, ...patch };
+  await sheets.updateRange(SHEET, `C${rowIndex}`, [[JSON.stringify(merged)]]);
+  return true;
+}
+
+module.exports = { append, getAllPending, updateStatus, updateActionJSON, getByRequestId, ensureHeader };

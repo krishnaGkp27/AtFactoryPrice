@@ -54,4 +54,28 @@ async function updateActivities(deptId, activities) {
   return true;
 }
 
-module.exports = { getAll, findById, findByName, append, updateActivities, SHEET, HEADERS };
+/**
+ * Idempotent: ensure a department row exists with the given name.
+ * Used by Stage 1 dispatch routing so the bot can self-heal a missing
+ * Dispatch department without forcing the admin to hand-edit the
+ * Departments sheet. Returns the (existing or newly-created) row.
+ *
+ * @param {{dept_name:string, dept_id?:string, allowed_activities?:string[]|string}} cfg
+ * @returns {Promise<object>}
+ */
+async function ensureDept(cfg) {
+  if (!cfg || !cfg.dept_name) throw new Error('ensureDept: dept_name is required');
+  const existing = await findByName(cfg.dept_name);
+  if (existing) return existing;
+  const dept_id = cfg.dept_id || `D-${cfg.dept_name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12)}`;
+  await append({
+    dept_id,
+    dept_name: cfg.dept_name,
+    allowed_activities: cfg.allowed_activities || '',
+    status: 'active',
+  });
+  // Re-read to get the rowIndex of the newly-appended row.
+  return await findByName(cfg.dept_name);
+}
+
+module.exports = { getAll, findById, findByName, append, updateActivities, ensureDept, SHEET, HEADERS };

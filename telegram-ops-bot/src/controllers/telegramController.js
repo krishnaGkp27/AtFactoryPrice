@@ -2182,7 +2182,7 @@ async function showOrderSalespersonPicker(bot, chatId, userId) {
   const active = users.filter((u) => {
     if (u.status !== 'active') return false;
     if (adminIds.has(u.user_id)) return true;
-    return (u.department || '').toLowerCase() === 'sales';
+    return usersRepository.inDepartment(u, 'Sales');
   });
   if (!active.length) {
     await bot.sendMessage(chatId, '⚠️ No salespersons found (Sales dept or admin). Ask admin to assign users.');
@@ -2633,6 +2633,15 @@ async function handleMessage(bot, msg) {
 
   if (GREETINGS.test(text.trim())) {
     await buildGreetingMenu(bot, chatId, userId);
+    return;
+  }
+
+  // Stage-1 reject reason / Stage-3 decline reason — these run on a
+  // separate pendingReason map inside approvalEvents (not on the
+  // shared sessionStore), so we check them BEFORE any other text
+  // state handler. handleReasonReply returns true when it consumed
+  // the message, false when it wasn't waiting for one.
+  if (await approvalEvents.handleReasonReply(bot, msg)) {
     return;
   }
 
@@ -3858,14 +3867,31 @@ const GREETINGS = /^(hi|hello|hey|start|menu|home|main\s*menu)$/i;
 async function buildGreetingMenuMarkup(userId, showAll = false) {
   const isAdminUser = config.access.adminIds.includes(userId);
   const user = await usersRepository.findByUserId(userId);
-  const deptName = (user && user.department) || (isAdminUser ? 'Admin' : '');
+  // Multi-dept users (e.g. Yarima in Sales + Dispatch) see the UNION
+  // of allowed activities across every department they belong to —
+  // this is the natural "I can do anything any of my departments can
+  // do" behavior. Falls back to the single-dept legacy field if the
+  // multi-dept array isn't populated yet.
+  const userDepts = (user && Array.isArray(user.departments) && user.departments.length)
+    ? user.departments
+    : (user && user.department ? [user.department] : (isAdminUser ? ['Admin'] : []));
+  const deptName = userDepts[0] || (isAdminUser ? 'Admin' : '');
 
   let allowed = [];
   if (isAdminUser) {
     allowed = activityRegistry.getAll();
-  } else if (deptName) {
-    const dept = await departmentsRepo.findByName(deptName);
-    if (dept) allowed = activityRegistry.filterByCodes(dept.allowed_activities);
+  } else if (userDepts.length) {
+    const seen = new Set();
+    for (const name of userDepts) {
+      const dept = await departmentsRepo.findByName(name);
+      if (!dept) continue;
+      for (const a of activityRegistry.filterByCodes(dept.allowed_activities)) {
+        if (!seen.has(a.code)) {
+          seen.add(a.code);
+          allowed.push(a);
+        }
+      }
+    }
   }
 
   if (!allowed.length) {
@@ -3956,14 +3982,25 @@ async function renderHubSubmenu(bot, chatId, messageId, userId, hubId) {
 
   const isAdminUser = config.access.adminIds.includes(userId);
   const user = await usersRepository.findByUserId(userId);
-  const deptName = (user && user.department) || (isAdminUser ? 'Admin' : '');
+  const userDepts = (user && Array.isArray(user.departments) && user.departments.length)
+    ? user.departments
+    : (user && user.department ? [user.department] : (isAdminUser ? ['Admin'] : []));
 
   let allowed = [];
   if (isAdminUser) {
     allowed = activityRegistry.getAll();
-  } else if (deptName) {
-    const dept = await departmentsRepo.findByName(deptName);
-    if (dept) allowed = activityRegistry.filterByCodes(dept.allowed_activities);
+  } else if (userDepts.length) {
+    const seen = new Set();
+    for (const name of userDepts) {
+      const dept = await departmentsRepo.findByName(name);
+      if (!dept) continue;
+      for (const a of activityRegistry.filterByCodes(dept.allowed_activities)) {
+        if (!seen.has(a.code)) {
+          seen.add(a.code);
+          allowed.push(a);
+        }
+      }
+    }
   }
   const subs = allowed.filter((a) => a.hub === hubId);
 
@@ -4438,9 +4475,9 @@ async function showSupplySalespersonPicker(bot, chatId, userId, showAll = false)
   const allUsers = await usersRepository.getAll();
   const adminIds = new Set(config.access.adminIds || []);
   const salesUsers = allUsers.filter((u) => {
+    if (u.status && u.status !== 'active') return false;
     if (adminIds.has(u.user_id)) return true;
-    const dept = (u.department || '').toLowerCase();
-    return dept === 'sales';
+    return usersRepository.inDepartment(u, 'Sales');
   });
   if (!salesUsers.length) {
     await editOrSendAnchored(bot, chatId, userId, '⚠️ No salespersons found. Please ask admin to assign users to the Sales department.');
@@ -4552,9 +4589,11 @@ async function showUserManagement(bot, chatId) {
   const users = await usersRepository.getAll();
   let text = '👥 *User Management*\n\n';
   for (const u of users) {
-    const dept = u.department || '-';
+    const depts = (Array.isArray(u.departments) && u.departments.length)
+      ? u.departments.join(', ')
+      : (u.department || '-');
     const wh = u.warehouses.length ? u.warehouses.join(', ') : '-';
-    text += `• *${u.name || u.user_id}* (${u.user_id})\n  Dept: ${dept} | Warehouses: ${wh}\n`;
+    text += `• *${u.name || u.user_id}* (${u.user_id})\n  Depts: ${depts} | Warehouses: ${wh}\n`;
   }
   text += '\nSelect action:';
   await sendLong(bot, chatId, text, {
@@ -4905,8 +4944,18 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'reject');
   } else if (data.startsWith('srf_assign:')) {
     await approvalEvents.handleSupplyAssign(bot, callbackQuery);
-  } else if (data.startsWith('srf_ack:')) {
-    await approvalEvents.handleSupplyAcknowledge(bot, callbackQuery);
+  } else if (data.startsWith('srf_acc:') || data.startsWith('srf_ack:')) {
+    // srf_acc:  = new Stage-3 Accept button.
+    // srf_ack:  = legacy Acknowledge button kept for back-compat with
+    //             messages already in users' chats from before the
+    //             Accept/Decline upgrade. handleSupplyAccept handles
+    //             both prefixes.
+    await approvalEvents.handleSupplyAccept(bot, callbackQuery);
+  } else if (data.startsWith('srf_dec:')) {
+    await approvalEvents.handleSupplyDecline(bot, callbackQuery);
+  } else if (data.startsWith('smc:')) {
+    // Stage 1 dispatch-manager confirm/reject/show-details.
+    await approvalEvents.handleDispatchManagerCallback(bot, callbackQuery);
   } else if (data.startsWith('confirm_sale:')) {
     const saleUserId = data.replace('confirm_sale:', '');
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Processing sale...' });
@@ -6825,6 +6874,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const isAdmin = config.access.adminIds.includes(uid);
     const approvalReason = isAdmin ? '2nd admin approval required' : 'Admin approval required';
 
+    // Stage-1 routing: supply requests now go to Dispatch first for
+    // feasibility confirmation, THEN to admins. We tag the actionJSON
+    // up front so the queue row carries its current stage at all
+    // times (admin_review = ready for 2nd-admin tap).
+    actionJSON.stage = 'dispatch_review';
+
     await approvalQueueRepository.append({
       requestId, user: uid, actionJSON, riskReason: approvalReason, status: 'pending',
     });
@@ -6852,25 +6907,47 @@ async function handleCallbackQuery(bot, callbackQuery) {
     summary += `📅 ${fmtDate(actionJSON.salesDate)}`;
     if (actionJSON.sale_doc_file_id) summary += `\n📎 Document attached`;
 
-    const excludeId = isAdmin ? uid : undefined;
-    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, approvalReason, excludeId);
+    // Try Stage 1 — notify Dispatch dept for confirmation.
+    // notifyDispatchManagers self-heals (creates the Dispatch dept
+    // row if missing) and excludes the requester. If no eligible
+    // dispatch users exist, we fall through to the original direct-
+    // to-admin notification so the request is never deadlocked.
+    const queueItem = { requestId, user: uid, actionJSON };
+    const stage1 = await approvalEvents.notifyDispatchManagers(bot, requestId, queueItem, uid);
 
-    if (actionJSON.sale_doc_file_id) {
-      for (const adminId of config.access.adminIds) {
-        if (excludeId && String(adminId) === String(excludeId)) continue;
-        try {
-          if (actionJSON.sale_doc_type === 'photo') {
-            await bot.sendPhoto(adminId, actionJSON.sale_doc_file_id, { caption: `📎 Bill for ${requestId}` });
-          } else {
-            await bot.sendDocument(adminId, actionJSON.sale_doc_file_id, { caption: `📎 Bill for ${requestId}` });
-          }
-        } catch (_) {}
+    let stage1Skipped = false;
+    if (!stage1.routed) {
+      stage1Skipped = true;
+      // Fallback: ensure actionJSON reflects the skip so admins
+      // reviewing later don't see a phantom 'dispatch_review' tag.
+      try {
+        await approvalQueueRepository.updateActionJSON(requestId, { stage: 'admin_review', dispatchSkipped: true });
+      } catch (_) {}
+
+      const excludeId = isAdmin ? uid : undefined;
+      await approvalEvents.notifyAdminsApprovalRequest(
+        bot, requestId, userLabel, summary, approvalReason, excludeId,
+        { prependNote: '⚠️ No active Dispatch members — Stage 1 confirmation skipped.' },
+      );
+      if (actionJSON.sale_doc_file_id) {
+        for (const adminId of config.access.adminIds) {
+          if (excludeId && String(adminId) === String(excludeId)) continue;
+          try {
+            if (actionJSON.sale_doc_type === 'photo') {
+              await bot.sendPhoto(adminId, actionJSON.sale_doc_file_id, { caption: `📎 Bill for ${requestId}` });
+            } else {
+              await bot.sendDocument(adminId, actionJSON.sale_doc_file_id, { caption: `📎 Bill for ${requestId}` });
+            }
+          } catch (_) {}
+        }
       }
     }
 
-    const approverLabel = isAdmin ? '2nd admin' : 'admin';
+    const waitingFor = stage1Skipped
+      ? (isAdmin ? '2nd admin approval' : 'admin approval')
+      : 'Dispatch confirmation';
     await bot.sendMessage(chatId,
-      `✅ Supply request submitted.\n\n🏭 ${actionJSON.warehouse}\n━━━━━━━━━━━━━━━━━━━━━━\n${cartLines}\n━━━━━━━━━━━━━━━━━━━━━━\n📦 Total: ${totalPkgs} ${containerPlural}\n👤 ${actionJSON.customer}\n📅 ${fmtDate(actionJSON.salesDate)}\n\n⏳ Waiting for ${approverLabel} approval.\nRequest: ${requestId}`, {
+      `✅ Supply request submitted.\n\n🏭 ${actionJSON.warehouse}\n━━━━━━━━━━━━━━━━━━━━━━\n${cartLines}\n━━━━━━━━━━━━━━━━━━━━━━\n📦 Total: ${totalPkgs} ${containerPlural}\n👤 ${actionJSON.customer}\n📅 ${fmtDate(actionJSON.salesDate)}\n\n⏳ Waiting for ${waitingFor}.\nRequest: ${requestId}`, {
         parse_mode: 'Markdown',
       });
 
@@ -6888,9 +6965,14 @@ async function handleCallbackQuery(bot, callbackQuery) {
 
     if (action === 'assign_dept') {
       const users = await usersRepository.getAll();
-      const rows = users.map((u) => [{ text: `${u.name || u.user_id} (${u.department || 'none'})`, callback_data: `adm_du:${u.user_id}` }]);
+      const rows = users.map((u) => {
+        const depts = (Array.isArray(u.departments) && u.departments.length)
+          ? u.departments.join(',')
+          : (u.department || 'none');
+        return [{ text: `${u.name || u.user_id} (${depts})`, callback_data: `adm_du:${u.user_id}` }];
+      });
       sessionStore.set(uid, { type: 'adm_flow', action: 'assign_dept', step: 'pick_user' });
-      await bot.sendMessage(chatId, '🏢 Select user to assign department:', { reply_markup: { inline_keyboard: rows } });
+      await bot.sendMessage(chatId, '🏢 Select user to assign departments:', { reply_markup: { inline_keyboard: rows } });
     } else if (action === 'assign_wh') {
       const users = await usersRepository.getAll();
       const rows = users.map((u) => [{ text: `${u.name || u.user_id} (${u.warehouses.join(', ') || 'none'})`, callback_data: `adm_wu:${u.user_id}` }]);
@@ -6902,26 +6984,71 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
 
   } else if (data.startsWith('adm_du:')) {
+    // Multi-toggle department picker (mirrors the warehouse picker's
+    // ✅/⬜ pattern). Tapping a department flips it in/out of the
+    // user's pending list; tapping 💾 Save persists the CSV.
     const targetUserId = data.slice(7);
     const chatId = callbackQuery.message.chat.id;
     const uid = String(callbackQuery.from.id);
     await bot.answerCallbackQuery(callbackQuery.id);
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
 
-    const depts = await departmentsRepo.getAll();
-    const rows = depts.filter((d) => d.status === 'active').map((d) => [{ text: `🏢 ${d.dept_name}`, callback_data: `adm_dd:${targetUserId}|${d.dept_name}` }]);
-    await bot.sendMessage(chatId, `Select department for user ${targetUserId}:`, { reply_markup: { inline_keyboard: rows } });
+    const depts = (await departmentsRepo.getAll()).filter((d) => d.status === 'active');
+    const targetUser = await usersRepository.findByUserId(targetUserId);
+    const current = (targetUser && Array.isArray(targetUser.departments) && targetUser.departments.length)
+      ? targetUser.departments.slice()
+      : (targetUser && targetUser.department ? [targetUser.department] : []);
+    const rows = depts.map((d) => {
+      const has = current.some((c) => String(c).trim().toLowerCase() === d.dept_name.toLowerCase());
+      return [{ text: `${has ? '✅' : '⬜'} 🏢 ${d.dept_name}`, callback_data: `adm_dt:${targetUserId}|${d.dept_name}` }];
+    });
+    rows.push([{ text: '💾 Save', callback_data: `adm_ds:${targetUserId}` }]);
+    rows.push([{ text: '⬅️ Back', callback_data: 'adm:assign_dept' }]);
+    sessionStore.set(uid, { type: 'adm_flow', action: 'assign_dept', targetUserId, pendingDepartments: current });
+    await bot.sendMessage(chatId, `🏢 Toggle departments for ${targetUser ? targetUser.name : targetUserId}:`, { reply_markup: { inline_keyboard: rows } });
 
-  } else if (data.startsWith('adm_dd:')) {
+  } else if (data.startsWith('adm_dt:')) {
     const [targetUserId, deptName] = data.slice(7).split('|');
     const chatId = callbackQuery.message.chat.id;
     const uid = String(callbackQuery.from.id);
-    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Assigning...' });
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'adm_flow' || session.targetUserId !== targetUserId) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired. Re-open the user.' });
+      return;
+    }
+    if (!session.pendingDepartments) session.pendingDepartments = [];
+    const idx = session.pendingDepartments.findIndex((c) => String(c).trim().toLowerCase() === deptName.toLowerCase());
+    if (idx >= 0) session.pendingDepartments.splice(idx, 1);
+    else session.pendingDepartments.push(deptName);
+    sessionStore.set(uid, session);
+
+    const depts = (await departmentsRepo.getAll()).filter((d) => d.status === 'active');
+    const rows = depts.map((d) => {
+      const has = session.pendingDepartments.some((c) => String(c).trim().toLowerCase() === d.dept_name.toLowerCase());
+      return [{ text: `${has ? '✅' : '⬜'} 🏢 ${d.dept_name}`, callback_data: `adm_dt:${targetUserId}|${d.dept_name}` }];
+    });
+    rows.push([{ text: '💾 Save', callback_data: `adm_ds:${targetUserId}` }]);
+    rows.push([{ text: '⬅️ Back', callback_data: 'adm:assign_dept' }]);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: `${idx >= 0 ? 'Removed' : 'Added'} ${deptName}` });
+    await bot.editMessageReplyMarkup({ inline_keyboard: rows }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+  } else if (data.startsWith('adm_ds:')) {
+    const targetUserId = data.slice(7);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'adm_flow' || session.targetUserId !== targetUserId) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' });
+      return;
+    }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Saving...' });
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
 
-    const ok = await usersRepository.updateDepartment(targetUserId, deptName);
+    const finalDepts = (session.pendingDepartments || []).map((d) => String(d).trim()).filter(Boolean);
+    const ok = await usersRepository.updateDepartment(targetUserId, finalDepts);
     if (ok) {
-      await bot.sendMessage(chatId, `✅ User ${targetUserId} assigned to department *${deptName}*.`, { parse_mode: 'Markdown' });
+      const list = finalDepts.length ? finalDepts.join(', ') : '(none)';
+      await bot.sendMessage(chatId, `✅ User ${targetUserId} departments saved: *${list}*.`, { parse_mode: 'Markdown' });
     } else {
       await bot.sendMessage(chatId, `⚠️ User ${targetUserId} not found in Users sheet. Add them first.`);
     }
