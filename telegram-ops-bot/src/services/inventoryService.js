@@ -358,6 +358,24 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       qty: totalYards, before: 'sold', after: 'available', status: 'approved',
     });
     try { erpBus.emit('return', { type: 'return_package', packageNo: aj.packageNo, yards: totalYards, design: results[0]?.design, shade: results[0]?.shade, userId: item.user, txnId: `RP-${aj.packageNo}` }); } catch (_) {}
+  } else if (aj.action === 'revert_sale_bundle') {
+    // Two-admin-approved revert of a previously-approved sale_bundle.
+    // Marks every Bale/than in the original sale available again and
+    // reverses the customer ledger entry (revertSaleBundle handles
+    // both sides). Then flips the original Transactions row to
+    // status='reverted' so reports/audits can see the trail.
+    const result = await revertSaleBundle(aj.saleRefId, item.user);
+    if (!result.ok) return { ok: false, message: result.message || 'Revert failed.' };
+    if (aj.txnTimestamp && aj.txnUser && aj.txnAction) {
+      try {
+        await transactionsRepository.setStatusReverted(aj.txnTimestamp, aj.txnUser, aj.txnAction);
+      } catch (_) { /* leave audit row as-is if marker fails */ }
+    }
+    await transactionsRepository.append({
+      user: item.user, action: 'revert_sale_bundle', design: '', color: '',
+      qty: result.revertedThans || 0, before: 'sold', after: 'available', status: 'approved',
+      saleRefId: aj.saleRefId,
+    });
   } else if (aj.action === 'update_price') {
     const count = await inventoryRepository.updatePrice(aj.filters || {}, aj.price);
     await transactionsRepository.append({

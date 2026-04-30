@@ -13,7 +13,7 @@ const logger = require('../utils/logger');
 
 const WRITE_ACTIONS = [
   'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell',
-  'return_than', 'return_package',
+  'return_than', 'return_package', 'revert_sale_bundle',
   'update_price',
   'add', 'add_stock',
   'record_payment',
@@ -22,8 +22,14 @@ const WRITE_ACTIONS = [
   'transfer_than', 'transfer_package', 'transfer_batch',
 ];
 
+// Actions that ALWAYS go through the approval queue, regardless of whether
+// the requester is an admin. Admin → 2nd-admin gate; employee → admin gate.
+// Returns and full-bundle reverts belong here because they modify approved
+// sales (inventory state + customer ledger) and a single admin should never
+// be able to roll those back unilaterally.
 const ALWAYS_APPROVAL_ACTIONS = [
   'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell',
+  'return_than', 'return_package', 'revert_sale_bundle',
   'record_payment', 'update_price', 'supply_request',
 ];
 
@@ -71,7 +77,7 @@ async function evaluate(params) {
 function formatAction(action) {
   const map = {
     sell_than: 'sale', sell_package: 'sale', sell_batch: 'sale', sell_mixed: 'sale', sell: 'sale',
-    return_than: 'return', return_package: 'return',
+    return_than: 'return', return_package: 'return', revert_sale_bundle: 'sale revert',
     update_price: 'price update', add: 'stock addition', add_stock: 'stock addition',
     record_payment: 'payment', add_customer: 'customer creation', add_contact: 'contact creation',
     transfer_than: 'transfer', transfer_package: 'transfer', transfer_batch: 'transfer',

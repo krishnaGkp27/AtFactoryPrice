@@ -3337,13 +3337,28 @@ async function handleMessage(bot, msg) {
           await bot.sendMessage(chatId, `Last transaction is "${t.action}" (no SaleRefId). Only sale_bundle (approved sales) can be reverted.`);
           return;
         }
-        const result = await inventoryService.revertSaleBundle(t.saleRefId, userId);
-        if (!result.ok) {
-          await bot.sendMessage(chatId, `Revert failed: ${result.message}`);
-          return;
-        }
-        await transactionsRepo.setStatusReverted(t.timestamp, t.user, t.action);
-        await bot.sendMessage(chatId, `✅ Last transaction reverted. ${result.revertedThans} thans marked available again; ledger reversed.`);
+        // Build a human-readable summary of what's about to be reverted so
+        // the 2nd admin can audit before approving. We hand the original
+        // sale's request_id and txn timestamp into the approval payload so
+        // the executor can roll back inventory + ledger and mark the
+        // original transaction row "reverted" once approved.
+        let summaryDetail = '';
+        try {
+          const approvalRow = await approvalQueueRepository.getByRequestId(t.saleRefId);
+          const aj = approvalRow?.actionJSON || {};
+          if (aj && Array.isArray(aj.items)) {
+            const totalItems = aj.items.length;
+            summaryDetail = `\nOriginal sale: ${aj.customer || '?'} · ${totalItems} item(s) · request \`${t.saleRefId}\``;
+          }
+        } catch (_) { /* best-effort */ }
+        const queued = await requireApproval(bot, chatId, msg, userId, 'revert_sale_bundle',
+          { action: 'revert_sale_bundle', saleRefId: t.saleRefId, txnTimestamp: t.timestamp, txnUser: t.user, txnAction: t.action },
+          `Revert last transaction${summaryDetail}`);
+        if (queued) return;
+        // Should be unreachable — revert_sale_bundle is in
+        // ALWAYS_APPROVAL_ACTIONS so requireApproval always queues. Keep a
+        // fallback message just in case the risk config drifts.
+        await bot.sendMessage(chatId, '⚠️ Could not queue revert for approval. Check risk configuration.');
         return;
       }
 
@@ -5541,22 +5556,31 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'return_than_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Submitting...' });
+    // Returns require approval from a different admin than the requester.
+    // Mirror the wording used by the NL path (requireApproval) so admin
+    // requesters see "2nd admin" and employee requesters see "admin".
+    const isAdm = config.access.adminIds.includes(uid);
+    const approverLabel = isAdm ? '2nd admin' : 'admin';
+    const riskReason = `All return operations require ${approverLabel} approval.`;
     const requestId = genId();
     await approvalQueueRepository.append({
       requestId, user: uid,
       actionJSON: { action: 'return_than', packageNo: session.packageNo, thanNo: session.thanNo },
-      riskReason: 'Than return requires admin approval', status: 'pending',
+      riskReason, status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: 'return_than', via: 'tap_flow' }, uid);
     if (session.flowMessageId) {
       await bot.editMessageText(
-        `↩️ *Return Than — submitted*\n\nBale: *${session.packageNo}* · Than: *#${session.thanNo}*\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
+        `↩️ *Return Than — submitted*\n\nBale: *${session.packageNo}* · Than: *#${session.thanNo}*\n\n⏳ Waiting for ${approverLabel} approval.\nRequest: \`${requestId}\``,
         { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
       ).catch(() => {});
     }
     const userLabel = await getRequesterDisplayName(uid, null);
     const summary = `Return Than\nBale: ${session.packageNo}\nThan: ${session.thanNo}\nDesign: ${session.design || '?'} ${session.shade || ''}`;
-    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'Than return requires admin approval');
+    // Exclude the requester from the broadcast so an admin can't approve
+    // their own return request. The other admin(s) still get it.
+    const excludeId = isAdm ? uid : undefined;
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, riskReason, excludeId);
     sessionStore.clear(uid);
 
   /* ─── LEGACY: existing text-started sample flow customer pick (kept for back-compat) ─── */
