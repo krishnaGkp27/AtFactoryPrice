@@ -34,6 +34,7 @@ const userPrefsRepo = require('../repositories/userPrefsRepository');
 const designAssetsRepo = require('../repositories/designAssetsRepository');
 const designAssetsService = require('../services/designAssetsService');
 const colorDetector = require('../ai/colorDetector');
+const catalogFlows = require('./catalogFlowController');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
 const idGenerator = require('../utils/idGenerator');
 const config = require('../config');
@@ -2959,6 +2960,11 @@ async function handleFileMessage(bot, msg) {
     if (handled) return;
   }
 
+  if (session && session.type === 'marketer_reg_flow' && (session.step === 'person_photo' || session.step === 'catalog_photo')) {
+    const handled = await catalogFlows.handleCatalogFlowPhotoStep(bot, chatId, userId, msg);
+    if (handled) return;
+  }
+
   if (session && session.type === 'receipt_flow' && session.step === 'file') {
     let telegramFileId, fileType, mimeType;
     if (msg.photo && msg.photo.length) {
@@ -3089,6 +3095,15 @@ async function handleMessage(bot, msg) {
     const dasSession = sessionStore.get(userId);
     if (dasSession && dasSession.type === 'catalog_search_flow') {
       const handled = await handleCatalogSearchTextStep(bot, chatId, userId, text);
+      if (handled) return;
+    }
+  }
+
+  // Physical catalog flows: supply, loan, return, register marketer.
+  {
+    const cfSession = sessionStore.get(userId);
+    if (cfSession && ['catalog_supply_flow', 'catalog_loan_flow', 'catalog_return_flow', 'marketer_reg_flow'].includes(cfSession.type)) {
+      const handled = await catalogFlows.handleCatalogFlowTextStep(bot, chatId, userId, text);
       if (handled) return;
     }
   }
@@ -5383,6 +5398,11 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const handled = await handleCatalogBrowseSearchCallback(bot, callbackQuery);
     if (handled) return;
   }
+  if (data.startsWith('csf:') || data.startsWith('clf:') || data.startsWith('crf:') ||
+      data.startsWith('mkr:') || data.startsWith('ctr:')) {
+    const handled = await catalogFlows.handleCatalogFlowCallback(bot, callbackQuery);
+    if (handled) return;
+  }
 
   if (data.startsWith('approve:')) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'approve');
@@ -7408,6 +7428,21 @@ async function handleCallbackQuery(bot, callbackQuery) {
         break;
       case 'catalog_stats':
         await showCatalogStats(bot, chatId, uid, messageId);
+        break;
+      case 'supply_catalog':
+        await catalogFlows.startSupplyCatalogFlow(bot, chatId, uid, messageId);
+        break;
+      case 'loan_catalog':
+        await catalogFlows.startLoanCatalogFlow(bot, chatId, uid, messageId);
+        break;
+      case 'return_catalog':
+        await catalogFlows.startReturnCatalogFlow(bot, chatId, uid, messageId);
+        break;
+      case 'register_marketer':
+        await catalogFlows.startRegisterMarketerFlow(bot, chatId, uid, messageId);
+        break;
+      case 'catalog_tracker':
+        await catalogFlows.startCatalogTracker(bot, chatId, uid, messageId);
         break;
       default:
         await bot.sendMessage(chatId, 'Feature coming soon.');
