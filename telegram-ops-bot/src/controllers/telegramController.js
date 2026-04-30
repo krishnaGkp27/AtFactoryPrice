@@ -1316,7 +1316,10 @@ async function showSampleShadePicker(bot, chatId, userId, design) {
     callback_data: `smsh:${s.slice(0, 55)}`,
   }));
   const rows = layoutShadeRows(buttons);
-  rows.push([{ text: '❌ Cancel', callback_data: 'smcanc:0' }]);
+  rows.push([
+    { text: '⬅️ Back', callback_data: 'smb:design' },
+    { text: '❌ Cancel', callback_data: 'smcanc:0' },
+  ]);
   await _sampleRender(bot, chatId, userId, 'Pick a shade:', rows);
 }
 
@@ -1344,7 +1347,10 @@ async function showSampleCustomerPicker(bot, chatId, userId, showAll = false) {
     rows.push([{ text: '📋 See More Customers', callback_data: 'smcu:__more__' }]);
   }
   rows.push([{ text: '➕ Add New Customer', callback_data: 'smcu:__new__' }]);
-  rows.push([{ text: '❌ Cancel', callback_data: 'smcanc:0' }]);
+  rows.push([
+    { text: '⬅️ Back', callback_data: 'smb:shade' },
+    { text: '❌ Cancel', callback_data: 'smcanc:0' },
+  ]);
 
   const prompt = showAll ? 'All other customers:' : 'Who is this sample for?\n(⭐ top buyers of this design)';
   await _sampleRender(bot, chatId, userId, prompt, rows);
@@ -1359,7 +1365,10 @@ async function showSampleQuantityPicker(bot, chatId, userId) {
       { text: '5 pcs', callback_data: 'smq:5' },
     ],
     [{ text: '✏️ Custom', callback_data: 'smq:__custom__' }],
-    [{ text: '❌ Cancel', callback_data: 'smcanc:0' }],
+    [
+      { text: '⬅️ Back', callback_data: 'smb:customer' },
+      { text: '❌ Cancel', callback_data: 'smcanc:0' },
+    ],
   ];
   await _sampleRender(bot, chatId, userId, 'How many sample pieces?', rows);
 }
@@ -1371,7 +1380,10 @@ async function showSampleTypePicker(bot, chatId, userId) {
       { text: 'Type B', callback_data: 'smpt:B' },
       { text: 'Type C', callback_data: 'smpt:C' },
     ],
-    [{ text: '❌ Cancel', callback_data: 'smcanc:0' }],
+    [
+      { text: '⬅️ Back', callback_data: 'smb:quantity' },
+      { text: '❌ Cancel', callback_data: 'smcanc:0' },
+    ],
   ];
   await _sampleRender(bot, chatId, userId, 'Select sample type:', rows);
 }
@@ -1391,7 +1403,10 @@ async function showSampleFollowupPicker(bot, chatId, userId) {
       { text: `📅 ${fmtDate(d14)} (+14d)`, callback_data: `smfq:${d14}` },
       { text: '🗓️ Pick from calendar',    callback_data: 'smfcal:0' },
     ],
-    [{ text: '❌ Cancel', callback_data: 'smcanc:0' }],
+    [
+      { text: '⬅️ Back', callback_data: 'smb:type' },
+      { text: '❌ Cancel', callback_data: 'smcanc:0' },
+    ],
   ];
   await _sampleRender(bot, chatId, userId, 'When to follow up with customer?', rows);
 }
@@ -1404,6 +1419,7 @@ async function showSampleConfirmation(bot, chatId, userId) {
       { text: '✅ Submit for Approval', callback_data: 'smpconf:1' },
       { text: '❌ Cancel', callback_data: 'smcanc:0' },
     ],
+    [{ text: '⬅️ Back', callback_data: 'smb:followup' }],
   ];
   await _sampleRender(bot, chatId, userId, '*Confirm and submit?*', rows);
 }
@@ -1468,7 +1484,10 @@ async function startAddCustomerFlow(bot, chatId, userId, messageId = null) {
 async function showAddCustomerPhoneStep(bot, chatId, userId) {
   const rows = [
     [{ text: '⏭ Skip phone', callback_data: 'acskip:phone' }],
-    [{ text: '❌ Cancel', callback_data: 'accanc:0' }],
+    [
+      { text: '⬅️ Back', callback_data: 'acb:name' },
+      { text: '❌ Cancel', callback_data: 'accanc:0' },
+    ],
   ];
   await _acRender(bot, chatId, userId, 'Enter *phone number* (or tap Skip):', rows);
 }
@@ -1476,7 +1495,10 @@ async function showAddCustomerPhoneStep(bot, chatId, userId) {
 async function showAddCustomerAddressStep(bot, chatId, userId) {
   const rows = [
     [{ text: '⏭ Skip address', callback_data: 'acskip:address' }],
-    [{ text: '❌ Cancel', callback_data: 'accanc:0' }],
+    [
+      { text: '⬅️ Back', callback_data: 'acb:phone' },
+      { text: '❌ Cancel', callback_data: 'accanc:0' },
+    ],
   ];
   await _acRender(bot, chatId, userId, 'Enter *address* (or tap Skip):', rows);
 }
@@ -1488,7 +1510,10 @@ async function showAddCustomerCategoryPicker(bot, chatId, userId) {
     if (CUSTOMER_CATEGORIES[i + 1]) row.push({ text: `🏷 ${CUSTOMER_CATEGORIES[i + 1]}`, callback_data: `accat:${CUSTOMER_CATEGORIES[i + 1]}` });
     rows.push(row);
   }
-  rows.push([{ text: '❌ Cancel', callback_data: 'accanc:0' }]);
+  rows.push([
+    { text: '⬅️ Back', callback_data: 'acb:address' },
+    { text: '❌ Cancel', callback_data: 'accanc:0' },
+  ]);
   await _acRender(bot, chatId, userId, 'Pick *category*:', rows);
 }
 
@@ -1502,7 +1527,10 @@ async function showAddCustomerCreditPicker(bot, chatId, userId) {
   for (let i = 0; i < cells.length; i += 3) {
     rows.push(cells.slice(i, i + 3));
   }
-  rows.push([{ text: '❌ Cancel', callback_data: 'accanc:0' }]);
+  rows.push([
+    { text: '⬅️ Back', callback_data: 'acb:category' },
+    { text: '❌ Cancel', callback_data: 'accanc:0' },
+  ]);
   await _acRender(bot, chatId, userId, 'Pick *credit limit*:', rows);
 }
 
@@ -1519,7 +1547,10 @@ async function showAddCustomerPaymentTermsStep(bot, chatId, userId) {
       { text: 'Credit', callback_data: 'acpt:Credit' },
       { text: '✏️ Custom', callback_data: 'acpt:__custom__' },
     ],
-    [{ text: '❌ Cancel', callback_data: 'accanc:0' }],
+    [
+      { text: '⬅️ Back', callback_data: 'acb:credit' },
+      { text: '❌ Cancel', callback_data: 'accanc:0' },
+    ],
   ];
   await _acRender(bot, chatId, userId, 'Pick *payment terms*:', rows);
 }
@@ -1527,16 +1558,22 @@ async function showAddCustomerPaymentTermsStep(bot, chatId, userId) {
 async function showAddCustomerNotesStep(bot, chatId, userId) {
   const rows = [
     [{ text: '⏭ Skip notes', callback_data: 'acskip:notes' }],
-    [{ text: '❌ Cancel', callback_data: 'accanc:0' }],
+    [
+      { text: '⬅️ Back', callback_data: 'acb:terms' },
+      { text: '❌ Cancel', callback_data: 'accanc:0' },
+    ],
   ];
   await _acRender(bot, chatId, userId, 'Add any *notes* (or tap Skip):', rows);
 }
 
 async function showAddCustomerConfirmation(bot, chatId, userId) {
-  const rows = [[
-    { text: '✅ Submit for Approval', callback_data: 'acconf:1' },
-    { text: '❌ Cancel', callback_data: 'accanc:0' },
-  ]];
+  const rows = [
+    [
+      { text: '✅ Submit for Approval', callback_data: 'acconf:1' },
+      { text: '❌ Cancel', callback_data: 'accanc:0' },
+    ],
+    [{ text: '⬅️ Back', callback_data: 'acb:notes' }],
+  ];
   await _acRender(bot, chatId, userId, '*Confirm and submit for admin approval?*', rows);
 }
 
@@ -1636,7 +1673,10 @@ async function showUpdatePriceShadePicker(bot, chatId, userId) {
   const rows = [[{ text: '🎨 All shades', callback_data: 'ups:__all__' }]];
   for (const r of layoutShadeRows(shadeButtons)) rows.push(r);
   if (rows.length > 15) rows.splice(15);
-  rows.push([{ text: '❌ Cancel', callback_data: 'upcanc:0' }]);
+  rows.push([
+    { text: '⬅️ Back', callback_data: 'upb:design' },
+    { text: '❌ Cancel', callback_data: 'upcanc:0' },
+  ]);
 
   const text = `💲 *Update Price*\n\n✓ Design: *${session.design}*\n\nSelect shade:`;
   await editOrSend(bot, chatId, session.flowMessageId, text,
@@ -1663,7 +1703,10 @@ async function showUpdatePriceNudgePicker(bot, chatId, userId) {
   const rows = [
     [mk(-20), mk(-10), mk(-5), mk(5), mk(10), mk(20)],
     [{ text: '✏️ Custom price', callback_data: 'upn:__custom__' }],
-    [{ text: '❌ Cancel', callback_data: 'upcanc:0' }],
+    [
+      { text: '⬅️ Back', callback_data: 'upb:shade' },
+      { text: '❌ Cancel', callback_data: 'upcanc:0' },
+    ],
   ];
   const shadeLabel = session.shade === '__all__' ? 'All shades' : session.shade;
   const text = `💲 *Update Price*\n\n✓ Design: *${session.design}*\n✓ Shade: *${shadeLabel}*\n` +
@@ -1681,10 +1724,13 @@ async function showUpdatePriceConfirm(bot, chatId, userId) {
                `After:  *${fmtMoney(session.newPrice)}/yard*\n\n_Will be queued for 2-admin approval._`;
   await editOrSend(bot, chatId, session.flowMessageId, text, {
     parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: [[
-      { text: '✅ Submit for Approval', callback_data: 'upconf:1' },
-      { text: '❌ Cancel', callback_data: 'upcanc:0' },
-    ]] },
+    reply_markup: { inline_keyboard: [
+      [
+        { text: '✅ Submit for Approval', callback_data: 'upconf:1' },
+        { text: '❌ Cancel', callback_data: 'upcanc:0' },
+      ],
+      [{ text: '⬅️ Back', callback_data: 'upb:nudge' }],
+    ] },
   });
 }
 
@@ -1739,7 +1785,10 @@ async function showTransferPackageWarehousePicker(bot, chatId, userId) {
     if (options[i + 1]) row.push({ text: `🏭 ${options[i + 1]}`, callback_data: `tpw:${String(options[i + 1]).slice(0, 50)}` });
     rows.push(row);
   }
-  rows.push([{ text: '❌ Cancel', callback_data: 'tpcanc:0' }]);
+  rows.push([
+    { text: '⬅️ Back', callback_data: 'tpb:package' },
+    { text: '❌ Cancel', callback_data: 'tpcanc:0' },
+  ]);
   const text = `🚚 *Transfer Bale*\n\n✓ Bale: *${session.packageNo}*\n` +
                `Design: ${session.design}${session.shade ? ' ' + session.shade : ''}\n` +
                `Thans: ${session.availableThans} · Yards: ${fmtQty(session.availableYards)}\n` +
@@ -1757,17 +1806,20 @@ async function showTransferPackageConfirm(bot, chatId, userId) {
                `From: *${session.fromWh}*  →  To: *${session.toWh}*\n\n_Queues 2-admin approval._`;
   await editOrSend(bot, chatId, session.flowMessageId, text, {
     parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: [[
-      { text: '✅ Submit for Approval', callback_data: 'tpconf:1' },
-      { text: '❌ Cancel', callback_data: 'tpcanc:0' },
-    ]] },
+    reply_markup: { inline_keyboard: [
+      [
+        { text: '✅ Submit for Approval', callback_data: 'tpconf:1' },
+        { text: '❌ Cancel', callback_data: 'tpcanc:0' },
+      ],
+      [{ text: '⬅️ Back', callback_data: 'tpb:warehouse' }],
+    ] },
   });
 }
 
 /* ─── Transfer Than tap flow ─────────────────────────────────────────── */
 async function startTransferThanFlow(bot, chatId, userId, messageId = null) {
   const all = await inventoryRepository.getAll();
-  const byBale = new Map();
+  const byPkg = new Map();
   all.forEach((r) => {
     if (r.status !== 'available') return;
     const key = String(r.packageNo || '').trim();
@@ -1810,7 +1862,10 @@ async function showTransferThanThanPicker(bot, chatId, userId) {
       text: `#${t.thanNo} · ${fmtQty(t.yards)}y`, callback_data: `tth:${t.thanNo}`,
     })));
   }
-  rows.push([{ text: '❌ Cancel', callback_data: 'ttcanc:0' }]);
+  rows.push([
+    { text: '⬅️ Back', callback_data: 'ttb:package' },
+    { text: '❌ Cancel', callback_data: 'ttcanc:0' },
+  ]);
   const text = `↔️ *Transfer Than*\n\n✓ Bale: *${session.packageNo}* (${session.design}${session.shade ? ' ' + session.shade : ''})\nFrom: *${session.fromWh}*\n\nSelect the than to transfer:`;
   await editOrSend(bot, chatId, session.flowMessageId, text,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
@@ -1831,7 +1886,10 @@ async function showTransferThanWarehousePicker(bot, chatId, userId) {
     if (options[i + 1]) row.push({ text: `🏭 ${options[i + 1]}`, callback_data: `ttw:${String(options[i + 1]).slice(0, 50)}` });
     rows.push(row);
   }
-  rows.push([{ text: '❌ Cancel', callback_data: 'ttcanc:0' }]);
+  rows.push([
+    { text: '⬅️ Back', callback_data: 'ttb:than' },
+    { text: '❌ Cancel', callback_data: 'ttcanc:0' },
+  ]);
   const text = `↔️ *Transfer Than*\n\n✓ Bale: *${session.packageNo}*\n✓ Than: *#${session.thanNo}*\nFrom: *${session.fromWh}*\n\nSelect destination warehouse:`;
   await editOrSend(bot, chatId, session.flowMessageId, text,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
@@ -1843,10 +1901,13 @@ async function showTransferThanConfirm(bot, chatId, userId) {
   const text = `↔️ *Confirm Transfer Than*\n\nBale: *${session.packageNo}*\nThan: *#${session.thanNo}*\nDesign: ${session.design}${session.shade ? ' ' + session.shade : ''}\nFrom: *${session.fromWh}*  →  To: *${session.toWh}*\n\n_Queues 2-admin approval._`;
   await editOrSend(bot, chatId, session.flowMessageId, text, {
     parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: [[
-      { text: '✅ Submit for Approval', callback_data: 'ttconf:1' },
-      { text: '❌ Cancel', callback_data: 'ttcanc:0' },
-    ]] },
+    reply_markup: { inline_keyboard: [
+      [
+        { text: '✅ Submit for Approval', callback_data: 'ttconf:1' },
+        { text: '❌ Cancel', callback_data: 'ttcanc:0' },
+      ],
+      [{ text: '⬅️ Back', callback_data: 'ttb:warehouse' }],
+    ] },
   });
 }
 
@@ -1899,7 +1960,10 @@ async function showReturnThanThanPicker(bot, chatId, userId) {
     if (soldThans[i + 1]) row.push(mk(soldThans[i + 1]));
     rows.push(row);
   }
-  rows.push([{ text: '❌ Cancel', callback_data: 'rtcanc:0' }]);
+  rows.push([
+    { text: '⬅️ Back', callback_data: 'rtb:package' },
+    { text: '❌ Cancel', callback_data: 'rtcanc:0' },
+  ]);
   const text = `↩️ *Return Than*\n\n✓ Bale: *${session.packageNo}* (${session.design}${session.shade ? ' ' + session.shade : ''})\n\nSelect the sold than to return:`;
   await editOrSend(bot, chatId, session.flowMessageId, text,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
@@ -1911,10 +1975,13 @@ async function showReturnThanConfirm(bot, chatId, userId) {
   const text = `↩️ *Confirm Return Than*\n\nBale: *${session.packageNo}*\nThan: *#${session.thanNo}*\nDesign: ${session.design}${session.shade ? ' ' + session.shade : ''}\n\n_Will mark the than available again. Queues 2-admin approval._`;
   await editOrSend(bot, chatId, session.flowMessageId, text, {
     parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: [[
-      { text: '✅ Submit for Approval', callback_data: 'rtconf:1' },
-      { text: '❌ Cancel', callback_data: 'rtcanc:0' },
-    ]] },
+    reply_markup: { inline_keyboard: [
+      [
+        { text: '✅ Submit for Approval', callback_data: 'rtconf:1' },
+        { text: '❌ Cancel', callback_data: 'rtcanc:0' },
+      ],
+      [{ text: '⬅️ Back', callback_data: 'rtb:than' }],
+    ] },
   });
 }
 
@@ -1931,6 +1998,7 @@ async function showSampleStatusDatePicker(bot, chatId, messageId = null) {
         { text: '📅 Last 90 days', callback_data: 'smsd:90' },
         { text: '📋 All active',   callback_data: 'smsd:all' },
       ],
+      [{ text: '⬅ Back to menu', callback_data: 'act:__back__' }],
     ],
   };
   const opts = { parse_mode: 'Markdown', reply_markup: markup };
@@ -2195,7 +2263,10 @@ async function showOrderSalespersonPicker(bot, chatId, userId) {
     if (active[i + 1]) row.push({ text: `🧑 ${active[i + 1].name}`, callback_data: `os:${active[i + 1].user_id}` });
     rows.push(row);
   }
-  rows.push([{ text: '❌ Cancel', callback_data: 'ocanc:1' }]);
+  rows.push([
+    { text: '⬅️ Back', callback_data: 'obb:quantity' },
+    { text: '❌ Cancel', callback_data: 'ocanc:1' },
+  ]);
   await bot.sendMessage(chatId, '🧑 *Select salesperson:*', {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
@@ -3737,6 +3808,7 @@ async function handleMessage(bot, msg) {
           reply_markup: { inline_keyboard: [
             [{ text: '🏭 Warehouse wise', callback_data: 'inv:wh' }],
             [{ text: '📦 Design wise', callback_data: 'inv:design' }],
+            [{ text: '⬅ Back to menu', callback_data: 'act:__back__' }],
           ] },
         });
         return;
@@ -3752,6 +3824,7 @@ async function handleMessage(bot, msg) {
           reply_markup: { inline_keyboard: [
             [{ text: '📅 Weekly (7 days)', callback_data: 'sr:7' }, { text: '📅 Monthly (30 days)', callback_data: 'sr:30' }],
             [{ text: '📅 Quarterly (90 days)', callback_data: 'sr:90' }, { text: '📅 Yearly (365 days)', callback_data: 'sr:365' }],
+            [{ text: '⬅ Back to menu', callback_data: 'act:__back__' }],
           ] },
         });
         return;
@@ -4921,6 +4994,7 @@ async function startOrderFlow(bot, chatId, userId) {
     rows.push(row);
   }
   if (rows.length > 30) rows.splice(30);
+  rows.push([{ text: '❌ Cancel', callback_data: 'ocanc:1' }]);
   await bot.sendMessage(chatId, '📦 *Create Supply Order*\n\nSelect a design:', { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
@@ -5173,6 +5247,56 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
     sessionStore.clear(uid);
 
+  } else if (data.startsWith('smb:')) {
+    // Step-by-step Back inside the Give-Sample flow.
+    //   smb:design   — re-show the design picker (first step). Clears all later state.
+    //   smb:shade    — re-show shade picker.
+    //   smb:customer — re-show customer picker.
+    //   smb:quantity — re-show quantity picker.
+    //   smb:type     — re-show type picker.
+    //   smb:followup — re-show follow-up date picker.
+    const target = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'sample_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+
+    if (target === 'design') {
+      delete session.design; delete session.shade; delete session.customer;
+      delete session.quantity; delete session.sampleType; delete session.followupDate;
+      session.step = 'design';
+      sessionStore.set(uid, session);
+      await showSampleDesignPicker(bot, chatId, uid);
+    } else if (target === 'shade') {
+      delete session.shade; delete session.customer;
+      delete session.quantity; delete session.sampleType; delete session.followupDate;
+      session.step = 'shade';
+      sessionStore.set(uid, session);
+      await showSampleShadePicker(bot, chatId, uid, session.design);
+    } else if (target === 'customer') {
+      delete session.customer; delete session.quantity;
+      delete session.sampleType; delete session.followupDate;
+      session.step = 'customer';
+      sessionStore.set(uid, session);
+      await showSampleCustomerPicker(bot, chatId, uid);
+    } else if (target === 'quantity') {
+      delete session.quantity; delete session.sampleType; delete session.followupDate;
+      session.step = 'quantity';
+      sessionStore.set(uid, session);
+      await showSampleQuantityPicker(bot, chatId, uid);
+    } else if (target === 'type') {
+      delete session.sampleType; delete session.followupDate;
+      session.step = 'type';
+      sessionStore.set(uid, session);
+      await showSampleTypePicker(bot, chatId, uid);
+    } else if (target === 'followup') {
+      delete session.followupDate;
+      session.step = 'followup';
+      sessionStore.set(uid, session);
+      await showSampleFollowupPicker(bot, chatId, uid);
+    }
+
   /* ─── ADD CUSTOMER BUTTON FLOW ─── */
   } else if (data.startsWith('accanc:')) {
     const uid = String(callbackQuery.from.id);
@@ -5185,6 +5309,56 @@ async function handleCallbackQuery(bot, callbackQuery) {
       }).catch(() => {});
     }
     sessionStore.clear(uid);
+
+  } else if (data.startsWith('acb:')) {
+    // Step-by-step Back inside the Add-Customer flow.
+    // The session step name matches each picker; we just rewind the
+    // step pointer + clear later fields, then re-render.
+    const target = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'add_customer_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+
+    // Wipe any field captured AT or AFTER the target step so the user
+    // genuinely re-answers from there. Order: name, phone, address,
+    // category, credit, terms, notes.
+    const order = ['name', 'phone', 'address', 'category', 'credit', 'terms', 'notes'];
+    const idx = order.indexOf(target);
+    if (idx >= 0) {
+      for (let i = idx; i < order.length; i++) {
+        const f = order[i];
+        if (f === 'name') delete session.name;
+        else if (f === 'phone') delete session.phone;
+        else if (f === 'address') delete session.address;
+        else if (f === 'category') delete session.category;
+        else if (f === 'credit') delete session.credit_limit;
+        else if (f === 'terms') delete session.payment_terms;
+        else if (f === 'notes') delete session.notes;
+      }
+    }
+    session.step = target;
+    sessionStore.set(uid, session);
+
+    if (target === 'name') {
+      // Restart from the entry screen. _acRender shows the prompt and
+      // a Cancel button; name itself is captured via free text.
+      await _acRender(bot, chatId, uid, 'Enter the customer *full name* (reply in chat):',
+        [[{ text: '❌ Cancel', callback_data: 'accanc:0' }]]);
+    } else if (target === 'phone') {
+      await showAddCustomerPhoneStep(bot, chatId, uid);
+    } else if (target === 'address') {
+      await showAddCustomerAddressStep(bot, chatId, uid);
+    } else if (target === 'category') {
+      await showAddCustomerCategoryPicker(bot, chatId, uid);
+    } else if (target === 'credit') {
+      await showAddCustomerCreditPicker(bot, chatId, uid);
+    } else if (target === 'terms') {
+      await showAddCustomerPaymentTermsStep(bot, chatId, uid);
+    } else if (target === 'notes') {
+      await showAddCustomerNotesStep(bot, chatId, uid);
+    }
 
   } else if (data.startsWith('acskip:')) {
     const field = data.slice(7);
@@ -5368,6 +5542,40 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
     sessionStore.clear(uid);
 
+  } else if (data.startsWith('upb:')) {
+    // Step-by-step Back inside the Update-Price flow.
+    //   upb:design — re-show the design picker (clears all later state).
+    //   upb:shade  — re-show the shade picker (clears nudge/newPrice).
+    //   upb:nudge  — re-show the nudge/custom-price picker (clears newPrice).
+    const target = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'update_price_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+
+    if (target === 'design') {
+      delete session.design;
+      delete session.shade;
+      delete session.currentPrice;
+      delete session.newPrice;
+      session.step = 'design';
+      sessionStore.set(uid, session);
+      await startUpdatePriceFlow(bot, chatId, uid, session.flowMessageId);
+    } else if (target === 'shade') {
+      delete session.shade;
+      delete session.currentPrice;
+      delete session.newPrice;
+      session.step = 'shade';
+      sessionStore.set(uid, session);
+      await showUpdatePriceShadePicker(bot, chatId, uid);
+    } else if (target === 'nudge') {
+      delete session.newPrice;
+      session.step = 'nudge';
+      sessionStore.set(uid, session);
+      await showUpdatePriceNudgePicker(bot, chatId, uid);
+    }
+
   } else if (data.startsWith('upd:')) {
     const design = data.slice(4);
     const uid = String(callbackQuery.from.id);
@@ -5450,6 +5658,35 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
     sessionStore.clear(uid);
 
+  } else if (data.startsWith('tpb:')) {
+    // Step-by-step Back inside the Transfer-Bale flow.
+    //   tpb:package   — re-show the Bale picker (clears packageNo/toWh).
+    //   tpb:warehouse — re-show warehouse picker (clears toWh).
+    const target = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'transfer_package_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+
+    if (target === 'package') {
+      delete session.packageNo;
+      delete session.toWh;
+      delete session.fromWh;
+      delete session.design;
+      delete session.shade;
+      delete session.availableThans;
+      delete session.availableYards;
+      session.step = 'package';
+      sessionStore.set(uid, session);
+      await startTransferPackageFlow(bot, chatId, uid, session.flowMessageId);
+    } else if (target === 'warehouse') {
+      delete session.toWh;
+      session.step = 'warehouse';
+      sessionStore.set(uid, session);
+      await showTransferPackageWarehousePicker(bot, chatId, uid);
+    }
+
   } else if (data.startsWith('tpp:')) {
     const pkg = data.slice(4);
     const uid = String(callbackQuery.from.id);
@@ -5507,6 +5744,41 @@ async function handleCallbackQuery(bot, callbackQuery) {
       }).catch(() => {});
     }
     sessionStore.clear(uid);
+
+  } else if (data.startsWith('ttb:')) {
+    // Step-by-step Back inside the Transfer-Than flow.
+    //   ttb:package   — re-show the Bale picker (clears all flow state below it).
+    //   ttb:than      — re-show than picker (clears thanNo/toWh).
+    //   ttb:warehouse — re-show warehouse picker (clears toWh).
+    const target = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'transfer_than_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+
+    if (target === 'package') {
+      delete session.packageNo;
+      delete session.thanNo;
+      delete session.toWh;
+      delete session.fromWh;
+      delete session.design;
+      delete session.shade;
+      session.step = 'package';
+      sessionStore.set(uid, session);
+      await startTransferThanFlow(bot, chatId, uid, session.flowMessageId);
+    } else if (target === 'than') {
+      delete session.thanNo;
+      delete session.toWh;
+      session.step = 'than';
+      sessionStore.set(uid, session);
+      await showTransferThanThanPicker(bot, chatId, uid);
+    } else if (target === 'warehouse') {
+      delete session.toWh;
+      session.step = 'warehouse';
+      sessionStore.set(uid, session);
+      await showTransferThanWarehousePicker(bot, chatId, uid);
+    }
 
   } else if (data.startsWith('ttp:')) {
     const pkg = data.slice(4);
@@ -5576,6 +5848,32 @@ async function handleCallbackQuery(bot, callbackQuery) {
       }).catch(() => {});
     }
     sessionStore.clear(uid);
+
+  } else if (data.startsWith('rtb:')) {
+    // Step-by-step Back inside the Return-Than flow.
+    //   rtb:package — re-show the Bale picker (clears the previously picked Bale + than).
+    //   rtb:than    — re-show the than picker for the same Bale (clears thanNo).
+    const target = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'return_than_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+
+    if (target === 'package') {
+      delete session.packageNo;
+      delete session.thanNo;
+      delete session.design;
+      delete session.shade;
+      session.step = 'package';
+      sessionStore.set(uid, session);
+      await startReturnThanFlow(bot, chatId, uid, session.flowMessageId);
+    } else if (target === 'than') {
+      delete session.thanNo;
+      session.step = 'than';
+      sessionStore.set(uid, session);
+      await showReturnThanThanPicker(bot, chatId, uid);
+    }
 
   } else if (data.startsWith('rtp:')) {
     const pkg = data.slice(4);
@@ -5803,6 +6101,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
     if (rows.length > 20) rows.splice(20);
     rows.push([{ text: '➕ New customer', callback_data: 'oc:__new__' }]);
+    rows.push([
+      { text: '⬅️ Back', callback_data: 'obb:design' },
+      { text: '❌ Cancel', callback_data: 'ocanc:1' },
+    ]);
     await bot.sendMessage(callbackQuery.message.chat.id, `Design: *${design}*\n\nSelect customer (${label}):`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 
   } else if (data.startsWith('oc:')) {
@@ -5833,7 +6135,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
             { text: '10 Bales', callback_data: 'oq:10' },
           ],
           [{ text: '✏️ Custom', callback_data: 'oq:__custom__' }],
-          [{ text: '❌ Cancel', callback_data: 'ocanc:1' }],
+          [
+            { text: '⬅️ Back', callback_data: 'obb:customer' },
+            { text: '❌ Cancel', callback_data: 'ocanc:1' },
+          ],
         ] },
       });
     }
@@ -5871,7 +6176,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
     sessionStore.set(uid, session);
     await bot.sendMessage(callbackQuery.message.chat.id, `Salesperson: *${session.salesperson_name}*\n\nPayment status:`, {
       parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: [[{ text: '💰 PAID', callback_data: 'op:PAID' }, { text: '📝 UNPAID', callback_data: 'op:UNPAID' }]] },
+      reply_markup: { inline_keyboard: [
+        [{ text: '💰 PAID', callback_data: 'op:PAID' }, { text: '📝 UNPAID', callback_data: 'op:UNPAID' }],
+        [
+          { text: '⬅️ Back', callback_data: 'obb:salesperson' },
+          { text: '❌ Cancel', callback_data: 'ocanc:1' },
+        ],
+      ] },
     });
 
   } else if (data.startsWith('op:')) {
@@ -5892,6 +6203,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
         [{ text: `📅 Today (${today})`, callback_data: 'odt:today' }],
         [{ text: `📅 Next Monday (${nextMon})`, callback_data: 'odt:mon' }, { text: `📅 Next Friday (${nextFri})`, callback_data: 'odt:fri' }],
         [{ text: '✏️ Custom date', callback_data: 'odt:custom' }],
+        [
+          { text: '⬅️ Back', callback_data: 'obb:payment' },
+          { text: '❌ Cancel', callback_data: 'ocanc:1' },
+        ],
       ] },
     });
 
@@ -5990,6 +6305,98 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
     await bot.sendMessage(callbackQuery.message.chat.id, 'Order creation cancelled.');
+
+  } else if (data.startsWith('obb:')) {
+    // Step-by-step Back inside the Order-creation flow.
+    // Order flow uses fresh sends for each step (no in-place edits), so
+    // each Back tap simply rewinds session.step + clears later fields,
+    // hides the current message's keyboard, and re-renders the prior
+    // step as a new message.
+    const target = data.slice(4);
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'order_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+
+    if (target === 'design') {
+      delete session.design; delete session.customer;
+      delete session.quantity; delete session.salesperson_id; delete session.salesperson_name;
+      delete session.payment_status; delete session.scheduled_date;
+      session.step = 'design';
+      sessionStore.set(uid, session);
+      await startOrderFlow(bot, chatId, uid);
+    } else if (target === 'customer') {
+      delete session.customer; delete session.quantity;
+      delete session.salesperson_id; delete session.salesperson_name;
+      delete session.payment_status; delete session.scheduled_date;
+      session.step = 'customer';
+      sessionStore.set(uid, session);
+      // Re-render customer picker from scratch (mirrors `od:` branch).
+      let customerNames = await transactionsRepo.getCustomersByDesign(session.design);
+      let label = 'past buyers shown';
+      if (!customerNames.length) {
+        const customersRepo = require('../repositories/customersRepository');
+        const allCust = await customersRepo.getAll();
+        customerNames = allCust.filter((c) => c.status === 'Active' && c.name).map((c) => c.name);
+        if (customerNames.length) label = 'registered customers shown';
+      }
+      const rows = [];
+      for (let i = 0; i < customerNames.length; i += 2) {
+        const row = [{ text: customerNames[i], callback_data: `oc:${customerNames[i].slice(0, 50)}` }];
+        if (customerNames[i + 1]) row.push({ text: customerNames[i + 1], callback_data: `oc:${customerNames[i + 1].slice(0, 50)}` });
+        rows.push(row);
+      }
+      if (rows.length > 20) rows.splice(20);
+      rows.push([{ text: '➕ New customer', callback_data: 'oc:__new__' }]);
+      rows.push([
+        { text: '⬅️ Back', callback_data: 'obb:design' },
+        { text: '❌ Cancel', callback_data: 'ocanc:1' },
+      ]);
+      await bot.sendMessage(chatId, `Design: *${session.design}*\n\nSelect customer (${label}):`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+    } else if (target === 'quantity') {
+      delete session.quantity; delete session.salesperson_id; delete session.salesperson_name;
+      delete session.payment_status; delete session.scheduled_date;
+      session.step = 'quantity';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(chatId, `Customer: *${session.customer}*\n\nPick quantity:`, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [
+          [
+            { text: '1 Bale',  callback_data: 'oq:1' },
+            { text: '2 Bales', callback_data: 'oq:2' },
+            { text: '5 Bales', callback_data: 'oq:5' },
+            { text: '10 Bales', callback_data: 'oq:10' },
+          ],
+          [{ text: '✏️ Custom', callback_data: 'oq:__custom__' }],
+          [
+            { text: '⬅️ Back', callback_data: 'obb:customer' },
+            { text: '❌ Cancel', callback_data: 'ocanc:1' },
+          ],
+        ] },
+      });
+    } else if (target === 'salesperson') {
+      delete session.salesperson_id; delete session.salesperson_name;
+      delete session.payment_status; delete session.scheduled_date;
+      session.step = 'salesperson';
+      sessionStore.set(uid, session);
+      await showOrderSalespersonPicker(bot, chatId, uid);
+    } else if (target === 'payment') {
+      delete session.payment_status; delete session.scheduled_date;
+      session.step = 'payment';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(chatId, `Salesperson: *${session.salesperson_name}*\n\nPayment status:`, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [
+          [{ text: '💰 PAID', callback_data: 'op:PAID' }, { text: '📝 UNPAID', callback_data: 'op:UNPAID' }],
+          [
+            { text: '⬅️ Back', callback_data: 'obb:salesperson' },
+            { text: '❌ Cancel', callback_data: 'ocanc:1' },
+          ],
+        ] },
+      });
+    }
 
   } else if (data.startsWith('oacc:')) {
     const orderId = data.slice(5);
@@ -6376,6 +6783,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
           reply_markup: { inline_keyboard: [
             [{ text: '🏭 Warehouse wise', callback_data: 'inv:wh' }],
             [{ text: '📦 Design wise', callback_data: 'inv:design' }],
+            [{ text: '⬅ Back to menu', callback_data: 'act:__back__' }],
           ] },
         });
         break;
@@ -6387,6 +6795,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
           reply_markup: { inline_keyboard: [
             [{ text: '📅 Weekly (7 days)', callback_data: 'sr:7' }, { text: '📅 Monthly (30 days)', callback_data: 'sr:30' }],
             [{ text: '📅 Quarterly (90 days)', callback_data: 'sr:90' }, { text: '📅 Yearly (365 days)', callback_data: 'sr:365' }],
+            [{ text: '⬅ Back to menu', callback_data: 'act:__back__' }],
           ] },
         });
         break;
