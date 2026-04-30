@@ -64,16 +64,26 @@ async function sendLong(bot, chatId, text, opts = {}) {
     return;
   }
   const lines = text.split('\n');
+  // When opts has a reply_markup (e.g. drill-down buttons under a
+  // compact report), we only attach it to the FINAL chunk so the
+  // inline keyboard isn't duplicated across each split message.
+  const optsNoKeyboard = { ...opts };
+  delete optsNoKeyboard.reply_markup;
+  const chunks = [];
   let chunk = '';
   for (const line of lines) {
     if ((chunk + '\n' + line).length > MAX && chunk) {
-      await bot.sendMessage(chatId, chunk, opts);
+      chunks.push(chunk);
       chunk = line;
     } else {
       chunk = chunk ? chunk + '\n' + line : line;
     }
   }
-  if (chunk) await bot.sendMessage(chatId, chunk, opts);
+  if (chunk) chunks.push(chunk);
+  for (let i = 0; i < chunks.length; i++) {
+    const useOpts = i === chunks.length - 1 ? opts : optsNoKeyboard;
+    await bot.sendMessage(chatId, chunks[i], useOpts);
+  }
 }
 
 async function requireApproval(bot, chatId, msg, userId, action, actionJSON, summary) {
@@ -94,9 +104,55 @@ async function requireApproval(bot, chatId, msg, userId, action, actionJSON, sum
 }
 
 const CURRENCY = config.currency || 'NGN';
+// Short currency symbol used inside report rows so we don't repeat "NGN"
+// on every line. Falls back to a configured symbol or "₦" for Naira.
+// Long-form fmtMoney is preserved for headers / one-off lines that want
+// the explicit currency code.
+const CURRENCY_SYMBOL = (config.currencySymbol || (CURRENCY === 'NGN' ? '₦' : `${CURRENCY} `));
 
 function fmtQty(n) { return Number(n).toLocaleString('en-NG', { maximumFractionDigits: 2 }); }
 function fmtMoney(n) { return `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`; }
+/** Compact money for in-row use: "₦1,500,000" — no space, no currency code. */
+function fmtMoneyShort(n) {
+  return `${CURRENCY_SYMBOL}${Number(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
+}
+
+/**
+ * Render a list with the top-N items expanded and the remainder rolled
+ * into a single trailing line. Returns:
+ *   { text, hasMore: boolean, restCount: number }
+ *
+ * @param {Array} items
+ * @param {number} n         How many top items to show.
+ * @param {(item:any, idx:number)=>string} formatItemFn
+ * @param {string} [restLabel='item']  Singular noun for the rest line.
+ */
+function renderTopNWithRest(items, n, formatItemFn, restLabel = 'item') {
+  const out = [];
+  const limit = Math.min(n, items.length);
+  for (let i = 0; i < limit; i++) out.push(formatItemFn(items[i], i));
+  const restCount = Math.max(0, items.length - limit);
+  return {
+    text: out.join('\n'),
+    hasMore: restCount > 0,
+    restCount,
+  };
+}
+
+/**
+ * One-line legend that appears once at the top of a report so the
+ * data rows can drop their unit labels. Currency line is appended
+ * automatically when `hasMoney` is true.
+ *
+ * @param {string[]} parts Comma-joined into a single italic legend line.
+ * @param {boolean} hasMoney
+ * @returns {string}
+ */
+function buildReportLegend(parts, hasMoney) {
+  const xs = parts.slice();
+  if (hasMoney) xs.push(`amounts in ${CURRENCY}`);
+  return `_${xs.join(' · ')}_\n`;
+}
 
 const getMaterialInfo = productTypesRepo.getMaterialInfo;
 const fmtDate = require('../utils/formatDate');
@@ -130,6 +186,10 @@ async function getSoldItems() {
 
 function valStr(value, isAdmin) {
   return isAdmin ? ` — ${fmtMoney(value)}` : '';
+}
+/** Compact admin-only value tail using short currency symbol. */
+function valStrShort(value, isAdmin) {
+  return isAdmin ? ` · ${fmtMoneyShort(value)}` : '';
 }
 
 function buildDesignWiseReport(sold, isAdmin) {
@@ -238,7 +298,32 @@ function buildDesignDateWiseReport(sold, isAdmin) {
   return text;
 }
 
-function buildCustomerWiseReport(sold, isAdmin) {
+/**
+ * Per-group inner formatter used by both Customer-wise and Warehouse-
+ * wise supply reports. Returns the compact (top-3) block; full block
+ * if `expandAll` is true.
+ */
+function _supplyDetailsGroupBlock(items, isAdmin, expandAll) {
+  const byDS = new Map();
+  for (const r of items) {
+    const key = `${r.design}|${r.shade || '-'}`;
+    if (!byDS.has(key)) byDS.set(key, { design: r.design, shade: r.shade || '-', pkgs: new Set(), thans: 0, yards: 0, value: 0 });
+    const ds = byDS.get(key);
+    ds.pkgs.add(r.packageNo); ds.thans++; ds.yards += r.yards; ds.value += r.yards * r.pricePerYard;
+  }
+  const dsSorted = [...byDS.values()].sort((a, b) => b.yards - a.yards);
+  const limit = expandAll ? dsSorted.length : Math.min(3, dsSorted.length);
+  const lines = [];
+  for (let i = 0; i < limit; i++) {
+    const ds = dsSorted[i];
+    lines.push(`  ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} · ${ds.thans} thans · ${fmtQty(ds.yards)} yds${valStrShort(ds.value, isAdmin)}`);
+  }
+  const restCount = dsSorted.length - limit;
+  return { lines, restCount, totalDesigns: dsSorted.length };
+}
+
+function buildCustomerWiseReport(sold, isAdmin, opts = {}) {
+  const expandKey = (opts.expand || '').trim().toLowerCase();
   const customers = new Map();
   for (const r of sold) {
     const key = r.soldTo;
@@ -248,30 +333,30 @@ function buildCustomerWiseReport(sold, isAdmin) {
     cg.totalPkgs.add(r.packageNo); cg.totalThans++; cg.totalYards += r.yards; cg.totalValue += r.yards * r.pricePerYard;
   }
   const sorted = [...customers.entries()].sort((a, b) => b[1].totalValue - a[1].totalValue);
-  let text = `📊 *Supply Details — Customer Wise*\n\n`;
+  let text = `📊 *Supply Details — Customer Wise*\n`;
+  text += buildReportLegend(['Bales · thans · yds'], isAdmin);
+  text += '\n';
+  const buttons = [];
   let grandPkgs = new Set(), grandThans = 0, grandYards = 0, grandValue = 0;
   for (const [customer, cg] of sorted) {
-    text += `👤 *${customer}*\n`;
-    const byDS = new Map();
-    for (const r of cg.items) {
-      const key = `${r.design}|${r.shade || '-'}`;
-      if (!byDS.has(key)) byDS.set(key, { design: r.design, shade: r.shade || '-', pkgs: new Set(), thans: 0, yards: 0, value: 0 });
-      const ds = byDS.get(key);
-      ds.pkgs.add(r.packageNo); ds.thans++; ds.yards += r.yards; ds.value += r.yards * r.pricePerYard;
+    text += `👤 *${customer}* — ${cg.totalPkgs.size} · ${cg.totalThans} thans · ${fmtQty(cg.totalYards)} yds${valStrShort(cg.totalValue, isAdmin)}\n`;
+    const expandThis = expandKey === customer.toLowerCase();
+    const block = _supplyDetailsGroupBlock(cg.items, isAdmin, expandThis);
+    if (block.lines.length) text += block.lines.join('\n') + '\n';
+    if (block.restCount > 0) {
+      text += `  _… and ${block.restCount} more design${block.restCount > 1 ? 's' : ''}_\n`;
+      buttons.push([{ text: `🔍 ${customer} — show all (${block.totalDesigns})`, callback_data: `rxw:supply_c:${customer.slice(0, 50)}` }]);
     }
-    const dsSorted = [...byDS.values()].sort((a, b) => b.yards - a.yards);
-    for (const ds of dsSorted) {
-      text += `  ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} Bales, ${ds.thans} thans, ${fmtQty(ds.yards)} yds${valStr(ds.value, isAdmin)}\n`;
-    }
-    text += `  *Total: ${cg.totalPkgs.size} Bales, ${cg.totalThans} thans, ${fmtQty(cg.totalYards)} yds${valStr(cg.totalValue, isAdmin)}*\n\n`;
+    text += '\n';
     for (const p of cg.totalPkgs) grandPkgs.add(p);
     grandThans += cg.totalThans; grandYards += cg.totalYards; grandValue += cg.totalValue;
   }
-  text += `*Grand Total: ${grandPkgs.size} Bales, ${grandThans} thans, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
-  return text;
+  text += `*Grand Total: ${grandPkgs.size} · ${grandThans} thans · ${fmtQty(grandYards)} yds${valStrShort(grandValue, isAdmin)}*`;
+  return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
-function buildWarehouseWiseReport(sold, isAdmin) {
+function buildWarehouseWiseReport(sold, isAdmin, opts = {}) {
+  const expandKey = (opts.expand || '').trim().toLowerCase();
   const warehouses = new Map();
   for (const r of sold) {
     const key = r.warehouse || 'Unknown';
@@ -281,27 +366,26 @@ function buildWarehouseWiseReport(sold, isAdmin) {
     wg.totalPkgs.add(r.packageNo); wg.totalThans++; wg.totalYards += r.yards; wg.totalValue += r.yards * r.pricePerYard;
   }
   const sorted = [...warehouses.entries()].sort((a, b) => b[1].totalValue - a[1].totalValue);
-  let text = `📊 *Supply Details — Warehouse Wise*\n\n`;
+  let text = `📊 *Supply Details — Warehouse Wise*\n`;
+  text += buildReportLegend(['Bales · thans · yds'], isAdmin);
+  text += '\n';
+  const buttons = [];
   let grandPkgs = new Set(), grandThans = 0, grandYards = 0, grandValue = 0;
   for (const [wh, wg] of sorted) {
-    text += `🏭 *${wh}*\n`;
-    const byDS = new Map();
-    for (const r of wg.items) {
-      const key = `${r.design}|${r.shade || '-'}`;
-      if (!byDS.has(key)) byDS.set(key, { design: r.design, shade: r.shade || '-', pkgs: new Set(), thans: 0, yards: 0, value: 0 });
-      const ds = byDS.get(key);
-      ds.pkgs.add(r.packageNo); ds.thans++; ds.yards += r.yards; ds.value += r.yards * r.pricePerYard;
+    text += `🏭 *${wh}* — ${wg.totalPkgs.size} · ${wg.totalThans} thans · ${fmtQty(wg.totalYards)} yds${valStrShort(wg.totalValue, isAdmin)}\n`;
+    const expandThis = expandKey === wh.toLowerCase();
+    const block = _supplyDetailsGroupBlock(wg.items, isAdmin, expandThis);
+    if (block.lines.length) text += block.lines.join('\n') + '\n';
+    if (block.restCount > 0) {
+      text += `  _… and ${block.restCount} more design${block.restCount > 1 ? 's' : ''}_\n`;
+      buttons.push([{ text: `🔍 ${wh} — show all (${block.totalDesigns})`, callback_data: `rxw:supply_w:${wh.slice(0, 50)}` }]);
     }
-    const dsSorted = [...byDS.values()].sort((a, b) => b.yards - a.yards);
-    for (const ds of dsSorted) {
-      text += `  ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} Bales, ${ds.thans} thans, ${fmtQty(ds.yards)} yds${valStr(ds.value, isAdmin)}\n`;
-    }
-    text += `  *Total: ${wg.totalPkgs.size} Bales, ${wg.totalThans} thans, ${fmtQty(wg.totalYards)} yds${valStr(wg.totalValue, isAdmin)}*\n\n`;
+    text += '\n';
     for (const p of wg.totalPkgs) grandPkgs.add(p);
     grandThans += wg.totalThans; grandYards += wg.totalYards; grandValue += wg.totalValue;
   }
-  text += `*Grand Total: ${grandPkgs.size} Bales, ${grandThans} thans, ${fmtQty(grandYards)} yds${valStr(grandValue, isAdmin)}*`;
-  return text;
+  text += `*Grand Total: ${grandPkgs.size} · ${grandThans} thans · ${fmtQty(grandYards)} yds${valStrShort(grandValue, isAdmin)}*`;
+  return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
 // ─── End Supply Details Reports ─────────────────────────────────────────────
@@ -379,65 +463,124 @@ async function editOrSendAnchored(bot, chatId, userId, text, opts = {}) {
   return result;
 }
 
-function buildInventoryWarehouseReport(allItems) {
+/**
+ * Render one shade row in compact form. The legend at the top of the
+ * report explains what the columns mean, so we omit per-row labels.
+ *
+ * Format: "  <head>: <bal>/<total> Bales · <yds> yds avail · sold-bar"
+ * — but if nothing has been sold (sold yards == 0), we drop the bar
+ * and the redundant "<total>" since avail == total.
+ */
+function _invShadeLineCompact(ds, head) {
+  const balPkgs = ds.balPkgs.size;
+  const totalPkgs = ds.totalPkgs.size;
+  const noSales = (ds.soldYards || 0) === 0;
+  if (noSales) {
+    // Pre-sale: avail == total, so a single number is enough.
+    return `  ${head}: ${balPkgs} · ${fmtQty(ds.balYards)} yds`;
+  }
+  const bar = fmtBar(ds.soldYards, ds.totalYards);
+  return `  ${head}: ${balPkgs}/${totalPkgs} · ${fmtQty(ds.balYards)}/${fmtQty(ds.totalYards)} yds · ${bar}`;
+}
+
+function _invGroupSummary(rows) {
+  let totalYards = 0, soldYards = 0, balYards = 0;
+  const balPkgs = new Set(), totalPkgs = new Set();
+  for (const ds of rows) {
+    totalYards += ds.totalYards; soldYards += ds.soldYards; balYards += ds.balYards;
+    for (const p of ds.balPkgs) balPkgs.add(p);
+    for (const p of ds.totalPkgs) totalPkgs.add(p);
+  }
+  return { totalYards, soldYards, balYards, balPkgs, totalPkgs };
+}
+
+function _invSummaryLine(s) {
+  const noSales = s.soldYards === 0;
+  if (noSales) {
+    return `${s.balPkgs.size} Bales · ${fmtQty(s.balYards)} yds`;
+  }
+  return `${s.balPkgs.size}/${s.totalPkgs.size} Bales · ${fmtQty(s.balYards)}/${fmtQty(s.totalYards)} yds · ${fmtBar(s.soldYards, s.totalYards)}`;
+}
+
+function buildInventoryWarehouseReport(allItems, opts = {}) {
+  const expandKey = (opts.expand || '').trim().toLowerCase();
   const warehouses = new Map();
   for (const r of allItems) {
     const wh = r.warehouse || 'Unknown';
     if (!warehouses.has(wh)) warehouses.set(wh, []);
     warehouses.get(wh).push(r);
   }
-  let text = '';
+  let text = `📦 *Inventory Details — Warehouse Wise*\n`;
+  text += buildReportLegend(['Bales (avail/total)', 'yds (avail/total)', 'sold-bar'], false);
+  text += '\n';
+  const buttons = [];
   let gTotalYards = 0, gSoldYards = 0, gBalYards = 0, gBalPkgs = new Set(), gTotalPkgs = new Set();
   for (const [wh, items] of [...warehouses.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     const rows = aggregateShadeRows(items);
-    let whTotalYards = 0, whSoldYards = 0, whBalYards = 0, whBalPkgs = new Set(), whTotalPkgs = new Set();
-    text += `🏭 *${wh}*\n`;
-    for (const ds of rows) {
-      text += `  ${ds.design} Shade ${ds.shade}: ${ds.balPkgs.size} Bales, ${fmtQty(ds.balYards)} yds avail | ${fmtQty(ds.totalYards)} total | ${fmtBar(ds.soldYards, ds.totalYards)}\n`;
-      whTotalYards += ds.totalYards; whSoldYards += ds.soldYards; whBalYards += ds.balYards;
-      for (const p of ds.balPkgs) whBalPkgs.add(p);
-      for (const p of ds.totalPkgs) whTotalPkgs.add(p);
+    const summary = _invGroupSummary(rows);
+    text += `🏭 *${wh}* — ${_invSummaryLine(summary)}\n`;
+    const expandThis = expandKey === wh.toLowerCase();
+    const limit = expandThis ? rows.length : Math.min(3, rows.length);
+    for (let i = 0; i < limit; i++) {
+      const ds = rows[i];
+      text += _invShadeLineCompact(ds, `${ds.design} Shade ${ds.shade}`) + '\n';
     }
-    text += `  *${wh} Total: ${whTotalPkgs.size} Bales | ${fmtQty(whTotalYards)} yds total | ${fmtQty(whSoldYards)} sold | Balance: ${whBalPkgs.size} Bales, ${fmtQty(whBalYards)} yds*\n\n`;
-    gTotalYards += whTotalYards; gSoldYards += whSoldYards; gBalYards += whBalYards;
-    for (const p of whBalPkgs) gBalPkgs.add(p);
-    for (const p of whTotalPkgs) gTotalPkgs.add(p);
+    const restCount = rows.length - limit;
+    if (restCount > 0) {
+      text += `  _… and ${restCount} more shade${restCount > 1 ? 's' : ''}_\n`;
+      buttons.push([{ text: `🔍 ${wh} — show all (${rows.length})`, callback_data: `rxw:inv_w:${wh.slice(0, 50)}` }]);
+    }
+    text += '\n';
+    gTotalYards += summary.totalYards; gSoldYards += summary.soldYards; gBalYards += summary.balYards;
+    for (const p of summary.balPkgs) gBalPkgs.add(p);
+    for (const p of summary.totalPkgs) gTotalPkgs.add(p);
   }
-  text += `*Grand Total: ${gTotalPkgs.size} Bales | ${fmtQty(gTotalYards)} yds total | ${fmtQty(gSoldYards)} sold | Balance: ${gBalPkgs.size} Bales, ${fmtQty(gBalYards)} yds*`;
-  return `📦 *Inventory Details — Warehouse Wise*\n\n` + text;
+  const grand = { totalYards: gTotalYards, soldYards: gSoldYards, balYards: gBalYards, balPkgs: gBalPkgs, totalPkgs: gTotalPkgs };
+  text += `*Grand Total: ${_invSummaryLine(grand)}*`;
+  return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
-function buildInventoryDesignReport(allItems) {
+function buildInventoryDesignReport(allItems, opts = {}) {
+  const expandKey = (opts.expand || '').trim().toLowerCase();
   const designs = new Map();
   for (const r of allItems) {
     const key = r.design || 'Unknown';
     if (!designs.has(key)) designs.set(key, []);
     designs.get(key).push(r);
   }
-  let text = '';
-  let gTotalYards = 0, gSoldYards = 0, gBalYards = 0, gBalPkgs = new Set(), gTotalPkgs = new Set();
+  let text = `📦 *Inventory Details — Design Wise*\n`;
+  text += buildReportLegend(['Bales (avail/total)', 'yds (avail/total)', 'sold-bar'], false);
+  text += '\n';
+  const buttons = [];
   const sortedDesigns = [...designs.entries()].sort((a, b) => {
     const balA = a[1].filter((r) => r.status === 'available').reduce((s, r) => s + r.yards, 0);
     const balB = b[1].filter((r) => r.status === 'available').reduce((s, r) => s + r.yards, 0);
     return balB - balA;
   });
+  let gTotalYards = 0, gSoldYards = 0, gBalYards = 0, gBalPkgs = new Set(), gTotalPkgs = new Set();
   for (const [design, items] of sortedDesigns) {
     const rows = aggregateShadeRows(items);
-    let dTotalYards = 0, dSoldYards = 0, dBalYards = 0, dBalPkgs = new Set(), dTotalPkgs = new Set();
-    text += `📦 *${design}*\n`;
-    for (const ds of rows) {
-      text += `  Shade ${ds.shade}: ${ds.balPkgs.size} Bales, ${fmtQty(ds.balYards)} yds avail | ${fmtQty(ds.totalYards)} total | ${fmtBar(ds.soldYards, ds.totalYards)}\n`;
-      dTotalYards += ds.totalYards; dSoldYards += ds.soldYards; dBalYards += ds.balYards;
-      for (const p of ds.balPkgs) dBalPkgs.add(p);
-      for (const p of ds.totalPkgs) dTotalPkgs.add(p);
+    const summary = _invGroupSummary(rows);
+    text += `📦 *${design}* — ${_invSummaryLine(summary)}\n`;
+    const expandThis = expandKey === design.toLowerCase();
+    const limit = expandThis ? rows.length : Math.min(3, rows.length);
+    for (let i = 0; i < limit; i++) {
+      const ds = rows[i];
+      text += _invShadeLineCompact(ds, `Shade ${ds.shade}`) + '\n';
     }
-    text += `  *Total: ${dTotalPkgs.size} Bales | ${fmtQty(dTotalYards)} yds total | ${fmtQty(dSoldYards)} sold | Balance: ${dBalPkgs.size} Bales, ${fmtQty(dBalYards)} yds*\n\n`;
-    gTotalYards += dTotalYards; gSoldYards += dSoldYards; gBalYards += dBalYards;
-    for (const p of dBalPkgs) gBalPkgs.add(p);
-    for (const p of dTotalPkgs) gTotalPkgs.add(p);
+    const restCount = rows.length - limit;
+    if (restCount > 0) {
+      text += `  _… and ${restCount} more shade${restCount > 1 ? 's' : ''}_\n`;
+      buttons.push([{ text: `🔍 ${design} — show all (${rows.length})`, callback_data: `rxw:inv_d:${design.slice(0, 50)}` }]);
+    }
+    text += '\n';
+    gTotalYards += summary.totalYards; gSoldYards += summary.soldYards; gBalYards += summary.balYards;
+    for (const p of summary.balPkgs) gBalPkgs.add(p);
+    for (const p of summary.totalPkgs) gTotalPkgs.add(p);
   }
-  text += `*Grand Total: ${gTotalPkgs.size} Bales | ${fmtQty(gTotalYards)} yds total | ${fmtQty(gSoldYards)} sold | Balance: ${gBalPkgs.size} Bales, ${fmtQty(gBalYards)} yds*`;
-  return `📦 *Inventory Details — Design Wise*\n\n` + text;
+  const grand = { totalYards: gTotalYards, soldYards: gSoldYards, balYards: gBalYards, balPkgs: gBalPkgs, totalPkgs: gTotalPkgs };
+  text += `*Grand Total: ${_invSummaryLine(grand)}*`;
+  return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
 // ─── Sales Report (Interactive) ─────────────────────────────────────────────
@@ -449,7 +592,8 @@ function filterSoldByPeriod(sold, periodDays) {
   return sold.filter((r) => r.soldDate >= cutoffStr);
 }
 
-function buildSalesDesignReport(sold, periodLabel) {
+function buildSalesDesignReport(sold, periodLabel, opts = {}) {
+  const expandAll = !!opts.expand;
   const byDS = new Map();
   for (const r of sold) {
     const key = `${r.design}|${r.shade || '-'}`;
@@ -458,22 +602,33 @@ function buildSalesDesignReport(sold, periodLabel) {
     ds.pkgs.add(r.packageNo); ds.thans++; ds.yards += r.yards; ds.value += r.yards * r.pricePerYard;
   }
   const sorted = [...byDS.values()].sort((a, b) => b.value - a.value);
-  let text = `📊 *Sales Report — ${periodLabel} — Design Wise*\n\n`;
-  if (!sorted.length) return text + 'No sales in this period.';
+  let text = `📊 *Sales Report — ${periodLabel} — Design Wise*\n`;
+  text += buildReportLegend(['Bales · thans · yds · value'], true);
+  text += '\n';
+  if (!sorted.length) return { text: text + 'No sales in this period.', keyboard: null };
+  const limit = expandAll ? sorted.length : Math.min(3, sorted.length);
   let gPkgs = new Set(), gThans = 0, gYards = 0, gValue = 0;
-  let rank = 0;
+  for (let i = 0; i < limit; i++) {
+    const ds = sorted[i];
+    text += `${i + 1}. *${ds.design}* Shade ${ds.shade} — ${ds.pkgs.size} · ${ds.thans} thans · ${fmtQty(ds.yards)} yds · ${fmtMoneyShort(ds.value)}\n`;
+  }
+  // Always accumulate ALL groups for grand totals (not just shown ones).
   for (const ds of sorted) {
-    rank++;
-    text += `${rank}. *${ds.design}* Shade ${ds.shade}\n`;
-    text += `   ${ds.pkgs.size} Bales, ${ds.thans} thans, ${fmtQty(ds.yards)} yds — ${fmtMoney(ds.value)}\n`;
     for (const p of ds.pkgs) gPkgs.add(p);
     gThans += ds.thans; gYards += ds.yards; gValue += ds.value;
   }
-  text += `\n*Grand Total: ${gPkgs.size} Bales, ${gThans} thans, ${fmtQty(gYards)} yds — ${fmtMoney(gValue)}*`;
-  return text;
+  const restCount = sorted.length - limit;
+  const buttons = [];
+  if (restCount > 0) {
+    text += `\n_… and ${restCount} more design${restCount > 1 ? 's' : ''}_\n`;
+    buttons.push([{ text: `🔍 Show all (${sorted.length})`, callback_data: `rxw:sales_d:${opts.periodKey || ''}` }]);
+  }
+  text += `\n*Grand Total: ${gPkgs.size} · ${gThans} thans · ${fmtQty(gYards)} yds · ${fmtMoneyShort(gValue)}*`;
+  return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
-function buildSalesCustomerReport(sold, periodLabel) {
+function buildSalesCustomerReport(sold, periodLabel, opts = {}) {
+  const expandKey = (opts.expand || '').trim().toLowerCase();
   const customers = new Map();
   for (const r of sold) {
     const key = r.soldTo || 'Unknown';
@@ -483,13 +638,17 @@ function buildSalesCustomerReport(sold, periodLabel) {
     cg.pkgs.add(r.packageNo); cg.thans++; cg.yards += r.yards; cg.value += r.yards * r.pricePerYard;
   }
   const sorted = [...customers.entries()].sort((a, b) => b[1].value - a[1].value);
-  let text = `📊 *Sales Report — ${periodLabel} — Customer Wise*\n\n`;
-  if (!sorted.length) return text + 'No sales in this period.';
+  let text = `📊 *Sales Report — ${periodLabel} — Customer Wise*\n`;
+  text += buildReportLegend(['Bales · thans · yds · value'], true);
+  text += '\n';
+  if (!sorted.length) return { text: text + 'No sales in this period.', keyboard: null };
+  const buttons = [];
   let gPkgs = new Set(), gThans = 0, gYards = 0, gValue = 0;
   let rank = 0;
   for (const [customer, cg] of sorted) {
     rank++;
-    text += `${rank}. 👤 *${customer}*\n`;
+    text += `${rank}. 👤 *${customer}* — ${cg.pkgs.size} · ${cg.thans} thans · ${fmtQty(cg.yards)} yds · ${fmtMoneyShort(cg.value)}\n`;
+    const expandThis = expandKey === customer.toLowerCase();
     const byDS = new Map();
     for (const r of cg.items) {
       const key = `${r.design}|${r.shade || '-'}`;
@@ -498,15 +657,22 @@ function buildSalesCustomerReport(sold, periodLabel) {
       ds.pkgs.add(r.packageNo); ds.thans++; ds.yards += r.yards; ds.value += r.yards * r.pricePerYard;
     }
     const dsSorted = [...byDS.values()].sort((a, b) => b.value - a.value);
-    for (const ds of dsSorted) {
-      text += `   ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} Bales, ${ds.thans} thans, ${fmtQty(ds.yards)} yds — ${fmtMoney(ds.value)}\n`;
+    const dsLimit = expandThis ? dsSorted.length : Math.min(3, dsSorted.length);
+    for (let i = 0; i < dsLimit; i++) {
+      const ds = dsSorted[i];
+      text += `   ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} · ${ds.thans} thans · ${fmtQty(ds.yards)} yds · ${fmtMoneyShort(ds.value)}\n`;
     }
-    text += `   *Total: ${cg.pkgs.size} Bales, ${cg.thans} thans, ${fmtQty(cg.yards)} yds — ${fmtMoney(cg.value)}*\n\n`;
+    const restCount = dsSorted.length - dsLimit;
+    if (restCount > 0) {
+      text += `   _… and ${restCount} more design${restCount > 1 ? 's' : ''}_\n`;
+      buttons.push([{ text: `🔍 ${customer} — show all (${dsSorted.length})`, callback_data: `rxw:sales_c:${(opts.periodKey || '')}|${customer.slice(0, 40)}` }]);
+    }
+    text += '\n';
     for (const p of cg.pkgs) gPkgs.add(p);
     gThans += cg.thans; gYards += cg.yards; gValue += cg.value;
   }
-  text += `*Grand Total: ${gPkgs.size} Bales, ${gThans} thans, ${fmtQty(gYards)} yds — ${fmtMoney(gValue)}*`;
-  return text;
+  text += `*Grand Total: ${gPkgs.size} · ${gThans} thans · ${fmtQty(gYards)} yds · ${fmtMoneyShort(gValue)}*`;
+  return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
 // ─── End Inventory & Sales Reports ──────────────────────────────────────────
@@ -963,7 +1129,8 @@ function _hist_dayOf(dateStr) {
   return '--';
 }
 
-async function sendCustomerHistoryReport(bot, chatId, customerName) {
+async function sendCustomerHistoryReport(bot, chatId, customerName, opts = {}) {
+  const expandAll = !!opts.expand;
   const events = await buildCustomerTimeline(customerName);
   if (!events.length) {
     await bot.sendMessage(chatId, `No interaction history found for "${customerName}".`);
@@ -1071,7 +1238,9 @@ async function sendCustomerHistoryReport(bot, chatId, customerName) {
   }
 
   const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const MAX_ITEMS = 30;
+  // Compact default: 10 most-recent interactions; expand button reveals
+  // up to 30 (the previous default). True expand-all bypasses both.
+  const MAX_ITEMS = expandAll ? Infinity : 10;
   let shown = 0;
   for (const [mk, items] of byMonth) {
     if (shown >= MAX_ITEMS) break;
@@ -1097,13 +1266,19 @@ async function sendCustomerHistoryReport(bot, chatId, customerName) {
   }
 
   const totalItems = allItems.length;
-  if (totalItems > MAX_ITEMS) out += `_...and ${totalItems - MAX_ITEMS} earlier interaction${totalItems - MAX_ITEMS > 1 ? 's' : ''}_\n`;
+  const hidden = totalItems - shown;
+  if (hidden > 0) out += `_…and ${hidden} earlier interaction${hidden > 1 ? 's' : ''}_\n`;
   out += `*${totalItems} total interaction${totalItems > 1 ? 's' : ''}*`;
 
-  await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+  const reply_markup = (hidden > 0)
+    ? { inline_keyboard: [[{ text: `🔍 Show all ${totalItems}`, callback_data: `rxw:hist:${customerName.slice(0, 50)}` }]] }
+    : undefined;
+
+  await sendLong(bot, chatId, out, { parse_mode: 'Markdown', ...(reply_markup ? { reply_markup } : {}) });
 }
 
-async function sendCustomerPatternReport(bot, chatId, customerName) {
+async function sendCustomerPatternReport(bot, chatId, customerName, opts = {}) {
+  const expandAll = !!opts.expand;
   const pattern = await buildCustomerPattern(customerName);
   if (!pattern) {
     await bot.sendMessage(chatId, `No purchase data found for "${customerName}".`);
@@ -1115,67 +1290,125 @@ async function sendCustomerPatternReport(bot, chatId, customerName) {
     ? pattern.items
     : [...pattern.items].sort((a, b) => b.yards - a.yards);
 
-  let out = `🔍 *Purchase Pattern — ${customerName}*\n\n`;
-  out += `📅 First purchase: ${fmtDate(pattern.firstDate) || pattern.firstDate} | Last: ${fmtDate(pattern.lastDate) || pattern.lastDate}\n`;
-  out += `📊 Lifetime: ${pattern.totalPkgs} Bales, ${pattern.totalThans} thans, ${fmtQty(pattern.totalYards)} yds`;
-  out += hasPrices ? ` — ${fmtMoney(pattern.totalValue)}\n\n` : `\n_(no price data available for these sales)_\n\n`;
-  out += hasPrices ? `*Preferred Items (by value):*\n` : `*Preferred Items (by volume):*\n`;
-  let rank = 0;
-  for (const ds of sortedItems) {
-    rank++;
+  let out = `🔍 *Purchase Pattern — ${customerName}*\n`;
+  out += buildReportLegend(['Bales · yds · share-of-total'], hasPrices);
+  out += '\n';
+  out += `📅 ${fmtDate(pattern.firstDate) || pattern.firstDate} → ${fmtDate(pattern.lastDate) || pattern.lastDate}\n`;
+  out += `📊 Lifetime: ${pattern.totalPkgs} · ${pattern.totalThans} thans · ${fmtQty(pattern.totalYards)} yds`;
+  out += hasPrices ? ` · ${fmtMoneyShort(pattern.totalValue)}\n\n` : `\n_(no price data)_\n\n`;
+  out += hasPrices ? `*Preferred items (by value):*\n` : `*Preferred items (by volume):*\n`;
+
+  // Compact view: top 5 designs + roll up remainder into "Other (N)"
+  const TOP = 5;
+  const limit = expandAll ? sortedItems.length : Math.min(TOP, sortedItems.length);
+  for (let i = 0; i < limit; i++) {
+    const ds = sortedItems[i];
     const thisMetric = hasPrices ? ds.value : ds.yards;
     const pct = rankBasis > 0 ? Math.round((thisMetric / rankBasis) * 100) : 0;
-    const valueStr = hasPrices ? ` — ${fmtMoney(ds.value)}` : '';
-    out += `${rank}. ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} Bales, ${fmtQty(ds.yards)} yds${valueStr} (${pct}%)\n`;
+    const valueStr = hasPrices ? ` · ${fmtMoneyShort(ds.value)}` : '';
+    out += `${i + 1}. ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} · ${fmtQty(ds.yards)} yds${valueStr} (${pct}%)\n`;
   }
+  const restItems = sortedItems.slice(limit);
+  const buttons = [];
+  if (restItems.length > 0) {
+    // Roll up the rest into a single "Other" line so users still see
+    // the remainder's aggregate weight.
+    const restAgg = { pkgs: new Set(), yards: 0, value: 0 };
+    for (const ds of restItems) {
+      for (const p of ds.pkgs) restAgg.pkgs.add(p);
+      restAgg.yards += ds.yards;
+      restAgg.value += ds.value;
+    }
+    const otherMetric = hasPrices ? restAgg.value : restAgg.yards;
+    const otherPct = rankBasis > 0 ? Math.round((otherMetric / rankBasis) * 100) : 0;
+    const valueStr = hasPrices ? ` · ${fmtMoneyShort(restAgg.value)}` : '';
+    out += `…  Other (${restItems.length} more): ${restAgg.pkgs.size} · ${fmtQty(restAgg.yards)} yds${valueStr} (${otherPct}%)\n`;
+    buttons.push([{ text: `🔍 Show all ${sortedItems.length}`, callback_data: `rxw:pat:${customerName.slice(0, 50)}` }]);
+  }
+
   const top = sortedItems[0];
-  const topMetric = hasPrices ? top.value : top.yards;
-  const topPct = rankBasis > 0 ? Math.round((topMetric / rankBasis) * 100) : 0;
-  out += `\n*Top design: ${top.design} Shade ${top.shade} (${topPct}% of ${hasPrices ? 'value' : 'volume'})*`;
-  await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+  if (top) {
+    const topMetric = hasPrices ? top.value : top.yards;
+    const topPct = rankBasis > 0 ? Math.round((topMetric / rankBasis) * 100) : 0;
+    out += `\n*Top: ${top.design} Shade ${top.shade} (${topPct}% of ${hasPrices ? 'value' : 'volume'})*`;
+  }
+  await sendLong(bot, chatId, out, {
+    parse_mode: 'Markdown',
+    ...(buttons.length ? { reply_markup: { inline_keyboard: buttons } } : {}),
+  });
 }
 
-async function sendCustomerNotesReport(bot, chatId, customerName) {
+async function sendCustomerNotesReport(bot, chatId, customerName, opts = {}) {
+  const expandAll = !!opts.expand;
   const notes = await customerNotesRepo.getByCustomer(customerName);
   if (!notes.length) {
     await bot.sendMessage(chatId,
       `No notes found for "${customerName}". Add with: "Note for ${customerName}: your note here"`);
     return;
   }
+  // Compact default: latest 5; expand-all reveals all (was 15).
+  const LIMIT = expandAll ? notes.length : 5;
   let out = `📝 *Notes for ${customerName}* (${notes.length})\n\n`;
-  for (const n of notes.slice(-15)) {
+  const visible = notes.slice(-LIMIT).reverse(); // newest first
+  for (const n of visible) {
     out += `• ${fmtDate(n.created_at) || '-'}: ${n.note}\n`;
   }
-  if (notes.length > 15) out += `\n_Showing last 15 of ${notes.length} notes_`;
-  await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+  const hidden = notes.length - visible.length;
+  const buttons = [];
+  if (hidden > 0) {
+    out += `\n_…and ${hidden} earlier note${hidden > 1 ? 's' : ''}_`;
+    buttons.push([{ text: `🔍 Show all ${notes.length}`, callback_data: `rxw:notes:${customerName.slice(0, 50)}` }]);
+  }
+  await sendLong(bot, chatId, out, {
+    parse_mode: 'Markdown',
+    ...(buttons.length ? { reply_markup: { inline_keyboard: buttons } } : {}),
+  });
 }
 
-async function sendCustomerRankingReport(bot, chatId) {
+async function sendCustomerRankingReport(bot, chatId, opts = {}) {
+  const page = Number.isFinite(opts.page) ? opts.page : 0; // 0 = top 10, 1 = 11-20, …
+  const PAGE_SIZE = 10;
   const ranked = await buildCustomerRanking();
   if (!ranked.length) {
     await bot.sendMessage(chatId, 'No sales data found.');
     return;
   }
   const topValue = ranked[0][1].value;
-  let out = `🏆 *Customer Ranking — Top ${Math.min(ranked.length, 20)} by Value*\n`;
-  out += `_Bar shows each customer's value as % of #1 buyer (${fmtMoney(topValue)})_\n\n`;
-  let rank = 0;
+  const start = page * PAGE_SIZE;
+  const slice = ranked.slice(start, start + PAGE_SIZE);
+  if (!slice.length) {
+    await bot.sendMessage(chatId, `No customers on page ${page + 1}.`);
+    return;
+  }
+  let out = page === 0
+    ? `🏆 *Customer Ranking — Top ${PAGE_SIZE} by Value*\n`
+    : `🏆 *Customer Ranking — #${start + 1}-${start + slice.length} by Value*\n`;
+  out += `_Bar = % of #1 buyer (${fmtMoneyShort(topValue)})_\n\n`;
   const medals = ['🥇', '🥈', '🥉'];
-  for (const [name, c] of ranked.slice(0, 20)) {
+  let rank = start;
+  for (const [name, c] of slice) {
     const medal = rank < 3 ? medals[rank] : `${rank + 1}.`;
     const lastMs = c.lastDate ? new Date(c.lastDate).getTime() : NaN;
     const daysAgo = Number.isFinite(lastMs)
       ? `${Math.floor((Date.now() - lastMs) / 86400000)}d ago`
       : (c.lastDate ? fmtDate(c.lastDate) : '—');
-    out += `${medal} *${name}*\n`;
-    out += `   ${c.pkgs.size} Bales, ${c.thans} thans, ${fmtQty(c.yards)} yds\n`;
-    out += `   Value: ${fmtMoney(c.value)} | Last: ${daysAgo}\n`;
+    out += `${medal} *${name}* — ${c.pkgs.size} · ${c.thans} thans · ${fmtQty(c.yards)} yds · ${fmtMoneyShort(c.value)} · ${daysAgo}\n`;
     out += `   ${fmtBar(c.value, topValue, 'of #1')}\n\n`;
     rank++;
   }
   const grandValue = ranked.reduce((s, [, c]) => s + c.value, 0);
-  out += `*Total Customers: ${ranked.length} | Total Value: ${fmtMoney(grandValue)}*`;
-  await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+  out += `*Total: ${ranked.length} customers · ${fmtMoneyShort(grandValue)}*`;
+
+  // Pagination buttons: Prev / Next / Show all (a single rich page).
+  const buttons = [];
+  const navRow = [];
+  if (page > 0) navRow.push({ text: '⬅️ Prev', callback_data: `rxw:rank:${page - 1}` });
+  if (start + slice.length < ranked.length) navRow.push({ text: 'Next ➡️', callback_data: `rxw:rank:${page + 1}` });
+  if (navRow.length) buttons.push(navRow);
+  await sendLong(bot, chatId, out, {
+    parse_mode: 'Markdown',
+    ...(buttons.length ? { reply_markup: { inline_keyboard: buttons } } : {}),
+  });
 }
 
 async function sendSampleStatusReport(bot, chatId, options = {}) {
@@ -5087,7 +5320,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
       const allItems = await inventoryRepository.getAll();
       if (!allItems.length) { await bot.sendMessage(callbackQuery.message.chat.id, 'No inventory data found.'); return; }
       const report = view === 'wh' ? buildInventoryWarehouseReport(allItems) : buildInventoryDesignReport(allItems);
-      await sendLong(bot, callbackQuery.message.chat.id, report, { parse_mode: 'Markdown' });
+      await sendLong(bot, callbackQuery.message.chat.id, report.text, {
+        parse_mode: 'Markdown',
+        ...(report.keyboard ? { reply_markup: report.keyboard } : {}),
+      });
     } catch (e) {
       logger.error('Inventory details error', e);
       await bot.sendMessage(callbackQuery.message.chat.id, `Report error: ${e.message}`);
@@ -5125,8 +5361,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
       const filtered = filterSoldByPeriod(sold, days);
       const labels = { 7: 'Last 7 Days', 30: 'Last 30 Days', 90: 'Last 90 Days', 365: 'Last 365 Days' };
       const periodLabel = labels[days] || `Last ${days} Days`;
-      const report = groupBy === 'design' ? buildSalesDesignReport(filtered, periodLabel) : buildSalesCustomerReport(filtered, periodLabel);
-      await sendLong(bot, callbackQuery.message.chat.id, report, { parse_mode: 'Markdown' });
+      const report = groupBy === 'design'
+        ? buildSalesDesignReport(filtered, periodLabel, { periodKey: String(days) })
+        : buildSalesCustomerReport(filtered, periodLabel, { periodKey: String(days) });
+      await sendLong(bot, callbackQuery.message.chat.id, report.text, {
+        parse_mode: 'Markdown',
+        ...(report.keyboard ? { reply_markup: report.keyboard } : {}),
+      });
     } catch (e) {
       logger.error('Sales report error', e);
       await bot.sendMessage(callbackQuery.message.chat.id, `Report error: ${e.message}`);
@@ -6045,7 +6286,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
       if (view === 'customer') report = buildCustomerWiseReport(sold, isAdminUser);
       else if (view === 'warehouse') report = buildWarehouseWiseReport(sold, isAdminUser);
       else { await bot.sendMessage(callbackQuery.message.chat.id, 'Unknown view.'); return; }
-      await sendLong(bot, callbackQuery.message.chat.id, report, { parse_mode: 'Markdown' });
+      await sendLong(bot, callbackQuery.message.chat.id, report.text, {
+        parse_mode: 'Markdown',
+        ...(report.keyboard ? { reply_markup: report.keyboard } : {}),
+      });
     } catch (e) {
       logger.error('Supply details report error', e);
       await bot.sendMessage(callbackQuery.message.chat.id, `Report error: ${e.message}`);
@@ -6599,6 +6843,119 @@ async function handleCallbackQuery(bot, callbackQuery) {
   /* ─── NOOP (calendar headers etc.) ─── */
   } else if (data === 'noop') {
     await bot.answerCallbackQuery(callbackQuery.id);
+
+  /* ─── REPORT EXPAND (rxw:<reportType>[:payload]) ───────────────────────
+   * Drill-down dispatcher for the compact reports. Each report ships
+   * with top-N rows visible by default; tapping the inline "🔍 Show
+   * all" button lands here and we re-run the underlying report builder
+   * in expand mode. The new (longer) version is sent as a fresh
+   * message — the original compact one stays in scrollback as a
+   * concise reference.
+   */
+  } else if (data.startsWith('rxw:')) {
+    const rest = data.slice(4);
+    const sepIdx = rest.indexOf(':');
+    const reportType = sepIdx >= 0 ? rest.slice(0, sepIdx) : rest;
+    const payload = sepIdx >= 0 ? rest.slice(sepIdx + 1) : '';
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    const isAdminUser = config.access.adminIds.includes(uid);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Expanding…' });
+
+    try {
+      switch (reportType) {
+        case 'inv_w': {
+          const allItems = await inventoryRepository.getAll();
+          const expanded = buildInventoryWarehouseReport(allItems, { expand: payload });
+          await sendLong(bot, chatId, expanded.text, {
+            parse_mode: 'Markdown',
+            ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
+          });
+          break;
+        }
+        case 'inv_d': {
+          const allItems = await inventoryRepository.getAll();
+          const expanded = buildInventoryDesignReport(allItems, { expand: payload });
+          await sendLong(bot, chatId, expanded.text, {
+            parse_mode: 'Markdown',
+            ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
+          });
+          break;
+        }
+        case 'sales_d': {
+          // payload = period days (e.g. "7", "30").
+          const days = parseInt(payload, 10) || 30;
+          const allItems = await inventoryRepository.getAll();
+          const sold = allItems.filter((r) => r.status === 'sold' && r.soldTo && r.soldDate);
+          const filtered = filterSoldByPeriod(sold, days);
+          const labels = { 7: 'Last 7 Days', 30: 'Last 30 Days', 90: 'Last 90 Days', 365: 'Last 365 Days' };
+          const periodLabel = labels[days] || `Last ${days} Days`;
+          const expanded = buildSalesDesignReport(filtered, periodLabel, { expand: true, periodKey: payload });
+          await sendLong(bot, chatId, expanded.text, {
+            parse_mode: 'Markdown',
+            ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
+          });
+          break;
+        }
+        case 'sales_c': {
+          // payload = "<days>|<customerName>".
+          const pipe = payload.indexOf('|');
+          const days = parseInt(pipe > 0 ? payload.slice(0, pipe) : payload, 10) || 30;
+          const customer = pipe > 0 ? payload.slice(pipe + 1) : '';
+          const allItems = await inventoryRepository.getAll();
+          const sold = allItems.filter((r) => r.status === 'sold' && r.soldTo && r.soldDate);
+          const filtered = filterSoldByPeriod(sold, days);
+          const labels = { 7: 'Last 7 Days', 30: 'Last 30 Days', 90: 'Last 90 Days', 365: 'Last 365 Days' };
+          const periodLabel = labels[days] || `Last ${days} Days`;
+          const expanded = buildSalesCustomerReport(filtered, periodLabel, { expand: customer, periodKey: String(days) });
+          await sendLong(bot, chatId, expanded.text, {
+            parse_mode: 'Markdown',
+            ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
+          });
+          break;
+        }
+        case 'supply_c': {
+          const sold = await getSoldItems();
+          const expanded = buildCustomerWiseReport(sold, isAdminUser, { expand: payload });
+          await sendLong(bot, chatId, expanded.text, {
+            parse_mode: 'Markdown',
+            ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
+          });
+          break;
+        }
+        case 'supply_w': {
+          const sold = await getSoldItems();
+          const expanded = buildWarehouseWiseReport(sold, isAdminUser, { expand: payload });
+          await sendLong(bot, chatId, expanded.text, {
+            parse_mode: 'Markdown',
+            ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
+          });
+          break;
+        }
+        case 'hist': {
+          await sendCustomerHistoryReport(bot, chatId, payload, { expand: true });
+          break;
+        }
+        case 'pat': {
+          await sendCustomerPatternReport(bot, chatId, payload, { expand: true });
+          break;
+        }
+        case 'notes': {
+          await sendCustomerNotesReport(bot, chatId, payload, { expand: true });
+          break;
+        }
+        case 'rank': {
+          const page = parseInt(payload, 10) || 0;
+          await sendCustomerRankingReport(bot, chatId, { page });
+          break;
+        }
+        default:
+          await bot.sendMessage(chatId, `Unknown report drill-down: ${reportType}`);
+      }
+    } catch (e) {
+      logger.error('rxw drill-down error', e);
+      await bot.sendMessage(chatId, `Couldn't expand report: ${e.message}`);
+    }
 
   /* ─── REPORT CUSTOMER PICKER (rpt:<type>:<customerName>) ─── */
   } else if (data.startsWith('rpt:')) {
