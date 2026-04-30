@@ -3084,6 +3084,15 @@ async function handleMessage(bot, msg) {
     }
   }
 
+  // Catalog: search design photo — free-text design number lookup.
+  {
+    const dasSession = sessionStore.get(userId);
+    if (dasSession && dasSession.type === 'catalog_search_flow') {
+      const handled = await handleCatalogSearchTextStep(bot, chatId, userId, text);
+      if (handled) return;
+    }
+  }
+
   // Orphan-flow detection: if the user just posted a reply that *looks* like
   // it was meant for a recently expired flow (e.g. comma-separated shade
   // names while the design_asset_flow session timed out), send a clear
@@ -5359,7 +5368,8 @@ async function startOrderFlow(bot, chatId, userId) {
 async function handleCallbackQuery(bot, callbackQuery) {
   const data = (callbackQuery.data || '').trim();
 
-  // Catalog hub: design-asset upload flow / manage flow / view-on-demand.
+  // Catalog hub: design-asset upload flow / manage flow / view-on-demand /
+  // browse / search / stats.
   // Routed first to keep these self-contained and avoid prefix collisions.
   if (data.startsWith('dap:') || data.startsWith('dam:')) {
     const handled = await handleDesignAssetCallback(bot, callbackQuery);
@@ -5367,6 +5377,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
   }
   if (data.startsWith('dav:')) {
     const handled = await handleDesignAssetViewCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+  if (data.startsWith('dab:') || data.startsWith('das:') || data.startsWith('dat:')) {
+    const handled = await handleCatalogBrowseSearchCallback(bot, callbackQuery);
     if (handled) return;
   }
 
@@ -7386,6 +7400,15 @@ async function handleCallbackQuery(bot, callbackQuery) {
       case 'manage_design_photos':
         await startManageDesignPhotos(bot, chatId, uid, messageId);
         break;
+      case 'browse_catalog':
+        await startBrowseCatalog(bot, chatId, uid, messageId);
+        break;
+      case 'search_design_photo':
+        await startSearchDesignPhoto(bot, chatId, uid, messageId);
+        break;
+      case 'catalog_stats':
+        await showCatalogStats(bot, chatId, uid, messageId);
+        break;
       default:
         await bot.sendMessage(chatId, 'Feature coming soon.');
     }
@@ -8532,6 +8555,34 @@ async function handleDesignAssetTextStep(bot, chatId, userId, text) {
     // — this avoids duplicating the parse / validation logic.
     return await handleDesignAssetTextStep(bot, chatId, userId, text);
   }
+  if (session.step === 'manage_search') {
+    const q = text.trim().toUpperCase();
+    if (!q) {
+      await bot.sendMessage(chatId, '⚠️ Type a design number to search.');
+      return true;
+    }
+    sessionStore.clear(userId);
+    const row = await designAssetsRepo.findActive(q);
+    if (row) {
+      await showDesignAssetDetail(bot, chatId, userId, q);
+    } else {
+      let actives = [];
+      try { actives = await designAssetsRepo.list('active'); } catch (_) {}
+      const partials = actives.filter((a) => a.design.toUpperCase().includes(q)).slice(0, 8);
+      if (partials.length) {
+        const rows = partials.map((a) => [{ text: `📷 ${a.design} — ${a.shadeCount} shades`, callback_data: `dam:view:${a.design.slice(0, 30)}` }]);
+        rows.push([{ text: '◀️ Back', callback_data: 'dam:back' }]);
+        await bot.sendMessage(chatId,
+          `🔎 No exact match for *${q}*. Similar designs:`,
+          { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+      } else {
+        await bot.sendMessage(chatId,
+          `🔎 No design found matching *${q}*.`,
+          { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '◀️ Back', callback_data: 'dam:back' }]] } });
+      }
+    }
+    return true;
+  }
   if (session.step === 'design_typing') {
     const d = text.trim();
     if (!d || d.length > DAP_MAX_DESIGN_LEN) {
@@ -8652,30 +8703,7 @@ async function handleDesignAssetPhotoMessage(bot, chatId, userId, msg) {
 /* ─── MANAGE PRODUCT PHOTOS (admin) ─── */
 
 async function startManageDesignPhotos(bot, chatId, userId, messageId) {
-  if (!config.access.adminIds.includes(userId)) {
-    await bot.sendMessage(chatId, 'Admin only.');
-    return;
-  }
-  let actives = [];
-  try { actives = await designAssetsRepo.list('active'); } catch (e) { logger.warn('manage_design_photos list failed', e.message); }
-  let pending = [];
-  try { pending = await designAssetsRepo.list('pending'); } catch (_) {}
-  if (!actives.length && !pending.length) {
-    await editOrSend(bot, chatId, messageId,
-      '🖼️ *Manage Product Photos*\n\n_No photos uploaded yet._\n\nAsk a teammate to use 📷 Upload Product Photo from the Catalog hub.',
-      { parse_mode: 'Markdown' });
-    return;
-  }
-  const rows = [];
-  for (const a of actives.slice(0, 24)) {
-    rows.push([{ text: `📷 ${a.design} — ${a.shadeCount} shades`, callback_data: `dam:view:${String(a.design).slice(0, 30)}` }]);
-  }
-  if (pending.length) {
-    rows.push([{ text: `⏳ ${pending.length} pending approval`, callback_data: 'dam:noop' }]);
-  }
-  await editOrSend(bot, chatId, messageId,
-    `🖼️ *Manage Product Photos*\n\nActive: *${actives.length}* • Pending approval: *${pending.length}*\n\nTap a design to view, replace, or deactivate.`,
-    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+  await showManageDesignPhotosPage(bot, chatId, userId, 0, messageId);
 }
 
 async function showDesignAssetDetail(bot, chatId, userId, design) {
@@ -8860,6 +8888,24 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
   }
   if (data === 'dam:noop') {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Pending items appear in the admin approval feed.' });
+    return true;
+  }
+  if (data.startsWith('dam:pg:')) {
+    const page = parseInt(data.slice('dam:pg:'.length), 10) || 0;
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await showManageDesignPhotosPage(bot, chatId, uid, page, callbackQuery.message.message_id);
+    return true;
+  }
+  if (data === 'dam:search') {
+    if (!config.access.adminIds.includes(uid)) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' });
+      return true;
+    }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    sessionStore.set(uid, { type: 'design_asset_flow', step: 'manage_search', shadeNames: [], ttlMs: DESIGN_ASSET_TTL_MS });
+    await bot.sendMessage(chatId,
+      '🔎 *Search Manage Photos*\n\nType a design number to jump to it.\nType *cancel* to go back.',
+      { parse_mode: 'Markdown' });
     return true;
   }
   if (data.startsWith('dam:view:')) {
@@ -9114,6 +9160,422 @@ async function handleDesignAssetViewCallback(bot, callbackQuery) {
     await bot.sendMessage(chatId, `📷 No product photo on file for ${design}. An admin can add one via 📷 Catalog → Upload Product Photo.`);
   }
   return true;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * CATALOG: Browse / Search / Stats — additional tappable options
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+const DAB_PAGE_SIZE = 8;
+
+async function startBrowseCatalog(bot, chatId, userId, messageId) {
+  const session = sessionStore.get(userId);
+  if (session && session.type !== 'catalog_browse') sessionStore.clear(userId);
+  sessionStore.set(userId, { type: 'catalog_browse', page: 0, filter: null });
+  await showCatalogBrowsePage(bot, chatId, userId, 0, messageId);
+}
+
+async function showCatalogBrowsePage(bot, chatId, userId, page, messageId) {
+  let actives = [];
+  try { actives = await designAssetsRepo.list('active'); } catch (_) {}
+  if (!actives.length) {
+    await editOrSend(bot, chatId, messageId,
+      '📖 *Browse Catalog*\n\n_No product photos in the catalog yet._',
+      { parse_mode: 'Markdown' });
+    return;
+  }
+
+  const session = sessionStore.get(userId);
+  let filtered = actives;
+  if (session && session.filter) {
+    const f = session.filter.toLowerCase();
+    filtered = actives.filter((a) => (a.productType || '').toLowerCase() === f);
+  }
+  filtered.sort((a, b) => a.design.localeCompare(b.design, undefined, { numeric: true }));
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / DAB_PAGE_SIZE));
+  if (page < 0) page = 0;
+  if (page >= totalPages) page = totalPages - 1;
+
+  const slice = filtered.slice(page * DAB_PAGE_SIZE, (page + 1) * DAB_PAGE_SIZE);
+  const rows = [];
+  for (let i = 0; i < slice.length; i += 2) {
+    const row = [];
+    for (let j = i; j < Math.min(i + 2, slice.length); j++) {
+      const a = slice[j];
+      row.push({ text: `📷 ${a.design} (${a.shadeCount})`, callback_data: `dab:view:${a.design.slice(0, 30)}` });
+    }
+    rows.push(row);
+  }
+
+  const nav = [];
+  if (page > 0)              nav.push({ text: '⬅️ Prev', callback_data: `dab:pg:${page - 1}` });
+  if (page < totalPages - 1) nav.push({ text: 'Next ➡️', callback_data: `dab:pg:${page + 1}` });
+  if (nav.length) rows.push(nav);
+
+  const types = [...new Set(actives.map((a) => (a.productType || 'fabric').toLowerCase()))].sort();
+  if (types.length > 1) {
+    const filterRow = [];
+    for (const t of types.slice(0, 4)) {
+      const active = session && session.filter === t;
+      filterRow.push({ text: `${active ? '✓ ' : ''}${t.charAt(0).toUpperCase() + t.slice(1)}`, callback_data: `dab:filter:${t.slice(0, 20)}` });
+    }
+    rows.push(filterRow);
+    if (session && session.filter) {
+      rows.push([{ text: '✖ Clear filter', callback_data: 'dab:filter:__clear__' }]);
+    }
+  }
+
+  const filterLabel = session && session.filter ? ` (${session.filter})` : '';
+  const header = `📖 *Browse Catalog*${filterLabel}\n\n` +
+    `${filtered.length} design${filtered.length === 1 ? '' : 's'} with photos — page ${page + 1}/${totalPages}\n\n` +
+    `Tap a design to view its photo and shades.`;
+  await editOrSend(bot, chatId, messageId, header,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function showCatalogBrowseDetail(bot, chatId, userId, design) {
+  const row = await designAssetsRepo.findActive(design);
+  if (!row) {
+    await bot.sendMessage(chatId, `⚠️ No active photo for *${design}*.`, { parse_mode: 'Markdown' });
+    return;
+  }
+  const shadesText = formatShadesPreview(row.shades || []);
+  const caption = `📖 *${row.design}* — ${row.productType || 'fabric'}\n` +
+    `Shades (${row.shadeCount}): ${shadesText}`;
+
+  const kb = { inline_keyboard: [
+    [{ text: '◀️ Back to catalog', callback_data: 'dab:back' }],
+  ] };
+
+  const photoSrc = row.telegramFileId
+    || (row.labeledDriveFileId ? `https://drive.google.com/uc?export=download&id=${row.labeledDriveFileId}` : '');
+  if (photoSrc) {
+    try {
+      const sent = await bot.sendPhoto(chatId, photoSrc, { caption, parse_mode: 'Markdown', reply_markup: kb });
+      if (!row.telegramFileId && sent && sent.photo && sent.photo.length) {
+        designAssetsService.cacheTelegramFileId(row.rowIndex, sent.photo[sent.photo.length - 1].file_id).catch(() => {});
+      }
+      return;
+    } catch (e) {
+      logger.warn(`showCatalogBrowseDetail sendPhoto failed: ${e.message}`);
+    }
+  }
+  await bot.sendMessage(chatId, caption, { parse_mode: 'Markdown', reply_markup: kb });
+}
+
+/* ─── SEARCH DESIGN PHOTO ─── */
+
+async function startSearchDesignPhoto(bot, chatId, userId, messageId) {
+  sessionStore.clear(userId);
+  sessionStore.set(userId, { type: 'catalog_search_flow', step: 'awaiting_query' });
+
+  let actives = [];
+  try { actives = await designAssetsRepo.list('active'); } catch (_) {}
+  const rows = [];
+  if (actives.length) {
+    const recent = actives
+      .filter((a) => a.uploadedAt)
+      .sort((a, b) => (b.uploadedAt || '').localeCompare(a.uploadedAt || ''))
+      .slice(0, 6);
+    if (recent.length) {
+      const btnRow = [];
+      for (const a of recent) {
+        btnRow.push({ text: `📷 ${a.design}`, callback_data: `das:pick:${a.design.slice(0, 30)}` });
+        if (btnRow.length === 3) { rows.push([...btnRow]); btnRow.length = 0; }
+      }
+      if (btnRow.length) rows.push(btnRow);
+    }
+  }
+  rows.push([{ text: '❌ Cancel', callback_data: 'das:cancel' }]);
+
+  const text = `🔎 *Search Design Photo*\n\n` +
+    `Type a design number to look up its photo and shade info.\n` +
+    (actives.length ? `\nOr tap a recently added design:` : '');
+  const sent = await editOrSend(bot, chatId, messageId, text,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+  if (sent && sent.message_id) {
+    const s = sessionStore.get(userId);
+    if (s) { s.flowMessageId = sent.message_id; sessionStore.set(userId, s); }
+  }
+}
+
+async function handleCatalogSearchTextStep(bot, chatId, userId, text) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'catalog_search_flow') return false;
+
+  if (text.toLowerCase() === 'cancel') {
+    sessionStore.clear(userId);
+    await bot.sendMessage(chatId, '❌ Search cancelled.');
+    return true;
+  }
+
+  const query = text.trim().toUpperCase();
+  if (!query) {
+    await bot.sendMessage(chatId, '⚠️ Please type a design number.');
+    return true;
+  }
+
+  await showCatalogSearchResult(bot, chatId, userId, query);
+  return true;
+}
+
+async function showCatalogSearchResult(bot, chatId, userId, query) {
+  let allActive = [];
+  try { allActive = await designAssetsRepo.list('active'); } catch (_) {}
+
+  const exact = allActive.find((a) => a.design.toUpperCase() === query);
+  const partials = exact
+    ? []
+    : allActive.filter((a) => a.design.toUpperCase().includes(query)).slice(0, 8);
+
+  if (exact) {
+    const shadesText = formatShadesPreview(exact.shades || []);
+    const caption = `🔎 *${exact.design}* — ${exact.productType || 'fabric'}\n` +
+      `Shades (${exact.shadeCount}): ${shadesText}`;
+    const kb = { inline_keyboard: [
+      [{ text: '🔎 Search another', callback_data: 'das:again' }],
+    ] };
+    const photoSrc = exact.telegramFileId
+      || (exact.labeledDriveFileId ? `https://drive.google.com/uc?export=download&id=${exact.labeledDriveFileId}` : '');
+    if (photoSrc) {
+      try {
+        const sent = await bot.sendPhoto(chatId, photoSrc, { caption, parse_mode: 'Markdown', reply_markup: kb });
+        if (!exact.telegramFileId && sent && sent.photo && sent.photo.length) {
+          designAssetsService.cacheTelegramFileId(exact.rowIndex, sent.photo[sent.photo.length - 1].file_id).catch(() => {});
+        }
+        return;
+      } catch (e) {
+        logger.warn(`showCatalogSearchResult sendPhoto failed: ${e.message}`);
+      }
+    }
+    await bot.sendMessage(chatId, caption, { parse_mode: 'Markdown', reply_markup: kb });
+    return;
+  }
+
+  if (partials.length) {
+    const rows = [];
+    for (let i = 0; i < partials.length; i += 2) {
+      const row = [];
+      for (let j = i; j < Math.min(i + 2, partials.length); j++) {
+        row.push({ text: `📷 ${partials[j].design}`, callback_data: `das:pick:${partials[j].design.slice(0, 30)}` });
+      }
+      rows.push(row);
+    }
+    rows.push([{ text: '🔎 Search another', callback_data: 'das:again' }]);
+    await bot.sendMessage(chatId,
+      `🔎 No exact match for *${query}*, but found ${partials.length} similar:\n\nTap one to view its photo.`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+    return;
+  }
+
+  await bot.sendMessage(chatId,
+    `🔎 No design photo found for *${query}*.\n\nMake sure the design has an approved photo in the catalog.`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
+      [{ text: '🔎 Search another', callback_data: 'das:again' }],
+    ] } });
+}
+
+/* ─── CATALOG STATS ─── */
+
+async function showCatalogStats(bot, chatId, userId, messageId) {
+  let all = [];
+  try { all = await designAssetsRepo.getAll(); } catch (_) {}
+
+  const active   = all.filter((r) => r.status === 'active');
+  const pending  = all.filter((r) => r.status === 'pending');
+  const replaced = all.filter((r) => r.status === 'replaced');
+  const inactive = all.filter((r) => r.status === 'inactive');
+
+  const byType = {};
+  for (const a of active) {
+    const t = (a.productType || 'fabric').toLowerCase();
+    byType[t] = (byType[t] || 0) + 1;
+  }
+  const typeLines = Object.entries(byType)
+    .sort((a, b) => b[1] - a[1])
+    .map(([t, c]) => `  • ${t.charAt(0).toUpperCase() + t.slice(1)}: *${c}*`)
+    .join('\n') || '  _(none)_';
+
+  let totalShades = 0;
+  let maxShades = { design: '—', count: 0 };
+  for (const a of active) {
+    totalShades += a.shadeCount || 0;
+    if ((a.shadeCount || 0) > maxShades.count) {
+      maxShades = { design: a.design, count: a.shadeCount };
+    }
+  }
+  const avgShades = active.length ? (totalShades / active.length).toFixed(1) : '0';
+
+  let inventoryDesigns = 0;
+  try {
+    const raw = await inventoryRepository.getDistinctDesigns();
+    inventoryDesigns = [...new Set(raw.map((d) => (d.design || '').trim().toUpperCase()).filter(Boolean))].length;
+  } catch (_) {}
+  const coverage = inventoryDesigns > 0
+    ? `${Math.round((active.length / inventoryDesigns) * 100)}% (${active.length}/${inventoryDesigns} designs)`
+    : `${active.length} designs photographed`;
+
+  const recentUploads = active
+    .filter((a) => a.uploadedAt)
+    .sort((a, b) => (b.uploadedAt || '').localeCompare(a.uploadedAt || ''))
+    .slice(0, 5)
+    .map((a) => `  • ${a.design} — ${fmtDate(a.uploadedAt) || a.uploadedAt}`)
+    .join('\n') || '  _(none)_';
+
+  const text = `📊 *Catalog Statistics*\n\n` +
+    `*Status breakdown*\n` +
+    `  ✅ Active: *${active.length}*\n` +
+    `  ⏳ Pending: *${pending.length}*\n` +
+    `  🔄 Replaced: *${replaced.length}*\n` +
+    `  🗑️ Inactive: *${inactive.length}*\n\n` +
+    `*By product type*\n${typeLines}\n\n` +
+    `*Coverage*: ${coverage}\n\n` +
+    `*Shade stats*\n` +
+    `  Total shades across catalog: *${totalShades}*\n` +
+    `  Average per design: *${avgShades}*\n` +
+    `  Most shades: *${maxShades.design}* (${maxShades.count})\n\n` +
+    `*Recently added*\n${recentUploads}`;
+
+  const rows = [
+    [{ text: '📖 Browse Catalog',       callback_data: 'dat:browse' }],
+    [{ text: '🔎 Search Design Photo',  callback_data: 'dat:search' }],
+    [{ text: '🔄 Refresh',              callback_data: 'dat:refresh' }],
+  ];
+
+  await editOrSend(bot, chatId, messageId, text,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+/* ─── MANAGE FLOW PAGINATION ─── */
+
+const DAM_PAGE_SIZE = 10;
+
+async function showManageDesignPhotosPage(bot, chatId, userId, page, messageId) {
+  if (!config.access.adminIds.includes(userId)) {
+    await bot.sendMessage(chatId, 'Admin only.');
+    return;
+  }
+  let actives = [];
+  try { actives = await designAssetsRepo.list('active'); } catch (_) {}
+  let pending = [];
+  try { pending = await designAssetsRepo.list('pending'); } catch (_) {}
+
+  if (!actives.length && !pending.length) {
+    await editOrSend(bot, chatId, messageId,
+      '🖼️ *Manage Product Photos*\n\n_No photos uploaded yet._',
+      { parse_mode: 'Markdown' });
+    return;
+  }
+
+  actives.sort((a, b) => a.design.localeCompare(b.design, undefined, { numeric: true }));
+  const totalPages = Math.max(1, Math.ceil(actives.length / DAM_PAGE_SIZE));
+  if (page < 0) page = 0;
+  if (page >= totalPages) page = totalPages - 1;
+
+  const slice = actives.slice(page * DAM_PAGE_SIZE, (page + 1) * DAM_PAGE_SIZE);
+  const rows = [];
+  for (const a of slice) {
+    rows.push([{ text: `📷 ${a.design} — ${a.shadeCount} shades`, callback_data: `dam:view:${String(a.design).slice(0, 30)}` }]);
+  }
+  if (pending.length) {
+    rows.push([{ text: `⏳ ${pending.length} pending approval`, callback_data: 'dam:noop' }]);
+  }
+
+  const nav = [];
+  if (page > 0)              nav.push({ text: '⬅️ Prev', callback_data: `dam:pg:${page - 1}` });
+  if (page < totalPages - 1) nav.push({ text: 'Next ➡️', callback_data: `dam:pg:${page + 1}` });
+  if (nav.length) rows.push(nav);
+
+  rows.push([{ text: '🔎 Search', callback_data: 'dam:search' }]);
+
+  await editOrSend(bot, chatId, messageId,
+    `🖼️ *Manage Product Photos*\n\nActive: *${actives.length}* • Pending: *${pending.length}* — page ${page + 1}/${totalPages}\n\nTap a design to view, replace, or deactivate.`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+/* ─── CALLBACK HANDLER for Browse / Search / Stats ─── */
+
+async function handleCatalogBrowseSearchCallback(bot, callbackQuery) {
+  const data = callbackQuery.data || '';
+  const uid = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+
+  /* DAB — browse catalog */
+  if (data === 'dab:back') {
+    await bot.answerCallbackQuery(callbackQuery.id);
+    const session = sessionStore.get(uid);
+    const page = (session && session.type === 'catalog_browse') ? (session.page || 0) : 0;
+    await showCatalogBrowsePage(bot, chatId, uid, page, null);
+    return true;
+  }
+  if (data.startsWith('dab:pg:')) {
+    const page = parseInt(data.slice('dab:pg:'.length), 10) || 0;
+    await bot.answerCallbackQuery(callbackQuery.id);
+    const session = sessionStore.get(uid);
+    if (session && session.type === 'catalog_browse') {
+      session.page = page;
+      sessionStore.set(uid, session);
+    }
+    await showCatalogBrowsePage(bot, chatId, uid, page, messageId);
+    return true;
+  }
+  if (data.startsWith('dab:view:')) {
+    const design = data.slice('dab:view:'.length);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await showCatalogBrowseDetail(bot, chatId, uid, design);
+    return true;
+  }
+  if (data.startsWith('dab:filter:')) {
+    const filter = data.slice('dab:filter:'.length);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    const session = sessionStore.get(uid) || { type: 'catalog_browse', page: 0 };
+    session.filter = filter === '__clear__' ? null : filter;
+    session.page = 0;
+    sessionStore.set(uid, session);
+    await showCatalogBrowsePage(bot, chatId, uid, 0, messageId);
+    return true;
+  }
+
+  /* DAS — search design photo */
+  if (data === 'das:cancel') {
+    sessionStore.clear(uid);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
+    return true;
+  }
+  if (data === 'das:again') {
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await startSearchDesignPhoto(bot, chatId, uid, null);
+    return true;
+  }
+  if (data.startsWith('das:pick:')) {
+    const design = data.slice('das:pick:'.length);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await showCatalogSearchResult(bot, chatId, uid, design.toUpperCase());
+    return true;
+  }
+
+  /* DAT — catalog stats quick links */
+  if (data === 'dat:refresh') {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Refreshing…' });
+    designAssetsRepo.invalidateCache();
+    await showCatalogStats(bot, chatId, uid, messageId);
+    return true;
+  }
+  if (data === 'dat:browse') {
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await startBrowseCatalog(bot, chatId, uid, null);
+    return true;
+  }
+  if (data === 'dat:search') {
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await startSearchDesignPhoto(bot, chatId, uid, null);
+    return true;
+  }
+
+  return false;
 }
 
 module.exports = {

@@ -48,6 +48,9 @@ const ACTIVITIES = [
 
   { code: 'upload_design_photo',   label: 'Upload Product Photo',      icon: '📷', callback: 'act:upload_design_photo', hub: 'catalog' },
   { code: 'manage_design_photos',  label: 'Manage Product Photos',     icon: '🖼️', callback: 'act:manage_design_photos', hub: 'catalog' },
+  { code: 'browse_catalog',        label: 'Browse Catalog',            icon: '📖', callback: 'act:browse_catalog',       hub: 'catalog' },
+  { code: 'search_design_photo',   label: 'Search Design Photo',       icon: '🔎', callback: 'act:search_design_photo',  hub: 'catalog' },
+  { code: 'catalog_stats',         label: 'Catalog Stats',             icon: '📊', callback: 'act:catalog_stats',        hub: 'catalog' },
 
   { code: 'sales_report',          label: 'Sales Report',              icon: '📊', callback: 'act:sales_report',       hub: 'reports' },
   { code: 'supply_details',        label: 'Supply Details',            icon: '📦', callback: 'act:supply_details',     hub: 'reports' },
