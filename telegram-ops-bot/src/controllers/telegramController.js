@@ -191,13 +191,34 @@ function valStr(value, isAdmin) {
 function valStrShort(value, isAdmin) {
   return isAdmin ? ` · ${fmtMoneyShort(value)}` : '';
 }
+/**
+ * Per-ROW money tail for supply reports. Hidden by default to keep
+ * data rows scannable (Bales/thans/yds is the operational info); the
+ * money still shows up at subtotal and grand-total levels via
+ * valStrShort. Brought back per-row when the user taps the
+ * "💰 Show prices per row" toggle button (sets showRowMoney=true).
+ */
+function valStrRow(value, isAdmin, showRowMoney) {
+  return (isAdmin && showRowMoney) ? ` · ${fmtMoneyShort(value)}` : '';
+}
+/**
+ * Build the per-row-money toggle button row for supply reports.
+ * The button alternates between "💰 Show prices per row" and
+ * "💵 Hide row prices" depending on current state, both encoded via
+ * the rxw: callback grammar.
+ */
+function buildRowMoneyToggleRow(reportType, payload, showRowMoney) {
+  const label = showRowMoney ? '💵 Hide row prices' : '💰 Show prices per row';
+  const flag = showRowMoney ? 'n' : 'y';
+  return [{ text: label, callback_data: `rxw:${reportType}:${payload}::m=${flag}` }];
+}
 
 function buildDesignWiseReport(sold, isAdmin, opts = {}) {
-  // Per-design "summary" already groups by Design → Shade naturally,
-  // so promotion just means rendering Design as a top-level header
-  // with shades indented underneath. No code blocks; plain markdown
-  // renders reliably and avoids the multi-fence parser bug.
-  const _ = opts; // (no view modes — list-only)
+  // Per-design "summary" already groups by Design → Shade naturally.
+  // Money is hidden per-row by default so the qty columns dominate;
+  // it still appears at subtotal + grand total. The user can toggle
+  // per-row money on with "💰 Show prices per row".
+  const showRowMoney = !!opts.showRowMoney;
   const designs = new Map();
   for (const r of sold) {
     const key = r.design || 'Unknown';
@@ -220,14 +241,15 @@ function buildDesignWiseReport(sold, isAdmin, opts = {}) {
     const topBuyer = [...dg.buyers.entries()].sort((a, b) => b[1] - a[1])[0];
     text += `📦 *${design}*${topBuyer ? `  · top buyer: ${topBuyer[0]}` : ''}\n`;
     for (const [shade, sh] of shadesSorted) {
-      text += `   Shade ${shade}: ${sh.pkgs.size} Bales · ${sh.thans} thans · ${fmtQty(sh.yards)} yds${valStrShort(sh.value, isAdmin)}\n`;
+      text += `   Shade ${shade}: ${sh.pkgs.size} Bales · ${sh.thans} thans · ${fmtQty(sh.yards)} yds${valStrRow(sh.value, isAdmin, showRowMoney)}\n`;
     }
     text += `   *Subtotal: ${dg.totalPkgs.size} Bales · ${dg.totalThans} thans · ${fmtQty(dg.totalYards)} yds${valStrShort(dg.totalValue, isAdmin)}*\n\n`;
     for (const p of dg.totalPkgs) grandPkgs.add(p);
     grandThans += dg.totalThans; grandYards += dg.totalYards; grandValue += dg.totalValue;
   }
   text += `🧮 *Grand Total: ${grandPkgs.size} Bales · ${grandThans} thans · ${fmtQty(grandYards)} yds${valStrShort(grandValue, isAdmin)}*`;
-  return { text, keyboard: null };
+  const keyboard = isAdmin ? { inline_keyboard: [buildRowMoneyToggleRow('supply_ds', '', showRowMoney)] } : null;
+  return { text, keyboard };
 }
 
 function normalizeDate(raw) {
@@ -269,7 +291,7 @@ function normalizeDate(raw) {
  * Markdown renders reliably across all Telegram clients.
  */
 function buildDesignDateWiseReport(sold, isAdmin, opts = {}) {
-  const _ = opts;
+  const showRowMoney = !!opts.showRowMoney;
   const designs = new Map();
   for (const r of sold) {
     const key = r.design || 'Unknown';
@@ -336,7 +358,7 @@ function buildDesignDateWiseReport(sold, isAdmin, opts = {}) {
         if (!onlyCustomer) parts.push(row.customer);
         if (!onlyShade) parts.push(`Shade ${row.shade}`);
         const lead = parts.length ? `${parts.join(' · ')}: ` : '';
-        text += `   ${lead}${row.pkgs.size} Bales · ${row.thans} thans · ${fmtQty(row.yards)} yds${valStrShort(row.value, isAdmin)}\n`;
+        text += `   ${lead}${row.pkgs.size} Bales · ${row.thans} thans · ${fmtQty(row.yards)} yds${valStrRow(row.value, isAdmin, showRowMoney)}\n`;
         for (const p of row.pkgs) dt.pkgs.add(p);
         dt.thans += row.thans; dt.yards += row.yards; dt.value += row.value;
       }
@@ -353,7 +375,8 @@ function buildDesignDateWiseReport(sold, isAdmin, opts = {}) {
     grandThans += dTotal.thans; grandYards += dTotal.yards; grandValue += dTotal.value;
   }
   text += `🧮 *Grand Total: ${grandPkgs.size} Bales · ${grandThans} thans · ${fmtQty(grandYards)} yds${valStrShort(grandValue, isAdmin)}*`;
-  return { text, keyboard: null };
+  const keyboard = isAdmin ? { inline_keyboard: [buildRowMoneyToggleRow('supply_dd', '', showRowMoney)] } : null;
+  return { text, keyboard };
 }
 
 /**
@@ -385,9 +408,9 @@ function _supplyDetailsGroupBlock(items, isAdmin, expandAll) {
  * promoted ("pushed up") when consecutive rows share it: only the
  * first row spells the design out; subsequent rows on the same design
  * just show the shade. Compact top-N + "… and N more" + drill-down
- * stays as before.
+ * stays as before. Money per-row is gated by `showRowMoney`.
  */
-function _supplyGroupRender({ items, isAdmin, expandAll }) {
+function _supplyGroupRender({ items, isAdmin, expandAll, showRowMoney }) {
   const byDS = new Map();
   for (const r of items) {
     const key = `${r.design}|${r.shade || '-'}`;
@@ -399,22 +422,21 @@ function _supplyGroupRender({ items, isAdmin, expandAll }) {
   const limit = expandAll ? dsSorted.length : Math.min(3, dsSorted.length);
   const visible = dsSorted.slice(0, limit);
   const restCount = dsSorted.length - limit;
-  // Promote the Design column when the same design repeats across
-  // consecutive visible rows. The first row of a run prints the
-  // design; followers indent further and show only their shade.
   let prevDesign = null;
   const lines = visible.map((ds) => {
     const sameAsPrev = ds.design === prevDesign;
     prevDesign = ds.design;
+    const tail = valStrRow(ds.value, isAdmin, showRowMoney);
     if (sameAsPrev) {
-      return `      Shade ${ds.shade}: ${ds.pkgs.size} Bales · ${ds.thans} thans · ${fmtQty(ds.yards)} yds${valStrShort(ds.value, isAdmin)}`;
+      return `      Shade ${ds.shade}: ${ds.pkgs.size} Bales · ${ds.thans} thans · ${fmtQty(ds.yards)} yds${tail}`;
     }
-    return `   ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} Bales · ${ds.thans} thans · ${fmtQty(ds.yards)} yds${valStrShort(ds.value, isAdmin)}`;
+    return `   ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} Bales · ${ds.thans} thans · ${fmtQty(ds.yards)} yds${tail}`;
   });
   return { block: lines.join('\n'), restCount, totalDesigns: dsSorted.length };
 }
 
 function buildCustomerWiseReport(sold, isAdmin, opts = {}) {
+  const showRowMoney = !!opts.showRowMoney;
   const expandKey = (opts.expand || '').trim().toLowerCase();
   const customers = new Map();
   for (const r of sold) {
@@ -433,7 +455,7 @@ function buildCustomerWiseReport(sold, isAdmin, opts = {}) {
   for (const [customer, cg] of sorted) {
     text += `👤 *${customer}* — ${cg.totalPkgs.size} Bales · ${cg.totalThans} thans · ${fmtQty(cg.totalYards)} yds${valStrShort(cg.totalValue, isAdmin)}\n`;
     const expandThis = expandKey === customer.toLowerCase();
-    const block = _supplyGroupRender({ items: cg.items, isAdmin, expandAll: expandThis });
+    const block = _supplyGroupRender({ items: cg.items, isAdmin, expandAll: expandThis, showRowMoney });
     if (block.block) text += block.block + '\n';
     if (block.restCount > 0) {
       text += `   _… and ${block.restCount} more design${block.restCount > 1 ? 's' : ''}_\n`;
@@ -444,10 +466,12 @@ function buildCustomerWiseReport(sold, isAdmin, opts = {}) {
     grandThans += cg.totalThans; grandYards += cg.totalYards; grandValue += cg.totalValue;
   }
   text += `🧮 *Grand Total: ${grandPkgs.size} Bales · ${grandThans} thans · ${fmtQty(grandYards)} yds${valStrShort(grandValue, isAdmin)}*`;
+  if (isAdmin) buttons.push(buildRowMoneyToggleRow('supply_c', '', showRowMoney));
   return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
 function buildWarehouseWiseReport(sold, isAdmin, opts = {}) {
+  const showRowMoney = !!opts.showRowMoney;
   const expandKey = (opts.expand || '').trim().toLowerCase();
   const warehouses = new Map();
   for (const r of sold) {
@@ -466,7 +490,7 @@ function buildWarehouseWiseReport(sold, isAdmin, opts = {}) {
   for (const [wh, wg] of sorted) {
     text += `🏭 *${wh}* — ${wg.totalPkgs.size} Bales · ${wg.totalThans} thans · ${fmtQty(wg.totalYards)} yds${valStrShort(wg.totalValue, isAdmin)}\n`;
     const expandThis = expandKey === wh.toLowerCase();
-    const block = _supplyGroupRender({ items: wg.items, isAdmin, expandAll: expandThis });
+    const block = _supplyGroupRender({ items: wg.items, isAdmin, expandAll: expandThis, showRowMoney });
     if (block.block) text += block.block + '\n';
     if (block.restCount > 0) {
       text += `   _… and ${block.restCount} more design${block.restCount > 1 ? 's' : ''}_\n`;
@@ -477,6 +501,7 @@ function buildWarehouseWiseReport(sold, isAdmin, opts = {}) {
     grandThans += wg.totalThans; grandYards += wg.totalYards; grandValue += wg.totalValue;
   }
   text += `🧮 *Grand Total: ${grandPkgs.size} Bales · ${grandThans} thans · ${fmtQty(grandYards)} yds${valStrShort(grandValue, isAdmin)}*`;
+  if (isAdmin) buttons.push(buildRowMoneyToggleRow('supply_w', '', showRowMoney));
   return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
@@ -759,7 +784,9 @@ function buildSalesCustomerReport(sold, periodLabel, opts = {}) {
     rank++;
     text += `${rank}. 👤 *${customer}* — ${cg.pkgs.size} Bales · ${cg.thans} thans · ${fmtQty(cg.yards)} yds · ${fmtMoneyShort(cg.value)}\n`;
     const expandThis = expandKey === customer.toLowerCase();
-    const block = _supplyGroupRender({ items: cg.items, isAdmin: true, expandAll: expandThis });
+    // Sales reports always show money per row — money IS the focus
+    // here, unlike Supply reports where it's secondary context.
+    const block = _supplyGroupRender({ items: cg.items, isAdmin: true, expandAll: expandThis, showRowMoney: true });
     if (block.block) text += block.block + '\n';
     if (block.restCount > 0) {
       text += `   _… and ${block.restCount} more design${block.restCount > 1 ? 's' : ''}_\n`;
@@ -6954,20 +6981,29 @@ async function handleCallbackQuery(bot, callbackQuery) {
    * concise reference.
    */
   } else if (data.startsWith('rxw:')) {
-    // Callback grammar:  rxw:<reportType>:<payload>
-    // Used for "Show all" drill-down on the compact reports. (The
-    // older view-toggle syntax `::v=t|l` is gracefully accepted but
-    // ignored — we no longer support a separate table view.)
+    // Callback grammar:  rxw:<reportType>:<payload>[::<flag>=<value>]
+    // Flags currently supported:
+    //   ::m=y / ::m=n  — Supply reports' "Show prices per row" toggle.
+    // Older "::v=t|l" view-toggle suffix is gracefully ignored (kept
+    // for compatibility with stale callbacks from earlier deploys).
     const rest = data.slice(4);
     const dblIdx = rest.indexOf('::');
     const head = dblIdx >= 0 ? rest.slice(0, dblIdx) : rest;
+    const tail = dblIdx >= 0 ? rest.slice(dblIdx + 2) : '';
     const sepIdx = head.indexOf(':');
     const reportType = sepIdx >= 0 ? head.slice(0, sepIdx) : head;
     const payload = sepIdx >= 0 ? head.slice(sepIdx + 1) : '';
+    let showRowMoney; // undefined → builder default (false)
+    if (tail.startsWith('m=')) {
+      const v = tail.slice(2);
+      if (v === 'y') showRowMoney = true;
+      else if (v === 'n') showRowMoney = false;
+    }
+    const isMoneyToggle = showRowMoney !== undefined;
     const chatId = callbackQuery.message.chat.id;
     const uid = String(callbackQuery.from.id);
     const isAdminUser = config.access.adminIds.includes(uid);
-    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Expanding…' });
+    await bot.answerCallbackQuery(callbackQuery.id, { text: isMoneyToggle ? 'Switching prices…' : 'Expanding…' });
 
     try {
       switch (reportType) {
@@ -7021,7 +7057,11 @@ async function handleCallbackQuery(bot, callbackQuery) {
         }
         case 'supply_c': {
           const sold = await getSoldItems();
-          const expanded = buildCustomerWiseReport(sold, isAdminUser, { expand: payload });
+          // Money-toggle taps want a fresh compact render, NOT a
+          // group-expanded one — pass empty expand so the top-3 +
+          // "Show all" UX is preserved.
+          const expandArg = isMoneyToggle ? '' : payload;
+          const expanded = buildCustomerWiseReport(sold, isAdminUser, { expand: expandArg, showRowMoney });
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
             ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
@@ -7030,7 +7070,8 @@ async function handleCallbackQuery(bot, callbackQuery) {
         }
         case 'supply_w': {
           const sold = await getSoldItems();
-          const expanded = buildWarehouseWiseReport(sold, isAdminUser, { expand: payload });
+          const expandArg = isMoneyToggle ? '' : payload;
+          const expanded = buildWarehouseWiseReport(sold, isAdminUser, { expand: expandArg, showRowMoney });
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
             ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
@@ -7039,7 +7080,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         }
         case 'supply_ds': {
           const sold = await getSoldItems();
-          const expanded = buildDesignWiseReport(sold, isAdminUser);
+          const expanded = buildDesignWiseReport(sold, isAdminUser, { showRowMoney });
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
             ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
@@ -7048,7 +7089,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         }
         case 'supply_dd': {
           const sold = await getSoldItems();
-          const expanded = buildDesignDateWiseReport(sold, isAdminUser);
+          const expanded = buildDesignDateWiseReport(sold, isAdminUser, { showRowMoney });
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
             ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
