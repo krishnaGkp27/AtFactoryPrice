@@ -45,6 +45,30 @@ async function getSubmittedPendingApproval() {
   return all.filter((t) => t.status === 'submitted');
 }
 
+/**
+ * Tasks the given assigner created that are currently waiting on
+ * their sign-off (status === 'submitted').
+ */
+async function getSubmittedForAssigner(assignerUserId) {
+  if (!assignerUserId) return [];
+  const all = await getAll();
+  return all.filter(
+    (t) => t.status === 'submitted' && t.assigned_by === String(assignerUserId),
+  );
+}
+
+/**
+ * Tasks assigned to anyone in the set of `teamUserIds`. Used for the
+ * "Team Tasks" view — caller computes the team via deptGraph.canAssignTo
+ * and passes the resulting user_id list here.
+ */
+async function getByAssignedToMany(teamUserIds) {
+  if (!Array.isArray(teamUserIds) || !teamUserIds.length) return [];
+  const set = new Set(teamUserIds.map((x) => String(x)));
+  const all = await getAll();
+  return all.filter((t) => set.has(t.assigned_to));
+}
+
 async function append(task) {
   const taskId = task.task_id || idGenerator.generate('TASK');
   const now = new Date().toISOString();
@@ -73,4 +97,14 @@ async function updateStatus(taskId, status, submittedAtOrCompletedAt) {
   return true;
 }
 
-module.exports = { getAll, getById, getByAssignedTo, getSubmittedPendingApproval, append, updateStatus, SHEET };
+module.exports = {
+  getAll,
+  getById,
+  getByAssignedTo,
+  getSubmittedPendingApproval,
+  getSubmittedForAssigner,
+  getByAssignedToMany,
+  append,
+  updateStatus,
+  SHEET,
+};

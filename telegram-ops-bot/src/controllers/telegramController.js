@@ -35,6 +35,7 @@ const designAssetsRepo = require('../repositories/designAssetsRepository');
 const designAssetsService = require('../services/designAssetsService');
 const colorDetector = require('../ai/colorDetector');
 const catalogFlows = require('./catalogFlowController');
+const taskFlow = require('../flows/taskFlow');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
 const idGenerator = require('../utils/idGenerator');
 const config = require('../config');
@@ -3117,6 +3118,15 @@ async function handleMessage(bot, msg) {
     }
   }
 
+  // Task assign flow: title / description text input.
+  {
+    const tskSession = sessionStore.get(userId);
+    if (tskSession && tskSession.type === 'task_assign_flow') {
+      const handled = await taskFlow.handleTextStep(bot, msg);
+      if (handled) return;
+    }
+  }
+
   // Orphan-flow detection: if the user just posted a reply that *looks* like
   // it was meant for a recently expired flow (e.g. comma-separated shade
   // names while the design_asset_flow session timed out), send a clear
@@ -3897,42 +3907,15 @@ async function handleMessage(bot, msg) {
       }
 
       case 'assign_task': {
-        if (!config.access.adminIds.includes(userId)) {
-          await bot.sendMessage(chatId, 'Only admins can assign tasks.');
-          return;
-        }
-        const title = intent.taskTitle || intent.design || text.replace(/^assign\s+task\s+/i, '').trim();
-        const assigneeName = intent.customer;
-        if (!title || !assigneeName) {
-          await bot.sendMessage(chatId, 'Please specify task title and assignee. Example: "Assign task Deliver order to Abdul".');
-          return;
-        }
-        const tasksRepo = require('../repositories/tasksRepository');
-        const users = await usersRepository.getAll();
-        const assignee = users.find((u) => u.name.toLowerCase() === assigneeName.toLowerCase());
-        if (!assignee) {
-          await bot.sendMessage(chatId, `User "${assigneeName}" not found in Users. Add them first.`);
-          return;
-        }
-        const created = await tasksRepo.append({ title, description: '', assigned_to: assignee.user_id, assigned_by: userId, status: 'pending' });
-        await bot.sendMessage(chatId, `✅ Task assigned: "${title}" to ${assignee.name} (ID: ${created.task_id}). They can view with "My tasks" and mark done when finished.`);
+        // Tappable picker is the canonical entry point now — NL just launches it.
+        await taskFlow.startAssign(bot, chatId, userId, null);
         return;
       }
 
       case 'my_tasks': {
-        const tasksRepo = require('../repositories/tasksRepository');
-        const list = await tasksRepo.getByAssignedTo(userId);
-        if (!list.length) {
-          await bot.sendMessage(chatId, 'You have no assigned tasks.');
-          return;
-        }
-        let out = '📋 *Your tasks*\n\n';
-        for (const t of list) {
-          const statusLabel = t.status === 'completed' ? '✅' : t.status === 'submitted' ? '⏳ (pending admin approval)' : '📌';
-          out += `${statusLabel} ${t.task_id}: ${t.title}\n  Status: ${t.status}${t.completed_at ? `, completed ${fmtDate(t.completed_at)}` : ''}\n\n`;
-        }
-        out += 'To mark a task done, say: "Mark task <task_id> done" (e.g. Mark task ' + list[0].task_id + ' done)';
-        await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+        // Send a fresh anchor message; taskFlow.showMyTasks edits in place.
+        const sent = await bot.sendMessage(chatId, 'Loading your tasks…');
+        await taskFlow.showMyTasks(bot, chatId, userId, sent.message_id);
         return;
       }
 
@@ -4342,20 +4325,37 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
   const deptName = userDepts[0] || (isAdminUser ? 'Admin' : '');
 
   let allowed = [];
+  const TASK_CODES = new Set(['assign_task', 'my_tasks', 'team_tasks', 'pending_signoff']);
   if (isAdminUser) {
-    allowed = activityRegistry.getAll();
+    // Admin sees the entire registry; we'll still let taskFlow gate the
+    // Task hub entries below so non-managing admins are not noisy with
+    // every task tile (admins ARE managers by definition, so all 4 show).
+    allowed = activityRegistry.getAll().filter((a) => !TASK_CODES.has(a.code));
   } else if (userDepts.length) {
     const seen = new Set();
     for (const name of userDepts) {
       const dept = await departmentsRepo.findByName(name);
       if (!dept) continue;
       for (const a of activityRegistry.filterByCodes(dept.allowed_activities)) {
+        // Skip task codes — they're injected per-user below, not from
+        // Departments.allowed_activities.
+        if (TASK_CODES.has(a.code)) continue;
         if (!seen.has(a.code)) {
           seen.add(a.code);
           allowed.push(a);
         }
       }
     }
+  }
+
+  // Inject Task hub activities based on user attributes (admin / manages).
+  try {
+    const taskCodes = await taskFlow.visibleTaskActivityCodes(userId);
+    for (const a of activityRegistry.filterByCodes(taskCodes)) {
+      allowed.push(a);
+    }
+  } catch (e) {
+    logger.warn(`buildGreetingMenuMarkup: taskFlow visibility failed: ${e.message}`);
   }
 
   if (!allowed.length) {
@@ -4451,20 +4451,30 @@ async function renderHubSubmenu(bot, chatId, messageId, userId, hubId) {
     : (user && user.department ? [user.department] : (isAdminUser ? ['Admin'] : []));
 
   let allowed = [];
+  const TASK_CODES = new Set(['assign_task', 'my_tasks', 'team_tasks', 'pending_signoff']);
   if (isAdminUser) {
-    allowed = activityRegistry.getAll();
+    allowed = activityRegistry.getAll().filter((a) => !TASK_CODES.has(a.code));
   } else if (userDepts.length) {
     const seen = new Set();
     for (const name of userDepts) {
       const dept = await departmentsRepo.findByName(name);
       if (!dept) continue;
       for (const a of activityRegistry.filterByCodes(dept.allowed_activities)) {
+        if (TASK_CODES.has(a.code)) continue;
         if (!seen.has(a.code)) {
           seen.add(a.code);
           allowed.push(a);
         }
       }
     }
+  }
+  try {
+    const taskCodes = await taskFlow.visibleTaskActivityCodes(userId);
+    for (const a of activityRegistry.filterByCodes(taskCodes)) {
+      allowed.push(a);
+    }
+  } catch (e) {
+    logger.warn(`renderHubSubmenu: taskFlow visibility failed: ${e.message}`);
   }
   const subs = allowed.filter((a) => a.hub === hubId);
 
@@ -5414,6 +5424,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
   }
   if (data.startsWith('cms:')) {
     const handled = await catalogFlows.handleCmsCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
+  // Task hub: tappable assign flow + mark-done + sign-off cards.
+  if (data.startsWith('tsk:')) {
+    const handled = await taskFlow.handleCallback(bot, callbackQuery);
     if (handled) return;
   }
 
@@ -7459,6 +7475,19 @@ async function handleCallbackQuery(bot, callbackQuery) {
         break;
       case 'manage_catalog_stock':
         await catalogFlows.startManageCatalogStock(bot, chatId, uid, messageId);
+        break;
+      // Task hub entries — delegate to taskFlow module.
+      case 'assign_task':
+        await taskFlow.startAssign(bot, chatId, uid, messageId);
+        break;
+      case 'my_tasks':
+        await taskFlow.showMyTasks(bot, chatId, uid, messageId);
+        break;
+      case 'team_tasks':
+        await taskFlow.showTeamTasks(bot, chatId, uid, messageId);
+        break;
+      case 'pending_signoff':
+        await taskFlow.showPendingSignOff(bot, chatId, uid, messageId);
         break;
       default:
         await bot.sendMessage(chatId, 'Feature coming soon.');

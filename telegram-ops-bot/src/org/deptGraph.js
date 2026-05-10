@@ -149,6 +149,29 @@ function mergeActivitiesForManages(user, allDepartments) {
   return [...set];
 }
 
+/**
+ * Filter all active users to those the actor may assign work to.
+ * Admin sees everyone active; managers see anyone whose departments
+ * fall under (or equal to) any department in actor.manages.
+ *
+ * @param {{ user_id?: string, manages?: string[] }} actorUser
+ * @param {Array<{ user_id: string, status?: string, departments?: string[], department?: string }>} allUsers
+ * @param {{ byNorm: Map<string, unknown> }} graph
+ * @param {{ isAdmin?: boolean, excludeSelf?: boolean }} [opts]
+ */
+function listAssignableUsers(actorUser, allUsers, graph, opts = {}) {
+  const isAdmin = !!opts.isAdmin;
+  const excludeSelf = opts.excludeSelf !== false;
+  const actorId = actorUser?.user_id ? String(actorUser.user_id) : '';
+
+  return (allUsers || []).filter((u) => {
+    if (!u || (u.status && u.status !== 'active')) return false;
+    if (excludeSelf && actorId && String(u.user_id) === actorId) return false;
+    if (isAdmin) return true;
+    return canAssignTo(actorUser, u, graph);
+  });
+}
+
 module.exports = {
   norm,
   buildGraph,
@@ -157,4 +180,5 @@ module.exports = {
   validateForest,
   canAssignTo,
   mergeActivitiesForManages,
+  listAssignableUsers,
 };

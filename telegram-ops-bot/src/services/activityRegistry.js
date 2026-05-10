@@ -19,6 +19,7 @@ const HUBS = [
   { id: 'samples',    label: 'Samples',              icon: '🧪' },
   { id: 'catalog',    label: 'Catalog',              icon: '📷' },
   { id: 'reports',    label: 'Reports',              icon: '📊' },
+  { id: 'tasks',      label: 'Tasks',                icon: '📌' },
   { id: 'admin',      label: 'Admin Settings',       icon: '⚙️' },
 ];
 
@@ -60,6 +61,16 @@ const ACTIVITIES = [
 
   { code: 'sales_report',          label: 'Sales Report',              icon: '📊', callback: 'act:sales_report',       hub: 'reports' },
   { code: 'supply_details',        label: 'Supply Details',            icon: '📦', callback: 'act:supply_details',     hub: 'reports' },
+
+  // Tasks hub — visibility is *injected* per-user by the controller
+  // (admin / has-manages → sees assign/team/signoff; everyone else
+  // sees only My Tasks). Do not list these codes in any department's
+  // allowed_activities — controller decides visibility from
+  // user.manages / isAdmin, not from the Departments sheet.
+  { code: 'assign_task',           label: 'Assign Task',               icon: '➕', callback: 'act:assign_task',        hub: 'tasks' },
+  { code: 'my_tasks',              label: 'My Tasks',                  icon: '📋', callback: 'act:my_tasks',           hub: 'tasks' },
+  { code: 'team_tasks',            label: 'Team Tasks',                icon: '👥', callback: 'act:team_tasks',         hub: 'tasks' },
+  { code: 'pending_signoff',       label: 'Pending Sign-off',          icon: '⏳', callback: 'act:pending_signoff',    hub: 'tasks' },
 
   { code: 'update_price',          label: 'Update Price',              icon: '💲', callback: 'act:update_price',       hub: 'admin' },
   { code: 'manage_users',          label: 'Manage Users',              icon: '👥', callback: 'act:manage_users',       hub: 'admin' },
