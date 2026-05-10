@@ -36,6 +36,7 @@ const designAssetsService = require('../services/designAssetsService');
 const colorDetector = require('../ai/colorDetector');
 const catalogFlows = require('./catalogFlowController');
 const taskFlow = require('../flows/taskFlow');
+const menuNav = require('../utils/menuNav');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
 const idGenerator = require('../utils/idGenerator');
 const config = require('../config');
@@ -1526,15 +1527,15 @@ async function sendCustomerRankingReport(bot, chatId, opts = {}) {
   const grandValue = ranked.reduce((s, [, c]) => s + c.value, 0);
   out += `*Total: ${ranked.length} customers · ${fmtMoneyShort(grandValue)}*`;
 
-  // Pagination buttons: Prev / Next / Show all (a single rich page).
   const buttons = [];
   const navRow = [];
   if (page > 0) navRow.push({ text: '⬅️ Prev', callback_data: `rxw:rank:${page - 1}` });
   if (start + slice.length < ranked.length) navRow.push({ text: 'Next ➡️', callback_data: `rxw:rank:${page + 1}` });
   if (navRow.length) buttons.push(navRow);
+  buttons.push(menuNav.backToMenuRow());
   await sendLong(bot, chatId, out, {
     parse_mode: 'Markdown',
-    ...(buttons.length ? { reply_markup: { inline_keyboard: buttons } } : {}),
+    reply_markup: { inline_keyboard: buttons },
   });
 }
 
@@ -7317,13 +7318,21 @@ async function handleCallbackQuery(bot, callbackQuery) {
       case 'upload_receipt': await startReceiptFlow(bot, chatId, uid); break;
       case 'my_orders': {
         const orders = await ordersRepo.getByAssignee(uid);
-        if (!orders.length) { await bot.sendMessage(chatId, 'You have no pending supply orders.'); break; }
+        if (!orders.length) {
+          await editOrSend(bot, chatId, messageId, 'You have no pending supply orders.', {
+            reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] },
+          });
+          break;
+        }
         let out = '📋 *Your Supply Orders*\n\n';
         for (const o of orders) {
           const icon = o.status === 'accepted' ? '✅' : '⏳';
           out += `${icon} *${o.order_id}*\n  Design: ${o.design} | Customer: ${o.customer}\n  Qty: ${o.quantity} | Date: ${o.scheduled_date}\n  Payment: ${o.payment_status} | Status: ${o.status}\n\n`;
         }
-        await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
+        await sendLong(bot, chatId, out, {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] },
+        });
         break;
       }
       case 'mark_delivered':
@@ -7339,6 +7348,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
             [{ text: '📦 Design / Product wise', callback_data: 'sd:design' }],
             [{ text: '👤 Customer wise', callback_data: 'sd:customer' }],
             [{ text: '🏭 Warehouse wise', callback_data: 'sd:warehouse' }],
+            menuNav.backToMenuRow(),
           ] },
         });
         break;
@@ -7411,7 +7421,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
         for (const d of depts) {
           text += `*${d.dept_name}* (${d.dept_id})\n  Activities: ${d.allowed_activities.join(', ')}\n  Status: ${d.status}\n\n`;
         }
-        await sendLong(bot, chatId, text, { parse_mode: 'Markdown' });
+        await sendLong(bot, chatId, text, {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] },
+        });
         break;
       }
       case 'manage_wh': {
@@ -7420,7 +7433,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
         let text = '🏭 *Warehouses*\n\n';
         for (const w of whs) text += `• ${w}\n`;
         text += '\nTo assign a warehouse to a user, use 👥 Manage Users.';
-        await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+        await editOrSend(bot, chatId, messageId, text, {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] },
+        });
         break;
       }
       case 'manage_banks':
