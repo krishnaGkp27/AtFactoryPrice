@@ -30,14 +30,14 @@ const REQUIRED_SHEETS = {
     headers: ['customer_id', 'name', 'phone', 'address', 'category', 'credit_limit', 'outstanding_balance', 'payment_terms', 'notes', 'status', 'created_at', 'updated_at'],
   },
   Users: {
-    headers: ['user_id', 'name', 'role', 'branch', 'access_level', 'status', 'created_at', 'department', 'warehouses'],
+    headers: ['user_id', 'name', 'role', 'branch', 'access_level', 'status', 'created_at', 'department', 'warehouses', 'manages'],
   },
   Departments: {
-    headers: ['dept_id', 'dept_name', 'allowed_activities', 'status', 'created_at'],
+    headers: ['dept_id', 'dept_name', 'allowed_activities', 'status', 'created_at', 'parent_department'],
     seed: [
-      ['DEPT-001', 'Sales', 'supply_request,upload_receipt,my_orders,give_sample,supply_details,customer_history,customer_pattern,show_customer_notes', 'active'],
-      ['DEPT-002', 'Dispatch', 'mark_order_delivered,my_orders', 'active'],
-      ['DEPT-003', 'Admin', '__all__', 'active'],
+      ['DEPT-001', 'Sales', 'supply_request,upload_receipt,my_orders,give_sample,supply_details,customer_history,customer_pattern,show_customer_notes', 'active', '', ''],
+      ['DEPT-002', 'Dispatch', 'mark_order_delivered,my_orders', 'active', '', ''],
+      ['DEPT-003', 'Admin', '__all__', 'active', '', ''],
     ],
   },
   Tasks: {
@@ -154,16 +154,37 @@ async function initialize() {
 
   if (existing.includes('Users')) {
     try {
-      const userHeader = await sheets.readRange('Users', 'A1:I1');
-      const h = userHeader[0] || [];
+      let userHeader = await sheets.readRange('Users', 'A1:Z1');
+      let h = userHeader[0] || [];
       if (!h.includes('department')) {
         const nextCol = colLetter(h.length + 1);
         const endCol = colLetter(h.length + 2);
         await sheets.updateRange('Users', `${nextCol}1:${endCol}1`, [['department', 'warehouses']]);
         logger.info('SchemaMapper: extended Users with department, warehouses columns');
+        userHeader = await sheets.readRange('Users', 'A1:Z1');
+        h = userHeader[0] || [];
+      }
+      if (!h.includes('manages')) {
+        const nextCol = colLetter(h.length + 1);
+        await sheets.updateRange('Users', `${nextCol}1:${nextCol}1`, [['manages']]);
+        logger.info('SchemaMapper: extended Users with manages column (TG-7.5)');
       }
     } catch (e) {
       logger.warn('SchemaMapper: could not extend Users —', e.message);
+    }
+  }
+
+  if (existing.includes('Departments')) {
+    try {
+      const deptHeader = await sheets.readRange('Departments', 'A1:Z1');
+      const h = deptHeader[0] || [];
+      if (!h.includes('parent_department')) {
+        const nextCol = colLetter(h.length + 1);
+        await sheets.updateRange('Departments', `${nextCol}1:${nextCol}1`, [['parent_department']]);
+        logger.info('SchemaMapper: extended Departments with parent_department (TG-7.5)');
+      }
+    } catch (e) {
+      logger.warn('SchemaMapper: could not extend Departments —', e.message);
     }
   }
 

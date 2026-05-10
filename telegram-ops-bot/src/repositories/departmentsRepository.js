@@ -6,7 +6,10 @@
 const sheets = require('./sheetsClient');
 
 const SHEET = 'Departments';
-const HEADERS = ['dept_id', 'dept_name', 'allowed_activities', 'status', 'created_at'];
+const HEADERS = [
+  'dept_id', 'dept_name', 'allowed_activities', 'status', 'created_at',
+  'parent_department',
+];
 
 function str(v) { return (v ?? '').toString().trim(); }
 
@@ -18,11 +21,12 @@ function parse(r, rowIndex) {
     allowed_activities: str(r[2]).split(',').map((a) => a.trim()).filter(Boolean),
     status: str(r[3]) || 'active',
     created_at: str(r[4]),
+    parent_department: str(r[5]),
   };
 }
 
 async function getAll() {
-  const rows = await sheets.readRange(SHEET, 'A2:E');
+  const rows = await sheets.readRange(SHEET, 'A2:F');
   return rows.map((r, i) => parse(r, i + 2)).filter((d) => d.dept_id);
 }
 
@@ -55,6 +59,16 @@ async function updateActivities(deptId, activities) {
 }
 
 /**
+ * Set parent department name (empty = top-level). Validates row exists.
+ */
+async function updateParentDepartment(deptId, parentDepartmentName) {
+  const d = await findById(deptId);
+  if (!d) return false;
+  await sheets.updateRange(SHEET, `F${d.rowIndex}`, [[str(parentDepartmentName)]]);
+  return true;
+}
+
+/**
  * Idempotent: ensure a department row exists with the given name.
  * Used by Stage 1 dispatch routing so the bot can self-heal a missing
  * Dispatch department without forcing the admin to hand-edit the
@@ -78,4 +92,14 @@ async function ensureDept(cfg) {
   return await findByName(cfg.dept_name);
 }
 
-module.exports = { getAll, findById, findByName, append, updateActivities, ensureDept, SHEET, HEADERS };
+module.exports = {
+  getAll,
+  findById,
+  findByName,
+  append,
+  updateActivities,
+  updateParentDepartment,
+  ensureDept,
+  SHEET,
+  HEADERS,
+};

@@ -20,8 +20,13 @@ function parseDeptCsv(raw) {
   return str(raw).split(',').map((d) => d.trim()).filter(Boolean);
 }
 
+function parseManagesCsv(raw) {
+  return str(raw).split(',').map((d) => d.trim()).filter(Boolean);
+}
+
 function parse(r, rowIndex) {
   const departments = parseDeptCsv(r[7]);
+  const manages = parseManagesCsv(r[9]);
   return {
     rowIndex,
     user_id: str(r[0]),
@@ -36,6 +41,8 @@ function parse(r, rowIndex) {
     department: departments[0] || '',
     departments,
     warehouses: str(r[8]).split(',').map((w) => w.trim()).filter(Boolean),
+    /** Department names this user heads (TG-7.5); scope = union of those depts' allowed_activities */
+    manages,
   };
 }
 
@@ -58,7 +65,7 @@ function inDepartment(user, name) {
 }
 
 async function getAll() {
-  const rows = await sheets.readRange(SHEET, 'A2:I');
+  const rows = await sheets.readRange(SHEET, 'A2:J');
   return rows.map((r, i) => parse(r, i + 2)).filter((u) => u.user_id);
 }
 
@@ -82,11 +89,15 @@ async function append(user) {
   const deptCsv = Array.isArray(user.departments)
     ? user.departments.join(',')
     : (user.department || '');
+  const managesCsv = Array.isArray(user.manages)
+    ? user.manages.join(',')
+    : str(user.manages);
   await sheets.appendRows(SHEET, [[
     user.user_id, user.name || '', user.role || 'employee',
     user.branch || '', user.access_level || 'branch_only',
     user.status || 'active', new Date().toISOString(),
     deptCsv, Array.isArray(user.warehouses) ? user.warehouses.join(',') : (user.warehouses || ''),
+    managesCsv,
   ]]);
 }
 
@@ -113,6 +124,19 @@ async function updateWarehouses(userId, warehouses) {
   return true;
 }
 
+/**
+ * CSV of department names this user manages (heads). Empty = not a dept head.
+ */
+async function updateManages(userId, manages) {
+  const u = await findByUserId(userId);
+  if (!u) return false;
+  const csv = Array.isArray(manages)
+    ? manages.map((d) => String(d).trim()).filter(Boolean).join(',')
+    : String(manages || '').trim();
+  await sheets.updateRange(SHEET, `J${u.rowIndex}`, [[csv]]);
+  return true;
+}
+
 module.exports = {
   getAll,
   findByUserId,
@@ -121,5 +145,6 @@ module.exports = {
   append,
   updateDepartment,
   updateWarehouses,
+  updateManages,
   SHEET,
 };
