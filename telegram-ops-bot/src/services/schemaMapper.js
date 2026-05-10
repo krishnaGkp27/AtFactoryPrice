@@ -41,7 +41,32 @@ const REQUIRED_SHEETS = {
     ],
   },
   Tasks: {
-    headers: ['task_id', 'title', 'description', 'assigned_to', 'assigned_by', 'status', 'created_at', 'submitted_at', 'completed_at'],
+    headers: [
+      'task_id', 'title', 'description', 'assigned_to', 'assigned_by',
+      'status', 'created_at', 'submitted_at', 'completed_at',
+      // TG-7.5 Phase C — track + timestamps + negotiated timeline.
+      'track', 'priority', 'assigned_at', 'accepted_at',
+      'proposed_hours', 'proposed_deadline', 'negotiation_rounds',
+      'timeline_agreed_at', 'started_at', 'approved_at', 'last_event_at',
+    ],
+  },
+  // Money-side of the Tasks workflow. Kept in its own sheet so admin /
+  // scrum-master Tasks views cannot leak incentive amounts. Only
+  // config.access.financeIds users should be allowed to read this sheet
+  // through the bot.
+  Incentives: {
+    headers: [
+      'task_id', 'amount', 'currency', 'set_by', 'set_at',
+      'doer_confirmed_at', 'paid_status', 'paid_at', 'paid_amount', 'notes',
+    ],
+  },
+  // Append-only audit log; powers performance analysis (planned vs
+  // actual duration, negotiation latency, Gantt timelines later).
+  TaskEvents: {
+    headers: [
+      'event_id', 'task_id', 'event_type', 'from_status', 'to_status',
+      'actor_user_id', 'at', 'meta_json',
+    ],
   },
   Contacts: {
     headers: ['contact_id', 'name', 'phone', 'type', 'address', 'notes', 'created_at'],
@@ -185,6 +210,31 @@ async function initialize() {
       }
     } catch (e) {
       logger.warn('SchemaMapper: could not extend Departments —', e.message);
+    }
+  }
+
+  // TG-7.5 Phase C: extend pre-existing Tasks sheet with the new
+  // negotiation + timestamp columns. New deployments get the full
+  // header via REQUIRED_SHEETS above; this branch is only hit when
+  // the sheet already existed with the legacy 9-column header.
+  if (existing.includes('Tasks')) {
+    try {
+      const TASK_NEW_COLS = [
+        'track', 'priority', 'assigned_at', 'accepted_at',
+        'proposed_hours', 'proposed_deadline', 'negotiation_rounds',
+        'timeline_agreed_at', 'started_at', 'approved_at', 'last_event_at',
+      ];
+      const taskHeader = await sheets.readRange('Tasks', 'A1:Z1');
+      const h = taskHeader[0] || [];
+      const missing = TASK_NEW_COLS.filter((c) => !h.includes(c));
+      if (missing.length) {
+        const startCol = colLetter(h.length + 1);
+        const endCol = colLetter(h.length + missing.length);
+        await sheets.updateRange('Tasks', `${startCol}1:${endCol}1`, [missing]);
+        logger.info(`SchemaMapper: extended Tasks with ${missing.length} TG-7.5 columns (${missing.join(', ')})`);
+      }
+    } catch (e) {
+      logger.warn('SchemaMapper: could not extend Tasks —', e.message);
     }
   }
 

@@ -7,6 +7,9 @@
  *   S2  Repo parse — departmentsRepository reads parent_department
  *   S3  Repo parse — usersRepository reads manages
  *   S4  Intent-parser action enum vs risk/evaluate.js policy (TG-7 lint)
+ *   S5  Repo parse — tasksRepository extended schema (TG-7.5 Phase C)
+ *   S6  Repo parse — incentivesRepository row shape
+ *   S7  Repo parse — taskEventsRepository row shape + meta JSON
  *
  * Run:  npm run smoke         (from telegram-ops-bot/)
  * Exit: 0 = all passed, 1 = one or more FAIL
@@ -282,6 +285,153 @@ function runS4() {
 }
 
 // ---------------------------------------------------------------------------
+// S5 — tasksRepository._parse handles legacy 9-col + new 20-col rows
+// ---------------------------------------------------------------------------
+function runS5() {
+  // Stub sheetsClient so the repo can load without Google creds.
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async () => [],
+    appendRows: async () => {},
+    updateRange: async () => {},
+  });
+  const tasksRepo = require('../src/repositories/tasksRepository');
+
+  // Legacy 9-column row (pre-TG-7.5): only A..I populated.
+  const legacy = ['T1', 'Fix lamp', '', 'U1', 'U2', 'pending', '2026-05-01T00:00:00Z', '', ''];
+  const lp = tasksRepo._parse(legacy, 2);
+  if (lp.status === 'assigned' && lp.track === 'salaried' && lp.priority === 'normal'
+      && lp.negotiation_rounds === 0 && lp.proposed_hours === null
+      && lp.assigned_at === lp.created_at) {
+    pass('S5.1 tasksRepository: legacy 9-col row maps pending→assigned with safe defaults');
+  } else {
+    fail('S5.1 tasksRepository: legacy 9-col row maps pending→assigned with safe defaults', JSON.stringify(lp));
+  }
+
+  // Legacy in_progress → active
+  const legacy2 = ['T2', 'Sweep', '', 'U1', 'U2', 'in_progress', '2026-05-01', '', ''];
+  const lp2 = tasksRepo._parse(legacy2, 3);
+  if (lp2.status === 'active') {
+    pass('S5.2 tasksRepository: legacy in_progress → active');
+  } else {
+    fail('S5.2 tasksRepository: legacy in_progress → active', JSON.stringify(lp2));
+  }
+
+  // Full 20-column row with new fields.
+  const full = [
+    'T3', 'Wire panel', 'Be careful', 'U-doer', 'U-mgr',
+    'awaiting_incentive', '2026-05-09T10:00:00Z', '', '',
+    'incentivized', 'high', '2026-05-09T10:00:00Z', '2026-05-09T10:05:00Z',
+    '4.5', '2026-05-12', '1',
+    '2026-05-09T11:00:00Z', '', '', '2026-05-09T11:00:00Z',
+  ];
+  const fp = tasksRepo._parse(full, 4);
+  if (fp.track === 'incentivized'
+      && fp.priority === 'high'
+      && fp.proposed_hours === 4.5
+      && fp.proposed_deadline === '2026-05-12'
+      && fp.negotiation_rounds === 1
+      && fp.timeline_agreed_at === '2026-05-09T11:00:00Z') {
+    pass('S5.3 tasksRepository: full 20-col row parses all new fields');
+  } else {
+    fail('S5.3 tasksRepository: full 20-col row parses all new fields', JSON.stringify(fp));
+  }
+
+  // STATUSES exported and includes all phases.
+  const wantStatuses = [
+    'assigned', 'awaiting_timeline_ack', 'awaiting_incentive',
+    'awaiting_final_ack', 'active', 'submitted', 'completed',
+    'declined', 'cancelled',
+  ];
+  const haveAll = wantStatuses.every((s) => tasksRepo.VALID_STATUSES.has(s));
+  if (haveAll) {
+    pass('S5.4 tasksRepository: VALID_STATUSES covers full state machine');
+  } else {
+    fail('S5.4 tasksRepository: VALID_STATUSES covers full state machine',
+      JSON.stringify([...tasksRepo.VALID_STATUSES]));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// S6 — incentivesRepository row shape
+// ---------------------------------------------------------------------------
+function runS6() {
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async () => [],
+    appendRows: async () => {},
+    updateRange: async () => {},
+  });
+  const incRepo = require('../src/repositories/incentivesRepository');
+
+  const row = [
+    'T-100', '5000', 'NGN', 'U-mgr', '2026-05-10T08:00:00Z',
+    '2026-05-10T09:00:00Z', 'pending', '', '', 'sample-notes',
+  ];
+  const p = incRepo._parse(row, 2);
+  if (p.task_id === 'T-100' && p.amount === 5000 && p.currency === 'NGN'
+      && p.set_by === 'U-mgr' && p.doer_confirmed_at && p.paid_status === 'pending'
+      && p.paid_amount === null) {
+    pass('S6.1 incentivesRepository: parses amount/currency/set_by/doer_confirmed_at');
+  } else {
+    fail('S6.1 incentivesRepository: parses amount/currency/set_by/doer_confirmed_at', JSON.stringify(p));
+  }
+
+  // Sparse row — only task_id + amount set.
+  const sparse = ['T-101', '0'];
+  const sp = incRepo._parse(sparse, 3);
+  if (sp.task_id === 'T-101' && sp.amount === 0 && sp.currency && sp.paid_amount === null) {
+    pass('S6.2 incentivesRepository: sparse row → defaults');
+  } else {
+    fail('S6.2 incentivesRepository: sparse row → defaults', JSON.stringify(sp));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// S7 — taskEventsRepository row shape + meta_json decoding
+// ---------------------------------------------------------------------------
+function runS7() {
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async () => [],
+    appendRows: async () => {},
+    updateRange: async () => {},
+  });
+  const tev = require('../src/repositories/taskEventsRepository');
+
+  const row = [
+    'TEV-20260510-001', 'T-100', 'doer_proposed_timeline',
+    'assigned', 'awaiting_timeline_ack', 'U-doer',
+    '2026-05-10T10:00:00Z', JSON.stringify({ hours: 4, deadline: '2026-05-12' }),
+  ];
+  const p = tev._parse(row, 2);
+  if (p.event_id && p.task_id === 'T-100' && p.event_type === 'doer_proposed_timeline'
+      && p.from_status === 'assigned' && p.to_status === 'awaiting_timeline_ack'
+      && p.meta && p.meta.hours === 4 && p.meta.deadline === '2026-05-12') {
+    pass('S7.1 taskEventsRepository: parses event row with valid meta JSON');
+  } else {
+    fail('S7.1 taskEventsRepository: parses event row with valid meta JSON', JSON.stringify(p));
+  }
+
+  // Malformed meta — should fall back to { _raw: '…' } rather than crash.
+  const bad = ['TEV-x', 'T-100', 'x', '', '', '', '', '{not-json'];
+  const bp = tev._parse(bad, 3);
+  if (bp.meta && typeof bp.meta._raw === 'string') {
+    pass('S7.2 taskEventsRepository: malformed meta JSON → _raw fallback');
+  } else {
+    fail('S7.2 taskEventsRepository: malformed meta JSON → _raw fallback', JSON.stringify(bp));
+  }
+}
+
+// Tiny helper to stub a module in the require cache so repo modules can
+// load without their real dependencies (Google Sheets client, etc.).
+function stubModule(resolvedPath, exports) {
+  require.cache[resolvedPath] = {
+    id: resolvedPath,
+    filename: resolvedPath,
+    loaded: true,
+    exports,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (function main() {
@@ -291,6 +441,9 @@ function runS4() {
   try { runS2(); } catch (e) { fail('S2 unexpected error', e.message); }
   try { runS3(); } catch (e) { fail('S3 unexpected error', e.message); }
   try { runS4(); } catch (e) { fail('S4 unexpected error', e.message); }
+  try { runS5(); } catch (e) { fail('S5 unexpected error', e.message); }
+  try { runS6(); } catch (e) { fail('S6 unexpected error', e.message); }
+  try { runS7(); } catch (e) { fail('S7 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

@@ -51,6 +51,12 @@ const config = {
   access: {
     adminIds: parseIds(process.env.ADMIN_IDS),
     employeeIds: parseIds(process.env.EMPLOYEE_IDS),
+    // Finance role: who can see Incentives (money-side of the Tasks
+    // workflow). Defaults to the admin list when FINANCE_IDS is unset,
+    // so existing deployments retain current visibility. Narrow this
+    // list (env: FINANCE_IDS=12345,67890) once you want admins to be
+    // scrum-master only and a smaller group to hold money visibility.
+    financeIds: parseIds(process.env.FINANCE_IDS),
   },
 
   risk: {
@@ -72,5 +78,9 @@ const config = {
 
 /** All allowed user IDs (admin + employee) for whitelist */
 config.access.allowedIds = [...new Set([...config.access.adminIds, ...config.access.employeeIds])];
+
+if (!config.access.financeIds.length) {
+  config.access.financeIds = [...config.access.adminIds];
+}
 
 module.exports = config;

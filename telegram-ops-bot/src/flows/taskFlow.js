@@ -549,7 +549,7 @@ async function submitTask(bot, chatId, userId) {
       description,
       assigned_to: d.assigneeUserId,
       assigned_by: userId,
-      status: 'pending',
+      status: 'assigned',
     });
   } catch (e) {
     logger.error(`taskFlow.submit: append failed: ${e.message}`);
@@ -613,7 +613,7 @@ async function handleMarkDone(bot, callbackQuery, taskId) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assignee can mark this done.', show_alert: true }).catch(() => {});
     return;
   }
-  if (task.status !== 'pending' && task.status !== 'in_progress') {
+  if (task.status !== 'assigned' && task.status !== 'active') {
     await editOrSend(bot, chatId, messageId,
       `ℹ️ Task ${taskId} is already *${task.status}*.`,
       { parse_mode: 'Markdown' });
@@ -681,7 +681,7 @@ async function handleSignOff(bot, callbackQuery, taskId, approve) {
         { parse_mode: 'Markdown' });
     } catch (_) { /* noop */ }
   } else {
-    await tasksRepository.updateStatus(taskId, 'pending');
+    await tasksRepository.updateStatus(taskId, 'active');
     await editOrSend(bot, chatId, messageId,
       `↩️ Task *${escapeMd(task.title)}* sent back to pending.\nID: \`${taskId}\``,
       { parse_mode: 'Markdown' });
@@ -711,7 +711,7 @@ async function showMyTasks(bot, chatId, userId, messageId) {
     return;
   }
   // Pending / in_progress first, then submitted, then completed (newest 5).
-  const open = tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress');
+  const open = tasks.filter((t) => t.status === 'assigned' || t.status === 'active');
   const submitted = tasks.filter((t) => t.status === 'submitted');
   const done = tasks.filter((t) => t.status === 'completed').slice(-5);
 
@@ -761,7 +761,10 @@ async function showTeamTasks(bot, chatId, userId, messageId) {
     return;
   }
   const nameById = new Map(team.map((u) => [String(u.user_id), u.name || u.user_id]));
-  const open = tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress' || t.status === 'submitted');
+  const open = tasks.filter((t) =>
+    t.status === 'assigned' || t.status === 'active' || t.status === 'submitted'
+    || t.status === 'awaiting_timeline_ack' || t.status === 'awaiting_incentive'
+    || t.status === 'awaiting_final_ack');
   const recent = tasks.filter((t) => t.status === 'completed').slice(-5);
 
   const lines = ['👥 *Team Tasks*', ''];
