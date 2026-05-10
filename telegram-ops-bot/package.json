@@ -7,7 +7,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "set-webhook": "node scripts/set-webhook.js",
-    "check-org": "node scripts/check-org-graph.js"
+    "check-org": "node scripts/check-org-graph.js",
+    "smoke": "node scripts/smoke.js"
   },
   "engines": {
     "node": ">=18"

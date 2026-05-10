@@ -20,6 +20,10 @@ const WRITE_ACTIONS = [
   'add_customer',
   'add_contact',
   'transfer_than', 'transfer_package', 'transfer_batch',
+  // Bank management — settings writes, admin only in controller
+  'add_bank', 'remove_bank',
+  // User management — admin only in controller
+  'add_user',
 ];
 
 // Actions that ALWAYS go through the approval queue, regardless of whether
