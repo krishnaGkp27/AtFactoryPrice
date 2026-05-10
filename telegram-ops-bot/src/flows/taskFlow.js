@@ -133,6 +133,36 @@ function cancelRow() {
   return [{ text: '❌ Cancel', callback_data: 'tsk:cancel' }];
 }
 
+/**
+ * Footer row used by every terminal-state Tasks screen (read-only
+ * views + flow confirmation screens). Two taps, matching the
+ * Inventory Status / Sales Report convention elsewhere in the bot:
+ *   ⬅ Back to Tasks  → re-renders the Tasks hub submenu
+ *   🏠 Menu          → returns to the top-level greeting menu
+ *
+ * Callbacks reuse the controller-side dispatchers already wired for
+ * the hub system: 'act:__hub__:tasks' and 'act:__back__'. No new
+ * callback prefixes are needed.
+ */
+function navFooterRow() {
+  return [
+    { text: '⬅ Back to Tasks', callback_data: 'act:__hub__:tasks' },
+    { text: '🏠 Menu',          callback_data: 'act:__back__' },
+  ];
+}
+
+/**
+ * Footer row used on the FIRST step of the assign-task flow (assignee
+ * picker), where there is no "previous step" to go back to. Lets the
+ * user bail to the Tasks hub without losing the cancel option.
+ */
+function firstStepFooterRow() {
+  return [
+    { text: '⬅ Back to Tasks', callback_data: 'act:__hub__:tasks' },
+    { text: '❌ Cancel',        callback_data: 'tsk:cancel' },
+  ];
+}
+
 function canManage(user, isAdm) {
   if (isAdm) return true;
   return !!(user && Array.isArray(user.manages) && user.manages.length);
@@ -195,7 +225,7 @@ async function renderAssigneePicker(bot, chatId, userId) {
       '❗ No users available to assign tasks to.\n\nMake sure:\n• The Users sheet has active users.\n• Their `department` column is set.\n• If you\'re not admin, your `manages` column lists at least one department.',
       {
         parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [cancelRow()] },
+        reply_markup: { inline_keyboard: [firstStepFooterRow()] },
       });
     return;
   }
@@ -234,7 +264,7 @@ async function renderAssigneePicker(bot, chatId, userId) {
     rows.push(nav);
   }
 
-  rows.push(cancelRow());
+  rows.push(firstStepFooterRow());
 
   await anchor(bot, chatId, userId,
     '📌 *Assign Task*\n\nStep 1/6 — Who do you want to assign to?',
@@ -350,7 +380,9 @@ async function handleCallback(bot, callbackQuery) {
   if (data === 'tsk:cancel') {
     const s = sessionStore.get(userId);
     if (s && s.type === 'task_assign_flow') sessionStore.clear(userId);
-    await editOrSend(bot, chatId, messageId, '❌ Task assignment cancelled.', {});
+    await editOrSend(bot, chatId, messageId, '❌ Task assignment cancelled.', {
+      reply_markup: { inline_keyboard: [navFooterRow()] },
+    });
     return true;
   }
 
@@ -375,8 +407,11 @@ async function handleCallback(bot, callbackQuery) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== 'task_assign_flow') {
     await editOrSend(bot, chatId, messageId,
-      '⏳ This task picker has expired. Open the menu and tap *Assign Task* again.',
-      { parse_mode: 'Markdown' });
+      '⏳ This task picker has expired. Tap *Back to Tasks* and start *Assign Task* again.',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [navFooterRow()] },
+      });
     return true;
   }
   session.flowMessageId = messageId;
@@ -566,7 +601,10 @@ async function submitTask(bot, chatId, userId) {
     `${pm.icon} *${escapeMd(d.title)}*\n` +
     `Due: ${d.dueDate ? fmtDate(d.dueDate) : '_none_'}\n` +
     `ID: \`${created.task_id}\``,
-    { parse_mode: 'Markdown' });
+    {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [navFooterRow()] },
+    });
 
   // DM the assignee with a card + Mark-done button.
   try {
@@ -626,7 +664,10 @@ async function handleMarkDone(bot, callbackQuery, taskId) {
   const pm = PRIORITY_META[meta.priority] || PRIORITY_META.normal;
   await editOrSend(bot, chatId, messageId,
     `⏳ *Submitted for sign-off*\n\n${pm.icon} ${escapeMd(task.title)}\nID: \`${taskId}\``,
-    { parse_mode: 'Markdown' });
+    {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [navFooterRow()] },
+    });
 
   // Ping the assigner with approve/reject buttons.
   try {
@@ -674,7 +715,10 @@ async function handleSignOff(bot, callbackQuery, taskId, approve) {
     await tasksRepository.updateStatus(taskId, 'completed', new Date().toISOString());
     await editOrSend(bot, chatId, messageId,
       `✅ Task *${escapeMd(task.title)}* marked completed.\nID: \`${taskId}\``,
-      { parse_mode: 'Markdown' });
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [navFooterRow()] },
+      });
     try {
       await bot.sendMessage(task.assigned_to,
         `✅ Your task is approved: *${escapeMd(task.title)}*`,
@@ -684,7 +728,10 @@ async function handleSignOff(bot, callbackQuery, taskId, approve) {
     await tasksRepository.updateStatus(taskId, 'active');
     await editOrSend(bot, chatId, messageId,
       `↩️ Task *${escapeMd(task.title)}* sent back to pending.\nID: \`${taskId}\``,
-      { parse_mode: 'Markdown' });
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [navFooterRow()] },
+      });
     try {
       await bot.sendMessage(task.assigned_to,
         `↩️ Your task was sent back: *${escapeMd(task.title)}* — please re-check and tap Mark done again.`,
@@ -707,7 +754,9 @@ async function handleSignOff(bot, callbackQuery, taskId, approve) {
 async function showMyTasks(bot, chatId, userId, messageId) {
   const tasks = await tasksRepository.getByAssignedTo(userId);
   if (!tasks.length) {
-    await editOrSend(bot, chatId, messageId, 'You have no assigned tasks.', {});
+    await editOrSend(bot, chatId, messageId, 'You have no assigned tasks.', {
+      reply_markup: { inline_keyboard: [navFooterRow()] },
+    });
     return;
   }
   // Pending / in_progress first, then submitted, then completed (newest 5).
@@ -734,6 +783,8 @@ async function showMyTasks(bot, chatId, userId, messageId) {
     for (const t of done) lines.push(`   ${escapeMd(t.title)}`);
   }
 
+  rows.push(navFooterRow());
+
   await editOrSend(bot, chatId, messageId, lines.join('\n'), {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
@@ -745,7 +796,8 @@ async function showTeamTasks(bot, chatId, userId, messageId) {
   const actor = await usersRepository.findByUserId(userId);
   if (!canManage(actor, isAdm)) {
     await editOrSend(bot, chatId, messageId,
-      'You don\'t manage any department, so there are no team tasks to show.', {});
+      'You don\'t manage any department, so there are no team tasks to show.',
+      { reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
   const allUsers = await usersRepository.getAll();
@@ -757,7 +809,9 @@ async function showTeamTasks(bot, chatId, userId, messageId) {
   const teamIds = team.map((u) => String(u.user_id));
   const tasks = await tasksRepository.getByAssignedToMany(teamIds);
   if (!tasks.length) {
-    await editOrSend(bot, chatId, messageId, 'No tasks for your team yet.', {});
+    await editOrSend(bot, chatId, messageId, 'No tasks for your team yet.', {
+      reply_markup: { inline_keyboard: [navFooterRow()] },
+    });
     return;
   }
   const nameById = new Map(team.map((u) => [String(u.user_id), u.name || u.user_id]));
@@ -785,7 +839,10 @@ async function showTeamTasks(bot, chatId, userId, messageId) {
       lines.push(`   ${escapeMd(t.title)} — ${escapeMd(nameById.get(t.assigned_to) || t.assigned_to)}`);
     }
   }
-  await editOrSend(bot, chatId, messageId, lines.join('\n'), { parse_mode: 'Markdown' });
+  await editOrSend(bot, chatId, messageId, lines.join('\n'), {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [navFooterRow()] },
+  });
 }
 
 async function showPendingSignOff(bot, chatId, userId, messageId) {
@@ -794,7 +851,9 @@ async function showPendingSignOff(bot, chatId, userId, messageId) {
     ? await tasksRepository.getSubmittedPendingApproval()
     : await tasksRepository.getSubmittedForAssigner(userId);
   if (!tasks.length) {
-    await editOrSend(bot, chatId, messageId, 'No tasks waiting for your sign-off.', {});
+    await editOrSend(bot, chatId, messageId, 'No tasks waiting for your sign-off.', {
+      reply_markup: { inline_keyboard: [navFooterRow()] },
+    });
     return;
   }
   const lines = ['⏳ *Pending Sign-off*', ''];
@@ -810,6 +869,7 @@ async function showPendingSignOff(bot, chatId, userId, messageId) {
       { text: '❌ Reject', callback_data: `tsk:sign:no:${t.task_id}` },
     ]);
   }
+  rows.push(navFooterRow());
   await editOrSend(bot, chatId, messageId, lines.join('\n'), {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
