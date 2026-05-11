@@ -90,6 +90,19 @@ async function markDoerConfirmed(taskId, ts) {
   return true;
 }
 
+/**
+ * Flip an incentive row to `awaiting_payout`. Called when the task
+ * itself reaches `completed` so finance has a clear queue of money
+ * owed but not yet paid out.
+ */
+async function markAwaitingPayout(taskId) {
+  const row = await getByTaskId(taskId);
+  if (!row) return false;
+  if (row.paid_status === 'paid' || row.paid_status === 'cancelled') return false;
+  await sheets.updateRange(SHEET, `G${row.rowIndex}`, [['awaiting_payout']]);
+  return true;
+}
+
 async function markPaid({ task_id, paid_amount, paid_at, notes }) {
   const row = await getByTaskId(task_id);
   if (!row) return false;
@@ -114,6 +127,7 @@ module.exports = {
   getByTaskId,
   setAmount,
   markDoerConfirmed,
+  markAwaitingPayout,
   markPaid,
   cancel,
   _parse: parse,

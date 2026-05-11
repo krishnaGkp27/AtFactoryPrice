@@ -126,13 +126,25 @@ const TRANSITIONS = Object.freeze({
   },
 
   [STATUSES.AWAITING_TIMELINE_ACK]: {
+    // commit 3.5 — incentive is set BEFORE accept_timeline (for
+    // incentivized track). accept_timeline therefore always goes
+    // straight to awaiting_final_ack. The AWAITING_INCENTIVE state
+    // below is kept for legacy / safety but the new UI never reaches
+    // it.
     accept_timeline: {
-      to: (task) => (task.track === 'incentivized'
-        ? STATUSES.AWAITING_INCENTIVE
-        : STATUSES.AWAITING_FINAL_ACK),
+      to: STATUSES.AWAITING_FINAL_ACK,
       actorRole: 'assigner_or_admin',
       eventType: 'assigner_accepted_timeline',
       setsTimestamps: ['timeline_agreed_at'],
+    },
+    // Self-transition: setting / changing the incentive amount during
+    // negotiation. Status stays awaiting_timeline_ack; the audit log
+    // records the change. Amount itself is written to the Incentives
+    // sheet by the caller, not by the engine.
+    set_incentive: {
+      to: STATUSES.AWAITING_TIMELINE_ACK,
+      actorRole: 'assigner_or_admin',
+      eventType: 'assigner_set_incentive',
     },
     counter_timeline: {
       to: STATUSES.ASSIGNED,

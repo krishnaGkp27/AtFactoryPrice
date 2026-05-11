@@ -115,6 +115,23 @@ function addDays(days) {
   return d.toISOString().slice(0, 10);
 }
 
+function todayYM() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function addMonthsYM(ym, delta) {
+  const [y, m] = ym.split('-').map((s) => parseInt(s, 10));
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function ymCompare(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+const CAL_MAX_FORWARD_MONTHS = 6;
+
 function fmtHours(hours) {
   const n = Number(hours);
   if (!Number.isFinite(n)) return '?';
@@ -493,14 +510,31 @@ async function renderHoursPicker(bot, chatId, userId) {
       callback_data: `tsk:phr:${value}`,
     })));
   }
-  rows.push([
-    { text: '⬅️ Back', callback_data: 'tsk:pcn' },
-  ]);
+  rows.push([{ text: '⌨ Custom hours', callback_data: 'tsk:phr_custom' }]);
+  rows.push([{ text: '⬅️ Back', callback_data: 'tsk:pcn' }]);
   const t = session.data;
   const pm = PRIORITY_META[t.taskPriority] || PRIORITY_META.normal;
   await anchor(bot, chatId, userId,
-    `⏱ *Propose Timeline — Step 1/2*\n\n${pm.icon} *${escapeMd(t.taskTitle)}*\n\nHow long do you need?`,
+    `⏱ *Propose Timeline — Step 1/2*\n\n${pm.icon} *${escapeMd(t.taskTitle)}*\n\nHow long do you need?\n_Use a preset, or tap *Custom hours* to reply with a specific number._`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function renderHoursCustomPrompt(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const t = session.data;
+  const pm = PRIORITY_META[t.taskPriority] || PRIORITY_META.normal;
+  await anchor(bot, chatId, userId,
+    `⌨ *Custom hours*\n\n${pm.icon} ${escapeMd(t.taskTitle)}\n\nReply with the number of hours (e.g. \`6\`, \`0.5\`, \`36\`).\n_Max 720 hours (= 30 days). Decimals OK._`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '⬅️ Back to presets', callback_data: 'tsk:pbk:hours' },
+          { text: '❌ Cancel',           callback_data: 'tsk:pcn' },
+        ]],
+      },
+    });
 }
 
 async function renderDeadlinePicker(bot, chatId, userId) {
@@ -514,6 +548,7 @@ async function renderDeadlinePicker(bot, chatId, userId) {
       callback_data: `tsk:pdl:${key}`,
     }];
   });
+  rows.push([{ text: '📅 Pick a specific date', callback_data: 'tsk:pcal' }]);
   rows.push([
     { text: '⬅️ Back',  callback_data: 'tsk:pbk:hours' },
     { text: '❌ Cancel', callback_data: 'tsk:pcn' },
@@ -521,6 +556,75 @@ async function renderDeadlinePicker(bot, chatId, userId) {
   const t = session.data;
   await anchor(bot, chatId, userId,
     `⏱ *Propose Timeline — Step 2/2*\n\n${escapeMd(t.taskTitle)}\n\nEstimated effort: *${fmtHours(t.hours)}*\n\nBy when will it be done?`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+/**
+ * Mini-calendar deadline picker. Builds a Mon-first 7-column grid for
+ * `session.data.calMonth` ('YYYY-MM'). Past days render as '·' (no-op);
+ * today is marked with a • prefix; future days are tappable buttons
+ * that emit `tsk:cdy:YYYY-MM-DD`.
+ *
+ * Navigation buttons cap at today's month going back and at
+ * `CAL_MAX_FORWARD_MONTHS` going forward.
+ */
+async function renderCalendar(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  if (!session.data.calMonth) session.data.calMonth = todayYM();
+  sessionStore.set(userId, session);
+
+  const ym = session.data.calMonth;
+  const [year, month] = ym.split('-').map((s) => parseInt(s, 10));
+  const monthName = new Date(year, month - 1, 1).toLocaleString('en-US', { month: 'long' });
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const minYm = todayYM();
+  const maxYm = addMonthsYM(minYm, CAL_MAX_FORWARD_MONTHS);
+  const canPrev = ymCompare(ym, minYm) > 0;
+  const canNext = ymCompare(ym, maxYm) < 0;
+
+  const header = [
+    { text: canPrev ? '« Prev' : '·', callback_data: canPrev ? 'tsk:cmv:prev' : 'tsk:noop' },
+    { text: `${monthName} ${year}`, callback_data: 'tsk:noop' },
+    { text: canNext ? 'Next »' : '·', callback_data: canNext ? 'tsk:cmv:next' : 'tsk:noop' },
+  ];
+  const dowRow = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
+    .map((d) => ({ text: d, callback_data: 'tsk:noop' }));
+
+  const firstDay = new Date(year, month - 1, 1);
+  const lastDay = new Date(year, month, 0);
+  const daysInMonth = lastDay.getDate();
+  const startCol = (firstDay.getDay() + 6) % 7; // Mon-first
+
+  const cells = [];
+  for (let i = 0; i < startCol; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const rows = [header, dowRow];
+  for (let i = 0; i < cells.length; i += 7) {
+    const row = [];
+    for (let j = i; j < i + 7; j++) {
+      const day = cells[j];
+      if (day == null) { row.push({ text: ' ', callback_data: 'tsk:noop' }); continue; }
+      const date = new Date(year, month - 1, day);
+      const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      if (date < today) { row.push({ text: '·', callback_data: 'tsk:noop' }); }
+      else if (date.getTime() === today.getTime()) {
+        row.push({ text: `•${day}`, callback_data: `tsk:cdy:${iso}` });
+      } else {
+        row.push({ text: String(day), callback_data: `tsk:cdy:${iso}` });
+      }
+    }
+    rows.push(row);
+  }
+  rows.push([{ text: '⬅ Back to presets', callback_data: 'tsk:cbk' }]);
+
+  const t = session.data;
+  await anchor(bot, chatId, userId,
+    `📅 *Pick a deadline*\n\n${escapeMd(t.taskTitle)}\n\nEstimated effort: *${fmtHours(t.hours)}*\n\nTap a date below. _Past days are disabled (·). Today is marked with •._`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
@@ -575,34 +679,97 @@ async function submitProposal(bot, chatId, userId) {
   await dmAssignerProposal(bot, t.taskId, userId);
 }
 
-/** DM the assigner with the proposal + Accept / Counter / Cancel buttons. */
+/**
+ * Render (send OR edit) the assigner's proposal card. Used both as the
+ * initial DM after the doer proposes a timeline and as a re-render
+ * target after Set Incentive / Counter cancels.
+ *
+ *   - SALARIED:     [✅ Accept timeline] [↩ Counter] [❌ Cancel]
+ *   - INCENTIVIZED & incentive NOT set:  [💰 Set incentive] [↩ Counter] [❌ Cancel]
+ *   - INCENTIVIZED & incentive SET:      [✅ Accept timeline] [💰 Change incentive] [↩ Counter] [❌ Cancel]
+ *
+ * Accept is GATED on incentivized track until an amount has been set
+ * (₦0 via Skip counts as "set").
+ *
+ * Returns the message_id of the rendered card (so the caller can store
+ * it in session state for later edits).
+ */
+async function renderProposalCardForAssigner(bot, taskId, opts = {}) {
+  const task = await tasksRepository.getById(taskId);
+  if (!task) return null;
+  const doer = await usersRepository.findByUserId(task.assigned_to);
+  const pm = PRIORITY_META[task.priority] || PRIORITY_META.normal;
+  const tm = TRACK_META[task.track] || TRACK_META.salaried;
+  const isIncentivized = task.track === 'incentivized';
+
+  let incentiveLine = '';
+  let incentiveSet = false;
+  if (isIncentivized) {
+    try {
+      const inc = await incentivesRepository.getByTaskId(taskId);
+      if (inc) {
+        incentiveSet = true;
+        incentiveLine = `\n💰 Incentive: *${fmtMoney(inc.amount, inc.currency)}*`;
+      } else {
+        incentiveLine = `\n💰 Incentive: _not set yet_`;
+      }
+    } catch (_) { incentiveLine = `\n💰 Incentive: _(lookup failed)_`; }
+  }
+
+  const text =
+    `📨 *Timeline proposed*\n\n` +
+    `${pm.icon} *${escapeMd(task.title)}*\n${tm.icon} ${tm.label}\n\n` +
+    `👤 ${escapeMd(doer?.name || task.assigned_to)} proposes:\n` +
+    `   ⏱ ${fmtHours(task.proposed_hours)}\n` +
+    `   📅 By ${fmtDate(task.proposed_deadline)}${incentiveLine}\n\n` +
+    `Rounds used: ${task.negotiation_rounds || 0}/${taskStateMachine.MAX_NEGOTIATION_ROUNDS}\n\nID: \`${taskId}\``;
+
+  const rows = [];
+  if (!isIncentivized) {
+    rows.push([
+      { text: '✅ Accept timeline', callback_data: `tsk:acc:${taskId}` },
+      { text: '↩ Counter',          callback_data: `tsk:cnt:${taskId}` },
+    ]);
+  } else if (!incentiveSet) {
+    rows.push([
+      { text: '💰 Set incentive', callback_data: `tsk:six:${taskId}` },
+      { text: '↩ Counter',        callback_data: `tsk:cnt:${taskId}` },
+    ]);
+  } else {
+    rows.push([
+      { text: '✅ Accept timeline & lock deal', callback_data: `tsk:acc:${taskId}` },
+    ]);
+    rows.push([
+      { text: '💰 Change incentive', callback_data: `tsk:six:${taskId}` },
+      { text: '↩ Counter',           callback_data: `tsk:cnt:${taskId}` },
+    ]);
+  }
+  rows.push([{ text: '❌ Cancel task', callback_data: `tsk:cnl:${taskId}` }]);
+
+  const sendOpts = {
+    parse_mode: 'Markdown',
+    disable_notification: priorityIsSilent(task.priority),
+    reply_markup: { inline_keyboard: rows },
+  };
+
+  if (opts.editChatId && opts.editMessageId) {
+    try {
+      await bot.editMessageText(text, {
+        chat_id: opts.editChatId, message_id: opts.editMessageId, ...sendOpts,
+      });
+      return opts.editMessageId;
+    } catch (e) {
+      logger.warn(`renderProposalCardForAssigner: edit failed, falling back to send: ${e.message}`);
+    }
+  }
+  const res = await bot.sendMessage(task.assigned_by, text, sendOpts);
+  return res?.message_id || null;
+}
+
+/** Initial DM after the doer submits a timeline. */
 async function dmAssignerProposal(bot, taskId, doerUserId) {
   try {
-    const task = await tasksRepository.getById(taskId);
-    if (!task) return;
-    const doer = await usersRepository.findByUserId(doerUserId);
-    const pm = PRIORITY_META[task.priority] || PRIORITY_META.normal;
-    const tm = TRACK_META[task.track] || TRACK_META.salaried;
-    await bot.sendMessage(task.assigned_by,
-      `📨 *Timeline proposed*\n\n` +
-      `${pm.icon} *${escapeMd(task.title)}*\n${tm.icon} ${tm.label}\n\n` +
-      `👤 ${escapeMd(doer?.name || doerUserId)} proposes:\n` +
-      `   ⏱ ${fmtHours(task.proposed_hours)}\n` +
-      `   📅 By ${fmtDate(task.proposed_deadline)}\n\n` +
-      `Rounds used: ${task.negotiation_rounds || 0}/${taskStateMachine.MAX_NEGOTIATION_ROUNDS}\n\nID: \`${taskId}\``,
-      {
-        parse_mode: 'Markdown',
-        disable_notification: priorityIsSilent(task.priority),
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '✅ Accept timeline', callback_data: `tsk:acc:${taskId}` },
-              { text: '↩ Counter',          callback_data: `tsk:cnt:${taskId}` },
-            ],
-            [{ text: '❌ Cancel task', callback_data: `tsk:cnl:${taskId}` }],
-          ],
-        },
-      });
+    await renderProposalCardForAssigner(bot, taskId);
   } catch (e) {
     logger.warn(`taskFlow.dmAssignerProposal: ${e.message}`);
   }
@@ -652,30 +819,62 @@ async function handleAcceptTimeline(bot, callbackQuery, taskId) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assigner or an admin can accept.', show_alert: true }).catch(() => {});
     return;
   }
-  let result;
+  // Gate: on incentivized track, an incentive amount MUST be set before
+  // accept (₦0 via Skip counts as set). The button is normally not even
+  // rendered until set, but guard server-side for safety.
+  if (task.track === 'incentivized') {
+    const inc = await incentivesRepository.getByTaskId(taskId);
+    if (!inc) {
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: 'Set the incentive amount first (or tap Skip → ₦0).',
+        show_alert: true,
+      }).catch(() => {});
+      return;
+    }
+  }
   try {
-    result = await taskStateMachine.transition(taskId, 'accept_timeline', userId);
+    await taskStateMachine.transition(taskId, 'accept_timeline', userId);
   } catch (e) {
     await editOrSend(bot, chatId, messageId, `❌ Couldn\'t accept: ${e.message}`, { parse_mode: 'Markdown' });
     return;
   }
-  const updated = result.task;
+  await editOrSend(bot, chatId, messageId,
+    `✅ *Timeline accepted*\n\n${escapeMd(task.title)}\n⏱ ${fmtHours(task.proposed_hours)} · 📅 ${fmtDate(task.proposed_deadline)}\n\n_Waiting on the doer\'s final OK._`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+  await dmDoerFinalAck(bot, taskId);
+}
 
-  if (updated.status === 'awaiting_incentive') {
-    // Incentivized track — show the incentive input card to the assigner.
-    sessionStore.set(userId, {
-      type: 'task_incentive_flow',
-      flowMessageId: messageId,
-      data: { taskId, taskTitle: task.title, taskTrack: task.track },
-    });
-    await renderIncentiveCard(bot, chatId, userId);
-  } else {
-    // Salaried — straight to doer for final ack.
-    await editOrSend(bot, chatId, messageId,
-      `✅ *Timeline accepted*\n\n${escapeMd(task.title)}\n⏱ ${fmtHours(task.proposed_hours)} · 📅 ${fmtDate(task.proposed_deadline)}\n\n_Waiting on the doer\'s final OK._`,
-      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
-    await dmDoerFinalAck(bot, taskId);
+/**
+ * Starts (or re-opens) the set-incentive input from a proposal-card
+ * "💰 Set incentive" tap. Stores the proposal card's message_id so the
+ * card can be re-rendered with the new amount once the user replies.
+ */
+async function startSetIncentiveFromCard(bot, callbackQuery, taskId) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const task = await tasksRepository.getById(taskId);
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (task.assigned_by !== userId && !isAdmin(userId)) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assigner or an admin can set the incentive.', show_alert: true }).catch(() => {});
+    return;
   }
+  if (task.track !== 'incentivized') {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'This task is salaried; no incentive applies.', show_alert: true }).catch(() => {});
+    return;
+  }
+  if (task.status !== 'awaiting_timeline_ack') {
+    await editOrSend(bot, chatId, messageId,
+      `ℹ️ Task ${taskId} is *${task.status}* — incentive can only be set during timeline negotiation.`,
+      { parse_mode: 'Markdown' });
+    return;
+  }
+  sessionStore.set(userId, {
+    type: 'task_incentive_flow',
+    flowMessageId: messageId,
+    data: { taskId, taskTitle: task.title, taskTrack: task.track, returnToProposalCard: true },
+  });
+  await renderIncentiveCard(bot, chatId, userId);
 }
 
 async function startCounterFlow(bot, callbackQuery, taskId) {
@@ -781,18 +980,17 @@ async function renderIncentiveCard(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
   const t = session.data;
+  const rows = [
+    [{ text: '⏭ Skip (₦0)', callback_data: `tsk:sip:${t.taskId}` }],
+  ];
+  if (t.returnToProposalCard) {
+    rows.push([{ text: '⬅ Back to proposal', callback_data: `tsk:sib:${t.taskId}` }]);
+  }
   await anchor(bot, chatId, userId,
     `💰 *Set incentive for the doer*\n\n${escapeMd(t.taskTitle)}\n\n` +
     `Reply with the ₦ amount (digits only, e.g. \`5000\`).\n` +
     `Tap Skip to use ₦0.\n\n_The amount is stored separately and is NOT visible to scrum-master admin in any Tasks view._`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '⏭ Skip (₦0)', callback_data: `tsk:sip:${t.taskId}` }],
-        ],
-      },
-    });
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
 async function submitIncentive(bot, chatId, userId, amountRaw) {
@@ -828,8 +1026,18 @@ async function finalizeIncentive(bot, chatId, userId, amount) {
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
+  const returnToCard = !!t.returnToProposalCard;
+  const cardMsgId = session.flowMessageId;
   sessionStore.clear(userId);
-  await editOrSend(bot, chatId, session.flowMessageId,
+  if (returnToCard) {
+    // Re-render the proposal card in-place with the new amount + Accept enabled.
+    await renderProposalCardForAssigner(bot, t.taskId, {
+      editChatId: chatId, editMessageId: cardMsgId,
+    });
+    return;
+  }
+  // Legacy path (no card to return to) — just confirm and DM the doer.
+  await editOrSend(bot, chatId, cardMsgId,
     `💰 *Incentive saved*\n\n${escapeMd(t.taskTitle)}\nAmount: ${fmtMoney(amount, currency)}\n\n_Waiting on the doer\'s final OK._`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
   await dmDoerFinalAck(bot, t.taskId);
@@ -889,6 +1097,12 @@ async function handleFinalAck(bot, callbackQuery, taskId) {
   } catch (e) {
     await editOrSend(bot, chatId, messageId, `❌ Couldn\'t accept: ${e.message}`, { parse_mode: 'Markdown' });
     return;
+  }
+  // Stamp doer_confirmed_at on the Incentives row so finance has a
+  // clean record of when the doer locked in the deal.
+  if (task.track === 'incentivized') {
+    try { await incentivesRepository.markDoerConfirmed(taskId); }
+    catch (e) { logger.warn(`taskFlow.handleFinalAck: markDoerConfirmed: ${e.message}`); }
   }
   await editOrSend(bot, chatId, messageId,
     `🟢 *Clock started*\n\n${escapeMd(task.title)}\n⏱ ${fmtHours(task.proposed_hours)} · 📅 ${fmtDate(task.proposed_deadline)}\n\nWhen done, tap *Mark done*.\nID: \`${taskId}\``,
@@ -968,6 +1182,7 @@ async function handleCallback(bot, callbackQuery) {
   if (data.startsWith('tsk:prp:'))     { await startProposeFlow (bot, callbackQuery, data.slice('tsk:prp:'.length)); return true; }
   if (data.startsWith('tsk:dec:'))     { await handleDecline    (bot, callbackQuery, data.slice('tsk:dec:'.length)); return true; }
   if (data.startsWith('tsk:acc:'))     { await handleAcceptTimeline(bot, callbackQuery, data.slice('tsk:acc:'.length)); return true; }
+  if (data.startsWith('tsk:six:'))     { await startSetIncentiveFromCard(bot, callbackQuery, data.slice('tsk:six:'.length)); return true; }
   if (data.startsWith('tsk:cnt:'))     { await startCounterFlow (bot, callbackQuery, data.slice('tsk:cnt:'.length)); return true; }
   if (data.startsWith('tsk:cnl:'))     { await handleCancelTask (bot, callbackQuery, data.slice('tsk:cnl:'.length)); return true; }
   if (data.startsWith('tsk:fa:'))      { await handleFinalAck   (bot, callbackQuery, data.slice('tsk:fa:'.length)); return true; }
@@ -994,8 +1209,10 @@ async function handleCallback(bot, callbackQuery) {
     });
     return true;
   }
-  if (data.startsWith('tsk:phr:') || data.startsWith('tsk:pdl:') || data === 'tsk:pcf'
-      || data.startsWith('tsk:pbk:')) {
+  if (data.startsWith('tsk:phr:') || data === 'tsk:phr_custom'
+      || data.startsWith('tsk:pdl:') || data === 'tsk:pcal' || data === 'tsk:cbk'
+      || data.startsWith('tsk:cmv:') || data.startsWith('tsk:cdy:')
+      || data === 'tsk:pcf' || data.startsWith('tsk:pbk:')) {
     const session = sessionStore.get(userId);
     if (!session || session.type !== 'task_propose_flow') {
       await editOrSend(bot, chatId, messageId,
@@ -1014,6 +1231,12 @@ async function handleCallback(bot, callbackQuery) {
       await renderDeadlinePicker(bot, chatId, userId);
       return true;
     }
+    if (data === 'tsk:phr_custom') {
+      session.step = 'hours_text';
+      sessionStore.set(userId, session);
+      await renderHoursCustomPrompt(bot, chatId, userId);
+      return true;
+    }
     if (data.startsWith('tsk:pdl:')) {
       const key = data.slice('tsk:pdl:'.length);
       const preset = DEADLINE_PRESETS.find(([k]) => k === key);
@@ -1021,6 +1244,42 @@ async function handleCallback(bot, callbackQuery) {
       session.step = 'confirm';
       sessionStore.set(userId, session);
       await renderProposeConfirmCard(bot, chatId, userId);
+      return true;
+    }
+    if (data === 'tsk:pcal') {
+      session.step = 'calendar';
+      session.data.calMonth = session.data.calMonth || todayYM();
+      sessionStore.set(userId, session);
+      await renderCalendar(bot, chatId, userId);
+      return true;
+    }
+    if (data === 'tsk:cbk') {
+      session.step = 'deadline';
+      sessionStore.set(userId, session);
+      await renderDeadlinePicker(bot, chatId, userId);
+      return true;
+    }
+    if (data.startsWith('tsk:cmv:')) {
+      const dir = data.slice('tsk:cmv:'.length);
+      const cur = session.data.calMonth || todayYM();
+      const minYm = todayYM();
+      const maxYm = addMonthsYM(minYm, CAL_MAX_FORWARD_MONTHS);
+      const next = addMonthsYM(cur, dir === 'next' ? 1 : -1);
+      if (ymCompare(next, minYm) >= 0 && ymCompare(next, maxYm) <= 0) {
+        session.data.calMonth = next;
+        sessionStore.set(userId, session);
+      }
+      await renderCalendar(bot, chatId, userId);
+      return true;
+    }
+    if (data.startsWith('tsk:cdy:')) {
+      const iso = data.slice('tsk:cdy:'.length);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+        session.data.deadline = iso;
+        session.step = 'confirm';
+        sessionStore.set(userId, session);
+        await renderProposeConfirmCard(bot, chatId, userId);
+      }
       return true;
     }
     if (data.startsWith('tsk:pbk:')) {
@@ -1056,6 +1315,16 @@ async function handleCallback(bot, callbackQuery) {
     const session = sessionStore.get(userId);
     if (session && session.type === 'task_incentive_flow') {
       await finalizeIncentive(bot, chatId, userId, 0);
+    }
+    return true;
+  }
+  if (data.startsWith('tsk:sib:')) {
+    const session = sessionStore.get(userId);
+    if (session && session.type === 'task_incentive_flow' && session.data.returnToProposalCard) {
+      const cardMsgId = session.flowMessageId;
+      const taskId = session.data.taskId;
+      sessionStore.clear(userId);
+      await renderProposalCardForAssigner(bot, taskId, { editChatId: chatId, editMessageId: cardMsgId });
     }
     return true;
   }
@@ -1159,6 +1428,26 @@ async function handleTextStep(bot, msg) {
       session.step = 'confirm';
       sessionStore.set(userId, session);
       await renderConfirmCard(bot, chatId, userId);
+      return true;
+    }
+    return false;
+  }
+
+  if (session.type === 'task_propose_flow') {
+    if (session.step === 'hours_text') {
+      if (!/^\d+(\.\d+)?$/.test(text)) {
+        await bot.sendMessage(chatId, '⚠️ Reply with a number only (e.g. `6`, `0.5`, `36`).', { parse_mode: 'Markdown' });
+        return true;
+      }
+      const hrs = Number(text);
+      if (!Number.isFinite(hrs) || hrs <= 0 || hrs > 720) {
+        await bot.sendMessage(chatId, '⚠️ Hours must be greater than 0 and ≤ 720 (= 30 days). Please reply again.');
+        return true;
+      }
+      session.data.hours = hrs;
+      session.step = 'deadline';
+      sessionStore.set(userId, session);
+      await renderDeadlinePicker(bot, chatId, userId);
       return true;
     }
     return false;
@@ -1286,12 +1575,28 @@ async function handleSignOff(bot, callbackQuery, taskId, approve) {
     return;
   }
   if (approve) {
+    // Incentivized task → flip Incentives row to awaiting_payout so
+    // finance has a clean queue of what's owed but not yet disbursed.
+    let incentiveInfo = null;
+    if (task.track === 'incentivized') {
+      try {
+        await incentivesRepository.markAwaitingPayout(taskId);
+        incentiveInfo = await incentivesRepository.getByTaskId(taskId);
+      } catch (e) { logger.warn(`taskFlow.handleSignOff(approve): incentive lifecycle: ${e.message}`); }
+    }
+    const assignerIncentiveLine = incentiveInfo
+      ? `\n💰 Incentive: ${fmtMoney(incentiveInfo.amount, incentiveInfo.currency)} — *queued for payout*`
+      : '';
     await editOrSend(bot, chatId, messageId,
-      `✅ Task *${escapeMd(task.title)}* marked completed.\nID: \`${taskId}\``,
+      `✅ Task *${escapeMd(task.title)}* marked completed.\nID: \`${taskId}\`${assignerIncentiveLine}`,
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     try {
+      const doerIncentiveLine = incentiveInfo
+        ? `\n💰 *Incentive earned:* ${fmtMoney(incentiveInfo.amount, incentiveInfo.currency)}  _(pending payout)_`
+        : '';
       await bot.sendMessage(task.assigned_to,
-        `✅ Your task is approved: *${escapeMd(task.title)}*`, { parse_mode: 'Markdown' });
+        `✅ *Task completed*\n\n${escapeMd(task.title)}${doerIncentiveLine}`,
+        { parse_mode: 'Markdown' });
     } catch (_) { /* noop */ }
   } else {
     await editOrSend(bot, chatId, messageId,

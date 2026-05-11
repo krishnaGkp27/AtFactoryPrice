@@ -539,23 +539,40 @@ async function runS8() {
     fail('S8.4 propose_timeline: status + proposed_hours + proposed_deadline persisted', JSON.stringify(t));
   }
 
-  // S8.5 branching target: accept_timeline on incentivized track → awaiting_incentive.
-  await sm.transition(created.task_id, 'accept_timeline', 'mgr-1');
+  // S8.5 commit 3.5 — set_incentive is now a SELF-TRANSITION from
+  // awaiting_timeline_ack. Status stays the same; audit event written;
+  // can be called repeatedly (assigner adjusts amount).
+  await sm.transition(created.task_id, 'set_incentive', 'mgr-1', { amount: 3000, currency: 'NGN' });
   t = await tasksRepo.getById(created.task_id);
-  if (t.status === 'awaiting_incentive' && t.timeline_agreed_at) {
-    pass('S8.5 accept_timeline (incentivized): → awaiting_incentive + timeline_agreed_at set');
+  if (t.status === 'awaiting_timeline_ack') {
+    pass('S8.5 set_incentive: self-transition from awaiting_timeline_ack (no status change)');
   } else {
-    fail('S8.5 accept_timeline (incentivized): → awaiting_incentive + timeline_agreed_at set', JSON.stringify(t));
+    fail('S8.5 set_incentive: self-transition', JSON.stringify(t));
+  }
+  // Second call also legal — assigner changes the amount.
+  await sm.transition(created.task_id, 'set_incentive', 'mgr-1', { amount: 5000, currency: 'NGN' });
+  t = await tasksRepo.getById(created.task_id);
+  if (t.status === 'awaiting_timeline_ack') {
+    pass('S8.5b set_incentive: repeatable (assigner adjusts amount)');
+  } else {
+    fail('S8.5b set_incentive: repeatable', JSON.stringify(t));
   }
 
-  // S8.6 set_incentive + final_ack happy path.
-  await sm.transition(created.task_id, 'set_incentive', 'mgr-1', { amount: 5000, currency: 'NGN' });
+  // S8.6 accept_timeline (incentivized) now goes DIRECTLY to
+  // awaiting_final_ack (skipping awaiting_incentive entirely).
+  await sm.transition(created.task_id, 'accept_timeline', 'mgr-1');
+  t = await tasksRepo.getById(created.task_id);
+  if (t.status === 'awaiting_final_ack' && t.timeline_agreed_at) {
+    pass('S8.6 accept_timeline (incentivized): → awaiting_final_ack directly (commit 3.5)');
+  } else {
+    fail('S8.6 accept_timeline (incentivized): → awaiting_final_ack directly', JSON.stringify(t));
+  }
   await sm.transition(created.task_id, 'final_ack', 'doer-1');
   t = await tasksRepo.getById(created.task_id);
   if (t.status === 'active' && t.started_at) {
-    pass('S8.6 set_incentive + final_ack: → active + started_at stamped');
+    pass('S8.6b final_ack: → active + started_at stamped');
   } else {
-    fail('S8.6 set_incentive + final_ack: → active + started_at stamped', JSON.stringify(t));
+    fail('S8.6b final_ack: → active + started_at stamped', JSON.stringify(t));
   }
 
   // S8.7 admin (not assigner) can also accept/cancel; mark_done → submitted; approve → completed.
@@ -623,6 +640,36 @@ async function runS8() {
   } catch (e) {
     if (e.code === 'ILLEGAL_TRANSITION') pass('S8.12 terminal state rejects further events');
     else fail('S8.12 terminal state rejects further events', `wrong error: ${e.message}`);
+  }
+
+  // S8.13 commit 3.5 — incentivized happy path audit log shape.
+  const incevs = await eventsRepo.getByTaskId(created.task_id);
+  const expectedOrder = [
+    'assigned',
+    'doer_proposed_timeline',
+    'assigner_set_incentive',     // BEFORE accept_timeline now
+    'assigner_set_incentive',     // second call (amount adjust)
+    'assigner_accepted_timeline',
+    'doer_final_ack',
+    'doer_marked_done',
+    'assigner_approved',
+  ];
+  const actualOrder = incevs.map((e) => e.event_type);
+  if (JSON.stringify(actualOrder) === JSON.stringify(expectedOrder)) {
+    pass('S8.13 audit log: set_incentive logged BEFORE accept_timeline (commit 3.5 order)');
+  } else {
+    fail('S8.13 audit log: set_incentive logged BEFORE accept_timeline',
+      `expected ${JSON.stringify(expectedOrder)} got ${JSON.stringify(actualOrder)}`);
+  }
+
+  // S8.14 set_incentive is rejected from non-awaiting-timeline-ack
+  // states (e.g. after the deal is locked).
+  try {
+    await sm.transition(created.task_id, 'set_incentive', 'mgr-1', { amount: 7000 });
+    fail('S8.14 set_incentive from completed rejected', 'should throw ILLEGAL_TRANSITION');
+  } catch (e) {
+    if (e.code === 'ILLEGAL_TRANSITION') pass('S8.14 set_incentive from completed rejected (ILLEGAL_TRANSITION)');
+    else fail('S8.14 set_incentive from completed rejected', `wrong error: ${e.message}`);
   }
 }
 
