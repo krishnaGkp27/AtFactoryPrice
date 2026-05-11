@@ -10,6 +10,7 @@
  *   S5  Repo parse — tasksRepository extended schema (TG-7.5 Phase C)
  *   S6  Repo parse — incentivesRepository row shape
  *   S7  Repo parse — taskEventsRepository row shape + meta JSON
+ *   S8  Task state-machine engine (TG-7.5 Phase C commit 2)
  *
  * Run:  npm run smoke         (from telegram-ops-bot/)
  * Exit: 0 = all passed, 1 = one or more FAIL
@@ -432,9 +433,203 @@ function stubModule(resolvedPath, exports) {
 }
 
 // ---------------------------------------------------------------------------
+// S8 — task state-machine engine
+// ---------------------------------------------------------------------------
+// Replaces tasksRepository / taskEventsRepository with in-memory fakes
+// so we can drive the engine through transitions without touching any
+// real Google Sheet.
+// ---------------------------------------------------------------------------
+async function runS8() {
+  // 1. Build the in-memory tasks store. We patch the existing module
+  //    exports rather than swapping the whole module so that whatever
+  //    references the engine has already captured still work.
+  delete require.cache[require.resolve('../src/repositories/tasksRepository')];
+  delete require.cache[require.resolve('../src/repositories/taskEventsRepository')];
+  delete require.cache[require.resolve('../src/flows/taskStateMachine')];
+  delete require.cache[require.resolve('../src/config')];
+
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async () => [], appendRows: async () => {}, updateRange: async () => {},
+  });
+
+  // Real config is awkward (parses env); inject a minimal one so the
+  // engine knows who is admin.
+  stubModule(require.resolve('../src/config'), {
+    access: { adminIds: ['admin-1'], employeeIds: [], allowedIds: [], financeIds: [] },
+    currency: 'NGN',
+  });
+
+  const tasksRepo = require('../src/repositories/tasksRepository');
+  const eventsRepo = require('../src/repositories/taskEventsRepository');
+
+  const taskStore = new Map();
+  const eventStore = [];
+  let rowCounter = 1;
+
+  tasksRepo.append = async (t) => {
+    const id = t.task_id || `T-${++rowCounter}`;
+    const row = {
+      ...t,
+      task_id: id,
+      rowIndex: rowCounter + 1,
+      status: t.status || tasksRepo.STATUSES.ASSIGNED,
+      track: t.track || 'salaried',
+      priority: t.priority || 'normal',
+      negotiation_rounds: 0,
+      last_event_at: new Date().toISOString(),
+    };
+    taskStore.set(id, row);
+    return row;
+  };
+  tasksRepo.getById = async (id) => taskStore.get(id) || null;
+  tasksRepo.updateFields = async (id, patch) => {
+    const t = taskStore.get(id);
+    if (!t) return false;
+    Object.assign(t, patch);
+    return true;
+  };
+  eventsRepo.append = async (e) => {
+    const row = { ...e, event_id: `E-${eventStore.length + 1}`, at: e.at || new Date().toISOString() };
+    eventStore.push(row);
+    return row;
+  };
+  eventsRepo.getByTaskId = async (id) => eventStore.filter((e) => e.task_id === id);
+
+  const sm = require('../src/flows/taskStateMachine');
+
+  // S8.1 create() — task is in 'assigned' and an 'assigned' event row is written.
+  const created = await sm.create({
+    title: 'Wire panel',
+    assigned_to: 'doer-1',
+    assigned_by: 'mgr-1',
+    track: 'incentivized',
+    priority: 'high',
+  });
+  const ev0 = (await eventsRepo.getByTaskId(created.task_id))[0];
+  if (created.status === 'assigned' && ev0 && ev0.event_type === 'assigned' && ev0.to_status === 'assigned') {
+    pass('S8.1 create: task starts in assigned + origin event row written');
+  } else {
+    fail('S8.1 create: task starts in assigned + origin event row written', JSON.stringify({ created, ev0 }));
+  }
+
+  // S8.2 illegal transition from a state that doesn't allow it.
+  try {
+    await sm.transition(created.task_id, 'approve', 'mgr-1');
+    fail('S8.2 illegal transition rejected', 'approve from assigned should have thrown');
+  } catch (e) {
+    if (e.code === 'ILLEGAL_TRANSITION') pass('S8.2 illegal transition rejected (approve from assigned)');
+    else fail('S8.2 illegal transition rejected', `wrong error: ${e.message}`);
+  }
+
+  // S8.3 actor-role guard: assigner cannot propose timeline (only doer can).
+  try {
+    await sm.transition(created.task_id, 'propose_timeline', 'mgr-1', { hours: 4, deadline: '2026-05-15' });
+    fail('S8.3 doer-only transition guarded', 'should have rejected non-doer');
+  } catch (e) {
+    if (e.code === 'NOT_ACTOR') pass('S8.3 doer-only transition guarded (NOT_ACTOR)');
+    else fail('S8.3 doer-only transition guarded', `wrong error: ${e.message}`);
+  }
+
+  // S8.4 happy path: doer proposes; status → awaiting_timeline_ack; hours/deadline saved.
+  await sm.transition(created.task_id, 'propose_timeline', 'doer-1', { hours: 4, deadline: '2026-05-15' });
+  let t = await tasksRepo.getById(created.task_id);
+  if (t.status === 'awaiting_timeline_ack' && t.proposed_hours === 4 && t.proposed_deadline === '2026-05-15') {
+    pass('S8.4 propose_timeline: status + proposed_hours + proposed_deadline persisted');
+  } else {
+    fail('S8.4 propose_timeline: status + proposed_hours + proposed_deadline persisted', JSON.stringify(t));
+  }
+
+  // S8.5 branching target: accept_timeline on incentivized track → awaiting_incentive.
+  await sm.transition(created.task_id, 'accept_timeline', 'mgr-1');
+  t = await tasksRepo.getById(created.task_id);
+  if (t.status === 'awaiting_incentive' && t.timeline_agreed_at) {
+    pass('S8.5 accept_timeline (incentivized): → awaiting_incentive + timeline_agreed_at set');
+  } else {
+    fail('S8.5 accept_timeline (incentivized): → awaiting_incentive + timeline_agreed_at set', JSON.stringify(t));
+  }
+
+  // S8.6 set_incentive + final_ack happy path.
+  await sm.transition(created.task_id, 'set_incentive', 'mgr-1', { amount: 5000, currency: 'NGN' });
+  await sm.transition(created.task_id, 'final_ack', 'doer-1');
+  t = await tasksRepo.getById(created.task_id);
+  if (t.status === 'active' && t.started_at) {
+    pass('S8.6 set_incentive + final_ack: → active + started_at stamped');
+  } else {
+    fail('S8.6 set_incentive + final_ack: → active + started_at stamped', JSON.stringify(t));
+  }
+
+  // S8.7 admin (not assigner) can also accept/cancel; mark_done → submitted; approve → completed.
+  await sm.transition(created.task_id, 'mark_done', 'doer-1');
+  await sm.transition(created.task_id, 'approve', 'admin-1');
+  t = await tasksRepo.getById(created.task_id);
+  if (t.status === 'completed' && t.submitted_at && t.completed_at && t.approved_at) {
+    pass('S8.7 mark_done + admin approve: terminal completed with all timestamps');
+  } else {
+    fail('S8.7 mark_done + admin approve: terminal completed with all timestamps', JSON.stringify(t));
+  }
+
+  // S8.8 audit log captured every step — at least the 6 expected event types.
+  const evs = await eventsRepo.getByTaskId(created.task_id);
+  const expectedTypes = [
+    'assigned', 'doer_proposed_timeline', 'assigner_accepted_timeline',
+    'assigner_set_incentive', 'doer_final_ack', 'doer_marked_done', 'assigner_approved',
+  ];
+  const haveAll = expectedTypes.every((tag) => evs.some((e) => e.event_type === tag));
+  if (haveAll && evs.length >= expectedTypes.length) {
+    pass(`S8.8 audit log: all ${expectedTypes.length} expected event types written`);
+  } else {
+    fail('S8.8 audit log: all expected event types written',
+      `got: ${evs.map((e) => e.event_type).join(', ')}`);
+  }
+
+  // S8.9 rounds cap: counter + renegotiate cap at MAX_NEGOTIATION_ROUNDS.
+  const t2 = await sm.create({ title: 'Negotiate me', assigned_to: 'doer-2', assigned_by: 'mgr-2', track: 'salaried' });
+  for (let i = 0; i < 3; i++) {
+    await sm.transition(t2.task_id, 'propose_timeline', 'doer-2', { hours: 1, deadline: '2026-05-30' });
+    await sm.transition(t2.task_id, 'counter_timeline', 'mgr-2');
+  }
+  let exhausted = false;
+  try {
+    await sm.transition(t2.task_id, 'propose_timeline', 'doer-2', { hours: 1, deadline: '2026-05-30' });
+    await sm.transition(t2.task_id, 'counter_timeline', 'mgr-2');
+  } catch (e) {
+    if (e.code === 'ROUNDS_EXHAUSTED') exhausted = true;
+  }
+  if (exhausted) pass(`S8.9 rounds cap: 4th counter_timeline rejected at ${sm.MAX_NEGOTIATION_ROUNDS} rounds`);
+  else fail(`S8.9 rounds cap: 4th counter_timeline rejected at ${sm.MAX_NEGOTIATION_ROUNDS} rounds`);
+
+  // S8.10 salaried track: accept_timeline → awaiting_final_ack (no incentive step).
+  const t3 = await sm.create({ title: 'Salaried task', assigned_to: 'doer-3', assigned_by: 'mgr-3', track: 'salaried' });
+  await sm.transition(t3.task_id, 'propose_timeline', 'doer-3', { hours: 2, deadline: '2026-05-20' });
+  await sm.transition(t3.task_id, 'accept_timeline', 'mgr-3');
+  const t3now = await tasksRepo.getById(t3.task_id);
+  if (t3now.status === 'awaiting_final_ack') {
+    pass('S8.10 accept_timeline (salaried): skips incentive → awaiting_final_ack');
+  } else {
+    fail('S8.10 accept_timeline (salaried): skips incentive → awaiting_final_ack', JSON.stringify(t3now));
+  }
+
+  // S8.11 cancel works from non-terminal states.
+  const t4 = await sm.create({ title: 'To cancel', assigned_to: 'doer-4', assigned_by: 'mgr-4' });
+  await sm.transition(t4.task_id, 'cancel', 'mgr-4');
+  const t4now = await tasksRepo.getById(t4.task_id);
+  if (t4now.status === 'cancelled') pass('S8.11 cancel from non-terminal works');
+  else fail('S8.11 cancel from non-terminal works', JSON.stringify(t4now));
+
+  // S8.12 no further transitions from terminal.
+  try {
+    await sm.transition(t4.task_id, 'mark_done', 'doer-4');
+    fail('S8.12 terminal state rejects further events', 'mark_done from cancelled should throw');
+  } catch (e) {
+    if (e.code === 'ILLEGAL_TRANSITION') pass('S8.12 terminal state rejects further events');
+    else fail('S8.12 terminal state rejects further events', `wrong error: ${e.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
-(function main() {
+(async function main() {
   console.log('=== AtFactoryPrice smoke harness ===\n');
 
   try { runS1(); } catch (e) { fail('S1 unexpected error', e.message); }
@@ -444,6 +639,7 @@ function stubModule(resolvedPath, exports) {
   try { runS5(); } catch (e) { fail('S5 unexpected error', e.message); }
   try { runS6(); } catch (e) { fail('S6 unexpected error', e.message); }
   try { runS7(); } catch (e) { fail('S7 unexpected error', e.message); }
+  try { await runS8(); } catch (e) { fail('S8 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

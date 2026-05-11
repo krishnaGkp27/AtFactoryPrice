@@ -31,6 +31,7 @@
 const usersRepository = require('../repositories/usersRepository');
 const departmentsRepo = require('../repositories/departmentsRepository');
 const tasksRepository = require('../repositories/tasksRepository');
+const taskStateMachine = require('./taskStateMachine');
 const sessionStore = require('../utils/sessionStore');
 const deptGraph = require('../org/deptGraph');
 const auth = require('../middlewares/auth');
@@ -579,15 +580,18 @@ async function submitTask(bot, chatId, userId) {
 
   let created;
   try {
-    created = await tasksRepository.append({
+    // Route through the state-machine engine so the assignment also
+    // writes its origin row to TaskEvents (audit log).
+    created = await taskStateMachine.create({
       title: d.title,
       description,
       assigned_to: d.assigneeUserId,
       assigned_by: userId,
-      status: 'assigned',
+      track: 'salaried',
+      priority: d.priority || 'normal',
     });
   } catch (e) {
-    logger.error(`taskFlow.submit: append failed: ${e.message}`);
+    logger.error(`taskFlow.submit: create failed: ${e.message}`);
     await bot.sendMessage(chatId, '❌ Could not save the task. Please try again.');
     return;
   }
@@ -651,14 +655,49 @@ async function handleMarkDone(bot, callbackQuery, taskId) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assignee can mark this done.', show_alert: true }).catch(() => {});
     return;
   }
-  if (task.status !== 'assigned' && task.status !== 'active') {
+  // The current Mark-done UI is the simple flow (no negotiation), so
+  // tasks in 'assigned' get an implicit timeline-skip into 'active'
+  // first, then 'mark_done' moves to 'submitted'. This preserves the
+  // existing user-facing behavior while keeping each step audited.
+  if (task.status === 'assigned') {
+    try {
+      // synthesize a one-shot pass-through so the audit log keeps the
+      // origin event but the doer is allowed to mark a fresh task done
+      // without the full negotiation flow (Phase B back-compat).
+      await tasksRepository.updateFields(taskId, {
+        status: 'active',
+        started_at: new Date().toISOString(),
+      });
+      await require('../repositories/taskEventsRepository').append({
+        task_id: taskId,
+        event_type: 'doer_marked_started_legacy',
+        from_status: 'assigned',
+        to_status: 'active',
+        actor_user_id: userId,
+        meta: { reason: 'pre-negotiation_flow_back_compat' },
+      });
+      task.status = 'active';
+    } catch (e) {
+      logger.warn(`taskFlow.handleMarkDone: pre-active pass failed: ${e.message}`);
+    }
+  }
+
+  if (task.status !== 'active') {
     await editOrSend(bot, chatId, messageId,
       `ℹ️ Task ${taskId} is already *${task.status}*.`,
       { parse_mode: 'Markdown' });
     return;
   }
 
-  await tasksRepository.updateStatus(taskId, 'submitted');
+  try {
+    await taskStateMachine.transition(taskId, 'mark_done', userId);
+  } catch (e) {
+    logger.error(`taskFlow.handleMarkDone: transition failed: ${e.message}`);
+    await editOrSend(bot, chatId, messageId,
+      `❌ Could not submit: ${e.message}`,
+      { parse_mode: 'Markdown' });
+    return;
+  }
 
   const meta = decodeDescription(task.description);
   const pm = PRIORITY_META[meta.priority] || PRIORITY_META.normal;
@@ -712,7 +751,15 @@ async function handleSignOff(bot, callbackQuery, taskId, approve) {
   }
 
   if (approve) {
-    await tasksRepository.updateStatus(taskId, 'completed', new Date().toISOString());
+    try {
+      await taskStateMachine.transition(taskId, 'approve', userId);
+    } catch (e) {
+      logger.error(`taskFlow.handleSignOff(approve): ${e.message}`);
+      await editOrSend(bot, chatId, messageId,
+        `❌ Could not approve: ${e.message}`,
+        { parse_mode: 'Markdown' });
+      return;
+    }
     await editOrSend(bot, chatId, messageId,
       `✅ Task *${escapeMd(task.title)}* marked completed.\nID: \`${taskId}\``,
       {
@@ -725,7 +772,15 @@ async function handleSignOff(bot, callbackQuery, taskId, approve) {
         { parse_mode: 'Markdown' });
     } catch (_) { /* noop */ }
   } else {
-    await tasksRepository.updateStatus(taskId, 'active');
+    try {
+      await taskStateMachine.transition(taskId, 'reject', userId);
+    } catch (e) {
+      logger.error(`taskFlow.handleSignOff(reject): ${e.message}`);
+      await editOrSend(bot, chatId, messageId,
+        `❌ Could not reject: ${e.message}`,
+        { parse_mode: 'Markdown' });
+      return;
+    }
     await editOrSend(bot, chatId, messageId,
       `↩️ Task *${escapeMd(task.title)}* sent back to pending.\nID: \`${taskId}\``,
       {
