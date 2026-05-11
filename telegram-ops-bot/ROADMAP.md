@@ -376,61 +376,16 @@ Detailed design: §5.5
 
 ### 5.2 Task Templates (commits 5a, 5b, 6)
 
-#### TaskTemplates sheet (12 columns)
+**Full spec:** [`specs/templates.md`](specs/templates.md)
 
-| Col | Field | Notes |
-|---|---|---|
-| A | template_id | `TMPL-001` auto |
-| B | name | Display name |
-| C | description | Free text |
-| D | track | `salaried` \| `incentivized` |
-| E | priority | `critical` \| `high` \| `normal` \| `low` |
-| F | default_incentive | ₦ amount (incentivized only) |
-| G | default_hours | Numeric |
-| H | default_deadline_offset_days | 0=today, 1=tomorrow, … |
-| I | auto_negotiate | bool — skip propose-timeline |
-| J | requires_doer_ack | bool — only meaningful if auto_negotiate=true. If true: doer one-tap Accept. If false: fully auto, no Accept step. |
-| K | allowed_departments | CSV (empty = any) |
-| L | allowed_assignees | CSV user_ids (empty = any in dept) |
-| — | source | `admin` \| `manager` \| `auto` (system column) |
-| — | status | `active` \| `pending_approval` \| `retired` |
-| — | created_by, created_at | system |
+**Summary:** new `TaskTemplates` sheet (20 cols), three growth paths (admin curated, manager proposed, bot self-learning at 5+ identical/30d), per-template `auto_negotiate` + `requires_doer_ack` knobs to control doer friction. Reuses existing task state machine — no engine changes beyond a 5-line carve-out for synthetic `system_template:*` actors.
 
-#### Assign-task UI changes (commit 5b)
+**Commit decomposition:**
+- **5a** — TaskTemplates schema + admin Manage Templates UI
+- **5b** — "From template" picker + templateRunner.js (consumption side)
+- **6** — Manager-proposed templates + bot self-suggestions + suppression state
 
-New step 0 prepended to the picker:
-
-```
-📌 Assign Task — How?
-[ ⚡ From template ]   ← lists active templates by user's dept
-[ ✏ Custom (one-off) ] ← existing 6-step flow
-```
-
-"From template" path:
-- Step 1: pick template
-- Step 2: pick assignee (filtered by template's `allowed_assignees`/`allowed_departments`)
-- Step 3: confirm
-- Submit → engine creates task with template defaults baked in
-- If `auto_negotiate=true`: propose_hours, proposed_deadline, incentive all pre-filled from template; status jumps to `awaiting_final_ack`
-- If `requires_doer_ack=true`: doer gets one-tap Accept card
-- If `requires_doer_ack=false`: doer's DM informs them, task is `active` immediately
-
-#### Self-learning suggestions (commit 6)
-
-Trigger: same title assigned ≥5 times by same manager in last 30 days.
-
-On the next assign-task tap, bot interjects:
-```
-🤖 I noticed you've assigned "Send daily sales report" 7 times this month.
-   Average: ₦100, usually to Abdul, ~30min duration.
-
-   Save as a template? You'll one-tap it next time.
-   [ ✨ Yes, draft it ]   [ Not now ]   [ Don't ask again ]
-```
-
-Tapping Yes → drafts a template with `source=auto`, `status=pending_approval`, fills defaults from the historical median → admin gets approval DM.
-
-Suppression state stored per manager-title pair.
+Open questions (8) tracked in spec §8.
 
 ### 5.3 Adaptive UI (commit 7)
 
@@ -466,29 +421,15 @@ Suppression state stored per manager-title pair.
 
 ### 5.4 Customer-side deals (commits 8–9)
 
-**Status:** 💭 Discuss. Architecture sketch only; full design once existing Customers/Sales schema is mapped.
+**Full spec:** [`specs/customer-orders.md`](specs/customer-orders.md)
 
-#### Concept
-- Customer = `Users` row with role `customer` (or separate Customers sheet — decide during implementation).
-- Customer DMs the bot → identifies by Telegram ID → onboarded by admin once.
+**Summary:** customer becomes a third principal type (alongside admin and employee). Telegram-only for now; WhatsApp migration sketched in spec §11. Own state machine (`OrderStateMachine`) since order lifecycle differs from task negotiation. Auto-approval rules pipeline checks customer status, item validity, total caps, credit limit, deposit, and configurable business gates. Auto-approved orders **reuse the task state machine** for the fulfillment side via a templated "Dispatch order #X" task — this is the core architectural reuse from commits 5-6.
 
-#### Auto-approval rule
-Order is auto-approved iff:
-- `credit_limit_remaining ≥ order_value`, AND
-- `cash_balance ≥ required_deposit` (if any), AND
-- Customer.status = active, AND
-- Order respects business rules (min/max, allowed categories, etc.)
+**Commit decomposition:**
+- **8** — Onboarding + ledger + auto-approval rules engine + admin pending-orders queue
+- **9** — Order placement UI (catalog browse + cart + submit) + fulfillment bridge
 
-#### Fulfillment integration
-Auto-approved order → creates a **templated task** "Dispatch order #ORD-123 to Customer X" assigned to the dispatch team. Template defines hours, deadline, no incentive. This reuses the entire task state machine — including timeline negotiation if dispatch needs more time.
-
-#### Customer surfaces
-- `/order` or 🛒 Place order — catalog browse → cart → submit
-- `/ledger` or 📒 My Ledger — outstanding, credit limit, recent transactions
-- Order status DM updates (auto-approved → dispatched → delivered)
-
-#### Future WhatsApp migration
-Plan: same backend, new bot facade. Postpone until Telegram-side is proven.
+Spec is **TBR-heavy** (10 open questions, several depending on existing Customers/Sales/Catalog schema). Must read existing repo before commit 8 starts.
 
 ### 5.5 Conversational AI front-door (commit 10+)
 
