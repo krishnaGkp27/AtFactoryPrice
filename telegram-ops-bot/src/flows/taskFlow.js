@@ -1,29 +1,26 @@
 /**
- * Tappable task assignment + viewing flow (TG-7.5 Phase B slice).
+ * Tappable task assignment + negotiation flow (TG-7.5 Phase C — commit 3).
  *
  * Surface:
- *   - act:assign_task        → start the 6-step in-place picker
- *   - act:my_tasks           → my-tasks view with inline Mark-done buttons
- *   - act:team_tasks         → team-tasks view (managers / admin only)
+ *   - act:assign_task        → 6-step in-place picker (Track replaces Due Date)
+ *   - act:my_tasks           → my-tasks view; buttons reflect current status
+ *   - act:team_tasks         → team-tasks view (managers / admin only) — no money
  *   - act:pending_signoff    → tasks submitted to me waiting for ✅/❌
  *
- * Callback namespace: `tsk:*`
- *   tsk:asn:<userId>          pick assignee
- *   tsk:asnpg:<page>          assignee picker pagination
- *   tsk:prio:<level>          pick priority
- *   tsk:due:<choice>          pick due preset
- *   tsk:skip:<field>          skip optional field (due, desc)
- *   tsk:back:<step>           ⬅ Back navigation
- *   tsk:cancel                ❌ Cancel
- *   tsk:confirm               ✅ Submit
- *   tsk:done:<taskId>         assignee marks done → submitted
- *   tsk:sign:ok:<taskId>      assigner approves a submitted task
- *   tsk:sign:no:<taskId>      assigner rejects a submitted task back to pending
+ * Workflow (drives `src/flows/taskStateMachine.js`):
+ *   assigned                 →  doer taps [⏱ Propose timeline] OR [❌ Decline]
+ *   awaiting_timeline_ack    →  assigner taps [✅ Accept] OR [↩ Counter]
+ *   awaiting_incentive       →  assigner enters ₦ amount (or Skip → ₦0)
+ *                               *only* on incentivized track
+ *   awaiting_final_ack       →  doer taps [✅ Accept deal] OR [↩ Renegotiate]
+ *   active                   →  doer taps [✅ Mark done]
+ *   submitted                →  assigner taps [✅ Approve] OR [❌ Reject]
+ *   completed                →  terminal
  *
- * Sheet contract: existing Tasks sheet (9 cols, unchanged). Priority +
- * due-date are encoded into `description` as a structured prefix
- * `[P:<level>; due:<iso>]\n<free text>` so no schema migration is
- * required for v1.
+ * Three negotiation loops (counter, renegotiate) share a hard cap of 3
+ * rounds per task (enforced by the state-machine engine).
+ *
+ * Callback namespace: `tsk:*` (full list in inline keyboards below).
  */
 
 'use strict';
@@ -31,16 +28,21 @@
 const usersRepository = require('../repositories/usersRepository');
 const departmentsRepo = require('../repositories/departmentsRepository');
 const tasksRepository = require('../repositories/tasksRepository');
+const taskEventsRepository = require('../repositories/taskEventsRepository');
+const incentivesRepository = require('../repositories/incentivesRepository');
 const taskStateMachine = require('./taskStateMachine');
 const sessionStore = require('../utils/sessionStore');
 const deptGraph = require('../org/deptGraph');
 const auth = require('../middlewares/auth');
+const config = require('../config');
 const logger = require('../utils/logger');
 
 const PAGE_SIZE = 8;
 const TITLE_MIN_LEN = 3;
 const TITLE_MAX_LEN = 100;
 const DESC_MAX_LEN = 500;
+const COUNTER_REASON_MAX_LEN = 200;
+const INCENTIVE_MAX = 100_000_000;
 
 const PRIORITY_META = {
   critical: { icon: '🔴', label: 'Critical' },
@@ -49,12 +51,44 @@ const PRIORITY_META = {
   low:      { icon: '⚪', label: 'Low' },
 };
 
+const TRACK_META = {
+  salaried:     { icon: '📋', label: 'Salaried',     hint: 'No incentive — covered by salary' },
+  incentivized: { icon: '💰', label: 'Incentivized', hint: 'Doer can earn an extra ₦ bonus' },
+};
+
+const STATUS_LABEL = {
+  assigned:              { icon: '📨', label: 'Waiting for you to propose timeline' },
+  awaiting_timeline_ack: { icon: '⌛', label: 'Waiting for assigner to accept timeline' },
+  awaiting_incentive:    { icon: '⌛', label: 'Waiting for assigner to set incentive' },
+  awaiting_final_ack:    { icon: '⌛', label: 'Waiting for you to accept the deal' },
+  active:                { icon: '🟢', label: 'In progress' },
+  submitted:             { icon: '⏳', label: 'Waiting on sign-off' },
+  completed:             { icon: '✅', label: 'Completed' },
+  declined:              { icon: '🚫', label: 'Declined' },
+  cancelled:             { icon: '❌', label: 'Cancelled' },
+};
+
+const HOURS_PRESETS = [
+  ['1h', 1], ['2h', 2], ['4h', 4], ['8h', 8],
+  ['1d', 24], ['2d', 48], ['5d', 120], ['1w', 168],
+];
+
+const DEADLINE_PRESETS = [
+  ['today', 'Today', 0],
+  ['tomorrow', 'Tomorrow', 1],
+  ['3d', '+3 days', 3],
+  ['1w', '+1 week', 7],
+  ['2w', '+2 weeks', 14],
+];
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function isAdmin(userId) {
-  return auth.isAdmin(userId);
+function isAdmin(userId) { return auth.isAdmin(userId); }
+function isFinance(userId) {
+  const ids = (config && config.access && config.access.financeIds) || [];
+  return ids.includes(String(userId));
 }
 
 function fmtDate(iso) {
@@ -66,13 +100,13 @@ function fmtDate(iso) {
     const mmm = d.toLocaleString('en-US', { month: 'short' });
     const yy = String(d.getFullYear()).slice(-2);
     return `${dd}-${mmm}-${yy}`;
-  } catch (_) {
-    return iso;
-  }
+  } catch (_) { return iso; }
 }
 
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+function fmtMoney(amount, currency = 'NGN') {
+  const sign = currency === 'NGN' ? '₦' : `${currency} `;
+  const n = Number(amount) || 0;
+  return `${sign}${n.toLocaleString('en-US')}`;
 }
 
 function addDays(days) {
@@ -81,33 +115,46 @@ function addDays(days) {
   return d.toISOString().slice(0, 10);
 }
 
-function encodeDescription({ priority, dueDate, description }) {
-  const meta = `[P:${priority || 'normal'}${dueDate ? `; due:${dueDate}` : ''}]`;
-  return description ? `${meta}\n${description}` : meta;
+function fmtHours(hours) {
+  const n = Number(hours);
+  if (!Number.isFinite(n)) return '?';
+  if (n < 24) return `${n}h`;
+  const d = Math.round(n / 24 * 10) / 10;
+  return `${d}d`;
 }
 
-function decodeDescription(raw) {
-  if (!raw) return { priority: 'normal', dueDate: null, text: '' };
+/**
+ * Legacy reader — older tasks (created before commit 3) encoded priority
+ * + due-date as a `[P:high; due:2026-05-12]\n<text>` prefix in the
+ * description column. Newer tasks use real columns. This decoder is
+ * tolerant of both shapes.
+ */
+function decodeLegacyDescription(raw) {
+  if (!raw) return { priority: null, dueDate: null, text: '' };
   const m = raw.match(/^\[P:([a-z]+)(?:;\s*due:([0-9\-]+))?\]\n?([\s\S]*)$/i);
-  if (!m) return { priority: 'normal', dueDate: null, text: String(raw) };
+  if (!m) return { priority: null, dueDate: null, text: String(raw) };
   return {
-    priority: (m[1] || 'normal').toLowerCase(),
+    priority: (m[1] || '').toLowerCase() || null,
     dueDate: m[2] || null,
     text: (m[3] || '').trim(),
   };
 }
 
+function getPriority(task) {
+  const dec = decodeLegacyDescription(task.description);
+  return task.priority || dec.priority || 'normal';
+}
+
+function getDescriptionText(task) {
+  const dec = decodeLegacyDescription(task.description);
+  return dec.text || '';
+}
+
 async function editOrSend(bot, chatId, messageId, text, opts = {}) {
   if (messageId) {
     try {
-      return await bot.editMessageText(text, {
-        chat_id: chatId,
-        message_id: messageId,
-        ...opts,
-      });
-    } catch (_) {
-      // fall through to fresh send
-    }
+      return await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...opts });
+    } catch (_) { /* fall through */ }
   }
   return bot.sendMessage(chatId, text, opts);
 }
@@ -130,21 +177,6 @@ function backRow(step) {
   ];
 }
 
-function cancelRow() {
-  return [{ text: '❌ Cancel', callback_data: 'tsk:cancel' }];
-}
-
-/**
- * Footer row used by every terminal-state Tasks screen (read-only
- * views + flow confirmation screens). Two taps, matching the
- * Inventory Status / Sales Report convention elsewhere in the bot:
- *   ⬅ Back to Tasks  → re-renders the Tasks hub submenu
- *   🏠 Menu          → returns to the top-level greeting menu
- *
- * Callbacks reuse the controller-side dispatchers already wired for
- * the hub system: 'act:__hub__:tasks' and 'act:__back__'. No new
- * callback prefixes are needed.
- */
 function navFooterRow() {
   return [
     { text: '⬅ Back to Tasks', callback_data: 'act:__hub__:tasks' },
@@ -152,11 +184,6 @@ function navFooterRow() {
   ];
 }
 
-/**
- * Footer row used on the FIRST step of the assign-task flow (assignee
- * picker), where there is no "previous step" to go back to. Lets the
- * user bail to the Tasks hub without losing the cancel option.
- */
 function firstStepFooterRow() {
   return [
     { text: '⬅ Back to Tasks', callback_data: 'act:__hub__:tasks' },
@@ -169,20 +196,30 @@ function canManage(user, isAdm) {
   return !!(user && Array.isArray(user.manages) && user.manages.length);
 }
 
-/** Returns the set of activity codes the Tasks hub should expose for this user. */
+/** Activities the Tasks hub should expose to this user. */
 async function visibleTaskActivityCodes(userId) {
   const user = await usersRepository.findByUserId(userId);
   const isAdm = isAdmin(userId);
-  // My Tasks is always available to any active user.
   const codes = ['my_tasks'];
-  if (canManage(user, isAdm)) {
-    codes.push('assign_task', 'team_tasks', 'pending_signoff');
-  }
+  if (canManage(user, isAdm)) codes.push('assign_task', 'team_tasks', 'pending_signoff');
   return codes;
 }
 
+function escapeMd(s) {
+  return String(s == null ? '' : s).replace(/([_*`\[\]])/g, '\\$1');
+}
+
+function truncate(s, n) {
+  const t = String(s || '');
+  return t.length <= n ? t : t.slice(0, n - 1) + '…';
+}
+
+function priorityIsSilent(priority) {
+  return priority === 'normal' || priority === 'low';
+}
+
 // ---------------------------------------------------------------------------
-// Assign-task flow
+// ASSIGN-TASK PICKER (6 steps: assignee → title → priority → track → desc → confirm)
 // ---------------------------------------------------------------------------
 
 async function startAssign(bot, chatId, userId, messageId) {
@@ -193,16 +230,14 @@ async function startAssign(bot, chatId, userId, messageId) {
       'You can\'t assign tasks. Ask an admin to set you as manager of a department (Users sheet → `manages` column).');
     return;
   }
-
   sessionStore.set(userId, {
     type: 'task_assign_flow',
     step: 'assignee',
     flowMessageId: messageId || null,
     page: 0,
-    data: { priority: 'normal' },
+    data: { priority: 'normal', track: 'salaried' },
     actorIsAdmin: isAdm,
   });
-
   await renderAssigneePicker(bot, chatId, userId);
 }
 
@@ -224,36 +259,22 @@ async function renderAssigneePicker(bot, chatId, userId) {
   if (!assignable.length) {
     await anchor(bot, chatId, userId,
       '❗ No users available to assign tasks to.\n\nMake sure:\n• The Users sheet has active users.\n• Their `department` column is set.\n• If you\'re not admin, your `manages` column lists at least one department.',
-      {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [firstStepFooterRow()] },
-      });
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [firstStepFooterRow()] } });
     return;
   }
 
   const page = Math.max(0, session.page || 0);
   const totalPages = Math.max(1, Math.ceil(assignable.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
-  if (safePage !== page) {
-    session.page = safePage;
-    sessionStore.set(userId, session);
-  }
+  if (safePage !== page) { session.page = safePage; sessionStore.set(userId, session); }
 
   const slice = assignable.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
   const rows = [];
   for (let i = 0; i < slice.length; i += 2) {
     const a = slice[i];
     const b = slice[i + 1];
-    const row = [{
-      text: `👤 ${a.name || a.user_id}`,
-      callback_data: `tsk:asn:${a.user_id}`,
-    }];
-    if (b) {
-      row.push({
-        text: `👤 ${b.name || b.user_id}`,
-        callback_data: `tsk:asn:${b.user_id}`,
-      });
-    }
+    const row = [{ text: `👤 ${a.name || a.user_id}`, callback_data: `tsk:asn:${a.user_id}` }];
+    if (b) row.push({ text: `👤 ${b.name || b.user_id}`, callback_data: `tsk:asn:${b.user_id}` });
     rows.push(row);
   }
 
@@ -264,7 +285,6 @@ async function renderAssigneePicker(bot, chatId, userId) {
     if (safePage < totalPages - 1) nav.push({ text: 'Next ➡️', callback_data: `tsk:asnpg:${safePage + 1}` });
     rows.push(nav);
   }
-
   rows.push(firstStepFooterRow());
 
   await anchor(bot, chatId, userId,
@@ -279,10 +299,7 @@ async function renderTitlePrompt(bot, chatId, userId) {
   const titleShown = session.data?.title ? `\n\n_Current:_ ${escapeMd(session.data.title)}` : '';
   await anchor(bot, chatId, userId,
     `📌 *Assign Task*\n\nStep 2/6 — Reply with the *task title*.\n\nAssignee: *${escapeMd(assignee)}*${titleShown}\n\n_Min ${TITLE_MIN_LEN}, max ${TITLE_MAX_LEN} characters._`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: [backRow('assignee')] },
-    });
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [backRow('assignee')] } });
 }
 
 async function renderPriorityPicker(bot, chatId, userId) {
@@ -299,23 +316,25 @@ async function renderPriorityPicker(bot, chatId, userId) {
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
-async function renderDuePicker(bot, chatId, userId) {
+async function renderTrackPicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
+  const cur = session.data?.track || 'salaried';
   const rows = [
-    [
-      { text: '📅 Today', callback_data: 'tsk:due:today' },
-      { text: '📅 Tomorrow', callback_data: 'tsk:due:tomorrow' },
-    ],
-    [
-      { text: '📅 In 3 days', callback_data: 'tsk:due:3d' },
-      { text: '📅 This week', callback_data: 'tsk:due:week' },
-    ],
-    [{ text: '⏭️ Skip (no due date)', callback_data: 'tsk:skip:due' }],
+    [{
+      text: `${TRACK_META.salaried.icon} Salaried${cur === 'salaried' ? ' ✓' : ''}`,
+      callback_data: 'tsk:trk:salaried',
+    }],
+    [{
+      text: `${TRACK_META.incentivized.icon} Incentivized${cur === 'incentivized' ? ' ✓' : ''}`,
+      callback_data: 'tsk:trk:incentivized',
+    }],
     backRow('priority'),
   ];
   await anchor(bot, chatId, userId,
-    '📌 *Assign Task*\n\nStep 4/6 — Pick a *due date* (optional).',
+    '📌 *Assign Task*\n\nStep 4/6 — Pick a *track*:\n\n' +
+    `• ${TRACK_META.salaried.icon} *Salaried* — ${TRACK_META.salaried.hint}.\n` +
+    `• ${TRACK_META.incentivized.icon} *Incentivized* — ${TRACK_META.incentivized.hint}. You\'ll be asked to set the amount AFTER the doer proposes a timeline you accept.`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
@@ -324,7 +343,7 @@ async function renderDescriptionPrompt(bot, chatId, userId) {
   if (!session) return;
   const rows = [
     [{ text: '⏭️ Skip (no description)', callback_data: 'tsk:skip:desc' }],
-    backRow('due'),
+    backRow('track'),
   ];
   await anchor(bot, chatId, userId,
     `📌 *Assign Task*\n\nStep 5/6 — Reply with an optional *description* (max ${DESC_MAX_LEN} chars), or skip.`,
@@ -336,37 +355,601 @@ async function renderConfirmCard(bot, chatId, userId) {
   if (!session) return;
   const d = session.data || {};
   const pm = PRIORITY_META[d.priority || 'normal'];
+  const tm = TRACK_META[d.track || 'salaried'];
   const lines = [
-    '📌 *Assign Task — Confirm*',
-    '',
+    '📌 *Assign Task — Confirm*', '',
     `👤 *Assignee:* ${escapeMd(d.assigneeName || d.assigneeUserId || '?')}`,
     `📝 *Title:* ${escapeMd(d.title || '')}`,
     `${pm.icon} *Priority:* ${pm.label}`,
-    `📅 *Due:* ${d.dueDate ? fmtDate(d.dueDate) : '_none_'}`,
+    `${tm.icon} *Track:* ${tm.label}`,
     `🗒 *Description:* ${d.description ? escapeMd(d.description) : '_none_'}`,
+    '',
+    '_Once you submit, the assignee gets a DM and must propose how long they\'ll take + by when._',
   ];
   const rows = [
     [{ text: '✅ Submit', callback_data: 'tsk:confirm' }],
     backRow('desc'),
   ];
   await anchor(bot, chatId, userId, lines.join('\n'), {
-    parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: rows },
+    parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows },
   });
 }
 
-function escapeMd(s) {
-  return String(s == null ? '' : s).replace(/([_*`\[\]])/g, '\\$1');
+async function submitTask(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'task_assign_flow') return;
+  const d = session.data || {};
+  if (!d.assigneeUserId || !d.title) {
+    sessionStore.clear(userId);
+    await bot.sendMessage(chatId, '⚠️ Missing required fields. Please restart.');
+    return;
+  }
+
+  let created;
+  try {
+    // Plain description: priority + track now live in real columns.
+    created = await taskStateMachine.create({
+      title: d.title,
+      description: d.description || '',
+      assigned_to: d.assigneeUserId,
+      assigned_by: userId,
+      track: d.track || 'salaried',
+      priority: d.priority || 'normal',
+    });
+  } catch (e) {
+    logger.error(`taskFlow.submit: create failed: ${e.message}`);
+    await bot.sendMessage(chatId, '❌ Could not save the task. Please try again.');
+    return;
+  }
+
+  sessionStore.clear(userId);
+  const pm = PRIORITY_META[d.priority || 'normal'];
+  const tm = TRACK_META[d.track || 'salaried'];
+
+  await editOrSend(bot, chatId, session.flowMessageId,
+    `✅ Task assigned to *${escapeMd(d.assigneeName)}*\n\n` +
+    `${pm.icon} *${escapeMd(d.title)}*\n` +
+    `${tm.icon} ${tm.label}\n` +
+    `ID: \`${created.task_id}\`\n\n` +
+    `_${d.assigneeName} now sees the task in their chat and will propose how long it will take + by when. You\'ll be notified to accept or counter their proposal._`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+
+  await dmAssigneeNewTask(bot, created, userId);
+}
+
+/** Send the new-task DM card to the assignee with Propose-timeline / Decline. */
+async function dmAssigneeNewTask(bot, task, assignerUserId) {
+  try {
+    const pm = PRIORITY_META[task.priority] || PRIORITY_META.normal;
+    const tm = TRACK_META[task.track] || TRACK_META.salaried;
+    const descLine = task.description ? `\n🗒 ${escapeMd(task.description)}` : '';
+    const assignerUser = await usersRepository.findByUserId(assignerUserId);
+    const fromLine = assignerUser ? `\n_From: ${escapeMd(assignerUser.name || assignerUserId)}_` : '';
+    const incentiveHint = task.track === 'incentivized'
+      ? '\n\n💰 _Incentivized track — your assigner will set a bonus after they accept your timeline._'
+      : '';
+    await bot.sendMessage(task.assigned_to,
+      `${pm.icon} *New Task — ${pm.label}*\n${tm.icon} ${tm.label}\n\n` +
+      `📝 *${escapeMd(task.title)}*${descLine}${fromLine}\n\n` +
+      `*How long do you need, and by when?*${incentiveHint}\n\n` +
+      `ID: \`${task.task_id}\``,
+      {
+        parse_mode: 'Markdown',
+        disable_notification: priorityIsSilent(task.priority),
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '⏱ Propose timeline', callback_data: `tsk:prp:${task.task_id}` },
+            { text: '❌ Decline',          callback_data: `tsk:dec:${task.task_id}` },
+          ]],
+        },
+      });
+  } catch (e) {
+    logger.warn(`taskFlow.dmAssigneeNewTask: could not DM ${task.assigned_to}: ${e.message}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Callback dispatcher
+// PROPOSE-TIMELINE FLOW (doer-side)
 // ---------------------------------------------------------------------------
 
-/**
- * Handle any callback whose data starts with `tsk:`. Returns true if
- * handled, false otherwise.
- */
+async function startProposeFlow(bot, callbackQuery, taskId) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+
+  const task = await tasksRepository.getById(taskId);
+  if (!task) {
+    await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {});
+    return;
+  }
+  if (task.assigned_to !== userId) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assignee can propose a timeline.', show_alert: true }).catch(() => {});
+    return;
+  }
+  if (task.status !== 'assigned') {
+    await editOrSend(bot, chatId, messageId,
+      `ℹ️ Task ${taskId} is *${task.status}* — proposing a timeline is no longer possible.`,
+      { parse_mode: 'Markdown' });
+    return;
+  }
+
+  sessionStore.set(userId, {
+    type: 'task_propose_flow',
+    step: 'hours',
+    flowMessageId: messageId,
+    data: { taskId, taskTitle: task.title, taskPriority: task.priority, taskTrack: task.track },
+  });
+  await renderHoursPicker(bot, chatId, userId);
+}
+
+async function renderHoursPicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const cur = session.data?.hours;
+  const rows = [];
+  for (let i = 0; i < HOURS_PRESETS.length; i += 4) {
+    rows.push(HOURS_PRESETS.slice(i, i + 4).map(([label, value]) => ({
+      text: `⏱ ${label}${cur === value ? ' ✓' : ''}`,
+      callback_data: `tsk:phr:${value}`,
+    })));
+  }
+  rows.push([
+    { text: '⬅️ Back', callback_data: 'tsk:pcn' },
+  ]);
+  const t = session.data;
+  const pm = PRIORITY_META[t.taskPriority] || PRIORITY_META.normal;
+  await anchor(bot, chatId, userId,
+    `⏱ *Propose Timeline — Step 1/2*\n\n${pm.icon} *${escapeMd(t.taskTitle)}*\n\nHow long do you need?`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function renderDeadlinePicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const cur = session.data?.deadline;
+  const rows = DEADLINE_PRESETS.map(([key, label, days]) => {
+    const iso = addDays(days);
+    return [{
+      text: `📅 ${label} (${fmtDate(iso)})${cur === iso ? ' ✓' : ''}`,
+      callback_data: `tsk:pdl:${key}`,
+    }];
+  });
+  rows.push([
+    { text: '⬅️ Back',  callback_data: 'tsk:pbk:hours' },
+    { text: '❌ Cancel', callback_data: 'tsk:pcn' },
+  ]);
+  const t = session.data;
+  await anchor(bot, chatId, userId,
+    `⏱ *Propose Timeline — Step 2/2*\n\n${escapeMd(t.taskTitle)}\n\nEstimated effort: *${fmtHours(t.hours)}*\n\nBy when will it be done?`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function renderProposeConfirmCard(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const t = session.data;
+  const pm = PRIORITY_META[t.taskPriority] || PRIORITY_META.normal;
+  const tm = TRACK_META[t.taskTrack] || TRACK_META.salaried;
+  const rows = [
+    [{ text: '✅ Submit', callback_data: 'tsk:pcf' }],
+    [
+      { text: '⬅️ Back',  callback_data: 'tsk:pbk:deadline' },
+      { text: '❌ Cancel', callback_data: 'tsk:pcn' },
+    ],
+  ];
+  await anchor(bot, chatId, userId,
+    `⏱ *Propose Timeline — Confirm*\n\n` +
+    `${pm.icon} *${escapeMd(t.taskTitle)}*\n${tm.icon} ${tm.label}\n\n` +
+    `⏱ Effort: *${fmtHours(t.hours)}*\n` +
+    `📅 Deadline: *${fmtDate(t.deadline)}*\n\n` +
+    `_Once you submit, your assigner will accept the timeline or send back a counter-proposal._`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+async function submitProposal(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'task_propose_flow') return;
+  const t = session.data;
+  if (!t.taskId || t.hours == null || !t.deadline) {
+    sessionStore.clear(userId);
+    await bot.sendMessage(chatId, '⚠️ Missing values. Please restart from the task card.');
+    return;
+  }
+  try {
+    await taskStateMachine.transition(t.taskId, 'propose_timeline', userId, {
+      hours: t.hours, deadline: t.deadline,
+    });
+  } catch (e) {
+    logger.error(`taskFlow.submitProposal: ${e.message}`);
+    sessionStore.clear(userId);
+    await editOrSend(bot, chatId, session.flowMessageId,
+      `❌ Couldn\'t submit proposal: ${e.message}`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+  sessionStore.clear(userId);
+  await editOrSend(bot, chatId, session.flowMessageId,
+    `✅ *Proposal sent*\n\n⏱ ${fmtHours(t.hours)} · 📅 ${fmtDate(t.deadline)}\n\n_Waiting for your assigner to accept or counter._`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+
+  await dmAssignerProposal(bot, t.taskId, userId);
+}
+
+/** DM the assigner with the proposal + Accept / Counter / Cancel buttons. */
+async function dmAssignerProposal(bot, taskId, doerUserId) {
+  try {
+    const task = await tasksRepository.getById(taskId);
+    if (!task) return;
+    const doer = await usersRepository.findByUserId(doerUserId);
+    const pm = PRIORITY_META[task.priority] || PRIORITY_META.normal;
+    const tm = TRACK_META[task.track] || TRACK_META.salaried;
+    await bot.sendMessage(task.assigned_by,
+      `📨 *Timeline proposed*\n\n` +
+      `${pm.icon} *${escapeMd(task.title)}*\n${tm.icon} ${tm.label}\n\n` +
+      `👤 ${escapeMd(doer?.name || doerUserId)} proposes:\n` +
+      `   ⏱ ${fmtHours(task.proposed_hours)}\n` +
+      `   📅 By ${fmtDate(task.proposed_deadline)}\n\n` +
+      `Rounds used: ${task.negotiation_rounds || 0}/${taskStateMachine.MAX_NEGOTIATION_ROUNDS}\n\nID: \`${taskId}\``,
+      {
+        parse_mode: 'Markdown',
+        disable_notification: priorityIsSilent(task.priority),
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '✅ Accept timeline', callback_data: `tsk:acc:${taskId}` },
+              { text: '↩ Counter',          callback_data: `tsk:cnt:${taskId}` },
+            ],
+            [{ text: '❌ Cancel task', callback_data: `tsk:cnl:${taskId}` }],
+          ],
+        },
+      });
+  } catch (e) {
+    logger.warn(`taskFlow.dmAssignerProposal: ${e.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DECLINE (doer-side, one-tap)
+// ---------------------------------------------------------------------------
+
+async function handleDecline(bot, callbackQuery, taskId) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const task = await tasksRepository.getById(taskId);
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (task.assigned_to !== userId) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assignee can decline.', show_alert: true }).catch(() => {});
+    return;
+  }
+  try {
+    await taskStateMachine.transition(taskId, 'decline', userId);
+  } catch (e) {
+    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t decline: ${e.message}`, { parse_mode: 'Markdown' });
+    return;
+  }
+  await editOrSend(bot, chatId, messageId,
+    `🚫 *Declined*\n\n${escapeMd(task.title)}\n\n_Your assigner has been notified._`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+  try {
+    await bot.sendMessage(task.assigned_by,
+      `🚫 *Task declined*\n\n${escapeMd(task.title)}\n👤 By: ${escapeMd((await usersRepository.findByUserId(userId))?.name || userId)}\n\nID: \`${taskId}\`\n\n_Tap Assign Task to send it to someone else._`,
+      { parse_mode: 'Markdown' });
+  } catch (_) { /* noop */ }
+}
+
+// ---------------------------------------------------------------------------
+// ACCEPT / COUNTER / CANCEL (assigner-side, from the proposal card)
+// ---------------------------------------------------------------------------
+
+async function handleAcceptTimeline(bot, callbackQuery, taskId) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const task = await tasksRepository.getById(taskId);
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (task.assigned_by !== userId && !isAdmin(userId)) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assigner or an admin can accept.', show_alert: true }).catch(() => {});
+    return;
+  }
+  let result;
+  try {
+    result = await taskStateMachine.transition(taskId, 'accept_timeline', userId);
+  } catch (e) {
+    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t accept: ${e.message}`, { parse_mode: 'Markdown' });
+    return;
+  }
+  const updated = result.task;
+
+  if (updated.status === 'awaiting_incentive') {
+    // Incentivized track — show the incentive input card to the assigner.
+    sessionStore.set(userId, {
+      type: 'task_incentive_flow',
+      flowMessageId: messageId,
+      data: { taskId, taskTitle: task.title, taskTrack: task.track },
+    });
+    await renderIncentiveCard(bot, chatId, userId);
+  } else {
+    // Salaried — straight to doer for final ack.
+    await editOrSend(bot, chatId, messageId,
+      `✅ *Timeline accepted*\n\n${escapeMd(task.title)}\n⏱ ${fmtHours(task.proposed_hours)} · 📅 ${fmtDate(task.proposed_deadline)}\n\n_Waiting on the doer\'s final OK._`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    await dmDoerFinalAck(bot, taskId);
+  }
+}
+
+async function startCounterFlow(bot, callbackQuery, taskId) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const task = await tasksRepository.getById(taskId);
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (task.assigned_by !== userId && !isAdmin(userId)) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assigner or an admin can counter.', show_alert: true }).catch(() => {});
+    return;
+  }
+  if ((task.negotiation_rounds || 0) >= taskStateMachine.MAX_NEGOTIATION_ROUNDS) {
+    await editOrSend(bot, chatId, messageId,
+      `⚠️ Negotiation cap reached (${task.negotiation_rounds}/${taskStateMachine.MAX_NEGOTIATION_ROUNDS}). Accept the proposal or cancel the task.`,
+      { parse_mode: 'Markdown' });
+    return;
+  }
+  sessionStore.set(userId, {
+    type: 'task_counter_flow',
+    flowMessageId: messageId,
+    data: { taskId, taskTitle: task.title },
+  });
+  await editOrSend(bot, chatId, messageId,
+    `↩ *Counter proposal*\n\n${escapeMd(task.title)}\n\nReply with a one-line note for the doer (or tap *Send without note*).\n\n_Max ${COUNTER_REASON_MAX_LEN} chars._`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '⏭ Send without note', callback_data: 'tsk:cnt_skip' }],
+          [{ text: '❌ Cancel counter',     callback_data: 'tsk:cnt_canc' }],
+        ],
+      },
+    });
+}
+
+async function submitCounter(bot, chatId, userId, reason) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'task_counter_flow') return;
+  const t = session.data;
+  try {
+    await taskStateMachine.transition(t.taskId, 'counter_timeline', userId, reason ? { reason } : {});
+  } catch (e) {
+    sessionStore.clear(userId);
+    await editOrSend(bot, chatId, session.flowMessageId, `❌ Couldn\'t counter: ${e.message}`, { parse_mode: 'Markdown' });
+    return;
+  }
+  sessionStore.clear(userId);
+  await editOrSend(bot, chatId, session.flowMessageId,
+    `↩ *Counter sent*\n\n${escapeMd(t.taskTitle)}\n\n_The doer will propose a fresh timeline._`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+  // DM the doer with fresh propose card + the counter note.
+  try {
+    const task = await tasksRepository.getById(t.taskId);
+    const pm = PRIORITY_META[task.priority] || PRIORITY_META.normal;
+    const tm = TRACK_META[task.track] || TRACK_META.salaried;
+    const noteLine = reason ? `\n\n💬 _Counter note:_ ${escapeMd(reason)}` : '';
+    await bot.sendMessage(task.assigned_to,
+      `↩ *Counter from assigner*\n\n${pm.icon} *${escapeMd(task.title)}*\n${tm.icon} ${tm.label}${noteLine}\n\n` +
+      `Please propose a fresh timeline.\n\n` +
+      `Round ${task.negotiation_rounds}/${taskStateMachine.MAX_NEGOTIATION_ROUNDS}\nID: \`${t.taskId}\``,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '⏱ Propose timeline', callback_data: `tsk:prp:${t.taskId}` },
+            { text: '❌ Decline',          callback_data: `tsk:dec:${t.taskId}` },
+          ]],
+        },
+      });
+  } catch (e) {
+    logger.warn(`taskFlow.submitCounter: could not DM doer: ${e.message}`);
+  }
+}
+
+async function handleCancelTask(bot, callbackQuery, taskId) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const task = await tasksRepository.getById(taskId);
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  try {
+    await taskStateMachine.transition(taskId, 'cancel', userId);
+  } catch (e) {
+    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t cancel: ${e.message}`, { parse_mode: 'Markdown' });
+    return;
+  }
+  await editOrSend(bot, chatId, messageId,
+    `❌ *Task cancelled*\n\n${escapeMd(task.title)}\nID: \`${taskId}\``,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+  try {
+    await bot.sendMessage(task.assigned_to,
+      `❌ *Task cancelled by assigner*\n\n${escapeMd(task.title)}\nID: \`${taskId}\``,
+      { parse_mode: 'Markdown' });
+  } catch (_) { /* noop */ }
+}
+
+// ---------------------------------------------------------------------------
+// SET-INCENTIVE FLOW (assigner-side; incentivized track only)
+// ---------------------------------------------------------------------------
+
+async function renderIncentiveCard(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const t = session.data;
+  await anchor(bot, chatId, userId,
+    `💰 *Set incentive for the doer*\n\n${escapeMd(t.taskTitle)}\n\n` +
+    `Reply with the ₦ amount (digits only, e.g. \`5000\`).\n` +
+    `Tap Skip to use ₦0.\n\n_The amount is stored separately and is NOT visible to scrum-master admin in any Tasks view._`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '⏭ Skip (₦0)', callback_data: `tsk:sip:${t.taskId}` }],
+        ],
+      },
+    });
+}
+
+async function submitIncentive(bot, chatId, userId, amountRaw) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'task_incentive_flow') return;
+  const t = session.data;
+  const amount = Number(amountRaw);
+  if (!Number.isFinite(amount) || amount < 0 || amount > INCENTIVE_MAX) {
+    await bot.sendMessage(chatId, `⚠️ Enter a non-negative whole number ≤ ${INCENTIVE_MAX.toLocaleString()}, or tap Skip.`);
+    return;
+  }
+  await finalizeIncentive(bot, chatId, userId, amount);
+}
+
+async function finalizeIncentive(bot, chatId, userId, amount) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'task_incentive_flow') return;
+  const t = session.data;
+  const currency = config.currency || 'NGN';
+  try {
+    await incentivesRepository.setAmount({
+      task_id: t.taskId,
+      amount,
+      currency,
+      set_by: userId,
+    });
+    await taskStateMachine.transition(t.taskId, 'set_incentive', userId, { amount, currency });
+  } catch (e) {
+    logger.error(`taskFlow.finalizeIncentive: ${e.message}`);
+    sessionStore.clear(userId);
+    await editOrSend(bot, chatId, session.flowMessageId,
+      `❌ Couldn\'t save incentive: ${e.message}`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+  sessionStore.clear(userId);
+  await editOrSend(bot, chatId, session.flowMessageId,
+    `💰 *Incentive saved*\n\n${escapeMd(t.taskTitle)}\nAmount: ${fmtMoney(amount, currency)}\n\n_Waiting on the doer\'s final OK._`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+  await dmDoerFinalAck(bot, t.taskId);
+}
+
+// ---------------------------------------------------------------------------
+// FINAL-ACK FLOW (doer-side)
+// ---------------------------------------------------------------------------
+
+async function dmDoerFinalAck(bot, taskId) {
+  try {
+    const task = await tasksRepository.getById(taskId);
+    if (!task) return;
+    const pm = PRIORITY_META[task.priority] || PRIORITY_META.normal;
+    const tm = TRACK_META[task.track] || TRACK_META.salaried;
+    let incentiveLine = '';
+    if (task.track === 'incentivized') {
+      try {
+        const inc = await incentivesRepository.getByTaskId(taskId);
+        const amount = inc ? Number(inc.amount) : 0;
+        incentiveLine = `\n💰 *Incentive:* ${fmtMoney(amount, inc?.currency || config.currency || 'NGN')}`;
+      } catch (e) {
+        logger.warn(`taskFlow.dmDoerFinalAck: incentive lookup failed: ${e.message}`);
+      }
+    }
+    await bot.sendMessage(task.assigned_to,
+      `🤝 *Deal ready — your final OK*\n\n` +
+      `${pm.icon} *${escapeMd(task.title)}*\n${tm.icon} ${tm.label}\n\n` +
+      `⏱ Effort: *${fmtHours(task.proposed_hours)}*\n📅 Deadline: *${fmtDate(task.proposed_deadline)}*${incentiveLine}\n\n` +
+      `Round ${task.negotiation_rounds || 0}/${taskStateMachine.MAX_NEGOTIATION_ROUNDS}\nID: \`${taskId}\``,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '✅ Accept the deal', callback_data: `tsk:fa:${taskId}` },
+            { text: '↩ Renegotiate',     callback_data: `tsk:rng:${taskId}` },
+          ]],
+        },
+      });
+  } catch (e) {
+    logger.warn(`taskFlow.dmDoerFinalAck: ${e.message}`);
+  }
+}
+
+async function handleFinalAck(bot, callbackQuery, taskId) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const task = await tasksRepository.getById(taskId);
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (task.assigned_to !== userId) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assignee can confirm the deal.', show_alert: true }).catch(() => {});
+    return;
+  }
+  try {
+    await taskStateMachine.transition(taskId, 'final_ack', userId);
+  } catch (e) {
+    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t accept: ${e.message}`, { parse_mode: 'Markdown' });
+    return;
+  }
+  await editOrSend(bot, chatId, messageId,
+    `🟢 *Clock started*\n\n${escapeMd(task.title)}\n⏱ ${fmtHours(task.proposed_hours)} · 📅 ${fmtDate(task.proposed_deadline)}\n\nWhen done, tap *Mark done*.\nID: \`${taskId}\``,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '✅ Mark done', callback_data: `tsk:done:${taskId}` },
+        ]],
+      },
+    });
+  try {
+    await bot.sendMessage(task.assigned_by,
+      `🟢 *Doer accepted — clock started*\n\n${escapeMd(task.title)}\n⏱ ${fmtHours(task.proposed_hours)} · 📅 ${fmtDate(task.proposed_deadline)}\nID: \`${taskId}\``,
+      { parse_mode: 'Markdown' });
+  } catch (_) { /* noop */ }
+}
+
+async function handleRenegotiate(bot, callbackQuery, taskId) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const task = await tasksRepository.getById(taskId);
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (task.assigned_to !== userId) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assignee can renegotiate.', show_alert: true }).catch(() => {});
+    return;
+  }
+  if ((task.negotiation_rounds || 0) >= taskStateMachine.MAX_NEGOTIATION_ROUNDS) {
+    await editOrSend(bot, chatId, messageId,
+      `⚠️ Negotiation cap reached. Accept the deal or it will need to be cancelled.`,
+      { parse_mode: 'Markdown' });
+    return;
+  }
+  try {
+    await taskStateMachine.transition(taskId, 'renegotiate', userId);
+  } catch (e) {
+    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t renegotiate: ${e.message}`, { parse_mode: 'Markdown' });
+    return;
+  }
+  await editOrSend(bot, chatId, messageId,
+    `↩ *Renegotiating*\n\n${escapeMd(task.title)}\nPlease propose a fresh timeline.\nID: \`${taskId}\``,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '⏱ Propose timeline', callback_data: `tsk:prp:${taskId}` },
+        ]],
+      },
+    });
+  try {
+    await bot.sendMessage(task.assigned_by,
+      `↩ *Doer asked to renegotiate*\n\n${escapeMd(task.title)}\nID: \`${taskId}\`\n\n_They\'ll send a fresh timeline shortly._`,
+      { parse_mode: 'Markdown' });
+  } catch (_) { /* noop */ }
+}
+
+// ---------------------------------------------------------------------------
+// CALLBACK DISPATCHER
+// ---------------------------------------------------------------------------
+
 async function handleCallback(bot, callbackQuery) {
   const data = callbackQuery.data || '';
   if (!data.startsWith('tsk:')) return false;
@@ -374,42 +957,114 @@ async function handleCallback(bot, callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
 
-  // Always answer the callback so Telegram clears the spinner.
   try { await bot.answerCallbackQuery(callbackQuery.id); } catch (_) { /* noop */ }
 
-  // Cancel — clear any active task_assign_flow session.
+  if (data === 'tsk:noop') return true;
+
+  // Standalone leaf callbacks — no flow session required.
+  if (data.startsWith('tsk:done:'))    { await handleMarkDone   (bot, callbackQuery, data.slice('tsk:done:'.length));    return true; }
+  if (data.startsWith('tsk:sign:ok:')) { await handleSignOff    (bot, callbackQuery, data.slice('tsk:sign:ok:'.length), true);  return true; }
+  if (data.startsWith('tsk:sign:no:')) { await handleSignOff    (bot, callbackQuery, data.slice('tsk:sign:no:'.length), false); return true; }
+  if (data.startsWith('tsk:prp:'))     { await startProposeFlow (bot, callbackQuery, data.slice('tsk:prp:'.length)); return true; }
+  if (data.startsWith('tsk:dec:'))     { await handleDecline    (bot, callbackQuery, data.slice('tsk:dec:'.length)); return true; }
+  if (data.startsWith('tsk:acc:'))     { await handleAcceptTimeline(bot, callbackQuery, data.slice('tsk:acc:'.length)); return true; }
+  if (data.startsWith('tsk:cnt:'))     { await startCounterFlow (bot, callbackQuery, data.slice('tsk:cnt:'.length)); return true; }
+  if (data.startsWith('tsk:cnl:'))     { await handleCancelTask (bot, callbackQuery, data.slice('tsk:cnl:'.length)); return true; }
+  if (data.startsWith('tsk:fa:'))      { await handleFinalAck   (bot, callbackQuery, data.slice('tsk:fa:'.length)); return true; }
+  if (data.startsWith('tsk:rng:'))     { await handleRenegotiate(bot, callbackQuery, data.slice('tsk:rng:'.length)); return true; }
+
+  // Cancel — clears whichever flow session is active.
   if (data === 'tsk:cancel') {
     const s = sessionStore.get(userId);
-    if (s && s.type === 'task_assign_flow') sessionStore.clear(userId);
-    await editOrSend(bot, chatId, messageId, '❌ Task assignment cancelled.', {
+    if (s && (s.type === 'task_assign_flow' || s.type === 'task_propose_flow'
+              || s.type === 'task_counter_flow' || s.type === 'task_incentive_flow')) {
+      sessionStore.clear(userId);
+    }
+    await editOrSend(bot, chatId, messageId, '❌ Cancelled.', {
       reply_markup: { inline_keyboard: [navFooterRow()] },
     });
     return true;
   }
 
-  if (data === 'tsk:noop') return true;
+  // ----- Propose-timeline flow (`task_propose_flow`) ----------------------
+  if (data === 'tsk:pcn') {
+    sessionStore.clear(userId);
+    await editOrSend(bot, chatId, messageId, '❌ Proposal cancelled.', {
+      reply_markup: { inline_keyboard: [navFooterRow()] },
+    });
+    return true;
+  }
+  if (data.startsWith('tsk:phr:') || data.startsWith('tsk:pdl:') || data === 'tsk:pcf'
+      || data.startsWith('tsk:pbk:')) {
+    const session = sessionStore.get(userId);
+    if (!session || session.type !== 'task_propose_flow') {
+      await editOrSend(bot, chatId, messageId,
+        '⏳ This timeline picker has expired. Open the task DM and tap Propose timeline again.', {
+          reply_markup: { inline_keyboard: [navFooterRow()] },
+        });
+      return true;
+    }
+    session.flowMessageId = messageId;
+    sessionStore.set(userId, session);
 
-  // Standalone leaf callbacks: mark done / sign off — no flow session
-  // required. These come from task cards previously DMed to users.
-  if (data.startsWith('tsk:done:')) {
-    await handleMarkDone(bot, callbackQuery, data.slice('tsk:done:'.length));
-    return true;
+    if (data.startsWith('tsk:phr:')) {
+      session.data.hours = parseFloat(data.slice('tsk:phr:'.length));
+      session.step = 'deadline';
+      sessionStore.set(userId, session);
+      await renderDeadlinePicker(bot, chatId, userId);
+      return true;
+    }
+    if (data.startsWith('tsk:pdl:')) {
+      const key = data.slice('tsk:pdl:'.length);
+      const preset = DEADLINE_PRESETS.find(([k]) => k === key);
+      if (preset) session.data.deadline = addDays(preset[2]);
+      session.step = 'confirm';
+      sessionStore.set(userId, session);
+      await renderProposeConfirmCard(bot, chatId, userId);
+      return true;
+    }
+    if (data.startsWith('tsk:pbk:')) {
+      const where = data.slice('tsk:pbk:'.length);
+      if (where === 'hours') { session.step = 'hours'; sessionStore.set(userId, session); await renderHoursPicker(bot, chatId, userId); }
+      else if (where === 'deadline') { session.step = 'deadline'; sessionStore.set(userId, session); await renderDeadlinePicker(bot, chatId, userId); }
+      return true;
+    }
+    if (data === 'tsk:pcf') {
+      await submitProposal(bot, chatId, userId);
+      return true;
+    }
   }
-  if (data.startsWith('tsk:sign:ok:')) {
-    await handleSignOff(bot, callbackQuery, data.slice('tsk:sign:ok:'.length), true);
-    return true;
-  }
-  if (data.startsWith('tsk:sign:no:')) {
-    await handleSignOff(bot, callbackQuery, data.slice('tsk:sign:no:'.length), false);
+
+  // ----- Counter flow ------------------------------------------------------
+  if (data === 'tsk:cnt_skip' || data === 'tsk:cnt_canc') {
+    const session = sessionStore.get(userId);
+    if (session && session.type === 'task_counter_flow') {
+      if (data === 'tsk:cnt_canc') {
+        sessionStore.clear(userId);
+        await editOrSend(bot, chatId, messageId, '❌ Counter cancelled.', {
+          reply_markup: { inline_keyboard: [navFooterRow()] },
+        });
+        return true;
+      }
+      await submitCounter(bot, chatId, userId, '');
+    }
     return true;
   }
 
-  // The remaining callbacks all require a live task_assign_flow session.
+  // ----- Incentive flow ---------------------------------------------------
+  if (data.startsWith('tsk:sip:')) {
+    const session = sessionStore.get(userId);
+    if (session && session.type === 'task_incentive_flow') {
+      await finalizeIncentive(bot, chatId, userId, 0);
+    }
+    return true;
+  }
+
+  // ----- Assign-task flow (`task_assign_flow`) ----------------------------
   const session = sessionStore.get(userId);
   if (!session || session.type !== 'task_assign_flow') {
     await editOrSend(bot, chatId, messageId,
-      '⏳ This task picker has expired. Tap *Back to Tasks* and start *Assign Task* again.',
-      {
+      '⏳ This task picker has expired. Tap *Back to Tasks* and start *Assign Task* again.', {
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [navFooterRow()] },
       });
@@ -424,14 +1079,10 @@ async function handleCallback(bot, callbackQuery) {
     await renderAssigneePicker(bot, chatId, userId);
     return true;
   }
-
   if (data.startsWith('tsk:asn:')) {
     const targetId = data.slice('tsk:asn:'.length);
     const target = await usersRepository.findByUserId(targetId);
-    if (!target) {
-      await renderAssigneePicker(bot, chatId, userId);
-      return true;
-    }
+    if (!target) { await renderAssigneePicker(bot, chatId, userId); return true; }
     session.data.assigneeUserId = String(target.user_id);
     session.data.assigneeName = target.name || target.user_id;
     session.step = 'title';
@@ -439,37 +1090,20 @@ async function handleCallback(bot, callbackQuery) {
     await renderTitlePrompt(bot, chatId, userId);
     return true;
   }
-
   if (data.startsWith('tsk:prio:')) {
     session.data.priority = data.slice('tsk:prio:'.length);
-    session.step = 'due';
+    session.step = 'track';
     sessionStore.set(userId, session);
-    await renderDuePicker(bot, chatId, userId);
+    await renderTrackPicker(bot, chatId, userId);
     return true;
   }
-
-  if (data.startsWith('tsk:due:')) {
-    const choice = data.slice('tsk:due:'.length);
-    const dueDate = choice === 'today' ? todayIso()
-      : choice === 'tomorrow' ? addDays(1)
-      : choice === '3d' ? addDays(3)
-      : choice === 'week' ? addDays(7)
-      : null;
-    session.data.dueDate = dueDate;
+  if (data.startsWith('tsk:trk:')) {
+    session.data.track = data.slice('tsk:trk:'.length);
     session.step = 'desc';
     sessionStore.set(userId, session);
     await renderDescriptionPrompt(bot, chatId, userId);
     return true;
   }
-
-  if (data === 'tsk:skip:due') {
-    session.data.dueDate = null;
-    session.step = 'desc';
-    sessionStore.set(userId, session);
-    await renderDescriptionPrompt(bot, chatId, userId);
-    return true;
-  }
-
   if (data === 'tsk:skip:desc') {
     session.data.description = '';
     session.step = 'confirm';
@@ -477,81 +1111,74 @@ async function handleCallback(bot, callbackQuery) {
     await renderConfirmCard(bot, chatId, userId);
     return true;
   }
-
   if (data.startsWith('tsk:back:')) {
     const target = data.slice('tsk:back:'.length);
-    if (target === 'assignee') {
-      session.step = 'assignee';
-      sessionStore.set(userId, session);
-      await renderAssigneePicker(bot, chatId, userId);
-    } else if (target === 'title') {
-      session.step = 'title';
-      sessionStore.set(userId, session);
-      await renderTitlePrompt(bot, chatId, userId);
-    } else if (target === 'priority') {
-      session.step = 'priority';
-      sessionStore.set(userId, session);
-      await renderPriorityPicker(bot, chatId, userId);
-    } else if (target === 'due') {
-      session.step = 'due';
-      sessionStore.set(userId, session);
-      await renderDuePicker(bot, chatId, userId);
-    } else if (target === 'desc') {
-      session.step = 'desc';
-      sessionStore.set(userId, session);
-      await renderDescriptionPrompt(bot, chatId, userId);
-    }
+    if (target === 'assignee')     { session.step = 'assignee'; sessionStore.set(userId, session); await renderAssigneePicker(bot, chatId, userId); }
+    else if (target === 'title')   { session.step = 'title';    sessionStore.set(userId, session); await renderTitlePrompt(bot, chatId, userId); }
+    else if (target === 'priority'){ session.step = 'priority'; sessionStore.set(userId, session); await renderPriorityPicker(bot, chatId, userId); }
+    else if (target === 'track')   { session.step = 'track';    sessionStore.set(userId, session); await renderTrackPicker(bot, chatId, userId); }
+    else if (target === 'desc')    { session.step = 'desc';     sessionStore.set(userId, session); await renderDescriptionPrompt(bot, chatId, userId); }
     return true;
   }
-
-  if (data === 'tsk:confirm') {
-    await submitTask(bot, chatId, userId);
-    return true;
-  }
+  if (data === 'tsk:confirm') { await submitTask(bot, chatId, userId); return true; }
 
   return false;
 }
 
 // ---------------------------------------------------------------------------
-// Text-step handler (title + description)
+// TEXT-STEP HANDLER (title, description, counter reason, incentive amount)
 // ---------------------------------------------------------------------------
 
-/**
- * Process a free-text message when a task_assign_flow session is active.
- * Returns true if it consumed the message, false otherwise (so the
- * caller can fall through to other handlers / NL).
- */
 async function handleTextStep(bot, msg) {
   const userId = String(msg.from?.id || '');
   const session = sessionStore.get(userId);
-  if (!session || session.type !== 'task_assign_flow') return false;
+  if (!session) return false;
   const text = (msg.text || '').trim();
   if (!text) return false;
   const chatId = msg.chat.id;
 
-  if (session.step === 'title') {
-    if (text.length < TITLE_MIN_LEN || text.length > TITLE_MAX_LEN) {
-      await bot.sendMessage(chatId,
-        `⚠️ Title must be between ${TITLE_MIN_LEN} and ${TITLE_MAX_LEN} characters. Please reply again.`);
+  if (session.type === 'task_assign_flow') {
+    if (session.step === 'title') {
+      if (text.length < TITLE_MIN_LEN || text.length > TITLE_MAX_LEN) {
+        await bot.sendMessage(chatId,
+          `⚠️ Title must be between ${TITLE_MIN_LEN} and ${TITLE_MAX_LEN} characters. Please reply again.`);
+        return true;
+      }
+      session.data.title = text;
+      session.step = 'priority';
+      sessionStore.set(userId, session);
+      await renderPriorityPicker(bot, chatId, userId);
       return true;
     }
-    session.data.title = text;
-    session.step = 'priority';
-    sessionStore.set(userId, session);
-    await renderPriorityPicker(bot, chatId, userId);
+    if (session.step === 'desc') {
+      if (text.length > DESC_MAX_LEN) {
+        await bot.sendMessage(chatId, `⚠️ Description must be ≤ ${DESC_MAX_LEN} characters. Please reply again, or tap Skip.`);
+        return true;
+      }
+      session.data.description = text;
+      session.step = 'confirm';
+      sessionStore.set(userId, session);
+      await renderConfirmCard(bot, chatId, userId);
+      return true;
+    }
+    return false;
+  }
+
+  if (session.type === 'task_counter_flow') {
+    if (text.length > COUNTER_REASON_MAX_LEN) {
+      await bot.sendMessage(chatId, `⚠️ Counter note must be ≤ ${COUNTER_REASON_MAX_LEN} chars. Reply again or tap *Send without note*.`, { parse_mode: 'Markdown' });
+      return true;
+    }
+    await submitCounter(bot, chatId, userId, text);
     return true;
   }
 
-  if (session.step === 'desc') {
-    if (text.length > DESC_MAX_LEN) {
-      await bot.sendMessage(chatId,
-        `⚠️ Description must be ≤ ${DESC_MAX_LEN} characters. Please reply again, or tap Skip.`);
+  if (session.type === 'task_incentive_flow') {
+    if (!/^\d+(\.\d+)?$/.test(text)) {
+      await bot.sendMessage(chatId, '⚠️ Reply with digits only (e.g. `5000`), or tap *Skip (₦0)*.', { parse_mode: 'Markdown' });
       return true;
     }
-    session.data.description = text;
-    session.step = 'confirm';
-    sessionStore.set(userId, session);
-    await renderConfirmCard(bot, chatId, userId);
+    await submitIncentive(bot, chatId, userId, text);
     return true;
   }
 
@@ -559,86 +1186,7 @@ async function handleTextStep(bot, msg) {
 }
 
 // ---------------------------------------------------------------------------
-// Submit / notify
-// ---------------------------------------------------------------------------
-
-async function submitTask(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  if (!session || session.type !== 'task_assign_flow') return;
-  const d = session.data || {};
-  if (!d.assigneeUserId || !d.title) {
-    sessionStore.clear(userId);
-    await bot.sendMessage(chatId, '⚠️ Missing required fields. Please restart.');
-    return;
-  }
-
-  const description = encodeDescription({
-    priority: d.priority || 'normal',
-    dueDate: d.dueDate || null,
-    description: d.description || '',
-  });
-
-  let created;
-  try {
-    // Route through the state-machine engine so the assignment also
-    // writes its origin row to TaskEvents (audit log).
-    created = await taskStateMachine.create({
-      title: d.title,
-      description,
-      assigned_to: d.assigneeUserId,
-      assigned_by: userId,
-      track: 'salaried',
-      priority: d.priority || 'normal',
-    });
-  } catch (e) {
-    logger.error(`taskFlow.submit: create failed: ${e.message}`);
-    await bot.sendMessage(chatId, '❌ Could not save the task. Please try again.');
-    return;
-  }
-
-  sessionStore.clear(userId);
-  const pm = PRIORITY_META[d.priority || 'normal'];
-
-  // Confirm to assigner — edit the flow message.
-  await editOrSend(bot, chatId, session.flowMessageId,
-    `✅ Task assigned to *${escapeMd(d.assigneeName)}*\n\n` +
-    `${pm.icon} *${escapeMd(d.title)}*\n` +
-    `Due: ${d.dueDate ? fmtDate(d.dueDate) : '_none_'}\n` +
-    `ID: \`${created.task_id}\``,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: [navFooterRow()] },
-    });
-
-  // DM the assignee with a card + Mark-done button.
-  try {
-    const dueLine = d.dueDate ? `\n📅 Due: ${fmtDate(d.dueDate)}` : '';
-    const descLine = d.description ? `\n🗒 ${escapeMd(d.description)}` : '';
-    const assignerUser = await usersRepository.findByUserId(userId);
-    const fromLine = assignerUser ? `\n_From: ${escapeMd(assignerUser.name || userId)}_` : '';
-    const silent = (d.priority === 'normal' || d.priority === 'low');
-    await bot.sendMessage(d.assigneeUserId,
-      `${pm.icon} *New Task — ${pm.label}*\n\n` +
-      `📝 *${escapeMd(d.title)}*${dueLine}${descLine}${fromLine}\n\n` +
-      `ID: \`${created.task_id}\``,
-      {
-        parse_mode: 'Markdown',
-        disable_notification: silent,
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '✅ Mark done', callback_data: `tsk:done:${created.task_id}` },
-          ]],
-        },
-      });
-  } catch (e) {
-    logger.warn(`taskFlow.submit: could not DM assignee ${d.assigneeUserId}: ${e.message}`);
-    await bot.sendMessage(chatId,
-      '⚠️ Task saved but I couldn\'t message the assignee directly (they may not have started a chat with the bot yet).');
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Assignee marks done → submitted
+// MARK-DONE  +  SIGN-OFF (existing simple flow; preserved + audited)
 // ---------------------------------------------------------------------------
 
 async function handleMarkDone(bot, callbackQuery, taskId) {
@@ -647,28 +1195,23 @@ async function handleMarkDone(bot, callbackQuery, taskId) {
   const messageId = callbackQuery.message.message_id;
 
   const task = await tasksRepository.getById(taskId);
-  if (!task) {
-    await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {});
-    return;
-  }
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
   if (task.assigned_to !== userId) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assignee can mark this done.', show_alert: true }).catch(() => {});
     return;
   }
-  // The current Mark-done UI is the simple flow (no negotiation), so
-  // tasks in 'assigned' get an implicit timeline-skip into 'active'
-  // first, then 'mark_done' moves to 'submitted'. This preserves the
-  // existing user-facing behavior while keeping each step audited.
+
+  // Legacy back-compat: tasks already in 'assigned' before commit 3 was
+  // deployed have no negotiation. The Mark-done button on their DM
+  // remains in users' chat histories — keep it working by fast-forwarding
+  // through 'active' (audit row tagged as `_legacy`).
   if (task.status === 'assigned') {
     try {
-      // synthesize a one-shot pass-through so the audit log keeps the
-      // origin event but the doer is allowed to mark a fresh task done
-      // without the full negotiation flow (Phase B back-compat).
       await tasksRepository.updateFields(taskId, {
         status: 'active',
         started_at: new Date().toISOString(),
       });
-      await require('../repositories/taskEventsRepository').append({
+      await taskEventsRepository.append({
         task_id: taskId,
         event_type: 'doer_marked_started_legacy',
         from_status: 'assigned',
@@ -684,7 +1227,7 @@ async function handleMarkDone(bot, callbackQuery, taskId) {
 
   if (task.status !== 'active') {
     await editOrSend(bot, chatId, messageId,
-      `ℹ️ Task ${taskId} is already *${task.status}*.`,
+      `ℹ️ Task ${taskId} is *${task.status}* — Mark-done isn\'t available yet.`,
       { parse_mode: 'Markdown' });
     return;
   }
@@ -692,23 +1235,16 @@ async function handleMarkDone(bot, callbackQuery, taskId) {
   try {
     await taskStateMachine.transition(taskId, 'mark_done', userId);
   } catch (e) {
-    logger.error(`taskFlow.handleMarkDone: transition failed: ${e.message}`);
-    await editOrSend(bot, chatId, messageId,
-      `❌ Could not submit: ${e.message}`,
-      { parse_mode: 'Markdown' });
+    logger.error(`taskFlow.handleMarkDone: ${e.message}`);
+    await editOrSend(bot, chatId, messageId, `❌ Could not submit: ${e.message}`, { parse_mode: 'Markdown' });
     return;
   }
 
-  const meta = decodeDescription(task.description);
-  const pm = PRIORITY_META[meta.priority] || PRIORITY_META.normal;
+  const pm = PRIORITY_META[getPriority(task)] || PRIORITY_META.normal;
   await editOrSend(bot, chatId, messageId,
     `⏳ *Submitted for sign-off*\n\n${pm.icon} ${escapeMd(task.title)}\nID: \`${taskId}\``,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: [navFooterRow()] },
-    });
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
 
-  // Ping the assigner with approve/reject buttons.
   try {
     await bot.sendMessage(task.assigned_by,
       `📨 *Task awaiting your sign-off*\n\n` +
@@ -725,7 +1261,7 @@ async function handleMarkDone(bot, callbackQuery, taskId) {
         },
       });
   } catch (e) {
-    logger.warn(`taskFlow.markDone: could not notify assigner ${task.assigned_by}: ${e.message}`);
+    logger.warn(`taskFlow.markDone: could not notify assigner: ${e.message}`);
   }
 }
 
@@ -733,78 +1269,79 @@ async function handleSignOff(bot, callbackQuery, taskId, approve) {
   const userId = String(callbackQuery.from.id);
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
-
   const task = await tasksRepository.getById(taskId);
-  if (!task) {
-    await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {});
-    return;
-  }
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
   if (task.assigned_by !== userId && !isAdmin(userId)) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assigner or an admin can sign off.', show_alert: true }).catch(() => {});
     return;
   }
   if (task.status !== 'submitted') {
-    await editOrSend(bot, chatId, messageId,
-      `ℹ️ Task ${taskId} is *${task.status}*, not submitted.`,
-      { parse_mode: 'Markdown' });
+    await editOrSend(bot, chatId, messageId, `ℹ️ Task ${taskId} is *${task.status}*, not submitted.`, { parse_mode: 'Markdown' });
     return;
   }
-
+  try {
+    await taskStateMachine.transition(taskId, approve ? 'approve' : 'reject', userId);
+  } catch (e) {
+    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t ${approve ? 'approve' : 'reject'}: ${e.message}`, { parse_mode: 'Markdown' });
+    return;
+  }
   if (approve) {
-    try {
-      await taskStateMachine.transition(taskId, 'approve', userId);
-    } catch (e) {
-      logger.error(`taskFlow.handleSignOff(approve): ${e.message}`);
-      await editOrSend(bot, chatId, messageId,
-        `❌ Could not approve: ${e.message}`,
-        { parse_mode: 'Markdown' });
-      return;
-    }
     await editOrSend(bot, chatId, messageId,
       `✅ Task *${escapeMd(task.title)}* marked completed.\nID: \`${taskId}\``,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [navFooterRow()] },
-      });
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     try {
       await bot.sendMessage(task.assigned_to,
-        `✅ Your task is approved: *${escapeMd(task.title)}*`,
-        { parse_mode: 'Markdown' });
+        `✅ Your task is approved: *${escapeMd(task.title)}*`, { parse_mode: 'Markdown' });
     } catch (_) { /* noop */ }
   } else {
-    try {
-      await taskStateMachine.transition(taskId, 'reject', userId);
-    } catch (e) {
-      logger.error(`taskFlow.handleSignOff(reject): ${e.message}`);
-      await editOrSend(bot, chatId, messageId,
-        `❌ Could not reject: ${e.message}`,
-        { parse_mode: 'Markdown' });
-      return;
-    }
     await editOrSend(bot, chatId, messageId,
-      `↩️ Task *${escapeMd(task.title)}* sent back to pending.\nID: \`${taskId}\``,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [navFooterRow()] },
-      });
+      `↩ Task *${escapeMd(task.title)}* sent back to active.\nID: \`${taskId}\``,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     try {
       await bot.sendMessage(task.assigned_to,
-        `↩️ Your task was sent back: *${escapeMd(task.title)}* — please re-check and tap Mark done again.`,
+        `↩ Your task was sent back: *${escapeMd(task.title)}* — please re-check and tap *Mark done* again.`,
         {
           parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '✅ Mark done', callback_data: `tsk:done:${taskId}` },
-            ]],
-          },
+          reply_markup: { inline_keyboard: [[
+            { text: '✅ Mark done', callback_data: `tsk:done:${taskId}` },
+          ]] },
         });
     } catch (_) { /* noop */ }
   }
 }
 
 // ---------------------------------------------------------------------------
-// Read-only views
+// READ-ONLY VIEWS
 // ---------------------------------------------------------------------------
+// All three views deliberately HIDE incentive amounts. Money lives only
+// in the Incentives sheet (and a future finance-only Incentives report).
+// ---------------------------------------------------------------------------
+
+function statusBadge(status) {
+  const s = STATUS_LABEL[status];
+  return s ? `${s.icon} ${s.label}` : status;
+}
+
+function buttonsForMyTask(task) {
+  switch (task.status) {
+    case 'assigned':
+      return [
+        { text: `⏱ Propose — ${truncate(task.title, 22)}`, callback_data: `tsk:prp:${task.task_id}` },
+        { text: '❌ Decline', callback_data: `tsk:dec:${task.task_id}` },
+      ];
+    case 'awaiting_final_ack':
+      return [
+        { text: `✅ Accept — ${truncate(task.title, 22)}`, callback_data: `tsk:fa:${task.task_id}` },
+        { text: '↩ Renegotiate', callback_data: `tsk:rng:${task.task_id}` },
+      ];
+    case 'active':
+      return [
+        { text: `✅ Done — ${truncate(task.title, 30)}`, callback_data: `tsk:done:${task.task_id}` },
+      ];
+    default:
+      return null;
+  }
+}
 
 async function showMyTasks(bot, chatId, userId, messageId) {
   const tasks = await tasksRepository.getByAssignedTo(userId);
@@ -814,35 +1351,42 @@ async function showMyTasks(bot, chatId, userId, messageId) {
     });
     return;
   }
-  // Pending / in_progress first, then submitted, then completed (newest 5).
-  const open = tasks.filter((t) => t.status === 'assigned' || t.status === 'active');
-  const submitted = tasks.filter((t) => t.status === 'submitted');
+
+  // Phase order — actionable first, then waiting, then recently done.
+  const order = ['active', 'awaiting_final_ack', 'assigned', 'awaiting_timeline_ack', 'awaiting_incentive', 'submitted'];
+  const visible = tasks
+    .filter((t) => order.includes(t.status))
+    .sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status));
   const done = tasks.filter((t) => t.status === 'completed').slice(-5);
+  const decl = tasks.filter((t) => t.status === 'declined' || t.status === 'cancelled').slice(-3);
 
   const lines = ['📋 *Your Tasks*', ''];
   const rows = [];
 
-  for (const t of open) {
-    const m = decodeDescription(t.description);
-    const pm = PRIORITY_META[m.priority] || PRIORITY_META.normal;
-    lines.push(`${pm.icon} ${escapeMd(t.title)}  \`${t.task_id}\``);
-    if (m.dueDate) lines.push(`     📅 ${fmtDate(m.dueDate)}`);
-    rows.push([{ text: `✅ Done — ${truncate(t.title, 30)}`, callback_data: `tsk:done:${t.task_id}` }]);
-  }
-  if (submitted.length) {
-    lines.push('', '⏳ *Waiting on sign-off:*');
-    for (const t of submitted) lines.push(`   ${escapeMd(t.title)}  \`${t.task_id}\``);
+  for (const t of visible) {
+    const pm = PRIORITY_META[getPriority(t)] || PRIORITY_META.normal;
+    const tm = TRACK_META[t.track] || TRACK_META.salaried;
+    lines.push(`${pm.icon} ${escapeMd(t.title)} · ${tm.icon} ${tm.label}  \`${t.task_id}\``);
+    lines.push(`     ${statusBadge(t.status)}`);
+    if (t.proposed_hours && t.proposed_deadline) {
+      lines.push(`     ⏱ ${fmtHours(t.proposed_hours)} · 📅 ${fmtDate(t.proposed_deadline)}`);
+    }
+    const btns = buttonsForMyTask(t);
+    if (btns) rows.push(btns);
   }
   if (done.length) {
     lines.push('', '✅ *Recently completed:*');
     for (const t of done) lines.push(`   ${escapeMd(t.title)}`);
   }
+  if (decl.length) {
+    lines.push('', '🚫 *Declined / cancelled:*');
+    for (const t of decl) lines.push(`   ${escapeMd(t.title)}  (${t.status})`);
+  }
 
   rows.push(navFooterRow());
 
   await editOrSend(bot, chatId, messageId, lines.join('\n'), {
-    parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: rows },
+    parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows },
   });
 }
 
@@ -870,22 +1414,24 @@ async function showTeamTasks(bot, chatId, userId, messageId) {
     return;
   }
   const nameById = new Map(team.map((u) => [String(u.user_id), u.name || u.user_id]));
-  const open = tasks.filter((t) =>
-    t.status === 'assigned' || t.status === 'active' || t.status === 'submitted'
-    || t.status === 'awaiting_timeline_ack' || t.status === 'awaiting_incentive'
-    || t.status === 'awaiting_final_ack');
+  const openSet = new Set([
+    'assigned', 'awaiting_timeline_ack', 'awaiting_incentive', 'awaiting_final_ack',
+    'active', 'submitted',
+  ]);
+  const open = tasks.filter((t) => openSet.has(t.status));
   const recent = tasks.filter((t) => t.status === 'completed').slice(-5);
 
-  const lines = ['👥 *Team Tasks*', ''];
-  if (!open.length) {
-    lines.push('_No open tasks._');
-  } else {
+  const lines = ['👥 *Team Tasks*\n_(scrum-master view — no money shown)_', ''];
+  if (!open.length) lines.push('_No open tasks._');
+  else {
     for (const t of open) {
-      const m = decodeDescription(t.description);
-      const pm = PRIORITY_META[m.priority] || PRIORITY_META.normal;
-      const status = t.status === 'submitted' ? ' ⏳' : '';
-      lines.push(`${pm.icon} ${escapeMd(t.title)}${status}`);
-      lines.push(`     👤 ${escapeMd(nameById.get(t.assigned_to) || t.assigned_to)}${m.dueDate ? ` · 📅 ${fmtDate(m.dueDate)}` : ''}  \`${t.task_id}\``);
+      const pm = PRIORITY_META[getPriority(t)] || PRIORITY_META.normal;
+      const tm = TRACK_META[t.track] || TRACK_META.salaried;
+      lines.push(`${pm.icon} ${escapeMd(t.title)} · ${tm.icon} ${tm.label}`);
+      lines.push(`     👤 ${escapeMd(nameById.get(t.assigned_to) || t.assigned_to)} · ${statusBadge(t.status)}  \`${t.task_id}\``);
+      if (t.proposed_hours && t.proposed_deadline) {
+        lines.push(`     ⏱ ${fmtHours(t.proposed_hours)} · 📅 ${fmtDate(t.proposed_deadline)}`);
+      }
     }
   }
   if (recent.length) {
@@ -914,11 +1460,14 @@ async function showPendingSignOff(bot, chatId, userId, messageId) {
   const lines = ['⏳ *Pending Sign-off*', ''];
   const rows = [];
   for (const t of tasks) {
-    const m = decodeDescription(t.description);
-    const pm = PRIORITY_META[m.priority] || PRIORITY_META.normal;
+    const pm = PRIORITY_META[getPriority(t)] || PRIORITY_META.normal;
+    const tm = TRACK_META[t.track] || TRACK_META.salaried;
     const by = (await usersRepository.findByUserId(t.assigned_to))?.name || t.assigned_to;
-    lines.push(`${pm.icon} ${escapeMd(t.title)}  \`${t.task_id}\``);
+    lines.push(`${pm.icon} ${escapeMd(t.title)} · ${tm.icon} ${tm.label}  \`${t.task_id}\``);
     lines.push(`     👤 ${escapeMd(by)}`);
+    if (t.proposed_hours && t.proposed_deadline) {
+      lines.push(`     ⏱ ${fmtHours(t.proposed_hours)} · 📅 ${fmtDate(t.proposed_deadline)}`);
+    }
     rows.push([
       { text: `✅ Approve ${truncate(t.title, 22)}`, callback_data: `tsk:sign:ok:${t.task_id}` },
       { text: '❌ Reject', callback_data: `tsk:sign:no:${t.task_id}` },
@@ -926,15 +1475,11 @@ async function showPendingSignOff(bot, chatId, userId, messageId) {
   }
   rows.push(navFooterRow());
   await editOrSend(bot, chatId, messageId, lines.join('\n'), {
-    parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: rows },
+    parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows },
   });
 }
 
-function truncate(s, n) {
-  const t = String(s || '');
-  return t.length <= n ? t : t.slice(0, n - 1) + '…';
-}
+// ---------------------------------------------------------------------------
 
 module.exports = {
   visibleTaskActivityCodes,
@@ -944,7 +1489,11 @@ module.exports = {
   showMyTasks,
   showTeamTasks,
   showPendingSignOff,
-  // exported for unit tests / smoke
-  encodeDescription,
-  decodeDescription,
+  // exported for smoke harness
+  _internals: {
+    fmtHours,
+    fmtDate,
+    decodeLegacyDescription,
+    getPriority,
+  },
 };
