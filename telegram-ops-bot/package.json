@@ -8,6 +8,7 @@
     "dev": "node --watch server.js",
     "set-webhook": "node scripts/set-webhook.js",
     "check-org": "node scripts/check-org-graph.js",
+    "onboard": "node scripts/onboard-employee.js",
     "smoke": "node scripts/smoke.js"
   },
   "engines": {
