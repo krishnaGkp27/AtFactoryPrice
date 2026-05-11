@@ -4,6 +4,8 @@
 **Consolidates:** former `IMPROVEMENT_PLAN.md` (v1.0) + `ORG_HIERARCHY_DESIGN.md` (v1.0)
 **Single source of truth for:** architecture, shipped work, forward roadmap, detailed designs, decisions, open questions.
 
+> **Companion folder:** [`journal/`](journal/) — the *human story* behind these technical decisions. Philosophy, people, business decisions, and chronological session summaries. Where ROADMAP tells you *how*, the journal tells you *why*.
+
 ---
 
 ## §0 · About this document
