@@ -347,13 +347,35 @@ Two-sided affiliate-and-customer-loyalty platform integrating the bot with `atfa
 
 Detailed design: §5.6 (placeholder for now; full spec to be written when commits 8-9 are stable)
 
-### 4.7 Admin direct task assignment ✏ Quick win
+### 4.7 Admin direct task assignment ✏ ✅ Done
 
-Small UI addition to bypass the org-tree filter when admin assigns. Folded into commit 4 (Reports) as a quick win so admin can test the reporting surface by assigning to anyone without dancing through the hierarchy.
+~~Small UI addition to bypass the org-tree filter when admin assigns.~~ During implementation it was discovered admin already bypasses the filter via `isAdmin: true` in `listAssignableUsers`. The release-night work was a **scope badge** instead: assignee picker now shows *"🛡 Admin mode — showing all N active employees"* for admins, *"👥 Manager mode — showing N from your reporting subtree"* otherwise. Shipped in commit `dbea342` alongside Mark Paid UI.
 
-**Sketch:** new top-level option "🛡 Admin direct (any user)" in the assign-task picker, admin-only, audit row marked `admin_direct_assignment`.
+### 4.8 Commits PA-1 through PA-5 — Payment Automation 📋 Planned
 
-### 4.8 Deferred items (legacy Phase 4)
+**Full spec:** [`specs/payment-automation.md`](specs/payment-automation.md)
+
+**Summary:** Five-commit track that closes the order-to-cash loop. Auto-DM customer after delivery with tier-aware payment details; OCR uploaded receipts to pre-fill admin review (Google Vision default, Tesseract fallback); integrate with Nigerian bank API (Mono default, Okra/Paystack/Flutterwave alternatives) to auto-match incoming transfers; surface the existing customer ledger as a friendly **Wallet** UI with top-up and apply-to-order; deliver premium-tier payment-request experiences for Gold and Platinum customers including a one-tap "Talk to John directly" button.
+
+**Architectural shape:** new `paymentStateMachine.js` (9 states, mirrors task/order state-machine pattern). Reuses `erpEventBus` to listen for `order.delivered` events from Customer Orders. Wallet is a **friendly read** of the existing `LedgerTransactions` sheet — no duplicate ledger, no double-bookkeeping.
+
+**Commit decomposition:**
+- **PA-1** — PaymentRequests schema + auto-DM trigger (depends on Customer Orders being deliverable)
+- **PA-2** — OCR layer (Google Vision + Tesseract fallback + Nigerian-pattern parser)
+- **PA-3** — Bank API integration + matcher (depends on Nigerian fintech provider research)
+- **PA-4** — Wallet UI + WalletTransactions schema (customer-facing balance + top-up + apply-to-order)
+- **PA-5** — Premium tier templates + nightly tier engine
+
+**Pre-requisites before PA-3 starts:** 2-3 hours of Nigerian fintech provider research (Mono vs Okra vs Paystack vs Flutterwave for bank coverage, pricing, SLA). Owner decision required.
+
+**Key design decisions captured:**
+- OCR is admin assistance, NOT proof of payment. Admin always taps approve. `AUTO_APPROVE_HIGH_CONFIDENCE` defaults to `false`.
+- Bank statement remains the source of truth; weekly reconciliation report catches drift.
+- Wallet reuses `LedgerTransactions` (extended), not a new sheet — one source of truth.
+- Tier downgrades happen silently; only upgrades celebrated via DM.
+- Each subsystem has its own feature flag for independent rollback.
+
+### 4.9 Deferred items (legacy Phase 4)
 
 | ID | Topic | When to revisit |
 |---|---|---|
@@ -558,6 +580,10 @@ Reverse chronological — newest first.
 
 | Date | Decision | Rationale |
 |---|---|---|
+| 2026-05-12 (late) | Add commits PA-1..PA-5: Payment Automation track (auto-DM, OCR, bank API, wallet, premium tier templates) | Owner observed admin workload around payment receipt verification is high; OCR + bank API + tier-aware DM can take 80-95% of that off admin. Wallet is friendly skin over existing ledger. |
+| 2026-05-12 (late) | OCR is admin assistance, never autonomous approval | Receipts are forgeable; bank statement is truth. `AUTO_APPROVE_HIGH_CONFIDENCE` defaults to false. Admin always taps. The tap takes 1 second — that 1 second is the fraud-resistance. |
+| 2026-05-12 (late) | Both OCR and Bank API designed from day one | Owner explicit choice; provider-agnostic abstractions allow either to be enhanced/swapped without rewriting the matcher or the admin UI. |
+| 2026-05-12 (late) | Wallet reuses LedgerTransactions, not a new sheet | One source of truth. "Wallet" is a customer-friendly read of the existing ledger; the new columns just add wallet-specific source_type and direction. |
 | 2026-05-12 | Add commits 11–14 to the roadmap: Referral graph + Loyalty platform with `atfactoryprice.com` integration | Owner's business model requires a two-sided affiliate-and-customer-loyalty system. Architectural patterns from tasks/orders generalize cleanly. |
 | 2026-05-12 | Scenario C confirmed: worker chain AND customer chain, separate rules, shared LoyaltyLedger | Most ambitious but most powerful. Workers earn from worker-output; customers earn from customer-purchases. |
 | 2026-05-12 | `atfactoryprice.com` serves both as storefront and registration funnel | Single coherent surface across bot and web; loyalty balance and identity must be unified across channels. |

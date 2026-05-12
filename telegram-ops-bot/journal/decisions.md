@@ -6,6 +6,18 @@
 
 ---
 
+## 2026-05-13 (~2:30am) · Payment automation becomes the closing piece of the order loop
+
+Right after the task-manager release shipped, the owner introduced the next ambition: automate the payment side of customer orders. The vision is a three-layer system — auto-DM the customer with payment details the moment the order is delivered (tier-aware so premium customers see a richer experience), OCR uploaded receipts to spare admin from squinting at thermal paper at 11pm, and integrate Nigerian bank APIs (Mono, Okra, Paystack, Flutterwave) to auto-match incoming transfers without the customer even needing to upload anything.
+
+The wallet system the owner described is the friendly customer-facing surface for what already exists internally as the customer ledger. Same data, vastly better UX. The existing `Ledger_Customers` + `LedgerTransactions` + `LedgerBalanceCache` infrastructure becomes the "Wallet" once we wrap a customer-side view around it.
+
+The QR-code-with-amount-instant-disbursement fast path the owner imagined is real and shippable. When a PaymentRequest is generated with a QR that bakes in the amount and reference, and the customer pays via that QR, the bot can recognize the high-confidence match and present admin with a one-tap "Approve & credit wallet" card. Five seconds of admin attention per QR payment.
+
+The five-commit track was added to the roadmap as PA-1 through PA-5. The full spec ships at `specs/payment-automation.md`. The architectural decision worth highlighting separately: **every domain in this bot is now consistently a state machine plus an append-only event log, communicating with other domains only through events on a shared bus**. Tasks, Orders, Payments, Loyalty — same shape, different content. The sixth domain costs the same as the fifth.
+
+The hardest honesty in the design conversation: OCR is admin assistance, not proof of payment. Receipts are forgeable. The bot makes admin's life 95% easier by pre-filling fields, but admin still taps. The 1-second tap is the fraud-resistance. The bank statement remains the source of truth, with a weekly reconciliation report (added to the Reports commit) catching any drift.
+
 ## 2026-05-12 (late) · The business model itself is two-sided — referrals + loyalty are core, not peripheral
 
 Late on this evening, the owner introduced a new layer of ambition that reframes the entire project: a **two-sided affiliate-and-customer-loyalty platform** that links the Telegram bot to the pre-existing `atfactoryprice.com` website. Workers can refer sub-workers (commission flows up the worker chain). Customers can refer customers (loyalty points flow up the customer chain). Both chains feed a shared `LoyaltyLedger`. Points are redeemable for goods, software, and hardware — the same generosity instinct that drove the customer-tier discussion earlier in the day, now made systematic.
