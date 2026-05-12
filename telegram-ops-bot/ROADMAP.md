@@ -330,7 +330,30 @@ LLM-driven slot filling on top of the existing tap UI. Model tier decided at imp
 
 Detailed design: §5.5
 
-### 4.6 Deferred items (legacy Phase 4)
+### 4.6 Commits 11–14 — Referral graph + Loyalty platform 💭 Discuss
+
+Two-sided affiliate-and-customer-loyalty platform integrating the bot with `atfactoryprice.com`. Scenario C confirmed (workers refer workers, customers refer customers, separate rules per chain).
+
+**Sub-commits:**
+- **11** — Referral graph + identity reconciliation across bot and website
+- **12** — `LoyaltyLedger` sheet + configurable earning rules
+- **13** — Website ↔ bot identity and balance bridge
+- **14** — Redemption flow (optional, creates fulfillment tasks via existing template runner)
+
+**Pre-requisites that must happen BEFORE commit 11 starts:**
+- Legal / accounting conversation about local rules for referral commissions (Nigeria — the line between legitimate referral and pyramid scheme depends on real product flow, which the business has, but the commission formula must be designed to stay clearly compliant)
+- Identity-reconciliation review of `atfactoryprice.com`'s existing user model (email/phone/username) so the bridge in commit 13 is correct from day one
+- Loyalty-point governance decisions: expiry policy, transferability, withdrawal-on-departure, accounting liability treatment
+
+Detailed design: §5.6 (placeholder for now; full spec to be written when commits 8-9 are stable)
+
+### 4.7 Admin direct task assignment ✏ Quick win
+
+Small UI addition to bypass the org-tree filter when admin assigns. Folded into commit 4 (Reports) as a quick win so admin can test the reporting surface by assigning to anyone without dancing through the hierarchy.
+
+**Sketch:** new top-level option "🛡 Admin direct (any user)" in the assign-task picker, admin-only, audit row marked `admin_direct_assignment`.
+
+### 4.8 Deferred items (legacy Phase 4)
 
 | ID | Topic | When to revisit |
 |---|---|---|
@@ -453,6 +476,39 @@ Spec is **TBR-heavy** (10 open questions, several depending on existing Customer
 - Every AI-driven task creation still routes through the state machine → unchanged validation, audit, approval semantics.
 - "AI assisted" badge on tasks created via conversation, so audit can distinguish.
 
+### 5.6 Referral graph + Loyalty platform (commits 11–14)
+
+**Status:** 💭 Discuss. High-level shape only; full spec to be written under `specs/referral-loyalty.md` when commits 8-9 (Customer Orders) are stable.
+
+#### Concept (Scenario C confirmed)
+**Two separate referral chains** with separate earning rules:
+
+| Chain | Who joins it | Who pays into it | What flows up |
+|---|---|---|---|
+| Worker chain | Workers / distributors recruited by other workers | Worker output (sales brought in, tasks completed, etc.) | Commission points to direct parent + diminishing share to grandparent and above |
+| Customer chain | Customers recruited by other customers | Customer purchases | Loyalty points to direct referrer + smaller share to upline (if any) |
+
+Both chains feed the same **LoyaltyLedger** but with different earning rules. Points are economically equivalent to money (redeemable on `atfactoryprice.com` for goods, software, hardware, discounts).
+
+#### Architectural reuse
+- **State machine pattern**: `LoyaltyEventEngine` reuses the same transition + audit shape as TaskStateMachine and OrderStateMachine.
+- **Tree pattern**: `deptGraph.js` patterns generalize to referral-tree ancestor walks for multi-level distribution.
+- **Privacy pattern**: distributors see their own balance and their downline's earnings, not anyone else's. Same gating model as `financeIds`.
+- **Redemption-as-task pattern**: a customer redeeming N points for a computer creates a fulfillment task via the existing template runner (commits 5-6 reuse). Beautiful symmetry.
+
+#### `atfactoryprice.com` integration (both surfaces)
+- Storefront: customers browse, buy, see their loyalty balance
+- Registration funnel: new distributors and customers sign up there with a referral code, get auto-linked to the parent in the bot's tree
+- Identity reconciliation: shared user model across bot (Telegram ID) and website (email/phone) — one user, multiple channels, one balance
+
+#### Non-negotiable design constraints
+- Real product flow (fabric sales to real customers) must remain the primary value driver. Referral commissions are secondary. This keeps the structure clearly on the legitimate side of MLM regulations.
+- Every loyalty point grant and redemption writes an append-only LoyaltyLedger row with actor, source event, amount, and resulting balance.
+- Points are NOT money in any legal/accounting sense, but ARE liability on the books once granted. Accounting integration is required.
+
+#### Open questions before any code
+See §8.6.
+
 ---
 
 ## §6 · Cross-cutting concerns
@@ -502,6 +558,10 @@ Reverse chronological — newest first.
 
 | Date | Decision | Rationale |
 |---|---|---|
+| 2026-05-12 | Add commits 11–14 to the roadmap: Referral graph + Loyalty platform with `atfactoryprice.com` integration | Owner's business model requires a two-sided affiliate-and-customer-loyalty system. Architectural patterns from tasks/orders generalize cleanly. |
+| 2026-05-12 | Scenario C confirmed: worker chain AND customer chain, separate rules, shared LoyaltyLedger | Most ambitious but most powerful. Workers earn from worker-output; customers earn from customer-purchases. |
+| 2026-05-12 | `atfactoryprice.com` serves both as storefront and registration funnel | Single coherent surface across bot and web; loyalty balance and identity must be unified across channels. |
+| 2026-05-12 | Admin direct task assignment shortcut folded into commit 4 (Reports) | Quick win (~1-2h); admin needs this to test the reporting surface freely without dancing through org-tree filters. |
 | 2026-05-11 | Templates support per-template `auto_negotiate` + `requires_doer_ack` (rather than global) | Different routine tasks have different friction tolerances |
 | 2026-05-11 | Bot self-learning trigger: 5+ identical in 30 days | Conservative; avoid suggesting templates from incidental repeats |
 | 2026-05-11 | No monetary caps yet on auto-approvals; rely on admin FYI | Faster delivery; tighten if abuse emerges |
@@ -557,6 +617,20 @@ Per phase. Each must be answered before that phase starts.
 - Q: Whose conversations get AI parsing — only managers, or doers too?
 - Q: When the AI is uncertain, drop to tap UI silently or explicitly ("I'm not sure about the deadline — please pick:")?
 - Q: Budget cap — per user per day, or total bot per day?
+
+### §8.6 · Commits 11–14 — Referral graph + Loyalty platform
+- Q: **Legal compliance** — what is the local Nigerian regulation on multi-level commission structures? (Requires lawyer/accountant conversation BEFORE any code.)
+- Q: **Identity reconciliation** — what does the existing `atfactoryprice.com` user table look like? Email, phone, username? How do we link to Telegram IDs?
+- Q: **Commission formula** — how many levels deep do points flow? What % at each level? Fixed schedule (e.g. 10/5/2 for L1/L2/L3) or configurable per-product/per-event?
+- Q: **Worker chain trigger events** — does Abdul earn when his sub-worker completes a task, brings an order, brings a customer, brings another worker? All of the above? Different point values per event?
+- Q: **Customer chain trigger events** — does the referring customer earn on every purchase, only the first purchase, or a percentage of lifetime spend?
+- Q: **Point expiry** — do points expire? After how long? Or never?
+- Q: **Point transferability** — can a distributor transfer points to another distributor or customer? Or strictly non-transferable?
+- Q: **Withdrawal-on-departure** — if a worker/distributor leaves, what happens to their accumulated points? Forfeit? Cash out? Time-windowed cash out?
+- Q: **Accounting treatment** — points granted are a liability on the books; how do we recognize them? (Requires accountant conversation.)
+- Q: **Redemption catalog** — what can points be redeemed for? Computer, software, hardware, discount on next purchase, cash equivalent? Configurable list?
+- Q: **Cross-chain interactions** — can a worker also be a customer (earning in both chains)? Most likely yes; how does the bot prevent double-dipping (earning twice on the same transaction)?
+- Q: **Referral code format** — auto-generated (`AFP-ABDUL-001`) or user-chosen with admin approval?
 
 ---
 

@@ -6,6 +6,22 @@
 
 ---
 
+## 2026-05-12 (late) · The business model itself is two-sided — referrals + loyalty are core, not peripheral
+
+Late on this evening, the owner introduced a new layer of ambition that reframes the entire project: a **two-sided affiliate-and-customer-loyalty platform** that links the Telegram bot to the pre-existing `atfactoryprice.com` website. Workers can refer sub-workers (commission flows up the worker chain). Customers can refer customers (loyalty points flow up the customer chain). Both chains feed a shared `LoyaltyLedger`. Points are redeemable for goods, software, and hardware — the same generosity instinct that drove the customer-tier discussion earlier in the day, now made systematic.
+
+The decision is to **add this as commits 11-14 in the roadmap**, after Customer Orders (commits 8-9) stabilize. Before any code starts, three real-world conversations must happen: a legal/accounting check on local Nigerian rules for multi-level commissions, an audit of the website's existing user model so identity reconciliation is designed correctly, and a decision on point governance (expiry, transferability, departure handling, accounting liability).
+
+This decision matters because it confirms that the bot is not a productivity tool with optional features bolted on — it is **the operating layer of a multi-channel business**, where the same person can be a worker, a referrer, a customer, and a loyalty member all at once, and the bot keeps it all coherent.
+
+The architectural payoff: the state-machine pattern (Tasks, Orders, Loyalty), the tree pattern (Departments, Referral chains), and the privacy pattern (Incentives gated by financeIds, points gated by chain membership) all generalize. Each new domain reuses the same shape. This is the reward for taking the time to design the first two domains carefully — every domain after is cheaper.
+
+## 2026-05-12 (late) · Admin gets a direct-assign shortcut (folded into commit 4)
+
+The owner asked for a simple addition: an admin shortcut to assign tasks directly to any employee, bypassing the org-tree filter. The state machine already supports this (the `assigner_or_admin` actor role); only the UI shortcut is missing. The decision is to fold this into **commit 4 (Reports)** as a quick win, because the owner needs it to test the reporting surface freely without dancing through the hierarchy.
+
+This decision reflects a recurring pattern in the project: when the engine is already correct, UI affordances are cheap. Worth ~1-2 hours of work; immediate utility.
+
 ## 2026-05-12 · Theft becomes the founding wound, not a feature request
 
 A theft of goods early in the business cost not only the goods but the entire profit margin of the design they were part of. That loss reframed everything. The bot is not a productivity tool; it is a *records system that happens to also help with productivity*. Audit-by-default — every inventory movement, payment, sample, return logged with actor and timestamp — is the floor, not the ceiling. Every commit must protect or extend this floor.
