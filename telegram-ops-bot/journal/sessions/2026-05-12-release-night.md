@@ -84,6 +84,58 @@ Three nights:
 
 This is what was being built toward.
 
+## The mid-session scope correction
+
+Half an hour into the work, the AI partner paused before writing the admin-direct-assign feature. While reading the existing code, it discovered that **the feature was already implemented**: `taskFlow.js` line 271 already passes `isAdmin: true` to `listAssignableUsers`, which at `deptGraph.js` line 170 returns every active user when the actor is admin. There was no org-tree filter applied to admin assignments.
+
+What was actually missing was *the user knowing this*. The picker just showed everyone without explaining why. So the "feature" was reduced from a 1-2 hour new mode to a 15-minute UX badge: *"🛡 Admin mode — showing all N active employees"* for admins, *"👥 Manager mode — showing N from your reporting subtree"* for managers.
+
+This correction is worth recording because it shaped the rest of the night. The remaining time was reallocated: currency-and-tests deferred to a fresh-head session tomorrow; Mark Paid UI promoted to the night's main work since it was the one thing genuinely blocking a credible release.
+
+The lesson: even with a clear plan, the first action of a coding session should be *reading the existing code carefully enough to verify the plan is still right*. The five minutes spent reading saved an hour of redundant work.
+
+## What shipped tonight
+
+Commit `dbea342` landed on `main` and Railway redeployed (`/health` → 200, ~1:30am UTC+1):
+
+**1. Payouts queue (finance-only)**
+- New activity `payouts` under the Tasks hub, visible only to users in `config.access.financeIds`.
+- `showPayouts()`: lists every Incentives row with `paid_status='awaiting_payout'`, with grouped totals per currency, plus the last 5 paid rows for context.
+- `handleMarkPaid()`: one-tap action. Updates the Incentives row, writes a `finance_marked_paid` audit row to TaskEvents, DMs the doer with a thank-you receipt, and re-renders the queue.
+
+**2. Admin/Manager scope badge**
+- The assignee picker now tells the assigner which mode they're in and how broad the list is. Admin sees "🛡 Admin mode — all N employees"; managers see "👥 Manager mode — N from your subtree".
+
+Smoke: 76 of 76 still passing, no regressions. ReadLints clean.
+
+## What's NOT shipped tonight (deferred to fresh-head session)
+
+- **Currency default + user preference**: NGN was already the default in practice; making it a per-user preference in the Users sheet is a clean 1.5-hour task best done with a clear head.
+- **Synthetic webhook tests**: the existing 76-check smoke harness covers engine logic; adding webhook-level happy-path tests is a hardening step that doesn't block tonight's release.
+- **Live end-to-end with Neha**: the owner can run this whenever Neha is available. The release is live; tomorrow morning over coffee is a fine time.
+
+## What this session was really about
+
+A release. After three nights of planning, two specs, a journal folder, and 76 passing smoke checks, tonight was the night the negotiated-task workflow became something an employee could be paid for using. The Mark Paid surface closes the payout loop that was previously a manual sheet edit — finance now has a one-tap settlement that triggers a thank-you DM and writes an audit row.
+
+The badge change is small but represents the right kind of small. The owner can now look at the picker and *know* he's in admin mode. He doesn't have to guess, doesn't have to remember, doesn't have to think. The bot tells him. That's the elegance the project was reaching for from the beginning.
+
+## The release in summary
+
+| Component | Status |
+|---|---|
+| Task creation with negotiated timeline | ✅ Live since commit 3.5 |
+| Incentive set before accept | ✅ Live since commit 3.5 |
+| Doer final-ack | ✅ Live since commit 3.5 |
+| Mark done / approve / reject | ✅ Live since commit 3.5 |
+| Finance Mark Paid | ✅ **Live as of tonight** |
+| Admin sees all / Manager sees subtree | ✅ Always was — now visible |
+| Audit trail (TaskEvents) | ✅ Live with the new `finance_marked_paid` event |
+| 76 smoke checks passing | ✅ Unchanged |
+| /health → 200 | ✅ Confirmed at ~1:30am |
+
+**The task manager is released.** Future sessions can build the reports surface, templates, and customer orders on top of this foundation.
+
 ---
 
-*Written near the start of release night, while the plan is still warm and before any code has shipped. Will be appended-to or paired with a follow-up session entry once the release lands.*
+*Written start-to-finish across the night of 12-May-2026. The release went out at ~1:30am the same calendar day — meeting the owner's "by today" deadline by an hour. A short, honest record of a good night's work.*
