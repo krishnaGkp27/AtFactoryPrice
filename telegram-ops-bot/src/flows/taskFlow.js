@@ -219,6 +219,9 @@ async function visibleTaskActivityCodes(userId) {
   const isAdm = isAdmin(userId);
   const codes = ['my_tasks'];
   if (canManage(user, isAdm)) codes.push('assign_task', 'team_tasks', 'pending_signoff');
+  // Payouts is finance-only — it's the one surface that reads the
+  // Incentives sheet and writes paid_status. Money stays gated.
+  if (isFinance(userId)) codes.push('payouts');
   return codes;
 }
 
@@ -304,8 +307,15 @@ async function renderAssigneePicker(bot, chatId, userId) {
   }
   rows.push(firstStepFooterRow());
 
+  // Admin sees the whole company; managers see only their subtree. Make
+  // the active mode visible so admin understands the breadth of the list
+  // and managers understand the constraint without surprise.
+  const scopeBadge = session.actorIsAdmin
+    ? `🛡 *Admin mode* — showing all ${assignable.length} active employees`
+    : `👥 *Manager mode* — showing ${assignable.length} from your reporting subtree`;
+
   await anchor(bot, chatId, userId,
-    '📌 *Assign Task*\n\nStep 1/6 — Who do you want to assign to?',
+    `📌 *Assign Task*\n\nStep 1/6 — Who do you want to assign to?\n\n${scopeBadge}`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
@@ -1187,6 +1197,7 @@ async function handleCallback(bot, callbackQuery) {
   if (data.startsWith('tsk:cnl:'))     { await handleCancelTask (bot, callbackQuery, data.slice('tsk:cnl:'.length)); return true; }
   if (data.startsWith('tsk:fa:'))      { await handleFinalAck   (bot, callbackQuery, data.slice('tsk:fa:'.length)); return true; }
   if (data.startsWith('tsk:rng:'))     { await handleRenegotiate(bot, callbackQuery, data.slice('tsk:rng:'.length)); return true; }
+  if (data.startsWith('tsk:py:p:'))    { await handleMarkPaid   (bot, callbackQuery, data.slice('tsk:py:p:'.length)); return true; }
 
   // Cancel — clears whichever flow session is active.
   if (data === 'tsk:cancel') {
@@ -1785,6 +1796,189 @@ async function showPendingSignOff(bot, chatId, userId, messageId) {
 }
 
 // ---------------------------------------------------------------------------
+// PAYOUTS — finance-only queue of incentives awaiting disbursement.
+// Reads the Incentives sheet; never touches Tasks (so admin/scrum-master
+// views remain money-blind). Visibility gated by config.access.financeIds.
+// ---------------------------------------------------------------------------
+
+async function showPayouts(bot, chatId, userId, messageId) {
+  if (!isFinance(userId)) {
+    await editOrSend(bot, chatId, messageId,
+      '🔒 *Payouts* is finance-only.\n\nIf you should have access, ask an admin to add your user ID to `FINANCE_IDS` in the environment.',
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+
+  let incentives = [];
+  try {
+    incentives = await incentivesRepository.getAll();
+  } catch (e) {
+    logger.error(`taskFlow.showPayouts: read Incentives failed: ${e.message}`);
+    await editOrSend(bot, chatId, messageId,
+      `❌ Couldn\'t read incentives: ${e.message}`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+
+  const queue = incentives.filter((i) => i.paid_status === 'awaiting_payout');
+  const paidRecent = incentives.filter((i) => i.paid_status === 'paid')
+    .sort((a, b) => String(b.paid_at).localeCompare(String(a.paid_at)))
+    .slice(0, 5);
+
+  const lines = ['💰 *Payouts queue*', ''];
+
+  if (!queue.length) {
+    lines.push('_No incentives are awaiting payout._', '');
+  } else {
+    const totalByCcy = new Map();
+    for (const i of queue) {
+      const c = i.currency || 'NGN';
+      totalByCcy.set(c, (totalByCcy.get(c) || 0) + (Number(i.amount) || 0));
+    }
+    const totals = [...totalByCcy.entries()].map(([c, n]) => fmtMoney(n, c)).join(' · ');
+    lines.push(`📊 *${queue.length} incentive${queue.length === 1 ? '' : 's'}* awaiting · ${totals}`, '');
+  }
+
+  const rows = [];
+  for (const inc of queue) {
+    let title = inc.task_id;
+    let doerName = '?';
+    try {
+      const task = await tasksRepository.getById(inc.task_id);
+      if (task) {
+        title = task.title || inc.task_id;
+        const doer = await usersRepository.findByUserId(task.assigned_to);
+        if (doer) doerName = doer.name || task.assigned_to;
+      }
+    } catch (_) { /* keep fallbacks */ }
+    const amt = fmtMoney(inc.amount, inc.currency);
+    lines.push(`• ${escapeMd(title)} → ${escapeMd(doerName)} · *${amt}*  \`${inc.task_id}\``);
+    rows.push([
+      { text: `✅ Mark paid — ${truncate(title, 22)} (${amt})`, callback_data: `tsk:py:p:${inc.task_id}` },
+    ]);
+  }
+
+  if (paidRecent.length) {
+    lines.push('', '🗂 *Recently paid (last 5)*');
+    for (const inc of paidRecent) {
+      let title = inc.task_id;
+      try {
+        const task = await tasksRepository.getById(inc.task_id);
+        if (task) title = task.title || inc.task_id;
+      } catch (_) { /* fallback */ }
+      const amt = fmtMoney(inc.paid_amount != null ? inc.paid_amount : inc.amount, inc.currency);
+      const when = inc.paid_at ? fmtDate(inc.paid_at) : '';
+      lines.push(`  ${escapeMd(title)} · *${amt}*${when ? ' · ' + when : ''}`);
+    }
+  }
+
+  rows.push(navFooterRow());
+
+  await editOrSend(bot, chatId, messageId, lines.join('\n'), {
+    parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows },
+  });
+}
+
+async function handleMarkPaid(bot, callbackQuery, taskId) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+
+  if (!isFinance(userId)) {
+    try {
+      await bot.answerCallbackQuery(callbackQuery.id,
+        { text: 'Only finance can mark incentives as paid.', show_alert: true });
+    } catch (_) { /* noop */ }
+    return;
+  }
+
+  let incentive;
+  try {
+    incentive = await incentivesRepository.getByTaskId(taskId);
+  } catch (e) {
+    logger.error(`taskFlow.handleMarkPaid: lookup failed: ${e.message}`);
+    await editOrSend(bot, chatId, messageId, `❌ Lookup failed: ${e.message}`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+
+  if (!incentive) {
+    await editOrSend(bot, chatId, messageId, `ℹ️ No incentive row found for \`${taskId}\`.`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+
+  if (incentive.paid_status === 'paid') {
+    await editOrSend(bot, chatId, messageId,
+      `ℹ️ ${fmtMoney(incentive.amount, incentive.currency)} for \`${taskId}\` is already marked paid.`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+
+  if (incentive.paid_status !== 'awaiting_payout') {
+    await editOrSend(bot, chatId, messageId,
+      `⚠️ Incentive for \`${taskId}\` is *${incentive.paid_status || 'pending'}* — only \`awaiting_payout\` rows can be marked paid here.\n\nThis usually means the task hasn\'t been approved yet. Approve the task first; the Payouts queue will then pick it up.`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+
+  // Update Incentives row + write a TaskEvents audit row so the trail
+  // shows finance disbursement explicitly (not just the bot's clock).
+  const paid_at = new Date().toISOString();
+  try {
+    await incentivesRepository.markPaid({
+      task_id: taskId,
+      paid_amount: incentive.amount,
+      paid_at,
+    });
+    try {
+      await taskEventsRepository.append({
+        task_id: taskId,
+        event_type: 'finance_marked_paid',
+        from_status: '',
+        to_status: '',
+        actor_user_id: userId,
+        at: paid_at,
+        meta: { amount: incentive.amount, currency: incentive.currency },
+      });
+    } catch (e) {
+      logger.warn(`taskFlow.handleMarkPaid: audit append failed: ${e.message}`);
+    }
+  } catch (e) {
+    logger.error(`taskFlow.handleMarkPaid: markPaid failed: ${e.message}`);
+    await editOrSend(bot, chatId, messageId,
+      `❌ Couldn\'t mark paid: ${e.message}`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+
+  let taskTitle = taskId;
+  let doerId = null;
+  try {
+    const task = await tasksRepository.getById(taskId);
+    if (task) {
+      taskTitle = task.title || taskId;
+      doerId = task.assigned_to;
+    }
+  } catch (_) { /* fallback */ }
+
+  // DM the doer — they earned this and they deserve to hear that it's
+  // settled. The receipt is short and doesn't expose anyone else's data.
+  if (doerId) {
+    try {
+      await bot.sendMessage(doerId,
+        `💰 *Incentive paid*\n\n${escapeMd(taskTitle)}\nAmount: *${fmtMoney(incentive.amount, incentive.currency)}*\n\n_Thank you for the work._`,
+        { parse_mode: 'Markdown' });
+    } catch (e) {
+      logger.warn(`taskFlow.handleMarkPaid: DM doer failed: ${e.message}`);
+    }
+  }
+
+  // Re-render the queue so the row vanishes and the totals refresh.
+  await showPayouts(bot, chatId, userId, messageId);
+}
+
+// ---------------------------------------------------------------------------
 
 module.exports = {
   visibleTaskActivityCodes,
@@ -1794,6 +1988,7 @@ module.exports = {
   showMyTasks,
   showTeamTasks,
   showPendingSignOff,
+  showPayouts,
   // exported for smoke harness
   _internals: {
     fmtHours,

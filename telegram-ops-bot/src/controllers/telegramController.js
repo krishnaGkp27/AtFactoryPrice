@@ -4326,7 +4326,7 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
   const deptName = userDepts[0] || (isAdminUser ? 'Admin' : '');
 
   let allowed = [];
-  const TASK_CODES = new Set(['assign_task', 'my_tasks', 'team_tasks', 'pending_signoff']);
+  const TASK_CODES = new Set(['assign_task', 'my_tasks', 'team_tasks', 'pending_signoff', 'payouts']);
   if (isAdminUser) {
     // Admin sees the entire registry; we'll still let taskFlow gate the
     // Task hub entries below so non-managing admins are not noisy with
@@ -4452,7 +4452,7 @@ async function renderHubSubmenu(bot, chatId, messageId, userId, hubId) {
     : (user && user.department ? [user.department] : (isAdminUser ? ['Admin'] : []));
 
   let allowed = [];
-  const TASK_CODES = new Set(['assign_task', 'my_tasks', 'team_tasks', 'pending_signoff']);
+  const TASK_CODES = new Set(['assign_task', 'my_tasks', 'team_tasks', 'pending_signoff', 'payouts']);
   if (isAdminUser) {
     allowed = activityRegistry.getAll().filter((a) => !TASK_CODES.has(a.code));
   } else if (userDepts.length) {
@@ -7504,6 +7504,9 @@ async function handleCallbackQuery(bot, callbackQuery) {
         break;
       case 'pending_signoff':
         await taskFlow.showPendingSignOff(bot, chatId, uid, messageId);
+        break;
+      case 'payouts':
+        await taskFlow.showPayouts(bot, chatId, uid, messageId);
         break;
       default:
         await bot.sendMessage(chatId, 'Feature coming soon.');

@@ -71,6 +71,9 @@ const ACTIVITIES = [
   { code: 'my_tasks',              label: 'My Tasks',                  icon: '📋', callback: 'act:my_tasks',           hub: 'tasks' },
   { code: 'team_tasks',            label: 'Team Tasks',                icon: '👥', callback: 'act:team_tasks',         hub: 'tasks' },
   { code: 'pending_signoff',       label: 'Pending Sign-off',          icon: '⏳', callback: 'act:pending_signoff',    hub: 'tasks' },
+  // Finance-only — sees the Incentives queue with one-tap Mark Paid.
+  // Visibility gated by config.access.financeIds, injected per-user.
+  { code: 'payouts',               label: 'Payouts',                   icon: '💰', callback: 'act:payouts',            hub: 'tasks' },
 
   { code: 'update_price',          label: 'Update Price',              icon: '💲', callback: 'act:update_price',       hub: 'admin' },
   { code: 'manage_users',          label: 'Manage Users',              icon: '👥', callback: 'act:manage_users',       hub: 'admin' },
