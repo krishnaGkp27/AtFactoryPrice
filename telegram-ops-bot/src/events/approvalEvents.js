@@ -13,6 +13,12 @@ const usersRepository = require('../repositories/usersRepository');
 const departmentsRepository = require('../repositories/departmentsRepository');
 const driveClient = require('../repositories/driveClient');
 const fmtDate = require('../utils/formatDate');
+// Hoisted (TG-1): inline `require('../services/sessionStore')` calls in
+// handleNewCustomerApproval crashed at runtime because sessionStore lives
+// under utils/, not services/. Top-of-file require makes the path
+// surface-visible and prevents the bug from re-appearing in a stray
+// require deeper in the file.
+const sessionStore = require('../utils/sessionStore');
 
 const SALE_ACTIONS = ['sell_than', 'sell_package', 'sale_bundle'];
 const DEFAULT_SALE_UNIT = 'yard';
@@ -892,7 +898,7 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
     }
     await bot.sendMessage(chatId, `✅ Customer "${custName}" approved and activated.`);
 
-    const sessionStore = require('../services/sessionStore');
+    // sessionStore now hoisted to top-of-file (TG-1).
     const session = sessionStore.get(requesterUserId);
     if (session && session.type === 'supply_req_flow' && session.step === 'awaiting_customer_approval') {
       session.customer = custName;
@@ -986,7 +992,7 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
   } else {
     await bot.sendMessage(chatId, `❌ Customer "${custName}" registration rejected.`);
 
-    const sessionStore = require('../services/sessionStore');
+    // sessionStore now hoisted to top-of-file (TG-1).
     const session = sessionStore.get(requesterUserId);
     if (session && session.type === 'supply_req_flow' && session.step === 'awaiting_customer_approval') {
       session.step = 'customer';
