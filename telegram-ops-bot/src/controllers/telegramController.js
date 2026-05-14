@@ -38,6 +38,7 @@ const catalogFlows = require('./catalogFlowController');
 const taskFlow = require('../flows/taskFlow');
 const notificationsFlow = require('../flows/notificationsFlow');
 const salesWorkflowView = require('../flows/salesWorkflowView');
+const goodsReceiptFlow = require('../flows/goodsReceiptFlow');
 const adminFeed = require('../services/adminFeed');
 const menuNav = require('../utils/menuNav');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
@@ -3203,6 +3204,16 @@ async function handleMessage(bot, msg) {
     }
   }
 
+  // P2 — Goods Receipt Note flow: warehouse-name / supplier-name / bales /
+  // yards-custom text input.
+  {
+    const grnSession = sessionStore.get(userId);
+    if (grnSession && grnSession.type === 'grn_flow') {
+      const handled = await goodsReceiptFlow.handleTextStep(bot, msg);
+      if (handled) return;
+    }
+  }
+
   // Orphan-flow detection: if the user just posted a reply that *looks* like
   // it was meant for a recently expired flow (e.g. comma-separated shade
   // names while the design_asset_flow session timed out), send a clear
@@ -5521,6 +5532,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (handled) return;
   }
 
+  // P2 — Goods Receipt Note flow (Receive Goods button).
+  if (data.startsWith('gr:')) {
+    const handled = await goodsReceiptFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
   if (data.startsWith('approve:')) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'approve');
   } else if (data.startsWith('reject:')) {
@@ -7671,6 +7688,11 @@ async function handleCallbackQuery(bot, callbackQuery) {
           break;
         }
         await salesWorkflowView.showSalesWorkflow(bot, chatId, uid, messageId);
+        break;
+      case 'receive_goods':
+        // P2 — GRN flow. Admins execute directly; employees route through
+        // admin approval (see WRITE_ACTIONS in risk/evaluate.js).
+        await goodsReceiptFlow.start(bot, chatId, uid, messageId);
         break;
       default:
         await bot.sendMessage(chatId, 'Feature coming soon.');

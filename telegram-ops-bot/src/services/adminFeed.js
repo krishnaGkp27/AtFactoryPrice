@@ -54,6 +54,14 @@ const CATALOG = Object.freeze([
   ['order.delivered',  'Order delivered',                    'orders',  true ],
 
   ['payout.paid',      'Payout disbursed (finance only)',    'finance', true ],
+
+  // P2 — Goods Receipt + warehouse-structure events. goods.received is
+  // default-ON because every admin should know when stock arrives;
+  // warehouse.added is default-ON because dual-admin sign-off means two
+  // admins already saw it, and the audit row keeps everyone aligned.
+  ['goods.received',   'Goods received at a warehouse',      'inventory', true ],
+  ['warehouse.added',  'New warehouse registered',           'inventory', true ],
+  ['warehouse.renamed','Warehouse renamed',                  'inventory', true ],
 ]);
 
 const DEFAULT_POLICY = Object.freeze(
@@ -61,9 +69,10 @@ const DEFAULT_POLICY = Object.freeze(
 );
 
 const GROUP_META = Object.freeze({
-  tasks:   { icon: '📋', label: 'Tasks' },
-  orders:  { icon: '🛒', label: 'Orders / Sales' },
-  finance: { icon: '💰', label: 'Finance' },
+  tasks:     { icon: '📋', label: 'Tasks' },
+  orders:    { icon: '🛒', label: 'Orders / Sales' },
+  finance:   { icon: '💰', label: 'Finance' },
+  inventory: { icon: '🏭', label: 'Inventory / Warehouses' },
 });
 
 // ---------------------------------------------------------------------------

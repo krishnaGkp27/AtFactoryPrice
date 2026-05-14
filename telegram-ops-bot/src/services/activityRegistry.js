@@ -33,6 +33,9 @@ const ACTIVITIES = [
   { code: 'check_stock',           label: 'Check Stock',               icon: '📦', callback: 'act:check_stock',        hub: 'stock' },
   { code: 'list_packages',         label: 'List Packages',             icon: '📋', callback: 'act:list_packages',      hub: 'stock' },
   { code: 'inventory_details',     label: 'Inventory Details',         icon: '🏭', callback: 'act:inventory_details',  hub: 'stock' },
+  // P2 — Goods Receipt Note. Admin executes directly; employee routes
+  // through approval (see WRITE_ACTIONS in risk/evaluate.js).
+  { code: 'receive_goods',         label: 'Receive Goods',             icon: '📥', callback: 'act:receive_goods',      hub: 'stock' },
   { code: 'transfer_package',      label: 'Transfer Package',          icon: '🚚', callback: 'act:transfer_package',   hub: 'stock' },
   { code: 'transfer_than',         label: 'Transfer Than',             icon: '↔️', callback: 'act:transfer_than',      hub: 'stock' },
   { code: 'return_than',           label: 'Return Than',               icon: '↩️', callback: 'act:return_than',        hub: 'stock' },

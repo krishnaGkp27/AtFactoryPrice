@@ -416,6 +416,104 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       name: aj.name || '', phone: aj.phone || '', type: aj.type || 'other',
       address: aj.address || '', notes: aj.notes || '',
     });
+  } else if (aj.action === 'receive_goods') {
+    // P2 — write GRN header, then append bales via inventoryRepository so
+    // server-generated bale_uid + addedAt are stamped per row, then drop a
+    // Stock_Ledger line per bale for the audit trail.
+    const goodsReceiptsRepo = require('../repositories/goodsReceiptsRepository');
+    const stockLedgerRepo = require('../repositories/stockLedgerRepository');
+    const bales = Array.isArray(aj.bales) ? aj.bales : [];
+    const totalYards = bales.reduce((s, b) => s + (parseFloat(b.yards) || 0), 0);
+    const grn = await goodsReceiptsRepo.append({
+      warehouse: aj.warehouse,
+      supplier: aj.supplier || '',
+      supplier_id: aj.supplier_id || '',
+      po_id: aj.po_id || '',
+      received_by: item.user,
+      total_bales: bales.length,
+      total_yards: totalYards,
+      photo_file_id: aj.photo_file_id || '',
+      notes: aj.notes || '',
+    });
+    const baleRows = bales.map((b) => ({
+      packageNo: b.packageNo, design: aj.design, shade: aj.shade,
+      thanNo: b.thanNo || 1, yards: parseFloat(b.yards) || 0,
+      warehouse: aj.warehouse, pricePerYard: b.pricePerYard || 0,
+      dateReceived: aj.dateReceived || new Date().toISOString().split('T')[0],
+      productType: aj.productType || 'fabric',
+      grnId: grn.grn_id,
+    }));
+    const persisted = await inventoryRepository.appendBale(baleRows);
+    try {
+      const idGen = require('../utils/idGenerator');
+      const today = new Date().toISOString().split('T')[0];
+      for (const b of persisted) {
+        await stockLedgerRepo.append({
+          entry_id: idGen.stockLedger(),
+          date: today,
+          item_id: b.baleUid, package_no: b.packageNo, branch: b.warehouse,
+          type: 'received', qty_in: b.yards, qty_out: 0,
+          reference_id: grn.grn_id,
+        });
+      }
+    } catch (_) { /* non-fatal: GRN + Inventory persisted; ledger is supplementary */ }
+    await transactionsRepository.append({
+      user: item.user, action: 'receive_goods', design: aj.design, color: aj.shade,
+      qty: totalYards, before: '', after: aj.warehouse, status: 'approved',
+      saleRefId: grn.grn_id,
+    });
+    // bundleReport is normally reserved for sale_bundle partials; reusing
+    // it as a generic carrier so approvalEvents can surface the GRN
+    // details in the success card.
+    bundleReport = { grnId: grn.grn_id, baleCount: persisted.length, totalYards };
+  } else if (aj.action === 'add_warehouse') {
+    // P2 — warehouse creation is dual-admin gated (see ALWAYS_APPROVAL_ACTIONS
+    // in risk/evaluate). There is no central Warehouses sheet today —
+    // warehouses are derived from distinct Inventory.Warehouse values — so the
+    // act of "creating" a warehouse is really registering its name so the
+    // greeting/picker can offer it. We store it in Settings under
+    // WAREHOUSE_LIST as a CSV so all flows see it immediately.
+    const settingsRepo3 = require('../repositories/settingsRepository');
+    const allS = await settingsRepo3.getAll();
+    const existing = (allS.WAREHOUSE_LIST || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const name = String(aj.name || '').trim();
+    if (!name) return { ok: false, message: 'Warehouse name is empty.' };
+    if (existing.map((w) => w.toLowerCase()).includes(name.toLowerCase())) {
+      return { ok: false, message: `Warehouse "${name}" already exists.` };
+    }
+    existing.push(name);
+    await settingsRepo3.set('WAREHOUSE_LIST', existing.join(','));
+  } else if (aj.action === 'rename_warehouse') {
+    // P2 — dual-admin gated. Renames touch every Inventory row that
+    // references the old warehouse name. Cap at a sane batch size to keep
+    // Sheets API happy; very large renames should be done out-of-band.
+    const oldName = String(aj.oldName || '').trim();
+    const newName = String(aj.newName || '').trim();
+    if (!oldName || !newName) return { ok: false, message: 'Old/new warehouse names required.' };
+    const all = await inventoryRepository.getAll();
+    const matches = all.filter((r) => (r.warehouse || '').toLowerCase() === oldName.toLowerCase());
+    if (!matches.length) return { ok: false, message: `No inventory rows reference "${oldName}".` };
+    const now = new Date().toISOString();
+    const updates = [];
+    for (const row of matches) {
+      updates.push({ range: `I${row.rowIndex}`, values: [[newName]] });
+      updates.push({ range: `P${row.rowIndex}`, values: [[now]] });
+    }
+    const sheetsClient = require('../repositories/sheetsClient');
+    await sheetsClient.batchUpdateRanges('Inventory', updates);
+    inventoryRepository.invalidateCache();
+    // Mirror the rename into the WAREHOUSE_LIST setting if present.
+    try {
+      const settingsRepo4 = require('../repositories/settingsRepository');
+      const allS = await settingsRepo4.getAll();
+      const existing = (allS.WAREHOUSE_LIST || '').split(',').map((s) => s.trim()).filter(Boolean);
+      const idx = existing.findIndex((w) => w.toLowerCase() === oldName.toLowerCase());
+      if (idx >= 0) {
+        existing[idx] = newName;
+        await settingsRepo4.set('WAREHOUSE_LIST', existing.join(','));
+      }
+    } catch (_) {}
+    bundleReport = { renamed: matches.length, from: oldName, to: newName };
   } else if (aj.action === 'transfer_than') {
     const result = await inventoryRepository.transferThan(aj.packageNo, aj.thanNo, aj.toWarehouse);
     if (!result) return { ok: false, message: 'Than not found or not available.' };

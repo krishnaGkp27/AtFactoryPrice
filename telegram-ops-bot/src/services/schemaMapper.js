@@ -132,6 +132,16 @@ const REQUIRED_SHEETS = {
   Marketers: {
     headers: ['MarketerId', 'Name', 'Phone', 'Area', 'PersonPhotoFileId', 'PersonPhotoDriveId', 'CatalogPhotoFileId', 'CatalogPhotoDriveId', 'Status', 'ApprovedBy', 'ApprovalRequestId', 'Notes', 'CreatedAt'],
   },
+  // P2 — Goods Receipt Note (GRN) header doc. Bales themselves go into the
+  // Inventory sheet directly with grn_id back-pointer; this sheet groups
+  // them per "delivery" for audit and supplier reconciliation.
+  GoodsReceipts: {
+    headers: [
+      'grn_id', 'warehouse', 'supplier', 'supplier_id', 'po_id',
+      'received_by', 'received_at', 'total_bales', 'total_yards',
+      'photo_file_id', 'notes', 'status',
+    ],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];

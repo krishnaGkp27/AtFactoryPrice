@@ -13,6 +13,7 @@
  *   S8  Task state-machine engine (TG-7.5 Phase C commit 2)
  *   S9  Admin Activity Feed: isEnabled policy + catalog (T2)
  *   S10 Inventory composite-key foundation (P1)
+ *   S11 Goods Receipt flow — parseBaleList + adminFeed inventory events (P2)
  *
  * Run:  npm run smoke         (from telegram-ops-bot/)
  * Exit: 0 = all passed, 1 = one or more FAIL
@@ -916,6 +917,93 @@ async function runS10() {
 }
 
 // ---------------------------------------------------------------------------
+// S11 — Goods Receipt flow: bale-list parser + adminFeed inventory events (P2)
+// ---------------------------------------------------------------------------
+function runS11() {
+  // Stub sheetsClient so the flow module can load without Google creds.
+  // We only need the pure helpers (parseBaleList) and the adminFeed catalog.
+  delete require.cache[require.resolve('../src/repositories/sheetsClient')];
+  delete require.cache[require.resolve('../src/services/adminFeed')];
+  delete require.cache[require.resolve('../src/flows/goodsReceiptFlow')];
+
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async () => [],
+    appendRows: async () => {},
+    updateRange: async () => {},
+    batchUpdateRanges: async () => {},
+    getSheetNames: async () => [],
+    addSheet: async () => {},
+  });
+
+  const grn = require('../src/flows/goodsReceiptFlow');
+  const { parseBaleList } = grn._internals;
+
+  // S11.1 — comma list
+  let r = parseBaleList('5801,5802,5803');
+  if (r.ok && r.bales.length === 3 && r.bales[0] === '5801' && r.bales[2] === '5803') {
+    pass('S11.1 parseBaleList: CSV → 3 distinct entries');
+  } else fail('S11.1 parseBaleList CSV', JSON.stringify(r));
+
+  // S11.2 — numeric range
+  r = parseBaleList('5801-5805');
+  if (r.ok && r.bales.length === 5 && r.bales[0] === '5801' && r.bales[4] === '5805') {
+    pass('S11.2 parseBaleList: range 5801-5805 → 5 sequential entries');
+  } else fail('S11.2 parseBaleList range', JSON.stringify(r));
+
+  // S11.3 — mixed CSV + range with whitespace
+  r = parseBaleList('5801-5803, 5810, 5820');
+  if (r.ok && r.bales.length === 5 && r.bales.join(',') === '5801,5802,5803,5810,5820') {
+    pass('S11.3 parseBaleList: mixed CSV+range with whitespace tolerated');
+  } else fail('S11.3 parseBaleList mixed', JSON.stringify(r));
+
+  // S11.4 — dedup across overlapping inputs
+  r = parseBaleList('5801, 5801, 5801-5803');
+  if (r.ok && r.bales.length === 3) {
+    pass('S11.4 parseBaleList: dedup across CSV duplicates and range overlap');
+  } else fail('S11.4 parseBaleList dedup', JSON.stringify(r));
+
+  // S11.5 — non-numeric literal stays as-is, range fails for non-numeric bounds
+  r = parseBaleList('A1, A2, B3');
+  if (r.ok && r.bales.length === 3 && r.bales.includes('A1') && r.bales.includes('B3')) {
+    pass('S11.5 parseBaleList: alphanumeric literals pass through');
+  } else fail('S11.5 parseBaleList alphanumeric', JSON.stringify(r));
+
+  // S11.6 — illegal range (low > high) rejected
+  r = parseBaleList('5810-5805');
+  if (!r.ok && /low/.test(r.error)) {
+    pass('S11.6 parseBaleList: range with low > high rejected');
+  } else fail('S11.6 parseBaleList illegal range', JSON.stringify(r));
+
+  // S11.7 — empty / whitespace-only input rejected
+  r = parseBaleList('   ');
+  if (!r.ok) pass('S11.7 parseBaleList: whitespace-only input rejected');
+  else fail('S11.7 parseBaleList empty', JSON.stringify(r));
+
+  // S11.8 — runaway range guard
+  r = parseBaleList('1-10000');
+  if (!r.ok && /exceeds/.test(r.error)) {
+    pass('S11.8 parseBaleList: > 1000-bale range rejected (operator must split)');
+  } else fail('S11.8 parseBaleList runaway range', JSON.stringify(r));
+
+  // S11.9 — adminFeed catalog includes the three new inventory event types
+  const af = require('../src/services/adminFeed');
+  const expected = ['goods.received', 'warehouse.added', 'warehouse.renamed'];
+  const ok = expected.every((et) => {
+    const e = af.getCatalogEntry(et);
+    return e && e.group === 'inventory' && e.default === true;
+  });
+  if (ok) pass('S11.9 adminFeed CATALOG: goods.received + warehouse.added/renamed registered, default ON');
+  else fail('S11.9 adminFeed CATALOG: inventory events',
+    JSON.stringify(expected.map((et) => [et, af.getCatalogEntry(et)])));
+
+  // S11.10 — adminFeed groups include 'inventory'
+  const groups = af.listGroups();
+  if (groups.find((g) => g.id === 'inventory' && /Inventory/i.test(g.label))) {
+    pass('S11.10 adminFeed groups: inventory group declared with label');
+  } else fail('S11.10 adminFeed groups inventory', JSON.stringify(groups));
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -931,6 +1019,7 @@ async function runS10() {
   try { await runS8(); } catch (e) { fail('S8 unexpected error', e.message); }
   try { runS9(); } catch (e) { fail('S9 unexpected error', e.message); }
   try { await runS10(); } catch (e) { fail('S10 unexpected error', e.message); }
+  try { runS11(); } catch (e) { fail('S11 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

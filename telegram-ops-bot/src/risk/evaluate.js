@@ -24,6 +24,9 @@ const WRITE_ACTIONS = [
   'add_bank', 'remove_bank',
   // User management — admin only in controller
   'add_user',
+  // P2 — Goods Receipt Note (admin executes directly; employee routes
+  // through admin approval).
+  'receive_goods',
 ];
 
 // Actions that ALWAYS go through the approval queue, regardless of whether
@@ -31,10 +34,19 @@ const WRITE_ACTIONS = [
 // Returns and full-bundle reverts belong here because they modify approved
 // sales (inventory state + customer ledger) and a single admin should never
 // be able to roll those back unilaterally.
+//
+// Warehouse mutations (add/rename) live here because the user explicitly
+// asked for dual-admin sign-off on every structural change to warehouses
+// (theft history made loose ad-hoc edits costly). The existing approval
+// queue + admin-broadcast pipeline enforces approver != requester
+// automatically (requireApproval excludes admin requesters from the
+// notification list — see telegramController.js requireApproval).
 const ALWAYS_APPROVAL_ACTIONS = [
   'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell',
   'return_than', 'return_package', 'revert_sale_bundle',
   'record_payment', 'update_price', 'supply_request',
+  // P2 — dual-admin gate for warehouse structural changes.
+  'add_warehouse', 'rename_warehouse',
 ];
 
 async function getThresholds() {
@@ -85,6 +97,7 @@ function formatAction(action) {
     update_price: 'price update', add: 'stock addition', add_stock: 'stock addition',
     record_payment: 'payment', add_customer: 'customer creation', add_contact: 'contact creation',
     transfer_than: 'transfer', transfer_package: 'transfer', transfer_batch: 'transfer',
+    receive_goods: 'goods receipt', add_warehouse: 'warehouse creation', rename_warehouse: 'warehouse rename',
   };
   return map[action] || action.replace(/_/g, ' ');
 }
