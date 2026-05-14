@@ -35,7 +35,7 @@ const REQUIRED_SHEETS = {
   Departments: {
     headers: ['dept_id', 'dept_name', 'allowed_activities', 'status', 'created_at', 'parent_department'],
     seed: [
-      ['DEPT-001', 'Sales', 'supply_request,upload_receipt,my_orders,give_sample,supply_details,customer_history,customer_pattern,show_customer_notes', 'active', '', ''],
+      ['DEPT-001', 'Sales', 'supply_request,upload_receipt,my_orders,give_sample,supply_details,customer_details,add_customer_note', 'active', '', ''],
       ['DEPT-002', 'Dispatch', 'mark_order_delivered,my_orders', 'active', '', ''],
       ['DEPT-003', 'Admin', '__all__', 'active', '', ''],
     ],

@@ -1181,7 +1181,14 @@ async function sendCustomerHistoryReport(bot, chatId, customerName, opts = {}) {
   const expandAll = !!opts.expand;
   const events = await buildCustomerTimeline(customerName);
   if (!events.length) {
-    await bot.sendMessage(chatId, `No interaction history found for "${customerName}".`);
+    const emptyText = `No interaction history found for "${customerName}".`;
+    const emptyKb = (opts.extraButtons && opts.extraButtons.length)
+      ? { reply_markup: { inline_keyboard: opts.extraButtons } } : {};
+    if (opts.editMessageId) {
+      await editOrSend(bot, chatId, opts.editMessageId, emptyText, emptyKb);
+    } else {
+      await bot.sendMessage(chatId, emptyText, emptyKb);
+    }
     return;
   }
 
@@ -1318,18 +1325,32 @@ async function sendCustomerHistoryReport(bot, chatId, customerName, opts = {}) {
   if (hidden > 0) out += `_…and ${hidden} earlier interaction${hidden > 1 ? 's' : ''}_\n`;
   out += `*${totalItems} total interaction${totalItems > 1 ? 's' : ''}*`;
 
-  const reply_markup = (hidden > 0)
-    ? { inline_keyboard: [[{ text: `🔍 Show all ${totalItems}`, callback_data: `rxw:hist:${customerName.slice(0, 50)}` }]] }
-    : undefined;
+  const baseRows = (hidden > 0)
+    ? [[{ text: `🔍 Show all ${totalItems}`, callback_data: `rxw:hist:${customerName.slice(0, 50)}` }]]
+    : [];
+  const allRows = [...baseRows, ...(opts.extraButtons || [])];
+  const sendOpts = { parse_mode: 'Markdown' };
+  if (allRows.length) sendOpts.reply_markup = { inline_keyboard: allRows };
 
-  await sendLong(bot, chatId, out, { parse_mode: 'Markdown', ...(reply_markup ? { reply_markup } : {}) });
+  if (opts.editMessageId) {
+    await editOrSend(bot, chatId, opts.editMessageId, out, sendOpts);
+  } else {
+    await sendLong(bot, chatId, out, sendOpts);
+  }
 }
 
 async function sendCustomerPatternReport(bot, chatId, customerName, opts = {}) {
   const expandAll = !!opts.expand;
   const pattern = await buildCustomerPattern(customerName);
   if (!pattern) {
-    await bot.sendMessage(chatId, `No purchase data found for "${customerName}".`);
+    const emptyText = `No purchase data found for "${customerName}".`;
+    const emptyKb = (opts.extraButtons && opts.extraButtons.length)
+      ? { reply_markup: { inline_keyboard: opts.extraButtons } } : {};
+    if (opts.editMessageId) {
+      await editOrSend(bot, chatId, opts.editMessageId, emptyText, emptyKb);
+    } else {
+      await bot.sendMessage(chatId, emptyText, emptyKb);
+    }
     return;
   }
   const hasPrices = pattern.totalValue > 0;
@@ -1380,18 +1401,28 @@ async function sendCustomerPatternReport(bot, chatId, customerName, opts = {}) {
     const topPct = rankBasis > 0 ? Math.round((topMetric / rankBasis) * 100) : 0;
     out += `\n*Top: ${top.design} Shade ${top.shade} (${topPct}% of ${hasPrices ? 'value' : 'volume'})*`;
   }
-  await sendLong(bot, chatId, out, {
-    parse_mode: 'Markdown',
-    ...(buttons.length ? { reply_markup: { inline_keyboard: buttons } } : {}),
-  });
+  const allRows = [...buttons, ...(opts.extraButtons || [])];
+  const sendOpts = { parse_mode: 'Markdown' };
+  if (allRows.length) sendOpts.reply_markup = { inline_keyboard: allRows };
+  if (opts.editMessageId) {
+    await editOrSend(bot, chatId, opts.editMessageId, out, sendOpts);
+  } else {
+    await sendLong(bot, chatId, out, sendOpts);
+  }
 }
 
 async function sendCustomerNotesReport(bot, chatId, customerName, opts = {}) {
   const expandAll = !!opts.expand;
   const notes = await customerNotesRepo.getByCustomer(customerName);
   if (!notes.length) {
-    await bot.sendMessage(chatId,
-      `No notes found for "${customerName}". Add with: "Note for ${customerName}: your note here"`);
+    const emptyText = `No notes found for "${customerName}". Add with: "Note for ${customerName}: your note here"`;
+    const emptyKb = (opts.extraButtons && opts.extraButtons.length)
+      ? { reply_markup: { inline_keyboard: opts.extraButtons } } : {};
+    if (opts.editMessageId) {
+      await editOrSend(bot, chatId, opts.editMessageId, emptyText, emptyKb);
+    } else {
+      await bot.sendMessage(chatId, emptyText, emptyKb);
+    }
     return;
   }
   // Compact default: latest 5; expand-all reveals all (was 15).
@@ -1407,10 +1438,14 @@ async function sendCustomerNotesReport(bot, chatId, customerName, opts = {}) {
     out += `\n_…and ${hidden} earlier note${hidden > 1 ? 's' : ''}_`;
     buttons.push([{ text: `🔍 Show all ${notes.length}`, callback_data: `rxw:notes:${customerName.slice(0, 50)}` }]);
   }
-  await sendLong(bot, chatId, out, {
-    parse_mode: 'Markdown',
-    ...(buttons.length ? { reply_markup: { inline_keyboard: buttons } } : {}),
-  });
+  const allRows = [...buttons, ...(opts.extraButtons || [])];
+  const sendOpts = { parse_mode: 'Markdown' };
+  if (allRows.length) sendOpts.reply_markup = { inline_keyboard: allRows };
+  if (opts.editMessageId) {
+    await editOrSend(bot, chatId, opts.editMessageId, out, sendOpts);
+  } else {
+    await sendLong(bot, chatId, out, sendOpts);
+  }
 }
 
 async function sendCustomerRankingReport(bot, chatId, opts = {}) {
@@ -1418,7 +1453,14 @@ async function sendCustomerRankingReport(bot, chatId, opts = {}) {
   const PAGE_SIZE = 10;
   const ranked = await buildCustomerRanking();
   if (!ranked.length) {
-    await bot.sendMessage(chatId, 'No sales data found.');
+    const emptyText = 'No sales data found.';
+    const emptyKb = (opts.extraButtons && opts.extraButtons.length)
+      ? { reply_markup: { inline_keyboard: opts.extraButtons } } : {};
+    if (opts.editMessageId) {
+      await editOrSend(bot, chatId, opts.editMessageId, emptyText, emptyKb);
+    } else {
+      await bot.sendMessage(chatId, emptyText, emptyKb);
+    }
     return;
   }
   const topValue = ranked[0][1].value;
@@ -1449,14 +1491,24 @@ async function sendCustomerRankingReport(bot, chatId, opts = {}) {
 
   const buttons = [];
   const navRow = [];
-  if (page > 0) navRow.push({ text: '⬅️ Prev', callback_data: `rxw:rank:${page - 1}` });
-  if (start + slice.length < ranked.length) navRow.push({ text: 'Next ➡️', callback_data: `rxw:rank:${page + 1}` });
+  // When called from inside the unified customer-details card we route
+  // pagination back through the cd: prefix so the message keeps editing
+  // in place; the legacy rxw: path stays the default.
+  const pageCb = opts.pageCallbackPrefix || 'rxw:rank';
+  if (page > 0) navRow.push({ text: '⬅️ Prev', callback_data: `${pageCb}:${page - 1}` });
+  if (start + slice.length < ranked.length) navRow.push({ text: 'Next ➡️', callback_data: `${pageCb}:${page + 1}` });
   if (navRow.length) buttons.push(navRow);
-  buttons.push(menuNav.backToMenuRow());
-  await sendLong(bot, chatId, out, {
-    parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: buttons },
-  });
+  if (opts.extraButtons && opts.extraButtons.length) {
+    buttons.push(...opts.extraButtons);
+  } else {
+    buttons.push(menuNav.backToMenuRow());
+  }
+  const sendOpts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } };
+  if (opts.editMessageId) {
+    await editOrSend(bot, chatId, opts.editMessageId, out, sendOpts);
+  } else {
+    await sendLong(bot, chatId, out, sendOpts);
+  }
 }
 
 async function sendSampleStatusReport(bot, chatId, options = {}) {
@@ -2356,6 +2408,108 @@ async function showCustomerPickerForReport(bot, chatId, reportType, showAll = fa
     });
   } else {
     await bot.sendMessage(chatId, text, opts);
+  }
+}
+
+/* ─── Unified Customer Details card (M3 consolidation) ────────────────────
+ * One menu entry, one customer pick, then a card that swaps tabs in place
+ * (History / Pattern / Notes / Add Note) — plus a global Ranking jump for
+ * admins. Replaces four separate hub entries that each forced a fresh
+ * pick-customer round trip.
+ *
+ * Callback shape (cd: prefix, 64-byte budget):
+ *   cd:pk             → re-show picker (top-8)
+ *   cd:pk:all         → re-show picker (full list)
+ *   cd:rk             → admin: global ranking, page 0
+ *   cd:rk:<page>      → admin: ranking pagination
+ *   cd:c:<name>       → open card for customer; default tab = history
+ *   cd:t:h:<name>     → switch to History tab
+ *   cd:t:p:<name>     → switch to Pattern tab
+ *   cd:t:n:<name>     → switch to Notes tab
+ *   cd:t:a:<name>     → "Add Note" tab → routes to existing add_note_flow
+ */
+
+/** Inline-keyboard row(s) shown under every section of the customer card. */
+function _cdTabFooter(customerName) {
+  const safe = customerName.slice(0, 50);
+  return [
+    [
+      { text: '📋 History',  callback_data: `cd:t:h:${safe}` },
+      { text: '🔍 Pattern',  callback_data: `cd:t:p:${safe}` },
+    ],
+    [
+      { text: '📝 Notes',    callback_data: `cd:t:n:${safe}` },
+      { text: '✏️ Add Note', callback_data: `cd:t:a:${safe}` },
+    ],
+    [
+      { text: '👤 Pick another', callback_data: 'cd:pk' },
+      { text: '⬅ Back to menu',  callback_data: 'act:__back__' },
+    ],
+  ];
+}
+
+async function showCustomerDetailsPicker(bot, chatId, userId, messageId = null, showAll = false) {
+  const allCust = await customersRepo.getAll();
+  const active = allCust
+    .filter((c) => (c.status || 'Active').toLowerCase() === 'active' && c.name)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  if (!active.length) {
+    const msg = 'No active customers found.';
+    if (messageId) {
+      await editOrSend(bot, chatId, messageId, msg, {});
+    } else {
+      await bot.sendMessage(chatId, msg);
+    }
+    return;
+  }
+
+  const MAX_VISIBLE = 8;
+  const visible = showAll ? active : active.slice(0, MAX_VISIBLE);
+  const rows = [];
+
+  // Admin-only shortcut to the global ranking, surfaced as the first row
+  // so the most senior insight is one tap away.
+  if (config.access.adminIds.includes(userId)) {
+    rows.push([{ text: '🏆 Customer Ranking (global)', callback_data: 'cd:rk' }]);
+  }
+
+  for (let i = 0; i < visible.length; i += 2) {
+    const row = [{ text: `👤 ${visible[i].name}`, callback_data: `cd:c:${visible[i].name.slice(0, 60)}` }];
+    if (visible[i + 1]) {
+      row.push({ text: `👤 ${visible[i + 1].name}`, callback_data: `cd:c:${visible[i + 1].name.slice(0, 60)}` });
+    }
+    rows.push(row);
+  }
+  if (!showAll && active.length > MAX_VISIBLE) {
+    rows.push([{ text: `📋 See All (${active.length})`, callback_data: 'cd:pk:all' }]);
+  }
+  rows.push([{ text: '⬅ Back to menu', callback_data: 'act:__back__' }]);
+
+  const text = '👤 *Customer Details*\n\nPick a customer to see history, pattern, notes, or add a note — all from the same card.';
+  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
+  if (messageId) {
+    await editOrSend(bot, chatId, messageId, text, opts);
+  } else {
+    await bot.sendMessage(chatId, text, opts);
+  }
+}
+
+/**
+ * Render one tab of the customer-details card by editing the same message
+ * in place. Delegates to the existing send*Report functions, which already
+ * understand `editMessageId` + `extraButtons` (the per-tab footer).
+ */
+async function renderCustomerCard(bot, chatId, messageId, customerName, tab = 'h') {
+  const footer = _cdTabFooter(customerName);
+  const baseOpts = { editMessageId: messageId, extraButtons: footer };
+  if (tab === 'p') {
+    await sendCustomerPatternReport(bot, chatId, customerName, baseOpts);
+  } else if (tab === 'n') {
+    await sendCustomerNotesReport(bot, chatId, customerName, baseOpts);
+  } else {
+    // 'h' (history) is the default tab.
+    await sendCustomerHistoryReport(bot, chatId, customerName, baseOpts);
   }
 }
 
@@ -7145,6 +7299,63 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await bot.sendMessage(chatId, 'Unknown report type.');
     }
 
+  /* ─── UNIFIED CUSTOMER DETAILS (cd:*) — M3 ─── */
+  } else if (data.startsWith('cd:')) {
+    const chatId = callbackQuery.message.chat.id;
+    const messageId = callbackQuery.message.message_id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+
+    const rest = data.slice(3);
+
+    if (rest === 'pk' || rest === 'pk:all') {
+      await showCustomerDetailsPicker(bot, chatId, uid, messageId, rest === 'pk:all');
+      return;
+    }
+
+    if (rest === 'rk' || rest.startsWith('rk:')) {
+      if (!config.access.adminIds.includes(uid)) {
+        await bot.sendMessage(chatId, 'Customer ranking is admin-only.');
+        return;
+      }
+      const page = rest.startsWith('rk:') ? (parseInt(rest.slice(3), 10) || 0) : 0;
+      const backFooter = [[{ text: '👤 Back to customer picker', callback_data: 'cd:pk' }]];
+      await sendCustomerRankingReport(bot, chatId, {
+        page,
+        editMessageId: messageId,
+        extraButtons: backFooter,
+        pageCallbackPrefix: 'cd:rk',
+      });
+      return;
+    }
+
+    if (rest.startsWith('c:')) {
+      const customerName = rest.slice(2);
+      await renderCustomerCard(bot, chatId, messageId, customerName, 'h');
+      return;
+    }
+
+    if (rest.startsWith('t:')) {
+      const after = rest.slice(2);
+      // tab is single char (h|p|n|a); the colon after it separates the name
+      const sepIdx = after.indexOf(':');
+      if (sepIdx < 0) return;
+      const tab = after.slice(0, sepIdx);
+      const customerName = after.slice(sepIdx + 1);
+      if (tab === 'a') {
+        // Reuse the existing add-note flow; it owns its own prompt + session.
+        sessionStore.set(uid, { type: 'add_note_flow', step: 'note_text', customer: customerName });
+        await editOrSend(bot, chatId, messageId,
+          `✏️ *Add Note for ${customerName}*\n\nType the note (e.g. "prefers Shade 3", "wants bulk discount"):`,
+          { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
+            [{ text: '⬅ Back to customer', callback_data: `cd:c:${customerName.slice(0, 60)}` }],
+          ] } });
+        return;
+      }
+      await renderCustomerCard(bot, chatId, messageId, customerName, tab);
+      return;
+    }
+
   /* ─── SAMPLE STATUS DATE WINDOW ─── */
   } else if (data.startsWith('smsd:')) {
     const val = data.slice(5);
@@ -7272,14 +7483,16 @@ async function handleCallbackQuery(bot, callbackQuery) {
           ] },
         });
         break;
+      case 'customer_details':
+        await showCustomerDetailsPicker(bot, chatId, uid, messageId);
+        break;
+      // Legacy entry points — kept so text intents that still hit these
+      // callbacks (older keyboards in a user's chat history, etc.) keep
+      // working. New menus surface only `customer_details`.
       case 'customer_history':
-        await showCustomerPickerForReport(bot, chatId, 'history');
-        break;
       case 'customer_pattern':
-        await showCustomerPickerForReport(bot, chatId, 'pattern');
-        break;
       case 'customer_notes':
-        await showCustomerPickerForReport(bot, chatId, 'notes');
+        await showCustomerDetailsPicker(bot, chatId, uid, messageId);
         break;
       case 'add_note':
         await startAddNoteFlow(bot, chatId, uid, messageId);

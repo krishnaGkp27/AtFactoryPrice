@@ -37,12 +37,23 @@ const ACTIVITIES = [
   { code: 'transfer_than',         label: 'Transfer Than',             icon: '↔️', callback: 'act:transfer_than',      hub: 'stock' },
   { code: 'return_than',           label: 'Return Than',               icon: '↩️', callback: 'act:return_than',        hub: 'stock' },
 
-  { code: 'customer_history',      label: 'Customer History',          icon: '📋', callback: 'act:customer_history',   hub: 'customers' },
-  { code: 'customer_pattern',      label: 'Customer Pattern',          icon: '🔍', callback: 'act:customer_pattern',   hub: 'customers' },
-  { code: 'show_customer_notes',   label: 'Customer Notes',            icon: '📝', callback: 'act:customer_notes',     hub: 'customers' },
+  // Customer Details: single-tap entry that opens a customer card with
+  // [History / Pattern / Notes / Add Note] tabs (and Ranking for admins).
+  // Replaces four separate hub entries that each required a separate
+  // pick-customer round trip.
+  { code: 'customer_details',      label: 'Customer Details',          icon: '👤', callback: 'act:customer_details',   hub: 'customers' },
   { code: 'add_customer_note',     label: 'Add Note',                  icon: '✏️', callback: 'act:add_note',           hub: 'customers' },
-  { code: 'customer_ranking',      label: 'Customer Ranking',          icon: '🏆', callback: 'act:customer_ranking',   hub: 'customers' },
   { code: 'add_customer',          label: 'Add Customer',              icon: '➕', callback: 'act:add_customer',       hub: 'customers' },
+
+  // Deprecated read-only customer activities: still resolvable so text
+  // intents ("Customer history CJE") keep working, but their hub is set
+  // to '_hidden' so they no longer appear in the Customers hub grid.
+  // filterByCodes() auto-substitutes `customer_details` when any of these
+  // are present in a department's allowed_activities CSV.
+  { code: 'customer_history',      label: 'Customer History',          icon: '📋', callback: 'act:customer_history',   hub: '_hidden' },
+  { code: 'customer_pattern',      label: 'Customer Pattern',          icon: '🔍', callback: 'act:customer_pattern',   hub: '_hidden' },
+  { code: 'show_customer_notes',   label: 'Customer Notes',            icon: '📝', callback: 'act:customer_notes',     hub: '_hidden' },
+  { code: 'customer_ranking',      label: 'Customer Ranking',          icon: '🏆', callback: 'act:customer_ranking',   hub: '_hidden' },
 
   { code: 'give_sample',           label: 'Give Sample',               icon: '🧪', callback: 'act:give_sample',        hub: 'samples' },
   { code: 'sample_status',         label: 'Sample Status',             icon: '📊', callback: 'act:sample_status',      hub: 'samples' },
@@ -98,10 +109,29 @@ function getByCallback(callback) { return byCallback.get(callback) || null; }
 
 function getAll() { return ACTIVITIES; }
 
+// Codes that have been consolidated into the unified `customer_details`
+// hub entry. Departments seeded before the consolidation may still list
+// these in their allowed_activities CSV; filterByCodes() detects them and
+// injects `customer_details` so the customers hub keeps populating without
+// requiring a Departments-sheet migration.
+const DEPRECATED_CUSTOMER_READS = new Set([
+  'customer_history',
+  'customer_pattern',
+  'show_customer_notes',
+  'customer_ranking',
+]);
+
 function filterByCodes(codes) {
   if (!codes || !codes.length) return [];
   if (codes.includes('__all__')) return ACTIVITIES;
-  return codes.map((c) => byCode.get(c)).filter(Boolean);
+  const resolved = codes.map((c) => byCode.get(c)).filter(Boolean);
+  const hasLegacyRead = codes.some((c) => DEPRECATED_CUSTOMER_READS.has(c));
+  const hasNewEntry = codes.includes('customer_details');
+  if (hasLegacyRead && !hasNewEntry) {
+    const cd = byCode.get('customer_details');
+    if (cd) resolved.push(cd);
+  }
+  return resolved;
 }
 
 function getHubs() { return HUBS; }
