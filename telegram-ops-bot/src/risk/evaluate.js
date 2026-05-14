@@ -27,6 +27,9 @@ const WRITE_ACTIONS = [
   // P2 — Goods Receipt Note (admin executes directly; employee routes
   // through admin approval).
   'receive_goods',
+  // P2.5 — Bulk Receive (CSV/XLSX upload). Always dual-admin gated; see
+  // ALWAYS_APPROVAL_ACTIONS below.
+  'bulk_receive_goods',
 ];
 
 // Actions that ALWAYS go through the approval queue, regardless of whether
@@ -47,6 +50,10 @@ const ALWAYS_APPROVAL_ACTIONS = [
   'record_payment', 'update_price', 'supply_request',
   // P2 — dual-admin gate for warehouse structural changes.
   'add_warehouse', 'rename_warehouse',
+  // P2.5 — Bulk Receive uploads can land hundreds of rows in one stroke.
+  // Always dual-admin to ensure a 2nd pair of eyes on the parsed summary
+  // (file_hash + bale count + warehouse) before any Inventory write.
+  'bulk_receive_goods',
 ];
 
 async function getThresholds() {
@@ -98,6 +105,7 @@ function formatAction(action) {
     record_payment: 'payment', add_customer: 'customer creation', add_contact: 'contact creation',
     transfer_than: 'transfer', transfer_package: 'transfer', transfer_batch: 'transfer',
     receive_goods: 'goods receipt', add_warehouse: 'warehouse creation', rename_warehouse: 'warehouse rename',
+    bulk_receive_goods: 'bulk goods receipt',
   };
   return map[action] || action.replace(/_/g, ' ');
 }

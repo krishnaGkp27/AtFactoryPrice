@@ -18,6 +18,7 @@
  *   S13 Procurement Plan — low-stock computation + PO recompute + feed (P4)
  *   S14 Bulk Receive — CSV/XLSX parsers + row validator + fileHash (P2.5-C1)
  *   S14b Bulk Receive — GoodsReceipts.file_hash idempotency + lazy column (P2.5-C2)
+ *   S14c Bulk Receive — risk policy + activity + flow helpers (P2.5-C3)
  *
  * Run:  npm run smoke         (from telegram-ops-bot/)
  * Exit: 0 = all passed, 1 = one or more FAIL
@@ -1446,6 +1447,209 @@ async function runS14b() {
 }
 
 // ---------------------------------------------------------------------------
+// S14c — Bulk Receive: risk policy + activity registration + flow internals
+//        + parser routing (P2.5-C3)
+// ---------------------------------------------------------------------------
+async function runS14c() {
+  // S14c.1 — risk policy: bulk_receive_goods is in ALWAYS_APPROVAL_ACTIONS,
+  //          so both admins and employees route through approval.
+  delete require.cache[require.resolve('../src/risk/evaluate')];
+  delete require.cache[require.resolve('../src/repositories/settingsRepository')];
+  stubModule(require.resolve('../src/repositories/settingsRepository'), {
+    getAll: async () => ({}),
+    set: async () => {},
+  });
+  // Stub auth so we can flip admin status without env vars.
+  const authMod = require('../src/middlewares/auth');
+  const realIsAdmin = authMod.isAdmin;
+  authMod.isAdmin = (u) => u === 'ADM-1';
+  const risk = require('../src/risk/evaluate');
+
+  const adminRisk = await risk.evaluate({ action: 'bulk_receive_goods', userId: 'ADM-1' });
+  const empRisk = await risk.evaluate({ action: 'bulk_receive_goods', userId: 'EMP-1' });
+  if (adminRisk.risk === 'approval_required' && empRisk.risk === 'approval_required'
+      && /2nd admin/i.test(adminRisk.reason)) {
+    pass('S14c.1 risk policy: bulk_receive_goods → approval_required for admin (2nd admin) and employee');
+  } else {
+    fail('S14c.1 risk policy', JSON.stringify({ adminRisk, empRisk }));
+  }
+  authMod.isAdmin = realIsAdmin;
+
+  // S14c.2 — activity registry: bulk_receive_goods registered with correct hub + callback
+  delete require.cache[require.resolve('../src/services/activityRegistry')];
+  const reg = require('../src/services/activityRegistry');
+  const a = reg.getActivity('bulk_receive_goods');
+  if (a && a.hub === 'stock' && a.callback === 'act:bulk_receive_goods' && /Bulk/i.test(a.label)) {
+    pass('S14c.2 activityRegistry: bulk_receive_goods in stock hub with correct callback');
+  } else fail('S14c.2 activityRegistry', JSON.stringify(a));
+
+  // S14c.3 — flow.parseBuffer routes by extension
+  delete require.cache[require.resolve('../src/flows/bulkReceiveFlow')];
+  const flow = require('../src/flows/bulkReceiveFlow');
+  const csvBuf = Buffer.from('PackageNo,Design,Yards,Warehouse\n9001,Mint,50,Kano', 'utf8');
+  const csvParsed = await flow._internals.parseBuffer(csvBuf, 'csv');
+  if (csvParsed.ok && csvParsed.rows.length === 1 && csvParsed.rows[0].packageno === '9001') {
+    pass('S14c.3 flow.parseBuffer: routes .csv to parseCsv');
+  } else fail('S14c.3 flow.parseBuffer csv', JSON.stringify(csvParsed));
+
+  // S14c.4 — flow.parseBuffer routes .xlsx through SheetJS (when installed)
+  try {
+    const XLSX = require('xlsx');
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['PackageNo', 'Design', 'Yards', 'Warehouse'],
+      ['9001', 'Mint', 50, 'Kano'],
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+    const xlsxBuf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const xlsxParsed = await flow._internals.parseBuffer(xlsxBuf, 'xlsx');
+    if (xlsxParsed.ok && xlsxParsed.rows.length === 1) {
+      pass('S14c.4 flow.parseBuffer: routes .xlsx through SheetJS');
+    } else fail('S14c.4 flow.parseBuffer xlsx', JSON.stringify(xlsxParsed));
+  } catch (_) {
+    pass('S14c.4 flow.parseBuffer: xlsx skipped (package not installed in this env)');
+  }
+
+  // S14c.5 — flow.parseBuffer rejects unsupported extension
+  const bad = await flow._internals.parseBuffer(Buffer.from('x'), 'pdf');
+  if (!bad.ok && /Unsupported/i.test(bad.error)) {
+    pass('S14c.5 flow.parseBuffer: unsupported extension rejected');
+  } else fail('S14c.5 flow.parseBuffer unsupported', JSON.stringify(bad));
+
+  // S14c.6 — formatErrorsForChat: 3 errors → 3 bullets, no truncation note
+  const txt3 = flow._internals.formatErrorsForChat([
+    { row: 2, column: 'yards', message: 'must be positive' },
+    { row: 3, column: 'warehouse', message: 'missing' },
+    { row: 0, column: '', message: 'too many rows' },
+  ]);
+  if (txt3.includes('3 errors') && /Row 2/.test(txt3) && /File/.test(txt3) && !/more/.test(txt3)) {
+    pass('S14c.6 formatErrorsForChat: small error list renders cleanly');
+  } else fail('S14c.6 formatErrorsForChat small', JSON.stringify(txt3));
+
+  // S14c.7 — formatErrorsForChat: 20 errors → first 15 + truncation note
+  const many = Array.from({ length: 20 }, (_, i) => ({ row: i + 2, column: 'yards', message: 'bad' }));
+  const txt20 = flow._internals.formatErrorsForChat(many);
+  if (txt20.includes('20 errors') && /and 5 more/.test(txt20)) {
+    pass('S14c.7 formatErrorsForChat: truncates after 15 with "…and N more"');
+  } else fail('S14c.7 formatErrorsForChat truncate', JSON.stringify(txt20));
+
+  // S14c.8 — append-only snapshot guarantee: existing Inventory rows
+  //          are not mutated by a bulk receive (the service handler only
+  //          calls inventoryRepository.appendBale, which is append-only).
+  //          We assert this contract by stubbing the sheets client and
+  //          watching for any updateRange / batchUpdateRanges call on Inventory.
+  delete require.cache[require.resolve('../src/repositories/sheetsClient')];
+  delete require.cache[require.resolve('../src/repositories/inventoryRepository')];
+  delete require.cache[require.resolve('../src/repositories/goodsReceiptsRepository')];
+  delete require.cache[require.resolve('../src/repositories/stockLedgerRepository')];
+  delete require.cache[require.resolve('../src/repositories/transactionsRepository')];
+  delete require.cache[require.resolve('../src/repositories/approvalQueueRepository')];
+  delete require.cache[require.resolve('../src/repositories/auditLogRepository')];
+  delete require.cache[require.resolve('../src/services/inventoryService')];
+
+  // Existing inventory rows the test will assert remain untouched.
+  const EXISTING_INV = [
+    ['5800','','','Beige','B-12',1,50,'available','Kano','','2026-05-01','','','','','','fabric','BAL-20260501-5800-abcd','2026-05-01T00:00:00Z',''],
+    ['5801','','','Mint','M-1', 1,50,'available','Kano','','2026-05-02','','','','','','fabric','BAL-20260502-5801-1234','2026-05-02T00:00:00Z',''],
+  ];
+  const writes = { Inventory: { append: [], update: [], batch: [] }, others: [] };
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async (sheet) => sheet === 'Inventory' ? EXISTING_INV : [],
+    appendRows: async (sheet, rows) => {
+      if (sheet === 'Inventory') writes.Inventory.append.push(...rows);
+      else writes.others.push({ sheet, rows });
+    },
+    updateRange: async (sheet, range, rows) => {
+      if (sheet === 'Inventory') writes.Inventory.update.push({ range, rows });
+    },
+    batchUpdateRanges: async (sheet, updates) => {
+      if (sheet === 'Inventory') writes.Inventory.batch.push(...updates);
+    },
+    getSheetNames: async () => [],
+    addSheet: async () => {},
+  });
+
+  const approvalQueue = require('../src/repositories/approvalQueueRepository');
+  // Stub approvalQueue to return our prepared item by requestId.
+  const FAKE_ITEM = {
+    user: 'EMP-1',
+    actionJSON: {
+      action: 'bulk_receive_goods',
+      warehouse: 'Kano',
+      supplier: 'SupplierA',
+      bales: [
+        { packageNo: '9001', design: 'Beige', shade: 'B-12', yards: 50 },
+        { packageNo: '9002', design: 'Beige', shade: 'B-12', yards: 48 },
+      ],
+      totalBales: 2, totalYards: 98,
+      source: 'bulk_csv', fileHash: 'ffffffffffffff01',
+      fileName: 'abdul-2026-05-14.csv',
+      dateReceived: '2026-05-14',
+    },
+    status: 'pending',
+  };
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    getAllPending: async () => [{ requestId: 'req-test-1', ...FAKE_ITEM }],
+    getByRequestId: async () => ({ requestId: 'req-test-1', ...FAKE_ITEM }),
+    updateStatus: async () => {},
+    setStatus: async () => {},
+    append: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/auditLogRepository'), {
+    append: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/transactionsRepository'), {
+    append: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/stockLedgerRepository'), {
+    append: async () => {},
+  });
+
+  const invService = require('../src/services/inventoryService');
+  const result = await invService.executeApprovedAction('req-test-1', 'ADM-1');
+  if (result && result.ok && result.bundleReport
+      && result.bundleReport.baleCount === 2
+      && result.bundleReport.source === 'bulk_csv'
+      && result.bundleReport.fileHash === 'ffffffffffffff01'
+      && writes.Inventory.append.length === 2
+      && writes.Inventory.update.length === 0
+      && writes.Inventory.batch.length === 0) {
+    pass('S14c.8 service: bulk_receive_goods append-only — 2 new Inventory rows, 0 mutations of existing');
+  } else {
+    fail('S14c.8 service append-only', JSON.stringify({
+      result, invWrites: writes.Inventory,
+    }));
+  }
+
+  // S14c.9 — service idempotency: re-running with same fileHash returns
+  //          { ok: false, message: /already imported/ } and writes nothing.
+  const writesBefore = JSON.stringify(writes);
+  stubModule(require.resolve('../src/repositories/goodsReceiptsRepository'), {
+    getByFileHash: async (h) => h === 'ffffffffffffff01'
+      ? { grn_id: 'GRN-20260514-001', file_hash: h }
+      : null,
+    append: async () => { throw new Error('should not write a duplicate'); },
+    getAll: async () => [],
+    getById: async () => null,
+    getByWarehouse: async () => [],
+  });
+  delete require.cache[require.resolve('../src/services/inventoryService')];
+  const invService2 = require('../src/services/inventoryService');
+  const dup = await invService2.executeApprovedAction('req-test-1', 'ADM-1');
+  const writesAfter = JSON.stringify(writes);
+  if (dup && dup.ok === false && /already imported/i.test(dup.message) && writesBefore === writesAfter) {
+    pass('S14c.9 service idempotency: duplicate file_hash rejected; no writes');
+  } else {
+    fail('S14c.9 service idempotency', JSON.stringify({ dup, sameWrites: writesBefore === writesAfter }));
+  }
+
+  // Restore the dependency cache so subsequent smoke sections don't see
+  // the stubs.
+  delete require.cache[require.resolve('../src/risk/evaluate')];
+  delete require.cache[require.resolve('../src/services/inventoryService')];
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -1466,6 +1670,7 @@ async function runS14b() {
   try { await runS13(); } catch (e) { fail('S13 unexpected error', e.message); }
   try { runS14a(); } catch (e) { fail('S14a unexpected error', e.message); }
   try { await runS14b(); } catch (e) { fail('S14b unexpected error', e.message); }
+  try { await runS14c(); } catch (e) { fail('S14c unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

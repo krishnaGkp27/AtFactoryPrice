@@ -486,6 +486,120 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     // details in the success card.
     bundleReport = { grnId: grn.grn_id, baleCount: persisted.length, totalYards,
                      poId: aj.po_id || '', poUpdate };
+  } else if (aj.action === 'bulk_receive_goods') {
+    // P2.5 — Bulk Receive from a CSV/XLSX upload. The actionJSON already
+    // carries the validated, normalised bale list (the validator ran at
+    // submit time in bulkReceiveFlow). All we do here is:
+    //   1. Re-check file_hash duplicate (race condition guard: two admins
+    //      could approve two pending uploads of the same file).
+    //   2. Append the GRN header with source + file_hash provenance.
+    //   3. Append bales via inventoryRepository.appendBale (composite-key
+    //      stamping happens server-side per row — see P1).
+    //   4. Drop Stock_Ledger rows.
+    //   5. If po_id is set, push to procurementOrdersRepo and recompute.
+    const goodsReceiptsRepo = require('../repositories/goodsReceiptsRepository');
+    const stockLedgerRepo = require('../repositories/stockLedgerRepository');
+
+    const fileHash = String(aj.fileHash || '').trim();
+    if (fileHash) {
+      try {
+        const dup = await goodsReceiptsRepo.getByFileHash(fileHash);
+        if (dup) {
+          return {
+            ok: false,
+            message: `File already imported as ${dup.grn_id} (hash ${fileHash}). Refusing to duplicate.`,
+          };
+        }
+      } catch (e) {
+        // Read failure is non-fatal — fall through and rely on the
+        // optimistic write below; the worst case is a re-import which
+        // will surface in audit, and the operator can revert.
+        logger.warn(`bulk_receive_goods: file_hash dedup read failed (continuing): ${e.message}`);
+      }
+    }
+
+    const bales = Array.isArray(aj.bales) ? aj.bales : [];
+    if (!bales.length) return { ok: false, message: 'No bales in payload.' };
+    const totalBales = bales.length;
+    const totalYards = bales.reduce((s, b) => s + (parseFloat(b.yards) || 0), 0);
+
+    const grn = await goodsReceiptsRepo.append({
+      warehouse: aj.warehouse,
+      supplier: aj.supplier || '',
+      supplier_id: aj.supplier_id || '',
+      po_id: aj.po_id || '',
+      received_by: item.user,
+      total_bales: totalBales,
+      total_yards: totalYards,
+      photo_file_id: '',
+      notes: aj.fileName ? `bulk: ${aj.fileName}` : '',
+      status: 'received',
+      source: aj.source || 'bulk_csv',
+      file_hash: fileHash,
+    });
+
+    const baleRows = bales.map((b) => ({
+      packageNo: b.packageNo,
+      design: b.design,
+      shade: b.shade || '',
+      thanNo: 1,
+      yards: parseFloat(b.yards) || 0,
+      warehouse: aj.warehouse,
+      pricePerYard: 0,
+      dateReceived: aj.dateReceived || new Date().toISOString().split('T')[0],
+      productType: aj.productType || 'fabric',
+      grnId: grn.grn_id,
+    }));
+    const persisted = await inventoryRepository.appendBale(baleRows);
+
+    try {
+      const idGen = require('../utils/idGenerator');
+      const today = new Date().toISOString().split('T')[0];
+      for (const b of persisted) {
+        await stockLedgerRepo.append({
+          entry_id: idGen.stockLedger(),
+          date: today,
+          item_id: b.baleUid, package_no: b.packageNo, branch: b.warehouse,
+          type: 'received', qty_in: b.yards, qty_out: 0,
+          reference_id: grn.grn_id,
+        });
+      }
+    } catch (_) { /* non-fatal: GRN + Inventory persisted; ledger is supplementary */ }
+
+    await transactionsRepository.append({
+      user: item.user, action: 'bulk_receive_goods',
+      design: persisted[0]?.design || '', color: persisted[0]?.shade || '',
+      qty: totalYards, before: '', after: aj.warehouse, status: 'approved',
+      saleRefId: grn.grn_id,
+    });
+
+    let poUpdate = null;
+    if (aj.po_id) {
+      try {
+        const procurementRepo = require('../repositories/procurementOrdersRepository');
+        // Aggregate received bales by (design, shade) so each PO line is
+        // updated once, not N times.
+        const byKey = new Map();
+        for (const b of persisted) {
+          const key = `${b.design}|${b.shade || ''}`;
+          const acc = byKey.get(key) || { design: b.design, shade: b.shade || '', qty_bales: 0, qty_yards: 0 };
+          acc.qty_bales += 1;
+          acc.qty_yards += parseFloat(b.yards) || 0;
+          byKey.set(key, acc);
+        }
+        poUpdate = await procurementRepo.applyReceived(aj.po_id, Array.from(byKey.values()));
+        await procurementRepo.recomputeStatus(aj.po_id);
+      } catch (e) {
+        await auditLogRepository.append('po_receive_link_failed',
+          { grnId: grn.grn_id, poId: aj.po_id, error: e.message }, item.user);
+      }
+    }
+
+    bundleReport = {
+      grnId: grn.grn_id, baleCount: persisted.length, totalYards,
+      poId: aj.po_id || '', poUpdate,
+      source: aj.source || 'bulk_csv', fileHash, fileName: aj.fileName || '',
+    };
   } else if (aj.action === 'add_warehouse') {
     // P2 — warehouse creation is dual-admin gated (see ALWAYS_APPROVAL_ACTIONS
     // in risk/evaluate). There is no central Warehouses sheet today —

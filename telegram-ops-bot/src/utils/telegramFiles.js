@@ -17,6 +17,9 @@ const MIME_BY_EXT = {
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
   webp: 'image/webp', gif: 'image/gif',
   pdf: 'application/pdf',
+  csv: 'text/csv',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xls: 'application/vnd.ms-excel',
 };
 
 async function downloadTelegramFile(bot, fileId) {
