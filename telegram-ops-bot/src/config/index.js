@@ -70,6 +70,29 @@ const config = {
 
   drive: {
     folderId: process.env.GOOGLE_DRIVE_FOLDER_ID || '',
+    /** Where photo-receive backups land. Falls back to folderId if unset. */
+    ocrFolderId: process.env.OCR_GDRIVE_FOLDER_ID || process.env.GOOGLE_DRIVE_FOLDER_ID || '',
+  },
+
+  /**
+   * Photo / PDF OCR (P5) — feature-flagged, stub provider by default.
+   * Real provider gets wired in a follow-up commit once the stub UX is
+   * approved. Even with OCR_ENABLED=true, the bot only ships data into
+   * Inventory after the per-row review + the existing dual-admin
+   * `bulk_receive_goods` approval — OCR never auto-commits.
+   */
+  ocr: {
+    enabled: (process.env.OCR_ENABLED || 'false').toLowerCase() === 'true',
+    /** stub | openai | google */
+    provider: process.env.OCR_PROVIDER || 'stub',
+    /** OpenAI Vision model when provider=openai */
+    openaiModel: process.env.OCR_OPENAI_MODEL || 'gpt-4o',
+    /** Confidence in [0..1] below which a row is shown red + forces edit */
+    lowConfidenceThreshold: parseFloat(process.env.OCR_LOW_CONF) || 0.7,
+    /** Max image / PDF size in bytes (5 MB) */
+    maxFileBytes: parseInt(process.env.OCR_MAX_FILE_BYTES, 10) || 5 * 1024 * 1024,
+    /** Local archive dir (relative to repo root) */
+    localArchiveDir: process.env.OCR_ARCHIVE_DIR || 'data/ocr',
   },
 
   /** Optional: set BOT_API_KEY so admin page can update settings with X-API-Key header */

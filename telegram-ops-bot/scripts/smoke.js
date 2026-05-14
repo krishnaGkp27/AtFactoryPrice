@@ -19,6 +19,7 @@
  *   S14 Bulk Receive — CSV/XLSX parsers + row validator + fileHash (P2.5-C1)
  *   S14b Bulk Receive — GoodsReceipts.file_hash idempotency + lazy column (P2.5-C2)
  *   S14c Bulk Receive — risk policy + activity + flow helpers (P2.5-C3)
+ *   S15 Photo Receive — Vision client + stub provider (P5-C1)
  *
  * Run:  npm run smoke         (from telegram-ops-bot/)
  * Exit: 0 = all passed, 1 = one or more FAIL
@@ -1734,6 +1735,194 @@ async function runS14c() {
 }
 
 // ---------------------------------------------------------------------------
+// S15 — Photo Receive · Vision client + stub provider (P5-C1)
+// ---------------------------------------------------------------------------
+async function runS15a() {
+  // Force OCR enabled for this section, save prior env to restore.
+  const prevEnabled = process.env.OCR_ENABLED;
+  const prevProvider = process.env.OCR_PROVIDER;
+  process.env.OCR_ENABLED = 'true';
+  process.env.OCR_PROVIDER = 'stub';
+
+  // Fresh require — config caches once and we just toggled env.
+  delete require.cache[require.resolve('../src/config')];
+  delete require.cache[require.resolve('../src/services/vision')];
+  delete require.cache[require.resolve('../src/services/vision/stub')];
+
+  const vision = require('../src/services/vision');
+  const stub = require('../src/services/vision/stub');
+
+  // Tiny synthetic JPG-ish buffer (header bytes only — stub doesn't parse pixels)
+  const fakeJpg = Buffer.concat([
+    Buffer.from([0xff, 0xd8, 0xff, 0xe0]), // JPEG SOI + APP0
+    Buffer.from('stub-fixture-input'),
+  ]);
+
+  // S15.1 — happy path with stub provider
+  let resp = await vision.extractBales(fakeJpg, 'image/jpeg');
+  if (resp.ok && resp.provider === 'stub'
+      && Array.isArray(resp.bales) && resp.bales.length === 5
+      && resp.bales[0].packageNo === '9001' && resp.bales[0].thanNo === 1
+      && resp.bales[4].thanNo === 5
+      && resp.overallConfidence > 0.7 && resp.overallConfidence <= 1
+      && resp.rawText.includes('SupplierA')) {
+    pass('S15.1 vision.extractBales: stub returns 5 thans of bale 9001 with overall confidence > 0.7');
+  } else fail('S15.1 stub happy path', JSON.stringify({ ok: resp.ok, provider: resp.provider, count: resp.bales?.length }));
+
+  // S15.2 — per-row confidence + lowConfidence flag computed by normaliser
+  const lowConfRow = resp.bales.find((b) => b.thanNo === 3);
+  const highConfRow = resp.bales.find((b) => b.thanNo === 1);
+  if (lowConfRow && lowConfRow.lowConfidence === true
+      && lowConfRow.confidence < 0.7
+      && highConfRow && highConfRow.lowConfidence === false
+      && highConfRow.confidence >= 0.7) {
+    pass('S15.2 normaliser: lowConfidence flag set per-row from config.ocr.lowConfidenceThreshold');
+  } else fail('S15.2 lowConfidence flag', JSON.stringify({ lowConfRow, highConfRow }));
+
+  // S15.3 — normaliser fills required numeric defaults (no NaN leaks)
+  const allNumericClean = resp.bales.every((b) =>
+    typeof b.yards === 'number' && isFinite(b.yards) && b.yards > 0
+    && typeof b.netMtrs === 'number' && isFinite(b.netMtrs)
+    && typeof b.netWeight === 'number' && isFinite(b.netWeight)
+    && typeof b.confidence === 'number' && isFinite(b.confidence));
+  if (allNumericClean) pass('S15.3 normaliser: yards/netMtrs/netWeight/confidence are clean numbers, no NaN');
+  else fail('S15.3 numeric cleanliness', JSON.stringify(resp.bales));
+
+  // S15.4 — deterministic across calls (same buffer ⇒ same output structure)
+  const resp2 = await vision.extractBales(fakeJpg, 'image/jpeg');
+  if (resp2.ok && resp2.bales.length === resp.bales.length
+      && resp2.bales[0].packageNo === resp.bales[0].packageNo
+      && resp2.bales[2].confidence === resp.bales[2].confidence) {
+    pass('S15.4 stub: deterministic across repeat invocations');
+  } else fail('S15.4 stub determinism', JSON.stringify(resp2));
+
+  // S15.5 — empty buffer rejected with structured error
+  resp = await vision.extractBales(Buffer.alloc(0), 'image/jpeg');
+  if (!resp.ok && /empty_buffer/i.test(resp.error)) {
+    pass('S15.5 vision: empty buffer → ok=false with empty_buffer code');
+  } else fail('S15.5 empty buffer', JSON.stringify(resp));
+
+  // S15.6 — unsupported MIME rejected with human message
+  resp = await vision.extractBales(fakeJpg, 'application/vnd.ms-excel');
+  if (!resp.ok && /unsupported_mime/i.test(resp.error)) {
+    pass('S15.6 vision: unsupported MIME → ok=false with unsupported_mime code');
+  } else fail('S15.6 unsupported MIME', JSON.stringify(resp));
+
+  // S15.7 — oversized file rejected (set tight cap via env override is too
+  // invasive — instead build a buffer over the default 5 MB cap)
+  const big = Buffer.alloc(6 * 1024 * 1024, 0);
+  resp = await vision.extractBales(big, 'image/jpeg');
+  if (!resp.ok && /file_too_large/i.test(resp.error)) {
+    pass('S15.7 vision: > 5MB file → ok=false with file_too_large code');
+  } else fail('S15.7 oversize', JSON.stringify({ ok: resp.ok, err: resp.error?.slice(0, 80) }));
+
+  // S15.8 — unknown provider rejected
+  resp = await vision.extractBales(fakeJpg, 'image/jpeg', { providerOverride: 'nonexistent' });
+  if (!resp.ok && /unknown_provider/i.test(resp.error)) {
+    pass('S15.8 vision: unknown provider override → ok=false with unknown_provider code');
+  } else fail('S15.8 unknown provider', JSON.stringify(resp));
+
+  // S15.9 — disabled (OCR_ENABLED=false) → ocr_disabled
+  process.env.OCR_ENABLED = 'false';
+  delete require.cache[require.resolve('../src/config')];
+  delete require.cache[require.resolve('../src/services/vision')];
+  const visionDisabled = require('../src/services/vision');
+  resp = await visionDisabled.extractBales(fakeJpg, 'image/jpeg');
+  if (!resp.ok && /ocr_disabled/i.test(resp.error)) {
+    pass('S15.9 vision: OCR_ENABLED=false → ok=false with ocr_disabled code');
+  } else fail('S15.9 disabled', JSON.stringify(resp));
+
+  // S15.10 — but providerOverride bypasses the enabled check (test/admin path)
+  resp = await visionDisabled.extractBales(fakeJpg, 'image/jpeg', { providerOverride: 'stub' });
+  if (resp.ok && resp.bales.length === 5) {
+    pass('S15.10 vision: providerOverride bypasses enabled check (admin/test escape hatch)');
+  } else fail('S15.10 providerOverride escape', JSON.stringify(resp));
+
+  // S15.11 — OpenAI provider skeleton returns not_implemented (no crash)
+  process.env.OCR_ENABLED = 'true';
+  process.env.OCR_PROVIDER = 'openai';
+  delete require.cache[require.resolve('../src/config')];
+  delete require.cache[require.resolve('../src/services/vision')];
+  const visionOA = require('../src/services/vision');
+  resp = await visionOA.extractBales(fakeJpg, 'image/jpeg');
+  if (!resp.ok && /not_implemented/i.test(resp.error) && resp.provider === 'openai') {
+    pass('S15.11 vision: OpenAI provider skeleton → ok=false / not_implemented (no crash)');
+  } else fail('S15.11 openai skeleton', JSON.stringify(resp));
+
+  // S15.12 — fixture override via env var, deterministic.
+  // Reset config + vision so OCR_PROVIDER flip back to 'stub' takes effect
+  // (S15.11 left provider=openai cached in the loaded config object).
+  const tmpFixture = path.join(__dirname, '.ocr-fixture.tmp.json');
+  const fixture = {
+    bales: [
+      { packageNo: '7777', thanNo: 1, design: 'Test Fixture', shade: 'X-1',
+        yards: 99, netMtrs: 90, netWeight: 40, confidence: 0.99 },
+    ],
+    rawText: 'TEST-FIXTURE-PAYLOAD',
+    warnings: ['fixture-warning'],
+    overallConfidence: 0.99,
+  };
+  fs.writeFileSync(tmpFixture, JSON.stringify(fixture));
+  process.env.OCR_PROVIDER = 'stub';
+  process.env.OCR_STUB_FIXTURE_PATH = tmpFixture;
+  delete require.cache[require.resolve('../src/config')];
+  delete require.cache[require.resolve('../src/services/vision/stub')];
+  delete require.cache[require.resolve('../src/services/vision')];
+  const visionFix = require('../src/services/vision');
+  resp = await visionFix.extractBales(fakeJpg, 'image/jpeg');
+  const fixtureOK = resp.ok && resp.bales.length === 1
+    && resp.bales[0].packageNo === '7777' && resp.bales[0].design === 'Test Fixture'
+    && resp.warnings.includes('fixture-warning')
+    && resp.rawText.includes('TEST-FIXTURE-PAYLOAD');
+  try { fs.unlinkSync(tmpFixture); } catch { /* ignore */ }
+  delete process.env.OCR_STUB_FIXTURE_PATH;
+  if (fixtureOK) pass('S15.12 stub: OCR_STUB_FIXTURE_PATH loads canonical fixture');
+  else fail('S15.12 fixture override', JSON.stringify(resp));
+
+  // S15.13 — PDF MIME accepted (stub doesn't need to actually parse it)
+  resp = await visionFix.extractBales(fakeJpg, 'application/pdf');
+  if (resp.ok && resp.provider === 'stub') {
+    pass('S15.13 vision: PDF MIME type accepted for OCR pipeline');
+  } else fail('S15.13 pdf accepted', JSON.stringify(resp));
+
+  // S15.14 — confidence clamping (raw provider returning conf > 1 or < 0)
+  delete require.cache[require.resolve('../src/services/vision/stub')];
+  delete require.cache[require.resolve('../src/services/vision')];
+  const stubMod = require('../src/services/vision/stub');
+  const origCanned = stubMod.CANNED.bales.slice();
+  stubMod.CANNED.bales = [
+    { packageNo: '1', thanNo: 1, design: 'D', yards: 1, confidence: 1.5 },  // > 1
+    { packageNo: '2', thanNo: 1, design: 'D', yards: 1, confidence: -0.4 }, // < 0
+    { packageNo: '3', thanNo: 1, design: 'D', yards: 1, confidence: 'foo' }, // NaN
+  ];
+  const visionClamp = require('../src/services/vision');
+  resp = await visionClamp.extractBales(fakeJpg, 'image/jpeg');
+  stubMod.CANNED.bales = origCanned;
+  if (resp.ok && resp.bales[0].confidence === 1
+      && resp.bales[1].confidence === 0
+      && resp.bales[2].confidence === 0) {
+    pass('S15.14 normaliser: confidence clamped to [0..1], NaN → 0');
+  } else fail('S15.14 confidence clamp', JSON.stringify(resp.bales));
+
+  // S15.15 — provider throw is caught (no unhandled rejection)
+  delete require.cache[require.resolve('../src/services/vision')];
+  const visionFinal = require('../src/services/vision');
+  visionFinal.PROVIDERS.boom = { extractBales: async () => { throw new Error('boom!'); } };
+  resp = await visionFinal.extractBales(fakeJpg, 'image/jpeg', { providerOverride: 'boom' });
+  if (!resp.ok && /provider_error.*boom!/i.test(resp.error)) {
+    pass('S15.15 vision: provider throwing is caught and surfaced as provider_error');
+  } else fail('S15.15 provider throw', JSON.stringify(resp));
+
+  // Restore env
+  if (prevEnabled == null) delete process.env.OCR_ENABLED; else process.env.OCR_ENABLED = prevEnabled;
+  if (prevProvider == null) delete process.env.OCR_PROVIDER; else process.env.OCR_PROVIDER = prevProvider;
+  delete require.cache[require.resolve('../src/config')];
+  delete require.cache[require.resolve('../src/services/vision')];
+  delete require.cache[require.resolve('../src/services/vision/stub')];
+  delete require.cache[require.resolve('../src/services/vision/openai')];
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -1755,6 +1944,7 @@ async function runS14c() {
   try { runS14a(); } catch (e) { fail('S14a unexpected error', e.message); }
   try { await runS14b(); } catch (e) { fail('S14b unexpected error', e.message); }
   try { await runS14c(); } catch (e) { fail('S14c unexpected error', e.message); }
+  try { await runS15a(); } catch (e) { fail('S15a unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

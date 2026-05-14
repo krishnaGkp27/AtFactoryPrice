@@ -347,7 +347,79 @@ asserts neither is called on `Inventory` after a bulk receive — only
 `appendRows`. That's the machine-enforced version of "address / path /
 detail of existing rows shall not be disturbed."
 
-### 2.6 Phase 4 · Scalability (legacy TG-22 .. TG-26)
+### 2.7 Photo Receive · P5 (in flight, 2026-05-14)
+
+**Vision:** Abdul photos a packaging slip on his phone, the bot OCRs it,
+shows the admin a per-row review card, admin approves each row (or
+edits it), then the same dual-admin `bulk_receive_goods` approval gate
+runs — so OCR is *capture-only*. The persistence path is identical to
+P2.5 bulk CSV; only the row-capture mechanism changes.
+
+**Locked decisions (user sign-off, 2026-05-14):**
+- **Stub-first.** P5-C1 ships a deterministic stub provider so the UX
+  can be built and smoke-tested offline. Real OpenAI Vision wiring
+  lands in a follow-up commit once the per-row review UX is approved.
+- **Inbound first.** P5a + P5b only. Outbound photo-dispatch (P5c)
+  ships after a week of live inbound usage validates OCR accuracy on
+  real slips.
+- **Local + Google Drive backup.** Every uploaded image / PDF lands in
+  `data/ocr/{hash}.{ext}` AND a `Bot Uploads / OCR / {YYYY-MM}/` Drive
+  folder under the operator's account. Drive folder ID configurable
+  via `OCR_GDRIVE_FOLDER_ID`.
+- **Per-row admin approval.** Every extracted row gets ✅ / ✏ / ❌
+  buttons. Low-confidence rows (< `OCR_LOW_CONF`, default 0.7) render
+  red and force ✏ before they can be accepted. AI never auto-commits.
+- **No advanced features in v1.** A2–A8 (autocomplete, PO cross-ref,
+  photo annotation, signature capture, invoice PDF, etc.) all deferred
+  to P5e. Ship core P5 only.
+- **No daily cost cap.** Skipped — operator monitors cost dashboard
+  manually once real OCR is wired.
+
+| Commit | Hash | Title | Status |
+|---|---|---|---|
+| C1 | (this set) | Vision client interface + stub provider + config block | ✅ Done |
+| C2 | — | Drive backup helper + local image archiving | ⏳ Next |
+| C3 | — | `photoReceiveFlow.js` — upload + per-row review UI | ⏳ Planned |
+| C4 | — | Per-row edit subflow + submission bridge into `bulk_receive_goods` | ⏳ Planned |
+| C5 | — | Smoke + docs/photo-receive-template.md | ⏳ Planned |
+
+**P5-C1 ships:**
+- `src/services/vision/index.js` — provider-agnostic dispatcher.
+  Uniform return shape (`{ ok, provider, bales[], rawText,
+  overallConfidence, warnings }`) regardless of which provider runs.
+  Centralised input gating: empty buffer → `empty_buffer`, unsupported
+  MIME → `unsupported_mime`, file > 5 MB → `file_too_large`, OCR
+  disabled → `ocr_disabled`, provider throw → `provider_error`. Every
+  failure mode surfaces as a structured `{ ok: false, error: '<code>:
+  <message>' }` rather than an exception.
+- `src/services/vision/stub.js` — deterministic 5-than single-bale
+  fixture (matches `docs/samples/bulk-receive-sample-single-bale.csv`)
+  with one intentionally-low-confidence row at ThanNo=3 so the
+  review UI's red-row / force-edit path is always exercised. Supports
+  override via `OCR_STUB_FIXTURE_PATH` for QA pinning of edge cases.
+- `src/services/vision/openai.js` — skeleton returning `not_implemented`.
+  Resolves so `OCR_PROVIDER=openai` gives a clear error instead of
+  silently routing somewhere unexpected.
+- `src/config/index.js` — new `ocr` block: `enabled` (flag),
+  `provider` (stub|openai|google), `openaiModel`,
+  `lowConfidenceThreshold`, `maxFileBytes`, `localArchiveDir`.
+- Per-row `lowConfidence` flag computed during normalisation so flows
+  don't have to repeat the threshold check.
+
+**Smoke coverage (S15, +15 checks):**
+S15.1 happy path · S15.2 lowConfidence flag set from threshold ·
+S15.3 numeric cleanliness (no NaN leaks) · S15.4 determinism ·
+S15.5–8 input gating (empty / MIME / oversize / unknown provider) ·
+S15.9 disabled returns ocr_disabled · S15.10 providerOverride bypasses
+disabled flag (test escape hatch) · S15.11 OpenAI skeleton returns
+not_implemented without crashing · S15.12 fixture override loads from
+disk · S15.13 PDF MIME accepted · S15.14 confidence clamping
+([0..1] + NaN → 0) · S15.15 provider throw caught and surfaced as
+provider_error.
+
+Harness: 168 green (was 153).
+
+### 2.8 Phase 4 · Scalability (legacy TG-22 .. TG-26)
 
 All 💭 Discuss — never start without an explicit owner decision (see §4.6).
 
