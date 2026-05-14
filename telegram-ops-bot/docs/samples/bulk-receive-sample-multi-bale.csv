@@ -1,0 +1,11 @@
+PackageNo,ThanNo,Design,Shade,Yards,NetMtrs,NetWeight,Warehouse,Supplier,Notes
+9001,1,Beige Crepe,B-12,50,45.7,18.5,Kano,SupplierA,
+9001,2,Beige Crepe,B-12,48,43.8,17.9,Kano,SupplierA,
+9001,3,Beige Crepe,B-12,52,47.5,19.2,Kano,SupplierA,
+9001,4,Beige Crepe,B-12,50,45.7,18.5,Kano,SupplierA,
+9001,5,Beige Crepe,B-12,49,44.8,18.2,Kano,SupplierA,
+9002,1,Red Silk,R-04,46,42.0,17.0,Kano,SupplierA,VIP hold
+9002,2,Red Silk,R-04,48,43.8,17.9,Kano,SupplierA,
+9002,3,Red Silk,R-04,50,45.7,18.5,Kano,SupplierA,
+9003,1,Mint Voile,M-03,52,47.5,15.5,Kano,SupplierA,
+9003,2,Mint Voile,M-03,50,45.7,15.0,Kano,SupplierA,

@@ -77,7 +77,7 @@ function header(session) {
   if (session.fileName) lines.push(`✓ File: \`${session.fileName}\``);
   if (session.summary) {
     const s = session.summary;
-    lines.push(`✓ ${s.totalBales} bales · ${fmtQty(s.totalYards, { maxFraction: 2 })} yards`);
+    lines.push(`✓ ${s.totalBales} bales · ${s.totalThans} thans · ${fmtQty(s.totalYards, { maxFraction: 2 })} yards`);
   }
   return lines.join('\n');
 }
@@ -143,8 +143,10 @@ async function showAwaitFileStep(bot, chatId, userId) {
   const prompt = [
     '*Send the file as a document (.csv or .xlsx).*',
     '',
-    'Required columns: `PackageNo`, `Design`, `Yards`, `Warehouse`',
-    'Optional: `Shade`, `Supplier`, `Notes`, `Color`',
+    '*One row = one than.* Bales with N thans use N rows sharing the same PackageNo.',
+    '',
+    'Required columns: `PackageNo`, `ThanNo`, `Design`, `Yards`, `Warehouse`',
+    'Optional: `Shade`, `Supplier`, `NetMtrs`, `NetWeight`, `Notes`, `Color`',
     `Max ${bulkValidator.MAX_ROWS_DEFAULT} rows.${xlsxNote}`,
     '',
     '_Type /bulkformat for a template._',
@@ -286,11 +288,14 @@ async function showPreviewStep(bot, chatId, userId) {
     `*Supplier:*  ${s.suppliers[0] || '_none_'}`,
     `*Designs:*   ${s.designs.length} (${s.designs.slice(0, 4).join(', ')}${s.designs.length > 4 ? '…' : ''})`,
     `*Bales:*     ${s.totalBales}`,
+    `*Thans:*     ${s.totalThans}`,
     `*Yards:*     ${fmtQty(s.totalYards, { maxFraction: 2 })}`,
-    `*Hash:*      \`${session.fileHash}\``,
-    '',
-    '_All ${rows} rows will be appended to Inventory with fresh bale_uid + addedAt._'.replace('${rows}', s.totalBales),
   ];
+  if (s.totalNetMtrs > 0) lines.push(`*Net m:*      ${fmtQty(s.totalNetMtrs, { maxFraction: 2 })}`);
+  if (s.totalNetWeight > 0) lines.push(`*Net kg:*     ${fmtQty(s.totalNetWeight, { maxFraction: 2 })}`);
+  lines.push(`*Hash:*      \`${session.fileHash}\``);
+  lines.push('');
+  lines.push(`_${s.totalThans} thans across ${s.totalBales} bale${s.totalBales === 1 ? '' : 's'} will be appended to Inventory with fresh bale_uid + addedAt per row._`);
   if (session.po_id && session.po_id !== '__skip__') {
     lines.splice(1, 0, `*PO:*        \`${session.po_id}\``);
   }
@@ -321,11 +326,18 @@ async function submit(bot, chatId, userId) {
     supplier: session.summary.suppliers[0] || '',
     po_id: session.po_id && session.po_id !== '__skip__' ? session.po_id : '',
     bales: session.bales.map((b) => ({
-      packageNo: b.packageNo, design: b.design, shade: b.shade, color: b.color,
-      yards: b.yards, notes: b.notes,
+      packageNo: b.packageNo,
+      thanNo: b.thanNo,
+      design: b.design, shade: b.shade, color: b.color,
+      yards: b.yards,
+      netMtrs: b.netMtrs || 0, netWeight: b.netWeight || 0,
+      notes: b.notes,
     })),
     totalBales: session.summary.totalBales,
+    totalThans: session.summary.totalThans,
     totalYards: session.summary.totalYards,
+    totalNetMtrs: session.summary.totalNetMtrs,
+    totalNetWeight: session.summary.totalNetWeight,
     source: session.fileExt === 'xlsx' ? 'bulk_xlsx' : 'bulk_csv',
     fileHash: session.fileHash,
     fileName: session.fileName,
@@ -351,7 +363,7 @@ async function submit(bot, chatId, userId) {
   const approverLabel = isAdm ? '2nd admin' : 'admin';
   const excludeId = isAdm ? userId : undefined;
   const summary =
-    `📤 Bulk Receive — ${aj.warehouse} · ${aj.totalBales} bales · ${fmtQty(aj.totalYards, { maxFraction: 2 })} yds`
+    `📤 Bulk Receive — ${aj.warehouse} · ${aj.totalBales} bales / ${aj.totalThans} thans · ${fmtQty(aj.totalYards, { maxFraction: 2 })} yds`
     + ` · ${aj.source}${aj.po_id ? ' · PO ' + aj.po_id : ''}`;
   await approvalEvents.notifyAdminsApprovalRequest(
     bot, requestId, String(userId), summary, risk.reason, excludeId);
@@ -465,22 +477,28 @@ async function handleCallback(bot, callbackQuery) {
 
 async function sendTemplate(bot, chatId) {
   const csv = [
-    'PackageNo,Design,Shade,Yards,Warehouse,Supplier,Notes',
-    '9001,Beige Crepe,B-12,50,Kano,SupplierA,',
-    '9002,Beige Crepe,B-12,48,Kano,SupplierA,',
-    '9003,Red Silk,R-04,52,Kano,SupplierB,VIP hold',
+    'PackageNo,ThanNo,Design,Shade,Yards,NetMtrs,NetWeight,Warehouse,Supplier,Notes',
+    '9001,1,Beige Crepe,B-12,50,45.7,18.5,Kano,SupplierA,',
+    '9001,2,Beige Crepe,B-12,48,43.8,17.9,Kano,SupplierA,',
+    '9001,3,Beige Crepe,B-12,52,47.5,19.2,Kano,SupplierA,',
+    '9001,4,Beige Crepe,B-12,50,45.7,18.5,Kano,SupplierA,',
+    '9001,5,Beige Crepe,B-12,49,44.8,18.2,Kano,SupplierA,',
   ].join('\n');
   const text = [
     '*Bulk Receive template*',
     '',
-    'Required: `PackageNo`, `Design`, `Yards`, `Warehouse`',
-    'Optional: `Shade`, `Supplier`, `Notes`, `Color`',
-    `Max ${bulkValidator.MAX_ROWS_DEFAULT} rows. Single warehouse + supplier per file.`,
+    '*One row = one than.* Each bale (PackageNo) lists 1..N thans on consecutive rows.',
     '',
-    'Sample (3 rows):',
+    'Required: `PackageNo`, `ThanNo`, `Design`, `Yards`, `Warehouse`',
+    'Optional: `Shade`, `Supplier`, `NetMtrs`, `NetWeight`, `Notes`, `Color`',
+    `Max ${bulkValidator.MAX_ROWS_DEFAULT} rows · single warehouse + supplier per file · (PackageNo, ThanNo) unique within file.`,
+    '',
+    'Sample — one bale, 5 thans:',
     '```',
     csv,
     '```',
+    '',
+    'Full template + samples: `telegram-ops-bot/docs/samples/`',
   ].join('\n');
   await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
 }

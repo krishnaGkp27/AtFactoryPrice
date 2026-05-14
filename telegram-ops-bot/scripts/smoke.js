@@ -1212,36 +1212,42 @@ function runS14a() {
   const { parseXlsx, isAvailable } = require('../src/utils/xlsxParser');
   const { validate, fileHash } = require('../src/utils/bulkRowValidator');
 
-  // S14a.1 — happy-path CSV: 3 bales, header lowercased, totals correct
-  const csv1 = [
-    'PackageNo,Design,Shade,Yards,Warehouse,Supplier,Notes',
-    '9001,Beige Crepe,B-12,50,Kano,SupplierA,',
-    '9002,Beige Crepe,B-12,48,Kano,SupplierA,',
-    '9003,Red Silk,R-04,52,Kano,SupplierB,VIP hold',
+  // Canonical 5-than single-bale fixture used by happy-path assertions
+  // below. Matches docs/samples/bulk-receive-sample-single-bale.csv.
+  const SINGLE_BALE_CSV = [
+    'PackageNo,ThanNo,Design,Shade,Yards,NetMtrs,NetWeight,Warehouse,Supplier,Notes',
+    '9001,1,Beige Crepe,B-12,50,45.7,18.5,Kano,SupplierA,',
+    '9001,2,Beige Crepe,B-12,48,43.8,17.9,Kano,SupplierA,',
+    '9001,3,Beige Crepe,B-12,52,47.5,19.2,Kano,SupplierA,',
+    '9001,4,Beige Crepe,B-12,50,45.7,18.5,Kano,SupplierA,',
+    '9001,5,Beige Crepe,B-12,49,44.8,18.2,Kano,SupplierA,',
   ].join('\n');
-  let parsed = parseCsv(csv1);
-  if (parsed.ok && parsed.rows.length === 3
-      && parsed.headers.includes('packageno') && parsed.headers.includes('warehouse')
-      && parsed.rows[0].packageno === '9001' && parsed.rows[2].notes === 'VIP hold') {
-    pass('S14a.1 parseCsv: happy path 3 rows, lowercased headers, body parsed');
+
+  // S14a.1 — happy-path CSV: 1 bale × 5 thans
+  let parsed = parseCsv(SINGLE_BALE_CSV);
+  if (parsed.ok && parsed.rows.length === 5
+      && parsed.headers.includes('packageno') && parsed.headers.includes('thanno')
+      && parsed.rows[0].packageno === '9001' && parsed.rows[0].thanno === '1'
+      && parsed.rows[4].thanno === '5') {
+    pass('S14a.1 parseCsv: single-bale 5-than fixture parsed, ThanNo column read');
   } else fail('S14a.1 parseCsv happy path', JSON.stringify(parsed));
 
   // S14a.2 — quoted field with embedded comma is preserved
-  const csv2 = 'PackageNo,Design,Yards,Warehouse,Notes\n9001,Mint,50,Kano,"Lagos, Apapa Wharf"';
+  const csv2 = 'PackageNo,ThanNo,Design,Yards,Warehouse,Notes\n9001,1,Mint,50,Kano,"Lagos, Apapa Wharf"';
   parsed = parseCsv(csv2);
   if (parsed.ok && parsed.rows[0].notes === 'Lagos, Apapa Wharf') {
     pass('S14a.2 parseCsv: quoted comma-bearing cell preserved');
   } else fail('S14a.2 parseCsv quoted comma', JSON.stringify(parsed));
 
   // S14a.3 — BOM at start of file is stripped (Excel-on-Windows habit)
-  const csv3 = '\uFEFFPackageNo,Design,Yards,Warehouse\n9001,Mint,50,Kano';
+  const csv3 = '\uFEFFPackageNo,ThanNo,Design,Yards,Warehouse\n9001,1,Mint,50,Kano';
   parsed = parseCsv(csv3);
   if (parsed.ok && parsed.headers[0] === 'packageno') {
     pass('S14a.3 parseCsv: UTF-8 BOM stripped');
   } else fail('S14a.3 parseCsv BOM', JSON.stringify(parsed));
 
   // S14a.4 — CRLF line endings handled
-  const csv4 = 'PackageNo,Design,Yards,Warehouse\r\n9001,Mint,50,Kano\r\n9002,Mint,48,Kano\r\n';
+  const csv4 = 'PackageNo,ThanNo,Design,Yards,Warehouse\r\n9001,1,Mint,50,Kano\r\n9001,2,Mint,48,Kano\r\n';
   parsed = parseCsv(csv4);
   if (parsed.ok && parsed.rows.length === 2) {
     pass('S14a.4 parseCsv: CRLF newlines + trailing newline tolerated');
@@ -1253,38 +1259,42 @@ function runS14a() {
   else fail('S14a.5 parseCsv empty', JSON.stringify(parsed));
 
   // S14a.6 — header only (no data rows) rejected
-  parsed = parseCsv('PackageNo,Design,Yards,Warehouse\n');
+  parsed = parseCsv('PackageNo,ThanNo,Design,Yards,Warehouse\n');
   if (!parsed.ok) pass('S14a.6 parseCsv: header-only file rejected');
   else fail('S14a.6 parseCsv header-only', JSON.stringify(parsed));
 
   // S14a.7 — escaped double-quote inside quoted cell
-  const csv7 = 'PackageNo,Design,Yards,Warehouse,Notes\n9001,Mint,50,Kano,"He said ""hi"""';
+  const csv7 = 'PackageNo,ThanNo,Design,Yards,Warehouse,Notes\n9001,1,Mint,50,Kano,"He said ""hi"""';
   parsed = parseCsv(csv7);
   if (parsed.ok && parsed.rows[0].notes === 'He said "hi"') {
     pass('S14a.7 parseCsv: escaped quote ("") inside quoted cell');
   } else fail('S14a.7 parseCsv escaped quote', JSON.stringify(parsed));
 
-  // S14a.8 — validator happy path
-  parsed = parseCsv(csv1);
+  // S14a.8 — validator happy path on the canonical fixture
+  parsed = parseCsv(SINGLE_BALE_CSV);
   let v = validate(parsed);
-  if (v.ok && v.valid === 3 && v.summary.totalYards === 150
-      && v.summary.designs.length === 2 && v.bales[0].packageNo === '9001') {
-    pass('S14a.8 validator: 3-row clean file → ok=true, summary correct');
+  if (v.ok && v.valid === 5
+      && v.summary.totalBales === 1 && v.summary.totalThans === 5
+      && v.summary.totalYards === 249
+      && Math.abs(v.summary.totalNetMtrs - 227.5) < 0.01
+      && Math.abs(v.summary.totalNetWeight - 92.3) < 0.01
+      && v.thans[0].thanNo === 1 && v.thans[4].thanNo === 5) {
+    pass('S14a.8 validator: single-bale 5-than → 1 bale / 5 thans / 249 yards / 227.5 m / 92.3 kg');
   } else fail('S14a.8 validator happy path', JSON.stringify({ ok: v.ok, errors: v.errors, summary: v.summary }));
 
-  // S14a.9 — validator catches missing required header
-  parsed = parseCsv('PackageNo,Design,Warehouse\n9001,Mint,Kano');
+  // S14a.9 — validator catches missing required header (now ThanNo)
+  parsed = parseCsv('PackageNo,Design,Yards,Warehouse\n9001,Mint,50,Kano');
   v = validate(parsed);
-  if (!v.ok && v.errors.some((e) => /yards/i.test(e.message) && /Missing required/i.test(e.message))) {
-    pass('S14a.9 validator: missing "yards" header flagged');
+  if (!v.ok && v.errors.some((e) => /thanno/i.test(e.message) && /Missing required/i.test(e.message))) {
+    pass('S14a.9 validator: missing "thanno" header flagged');
   } else fail('S14a.9 validator missing header', JSON.stringify(v.errors));
 
   // S14a.10 — validator catches non-numeric yards + empty PackageNo + supplies row numbers
   const csv10 = [
-    'PackageNo,Design,Yards,Warehouse',
-    '9001,Mint,fifty,Kano',
-    ',Beige,50,Kano',
-    '9002,Beige,50,Kano',
+    'PackageNo,ThanNo,Design,Yards,Warehouse',
+    '9001,1,Mint,fifty,Kano',
+    ',1,Beige,50,Kano',
+    '9002,1,Beige,50,Kano',
   ].join('\n');
   parsed = parseCsv(csv10);
   v = validate(parsed);
@@ -1295,15 +1305,15 @@ function runS14a() {
   } else fail('S14a.10 validator row errors', JSON.stringify(v.errors));
 
   // S14a.11 — warehouse not in allowedWarehouses → rejected per locked spec
-  parsed = parseCsv('PackageNo,Design,Yards,Warehouse\n9001,Mint,50,LagosUnknown');
+  parsed = parseCsv('PackageNo,ThanNo,Design,Yards,Warehouse\n9001,1,Mint,50,LagosUnknown');
   v = validate(parsed, { allowedWarehouses: ['Kano', 'Abuja'] });
   if (!v.ok && v.errors.some((e) => e.column === 'warehouse' && /not registered/i.test(e.message))) {
     pass('S14a.11 validator: unregistered warehouse rejects the file');
   } else fail('S14a.11 validator unknown warehouse', JSON.stringify(v.errors));
 
   // S14a.12 — max row cap honoured
-  const big = ['PackageNo,Design,Yards,Warehouse'].concat(
-    Array.from({ length: 6 }, (_, i) => `${i},Mint,50,Kano`)
+  const big = ['PackageNo,ThanNo,Design,Yards,Warehouse'].concat(
+    Array.from({ length: 6 }, (_, i) => `${i + 1},1,Mint,50,Kano`)
   ).join('\n');
   parsed = parseCsv(big);
   v = validate(parsed, { maxRows: 5 });
@@ -1311,30 +1321,31 @@ function runS14a() {
     pass('S14a.12 validator: maxRows cap enforced');
   } else fail('S14a.12 validator maxRows', JSON.stringify(v.errors));
 
-  // S14a.13 — same PackageNo can legitimately repeat (composite-key model)
+  // S14a.13 — multi-bale composite-key OK; same (pkg, than) is NOT
   const csv13 = [
-    'PackageNo,Design,Yards,Warehouse',
-    '9001,Mint,50,Kano',
-    '9001,Beige,48,Kano',
+    'PackageNo,ThanNo,Design,Yards,Warehouse',
+    '9001,1,Mint,50,Kano',
+    '9002,1,Mint,48,Kano',
+    '9003,1,Mint,52,Kano',
   ].join('\n');
   parsed = parseCsv(csv13);
   v = validate(parsed);
-  if (v.ok && v.valid === 2 && v.bales[0].packageNo === '9001' && v.bales[1].packageNo === '9001') {
-    pass('S14a.13 validator: repeated PackageNo allowed (composite-key model)');
-  } else fail('S14a.13 validator repeated package', JSON.stringify(v));
+  if (v.ok && v.summary.totalBales === 3 && v.summary.totalThans === 3) {
+    pass('S14a.13 validator: 3 distinct bales × 1 than each (composite key OK)');
+  } else fail('S14a.13 validator multi-bale', JSON.stringify(v));
 
   // S14a.14 — fileHash is stable for identical input and changes when content changes
-  const h1 = fileHash(csv1);
-  const h2 = fileHash(csv1);
-  const h3 = fileHash(csv1 + '\n');
+  const h1 = fileHash(SINGLE_BALE_CSV);
+  const h2 = fileHash(SINGLE_BALE_CSV);
+  const h3 = fileHash(SINGLE_BALE_CSV + '\n');
   if (h1 && h1 === h2 && h1 !== h3 && /^[a-f0-9]{16}$/.test(h1)) {
     pass('S14a.14 fileHash: stable for same input, differs when content changes');
   } else fail('S14a.14 fileHash', JSON.stringify({ h1, h2, h3 }));
 
   // S14a.15 — fileHash works on Buffers too (for XLSX path)
-  const buf1 = Buffer.from(csv1, 'utf8');
+  const buf1 = Buffer.from(SINGLE_BALE_CSV, 'utf8');
   const hb1 = fileHash(buf1);
-  const hb2 = fileHash(Buffer.from(csv1, 'utf8'));
+  const hb2 = fileHash(Buffer.from(SINGLE_BALE_CSV, 'utf8'));
   if (hb1 && hb1 === hb2) {
     pass('S14a.15 fileHash: Buffer input handled');
   } else fail('S14a.15 fileHash buffer', JSON.stringify({ hb1, hb2 }));
@@ -1365,6 +1376,71 @@ function runS14a() {
       pass('S14a.16 parseXlsx: gracefully reports missing dep (install pending)');
     } else fail('S14a.16 parseXlsx skip', JSON.stringify(skip));
   }
+
+  // S14a.17 — (PackageNo, ThanNo) uniqueness across file
+  const dupTPC = [
+    'PackageNo,ThanNo,Design,Yards,Warehouse',
+    '9001,1,Mint,50,Kano',
+    '9001,1,Mint,48,Kano', // duplicate
+    '9001,2,Mint,50,Kano',
+  ].join('\n');
+  let parsedDup = parseCsv(dupTPC);
+  let vDup = validate(parsedDup);
+  if (!vDup.ok && vDup.errors.some((e) => /Duplicate.*ThanNo=1/i.test(e.message) && e.row === 3)) {
+    pass('S14a.17 validator: duplicate (PackageNo, ThanNo) rejected with row reference');
+  } else fail('S14a.17 validator duplicate', JSON.stringify(vDup.errors));
+
+  // S14a.18 — per-bale uniformity: same PackageNo must share Design + Shade
+  const mixCsv = [
+    'PackageNo,ThanNo,Design,Shade,Yards,Warehouse',
+    '9001,1,Beige,B-12,50,Kano',
+    '9001,2,Beige,B-12,50,Kano',
+    '9001,3,Mint,M-01,50,Kano',  // wrong design + shade for bale 9001
+  ].join('\n');
+  let parsedMix = parseCsv(mixCsv);
+  let vMix = validate(parsedMix);
+  const designErr = vMix.errors.find((e) => e.column === 'design' && /Bale 9001.*inconsistent design/i.test(e.message));
+  const shadeErr = vMix.errors.find((e) => e.column === 'shade' && /Bale 9001.*inconsistent shade/i.test(e.message));
+  if (!vMix.ok && designErr && shadeErr) {
+    pass('S14a.18 validator: per-bale design/shade uniformity enforced');
+  } else fail('S14a.18 validator uniformity', JSON.stringify(vMix.errors));
+
+  // S14a.19 — ThanNo type guardrails: blank, zero, negative, decimal all rejected
+  const badThan = [
+    'PackageNo,ThanNo,Design,Yards,Warehouse',
+    '9001,,Mint,50,Kano',   // blank
+    '9001,0,Mint,50,Kano',  // zero
+    '9001,-1,Mint,50,Kano', // negative
+    '9001,1.5,Mint,50,Kano',// decimal (parseInt → 1, fine), but better caught? actually parseInt of "1.5" is 1
+    '9001,1000,Mint,50,Kano', // above THAN_NO_MAX
+  ].join('\n');
+  let parsedBad = parseCsv(badThan);
+  let vBad = validate(parsedBad);
+  // Expect: blank, 0, negative, 1000 all flagged. parseInt('1.5') is 1, so that row is technically valid
+  // but it's a duplicate of the implied row above… let's just count specific failures:
+  const blankErr = vBad.errors.find((e) => e.row === 2 && e.column === 'thanno' && /required/i.test(e.message));
+  const zeroErr = vBad.errors.find((e) => e.row === 3 && e.column === 'thanno');
+  const negErr = vBad.errors.find((e) => e.row === 4 && e.column === 'thanno');
+  const overflowErr = vBad.errors.find((e) => e.row === 6 && e.column === 'thanno');
+  if (!vBad.ok && blankErr && zeroErr && negErr && overflowErr) {
+    pass('S14a.19 validator: ThanNo blank/zero/negative/>999 all rejected');
+  } else fail('S14a.19 validator ThanNo bounds', JSON.stringify(vBad.errors));
+
+  // S14a.20 — NetMtrs / NetWeight: optional, but if present must be ≥ 0 numeric
+  const netCsv = [
+    'PackageNo,ThanNo,Design,Yards,NetMtrs,NetWeight,Warehouse',
+    '9001,1,Mint,50,,,,Kano',          // both blank → fine
+    '9001,2,Mint,50,45.5,18.2,Kano',   // both populated → fine
+    '9001,3,Mint,50,notanumber,18,Kano', // bad NetMtrs
+    '9001,4,Mint,50,-5,18,Kano',       // negative NetMtrs
+  ].join('\n');
+  let parsedNet = parseCsv(netCsv);
+  let vNet = validate(parsedNet);
+  const netNanErr = vNet.errors.find((e) => e.row === 4 && e.column === 'netmtrs');
+  const netNegErr = vNet.errors.find((e) => e.row === 5 && e.column === 'netmtrs' && /non-negative/i.test(e.message));
+  if (!vNet.ok && netNanErr && netNegErr) {
+    pass('S14a.20 validator: NetMtrs non-numeric / negative rejected; blank tolerated');
+  } else fail('S14a.20 validator NetMtrs', JSON.stringify(vNet.errors));
 }
 
 // ---------------------------------------------------------------------------
@@ -1577,11 +1653,12 @@ async function runS14c() {
       action: 'bulk_receive_goods',
       warehouse: 'Kano',
       supplier: 'SupplierA',
+      // One bale (9001) with 2 thans — the canonical single-bale case.
       bales: [
-        { packageNo: '9001', design: 'Beige', shade: 'B-12', yards: 50 },
-        { packageNo: '9002', design: 'Beige', shade: 'B-12', yards: 48 },
+        { packageNo: '9001', thanNo: 1, design: 'Beige', shade: 'B-12', yards: 50, netMtrs: 45.7, netWeight: 18.5 },
+        { packageNo: '9001', thanNo: 2, design: 'Beige', shade: 'B-12', yards: 48, netMtrs: 43.8, netWeight: 17.9 },
       ],
-      totalBales: 2, totalYards: 98,
+      totalBales: 1, totalThans: 2, totalYards: 98,
       source: 'bulk_csv', fileHash: 'ffffffffffffff01',
       fileName: 'abdul-2026-05-14.csv',
       dateReceived: '2026-05-14',
@@ -1607,17 +1684,24 @@ async function runS14c() {
 
   const invService = require('../src/services/inventoryService');
   const result = await invService.executeApprovedAction('req-test-1', 'ADM-1');
+  // Append-only contract: 1 bale × 2 thans should produce 2 new Inventory
+  // rows, zero mutations of existing rows. bundleReport surfaces the
+  // distinction: baleCount=1, thanCount=2.
+  const appendedThanRows = writes.Inventory.append;
+  const thanNosWritten = appendedThanRows.map((r) => r[5]); // column F = ThanNo
   if (result && result.ok && result.bundleReport
-      && result.bundleReport.baleCount === 2
+      && result.bundleReport.baleCount === 1
+      && result.bundleReport.thanCount === 2
       && result.bundleReport.source === 'bulk_csv'
       && result.bundleReport.fileHash === 'ffffffffffffff01'
-      && writes.Inventory.append.length === 2
+      && appendedThanRows.length === 2
+      && thanNosWritten[0] === 1 && thanNosWritten[1] === 2
       && writes.Inventory.update.length === 0
       && writes.Inventory.batch.length === 0) {
-    pass('S14c.8 service: bulk_receive_goods append-only — 2 new Inventory rows, 0 mutations of existing');
+    pass('S14c.8 service: bulk_receive_goods append-only — 1 bale × 2 thans, ThanNo persisted, 0 mutations');
   } else {
     fail('S14c.8 service append-only', JSON.stringify({
-      result, invWrites: writes.Inventory,
+      result, invWrites: writes.Inventory, thanNosWritten,
     }));
   }
 

@@ -180,3 +180,39 @@ Both deferred until P1–P4 + P2.5 are field-tested. Filed in ROADMAP §8
   instruments sheetsClient to assert "no mutating writes on Inventory."
   That should be the *first* test written for any append-only feature,
   not the eighth. It's the test that locks the spec.
+- **Ask the domain question before locking the schema.** Biggest miss
+  of the day: I shipped C1-C4 assuming "1 row = 1 bale." The user
+  corrected me in their next message — actually 1 row = 1 *than*, and
+  one bale carries N thans. I had to ship C5 the same day to add the
+  `ThanNo` column and per-bale uniformity checks. The remedy is
+  cheap (one focused validator question about row-to-physical-object
+  mapping) and would have saved a round-trip. Building schema-first
+  for any line-of-business feature: *always* ask "what is one row?".
+
+## Addendum (C5) — schema correction
+
+> User: "As of now single rows in inventory consists of one than (part
+> of one bale number). FYI, one bale consists of one or more thans for
+> the material we are dealing with right now."
+
+**What changed in C5:**
+- Validator: `ThanNo` is now a 5th required column (positive integer
+  1–999). `NetMtrs` and `NetWeight` added as optional numeric columns.
+  Two new file-level invariants: (PackageNo, ThanNo) unique within a
+  file, and per-bale Design + Shade uniformity.
+- Flow preview now shows "1 bale · 5 thans · 249 yards" with optional
+  net m / net kg lines when those columns are populated.
+- Service handler: each row writes its own ThanNo + NetMtrs + NetWeight
+  to the Inventory column-F/N/O slots (the columns were already there
+  from the legacy schema; we just stopped hard-coding `thanNo: 1`).
+- PO linkage: `qty_bales` against the PO now counts *distinct
+  PackageNos*, not row count. A bale of 5 thans applies 1 against a
+  PO's bale quota, not 5.
+- Sample CSVs at `docs/samples/bulk-receive-sample-single-bale.csv`
+  (1 bale, 5 thans) and `bulk-receive-sample-multi-bale.csv`
+  (3 bales, 10 thans) — Abdul can copy either and edit.
+- Smoke harness: +4 checks (S14a.17–.20), now at 153 green.
+
+The lesson is in "What I'd do differently next time" above — schema
+shape questions belong in the very first clarifier round, not after
+the code is pushed.

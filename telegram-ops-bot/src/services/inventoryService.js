@@ -518,10 +518,15 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       }
     }
 
-    const bales = Array.isArray(aj.bales) ? aj.bales : [];
-    if (!bales.length) return { ok: false, message: 'No bales in payload.' };
-    const totalBales = bales.length;
-    const totalYards = bales.reduce((s, b) => s + (parseFloat(b.yards) || 0), 0);
+    const thans = Array.isArray(aj.bales) ? aj.bales : [];
+    if (!thans.length) return { ok: false, message: 'No thans in payload.' };
+    const totalThans = thans.length;
+    const totalYards = thans.reduce((s, b) => s + (parseFloat(b.yards) || 0), 0);
+    // Bale count = distinct PackageNo. The validator already enforces
+    // (PackageNo, ThanNo) uniqueness and per-bale uniformity, so this
+    // is just a final tally for the GRN header.
+    const distinctBales = new Set(thans.map((b) => b.packageNo));
+    const totalBales = distinctBales.size;
 
     const grn = await goodsReceiptsRepo.append({
       warehouse: aj.warehouse,
@@ -532,18 +537,20 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       total_bales: totalBales,
       total_yards: totalYards,
       photo_file_id: '',
-      notes: aj.fileName ? `bulk: ${aj.fileName}` : '',
+      notes: aj.fileName ? `bulk: ${aj.fileName} · ${totalThans} thans` : `bulk: ${totalThans} thans`,
       status: 'received',
       source: aj.source || 'bulk_csv',
       file_hash: fileHash,
     });
 
-    const baleRows = bales.map((b) => ({
+    const baleRows = thans.map((b) => ({
       packageNo: b.packageNo,
       design: b.design,
       shade: b.shade || '',
-      thanNo: 1,
+      thanNo: parseInt(b.thanNo, 10) > 0 ? parseInt(b.thanNo, 10) : 1,
       yards: parseFloat(b.yards) || 0,
+      netMtrs: parseFloat(b.netMtrs) || 0,
+      netWeight: parseFloat(b.netWeight) || 0,
       warehouse: aj.warehouse,
       pricePerYard: 0,
       dateReceived: aj.dateReceived || new Date().toISOString().split('T')[0],
@@ -577,17 +584,26 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     if (aj.po_id) {
       try {
         const procurementRepo = require('../repositories/procurementOrdersRepository');
-        // Aggregate received bales by (design, shade) so each PO line is
-        // updated once, not N times.
+        // Aggregate by (design, shade). qty_bales counts DISTINCT
+        // PackageNos (because a PO line is sized in bales, not thans);
+        // qty_yards aggregates across all thans of those bales.
         const byKey = new Map();
         for (const b of persisted) {
           const key = `${b.design}|${b.shade || ''}`;
-          const acc = byKey.get(key) || { design: b.design, shade: b.shade || '', qty_bales: 0, qty_yards: 0 };
-          acc.qty_bales += 1;
+          const acc = byKey.get(key) || {
+            design: b.design, shade: b.shade || '',
+            qty_bales: 0, qty_yards: 0,
+            _bales: new Set(),
+          };
+          acc._bales.add(b.packageNo);
           acc.qty_yards += parseFloat(b.yards) || 0;
           byKey.set(key, acc);
         }
-        poUpdate = await procurementRepo.applyReceived(aj.po_id, Array.from(byKey.values()));
+        const aggregated = Array.from(byKey.values()).map((a) => ({
+          design: a.design, shade: a.shade,
+          qty_bales: a._bales.size, qty_yards: a.qty_yards,
+        }));
+        poUpdate = await procurementRepo.applyReceived(aj.po_id, aggregated);
         await procurementRepo.recomputeStatus(aj.po_id);
       } catch (e) {
         await auditLogRepository.append('po_receive_link_failed',
@@ -596,7 +612,10 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     }
 
     bundleReport = {
-      grnId: grn.grn_id, baleCount: persisted.length, totalYards,
+      grnId: grn.grn_id,
+      baleCount: totalBales,
+      thanCount: persisted.length,
+      totalYards,
       poId: aj.po_id || '', poUpdate,
       source: aj.source || 'bulk_csv', fileHash, fileName: aj.fileName || '',
     };

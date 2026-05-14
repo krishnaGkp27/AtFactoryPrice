@@ -261,7 +261,8 @@ is a one-file change when the operator decides.
 | C1 | `cacf8cd` | CSV/XLSX parsers + bulk row validator (pure utils) | ✅ Done |
 | C2 | `8547dc4` | `GoodsReceipts.source` + `file_hash` columns for idempotency | ✅ Done |
 | C3 | `ec54406` | Bulk Receive flow + dual-admin risk + service handler | ✅ Done |
-| C4 | (this set) | Controller wire-up + Abdul-friendly CSV template doc | ✅ Done |
+| C4 | (pushed) | Controller wire-up + Abdul-friendly CSV template doc | ✅ Done |
+| C5 | (this set) | **Schema correction: `ThanNo` is now a required CSV column.** 1 row = 1 *than* (not 1 *bale*). Adds optional `NetMtrs` / `NetWeight`, file-level (PackageNo, ThanNo) uniqueness, per-bale design/shade uniformity, PO linkage counts distinct bales rather than thans. Sample CSVs ship at `docs/samples/`. | ✅ Done |
 
 **Why this set:** the interactive 6-step GRN flow (P2) is great for two
 or three bales, but when Abdul has a stack of 50 packaging slips after
@@ -269,11 +270,19 @@ a delivery, tapping through 6 steps × 50 bales is unworkable. Bulk
 Receive lets him assemble the data offline in Excel/Sheets, upload one
 file, and have admin sign-off applied to the whole batch in one stroke.
 
-**Locked design (user decisions, 2026-05-14):**
-- **Append-only.** Every file row becomes a *new* Inventory bale with
-  fresh `bale_uid` + `addedAt`. Existing rows are never mutated,
-  reordered, or deleted. Repeated `PackageNo` is allowed (composite-key
-  model from P1).
+**Locked design (user decisions, 2026-05-14, refined in C5):**
+- **1 row = 1 than.** A bale (`PackageNo`) contains 1..N thans (rolls).
+  Each row is one than and writes one Inventory row. A bale with 5 thans
+  is 5 rows sharing the same `PackageNo` with `ThanNo` running 1..5.
+- **Append-only.** Every row becomes a *new* Inventory row with fresh
+  `bale_uid` + `addedAt`. Existing rows are never mutated, reordered, or
+  deleted. Repeated `PackageNo` is allowed both within a file (multiple
+  thans of one bale) and across history (composite-key model from P1).
+- **Per-bale uniformity.** All thans of the same `PackageNo` must share
+  the same `Design` and `Shade` — enforced by the validator with a
+  clear error message naming both rows.
+- **(PackageNo, ThanNo) unique within a file.** You can't have two
+  ThanNo=1 entries for the same bale in the same upload.
 - **CSV + XLSX** in v1. CSV is the canonical format; XLSX is wrapped via
   SheetJS (`xlsx` npm package).
 - **Reject the whole file** on any error (missing required column, bad
@@ -314,21 +323,23 @@ file, and have admin sign-off applied to the whole batch in one stroke.
   Abdul's expected volumes).
 
 **Smoke coverage (S14):**
-- **S14a — parsers/validator** (16 checks): CSV happy path, quoted
+- **S14a — parsers/validator** (20 checks): CSV happy path, quoted
   cells, BOM, CRLF, escaped quotes, validator header/row/maxRows
-  checks, repeated-PackageNo allowance, fileHash stability, XLSX
-  round-trip.
+  checks, multi-bale composite-key allowance, fileHash stability, XLSX
+  round-trip, **(PackageNo, ThanNo) uniqueness (S14a.17)**, **per-bale
+  design/shade uniformity (S14a.18)**, **ThanNo integer bounds 1–999
+  (S14a.19)**, **NetMtrs/NetWeight optional + ≥0 numeric (S14a.20)**.
 - **S14b — idempotency** (5 checks): 14-col GoodsReceipts parse with
   source + file_hash, legacy 12-col defaults to source='manual',
   getByFileHash hit/miss, append column count.
 - **S14c — flow + service** (9 checks): risk policy returns
   approval_required for admins and employees, activity registered in
   stock hub, parseBuffer routes correctly by extension, error formatter
-  truncates after 15 rows, **append-only contract** (asserts 0 mutating
-  writes to Inventory after a bulk receive), idempotency race-condition
-  guard at persist time.
+  truncates after 15 rows, **append-only contract + ThanNo persistence**
+  (asserts 0 mutating writes to Inventory and verifies `ThanNo` lands in
+  column F per row), idempotency race-condition guard at persist time.
 
-Total +30 checks; harness at 149 green.
+Total +34 checks; harness at 153 green.
 
 **Smoke contract that locks the spec:** S14c.8 instruments
 `sheetsClient.updateRange` and `sheetsClient.batchUpdateRanges` and
