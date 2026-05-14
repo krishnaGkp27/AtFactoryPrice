@@ -2255,6 +2255,198 @@ async function runS15c() {
 }
 
 // ---------------------------------------------------------------------------
+// S15d — Photo Receive · edit subflow + submit bridge (P5-C4)
+// ---------------------------------------------------------------------------
+async function runS15d() {
+  delete require.cache[require.resolve('../src/flows/photoReceiveFlow')];
+  const flow = require('../src/flows/photoReceiveFlow');
+
+  // S15d.1 — EDITABLE_FIELDS list contains every field the validator cares about
+  const expected = ['packageNo', 'thanNo', 'design', 'shade', 'yards', 'netMtrs', 'netWeight'];
+  const missing = expected.filter((f) => !flow.EDITABLE_FIELDS.includes(f));
+  if (!missing.length && flow.EDITABLE_FIELDS.length === expected.length) {
+    pass('S15d.1 EDITABLE_FIELDS: complete coverage of bulkValidator-relevant fields');
+  } else fail('S15d.1 editable fields', `missing: ${missing.join(', ')}, full: ${flow.EDITABLE_FIELDS.join(', ')}`);
+
+  // S15d.2 — FIELD_META present for every editable field
+  const metaMissing = expected.filter((f) => !flow.FIELD_META[f] || !flow.FIELD_META[f].label || !flow.FIELD_META[f].type);
+  if (!metaMissing.length) pass('S15d.2 FIELD_META: label + type present for every editable field');
+  else fail('S15d.2 field meta', `missing meta: ${metaMissing.join(', ')}`);
+
+  // S15d.3 — coerceFieldValue: string (Design)
+  let v = flow.coerceFieldValue('design', 'Beige Crepe');
+  if (v.ok && v.value === 'Beige Crepe') pass('S15d.3a coerce: string Design accepted');
+  else fail('S15d.3a coerce string', JSON.stringify(v));
+
+  v = flow.coerceFieldValue('design', '');
+  if (!v.ok && /can't be empty/i.test(v.error)) pass('S15d.3b coerce: empty Design rejected');
+  else fail('S15d.3b coerce empty string', JSON.stringify(v));
+
+  v = flow.coerceFieldValue('design', 'x'.repeat(81));
+  if (!v.ok && /too long/i.test(v.error)) pass('S15d.3c coerce: Design > 80 chars rejected');
+  else fail('S15d.3c coerce long string', JSON.stringify(v));
+
+  v = flow.coerceFieldValue('packageNo', 'x'.repeat(33));
+  if (!v.ok && /too long/i.test(v.error)) pass('S15d.3d coerce: PackageNo > 32 chars rejected');
+  else fail('S15d.3d coerce long pkg', JSON.stringify(v));
+
+  // S15d.4 — coerceFieldValue: int (ThanNo)
+  v = flow.coerceFieldValue('thanNo', '5');
+  if (v.ok && v.value === 5) pass('S15d.4a coerce: ThanNo "5" → 5');
+  else fail('S15d.4a coerce thanNo', JSON.stringify(v));
+
+  v = flow.coerceFieldValue('thanNo', '0');
+  if (!v.ok && /positive integer/i.test(v.error)) pass('S15d.4b coerce: ThanNo "0" rejected');
+  else fail('S15d.4b coerce thanNo zero', JSON.stringify(v));
+
+  v = flow.coerceFieldValue('thanNo', '1000');
+  if (!v.ok && /1.999/i.test(v.error)) pass('S15d.4c coerce: ThanNo 1000 rejected (max 999)');
+  else fail('S15d.4c coerce thanNo overflow', JSON.stringify(v));
+
+  v = flow.coerceFieldValue('thanNo', '5.7');
+  // parseInt("5.7", 10) = 5, accepted. That's fine — we round down.
+  if (v.ok && v.value === 5) pass('S15d.4d coerce: ThanNo "5.7" → 5 (parseInt truncates)');
+  else fail('S15d.4d coerce thanNo decimal', JSON.stringify(v));
+
+  // S15d.5 — coerceFieldValue: positive_number (Yards)
+  v = flow.coerceFieldValue('yards', '52.5');
+  if (v.ok && v.value === 52.5) pass('S15d.5a coerce: Yards "52.5" → 52.5');
+  else fail('S15d.5a coerce yards', JSON.stringify(v));
+
+  v = flow.coerceFieldValue('yards', '0');
+  if (!v.ok && /positive number/i.test(v.error)) pass('S15d.5b coerce: Yards "0" rejected');
+  else fail('S15d.5b coerce yards zero', JSON.stringify(v));
+
+  v = flow.coerceFieldValue('yards', 'fifty');
+  if (!v.ok) pass('S15d.5c coerce: Yards "fifty" rejected (not numeric)');
+  else fail('S15d.5c coerce yards word', JSON.stringify(v));
+
+  // S15d.6 — coerceFieldValue: non_negative_number with "-" clear sentinel
+  v = flow.coerceFieldValue('netMtrs', '-');
+  if (v.ok && v.value === 0) pass('S15d.6a coerce: NetMtrs "-" → 0 (clear sentinel)');
+  else fail('S15d.6a coerce netMtrs clear', JSON.stringify(v));
+
+  v = flow.coerceFieldValue('shade', '-');
+  if (v.ok && v.value === '') pass('S15d.6b coerce: Shade "-" → "" (clear sentinel)');
+  else fail('S15d.6b coerce shade clear', JSON.stringify(v));
+
+  v = flow.coerceFieldValue('netWeight', '-1');
+  if (!v.ok && /≥ 0/i.test(v.error)) pass('S15d.6c coerce: NetWeight "-1" rejected (must be ≥ 0)');
+  else fail('S15d.6c coerce netWeight negative', JSON.stringify(v));
+
+  // S15d.7 — coerceFieldValue: yards "-" is NOT a clear (yards is required)
+  v = flow.coerceFieldValue('yards', '-');
+  if (!v.ok) pass('S15d.7 coerce: Yards "-" rejected (required field, no clear)');
+  else fail('S15d.7 coerce yards clear', JSON.stringify(v));
+
+  // S15d.8 — handleText: routes only when type+step+editingField match
+  // We stub the bot just to capture sends; sessionStore is real.
+  const sessionStore = require('../src/utils/sessionStore');
+  const userId = 'U-S15d-1';
+  const sends = [];
+  let nextMsgId = 1000;
+  const fakeBot = {
+    sendMessage: async (cid, t /* , opts */) => {
+      sends.push({ cid, t });
+      return { message_id: ++nextMsgId };   // render() expects this shape
+    },
+    editMessageText: async () => true,
+  };
+  const msg = { from: { id: userId }, chat: { id: 999 }, text: '50' };
+
+  // (a) no session → false
+  sessionStore.clear(userId);
+  let handled = await flow.handleText(fakeBot, msg);
+  if (handled === false) pass('S15d.8a handleText: no session → false');
+  else fail('S15d.8a no session', `expected false, got ${handled}`);
+
+  // (b) wrong session type → false
+  sessionStore.set(userId, { type: 'wrong_flow', step: 'await_edit', editingField: 'yards' });
+  handled = await flow.handleText(fakeBot, msg);
+  if (handled === false) pass('S15d.8b handleText: wrong session type → false');
+  else fail('S15d.8b wrong type', `expected false`);
+
+  // (c) right type, wrong step → false
+  sessionStore.set(userId, { type: 'photo_receive_flow', step: 'await_file', editingField: 'yards' });
+  handled = await flow.handleText(fakeBot, msg);
+  if (handled === false) pass('S15d.8c handleText: wrong step (await_file) → false');
+  else fail('S15d.8c wrong step', `expected false`);
+
+  // (d) right type + step, but editingField null → false
+  sessionStore.set(userId, { type: 'photo_receive_flow', step: 'await_edit', editingField: null });
+  handled = await flow.handleText(fakeBot, msg);
+  if (handled === false) pass('S15d.8d handleText: editingField null → false (passes through)');
+  else fail('S15d.8d no editingField', `expected false`);
+
+  // (e) full match → handles, applies value, advances state
+  sessionStore.set(userId, {
+    type: 'photo_receive_flow', step: 'await_edit',
+    editingRowIdx: 0, editingField: 'yards',
+    flowMessageId: null,
+    rows: [{
+      idx: 0, packageNo: '9001', thanNo: 3, design: 'Beige', shade: 'B-12',
+      yards: 52, netMtrs: 47.5, netWeight: 19.2,
+      confidence: 0.55, lowConfidence: true,
+      state: 'pending', editedFields: [],
+    }],
+  });
+  handled = await flow.handleText(fakeBot, msg);
+  const sess = sessionStore.get(userId);
+  if (handled === true
+      && sess.rows[0].yards === 50
+      && sess.rows[0].editedFields.includes('yards')
+      && sess.rows[0].lowConfidence === false   // editing clears the flag
+      && sess.editingField === null) {
+    pass('S15d.8e handleText: full match → value applied, editedFields tracked, lowConf cleared');
+  } else fail('S15d.8e full match', JSON.stringify({ handled, row: sess.rows[0], editing: sess.editingField }));
+
+  // (f) /cancel exits the edit without changing the value
+  sessionStore.set(userId, {
+    type: 'photo_receive_flow', step: 'await_edit',
+    editingRowIdx: 0, editingField: 'design',
+    flowMessageId: null,
+    rows: [{
+      idx: 0, packageNo: '9001', thanNo: 1, design: 'Beige', shade: 'B-12',
+      yards: 50, netMtrs: 0, netWeight: 0,
+      confidence: 0.95, lowConfidence: false,
+      state: 'pending', editedFields: [],
+    }],
+  });
+  handled = await flow.handleText(fakeBot, { from: { id: userId }, chat: { id: 999 }, text: '/cancel' });
+  const sess2 = sessionStore.get(userId);
+  if (handled === true
+      && sess2.rows[0].design === 'Beige'
+      && sess2.rows[0].editedFields.length === 0
+      && sess2.editingField === null) {
+    pass('S15d.8f handleText: /cancel exits edit without applying value');
+  } else fail('S15d.8f cancel', JSON.stringify({ handled, row: sess2.rows[0] }));
+
+  // (g) invalid value re-prompts without clearing editingField
+  sessionStore.set(userId, {
+    type: 'photo_receive_flow', step: 'await_edit',
+    editingRowIdx: 0, editingField: 'yards',
+    flowMessageId: null,
+    rows: [{
+      idx: 0, packageNo: '9001', thanNo: 1, design: 'Beige', shade: 'B-12',
+      yards: 50, netMtrs: 0, netWeight: 0,
+      confidence: 0.95, lowConfidence: false,
+      state: 'pending', editedFields: [],
+    }],
+  });
+  handled = await flow.handleText(fakeBot, { from: { id: userId }, chat: { id: 999 }, text: 'fifty' });
+  const sess3 = sessionStore.get(userId);
+  if (handled === true
+      && sess3.rows[0].yards === 50          // unchanged
+      && sess3.editingField === 'yards'      // still in edit mode for that field
+      && sends.length > 0
+      && /try again|positive number/i.test(sends[sends.length - 1].t)) {
+    pass('S15d.8g handleText: invalid value re-prompts, editingField preserved');
+  } else fail('S15d.8g invalid value', JSON.stringify({ handled, row: sess3.rows[0], editing: sess3.editingField, lastSend: sends[sends.length - 1] }));
+
+  sessionStore.clear(userId);
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -2279,6 +2471,7 @@ async function runS15c() {
   try { await runS15a(); } catch (e) { fail('S15a unexpected error', e.message); }
   try { await runS15b(); } catch (e) { fail('S15b unexpected error', e.message); }
   try { await runS15c(); } catch (e) { fail('S15c unexpected error', e.message); }
+  try { await runS15d(); } catch (e) { fail('S15d unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

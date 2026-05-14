@@ -3249,6 +3249,17 @@ async function handleMessage(bot, msg) {
     }
   }
 
+  // P5 — Photo Receive: per-row field edits accept free-text input.
+  // Only matches when an edit subflow is active (session.editingField
+  // is set), so harmless when the flow is in any other step.
+  {
+    const prSession = sessionStore.get(userId);
+    if (prSession && prSession.type === 'photo_receive_flow') {
+      const handled = await photoReceiveFlow.handleText(bot, msg);
+      if (handled) return;
+    }
+  }
+
   // Catalog: search design photo — free-text design number lookup.
   {
     const dasSession = sessionStore.get(userId);

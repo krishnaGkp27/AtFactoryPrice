@@ -379,9 +379,9 @@ P2.5 bulk CSV; only the row-capture mechanism changes.
 |---|---|---|---|
 | C1 | `5ae3a82` | Vision client interface + stub provider + config block | ✅ Done |
 | C2 | `2fa1f6b` | Drive backup helper + local image archiving | ✅ Done |
-| C3 | (this set) | `photoReceiveFlow.js` — upload + per-row review UI | ✅ Done |
-| C4 | — | Per-row edit subflow + submission bridge into `bulk_receive_goods` | ⏳ Next |
-| C5 | — | Smoke + docs/photo-receive-template.md | ⏳ Planned |
+| C3 | `dd769cc` | `photoReceiveFlow.js` — upload + per-row review UI | ✅ Done |
+| C4 | (this set) | Per-row edit subflow + submission bridge into `bulk_receive_goods` | ✅ Done |
+| C5 | — | Smoke + docs/photo-receive-template.md | ⏳ Next |
 
 **P5-C1 ships:**
 - `src/services/vision/index.js` — provider-agnostic dispatcher.
@@ -465,6 +465,43 @@ P2.5 bulk CSV; only the row-capture mechanism changes.
   doesn't dead-end, and the controller wiring is already in place — C4
   just fills in the handlers.
 
+**P5-C4 ships:**
+- *Per-row edit subflow* — tap `✏ N` opens a field-by-field edit panel:
+  `PackageNo`, `ThanNo`, `Design`, `Shade`, `Yards`, `NetMtrs`,
+  `NetWeight`. Each field button starts a text-input prompt; admin
+  sends the new value, validator coerces it, panel re-renders. Admin
+  can edit any number of fields then `✅ Save row`. `↩ Discard edits +
+  back` reverts via a snapshot taken on edit-entry so changes are atomic.
+  Editing a low-confidence row automatically clears its `🔴` flag — by
+  touching the cell, the admin has explicitly vetted it.
+- *Field-type coercion* — string fields enforce length limits matching
+  the bulk validator (PackageNo ≤ 32, others ≤ 80). Integer fields
+  (ThanNo) range-checked 1–999. Positive-number fields (Yards) must be
+  > 0. Non-negative-number fields (NetMtrs, NetWeight) must be ≥ 0.
+  Sentinel `-` clears optional fields (`Shade`, `NetMtrs`, `NetWeight`)
+  so admin can undo OCR-introduced garbage without inventing a delete
+  UI. Required fields refuse to clear.
+- *Real submit bridge* — `pr:submit` no longer dead-ends. Accepted +
+  edited rows go through the existing `bulkRowValidator.validate` (so
+  file-level invariants from P2.5-C5 still apply: single warehouse,
+  (PackageNo, ThanNo) unique, per-bale design/shade uniformity), then
+  build an `actionJSON` with `action: 'bulk_receive_goods'` and
+  `source: 'ocr_vision_<provider>'`. The payload includes the OCR raw
+  text (capped at 2000 chars), per-row edit audit (`editedRows`), and
+  the image's SHA-256 hash so the existing idempotency guard in
+  `inventoryService.executeApprovedAction` picks it up the same way it
+  does for bulk CSV.
+- *Same approval gate as CSV* — `riskEvaluate.evaluate({ action:
+  'bulk_receive_goods' })` returns `approval_required` regardless of
+  who submits; `approvalQueueRepository.append` queues the request;
+  `approvalEvents.notifyAdminsApprovalRequest` notifies admins with the
+  requester excluded if they're an admin themselves. Approval card
+  summary now includes `· N edited` when the admin tweaked OCR output.
+- *Controller wire-up* — `handleMessage` routes text messages to
+  `photoReceiveFlow.handleText` when an active `photo_receive_flow`
+  session exists. Routing is namespace-isolated (no collision with
+  any other text-step flow).
+
 **Smoke coverage (S15a + S15b + S15c, +35 checks total):**
 S15.1 happy path · S15.2 lowConfidence flag set from threshold ·
 S15.3 numeric cleanliness (no NaN leaks) · S15.4 determinism ·
@@ -496,9 +533,23 @@ S15.15 provider throw caught · **S15b.1** sha256 stability ·
 `ALWAYS_APPROVAL_ACTIONS` — photo route inherits dual-admin gate ·
 **S15c.9** module exports complete (`start`, `handleCallback`,
 `handleFile`, …) ·
-**S15c.10** callback namespaces isolated (`pr:*` vs `br:*`).
+**S15c.10** callback namespaces isolated (`pr:*` vs `br:*`) ·
+**S15d.1** EDITABLE_FIELDS list complete ·
+**S15d.2** FIELD_META present for every editable field ·
+**S15d.3a-d** coerce string fields (Design, PackageNo) with length caps ·
+**S15d.4a-d** coerce ThanNo integer with 1–999 bounds + parseInt truncation ·
+**S15d.5a-c** coerce Yards as positive number ·
+**S15d.6a-c** coerce NetMtrs / NetWeight ≥ 0, `-` sentinel clears,
+negative rejected ·
+**S15d.7** Yards `-` rejected (required field, no clear) ·
+**S15d.8a-d** handleText only fires when type+step+editingField all
+match (no false positives across other flows) ·
+**S15d.8e** full match applies value, tracks editedFields, clears
+lowConfidence flag ·
+**S15d.8f** `/cancel` exits edit without applying value ·
+**S15d.8g** invalid input re-prompts while preserving editingField.
 
-Harness: 192 green (was 153).
+Harness: 216 green (was 153).
 
 ### 2.8 Phase 4 · Scalability (legacy TG-22 .. TG-26)
 

@@ -87,6 +87,14 @@
 const sessionStore = require('../utils/sessionStore');
 const procurementOrdersRepo = require('../repositories/procurementOrdersRepository');
 const settingsRepository = require('../repositories/settingsRepository');
+const goodsReceiptsRepo = require('../repositories/goodsReceiptsRepository');
+const inventoryRepository = require('../repositories/inventoryRepository');
+const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+const approvalEvents = require('../events/approvalEvents');
+const auditLogRepository = require('../repositories/auditLogRepository');
+const idGenerator = require('../utils/idGenerator');
+const riskEvaluate = require('../risk/evaluate');
+const auth = require('../middlewares/auth');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
 const vision = require('../services/vision');
 const driveBackup = require('../services/vision/driveBackup');
@@ -511,30 +519,73 @@ async function handleCallback(bot, query) {
 
   const editMatch = data.match(/^pr:row_edit:(\d+)$/);
   if (editMatch) {
-    // C4 will implement the field-by-field edit subflow. For now,
-    // tell the operator clearly so they don't think the bot is broken.
+    const idx = parseInt(editMatch[1], 10);
+    if (!session.rows[idx]) return true;
+    session.editingRowIdx = idx;
+    session.editingField = null;
+    session._editSnapshot = { ...session.rows[idx], editedFields: session.rows[idx].editedFields.slice() };
+    session.step = 'await_edit';
+    sessionStore.set(userId, session);
+    await showEditStep(bot, chatId, userId);
+    return true;
+  }
+
+  const fieldMatch = data.match(/^pr:edit_field:(\d+):([a-z]+)$/);
+  if (fieldMatch) {
+    const idx = parseInt(fieldMatch[1], 10);
+    const field = fieldMatch[2];
+    if (!session.rows[idx]) return true;
+    if (!EDITABLE_FIELDS.includes(field)) return true;
+    session.editingRowIdx = idx;
+    session.editingField = field;
+    sessionStore.set(userId, session);
+    const cur = session.rows[idx][field];
+    const meta = FIELD_META[field];
     await bot.sendMessage(chatId,
-      '✏ _Edit subflow lands in P5-C4 (next commit)._\n'
-      + 'For now: tap ❌ Skip on this row and use 📤 Bulk Receive (CSV) for any low-confidence rows.',
+      `*Set new value for ${meta.label}* (row ${idx + 1})\n`
+      + `Current: ${cur === '' || cur == null ? '_(none)_' : `\`${cur}\``}\n`
+      + (meta.hint ? `_${meta.hint}_\n` : '')
+      + `Send /cancel to abort.`,
       { parse_mode: 'Markdown' });
     return true;
   }
 
+  const editSaveMatch = data.match(/^pr:edit_save:(\d+)$/);
+  if (editSaveMatch) {
+    const idx = parseInt(editSaveMatch[1], 10);
+    if (!session.rows[idx]) return true;
+    const r = session.rows[idx];
+    r.state = r.editedFields.length ? 'edited' : 'accepted';
+    session.editingRowIdx = null;
+    session.editingField = null;
+    delete session._editSnapshot;
+    session.step = 'await_review';
+    sessionStore.set(userId, session);
+    await showReviewStep(bot, chatId, userId);
+    return true;
+  }
+
+  const editCancelMatch = data.match(/^pr:edit_cancel:(\d+)$/);
+  if (editCancelMatch) {
+    const idx = parseInt(editCancelMatch[1], 10);
+    if (session.rows[idx] && session._editSnapshot) {
+      session.rows[idx] = session._editSnapshot;
+    }
+    session.editingRowIdx = null;
+    session.editingField = null;
+    delete session._editSnapshot;
+    session.step = 'await_review';
+    sessionStore.set(userId, session);
+    await showReviewStep(bot, chatId, userId);
+    return true;
+  }
+
   if (data === 'pr:submit') {
-    // C4 will bridge into bulk_receive_goods. For now, show what would
-    // be submitted so the review-UI iteration loop with the user is
-    // unblocked.
     if (!canSubmit(session.rows)) {
-      await bot.sendMessage(chatId, '⚠️ Decide every row before submitting.');
+      await bot.answerCallbackQuery(query.id, { text: 'Decide every row before submitting.' });
       return true;
     }
-    const accepted = session.rows.filter((r) => r.state === 'accepted' || r.state === 'edited');
-    await bot.sendMessage(chatId,
-      `▶ _Submit bridge lands in P5-C4 (next commit)._\n`
-      + `Would submit ${accepted.length} accepted row${accepted.length === 1 ? '' : 's'} `
-      + `as a \`bulk_receive_goods\` request, source=\`ocr_vision_${session.ocrProvider}\`, `
-      + `hash=\`${session.fileHash}\`.`,
-      { parse_mode: 'Markdown' });
+    await submit(bot, chatId, userId);
     return true;
   }
 
@@ -549,18 +600,313 @@ async function handleCallback(bot, query) {
 }
 
 // ---------------------------------------------------------------------------
+// Step 4 — Per-row edit subflow (P5-C4)
+// ---------------------------------------------------------------------------
+
+const EDITABLE_FIELDS = ['packageNo', 'thanNo', 'design', 'shade', 'yards', 'netMtrs', 'netWeight'];
+
+const FIELD_META = {
+  packageNo: { label: 'PackageNo',  type: 'string', hint: 'Max 32 chars. The number printed on the bale.' },
+  thanNo:    { label: 'ThanNo',     type: 'int',    hint: 'Positive integer 1–999.' },
+  design:    { label: 'Design',     type: 'string', hint: 'Max 80 chars. E.g. "Beige Crepe".' },
+  shade:     { label: 'Shade',      type: 'string', hint: 'Max 80 chars. E.g. "B-12". Send "-" to clear.' },
+  yards:     { label: 'Yards',      type: 'positive_number', hint: 'Numeric > 0.' },
+  netMtrs:   { label: 'NetMtrs',    type: 'non_negative_number', hint: 'Numeric ≥ 0. Send "-" to clear.' },
+  netWeight: { label: 'NetWeight',  type: 'non_negative_number', hint: 'Numeric ≥ 0. Send "-" to clear.' },
+};
+
+function fmtRowField(r, field) {
+  const v = r[field];
+  if (v == null || v === '' || v === 0 && field !== 'thanNo' && field !== 'yards') return '_(none)_';
+  return `\`${v}\``;
+}
+
+async function showEditStep(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || session.editingRowIdx == null) return;
+  const idx = session.editingRowIdx;
+  const r = session.rows[idx];
+  if (!r) return;
+  const conf = Math.round(r.confidence * 100);
+  const lines = [
+    `*✏ Editing row ${idx + 1}* — OCR confidence ${conf}%${r.lowConfidence ? ' 🔴' : ''}`,
+    '',
+    `PackageNo: ${fmtRowField(r, 'packageNo')}`,
+    `ThanNo:    ${fmtRowField(r, 'thanNo')}`,
+    `Design:    ${fmtRowField(r, 'design')}`,
+    `Shade:     ${fmtRowField(r, 'shade')}`,
+    `Yards:     ${fmtRowField(r, 'yards')}`,
+    `NetMtrs:   ${fmtRowField(r, 'netMtrs')}`,
+    `NetWeight: ${fmtRowField(r, 'netWeight')}`,
+  ];
+  if (r.editedFields.length) {
+    lines.push('');
+    lines.push(`_Edited so far: ${r.editedFields.join(', ')}_`);
+  }
+  // Field-edit buttons — two per row for compactness
+  const fieldButtons = [];
+  for (let i = 0; i < EDITABLE_FIELDS.length; i += 2) {
+    const row = [];
+    const a = EDITABLE_FIELDS[i];
+    row.push({ text: `✏ ${FIELD_META[a].label}`, callback_data: `pr:edit_field:${idx}:${a}` });
+    const b = EDITABLE_FIELDS[i + 1];
+    if (b) row.push({ text: `✏ ${FIELD_META[b].label}`, callback_data: `pr:edit_field:${idx}:${b}` });
+    fieldButtons.push(row);
+  }
+  const actionButtons = [
+    [
+      { text: `✅ Save row ${idx + 1}`, callback_data: `pr:edit_save:${idx}` },
+      { text: `❌ Skip row ${idx + 1}`, callback_data: `pr:row_skip:${idx}` },
+    ],
+    [{ text: '↩ Discard edits + back', callback_data: `pr:edit_cancel:${idx}` }],
+  ];
+  await render(bot, chatId, userId, lines.join('\n'), [...fieldButtons, ...actionButtons]);
+}
+
+/**
+ * Coerce + validate a text input against a field's type spec.
+ *
+ * Returns `{ ok: true, value }` on success or `{ ok: false, error }`
+ * on validation failure. Caller renders the error to the user.
+ *
+ * Sentinel `-` clears optional fields (Shade, NetMtrs, NetWeight) so
+ * the operator can undo an OCR-introduced value without inventing a
+ * cryptic delete UI.
+ */
+function coerceFieldValue(field, raw) {
+  const meta = FIELD_META[field];
+  if (!meta) return { ok: false, error: `Unknown field ${field}.` };
+  const s = (raw || '').trim();
+  if (!s) return { ok: false, error: `${meta.label} can't be empty.` };
+
+  if (s === '-' && ['shade', 'netMtrs', 'netWeight'].includes(field)) {
+    return { ok: true, value: field === 'shade' ? '' : 0 };
+  }
+
+  if (meta.type === 'string') {
+    if (s.length > 80) return { ok: false, error: `${meta.label} too long (max 80 chars).` };
+    if (field === 'packageNo' && s.length > 32) return { ok: false, error: 'PackageNo too long (max 32 chars).' };
+    return { ok: true, value: s };
+  }
+  if (meta.type === 'int') {
+    const n = parseInt(s, 10);
+    if (!Number.isInteger(n) || n <= 0) return { ok: false, error: `${meta.label} must be a positive integer.` };
+    if (field === 'thanNo' && n > 999) return { ok: false, error: 'ThanNo must be 1–999.' };
+    return { ok: true, value: n };
+  }
+  if (meta.type === 'positive_number') {
+    const n = parseFloat(s);
+    if (!isFinite(n) || n <= 0) return { ok: false, error: `${meta.label} must be a positive number.` };
+    return { ok: true, value: n };
+  }
+  if (meta.type === 'non_negative_number') {
+    const n = parseFloat(s);
+    if (!isFinite(n) || n < 0) return { ok: false, error: `${meta.label} must be ≥ 0.` };
+    return { ok: true, value: n };
+  }
+  return { ok: false, error: `Unknown field type ${meta.type}.` };
+}
+
+/**
+ * Called by the controller (handleMessage) when a text message arrives
+ * while a `photo_receive_flow` session is active in `await_edit` step
+ * with an editingField set.
+ *
+ * Returns true if the text was consumed.
+ */
+async function handleText(bot, msg) {
+  const userId = String(msg.from.id);
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'photo_receive_flow') return false;
+  if (session.step !== 'await_edit') return false;
+  if (session.editingField == null) return false;
+  const chatId = msg.chat.id;
+  const text = (msg.text || '').trim();
+
+  if (/^\/cancel\b/i.test(text)) {
+    session.editingField = null;
+    sessionStore.set(userId, session);
+    await bot.sendMessage(chatId, 'Edit cancelled.');
+    await showEditStep(bot, chatId, userId);
+    return true;
+  }
+
+  const idx = session.editingRowIdx;
+  const field = session.editingField;
+  const verdict = coerceFieldValue(field, text);
+  if (!verdict.ok) {
+    await bot.sendMessage(chatId, `⚠️ ${verdict.error}\nTry again, or send /cancel.`);
+    return true;
+  }
+  const r = session.rows[idx];
+  if (!r) return true;
+  r[field] = verdict.value;
+  if (!r.editedFields.includes(field)) r.editedFields.push(field);
+  // Editing yards on a low-confidence row clears the lowConfidence flag
+  // for UX purposes — the admin has now vetted it.
+  if (r.lowConfidence) r.lowConfidence = false;
+  session.editingField = null;
+  sessionStore.set(userId, session);
+  await bot.sendMessage(chatId,
+    `✅ ${FIELD_META[field].label} updated. Tap another field or *Save*.`,
+    { parse_mode: 'Markdown' });
+  await showEditStep(bot, chatId, userId);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Step 5 — Submit (bridges into bulk_receive_goods)
+// ---------------------------------------------------------------------------
+
+async function submit(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'photo_receive_flow') return;
+
+  // Collect accepted + edited rows; build a payload that looks IDENTICAL
+  // to a bulk-CSV submit so the existing service handler doesn't need
+  // a separate branch.
+  const accepted = session.rows.filter((r) => r.state === 'accepted' || r.state === 'edited');
+  if (!accepted.length) {
+    await bot.sendMessage(chatId, '⚠️ No accepted rows to submit. Decide each row first.');
+    return;
+  }
+
+  // Run through the bulk validator one more time — same uniformity +
+  // uniqueness rules as the CSV path. The OCR review already enforces
+  // per-row sanity, but the file-level invariants (one warehouse,
+  // (PackageNo, ThanNo) unique, per-bale Design+Shade uniformity) need
+  // a second pass.
+  const allowed = await listAllowedWarehouses();
+  // Synthesize the structure bulkValidator.validate expects:
+  // rows keyed by lowercased headers, with _rowNum for error addressing.
+  const synthetic = {
+    ok: true,
+    headers: ['packageno', 'thanno', 'design', 'shade', 'yards', 'netmtrs', 'netweight',
+              'warehouse', 'supplier', 'notes'],
+    rows: accepted.map((r, i) => ({
+      _rowNum: r.idx + 1,
+      packageno: r.packageNo, thanno: String(r.thanNo),
+      design: r.design, shade: r.shade,
+      yards: String(r.yards),
+      netmtrs: r.netMtrs ? String(r.netMtrs) : '',
+      netweight: r.netWeight ? String(r.netWeight) : '',
+      // Warehouse + supplier are FILE-level for OCR — we infer them
+      // from the bot's currently-default warehouse / supplier choice.
+      // For v1 we attach the *first* registered warehouse if there's
+      // exactly one and let the validator catch missing/mismatched.
+      warehouse: r._warehouse || (allowed && allowed.length === 1 ? allowed[0] : ''),
+      supplier: r._supplier || '',
+      notes: r.notes || '',
+    })),
+  };
+  const verdict = bulkValidator.validate(synthetic, {
+    allowedWarehouses: allowed,
+    maxRows: bulkValidator.MAX_ROWS_DEFAULT,
+  });
+  if (!verdict.ok) {
+    const head = `⚠️ *${verdict.errors.length} validation error${verdict.errors.length === 1 ? '' : 's'}:*\n`;
+    const body = verdict.errors.slice(0, 10).map((e) =>
+      `• Row ${e.row || '?'}${e.column ? ` · ${e.column}` : ''}: ${e.message}`
+    ).join('\n');
+    const more = verdict.errors.length > 10 ? `\n_…and ${verdict.errors.length - 10} more._` : '';
+    await bot.sendMessage(chatId, head + body + more
+      + '\n\nReview the rows, edit as needed, or skip the bad ones before submitting.',
+      { parse_mode: 'Markdown' });
+    return;
+  }
+
+  // Idempotency — same image already imported?
+  try {
+    const dup = await goodsReceiptsRepo.getByFileHash(session.fileHash);
+    if (dup) {
+      await bot.sendMessage(chatId,
+        `⚠️ This photo was already imported as \`${dup.grn_id}\` on ${(dup.received_at || '').split('T')[0]}.\n_Hash:_ \`${session.fileHash}\``,
+        { parse_mode: 'Markdown' });
+      return;
+    }
+  } catch (e) {
+    logger.warn(`photoReceiveFlow: getByFileHash failed (continuing): ${e.message}`);
+  }
+
+  const sourceTag = `ocr_vision_${session.ocrProvider || 'stub'}`;
+  const aj = {
+    action: 'bulk_receive_goods',          // bridge into existing handler
+    warehouse: verdict.summary.warehouses[0] || '',
+    supplier: verdict.summary.suppliers[0] || '',
+    po_id: session.po_id && session.po_id !== '__skip__' ? session.po_id : '',
+    bales: verdict.bales.map((b) => ({
+      packageNo: b.packageNo,
+      thanNo: b.thanNo,
+      design: b.design, shade: b.shade, color: b.color || '',
+      yards: b.yards,
+      netMtrs: b.netMtrs || 0, netWeight: b.netWeight || 0,
+      notes: b.notes || '',
+    })),
+    totalBales: verdict.summary.totalBales,
+    totalThans: verdict.summary.totalThans,
+    totalYards: verdict.summary.totalYards,
+    totalNetMtrs: verdict.summary.totalNetMtrs,
+    totalNetWeight: verdict.summary.totalNetWeight,
+    source: sourceTag,                     // 'ocr_vision_stub' | 'ocr_vision_openai' | ...
+    fileHash: session.fileHash,
+    fileName: session.fileName,
+    fileSize: session.fileSize || 0,
+    archivedPath: session.localPath || '',
+    driveLink: session.driveLink || '',
+    ocrProvider: session.ocrProvider,
+    ocrConfidence: session.ocrConfidence,
+    ocrRawText: (session.rawText || '').slice(0, 2000), // cap to keep approval row small
+    editedRows: accepted.filter((r) => r.editedFields.length).map((r) => ({
+      idx: r.idx, fields: r.editedFields.slice(),
+    })),
+    dateReceived: new Date().toISOString().split('T')[0],
+    productType: 'fabric',
+  };
+
+  const risk = await riskEvaluate.evaluate({ action: 'bulk_receive_goods', userId });
+  const requestId = idGenerator.requestId();
+  await approvalQueueRepository.append({
+    requestId, user: userId, actionJSON: aj,
+    riskReason: risk.reason || 'dual_admin_required', status: 'pending',
+  });
+  await auditLogRepository.append('approval_queued', {
+    requestId, reason: risk.reason, source: aj.source, fileHash: aj.fileHash,
+    bales: aj.totalBales, thans: aj.totalThans, edited: aj.editedRows.length,
+  }, userId);
+
+  const isAdm = auth.isAdmin(userId);
+  const approverLabel = isAdm ? '2nd admin' : 'admin';
+  const excludeId = isAdm ? userId : undefined;
+  const summary =
+    `📷 Photo Receive — ${aj.warehouse} · ${aj.totalBales} bales / ${aj.totalThans} thans · `
+    + `${fmtQty(aj.totalYards, { maxFraction: 2 })} yds · ${aj.source}`
+    + `${aj.po_id ? ' · PO ' + aj.po_id : ''}`
+    + `${aj.editedRows.length ? ` · ${aj.editedRows.length} edited` : ''}`;
+  await approvalEvents.notifyAdminsApprovalRequest(
+    bot, requestId, String(userId), summary, risk.reason, excludeId);
+
+  session.step = 'submitted';
+  sessionStore.set(userId, session);
+  await render(bot, chatId, userId,
+    `⏳ Submitted for ${approverLabel} approval.\nRequest: \`${requestId}\`\nHash: \`${aj.fileHash}\``,
+    [[{ text: '📷 Upload another', callback_data: 'act:photo_receive_goods' }],
+     [{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+  sessionStore.clear(userId);
+}
+
+// ---------------------------------------------------------------------------
 // Reference data — warehouses (kept identical to bulkReceiveFlow for parity)
 // ---------------------------------------------------------------------------
 
 async function listAllowedWarehouses() {
   try {
-    const rows = await settingsRepository.getAll();
-    const map = new Map(rows.map((r) => [r.key, r.value]));
-    const raw = String(map.get('WAREHOUSES') || '').split(',').map((s) => s.trim()).filter(Boolean);
-    return raw.length ? raw : null;
-  } catch (e) {
-    logger.warn(`photoReceiveFlow.listAllowedWarehouses: ${e.message}`);
-    return null;
+    const fromInv = await inventoryRepository.getWarehouses();
+    const fromSet = await settingsRepository.getAll();
+    const extra = ((fromSet || {}).WAREHOUSE_LIST || '')
+      .split(',').map((s) => s.trim()).filter(Boolean);
+    return Array.from(new Set([...(fromInv || []), ...extra])).sort();
+  } catch (_) {
+    return [];
   }
 }
 
@@ -568,9 +914,12 @@ module.exports = {
   start,
   handleCallback,
   handleFile,
+  handleText,
+  submit,
   showPoStep,
   showAwaitFileStep,
   showReviewStep,
+  showEditStep,
   // Test-friendly internals
   reviewProgress,
   canSubmit,
@@ -578,5 +927,8 @@ module.exports = {
   rowButtons,
   acceptAllOk,
   setRowState,
+  coerceFieldValue,
   listAllowedWarehouses,
+  EDITABLE_FIELDS,
+  FIELD_META,
 };
