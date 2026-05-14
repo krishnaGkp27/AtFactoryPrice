@@ -174,6 +174,21 @@ When in doubt about *where* something belongs, ask: is this a status (§2), a re
 
 Detailed designs in §3.1 (engine) and §3.2 (incentives).
 
+### 2.5b Manager visibility + admin observability (2026-05-14)
+
+| Commit | Hash | Title | Status |
+|---|---|---|---|
+| T1 | `f947c60` | Manager controls — priority-sorted doer view + Re-prioritize + Drop-off | ✅ Done |
+| T2 | `91b04bc` | Admin opt-in Activity Feed — per-user notification preferences | ✅ Done |
+| T3 | `2455331` | Admin Sales Workflow view — read-only order/customer/ledger lens | ✅ Done |
+
+**What this set delivers:**
+- **T1**: `My Tasks` re-sorted by priority → soonest deadline → phase. New `🔝 Re-prioritize` and `🚫 Drop` buttons on every Team Tasks row (manager-only). State-machine additions: `update_priority` (self-transition, any open state) and `drop` (terminal → `dropped`, illegal from `submitted`). Smart doer DMs (silent for normal/low priority, audible for high/critical).
+- **T2**: Centralizes broadcast notifications behind `src/services/adminFeed.js`. New `Users.notification_prefs` column (JSON) stores per-admin opt-in/out per event type. Admin hub gets a `⚙️ Notifications` screen for toggling. Defaults preserve today's all-on behavior — admins opt OUT at their pace. Catalog: `task.assigned/completed/dropped/declined/priority`, `order.created/accepted/delivered`, `payout.paid`.
+- **T3**: New `📊 Sales Workflow` activity in Admin hub. Read-only grouped view of orders (pending / accepted / recently delivered), joined with customer phone, tier, credit limit, and current ledger balance. Tap-through detail card shows the customer's 3 most recent other orders for pattern-spotting. No new schema — Orders + Customers + LedgerBalanceCache already exist.
+
+Admin override actions (force-accept, reassign, cancel) deliberately deferred — they need an Order state machine first.
+
 ### 2.6 Phase 4 · Scalability (legacy TG-22 .. TG-26)
 
 All 💭 Discuss — never start without an explicit owner decision (see §4.6).
