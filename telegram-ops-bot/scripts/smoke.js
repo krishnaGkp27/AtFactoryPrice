@@ -11,6 +11,7 @@
  *   S6  Repo parse — incentivesRepository row shape
  *   S7  Repo parse — taskEventsRepository row shape + meta JSON
  *   S8  Task state-machine engine (TG-7.5 Phase C commit 2)
+ *   S9  Admin Activity Feed: isEnabled policy + catalog (T2)
  *
  * Run:  npm run smoke         (from telegram-ops-bot/)
  * Exit: 0 = all passed, 1 = one or more FAIL
@@ -743,6 +744,80 @@ async function runS8() {
 }
 
 // ---------------------------------------------------------------------------
+// S9 — Admin Activity Feed: isEnabled policy + catalog (T2)
+// ---------------------------------------------------------------------------
+function runS9() {
+  // Stub usersRepository so adminFeed can require it without Sheets creds.
+  // We only test isEnabled / catalog helpers — notify() needs a bot and is
+  // exercised at integration time.
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async () => [],
+    appendRows: async () => {},
+    updateRange: async () => {},
+    getSheetNames: async () => [],
+    addSheet: async () => {},
+  });
+  const af = require('../src/services/adminFeed');
+
+  // S9.1 — no prefs at all = DEFAULT_POLICY for the type.
+  if (af.isEnabled(null, 'task.assigned') === true
+      && af.isEnabled(null, 'task.priority') === false) {
+    pass('S9.1 isEnabled: null prefs → DEFAULT_POLICY (assigned=ON, priority=OFF)');
+  } else {
+    fail('S9.1 isEnabled: null prefs → DEFAULT_POLICY');
+  }
+
+  // S9.2 — explicit user override beats DEFAULT.
+  const prefs = { 'task.assigned': false, 'task.priority': true };
+  if (af.isEnabled(prefs, 'task.assigned') === false
+      && af.isEnabled(prefs, 'task.priority') === true) {
+    pass('S9.2 isEnabled: explicit prefs override DEFAULT_POLICY');
+  } else {
+    fail('S9.2 isEnabled: explicit prefs override DEFAULT_POLICY');
+  }
+
+  // S9.3 — prefs object without this event falls back to DEFAULT.
+  const partial = { 'task.assigned': false };
+  if (af.isEnabled(partial, 'order.delivered') === true
+      && af.isEnabled(partial, 'task.priority') === false) {
+    pass('S9.3 isEnabled: missing key falls back to DEFAULT_POLICY');
+  } else {
+    fail('S9.3 isEnabled: missing key falls back to DEFAULT_POLICY');
+  }
+
+  // S9.4 — malformed JSON marker → fallback to DEFAULT.
+  const malformed = { _malformed: 'not-json' };
+  if (af.isEnabled(malformed, 'order.created') === true) {
+    pass('S9.4 isEnabled: malformed prefs fall back to DEFAULT_POLICY');
+  } else {
+    fail('S9.4 isEnabled: malformed prefs fall back to DEFAULT_POLICY');
+  }
+
+  // S9.5 — catalog coverage: every group in GROUP_META has ≥1 event.
+  const groups = af.listGroups().map((g) => g.id);
+  const eventGroups = new Set(af.listEventTypes().map((et) => af.getCatalogEntry(et).group));
+  const allGroupsCovered = groups.every((g) => eventGroups.has(g));
+  if (allGroupsCovered) {
+    pass('S9.5 catalog: every declared group has at least one event');
+  } else {
+    fail('S9.5 catalog: every declared group has at least one event',
+      `groups=${JSON.stringify(groups)} events=${JSON.stringify([...eventGroups])}`);
+  }
+
+  // S9.6 — default policy preserves today's behavior for legacy events
+  // (so admin notifications don't go silent on upgrade).
+  const legacyOn = ['task.assigned', 'task.completed', 'task.dropped', 'task.declined',
+                    'order.created', 'order.accepted', 'order.delivered', 'payout.paid'];
+  const allLegacyOn = legacyOn.every((et) => af.getCatalogEntry(et)?.default === true);
+  if (allLegacyOn) {
+    pass('S9.6 default policy: all legacy events default ON (preserve current behavior)');
+  } else {
+    fail('S9.6 default policy: all legacy events default ON',
+      JSON.stringify(legacyOn.map((et) => [et, af.getCatalogEntry(et)?.default])));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -756,6 +831,7 @@ async function runS8() {
   try { runS6(); } catch (e) { fail('S6 unexpected error', e.message); }
   try { runS7(); } catch (e) { fail('S7 unexpected error', e.message); }
   try { await runS8(); } catch (e) { fail('S8 unexpected error', e.message); }
+  try { runS9(); } catch (e) { fail('S9 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

@@ -30,7 +30,10 @@ const REQUIRED_SHEETS = {
     headers: ['customer_id', 'name', 'phone', 'address', 'category', 'credit_limit', 'outstanding_balance', 'payment_terms', 'notes', 'status', 'created_at', 'updated_at'],
   },
   Users: {
-    headers: ['user_id', 'name', 'role', 'branch', 'access_level', 'status', 'created_at', 'department', 'warehouses', 'manages'],
+    // Column K = notification_prefs (JSON object string). Stores per-user
+    // opt-in/opt-out flags for the Admin Activity Feed events. Empty means
+    // "use default policy" (currently: preserve today's all-ON behavior).
+    headers: ['user_id', 'name', 'role', 'branch', 'access_level', 'status', 'created_at', 'department', 'warehouses', 'manages', 'notification_prefs'],
   },
   Departments: {
     headers: ['dept_id', 'dept_name', 'allowed_activities', 'status', 'created_at', 'parent_department'],
@@ -193,6 +196,14 @@ async function initialize() {
         const nextCol = colLetter(h.length + 1);
         await sheets.updateRange('Users', `${nextCol}1:${nextCol}1`, [['manages']]);
         logger.info('SchemaMapper: extended Users with manages column (TG-7.5)');
+        userHeader = await sheets.readRange('Users', 'A1:Z1');
+        h = userHeader[0] || [];
+      }
+      // T2 — per-user opt-in/out toggles for the Admin Activity Feed.
+      if (!h.includes('notification_prefs')) {
+        const nextCol = colLetter(h.length + 1);
+        await sheets.updateRange('Users', `${nextCol}1:${nextCol}1`, [['notification_prefs']]);
+        logger.info('SchemaMapper: extended Users with notification_prefs column (T2)');
       }
     } catch (e) {
       logger.warn('SchemaMapper: could not extend Users —', e.message);

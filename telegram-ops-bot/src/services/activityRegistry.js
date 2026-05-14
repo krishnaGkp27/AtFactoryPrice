@@ -91,6 +91,10 @@ const ACTIVITIES = [
   { code: 'manage_departments',    label: 'Manage Departments',        icon: '🏢', callback: 'act:manage_depts',       hub: 'admin' },
   { code: 'manage_warehouses',     label: 'Manage Warehouses',         icon: '🏭', callback: 'act:manage_wh',          hub: 'admin' },
   { code: 'add_bank',              label: 'Manage Banks',              icon: '🏦', callback: 'act:manage_banks',       hub: 'admin' },
+  // T2 — per-user opt-in/out toggles for the Admin Activity Feed.
+  // Injected per-user by the controller (admin-only); not listed in any
+  // department's allowed_activities CSV.
+  { code: 'notifications_settings',label: 'Notifications',             icon: '⚙️', callback: 'act:notifications',      hub: 'admin' },
 
   { code: 'upload_receipt',        label: 'Upload Receipt',            icon: '🧾', callback: 'act:upload_receipt',     hub: null },
 ];

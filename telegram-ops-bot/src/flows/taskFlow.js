@@ -36,6 +36,7 @@ const deptGraph = require('../org/deptGraph');
 const auth = require('../middlewares/auth');
 const config = require('../config');
 const logger = require('../utils/logger');
+const adminFeed = require('../services/adminFeed');
 // taskFlow renders incentives in DMs/inline rows where the symbol form
 // ("₦5,000") reads better than the long form. Centralized helpers live in
 // utils/format and utils/telegramUI.
@@ -443,6 +444,20 @@ async function submitTask(bot, chatId, userId) {
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
 
   await dmAssigneeNewTask(bot, created, userId);
+
+  // T2: broadcast to opted-in admins (the assigner is excluded so the
+  // person who just clicked Submit doesn't get an echo of their own action).
+  try {
+    const assignerName = (await usersRepository.findByUserId(userId))?.name || userId;
+    await adminFeed.notify(bot, 'task.assigned',
+      `📌 *Task assigned*\n\n${pm.icon} ${escapeMd(d.title)}\n` +
+      `${tm.icon} ${tm.label}\n` +
+      `👤 ${escapeMd(d.assigneeName)} ← ${escapeMd(assignerName)}\n` +
+      `ID: \`${created.task_id}\``,
+      { parse_mode: 'Markdown' }, { excludeUserId: userId });
+  } catch (e) {
+    logger.warn(`taskFlow.submit: adminFeed task.assigned: ${e.message}`);
+  }
 }
 
 /** Send the new-task DM card to the assignee with Propose-timeline / Decline. */
@@ -809,11 +824,20 @@ async function handleDecline(bot, callbackQuery, taskId) {
   await editOrSend(bot, chatId, messageId,
     `🚫 *Declined*\n\n${escapeMd(task.title)}\n\n_Your assigner has been notified._`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+  const doerName = (await usersRepository.findByUserId(userId))?.name || userId;
   try {
     await bot.sendMessage(task.assigned_by,
-      `🚫 *Task declined*\n\n${escapeMd(task.title)}\n👤 By: ${escapeMd((await usersRepository.findByUserId(userId))?.name || userId)}\n\nID: \`${taskId}\`\n\n_Tap Assign Task to send it to someone else._`,
+      `🚫 *Task declined*\n\n${escapeMd(task.title)}\n👤 By: ${escapeMd(doerName)}\n\nID: \`${taskId}\`\n\n_Tap Assign Task to send it to someone else._`,
       { parse_mode: 'Markdown' });
   } catch (_) { /* noop */ }
+  // T2: feed event for opted-in admins (assigner already notified above).
+  try {
+    await adminFeed.notify(bot, 'task.declined',
+      `🚫 *Task declined*\n\n${escapeMd(task.title)}\n👤 By ${escapeMd(doerName)}\nID: \`${taskId}\``,
+      { parse_mode: 'Markdown' }, { excludeUserId: task.assigned_by });
+  } catch (e) {
+    logger.warn(`taskFlow.handleDecline: adminFeed task.declined: ${e.message}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1157,6 +1181,17 @@ async function applyPriority(bot, callbackQuery, taskId, newPriority) {
   } catch (e) {
     logger.warn(`taskFlow.applyPriority: DM doer failed: ${e.message}`);
   }
+  // T2: opt-in feed (defaults OFF — this can be noisy).
+  try {
+    const doerName = (await usersRepository.findByUserId(task.assigned_to))?.name || task.assigned_to;
+    await adminFeed.notify(bot, 'task.priority',
+      `🔝 *Priority changed*\n${escapeMd(task.title)}\n` +
+      `${oldPm.icon} ${oldPm.label} → ${newPm.icon} *${newPm.label}*\n` +
+      `👤 ${escapeMd(doerName)}\nID: \`${taskId}\``,
+      { parse_mode: 'Markdown' }, { excludeUserId: userId });
+  } catch (e) {
+    logger.warn(`taskFlow.applyPriority: adminFeed task.priority: ${e.message}`);
+  }
 }
 
 /** Show the drop confirm card with optional reason reply. */
@@ -1227,6 +1262,14 @@ async function submitDrop(bot, chatId, userId, reason) {
     }
   } catch (e) {
     logger.warn(`taskFlow.submitDrop: DM doer failed: ${e.message}`);
+  }
+  // T2: opt-in feed for opted-in admins (excluding the actor).
+  try {
+    await adminFeed.notify(bot, 'task.dropped',
+      `🚫 *Task dropped*\n\n${escapeMd(t.taskTitle)}\n👤 ${escapeMd(t.doerName)}${reasonLine}\nID: \`${t.taskId}\``,
+      { parse_mode: 'Markdown' }, { excludeUserId: userId });
+  } catch (e) {
+    logger.warn(`taskFlow.submitDrop: adminFeed task.dropped: ${e.message}`);
   }
 }
 
@@ -1842,6 +1885,16 @@ async function handleSignOff(bot, callbackQuery, taskId, approve) {
         `✅ *Task completed*\n\n${escapeMd(task.title)}${doerIncentiveLine}`,
         { parse_mode: 'Markdown' });
     } catch (_) { /* noop */ }
+    // T2: feed for opted-in admins. Money is intentionally NOT in the
+    // broadcast message — feed admins are scrum-master role, not finance.
+    try {
+      const doerName = (await usersRepository.findByUserId(task.assigned_to))?.name || task.assigned_to;
+      await adminFeed.notify(bot, 'task.completed',
+        `✅ *Task completed*\n\n${escapeMd(task.title)}\n👤 ${escapeMd(doerName)}\nID: \`${taskId}\``,
+        { parse_mode: 'Markdown' }, { excludeUserId: userId });
+    } catch (e) {
+      logger.warn(`taskFlow.handleSignOff: adminFeed task.completed: ${e.message}`);
+    }
   } else {
     await editOrSend(bot, chatId, messageId,
       `↩ Task *${escapeMd(task.title)}* sent back to active.\nID: \`${taskId}\``,
@@ -2260,6 +2313,15 @@ async function handleMarkPaid(bot, callbackQuery, taskId) {
     } catch (e) {
       logger.warn(`taskFlow.handleMarkPaid: DM doer failed: ${e.message}`);
     }
+  }
+
+  // T2: feed event for opted-in admins (default ON, finance group).
+  try {
+    await adminFeed.notify(bot, 'payout.paid',
+      `💰 *Payout disbursed*\n\n${escapeMd(taskTitle)}\nAmount: *${fmtMoney(incentive.amount, incentive.currency)}*\nID: \`${taskId}\``,
+      { parse_mode: 'Markdown' }, { excludeUserId: userId });
+  } catch (e) {
+    logger.warn(`taskFlow.handleMarkPaid: adminFeed payout.paid: ${e.message}`);
   }
 
   // Re-render the queue so the row vanishes and the totals refresh.

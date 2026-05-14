@@ -36,6 +36,8 @@ const designAssetsService = require('../services/designAssetsService');
 const colorDetector = require('../ai/colorDetector');
 const catalogFlows = require('./catalogFlowController');
 const taskFlow = require('../flows/taskFlow');
+const notificationsFlow = require('../flows/notificationsFlow');
+const adminFeed = require('../services/adminFeed');
 const menuNav = require('../utils/menuNav');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
 const idGenerator = require('../utils/idGenerator');
@@ -2649,11 +2651,9 @@ async function executeMarkOrderDelivered(bot, chatId, userId, orderId) {
   }
   await ordersRepo.updateStatus(orderId, 'delivered', { delivered_at: new Date().toISOString() });
   await bot.sendMessage(chatId, `✅ Order ${orderId} marked as delivered.`);
-  for (const adminId of config.access.adminIds) {
-    try {
-      await bot.sendMessage(adminId, `📦 Order *${orderId}* has been delivered.\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQty: ${order.quantity}\nDelivered by: ${order.salesperson_name}`, { parse_mode: 'Markdown' });
-    } catch (_) {}
-  }
+  await adminFeed.notify(bot, 'order.delivered',
+    `📦 Order *${orderId}* has been delivered.\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQty: ${order.quantity}\nDelivered by: ${order.salesperson_name}`,
+    { parse_mode: 'Markdown' });
 }
 
 /** Picker showing the user's own pending (accepted, not delivered) orders. */
@@ -5508,6 +5508,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (handled) return;
   }
 
+  // Admin notifications settings (T2): per-event opt-in toggles.
+  if (data.startsWith('nf:')) {
+    const handled = await notificationsFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
   if (data.startsWith('approve:')) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'approve');
   } else if (data.startsWith('reject:')) {
@@ -6798,6 +6804,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
     });
     sessionStore.clear(uid);
     await bot.sendMessage(callbackQuery.message.chat.id, `✅ Order *${saved.order_id}* created and sent to ${session.salesperson_name} for acceptance.`, { parse_mode: 'Markdown' });
+    // T2: notify admins that an order was proposed. The creator (uid) is
+    // excluded so admins who created the order themselves don't get a
+    // duplicate echo of what they just did.
+    await adminFeed.notify(bot, 'order.created',
+      `🆕 *New order proposed*\n\nOrder: *${saved.order_id}*\nDesign: ${session.design}\nCustomer: ${session.customer}\nQuantity: ${session.quantity}\nPayment: ${session.payment_status}\nScheduled: ${session.scheduled_date}\nSalesperson: ${session.salesperson_name}\n\n_Awaiting acceptance._`,
+      { parse_mode: 'Markdown' }, { excludeUserId: uid });
     try {
       const orderMsg = `📦 *New Supply Order Assigned*\n\nOrder: *${saved.order_id}*\nDesign: ${session.design}\nCustomer: ${session.customer}\nQuantity: ${session.quantity}\nPayment: ${session.payment_status}\nScheduled Date: ${session.scheduled_date}\n\nPlease accept this order:`;
       await bot.sendMessage(session.salesperson_id, orderMsg, {
@@ -6919,11 +6931,9 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
     await ordersRepo.updateStatus(orderId, 'accepted', { accepted_at: new Date().toISOString() });
     await bot.sendMessage(callbackQuery.message.chat.id, `✅ You accepted order *${orderId}*.\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQty: ${order.quantity}\nScheduled: ${order.scheduled_date}\n\nYou'll get a reminder 1 day before. Mark delivered with: "Mark order ${orderId} delivered"`, { parse_mode: 'Markdown' });
-    for (const adminId of config.access.adminIds) {
-      try {
-        await bot.sendMessage(adminId, `✅ *${order.salesperson_name}* accepted order *${orderId}*\n\nDesign: ${order.design} | Customer: ${order.customer}\nQty: ${order.quantity} | Date: ${order.scheduled_date}`, { parse_mode: 'Markdown' });
-      } catch (_) {}
-    }
+    await adminFeed.notify(bot, 'order.accepted',
+      `✅ *${order.salesperson_name}* accepted order *${orderId}*\n\nDesign: ${order.design} | Customer: ${order.customer}\nQty: ${order.quantity} | Date: ${order.scheduled_date}`,
+      { parse_mode: 'Markdown' });
 
   } else if (data.startsWith('odel:')) {
     const orderId = data.slice(5);
@@ -6936,11 +6946,9 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
     await ordersRepo.updateStatus(orderId, 'delivered', { delivered_at: new Date().toISOString() });
     await bot.sendMessage(callbackQuery.message.chat.id, `✅ Order *${orderId}* marked as delivered.`, { parse_mode: 'Markdown' });
-    for (const adminId of config.access.adminIds) {
-      try {
-        await bot.sendMessage(adminId, `📦 Order *${orderId}* has been delivered.\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQty: ${order.quantity}\nDelivered by: ${order.salesperson_name}`, { parse_mode: 'Markdown' });
-      } catch (_) {}
-    }
+    await adminFeed.notify(bot, 'order.delivered',
+      `📦 Order *${orderId}* has been delivered.\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQty: ${order.quantity}\nDelivered by: ${order.salesperson_name}`,
+      { parse_mode: 'Markdown' });
 
   // ─── Receipt Flow Callbacks ─────────────────────────────────────────────
   } else if (data.startsWith('rcc:')) {
@@ -7640,6 +7648,14 @@ async function handleCallbackQuery(bot, callbackQuery) {
         break;
       case 'payouts':
         await taskFlow.showPayouts(bot, chatId, uid, messageId);
+        break;
+      case 'notifications':
+        // T2 — per-admin opt-in/out toggles for the Admin Activity Feed.
+        if (!config.access.adminIds.includes(uid)) {
+          await bot.sendMessage(chatId, 'Notifications settings are admin-only.');
+          break;
+        }
+        await notificationsFlow.renderToggleScreen(bot, chatId, uid, messageId);
         break;
       default:
         await bot.sendMessage(chatId, 'Feature coming soon.');

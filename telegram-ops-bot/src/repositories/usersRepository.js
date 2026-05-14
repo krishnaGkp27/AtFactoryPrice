@@ -24,6 +24,18 @@ function parseManagesCsv(raw) {
   return str(raw).split(',').map((d) => d.trim()).filter(Boolean);
 }
 
+function parseNotificationPrefs(raw) {
+  const s = str(raw);
+  if (!s) return null; // null = "use default policy"
+  try {
+    const obj = JSON.parse(s);
+    return obj && typeof obj === 'object' ? obj : null;
+  } catch (_) {
+    // Malformed JSON shouldn't crash reads — log-and-default at call site.
+    return { _malformed: s };
+  }
+}
+
 function parse(r, rowIndex) {
   const departments = parseDeptCsv(r[7]);
   const manages = parseManagesCsv(r[9]);
@@ -43,6 +55,8 @@ function parse(r, rowIndex) {
     warehouses: str(r[8]).split(',').map((w) => w.trim()).filter(Boolean),
     /** Department names this user heads (TG-7.5); scope = union of those depts' allowed_activities */
     manages,
+    /** Per-user Admin Activity Feed opt-ins (T2). null = use default. */
+    notification_prefs: parseNotificationPrefs(r[10]),
   };
 }
 
@@ -65,7 +79,9 @@ function inDepartment(user, name) {
 }
 
 async function getAll() {
-  const rows = await sheets.readRange(SHEET, 'A2:J');
+  // K = notification_prefs (T2). Older deployments may still have only
+  // A:J — sheets API returns shorter rows; the parser handles undefined.
+  const rows = await sheets.readRange(SHEET, 'A2:K');
   return rows.map((r, i) => parse(r, i + 2)).filter((u) => u.user_id);
 }
 
@@ -137,6 +153,42 @@ async function updateManages(userId, manages) {
   return true;
 }
 
+/**
+ * Persist the entire notification_prefs object (JSON-encoded) for a user.
+ * Pass `null` or `{}` to clear (which resumes the default policy).
+ *
+ * Stored in column K of the Users sheet.
+ */
+async function updateNotificationPrefs(userId, prefs) {
+  const u = await findByUserId(userId);
+  if (!u) return false;
+  let json = '';
+  if (prefs && typeof prefs === 'object' && Object.keys(prefs).length) {
+    try { json = JSON.stringify(prefs); } catch (_) { json = ''; }
+  }
+  await sheets.updateRange(SHEET, `K${u.rowIndex}`, [[json]]);
+  return true;
+}
+
+/**
+ * Set a single event-type pref to enabled/disabled, preserving the
+ * other keys already in the user's prefs object.
+ *
+ * @param {string} userId
+ * @param {string} eventType   e.g. 'task.assigned', 'order.delivered'
+ * @param {boolean} enabled
+ * @returns {Promise<Object|null>} the merged prefs object, or null on failure.
+ */
+async function setNotificationPref(userId, eventType, enabled) {
+  const u = await findByUserId(userId);
+  if (!u) return null;
+  const current = (u.notification_prefs && typeof u.notification_prefs === 'object' && !u.notification_prefs._malformed)
+    ? { ...u.notification_prefs } : {};
+  current[eventType] = !!enabled;
+  const ok = await updateNotificationPrefs(userId, current);
+  return ok ? current : null;
+}
+
 module.exports = {
   getAll,
   findByUserId,
@@ -146,5 +198,7 @@ module.exports = {
   updateDepartment,
   updateWarehouses,
   updateManages,
+  updateNotificationPrefs,
+  setNotificationPref,
   SHEET,
 };
