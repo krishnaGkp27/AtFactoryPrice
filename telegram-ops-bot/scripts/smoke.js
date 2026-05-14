@@ -17,6 +17,7 @@
  *   S12 Quick Add Customer parser (P3)
  *   S13 Procurement Plan — low-stock computation + PO recompute + feed (P4)
  *   S14 Bulk Receive — CSV/XLSX parsers + row validator + fileHash (P2.5-C1)
+ *   S14b Bulk Receive — GoodsReceipts.file_hash idempotency + lazy column (P2.5-C2)
  *
  * Run:  npm run smoke         (from telegram-ops-bot/)
  * Exit: 0 = all passed, 1 = one or more FAIL
@@ -1366,6 +1367,85 @@ function runS14a() {
 }
 
 // ---------------------------------------------------------------------------
+// S14b — Bulk Receive: GoodsReceipts.file_hash idempotency (P2.5-C2)
+// ---------------------------------------------------------------------------
+async function runS14b() {
+  delete require.cache[require.resolve('../src/repositories/sheetsClient')];
+  delete require.cache[require.resolve('../src/repositories/goodsReceiptsRepository')];
+
+  // S14b.1 — parse() round-trips source + file_hash from a 14-col row,
+  //           and tolerates a 12-col legacy row (defaults source='manual').
+  const legacy12 = [
+    'GRN-20260514-001', 'Kano', 'SupplierA', 'CT-1', '',
+    'U1', '2026-05-14T10:00:00Z', 3, 150,
+    '', 'legacy note', 'received',
+  ];
+  const new14 = [
+    'GRN-20260514-002', 'Kano', 'SupplierA', 'CT-1', '',
+    'U1', '2026-05-14T11:00:00Z', 3, 150,
+    '', 'bulk note', 'received',
+    'bulk_csv', 'abcdef0123456789',
+  ];
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async (sheet) => sheet === 'GoodsReceipts' ? [legacy12, new14] : [],
+    appendRows: async () => {},
+    updateRange: async () => {},
+    batchUpdateRanges: async () => {},
+    getSheetNames: async () => [],
+    addSheet: async () => {},
+  });
+  const grnRepo = require('../src/repositories/goodsReceiptsRepository');
+  const all = await grnRepo.getAll();
+  const legacyParsed = all.find((g) => g.grn_id === 'GRN-20260514-001');
+  const newParsed = all.find((g) => g.grn_id === 'GRN-20260514-002');
+  if (legacyParsed && legacyParsed.source === 'manual' && legacyParsed.file_hash === ''
+      && newParsed && newParsed.source === 'bulk_csv' && newParsed.file_hash === 'abcdef0123456789') {
+    pass('S14b.1 parse: legacy 12-col row defaults source=manual; new 14-col carries source+file_hash');
+  } else fail('S14b.1 parse', JSON.stringify({ legacyParsed, newParsed }));
+
+  // S14b.2 — getByFileHash returns the matching row
+  const match = await grnRepo.getByFileHash('abcdef0123456789');
+  if (match && match.grn_id === 'GRN-20260514-002') {
+    pass('S14b.2 getByFileHash: returns matching GRN');
+  } else fail('S14b.2 getByFileHash match', JSON.stringify(match));
+
+  // S14b.3 — empty/unknown hash returns null without throwing
+  const miss = await grnRepo.getByFileHash('deadbeefdeadbeef');
+  const empty = await grnRepo.getByFileHash('');
+  if (miss === null && empty === null) {
+    pass('S14b.3 getByFileHash: unknown + empty hash returns null');
+  } else fail('S14b.3 getByFileHash null', JSON.stringify({ miss, empty }));
+
+  // S14b.4 — append writes 14 columns including source + file_hash
+  let appended = null;
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async () => [],
+    appendRows: async (_sheet, rows) => { appended = rows[0]; },
+    updateRange: async () => {},
+    batchUpdateRanges: async () => {},
+    getSheetNames: async () => [],
+    addSheet: async () => {},
+  });
+  delete require.cache[require.resolve('../src/repositories/goodsReceiptsRepository')];
+  const grnRepo2 = require('../src/repositories/goodsReceiptsRepository');
+  const saved = await grnRepo2.append({
+    warehouse: 'Lagos', supplier: 'WangTex', total_bales: 5, total_yards: 250,
+    source: 'bulk_xlsx', file_hash: '1234567890abcdef',
+  });
+  if (appended && appended.length === 14 && appended[12] === 'bulk_xlsx'
+      && appended[13] === '1234567890abcdef' && saved.source === 'bulk_xlsx') {
+    pass('S14b.4 append: writes 14 cols; source + file_hash persisted');
+  } else fail('S14b.4 append', JSON.stringify({ appended, saved }));
+
+  // S14b.5 — manual GRN (no source/file_hash) defaults source='manual'
+  appended = null;
+  await grnRepo2.append({ warehouse: 'Kano', total_bales: 2, total_yards: 100 });
+  if (appended && appended[12] === 'manual' && appended[13] === '') {
+    pass('S14b.5 append: manual GRN defaults source=manual, file_hash empty');
+  } else fail('S14b.5 append manual default', JSON.stringify(appended));
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -1385,6 +1465,7 @@ function runS14a() {
   try { runS12(); } catch (e) { fail('S12 unexpected error', e.message); }
   try { await runS13(); } catch (e) { fail('S13 unexpected error', e.message); }
   try { runS14a(); } catch (e) { fail('S14a unexpected error', e.message); }
+  try { await runS14b(); } catch (e) { fail('S14b unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

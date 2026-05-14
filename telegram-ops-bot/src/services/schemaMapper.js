@@ -140,6 +140,8 @@ const REQUIRED_SHEETS = {
       'grn_id', 'warehouse', 'supplier', 'supplier_id', 'po_id',
       'received_by', 'received_at', 'total_bales', 'total_yards',
       'photo_file_id', 'notes', 'status',
+      // P2.5 — bulk-import provenance (CSV/XLSX). Empty for manual GRNs.
+      'source', 'file_hash',
     ],
   },
   // P4 — Procurement Order header. Drafted before goods arrive; GRN flow
@@ -300,6 +302,26 @@ async function initialize() {
       }
     } catch (e) {
       logger.warn('SchemaMapper: could not extend Inventory —', e.message);
+    }
+  }
+
+  // P2.5 — extend existing GoodsReceipts sheets with source + file_hash so
+  // deployments created before Bulk Receive land can read/write bulk-import
+  // rows without losing data. New deployments get them via REQUIRED_SHEETS.
+  if (existing.includes('GoodsReceipts')) {
+    try {
+      const grnHeader = await sheets.readRange('GoodsReceipts', 'A1:Z1');
+      const h = grnHeader[0] || [];
+      const GRN_NEW_COLS = ['source', 'file_hash'];
+      const missingGrn = GRN_NEW_COLS.filter((c) => !h.includes(c));
+      if (missingGrn.length) {
+        const startCol = colLetter(h.length + 1);
+        const endCol = colLetter(h.length + missingGrn.length);
+        await sheets.updateRange('GoodsReceipts', `${startCol}1:${endCol}1`, [missingGrn]);
+        logger.info(`SchemaMapper: extended GoodsReceipts with ${missingGrn.length} P2.5 columns (${missingGrn.join(', ')})`);
+      }
+    } catch (e) {
+      logger.warn('SchemaMapper: could not extend GoodsReceipts —', e.message);
     }
   }
 

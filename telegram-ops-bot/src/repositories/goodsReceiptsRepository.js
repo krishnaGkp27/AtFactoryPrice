@@ -20,6 +20,10 @@
  *   photo_file_id   — Telegram file_id of the supplier invoice photo (P5 OCR)
  *   notes           — free-text
  *   status          — 'received' | 'cancelled'
+ *   source          — origin tag: 'manual' | 'bulk_csv' | 'bulk_xlsx' (P2.5)
+ *   file_hash       — 16-hex sha256 prefix of the original upload; populated
+ *                     only for bulk imports. Used by getByFileHash() to
+ *                     reject duplicate re-uploads of the same file.
  */
 
 const sheets = require('./sheetsClient');
@@ -30,6 +34,9 @@ const HEADERS = [
   'grn_id', 'warehouse', 'supplier', 'supplier_id', 'po_id',
   'received_by', 'received_at', 'total_bales', 'total_yards',
   'photo_file_id', 'notes', 'status',
+  // P2.5 — bulk-import provenance. Both columns are empty for the
+  // interactive (manual) GRN flow created in P2.
+  'source', 'file_hash',
 ];
 
 function str(v) { return (v ?? '').toString().trim(); }
@@ -50,11 +57,13 @@ function parse(r, rowIndex) {
     photo_file_id: str(r[9]),
     notes: str(r[10]),
     status: str(r[11]) || 'received',
+    source: str(r[12]) || 'manual',
+    file_hash: str(r[13]),
   };
 }
 
 async function getAll() {
-  const rows = await sheets.readRange(SHEET, 'A2:L');
+  const rows = await sheets.readRange(SHEET, 'A2:N');
   return rows.map((r, i) => parse(r, i + 2)).filter((g) => g.grn_id);
 }
 
@@ -66,6 +75,21 @@ async function getById(grnId) {
 async function getByWarehouse(warehouse) {
   const all = await getAll();
   return all.filter((g) => g.warehouse.toLowerCase() === (warehouse || '').toLowerCase());
+}
+
+/**
+ * Look up a GRN by the file_hash of its originating upload. Used by the
+ * bulk-receive flow to reject duplicate re-uploads of the same file
+ * before any sheet write happens.
+ *
+ * Returns null when no match (the common case — the user is uploading
+ * a fresh file).
+ */
+async function getByFileHash(fileHash) {
+  const h = str(fileHash);
+  if (!h) return null;
+  const all = await getAll();
+  return all.find((g) => g.file_hash === h) || null;
 }
 
 /**
@@ -88,9 +112,18 @@ async function append(grn) {
     grn.photo_file_id || '',
     grn.notes || '',
     grn.status || 'received',
+    grn.source || 'manual',
+    grn.file_hash || '',
   ];
   await sheets.appendRows(SHEET, [row]);
-  return { ...grn, grn_id: grnId, received_at: row[6], status: row[11] };
+  return {
+    ...grn,
+    grn_id: grnId,
+    received_at: row[6],
+    status: row[11],
+    source: row[12],
+    file_hash: row[13],
+  };
 }
 
-module.exports = { getAll, getById, getByWarehouse, append, SHEET, HEADERS };
+module.exports = { getAll, getById, getByWarehouse, getByFileHash, append, SHEET, HEADERS };
