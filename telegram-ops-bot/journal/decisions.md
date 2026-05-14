@@ -6,6 +6,16 @@
 
 ---
 
+## 2026-05-14 · Production-hygiene pass before customer-facing features (TG-1, TG-2, TG-4)
+
+The owner returned the day after the late-night planning session, asked about the cloud agent's old improvement plan, and the AI partner showed that 22 of 26 items were still pending. Rather than work through all of them mechanically, the discussion narrowed to three that mattered before customer-facing features open up: a real runtime crash (TG-1), a real security gap (TG-2), and a misleading piece of dead code (TG-4). The other 19 items remain on the deferred list with the explicit understanding that *real engineering wins ≠ urgent*.
+
+Three separate commits landed: `4d0e213` deleted the broken idempotency utility (32 lines, no behavior change because nothing referenced it); `cac0ea6` hoisted the sessionStore require in approvalEvents.js so the inline-require crash on the customer-approval resume path cannot recur; `e18aaa0` added webhook-secret validation in server.js and registered the secret with Telegram via the set-webhook script.
+
+The reasoning matters more than the change itself: **bot-side floor must be patched before customer-side rooms are added**. Commits 8-9 will put real customer data through the same webhook; doing those commits over an unauthenticated webhook would have been a quiet timebomb. Doing them over a latent sessionStore crash would have generated mysterious incidents we'd have spent days diagnosing.
+
+Smoke 76/76 unchanged across all three commits. ReadLints clean. Three commits separate so each is independently revertable.
+
 ## 2026-05-13 (~2:30am) · Payment automation becomes the closing piece of the order loop
 
 Right after the task-manager release shipped, the owner introduced the next ambition: automate the payment side of customer orders. The vision is a three-layer system — auto-DM the customer with payment details the moment the order is delivered (tier-aware so premium customers see a richer experience), OCR uploaded receipts to spare admin from squinting at thermal paper at 11pm, and integrate Nigerian bank APIs (Mono, Okra, Paystack, Flutterwave) to auto-match incoming transfers without the customer even needing to upload anything.
