@@ -1,17 +1,33 @@
 /**
  * Data access for Inventory sheet — Package/Than model.
- * Columns: PackageNo | Indent | CSNo | Design | Shade | ThanNo | Yards | Status |
- *          Warehouse | PricePerYard | DateReceived | SoldTo | SoldDate | NetMtrs | NetWeight | UpdatedAt
+ *
+ * Columns A-Q (legacy): PackageNo | Indent | CSNo | Design | Shade | ThanNo | Yards | Status |
+ *                       Warehouse | PricePerYard | DateReceived | SoldTo | SoldDate | NetMtrs | NetWeight | UpdatedAt | ProductType
+ * Columns R-T (P1 — composite key foundation):
+ *   R = bale_uid   internal-only unambiguous ID; format BAL-YYYYMMDD-{pkg}-{rand4}.
+ *                  PackageNo (column A) is the human-printed bale number and may
+ *                  legitimately repeat over time as new physical bales arrive.
+ *                  bale_uid is the FK target for ProcurementOrders, transfers,
+ *                  sales and audit trail.
+ *   S = addedAt    server-generated ISO timestamp at row creation (distinct
+ *                  from DateReceived, which is the supplier-stated date).
+ *   T = grn_id     foreign key to GoodsReceipts header (optional; empty for
+ *                  legacy rows and for non-GRN intake paths).
+ *
+ * Legacy rows (created before P1) get synthetic bale_uid='BAL-LEGACY-{rowIndex}'
+ * and addedAt=DateReceived||'' injected at read time. They are persisted on
+ * next mutation (transfer / sale / price update) or via backfillLegacyBales().
  */
 
 const sheets = require('./sheetsClient');
+const idGenerator = require('../utils/idGenerator');
 
 const SHEET = 'Inventory';
-const COL_COUNT = 17;
+const COL_COUNT = 20;
 const HEADERS = [
   'PackageNo', 'Indent', 'CSNo', 'Design', 'Shade', 'ThanNo', 'Yards', 'Status',
   'Warehouse', 'PricePerYard', 'DateReceived', 'SoldTo', 'SoldDate', 'NetMtrs', 'NetWeight', 'UpdatedAt',
-  'ProductType',
+  'ProductType', 'bale_uid', 'addedAt', 'grn_id',
 ];
 
 /** Short-lived cache for getAll() to avoid hammering the API during batch ops. */
@@ -24,6 +40,9 @@ function num(v) { return parseFloat(v) || 0; }
 function upper(v) { return str(v).toUpperCase(); }
 
 function parseRow(r, rowIndex) {
+  const rawUid = str(r[17]);
+  const rawAddedAt = str(r[18]);
+  const isLegacy = !rawUid;
   return {
     rowIndex,
     packageNo: str(r[0]),
@@ -43,6 +62,10 @@ function parseRow(r, rowIndex) {
     netWeight: num(r[14]),
     updatedAt: str(r[15]),
     productType: str(r[16]) || 'fabric',
+    baleUid: rawUid || `BAL-LEGACY-${rowIndex}`,
+    addedAt: rawAddedAt || str(r[10]) || '',
+    grnId: str(r[19]),
+    _legacy: isLegacy,
   };
 }
 
@@ -53,20 +76,21 @@ function toRow(o) {
     o.warehouse ?? '', o.pricePerYard ?? 0, o.dateReceived ?? '',
     o.soldTo ?? '', o.soldDate ?? '', o.netMtrs ?? '', o.netWeight ?? '',
     o.updatedAt ?? '', o.productType ?? 'fabric',
+    o.baleUid ?? '', o.addedAt ?? '', o.grnId ?? '',
   ];
 }
 
 async function ensureHeader() {
-  const rows = await sheets.readRange(SHEET, 'A1:Q1');
+  const rows = await sheets.readRange(SHEET, 'A1:T1');
   if (!rows.length || rows[0].length < COL_COUNT) {
-    await sheets.updateRange(SHEET, 'A1:Q1', [HEADERS]);
+    await sheets.updateRange(SHEET, 'A1:T1', [HEADERS]);
   }
 }
 
 async function getAll() {
   const now = Date.now();
   if (_allCache && (now - _allCacheTs) < CACHE_TTL_MS) return _allCache;
-  const rows = await sheets.readRange(SHEET, 'A2:Q');
+  const rows = await sheets.readRange(SHEET, 'A2:T');
   _allCache = rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.packageNo || r.design);
   _allCacheTs = Date.now();
   return _allCache;
@@ -84,10 +108,31 @@ async function findByDesign(design, shade) {
   return all.filter((r) => upper(r.design) === d && (!s || upper(r.shade) === s));
 }
 
-async function findByPackage(packageNo) {
+/**
+ * Find all Inventory rows matching a human-printed PackageNo.
+ *
+ * Because PackageNo may legitimately repeat across intake dates, this returns
+ * every matching row (newest addedAt first). Pass `{ latestOnly: true }` to
+ * collapse to the most recently-added instance.
+ *
+ * @param {string|number} packageNo
+ * @param {{ latestOnly?: boolean, includeSold?: boolean }} [opts]
+ */
+async function findByPackage(packageNo, opts = {}) {
   const all = await getAll();
   const p = str(packageNo);
-  return all.filter((r) => r.packageNo === p);
+  let rows = all.filter((r) => r.packageNo === p);
+  if (opts.includeSold === false) {
+    rows = rows.filter((r) => r.status !== 'sold');
+  }
+  rows.sort((a, b) => (b.addedAt || '').localeCompare(a.addedAt || ''));
+  if (opts.latestOnly) return rows.length ? [rows[0]] : [];
+  return rows;
+}
+
+async function findByBaleUid(baleUid) {
+  const all = await getAll();
+  return all.find((r) => r.baleUid === str(baleUid)) || null;
 }
 
 async function findAvailable(filters = {}) {
@@ -143,6 +188,77 @@ async function appendThans(thanRows) {
   await sheets.appendRows(SHEET, rows);
   invalidateCache();
   return thanRows.length;
+}
+
+/**
+ * Append one or more bales with server-generated bale_uid + addedAt.
+ *
+ * Each input bale may omit `baleUid` and `addedAt`; they will be generated
+ * here. If a bale provides them explicitly (e.g. lazy back-fill writes), they
+ * are preserved as-is.
+ *
+ * `grnId` is optional and links the bale to a GoodsReceipts header.
+ *
+ * Returns the bale objects with their generated ids attached. Cache is
+ * invalidated atomically.
+ *
+ * @param {Array<object>} bales
+ * @returns {Promise<Array<object>>}
+ */
+async function appendBale(bales) {
+  if (!Array.isArray(bales) || !bales.length) return [];
+  await ensureHeader();
+  const nowIso = new Date().toISOString();
+  const prepared = bales.map((b) => {
+    const baleUid = b.baleUid || idGenerator.baleUid(b.packageNo);
+    const addedAt = b.addedAt || nowIso;
+    return {
+      ...b,
+      status: b.status || 'available',
+      productType: b.productType || 'fabric',
+      updatedAt: b.updatedAt || nowIso,
+      baleUid,
+      addedAt,
+      grnId: b.grnId || '',
+    };
+  });
+  const rows = prepared.map(toRow);
+  await sheets.appendRows(SHEET, rows);
+  invalidateCache();
+  return prepared;
+}
+
+/**
+ * Back-fill legacy Inventory rows (those without bale_uid in column R) with
+ * generated bale_uid + addedAt values. Safe to run repeatedly — only touches
+ * rows where column R is empty. Returns the count of rows back-filled.
+ *
+ * Trade-off: this is opt-in (not run automatically on every read) because the
+ * back-fill takes one batch-update API call. In typical operation the legacy
+ * row count is small (< 1000) and a single run during a maintenance window
+ * suffices.
+ */
+async function backfillLegacyBales() {
+  const rows = await sheets.readRange(SHEET, 'A2:T');
+  const updates = [];
+  let count = 0;
+  rows.forEach((r, i) => {
+    const rowIndex = i + 2;
+    const packageNo = str(r[0]);
+    if (!packageNo) return;
+    const hasUid = str(r[17]);
+    if (hasUid) return;
+    const dateReceived = str(r[10]);
+    const synthUid = `BAL-LEGACY-${rowIndex}-${(packageNo || 'X').toString().slice(0, 8)}`;
+    const synthAddedAt = dateReceived || '1970-01-01T00:00:00.000Z';
+    updates.push({ range: `R${rowIndex}:S${rowIndex}`, values: [[synthUid, synthAddedAt]] });
+    count += 1;
+  });
+  if (updates.length) {
+    await sheets.batchUpdateRanges(SHEET, updates);
+    invalidateCache();
+  }
+  return count;
 }
 
 async function getWarehouses() {
@@ -243,6 +359,7 @@ module.exports = {
   getAll,
   findByDesign,
   findByPackage,
+  findByBaleUid,
   findAvailable,
   findThan,
   markThanSold,
@@ -253,6 +370,8 @@ module.exports = {
   transferThan,
   transferPackage,
   appendThans,
+  appendBale,
+  backfillLegacyBales,
   getWarehouses,
   getDistinctDesigns,
   ensureHeader,

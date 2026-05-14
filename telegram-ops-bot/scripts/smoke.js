@@ -12,6 +12,7 @@
  *   S7  Repo parse — taskEventsRepository row shape + meta JSON
  *   S8  Task state-machine engine (TG-7.5 Phase C commit 2)
  *   S9  Admin Activity Feed: isEnabled policy + catalog (T2)
+ *   S10 Inventory composite-key foundation (P1)
  *
  * Run:  npm run smoke         (from telegram-ops-bot/)
  * Exit: 0 = all passed, 1 = one or more FAIL
@@ -818,6 +819,103 @@ function runS9() {
 }
 
 // ---------------------------------------------------------------------------
+// S10 — Inventory composite-key foundation (P1)
+// ---------------------------------------------------------------------------
+async function runS10() {
+  // Reset module cache so previous stubs don't leak.
+  delete require.cache[require.resolve('../src/repositories/sheetsClient')];
+  delete require.cache[require.resolve('../src/repositories/inventoryRepository')];
+
+  // Mock sheets state: row 2 is a legacy row (only A-Q populated, R/S/T empty);
+  // we'll append a new bale and re-read to verify the round-trip.
+  const sheetRows = [
+    // Row 2 — legacy: PackageNo=5801, Design=Beige, DateReceived=2024-12-01, no bale_uid/addedAt
+    ['5801', '', '', 'Beige Crepe', 'B-12', 1, 50, 'available', 'Kano', 0, '2024-12-01', '', '', '', '', '', 'fabric', '', '', ''],
+  ];
+  const updateLog = [];
+  const appendLog = [];
+
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async (sheet, range) => {
+      if (range.startsWith('A1')) return [['PackageNo']]; // header row exists
+      return sheetRows;
+    },
+    appendRows: async (sheet, rows) => {
+      appendLog.push(...rows);
+      rows.forEach((r) => sheetRows.push(r));
+    },
+    updateRange: async (sheet, range, values) => { updateLog.push({ range, values }); },
+    batchUpdateRanges: async (sheet, updates) => { updateLog.push(...updates); },
+  });
+
+  const invRepo = require('../src/repositories/inventoryRepository');
+
+  // S10.1 — legacy row gets synthetic bale_uid + addedAt at read time
+  invRepo.invalidateCache();
+  const all1 = await invRepo.getAll();
+  const legacy = all1.find((r) => r.packageNo === '5801');
+  if (legacy && legacy.baleUid === 'BAL-LEGACY-2' && legacy.addedAt === '2024-12-01' && legacy._legacy === true) {
+    pass('S10.1 parseRow: legacy row gets synthetic BAL-LEGACY-<rowIndex> + addedAt=DateReceived');
+  } else {
+    fail('S10.1 parseRow: legacy row synthetic id', JSON.stringify(legacy));
+  }
+
+  // S10.2 — appendBale() generates server-side bale_uid + addedAt
+  invRepo.invalidateCache();
+  const created = await invRepo.appendBale([{
+    packageNo: '5801', design: 'Beige Crepe', shade: 'B-12',
+    thanNo: 1, yards: 50, warehouse: 'Kano', dateReceived: '2026-05-14',
+  }]);
+  if (created.length === 1
+      && /^BAL-\d{8}-5801-[a-z0-9]{4}$/.test(created[0].baleUid)
+      && /^\d{4}-\d{2}-\d{2}T/.test(created[0].addedAt)) {
+    pass('S10.2 appendBale: server-generated bale_uid (BAL-YYYYMMDD-pkg-rand4) + ISO addedAt');
+  } else {
+    fail('S10.2 appendBale: server-generated id', JSON.stringify(created[0]));
+  }
+
+  // S10.3 — same PackageNo across intake dates is allowed (composite-key semantics)
+  invRepo.invalidateCache();
+  const all3 = await invRepo.getAll();
+  const both5801 = all3.filter((r) => r.packageNo === '5801');
+  if (both5801.length === 2) {
+    pass('S10.3 findByPackage: two rows with PackageNo=5801 coexist (legacy + new intake)');
+  } else {
+    fail('S10.3 findByPackage: composite key duplicates', `expected 2, got ${both5801.length}`);
+  }
+
+  // S10.4 — findByPackage(p, { latestOnly: true }) returns just the newest
+  invRepo.invalidateCache();
+  const latest = await invRepo.findByPackage('5801', { latestOnly: true });
+  if (latest.length === 1 && /^BAL-2026/.test(latest[0].baleUid)) {
+    pass('S10.4 findByPackage latestOnly: returns the most recently added instance');
+  } else {
+    fail('S10.4 findByPackage latestOnly', JSON.stringify(latest));
+  }
+
+  // S10.5 — findByBaleUid looks up by internal unambiguous id
+  invRepo.invalidateCache();
+  const newUid = created[0].baleUid;
+  const byUid = await invRepo.findByBaleUid(newUid);
+  if (byUid && byUid.packageNo === '5801' && byUid.baleUid === newUid) {
+    pass('S10.5 findByBaleUid: resolves Inventory row by internal id');
+  } else {
+    fail('S10.5 findByBaleUid', JSON.stringify(byUid));
+  }
+
+  // S10.6 — backfillLegacyBales writes synthetic ids for empty-uid rows
+  invRepo.invalidateCache();
+  updateLog.length = 0;
+  const filled = await invRepo.backfillLegacyBales();
+  const wroteR2 = updateLog.some((u) => /^R2:S2$/.test(u.range));
+  if (filled === 1 && wroteR2) {
+    pass('S10.6 backfillLegacyBales: persists synthetic id for legacy row in batch update');
+  } else {
+    fail('S10.6 backfillLegacyBales', `filled=${filled} log=${JSON.stringify(updateLog)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -832,6 +930,7 @@ function runS9() {
   try { runS7(); } catch (e) { fail('S7 unexpected error', e.message); }
   try { await runS8(); } catch (e) { fail('S8 unexpected error', e.message); }
   try { runS9(); } catch (e) { fail('S9 unexpected error', e.message); }
+  try { await runS10(); } catch (e) { fail('S10 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

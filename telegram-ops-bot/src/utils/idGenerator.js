@@ -24,6 +24,26 @@ function requestId() {
   catch (_) { return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`; }
 }
 
+/**
+ * Bale UID — internal-only unambiguous identity for an Inventory row.
+ *
+ * Format: BAL-YYYYMMDD-{packageNo}-{rand4}
+ * Example: BAL-20260514-5801-3a7f
+ *
+ * The PRINTED-ON-BALE PackageNo stays as the human identifier in column A;
+ * bale_uid lets the system disambiguate when the same PackageNo appears
+ * across different intake dates. Random suffix prevents collision when
+ * multiple bales with same PackageNo are intaken on the same day (rare but
+ * possible — e.g. two physical bales with mis-printed identical numbers).
+ */
+function baleUid(packageNo) {
+  const d = new Date();
+  const date = d.toISOString().slice(0, 10).replace(/-/g, '');
+  const pkg = String(packageNo || '').trim() || 'X';
+  const rand = Math.random().toString(36).slice(2, 6);
+  return `BAL-${date}-${pkg}-${rand}`;
+}
+
 module.exports = {
   ledgerEntry: () => generate('LE'),
   stockLedger: () => generate('SL'),
@@ -36,6 +56,9 @@ module.exports = {
   note: () => generate('NOTE'),
   receipt: () => generate('RCT'),
   department: () => generate('DEPT'),
+  grn: () => generate('GRN'),
+  procurementOrder: () => generate('PO'),
+  baleUid,
   requestId,
   generate,
 };

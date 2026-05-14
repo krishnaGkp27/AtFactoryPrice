@@ -251,12 +251,27 @@ async function initialize() {
 
   if (existing.includes('Inventory')) {
     try {
-      const invHeader = await sheets.readRange('Inventory', 'A1:Q1');
-      const h = invHeader[0] || [];
+      let invHeader = await sheets.readRange('Inventory', 'A1:Z1');
+      let h = invHeader[0] || [];
       if (!h.includes('ProductType')) {
         const nextCol = colLetter(h.length + 1);
         await sheets.updateRange('Inventory', `${nextCol}1:${nextCol}1`, [['ProductType']]);
         logger.info('SchemaMapper: extended Inventory with ProductType column');
+        invHeader = await sheets.readRange('Inventory', 'A1:Z1');
+        h = invHeader[0] || [];
+      }
+      // P1 — composite-key foundation: bale_uid + addedAt + grn_id columns.
+      // Existing rows are left empty; inventoryRepository.parseRow injects a
+      // synthetic BAL-LEGACY-<rowIndex> bale_uid at read time, and
+      // backfillLegacyBales() may be invoked to persist them in a single
+      // batch when the operator is ready.
+      const INV_NEW_COLS = ['bale_uid', 'addedAt', 'grn_id'];
+      const missingInv = INV_NEW_COLS.filter((c) => !h.includes(c));
+      if (missingInv.length) {
+        const startCol = colLetter(h.length + 1);
+        const endCol = colLetter(h.length + missingInv.length);
+        await sheets.updateRange('Inventory', `${startCol}1:${endCol}1`, [missingInv]);
+        logger.info(`SchemaMapper: extended Inventory with ${missingInv.length} P1 columns (${missingInv.join(', ')})`);
       }
     } catch (e) {
       logger.warn('SchemaMapper: could not extend Inventory —', e.message);
