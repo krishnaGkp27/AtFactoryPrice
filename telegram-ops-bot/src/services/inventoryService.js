@@ -462,10 +462,30 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       qty: totalYards, before: '', after: aj.warehouse, status: 'approved',
       saleRefId: grn.grn_id,
     });
+    // P4 linkage — when the GRN was raised against a PO, push the
+    // received qty into the PO's lines + recompute status so the
+    // Procurement Plan view advances automatically. Best-effort: any
+    // failure here is logged but doesn't roll back the GRN.
+    let poUpdate = null;
+    if (aj.po_id) {
+      try {
+        const procurementRepo = require('../repositories/procurementOrdersRepository');
+        poUpdate = await procurementRepo.applyReceived(aj.po_id, [{
+          design: aj.design, shade: aj.shade,
+          qty_bales: persisted.length, qty_yards: totalYards,
+        }]);
+        await procurementRepo.recomputeStatus(aj.po_id);
+      } catch (e) {
+        // Surface via audit only — the receive itself already succeeded.
+        await auditLogRepository.append('po_receive_link_failed',
+          { grnId: grn.grn_id, poId: aj.po_id, error: e.message }, item.user);
+      }
+    }
     // bundleReport is normally reserved for sale_bundle partials; reusing
     // it as a generic carrier so approvalEvents can surface the GRN
     // details in the success card.
-    bundleReport = { grnId: grn.grn_id, baleCount: persisted.length, totalYards };
+    bundleReport = { grnId: grn.grn_id, baleCount: persisted.length, totalYards,
+                     poId: aj.po_id || '', poUpdate };
   } else if (aj.action === 'add_warehouse') {
     // P2 — warehouse creation is dual-admin gated (see ALWAYS_APPROVAL_ACTIONS
     // in risk/evaluate). There is no central Warehouses sheet today —

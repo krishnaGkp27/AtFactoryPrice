@@ -39,6 +39,7 @@ const taskFlow = require('../flows/taskFlow');
 const notificationsFlow = require('../flows/notificationsFlow');
 const salesWorkflowView = require('../flows/salesWorkflowView');
 const goodsReceiptFlow = require('../flows/goodsReceiptFlow');
+const procurementPlanView = require('../flows/procurementPlanView');
 const adminFeed = require('../services/adminFeed');
 const menuNav = require('../utils/menuNav');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
@@ -3274,6 +3275,15 @@ async function handleMessage(bot, msg) {
     }
   }
 
+  // P4 — Procurement PO new-flow: supplier/design/shade/qty/date text input.
+  {
+    const poSession = sessionStore.get(userId);
+    if (poSession && poSession.type === 'po_new_flow') {
+      const handled = await procurementPlanView.handleTextStep(bot, msg);
+      if (handled) return;
+    }
+  }
+
   // Orphan-flow detection: if the user just posted a reply that *looks* like
   // it was meant for a recently expired flow (e.g. comma-separated shade
   // names while the design_asset_flow session timed out), send a clear
@@ -3484,6 +3494,34 @@ async function handleMessage(bot, msg) {
       return;
     }
     await startOrderFlow(bot, chatId, userId);
+    return;
+  }
+
+  // P4 — /setlowstock N  (admin-only) — tunes the low-stock alert
+  // threshold used by the Procurement Plan view. Persisted to Settings
+  // so all flows see it immediately.
+  if (/^\/setlowstock\b/i.test(text.trim())) {
+    if (!config.access.adminIds.includes(userId)) {
+      await bot.sendMessage(chatId, 'Admin only.');
+      return;
+    }
+    const m = text.trim().match(/^\/setlowstock\s+(\d+)\s*$/i);
+    if (!m) {
+      await bot.sendMessage(chatId, 'Usage: `/setlowstock N` — e.g. `/setlowstock 5`', { parse_mode: 'Markdown' });
+      return;
+    }
+    const n = parseInt(m[1], 10);
+    if (!Number.isFinite(n) || n < 0) {
+      await bot.sendMessage(chatId, 'N must be a non-negative integer.');
+      return;
+    }
+    try {
+      const settingsRepo = require('../repositories/settingsRepository');
+      await settingsRepo.set('LOW_STOCK_THRESHOLD', String(n));
+      await bot.sendMessage(chatId, `✅ Low-stock threshold set to *${n}* bales.`, { parse_mode: 'Markdown' });
+    } catch (e) {
+      await bot.sendMessage(chatId, `❌ Failed to save: ${e.message}`);
+    }
     return;
   }
 
@@ -5595,6 +5633,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
   // P2 — Goods Receipt Note flow (Receive Goods button).
   if (data.startsWith('gr:')) {
     const handled = await goodsReceiptFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
+  // P4 — Procurement Plan view + PO drafting flow.
+  if (data.startsWith('pp:')) {
+    const handled = await procurementPlanView.handleCallback(bot, callbackQuery);
     if (handled) return;
   }
 
@@ -7765,6 +7809,14 @@ async function handleCallbackQuery(bot, callbackQuery) {
         // P2 — GRN flow. Admins execute directly; employees route through
         // admin approval (see WRITE_ACTIONS in risk/evaluate.js).
         await goodsReceiptFlow.start(bot, chatId, uid, messageId);
+        break;
+      case 'procurement_plan':
+        // P4 — admin Procurement Plan view (low-stock + open POs + new PO).
+        if (!config.access.adminIds.includes(uid)) {
+          await bot.sendMessage(chatId, 'Procurement Plan is admin-only.');
+          break;
+        }
+        await procurementPlanView.showPlan(bot, chatId, uid, messageId);
         break;
       default:
         await bot.sendMessage(chatId, 'Feature coming soon.');

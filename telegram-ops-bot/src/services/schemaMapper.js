@@ -142,6 +142,21 @@ const REQUIRED_SHEETS = {
       'photo_file_id', 'notes', 'status',
     ],
   },
+  // P4 — Procurement Order header. Drafted before goods arrive; GRN flow
+  // may optionally reference po_id so receipts auto-reconcile against the
+  // PO's lines and advance its status.
+  ProcurementOrders: {
+    headers: [
+      'po_id', 'supplier', 'supplier_id', 'expected_date', 'status',
+      'created_by', 'created_at', 'updated_at', 'photo_file_id', 'notes',
+    ],
+  },
+  ProcurementOrderLines: {
+    headers: [
+      'line_id', 'po_id', 'design', 'shade', 'qty_bales', 'qty_yards',
+      'unit_price', 'received_bales', 'received_yards',
+    ],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];

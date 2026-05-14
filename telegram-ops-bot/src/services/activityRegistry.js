@@ -101,6 +101,10 @@ const ACTIVITIES = [
   // T3 — admin read-only lens on the supply-order pipeline (Orders +
   // Customers + LedgerBalanceCache joined into one view).
   { code: 'sales_workflow_view',   label: 'Sales Workflow',            icon: '📊', callback: 'act:sales_workflow',     hub: 'admin' },
+  // P4 — admin Procurement Plan: low-stock alerts + open POs + new PO flow.
+  // Visibility gated to admins in the controller; not listed in any
+  // department's allowed_activities CSV.
+  { code: 'procurement_plan',      label: 'Procurement Plan',          icon: '📋', callback: 'act:procurement_plan',   hub: 'admin' },
 
   { code: 'upload_receipt',        label: 'Upload Receipt',            icon: '🧾', callback: 'act:upload_receipt',     hub: null },
 ];

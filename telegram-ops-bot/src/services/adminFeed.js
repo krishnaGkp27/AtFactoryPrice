@@ -62,6 +62,14 @@ const CATALOG = Object.freeze([
   ['goods.received',   'Goods received at a warehouse',      'inventory', true ],
   ['warehouse.added',  'New warehouse registered',           'inventory', true ],
   ['warehouse.renamed','Warehouse renamed',                  'inventory', true ],
+
+  // P4 — Procurement Order lifecycle. po.created is default-ON; po.received
+  // is default-ON so an admin who isn't drafting POs still sees deliveries
+  // close out. po.partial is default-OFF (noisy on multi-truck deliveries
+  // — admins can flip it on if they want close visibility).
+  ['po.created',       'Procurement Order drafted',          'inventory', true ],
+  ['po.received',      'Procurement Order fully received',   'inventory', true ],
+  ['po.partial',       'Procurement Order partially received','inventory', false],
 ]);
 
 const DEFAULT_POLICY = Object.freeze(

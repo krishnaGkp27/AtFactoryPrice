@@ -15,6 +15,7 @@
  *   S10 Inventory composite-key foundation (P1)
  *   S11 Goods Receipt flow — parseBaleList + adminFeed inventory events (P2)
  *   S12 Quick Add Customer parser (P3)
+ *   S13 Procurement Plan — low-stock computation + PO recompute + feed (P4)
  *
  * Run:  npm run smoke         (from telegram-ops-bot/)
  * Exit: 0 = all passed, 1 = one or more FAIL
@@ -1057,6 +1058,150 @@ function runS12() {
 }
 
 // ---------------------------------------------------------------------------
+// S13 — Procurement Plan: low-stock computation + PO status recompute (P4)
+// ---------------------------------------------------------------------------
+async function runS13() {
+  delete require.cache[require.resolve('../src/repositories/sheetsClient')];
+  delete require.cache[require.resolve('../src/repositories/inventoryRepository')];
+  delete require.cache[require.resolve('../src/repositories/procurementOrdersRepository')];
+  delete require.cache[require.resolve('../src/repositories/settingsRepository')];
+  delete require.cache[require.resolve('../src/flows/procurementPlanView')];
+  delete require.cache[require.resolve('../src/services/adminFeed')];
+
+  // S13.1 — computeLowStock groups by (design, shade), filters 'available',
+  //          and surfaces those below threshold.
+  const invRows = [
+    ['5801','','','Beige','B-12',1,50,'available','Kano','',''  ,'','','','','','fabric','','',''],
+    ['5802','','','Beige','B-12',1,50,'available','Kano','',''  ,'','','','','','fabric','','',''],
+    ['5803','','','Mint','',   1,50,'available','Kano','',''  ,'','','','','','fabric','','',''],
+    ['5804','','','Indigo','I-1',1,50,'sold','Kano','',''  ,'C','2026-05-01','','','','fabric','','',''],
+  ];
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async (sheet) => sheet === 'Inventory' ? invRows : [],
+    appendRows: async () => {},
+    updateRange: async () => {},
+    batchUpdateRanges: async () => {},
+    getSheetNames: async () => [],
+    addSheet: async () => {},
+  });
+  // Stub settingsRepository so getAll() works without Sheets.
+  stubModule(require.resolve('../src/repositories/settingsRepository'), {
+    getAll: async () => ({ LOW_STOCK_THRESHOLD: '2' }),
+    set: async () => {},
+  });
+
+  const pv = require('../src/flows/procurementPlanView');
+  const lows = await pv._internals.computeLowStock(2);
+  // Beige/B-12 has 2 available bales (NOT below 2 threshold strict <),
+  // Mint has 1 (below threshold). Indigo is sold (not available).
+  const mint = lows.find((l) => l.design === 'Mint');
+  const beige = lows.find((l) => l.design === 'Beige');
+  if (mint && mint.bales === 1 && !beige) {
+    pass('S13.1 computeLowStock: counts only available bales, applies strict-less-than threshold');
+  } else {
+    fail('S13.1 computeLowStock', `lows=${JSON.stringify(lows)}`);
+  }
+
+  // S13.2 — threshold setting falls back to default when malformed
+  stubModule(require.resolve('../src/repositories/settingsRepository'), {
+    getAll: async () => ({ LOW_STOCK_THRESHOLD: 'not-a-number' }),
+    set: async () => {},
+  });
+  delete require.cache[require.resolve('../src/flows/procurementPlanView')];
+  const pv2 = require('../src/flows/procurementPlanView');
+  const t = await pv2._internals.getLowStockThreshold();
+  if (t === pv2._internals.DEFAULT_LOW_STOCK_THRESHOLD) {
+    pass('S13.2 getLowStockThreshold: malformed setting falls back to default');
+  } else {
+    fail('S13.2 getLowStockThreshold default', `got ${t}`);
+  }
+
+  // S13.3 — ProcurementOrders recomputeStatus: partial/full transitions.
+  const headerRows = [
+    // PO with status 'sent', has lines below.
+    ['PO-1','Wang Tex','','2026-05-30','sent','U1','2026-05-10T00:00:00Z','2026-05-10T00:00:00Z','',''],
+  ];
+  const lineRows = [
+    // Two lines for PO-1 — neither received yet → recompute stays 'sent'.
+    ['POL-1','PO-1','Beige','B-12',10,500,0,0,0],
+    ['POL-2','PO-1','Mint','',5,250,0,0,0],
+  ];
+  let writes = [];
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async (sheet) => {
+      if (sheet === 'ProcurementOrders') return headerRows;
+      if (sheet === 'ProcurementOrderLines') return lineRows;
+      return [];
+    },
+    appendRows: async () => {},
+    updateRange: async () => {},
+    batchUpdateRanges: async (_sheet, updates) => { writes.push(...updates); },
+    getSheetNames: async () => [],
+    addSheet: async () => {},
+  });
+  delete require.cache[require.resolve('../src/repositories/procurementOrdersRepository')];
+  const poRepo = require('../src/repositories/procurementOrdersRepository');
+
+  // Apply partial receipt: 6 bales of Beige
+  writes = [];
+  const partial = await poRepo.applyReceived('PO-1', [
+    { design: 'Beige', shade: 'B-12', qty_bales: 6, qty_yards: 300 },
+  ]);
+  if (partial.ok && partial.updatedLines === 1) {
+    pass('S13.3 applyReceived: partial receipt matched (design+shade)');
+  } else {
+    fail('S13.3 applyReceived partial', JSON.stringify(partial));
+  }
+  // After applyReceived mutates the in-memory line, also reflect that in the
+  // stubbed sheet rows so recomputeStatus sees the updated received_bales.
+  lineRows[0][7] = 6; lineRows[0][8] = 300;
+
+  const afterPartial = await poRepo.recomputeStatus('PO-1');
+  if (afterPartial.status === 'partially_received') {
+    pass('S13.4 recomputeStatus: any-received → partially_received');
+  } else {
+    fail('S13.4 recomputeStatus partial', JSON.stringify(afterPartial));
+  }
+
+  // Complete both lines → 'received'
+  lineRows[0][7] = 10; lineRows[0][8] = 500;
+  lineRows[1][7] = 5;  lineRows[1][8] = 250;
+  headerRows[0][4] = 'partially_received';
+  const afterFull = await poRepo.recomputeStatus('PO-1');
+  if (afterFull.status === 'received') {
+    pass('S13.5 recomputeStatus: all-lines-met → received');
+  } else {
+    fail('S13.5 recomputeStatus received', JSON.stringify(afterFull));
+  }
+
+  // S13.6 — applyReceived returns unmatched bales when (design, shade)
+  //          doesn't align with any line on the PO
+  writes = [];
+  lineRows[0][7] = 0; lineRows[0][8] = 0;
+  lineRows[1][7] = 0; lineRows[1][8] = 0;
+  const r2 = await poRepo.applyReceived('PO-1', [
+    { design: 'Beige', shade: 'B-12', qty_bales: 2, qty_yards: 100 },
+    { design: 'Indigo', shade: '',    qty_bales: 1, qty_yards: 50  },
+  ]);
+  if (r2.ok && r2.updatedLines === 1 && r2.unmatched.length === 1
+      && r2.unmatched[0].design === 'Indigo') {
+    pass('S13.6 applyReceived: unmatched bales returned for caller to surface');
+  } else {
+    fail('S13.6 applyReceived unmatched', JSON.stringify(r2));
+  }
+
+  // S13.7 — adminFeed catalog covers po.created / po.received / po.partial
+  const af = require('../src/services/adminFeed');
+  const need = ['po.created', 'po.received', 'po.partial'];
+  const ok = need.every((et) => {
+    const e = af.getCatalogEntry(et);
+    return e && e.group === 'inventory';
+  });
+  if (ok) pass('S13.7 adminFeed CATALOG: PO events registered under inventory group');
+  else fail('S13.7 adminFeed CATALOG PO', JSON.stringify(need.map((et) => [et, af.getCatalogEntry(et)])));
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -1074,6 +1219,7 @@ function runS12() {
   try { await runS10(); } catch (e) { fail('S10 unexpected error', e.message); }
   try { runS11(); } catch (e) { fail('S11 unexpected error', e.message); }
   try { runS12(); } catch (e) { fail('S12 unexpected error', e.message); }
+  try { await runS13(); } catch (e) { fail('S13 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

@@ -338,6 +338,11 @@ async function submit(bot, chatId, userId, msgOrNull) {
     bales: session.bales || [],
     dateReceived: new Date().toISOString().split('T')[0],
     productType: 'fabric',
+    // P4 linkage — when the GRN was started from a PO context (via
+    // "📥 Receive against this PO" in the Procurement Plan), the po_id
+    // travels with the actionJSON so the service handler can update the
+    // PO's line totals + advance status (partially_received / received).
+    po_id: session.po_id || '',
   };
 
   const risk = await riskEvaluate.evaluate({ action: 'receive_goods', userId });
