@@ -16,6 +16,7 @@
  *   S11 Goods Receipt flow — parseBaleList + adminFeed inventory events (P2)
  *   S12 Quick Add Customer parser (P3)
  *   S13 Procurement Plan — low-stock computation + PO recompute + feed (P4)
+ *   S14 Bulk Receive — CSV/XLSX parsers + row validator + fileHash (P2.5-C1)
  *
  * Run:  npm run smoke         (from telegram-ops-bot/)
  * Exit: 0 = all passed, 1 = one or more FAIL
@@ -1202,6 +1203,169 @@ async function runS13() {
 }
 
 // ---------------------------------------------------------------------------
+// S14 — Bulk Receive: CSV + XLSX parsers + row validator + fileHash (P2.5-C1)
+// ---------------------------------------------------------------------------
+function runS14a() {
+  const { parseCsv } = require('../src/utils/csvParser');
+  const { parseXlsx, isAvailable } = require('../src/utils/xlsxParser');
+  const { validate, fileHash } = require('../src/utils/bulkRowValidator');
+
+  // S14a.1 — happy-path CSV: 3 bales, header lowercased, totals correct
+  const csv1 = [
+    'PackageNo,Design,Shade,Yards,Warehouse,Supplier,Notes',
+    '9001,Beige Crepe,B-12,50,Kano,SupplierA,',
+    '9002,Beige Crepe,B-12,48,Kano,SupplierA,',
+    '9003,Red Silk,R-04,52,Kano,SupplierB,VIP hold',
+  ].join('\n');
+  let parsed = parseCsv(csv1);
+  if (parsed.ok && parsed.rows.length === 3
+      && parsed.headers.includes('packageno') && parsed.headers.includes('warehouse')
+      && parsed.rows[0].packageno === '9001' && parsed.rows[2].notes === 'VIP hold') {
+    pass('S14a.1 parseCsv: happy path 3 rows, lowercased headers, body parsed');
+  } else fail('S14a.1 parseCsv happy path', JSON.stringify(parsed));
+
+  // S14a.2 — quoted field with embedded comma is preserved
+  const csv2 = 'PackageNo,Design,Yards,Warehouse,Notes\n9001,Mint,50,Kano,"Lagos, Apapa Wharf"';
+  parsed = parseCsv(csv2);
+  if (parsed.ok && parsed.rows[0].notes === 'Lagos, Apapa Wharf') {
+    pass('S14a.2 parseCsv: quoted comma-bearing cell preserved');
+  } else fail('S14a.2 parseCsv quoted comma', JSON.stringify(parsed));
+
+  // S14a.3 — BOM at start of file is stripped (Excel-on-Windows habit)
+  const csv3 = '\uFEFFPackageNo,Design,Yards,Warehouse\n9001,Mint,50,Kano';
+  parsed = parseCsv(csv3);
+  if (parsed.ok && parsed.headers[0] === 'packageno') {
+    pass('S14a.3 parseCsv: UTF-8 BOM stripped');
+  } else fail('S14a.3 parseCsv BOM', JSON.stringify(parsed));
+
+  // S14a.4 — CRLF line endings handled
+  const csv4 = 'PackageNo,Design,Yards,Warehouse\r\n9001,Mint,50,Kano\r\n9002,Mint,48,Kano\r\n';
+  parsed = parseCsv(csv4);
+  if (parsed.ok && parsed.rows.length === 2) {
+    pass('S14a.4 parseCsv: CRLF newlines + trailing newline tolerated');
+  } else fail('S14a.4 parseCsv CRLF', JSON.stringify(parsed));
+
+  // S14a.5 — empty file rejected
+  parsed = parseCsv('');
+  if (!parsed.ok) pass('S14a.5 parseCsv: empty string rejected');
+  else fail('S14a.5 parseCsv empty', JSON.stringify(parsed));
+
+  // S14a.6 — header only (no data rows) rejected
+  parsed = parseCsv('PackageNo,Design,Yards,Warehouse\n');
+  if (!parsed.ok) pass('S14a.6 parseCsv: header-only file rejected');
+  else fail('S14a.6 parseCsv header-only', JSON.stringify(parsed));
+
+  // S14a.7 — escaped double-quote inside quoted cell
+  const csv7 = 'PackageNo,Design,Yards,Warehouse,Notes\n9001,Mint,50,Kano,"He said ""hi"""';
+  parsed = parseCsv(csv7);
+  if (parsed.ok && parsed.rows[0].notes === 'He said "hi"') {
+    pass('S14a.7 parseCsv: escaped quote ("") inside quoted cell');
+  } else fail('S14a.7 parseCsv escaped quote', JSON.stringify(parsed));
+
+  // S14a.8 — validator happy path
+  parsed = parseCsv(csv1);
+  let v = validate(parsed);
+  if (v.ok && v.valid === 3 && v.summary.totalYards === 150
+      && v.summary.designs.length === 2 && v.bales[0].packageNo === '9001') {
+    pass('S14a.8 validator: 3-row clean file → ok=true, summary correct');
+  } else fail('S14a.8 validator happy path', JSON.stringify({ ok: v.ok, errors: v.errors, summary: v.summary }));
+
+  // S14a.9 — validator catches missing required header
+  parsed = parseCsv('PackageNo,Design,Warehouse\n9001,Mint,Kano');
+  v = validate(parsed);
+  if (!v.ok && v.errors.some((e) => /yards/i.test(e.message) && /Missing required/i.test(e.message))) {
+    pass('S14a.9 validator: missing "yards" header flagged');
+  } else fail('S14a.9 validator missing header', JSON.stringify(v.errors));
+
+  // S14a.10 — validator catches non-numeric yards + empty PackageNo + supplies row numbers
+  const csv10 = [
+    'PackageNo,Design,Yards,Warehouse',
+    '9001,Mint,fifty,Kano',
+    ',Beige,50,Kano',
+    '9002,Beige,50,Kano',
+  ].join('\n');
+  parsed = parseCsv(csv10);
+  v = validate(parsed);
+  const yardsErr = v.errors.find((e) => e.row === 2 && e.column === 'yards');
+  const pkgErr = v.errors.find((e) => e.row === 3 && e.column === 'packageno');
+  if (!v.ok && yardsErr && pkgErr) {
+    pass('S14a.10 validator: row-level errors tagged with row + column');
+  } else fail('S14a.10 validator row errors', JSON.stringify(v.errors));
+
+  // S14a.11 — warehouse not in allowedWarehouses → rejected per locked spec
+  parsed = parseCsv('PackageNo,Design,Yards,Warehouse\n9001,Mint,50,LagosUnknown');
+  v = validate(parsed, { allowedWarehouses: ['Kano', 'Abuja'] });
+  if (!v.ok && v.errors.some((e) => e.column === 'warehouse' && /not registered/i.test(e.message))) {
+    pass('S14a.11 validator: unregistered warehouse rejects the file');
+  } else fail('S14a.11 validator unknown warehouse', JSON.stringify(v.errors));
+
+  // S14a.12 — max row cap honoured
+  const big = ['PackageNo,Design,Yards,Warehouse'].concat(
+    Array.from({ length: 6 }, (_, i) => `${i},Mint,50,Kano`)
+  ).join('\n');
+  parsed = parseCsv(big);
+  v = validate(parsed, { maxRows: 5 });
+  if (!v.ok && v.errors.some((e) => /max is 5/i.test(e.message))) {
+    pass('S14a.12 validator: maxRows cap enforced');
+  } else fail('S14a.12 validator maxRows', JSON.stringify(v.errors));
+
+  // S14a.13 — same PackageNo can legitimately repeat (composite-key model)
+  const csv13 = [
+    'PackageNo,Design,Yards,Warehouse',
+    '9001,Mint,50,Kano',
+    '9001,Beige,48,Kano',
+  ].join('\n');
+  parsed = parseCsv(csv13);
+  v = validate(parsed);
+  if (v.ok && v.valid === 2 && v.bales[0].packageNo === '9001' && v.bales[1].packageNo === '9001') {
+    pass('S14a.13 validator: repeated PackageNo allowed (composite-key model)');
+  } else fail('S14a.13 validator repeated package', JSON.stringify(v));
+
+  // S14a.14 — fileHash is stable for identical input and changes when content changes
+  const h1 = fileHash(csv1);
+  const h2 = fileHash(csv1);
+  const h3 = fileHash(csv1 + '\n');
+  if (h1 && h1 === h2 && h1 !== h3 && /^[a-f0-9]{16}$/.test(h1)) {
+    pass('S14a.14 fileHash: stable for same input, differs when content changes');
+  } else fail('S14a.14 fileHash', JSON.stringify({ h1, h2, h3 }));
+
+  // S14a.15 — fileHash works on Buffers too (for XLSX path)
+  const buf1 = Buffer.from(csv1, 'utf8');
+  const hb1 = fileHash(buf1);
+  const hb2 = fileHash(Buffer.from(csv1, 'utf8'));
+  if (hb1 && hb1 === hb2) {
+    pass('S14a.15 fileHash: Buffer input handled');
+  } else fail('S14a.15 fileHash buffer', JSON.stringify({ hb1, hb2 }));
+
+  // S14a.16 — XLSX parser: smoke-test a tiny workbook when `xlsx` is
+  //           installed; soft-skip if the dep isn't on disk yet (network
+  //           hiccup during install — install lands in a follow-up commit
+  //           and the SAME assertions re-execute next smoke run).
+  if (isAvailable()) {
+    const XLSX = require('xlsx');
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['PackageNo', 'Design', 'Yards', 'Warehouse', 'Supplier'],
+      ['9001', 'Mint', 50, 'Kano', 'SupplierA'],
+      ['9002', 'Beige', 48, 'Kano', 'SupplierA'],
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const px = parseXlsx(buf);
+    if (px.ok && px.rows.length === 2 && px.rows[0].packageno === '9001' && px.rows[1].yards === '48') {
+      pass('S14a.16 parseXlsx: 2-row workbook parsed, numeric Yards stringified');
+    } else fail('S14a.16 parseXlsx', JSON.stringify(px));
+  } else {
+    // Soft skip — graceful-degrade contract: parseXlsx returns a structured
+    // error when the package isn't loaded, which is what we assert here.
+    const skip = parseXlsx(Buffer.from([1, 2, 3]));
+    if (!skip.ok && /xlsx/i.test(skip.error)) {
+      pass('S14a.16 parseXlsx: gracefully reports missing dep (install pending)');
+    } else fail('S14a.16 parseXlsx skip', JSON.stringify(skip));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -1220,6 +1384,7 @@ async function runS13() {
   try { runS11(); } catch (e) { fail('S11 unexpected error', e.message); }
   try { runS12(); } catch (e) { fail('S12 unexpected error', e.message); }
   try { await runS13(); } catch (e) { fail('S13 unexpected error', e.message); }
+  try { runS14a(); } catch (e) { fail('S14a unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

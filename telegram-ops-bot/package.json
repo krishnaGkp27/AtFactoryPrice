@@ -20,6 +20,7 @@
     "googleapis": "^144.0.0",
     "node-telegram-bot-api": "^0.66.0",
     "openai": "^4.73.0",
-    "sharp": "^0.34.5"
+    "sharp": "^0.34.5",
+    "xlsx": "^0.18.5"
   }
 }
