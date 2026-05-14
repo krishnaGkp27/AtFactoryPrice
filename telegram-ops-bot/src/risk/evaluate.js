@@ -110,4 +110,4 @@ function formatAction(action) {
   return map[action] || action.replace(/_/g, ' ');
 }
 
-module.exports = { evaluate, getThresholds, WRITE_ACTIONS };
+module.exports = { evaluate, getThresholds, WRITE_ACTIONS, ALWAYS_APPROVAL_ACTIONS };

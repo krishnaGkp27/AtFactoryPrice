@@ -41,6 +41,7 @@ const salesWorkflowView = require('../flows/salesWorkflowView');
 const goodsReceiptFlow = require('../flows/goodsReceiptFlow');
 const procurementPlanView = require('../flows/procurementPlanView');
 const bulkReceiveFlow = require('../flows/bulkReceiveFlow');
+const photoReceiveFlow = require('../flows/photoReceiveFlow');
 const adminFeed = require('../services/adminFeed');
 const menuNav = require('../utils/menuNav');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
@@ -3138,6 +3139,15 @@ async function handleFileMessage(bot, msg) {
     if (handled) return;
   }
 
+  // P5 — Photo Receive: accepts both compressed photos (msg.photo) and
+  // documents (msg.document, including PDFs and full-quality images).
+  // The flow's handleFile decides which is which.
+  if (session && session.type === 'photo_receive_flow'
+      && (msg.photo || msg.document)) {
+    const handled = await photoReceiveFlow.handleFile(bot, msg);
+    if (handled) return;
+  }
+
   if (session && session.type === 'sale_flow' && session.awaitingDocument) {
     let telegramFileId, fileType, mimeType;
     if (msg.photo && msg.photo.length) {
@@ -5660,6 +5670,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (handled) return;
   }
 
+  // P5 — Photo Receive Goods (image/PDF OCR) flow.
+  if (data.startsWith('pr:')) {
+    const handled = await photoReceiveFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
   // P4 — Procurement Plan view + PO drafting flow.
   if (data.startsWith('pp:')) {
     const handled = await procurementPlanView.handleCallback(bot, callbackQuery);
@@ -7838,6 +7854,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
         // P2.5 — Bulk Receive (CSV/XLSX upload). Always dual-admin gated
         // regardless of who submits (see ALWAYS_APPROVAL_ACTIONS).
         await bulkReceiveFlow.start(bot, chatId, uid, messageId);
+        break;
+      case 'photo_receive_goods':
+        // P5 — Photo Receive (image/PDF + OCR). Same dual-admin gate as
+        // bulk_receive_goods; OCR is purely a capture mechanism, the
+        // approval + persistence path is shared.
+        await photoReceiveFlow.start(bot, chatId, uid, messageId);
         break;
       case 'procurement_plan':
         // P4 — admin Procurement Plan view (low-stock + open POs + new PO).

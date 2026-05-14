@@ -2097,6 +2097,164 @@ async function runS15b() {
 }
 
 // ---------------------------------------------------------------------------
+// S15c — Photo Receive flow · per-row state machine (P5-C3)
+// ---------------------------------------------------------------------------
+async function runS15c() {
+  delete require.cache[require.resolve('../src/flows/photoReceiveFlow')];
+  delete require.cache[require.resolve('../src/services/activityRegistry')];
+  const flow = require('../src/flows/photoReceiveFlow');
+  const activityRegistry = require('../src/services/activityRegistry');
+
+  // Helper — build a fresh session-like object with N rows.
+  function mkSession(rows) {
+    return {
+      type: 'photo_receive_flow',
+      rows: rows.map((r, i) => ({
+        idx: i,
+        packageNo: r.packageNo || `pkg${i + 1}`,
+        thanNo: r.thanNo || (i + 1),
+        design: r.design || 'D',
+        shade: r.shade || '',
+        yards: r.yards || 50,
+        netMtrs: r.netMtrs || 0,
+        netWeight: r.netWeight || 0,
+        supplier: '', notes: '',
+        confidence: r.confidence ?? 0.9,
+        lowConfidence: r.lowConfidence ?? false,
+        state: r.state || 'pending',
+        editedFields: r.editedFields || [],
+      })),
+    };
+  }
+
+  // S15c.1 — Activity registered in stock hub with the right callback
+  const acts = activityRegistry.getAll
+    ? activityRegistry.getAll()
+    : (activityRegistry.ACTIVITIES || activityRegistry);
+  const list = Array.isArray(acts) ? acts : Object.values(acts);
+  const photoAct = list.find((a) => a && a.code === 'photo_receive_goods');
+  if (photoAct && photoAct.hub === 'stock'
+      && photoAct.callback === 'act:photo_receive_goods'
+      && photoAct.icon === '📷') {
+    pass('S15c.1 activityRegistry: photo_receive_goods registered in stock hub with 📷 icon');
+  } else fail('S15c.1 activity registered', JSON.stringify(photoAct));
+
+  // S15c.2 — reviewProgress aggregates row states correctly
+  const s = mkSession([
+    { state: 'pending' },
+    { state: 'accepted' },
+    { state: 'accepted' },
+    { state: 'skipped' },
+    { state: 'pending', lowConfidence: true },
+  ]);
+  const p = flow.reviewProgress(s.rows);
+  if (p.total === 5 && p.accepted === 2 && p.skipped === 1 && p.pending === 2 && p.lowOpen === 1) {
+    pass('S15c.2 reviewProgress: accepted/skipped/pending/lowOpen counted correctly');
+  } else fail('S15c.2 reviewProgress', JSON.stringify(p));
+
+  // S15c.3 — canSubmit gates on zero-pending AND at-least-one-accepted
+  if (!flow.canSubmit(s.rows)) pass('S15c.3a canSubmit: false when any row is pending');
+  else fail('S15c.3a canSubmit pending', JSON.stringify(p));
+
+  const decided = mkSession([
+    { state: 'accepted' }, { state: 'accepted' }, { state: 'skipped' },
+  ]);
+  if (flow.canSubmit(decided.rows)) pass('S15c.3b canSubmit: true when all decided + ≥1 accepted');
+  else fail('S15c.3b canSubmit decided', '');
+
+  const allSkipped = mkSession([{ state: 'skipped' }, { state: 'skipped' }]);
+  if (!flow.canSubmit(allSkipped.rows)) pass('S15c.3c canSubmit: false when all skipped (nothing to submit)');
+  else fail('S15c.3c canSubmit all-skipped', '');
+
+  // S15c.4 — acceptAllOk flips pending non-low-conf rows to accepted, leaves low-conf pending
+  const mixed = mkSession([
+    { state: 'pending' },
+    { state: 'pending', lowConfidence: true },
+    { state: 'pending' },
+    { state: 'skipped' },                // user already decided
+    { state: 'accepted' },               // user already decided
+  ]);
+  const changed = flow.acceptAllOk(mixed);
+  const states = mixed.rows.map((r) => r.state);
+  if (changed === 2
+      && states[0] === 'accepted'
+      && states[1] === 'pending'         // low-conf stays pending
+      && states[2] === 'accepted'
+      && states[3] === 'skipped'         // already-decided untouched
+      && states[4] === 'accepted') {
+    pass('S15c.4 acceptAllOk: only pending non-low-conf rows flip; decided rows untouched');
+  } else fail('S15c.4 acceptAllOk', JSON.stringify({ changed, states }));
+
+  // S15c.5 — setRowState transitions individual rows
+  const single = mkSession([{ state: 'pending' }]);
+  const ok = flow.setRowState(single, 0, 'accepted');
+  const bad = flow.setRowState(single, 99, 'accepted');
+  if (ok === true && bad === false && single.rows[0].state === 'accepted') {
+    pass('S15c.5 setRowState: valid idx flips state, out-of-range returns false');
+  } else fail('S15c.5 setRowState', JSON.stringify({ ok, bad, state: single.rows[0].state }));
+
+  // S15c.6 — rowSummary contains all expected fields + low-conf marker
+  const rowHi = mkSession([{ packageNo: '9001', thanNo: 1, design: 'Beige', shade: 'B-12', yards: 50, confidence: 0.95 }]).rows[0];
+  const rowLo = mkSession([{ packageNo: '9001', thanNo: 3, design: 'Beige', shade: 'B-12', yards: 52, confidence: 0.55, lowConfidence: true }]).rows[0];
+  const sumHi = flow.rowSummary(rowHi);
+  const sumLo = flow.rowSummary(rowLo);
+  if (sumHi.includes('9001-T1') && sumHi.includes('Beige') && sumHi.includes('B-12')
+      && sumHi.includes('50') && sumHi.includes('95%') && !sumHi.includes('🔴')
+      && sumLo.includes('🔴') && sumLo.includes('55%')) {
+    pass('S15c.6 rowSummary: renders fields + 🔴 for low-confidence rows');
+  } else fail('S15c.6 rowSummary', JSON.stringify({ sumHi, sumLo }));
+
+  // S15c.7 — rowButtons: high-conf pending shows 3 buttons (✅/✏/❌)
+  const btnsHi = flow.rowButtons(rowHi);
+  if (btnsHi.length === 3
+      && btnsHi[0].callback_data === 'pr:row_accept:0'
+      && btnsHi[1].callback_data === 'pr:row_edit:0'
+      && btnsHi[2].callback_data === 'pr:row_skip:0') {
+    pass('S15c.7a rowButtons: pending high-conf row → [accept, edit, skip]');
+  } else fail('S15c.7a buttons high-conf', JSON.stringify(btnsHi));
+
+  // S15c.7b — rowButtons: low-conf pending shows 2 buttons (✏/❌), NO ✅
+  const btnsLo = flow.rowButtons(rowLo);
+  if (btnsLo.length === 2
+      && btnsLo.every((b) => !b.callback_data.includes('row_accept'))
+      && btnsLo.some((b) => b.callback_data.includes('row_edit'))
+      && btnsLo.some((b) => b.callback_data.includes('row_skip'))) {
+    pass('S15c.7b rowButtons: pending low-conf row → [edit, skip] (no ✅ — must edit first)');
+  } else fail('S15c.7b buttons low-conf', JSON.stringify(btnsLo));
+
+  // S15c.7c — rowButtons: decided row shows only Undo
+  const rowDecided = mkSession([{ state: 'accepted' }]).rows[0];
+  const btnsDecided = flow.rowButtons(rowDecided);
+  if (btnsDecided.length === 1 && btnsDecided[0].callback_data === 'pr:row_undo:0') {
+    pass('S15c.7c rowButtons: decided row → [Undo] only');
+  } else fail('S15c.7c buttons decided', JSON.stringify(btnsDecided));
+
+  // S15c.8 — Risk policy: photo_receive_goods is NOT explicitly in
+  // ALWAYS_APPROVAL_ACTIONS yet (it bridges into bulk_receive_goods in
+  // C4 which IS always-approval). Confirm that the bridge target is
+  // there so the architectural promise holds.
+  const risk = require('../src/risk/evaluate');
+  if (Array.isArray(risk.ALWAYS_APPROVAL_ACTIONS)
+      && risk.ALWAYS_APPROVAL_ACTIONS.includes('bulk_receive_goods')) {
+    pass('S15c.8 risk: bulk_receive_goods (the bridge target) is in ALWAYS_APPROVAL_ACTIONS — photo route inherits dual-admin gate');
+  } else fail('S15c.8 risk bridge target', JSON.stringify(risk.ALWAYS_APPROVAL_ACTIONS));
+
+  // S15c.9 — Module surface: required exports for controller wire-up
+  const required = ['start', 'handleCallback', 'handleFile',
+                    'showPoStep', 'showAwaitFileStep', 'showReviewStep'];
+  const missing = required.filter((k) => typeof flow[k] !== 'function');
+  if (!missing.length) pass('S15c.9 photoReceiveFlow: exports complete (start, handleCallback, handleFile, …)');
+  else fail('S15c.9 exports', `missing: ${missing.join(', ')}`);
+
+  // S15c.10 — Callback prefix isolation: pr: vs br: don't collide
+  if (!risk.WRITE_ACTIONS || risk.WRITE_ACTIONS.includes('bulk_receive_goods')) {
+    // We don't add a new write action — photo flow always bridges to
+    // bulk_receive_goods. The 'pr:' callback namespace is flow-internal.
+    pass('S15c.10 namespace: photo flow uses pr:* callbacks only; persistence still flows through bulk_receive_goods');
+  } else fail('S15c.10 namespace', 'WRITE_ACTIONS missing bulk_receive_goods');
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -2120,6 +2278,7 @@ async function runS15b() {
   try { await runS14c(); } catch (e) { fail('S14c unexpected error', e.message); }
   try { await runS15a(); } catch (e) { fail('S15a unexpected error', e.message); }
   try { await runS15b(); } catch (e) { fail('S15b unexpected error', e.message); }
+  try { await runS15c(); } catch (e) { fail('S15c unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

@@ -39,6 +39,9 @@ const ACTIVITIES = [
   // P2.5 — Bulk Receive (CSV/XLSX upload). ALWAYS dual-admin gated
   // regardless of who submits (see ALWAYS_APPROVAL_ACTIONS).
   { code: 'bulk_receive_goods',    label: 'Bulk Receive (CSV/XLSX)',   icon: '📤', callback: 'act:bulk_receive_goods', hub: 'stock' },
+  // P5 — Photo Receive (image/PDF + OCR). Submits through the same
+  // bulk_receive_goods approval gate; the OCR layer is purely capture.
+  { code: 'photo_receive_goods',   label: 'Photo Receive (image/PDF)', icon: '📷', callback: 'act:photo_receive_goods', hub: 'stock' },
   { code: 'transfer_package',      label: 'Transfer Package',          icon: '🚚', callback: 'act:transfer_package',   hub: 'stock' },
   { code: 'transfer_than',         label: 'Transfer Than',             icon: '↔️', callback: 'act:transfer_than',      hub: 'stock' },
   { code: 'return_than',           label: 'Return Than',               icon: '↩️', callback: 'act:return_than',        hub: 'stock' },

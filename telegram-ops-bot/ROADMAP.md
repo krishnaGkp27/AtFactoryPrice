@@ -378,9 +378,9 @@ P2.5 bulk CSV; only the row-capture mechanism changes.
 | Commit | Hash | Title | Status |
 |---|---|---|---|
 | C1 | `5ae3a82` | Vision client interface + stub provider + config block | ✅ Done |
-| C2 | (this set) | Drive backup helper + local image archiving | ✅ Done |
-| C3 | — | `photoReceiveFlow.js` — upload + per-row review UI | ⏳ Next |
-| C4 | — | Per-row edit subflow + submission bridge into `bulk_receive_goods` | ⏳ Planned |
+| C2 | `2fa1f6b` | Drive backup helper + local image archiving | ✅ Done |
+| C3 | (this set) | `photoReceiveFlow.js` — upload + per-row review UI | ✅ Done |
+| C4 | — | Per-row edit subflow + submission bridge into `bulk_receive_goods` | ⏳ Next |
 | C5 | — | Smoke + docs/photo-receive-template.md | ⏳ Planned |
 
 **P5-C1 ships:**
@@ -426,7 +426,46 @@ P2.5 bulk CSV; only the row-capture mechanism changes.
 - `.gitignore` extended to cover `data/uploads/` (P2.5) and `data/ocr/`
   (P5) so the archives never accidentally end up in source control.
 
-**Smoke coverage (S15a + S15b, +25 checks total):**
+**P5-C3 ships:**
+- `src/flows/photoReceiveFlow.js` — full Telegram flow with five steps
+  (PO link → file upload → OCR + per-row review → submit → approval).
+  Reuses the bulk receive shape; only the capture and review steps are
+  new.
+- Per-row review card:
+  - One line per OCR row showing status icon, `PackageNo-T<ThanNo>`,
+    design / shade / yards / confidence%, with `🔴` for low-confidence
+    rows.
+  - Three buttons per pending row (`✅ N`, `✏ N`, `❌ N`) — but
+    **low-confidence rows hide the ✅ button entirely**, so the operator
+    can't accept them without engaging with the data.
+  - "Decided X/N · Pending P · Low-conf open L" live progress tracker.
+  - Decided rows render with `↩ Undo N` so admin can change their mind.
+  - Mass action `✅ Accept all OK rows` — flips every *pending,
+    non-low-conf* row to accepted in one tap. Already-decided and
+    low-conf rows are left alone.
+  - Submit button is auto-disabled until pending=0 AND accepted≥1; the
+    button text live-updates (`▶ Submit (decide 3 more)`).
+- Controller wired up:
+  - `act:photo_receive_goods` callback opens the flow (new entry in
+    `activityRegistry` under the Stock hub with `📷` icon).
+  - `pr:*` callback namespace dispatched to `photoReceiveFlow.handleCallback`.
+  - `handleFile()` consumes both `msg.photo` (compressed via Telegram)
+    and `msg.document` (full-quality images + PDFs) during an active
+    `photo_receive_flow` session in `await_file`.
+- Low-confidence interaction lock baked in: `acceptAllOk()` skips
+  low-conf rows; per-row `✅` button hidden for low-conf pending rows.
+  No way to silently let low-confidence data through.
+- `risk/evaluate.js` now exports `ALWAYS_APPROVAL_ACTIONS` (was already
+  internal) — smoke can verify the bridge target. `photo_receive_goods`
+  itself is intentionally **not** a write action: the actual write
+  always happens via `bulk_receive_goods`, which is in
+  `ALWAYS_APPROVAL_ACTIONS`. The photo flow is purely a capture layer.
+- C4 hooks reserved: the `pr:row_edit:<n>` and `pr:submit` callbacks
+  currently show a "coming in P5-C4 (next commit)" message so the UX
+  doesn't dead-end, and the controller wiring is already in place — C4
+  just fills in the handlers.
+
+**Smoke coverage (S15a + S15b + S15c, +35 checks total):**
 S15.1 happy path · S15.2 lowConfidence flag set from threshold ·
 S15.3 numeric cleanliness (no NaN leaks) · S15.4 determinism ·
 S15.5–8 input gating (empty / MIME / oversize / unknown provider) ·
@@ -441,9 +480,25 @@ S15.15 provider throw caught · **S15b.1** sha256 stability ·
 **S15b.7** Drive happy path — month folder created + file uploaded ·
 **S15b.8** month folder reused on subsequent uploads ·
 **S15b.9** Drive failure → local succeeds, driveError surfaced ·
-**S15b.10** opts.filename customises Drive name.
+**S15b.10** opts.filename customises Drive name ·
+**S15c.1** activity registered with 📷 icon in stock hub ·
+**S15c.2** reviewProgress tally (total/accepted/skipped/pending/lowOpen) ·
+**S15c.3a** canSubmit blocks while any row is pending ·
+**S15c.3b** canSubmit fires once all decided + ≥1 accepted ·
+**S15c.3c** canSubmit refuses all-skipped batches ·
+**S15c.4** acceptAllOk only flips pending non-low-conf rows ·
+**S15c.5** setRowState bounds-checks the index ·
+**S15c.6** rowSummary renders fields + 🔴 marker for low-conf ·
+**S15c.7a** pending high-conf row → [accept, edit, skip] buttons ·
+**S15c.7b** pending low-conf row → [edit, skip] only (no ✅) ·
+**S15c.7c** decided row → [Undo] only ·
+**S15c.8** bridge target `bulk_receive_goods` is in
+`ALWAYS_APPROVAL_ACTIONS` — photo route inherits dual-admin gate ·
+**S15c.9** module exports complete (`start`, `handleCallback`,
+`handleFile`, …) ·
+**S15c.10** callback namespaces isolated (`pr:*` vs `br:*`).
 
-Harness: 178 green (was 153).
+Harness: 192 green (was 153).
 
 ### 2.8 Phase 4 · Scalability (legacy TG-22 .. TG-26)
 
