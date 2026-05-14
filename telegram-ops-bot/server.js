@@ -17,7 +17,10 @@ if (!config.telegram.token) {
   logger.warn('TELEGRAM_TOKEN not set. Bot will not start.');
 }
 
-const bot = config.telegram.token ? new TelegramBot(config.telegram.token, { polling: false }) : null;
+// Webhook-only: omitting `polling: false` is identical to passing it (the lib
+// defaults to no polling). Keeping the option around invited a future maintainer
+// to flip it to `true`, which would race the production webhook for updates.
+const bot = config.telegram.token ? new TelegramBot(config.telegram.token) : null;
 
 const app = express();
 app.use(express.json());

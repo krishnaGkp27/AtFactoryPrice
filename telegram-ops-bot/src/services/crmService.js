@@ -5,9 +5,7 @@
 const customersRepo = require('../repositories/customersRepository');
 const accountingService = require('../services/accountingService');
 const idGen = require('../utils/idGenerator');
-const config = require('../config');
-
-const CURRENCY = config.currency || 'NGN';
+const { fmtMoney } = require('../utils/format');
 
 async function findOrCreateCustomer(name) {
   if (!name) return null;
@@ -67,7 +65,5 @@ async function addToOutstanding(customerName, amount) {
   const newBalance = cust.outstanding_balance + amount;
   await customersRepo.updateOutstanding(cust.customer_id, newBalance);
 }
-
-function fmtMoney(v) { return `${CURRENCY} ${Number(v).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`; }
 
 module.exports = { findOrCreateCustomer, addCustomer, getCustomer, searchCustomers, listCustomers, recordPayment, addToOutstanding, fmtMoney };

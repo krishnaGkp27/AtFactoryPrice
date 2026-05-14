@@ -3,11 +3,7 @@
  */
 
 const inventoryRepository = require('../repositories/inventoryRepository');
-const config = require('../config');
-
-const CURRENCY = config.currency || 'NGN';
-function fmtMoney(v) { return `${CURRENCY} ${Number(v).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`; }
-function fmtQty(v) { return Number(v).toLocaleString('en-NG', { maximumFractionDigits: 0 }); }
+const { fmtMoney, fmtQty } = require('../utils/format');
 
 /** Stock summary grouped by design+shade. */
 async function stockByDesign() {

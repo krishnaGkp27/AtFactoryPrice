@@ -10,14 +10,9 @@ const transactionService = require('../services/transactionService');
 const ledgerCustomersRepository = require('../repositories/ledgerCustomersRepository');
 const idGen = require('../utils/idGenerator');
 const auth = require('../middlewares/auth');
-const config = require('../config');
+const { fmtMoney } = require('../utils/format');
 
-const CURRENCY = config.currency || 'NGN';
 const LEDGER_PAGE_SIZE = 20;
-
-function fmtMoney(n) {
-  return `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
-}
 
 /**
  * /ledger <customer_id>

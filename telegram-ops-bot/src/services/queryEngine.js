@@ -8,12 +8,9 @@ const inventoryRepository = require('../repositories/inventoryRepository');
 const customersRepo = require('../repositories/customersRepository');
 const analytics = require('../ai/analytics');
 const config = require('../config');
+const { fmtMoney, fmtQty } = require('../utils/format');
 
-const CURRENCY = config.currency || 'NGN';
 const openai = config.openai.apiKey ? new OpenAI({ apiKey: config.openai.apiKey }) : null;
-
-function fmtQty(v) { return Number(v).toLocaleString('en-NG', { maximumFractionDigits: 0 }); }
-function fmtMoney(v) { return `${CURRENCY} ${Number(v).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`; }
 
 // ─── TIER 1: Predefined Reports (no AI cost) ───
 

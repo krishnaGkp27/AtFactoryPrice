@@ -55,39 +55,10 @@ async function getRequesterDisplayName(userId, msgOrNull) {
   return String(userId);
 }
 
-function genId() {
-  try { return require('crypto').randomUUID(); }
-  catch { return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`; }
-}
+// Approval request IDs flow through idGenerator (single source of truth).
+const genId = require('../utils/idGenerator').requestId;
 
-async function sendLong(bot, chatId, text, opts = {}) {
-  const MAX = 4000;
-  if (text.length <= MAX) {
-    await bot.sendMessage(chatId, text, opts);
-    return;
-  }
-  const lines = text.split('\n');
-  // When opts has a reply_markup (e.g. drill-down buttons under a
-  // compact report), we only attach it to the FINAL chunk so the
-  // inline keyboard isn't duplicated across each split message.
-  const optsNoKeyboard = { ...opts };
-  delete optsNoKeyboard.reply_markup;
-  const chunks = [];
-  let chunk = '';
-  for (const line of lines) {
-    if ((chunk + '\n' + line).length > MAX && chunk) {
-      chunks.push(chunk);
-      chunk = line;
-    } else {
-      chunk = chunk ? chunk + '\n' + line : line;
-    }
-  }
-  if (chunk) chunks.push(chunk);
-  for (let i = 0; i < chunks.length; i++) {
-    const useOpts = i === chunks.length - 1 ? opts : optsNoKeyboard;
-    await bot.sendMessage(chatId, chunks[i], useOpts);
-  }
-}
+const { editOrSend, editOrSendAnchored, sendLong } = require('../utils/telegramUI');
 
 async function requireApproval(bot, chatId, msg, userId, action, actionJSON, summary) {
   const risk = await riskEvaluate.evaluate({ action, userId });
@@ -106,19 +77,19 @@ async function requireApproval(bot, chatId, msg, userId, action, actionJSON, sum
   return true;
 }
 
-const CURRENCY = config.currency || 'NGN';
-// Short currency symbol used inside report rows so we don't repeat "NGN"
-// on every line. Falls back to a configured symbol or "₦" for Naira.
-// Long-form fmtMoney is preserved for headers / one-off lines that want
-// the explicit currency code.
-const CURRENCY_SYMBOL = (config.currencySymbol || (CURRENCY === 'NGN' ? '₦' : `${CURRENCY} `));
+// Currency + formatting are centralized in src/utils/format.js; this controller
+// keeps `fmtQty` as a thin wrapper because inventory/sales reports here show
+// fractional yards (2 decimals) while format.js defaults to integer quantities.
+const {
+  CURRENCY,
+  currencySymbol: _currencySymbol,
+  fmtMoney,
+  fmtMoneyShort,
+  fmtQty: fmtQtyBase,
+} = require('../utils/format');
+const CURRENCY_SYMBOL = _currencySymbol(CURRENCY);
 
-function fmtQty(n) { return Number(n).toLocaleString('en-NG', { maximumFractionDigits: 2 }); }
-function fmtMoney(n) { return `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`; }
-/** Compact money for in-row use: "₦1,500,000" — no space, no currency code. */
-function fmtMoneyShort(n) {
-  return `${CURRENCY_SYMBOL}${Number(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
-}
+function fmtQty(n) { return fmtQtyBase(n, { maxFraction: 2 }); }
 
 /**
  * Render a list with the top-N items expanded and the remainder rolled
@@ -530,57 +501,6 @@ function fmtBar(value, total, label = 'sold') {
   const pct = Math.round((value / total) * 100);
   const filled = Math.round(pct / 10);
   return '▓'.repeat(filled) + '░'.repeat(10 - filled) + ` ${pct}% ${label}`;
-}
-
-/**
- * Edit an existing message in place if messageId is provided, otherwise send
- * a new message. On edit failure (e.g. message too old or identical content),
- * silently falls back to sendMessage so the user always sees the update.
- *
- * opts may include parse_mode and reply_markup (standard Telegram options).
- */
-async function editOrSend(bot, chatId, messageId, text, opts = {}) {
-  if (messageId) {
-    try {
-      return await bot.editMessageText(text, {
-        chat_id: chatId,
-        message_id: messageId,
-        ...opts,
-      });
-    } catch (_) {
-      // fall through
-    }
-  }
-  return bot.sendMessage(chatId, text, opts);
-}
-
-/**
- * Edit-in-place OR fresh-send a flow message, AND keep the session's
- * `flowMessageId` anchored on whichever message_id results.
- *
- * Why this exists: each step of a multi-step picker flow (e.g. supply
- * request: warehouse → design → shade → quantity → cart → customer →
- * …) edits a single message in place. That requires every render to
- * write the *current* flow message_id back to the session, otherwise
- * an interruption (e.g. a photo preview message getting sent in the
- * middle, which clears flowMessageId) leaves later steps unable to
- * find the picker they should be editing — so each step ships as a
- * fresh new message and the chat fills up with stacked pickers.
- *
- * editOrSend's return is normally a Message object (with message_id)
- * for both edits and fresh sends, but Telegram's editMessageText is
- * documented to return `True` in some cases. We only update the
- * anchor when we got a real Message object back.
- */
-async function editOrSendAnchored(bot, chatId, userId, text, opts = {}) {
-  const session = userId ? sessionStore.get(userId) : null;
-  const msgId = session && session.flowMessageId;
-  const result = await editOrSend(bot, chatId, msgId, text, opts);
-  if (session && result && typeof result === 'object' && result.message_id) {
-    session.flowMessageId = result.message_id;
-    sessionStore.set(userId, session);
-  }
-  return result;
 }
 
 /**

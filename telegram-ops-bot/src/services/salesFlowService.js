@@ -8,13 +8,12 @@ const customersRepo = require('../repositories/customersRepository');
 const usersRepo = require('../repositories/usersRepository');
 const settingsRepo = require('../repositories/settingsRepository');
 const inventoryService = require('./inventoryService');
-const config = require('../config');
+const { fmtMoney, fmtQty: fmtQtyBase } = require('../utils/format');
 
-const CURRENCY = config.currency || 'NGN';
 const SALE_FIELDS = ['customer', 'salesperson', 'paymentMode', 'salesDate'];
 
-function fmtQty(n) { return Number(n).toLocaleString('en-NG', { maximumFractionDigits: 2 }); }
-function fmtMoney(n) { return `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`; }
+// Sales flow shows fractional yards (e.g. 12.5 yds), so we keep two decimals.
+function fmtQty(n) { return fmtQtyBase(n, { maxFraction: 2 }); }
 
 async function getBankList() {
   const all = await settingsRepo.getAll();

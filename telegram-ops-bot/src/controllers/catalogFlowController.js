@@ -17,20 +17,12 @@ const fmtDate = require('../utils/formatDate');
 const config = require('../config');
 const logger = require('../utils/logger');
 const idGenerator = require('../utils/idGenerator');
+const { editOrSend, safeDelete, cbSafe } = require('../utils/telegramUI');
 
 const DESIGNS_PER_PAGE = 12;
 const FLOW_TTL_MS = 10 * 60 * 1000;
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
-
-async function editOrSend(bot, chatId, messageId, text, opts = {}) {
-  if (messageId) {
-    try {
-      return await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...opts });
-    } catch (_) { /* fall through to send */ }
-  }
-  return bot.sendMessage(chatId, text, opts);
-}
 
 async function getDisplayName(userId) {
   try {
@@ -39,18 +31,6 @@ async function getDisplayName(userId) {
   } catch (_) {
     return String(userId);
   }
-}
-
-async function safeDelete(bot, chatId, messageId) {
-  if (!messageId) return;
-  try { await bot.deleteMessage(chatId, messageId); } catch (_) { /* ignore */ }
-}
-
-function cbSafe(data) {
-  if (Buffer.byteLength(data, 'utf8') <= 64) return data;
-  let s = data;
-  while (Buffer.byteLength(s, 'utf8') > 64) s = s.slice(0, -1);
-  return s;
 }
 
 function saveSession(userId, data) {

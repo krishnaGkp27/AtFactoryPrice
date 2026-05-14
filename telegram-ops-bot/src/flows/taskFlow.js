@@ -36,6 +36,11 @@ const deptGraph = require('../org/deptGraph');
 const auth = require('../middlewares/auth');
 const config = require('../config');
 const logger = require('../utils/logger');
+// taskFlow renders incentives in DMs/inline rows where the symbol form
+// ("₦5,000") reads better than the long form. Centralized helpers live in
+// utils/format and utils/telegramUI.
+const { fmtMoneyShort: fmtMoney } = require('../utils/format');
+const { editOrSend } = require('../utils/telegramUI');
 
 const PAGE_SIZE = 8;
 const TITLE_MIN_LEN = 3;
@@ -103,12 +108,6 @@ function fmtDate(iso) {
   } catch (_) { return iso; }
 }
 
-function fmtMoney(amount, currency = 'NGN') {
-  const sign = currency === 'NGN' ? '₦' : `${currency} `;
-  const n = Number(amount) || 0;
-  return `${sign}${n.toLocaleString('en-US')}`;
-}
-
 function addDays(days) {
   const d = new Date();
   d.setDate(d.getDate() + days);
@@ -165,15 +164,6 @@ function getPriority(task) {
 function getDescriptionText(task) {
   const dec = decodeLegacyDescription(task.description);
   return dec.text || '';
-}
-
-async function editOrSend(bot, chatId, messageId, text, opts = {}) {
-  if (messageId) {
-    try {
-      return await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...opts });
-    } catch (_) { /* fall through */ }
-  }
-  return bot.sendMessage(chatId, text, opts);
 }
 
 async function anchor(bot, chatId, userId, text, opts = {}) {

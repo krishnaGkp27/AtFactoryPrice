@@ -14,6 +14,16 @@ function generate(prefix) {
   return `${prefix}-${date}-${seq}`;
 }
 
+/**
+ * Approval / idempotency request ID. Prefers crypto.randomUUID where available
+ * (Node 14.17+ / 16+); falls back to a timestamp + random suffix on platforms
+ * that don't ship it. Used by the controller for approval-pipeline request IDs.
+ */
+function requestId() {
+  try { return require('crypto').randomUUID(); }
+  catch (_) { return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`; }
+}
+
 module.exports = {
   ledgerEntry: () => generate('LE'),
   stockLedger: () => generate('SL'),
@@ -26,5 +36,6 @@ module.exports = {
   note: () => generate('NOTE'),
   receipt: () => generate('RCT'),
   department: () => generate('DEPT'),
+  requestId,
   generate,
 };
