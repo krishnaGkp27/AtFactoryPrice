@@ -14,6 +14,7 @@
  *   S9  Admin Activity Feed: isEnabled policy + catalog (T2)
  *   S10 Inventory composite-key foundation (P1)
  *   S11 Goods Receipt flow — parseBaleList + adminFeed inventory events (P2)
+ *   S12 Quick Add Customer parser (P3)
  *
  * Run:  npm run smoke         (from telegram-ops-bot/)
  * Exit: 0 = all passed, 1 = one or more FAIL
@@ -1004,6 +1005,58 @@ function runS11() {
 }
 
 // ---------------------------------------------------------------------------
+// S12 — Quick Add Customer parser (P3)
+// ---------------------------------------------------------------------------
+function runS12() {
+  const { parseQuickAddCustomerLine } = require('../src/utils/quickAddParser');
+
+  // S12.1 — name only (phone optional)
+  let r = parseQuickAddCustomerLine('Mariam Salisu');
+  if (r.ok && r.name === 'Mariam Salisu' && r.phone === '' && r.address === '') {
+    pass('S12.1 quick-add: name-only input → phone+address empty');
+  } else fail('S12.1 quick-add name-only', JSON.stringify(r));
+
+  // S12.2 — name + phone
+  r = parseQuickAddCustomerLine('Mariam Salisu, +234-803-555-7777');
+  if (r.ok && r.name === 'Mariam Salisu' && r.phone === '+234-803-555-7777' && r.address === '') {
+    pass('S12.2 quick-add: name+phone parsed');
+  } else fail('S12.2 quick-add name+phone', JSON.stringify(r));
+
+  // S12.3 — name + phone + address (single)
+  r = parseQuickAddCustomerLine('Wang Tex, +234-1-555-1234, Lagos');
+  if (r.ok && r.address === 'Lagos') {
+    pass('S12.3 quick-add: name+phone+address parsed');
+  } else fail('S12.3 quick-add full', JSON.stringify(r));
+
+  // S12.4 — address with internal comma is preserved (rejoined)
+  r = parseQuickAddCustomerLine('Wang Tex, +234-1-555-1234, Lagos, Apapa Wharf');
+  if (r.ok && r.address === 'Lagos, Apapa Wharf') {
+    pass('S12.4 quick-add: multi-part address rejoined with commas');
+  } else fail('S12.4 quick-add multi-part address', JSON.stringify(r));
+
+  // S12.5 — name too short rejected
+  r = parseQuickAddCustomerLine('A');
+  if (!r.ok && /short/i.test(r.error)) pass('S12.5 quick-add: single-char name rejected');
+  else fail('S12.5 quick-add single-char', JSON.stringify(r));
+
+  // S12.6 — malformed phone rejected (letters)
+  r = parseQuickAddCustomerLine('Wang Tex, NOT-A-PHONE');
+  if (!r.ok && /malformed/i.test(r.error)) pass('S12.6 quick-add: malformed phone rejected');
+  else fail('S12.6 quick-add malformed phone', JSON.stringify(r));
+
+  // S12.7 — empty input rejected
+  r = parseQuickAddCustomerLine('');
+  if (!r.ok) pass('S12.7 quick-add: empty input rejected');
+  else fail('S12.7 quick-add empty', JSON.stringify(r));
+
+  // S12.8 — whitespace tolerance + Unicode names
+  r = parseQuickAddCustomerLine('  Ngozi Okafor ,  +234 803 555 7777  ');
+  if (r.ok && r.name === 'Ngozi Okafor' && r.phone === '+234 803 555 7777') {
+    pass('S12.8 quick-add: whitespace stripped, Unicode names preserved');
+  } else fail('S12.8 quick-add whitespace', JSON.stringify(r));
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -1020,6 +1073,7 @@ function runS11() {
   try { runS9(); } catch (e) { fail('S9 unexpected error', e.message); }
   try { await runS10(); } catch (e) { fail('S10 unexpected error', e.message); }
   try { runS11(); } catch (e) { fail('S11 unexpected error', e.message); }
+  try { runS12(); } catch (e) { fail('S12 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

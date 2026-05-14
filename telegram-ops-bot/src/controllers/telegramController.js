@@ -948,6 +948,41 @@ async function handleAddCustomerFlowText(bot, chatId, userId, text) {
     return true;
   }
 
+  // P3 — admin Quick Add: parse "Name, Phone, [Address]" in one shot and
+  // write directly via crmService (no approval queue; admin executes).
+  if (session.step === 'quick_add') {
+    if (!config.access.adminIds.includes(userId)) {
+      await bot.sendMessage(chatId, 'Quick Add is admin-only.');
+      return true;
+    }
+    const parsed = parseQuickAddCustomerLine(trimmed);
+    if (!parsed.ok) {
+      await bot.sendMessage(chatId, `⚠️ ${parsed.error}\nTry again or tap Cancel.`);
+      return true;
+    }
+    const cust = {
+      name: parsed.name, phone: parsed.phone, address: parsed.address,
+      category: 'Standard', credit_limit: 0, payment_terms: 'COD', notes: '',
+    };
+    try {
+      await crmService.addCustomer(cust);
+    } catch (e) {
+      logger.error(`Quick add customer failed: ${e.message}`);
+      await bot.sendMessage(chatId, `❌ Failed to save: ${e.message}`);
+      return true;
+    }
+    sessionStore.clear(userId);
+    const summary = `✅ *Customer added*\nName: *${cust.name}*${cust.phone ? '\nPhone: ' + cust.phone : ''}${cust.address ? '\nAddress: ' + cust.address : ''}\n_Defaults: category=Standard · credit=₦0 · terms=COD · status=active. Edit later from Customer Details._`;
+    if (session.flowMessageId) {
+      await bot.editMessageText(summary, {
+        chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown',
+      }).catch(() => bot.sendMessage(chatId, summary, { parse_mode: 'Markdown' }));
+    } else {
+      await bot.sendMessage(chatId, summary, { parse_mode: 'Markdown' });
+    }
+    return true;
+  }
+
   if (session.step === 'name') {
     if (trimmed.length < 2) {
       await bot.sendMessage(chatId, 'Name too short, please re-enter:');
@@ -1813,10 +1848,35 @@ async function startAddCustomerFlow(bot, chatId, userId, messageId = null) {
     type: 'add_customer_flow', step: 'name', requestedBy: userId,
     flowMessageId: messageId || null,
   });
-  // Entry screen: explain flow, offer Cancel. Name is captured via free text.
-  const rows = [[{ text: '❌ Cancel', callback_data: 'accanc:0' }]];
-  await _acRender(bot, chatId, userId, 'Enter the customer *full name* (reply in chat):', rows);
+  // P3 — admins see a ⚡ Quick Add fast path that compresses the 8-step
+  // pickers into one line ("Name, +234..."). Non-admins keep the existing
+  // gated full flow (still routes through admin approval).
+  const rows = [];
+  if (config.access.adminIds.includes(userId)) {
+    rows.push([{ text: '⚡ Quick Add (name+phone in one line)', callback_data: 'acquick:1' }]);
+  }
+  rows.push([{ text: '❌ Cancel', callback_data: 'accanc:0' }]);
+  await _acRender(bot, chatId, userId, 'Enter the customer *full name* (reply in chat), or tap Quick Add for a one-liner:', rows);
 }
+
+/**
+ * P3 — admin Quick Add path. Switches the active add_customer session into
+ * 'quick_add' mode and prompts for "Name, Phone, [Address]" in one line.
+ * Direct write (no approval queue) because the path is admin-only.
+ */
+async function startAddCustomerQuickAdd(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'add_customer_flow') return;
+  if (!config.access.adminIds.includes(userId)) return;
+  session.step = 'quick_add';
+  sessionStore.set(userId, session);
+  await _acRender(bot, chatId, userId,
+    'Type *Name, Phone* (comma-separated) in one line:\n_Examples:_\n  `Mariam Salisu, +234-803-555-7777`\n  `Ibrahim Yusuf` _(phone optional)_\n  `Wang Tex, +234-1-555-1234, Lagos` _(name, phone, address)_',
+    [[{ text: '⬅️ Back to full form', callback_data: 'acb:name' }], [{ text: '❌ Cancel', callback_data: 'accanc:0' }]],
+  );
+}
+
+const { parseQuickAddCustomerLine } = require('../utils/quickAddParser');
 
 async function showAddCustomerPhoneStep(bot, chatId, userId) {
   const rows = [
@@ -5843,6 +5903,18 @@ async function handleCallbackQuery(bot, callbackQuery) {
       }).catch(() => {});
     }
     sessionStore.clear(uid);
+
+  // P3 — Quick Add fast path (admin-only). Swaps the session into quick_add
+  // step which expects "Name, Phone, [Address]" as a single text reply.
+  } else if (data.startsWith('acquick:')) {
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    if (!config.access.adminIds.includes(uid)) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' });
+      return;
+    }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await startAddCustomerQuickAdd(bot, chatId, uid);
 
   } else if (data.startsWith('acb:')) {
     // Step-by-step Back inside the Add-Customer flow.
