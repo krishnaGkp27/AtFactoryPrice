@@ -147,6 +147,41 @@ async function render(bot, chatId, userId, prompt, rows) {
 
 function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'pr:cancel' }]; }
 
+/**
+ * UX-C1: re-render the anchored flow card with an error notice embedded
+ * and a retry/cancel keyboard. Replaces plain `sendMessage(chatId, text)`
+ * calls that left the user with no tappable controls — those messages
+ * would land at the bottom of the chat with no inline keyboard, forcing
+ * the user to scroll up to find the original flow card.
+ *
+ * Use when the flow stays in its current step on error (typical for
+ * `await_file` and `await_review` failures); the inline keyboard mirrors
+ * the step's normal back/cancel options so the user never loses context.
+ */
+async function renderError(bot, chatId, userId, errorText, opts = {}) {
+  const session = sessionStore.get(userId);
+  if (!session) {
+    // Session gone — best-effort plain send so the user at least hears about it.
+    await bot.sendMessage(chatId, errorText, { parse_mode: 'Markdown' });
+    return;
+  }
+  const step = session.step || 'await_file';
+  const rows = [];
+  if (step === 'await_file') {
+    rows.push([{ text: '🔄 Try another file', callback_data: 'pr:retry' }]);
+    rows.push([{ text: '⬅ Back to PO', callback_data: 'pr:back_po' }]);
+  } else if (step === 'await_review' || step === 'await_submit') {
+    rows.push([{ text: '⬅ Back to review', callback_data: 'pr:back_review' }]);
+    rows.push([{ text: '🔄 Re-upload', callback_data: 'pr:retry' }]);
+  } else {
+    rows.push([{ text: '🔄 Try again', callback_data: 'pr:retry' }]);
+  }
+  rows.push(cancelRow());
+  // Compose the error onto the current header so the user keeps full
+  // context. render() handles edit-or-resend and message-id anchoring.
+  await render(bot, chatId, userId, `⚠️ ${errorText}`, rows);
+}
+
 // ---------------------------------------------------------------------------
 // Step 1 — Optional PO linkage
 // ---------------------------------------------------------------------------
@@ -245,9 +280,10 @@ async function handleFile(bot, msg) {
   }
 
   if (!ACCEPTED_MIMES.includes(mimeType)) {
-    await bot.sendMessage(chatId,
-      `⚠️ Unsupported file type \`${mimeType || '?'}\`.\nSend a JPG / PNG / WebP / HEIC photo, or a PDF.`,
-      { parse_mode: 'Markdown' });
+    // UX-C1: re-render the anchored flow card with retry/cancel keyboard
+    // instead of dropping a bare error at the bottom of the chat.
+    await renderError(bot, chatId, userId,
+      `Unsupported file type \`${mimeType || '?'}\`.\nSend a JPG / PNG / WebP / HEIC photo, or a PDF.`);
     return true;
   }
 
@@ -258,7 +294,7 @@ async function handleFile(bot, msg) {
     buffer = fetched.buffer;
   } catch (e) {
     logger.error(`photoReceiveFlow.handleFile fetch: ${e.message}`);
-    await bot.sendMessage(chatId, `⚠️ Could not fetch your file: ${e.message}`);
+    await renderError(bot, chatId, userId, `Could not fetch your file: ${e.message}`);
     return true;
   }
 
@@ -268,21 +304,22 @@ async function handleFile(bot, msg) {
     archive = await driveBackup.archiveImage(buffer, mimeType, { filename: fileName });
   } catch (e) {
     logger.error(`photoReceiveFlow.archiveImage: ${e.message}`);
-    await bot.sendMessage(chatId, `⚠️ Could not archive the upload: ${e.message}`);
+    await renderError(bot, chatId, userId, `Could not archive the upload: ${e.message}`);
     return true;
   }
 
-  // Run OCR.
+  // Run OCR. Brief progress note — small enough that scrolling past it is
+  // cheap, and the result render replaces the anchored card.
   await bot.sendMessage(chatId, '🔍 _Reading your slip…_', { parse_mode: 'Markdown' });
   const ocr = await vision.extractBales(buffer, mimeType);
   if (!ocr.ok) {
-    await bot.sendMessage(chatId,
-      `⚠️ OCR failed: ${ocr.error || 'unknown'}\nTap Cancel and try a sharper photo, or use 📤 Bulk Receive (CSV) instead.`);
+    await renderError(bot, chatId, userId,
+      `OCR failed: ${ocr.error || 'unknown'}\nTry a sharper photo, or use 📤 Bulk Receive (CSV) instead.`);
     return true;
   }
   if (!ocr.bales.length) {
-    await bot.sendMessage(chatId,
-      '⚠️ OCR did not find any bale rows on this slip. Try a sharper photo or use 📤 Bulk Receive (CSV).');
+    await renderError(bot, chatId, userId,
+      'OCR did not find any bale rows on this slip.\nTry a sharper photo or use 📤 Bulk Receive (CSV).');
     return true;
   }
 
@@ -458,6 +495,15 @@ async function handleCallback(bot, query) {
     session.po_id = data.slice('pr:po:'.length);
     sessionStore.set(userId, session);
     await showAwaitFileStep(bot, chatId, userId);
+    return true;
+  }
+
+  // UX-C1: simple navigation back to the review card from an error
+  // re-render. Used by renderError() when submit-time validation fails.
+  if (data === 'pr:back_review') {
+    session.step = 'await_review';
+    sessionStore.set(userId, session);
+    await showReviewStep(bot, chatId, userId);
     return true;
   }
 
@@ -767,7 +813,9 @@ async function submit(bot, chatId, userId) {
   // a separate branch.
   const accepted = session.rows.filter((r) => r.state === 'accepted' || r.state === 'edited');
   if (!accepted.length) {
-    await bot.sendMessage(chatId, '⚠️ No accepted rows to submit. Decide each row first.');
+    // UX-C1: keep the review card visible with retry/cancel attached.
+    await renderError(bot, chatId, userId,
+      'No accepted rows to submit. Decide each row first (Accept / Edit / Skip).');
     return;
   }
 
@@ -804,14 +852,15 @@ async function submit(bot, chatId, userId) {
     maxRows: bulkValidator.MAX_ROWS_DEFAULT,
   });
   if (!verdict.ok) {
-    const head = `⚠️ *${verdict.errors.length} validation error${verdict.errors.length === 1 ? '' : 's'}:*\n`;
+    // UX-C1: re-render the anchored card with the error list + Back/Cancel
+    // so the user keeps their place after spending minutes reviewing rows.
+    const head = `*${verdict.errors.length} validation error${verdict.errors.length === 1 ? '' : 's'}:*\n`;
     const body = verdict.errors.slice(0, 10).map((e) =>
       `• Row ${e.row || '?'}${e.column ? ` · ${e.column}` : ''}: ${e.message}`
     ).join('\n');
     const more = verdict.errors.length > 10 ? `\n_…and ${verdict.errors.length - 10} more._` : '';
-    await bot.sendMessage(chatId, head + body + more
-      + '\n\nReview the rows, edit as needed, or skip the bad ones before submitting.',
-      { parse_mode: 'Markdown' });
+    await renderError(bot, chatId, userId, head + body + more
+      + '\n\nReview the rows, edit as needed, or skip the bad ones before submitting.');
     return;
   }
 
@@ -819,9 +868,9 @@ async function submit(bot, chatId, userId) {
   try {
     const dup = await goodsReceiptsRepo.getByFileHash(session.fileHash);
     if (dup) {
-      await bot.sendMessage(chatId,
-        `⚠️ This photo was already imported as \`${dup.grn_id}\` on ${(dup.received_at || '').split('T')[0]}.\n_Hash:_ \`${session.fileHash}\``,
-        { parse_mode: 'Markdown' });
+      // UX-C1: idempotency block — keep anchored card with retry/cancel.
+      await renderError(bot, chatId, userId,
+        `This photo was already imported as \`${dup.grn_id}\` on ${(dup.received_at || '').split('T')[0]}.\n_Hash:_ \`${session.fileHash}\``);
       return;
     }
   } catch (e) {

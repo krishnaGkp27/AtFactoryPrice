@@ -101,6 +101,26 @@ async function render(bot, chatId, userId, prompt, rows) {
 
 function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'br:cancel' }]; }
 
+/**
+ * UX-C1: re-render the anchored flow card with an error message embedded
+ * and retry/cancel buttons. Replaces plain `sendMessage` error paths that
+ * would land at the bottom of the chat with no inline keyboard, forcing
+ * the user to scroll up to find the original flow card.
+ */
+async function renderError(bot, chatId, userId, errorText) {
+  const session = sessionStore.get(userId);
+  if (!session) {
+    await bot.sendMessage(chatId, errorText, { parse_mode: 'Markdown' });
+    return;
+  }
+  const rows = [
+    [{ text: '🔄 Try another file', callback_data: 'br:retry' }],
+    [{ text: '⬅ Back to PO', callback_data: 'br:back_po' }],
+    cancelRow(),
+  ];
+  await render(bot, chatId, userId, `⚠️ ${errorText}`, rows);
+}
+
 // ---------------------------------------------------------------------------
 // Step 1 — Optional PO linkage
 // ---------------------------------------------------------------------------
@@ -182,13 +202,16 @@ async function handleDocument(bot, msg) {
   const fileName = (doc.file_name || 'upload').trim();
   const ext = (fileName.split('.').pop() || '').toLowerCase();
   if (!ACCEPTED_EXTS.has(ext)) {
-    await bot.sendMessage(chatId,
-      `⚠️ Only .csv and .xlsx accepted (got .${ext}).\nPlease upload the right format.`);
+    // UX-C1: every error in await_file re-renders the anchored card with
+    // a retry/cancel keyboard instead of dropping a bare error at the
+    // bottom of the chat with no tappable controls.
+    await renderError(bot, chatId, userId,
+      `Only .csv and .xlsx accepted (got .${ext}).\nPlease upload the right format.`);
     return true;
   }
   if (doc.file_size && doc.file_size > MAX_FILE_BYTES) {
-    await bot.sendMessage(chatId,
-      `⚠️ File too large (${Math.round(doc.file_size / 1024)} KB > ${MAX_FILE_BYTES / 1024} KB).\nSplit it up.`);
+    await renderError(bot, chatId, userId,
+      `File too large (${Math.round(doc.file_size / 1024)} KB > ${MAX_FILE_BYTES / 1024} KB).\nSplit it up.`);
     return true;
   }
 
@@ -199,14 +222,14 @@ async function handleDocument(bot, msg) {
     buffer = fetched.buffer;
   } catch (e) {
     logger.error(`bulkReceiveFlow.handleDocument fetch: ${e.message}`);
-    await bot.sendMessage(chatId, `⚠️ Could not fetch your file: ${e.message}`);
+    await renderError(bot, chatId, userId, `Could not fetch your file: ${e.message}`);
     return true;
   }
 
   // Parse + validate
   const parseResult = await parseBuffer(buffer, ext);
   if (!parseResult.ok) {
-    await bot.sendMessage(chatId, `⚠️ ${parseResult.error}\nFix and re-upload, or tap Cancel.`);
+    await renderError(bot, chatId, userId, `${parseResult.error}\nFix and re-upload, or tap Cancel.`);
     return true;
   }
 
@@ -217,7 +240,10 @@ async function handleDocument(bot, msg) {
   });
 
   if (!verdict.ok) {
-    await bot.sendMessage(chatId, formatErrorsForChat(verdict.errors), { parse_mode: 'Markdown' });
+    // formatErrorsForChat already includes the warning glyph; renderError
+    // adds its own. Strip the leading sigil to avoid the double "⚠️ ⚠️".
+    const body = formatErrorsForChat(verdict.errors).replace(/^⚠️\s*/, '');
+    await renderError(bot, chatId, userId, body);
     return true;
   }
 
@@ -225,13 +251,13 @@ async function handleDocument(bot, msg) {
   // delivery. Mixed-warehouse files would force us to split into multiple
   // GRNs, which the v1 flow doesn't support — surface the error early.
   if (verdict.summary.warehouses.length > 1) {
-    await bot.sendMessage(chatId,
-      `⚠️ File mixes ${verdict.summary.warehouses.length} warehouses: ${verdict.summary.warehouses.join(', ')}.\nSplit into one file per warehouse.`);
+    await renderError(bot, chatId, userId,
+      `File mixes ${verdict.summary.warehouses.length} warehouses: ${verdict.summary.warehouses.join(', ')}.\nSplit into one file per warehouse.`);
     return true;
   }
   if (verdict.summary.suppliers.length > 1) {
-    await bot.sendMessage(chatId,
-      `⚠️ File mixes ${verdict.summary.suppliers.length} suppliers: ${verdict.summary.suppliers.join(', ')}.\nUse one supplier per upload.`);
+    await renderError(bot, chatId, userId,
+      `File mixes ${verdict.summary.suppliers.length} suppliers: ${verdict.summary.suppliers.join(', ')}.\nUse one supplier per upload.`);
     return true;
   }
 
@@ -241,9 +267,8 @@ async function handleDocument(bot, msg) {
   try {
     const dup = await goodsReceiptsRepo.getByFileHash(hash);
     if (dup) {
-      await bot.sendMessage(chatId,
-        `⚠️ This file was already imported as \`${dup.grn_id}\` on ${dup.received_at.split('T')[0]}.\n_Hash:_ \`${hash}\``,
-        { parse_mode: 'Markdown' });
+      await renderError(bot, chatId, userId,
+        `This file was already imported as \`${dup.grn_id}\` on ${dup.received_at.split('T')[0]}.\n_Hash:_ \`${hash}\``);
       return true;
     }
   } catch (e) {

@@ -368,7 +368,10 @@ async function submitNewPO(bot, chatId, userId) {
       qty_yards: (l.qty_bales || 0) * 50, // default 50 yds/bale; revisable later
     })));
   }
-  sessionStore.clear(userId);
+  // UX-C1: render the success card BEFORE clearing the session.
+  // renderNewPO reads sessionStore and no-ops on missing session, so the
+  // prior order (clear -> render) left the user staring at the old confirm
+  // card with no confirmation that anything happened.
   await renderNewPO(bot, chatId, userId,
     `✅ *Created* \`${header.po_id}\`\n\n_Tap "📥 Receive" against this PO once goods arrive — the GRN flow will pre-fill the supplier + design._`,
     [
@@ -377,6 +380,7 @@ async function submitNewPO(bot, chatId, userId) {
       backRow(),
     ],
   );
+  sessionStore.clear(userId);
 
   // Broadcast PO creation through the admin feed (respects per-admin opt-in).
   try {
