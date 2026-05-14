@@ -38,7 +38,26 @@ app.get('/health', (req, res) => {
 app.get('/api/settings', apiController.getSettings);
 app.put('/api/settings', apiController.updateSettings);
 
+// TG-2: when TELEGRAM_WEBHOOK_SECRET is set, Telegram includes it in the
+// `X-Telegram-Bot-Api-Secret-Token` header on every webhook POST. Reject
+// any request that arrives without the matching token — this is the
+// primary defence against anyone POSTing fake updates to the public
+// webhook URL. The check happens BEFORE we acknowledge with 200 so
+// spoofed requests don't even get a "delivered" signal.
+const WEBHOOK_SECRET = config.telegram.webhookSecret || '';
+if (!WEBHOOK_SECRET) {
+  logger.warn('TELEGRAM_WEBHOOK_SECRET not set — webhook is unauthenticated. Set the env var and re-run `npm run set-webhook` to enable.');
+}
+
 app.post('/webhook', (req, res) => {
+  if (WEBHOOK_SECRET) {
+    const incoming = req.headers['x-telegram-bot-api-secret-token'];
+    if (incoming !== WEBHOOK_SECRET) {
+      logger.warn(`webhook: rejected request with bad/missing secret token (ip=${req.ip || req.headers['x-forwarded-for'] || 'unknown'})`);
+      return res.sendStatus(401);
+    }
+  }
+
   res.sendStatus(200);
   const body = req.body;
   if (!body) return;
