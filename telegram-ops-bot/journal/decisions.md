@@ -6,6 +6,18 @@
 
 ---
 
+## 2026-05-14 (later) · Hygiene + UX pass — M1 + M3 + O1 in one session
+
+After the morning's TG-1/TG-2/TG-4 commits, the owner asked for a workflow + code audit before further feature work. The audit identified three "Must do" and five "Optional" cleanups; we took the three lowest-risk, highest-leverage ones in one session so the codebase is cleaner before Commit 4 Reports → Templates → Customer Orders → Payment Automation open up.
+
+`abb1bb6` collapsed seven duplicate `fmtMoney` definitions (and three duplicate `editOrSend`, plus the dead `genId` copy) into `src/utils/format.js` and `src/utils/telegramUI.js`. The new helpers accept a currency code so the per-user currency preference (ROADMAP §7 Decision 12) becomes a one-file change later. The dead `polling: false` option came off `server.js` in the same commit — identical behavior to the default, but a future maintainer might have flipped it to `true` and raced the production webhook.
+
+`a9f2940` consolidated the Customers hub from six tiles into three. The four read-only views of the same customer (History, Pattern, Notes, Ranking) became a single "👤 Customer Details" card whose tabs swap in place. One customer pick, four views, one message — replacing three pick-customer round trips. Crucially: no Departments-sheet migration was needed. `filterByCodes()` auto-injects `customer_details` when it sees any of the deprecated codes in a department's CSV, and the legacy callbacks now also land on the new picker rather than dead-ending. Owner asked for this audit *before* feature work, and the consolidation pays dividends specifically because the upcoming customer-facing surfaces (wallet, orders, loyalty) will need that hub uncluttered.
+
+Smoke 76/76 unchanged on both commits. ReadLints clean. Both verified live via `node -e` module-load before commit. Numbers came out byte-identical to what each call site was already producing.
+
+---
+
 ## 2026-05-14 · Production-hygiene pass before customer-facing features (TG-1, TG-2, TG-4)
 
 The owner returned the day after the late-night planning session, asked about the cloud agent's old improvement plan, and the AI partner showed that 22 of 26 items were still pending. Rather than work through all of them mechanically, the discussion narrowed to three that mattered before customer-facing features open up: a real runtime crash (TG-1), a real security gap (TG-2), and a misleading piece of dead code (TG-4). The other 19 items remain on the deferred list with the explicit understanding that *real engineering wins ≠ urgent*.
