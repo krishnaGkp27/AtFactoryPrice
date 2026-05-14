@@ -377,9 +377,9 @@ P2.5 bulk CSV; only the row-capture mechanism changes.
 
 | Commit | Hash | Title | Status |
 |---|---|---|---|
-| C1 | (this set) | Vision client interface + stub provider + config block | ✅ Done |
-| C2 | — | Drive backup helper + local image archiving | ⏳ Next |
-| C3 | — | `photoReceiveFlow.js` — upload + per-row review UI | ⏳ Planned |
+| C1 | `5ae3a82` | Vision client interface + stub provider + config block | ✅ Done |
+| C2 | (this set) | Drive backup helper + local image archiving | ✅ Done |
+| C3 | — | `photoReceiveFlow.js` — upload + per-row review UI | ⏳ Next |
 | C4 | — | Per-row edit subflow + submission bridge into `bulk_receive_goods` | ⏳ Planned |
 | C5 | — | Smoke + docs/photo-receive-template.md | ⏳ Planned |
 
@@ -406,18 +406,44 @@ P2.5 bulk CSV; only the row-capture mechanism changes.
 - Per-row `lowConfidence` flag computed during normalisation so flows
   don't have to repeat the threshold check.
 
-**Smoke coverage (S15, +15 checks):**
+**P5-C2 ships:**
+- `src/services/vision/driveBackup.js` — top-level `archiveImage(buf,
+  mime)` writes a SHA-256-named copy to `data/ocr/{hash}.{ext}` and
+  (if `OCR_GDRIVE_FOLDER_ID` is set) uploads to a `{YYYY-MM}` subfolder
+  under that ID. Local archive is idempotent — same bytes → same path
+  → no rewrite, so re-uploaded slips don't duplicate on disk.
+- Drive backup is *best-effort*: API failures don't break the local
+  archive, the error is surfaced in `result.driveError` instead. The
+  bot never loses an operator's image to a quota or network blip.
+- Drive auth uses the existing Sheets service-account credentials with
+  the `drive.file` scope added. That scope is locked to files the
+  service account itself creates, so it cannot read the operator's
+  wider Drive.
+- Helpers exported for direct use by flows / tests:
+  `sha256First16`, `extensionFor`, `monthLabel`, `archiveLocally`,
+  `ensureMonthFolder`, `uploadToDrive`, `_setDriveClient` (test escape
+  hatch).
+- `.gitignore` extended to cover `data/uploads/` (P2.5) and `data/ocr/`
+  (P5) so the archives never accidentally end up in source control.
+
+**Smoke coverage (S15a + S15b, +25 checks total):**
 S15.1 happy path · S15.2 lowConfidence flag set from threshold ·
 S15.3 numeric cleanliness (no NaN leaks) · S15.4 determinism ·
 S15.5–8 input gating (empty / MIME / oversize / unknown provider) ·
 S15.9 disabled returns ocr_disabled · S15.10 providerOverride bypasses
-disabled flag (test escape hatch) · S15.11 OpenAI skeleton returns
-not_implemented without crashing · S15.12 fixture override loads from
-disk · S15.13 PDF MIME accepted · S15.14 confidence clamping
-([0..1] + NaN → 0) · S15.15 provider throw caught and surfaced as
-provider_error.
+disabled flag · S15.11 OpenAI skeleton not_implemented · S15.12 fixture
+override · S15.13 PDF accepted · S15.14 confidence clamping ·
+S15.15 provider throw caught · **S15b.1** sha256 stability ·
+**S15b.2** extension mapping · **S15b.3** monthLabel UTC ·
+**S15b.4** local-only success when Drive unconfigured ·
+**S15b.5** local archive idempotent (no rewrite for same bytes) ·
+**S15b.6** empty buffer throws clear error ·
+**S15b.7** Drive happy path — month folder created + file uploaded ·
+**S15b.8** month folder reused on subsequent uploads ·
+**S15b.9** Drive failure → local succeeds, driveError surfaced ·
+**S15b.10** opts.filename customises Drive name.
 
-Harness: 168 green (was 153).
+Harness: 178 green (was 153).
 
 ### 2.8 Phase 4 · Scalability (legacy TG-22 .. TG-26)
 

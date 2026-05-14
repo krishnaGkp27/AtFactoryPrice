@@ -4,3 +4,8 @@ node_modules/
 .DS_Store
 credentials.json
 *-credentials.json
+
+# Local archives — Bulk CSV uploads (P2.5) and Photo Receive images / PDFs (P5)
+data/uploads/
+data/ocr/
+

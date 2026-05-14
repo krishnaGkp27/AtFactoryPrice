@@ -1923,6 +1923,180 @@ async function runS15a() {
 }
 
 // ---------------------------------------------------------------------------
+// S15b — Photo Receive · Drive backup + local archive (P5-C2)
+// ---------------------------------------------------------------------------
+async function runS15b() {
+  const os = require('os');
+
+  // Isolate the archive dir to a per-run temp folder so we don't pollute
+  // the repo's data/ocr/ directory.
+  const tmpArchive = fs.mkdtempSync(path.join(os.tmpdir(), 'ocr-archive-'));
+  const prevArchive = process.env.OCR_ARCHIVE_DIR;
+  const prevFolder = process.env.OCR_GDRIVE_FOLDER_ID;
+  process.env.OCR_ARCHIVE_DIR = tmpArchive;
+
+  delete require.cache[require.resolve('../src/config')];
+  delete require.cache[require.resolve('../src/services/vision/driveBackup')];
+
+  const drive = require('../src/services/vision/driveBackup');
+
+  const buf = Buffer.from('SAMPLE-IMAGE-BYTES-9001-T1');
+  const buf2 = Buffer.from('SAMPLE-IMAGE-BYTES-9001-T1'); // same content
+  const buf3 = Buffer.from('DIFFERENT-IMAGE-BYTES-9001-T2');
+
+  // S15b.1 — sha256First16 is stable and 16-hex
+  const h1 = drive.sha256First16(buf);
+  const h2 = drive.sha256First16(buf2);
+  const h3 = drive.sha256First16(buf3);
+  if (h1 === h2 && h1 !== h3 && /^[a-f0-9]{16}$/.test(h1)) {
+    pass('S15b.1 sha256First16: stable for same input, differs for different');
+  } else fail('S15b.1 hash', JSON.stringify({ h1, h2, h3 }));
+
+  // S15b.2 — extensionFor handles all known MIMEs + falls back to 'bin'
+  const cases = [
+    ['image/jpeg', 'jpg'],
+    ['image/png', 'png'],
+    ['image/webp', 'webp'],
+    ['image/heic', 'heic'],
+    ['application/pdf', 'pdf'],
+    ['application/vnd.weird', 'bin'],
+    ['', 'bin'],
+  ];
+  const allCorrect = cases.every(([m, e]) => drive.extensionFor(m) === e);
+  if (allCorrect) pass('S15b.2 extensionFor: maps all supported MIMEs + falls back to "bin"');
+  else fail('S15b.2 extensionFor', JSON.stringify(cases.map(([m, e]) => [m, drive.extensionFor(m), e])));
+
+  // S15b.3 — monthLabel: ISO YYYY-MM
+  const lbl = drive.monthLabel(new Date(Date.UTC(2026, 4, 14)));
+  if (lbl === '2026-05') pass('S15b.3 monthLabel: returns YYYY-MM (UTC, zero-padded)');
+  else fail('S15b.3 monthLabel', lbl);
+
+  // S15b.4 — archiveImage with no Drive folder: local-only, no error
+  // (process.env.OCR_GDRIVE_FOLDER_ID is unset here, so config.drive.ocrFolderId
+  // is the empty string)
+  delete process.env.OCR_GDRIVE_FOLDER_ID;
+  delete process.env.GOOGLE_DRIVE_FOLDER_ID;
+  delete require.cache[require.resolve('../src/config')];
+  delete require.cache[require.resolve('../src/services/vision/driveBackup')];
+  const driveNo = require('../src/services/vision/driveBackup');
+  let result = await driveNo.archiveImage(buf, 'image/jpeg');
+  if (result.hash === h1 && result.ext === 'jpg'
+      && result.localPath.endsWith(`${h1}.jpg`)
+      && fs.existsSync(result.localPath)
+      && fs.statSync(result.localPath).size === buf.length
+      && result.drive === null && result.driveError === null) {
+    pass('S15b.4 archiveImage: no Drive folder → local-only success, no error');
+  } else fail('S15b.4 local-only', JSON.stringify(result));
+
+  // S15b.5 — archiveImage is idempotent (same buffer → same path, no rewrite needed)
+  const mtime1 = fs.statSync(result.localPath).mtimeMs;
+  await new Promise((r) => setTimeout(r, 30));
+  const result2 = await driveNo.archiveImage(buf, 'image/jpeg');
+  const mtime2 = fs.statSync(result2.localPath).mtimeMs;
+  if (result.localPath === result2.localPath && mtime1 === mtime2) {
+    pass('S15b.5 archiveImage: idempotent — same buffer reuses existing file (no rewrite)');
+  } else fail('S15b.5 idempotency', JSON.stringify({ p1: result.localPath, p2: result2.localPath, mtime1, mtime2 }));
+
+  // S15b.6 — empty buffer throws
+  try {
+    await driveNo.archiveImage(Buffer.alloc(0), 'image/jpeg');
+    fail('S15b.6 empty buffer', 'expected throw');
+  } catch (e) {
+    if (/empty or invalid/i.test(e.message)) pass('S15b.6 archiveImage: empty buffer throws clear error');
+    else fail('S15b.6 empty buffer', e.message);
+  }
+
+  // S15b.7 — with Drive folder configured + mock client: uploads + folder reuse
+  process.env.OCR_GDRIVE_FOLDER_ID = 'parent-folder-id-xyz';
+  delete require.cache[require.resolve('../src/config')];
+  delete require.cache[require.resolve('../src/services/vision/driveBackup')];
+  const driveYes = require('../src/services/vision/driveBackup');
+
+  // Mock drive client: tracks all calls
+  const calls = { list: [], create: [] };
+  driveYes._setDriveClient({
+    files: {
+      list: async ({ q, fields }) => {
+        calls.list.push({ q, fields });
+        // first call: no folder yet
+        if (calls.list.length === 1) return { data: { files: [] } };
+        // subsequent calls: folder exists
+        return { data: { files: [{ id: 'month-folder-2026-05', name: '2026-05' }] } };
+      },
+      create: async ({ requestBody, media, fields }) => {
+        calls.create.push({ requestBody, hasMedia: !!media, fields });
+        if (requestBody.mimeType === 'application/vnd.google-apps.folder') {
+          return { data: { id: 'month-folder-2026-05', name: requestBody.name } };
+        }
+        return {
+          data: { id: `file-${calls.create.length}`, name: requestBody.name,
+                  webViewLink: `https://drive.google.com/file/d/file-${calls.create.length}/view` },
+        };
+      },
+    },
+  });
+
+  result = await driveYes.archiveImage(buf, 'image/jpeg', { now: new Date(Date.UTC(2026, 4, 14)) });
+  // Mock id naming is an implementation detail — assert structural shape only.
+  const fileUploadCall = calls.create.find((c) => c.hasMedia);
+  if (result.drive
+      && typeof result.drive.id === 'string' && result.drive.id.startsWith('file-')
+      && result.drive.folderId === 'month-folder-2026-05'
+      && result.drive.monthLabel === '2026-05'
+      && result.drive.webViewLink.startsWith('https://drive.google.com/')
+      && result.driveError === null
+      && calls.list.length === 1
+      && calls.create.length === 2 /* month folder create + file upload */
+      && fileUploadCall && fileUploadCall.requestBody.parents[0] === 'month-folder-2026-05') {
+    pass('S15b.7 archiveImage: Drive enabled → folder created + file uploaded into it, metadata returned');
+  } else fail('S15b.7 Drive happy path', JSON.stringify({ result, calls }));
+
+  // S15b.8 — second upload reuses existing month folder (files.list hit)
+  const result3 = await driveYes.archiveImage(buf3, 'image/jpeg', { now: new Date(Date.UTC(2026, 4, 14)) });
+  if (result3.drive
+      && result3.drive.folderId === 'month-folder-2026-05'
+      && calls.create.length === 3 /* prev 2 + just this file, no new folder */) {
+    pass('S15b.8 archiveImage: month folder reused on subsequent uploads');
+  } else fail('S15b.8 folder reuse', JSON.stringify({ result3, calls }));
+
+  // S15b.9 — Drive failure does NOT break local archive (best-effort)
+  driveYes._setDriveClient({
+    files: {
+      list: async () => { throw new Error('quota exceeded'); },
+      create: async () => { throw new Error('should never get here'); },
+    },
+  });
+  const result4 = await driveYes.archiveImage(Buffer.from('ANOTHER-PHOTO'), 'image/png');
+  if (result4.drive === null
+      && result4.driveError && /quota/i.test(result4.driveError)
+      && fs.existsSync(result4.localPath)) {
+    pass('S15b.9 archiveImage: Drive failure → local archive succeeds, driveError surfaced');
+  } else fail('S15b.9 Drive failure', JSON.stringify(result4));
+
+  // S15b.10 — opts.filename overrides default `{hash}.{ext}` name on Drive
+  driveYes._setDriveClient({
+    files: {
+      list: async () => ({ data: { files: [{ id: 'month-folder-2026-05', name: '2026-05' }] } }),
+      create: async ({ requestBody }) => ({
+        data: { id: 'custom-1', name: requestBody.name, webViewLink: 'x' },
+      }),
+    },
+  });
+  const result5 = await driveYes.archiveImage(Buffer.from('SLIP-FROM-ABDUL'), 'image/jpeg',
+    { filename: 'abdul-2026-05-14-bale9001.jpg' });
+  if (result5.drive && result5.drive.name === 'abdul-2026-05-14-bale9001.jpg') {
+    pass('S15b.10 archiveImage: opts.filename customises Drive file name');
+  } else fail('S15b.10 filename override', JSON.stringify(result5));
+
+  // Cleanup
+  try { fs.rmSync(tmpArchive, { recursive: true, force: true }); } catch { /* ignore */ }
+  if (prevArchive == null) delete process.env.OCR_ARCHIVE_DIR; else process.env.OCR_ARCHIVE_DIR = prevArchive;
+  if (prevFolder == null) delete process.env.OCR_GDRIVE_FOLDER_ID; else process.env.OCR_GDRIVE_FOLDER_ID = prevFolder;
+  delete require.cache[require.resolve('../src/config')];
+  delete require.cache[require.resolve('../src/services/vision/driveBackup')];
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -1945,6 +2119,7 @@ async function runS15a() {
   try { await runS14b(); } catch (e) { fail('S14b unexpected error', e.message); }
   try { await runS14c(); } catch (e) { fail('S14c unexpected error', e.message); }
   try { await runS15a(); } catch (e) { fail('S15a unexpected error', e.message); }
+  try { await runS15b(); } catch (e) { fail('S15b unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;
