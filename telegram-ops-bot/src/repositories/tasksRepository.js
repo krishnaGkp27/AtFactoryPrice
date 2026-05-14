@@ -61,6 +61,11 @@ const STATUSES = Object.freeze({
   COMPLETED: 'completed',
   DECLINED: 'declined',
   CANCELLED: 'cancelled',
+  // Manager-initiated removal mid-flight ("this is no longer relevant").
+  // Distinct from CANCELLED (negotiation-time bail-out) so the audit log
+  // separates "deal fell apart before work started" from "we decided
+  // partway through to drop this from the doer's plate".
+  DROPPED: 'dropped',
 });
 
 const VALID_STATUSES = new Set(Object.values(STATUSES));
@@ -206,6 +211,9 @@ const COLUMN_BY_FIELD = Object.freeze({
   status: 'F',
   submitted_at: 'H',
   completed_at: 'I',
+  // K = priority. Mutable post-creation so managers can re-prioritize
+  // live tasks via the update_priority state-machine transition.
+  priority: 'K',
   accepted_at: 'M',
   proposed_hours: 'N',
   proposed_deadline: 'O',

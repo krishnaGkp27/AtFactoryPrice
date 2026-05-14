@@ -341,7 +341,7 @@ function runS5() {
   const wantStatuses = [
     'assigned', 'awaiting_timeline_ack', 'awaiting_incentive',
     'awaiting_final_ack', 'active', 'submitted', 'completed',
-    'declined', 'cancelled',
+    'declined', 'cancelled', 'dropped',
   ];
   const haveAll = wantStatuses.every((s) => tasksRepo.VALID_STATUSES.has(s));
   if (haveAll) {
@@ -670,6 +670,75 @@ async function runS8() {
   } catch (e) {
     if (e.code === 'ILLEGAL_TRANSITION') pass('S8.14 set_incentive from completed rejected (ILLEGAL_TRANSITION)');
     else fail('S8.14 set_incentive from completed rejected', `wrong error: ${e.message}`);
+  }
+
+  // S8.15 update_priority — self-transition that mutates only priority,
+  // legal in every non-terminal state, only assigner_or_admin allowed.
+  const t5 = await sm.create({
+    title: 'Re-prio test', assigned_to: 'doer-5', assigned_by: 'mgr-5',
+    priority: 'normal',
+  });
+  // Doer cannot self-promote.
+  try {
+    await sm.transition(t5.task_id, 'update_priority', 'doer-5', { priority: 'high' });
+    fail('S8.15a update_priority: doer rejected', 'should have thrown NOT_ACTOR');
+  } catch (e) {
+    if (e.code === 'NOT_ACTOR') pass('S8.15a update_priority: doer rejected (NOT_ACTOR)');
+    else fail('S8.15a update_priority: doer rejected', `wrong error: ${e.message}`);
+  }
+  // Assigner promotes from normal → critical; status stays 'assigned'.
+  await sm.transition(t5.task_id, 'update_priority', 'mgr-5', {
+    priority: 'critical', from_priority: 'normal',
+  });
+  let t5now = await tasksRepo.getById(t5.task_id);
+  if (t5now.status === 'assigned' && t5now.priority === 'critical') {
+    pass('S8.15b update_priority: self-transition kept status, swapped priority');
+  } else {
+    fail('S8.15b update_priority: self-transition kept status, swapped priority', JSON.stringify(t5now));
+  }
+  // Even from 'active' (after a full negotiation loop), priority can flip.
+  await sm.transition(t5.task_id, 'propose_timeline', 'doer-5', { hours: 1, deadline: '2026-06-01' });
+  await sm.transition(t5.task_id, 'accept_timeline', 'mgr-5');
+  await sm.transition(t5.task_id, 'final_ack', 'doer-5');
+  await sm.transition(t5.task_id, 'update_priority', 'mgr-5', { priority: 'low' });
+  t5now = await tasksRepo.getById(t5.task_id);
+  if (t5now.status === 'active' && t5now.priority === 'low') {
+    pass('S8.15c update_priority: legal mid-flight on active status');
+  } else {
+    fail('S8.15c update_priority: legal mid-flight on active status', JSON.stringify(t5now));
+  }
+
+  // S8.16 drop — manager-initiated terminal transition from open states.
+  // Drop from active works; drop from submitted does NOT (assigner should
+  // approve/reject instead).
+  const t6 = await sm.create({ title: 'To drop', assigned_to: 'doer-6', assigned_by: 'mgr-6' });
+  await sm.transition(t6.task_id, 'drop', 'mgr-6', { reason: 'No longer needed' });
+  const t6now = await tasksRepo.getById(t6.task_id);
+  if (t6now.status === 'dropped' && t6now.completed_at) {
+    pass('S8.16a drop: assigned → dropped (terminal, completed_at stamped)');
+  } else {
+    fail('S8.16a drop: assigned → dropped', JSON.stringify(t6now));
+  }
+  // Drop from a submitted task is illegal — assigner must approve/reject.
+  const t7 = await sm.create({ title: 'Submitted then drop?', assigned_to: 'doer-7', assigned_by: 'mgr-7' });
+  await sm.transition(t7.task_id, 'propose_timeline', 'doer-7', { hours: 1, deadline: '2026-06-01' });
+  await sm.transition(t7.task_id, 'accept_timeline', 'mgr-7');
+  await sm.transition(t7.task_id, 'final_ack', 'doer-7');
+  await sm.transition(t7.task_id, 'mark_done', 'doer-7');
+  try {
+    await sm.transition(t7.task_id, 'drop', 'mgr-7');
+    fail('S8.16b drop from submitted rejected', 'should throw ILLEGAL_TRANSITION');
+  } catch (e) {
+    if (e.code === 'ILLEGAL_TRANSITION') pass('S8.16b drop from submitted rejected (assigner must approve/reject)');
+    else fail('S8.16b drop from submitted rejected', `wrong error: ${e.message}`);
+  }
+  // Dropped is terminal — no further transitions.
+  try {
+    await sm.transition(t6.task_id, 'mark_done', 'doer-6');
+    fail('S8.16c dropped is terminal', 'mark_done should throw');
+  } catch (e) {
+    if (e.code === 'ILLEGAL_TRANSITION') pass('S8.16c dropped is terminal (no outbound edges)');
+    else fail('S8.16c dropped is terminal', `wrong error: ${e.message}`);
   }
 }
 

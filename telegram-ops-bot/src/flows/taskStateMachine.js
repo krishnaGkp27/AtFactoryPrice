@@ -101,6 +101,37 @@ class TaskNotFoundError extends Error {
 // `eventType` is the short tag written to TaskEvents.event_type.
 // ---------------------------------------------------------------------------
 
+// Shared sub-transitions reused across many states.
+//
+// `update_priority` is a self-transition: status does NOT change, only
+// the `priority` column on the task. It's legal in every non-terminal
+// state so the assigner can re-prioritize at any point in the lifecycle.
+//
+// `drop` is the manager's "this is no longer relevant" lever. It is
+// distinct from `cancel` (which is a negotiation-time bail-out) and
+// only legal once a task is past initial assignment OR up to (but not
+// including) `submitted` — once the doer has marked done, the assigner
+// should `reject` or `approve`, not silently drop the work.
+const UPDATE_PRIORITY = Object.freeze({
+  // `to` resolves to "same status" — we keep the engine's contract that
+  // every transition has a target by setting it to the current status
+  // at resolve time (see resolveTarget).
+  to: (task) => task.status,
+  actorRole: 'assigner_or_admin',
+  eventType: 'priority_changed',
+  // The `priority` field is patched from meta.priority by patchExtras.
+  patchExtras: (meta) => ({
+    priority: meta && meta.priority ? String(meta.priority) : undefined,
+  }),
+});
+
+const DROP = Object.freeze({
+  to: STATUSES.DROPPED,
+  actorRole: 'assigner_or_admin',
+  eventType: 'manager_dropped',
+  setsTimestamps: ['completed_at'], // tracks "moment the task left the doer's plate"
+});
+
 const TRANSITIONS = Object.freeze({
   [STATUSES.ASSIGNED]: {
     propose_timeline: {
@@ -123,6 +154,8 @@ const TRANSITIONS = Object.freeze({
       actorRole: 'assigner_or_admin',
       eventType: 'assigner_cancelled',
     },
+    update_priority: UPDATE_PRIORITY,
+    drop: DROP,
   },
 
   [STATUSES.AWAITING_TIMELINE_ACK]: {
@@ -157,6 +190,8 @@ const TRANSITIONS = Object.freeze({
       actorRole: 'assigner_or_admin',
       eventType: 'assigner_cancelled',
     },
+    update_priority: UPDATE_PRIORITY,
+    drop: DROP,
   },
 
   [STATUSES.AWAITING_INCENTIVE]: {
@@ -173,6 +208,8 @@ const TRANSITIONS = Object.freeze({
       actorRole: 'assigner_or_admin',
       eventType: 'assigner_cancelled',
     },
+    update_priority: UPDATE_PRIORITY,
+    drop: DROP,
   },
 
   [STATUSES.AWAITING_FINAL_ACK]: {
@@ -193,6 +230,8 @@ const TRANSITIONS = Object.freeze({
       actorRole: 'assigner_or_admin',
       eventType: 'assigner_cancelled',
     },
+    update_priority: UPDATE_PRIORITY,
+    drop: DROP,
   },
 
   [STATUSES.ACTIVE]: {
@@ -207,6 +246,8 @@ const TRANSITIONS = Object.freeze({
       actorRole: 'assigner_or_admin',
       eventType: 'assigner_cancelled',
     },
+    update_priority: UPDATE_PRIORITY,
+    drop: DROP,
   },
 
   [STATUSES.SUBMITTED]: {
@@ -221,12 +262,17 @@ const TRANSITIONS = Object.freeze({
       actorRole: 'assigner_or_admin',
       eventType: 'assigner_rejected',
     },
+    // Priority can still change on submitted tasks (e.g. assigner wants
+    // to bump urgency on the sign-off queue itself). drop is NOT legal
+    // here — the doer already delivered; assigner must approve or reject.
+    update_priority: UPDATE_PRIORITY,
   },
 
   // Terminal states — no outgoing edges.
   [STATUSES.COMPLETED]: {},
   [STATUSES.DECLINED]: {},
   [STATUSES.CANCELLED]: {},
+  [STATUSES.DROPPED]: {},
 });
 
 // ---------------------------------------------------------------------------

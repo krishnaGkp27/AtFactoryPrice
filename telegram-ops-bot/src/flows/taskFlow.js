@@ -71,7 +71,18 @@ const STATUS_LABEL = {
   completed:             { icon: '✅', label: 'Completed' },
   declined:              { icon: '🚫', label: 'Declined' },
   cancelled:             { icon: '❌', label: 'Cancelled' },
+  dropped:               { icon: '🚫', label: 'Dropped by manager' },
 };
+
+// Numeric rank used to sort tasks by urgency. Critical first.
+const PRIORITY_RANK = { critical: 0, high: 1, normal: 2, low: 3 };
+
+// Tasks that are still moving (not yet terminal). Manager controls
+// (re-prioritize, drop-off) gate on this set.
+const OPEN_STATUSES = new Set([
+  'assigned', 'awaiting_timeline_ack', 'awaiting_incentive',
+  'awaiting_final_ack', 'active', 'submitted',
+]);
 
 const HOURS_PRESETS = [
   ['1h', 1], ['2h', 2], ['4h', 4], ['8h', 8],
@@ -1044,6 +1055,182 @@ async function finalizeIncentive(bot, chatId, userId, amount) {
 }
 
 // ---------------------------------------------------------------------------
+// MANAGER CONTROLS: Re-prioritize + Drop-off (assigner-side, from Team Tasks)
+// ---------------------------------------------------------------------------
+//
+// Both fire engine transitions (update_priority, drop) so every change
+// flows through the same state machine and is auditable via TaskEvents.
+// update_priority is a self-transition (status unchanged), drop is
+// terminal (status → 'dropped').
+// ---------------------------------------------------------------------------
+
+const DROP_REASON_MAX_LEN = 200;
+
+async function _guardAssignerOrAdmin(bot, callbackQuery, task) {
+  const userId = String(callbackQuery.from.id);
+  if (task.assigned_by !== userId && !isAdmin(userId)) {
+    await bot.answerCallbackQuery(callbackQuery.id, {
+      text: 'Only the assigner or an admin can change this.', show_alert: true,
+    }).catch(() => {});
+    return false;
+  }
+  return true;
+}
+
+/** Render the 4-priority picker; current priority is marked ✓. */
+async function startPriorityPicker(bot, callbackQuery, taskId) {
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const task = await tasksRepository.getById(taskId);
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (!(await _guardAssignerOrAdmin(bot, callbackQuery, task))) return;
+  if (!OPEN_STATUSES.has(task.status)) {
+    await editOrSend(bot, chatId, messageId,
+      `ℹ️ Task ${taskId} is *${task.status}* — priority can only be changed on open tasks.`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+  const cur = getPriority(task);
+  const row = ['critical', 'high', 'normal', 'low'].map((p) => ({
+    text: `${PRIORITY_META[p].icon} ${PRIORITY_META[p].label}${cur === p ? ' ✓' : ''}`,
+    callback_data: `tsk:prio_set:${taskId}:${p}`,
+  }));
+  await editOrSend(bot, chatId, messageId,
+    `🔝 *Re-prioritize*\n\n${escapeMd(task.title)}\n\nCurrent: ${PRIORITY_META[cur]?.icon || ''} *${PRIORITY_META[cur]?.label || cur}*\nPick a new priority:`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [
+        row.slice(0, 2),
+        row.slice(2, 4),
+        [{ text: '⬅ Back to Team Tasks', callback_data: 'act:__hub__:tasks' }],
+      ] },
+    });
+}
+
+async function applyPriority(bot, callbackQuery, taskId, newPriority) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  if (!PRIORITY_META[newPriority]) {
+    await editOrSend(bot, chatId, messageId, '❌ Invalid priority.', {});
+    return;
+  }
+  const task = await tasksRepository.getById(taskId);
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (!(await _guardAssignerOrAdmin(bot, callbackQuery, task))) return;
+
+  const oldPriority = getPriority(task);
+  if (oldPriority === newPriority) {
+    await editOrSend(bot, chatId, messageId,
+      `ℹ️ Priority is already *${PRIORITY_META[newPriority].label}*.`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+  try {
+    await taskStateMachine.transition(taskId, 'update_priority', userId, {
+      priority: newPriority,
+      from_priority: oldPriority,
+    });
+  } catch (e) {
+    await editOrSend(bot, chatId, messageId,
+      `❌ Couldn't change priority: ${e.message}`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+
+  const oldPm = PRIORITY_META[oldPriority] || PRIORITY_META.normal;
+  const newPm = PRIORITY_META[newPriority];
+  await editOrSend(bot, chatId, messageId,
+    `🔝 *Priority changed*\n\n${escapeMd(task.title)}\n${oldPm.icon} ${oldPm.label} → ${newPm.icon} *${newPm.label}*`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+
+  // Smart doer notification: silent DM when the new priority is normal/
+  // low (no need to interrupt them), audible DM when it's high/critical
+  // (urgency just went up — they should know now).
+  try {
+    const silent = priorityIsSilent(newPriority);
+    await bot.sendMessage(task.assigned_to,
+      `🔝 *Priority updated by your assigner*\n\n` +
+      `${escapeMd(task.title)}\n` +
+      `${oldPm.icon} ${oldPm.label} → ${newPm.icon} *${newPm.label}*\n\nID: \`${taskId}\``,
+      { parse_mode: 'Markdown', disable_notification: silent });
+  } catch (e) {
+    logger.warn(`taskFlow.applyPriority: DM doer failed: ${e.message}`);
+  }
+}
+
+/** Show the drop confirm card with optional reason reply. */
+async function startDropAsk(bot, callbackQuery, taskId) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const task = await tasksRepository.getById(taskId);
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (!(await _guardAssignerOrAdmin(bot, callbackQuery, task))) return;
+  if (task.status === 'submitted') {
+    await editOrSend(bot, chatId, messageId,
+      `ℹ️ ${escapeMd(task.title)} has been submitted by the doer — please approve or reject instead of dropping.`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+  if (!OPEN_STATUSES.has(task.status)) {
+    await editOrSend(bot, chatId, messageId,
+      `ℹ️ Task ${taskId} is *${task.status}* — drop is only available for open tasks.`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+  const doerName = (await usersRepository.findByUserId(task.assigned_to))?.name || task.assigned_to;
+  sessionStore.set(userId, {
+    type: 'task_drop_flow',
+    flowMessageId: messageId,
+    data: { taskId, taskTitle: task.title, doerName },
+  });
+  await editOrSend(bot, chatId, messageId,
+    `🚫 *Drop task*\n\n${escapeMd(task.title)}\n👤 From: *${escapeMd(doerName)}*\n\n` +
+    `_Optional: reply with a 1-line reason so the doer knows why._\n_Or just tap_ *Confirm drop* _to remove it from their plate._\n\nMax ${DROP_REASON_MAX_LEN} chars.`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [
+        [{ text: '🚫 Confirm drop', callback_data: `tsk:drop_go:${taskId}` }],
+        [{ text: '⬅ Cancel',         callback_data: 'tsk:drop_cancel' }],
+      ] },
+    });
+}
+
+async function submitDrop(bot, chatId, userId, reason) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'task_drop_flow') return;
+  const t = session.data;
+  try {
+    const meta = reason ? { reason } : {};
+    await taskStateMachine.transition(t.taskId, 'drop', userId, meta);
+  } catch (e) {
+    sessionStore.clear(userId);
+    await editOrSend(bot, chatId, session.flowMessageId,
+      `❌ Couldn't drop: ${e.message}`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+  sessionStore.clear(userId);
+  const reasonLine = reason ? `\n💬 _Reason:_ ${escapeMd(reason)}` : '';
+  await editOrSend(bot, chatId, session.flowMessageId,
+    `🚫 *Task dropped*\n\n${escapeMd(t.taskTitle)}\n👤 ${escapeMd(t.doerName)} has been notified.${reasonLine}`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+  // Polite DM to the doer — they should know not to do the work.
+  try {
+    const task = await tasksRepository.getById(t.taskId);
+    if (task) {
+      await bot.sendMessage(task.assigned_to,
+        `🚫 *Task dropped by your assigner*\n\n${escapeMd(task.title)}${reasonLine}\n\n` +
+        `_This task is no longer needed. No action required on your part._\nID: \`${t.taskId}\``,
+        { parse_mode: 'Markdown' });
+    }
+  } catch (e) {
+    logger.warn(`taskFlow.submitDrop: DM doer failed: ${e.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // FINAL-ACK FLOW (doer-side)
 // ---------------------------------------------------------------------------
 
@@ -1189,11 +1376,56 @@ async function handleCallback(bot, callbackQuery) {
   if (data.startsWith('tsk:rng:'))     { await handleRenegotiate(bot, callbackQuery, data.slice('tsk:rng:'.length)); return true; }
   if (data.startsWith('tsk:py:p:'))    { await handleMarkPaid   (bot, callbackQuery, data.slice('tsk:py:p:'.length)); return true; }
 
+  // Manager controls: re-prioritize + drop-off.
+  if (data.startsWith('tsk:prio_pick:')) {
+    await startPriorityPicker(bot, callbackQuery, data.slice('tsk:prio_pick:'.length));
+    return true;
+  }
+  if (data.startsWith('tsk:prio_set:')) {
+    // Format: tsk:prio_set:<taskId>:<priority>
+    const rest = data.slice('tsk:prio_set:'.length);
+    const lastColon = rest.lastIndexOf(':');
+    if (lastColon === -1) return true;
+    const tid = rest.slice(0, lastColon);
+    const pri = rest.slice(lastColon + 1);
+    await applyPriority(bot, callbackQuery, tid, pri);
+    return true;
+  }
+  if (data.startsWith('tsk:drop_ask:')) {
+    await startDropAsk(bot, callbackQuery, data.slice('tsk:drop_ask:'.length));
+    return true;
+  }
+  if (data.startsWith('tsk:drop_go:')) {
+    // Confirm-without-reason path (the optional reason flows through
+    // handleTextStep below, which then calls submitDrop).
+    const tid = data.slice('tsk:drop_go:'.length);
+    const session = sessionStore.get(userId);
+    if (!session || session.type !== 'task_drop_flow' || session.data?.taskId !== tid) {
+      await editOrSend(bot, chatId, messageId,
+        '⏳ This drop card has expired. Open *Team Tasks* and tap 🚫 Drop again.',
+        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+      return true;
+    }
+    session.flowMessageId = messageId;
+    sessionStore.set(userId, session);
+    await submitDrop(bot, chatId, userId, '');
+    return true;
+  }
+  if (data === 'tsk:drop_cancel') {
+    const s = sessionStore.get(userId);
+    if (s && s.type === 'task_drop_flow') sessionStore.clear(userId);
+    await editOrSend(bot, chatId, messageId, '❌ Drop cancelled.', {
+      reply_markup: { inline_keyboard: [navFooterRow()] },
+    });
+    return true;
+  }
+
   // Cancel — clears whichever flow session is active.
   if (data === 'tsk:cancel') {
     const s = sessionStore.get(userId);
     if (s && (s.type === 'task_assign_flow' || s.type === 'task_propose_flow'
-              || s.type === 'task_counter_flow' || s.type === 'task_incentive_flow')) {
+              || s.type === 'task_counter_flow' || s.type === 'task_incentive_flow'
+              || s.type === 'task_drop_flow')) {
       sessionStore.clear(userId);
     }
     await editOrSend(bot, chatId, messageId, '❌ Cancelled.', {
@@ -1472,6 +1704,17 @@ async function handleTextStep(bot, msg) {
     return true;
   }
 
+  if (session.type === 'task_drop_flow') {
+    if (text.length > DROP_REASON_MAX_LEN) {
+      await bot.sendMessage(chatId,
+        `⚠️ Reason must be ≤ ${DROP_REASON_MAX_LEN} chars. Reply again, or tap *Confirm drop* with no reason.`,
+        { parse_mode: 'Markdown' });
+      return true;
+    }
+    await submitDrop(bot, chatId, userId, text);
+    return true;
+  }
+
   return false;
 }
 
@@ -1658,21 +1901,50 @@ async function showMyTasks(bot, chatId, userId, messageId) {
     return;
   }
 
-  // Phase order — actionable first, then waiting, then recently done.
-  const order = ['active', 'awaiting_final_ack', 'assigned', 'awaiting_timeline_ack', 'awaiting_incentive', 'submitted'];
+  // Sort primarily by priority (critical → high → normal → low). When
+  // two tasks share priority, the one with the soonest deadline wins
+  // (urgency). When neither has a deadline, fall back to workflow phase
+  // so actionable items (active) appear above blocked ones (awaiting).
+  const PHASE_RANK = {
+    active: 0, awaiting_final_ack: 1, assigned: 2,
+    awaiting_timeline_ack: 3, awaiting_incentive: 4, submitted: 5,
+  };
+  function deadlineMs(t) {
+    if (!t.proposed_deadline) return Number.POSITIVE_INFINITY;
+    const ms = new Date(t.proposed_deadline).getTime();
+    return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
+  }
   const visible = tasks
-    .filter((t) => order.includes(t.status))
-    .sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status));
+    .filter((t) => PHASE_RANK[t.status] != null)
+    .sort((a, b) => {
+      const pa = PRIORITY_RANK[getPriority(a)] ?? 2;
+      const pb = PRIORITY_RANK[getPriority(b)] ?? 2;
+      if (pa !== pb) return pa - pb;
+      const da = deadlineMs(a);
+      const db = deadlineMs(b);
+      if (da !== db) return da - db;
+      return PHASE_RANK[a.status] - PHASE_RANK[b.status];
+    });
   const done = tasks.filter((t) => t.status === 'completed').slice(-5);
-  const decl = tasks.filter((t) => t.status === 'declined' || t.status === 'cancelled').slice(-3);
+  const offRoll = tasks.filter((t) =>
+    t.status === 'declined' || t.status === 'cancelled' || t.status === 'dropped'
+  ).slice(-3);
 
-  const lines = ['📋 *Your Tasks*', ''];
+  const lines = ['📋 *Your Tasks* — _by priority, soonest first_', ''];
   const rows = [];
 
+  // Render with a tiny priority header that resets each time the priority
+  // tier changes — easier to scan when the list is long.
+  let lastPriorityTier = null;
   for (const t of visible) {
-    const pm = PRIORITY_META[getPriority(t)] || PRIORITY_META.normal;
+    const p = getPriority(t);
+    if (p !== lastPriorityTier) {
+      lastPriorityTier = p;
+      const pm = PRIORITY_META[p] || PRIORITY_META.normal;
+      lines.push('', `${pm.icon} *${pm.label}*`);
+    }
     const tm = TRACK_META[t.track] || TRACK_META.salaried;
-    lines.push(`${pm.icon} ${escapeMd(t.title)} · ${tm.icon} ${tm.label}  \`${t.task_id}\``);
+    lines.push(`   ${escapeMd(t.title)} · ${tm.icon} ${tm.label}  \`${t.task_id}\``);
     lines.push(`     ${statusBadge(t.status)}`);
     if (t.proposed_hours && t.proposed_deadline) {
       lines.push(`     ⏱ ${fmtHours(t.proposed_hours)} · 📅 ${fmtDate(t.proposed_deadline)}`);
@@ -1684,9 +1956,9 @@ async function showMyTasks(bot, chatId, userId, messageId) {
     lines.push('', '✅ *Recently completed:*');
     for (const t of done) lines.push(`   ${escapeMd(t.title)}`);
   }
-  if (decl.length) {
-    lines.push('', '🚫 *Declined / cancelled:*');
-    for (const t of decl) lines.push(`   ${escapeMd(t.title)}  (${t.status})`);
+  if (offRoll.length) {
+    lines.push('', '🚫 *Declined / cancelled / dropped:*');
+    for (const t of offRoll) lines.push(`   ${escapeMd(t.title)}  (${t.status})`);
   }
 
   rows.push(navFooterRow());
@@ -1727,7 +1999,22 @@ async function showTeamTasks(bot, chatId, userId, messageId) {
   const open = tasks.filter((t) => openSet.has(t.status));
   const recent = tasks.filter((t) => t.status === 'completed').slice(-5);
 
+  // Sort open tasks by priority (critical first) so the manager scans
+  // urgency first, then by assignee for grouping. Within priority,
+  // tasks the doer hasn't even proposed on yet sort below in-flight ones.
+  const PHASE_RANK = {
+    active: 0, submitted: 1, awaiting_final_ack: 2, awaiting_timeline_ack: 3,
+    awaiting_incentive: 4, assigned: 5,
+  };
+  open.sort((a, b) => {
+    const pa = PRIORITY_RANK[getPriority(a)] ?? 2;
+    const pb = PRIORITY_RANK[getPriority(b)] ?? 2;
+    if (pa !== pb) return pa - pb;
+    return (PHASE_RANK[a.status] ?? 9) - (PHASE_RANK[b.status] ?? 9);
+  });
+
   const lines = ['👥 *Team Tasks*\n_(scrum-master view — no money shown)_', ''];
+  const rows = [];
   if (!open.length) lines.push('_No open tasks._');
   else {
     for (const t of open) {
@@ -1738,6 +2025,16 @@ async function showTeamTasks(bot, chatId, userId, messageId) {
       if (t.proposed_hours && t.proposed_deadline) {
         lines.push(`     ⏱ ${fmtHours(t.proposed_hours)} · 📅 ${fmtDate(t.proposed_deadline)}`);
       }
+      // Manager controls: Re-prioritize + Drop-off. Drop is hidden on
+      // 'submitted' (doer marked done — assigner should approve/reject,
+      // not silently drop the delivered work).
+      const mgrRow = [
+        { text: `🔝 Prio · ${truncate(t.title, 14)}`, callback_data: `tsk:prio_pick:${t.task_id}` },
+      ];
+      if (t.status !== 'submitted') {
+        mgrRow.push({ text: '🚫 Drop', callback_data: `tsk:drop_ask:${t.task_id}` });
+      }
+      rows.push(mgrRow);
     }
   }
   if (recent.length) {
@@ -1746,9 +2043,10 @@ async function showTeamTasks(bot, chatId, userId, messageId) {
       lines.push(`   ${escapeMd(t.title)} — ${escapeMd(nameById.get(t.assigned_to) || t.assigned_to)}`);
     }
   }
+  rows.push(navFooterRow());
   await editOrSend(bot, chatId, messageId, lines.join('\n'), {
     parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: [navFooterRow()] },
+    reply_markup: { inline_keyboard: rows },
   });
 }
 
