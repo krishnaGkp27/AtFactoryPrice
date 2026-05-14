@@ -189,6 +189,71 @@ Detailed designs in §3.1 (engine) and §3.2 (incentives).
 
 Admin override actions (force-accept, reassign, cancel) deliberately deferred — they need an Order state machine first.
 
+### 2.5c Inbound supply loop · P1-P4 (2026-05-14)
+
+| Commit | Hash | Title | Status |
+|---|---|---|---|
+| P1 | `e954dba` | Inventory composite-key foundation (bale_uid + addedAt + grn_id) | ✅ Done |
+| P2 | `b192808` | Goods Receipt Note (GRN) flow — inbound bale intake | ✅ Done |
+| P3 | `94ba68e` | Quick Add Customer — admin one-line fast path | ✅ Done |
+| P4 | `4ebde00` | Procurement Plan — low-stock alerts + PO drafting + GRN linkage | ✅ Done |
+
+**Why this set:** the system could already *sell* and *transfer* goods,
+but had no clean path to *receive* them from a supplier — "add stock"
+was a CSV import. P1-P4 closes the inbound loop so every bale entering
+a warehouse goes through a single, audited flow.
+
+**What this set delivers:**
+- **P1**: `Inventory` gains three columns — `bale_uid` (server-generated
+  internal id `BAL-YYYYMMDD-{pkg}-{rand4}`), `addedAt` (ISO timestamp at
+  row creation), `grn_id` (FK to `GoodsReceipts`). The printed-on-bale
+  `PackageNo` stays as the human identifier and is now allowed to repeat
+  across intake dates. `findByPackage(p, { latestOnly })` returns
+  newest-first; `findByBaleUid()` resolves the unambiguous internal id.
+  Legacy rows get synthetic `BAL-LEGACY-<rowIndex>` lazily on read;
+  `backfillLegacyBales()` persists them in one batch when the operator
+  is ready.
+- **P2**: New `📥 Receive Goods` activity in the Stock hub. Compact 6-step
+  flow (warehouse → supplier → design → shade → bales → confirm) with a
+  bale-list parser accepting CSV (`5801,5802`), range (`5801-5810`), or
+  mixed inputs. Each submit creates a `GoodsReceipts` header, appends
+  bales via P1's `appendBale()`, and drops `Stock_Ledger` 'received'
+  rows. Admins execute directly; employees route through admin approval.
+  Inline ➕ New warehouse triggers a `add_warehouse` action which is in
+  `ALWAYS_APPROVAL_ACTIONS` — meaning even an admin requester must get a
+  *different* admin to approve (dual-admin gate via the existing
+  `requireApproval` exclude-requester pattern). `rename_warehouse` uses
+  the same gate.
+- **P3**: Admins now see a `⚡ Quick Add` button on the Add Customer
+  entry. One-line input (`Name, +234..., Lagos`) writes directly via
+  `crmService.addCustomer` with sensible defaults (category=Standard,
+  credit=₦0, terms=COD). Non-admin path unchanged. Parser is in a
+  reusable util so future flows (and the smoke harness) can share it.
+- **P4**: New `📋 Procurement Plan` view in the Admin hub. Surfaces
+  low-stock alerts (distinct design/shade with available bales below
+  `LOW_STOCK_THRESHOLD` setting — tunable via `/setlowstock N`) and
+  open POs. `➕ New Procurement Order` walks through a multi-line PO
+  draft (supplier → loop[design → shade → qty] → expected date →
+  confirm). Open POs gain a `📥 Receive (PO-x)` button that launches the
+  P2 GRN flow with the PO pinned in session; the service handler then
+  applies received qty against PO lines and auto-advances the PO status
+  (`draft → sent → partially_received → received`). Status transitions
+  emit through `adminFeed` (`po.created` / `po.received` default ON,
+  `po.partial` default OFF).
+
+**New admin-feed events** (services/adminFeed.js inventory group):
+`goods.received`, `warehouse.added`, `warehouse.renamed`, `po.created`,
+`po.received`, `po.partial`.
+
+**Smoke coverage:** S10 (P1, 6 checks), S11 (P2, 10 checks), S12 (P3,
+8 checks), S13 (P4, 7 checks). Total +31 checks; harness at 119 green.
+
+**Deferred to P5 (OCR add-on):** supplier-invoice photo → auto-fill of
+design/shade/bale-list during step 5 of the GRN flow; business-card
+photo → auto-fill of Quick Add. Provider-agnostic abstraction stubbed
+out so OCR provider choice (Google Vision / Tesseract / OpenAI Vision)
+is a one-file change when the operator decides.
+
 ### 2.6 Phase 4 · Scalability (legacy TG-22 .. TG-26)
 
 All 💭 Discuss — never start without an explicit owner decision (see §4.6).
