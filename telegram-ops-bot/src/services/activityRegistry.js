@@ -95,6 +95,9 @@ const ACTIVITIES = [
   // Injected per-user by the controller (admin-only); not listed in any
   // department's allowed_activities CSV.
   { code: 'notifications_settings',label: 'Notifications',             icon: '⚙️', callback: 'act:notifications',      hub: 'admin' },
+  // T3 — admin read-only lens on the supply-order pipeline (Orders +
+  // Customers + LedgerBalanceCache joined into one view).
+  { code: 'sales_workflow_view',   label: 'Sales Workflow',            icon: '📊', callback: 'act:sales_workflow',     hub: 'admin' },
 
   { code: 'upload_receipt',        label: 'Upload Receipt',            icon: '🧾', callback: 'act:upload_receipt',     hub: null },
 ];

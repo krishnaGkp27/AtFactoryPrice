@@ -37,6 +37,7 @@ const colorDetector = require('../ai/colorDetector');
 const catalogFlows = require('./catalogFlowController');
 const taskFlow = require('../flows/taskFlow');
 const notificationsFlow = require('../flows/notificationsFlow');
+const salesWorkflowView = require('../flows/salesWorkflowView');
 const adminFeed = require('../services/adminFeed');
 const menuNav = require('../utils/menuNav');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
@@ -5514,6 +5515,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (handled) return;
   }
 
+  // Admin sales workflow view (T3): read-only order/customer/ledger lens.
+  if (data.startsWith('swv:')) {
+    const handled = await salesWorkflowView.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
   if (data.startsWith('approve:')) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'approve');
   } else if (data.startsWith('reject:')) {
@@ -7656,6 +7663,14 @@ async function handleCallbackQuery(bot, callbackQuery) {
           break;
         }
         await notificationsFlow.renderToggleScreen(bot, chatId, uid, messageId);
+        break;
+      case 'sales_workflow':
+        // T3 — admin read-only lens on the supply-order pipeline.
+        if (!config.access.adminIds.includes(uid)) {
+          await bot.sendMessage(chatId, 'Sales Workflow is admin-only.');
+          break;
+        }
+        await salesWorkflowView.showSalesWorkflow(bot, chatId, uid, messageId);
         break;
       default:
         await bot.sendMessage(chatId, 'Feature coming soon.');
