@@ -380,8 +380,12 @@ P2.5 bulk CSV; only the row-capture mechanism changes.
 | C1 | `5ae3a82` | Vision client interface + stub provider + config block | ✅ Done |
 | C2 | `2fa1f6b` | Drive backup helper + local image archiving | ✅ Done |
 | C3 | `dd769cc` | `photoReceiveFlow.js` — upload + per-row review UI | ✅ Done |
-| C4 | (this set) | Per-row edit subflow + submission bridge into `bulk_receive_goods` | ✅ Done |
-| C5 | — | Smoke + docs/photo-receive-template.md | ⏳ Next |
+| C4 | `35ba5ac` | Per-row edit subflow + submission bridge into `bulk_receive_goods` | ✅ Done |
+| C5 | (this set) | Operator docs + journal entry + .env example + ROADMAP polish | ✅ Done |
+
+**P5 status: feature-complete behind the stub provider.** Real Vision
+API wiring is a single follow-up commit (`OCR_PROVIDER=openai` plus
+`OPENAI_API_KEY` in `.env`).
 
 **P5-C1 ships:**
 - `src/services/vision/index.js` — provider-agnostic dispatcher.
