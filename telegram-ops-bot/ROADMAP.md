@@ -254,6 +254,88 @@ photo → auto-fill of Quick Add. Provider-agnostic abstraction stubbed
 out so OCR provider choice (Google Vision / Tesseract / OpenAI Vision)
 is a one-file change when the operator decides.
 
+### 2.5d Bulk Receive Goods · P2.5 (2026-05-14)
+
+| Commit | Hash | Title | Status |
+|---|---|---|---|
+| C1 | `cacf8cd` | CSV/XLSX parsers + bulk row validator (pure utils) | ✅ Done |
+| C2 | `8547dc4` | `GoodsReceipts.source` + `file_hash` columns for idempotency | ✅ Done |
+| C3 | `ec54406` | Bulk Receive flow + dual-admin risk + service handler | ✅ Done |
+| C4 | (this set) | Controller wire-up + Abdul-friendly CSV template doc | ✅ Done |
+
+**Why this set:** the interactive 6-step GRN flow (P2) is great for two
+or three bales, but when Abdul has a stack of 50 packaging slips after
+a delivery, tapping through 6 steps × 50 bales is unworkable. Bulk
+Receive lets him assemble the data offline in Excel/Sheets, upload one
+file, and have admin sign-off applied to the whole batch in one stroke.
+
+**Locked design (user decisions, 2026-05-14):**
+- **Append-only.** Every file row becomes a *new* Inventory bale with
+  fresh `bale_uid` + `addedAt`. Existing rows are never mutated,
+  reordered, or deleted. Repeated `PackageNo` is allowed (composite-key
+  model from P1).
+- **CSV + XLSX** in v1. CSV is the canonical format; XLSX is wrapped via
+  SheetJS (`xlsx` npm package).
+- **Reject the whole file** on any error (missing required column, bad
+  warehouse, non-numeric yards). Abdul fixes everything in one pass.
+  Single-warehouse + single-supplier per upload — multi-warehouse files
+  surface a "split into one file per warehouse" message.
+- **PO linkage is optional.** Entry step lets the operator pin an open
+  PO; the service handler then routes received qty into
+  `procurementOrdersRepo.applyReceived` and `recomputeStatus` advances
+  the PO automatically.
+- **Local archive** at `data/uploads/{fileHash}.{csv,xlsx}`. Cheap, fast,
+  easy to inspect. Moves to Drive in a future release if cloud-audit
+  becomes a requirement.
+- **Dual-admin gate.** `bulk_receive_goods` is in
+  `ALWAYS_APPROVAL_ACTIONS`, so even an admin requester needs a *second*
+  admin's approval. Existing `requireApproval` excludes the requester
+  from the approver pool.
+- **Idempotency.** SHA-256 first-16-hex of the file's raw bytes lives in
+  `GoodsReceipts.file_hash`. The flow rejects duplicates pre-archive and
+  the service handler re-checks at persist time (race-condition guard
+  if two admins approve simultaneously). Same file = same hash =
+  rejected with `"Already imported as GRN-…"`.
+
+**What this set delivers:**
+- New `📤 Bulk Receive (CSV/XLSX)` activity in the Stock hub. Visible to
+  anyone with `receive_goods` permission; routes through dual-admin
+  approval regardless.
+- `/bulkformat` slash command returns a copy-pasteable CSV template.
+- Flow: 1) PO link (optional) → 2) file upload → 3) preview card with
+  totals + hash → 4) Submit → 5) approval queue → 6) one GRN written
+  with `source='bulk_csv'|'bulk_xlsx'` + `file_hash`, then N Inventory
+  rows appended.
+- New `GoodsReceipts` columns: `source` (column M), `file_hash` (column
+  N). Lazy migration extends existing deployments; legacy 12-col rows
+  parse cleanly with `source='manual'`.
+- Validator caps file at 500 rows / 5 MB / 32-char PackageNo. Tunable
+  via `Settings.BULK_IMPORT_MAX_ROWS` (future — defaults are fine for
+  Abdul's expected volumes).
+
+**Smoke coverage (S14):**
+- **S14a — parsers/validator** (16 checks): CSV happy path, quoted
+  cells, BOM, CRLF, escaped quotes, validator header/row/maxRows
+  checks, repeated-PackageNo allowance, fileHash stability, XLSX
+  round-trip.
+- **S14b — idempotency** (5 checks): 14-col GoodsReceipts parse with
+  source + file_hash, legacy 12-col defaults to source='manual',
+  getByFileHash hit/miss, append column count.
+- **S14c — flow + service** (9 checks): risk policy returns
+  approval_required for admins and employees, activity registered in
+  stock hub, parseBuffer routes correctly by extension, error formatter
+  truncates after 15 rows, **append-only contract** (asserts 0 mutating
+  writes to Inventory after a bulk receive), idempotency race-condition
+  guard at persist time.
+
+Total +30 checks; harness at 149 green.
+
+**Smoke contract that locks the spec:** S14c.8 instruments
+`sheetsClient.updateRange` and `sheetsClient.batchUpdateRanges` and
+asserts neither is called on `Inventory` after a bulk receive — only
+`appendRows`. That's the machine-enforced version of "address / path /
+detail of existing rows shall not be disturbed."
+
 ### 2.6 Phase 4 · Scalability (legacy TG-22 .. TG-26)
 
 All 💭 Discuss — never start without an explicit owner decision (see §4.6).

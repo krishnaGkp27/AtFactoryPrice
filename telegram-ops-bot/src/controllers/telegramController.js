@@ -40,6 +40,7 @@ const notificationsFlow = require('../flows/notificationsFlow');
 const salesWorkflowView = require('../flows/salesWorkflowView');
 const goodsReceiptFlow = require('../flows/goodsReceiptFlow');
 const procurementPlanView = require('../flows/procurementPlanView');
+const bulkReceiveFlow = require('../flows/bulkReceiveFlow');
 const adminFeed = require('../services/adminFeed');
 const menuNav = require('../utils/menuNav');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
@@ -3128,6 +3129,15 @@ async function handleFileMessage(bot, msg) {
     return;
   }
 
+  // P2.5 — Bulk Receive: when a CSV/XLSX document arrives during an
+  // active bulk_receive_flow session, route it to the flow's document
+  // handler. handleDocument returns true when consumed so we short-
+  // circuit; false leaves the document for other handlers (none today).
+  if (session && session.type === 'bulk_receive_flow' && msg.document) {
+    const handled = await bulkReceiveFlow.handleDocument(bot, msg);
+    if (handled) return;
+  }
+
   if (session && session.type === 'sale_flow' && session.awaitingDocument) {
     let telegramFileId, fileType, mimeType;
     if (msg.photo && msg.photo.length) {
@@ -3522,6 +3532,14 @@ async function handleMessage(bot, msg) {
     } catch (e) {
       await bot.sendMessage(chatId, `❌ Failed to save: ${e.message}`);
     }
+    return;
+  }
+
+  // P2.5 — /bulkformat returns a copy-pasteable CSV template for the
+  // Bulk Receive Goods flow. Open to anyone with bot access so Abdul can
+  // reference the format on his phone without having to remember it.
+  if (/^\/bulkformat\b/i.test(text.trim())) {
+    await bulkReceiveFlow.sendTemplate(bot, chatId);
     return;
   }
 
@@ -5633,6 +5651,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
   // P2 — Goods Receipt Note flow (Receive Goods button).
   if (data.startsWith('gr:')) {
     const handled = await goodsReceiptFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
+  // P2.5 — Bulk Receive Goods (CSV/XLSX upload) flow.
+  if (data.startsWith('br:')) {
+    const handled = await bulkReceiveFlow.handleCallback(bot, callbackQuery);
     if (handled) return;
   }
 
@@ -7809,6 +7833,11 @@ async function handleCallbackQuery(bot, callbackQuery) {
         // P2 — GRN flow. Admins execute directly; employees route through
         // admin approval (see WRITE_ACTIONS in risk/evaluate.js).
         await goodsReceiptFlow.start(bot, chatId, uid, messageId);
+        break;
+      case 'bulk_receive_goods':
+        // P2.5 — Bulk Receive (CSV/XLSX upload). Always dual-admin gated
+        // regardless of who submits (see ALWAYS_APPROVAL_ACTIONS).
+        await bulkReceiveFlow.start(bot, chatId, uid, messageId);
         break;
       case 'procurement_plan':
         // P4 — admin Procurement Plan view (low-stock + open POs + new PO).
