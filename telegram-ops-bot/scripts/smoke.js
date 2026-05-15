@@ -2558,6 +2558,117 @@ async function runS15d() {
 }
 
 // ---------------------------------------------------------------------------
+// S16 — WH-C1: standalone Add Warehouse flow
+// ---------------------------------------------------------------------------
+async function runS16() {
+  const wf = require('../src/flows/warehouseFlow');
+
+  // S16.1 — canonicalizeWarehouseName: empty/null/whitespace → ''
+  if (wf.canonicalizeWarehouseName('') === ''
+      && wf.canonicalizeWarehouseName(null) === ''
+      && wf.canonicalizeWarehouseName('   ') === '') {
+    pass('S16.1 canonicalize: empty / null / whitespace → empty string');
+  } else fail('S16.1 canonicalize empty', '');
+
+  // S16.2 — trim + collapse internal whitespace + Title-Case
+  if (wf.canonicalizeWarehouseName('  kano   main  ') === 'Kano Main') {
+    pass('S16.2 canonicalize: "  kano   main  " → "Kano Main"');
+  } else fail('S16.2', wf.canonicalizeWarehouseName('  kano   main  '));
+
+  // S16.3 — ALL CAPS → Title Case + hyphen preserved
+  if (wf.canonicalizeWarehouseName('LAGOS MAIN') === 'Lagos Main'
+      && wf.canonicalizeWarehouseName('aba-north') === 'Aba-north') {
+    pass('S16.3 canonicalize: uppercase folded, hyphens preserved');
+  } else fail('S16.3', '');
+
+  // S16.4 — idempotent
+  const c = wf.canonicalizeWarehouseName('  kano   MAIN  ');
+  if (wf.canonicalizeWarehouseName(c) === c) {
+    pass('S16.4 canonicalize: idempotent (f(f(x)) === f(x))');
+  } else fail('S16.4', c);
+
+  // S16.5 — NAME_RE accepts valid + rejects invalid
+  const re = wf._NAME_RE;
+  const okList = ['Kano', 'Lagos Main', 'Aba-North', 'Warehouse 7'];
+  const badList = ['', ' Kano', 'Kano,Lagos', "K'ano", 'Ka=no', 'Kano!', 'A'.repeat(51), '-North'];
+  if (okList.every((v) => re.test(v)) && badList.every((v) => !re.test(v))) {
+    pass('S16.5 NAME_RE: valid accepted; punctuation/leading-non-alnum/too-long rejected');
+  } else fail('S16.5 NAME_RE', '');
+
+  // S16.6 — listMergedWarehouses dedups Inventory ∪ WAREHOUSE_LIST (case-insensitive)
+  stubModule(require.resolve('../src/repositories/inventoryRepository'), {
+    getWarehouses: async () => ['Kano', 'Lagos'],
+    invalidateCache: () => {},
+  });
+  stubModule(require.resolve('../src/repositories/settingsRepository'), {
+    getAll: async () => ({ WAREHOUSE_LIST: 'Lagos, Aba-North, Kano' }),
+    set: async () => {},
+  });
+  delete require.cache[require.resolve('../src/flows/warehouseFlow')];
+  const wf2 = require('../src/flows/warehouseFlow');
+  const merged = await wf2.listMergedWarehouses();
+  if (merged.raw.length === 3
+      && merged.raw.includes('Kano') && merged.raw.includes('Lagos') && merged.raw.includes('Aba-North')
+      && merged.lower.has('kano') && merged.lower.has('aba-north')) {
+    pass('S16.6 listMergedWarehouses: Inventory ∪ WAREHOUSE_LIST deduped');
+  } else fail('S16.6', JSON.stringify(merged));
+
+  // S16.7 — add_warehouse is in ALWAYS_APPROVAL_ACTIONS (dual-admin inherited)
+  delete require.cache[require.resolve('../src/risk/evaluate')];
+  const risk = require('../src/risk/evaluate');
+  if (Array.isArray(risk.ALWAYS_APPROVAL_ACTIONS)
+      && risk.ALWAYS_APPROVAL_ACTIONS.includes('add_warehouse')) {
+    pass('S16.7 risk: add_warehouse in ALWAYS_APPROVAL_ACTIONS — dual-admin inherited');
+  } else fail('S16.7', '');
+
+  // S16.8 — activity registry: 🏭 Add Warehouse in admin hub, just before Manage Warehouses
+  delete require.cache[require.resolve('../src/services/activityRegistry')];
+  const reg = require('../src/services/activityRegistry');
+  const flat = typeof reg.getAll === 'function' ? reg.getAll() : (Array.isArray(reg) ? reg : []);
+  const idxAdd = flat.findIndex((a) => a.code === 'add_warehouse');
+  const idxManage = flat.findIndex((a) => a.code === 'manage_warehouses');
+  if (idxAdd >= 0 && idxManage >= 0 && idxAdd < idxManage
+      && flat[idxAdd].callback === 'act:add_warehouse' && flat[idxAdd].hub === 'admin') {
+    pass('S16.8 activityRegistry: Add Warehouse in admin hub, just before Manage Warehouses');
+  } else fail('S16.8', JSON.stringify({ idxAdd, idxManage, entry: flat[idxAdd] }));
+
+  // S16.9 — dedup bug fix: name existing ONLY in Inventory is rejected by service handler
+  stubModule(require.resolve('../src/repositories/inventoryRepository'), {
+    getWarehouses: async () => ['Kano'],
+    invalidateCache: () => {},
+    getAll: async () => [],
+  });
+  stubModule(require.resolve('../src/repositories/settingsRepository'), {
+    getAll: async () => ({ WAREHOUSE_LIST: '' }),
+    set: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    getAllPending: async () => [{
+      requestId: 'req-1', user: 'u1',
+      actionJSON: { action: 'add_warehouse', name: 'Kano' },
+      status: 'pending',
+    }],
+    markApproved: async () => {}, markRejected: async () => {}, getByRequestId: async () => null,
+  });
+  stubModule(require.resolve('../src/repositories/transactionsRepository'), { append: async () => {} });
+  stubModule(require.resolve('../src/repositories/auditLogRepository'), { append: async () => {} });
+  delete require.cache[require.resolve('../src/services/inventoryService')];
+  const invService = require('../src/services/inventoryService');
+  const r = await invService.executeApprovedAction('req-1', 'u2', {});
+  if (r && r.ok === false && /already exists/i.test(r.message)) {
+    pass('S16.9 dedup: rejects name existing ONLY in Inventory (WH-C1 bug fix)');
+  } else fail('S16.9', JSON.stringify(r));
+
+  // S16.10 — warehouseFlow exports the full surface
+  const exp = require('../src/flows/warehouseFlow');
+  const need = ['start', 'handleCallback', 'handleText', 'canonicalizeWarehouseName', 'listMergedWarehouses'];
+  const missing = need.filter((k) => typeof exp[k] !== 'function');
+  if (missing.length === 0) {
+    pass('S16.10 exports: start, handleCallback, handleText, canonicalize, listMerged');
+  } else fail('S16.10', `missing: ${missing.join(', ')}`);
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -2583,6 +2694,7 @@ async function runS15d() {
   try { await runS15b(); } catch (e) { fail('S15b unexpected error', e.message); }
   try { await runS15c(); } catch (e) { fail('S15c unexpected error', e.message); }
   try { await runS15d(); } catch (e) { fail('S15d unexpected error', e.message); }
+  try { await runS16(); } catch (e) { fail('S16 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

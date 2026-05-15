@@ -42,6 +42,7 @@ const goodsReceiptFlow = require('../flows/goodsReceiptFlow');
 const procurementPlanView = require('../flows/procurementPlanView');
 const bulkReceiveFlow = require('../flows/bulkReceiveFlow');
 const photoReceiveFlow = require('../flows/photoReceiveFlow');
+const warehouseFlow = require('../flows/warehouseFlow');
 const adminFeed = require('../services/adminFeed');
 const menuNav = require('../utils/menuNav');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
@@ -3260,6 +3261,16 @@ async function handleMessage(bot, msg) {
     }
   }
 
+  // WH-C1 — standalone Add Warehouse flow accepts the new warehouse
+  // name via free-text reply during the `await_name` step.
+  {
+    const whSession = sessionStore.get(userId);
+    if (whSession && whSession.type === 'wh_add_flow') {
+      const handled = await warehouseFlow.handleText(bot, msg);
+      if (handled) return;
+    }
+  }
+
   // Catalog: search design photo — free-text design number lookup.
   {
     const dasSession = sessionStore.get(userId);
@@ -5687,6 +5698,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (handled) return;
   }
 
+  // WH-C1 — standalone Add Warehouse flow.
+  if (data.startsWith('wh:')) {
+    const handled = await warehouseFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
   // P4 — Procurement Plan view + PO drafting flow.
   if (data.startsWith('pp:')) {
     const handled = await procurementPlanView.handleCallback(bot, callbackQuery);
@@ -7759,15 +7776,37 @@ async function handleCallbackQuery(bot, callbackQuery) {
         });
         break;
       }
+      case 'add_warehouse': {
+        // WH-C1: first-class entry into the standalone Add-Warehouse flow.
+        // Admin-only gate matches the existing `add_warehouse` action's
+        // dual-admin approval policy (the requester then still can't
+        // self-approve at the queue stage).
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        await warehouseFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
       case 'manage_wh': {
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
-        const whs = await inventoryRepository.getWarehouses();
+        // WH-C1: read the MERGED list (Inventory-derived ∪ WAREHOUSE_LIST)
+        // so a warehouse the admin just added but hasn't yet received
+        // into is still visible here. The old version read only
+        // inventoryRepository.getWarehouses() and silently dropped names
+        // that existed only in the settings CSV.
+        const { raw: whs } = await warehouseFlow.listMergedWarehouses();
         let text = '🏭 *Warehouses*\n\n';
-        for (const w of whs) text += `• ${w}\n`;
-        text += '\nTo assign a warehouse to a user, use 👥 Manage Users.';
+        if (whs.length === 0) {
+          text += '_No warehouses registered yet._\nTap below to add one.\n';
+        } else {
+          for (const w of whs) text += `• ${w}\n`;
+          text += '\nTo assign a warehouse to a user, use 👥 Manage Users.';
+        }
+        const rows = [
+          [{ text: '➕ Add Warehouse', callback_data: 'act:add_warehouse' }],
+          menuNav.backToMenuRow(),
+        ];
         await editOrSend(bot, chatId, messageId, text, {
           parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] },
+          reply_markup: { inline_keyboard: rows },
         });
         break;
       }

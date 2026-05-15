@@ -646,16 +646,36 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     // act of "creating" a warehouse is really registering its name so the
     // greeting/picker can offer it. We store it in Settings under
     // WAREHOUSE_LIST as a CSV so all flows see it immediately.
+    //
+    // WH-C1: dedup against the MERGED list (Inventory-derived ∪
+    // WAREHOUSE_LIST). The previous version checked only the settings
+    // CSV, so a name that existed solely as Inventory rows could be
+    // re-registered, leading to two effective entries for the same
+    // physical warehouse. The bot UI submits canonicalised names, but
+    // approval-queue items submitted before WH-C1 may not be
+    // canonicalised — case-insensitive dedup catches both shapes.
     const settingsRepo3 = require('../repositories/settingsRepository');
     const allS = await settingsRepo3.getAll();
     const existing = (allS.WAREHOUSE_LIST || '').split(',').map((s) => s.trim()).filter(Boolean);
     const name = String(aj.name || '').trim();
     if (!name) return { ok: false, message: 'Warehouse name is empty.' };
-    if (existing.map((w) => w.toLowerCase()).includes(name.toLowerCase())) {
+
+    let fromInv = [];
+    try { fromInv = await inventoryRepository.getWarehouses(); } catch (_) { /* repo unavailable */ }
+    const mergedLower = new Set(
+      [...(fromInv || []), ...existing].map((w) => (w || '').toLowerCase())
+    );
+    if (mergedLower.has(name.toLowerCase())) {
       return { ok: false, message: `Warehouse "${name}" already exists.` };
     }
     existing.push(name);
     await settingsRepo3.set('WAREHOUSE_LIST', existing.join(','));
+    // Note: adminFeed.notify needs a `bot` instance which isn't in
+    // scope inside executeApprovedAction (called from approvalEvents).
+    // The feed broadcast for `warehouse.added` should hang off the
+    // approval-events handler if/when we want it. For now the
+    // requester + approver both get direct messages via the existing
+    // approval pipeline, which is sufficient signal.
   } else if (aj.action === 'rename_warehouse') {
     // P2 — dual-admin gated. Renames touch every Inventory row that
     // references the old warehouse name. Cap at a sane batch size to keep

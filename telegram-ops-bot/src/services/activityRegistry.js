@@ -98,6 +98,11 @@ const ACTIVITIES = [
   { code: 'update_price',          label: 'Update Price',              icon: '💲', callback: 'act:update_price',       hub: 'admin' },
   { code: 'manage_users',          label: 'Manage Users',              icon: '👥', callback: 'act:manage_users',       hub: 'admin' },
   { code: 'manage_departments',    label: 'Manage Departments',        icon: '🏢', callback: 'act:manage_depts',       hub: 'admin' },
+  // WH-C1: standalone add-warehouse activity. Same `add_warehouse`
+  // action under the hood (dual-admin gated, ALWAYS_APPROVAL_ACTIONS).
+  // Placed just before Manage Warehouses so the two related entries
+  // sit side-by-side in the admin hub.
+  { code: 'add_warehouse',         label: 'Add Warehouse',             icon: '🏭', callback: 'act:add_warehouse',     hub: 'admin' },
   { code: 'manage_warehouses',     label: 'Manage Warehouses',         icon: '🏭', callback: 'act:manage_wh',          hub: 'admin' },
   { code: 'add_bank',              label: 'Manage Banks',              icon: '🏦', callback: 'act:manage_banks',       hub: 'admin' },
   // T2 — per-user opt-in/out toggles for the Admin Activity Feed.
