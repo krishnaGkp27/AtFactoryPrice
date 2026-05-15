@@ -2702,6 +2702,84 @@ async function runS16() {
 }
 
 // ---------------------------------------------------------------------------
+// S17 — USR-C1: in-bot auth uses ADMIN_IDS ∪ EMPLOYEE_IDS ∪ Users(active)
+// ---------------------------------------------------------------------------
+async function runS17() {
+  // Configure env: admin=111, employee=222. Sheet adds active=333, inactive=444.
+  process.env.ADMIN_IDS = '111';
+  process.env.EMPLOYEE_IDS = '222';
+  delete require.cache[require.resolve('../src/config')];
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    getAll: async () => [
+      { user_id: '333', name: 'Active User', status: 'active' },
+      { user_id: '444', name: 'Inactive User', status: 'inactive' },
+    ],
+  });
+  delete require.cache[require.resolve('../src/middlewares/auth')];
+  const auth = require('../src/middlewares/auth');
+
+  // S17.1 — env admin allowed pre-refresh (cache seeded from env at load).
+  if (auth.isAllowed('111') && auth.isAdmin('111')) {
+    pass('S17.1 env admin allowed before any sheet refresh');
+  } else fail('S17.1', '');
+
+  // S17.2 — env employee allowed pre-refresh.
+  if (auth.isAllowed('222') && !auth.isAdmin('222')) {
+    pass('S17.2 env employee allowed before refresh');
+  } else fail('S17.2', '');
+
+  // S17.3 — sheet-only active user allowed AFTER refresh.
+  await auth.refresh();
+  if (auth.isAllowed('333')) {
+    pass('S17.3 sheet-active user allowed after refresh');
+  } else fail('S17.3', JSON.stringify(auth._internals.snapshot()));
+
+  // S17.4 — sheet inactive user rejected.
+  if (!auth.isAllowed('444')) {
+    pass('S17.4 sheet-INACTIVE user rejected');
+  } else fail('S17.4', '');
+
+  // S17.5 — unknown user rejected.
+  if (!auth.isAllowed('999')) {
+    pass('S17.5 unknown id rejected');
+  } else fail('S17.5', '');
+
+  // S17.6 — invalidate() re-reads the sheet immediately (newly added user).
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    getAll: async () => [
+      { user_id: '333', name: 'Active User', status: 'active' },
+      { user_id: '555', name: 'New User', status: 'active' },
+    ],
+  });
+  await auth.invalidate();
+  if (auth.isAllowed('555') && !auth.isAllowed('444')) {
+    pass('S17.6 invalidate(): new active user admitted; gone user dropped');
+  } else fail('S17.6', JSON.stringify(auth._internals.snapshot()));
+
+  // S17.7 — read failure does NOT clear the existing cache (last-known-good).
+  const beforeSnapshot = auth._internals.snapshot().slice().sort();
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    getAll: async () => { throw new Error('sheets down'); },
+  });
+  await auth.refresh();
+  const afterSnapshot = auth._internals.snapshot().slice().sort();
+  if (JSON.stringify(beforeSnapshot) === JSON.stringify(afterSnapshot)) {
+    pass('S17.7 read failure preserves last-known-good cache');
+  } else fail('S17.7', `before=${beforeSnapshot} after=${afterSnapshot}`);
+
+  // S17.8 — TTL semantics: lastRefresh advances after a successful refresh.
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    getAll: async () => [{ user_id: '333', status: 'active' }],
+  });
+  const before = auth._internals.lastRefresh();
+  await new Promise((r) => setTimeout(r, 5));
+  await auth.refresh();
+  if (auth._internals.lastRefresh() > before) {
+    pass('S17.8 successful refresh advances lastRefresh timestamp');
+  } else fail('S17.8', '');
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -2728,6 +2806,7 @@ async function runS16() {
   try { await runS15c(); } catch (e) { fail('S15c unexpected error', e.message); }
   try { await runS15d(); } catch (e) { fail('S15d unexpected error', e.message); }
   try { await runS16(); } catch (e) { fail('S16 unexpected error', e.message); }
+  try { await runS17(); } catch (e) { fail('S17 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

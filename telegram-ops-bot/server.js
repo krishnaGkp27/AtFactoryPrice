@@ -193,6 +193,10 @@ app.listen(PORT, async () => {
   try {
     await schemaMapper.initialize();
     erpEventBus.registerListeners();
+    // USR-C1: warm the in-process allow-list cache from the Users sheet so
+    // the very first message after boot sees sheet-managed employees, not
+    // only env-driven IDs. Failure is non-fatal — the env IDs still work.
+    try { await require('./src/middlewares/auth').refresh(); } catch (_) {}
     logger.info('ERP modules initialized');
     setInterval(() => { checkOrderReminders(); checkSampleFollowups(); checkCustomerFollowups(); checkColdCustomerAlerts(); }, REMINDER_INTERVAL_MS);
     logger.info('Scheduler started (hourly): orders, samples, follow-ups, cold alerts');
