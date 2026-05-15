@@ -316,8 +316,24 @@ async function renderAssigneePicker(bot, chatId, userId) {
     ? `🛡 *Admin mode* — showing all ${assignable.length} active employees`
     : `👥 *Manager mode* — showing ${assignable.length} from your reporting subtree`;
 
+  // UX-C3: once the list has 4+ people, the bare-button picker gets hard
+  // to scan ("which Mohammad?", "which warehouse?"). Render a compact
+  // subtitle list above the buttons — same order as the buttons — so the
+  // admin can match by index. Under 4 people we keep the screen sparse.
+  let subtitle = '';
+  if (slice.length >= 4) {
+    const meta = (u) => {
+      const dept = u.department ? u.department : '';
+      const wh = Array.isArray(u.warehouses) && u.warehouses.length
+        ? u.warehouses.join('/') : '';
+      const parts = [dept, wh].filter(Boolean);
+      return parts.length ? ` · ${parts.join(' · ')}` : '';
+    };
+    subtitle = '\n\n' + slice.map((u) => `• ${u.name || u.user_id}${meta(u)}`).join('\n');
+  }
+
   await anchor(bot, chatId, userId,
-    `📌 *Assign Task*\n\nStep 1/6 — Who do you want to assign to?\n\n${scopeBadge}`,
+    `📌 *Assign Task*\n\nStep 1/6 — Who do you want to assign to?\n\n${scopeBadge}${subtitle}`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
