@@ -9,7 +9,9 @@
     "set-webhook": "node scripts/set-webhook.js",
     "check-org": "node scripts/check-org-graph.js",
     "onboard": "node scripts/onboard-employee.js",
-    "smoke": "node scripts/smoke.js"
+    "smoke": "node scripts/smoke.js",
+    "snapshot": "node scripts/snapshot.js",
+    "snapshot:list": "node scripts/snapshot-list.js"
   },
   "engines": {
     "node": ">=18"
