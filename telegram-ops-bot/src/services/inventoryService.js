@@ -676,6 +676,79 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     // approval-events handler if/when we want it. For now the
     // requester + approver both get direct messages via the existing
     // approval pipeline, which is sufficient signal.
+  } else if (aj.action === 'add_user') {
+    // USR-C3 — in-bot user onboarding. Validates one more time (someone
+    // else might have added this Telegram ID since the request was
+    // queued), appends to Users sheet, ensures the department exists,
+    // marks any PendingUsers row as onboarded, and invalidates the auth
+    // cache so the new person can use the bot immediately.
+    const usersRepo = require('../repositories/usersRepository');
+    const deptsRepo = require('../repositories/departmentsRepository');
+    const auth = require('../middlewares/auth');
+
+    const tgId = String(aj.telegram_id || '').trim();
+    const name = String(aj.name || '').trim();
+    const dept = String(aj.department || '').trim();
+    const role = String(aj.role || 'employee').trim();
+    const warehouses = Array.isArray(aj.warehouses) ? aj.warehouses : [];
+
+    if (!tgId || !name || !dept || !role) {
+      return { ok: false, message: 'add_user: missing one of telegram_id / name / department / role.' };
+    }
+    if (!['employee', 'manager'].includes(role)) {
+      return { ok: false, message: `add_user: role "${role}" not allowed via this flow.` };
+    }
+
+    // Race-safe dedup: reject if an active user already exists.
+    const dup = await usersRepo.findByUserId(tgId);
+    if (dup && (dup.status || 'active') === 'active') {
+      return { ok: false, message: `Telegram ID ${tgId} is already an active user (${dup.name || dup.user_id}).` };
+    }
+
+    // Ensure the department exists; create empty-activities row if it doesn't.
+    try {
+      const existingDept = await deptsRepo.findByName(dept);
+      if (!existingDept) {
+        await deptsRepo.append({
+          dept_id: `DEPT-${dept.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) || 'NEW'}`,
+          dept_name: dept,
+          allowed_activities: '',
+          created_at: new Date().toISOString(),
+        });
+        logger.info(`add_user: created dept "${dept}"`);
+      }
+    } catch (e) {
+      logger.warn(`add_user: dept-ensure failed (${e.message}) — continuing with append`);
+    }
+
+    // Append the user row. If a row already exists but inactive, reactivate
+    // by appending a fresh row (simpler than updating; the older row
+    // remains as audit trail with status=inactive).
+    await usersRepo.append({
+      user_id: tgId,
+      name,
+      role,
+      branch: '',
+      access_level: 'branch_only',
+      status: 'active',
+      departments: [dept],
+      warehouses,
+      manages: '',
+    });
+
+    // Mark any PendingUsers row as onboarded (best-effort).
+    try {
+      const pendingUserService = require('./pendingUserService');
+      await pendingUserService.markOnboarded(tgId, item.user);
+    } catch (e) {
+      logger.warn(`add_user: markOnboarded failed: ${e.message}`);
+    }
+
+    // Invalidate the auth cache so the new user can be admitted on their
+    // very next message without waiting for the 10s TTL.
+    try { await auth.invalidate(); } catch (_) {}
+
+    bundleReport = { telegramId: tgId, name, dept, role, warehouses };
   } else if (aj.action === 'rename_warehouse') {
     // P2 — dual-admin gated. Renames touch every Inventory row that
     // references the old warehouse name. Cap at a sane batch size to keep

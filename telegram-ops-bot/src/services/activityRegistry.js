@@ -96,6 +96,9 @@ const ACTIVITIES = [
   { code: 'payouts',               label: 'Payouts',                   icon: '💰', callback: 'act:payouts',            hub: 'tasks' },
 
   { code: 'update_price',          label: 'Update Price',              icon: '💲', callback: 'act:update_price',       hub: 'admin' },
+  // USR-C3 — in-bot add employee (dual-admin gated, ALWAYS_APPROVAL_ACTIONS).
+  // Listed above Manage Users so the two related entries sit together.
+  { code: 'add_user',              label: 'Add Employee',              icon: '➕', callback: 'act:add_user',          hub: 'admin' },
   { code: 'manage_users',          label: 'Manage Users',              icon: '👥', callback: 'act:manage_users',       hub: 'admin' },
   { code: 'manage_departments',    label: 'Manage Departments',        icon: '🏢', callback: 'act:manage_depts',       hub: 'admin' },
   // WH-C1: standalone add-warehouse activity. Same `add_warehouse`

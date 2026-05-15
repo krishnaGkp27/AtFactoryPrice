@@ -3288,6 +3288,17 @@ async function handleMessage(bot, msg) {
     }
   }
 
+  // USR-C3 — Add Employee flow accepts free-text input for telegram_id,
+  // name, and new-department steps.
+  {
+    const userAddSession = sessionStore.get(userId);
+    if (userAddSession && userAddSession.type === 'user_add_flow') {
+      const userAddFlow = require('../flows/userAddFlow');
+      const handled = await userAddFlow.handleText(bot, msg);
+      if (handled) return;
+    }
+  }
+
   // Catalog: search design photo — free-text design number lookup.
   {
     const dasSession = sessionStore.get(userId);
@@ -5721,6 +5732,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (handled) return;
   }
 
+  // USR-C3 — Add Employee flow callbacks.
+  if (data.startsWith('usr:')) {
+    const userAddFlow = require('../flows/userAddFlow');
+    const handled = await userAddFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
   // USR-C2 — Pending user actions from the admin-feed notification card.
   //   pu:onboard:<telegramId>  → ack now; USR-C3 will route into Add Employee.
   //   pu:ignore:<telegramId>   → flip status=ignored, edit card to confirm.
@@ -5746,12 +5764,31 @@ async function handleCallbackQuery(bot, callbackQuery) {
       return;
     }
     if (action === 'onboard') {
-      // USR-C3 will pick up here. For now, ack with an explanatory note
-      // so admins know the next step exists and the system is wired.
-      await bot.answerCallbackQuery(callbackQuery.id, {
-        text: 'Onboard flow coming in next deploy — for now use Manage Users.',
-        show_alert: true,
-      });
+      // USR-C3: launch the Add Employee flow with the PendingUser's
+      // tg_id / name pre-filled. The flow validates and submits to the
+      // dual-admin approval queue exactly like the cold-start path.
+      try {
+        const pendingUsersRepo = require('../repositories/pendingUsersRepository');
+        const pu = await pendingUsersRepo.findByTelegramId(targetId);
+        if (!pu) {
+          await bot.answerCallbackQuery(callbackQuery.id, { text: 'PendingUser row not found.', show_alert: true });
+          return;
+        }
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Opening onboarding flow…' });
+        const userAddFlow = require('../flows/userAddFlow');
+        await userAddFlow.start(bot, callbackQuery.message.chat.id, adminId,
+          callbackQuery.message.message_id,
+          {
+            telegram_id: pu.telegram_id,
+            first_name: pu.first_name,
+            last_name: pu.last_name,
+            username: pu.username,
+            source: 'pending_user',
+          });
+      } catch (e) {
+        try { require('../utils/logger').warn(`pu:onboard failed: ${e.message}`); } catch (_) {}
+        await bot.answerCallbackQuery(callbackQuery.id, { text: `Failed: ${e.message}`, show_alert: true });
+      }
       return;
     }
   }
@@ -7826,6 +7863,14 @@ async function handleCallbackQuery(bot, callbackQuery) {
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] },
         });
+        break;
+      }
+      case 'add_user': {
+        // USR-C3: in-bot Add Employee flow. Admin-only entry; dual-admin
+        // approval enforced at submit via ALWAYS_APPROVAL_ACTIONS.
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        const userAddFlow = require('../flows/userAddFlow');
+        await userAddFlow.start(bot, chatId, uid, messageId);
         break;
       }
       case 'add_warehouse': {

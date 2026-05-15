@@ -696,6 +696,21 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
         await bot.sendMessage(chatIdCb, `✅ Request ${requestId} approved. Changes applied.`);
         await notifyEmployee(bot, requestingUser, requestId, `✅ Your request (${requestId}) has been approved by admin. Changes applied.`);
 
+        // USR-C3 — welcome DM to the new user (best-effort; fails silently
+        // if they haven't /start-ed the bot, which is the expected case
+        // for admin-initiated add without prefill).
+        const isAddUser = item && item.actionJSON && item.actionJSON.action === 'add_user';
+        if (isAddUser) {
+          const aj = item.actionJSON;
+          try {
+            await bot.sendMessage(aj.telegram_id,
+              `👋 *Welcome to AtFactoryPrice!*\n\nYou've been added as *${aj.name}* in the *${aj.department}* department.\nRole: ${aj.role}\n\nSend /menu to see what you can do.`,
+              { parse_mode: 'Markdown' });
+          } catch (e) {
+            logger.info(`add_user welcome DM skipped for ${aj.telegram_id} (likely no /start yet): ${e.message}`);
+          }
+        }
+
         // For design_asset_upload, send the now-active photo to the
         // approving admin as a confirmation. This warms up the Telegram
         // file_id cache (first send produces a Buffer→Telegram upload;

@@ -2894,6 +2894,204 @@ async function runS18() {
 }
 
 // ---------------------------------------------------------------------------
+// S19 — USR-C3: in-bot Add Employee flow + add_user execution branch
+// ---------------------------------------------------------------------------
+async function runS19() {
+  // ---- S19.1 — risk: add_user in ALWAYS_APPROVAL_ACTIONS ----
+  delete require.cache[require.resolve('../src/risk/evaluate')];
+  const risk = require('../src/risk/evaluate');
+  if (Array.isArray(risk.ALWAYS_APPROVAL_ACTIONS)
+      && risk.ALWAYS_APPROVAL_ACTIONS.includes('add_user')) {
+    pass('S19.1 risk: add_user is in ALWAYS_APPROVAL_ACTIONS');
+  } else fail('S19.1', '');
+
+  // ---- S19.2 — activityRegistry: Add Employee in admin hub, before Manage Users ----
+  delete require.cache[require.resolve('../src/services/activityRegistry')];
+  const reg = require('../src/services/activityRegistry');
+  const flat = typeof reg.getAll === 'function' ? reg.getAll() : (Array.isArray(reg) ? reg : []);
+  const idxAdd = flat.findIndex((a) => a.code === 'add_user');
+  const idxMU = flat.findIndex((a) => a.code === 'manage_users');
+  if (idxAdd >= 0 && idxMU >= 0 && idxAdd < idxMU
+      && flat[idxAdd].callback === 'act:add_user' && flat[idxAdd].hub === 'admin') {
+    pass('S19.2 activityRegistry: Add Employee in admin hub, just before Manage Users');
+  } else fail('S19.2', JSON.stringify({ idxAdd, idxMU, entry: flat[idxAdd] }));
+
+  // ---- S19.3 — flow exports surface ----
+  delete require.cache[require.resolve('../src/flows/userAddFlow')];
+  // Stub dependencies that the flow loads at require time.
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => true, isEmployee: () => false, isAllowed: () => true,
+    refresh: async () => {}, invalidate: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/departmentsRepository'), {
+    getAll: async () => [{ dept_name: 'Inventory' }, { dept_name: 'Sales' }],
+    findByName: async (n) => ({ dept_name: n }),
+    append: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    findByUserId: async () => null,
+    append: async () => {},
+    getAll: async () => [],
+  });
+  stubModule(require.resolve('../src/flows/warehouseFlow'), {
+    listMergedWarehouses: async () => ({ raw: ['Kano Main', 'Lagos South', 'IDUMOTA'], lower: new Set() }),
+  });
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    append: async () => {}, getAllPending: async () => [], markApproved: async () => {}, markRejected: async () => {},
+    getByRequestId: async () => null,
+  });
+  stubModule(require.resolve('../src/repositories/auditLogRepository'), { append: async () => {} });
+  stubModule(require.resolve('../src/events/approvalEvents'), {
+    notifyAdminsApprovalRequest: async () => {}, handleReasonReply: async () => false,
+  });
+  const flow = require('../src/flows/userAddFlow');
+  const need = ['start', 'handleText', 'handleCallback'];
+  const missing = need.filter((k) => typeof flow[k] !== 'function');
+  if (missing.length === 0) pass('S19.3 flow exports: start / handleText / handleCallback');
+  else fail('S19.3', `missing: ${missing.join(', ')}`);
+
+  // ---- S19.4 — start() refuses non-admin; admin starts session at step=telegram_id ----
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => false, isEmployee: () => true, isAllowed: () => true,
+    refresh: async () => {}, invalidate: async () => {},
+  });
+  delete require.cache[require.resolve('../src/flows/userAddFlow')];
+  const flow2 = require('../src/flows/userAddFlow');
+  const sentNon = [];
+  const fakeBotNon = { sendMessage: async (cid, t) => { sentNon.push(t); return { message_id: 1 }; },
+    editMessageText: async () => {} };
+  await flow2.start(fakeBotNon, 'c1', 'non-admin', null);
+  const sessionStore = require('../src/utils/sessionStore');
+  const s1 = sessionStore.get('non-admin');
+  if (!s1 && sentNon.some((t) => /admin only/i.test(t))) {
+    pass('S19.4 start(): non-admin rejected, no session created');
+  } else fail('S19.4', JSON.stringify({ s1, sentNon }));
+
+  // ---- S19.5 — admin start (no prefill) sets step=telegram_id ----
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => true, isEmployee: () => false, isAllowed: () => true,
+    refresh: async () => {}, invalidate: async () => {},
+  });
+  delete require.cache[require.resolve('../src/flows/userAddFlow')];
+  const flow3 = require('../src/flows/userAddFlow');
+  const fakeBot = { sendMessage: async () => ({ message_id: 2 }), editMessageText: async () => {} };
+  await flow3.start(fakeBot, 'c2', 'admin-1', null);
+  const s2 = sessionStore.get('admin-1');
+  if (s2 && s2.type === 'user_add_flow' && s2.step === 'telegram_id'
+      && s2.data && !s2.data.telegram_id) {
+    pass('S19.5 admin start, no prefill: session.step=telegram_id');
+  } else fail('S19.5', JSON.stringify(s2));
+
+  // ---- S19.6 — admin start with prefill from PendingUser jumps to step=name ----
+  await flow3.start(fakeBot, 'c3', 'admin-2', null,
+    { telegram_id: '8616305685', first_name: 'Mohammad', last_name: 'Sani', source: 'pending_user' });
+  const s3 = sessionStore.get('admin-2');
+  if (s3 && s3.step === 'name'
+      && s3.data.telegram_id === '8616305685'
+      && s3.data.name === 'Mohammad Sani'
+      && s3.data.prefillSource === 'pending_user') {
+    pass('S19.6 prefilled start: skips ID step, name pre-composed from first+last');
+  } else fail('S19.6', JSON.stringify(s3));
+
+  // ---- S19.7 — handleText rejects invalid Telegram ID ----
+  sessionStore.set('admin-3', { type: 'user_add_flow', step: 'telegram_id',
+    flowMessageId: null, data: { telegram_id: '', name: '', warehouses: [], prefillSource: null } });
+  const editedNon = [];
+  const fakeBot2 = {
+    sendMessage: async (cid, t) => { editedNon.push(t); return { message_id: 3 }; },
+    editMessageText: async (t) => { editedNon.push(t); },
+  };
+  await flow3.handleText(fakeBot2, { from: { id: 'admin-3' }, chat: { id: 'c4' }, text: 'abc' });
+  const s4 = sessionStore.get('admin-3');
+  if (s4.step === 'telegram_id' && editedNon.some((t) => /doesn't look like/i.test(t) || /digits/i.test(t))) {
+    pass('S19.7 invalid Telegram ID → rejected with try-again card; stays on same step');
+  } else fail('S19.7', JSON.stringify({ s4, editedNon }));
+
+  // ---- S19.8 — handleText accepts valid ID and advances to name step ----
+  await flow3.handleText(fakeBot2, { from: { id: 'admin-3' }, chat: { id: 'c4' }, text: '123456789' });
+  const s5 = sessionStore.get('admin-3');
+  if (s5.step === 'name' && s5.data.telegram_id === '123456789') {
+    pass('S19.8 valid Telegram ID advances to name step');
+  } else fail('S19.8', JSON.stringify(s5));
+
+  // ---- S19.9 — dedup: existing active user rejected ----
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    findByUserId: async (id) => (id === '999999999'
+      ? { user_id: '999999999', name: 'Already Here', status: 'active' } : null),
+    append: async () => {}, getAll: async () => [],
+  });
+  delete require.cache[require.resolve('../src/flows/userAddFlow')];
+  const flow4 = require('../src/flows/userAddFlow');
+  sessionStore.set('admin-4', { type: 'user_add_flow', step: 'telegram_id',
+    flowMessageId: null, data: { telegram_id: '', name: '', warehouses: [], prefillSource: null } });
+  const editedDup = [];
+  const fakeBot3 = {
+    sendMessage: async (cid, t) => { editedDup.push(t); return { message_id: 4 }; },
+    editMessageText: async (t) => { editedDup.push(t); },
+  };
+  await flow4.handleText(fakeBot3, { from: { id: 'admin-4' }, chat: { id: 'c5' }, text: '999999999' });
+  const s6 = sessionStore.get('admin-4');
+  if (s6.step === 'telegram_id' && editedDup.some((t) => /already an active user/i.test(t))) {
+    pass('S19.9 dedup: existing active user rejected at Telegram-ID step');
+  } else fail('S19.9', JSON.stringify({ s6, editedDup }));
+
+  // ---- S19.10 — inventoryService.executeApprovedAction add_user happy path ----
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    findByUserId: async () => null,
+    append: async (u) => { _captured.user = u; },
+    getAll: async () => [],
+  });
+  stubModule(require.resolve('../src/repositories/departmentsRepository'), {
+    findByName: async () => null,
+    append: async (d) => { _captured.dept = d; },
+    getAll: async () => [],
+  });
+  const _pendingAU = [{
+    requestId: 'req-au-1', user: 'admin-1', status: 'pending',
+    actionJSON: {
+      action: 'add_user', telegram_id: '8616305685', name: 'Mohammad Sani',
+      department: 'Inventory', warehouses: ['Lagos South'], role: 'employee',
+      prefillSource: 'pending_user',
+    },
+  }];
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    getByRequestId: async () => _pendingAU[0],
+    getAllPending: async () => _pendingAU,
+    markApproved: async () => {}, markRejected: async () => {},
+    updateStatus: async () => {},
+    append: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/transactionsRepository'), { append: async () => {} });
+  stubModule(require.resolve('../src/repositories/auditLogRepository'), { append: async () => {} });
+  let invalidated = false;
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => true, isEmployee: () => false, isAllowed: () => true,
+    refresh: async () => {}, invalidate: async () => { invalidated = true; },
+  });
+  let onboarded = null;
+  stubModule(require.resolve('../src/services/pendingUserService'), {
+    markOnboarded: async (id, by) => { onboarded = { id, by }; return true; },
+  });
+  const _captured = { user: null, dept: null };
+  global._captured = _captured;
+  delete require.cache[require.resolve('../src/services/inventoryService')];
+  const invService = require('../src/services/inventoryService');
+  // re-stub modules captured by closure inside inventoryService:
+  const r = await invService.executeApprovedAction('req-au-1', 'admin-2', {});
+  if (r && r.ok
+      && _captured.user && _captured.user.user_id === '8616305685'
+      && _captured.user.name === 'Mohammad Sani'
+      && _captured.user.role === 'employee'
+      && Array.isArray(_captured.user.departments) && _captured.user.departments.includes('Inventory')
+      && _captured.user.warehouses && _captured.user.warehouses.includes('Lagos South')
+      && _captured.dept && _captured.dept.dept_name === 'Inventory'
+      && invalidated === true
+      && onboarded && onboarded.id === '8616305685') {
+    pass('S19.10 add_user execute: user appended + dept ensured + auth invalidated + pendingUser marked onboarded');
+  } else fail('S19.10', JSON.stringify({ r, captured: _captured, invalidated, onboarded }));
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -2922,6 +3120,7 @@ async function runS18() {
   try { await runS16(); } catch (e) { fail('S16 unexpected error', e.message); }
   try { await runS17(); } catch (e) { fail('S17 unexpected error', e.message); }
   try { await runS18(); } catch (e) { fail('S18 unexpected error', e.message); }
+  try { await runS19(); } catch (e) { fail('S19 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

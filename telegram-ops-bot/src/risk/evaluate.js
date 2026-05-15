@@ -54,6 +54,11 @@ const ALWAYS_APPROVAL_ACTIONS = [
   // Always dual-admin to ensure a 2nd pair of eyes on the parsed summary
   // (file_hash + bale count + warehouse) before any Inventory write.
   'bulk_receive_goods',
+  // USR-C3 — in-bot user onboarding. Adding someone to the active-users
+  // roster grants them access to the bot (sheet-driven auth list), so
+  // every add_user goes through dual-admin approval. USR-C3b reserves a
+  // tighter SUPER_ADMIN gate for the special case of promoting to admin.
+  'add_user',
 ];
 
 async function getThresholds() {
