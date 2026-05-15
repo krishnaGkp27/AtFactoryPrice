@@ -2780,6 +2780,120 @@ async function runS17() {
 }
 
 // ---------------------------------------------------------------------------
+// S18 — USR-C2: PendingUsers capture on /start from strangers
+// ---------------------------------------------------------------------------
+async function runS18() {
+  // Stub the sheet repo so we can observe writes without hitting Google.
+  const writes = { appended: [], statuses: [], notified: 0 };
+  stubModule(require.resolve('../src/repositories/pendingUsersRepository'), {
+    findByTelegramId: async (id) => writes.appended.find((e) => e.telegram_id === String(id)) || null,
+    append: async (e) => { writes.appended.push(e); },
+    updateStatus: async (id, status, by) => {
+      writes.statuses.push({ id: String(id), status, by });
+      const e = writes.appended.find((x) => x.telegram_id === String(id));
+      if (e) e.status = status;
+      return true;
+    },
+    updateLastNotifiedMsgId: async () => true,
+  });
+  stubModule(require.resolve('../src/services/adminFeed'), {
+    notify: async () => { writes.notified += 1; return { sent: 1, skipped: 0 }; },
+  });
+  stubModule(require.resolve('../src/repositories/auditLogRepository'), {
+    append: async () => {},
+  });
+
+  delete require.cache[require.resolve('../src/services/pendingUserService')];
+  const svc = require('../src/services/pendingUserService');
+  svc._internals._resetRateLimitForTests();
+
+  const fakeBot = (() => {
+    const sent = [];
+    return {
+      _sent: sent,
+      sendMessage: async (cid, t, _o) => { sent.push({ cid, t }); return { message_id: 11 }; },
+    };
+  })();
+
+  const mkMsg = (id, text = '/start', extras = {}) => ({
+    chat: { id: 100 + Number(id) },
+    from: { id: String(id), first_name: extras.first || 'F', last_name: extras.last || 'L', username: extras.username },
+    text,
+  });
+
+  // S18.1 — first /start from a stranger: appended, polite reply sent, admin notified.
+  const r1 = await svc.captureStranger(fakeBot, mkMsg(701, '/start', { first: 'Mohammad', username: 'msani' }));
+  if (r1.captured && writes.appended.length === 1
+      && writes.appended[0].telegram_id === '701'
+      && writes.appended[0].status === 'pending'
+      && writes.notified === 1
+      && fakeBot._sent.length === 1
+      && /not yet registered/i.test(fakeBot._sent[0].t)) {
+    pass('S18.1 stranger /start: pending row + polite reply + admin notify');
+  } else fail('S18.1', JSON.stringify({ writes, sent: fakeBot._sent.length }));
+
+  // S18.2 — same stranger re-pings: NO duplicate row, NO new admin notify, polite reply re-sent.
+  const r2 = await svc.captureStranger(fakeBot, mkMsg(701, '/start', { first: 'Mohammad', username: 'msani' }));
+  if (r2.captured && writes.appended.length === 1
+      && writes.notified === 1
+      && fakeBot._sent.length === 2) {
+    pass('S18.2 idempotent re-ping: no dup row, no re-notify, reply resent');
+  } else fail('S18.2', JSON.stringify({ writes, sent: fakeBot._sent.length }));
+
+  // S18.3 — second distinct stranger: appended + notified.
+  await svc.captureStranger(fakeBot, mkMsg(702, '/start', { first: 'Adamu' }));
+  if (writes.appended.length === 2 && writes.notified === 2) {
+    pass('S18.3 distinct stranger: separate row + separate notify');
+  } else fail('S18.3', JSON.stringify(writes));
+
+  // S18.4 — rate limit: 10 cap. Push 8 more new strangers; the 11th must be silently dropped.
+  for (let i = 0; i < 8; i++) {
+    await svc.captureStranger(fakeBot, mkMsg(710 + i, '/start'));
+  }
+  if (writes.appended.length === 10 && writes.notified === 10) {
+    pass('S18.4 rate-limit window admits exactly 10 strangers');
+  } else fail('S18.4', JSON.stringify({ appended: writes.appended.length, notified: writes.notified }));
+
+  const sentBefore = fakeBot._sent.length;
+  const dropped = await svc.captureStranger(fakeBot, mkMsg(999, '/start'));
+  if (!dropped.captured && dropped.reason === 'rate_limited'
+      && writes.appended.length === 10
+      && writes.notified === 10
+      && fakeBot._sent.length === sentBefore) {
+    pass('S18.5 11th stranger dropped silently — no row, no notify, no reply');
+  } else fail('S18.5', JSON.stringify({ dropped, len: writes.appended.length }));
+
+  // S18.6 — ignore() flips status without removing the row.
+  await svc.ignore('701', 'admin-99');
+  const r701 = writes.appended.find((e) => e.telegram_id === '701');
+  if (r701 && r701.status === 'ignored'
+      && writes.statuses.some((s) => s.id === '701' && s.status === 'ignored' && s.by === 'admin-99')) {
+    pass('S18.6 ignore(): row flips to status=ignored with handler stamped');
+  } else fail('S18.6', JSON.stringify({ r701, statuses: writes.statuses }));
+
+  // S18.7 — re-ping AFTER ignore re-flags to pending and re-notifies admin.
+  const notifiedBefore = writes.notified;
+  await svc.captureStranger(fakeBot, mkMsg(701, '/start'));
+  const r701b = writes.appended.find((e) => e.telegram_id === '701');
+  if (r701b.status === 'pending' && writes.notified === notifiedBefore + 1) {
+    pass('S18.7 ignored stranger who re-pings: re-flagged pending, admin re-notified');
+  } else fail('S18.7', JSON.stringify({ status: r701b.status, notified: writes.notified, before: notifiedBefore }));
+
+  // S18.8 — markOnboarded flips status=onboarded.
+  await svc.markOnboarded('702', 'admin-99');
+  const r702 = writes.appended.find((e) => e.telegram_id === '702');
+  if (r702 && r702.status === 'onboarded') {
+    pass('S18.8 markOnboarded: status flips to onboarded (for USR-C3 hook)');
+  } else fail('S18.8', JSON.stringify(r702));
+
+  // S18.9 — malformed input returns gracefully (no throw, no captured).
+  const bad = await svc.captureStranger(fakeBot, null);
+  if (!bad.captured && bad.reason === 'malformed') {
+    pass('S18.9 captureStranger(null) returns malformed, no crash');
+  } else fail('S18.9', JSON.stringify(bad));
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -2807,6 +2921,7 @@ async function runS17() {
   try { await runS15d(); } catch (e) { fail('S15d unexpected error', e.message); }
   try { await runS16(); } catch (e) { fail('S16 unexpected error', e.message); }
   try { await runS17(); } catch (e) { fail('S17 unexpected error', e.message); }
+  try { await runS18(); } catch (e) { fail('S18 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

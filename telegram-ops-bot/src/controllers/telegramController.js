@@ -3215,6 +3215,23 @@ async function handleMessage(bot, msg) {
   const text = (msg.text || '').trim();
 
   if (!auth.isAllowed(userId)) {
+    // USR-C2 — strangers who tap /start (or just say hi) get captured into
+    // PendingUsers and an admin is notified, instead of seeing a curt
+    // "not authorized" message. Anyone else (an unknown sender pushing
+    // arbitrary text) still gets the polite-but-firm rejection so we
+    // don't spam admins with noise from drive-by traffic.
+    const looksLikeFirstContact = !text
+      || /^\/start\b/i.test(text)
+      || /^(hi|hello|hey)\b/i.test(text);
+    if (looksLikeFirstContact) {
+      try {
+        const pendingUserService = require('../services/pendingUserService');
+        await pendingUserService.captureStranger(bot, msg);
+      } catch (e) {
+        try { require('../utils/logger').warn(`captureStranger failed: ${e.message}`); } catch (_) {}
+      }
+      return;
+    }
     await bot.sendMessage(chatId, 'You are not authorized to use this bot.');
     return;
   }
@@ -5702,6 +5719,41 @@ async function handleCallbackQuery(bot, callbackQuery) {
   if (data.startsWith('wh:')) {
     const handled = await warehouseFlow.handleCallback(bot, callbackQuery);
     if (handled) return;
+  }
+
+  // USR-C2 — Pending user actions from the admin-feed notification card.
+  //   pu:onboard:<telegramId>  → ack now; USR-C3 will route into Add Employee.
+  //   pu:ignore:<telegramId>   → flip status=ignored, edit card to confirm.
+  if (data.startsWith('pu:')) {
+    const adminId = String(callbackQuery.from.id);
+    if (!auth.isAdmin(adminId)) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.', show_alert: true });
+      return;
+    }
+    const parts = data.split(':'); // pu, action, telegramId
+    const action = parts[1];
+    const targetId = parts[2] || '';
+    const pendingUserService = require('../services/pendingUserService');
+    if (action === 'ignore') {
+      try { await pendingUserService.ignore(targetId, adminId); } catch (_) {}
+      try {
+        await bot.editMessageText(
+          `🚫 *Ignored* — \`${targetId}\` will no longer prompt the admin feed.\n\n_Marked by_ ${adminId}`,
+          { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id, parse_mode: 'Markdown' },
+        );
+      } catch (_) {}
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Ignored.' });
+      return;
+    }
+    if (action === 'onboard') {
+      // USR-C3 will pick up here. For now, ack with an explanatory note
+      // so admins know the next step exists and the system is wired.
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: 'Onboard flow coming in next deploy — for now use Manage Users.',
+        show_alert: true,
+      });
+      return;
+    }
   }
 
   // P4 — Procurement Plan view + PO drafting flow.

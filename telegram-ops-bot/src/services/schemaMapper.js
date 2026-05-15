@@ -162,6 +162,16 @@ const REQUIRED_SHEETS = {
       'unit_price', 'received_bales', 'received_yards',
     ],
   },
+  // USR-C2 — strangers who sent /start but aren't in the Users sheet yet.
+  // Admin sees a notification with [Onboard] | [Ignore]; Onboard routes
+  // into the dual-admin Add Employee flow (USR-C3).
+  PendingUsers: {
+    headers: [
+      'telegram_id', 'username', 'first_name', 'last_name',
+      'arrived_at', 'status', 'last_notified_msg_id',
+      'handled_by', 'handled_at',
+    ],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];
