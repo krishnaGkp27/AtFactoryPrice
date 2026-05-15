@@ -172,10 +172,14 @@ async function renderError(bot, chatId, userId, errorText) {
 // ---------------------------------------------------------------------------
 
 async function start(bot, chatId, userId, messageId) {
-  if (!auth.isAdmin(userId)) {
-    await bot.sendMessage(chatId, 'Admin only.');
-    return;
-  }
+  // No admin gate here. Two reasons:
+  //  1. The admin-only ENTRY from the Admin hub is gated at the controller
+  //     (`act:add_warehouse` checks adminIds before calling start()).
+  //  2. Non-admin operators can also reach this flow indirectly — e.g. the
+  //     Goods Receipt flow's "➕ New warehouse" button delegates here so
+  //     there is a single canonical Add-Warehouse flow. Dual-admin approval
+  //     is enforced at submit time (add_warehouse ∈ ALWAYS_APPROVAL_ACTIONS),
+  //     so a non-admin can only REQUEST, never self-approve.
   sessionStore.set(userId, {
     type: 'wh_add_flow',
     step: 'await_name',

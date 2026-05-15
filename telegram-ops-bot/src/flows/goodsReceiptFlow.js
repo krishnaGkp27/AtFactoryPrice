@@ -19,7 +19,7 @@
  *   {
  *     type: 'grn_flow',
  *     step: 'warehouse' | 'supplier' | 'design' | 'shade' | 'bales' | 'yards' | 'confirm'
- *         | 'new_warehouse' | 'new_supplier' | 'new_design' | 'new_shade',
+ *         | 'new_supplier' | 'new_design' | 'new_shade',
  *     flowMessageId: number,
  *     warehouse: string,
  *     supplier: string, supplier_id: string,
@@ -402,36 +402,17 @@ async function submit(bot, chatId, userId, msgOrNull) {
 // ---------------------------------------------------------------------------
 
 async function startNewWarehouse(bot, chatId, userId) {
+  // UX-C2: consolidate onto the canonical WH-C1 flow so there is exactly
+  // one Add-Warehouse path (same canonicalisation, same validation, same
+  // back/cancel UX, same risk wiring). The user's in-progress GRN session
+  // is intentionally dropped — the new warehouse cannot be used until it
+  // is approved, so there is nothing useful to preserve. They can restart
+  // Receive Goods after approval and the new warehouse will be in the picker.
   const session = sessionStore.get(userId);
-  if (!session) return;
-  session.step = 'new_warehouse';
-  sessionStore.set(userId, session);
-  await render(bot, chatId, userId,
-    'Type the *new warehouse name* (reply in chat).\n_Will be queued for 2nd-admin approval._',
-    [[{ text: '⬅ Back', callback_data: 'gr:back:warehouse' }], cancelRow()],
-  );
-}
-
-async function submitNewWarehouse(bot, chatId, userId, name) {
-  const aj = { action: 'add_warehouse', name };
-  const risk = await riskEvaluate.evaluate({ action: 'add_warehouse', userId });
-  // add_warehouse is in ALWAYS_APPROVAL_ACTIONS so risk is always 'approval_required'.
-  const requestId = idGenerator.requestId();
-  await approvalQueueRepository.append({
-    requestId, user: userId, actionJSON: aj, riskReason: risk.reason || 'dual_admin_required', status: 'pending',
-  });
-  await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
-  const isAdm = auth.isAdmin(userId);
-  const excludeId = isAdm ? userId : undefined;
-  await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, String(userId),
-    `🏭 Add warehouse: ${name}`, risk.reason, excludeId);
-  await render(bot, chatId, userId,
-    `⏳ "${name}" submitted for 2nd-admin approval.\nRequest: \`${requestId}\`\n\n_Pick a different warehouse for this GRN, or cancel and retry once approved._`,
-    [[{ text: '⬅ Pick warehouse', callback_data: 'gr:back:warehouse' }], cancelRow()],
-  );
-  // Return to warehouse step (the new one isn't available yet).
-  const session = sessionStore.get(userId);
-  if (session) { session.step = 'warehouse'; sessionStore.set(userId, session); }
+  const anchor = session && session.flowMessageId ? session.flowMessageId : null;
+  sessionStore.clear(userId);
+  const warehouseFlow = require('./warehouseFlow');
+  await warehouseFlow.start(bot, chatId, userId, anchor);
 }
 
 // ---------------------------------------------------------------------------
@@ -629,14 +610,8 @@ async function handleTextStep(bot, msg) {
   const raw = (msg.text || '').trim();
   if (!raw) return false;
 
-  if (session.step === 'new_warehouse') {
-    if (raw.length > 50) {
-      await bot.sendMessage(chatId, '⚠️ Warehouse name too long (max 50 chars).');
-      return true;
-    }
-    await submitNewWarehouse(bot, chatId, userId, raw);
-    return true;
-  }
+  // UX-C2: 'new_warehouse' step no longer lives in this flow — `gr:wh_new`
+  // now delegates to warehouseFlow (single canonical Add-Warehouse path).
   if (session.step === 'new_supplier') {
     if (raw.length > 80) {
       await bot.sendMessage(chatId, '⚠️ Supplier name too long (max 80 chars).');

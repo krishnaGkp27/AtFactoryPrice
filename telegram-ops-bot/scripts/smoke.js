@@ -2659,6 +2659,39 @@ async function runS16() {
     pass('S16.9 dedup: rejects name existing ONLY in Inventory (WH-C1 bug fix)');
   } else fail('S16.9', JSON.stringify(r));
 
+  // S16.9b — warehouseFlow.start: non-admin can ENTER (e.g. from GR delegation).
+  // Admin-only entry from the menu is gated at the controller, not the flow.
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => false,
+    isAllowed: () => true,
+  });
+  delete require.cache[require.resolve('../src/flows/warehouseFlow')];
+  const wf3 = require('../src/flows/warehouseFlow');
+  const fakeBot1 = (() => {
+    const calls = [];
+    return {
+      _calls: calls,
+      sendMessage: async (cid, t, _o) => { calls.push({ cid, t }); return { message_id: 99 }; },
+      editMessageText: async () => {},
+    };
+  })();
+  await wf3.start(fakeBot1, 'cid-1', 'user-non-admin', null);
+  const rejected = fakeBot1._calls.some((c) => /admin only/i.test(c.t || ''));
+  if (!rejected) {
+    pass('S16.9b warehouseFlow.start: non-admin can ENTER (gating lives at controller)');
+  } else fail('S16.9b', 'non-admin was rejected by flow itself');
+
+  // S16.9c — UX-C2: goodsReceiptFlow no longer has its own `new_warehouse` step.
+  const grSrc = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'src', 'flows', 'goodsReceiptFlow.js'),
+    'utf8',
+  );
+  const stillHasInlineSubmit = /async function submitNewWarehouse/.test(grSrc);
+  const delegatesToWarehouseFlow = /require\(['"]\.\/warehouseFlow['"]\)/.test(grSrc);
+  if (!stillHasInlineSubmit && delegatesToWarehouseFlow) {
+    pass('S16.9c UX-C2: goodsReceiptFlow.gr:wh_new delegates to warehouseFlow (one canonical path)');
+  } else fail('S16.9c', `inline=${stillHasInlineSubmit}, delegates=${delegatesToWarehouseFlow}`);
+
   // S16.10 — warehouseFlow exports the full surface
   const exp = require('../src/flows/warehouseFlow');
   const need = ['start', 'handleCallback', 'handleText', 'canonicalizeWarehouseName', 'listMergedWarehouses'];
