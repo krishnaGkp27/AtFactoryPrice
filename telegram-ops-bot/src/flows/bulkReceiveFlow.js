@@ -61,6 +61,11 @@ const bulkValidator = require('../utils/bulkRowValidator');
 const { editOrSend } = require('../utils/telegramUI');
 const { fmtQty } = require('../utils/format');
 const logger = require('../utils/logger');
+// FILE-C1: shared archive (local + best-effort Drive) so CSV/XLSX uploads
+// get the same human-readable Drive filename and clickable sheet URL as
+// photo OCR uploads. Falls back to local-only when Drive isn't configured.
+const driveBackup = require('../services/vision/driveBackup');
+const usersRepository = require('../repositories/usersRepository');
 
 const UPLOADS_DIR = path.resolve(process.cwd(), 'data', 'uploads');
 const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MB hard cap; 500 rows fits easily
@@ -275,16 +280,45 @@ async function handleDocument(bot, msg) {
     logger.warn(`bulkReceiveFlow: getByFileHash failed (continuing): ${e.message}`);
   }
 
-  // Archive to local disk. We keep the file even if approval is denied —
-  // disk is cheap and the file_hash + ApprovalQueue row tell the full
-  // story for forensics.
-  let archivedPath = '';
+  // FILE-C1: archive locally AND best-effort to Drive, with a human-
+  // readable Drive filename built from uploader + date + original name
+  // + 8-char hash. Even if approval is denied, the file stays on disk
+  // for forensics, and the Drive row + file_hash + ApprovalQueue tell
+  // the full story end-to-end. Local archive still uses the hash-based
+  // path internally — it's a cache, not a human-browsable surface.
+  let uploaderName = msg.from.first_name || `user-${userId}`;
   try {
-    if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-    archivedPath = path.join(UPLOADS_DIR, `${hash}.${ext}`);
-    fs.writeFileSync(archivedPath, buffer);
+    const u = await usersRepository.findByUserId(userId);
+    if (u && u.name) uploaderName = u.name;
+  } catch (_) { /* repo absent in dev */ }
+
+  const mime = (ext === 'xlsx')
+    ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    : 'text/csv';
+  let archive;
+  try {
+    archive = await driveBackup.archiveFile(buffer, mime, {
+      uploader: uploaderName,
+      originalName: fileName,
+      kind: 'bulk',
+    });
   } catch (e) {
-    logger.warn(`bulkReceiveFlow: archive write failed (continuing): ${e.message}`);
+    logger.warn(`bulkReceiveFlow: archive failed (continuing local-only): ${e.message}`);
+    // Hard-fall-back to a hash path so the rest of the flow has a path
+    // to record. Drive metadata stays unset.
+    archive = { hash, localPath: '', readableName: '', drive: null };
+  }
+  // Belt-and-suspenders: ensure the local copy exists even if archiveFile
+  // somehow returned an empty path (e.g. in tests with stubbed deps).
+  let archivedPath = archive.localPath || '';
+  if (!archivedPath) {
+    try {
+      if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+      archivedPath = path.join(UPLOADS_DIR, `${hash}.${ext}`);
+      fs.writeFileSync(archivedPath, buffer);
+    } catch (e) {
+      logger.warn(`bulkReceiveFlow: fallback local archive failed (continuing): ${e.message}`);
+    }
   }
 
   // Update session and show preview
@@ -293,6 +327,13 @@ async function handleDocument(bot, msg) {
   session.fileHash = hash;
   session.fileSize = buffer.length;
   session.archivedPath = archivedPath;
+  // FILE-C1: Drive metadata is the *human-facing* surface; we forward
+  // it into the approval payload so the GoodsReceipts row gets a
+  // clickable source_url and we can stamp the Drive file description
+  // post-approval with the GRN id.
+  session.driveLink = archive.drive?.webViewLink || '';
+  session.driveFileId = archive.drive?.id || '';
+  session.sourceFilename = archive.readableName || '';
   session.summary = verdict.summary;
   session.bales = verdict.bales;
   session.step = 'await_submit';
@@ -368,6 +409,12 @@ async function submit(bot, chatId, userId) {
     fileName: session.fileName,
     fileSize: session.fileSize || 0,
     archivedPath: session.archivedPath || '',
+    // FILE-C1: Drive surface — webViewLink lands in GoodsReceipts.source_url,
+    // readableName lands in GoodsReceipts.source_filename, driveFileId is
+    // used post-approval to stamp the Drive file with the GRN id.
+    sourceUrl: session.driveLink || '',
+    sourceFilename: session.sourceFilename || '',
+    driveFileId: session.driveFileId || '',
     dateReceived: new Date().toISOString().split('T')[0],
     productType: 'fabric',
   };

@@ -20,10 +20,19 @@
  *   photo_file_id   — Telegram file_id of the supplier invoice photo (P5 OCR)
  *   notes           — free-text
  *   status          — 'received' | 'cancelled'
- *   source          — origin tag: 'manual' | 'bulk_csv' | 'bulk_xlsx' (P2.5)
+ *   source          — origin tag: 'manual' | 'bulk_csv' | 'bulk_xlsx' |
+ *                     'ocr_vision_*' (P2.5 + P5)
  *   file_hash       — 16-hex sha256 prefix of the original upload; populated
- *                     only for bulk imports. Used by getByFileHash() to
+ *                     for any non-manual receipt. Used by getByFileHash() to
  *                     reject duplicate re-uploads of the same file.
+ *   source_url      — FILE-C1: clickable Google Drive webViewLink to the
+ *                     original photo / PDF / CSV / XLSX. Empty when Drive
+ *                     backup wasn't configured or failed.
+ *   source_filename — FILE-C1: the human-readable filename the bot saved
+ *                     into Drive, e.g.
+ *                     `2026-05-15__abdul__packing-slip__a3f4b9c2.jpg`.
+ *                     Mirrors what's in the Drive folder so an operator
+ *                     can search either surface independently.
  */
 
 const sheets = require('./sheetsClient');
@@ -37,6 +46,10 @@ const HEADERS = [
   // P2.5 — bulk-import provenance. Both columns are empty for the
   // interactive (manual) GRN flow created in P2.
   'source', 'file_hash',
+  // FILE-C1 — Drive backup link + readable filename, populated for
+  // any non-manual receipt (bulk CSV/XLSX, photo OCR). Empty for
+  // interactive GRNs that don't upload a source file.
+  'source_url', 'source_filename',
 ];
 
 function str(v) { return (v ?? '').toString().trim(); }
@@ -59,11 +72,17 @@ function parse(r, rowIndex) {
     status: str(r[11]) || 'received',
     source: str(r[12]) || 'manual',
     file_hash: str(r[13]),
+    // FILE-C1: clickable link + readable filename for non-manual receipts.
+    source_url: str(r[14]),
+    source_filename: str(r[15]),
   };
 }
 
 async function getAll() {
-  const rows = await sheets.readRange(SHEET, 'A2:N');
+  // FILE-C1: read range extended from N (14 cols) to P (16 cols) to
+  // pick up source_url + source_filename. Older deployments missing
+  // those cells just yield empty strings via parse().
+  const rows = await sheets.readRange(SHEET, 'A2:P');
   return rows.map((r, i) => parse(r, i + 2)).filter((g) => g.grn_id);
 }
 
@@ -114,6 +133,9 @@ async function append(grn) {
     grn.status || 'received',
     grn.source || 'manual',
     grn.file_hash || '',
+    // FILE-C1
+    grn.source_url || '',
+    grn.source_filename || '',
   ];
   await sheets.appendRows(SHEET, [row]);
   return {
@@ -123,6 +145,8 @@ async function append(grn) {
     status: row[11],
     source: row[12],
     file_hash: row[13],
+    source_url: row[14],
+    source_filename: row[15],
   };
 }
 

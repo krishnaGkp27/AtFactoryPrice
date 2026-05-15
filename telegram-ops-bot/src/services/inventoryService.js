@@ -9,6 +9,7 @@ const auditLogRepository = require('../repositories/auditLogRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const riskEvaluate = require('../risk/evaluate');
 const config = require('../config');
+const logger = require('../utils/logger');
 const { bus: erpBus, emitAsync: erpEmitAsync } = require('../events/erpEventBus');
 
 const CURRENCY = config.currency || 'NGN';
@@ -541,7 +542,26 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       status: 'received',
       source: aj.source || 'bulk_csv',
       file_hash: fileHash,
+      // FILE-C1: persist the clickable Drive link + readable filename so
+      // the admin can open the source slip / CSV straight from the sheet.
+      source_url: aj.sourceUrl || '',
+      source_filename: aj.sourceFilename || '',
     });
+
+    // FILE-C1: best-effort enrichment — once we have a real grn_id,
+    // stamp the Drive file's description with "{grn_id} | {supplier} |
+    // {warehouse}" so an operator browsing Drive sees the context
+    // without opening the sheet. Renames are avoided so any URL stored
+    // elsewhere stays valid. Failures are logged and swallowed.
+    if (aj.driveFileId) {
+      try {
+        const driveBackup = require('./vision/driveBackup');
+        const desc = `${grn.grn_id} | ${aj.supplier || 'no supplier'} | ${aj.warehouse} | ${grn.received_at || ''}`;
+        await driveBackup.updateDescription(aj.driveFileId, desc);
+      } catch (e) {
+        logger.warn(`bulk_receive_goods: drive description stamp failed (continuing): ${e.message}`);
+      }
+    }
 
     const baleRows = thans.map((b) => ({
       packageNo: b.packageNo,

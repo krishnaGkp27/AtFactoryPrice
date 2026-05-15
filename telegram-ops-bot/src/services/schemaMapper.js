@@ -142,6 +142,9 @@ const REQUIRED_SHEETS = {
       'photo_file_id', 'notes', 'status',
       // P2.5 — bulk-import provenance (CSV/XLSX). Empty for manual GRNs.
       'source', 'file_hash',
+      // FILE-C1 — clickable Drive URL + readable Drive filename for any
+      // non-manual receipt (bulk + photo OCR). Empty for interactive GRNs.
+      'source_url', 'source_filename',
     ],
   },
   // P4 — Procurement Order header. Drafted before goods arrive; GRN flow
@@ -312,13 +315,16 @@ async function initialize() {
     try {
       const grnHeader = await sheets.readRange('GoodsReceipts', 'A1:Z1');
       const h = grnHeader[0] || [];
-      const GRN_NEW_COLS = ['source', 'file_hash'];
+      // P2.5 added source + file_hash; FILE-C1 added source_url +
+      // source_filename. Both migrations run idempotently here — the
+      // filter only appends columns the deployed sheet is missing.
+      const GRN_NEW_COLS = ['source', 'file_hash', 'source_url', 'source_filename'];
       const missingGrn = GRN_NEW_COLS.filter((c) => !h.includes(c));
       if (missingGrn.length) {
         const startCol = colLetter(h.length + 1);
         const endCol = colLetter(h.length + missingGrn.length);
         await sheets.updateRange('GoodsReceipts', `${startCol}1:${endCol}1`, [missingGrn]);
-        logger.info(`SchemaMapper: extended GoodsReceipts with ${missingGrn.length} P2.5 columns (${missingGrn.join(', ')})`);
+        logger.info(`SchemaMapper: extended GoodsReceipts with ${missingGrn.length} column(s) (${missingGrn.join(', ')})`);
       }
     } catch (e) {
       logger.warn('SchemaMapper: could not extend GoodsReceipts —', e.message);

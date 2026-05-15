@@ -98,6 +98,7 @@ const auth = require('../middlewares/auth');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
 const vision = require('../services/vision');
 const driveBackup = require('../services/vision/driveBackup');
+const usersRepository = require('../repositories/usersRepository');
 const bulkValidator = require('../utils/bulkRowValidator');
 const { fmtQty } = require('../utils/format');
 const logger = require('../utils/logger');
@@ -298,12 +299,27 @@ async function handleFile(bot, msg) {
     return true;
   }
 
-  // Archive locally + best-effort Drive backup.
+  // FILE-C1: archive locally + best-effort Drive backup, now with a
+  // human-readable Drive filename built from the uploader name + the
+  // original (Telegram-provided) filename + date + 8-char hash.
+  //
+  // Uploader name comes from the Users sheet — falls back to Telegram's
+  // first_name then the user_id so we always have something readable.
+  let uploaderName = msg.from.first_name || `user-${userId}`;
+  try {
+    const u = await usersRepository.findByUserId(userId);
+    if (u && u.name) uploaderName = u.name;
+  } catch (_) { /* repo absent in dev, fall back to Telegram first_name */ }
+
   let archive;
   try {
-    archive = await driveBackup.archiveImage(buffer, mimeType, { filename: fileName });
+    archive = await driveBackup.archiveFile(buffer, mimeType, {
+      uploader: uploaderName,
+      originalName: fileName,
+      kind: 'photo',
+    });
   } catch (e) {
-    logger.error(`photoReceiveFlow.archiveImage: ${e.message}`);
+    logger.error(`photoReceiveFlow.archiveFile: ${e.message}`);
     await renderError(bot, chatId, userId, `Could not archive the upload: ${e.message}`);
     return true;
   }
@@ -330,6 +346,10 @@ async function handleFile(bot, msg) {
   session.fileSize = buffer.length;
   session.localPath = archive.localPath || '';
   session.driveLink = archive.drive?.webViewLink || '';
+  // FILE-C1: keep the Drive file id for post-approval description
+  // enrichment + the readable name we'll write to GoodsReceipts.
+  session.driveFileId = archive.drive?.id || '';
+  session.sourceFilename = archive.readableName || '';
   session.ocrProvider = ocr.provider;
   session.ocrConfidence = ocr.overallConfidence;
   session.rawText = ocr.rawText;
@@ -902,6 +922,12 @@ async function submit(bot, chatId, userId) {
     fileSize: session.fileSize || 0,
     archivedPath: session.localPath || '',
     driveLink: session.driveLink || '',
+    // FILE-C1: surface Drive metadata to the persistence layer so the
+    // GoodsReceipts row gets source_url + source_filename and the
+    // post-approval description-stamping step can find the Drive file.
+    sourceUrl: session.driveLink || '',
+    sourceFilename: session.sourceFilename || '',
+    driveFileId: session.driveFileId || '',
     ocrProvider: session.ocrProvider,
     ocrConfidence: session.ocrConfidence,
     ocrRawText: (session.rawText || '').slice(0, 2000), // cap to keep approval row small

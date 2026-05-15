@@ -72,6 +72,12 @@ const config = {
     folderId: process.env.GOOGLE_DRIVE_FOLDER_ID || '',
     /** Where photo-receive backups land. Falls back to folderId if unset. */
     ocrFolderId: process.env.OCR_GDRIVE_FOLDER_ID || process.env.GOOGLE_DRIVE_FOLDER_ID || '',
+    /**
+     * FILE-C1: where ALL source uploads land — photos AND bulk CSV/XLSX.
+     * Preferred over `ocrFolderId` going forward; falls back to the
+     * OCR folder for back-compat so deployments don't break on upgrade.
+     */
+    sourceFolderId: process.env.SOURCE_GDRIVE_FOLDER_ID || process.env.OCR_GDRIVE_FOLDER_ID || process.env.GOOGLE_DRIVE_FOLDER_ID || '',
   },
 
   /**

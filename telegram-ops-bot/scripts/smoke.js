@@ -1494,7 +1494,8 @@ async function runS14b() {
     pass('S14b.3 getByFileHash: unknown + empty hash returns null');
   } else fail('S14b.3 getByFileHash null', JSON.stringify({ miss, empty }));
 
-  // S14b.4 — append writes 14 columns including source + file_hash
+  // S14b.4 — append writes 16 columns: P2.5 added source + file_hash;
+  // FILE-C1 added source_url + source_filename.
   let appended = null;
   stubModule(require.resolve('../src/repositories/sheetsClient'), {
     readRange: async () => [],
@@ -1509,17 +1510,24 @@ async function runS14b() {
   const saved = await grnRepo2.append({
     warehouse: 'Lagos', supplier: 'WangTex', total_bales: 5, total_yards: 250,
     source: 'bulk_xlsx', file_hash: '1234567890abcdef',
+    source_url: 'https://drive.google.com/file/d/abc/view',
+    source_filename: '2026-05-15__abdul__delivery__1234567a.xlsx',
   });
-  if (appended && appended.length === 14 && appended[12] === 'bulk_xlsx'
-      && appended[13] === '1234567890abcdef' && saved.source === 'bulk_xlsx') {
-    pass('S14b.4 append: writes 14 cols; source + file_hash persisted');
+  if (appended && appended.length === 16
+      && appended[12] === 'bulk_xlsx' && appended[13] === '1234567890abcdef'
+      && appended[14] === 'https://drive.google.com/file/d/abc/view'
+      && appended[15] === '2026-05-15__abdul__delivery__1234567a.xlsx'
+      && saved.source === 'bulk_xlsx' && saved.source_url.includes('drive.google.com')) {
+    pass('S14b.4 append: writes 16 cols; source + file_hash + source_url + source_filename persisted');
   } else fail('S14b.4 append', JSON.stringify({ appended, saved }));
 
-  // S14b.5 — manual GRN (no source/file_hash) defaults source='manual'
+  // S14b.5 — manual GRN (no source/file_hash/URL) defaults source='manual',
+  // file_hash + source_url + source_filename empty
   appended = null;
   await grnRepo2.append({ warehouse: 'Kano', total_bales: 2, total_yards: 100 });
-  if (appended && appended[12] === 'manual' && appended[13] === '') {
-    pass('S14b.5 append: manual GRN defaults source=manual, file_hash empty');
+  if (appended && appended[12] === 'manual' && appended[13] === ''
+      && appended[14] === '' && appended[15] === '') {
+    pass('S14b.5 append: manual GRN defaults source=manual; file_hash + source_url + source_filename empty');
   } else fail('S14b.5 append manual default', JSON.stringify(appended));
 }
 
@@ -2088,10 +2096,113 @@ async function runS15b() {
     pass('S15b.10 archiveImage: opts.filename customises Drive file name');
   } else fail('S15b.10 filename override', JSON.stringify(result5));
 
+  // -------------------------------------------------------------------------
+  // FILE-C1: buildReadableName + archiveFile + updateDescription
+  // -------------------------------------------------------------------------
+
+  // S15b.11 — buildReadableName produces date__uploader__name__hash8.ext
+  const n1 = driveYes.buildReadableName({
+    date: new Date('2026-05-15T10:00:00Z'),
+    uploader: 'Abdul', originalName: 'packing slip 9001.JPG',
+    kind: 'photo', hash: 'a3f4b9c2d1e6f078', ext: 'jpg',
+  });
+  if (n1 === '2026-05-15__Abdul__packing-slip-9001__a3f4b9c2.jpg') {
+    pass('S15b.11 buildReadableName: date__uploader__name__hash8.ext');
+  } else fail('S15b.11 buildReadableName basic', n1);
+
+  // S15b.12 — sanitization: strips path-unfriendly chars, collapses dashes,
+  // falls back to kind when originalName missing, falls back to 'unknown'
+  // uploader when uploader missing.
+  const n2 = driveYes.buildReadableName({
+    date: new Date('2026-05-15T10:00:00Z'),
+    uploader: '', originalName: '',
+    kind: 'bulk', hash: 'a3f4b9c2d1e6f078', ext: 'csv',
+  });
+  if (n2 === '2026-05-15__unknown__bulk__a3f4b9c2.csv') {
+    pass('S15b.12 buildReadableName: missing uploader→unknown, missing name→kind');
+  } else fail('S15b.12 buildReadableName fallback', n2);
+
+  // S15b.13 — special chars in uploader / original name get safely replaced
+  const n3 = driveYes.buildReadableName({
+    date: new Date('2026-05-15T10:00:00Z'),
+    uploader: 'Abdul O\'Brien/admin', originalName: '../../etc/passwd.csv',
+    hash: 'a3f4b9c2d1e6f078', ext: 'csv',
+  });
+  // Path traversal must be neutralised; underscores allowed (word char).
+  if (n3.startsWith('2026-05-15__Abdul-O-Brien-admin__')
+      && n3.includes('etc-passwd') && !n3.includes('..')
+      && !n3.includes('/') && n3.endsWith('__a3f4b9c2.csv')) {
+    pass('S15b.13 buildReadableName: sanitizes path-unfriendly chars');
+  } else fail('S15b.13 buildReadableName sanitize', n3);
+
+  // S15b.14 — archiveFile (new entry) uses readable name when none provided
+  driveYes._setDriveClient({
+    files: {
+      list: async () => ({ data: { files: [{ id: 'mf', name: '2026-05' }] } }),
+      create: async ({ requestBody }) => ({
+        data: { id: 'file-readable', name: requestBody.name, webViewLink: 'https://drive/...' },
+      }),
+    },
+  });
+  const result6 = await driveYes.archiveFile(Buffer.from('CSV-FROM-ABDUL-' + Date.now()), 'text/csv', {
+    uploader: 'Abdul', originalName: 'wangtex-2026-05-15.csv', kind: 'bulk',
+    now: new Date('2026-05-15T10:00:00Z'),
+  });
+  if (result6.drive && /^2026-05-15__Abdul__wangtex-2026-05-15__[0-9a-f]{8}\.csv$/.test(result6.drive.name)
+      && result6.readableName === result6.drive.name
+      && result6.drive.webViewLink === 'https://drive/...') {
+    pass('S15b.14 archiveFile: readable Drive name + webViewLink returned');
+  } else fail('S15b.14 archiveFile readable', JSON.stringify(result6));
+
+  // S15b.15 — updateDescription happy path
+  let stampedDesc = null;
+  driveYes._setDriveClient({
+    files: {
+      update: async ({ fileId, requestBody }) => { stampedDesc = { fileId, ...requestBody }; return { data: {} }; },
+    },
+  });
+  const okStamp = await driveYes.updateDescription('file-xyz', 'GRN-20260515-001 | WangTex | Lagos');
+  if (okStamp === true && stampedDesc && stampedDesc.fileId === 'file-xyz'
+      && stampedDesc.description.includes('GRN-20260515-001')) {
+    pass('S15b.15 updateDescription: stamps Drive file metadata, returns true');
+  } else fail('S15b.15 updateDescription happy', JSON.stringify(stampedDesc));
+
+  // S15b.16 — updateDescription swallows errors (best-effort, returns false)
+  driveYes._setDriveClient({
+    files: { update: async () => { throw new Error('quota'); } },
+  });
+  const failStamp = await driveYes.updateDescription('file-xyz', 'irrelevant');
+  if (failStamp === false) {
+    pass('S15b.16 updateDescription: best-effort — returns false on Drive error');
+  } else fail('S15b.16 updateDescription failure', String(failStamp));
+
+  // S15b.17 — empty fileId short-circuits without calling Drive
+  let updateCalled = false;
+  driveYes._setDriveClient({
+    files: { update: async () => { updateCalled = true; return { data: {} }; } },
+  });
+  const empty = await driveYes.updateDescription('', 'irrelevant');
+  if (empty === false && !updateCalled) {
+    pass('S15b.17 updateDescription: empty fileId returns false without calling Drive');
+  } else fail('S15b.17 updateDescription empty fileId', JSON.stringify({ empty, updateCalled }));
+
+  // S15b.18 — resolveSourceFolderId honours SOURCE_GDRIVE_FOLDER_ID first
+  const prevSource = process.env.SOURCE_GDRIVE_FOLDER_ID;
+  process.env.SOURCE_GDRIVE_FOLDER_ID = 'src-folder';
+  process.env.OCR_GDRIVE_FOLDER_ID = 'ocr-folder';
+  delete require.cache[require.resolve('../src/config')];
+  delete require.cache[require.resolve('../src/services/vision/driveBackup')];
+  const dbWithSource = require('../src/services/vision/driveBackup');
+  const resolved = dbWithSource.resolveSourceFolderId();
+  if (resolved === 'src-folder') {
+    pass('S15b.18 resolveSourceFolderId: SOURCE_GDRIVE_FOLDER_ID wins over OCR_GDRIVE_FOLDER_ID');
+  } else fail('S15b.18 resolveSourceFolderId precedence', resolved);
+
   // Cleanup
   try { fs.rmSync(tmpArchive, { recursive: true, force: true }); } catch { /* ignore */ }
   if (prevArchive == null) delete process.env.OCR_ARCHIVE_DIR; else process.env.OCR_ARCHIVE_DIR = prevArchive;
   if (prevFolder == null) delete process.env.OCR_GDRIVE_FOLDER_ID; else process.env.OCR_GDRIVE_FOLDER_ID = prevFolder;
+  if (prevSource == null) delete process.env.SOURCE_GDRIVE_FOLDER_ID; else process.env.SOURCE_GDRIVE_FOLDER_ID = prevSource;
   delete require.cache[require.resolve('../src/config')];
   delete require.cache[require.resolve('../src/services/vision/driveBackup')];
 }
