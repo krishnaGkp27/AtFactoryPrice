@@ -5739,6 +5739,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (handled) return;
   }
 
+  // USR-C3b / USR-C4 — Promote Admin & Deactivate User flows.
+  if (data.startsWith('umg:')) {
+    const userManageFlow = require('../flows/userManageFlow');
+    const handled = await userManageFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
   // USR-C2 — Pending user actions from the admin-feed notification card.
   //   pu:onboard:<telegramId>  → ack now; USR-C3 will route into Add Employee.
   //   pu:ignore:<telegramId>   → flip status=ignored, edit card to confirm.

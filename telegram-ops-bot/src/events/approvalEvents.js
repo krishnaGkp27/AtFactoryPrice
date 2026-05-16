@@ -665,6 +665,26 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
 
   const { item, requestingUser } = await resolveRequest(requestId);
 
+  // USR-C3b — restricted approvals: actions in SUPER_ADMIN_APPROVAL_ACTIONS
+  // (e.g. promote_admin) require the APPROVER to be in SUPER_ADMIN_IDS.
+  // We surface the gate as an alert so the admin understands why their
+  // tap was refused — they aren't powerless, the right person just needs
+  // to act. The card remains live (we did NOT clear its buttons yet).
+  try {
+    const riskMod = require('../risk/evaluate');
+    const auth = require('../middlewares/auth');
+    const restricted = Array.isArray(riskMod.SUPER_ADMIN_APPROVAL_ACTIONS)
+      ? riskMod.SUPER_ADMIN_APPROVAL_ACTIONS : [];
+    const actName = item && item.actionJSON && item.actionJSON.action;
+    if (actName && restricted.includes(actName) && !auth.isSuperAdmin(adminId)) {
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '🔒 Super-admin only — this action requires SUPER_ADMIN approval.',
+        show_alert: true,
+      });
+      return;
+    }
+  } catch (_) { /* fall through; never block on this guard's own failure */ }
+
   const chatIdCb = callbackQuery.message.chat.id;
   const msgIdCb = callbackQuery.message.message_id;
 

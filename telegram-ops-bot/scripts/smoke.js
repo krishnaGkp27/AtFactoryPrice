@@ -3092,6 +3092,194 @@ async function runS19() {
 }
 
 // ---------------------------------------------------------------------------
+// S20 — USR-C3b + USR-C4: promote_admin / deactivate_user + super-admin gate
+// ---------------------------------------------------------------------------
+async function runS20() {
+  // ---- S20.1 — risk lists ----
+  delete require.cache[require.resolve('../src/risk/evaluate')];
+  const risk = require('../src/risk/evaluate');
+  if (Array.isArray(risk.ALWAYS_APPROVAL_ACTIONS)
+      && risk.ALWAYS_APPROVAL_ACTIONS.includes('promote_admin')
+      && risk.ALWAYS_APPROVAL_ACTIONS.includes('deactivate_user')
+      && Array.isArray(risk.SUPER_ADMIN_APPROVAL_ACTIONS)
+      && risk.SUPER_ADMIN_APPROVAL_ACTIONS.includes('promote_admin')) {
+    pass('S20.1 risk: promote_admin + deactivate_user in ALWAYS; promote_admin in SUPER_ADMIN');
+  } else fail('S20.1', JSON.stringify({
+    always: risk.ALWAYS_APPROVAL_ACTIONS, super: risk.SUPER_ADMIN_APPROVAL_ACTIONS,
+  }));
+
+  // ---- S20.2 — activityRegistry: 👑 Promote + 🛑 Deactivate placed in admin hub ----
+  delete require.cache[require.resolve('../src/services/activityRegistry')];
+  const reg = require('../src/services/activityRegistry');
+  const flat = typeof reg.getAll === 'function' ? reg.getAll() : [];
+  const promote = flat.find((a) => a.code === 'promote_admin');
+  const deact = flat.find((a) => a.code === 'deactivate_user');
+  if (promote && promote.hub === 'admin' && promote.callback === 'umg:start:promote'
+      && deact && deact.hub === 'admin' && deact.callback === 'umg:start:deactivate') {
+    pass('S20.2 registry: Promote Admin + Deactivate User entries wired with umg:start:* callbacks');
+  } else fail('S20.2', JSON.stringify({ promote, deact }));
+
+  // ---- S20.3 — config.access.superAdminIds defaults to ADMIN_IDS when env unset ----
+  process.env.ADMIN_IDS = '111,222';
+  delete process.env.SUPER_ADMIN_IDS;
+  delete require.cache[require.resolve('../src/config')];
+  const cfg = require('../src/config');
+  if (Array.isArray(cfg.access.superAdminIds)
+      && cfg.access.superAdminIds.length === 2
+      && cfg.access.superAdminIds.includes('111') && cfg.access.superAdminIds.includes('222')) {
+    pass('S20.3 config: SUPER_ADMIN_IDS defaults to ADMIN_IDS when unset');
+  } else fail('S20.3', JSON.stringify(cfg.access));
+
+  // ---- S20.4 — explicit SUPER_ADMIN_IDS narrows from ADMIN_IDS ----
+  process.env.SUPER_ADMIN_IDS = '111';
+  delete require.cache[require.resolve('../src/config')];
+  const cfg2 = require('../src/config');
+  if (cfg2.access.superAdminIds.length === 1 && cfg2.access.superAdminIds[0] === '111') {
+    pass('S20.4 config: SUPER_ADMIN_IDS narrows the super-admin set');
+  } else fail('S20.4', JSON.stringify(cfg2.access));
+
+  // ---- S20.5 — auth.isSuperAdmin reads env list; isAdmin merges env + sheet ----
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    getAll: async () => [
+      { user_id: '111', name: 'Owner',     role: 'admin',    status: 'active' }, // env admin (also)
+      { user_id: '333', name: 'Promoted',  role: 'admin',    status: 'active' }, // sheet-only admin
+      { user_id: '444', name: 'WorkerBee', role: 'employee', status: 'active' },
+    ],
+  });
+  delete require.cache[require.resolve('../src/middlewares/auth')];
+  const auth = require('../src/middlewares/auth');
+  await auth.refresh();
+  const superOk = auth.isSuperAdmin('111') && !auth.isSuperAdmin('333') && !auth.isSuperAdmin('444');
+  const adminMerged = auth.isAdmin('111') && auth.isAdmin('333') && !auth.isAdmin('444');
+  if (superOk && adminMerged) {
+    pass('S20.5 auth: isSuperAdmin env-only; isAdmin merges env ∪ sheet (Users.role=admin & active)');
+  } else fail('S20.5', JSON.stringify({
+    super: { '111': auth.isSuperAdmin('111'), '333': auth.isSuperAdmin('333'), '444': auth.isSuperAdmin('444') },
+    admin: { '111': auth.isAdmin('111'), '333': auth.isAdmin('333'), '444': auth.isAdmin('444') },
+  }));
+
+  // ---- S20.6 — executeApprovedAction promote_admin happy path ----
+  const _caps = { role: null, invalidated: false };
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    findByUserId: async (id) => (id === '444'
+      ? { user_id: '444', name: 'WorkerBee', role: 'employee', status: 'active', rowIndex: 5 }
+      : null),
+    updateRole: async (id, role) => { _caps.role = { id: String(id), role }; return true; },
+    updateStatus: async () => true,
+    getAll: async () => [],
+  });
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    getAllPending: async () => [{
+      requestId: 'req-pa-1', user: 'admin-99', status: 'pending',
+      actionJSON: { action: 'promote_admin', telegram_id: '444', name: 'WorkerBee' },
+    }],
+    getByRequestId: async () => null,
+    updateStatus: async () => {}, markApproved: async () => {}, markRejected: async () => {},
+    append: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/transactionsRepository'), { append: async () => {} });
+  stubModule(require.resolve('../src/repositories/auditLogRepository'), { append: async () => {} });
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => true, isSuperAdmin: () => true, isEmployee: () => false,
+    isAllowed: () => true, refresh: async () => {},
+    invalidate: async () => { _caps.invalidated = true; },
+  });
+  delete require.cache[require.resolve('../src/services/inventoryService')];
+  const inv = require('../src/services/inventoryService');
+  const r1 = await inv.executeApprovedAction('req-pa-1', 'super-111', {});
+  if (r1 && r1.ok && _caps.role && _caps.role.id === '444' && _caps.role.role === 'admin' && _caps.invalidated) {
+    pass('S20.6 promote_admin: updateRole(444, admin) + auth.invalidate');
+  } else fail('S20.6', JSON.stringify({ r1, _caps }));
+
+  // ---- S20.7 — promote_admin rejects when target is already admin ----
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    findByUserId: async () => ({ user_id: '333', name: 'Promoted', role: 'admin', status: 'active' }),
+    updateRole: async () => true,
+    updateStatus: async () => true,
+    getAll: async () => [],
+  });
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    getAllPending: async () => [{
+      requestId: 'req-pa-2', user: 'admin-99', status: 'pending',
+      actionJSON: { action: 'promote_admin', telegram_id: '333' },
+    }],
+    getByRequestId: async () => null,
+    updateStatus: async () => {}, markApproved: async () => {}, markRejected: async () => {},
+    append: async () => {},
+  });
+  delete require.cache[require.resolve('../src/services/inventoryService')];
+  const inv2 = require('../src/services/inventoryService');
+  const r2 = await inv2.executeApprovedAction('req-pa-2', 'super-111', {});
+  if (r2 && r2.ok === false && /already an admin/i.test(r2.message)) {
+    pass('S20.7 promote_admin: rejects target that is already admin');
+  } else fail('S20.7', JSON.stringify(r2));
+
+  // ---- S20.8 — executeApprovedAction deactivate_user happy path ----
+  const _caps2 = { status: null, invalidated: false };
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    findByUserId: async () => ({ user_id: '444', name: 'WorkerBee', role: 'employee', status: 'active' }),
+    updateRole: async () => true,
+    updateStatus: async (id, st) => { _caps2.status = { id: String(id), status: st }; return true; },
+    getAll: async () => [],
+  });
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    getAllPending: async () => [{
+      requestId: 'req-da-1', user: 'admin-99', status: 'pending',
+      actionJSON: { action: 'deactivate_user', telegram_id: '444' },
+    }],
+    getByRequestId: async () => null,
+    updateStatus: async () => {}, markApproved: async () => {}, markRejected: async () => {},
+    append: async () => {},
+  });
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => true, isSuperAdmin: () => true, isEmployee: () => false,
+    isAllowed: () => true, refresh: async () => {},
+    invalidate: async () => { _caps2.invalidated = true; },
+  });
+  delete require.cache[require.resolve('../src/services/inventoryService')];
+  const inv3 = require('../src/services/inventoryService');
+  const r3 = await inv3.executeApprovedAction('req-da-1', 'admin-2', {});
+  if (r3 && r3.ok && _caps2.status && _caps2.status.id === '444' && _caps2.status.status === 'inactive' && _caps2.invalidated) {
+    pass('S20.8 deactivate_user: updateStatus(444, inactive) + auth.invalidate');
+  } else fail('S20.8', JSON.stringify({ r3, _caps2 }));
+
+  // ---- S20.9 — userManageFlow exports + entry rejects non-admin ----
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => false, isSuperAdmin: () => false, isEmployee: () => true,
+    isAllowed: () => true, refresh: async () => {}, invalidate: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    getAll: async () => [],
+    findByUserId: async () => null,
+    updateRole: async () => true, updateStatus: async () => true,
+  });
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    append: async () => {}, getAllPending: async () => [], markApproved: async () => {}, markRejected: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/auditLogRepository'), { append: async () => {} });
+  stubModule(require.resolve('../src/events/approvalEvents'), {
+    notifyAdminsApprovalRequest: async () => {}, handleReasonReply: async () => false,
+  });
+  delete require.cache[require.resolve('../src/flows/userManageFlow')];
+  const umg = require('../src/flows/userManageFlow');
+  const sent = [];
+  const fakeBot = {
+    sendMessage: async (cid, t) => { sent.push(t); return { message_id: 9 }; },
+    editMessageText: async () => {},
+  };
+  await umg.start(fakeBot, 'c1', 'non-admin', null, 'promote');
+  const sessionStore = require('../src/utils/sessionStore');
+  if (!sessionStore.get('non-admin') && sent.some((t) => /admin only/i.test(t))) {
+    pass('S20.9 userManageFlow.start: non-admin rejected, no session');
+  } else fail('S20.9', JSON.stringify({ s: sessionStore.get('non-admin'), sent }));
+
+  // ---- S20.10 — userManageFlow exports surface ----
+  if (typeof umg.start === 'function' && typeof umg.handleCallback === 'function') {
+    pass('S20.10 userManageFlow exports: start + handleCallback');
+  } else fail('S20.10', '');
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -3121,6 +3309,7 @@ async function runS19() {
   try { await runS17(); } catch (e) { fail('S17 unexpected error', e.message); }
   try { await runS18(); } catch (e) { fail('S18 unexpected error', e.message); }
   try { await runS19(); } catch (e) { fail('S19 unexpected error', e.message); }
+  try { await runS20(); } catch (e) { fail('S20 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

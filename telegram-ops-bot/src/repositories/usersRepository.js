@@ -132,6 +132,29 @@ async function updateDepartment(userId, department) {
   return true;
 }
 
+/**
+ * USR-C3b — update a user's role in column C (admin / manager / employee).
+ * Returns true if the row was found and updated, false otherwise.
+ */
+async function updateRole(userId, role) {
+  const u = await findByUserId(userId);
+  if (!u) return false;
+  await sheets.updateRange(SHEET, `C${u.rowIndex}`, [[String(role || 'employee')]]);
+  return true;
+}
+
+/**
+ * USR-C4 — flip a user's `status` (column F) between 'active' / 'inactive'.
+ * Inactive users disappear from pickers and lose bot access, but their row
+ * (and full history) stays in place for audit. Reactivating is symmetric.
+ */
+async function updateStatus(userId, status) {
+  const u = await findByUserId(userId);
+  if (!u) return false;
+  await sheets.updateRange(SHEET, `F${u.rowIndex}`, [[String(status || 'active')]]);
+  return true;
+}
+
 async function updateWarehouses(userId, warehouses) {
   const u = await findByUserId(userId);
   if (!u) return false;
@@ -198,6 +221,8 @@ module.exports = {
   updateDepartment,
   updateWarehouses,
   updateManages,
+  updateRole,
+  updateStatus,
   updateNotificationPrefs,
   setNotificationPref,
   SHEET,

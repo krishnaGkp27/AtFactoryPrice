@@ -23,11 +23,16 @@ const TTL_MS = 10_000;
 
 function envAdminIds() { return config.access.adminIds.map(String); }
 function envEmployeeIds() { return config.access.employeeIds.map(String); }
+function envSuperAdminIds() { return (config.access.superAdminIds || []).map(String); }
 
 // Cache the FULL allow-set (env ∪ sheet). Seeded synchronously with env IDs
 // at module load so the very first message after boot — before any refresh
 // has completed — still admits admins. The first sheet refresh runs lazily.
 let _allowed = new Set([...envAdminIds(), ...envEmployeeIds()]);
+// USR-C3b: sheet-driven admin set (Users.role === 'admin' AND status='active').
+// `isAdmin` returns true if id is in env ADMIN_IDS OR in this set. Refreshed
+// alongside `_allowed`.
+let _sheetAdmins = new Set();
 let _lastRefresh = 0;
 let _refreshing = false;
 
@@ -42,14 +47,17 @@ async function refresh() {
   try {
     const usersRepo = require('../repositories/usersRepository');
     const users = await usersRepo.getAll();
-    const active = users
-      .filter((u) => (u.status || 'active') === 'active' && u.user_id)
-      .map((u) => String(u.user_id));
+    const activeUsers = users.filter((u) => (u.status || 'active') === 'active' && u.user_id);
+    const active = activeUsers.map((u) => String(u.user_id));
     _allowed = new Set([
       ...envAdminIds(),
       ...envEmployeeIds(),
       ...active,
     ]);
+    _sheetAdmins = new Set(
+      activeUsers.filter((u) => String(u.role || '').toLowerCase() === 'admin')
+        .map((u) => String(u.user_id)),
+    );
     _lastRefresh = Date.now();
   } catch (e) {
     try { require('../utils/logger').warn(`auth.refresh failed: ${e.message}`); } catch (_) {}
@@ -75,15 +83,31 @@ function invalidate() {
 }
 
 function isAdmin(telegramId) {
-  return envAdminIds().includes(String(telegramId));
+  const id = String(telegramId);
+  if (envAdminIds().includes(id)) return true;
+  // USR-C3b: sheet-promoted admins. _sheetAdmins is rebuilt by refresh();
+  // the lazy schedule below ensures we converge within one TTL window
+  // after a promote_admin approval (which also calls invalidate()).
+  _maybeScheduleRefresh();
+  return _sheetAdmins.has(id);
+}
+
+/**
+ * Super-admin is the role allowed to APPROVE promote_admin requests.
+ * Lives in env only — there is no path to grant super-admin from inside
+ * the bot. This is the one true gate against in-bot privilege escalation.
+ */
+function isSuperAdmin(telegramId) {
+  return envSuperAdminIds().includes(String(telegramId));
 }
 
 function isEmployee(telegramId) {
-  // True if env says so OR they're in the Users sheet as active.
+  // True if env says so OR they're in the Users sheet as active and
+  // not currently a recognised admin.
   const id = String(telegramId);
   if (envEmployeeIds().includes(id)) return true;
   _maybeScheduleRefresh();
-  return _allowed.has(id) && !envAdminIds().includes(id);
+  return _allowed.has(id) && !envAdminIds().includes(id) && !_sheetAdmins.has(id);
 }
 
 function isAllowed(telegramId) {
@@ -93,6 +117,7 @@ function isAllowed(telegramId) {
 
 module.exports = {
   isAdmin,
+  isSuperAdmin,
   isEmployee,
   isAllowed,
   refresh,
@@ -100,6 +125,7 @@ module.exports = {
   // exported for tests:
   _internals: {
     snapshot: () => Array.from(_allowed),
+    snapshotAdmins: () => Array.from(_sheetAdmins),
     lastRefresh: () => _lastRefresh,
     ttlMs: TTL_MS,
   },

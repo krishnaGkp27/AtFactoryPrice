@@ -749,6 +749,39 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     try { await auth.invalidate(); } catch (_) {}
 
     bundleReport = { telegramId: tgId, name, dept, role, warehouses };
+  } else if (aj.action === 'promote_admin') {
+    // USR-C3b — flip a target user's role to 'admin'. The approver gate
+    // (super-admin) is enforced upstream in approvalEvents; here we
+    // assume the request is already authorised.
+    const usersRepo = require('../repositories/usersRepository');
+    const auth = require('../middlewares/auth');
+    const tgId = String(aj.telegram_id || '').trim();
+    if (!tgId) return { ok: false, message: 'promote_admin: telegram_id missing.' };
+    const target = await usersRepo.findByUserId(tgId);
+    if (!target || (target.status || 'active') !== 'active') {
+      return { ok: false, message: `promote_admin: ${tgId} is not an active user.` };
+    }
+    if (String(target.role || '').toLowerCase() === 'admin') {
+      return { ok: false, message: `promote_admin: ${tgId} is already an admin.` };
+    }
+    await usersRepo.updateRole(tgId, 'admin');
+    try { await auth.invalidate(); } catch (_) {}
+    bundleReport = { telegramId: tgId, name: target.name || tgId, fromRole: target.role || 'employee', toRole: 'admin' };
+  } else if (aj.action === 'deactivate_user') {
+    // USR-C4 — flip status=inactive. Row + history preserved; bot access
+    // revoked on the next auth refresh (or immediately via invalidate()).
+    const usersRepo = require('../repositories/usersRepository');
+    const auth = require('../middlewares/auth');
+    const tgId = String(aj.telegram_id || '').trim();
+    if (!tgId) return { ok: false, message: 'deactivate_user: telegram_id missing.' };
+    const target = await usersRepo.findByUserId(tgId);
+    if (!target) return { ok: false, message: `deactivate_user: ${tgId} not found.` };
+    if ((target.status || 'active') !== 'active') {
+      return { ok: false, message: `deactivate_user: ${tgId} is already ${target.status}.` };
+    }
+    await usersRepo.updateStatus(tgId, 'inactive');
+    try { await auth.invalidate(); } catch (_) {}
+    bundleReport = { telegramId: tgId, name: target.name || tgId, fromStatus: 'active', toStatus: 'inactive' };
   } else if (aj.action === 'rename_warehouse') {
     // P2 — dual-admin gated. Renames touch every Inventory row that
     // references the old warehouse name. Cap at a sane batch size to keep

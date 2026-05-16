@@ -1,5 +1,36 @@
 # Onboarding a new user (admin or employee)
 
+**As of USR-C3, the recommended path is entirely inside the bot.** The
+CLI procedure below is kept as a backup for emergencies (e.g. bot is
+down) and for bulk imports of a large team.
+
+## Recommended: in-bot flow
+
+1. New person opens Telegram, searches for the bot, taps **Start**.
+2. They see: *"You're not yet registered. An admin has been notified."*
+3. An admin (you) sees the admin-feed notification with the person's
+   details and two buttons: **✅ Onboard** | **🚫 Ignore**.
+4. Tap **✅ Onboard** → the Add Employee flow opens with their
+   Telegram ID + name pre-filled. Fill department, warehouses, role,
+   tap **Submit**.
+5. A **second admin** approves the request from their phone.
+6. The bot DMs the new person *"Welcome to AtFactoryPrice!"* and they
+   can use `/menu` immediately.
+
+Total time per new person: ~90 seconds spread across two admins. Zero
+Railway / CLI / sheet edits.
+
+**Privileged actions** also live in the admin hub:
+
+| Activity | Approval | Notes |
+|---|---|---|
+| **👑 Promote to Admin** | Super-admin tap required | Lifts a user from employee/manager to admin |
+| **🛑 Deactivate User** | Any 2 admins | Flips `status=inactive`. Row + history preserved. Re-activation is the same flow. |
+
+## CLI backup procedure
+
+Use when the bot can't be reached or you're bulk-loading a team.
+
 Complete, manual procedure. Today this takes ~3 minutes per person.
 Designed so it can be automated later (every step is mechanical).
 

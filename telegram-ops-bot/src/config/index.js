@@ -57,6 +57,14 @@ const config = {
     // list (env: FINANCE_IDS=12345,67890) once you want admins to be
     // scrum-master only and a smaller group to hold money visibility.
     financeIds: parseIds(process.env.FINANCE_IDS),
+    // USR-C3b: super-admins are the only role allowed to APPROVE
+    // promote_admin requests (granting admin power to another user).
+    // Defaults to ADMIN_IDS when unset so existing deployments don't
+    // lock themselves out; production should narrow this list to the
+    // company owner(s) and one trusted deputy.
+    superAdminIds: parseIds(process.env.SUPER_ADMIN_IDS).length
+      ? parseIds(process.env.SUPER_ADMIN_IDS)
+      : parseIds(process.env.ADMIN_IDS),
   },
 
   risk: {

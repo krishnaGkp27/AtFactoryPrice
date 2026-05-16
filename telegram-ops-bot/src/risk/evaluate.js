@@ -59,7 +59,22 @@ const ALWAYS_APPROVAL_ACTIONS = [
   // every add_user goes through dual-admin approval. USR-C3b reserves a
   // tighter SUPER_ADMIN gate for the special case of promoting to admin.
   'add_user',
+  // USR-C3b — promoting an existing user to admin grants approval power,
+  // including the power to approve add_user. To prevent two colluding
+  // admins from minting a third, this action additionally requires the
+  // APPROVER to be in SUPER_ADMIN_IDS (env-only, no in-bot path).
+  'promote_admin',
+  // USR-C4 — flipping status=inactive revokes a user's bot access. Dual-
+  // admin to prevent a single hostile admin from locking out a colleague.
+  'deactivate_user',
 ];
+
+/**
+ * USR-C3b — actions whose APPROVAL is restricted further: only super-
+ * admins (env SUPER_ADMIN_IDS) can tap Approve. Regular admins can still
+ * see the request in their queue but the approve handler rejects them.
+ */
+const SUPER_ADMIN_APPROVAL_ACTIONS = ['promote_admin'];
 
 async function getThresholds() {
   const settings = await settingsRepository.getAll();
@@ -115,4 +130,7 @@ function formatAction(action) {
   return map[action] || action.replace(/_/g, ' ');
 }
 
-module.exports = { evaluate, getThresholds, WRITE_ACTIONS, ALWAYS_APPROVAL_ACTIONS };
+module.exports = {
+  evaluate, getThresholds,
+  WRITE_ACTIONS, ALWAYS_APPROVAL_ACTIONS, SUPER_ADMIN_APPROVAL_ACTIONS,
+};
