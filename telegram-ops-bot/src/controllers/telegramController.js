@@ -5782,6 +5782,11 @@ async function handleCallbackQuery(bot, callbackQuery) {
   }
 
   // ATT-C2 — Attendance Admin hub callback dispatch.
+  if (data.startsWith('atd_rpt:')) {
+    const attendanceReportFlow = require('../flows/attendanceReportFlow');
+    const handled = await attendanceReportFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
   if (data.startsWith('atd_adm:')) {
     const attendanceAdminFlow = require('../flows/attendanceAdminFlow');
     const handled = await attendanceAdminFlow.handleCallback(bot, callbackQuery);
@@ -7936,6 +7941,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
         const attendanceAdminFlow = require('../flows/attendanceAdminFlow');
         await attendanceAdminFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'attendance_report': {
+        // ATT-RPT-1: read-only Reports view (today + 7d/Week/Month + per-employee %).
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        const attendanceReportFlow = require('../flows/attendanceReportFlow');
+        await attendanceReportFlow.start(bot, chatId, uid, messageId);
         break;
       }
       case 'add_warehouse': {

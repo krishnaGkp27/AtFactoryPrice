@@ -81,6 +81,10 @@ const ACTIVITIES = [
 
   { code: 'sales_report',          label: 'Sales Report',              icon: '📊', callback: 'act:sales_report',       hub: 'reports' },
   { code: 'supply_details',        label: 'Supply Details',            icon: '📦', callback: 'act:supply_details',     hub: 'reports' },
+  // ATT-RPT-1 — read-only attendance report (today + window stats per
+  // employee). Admin-only for now; manager-scoped variant ships later
+  // when the hierarchy hook is wired.
+  { code: 'attendance_report',     label: 'Attendance Report',         icon: '🗓', callback: 'act:attendance_report',  hub: 'reports' },
 
   // Tasks hub — visibility is *injected* per-user by the controller
   // (admin / has-manages → sees assign/team/signoff; everyone else

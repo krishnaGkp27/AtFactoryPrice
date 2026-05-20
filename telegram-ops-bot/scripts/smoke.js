@@ -3747,6 +3747,177 @@ async function runS21() {
 }
 
 // ---------------------------------------------------------------------------
+// S22 — ATT-RPT-1 — Attendance Report (under Reports hub)
+//
+// Verifies:
+//   - activityRegistry entry is in 'reports' hub
+//   - service.buildReport returns the correct shape for each window
+//   - flow renders today + daily + per-employee with names (no raw IDs)
+//   - tab switch (7d / Week / Month) re-renders with the active tag
+//   - non-admin is gated out
+// ---------------------------------------------------------------------------
+async function runS22() {
+  // ---- S22.1: registry entry sits in reports hub ----
+  delete require.cache[require.resolve('../src/services/activityRegistry')];
+  const reg = require('../src/services/activityRegistry');
+  const all = reg.getAll();
+  const e = all.find((a) => a.code === 'attendance_report');
+  if (e && e.hub === 'reports' && e.callback === 'act:attendance_report' && /Attendance/.test(e.label)) {
+    pass('S22.1 activityRegistry: attendance_report under reports hub with act:attendance_report');
+  } else fail('S22.1', JSON.stringify(e));
+
+  // ---- Set up fresh stubs (scoped to this block) ----
+  const settings22 = {
+    ATTENDANCE_REQUIRED_USERS: '8616305685,701',
+    ATTENDANCE_TIMEZONE: 'Africa/Lagos',
+    ATTENDANCE_WORKING_DAYS: 'Mon,Tue,Wed,Thu,Fri,Sat',
+    ATTENDANCE_LOCATIONS: 'Lagos Office,House,Kano Office,Chinos Store,Idumota Store',
+  };
+  const appended22 = [];
+
+  stubModule(require.resolve('../src/repositories/settingsRepository'), {
+    getAll: async () => ({ ...settings22 }),
+    get: async (k) => settings22[k] || null,
+    set: async (k, v) => { settings22[k] = String(v ?? ''); },
+  });
+  stubModule(require.resolve('../src/repositories/attendanceRepository'), {
+    getAll: async () => appended22.slice(),
+    getByDate: async (d) => appended22.filter((e) => e.date === d),
+    findByDateUser: async (d, id) => appended22.find((e) => e.date === d && e.telegram_id === String(id)) || null,
+    append: async (e) => { appended22.push({ ...e, rowIndex: appended22.length + 2 }); },
+    getRange: async (a, b) => appended22.filter((e) => e.date >= a && e.date <= b),
+  });
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    findByUserId: async (id) => (id === '8616305685'
+      ? { user_id: '8616305685', name: 'Mohammad Sani', status: 'active', role: 'employee' }
+      : id === '701'
+        ? { user_id: '701', name: 'Abdul Ahmed', status: 'active', role: 'employee' }
+        : null),
+    getAll: async () => [
+      { user_id: '8616305685', name: 'Mohammad Sani', status: 'active', role: 'employee' },
+      { user_id: '701', name: 'Abdul Ahmed', status: 'active', role: 'employee' },
+    ],
+  });
+  stubModule(require.resolve('../src/repositories/auditLogRepository'), {
+    append: async () => {},
+  });
+
+  // Pre-seed today + a past working day so the daily breakdown has data.
+  delete require.cache[require.resolve('../src/services/attendanceReportService')];
+  delete require.cache[require.resolve('../src/services/attendanceService')];
+  const att = require('../src/services/attendanceService');
+  const today = att.todayInTz('Africa/Lagos'); // YYYY-MM-DD
+  const yest = (() => {
+    const [y, m, d] = today.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d - 1));
+    return dt.toISOString().slice(0, 10);
+  })();
+  const repo = require('../src/repositories/attendanceRepository');
+  await repo.append({ date: today, telegram_id: '8616305685', employee_name: 'Mohammad Sani', status: 'present',
+    location: 'Lagos Office', logged_at: new Date().toISOString(), logged_via: 'self' });
+  await repo.append({ date: yest, telegram_id: '8616305685', employee_name: 'Mohammad Sani', status: 'present',
+    location: 'House', logged_at: yest + 'T08:30:00.000Z', logged_via: 'self' });
+  await repo.append({ date: yest, telegram_id: '701', employee_name: 'Abdul Ahmed', status: 'present',
+    location: 'Lagos Office', logged_at: yest + 'T09:15:00.000Z', logged_via: 'self' });
+
+  const reportService = require('../src/services/attendanceReportService');
+
+  // ---- S22.2: buildReport (7d) returns the expected shape ----
+  const r7 = await reportService.buildReport({ kind: '7d' });
+  if (r7.kind === '7d'
+      && r7.requiredCount === 2
+      && Array.isArray(r7.daily) && r7.daily.length > 0
+      && Array.isArray(r7.perEmployee) && r7.perEmployee.length === 2
+      && r7.today.date === today
+      && r7.today.present.length === 1
+      && r7.today.present[0].name === 'Mohammad Sani'
+      && r7.today.missing.length === 1
+      && r7.today.missing[0].name === 'Abdul Ahmed') {
+    pass('S22.2 buildReport(7d): shape OK, today partition correct, names resolved');
+  } else fail('S22.2', JSON.stringify({ kind: r7.kind, req: r7.requiredCount, daily: r7.daily.length, emp: r7.perEmployee.length, today: r7.today }));
+
+  // ---- S22.3: per-employee sorted by % desc ----
+  // Mohammad logged today + yest; Abdul only yest. Mohammad should rank
+  // higher when the window covers today.
+  if (r7.perEmployee[0].name === 'Mohammad Sani' && r7.perEmployee[0].pct >= r7.perEmployee[1].pct) {
+    pass('S22.3 perEmployee sorted by pct desc');
+  } else fail('S22.3', JSON.stringify(r7.perEmployee.map((e2) => ({ n: e2.name, p: e2.pct }))));
+
+  // ---- S22.4: buildReport (month) covers month-start → today ----
+  const rMon = await reportService.buildReport({ kind: 'month' });
+  if (rMon.kind === 'month'
+      && rMon.startYmd.endsWith('-01')
+      && rMon.endYmd === today
+      && rMon.daily.every((d) => d.date >= rMon.startYmd && d.date <= rMon.endYmd)) {
+    pass('S22.4 buildReport(month): window starts at month-01, ends today');
+  } else fail('S22.4', JSON.stringify({ start: rMon.startYmd, end: rMon.endYmd }));
+
+  // ---- S22.5: flow non-admin gated ----
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => false, isSuperAdmin: () => false, isEmployee: () => true,
+    isAllowed: () => true, refresh: async () => {}, invalidate: async () => {},
+  });
+  delete require.cache[require.resolve('../src/flows/attendanceReportFlow')];
+  const flowNon = require('../src/flows/attendanceReportFlow');
+  const sentNon = [];
+  const botNon = { sendMessage: async (cid, t) => { sentNon.push(t); return { message_id: 1 }; },
+    editMessageText: async () => {}, answerCallbackQuery: async () => {} };
+  await flowNon.start(botNon, 'c-22', 'employee-1', null);
+  if (sentNon.some((t) => /admin only/i.test(t))) {
+    pass('S22.5 flow: non-admin rejected at start()');
+  } else fail('S22.5', JSON.stringify(sentNon));
+
+  // ---- S22.6: flow admin renders text + 3-tab keyboard ----
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => true, isSuperAdmin: () => true, isEmployee: () => false,
+    isAllowed: () => true, refresh: async () => {}, invalidate: async () => {},
+  });
+  delete require.cache[require.resolve('../src/flows/attendanceReportFlow')];
+  const flow = require('../src/flows/attendanceReportFlow');
+  const sentR = [];
+  let kbR = null;
+  const botR = {
+    sendMessage: async (cid, t, opts) => { sentR.push(t); kbR = opts && opts.reply_markup; return { message_id: 22 }; },
+    editMessageText: async (t, opts) => { sentR.push(t); kbR = opts && opts.reply_markup; },
+    answerCallbackQuery: async () => {},
+  };
+  await flow.start(botR, 'c-22', 'admin-1', null);
+  const card = sentR[sentR.length - 1] || '';
+  const labels = (kbR && kbR.inline_keyboard || []).flat().map((b) => b.text).join(' | ');
+  if (/Attendance Report — Last 7 Days/.test(card)
+      && /Mohammad Sani/.test(card)
+      && /Abdul Ahmed/.test(card)
+      && !/🪪/.test(card)
+      && /✅ 📅 7d/.test(labels)   // 7d tab marked active
+      && /📅 Week/.test(labels) && /📅 Month/.test(labels)) {
+    pass('S22.6 flow: renders report card with names + 3 tabs (7d active)');
+  } else fail('S22.6', JSON.stringify({ card, labels }));
+
+  // ---- S22.7: tab switch to Month re-renders with Month tab active ----
+  await flow.handleCallback(botR, {
+    from: { id: 'admin-1' }, id: 'cb-22m',
+    message: { chat: { id: 'c-22' }, message_id: 22 },
+    data: 'atd_rpt:tab:month',
+  });
+  const cardMon = sentR[sentR.length - 1] || '';
+  const labelsMon = (kbR && kbR.inline_keyboard || []).flat().map((b) => b.text).join(' | ');
+  if (/Attendance Report — This Month/.test(cardMon)
+      && /✅ 📅 Month/.test(labelsMon)
+      && !/✅ 📅 7d/.test(labelsMon)) {
+    pass('S22.7 flow: tab switch to Month re-renders with Month marked active');
+  } else fail('S22.7', JSON.stringify({ cardMon: cardMon.slice(0, 200), labelsMon }));
+
+  // ---- S22.8: empty state — no required users ----
+  settings22.ATTENDANCE_REQUIRED_USERS = '';
+  delete require.cache[require.resolve('../src/services/attendanceReportService')];
+  const rsEmpty = require('../src/services/attendanceReportService');
+  const rEmpty = await rsEmpty.buildReport({ kind: '7d' });
+  if (rEmpty.requiredCount === 0 && rEmpty.perEmployee.length === 0) {
+    pass('S22.8 buildReport: empty required-users yields requiredCount=0, perEmployee=[]');
+  } else fail('S22.8', JSON.stringify({ rc: rEmpty.requiredCount, pe: rEmpty.perEmployee.length }));
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -3778,6 +3949,7 @@ async function runS21() {
   try { await runS19(); } catch (e) { fail('S19 unexpected error', e.message); }
   try { await runS20(); } catch (e) { fail('S20 unexpected error', e.message); }
   try { await runS21(); } catch (e) { fail('S21 unexpected error', e.message); }
+  try { await runS22(); } catch (e) { fail('S22 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;
