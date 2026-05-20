@@ -428,18 +428,20 @@ async function toggleDay(bot, chatId, userId, day) {
 // ---------------------------------------------------------------------------
 
 async function renderToday(bot, chatId, userId) {
+  // ATT-C2-LITE: use the ghost-aware detail so we only ever render rows
+  // for real active users, and Present (X/Y) reflects intersected count.
+  // Ghost IDs (smoke-test leftovers, deactivated users) are surfaced via
+  // a banner + one-tap [🧹 Clean N ghost IDs now] button so the admin
+  // can fix the settings without leaving the screen.
   const cfg = await attendanceService.getConfig();
   const { date, rows } = await attendanceService.getTodayAll(cfg.timezone);
   const loggedIds = new Set(rows.map((r) => r.telegram_id));
-  let users = [];
-  try { users = (await usersRepo.getAll()).filter((u) => (u.status || 'active') === 'active'); }
-  catch (_) {}
-  const required = cfg.requiredUsers.map((id) => {
-    const u = users.find((x) => String(x.user_id) === String(id));
-    return { id, name: (u && u.name) || id };
-  });
+  const { active: reqActive, ghost } = await attendanceService.getRequiredUsersDetailed();
+
+  const required = reqActive.map(({ id, user }) => ({ id, name: user.name || `User ${id.slice(-4)}` }));
   const present = required.filter((r) => loggedIds.has(r.id));
   const missing = required.filter((r) => !loggedIds.has(r.id));
+
   const fmtTime = (iso) => {
     try {
       return new Intl.DateTimeFormat('en-GB', {
@@ -447,6 +449,7 @@ async function renderToday(bot, chatId, userId) {
       }).format(new Date(iso));
     } catch (_) { return iso.slice(11, 16); }
   };
+
   const presentLines = present.length
     ? present.map((p) => {
         const e = rows.find((r) => r.telegram_id === p.id);
@@ -459,16 +462,57 @@ async function renderToday(bot, chatId, userId) {
   const missingLines = missing.length
     ? missing.map((m) => `  ⏳ ${m.name}`).join('\n')
     : '  _(everyone has logged)_';
+
+  // Surface any ad-hoc logs from people who weren't on the required list
+  // (e.g. admin marked someone on behalf who isn't required). Show them
+  // under a separate section so they're not lost, but don't count them
+  // toward Present (X/Y).
+  let usersAll = [];
+  try { usersAll = await usersRepo.getAll(); } catch (_) {}
+  const usersById = new Map(usersAll.map((u) => [String(u.user_id), u]));
+  const requiredSet = new Set(required.map((r) => r.id));
+  const extras = rows.filter((r) => !requiredSet.has(r.telegram_id));
+  const extrasLines = extras.length
+    ? extras.map((e) => {
+        const u = usersById.get(e.telegram_id);
+        const name = (u && u.name) || `(unknown ${e.telegram_id.slice(-4)})`;
+        return `  ✨ ${name} — ${e.location} @ ${fmtTime(e.logged_at)}`;
+      }).join('\n')
+    : '';
+
+  const ghostBanner = ghost.length
+    ? `\n\n⚠️ *${ghost.length} ghost ID(s)* in your Required-Users list don't match any active user. Tap below to clean them.`
+    : '';
+
+  const extrasSection = extras.length
+    ? `\n\n*Also logged today (not on required list):*\n${extrasLines}`
+    : '';
+
+  const kb = [];
+  if (ghost.length) {
+    kb.push([{ text: `🧹 Clean ${ghost.length} ghost ID${ghost.length > 1 ? 's' : ''} now`, callback_data: 'atd_adm:clean_ghosts' }]);
+  }
+  kb.push([{ text: '🔁 Refresh', callback_data: 'atd_adm:today' }]);
+  kb.push(backRow());
+
   await render(bot, chatId, userId,
     `📊 *Attendance — ${date}*\n\n`
     + `*Present (${present.length}/${required.length}):*\n${presentLines}\n\n`
-    + `*Not yet logged (${missing.length}):*\n${missingLines}\n\n`
+    + `*Not yet logged (${missing.length}):*\n${missingLines}`
+    + `${extrasSection}`
+    + `${ghostBanner}\n\n`
     + `_Live view — refresh by re-opening._`,
-    [
-      [{ text: '🔁 Refresh', callback_data: 'atd_adm:today' }],
-      backRow(),
-    ],
+    kb,
   );
+}
+
+async function cleanGhostsNow(bot, chatId, userId) {
+  // One-tap purge: keep the active-only IDs, drop all ghosts in a single
+  // setRequiredUsers() call (which emits an audit row). Then re-render
+  // Today so the admin sees clean counts immediately.
+  const { active } = await attendanceService.getRequiredUsersDetailed();
+  await attendanceService.setRequiredUsers(active.map((r) => r.id));
+  await renderToday(bot, chatId, userId);
 }
 
 // ---------------------------------------------------------------------------
@@ -609,6 +653,7 @@ async function handleCallback(bot, query) {
   if (data === 'atd_adm:loc')    { await renderLocationsEditor(bot, chatId, userId); return true; }
   if (data === 'atd_adm:days')   { await renderWorkingDays(bot, chatId, userId); return true; }
   if (data === 'atd_adm:today')  { await renderToday(bot, chatId, userId); return true; }
+  if (data === 'atd_adm:clean_ghosts') { await cleanGhostsNow(bot, chatId, userId); return true; }
   if (data === 'atd_adm:behalf') { const s = sessionStore.get(userId); s.behalfTarget = null; sessionStore.set(userId, s); await renderBehalfPickUser(bot, chatId, userId); return true; }
   if (data === 'atd_adm:tz')     { await promptTimezone(bot, chatId, userId); return true; }
   if (data === 'atd_adm:loc_add'){ await promptNewLocation(bot, chatId, userId); return true; }

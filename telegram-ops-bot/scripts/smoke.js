@@ -3695,6 +3695,55 @@ async function runS21() {
       && /Attendance — Admin Hub/.test(bottomHalf)) {
     pass('S21.30 admin hub: embeds Today\'s Status panel ABOVE the settings tiles');
   } else fail('S21.30', hubCard);
+
+  // S21.31 — Today's Full View: filters ghosts, shows names, never raw IDs.
+  // Seed with 2 real active + 5 ghosts; expect Present (X/2), no bare IDs.
+  _settingsState.ATTENDANCE_REQUIRED_USERS = '8616305685,701,743,064,826,287,006';
+  _appended.length = 0;
+  await att2.markPresent({ telegramId: '8616305685', name: 'Mohammad Sani', location: 'Lagos Office' });
+  const sent31 = [];
+  let keyboard31 = null;
+  const bot31 = {
+    sendMessage: async (cid, t, opts) => { sent31.push(t); keyboard31 = opts && opts.reply_markup; return { message_id: 31 }; },
+    editMessageText: async (t, opts) => { sent31.push(t); keyboard31 = opts && opts.reply_markup; },
+    answerCallbackQuery: async () => {},
+  };
+  await adm3.handleCallback(bot31, {
+    from: { id: 'admin-1' }, id: 'cb-31',
+    message: { chat: { id: 'c-31' }, message_id: 31 },
+    data: 'atd_adm:today',
+  });
+  const todayCard = sent31[sent31.length - 1] || '';
+  const allButtonLabels = (keyboard31 && keyboard31.inline_keyboard || [])
+    .flat().map((b) => b.text).join(' | ');
+  // Must show real counts (Present 1/2), real names, NO 3-digit ID rows,
+  // ghost banner in body + cleanup button in keyboard.
+  if (/Present \(1\/2\)/.test(todayCard)
+      && /✅ Mohammad Sani/.test(todayCard)
+      && /⏳ Abdul Ahmed/.test(todayCard)
+      && !/🪪/.test(todayCard)
+      && !/⏳ 743/.test(todayCard) && !/⏳ 064/.test(todayCard)
+      && /5 ghost ID/.test(todayCard)
+      && /Clean 5 ghost IDs now/.test(allButtonLabels)) {
+    pass('S21.31 Today\'s Full View: filters ghosts, shows names, no raw IDs, surfaces clean CTA');
+  } else fail('S21.31', JSON.stringify({ todayCard, allButtonLabels }));
+
+  // S21.32 — Clean ghosts button purges and re-renders with clean count.
+  await adm3.handleCallback(bot31, {
+    from: { id: 'admin-1' }, id: 'cb-32',
+    message: { chat: { id: 'c-31' }, message_id: 31 },
+    data: 'atd_adm:clean_ghosts',
+  });
+  const afterClean = sent31[sent31.length - 1];
+  // Settings should now contain only the 2 real active IDs.
+  const persisted = _settingsState.ATTENDANCE_REQUIRED_USERS.split(',').filter(Boolean);
+  if (persisted.length === 2
+      && persisted.includes('8616305685') && persisted.includes('701')
+      && /Present \(1\/2\)/.test(afterClean)
+      && !/ghost ID/.test(afterClean)
+      && !/Clean.*ghost/.test(afterClean)) {
+    pass('S21.32 clean_ghosts: purges settings + re-renders without banner/button');
+  } else fail('S21.32', JSON.stringify({ persisted, afterClean }));
 }
 
 // ---------------------------------------------------------------------------
