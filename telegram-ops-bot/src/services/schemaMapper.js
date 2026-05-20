@@ -172,6 +172,16 @@ const REQUIRED_SHEETS = {
       'handled_by', 'handled_at',
     ],
   },
+  // ATT-C1 — daily attendance log. One row per (date, telegram_id).
+  // V1 stores only 'present' marks; missing rows imply not-yet-logged
+  // (the C3 scheduler will later auto-stamp `not_logged` after the
+  // configured cutoff so the next morning's report is clean).
+  Attendance: {
+    headers: [
+      'date', 'telegram_id', 'employee_name', 'status',
+      'location', 'logged_at', 'logged_via', 'marked_by', 'reason',
+    ],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];

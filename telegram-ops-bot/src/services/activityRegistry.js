@@ -96,6 +96,15 @@ const ACTIVITIES = [
   { code: 'payouts',               label: 'Payouts',                   icon: '💰', callback: 'act:payouts',            hub: 'tasks' },
 
   { code: 'update_price',          label: 'Update Price',              icon: '💲', callback: 'act:update_price',       hub: 'admin' },
+  // ATT-C1 — Mark Attendance (employee-facing). Not anchored to a
+  // department; injected at menu-render time for users whose Telegram ID
+  // is in Settings.ATTENDANCE_REQUIRED_USERS. Hub is intentionally null
+  // so it never appears automatically from a department's activity list.
+  { code: 'mark_attendance',       label: 'Mark Attendance',           icon: '📍', callback: 'act:mark_attendance',   hub: null },
+  // ATT-C2 — admin hub entry to manage attendance: required users,
+  // locations, reminder/report times, working days, today view,
+  // mark-on-behalf. Admin-only.
+  { code: 'attendance_admin',      label: 'Attendance',                icon: '🗓', callback: 'act:attendance_admin', hub: 'admin' },
   // USR-C3 — in-bot add employee (dual-admin gated, ALWAYS_APPROVAL_ACTIONS).
   // Listed above Manage Users so the two related entries sit together.
   { code: 'add_user',              label: 'Add Employee',              icon: '➕', callback: 'act:add_user',          hub: 'admin' },

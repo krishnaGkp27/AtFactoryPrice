@@ -3299,6 +3299,18 @@ async function handleMessage(bot, msg) {
     }
   }
 
+  // ATT-C2 — Attendance Admin hub accepts text input only on HH:MM,
+  // timezone, and new-location steps. handleText returns false unless
+  // an await_* step is active.
+  {
+    const atdAdmSession = sessionStore.get(userId);
+    if (atdAdmSession && atdAdmSession.type === 'attendance_admin_flow') {
+      const attendanceAdminFlow = require('../flows/attendanceAdminFlow');
+      const handled = await attendanceAdminFlow.handleText(bot, msg);
+      if (handled) return;
+    }
+  }
+
   // Catalog: search design photo — free-text design number lookup.
   {
     const dasSession = sessionStore.get(userId);
@@ -4621,6 +4633,22 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
     logger.warn(`buildGreetingMenuMarkup: taskFlow visibility failed: ${e.message}`);
   }
 
+  // ATT-C1 — Inject the "📍 Mark Attendance" tile for users that admin has
+  // added to ATTENDANCE_REQUIRED_USERS. Hub is null on the registry entry,
+  // so this is the ONLY path that surfaces the tile. Admins also get the
+  // tile if they happen to be in the required list (test path).
+  try {
+    const attendanceService = require('../services/attendanceService');
+    const isReq = await attendanceService.isRequired(userId);
+    if (isReq) {
+      for (const a of activityRegistry.filterByCodes(['mark_attendance'])) {
+        if (!allowed.find((x) => x.code === a.code)) allowed.push(a);
+      }
+    }
+  } catch (e) {
+    logger.warn(`buildGreetingMenuMarkup: attendance visibility failed: ${e.message}`);
+  }
+
   if (!allowed.length) {
     return {
       empty: true,
@@ -5743,6 +5771,20 @@ async function handleCallbackQuery(bot, callbackQuery) {
   if (data.startsWith('umg:')) {
     const userManageFlow = require('../flows/userManageFlow');
     const handled = await userManageFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
+  // ATT-C1 — Mark Attendance (employee) callback dispatch.
+  if (data.startsWith('atd:')) {
+    const attendanceFlow = require('../flows/attendanceFlow');
+    const handled = await attendanceFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
+  // ATT-C2 — Attendance Admin hub callback dispatch.
+  if (data.startsWith('atd_adm:')) {
+    const attendanceAdminFlow = require('../flows/attendanceAdminFlow');
+    const handled = await attendanceAdminFlow.handleCallback(bot, callbackQuery);
     if (handled) return;
   }
 
@@ -7878,6 +7920,22 @@ async function handleCallbackQuery(bot, callbackQuery) {
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
         const userAddFlow = require('../flows/userAddFlow');
         await userAddFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'mark_attendance': {
+        // ATT-C1: employee picks today's location. The flow itself
+        // verifies the user is in ATTENDANCE_REQUIRED_USERS and renders
+        // a polite gate message if not (so a curious admin tapping the
+        // tile during testing gets a sensible screen).
+        const attendanceFlow = require('../flows/attendanceFlow');
+        await attendanceFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'attendance_admin': {
+        // ATT-C2: admin hub for attendance config + today view + mark-on-behalf.
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        const attendanceAdminFlow = require('../flows/attendanceAdminFlow');
+        await attendanceAdminFlow.start(bot, chatId, uid, messageId);
         break;
       }
       case 'add_warehouse': {

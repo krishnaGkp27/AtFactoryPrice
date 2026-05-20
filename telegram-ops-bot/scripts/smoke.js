@@ -3280,6 +3280,352 @@ async function runS20() {
 }
 
 // ---------------------------------------------------------------------------
+// S21 — ATT-C1 (employee mark) + ATT-C2 (admin hub + mark-on-behalf)
+// ---------------------------------------------------------------------------
+async function runS21() {
+  const _audit = [];
+  let _settingsState = {
+    ATTENDANCE_REQUIRED_USERS: '8616305685,701',
+    ATTENDANCE_LOCATIONS: 'Lagos Office,House,Kano Office,Chinos Store,Idumota Store',
+    ATTENDANCE_TIMEZONE: 'Africa/Lagos',
+    ATTENDANCE_WORKING_DAYS: 'Mon,Tue,Wed,Thu,Fri,Sat',
+    ATTENDANCE_REMINDER_TIME: '09:00',
+    ATTENDANCE_REPORT_TIME: '22:00',
+    ATTENDANCE_CUTOFF_TIME: '23:30',
+    ATTENDANCE_ESCALATE_AFTER_HOURS: '3',
+  };
+  const _appended = [];
+  stubModule(require.resolve('../src/repositories/settingsRepository'), {
+    getAll: async () => ({ ..._settingsState }),
+    set: async (k, v) => { _settingsState[k] = String(v); return { key: k, value: v }; },
+  });
+  stubModule(require.resolve('../src/repositories/attendanceRepository'), {
+    getAll: async () => _appended.slice(),
+    getByDate: async (d) => _appended.filter((e) => e.date === d),
+    findByDateUser: async (d, id) => _appended.find((e) => e.date === d && e.telegram_id === String(id)) || null,
+    append: async (e) => { _appended.push({ ...e, rowIndex: _appended.length + 2 }); },
+    getRange: async (a, b) => _appended.filter((e) => e.date >= a && e.date <= b),
+  });
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    findByUserId: async (id) => (id === '8616305685'
+      ? { user_id: '8616305685', name: 'Mohammad Sani', status: 'active', role: 'employee' }
+      : id === '701'
+        ? { user_id: '701', name: 'Abdul Ahmed', status: 'active', role: 'employee' }
+        : null),
+    getAll: async () => [
+      { user_id: '8616305685', name: 'Mohammad Sani', status: 'active', role: 'employee' },
+      { user_id: '701', name: 'Abdul Ahmed', status: 'active', role: 'employee' },
+      { user_id: '999', name: 'Inactive Person', status: 'inactive', role: 'employee' },
+    ],
+  });
+  stubModule(require.resolve('../src/repositories/auditLogRepository'), {
+    append: async (event, payload, user) => { _audit.push({ event, payload, user }); },
+  });
+
+  delete require.cache[require.resolve('../src/services/attendanceService')];
+  const att = require('../src/services/attendanceService');
+
+  const cfg = await att.getConfig();
+  if (cfg.requiredUsers.length === 2
+      && cfg.requiredUsers.includes('8616305685')
+      && cfg.locations.length === 5
+      && cfg.locations[0] === 'Lagos Office'
+      && cfg.timezone === 'Africa/Lagos'
+      && cfg.workingDays.length === 6
+      && cfg.escalateAfterHours === 3) {
+    pass('S21.1 attendanceService.getConfig: parses CSV settings + applies defaults');
+  } else fail('S21.1', JSON.stringify(cfg));
+
+  const today = att.todayInTz('Africa/Lagos');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(today)) {
+    pass(`S21.2 todayInTz: YYYY-MM-DD shape (${today})`);
+  } else fail('S21.2', today);
+
+  const r1 = await att.isRequired('8616305685');
+  const r2 = await att.isRequired('999999');
+  if (r1 === true && r2 === false) {
+    pass('S21.3 isRequired: returns true for listed id, false otherwise');
+  } else fail('S21.3', JSON.stringify({ r1, r2 }));
+
+  const m1 = await att.markPresent({ telegramId: '8616305685', name: 'Mohammad Sani', location: 'Lagos Office' });
+  if (m1.ok && !m1.alreadyLogged
+      && m1.entry.status === 'present'
+      && m1.entry.location === 'Lagos Office'
+      && m1.entry.telegram_id === '8616305685'
+      && m1.entry.logged_via === 'self'
+      && _appended.length === 1
+      && _audit.some((a) => a.event === 'attendance.marked')) {
+    pass('S21.4 markPresent: appends with status=present, via=self, audit emitted');
+  } else fail('S21.4', JSON.stringify({ m1, len: _appended.length, audit: _audit.length }));
+
+  const m2 = await att.markPresent({ telegramId: '8616305685', name: 'Mohammad Sani', location: 'Kano Office' });
+  if (m2.ok && m2.alreadyLogged
+      && _appended.length === 1
+      && _appended[0].location === 'Lagos Office') {
+    pass('S21.5 markPresent: idempotent — second call returns existing entry, no new row');
+  } else fail('S21.5', JSON.stringify({ m2, len: _appended.length }));
+
+  const m3 = await att.markPresent({ telegramId: '701', name: 'Abdul Ahmed', location: 'Mars Office' });
+  if (!m3.ok && m3.reason === 'location_not_in_admin_list' && Array.isArray(m3.allowed)) {
+    pass('S21.6 markPresent: rejects unknown location; surfaces allowed list');
+  } else fail('S21.6', JSON.stringify(m3));
+
+  const m4 = await att.markPresent({ telegramId: '701', name: 'Abdul Ahmed', location: 'House', adminUserId: 'admin-1' });
+  if (m4.ok && m4.entry.logged_via === 'admin' && m4.entry.marked_by === 'admin-1') {
+    pass('S21.7 markPresent: on-behalf records logged_via=admin + marked_by');
+  } else fail('S21.7', JSON.stringify(m4));
+
+  const all = await att.getTodayAll();
+  if (all.rows.length === 2
+      && all.rows.some((r) => r.telegram_id === '8616305685')
+      && all.rows.some((r) => r.telegram_id === '701')) {
+    pass('S21.8 getTodayAll: returns both of today\'s entries');
+  } else fail('S21.8', JSON.stringify(all));
+
+  delete require.cache[require.resolve('../src/flows/attendanceFlow')];
+  const flow = require('../src/flows/attendanceFlow');
+
+  const sent9 = [];
+  const fakeBot9 = {
+    sendMessage: async (cid, t) => { sent9.push(t); return { message_id: 91 }; },
+    editMessageText: async () => {},
+  };
+  await flow.start(fakeBot9, 'c-9', 'unknown-id', null);
+  if (sent9.some((t) => /not enabled/i.test(t)) && _appended.length === 2) {
+    pass('S21.9 flow.start: non-required user → gate message, no append');
+  } else fail('S21.9', JSON.stringify({ sent9, len: _appended.length }));
+
+  _appended.length = 0;
+  const sent10 = [];
+  const fakeBot10 = {
+    sendMessage: async (cid, t, opts) => { sent10.push({ t, opts }); return { message_id: 101 }; },
+    editMessageText: async () => {},
+  };
+  await flow.start(fakeBot10, 'c-10', '8616305685', null);
+  const lastCard = sent10[sent10.length - 1];
+  const buttons = lastCard && lastCard.opts && lastCard.opts.reply_markup
+    && lastCard.opts.reply_markup.inline_keyboard;
+  const buttonTexts = buttons ? buttons.flat().map((b) => b.text).join('|') : '';
+  if (/Where are you marking from/i.test(lastCard.t)
+      && /Lagos Office/.test(buttonTexts)
+      && /Idumota Store/.test(buttonTexts)) {
+    pass('S21.10 flow.start: required user, unlogged → location picker rendered');
+  } else fail('S21.10', JSON.stringify({ t: lastCard && lastCard.t, buttonTexts }));
+
+  const sent11 = [];
+  const fakeBot11 = {
+    sendMessage: async (cid, t) => { sent11.push(t); return { message_id: 111 }; },
+    editMessageText: async (t) => { sent11.push(t); },
+    answerCallbackQuery: async () => {},
+  };
+  await flow.handleCallback(fakeBot11, {
+    from: { id: '8616305685' }, id: 'cb-1',
+    message: { chat: { id: 'c-10' }, message_id: 101 },
+    data: 'atd:pick:' + encodeURIComponent('Lagos Office'),
+  });
+  if (_appended.length === 1
+      && _appended[0].location === 'Lagos Office'
+      && sent11.some((t) => /Attendance Recorded/i.test(t) && /Lagos Office/.test(t))) {
+    pass('S21.11 flow pick → markPresent → confirmation card');
+  } else fail('S21.11', JSON.stringify({ len: _appended.length, sent11 }));
+
+  const sent12 = [];
+  const fakeBot12 = {
+    sendMessage: async (cid, t) => { sent12.push(t); return { message_id: 121 }; },
+    editMessageText: async (t) => { sent12.push(t); },
+  };
+  await flow.start(fakeBot12, 'c-12', '8616305685', null);
+  if (sent12.some((t) => /Today's Attendance/i.test(t) && /Already marked/i.test(t) && /Lagos Office/.test(t))) {
+    pass('S21.12 flow.start when already logged: read-only "Today\'s Attendance" card');
+  } else fail('S21.12', JSON.stringify(sent12));
+
+  delete require.cache[require.resolve('../src/services/activityRegistry')];
+  const reg = require('../src/services/activityRegistry');
+  const flat = typeof reg.getAll === 'function' ? reg.getAll() : [];
+  const mark = flat.find((a) => a.code === 'mark_attendance');
+  const admin = flat.find((a) => a.code === 'attendance_admin');
+  if (mark && mark.callback === 'act:mark_attendance' && mark.hub === null
+      && admin && admin.callback === 'act:attendance_admin' && admin.hub === 'admin') {
+    pass('S21.13 registry: mark_attendance hub=null (injected at runtime); attendance_admin in admin hub');
+  } else fail('S21.13', JSON.stringify({ mark, admin }));
+
+  await att.setConfigKey('ATTENDANCE_REMINDER_TIME', '08:30');
+  const cfg2 = await att.getConfig();
+  if (cfg2.reminderTime === '08:30' && _settingsState.ATTENDANCE_REMINDER_TIME === '08:30') {
+    pass('S21.14 setConfigKey: writes through to settings + readable on next getConfig');
+  } else fail('S21.14', JSON.stringify({ cfg2, _settingsState }));
+
+  let threw = false;
+  try { await att.setConfigKey('ATTENDANCE_BOGUS', 'x'); } catch (_) { threw = true; }
+  if (threw) pass('S21.15 setConfigKey: throws on unknown key (typo safety)');
+  else fail('S21.15', 'expected throw');
+
+  // ------------------- ATT-C2: admin hub flow -------------------
+  // Use the SAME mock state from C1 so persistence is observable. Switch
+  // auth to admin and re-require the flow.
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => true, isSuperAdmin: () => true, isEmployee: () => false,
+    isAllowed: () => true, refresh: async () => {}, invalidate: async () => {},
+  });
+  delete require.cache[require.resolve('../src/flows/attendanceAdminFlow')];
+  const adm = require('../src/flows/attendanceAdminFlow');
+  const sessionStore = require('../src/utils/sessionStore');
+
+  // S21.16 — non-admin refused at entry.
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => false, isSuperAdmin: () => false, isEmployee: () => true,
+    isAllowed: () => true, refresh: async () => {}, invalidate: async () => {},
+  });
+  delete require.cache[require.resolve('../src/flows/attendanceAdminFlow')];
+  const admNon = require('../src/flows/attendanceAdminFlow');
+  const sent16 = [];
+  const bot16 = { sendMessage: async (cid, t) => { sent16.push(t); return { message_id: 1 }; },
+    editMessageText: async () => {} };
+  await admNon.start(bot16, 'c-16', 'employee-1', null);
+  if (!sessionStore.get('employee-1') && sent16.some((t) => /admin only/i.test(t))) {
+    pass('S21.16 admin hub: non-admin rejected, no session');
+  } else fail('S21.16', JSON.stringify({ s: sessionStore.get('employee-1'), sent16 }));
+
+  // Restore admin auth for the rest.
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => true, isSuperAdmin: () => true, isEmployee: () => false,
+    isAllowed: () => true, refresh: async () => {}, invalidate: async () => {},
+  });
+  delete require.cache[require.resolve('../src/flows/attendanceAdminFlow')];
+  const adm2 = require('../src/flows/attendanceAdminFlow');
+
+  // S21.17 — start renders hub card with key stats.
+  const sent17 = [];
+  const bot17 = {
+    sendMessage: async (cid, t) => { sent17.push(t); return { message_id: 17 }; },
+    editMessageText: async (t) => { sent17.push(t); },
+    answerCallbackQuery: async () => {},
+  };
+  await adm2.start(bot17, 'c-17', 'admin-1', null);
+  const hubText = sent17[sent17.length - 1];
+  if (/Attendance — Admin Hub/.test(hubText)
+      && /Required users/.test(hubText) && /Locations/.test(hubText)
+      && /Africa\/Lagos/.test(hubText)) {
+    pass('S21.17 admin hub: hub card renders with required/locations/tz stats');
+  } else fail('S21.17', hubText);
+
+  // S21.18 — toggle a required user via callback.
+  const beforeReq = _settingsState.ATTENDANCE_REQUIRED_USERS;
+  await adm2.handleCallback(bot17, {
+    from: { id: 'admin-1' }, id: 'cb-18',
+    message: { chat: { id: 'c-17' }, message_id: 17 },
+    data: 'atd_adm:req_toggle:701',
+  });
+  const afterReq = _settingsState.ATTENDANCE_REQUIRED_USERS;
+  if (afterReq !== beforeReq && !afterReq.split(',').includes('701')) {
+    pass('S21.18 admin hub: req_toggle removes existing required id');
+  } else fail('S21.18', JSON.stringify({ beforeReq, afterReq }));
+
+  // S21.19 — toggle back ON (round-trip).
+  await adm2.handleCallback(bot17, {
+    from: { id: 'admin-1' }, id: 'cb-19',
+    message: { chat: { id: 'c-17' }, message_id: 17 },
+    data: 'atd_adm:req_toggle:701',
+  });
+  if (_settingsState.ATTENDANCE_REQUIRED_USERS.split(',').includes('701')) {
+    pass('S21.19 admin hub: req_toggle adds id back (round-trip)');
+  } else fail('S21.19', _settingsState.ATTENDANCE_REQUIRED_USERS);
+
+  // S21.20 — add a new location via text input flow.
+  await adm2.handleCallback(bot17, {
+    from: { id: 'admin-1' }, id: 'cb-20a',
+    message: { chat: { id: 'c-17' }, message_id: 17 },
+    data: 'atd_adm:loc_add',
+  });
+  const s20 = sessionStore.get('admin-1');
+  if (!s20 || s20.step !== 'await_location_new') {
+    fail('S21.20 setup', JSON.stringify(s20));
+  } else {
+    await adm2.handleText(bot17, { from: { id: 'admin-1' }, chat: { id: 'c-17' }, text: 'Aba Branch' });
+    if (_settingsState.ATTENDANCE_LOCATIONS.split(',').map((x) => x.trim()).includes('Aba Branch')) {
+      pass('S21.20 admin hub: new location text input appended to locations');
+    } else fail('S21.20', _settingsState.ATTENDANCE_LOCATIONS);
+  }
+
+  // S21.21 — delete that location.
+  await adm2.handleCallback(bot17, {
+    from: { id: 'admin-1' }, id: 'cb-21',
+    message: { chat: { id: 'c-17' }, message_id: 17 },
+    data: 'atd_adm:loc_del:' + encodeURIComponent('Aba Branch'),
+  });
+  if (!_settingsState.ATTENDANCE_LOCATIONS.split(',').includes('Aba Branch')) {
+    pass('S21.21 admin hub: loc_del removes the location');
+  } else fail('S21.21', _settingsState.ATTENDANCE_LOCATIONS);
+
+  // S21.22 — set reminder time via text input.
+  await adm2.handleCallback(bot17, {
+    from: { id: 'admin-1' }, id: 'cb-22a',
+    message: { chat: { id: 'c-17' }, message_id: 17 },
+    data: 'atd_adm:time:reminder',
+  });
+  await adm2.handleText(bot17, { from: { id: 'admin-1' }, chat: { id: 'c-17' }, text: '07:45' });
+  if (_settingsState.ATTENDANCE_REMINDER_TIME === '07:45') {
+    pass('S21.22 admin hub: HH:MM input persists to reminder time');
+  } else fail('S21.22', _settingsState.ATTENDANCE_REMINDER_TIME);
+
+  // S21.23 — reject malformed HH:MM with helpful error.
+  await adm2.handleCallback(bot17, {
+    from: { id: 'admin-1' }, id: 'cb-23a',
+    message: { chat: { id: 'c-17' }, message_id: 17 },
+    data: 'atd_adm:time:report',
+  });
+  const beforeRep = _settingsState.ATTENDANCE_REPORT_TIME;
+  await adm2.handleText(bot17, { from: { id: 'admin-1' }, chat: { id: 'c-17' }, text: '25:99' });
+  if (_settingsState.ATTENDANCE_REPORT_TIME === beforeRep) {
+    pass('S21.23 admin hub: malformed HH:MM rejected, settings unchanged');
+  } else fail('S21.23', _settingsState.ATTENDANCE_REPORT_TIME);
+
+  // S21.24 — toggle a working day.
+  const beforeDays = _settingsState.ATTENDANCE_WORKING_DAYS;
+  await adm2.handleCallback(bot17, {
+    from: { id: 'admin-1' }, id: 'cb-24',
+    message: { chat: { id: 'c-17' }, message_id: 17 },
+    data: 'atd_adm:day:Sun',
+  });
+  if (_settingsState.ATTENDANCE_WORKING_DAYS.split(',').includes('Sun') && _settingsState.ATTENDANCE_WORKING_DAYS !== beforeDays) {
+    pass('S21.24 admin hub: working-day toggle persists');
+  } else fail('S21.24', _settingsState.ATTENDANCE_WORKING_DAYS);
+
+  // S21.25 — Mark on Behalf full path.
+  // Ensure 701 has NOT logged today for this round (clear append store).
+  _appended.length = 0;
+  await adm2.handleCallback(bot17, {
+    from: { id: 'admin-1' }, id: 'cb-25a',
+    message: { chat: { id: 'c-17' }, message_id: 17 },
+    data: 'atd_adm:behalf_pick:701',
+  });
+  await adm2.handleCallback(bot17, {
+    from: { id: 'admin-1' }, id: 'cb-25b',
+    message: { chat: { id: 'c-17' }, message_id: 17 },
+    data: 'atd_adm:behalf_loc:' + encodeURIComponent('House'),
+  });
+  if (_appended.length === 1
+      && _appended[0].telegram_id === '701'
+      && _appended[0].location === 'House'
+      && _appended[0].logged_via === 'admin'
+      && _appended[0].marked_by === 'admin-1') {
+    pass('S21.25 admin hub: Mark on Behalf appends row with via=admin + marked_by stamped');
+  } else fail('S21.25', JSON.stringify(_appended[0]));
+
+  // S21.26 — invalid timezone rejected.
+  await adm2.handleCallback(bot17, {
+    from: { id: 'admin-1' }, id: 'cb-26',
+    message: { chat: { id: 'c-17' }, message_id: 17 },
+    data: 'atd_adm:tz',
+  });
+  const beforeTz = _settingsState.ATTENDANCE_TIMEZONE;
+  await adm2.handleText(bot17, { from: { id: 'admin-1' }, chat: { id: 'c-17' }, text: 'Not/AReal_TZ' });
+  if (_settingsState.ATTENDANCE_TIMEZONE === beforeTz) {
+    pass('S21.26 admin hub: invalid timezone rejected');
+  } else fail('S21.26', _settingsState.ATTENDANCE_TIMEZONE);
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -3310,6 +3656,7 @@ async function runS20() {
   try { await runS18(); } catch (e) { fail('S18 unexpected error', e.message); }
   try { await runS19(); } catch (e) { fail('S19 unexpected error', e.message); }
   try { await runS20(); } catch (e) { fail('S20 unexpected error', e.message); }
+  try { await runS21(); } catch (e) { fail('S21 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;
