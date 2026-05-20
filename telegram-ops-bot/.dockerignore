@@ -1,0 +1,41 @@
+# DEPLOY-C1: keep build context small so Docker uploads/transfers are fast
+# and node_modules from the host never poison the image.
+
+node_modules
+npm-debug.log
+.npm
+.cache
+
+# tests, scripts, docs — not needed at runtime
+tests/
+scripts/smoke.js
+docs/
+*.md
+!README.md
+
+# editor / OS junk
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# git
+.git
+.gitignore
+.gitattributes
+
+# local env (never bake secrets into images)
+.env
+.env.*
+!.env.example
+
+# build outputs / caches
+coverage/
+dist/
+*.log
+
+# Railway / docker meta
+.dockerignore
+Dockerfile
+docker-compose.yml
+railway.json

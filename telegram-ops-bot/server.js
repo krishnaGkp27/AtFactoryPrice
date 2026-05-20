@@ -34,8 +34,22 @@ app.use((req, res, next) => {
   next();
 });
 
+// DEPLOY-C1: /health is what Railway probes BEFORE routing traffic to a
+// new container. We return:
+//   - 200 OK if the bot is past initial schema bootstrap (default state)
+//   - 503 once we've received SIGTERM and are draining (Railway then
+//     stops sending us new traffic, letting in-flight callbacks finish)
+let _shuttingDown = false;
+let _bootedAt = Date.now();
 app.get('/health', (req, res) => {
-  res.json({ ok: true, service: 'telegram-ops-bot' });
+  if (_shuttingDown) {
+    return res.status(503).json({ ok: false, state: 'draining' });
+  }
+  return res.json({
+    ok: true,
+    service: 'telegram-ops-bot',
+    uptimeSeconds: Math.round((Date.now() - _bootedAt) / 1000),
+  });
 });
 
 app.get('/api/settings', apiController.getSettings);
@@ -188,7 +202,8 @@ async function checkColdCustomerAlerts() {
 }
 
 const PORT = config.port;
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
+  _bootedAt = Date.now();
   logger.info(`Server listening on port ${PORT}. Webhook: ${config.baseUrl ? `${config.baseUrl}/webhook` : 'Set BASE_URL and run npm run set-webhook'}`);
   try {
     await schemaMapper.initialize();
@@ -203,4 +218,53 @@ app.listen(PORT, async () => {
   } catch (e) {
     logger.error('Init error (bot still running):', e.message);
   }
+});
+
+// DEPLOY-C1: graceful shutdown so Railway's container swap is zero-downtime.
+//
+// Sequence on SIGTERM (sent by Railway ~10s before SIGKILL):
+//   1. Flip _shuttingDown=true → /health starts returning 503
+//   2. Wait 2s so Railway's load balancer notices and stops sending us
+//      new webhook traffic
+//   3. Stop accepting new HTTP connections (server.close())
+//   4. Give in-flight requests up to 7s to finish before exit
+//
+// Without this handler, container swaps drop every callback that's
+// mid-flight — exactly the "tap goes nowhere" symptom we hit today.
+function gracefulShutdown(signal) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+  logger.info(`Shutdown signal received (${signal}). Draining…`);
+  setTimeout(() => {
+    server.close((err) => {
+      if (err) {
+        logger.error('server.close error during shutdown:', err.message);
+        process.exit(1);
+      }
+      logger.info('HTTP server closed cleanly. Exiting.');
+      process.exit(0);
+    });
+    // Hard timeout — if some socket refuses to close in 7s, force exit
+    // anyway. Railway will SIGKILL us at ~10s total, so leave ourselves
+    // a 1s buffer to log the forced exit.
+    setTimeout(() => {
+      logger.warn('Graceful shutdown timed out. Forcing exit.');
+      process.exit(0);
+    }, 7000).unref();
+  }, 2000).unref();
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+// Surface unhandled rejections in logs (silent failures are how the
+// "tap does nothing" bug class hides itself).
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled promise rejection:', reason && reason.stack ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught exception:', err.stack || err.message || err);
+  // Don't auto-exit — Railway will restart us via restartPolicy if the
+  // process dies, but most uncaught exceptions are recoverable (e.g.
+  // a single bad webhook payload) and killing the bot for them would
+  // be more disruptive than logging and continuing.
 });
