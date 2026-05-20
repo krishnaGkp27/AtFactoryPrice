@@ -80,6 +80,60 @@ async function setConfigKey(key, value) {
   return settingsRepo.set(key, value);
 }
 
+/**
+ * ATT-C2-LITE — write REQUIRED_USERS, auto-dropping any IDs that don't
+ * correspond to an active user. Prevents the "Currently required: 7 /
+ * 3 active" mismatch from accumulating ghost IDs over time (smoke-test
+ * leftovers, typos, deactivated employees).
+ *
+ * @param {string[]} ids                 Telegram IDs the admin wants required
+ * @returns {Promise<{saved:string[], dropped:string[]}>}
+ */
+async function setRequiredUsers(ids) {
+  const wanted = Array.from(new Set((ids || []).map((x) => String(x).trim()).filter(Boolean)));
+  const allUsers = await usersRepo.getAll();
+  const activeSet = new Set(
+    allUsers
+      .filter((u) => (u.status || 'active') === 'active' && u.user_id)
+      .map((u) => String(u.user_id)),
+  );
+  const saved = wanted.filter((id) => activeSet.has(id));
+  const dropped = wanted.filter((id) => !activeSet.has(id));
+  await settingsRepo.set(KEYS.REQUIRED_USERS, saved.join(','));
+  if (dropped.length) {
+    try {
+      await auditLogRepo.append('attendance.ghost_ids_cleaned', { dropped }, 'system');
+    } catch (_) {}
+  }
+  return { saved, dropped };
+}
+
+/**
+ * Return a structured snapshot of the required-users list for display:
+ * which IDs match real active users vs. which are ghosts. The picker UI
+ * uses this to show a clean "(N of M active)" count and to surface a
+ * one-tap cleanup CTA when ghosts exist.
+ */
+async function getRequiredUsersDetailed() {
+  const cfg = await getConfig();
+  const allUsers = await usersRepo.getAll();
+  const activeMap = new Map(
+    allUsers
+      .filter((u) => (u.status || 'active') === 'active' && u.user_id)
+      .map((u) => [String(u.user_id), u]),
+  );
+  const active = [];
+  const ghost = [];
+  for (const id of cfg.requiredUsers) {
+    if (activeMap.has(id)) {
+      active.push({ id, user: activeMap.get(id) });
+    } else {
+      ghost.push(id);
+    }
+  }
+  return { active, ghost, totalActiveUsers: activeMap.size };
+}
+
 // ---------------------------------------------------------------------------
 // Timezone-aware "today"
 // ---------------------------------------------------------------------------
@@ -219,6 +273,8 @@ module.exports = {
   DEFAULTS,
   getConfig,
   setConfigKey,
+  setRequiredUsers,
+  getRequiredUsersDetailed,
   todayInTz,
   weekdayInTz,
   isRequired,

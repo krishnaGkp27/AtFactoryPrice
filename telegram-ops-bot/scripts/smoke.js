@@ -3504,9 +3504,10 @@ async function runS21() {
   await adm2.start(bot17, 'c-17', 'admin-1', null);
   const hubText = sent17[sent17.length - 1];
   if (/Attendance — Admin Hub/.test(hubText)
-      && /Required users/.test(hubText) && /Locations/.test(hubText)
+      && /Today —/.test(hubText)              // ATT-C2-LITE: today panel embedded
+      && /Required:/.test(hubText) && /Locations:/.test(hubText)
       && /Africa\/Lagos/.test(hubText)) {
-    pass('S21.17 admin hub: hub card renders with required/locations/tz stats');
+    pass('S21.17 admin hub: hub card renders with Today panel + required/locations/tz stats');
   } else fail('S21.17', hubText);
 
   // S21.18 — toggle a required user via callback.
@@ -3623,6 +3624,77 @@ async function runS21() {
   if (_settingsState.ATTENDANCE_TIMEZONE === beforeTz) {
     pass('S21.26 admin hub: invalid timezone rejected');
   } else fail('S21.26', _settingsState.ATTENDANCE_TIMEZONE);
+
+  // ----- ATT-C2-LITE follow-up: ghost auto-clean + hub embeds Today's Status -----
+
+  // S21.27 — getRequiredUsersDetailed separates active vs ghost ids.
+  _settingsState.ATTENDANCE_REQUIRED_USERS = '8616305685,701,999,ghost-001,ghost-002';
+  delete require.cache[require.resolve('../src/services/attendanceService')];
+  const att2 = require('../src/services/attendanceService');
+  const detail = await att2.getRequiredUsersDetailed();
+  // Sheet stub has 8616305685, 701 active; 999 inactive. Two ghost-* don't match any row.
+  const activeIds = detail.active.map((r) => r.id);
+  if (activeIds.length === 2
+      && activeIds.includes('8616305685') && activeIds.includes('701')
+      && detail.ghost.length === 3
+      && detail.ghost.includes('999')
+      && detail.ghost.includes('ghost-001')
+      && detail.ghost.includes('ghost-002')) {
+    pass('S21.27 getRequiredUsersDetailed: separates active vs ghost (inactive + unknown IDs)');
+  } else fail('S21.27', JSON.stringify(detail));
+
+  // S21.28 — setRequiredUsers auto-drops ghosts on save (silent).
+  const auditCountBefore = _audit.length;
+  const result28 = await att2.setRequiredUsers(['8616305685', '701', '999', 'ghost-x']);
+  if (result28.saved.length === 2
+      && result28.saved.includes('8616305685') && result28.saved.includes('701')
+      && result28.dropped.length === 2
+      && result28.dropped.includes('999') && result28.dropped.includes('ghost-x')
+      && _settingsState.ATTENDANCE_REQUIRED_USERS === '8616305685,701'
+      && _audit.length > auditCountBefore
+      && _audit[_audit.length - 1].event === 'attendance.ghost_ids_cleaned') {
+    pass('S21.28 setRequiredUsers: keeps active ids, drops ghosts, emits audit');
+  } else fail('S21.28', JSON.stringify({ result28, persisted: _settingsState.ATTENDANCE_REQUIRED_USERS, audit: _audit[_audit.length - 1] }));
+
+  // S21.29 — toggleRequired through the admin flow now uses ghost-aware save.
+  // Seed with one active + one ghost, then toggle an existing active off.
+  _settingsState.ATTENDANCE_REQUIRED_USERS = '8616305685,old-ghost-id';
+  delete require.cache[require.resolve('../src/flows/attendanceAdminFlow')];
+  const adm3 = require('../src/flows/attendanceAdminFlow');
+  await adm3.handleCallback(bot17, {
+    from: { id: 'admin-1' }, id: 'cb-29',
+    message: { chat: { id: 'c-17' }, message_id: 17 },
+    data: 'atd_adm:req_toggle:8616305685',
+  });
+  // After toggle: 8616305685 removed; ghost dropped; result should be empty.
+  if (_settingsState.ATTENDANCE_REQUIRED_USERS === '') {
+    pass('S21.29 toggleRequired via flow: ghost-aware save (removes toggled id AND drops ghosts)');
+  } else fail('S21.29', _settingsState.ATTENDANCE_REQUIRED_USERS);
+
+  // S21.30 — Hub embeds "Today's Status" panel at the top of its card.
+  _appended.length = 0;
+  _settingsState.ATTENDANCE_REQUIRED_USERS = '8616305685,701';
+  // Pre-mark only 8616305685 so today's panel has one ✅ (Mohammad) and one ⏳ (Abdul).
+  await att2.markPresent({ telegramId: '8616305685', name: 'Mohammad Sani', location: 'Lagos Office' });
+  const sent30 = [];
+  const bot30 = {
+    sendMessage: async (cid, t) => { sent30.push(t); return { message_id: 30 }; },
+    editMessageText: async (t) => { sent30.push(t); },
+    answerCallbackQuery: async () => {},
+  };
+  await adm3.start(bot30, 'c-30', 'admin-1', null);
+  const hubCard = sent30[sent30.length - 1];
+  // Split the card at the divider to verify Today panel sits ABOVE the hub.
+  const dividerIdx = hubCard.indexOf('━━━━━━━━━━━━━━');
+  const topHalf = dividerIdx >= 0 ? hubCard.slice(0, dividerIdx) : '';
+  const bottomHalf = dividerIdx >= 0 ? hubCard.slice(dividerIdx) : '';
+  if (dividerIdx > 0
+      && /Today —/.test(topHalf)
+      && /✅ Mohammad Sani/.test(topHalf) && /Lagos Office/.test(topHalf)
+      && /Not yet logged \(1\)/.test(topHalf) && /⏳ Abdul Ahmed/.test(topHalf)
+      && /Attendance — Admin Hub/.test(bottomHalf)) {
+    pass('S21.30 admin hub: embeds Today\'s Status panel ABOVE the settings tiles');
+  } else fail('S21.30', hubCard);
 }
 
 // ---------------------------------------------------------------------------

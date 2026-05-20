@@ -97,32 +97,96 @@ async function start(bot, chatId, userId, messageId = null) {
   await renderHub(bot, chatId, userId);
 }
 
+function fmtHHmm(iso, timezone) {
+  if (!iso) return '';
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone || 'Africa/Lagos',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(new Date(iso));
+  } catch (_) { return iso.slice(11, 16); }
+}
+
+async function buildTodayPanel(cfg) {
+  // Returns markdown text for the embedded "Today's Status" panel at the
+  // top of the admin hub card. Always concise; never throws.
+  let usersAll = [];
+  try { usersAll = await usersRepo.getAll(); } catch (_) {}
+  const activeMap = new Map(
+    usersAll
+      .filter((u) => (u.status || 'active') === 'active' && u.user_id)
+      .map((u) => [String(u.user_id), u]),
+  );
+  const reqValid = cfg.requiredUsers.filter((id) => activeMap.has(id));
+  let todayDate = '';
+  let todayRows = [];
+  try {
+    const got = await attendanceService.getTodayAll(cfg.timezone);
+    todayDate = got.date;
+    todayRows = got.rows;
+  } catch (_) {}
+  const loggedIds = new Set(todayRows.map((r) => r.telegram_id));
+  const marked = reqValid.filter((id) => loggedIds.has(id));
+  const missing = reqValid.filter((id) => !loggedIds.has(id));
+  const presentLines = marked.length
+    ? marked.map((id) => {
+        const u = activeMap.get(id);
+        const e = todayRows.find((r) => r.telegram_id === id);
+        const loc = e ? e.location : '?';
+        const t = e ? fmtHHmm(e.logged_at, cfg.timezone) : '';
+        const via = e && e.logged_via === 'admin' ? ' _(via admin)_' : '';
+        return `  ✅ ${(u && u.name) || id} — ${loc} · ${t}${via}`;
+      }).join('\n')
+    : '  _(no one yet)_';
+  const missingLines = missing.length
+    ? missing.map((id) => {
+        const u = activeMap.get(id);
+        return `  ⏳ ${(u && u.name) || id}`;
+      }).join('\n')
+    : '  _(everyone has logged)_';
+  return {
+    text:
+      `📊 *Today — ${todayDate || '—'}*  ·  *${marked.length}/${reqValid.length}* marked\n\n`
+      + `${presentLines}\n\n`
+      + `*Not yet logged (${missing.length}):*\n${missingLines}`,
+    counts: { marked: marked.length, required: reqValid.length, missing: missing.length },
+  };
+}
+
 async function renderHub(bot, chatId, userId) {
   const cfg = await attendanceService.getConfig();
-  const reqCount = cfg.requiredUsers.length;
+  const { active: reqActive, ghost } = await attendanceService.getRequiredUsersDetailed();
+  const reqValidCount = reqActive.length;
   const locCount = cfg.locations.length;
   const wd = cfg.workingDays.join(', ');
-  await render(bot, chatId, userId,
-    '🗓 *Attendance — Admin Hub*\n\n'
-    + `*Required users:* ${reqCount}\n`
-    + `*Locations:* ${locCount}\n`
-    + `*Timezone:* ${cfg.timezone}\n`
-    + `*Working days:* ${wd}\n`
-    + `*Reminder:* ${cfg.reminderTime}  ·  *Report:* ${cfg.reportTime}  ·  *Cutoff:* ${cfg.cutoffTime}\n\n`
-    + '_Tap a tile to manage._',
-    [
-      [{ text: `👥 Required Users (${reqCount})`,  callback_data: 'atd_adm:req' },
-       { text: `📍 Locations (${locCount})`,        callback_data: 'atd_adm:loc' }],
-      [{ text: `⏰ Reminder ${cfg.reminderTime}`,   callback_data: 'atd_adm:time:reminder' },
-       { text: `🌙 Report ${cfg.reportTime}`,       callback_data: 'atd_adm:time:report' }],
-      [{ text: `🕒 Cutoff ${cfg.cutoffTime}`,       callback_data: 'atd_adm:time:cutoff' },
-       { text: `🌐 ${cfg.timezone}`,                callback_data: 'atd_adm:tz' }],
-      [{ text: '📅 Working Days',                   callback_data: 'atd_adm:days' }],
-      [{ text: '📊 Today\'s View',                  callback_data: 'atd_adm:today' },
-       { text: '✍️ Mark on Behalf',                callback_data: 'atd_adm:behalf' }],
-      homeRow(),
-    ],
-  );
+  const todayPanel = await buildTodayPanel(cfg);
+
+  const ghostHint = ghost.length
+    ? `\n\n_⚠️ ${ghost.length} ghost ID(s) found in your required-users list; they auto-clean the next time you toggle._`
+    : '';
+
+  const text =
+    `${todayPanel.text}\n\n`
+    + '━━━━━━━━━━━━━━\n'
+    + '🗓 *Attendance — Admin Hub*\n\n'
+    + `*Required:* ${reqValidCount} active employees  ·  *Locations:* ${locCount}\n`
+    + `*Times:* reminder ${cfg.reminderTime} · report ${cfg.reportTime} · cutoff ${cfg.cutoffTime}\n`
+    + `*Timezone:* ${cfg.timezone}  ·  *Working days:* ${wd}${ghostHint}\n\n`
+    + '_Tap a tile to manage._';
+
+  await render(bot, chatId, userId, text, [
+    [{ text: `👥 Required Users (${reqValidCount})`, callback_data: 'atd_adm:req' },
+     { text: `📍 Locations (${locCount})`,            callback_data: 'atd_adm:loc' }],
+    [{ text: `⏰ Reminder ${cfg.reminderTime}`,       callback_data: 'atd_adm:time:reminder' },
+     { text: `🌙 Report ${cfg.reportTime}`,           callback_data: 'atd_adm:time:report' }],
+    [{ text: `🕒 Cutoff ${cfg.cutoffTime}`,           callback_data: 'atd_adm:time:cutoff' },
+     { text: `🌐 ${cfg.timezone}`,                    callback_data: 'atd_adm:tz' }],
+    [{ text: '📅 Working Days',                       callback_data: 'atd_adm:days' }],
+    [{ text: '📊 Today\'s Full View',                 callback_data: 'atd_adm:today' },
+     { text: '✍️ Mark on Behalf',                    callback_data: 'atd_adm:behalf' }],
+    [{ text: '🔁 Refresh',                            callback_data: 'atd_adm:home' }],
+    homeRow(),
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -130,47 +194,54 @@ async function renderHub(bot, chatId, userId) {
 // ---------------------------------------------------------------------------
 
 async function renderRequiredPicker(bot, chatId, userId) {
-  const cfg = await attendanceService.getConfig();
-  const sel = new Set(cfg.requiredUsers);
+  // Pull the active-user list AND the structured required-detail so we
+  // can show clean counts that match reality (no more "7 / 3").
   let users = [];
   try { users = (await usersRepo.getAll()).filter((u) => (u.status || 'active') === 'active'); }
   catch (e) { logger.warn(`renderRequiredPicker: users read failed: ${e.message}`); }
   users.sort((a, b) => (a.name || a.user_id).localeCompare(b.name || b.user_id));
 
+  const { active: reqActive, ghost } = await attendanceService.getRequiredUsersDetailed();
+  const requiredSet = new Set(reqActive.map((r) => r.id));
+
   const rows = [];
   if (!users.length) {
-    rows.push([{ text: '_No active users yet — add some via Add Employee_', callback_data: 'atd_adm:noop' }]);
+    rows.push([{ text: '_No active users — add some via Add Employee_', callback_data: 'atd_adm:noop' }]);
   } else {
     for (const u of users) {
-      const mark = sel.has(String(u.user_id)) ? '✅' : '⬜';
-      const label = `${mark} ${u.name || u.user_id}`;
+      const isOn = requiredSet.has(String(u.user_id));
+      const label = `${isOn ? '✅' : '⬜'} ${u.name || u.user_id}`;
       rows.push([{ text: label, callback_data: `atd_adm:req_toggle:${u.user_id}` }]);
     }
   }
   rows.push([{ text: '🔘 Clear all', callback_data: 'atd_adm:req_clear' }]);
   rows.push(backRow());
+
+  const ghostNote = ghost.length
+    ? `\n\n_⚠️ ${ghost.length} ghost ID(s) detected in your settings (left over from old tests or deactivated users). They'll auto-clean when you next toggle anyone or tap Clear all._`
+    : '';
+
   await render(bot, chatId, userId,
     `🗓 *Attendance — Required Users*\n\n`
-    + `_Currently required:_ *${sel.size}* / ${users.length} active users.\n\n`
-    + `Tap a name to toggle. Required users see the 📍 Mark Attendance tile in their menu and receive reminders at the configured time.`,
+    + `_Currently required:_ *${requiredSet.size}* of *${users.length}* active employees.${ghostNote}\n\n`
+    + `Tap a name to toggle. Required employees see the 📍 Mark Attendance tile in their menu (reminders will land here once the scheduler is enabled).`,
     rows,
   );
 }
 
 async function toggleRequired(bot, chatId, userId, targetId) {
-  const cfg = await attendanceService.getConfig();
-  const set = new Set(cfg.requiredUsers);
-  if (set.has(targetId)) set.delete(targetId);
-  else set.add(targetId);
-  await attendanceService.setConfigKey(
-    attendanceService.KEYS.REQUIRED_USERS,
-    Array.from(set).join(','),
-  );
+  // Use service-level setRequiredUsers so ghosts get dropped silently on
+  // every save. The picker reflects the cleaned list on its next render.
+  const { active: reqActive } = await attendanceService.getRequiredUsersDetailed();
+  const set = new Set(reqActive.map((r) => r.id));
+  const id = String(targetId);
+  if (set.has(id)) set.delete(id); else set.add(id);
+  await attendanceService.setRequiredUsers(Array.from(set));
   await renderRequiredPicker(bot, chatId, userId);
 }
 
 async function clearRequired(bot, chatId, userId) {
-  await attendanceService.setConfigKey(attendanceService.KEYS.REQUIRED_USERS, '');
+  await attendanceService.setRequiredUsers([]);
   await renderRequiredPicker(bot, chatId, userId);
 }
 
