@@ -230,14 +230,42 @@ async function renderRequiredPicker(bot, chatId, userId) {
 }
 
 async function toggleRequired(bot, chatId, userId, targetId) {
+  // DEPLOY-C1 diagnostic: log every step of the toggle so future
+  // "tap does nothing" reports can be triaged from Railway logs alone.
   // Use service-level setRequiredUsers so ghosts get dropped silently on
   // every save. The picker reflects the cleaned list on its next render.
-  const { active: reqActive } = await attendanceService.getRequiredUsersDetailed();
-  const set = new Set(reqActive.map((r) => r.id));
-  const id = String(targetId);
-  if (set.has(id)) set.delete(id); else set.add(id);
-  await attendanceService.setRequiredUsers(Array.from(set));
-  await renderRequiredPicker(bot, chatId, userId);
+  const tag = `[atd_adm.toggle uid=${userId} target=${targetId}]`;
+  const t0 = Date.now();
+  try {
+    logger.info(`${tag} start`);
+    const { active: reqActive } = await attendanceService.getRequiredUsersDetailed();
+    const tBefore = Date.now() - t0;
+    const set = new Set(reqActive.map((r) => r.id));
+    const id = String(targetId);
+    const wasOn = set.has(id);
+    if (wasOn) set.delete(id); else set.add(id);
+    logger.info(`${tag} loaded=${reqActive.length} wasOn=${wasOn} → newSize=${set.size} (read ${tBefore}ms)`);
+
+    const saveResult = await attendanceService.setRequiredUsers(Array.from(set));
+    const tSave = Date.now() - t0;
+    logger.info(`${tag} saved=${saveResult.saved.length} droppedGhosts=${saveResult.dropped.length} (cum ${tSave}ms)`);
+
+    await renderRequiredPicker(bot, chatId, userId);
+    const tDone = Date.now() - t0;
+    logger.info(`${tag} ok total=${tDone}ms`);
+  } catch (e) {
+    const tErr = Date.now() - t0;
+    logger.error(`${tag} FAILED after ${tErr}ms: ${e && e.message ? e.message : e}\n${e && e.stack ? e.stack : ''}`);
+    // Make the failure visible to the user instead of dying silently:
+    try {
+      await bot.answerCallbackQuery(undefined, { text: `Toggle failed: ${e.message || 'unknown error'}`, show_alert: true });
+    } catch (_) {}
+    try {
+      await bot.sendMessage(chatId,
+        `⚠️ *Couldn't toggle attendance requirement*\n\nReason: \`${e.message || 'unknown'}\`\n\nThe error has been logged. You can retry, or contact support.`,
+        { parse_mode: 'Markdown' });
+    } catch (_) {}
+  }
 }
 
 async function clearRequired(bot, chatId, userId) {
@@ -631,7 +659,11 @@ async function handleCallback(bot, query) {
   const userId = String(query.from.id);
   const data = query.data || '';
   if (!data.startsWith('atd_adm:')) return false;
+  // DEPLOY-C1 diagnostic — log every atd_adm tap so we can correlate
+  // user-reported "tap does nothing" with what the server actually saw.
+  logger.info(`[atd_adm.dispatch uid=${userId}] data="${data}"`);
   if (!auth.isAdmin(userId)) {
+    logger.warn(`[atd_adm.dispatch uid=${userId}] rejected: not admin`);
     await bot.answerCallbackQuery(query.id, { text: 'Admin only.', show_alert: true }).catch(() => {});
     return true;
   }
