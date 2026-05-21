@@ -111,6 +111,47 @@ const config = {
 
   /** Optional: set BOT_API_KEY so admin page can update settings with X-API-Key header */
   botApiKey: process.env.BOT_API_KEY || '',
+
+  /**
+   * TG-INT — third-party integration adapter selection. Every block
+   * defaults to 'stub' so the bot boots without credentials. Set the
+   * provider env var + its secrets to enable a real provider.
+   * See `src/integrations/README.md` for the swap procedure.
+   */
+  integrations: {
+    monitoring: {
+      provider: process.env.MONITORING_PROVIDER || 'stub',   // stub | glitchTip | sentry
+      dsn:      process.env.MONITORING_DSN || '',
+    },
+    forex: {
+      // Per business decision: rates are entered MANUALLY by admin /
+      // finance (no live conversion at payment time). 'manual' reads
+      // from the ForexRates sheet. API providers are scaffolded for
+      // a future toggle-on only.
+      provider:                 process.env.FOREX_PROVIDER || 'manual',
+      openExchangeRatesAppId:   process.env.FOREX_OPEN_EXCHANGE_RATES_APP_ID || '',
+      exchangeRateApiKey:       process.env.FOREX_EXCHANGE_RATE_API_KEY || '',
+    },
+    shipment: {
+      provider:           process.env.SHIPMENT_PROVIDER || 'stub',   // stub | dhlExpress
+      dhlApiKey:          process.env.SHIPMENT_DHL_API_KEY || '',
+      dhlAccountNumber:   process.env.SHIPMENT_DHL_ACCOUNT_NUMBER || '',
+    },
+    banking: {
+      provider:           process.env.BANKING_PROVIDER || 'stub',    // stub | zenithBank | mono
+      zenithApiKey:       process.env.BANKING_ZENITH_API_KEY || '',
+      zenithAccountId:    process.env.BANKING_ZENITH_ACCOUNT_ID || '',
+      monoSecretKey:      process.env.BANKING_MONO_SECRET_KEY || '',
+    },
+    messaging: {
+      provider:                 process.env.WHATSAPP_PROVIDER || 'stub',  // stub | metaWhatsApp | twilio
+      metaAccessToken:          process.env.WHATSAPP_META_ACCESS_TOKEN || '',
+      metaPhoneNumberId:        process.env.WHATSAPP_META_PHONE_NUMBER_ID || '',
+      twilioAccountSid:         process.env.WHATSAPP_TWILIO_ACCOUNT_SID || '',
+      twilioAuthToken:          process.env.WHATSAPP_TWILIO_AUTH_TOKEN || '',
+      twilioFrom:               process.env.WHATSAPP_TWILIO_FROM || '',
+    },
+  },
 };
 
 /** All allowed user IDs (admin + employee) for whitelist */

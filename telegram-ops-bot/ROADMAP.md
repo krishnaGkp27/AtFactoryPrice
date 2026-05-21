@@ -93,6 +93,10 @@ When in doubt about *where* something belongs, ask: is this a status (§2), a re
 | Settings, BotAuditLog, WebhookErrors | various | Bot internals |
 | **TaskTemplates** (planned) | `taskTemplatesRepository` | Reusable task definitions (§5.2) |
 | **UserPreferences** (planned) | `userPrefsRepository` | Adaptive UI state (§5.3) |
+| **ForexRates** | `forexRatesRepository` | Manual FX rates entered by admin/finance (TG-INT 1.4 — see §2.9) |
+| **ShipmentEvents** | `shipmentEventsRepository` | Carrier status updates per tracking number (TG-INT 1.3) |
+| **BankFeed** | `bankFeedRepository` | Raw bank-feed transactions + reconciliation status (TG-INT 1.2) |
+| **WhatsAppTemplates**, **WhatsAppOutbound** | (admin-maintained) + `whatsappOutboundRepository` | Wave-A WhatsApp send catalogue + audit (TG-INT 1.1) |
 
 ### 1.3 Approval semantics (sacred)
 
@@ -559,6 +563,65 @@ Harness: 216 green (was 153).
 
 All 💭 Discuss — never start without an explicit owner decision (see §4.6).
 
+### 2.9 TG-INTEGRATIONS · Third-party adapter layer (2026-05-21)
+
+Introduces `src/integrations/` — a top-level module that wraps every
+external vendor behind a stable adapter interface so the business logic
+never depends on a specific SDK. The whole point is that swapping a
+provider (e.g. Twilio → Meta WhatsApp, Zenith → Mono) is a one-env-var
+change, not a code rewrite.
+
+**Shipped (Wave A — Commit 1):**
+
+| # | Capability | Providers (env default → others)                                | Persistence sheet           | Notes |
+|---|------------|-----------------------------------------------------------------|-----------------------------|-------|
+| 1 | monitoring | `stub` → `glitchTip`, `sentry`                                  | (reuses `AuditLog`)         | `@sentry/node` loaded lazily; optional dep |
+| 2 | forex      | **`manual` (default)** → `stub`, `exchangeRateApi`, `openExchangeRates` | `ForexRates`                | Per business decision: admin/finance enters rates manually; API providers are scaffolds only |
+| 3 | shipment   | `stub` → `dhlExpress` (Maersk reserved)                          | `ShipmentEvents`            | Each tracked event persisted with `reference_id` for join-back |
+| 4 | banking    | `stub` → `zenithBank`, `mono` (Setu reserved)                    | `BankFeed`                  | Reconciler in `src/services/bankReconciler.js`; match confirm is dual-admin gated |
+| 5 | messaging  | `stub` → `metaWhatsApp`, `twilio`                                | `WhatsAppTemplates`, `WhatsAppOutbound` | Outbound only — inbound (Wave B) intentionally deferred (`messaging/INBOUND_DEFERRED.md`) |
+
+**Architectural rules enforced by smoke (`S23` – `S26`, +8 / 9 / 1 / 4 checks):**
+
+- `S23` — shared infra: `providerSelector` falls back to `stub`;
+  `auditWrapper` records `{capability, provider, operation, success,
+  durationMs}` to `AuditLog`, rethrows the original error, and
+  swallows audit-write failures so a Sheets outage cannot take down
+  the integration call it wraps.
+- `S24` — every capability's public surface (`rate / track /
+  fetchTransactions / send / captureException`) plus `getEstimatedCost`
+  works against its stub provider.
+- `S25` — vendor-SDK isolation: forbidden packages (`@sentry/node`,
+  `twilio`, `@dhl/*`, `mono-node`, `@mono/*`) are not `require()`d
+  anywhere outside `src/integrations/`. This is the regression
+  tripwire — if a future maintainer reaches around the adapter layer,
+  CI fails.
+- `S26` — schema + policy wiring: all 5 new sheets are declared in
+  `schemaMapper.js`; `set_forex_rate` + `notify_wholesaler` are in
+  `WRITE_ACTIONS`; `confirm_bank_reconciliation` +
+  `broadcast_wholesalers` are in `ALWAYS_APPROVAL_ACTIONS`;
+  `config.integrations.forex.provider` defaults to `'manual'` and the
+  other four default to `'stub'`.
+
+**Smoke total:** 338 ok / 0 failed (was 310).
+
+**Phase 2 placeholders (folders + README, no code):**
+`integrations/banking/setu.js`, `integrations/shipment/maersk.js`,
+`integrations/analytics/` (Looker Studio / Metabase), `integrations/storage/` (S3).
+
+**Not in this commit (deferred bodies of work):**
+
+- WhatsApp **inbound** — webhook signing, consent registry, routing
+  to Telegram operators. See `messaging/INBOUND_DEFERRED.md`.
+- Admin forex-rates flow (button-only entry into `ForexRates` sheet)
+  — the adapter is ready; the UI lands in a follow-up.
+- Wiring `monitoring.captureException` into `server.js`'s
+  `unhandledRejection` / `uncaughtException` handlers — left as a
+  follow-up so this commit is purely additive and reversible.
+- Real banking endpoints for Zenith — provider file throws
+  `BANKING_NOT_WIRED` until credentials are finalised, so an
+  accidental env flip cannot silently return empty data.
+
 ---
 
 ## §3 · Active subsystems (reference)
@@ -675,6 +738,15 @@ Used so far for: Abdul Ahmed (`7430648262`) → Sales department → `upload_des
 ---
 
 ## §4 · Roadmap (forward-looking)
+
+### 4.0 TG-INT Wave-A — Third-party adapter layer ✅ Done (2026-05-21)
+
+Shipped as commit `TG-INT-A1`. Five capabilities live under
+`src/integrations/` behind a stable adapter contract — see §2.9 for
+the full table and `src/integrations/README.md` for the swap procedure.
+Smoke `S23`–`S26` enforce the rules. Follow-ups (admin Forex Rates UI,
+monitoring wiring in `server.js`, WhatsApp inbound, live banking
+endpoints) tracked separately.
 
 ### 4.1 Commit 4 — Reports 📋 Planned (next)
 

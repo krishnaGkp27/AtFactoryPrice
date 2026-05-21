@@ -3918,6 +3918,314 @@ async function runS22() {
 }
 
 // ---------------------------------------------------------------------------
+// S23 — TG-INT shared infrastructure (providerSelector + auditWrapper + cost)
+// ---------------------------------------------------------------------------
+async function runS23() {
+  // S23.1 providerSelector falls back to stub when env unset
+  delete require.cache[require.resolve('../src/integrations/_shared/providerSelector')];
+  const { selectProvider } = require('../src/integrations/_shared/providerSelector');
+  delete process.env.TEST_PROVIDER;
+  const sel = selectProvider('test', { stub: { tag: 'stub' }, foo: { tag: 'foo' } });
+  if (sel.name === 'stub' && sel.module.tag === 'stub') {
+    pass('S23.1 providerSelector: defaults to stub when env unset');
+  } else fail('S23.1', JSON.stringify(sel));
+
+  // S23.2 unknown provider name → fallback stub + warning
+  process.env.TEST_PROVIDER = 'nope';
+  const sel2 = selectProvider('test', { stub: { tag: 'stub' }, foo: { tag: 'foo' } });
+  if (sel2.name === 'stub') pass('S23.2 providerSelector: unknown name falls back to stub');
+  else fail('S23.2', JSON.stringify(sel2));
+
+  // S23.3 explicit provider chosen
+  process.env.TEST_PROVIDER = 'foo';
+  const sel3 = selectProvider('test', { stub: { tag: 'stub' }, foo: { tag: 'foo' } });
+  if (sel3.name === 'foo' && sel3.module.tag === 'foo') {
+    pass('S23.3 providerSelector: explicit provider honoured');
+  } else fail('S23.3', JSON.stringify(sel3));
+  delete process.env.TEST_PROVIDER;
+
+  // S23.4 auditWrapper records success + duration without throwing on audit failure
+  // Stub auditLogRepository before requiring auditWrapper.
+  const auditCalls = [];
+  const auditRepoPath = require.resolve('../src/repositories/auditLogRepository');
+  require.cache[auditRepoPath] = {
+    id: auditRepoPath,
+    filename: auditRepoPath,
+    loaded: true,
+    exports: {
+      append: async (type, payload, user) => { auditCalls.push({ type, payload, user }); },
+    },
+  };
+  delete require.cache[require.resolve('../src/integrations/_shared/auditWrapper')];
+  const { wrapOutbound } = require('../src/integrations/_shared/auditWrapper');
+  const okResult = await wrapOutbound('forex', 'stub', 'rate', { from: 'USD', to: 'NGN' }, async () => ({ rate: 1500 }));
+  if (okResult.rate === 1500 && auditCalls.length === 1
+      && auditCalls[0].type === 'integration_call'
+      && auditCalls[0].payload.success === true
+      && typeof auditCalls[0].payload.durationMs === 'number') {
+    pass('S23.4 auditWrapper: success path audits with durationMs');
+  } else fail('S23.4', JSON.stringify(auditCalls));
+
+  // S23.5 error path still records audit with success=false, original error rethrown
+  let caught = null;
+  try {
+    await wrapOutbound('forex', 'stub', 'rate', {}, async () => { throw new Error('boom'); });
+  } catch (e) { caught = e; }
+  if (caught && caught.message === 'boom'
+      && auditCalls.length === 2
+      && auditCalls[1].payload.success === false
+      && /boom/.test(auditCalls[1].payload.error || '')) {
+    pass('S23.5 auditWrapper: failure path audits + rethrows');
+  } else fail('S23.5', `caught=${caught && caught.message} calls=${auditCalls.length}`);
+
+  // S23.6 audit-write failure must NOT propagate
+  require.cache[auditRepoPath].exports.append = async () => { throw new Error('audit-down'); };
+  let bubbled = null;
+  try {
+    const r = await wrapOutbound('forex', 'stub', 'rate', {}, async () => 42);
+    if (r !== 42) bubbled = new Error('return value lost');
+  } catch (e) { bubbled = e; }
+  if (!bubbled) pass('S23.6 auditWrapper: audit-write failure is swallowed');
+  else fail('S23.6', bubbled.message);
+
+  // S23.7 sanitisePayload redacts secret-ish keys
+  const { _internals } = require('../src/integrations/_shared/auditWrapper');
+  const s = _internals.sanitisePayload({ apiKey: 'sk-123', token: 'abc', name: 'ok', big: 'x'.repeat(500) });
+  if (s.apiKey === '[redacted]' && s.token === '[redacted]' && s.name === 'ok' && s.big.length <= 121) {
+    pass('S23.7 auditWrapper: sanitisePayload redacts + truncates');
+  } else fail('S23.7', JSON.stringify(s));
+
+  // S23.8 costRegistry returns shape for known + unknown
+  const { estimate } = require('../src/integrations/_shared/costRegistry');
+  const known = estimate('forex', 'stub');
+  const unknown = estimate('weird', 'nope');
+  if (known.totalUsd === 0 && known.unit === 'request'
+      && unknown.totalUsd === 0 && unknown.notes === 'no cost registered') {
+    pass('S23.8 costRegistry: returns sane shape for known and unknown');
+  } else fail('S23.8', JSON.stringify({ known, unknown }));
+
+  // Clear the stubbed audit repo so subsequent suites get the real one.
+  delete require.cache[auditRepoPath];
+}
+
+// ---------------------------------------------------------------------------
+// S24 — Each integration capability exposes its public contract
+// ---------------------------------------------------------------------------
+async function runS24() {
+  // Force all providers to stub for this suite.
+  process.env.MONITORING_PROVIDER = 'stub';
+  process.env.FOREX_PROVIDER = 'stub';
+  process.env.SHIPMENT_PROVIDER = 'stub';
+  process.env.BANKING_PROVIDER = 'stub';
+  process.env.WHATSAPP_PROVIDER = 'stub';
+  // Stub auditLogRepository so adapter calls don't hit Sheets.
+  const auditRepoPath = require.resolve('../src/repositories/auditLogRepository');
+  require.cache[auditRepoPath] = {
+    id: auditRepoPath, filename: auditRepoPath, loaded: true,
+    exports: { append: async () => {} },
+  };
+  // Also stub the side-effect repositories so adapter index.js doesn't
+  // explode when it tries to record events / log outbound.
+  for (const repo of [
+    '../src/repositories/shipmentEventsRepository',
+    '../src/repositories/whatsappOutboundRepository',
+  ]) {
+    const p = require.resolve(repo);
+    require.cache[p] = { id: p, filename: p, loaded: true, exports: { recordEvents: async () => ({appended:0}), append: async () => 'STUB' } };
+  }
+  // Clear any cached integration modules.
+  for (const k of Object.keys(require.cache)) {
+    if (k.includes(`${path.sep}src${path.sep}integrations${path.sep}`)) delete require.cache[k];
+  }
+
+  const integrations = require('../src/integrations');
+
+  // S24.1 barrel has all five capabilities
+  const have = Object.keys(integrations).sort().join(',');
+  if (have === 'banking,forex,messaging,monitoring,shipment') {
+    pass('S24.1 integrations barrel exports all five capabilities');
+  } else fail('S24.1 barrel', have);
+
+  // S24.2 monitoring contract
+  const { monitoring } = integrations;
+  const m = await monitoring.captureException(new Error('hi'));
+  if (typeof monitoring.captureException === 'function'
+      && typeof monitoring.addBreadcrumb === 'function'
+      && monitoring.getEstimatedCost().totalUsd === 0
+      && m && m.id) {
+    pass('S24.2 monitoring: captureException+addBreadcrumb+cost present, stub returns id');
+  } else fail('S24.2', JSON.stringify({ m, cost: monitoring.getEstimatedCost() }));
+
+  // S24.3 forex stub returns rate with required keys
+  const { forex } = integrations;
+  const r = await forex.rate('USD', 'NGN', '2026-05-15');
+  if (r && r.rate > 0 && r.base === 'USD' && r.quote === 'NGN' && r.source === 'stub'
+      && typeof forex.getEstimatedCost === 'function') {
+    pass('S24.3 forex: stub returns {rate, base, quote, source}');
+  } else fail('S24.3', JSON.stringify(r));
+
+  // S24.4 forex identity
+  const ident = await forex.rate('USD', 'USD');
+  if (ident.rate === 1 && ident.source.startsWith('stub')) {
+    pass('S24.4 forex: identity (USD→USD) = 1');
+  } else fail('S24.4', JSON.stringify(ident));
+
+  // S24.5 shipment stub returns a deterministic event list
+  const { shipment } = integrations;
+  const t = await shipment.track('STUB-ABC-123', { persistEvents: false });
+  if (t && Array.isArray(t.events) && t.events.length >= 1 && t.carrier === 'stub') {
+    pass('S24.5 shipment: stub returns event list + carrier');
+  } else fail('S24.5', JSON.stringify(t));
+
+  // S24.6 banking stub returns 3 transactions
+  const { banking } = integrations;
+  const bf = await banking.fetchTransactions({ accountId: 'X' });
+  if (bf.transactions && bf.transactions.length === 3
+      && bf.transactions.every((x) => x.txnId && typeof x.amount === 'number')) {
+    pass('S24.6 banking: stub returns 3 transactions');
+  } else fail('S24.6', JSON.stringify(bf));
+
+  // S24.7 messaging stub send
+  const { messaging } = integrations;
+  const sm = await messaging.send({ to: '2348011112222', template: 'hello', variables: { name: 'Abdul' } });
+  if (sm.providerMessageId && sm.status === 'sent') {
+    pass('S24.7 messaging: stub send returns providerMessageId + status');
+  } else fail('S24.7', JSON.stringify(sm));
+
+  // S24.8 messaging broadcast aggregates results
+  const bc = await messaging.broadcast({ to: ['2348011112222', '2348011113333'], template: 'hello', variables: {} });
+  if (bc.results.length === 2 && bc.results.every((x) => x.ok)) {
+    pass('S24.8 messaging: broadcast iterates and reports per-recipient');
+  } else fail('S24.8', JSON.stringify(bc));
+
+  // S24.9 bank reconciler: name+amount match scores highest
+  delete require.cache[require.resolve('../src/services/bankReconciler')];
+  const reconciler = require('../src/services/bankReconciler');
+  const sugg = reconciler.suggestMatches(
+    { counterparty: 'BLUE SKIES TEXTILES LTD', narration: '', reference: '', amount: 125000 },
+    [
+      { id: 'INV-1', customerName: 'Blue Skies Textiles Ltd', openAmount: 125000, invoiceDate: new Date().toISOString() },
+      { id: 'INV-2', customerName: 'Other Customer',          openAmount: 125000, invoiceDate: new Date().toISOString() },
+      { id: 'INV-3', customerName: 'Blue Skies Textiles Ltd', openAmount: 999,    invoiceDate: new Date().toISOString() },
+    ],
+  );
+  if (sugg.length >= 1 && sugg[0].candidate.id === 'INV-1' && sugg[0].confidence >= 0.9) {
+    pass('S24.9 bankReconciler: name+amount match scores highest');
+  } else fail('S24.9', JSON.stringify(sugg));
+
+  // Clean stubbed repos so later tests get real ones.
+  delete require.cache[auditRepoPath];
+  for (const repo of [
+    '../src/repositories/shipmentEventsRepository',
+    '../src/repositories/whatsappOutboundRepository',
+  ]) {
+    delete require.cache[require.resolve(repo)];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// S25 — No vendor SDK leaks outside src/integrations/
+// ---------------------------------------------------------------------------
+function runS25() {
+  // List of vendor packages we want to keep boxed inside src/integrations/.
+  const FORBIDDEN = ['@sentry/node', '@dhl/', 'twilio', 'mono-node', '@mono/'];
+  const srcRoot = path.join(__dirname, '../src');
+  const integrationsRoot = path.join(srcRoot, 'integrations');
+  const violations = [];
+
+  function walk(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (p.startsWith(integrationsRoot)) continue; // skip — allowed
+        walk(p);
+      } else if (entry.isFile() && entry.name.endsWith('.js')) {
+        const txt = fs.readFileSync(p, 'utf8');
+        for (const pkg of FORBIDDEN) {
+          // Match require('<pkg>...') or from '<pkg>...'
+          const re = new RegExp(`require\\(['"]${pkg.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}`);
+          if (re.test(txt)) {
+            violations.push({ file: path.relative(srcRoot, p), pkg });
+          }
+        }
+      }
+    }
+  }
+  walk(srcRoot);
+
+  if (violations.length === 0) {
+    pass(`S25 SDK isolation: 0 vendor imports outside src/integrations/ (checked ${FORBIDDEN.length} packages)`);
+  } else {
+    fail('S25 SDK isolation', violations.map((v) => `${v.pkg} in ${v.file}`).join('; '));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// S26 — Schema + policy wiring for the new integration sheets / actions
+// ---------------------------------------------------------------------------
+function runS26() {
+  // S26.1 schemaMapper declares all 5 new sheets
+  const schemaSrc = fs.readFileSync(path.join(__dirname, '../src/services/schemaMapper.js'), 'utf8');
+  const required = ['ForexRates', 'ShipmentEvents', 'BankFeed', 'WhatsAppTemplates', 'WhatsAppOutbound'];
+  const missing = required.filter((s) => !new RegExp(`^\\s*${s}\\s*:\\s*\\{`, 'm').test(schemaSrc));
+  if (missing.length === 0) {
+    pass(`S26.1 schemaMapper: all 5 new sheets declared (${required.join(', ')})`);
+  } else fail('S26.1 schemaMapper missing', missing.join(', '));
+
+  // S26.2 evaluate.js has the new actions in the right buckets. Strip
+  // line + block comments first — apostrophes in human-written comments
+  // (e.g. "a user's bot access") confuse the naive quote tokeniser.
+  const evSrcRaw = fs.readFileSync(path.join(__dirname, '../src/risk/evaluate.js'), 'utf8');
+  const evSrc = evSrcRaw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  function extract(varName) {
+    const m = evSrc.match(new RegExp(`const\\s+${varName}\\s*=\\s*\\[([\\s\\S]*?)\\]`, 'm'));
+    return m ? (m[1].match(/'([^']+)'/g) || []).map((s) => s.replace(/'/g, '')) : [];
+  }
+  const W = new Set(extract('WRITE_ACTIONS'));
+  const A = new Set(extract('ALWAYS_APPROVAL_ACTIONS'));
+
+  const checks = [
+    ['set_forex_rate',              W, 'WRITE_ACTIONS'],
+    ['notify_wholesaler',           W, 'WRITE_ACTIONS'],
+    ['confirm_bank_reconciliation', A, 'ALWAYS_APPROVAL_ACTIONS'],
+    ['broadcast_wholesalers',       A, 'ALWAYS_APPROVAL_ACTIONS'],
+  ];
+  let okCount = 0;
+  for (const [action, set, label] of checks) {
+    if (set.has(action)) { pass(`S26.2 policy: ${action} ∈ ${label}`); okCount++; }
+    else fail(`S26.2 policy: ${action} ∈ ${label}`, 'missing');
+  }
+
+  // S26.3 config block exposes integrations. Clear any *_PROVIDER env
+  // vars set by earlier suites so we see the genuine defaults.
+  for (const k of ['MONITORING_PROVIDER', 'FOREX_PROVIDER', 'SHIPMENT_PROVIDER', 'BANKING_PROVIDER', 'WHATSAPP_PROVIDER']) {
+    delete process.env[k];
+  }
+  delete require.cache[require.resolve('../src/config')];
+  const cfg = require('../src/config');
+  const want = ['monitoring', 'forex', 'shipment', 'banking', 'messaging'];
+  const got = cfg.integrations && Object.keys(cfg.integrations);
+  if (got && want.every((k) => got.includes(k))) {
+    pass(`S26.3 config.integrations exposes all 5 capabilities`);
+  } else fail('S26.3 config.integrations', JSON.stringify(got));
+
+  // S26.4 forex default is 'manual', others default 'stub'
+  if (cfg.integrations.forex.provider === 'manual'
+      && cfg.integrations.monitoring.provider === 'stub'
+      && cfg.integrations.shipment.provider === 'stub'
+      && cfg.integrations.banking.provider === 'stub'
+      && cfg.integrations.messaging.provider === 'stub') {
+    pass('S26.4 config: forex defaults to "manual"; others default to "stub"');
+  } else fail('S26.4', JSON.stringify({
+    fx: cfg.integrations.forex.provider,
+    mon: cfg.integrations.monitoring.provider,
+    sh: cfg.integrations.shipment.provider,
+    bk: cfg.integrations.banking.provider,
+    msg: cfg.integrations.messaging.provider,
+  }));
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -3950,6 +4258,10 @@ async function runS22() {
   try { await runS20(); } catch (e) { fail('S20 unexpected error', e.message); }
   try { await runS21(); } catch (e) { fail('S21 unexpected error', e.message); }
   try { await runS22(); } catch (e) { fail('S22 unexpected error', e.message); }
+  try { await runS23(); } catch (e) { fail('S23 unexpected error', e.message); }
+  try { await runS24(); } catch (e) { fail('S24 unexpected error', e.message); }
+  try { runS25();       } catch (e) { fail('S25 unexpected error', e.message); }
+  try { runS26();       } catch (e) { fail('S26 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

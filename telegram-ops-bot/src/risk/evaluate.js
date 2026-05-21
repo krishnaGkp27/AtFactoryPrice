@@ -30,6 +30,14 @@ const WRITE_ACTIONS = [
   // P2.5 — Bulk Receive (CSV/XLSX upload). Always dual-admin gated; see
   // ALWAYS_APPROVAL_ACTIONS below.
   'bulk_receive_goods',
+  // TG-INT 1.4 — admin/finance sets a manual FX rate. Direct write for
+  // admins; employees would need approval (rare — finance role only in
+  // practice).
+  'set_forex_rate',
+  // TG-INT 1.1 — single-recipient WhatsApp send (transactional). Direct
+  // for admins; broadcasts to many recipients use the always-approval
+  // action below.
+  'notify_wholesaler',
 ];
 
 // Actions that ALWAYS go through the approval queue, regardless of whether
@@ -67,6 +75,14 @@ const ALWAYS_APPROVAL_ACTIONS = [
   // USR-C4 — flipping status=inactive revokes a user's bot access. Dual-
   // admin to prevent a single hostile admin from locking out a colleague.
   'deactivate_user',
+  // TG-INT 1.2 — admin confirms a bank-feed → ledger reconciliation
+  // match. Always dual-admin: incorrect matches cascade into wrong
+  // customer balances and supplier payment confirmations.
+  'confirm_bank_reconciliation',
+  // TG-INT 1.1 — outbound WhatsApp broadcast to multiple recipients
+  // (e.g. wholesaler price update). Always dual-admin to prevent any
+  // single admin from blasting incorrect / unauthorised messages.
+  'broadcast_wholesalers',
 ];
 
 /**
@@ -126,6 +142,10 @@ function formatAction(action) {
     transfer_than: 'transfer', transfer_package: 'transfer', transfer_batch: 'transfer',
     receive_goods: 'goods receipt', add_warehouse: 'warehouse creation', rename_warehouse: 'warehouse rename',
     bulk_receive_goods: 'bulk goods receipt',
+    set_forex_rate: 'forex rate update',
+    notify_wholesaler: 'wholesaler notification',
+    broadcast_wholesalers: 'wholesaler broadcast',
+    confirm_bank_reconciliation: 'bank reconciliation confirmation',
   };
   return map[action] || action.replace(/_/g, ' ');
 }

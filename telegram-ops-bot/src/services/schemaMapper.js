@@ -182,6 +182,45 @@ const REQUIRED_SHEETS = {
       'location', 'logged_at', 'logged_via', 'marked_by', 'reason',
     ],
   },
+  // TG-INT 1.4 — manual FX rates entered by admin/finance. The forex
+  // adapter's `manual` provider reads from this sheet: most recent
+  // entry on/before the queried date wins. API providers (when wired)
+  // can write back here too so we get a unified rate history.
+  ForexRates: {
+    headers: ['date', 'base', 'quote', 'rate', 'source', 'entered_by', 'entered_at', 'notes'],
+  },
+  // TG-INT 1.3 — courier tracking events. One row per status update.
+  // Multiple rows per tracking_number form a chronological trail.
+  ShipmentEvents: {
+    headers: [
+      'event_id', 'tracking_number', 'carrier', 'status', 'description',
+      'location', 'event_time', 'fetched_at', 'reference_id', 'raw_json',
+    ],
+  },
+  // TG-INT 1.2 — raw bank-feed transactions before reconciliation.
+  // Reconciler reads here, writes the match into Ledger_Entries.
+  BankFeed: {
+    headers: [
+      'txn_id', 'account_id', 'posted_at', 'amount', 'currency',
+      'direction', 'counterparty', 'narration', 'reference',
+      'fetched_at', 'matched_ledger_entry_id', 'reconciliation_status',
+    ],
+  },
+  // TG-INT 1.1 — WhatsApp message templates registered with the
+  // provider. Admin maintains this; bot uses it to know which template
+  // names + variables are available for outbound.
+  WhatsAppTemplates: {
+    headers: ['template_id', 'name', 'language', 'category', 'body', 'variables', 'status', 'updated_at'],
+  },
+  // TG-INT 1.1 — outbound message log (one row per send attempt).
+  // Reconciles to provider delivery webhooks when those land.
+  WhatsAppOutbound: {
+    headers: [
+      'send_id', 'recipient_phone', 'template_name', 'variables_json',
+      'status', 'provider', 'provider_message_id', 'cost_usd',
+      'sent_at', 'delivered_at', 'error',
+    ],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];
