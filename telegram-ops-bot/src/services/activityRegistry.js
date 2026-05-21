@@ -137,6 +137,9 @@ const ACTIVITIES = [
   // Visibility gated to admins in the controller; not listed in any
   // department's allowed_activities CSV.
   { code: 'procurement_plan',      label: 'Procurement Plan',          icon: '📋', callback: 'act:procurement_plan',   hub: 'admin' },
+  // LANDED-COST C1 — admin finalises USD cost-per-yard + import charges
+  // for a GRN. Dual-admin gated via `finalize_landed_cost`.
+  { code: 'finalize_landed_cost',  label: 'Finalize Landed Cost',      icon: '💵', callback: 'act:finalize_landed_cost', hub: 'admin' },
 
   { code: 'upload_receipt',        label: 'Upload Receipt',            icon: '🧾', callback: 'act:upload_receipt',     hub: null },
 ];

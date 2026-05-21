@@ -563,6 +563,80 @@ Harness: 216 green (was 153).
 
 All 💭 Discuss — never start without an explicit owner decision (see §4.6).
 
+### 2.10 LANDED-COST C1 · USD landed cost + import charges (2026-05-21)
+
+Admin-driven feature for sealing the true cost of received goods.
+Closes the gap between "what did we pay the supplier" (USD) and "what
+does each yard ACTUALLY cost us in NGN" (after container clearance,
+clearing agent, logistics, demurrage, insurance, customs, bank
+transfer fees).
+
+**Decisions (owner brief, all approved):**
+
+| Q | Decision |
+|---|---|
+| Allocation rule | **Per yard** — every charge divided by `total_yards` across the GRN |
+| Charge types | **Editable catalogue sheet** (`LandedCostTypes`, seeded with 7 common types) — admin can add more over time without code change |
+| Entry timing | **After receipt** — separate "Finalize Landed Cost" flow, GRNs land as `provisional` first |
+| FX locking | **At finalize time** — rate pulled from the manual `ForexRates` provider (TG-INT 1.4) and sealed on the GRN row |
+| Inventory schema | **Unchanged** — landed cost lives on the GRN row; per-bale lookup is a 1-hop join via existing `grn_id` column |
+| Container model | **1 GRN = 1 container** for V1 — multi-container split deferred |
+| Approval gate | **Dual-admin** (`finalize_landed_cost` ∈ `ALWAYS_APPROVAL_ACTIONS`) — wrong numbers cascade into every margin report |
+
+**Schema:**
+
+- New sheet `LandedCostTypes` — `type_id | type_name | active | created_at | created_by | notes`. Seeded with: Container Clearance, Clearing Agent, Logistics, Demurrage, Insurance, Customs Duty, Bank Transfer Fee.
+- New sheet `ContainerCharges` — `charge_id | grn_id | type_id | type_name | amount_usd | entered_by | entered_at | notes`. Append-only audit trail; one row per charge entered.
+- `GoodsReceipts` extended with 8 columns (lazy migration in schemaMapper for existing deployments): `lc_status` (`provisional` | `pending_approval` | `finalized`), `lc_usd_per_yard`, `lc_charges_usd`, `lc_fx_rate`, `lc_ngn_per_yard`, `lc_finalized_at`, `lc_finalized_by`, `lc_request_id`.
+
+**Files:**
+
+- `src/repositories/landedCostTypesRepository.js` (catalogue I/O)
+- `src/repositories/containerChargesRepository.js` (append-only charges)
+- `src/repositories/goodsReceiptsRepository.js` (extended: read 24 cols; `markPendingLandedCost` / `finalizeLandedCost` / `clearPendingLandedCost` mutators)
+- `src/services/landedCostService.js` (pure allocation math + `submitForApproval` / `applyApproved` / `cancelPending` / `getForBale` / `listProvisional` / `resolveFxRate`)
+- `src/flows/landedCostFlow.js` (admin-only multi-step UI: GRN picker → USD/yd → charges picker+amount → FX confirm → preview → submit)
+- `src/risk/evaluate.js` (`finalize_landed_cost` appended to `ALWAYS_APPROVAL_ACTIONS`)
+- `src/services/activityRegistry.js` (`💵 Finalize Landed Cost` in admin hub)
+- `src/services/inventoryService.js` (post-approval branch in `executeApprovedAction` + rejection-cleanup in `rejectApproval`)
+- `src/controllers/telegramController.js` (act dispatcher + `lcost:*` callbacks + text-input router)
+
+**Formula:**
+
+```
+usd_charges_per_yard  = total_charges_usd / total_yards_in_grn
+usd_landed_per_yard   = usd_cost_per_yard + usd_charges_per_yard
+ngn_landed_per_yard   = usd_landed_per_yard * fx_rate_at_receipt
+```
+
+**Smoke (`S27`, 16 checks):** schema declared + GoodsReceipts cols
+extended + policy in ALWAYS_APPROVAL + activityRegistry entry + math
+correctness (positive path + zero-yard refuse + bad USD/FX fail-fast)
++ FX resolution (manual hit + missing surfaces actionable error) +
+submit-flow queues request + flips GRN to `pending_approval` +
+double-submit blocked + `applyApproved` seals row + persists charges
++ `cancelPending` reverts on reject + `getForBale` resolves cost via
+`grn_id` back-pointer + `listProvisional` excludes finalized/pending.
+
+**Smoke total:** 354 ok / 0 failed (was 338).
+
+**Reads consumed by:** the upcoming margin reports (§4.4 financial
+reporting) and the future wholesaler-floor-pricing logic (§1.2 of
+`docs/vision-textile-trading.md`). Today's sales / supply flows are
+unchanged — `PricePerYard` retains its current "selling price"
+meaning; cost is a parallel data lane.
+
+**Follow-ups (not in this commit):**
+
+- Admin Forex Rates UI (button-only entry into `ForexRates` sheet) so
+  admins don't have to type into the sheet. Tracked under TG-INT-A3.
+- 3-day reminder for GRNs still provisional — needs the parked ATT-C3
+  scheduler.
+- Per-design USD-cost (instead of one-rate-per-GRN) — V2 only if
+  practice demands it.
+- Sales / margin reports surfacing `lc_ngn_per_yard` alongside
+  `PricePerYard` — owned by FIN-C1..C6.
+
 ### 2.9 TG-INTEGRATIONS · Third-party adapter layer (2026-05-21)
 
 Introduces `src/integrations/` — a top-level module that wraps every
@@ -757,26 +831,12 @@ sample tracking, document repository, customer-data discipline, task
 close-tracking, and data-hygiene migration. Document is the discussion
 substrate, not a commitment list. Re-read before each planning session.
 
-### 4.0b LANDED-COST · USD cost + import charges + NGN landed cost 🚧 In design (2026-05-21)
+### 4.0b LANDED-COST C1 · USD cost + import charges + NGN landed cost ✅ Shipped (2026-05-21)
 
-**Scope (pending owner answers — see chat questions Q1–Q7):**
-- Admin sets per-item USD cost on receipt.
-- Container-level fixed charges (clearance, clearing agent, logistics,
-  customs, etc.) entered against the GRN; bot allocates them across
-  bales (allocation rule TBD — recommended per-yard).
-- Bot locks the FX rate at receipt from `ForexRates` (manual-rate
-  provider shipped in TG-INT-A1), computes `ngn_landed_cost_per_yard`,
-  and writes new columns to `Inventory` alongside existing
-  `PricePerYard` (which becomes unambiguous "selling price").
-- Dual-admin gated (recommended) — directly drives margin reports.
-
-**Substrate unlocked for:** §1.4 financial reporting (accurate COGS),
-§1.2 wholesaler direct negotiation (real wholesale floor pricing),
-§1.7 sample-cost accounting.
-
-Build plan + 4 new columns + 1 new sheet (`ContainerCharges`) + 1 new
-flow ("💵 Finalize Landed Cost") to be drafted after owner answers
-the 7 tuning questions captured in chat on 2026-05-21.
+Owner approved all defaults: per-yard allocation, editable type
+catalogue, after-receipt entry, FX locked at receipt, Inventory schema
+untouched (lookup via existing `grn_id`), one GRN = one container,
+dual-admin approval. See §2.10.
 
 ### 4.1 Commit 4 — Reports 📋 Planned (next)
 

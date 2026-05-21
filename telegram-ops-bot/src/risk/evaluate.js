@@ -83,6 +83,10 @@ const ALWAYS_APPROVAL_ACTIONS = [
   // (e.g. wholesaler price update). Always dual-admin to prevent any
   // single admin from blasting incorrect / unauthorised messages.
   'broadcast_wholesalers',
+  // LANDED-COST C1 — finalize a GRN's landed cost (USD cost-per-yard +
+  // container charges + FX rate). Sealing wrong numbers cascades into
+  // every margin report + sales decision, so always dual-admin.
+  'finalize_landed_cost',
 ];
 
 /**
@@ -146,6 +150,7 @@ function formatAction(action) {
     notify_wholesaler: 'wholesaler notification',
     broadcast_wholesalers: 'wholesaler broadcast',
     confirm_bank_reconciliation: 'bank reconciliation confirmation',
+    finalize_landed_cost: 'landed cost finalization',
   };
   return map[action] || action.replace(/_/g, ' ');
 }

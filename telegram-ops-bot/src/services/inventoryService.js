@@ -639,6 +639,21 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       poId: aj.po_id || '', poUpdate,
       source: aj.source || 'bulk_csv', fileHash, fileName: aj.fileName || '',
     };
+  } else if (aj.action === 'finalize_landed_cost') {
+    // LANDED-COST C1 — write the container charges + seal the GRN row's
+    // lc_* columns. All inputs (USD/yard, charges, FX) are snapshotted
+    // in the action JSON at submit time so the math here matches the
+    // approval card exactly.
+    const landedCostService = require('./landedCostService');
+    try {
+      const result = await landedCostService.applyApproved({
+        aj, approvedBy, requestId,
+      });
+      return { ok: true, message: `Landed cost finalized for ${result.grnId} at ₦${result.allocation.ngnLandedPerYard.toFixed(2)}/yd.` };
+    } catch (e) {
+      logger.error(`finalize_landed_cost apply failed: ${e.message}`);
+      return { ok: false, message: e.message || 'Failed to finalize landed cost.' };
+    }
   } else if (aj.action === 'add_warehouse') {
     // P2 — warehouse creation is dual-admin gated (see ALWAYS_APPROVAL_ACTIONS
     // in risk/evaluate). There is no central Warehouses sheet today —
@@ -1007,6 +1022,17 @@ async function rejectApproval(requestId, rejectedBy) {
       const designAssetsService = require('./designAssetsService');
       await designAssetsService.rejectByApprovalRequestId(requestId, rejectedBy);
     } catch (_) { /* non-fatal: row stays pending; admin can clean up via Manage hub */ }
+  }
+  if (aj.action === 'finalize_landed_cost' && aj.grn_id) {
+    // LANDED-COST C1 — flip the GRN back to provisional so the admin
+    // can re-submit with corrected numbers. Non-fatal: even if this
+    // fails the approval row still gets marked rejected.
+    try {
+      const landedCostService = require('./landedCostService');
+      await landedCostService.cancelPending(aj.grn_id);
+    } catch (e) {
+      logger.warn(`finalize_landed_cost reject: failed to clear GRN ${aj.grn_id} pending state: ${e.message}`);
+    }
   }
   await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString());
   await auditLogRepository.append('approval_rejected', { requestId, rejectedBy }, rejectedBy);

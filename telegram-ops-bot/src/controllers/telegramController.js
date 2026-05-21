@@ -3288,6 +3288,17 @@ async function handleMessage(bot, msg) {
     }
   }
 
+  // LANDED-COST C1 — Finalize Landed Cost flow accepts free-text input
+  // for the USD-cost-per-yard step and the per-charge amount step.
+  {
+    const lcSession = sessionStore.get(userId);
+    if (lcSession && lcSession.type === 'landed_cost_flow') {
+      const landedCostFlow = require('../flows/landedCostFlow');
+      const handled = await landedCostFlow.handleText(bot, msg);
+      if (handled) return;
+    }
+  }
+
   // USR-C3 — Add Employee flow accepts free-text input for telegram_id,
   // name, and new-department steps.
   {
@@ -5760,6 +5771,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (handled) return;
   }
 
+  // LANDED-COST C1 — Finalize Landed Cost callbacks (lcost:*).
+  if (data.startsWith('lcost:')) {
+    const landedCostFlow = require('../flows/landedCostFlow');
+    const handled = await landedCostFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
   // USR-C3 — Add Employee flow callbacks.
   if (data.startsWith('usr:')) {
     const userAddFlow = require('../flows/userAddFlow');
@@ -7957,6 +7975,16 @@ async function handleCallbackQuery(bot, callbackQuery) {
         // self-approve at the queue stage).
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
         await warehouseFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'finalize_landed_cost': {
+        // LANDED-COST C1 — admin finalises USD cost / yard + container
+        // charges for a GRN. Dual-admin gated at submit time (action in
+        // ALWAYS_APPROVAL_ACTIONS); admin-only entry gate prevents
+        // employees from even reaching the flow.
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        const landedCostFlow = require('../flows/landedCostFlow');
+        await landedCostFlow.start(bot, chatId, uid, messageId);
         break;
       }
       case 'manage_wh': {

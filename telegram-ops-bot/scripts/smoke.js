@@ -1494,8 +1494,9 @@ async function runS14b() {
     pass('S14b.3 getByFileHash: unknown + empty hash returns null');
   } else fail('S14b.3 getByFileHash null', JSON.stringify({ miss, empty }));
 
-  // S14b.4 — append writes 16 columns: P2.5 added source + file_hash;
-  // FILE-C1 added source_url + source_filename.
+  // S14b.4 — append writes 24 columns: P2.5 added source + file_hash;
+  // FILE-C1 added source_url + source_filename; LANDED-COST C1 added
+  // 8 lc_* finalisation columns at the end.
   let appended = null;
   stubModule(require.resolve('../src/repositories/sheetsClient'), {
     readRange: async () => [],
@@ -1513,21 +1514,25 @@ async function runS14b() {
     source_url: 'https://drive.google.com/file/d/abc/view',
     source_filename: '2026-05-15__abdul__delivery__1234567a.xlsx',
   });
-  if (appended && appended.length === 16
+  if (appended && appended.length === 24
       && appended[12] === 'bulk_xlsx' && appended[13] === '1234567890abcdef'
       && appended[14] === 'https://drive.google.com/file/d/abc/view'
       && appended[15] === '2026-05-15__abdul__delivery__1234567a.xlsx'
-      && saved.source === 'bulk_xlsx' && saved.source_url.includes('drive.google.com')) {
-    pass('S14b.4 append: writes 16 cols; source + file_hash + source_url + source_filename persisted');
-  } else fail('S14b.4 append', JSON.stringify({ appended, saved }));
+      && appended[16] === 'provisional'    // lc_status defaults
+      && appended[23] === ''                // lc_request_id empty
+      && saved.source === 'bulk_xlsx' && saved.source_url.includes('drive.google.com')
+      && saved.lc_status === 'provisional') {
+    pass('S14b.4 append: writes 24 cols (P2.5 + FILE-C1 + LANDED-COST C1 with lc_status=provisional)');
+  } else fail('S14b.4 append', JSON.stringify({ len: appended?.length, appended, saved }));
 
   // S14b.5 — manual GRN (no source/file_hash/URL) defaults source='manual',
-  // file_hash + source_url + source_filename empty
+  // file_hash + source_url + source_filename empty; lc_status='provisional'.
   appended = null;
   await grnRepo2.append({ warehouse: 'Kano', total_bales: 2, total_yards: 100 });
   if (appended && appended[12] === 'manual' && appended[13] === ''
-      && appended[14] === '' && appended[15] === '') {
-    pass('S14b.5 append: manual GRN defaults source=manual; file_hash + source_url + source_filename empty');
+      && appended[14] === '' && appended[15] === ''
+      && appended[16] === 'provisional') {
+    pass('S14b.5 append: manual GRN defaults source=manual; file_hash + URL + filename empty; lc_status=provisional');
   } else fail('S14b.5 append manual default', JSON.stringify(appended));
 }
 
@@ -4226,6 +4231,303 @@ function runS26() {
 }
 
 // ---------------------------------------------------------------------------
+// S27 — LANDED-COST C1 (USD landed cost + container charges)
+// ---------------------------------------------------------------------------
+async function runS27() {
+  // ---- S27.1: schema declares LandedCostTypes + ContainerCharges sheets ----
+  const schemaSrc27 = fs.readFileSync(path.join(__dirname, '../src/services/schemaMapper.js'), 'utf8');
+  const want27 = ['LandedCostTypes', 'ContainerCharges'];
+  const miss27 = want27.filter((s) => !new RegExp(`^\\s*${s}\\s*:\\s*\\{`, 'm').test(schemaSrc27));
+  if (miss27.length === 0) pass('S27.1 schemaMapper: LandedCostTypes + ContainerCharges declared');
+  else fail('S27.1 schemaMapper missing', miss27.join(', '));
+
+  // ---- S27.2: GoodsReceipts header extended with 8 LC cols ----
+  const lcCols = ['lc_status', 'lc_usd_per_yard', 'lc_charges_usd', 'lc_fx_rate',
+                  'lc_ngn_per_yard', 'lc_finalized_at', 'lc_finalized_by', 'lc_request_id'];
+  const missLc = lcCols.filter((c) => !schemaSrc27.includes(`'${c}'`));
+  if (missLc.length === 0) pass('S27.2 schemaMapper: GoodsReceipts gains 8 landed-cost columns');
+  else fail('S27.2 GoodsReceipts cols missing', missLc.join(', '));
+
+  // ---- S27.3: evaluate.js has finalize_landed_cost in ALWAYS_APPROVAL ----
+  const evSrcRaw27 = fs.readFileSync(path.join(__dirname, '../src/risk/evaluate.js'), 'utf8');
+  const evSrc27 = evSrcRaw27.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const mAlways27 = evSrc27.match(new RegExp('const\\s+ALWAYS_APPROVAL_ACTIONS\\s*=\\s*\\[([\\s\\S]*?)\\]', 'm'));
+  const always27 = mAlways27 ? (mAlways27[1].match(/'([^']+)'/g) || []).map((s) => s.replace(/'/g, '')) : [];
+  if (always27.includes('finalize_landed_cost')) {
+    pass('S27.3 evaluate: finalize_landed_cost ∈ ALWAYS_APPROVAL_ACTIONS');
+  } else fail('S27.3 evaluate', 'finalize_landed_cost not in ALWAYS_APPROVAL_ACTIONS');
+
+  // ---- S27.4: activity registry surfaces finalize_landed_cost in admin hub ----
+  delete require.cache[require.resolve('../src/services/activityRegistry')];
+  const reg27 = require('../src/services/activityRegistry');
+  const entry27 = reg27.getAll().find((a) => a.code === 'finalize_landed_cost');
+  if (entry27 && entry27.hub === 'admin' && entry27.callback === 'act:finalize_landed_cost') {
+    pass('S27.4 activityRegistry: finalize_landed_cost in admin hub');
+  } else fail('S27.4 activityRegistry', JSON.stringify(entry27));
+
+  // ---- S27.5..S27.10: pure allocation math ----
+  delete require.cache[require.resolve('../src/services/landedCostService')];
+  delete require.cache[require.resolve('../src/integrations/forex')];
+  delete require.cache[require.resolve('../src/integrations')];
+  // Stub the repos / approval queue / audit / forex so the service can be loaded.
+  const stubs27 = {
+    grnRows: new Map(),
+    chargesAppended: [],
+    queueAppended: [],
+    auditAppended: [],
+    forexRows: [
+      { date: '2026-05-21', base: 'USD', quote: 'NGN', rate: 1520, source: 'admin' },
+    ],
+  };
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async () => [],
+    appendRows: async () => {},
+    updateRange: async () => {},
+    getSheetNames: async () => [],
+    addSheet: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/goodsReceiptsRepository'), {
+    getAll: async () => Array.from(stubs27.grnRows.values()),
+    getById: async (id) => stubs27.grnRows.get(id) || null,
+    append: async (g) => { stubs27.grnRows.set(g.grn_id, { ...g, rowIndex: stubs27.grnRows.size + 2 }); return g; },
+    markPendingLandedCost: async (id, requestId) => {
+      const g = stubs27.grnRows.get(id);
+      if (!g) throw new Error('not found');
+      g.lc_status = 'pending_approval'; g.lc_request_id = requestId;
+      return true;
+    },
+    finalizeLandedCost: async (id, p) => {
+      const g = stubs27.grnRows.get(id);
+      if (!g) throw new Error('not found');
+      Object.assign(g, {
+        lc_status: 'finalized',
+        lc_usd_per_yard: p.usdPerYard,
+        lc_charges_usd: p.chargesUsd,
+        lc_fx_rate: p.fxRate,
+        lc_ngn_per_yard: p.ngnPerYard,
+        lc_finalized_at: p.finalizedAt,
+        lc_finalized_by: p.finalizedBy,
+        lc_request_id: p.requestId,
+      });
+      return true;
+    },
+    clearPendingLandedCost: async (id) => {
+      const g = stubs27.grnRows.get(id);
+      if (g) { g.lc_status = 'provisional'; g.lc_request_id = ''; }
+      return true;
+    },
+  });
+  stubModule(require.resolve('../src/repositories/landedCostTypesRepository'), {
+    getActive: async () => [
+      { type_id: 'LCT-001', type_name: 'Container Clearance', active: true },
+      { type_id: 'LCT-003', type_name: 'Logistics', active: true },
+    ],
+    getById: async (id) => id === 'LCT-001'
+      ? { type_id: 'LCT-001', type_name: 'Container Clearance' }
+      : id === 'LCT-003' ? { type_id: 'LCT-003', type_name: 'Logistics' } : null,
+  });
+  stubModule(require.resolve('../src/repositories/containerChargesRepository'), {
+    append: async (c) => { stubs27.chargesAppended.push(c); return c; },
+    appendMany: async (rows) => { for (const r of rows) stubs27.chargesAppended.push(r); return rows; },
+    findByGrn: async (grnId) => stubs27.chargesAppended.filter((c) => c.grn_id === grnId),
+  });
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    append: async (r) => { stubs27.queueAppended.push(r); return r; },
+    getAllPending: async () => stubs27.queueAppended.slice(),
+    updateStatus: async () => true,
+  });
+  stubModule(require.resolve('../src/repositories/auditLogRepository'), {
+    append: async (...args) => { stubs27.auditAppended.push(args); },
+  });
+  // Forex adapter — stub returns the manual rate for the requested date.
+  stubModule(require.resolve('../src/integrations/forex'), {
+    rate: async (from, to, date) => {
+      const m = stubs27.forexRows.find((r) => r.base === from && r.quote === to && r.date <= date);
+      if (!m) {
+        const err = new Error(`No manual FX rate on file for ${from}/${to} on or before ${date}.`);
+        err.code = 'FOREX_NO_MANUAL_RATE';
+        throw err;
+      }
+      return { rate: m.rate, source: 'manual:admin', date: m.date, base: from, quote: to };
+    },
+    getEstimatedCost: () => ({ totalUsd: 0 }),
+    _providerName: 'manual',
+  });
+  // Also stub the integrations barrel so any nested `require('../integrations')`
+  // calls hit our stub.
+  stubModule(require.resolve('../src/integrations'), {
+    forex: require('../src/integrations/forex'),
+  });
+  stubModule(require.resolve('../src/risk/evaluate'), {
+    evaluate: async () => ({ risk: 'approval_required', reason: 'dual_admin_required' }),
+    WRITE_ACTIONS: [], ALWAYS_APPROVAL_ACTIONS: ['finalize_landed_cost'],
+    SUPER_ADMIN_APPROVAL_ACTIONS: [],
+  });
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => true, isEmployee: () => false,
+  });
+  // idGenerator + logger pass through.
+  delete require.cache[require.resolve('../src/services/landedCostService')];
+  const lcSvc = require('../src/services/landedCostService');
+
+  // 1000 yards, $2 / yard, charges $1500 + $500 = $2000 → $2/yard charges → $4 USD landed → ₦6080 @ 1520
+  const alloc = lcSvc.computeAllocation({
+    totalYards: 1000,
+    usdPerYard: 2,
+    charges: [{ amount_usd: 1500 }, { amount_usd: 500 }],
+    fxRate: 1520,
+  });
+  if (alloc.totalYards === 1000
+      && alloc.chargesUsd === 2000
+      && alloc.usdChargesPerYard === 2
+      && alloc.usdLandedPerYard === 4
+      && alloc.ngnLandedPerYard === 6080) {
+    pass('S27.5 computeAllocation: $2 + $2 charges/yd → $4 → ₦6080/yd at FX 1520');
+  } else fail('S27.5', JSON.stringify(alloc));
+
+  // ---- S27.6: zero-yard GRN throws LC_ZERO_YARDS ----
+  let zeroErr = null;
+  try { lcSvc.computeAllocation({ totalYards: 0, usdPerYard: 1, charges: [], fxRate: 1500 }); }
+  catch (e) { zeroErr = e; }
+  if (zeroErr && zeroErr.code === 'LC_ZERO_YARDS') pass('S27.6 computeAllocation: zero-yard GRN refuses');
+  else fail('S27.6', zeroErr && zeroErr.message);
+
+  // ---- S27.7: bad USD / FX throws ----
+  let badUsd = null, badFx = null;
+  try { lcSvc.computeAllocation({ totalYards: 100, usdPerYard: 0, charges: [], fxRate: 1500 }); }
+  catch (e) { badUsd = e; }
+  try { lcSvc.computeAllocation({ totalYards: 100, usdPerYard: 1, charges: [], fxRate: 0 }); }
+  catch (e) { badFx = e; }
+  if (badUsd?.code === 'LC_BAD_USD' && badFx?.code === 'LC_BAD_FX') {
+    pass('S27.7 computeAllocation: bad USD-per-yard and bad FX both fail-fast');
+  } else fail('S27.7', JSON.stringify({ badUsd: badUsd?.code, badFx: badFx?.code }));
+
+  // ---- S27.8: resolveFxRate returns manual rate ----
+  const fxOk = await lcSvc.resolveFxRate({ baseDate: '2026-05-22' });
+  if (fxOk.rate === 1520 && fxOk.source === 'manual:admin') {
+    pass('S27.8 resolveFxRate: manual rate served');
+  } else fail('S27.8', JSON.stringify(fxOk));
+
+  // ---- S27.9: resolveFxRate returns 0 + missing when no rate on file ----
+  stubs27.forexRows = []; // wipe
+  // Reload service so it picks up the stub change — wrapOutbound caches nothing.
+  delete require.cache[require.resolve('../src/services/landedCostService')];
+  const lcSvc2 = require('../src/services/landedCostService');
+  const fxMissing = await lcSvc2.resolveFxRate({ baseDate: '2026-05-01' });
+  if (fxMissing.rate === 0 && fxMissing.source === 'missing' && /No manual FX/.test(fxMissing.error || '')) {
+    pass('S27.9 resolveFxRate: no-rate-on-file surfaces actionable error');
+  } else fail('S27.9', JSON.stringify(fxMissing));
+  stubs27.forexRows = [{ date: '2026-05-21', base: 'USD', quote: 'NGN', rate: 1520, source: 'admin' }];
+
+  // ---- S27.10: submitForApproval queues + flips GRN to pending ----
+  await require('../src/repositories/goodsReceiptsRepository').append({
+    grn_id: 'GRN-S27-1', warehouse: 'Idumota', supplier: 'Supplier A',
+    total_bales: 10, total_yards: 500, received_at: '2026-05-20T10:00:00Z',
+    lc_status: 'provisional',
+  });
+  const submitRes = await lcSvc2.submitForApproval({
+    grnId: 'GRN-S27-1', userId: 'admin-1',
+    usdPerYard: 2.5,
+    charges: [
+      { type_id: 'LCT-001', type_name: 'Container Clearance', amount_usd: 750 },
+      { type_id: 'LCT-003', type_name: 'Logistics', amount_usd: 250 },
+    ],
+    fxRate: 1520,
+  });
+  // 500 yds, $2.5/yd + $1000 charges / 500 = $2/yd → $4.5 USD landed → ₦6840
+  if (submitRes.requestId
+      && submitRes.allocation.ngnLandedPerYard === 6840
+      && stubs27.grnRows.get('GRN-S27-1').lc_status === 'pending_approval'
+      && stubs27.queueAppended.length === 1
+      && stubs27.queueAppended[0].actionJSON.action === 'finalize_landed_cost') {
+    pass('S27.10 submitForApproval: queues request + flips GRN to pending_approval');
+  } else fail('S27.10', JSON.stringify({
+    req: submitRes.requestId, alloc: submitRes.allocation.ngnLandedPerYard,
+    grnState: stubs27.grnRows.get('GRN-S27-1').lc_status,
+    queueLen: stubs27.queueAppended.length,
+  }));
+
+  // ---- S27.11: re-submit on a pending GRN is rejected ----
+  let reErr = null;
+  try {
+    await lcSvc2.submitForApproval({
+      grnId: 'GRN-S27-1', userId: 'admin-1', usdPerYard: 3, charges: [], fxRate: 1520,
+    });
+  } catch (e) { reErr = e; }
+  if (reErr && reErr.code === 'LC_ALREADY_PENDING') pass('S27.11 submitForApproval: double-submit blocked while pending');
+  else fail('S27.11', reErr && reErr.message);
+
+  // ---- S27.12: applyApproved seals GRN row + persists charges ----
+  const aj12 = stubs27.queueAppended[0].actionJSON;
+  const apply12 = await lcSvc2.applyApproved({ aj: aj12, approvedBy: 'admin-2', requestId: 'REQ-12' });
+  const grn12 = stubs27.grnRows.get('GRN-S27-1');
+  const chargesPersisted = stubs27.chargesAppended.filter((c) => c.grn_id === 'GRN-S27-1');
+  if (apply12.ok
+      && grn12.lc_status === 'finalized'
+      && grn12.lc_ngn_per_yard === 6840
+      && grn12.lc_finalized_by === 'admin-2'
+      && chargesPersisted.length === 2
+      && chargesPersisted.find((c) => c.type_name === 'Container Clearance')
+      && chargesPersisted.find((c) => c.type_name === 'Logistics')) {
+    pass('S27.12 applyApproved: GRN sealed, 2 ContainerCharges rows written');
+  } else fail('S27.12', JSON.stringify({ apply: apply12.ok, st: grn12.lc_status, ngn: grn12.lc_ngn_per_yard, chargesLen: chargesPersisted.length }));
+
+  // ---- S27.13: cancelPending flips back to provisional ----
+  await require('../src/repositories/goodsReceiptsRepository').append({
+    grn_id: 'GRN-S27-2', warehouse: 'Lagos', supplier: 'Supplier B',
+    total_bales: 5, total_yards: 200, received_at: '2026-05-20T11:00:00Z',
+    lc_status: 'provisional',
+  });
+  await lcSvc2.submitForApproval({
+    grnId: 'GRN-S27-2', userId: 'admin-1', usdPerYard: 2,
+    charges: [{ type_id: 'LCT-001', type_name: 'Container Clearance', amount_usd: 100 }],
+    fxRate: 1520,
+  });
+  await lcSvc2.cancelPending('GRN-S27-2');
+  if (stubs27.grnRows.get('GRN-S27-2').lc_status === 'provisional'
+      && stubs27.grnRows.get('GRN-S27-2').lc_request_id === '') {
+    pass('S27.13 cancelPending: GRN reverts to provisional on rejection');
+  } else fail('S27.13', JSON.stringify(stubs27.grnRows.get('GRN-S27-2')));
+
+  // ---- S27.14: getForBale lookup via grn_id back-pointer ----
+  const bale14 = { packageNo: 'PKG-1', grn_id: 'GRN-S27-1' };
+  const cost14 = await lcSvc2.getForBale(bale14);
+  if (cost14.finalized && cost14.ngnPerYard === 6840 && cost14.usdPerYard === 2.5 && cost14.fxRate === 1520) {
+    pass('S27.14 getForBale: resolves cost via grn_id back-pointer');
+  } else fail('S27.14', JSON.stringify(cost14));
+
+  // ---- S27.15: getForBale returns finalized=false for a provisional GRN ----
+  await require('../src/repositories/goodsReceiptsRepository').append({
+    grn_id: 'GRN-S27-3', warehouse: 'Kano', supplier: 'Supplier C',
+    total_bales: 1, total_yards: 50, received_at: '2026-05-20T12:00:00Z',
+    lc_status: 'provisional',
+  });
+  const cost15 = await lcSvc2.getForBale({ packageNo: 'PKG-3', grn_id: 'GRN-S27-3' });
+  if (!cost15.finalized && cost15.ngnPerYard === 0) {
+    pass('S27.15 getForBale: provisional GRN reports finalized=false, no cost');
+  } else fail('S27.15', JSON.stringify(cost15));
+
+  // ---- S27.16: listProvisional excludes finalized + pending ----
+  const provisional = await lcSvc2.listProvisional();
+  const ids = provisional.map((g) => g.grn_id);
+  if (ids.includes('GRN-S27-2') && ids.includes('GRN-S27-3') && !ids.includes('GRN-S27-1')) {
+    pass('S27.16 listProvisional: includes provisional, excludes finalized');
+  } else fail('S27.16', JSON.stringify(ids));
+
+  // Clean up stubs so subsequent suites (none today, but for safety) get real modules.
+  for (const p of [
+    '../src/repositories/sheetsClient', '../src/repositories/goodsReceiptsRepository',
+    '../src/repositories/landedCostTypesRepository', '../src/repositories/containerChargesRepository',
+    '../src/repositories/approvalQueueRepository', '../src/repositories/auditLogRepository',
+    '../src/integrations/forex', '../src/integrations',
+    '../src/risk/evaluate', '../src/middlewares/auth',
+    '../src/services/landedCostService',
+  ]) {
+    delete require.cache[require.resolve(p)];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -4262,6 +4564,7 @@ function runS26() {
   try { await runS24(); } catch (e) { fail('S24 unexpected error', e.message); }
   try { runS25();       } catch (e) { fail('S25 unexpected error', e.message); }
   try { runS26();       } catch (e) { fail('S26 unexpected error', e.message); }
+  try { await runS27(); } catch (e) { fail('S27 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

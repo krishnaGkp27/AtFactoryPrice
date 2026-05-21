@@ -145,6 +145,17 @@ const REQUIRED_SHEETS = {
       // FILE-C1 — clickable Drive URL + readable Drive filename for any
       // non-manual receipt (bulk + photo OCR). Empty for interactive GRNs.
       'source_url', 'source_filename',
+      // LANDED-COST C1 — landed-cost finalisation state. All 8 cols are
+      // empty for a freshly-received GRN; populated when admin runs the
+      // "Finalize Landed Cost" flow and the 2nd admin approves.
+      //   lc_status: provisional | pending_approval | finalized
+      //   lc_usd_per_yard: admin's USD-cost-per-yard input
+      //   lc_charges_usd:  sum of ContainerCharges rows for this GRN
+      //   lc_fx_rate:      FX rate locked from ForexRates at finalize time
+      //   lc_ngn_per_yard: (usd_per_yard + charges_usd/total_yards) * fx_rate
+      //   lc_finalized_at, lc_finalized_by, lc_request_id
+      'lc_status', 'lc_usd_per_yard', 'lc_charges_usd', 'lc_fx_rate',
+      'lc_ngn_per_yard', 'lc_finalized_at', 'lc_finalized_by', 'lc_request_id',
     ],
   },
   // P4 — Procurement Order header. Drafted before goods arrive; GRN flow
@@ -219,6 +230,31 @@ const REQUIRED_SHEETS = {
       'send_id', 'recipient_phone', 'template_name', 'variables_json',
       'status', 'provider', 'provider_message_id', 'cost_usd',
       'sent_at', 'delivered_at', 'error',
+    ],
+  },
+  // LANDED-COST C1 — editable catalogue of import-charge types. Admin /
+  // finance can add new types over time (Demurrage, Customs Duty, etc.)
+  // without a code change. Seeded with the 7 common types named in the
+  // owner brief (2026-05-21).
+  LandedCostTypes: {
+    headers: ['type_id', 'type_name', 'active', 'created_at', 'created_by', 'notes'],
+    seed: [
+      ['LCT-001', 'Container Clearance', 'TRUE', '', 'system', 'Port + handling fees'],
+      ['LCT-002', 'Clearing Agent',      'TRUE', '', 'system', 'Customs broker / agent commission'],
+      ['LCT-003', 'Logistics',           'TRUE', '', 'system', 'Port → warehouse transport'],
+      ['LCT-004', 'Demurrage',           'TRUE', '', 'system', 'Container storage past free days'],
+      ['LCT-005', 'Insurance',           'TRUE', '', 'system', 'Marine + transit cover'],
+      ['LCT-006', 'Customs Duty',        'TRUE', '', 'system', 'Government import duty'],
+      ['LCT-007', 'Bank Transfer Fee',   'TRUE', '', 'system', 'Foreign-wire / TT cost'],
+    ],
+  },
+  // LANDED-COST C1 — itemised charges per GRN. The "Finalize Landed
+  // Cost" flow appends one row per charge entered by the admin. The
+  // sum is then allocated PER YARD across the GRN's bales.
+  ContainerCharges: {
+    headers: [
+      'charge_id', 'grn_id', 'type_id', 'type_name',
+      'amount_usd', 'entered_by', 'entered_at', 'notes',
     ],
   },
 };
@@ -375,9 +411,14 @@ async function initialize() {
       const grnHeader = await sheets.readRange('GoodsReceipts', 'A1:Z1');
       const h = grnHeader[0] || [];
       // P2.5 added source + file_hash; FILE-C1 added source_url +
-      // source_filename. Both migrations run idempotently here — the
+      // source_filename; LANDED-COST C1 added 8 landed-cost finalisation
+      // columns. All three migrations run idempotently here — the
       // filter only appends columns the deployed sheet is missing.
-      const GRN_NEW_COLS = ['source', 'file_hash', 'source_url', 'source_filename'];
+      const GRN_NEW_COLS = [
+        'source', 'file_hash', 'source_url', 'source_filename',
+        'lc_status', 'lc_usd_per_yard', 'lc_charges_usd', 'lc_fx_rate',
+        'lc_ngn_per_yard', 'lc_finalized_at', 'lc_finalized_by', 'lc_request_id',
+      ];
       const missingGrn = GRN_NEW_COLS.filter((c) => !h.includes(c));
       if (missingGrn.length) {
         const startCol = colLetter(h.length + 1);
