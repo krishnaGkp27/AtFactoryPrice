@@ -3299,6 +3299,26 @@ async function handleMessage(bot, msg) {
     }
   }
 
+  // BR-OPS C1 — daily branch ops (camera-note + opening cash text steps).
+  {
+    const bopsSession = sessionStore.get(userId);
+    if (bopsSession && bopsSession.type === 'daily_branch_ops') {
+      const dailyBranchOpsFlow = require('../flows/dailyBranchOpsFlow');
+      const handled = await dailyBranchOpsFlow.handleText(bot, msg);
+      if (handled) return;
+    }
+  }
+
+  // BR-OPS C1 — office expense batch (free-title + amount text steps).
+  {
+    const ofexSession = sessionStore.get(userId);
+    if (ofexSession && ofexSession.type === 'office_expense_flow') {
+      const officeExpenseFlow = require('../flows/officeExpenseFlow');
+      const handled = await officeExpenseFlow.handleText(bot, msg);
+      if (handled) return;
+    }
+  }
+
   // USR-C3 — Add Employee flow accepts free-text input for telegram_id,
   // name, and new-department steps.
   {
@@ -5778,6 +5798,20 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (handled) return;
   }
 
+  // BR-OPS C1 — Daily branch ops callbacks (bops:*).
+  if (data.startsWith('bops:')) {
+    const dailyBranchOpsFlow = require('../flows/dailyBranchOpsFlow');
+    const handled = await dailyBranchOpsFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
+  // BR-OPS C1 — Office expense flow callbacks (ofex:*).
+  if (data.startsWith('ofex:')) {
+    const officeExpenseFlow = require('../flows/officeExpenseFlow');
+    const handled = await officeExpenseFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
   // USR-C3 — Add Employee flow callbacks.
   if (data.startsWith('usr:')) {
     const userAddFlow = require('../flows/userAddFlow');
@@ -7388,6 +7422,22 @@ async function handleCallbackQuery(bot, callbackQuery) {
       status: 'pending',
     });
 
+    // BR-OPS C1 — pointer for the branch daily roll-up. Receipt rows
+    // start in `pending` admin-approval, but the manager still wants
+    // them visible in their "today's activity" panel immediately. The
+    // pointer itself logs at submission time; the receipt's own
+    // approval pipeline (rcapr:* / rcrej:*) is independent.
+    try {
+      const branchOpsService = require('../services/branchOpsService');
+      await branchOpsService.logPointer({
+        kind: 'receipt_logged', userId: uid,
+        ref_id: receiptId,
+        subject: `Receipt: ${session.customer} · ₦${(Number(session.amount) || 0).toLocaleString()}`,
+        amount: Number(session.amount) || 0,
+        notes: session.bank_account || '',
+      });
+    } catch (_) { /* swallowed in service */ }
+
     const isAdmin = config.access.adminIds.includes(uid);
     const otherAdmins = config.access.adminIds.filter((id) => id !== uid);
     const summary = `🧾 Receipt Approval Pending: ${receiptId}\n\nCustomer: ${session.customer}\nAmount: NGN ${fmtQty(session.amount)}\nAccount: ${session.bank_account}\nUploaded by: ${session.uploaded_by_name} (${session.uploaded_by_id})`;
@@ -7985,6 +8035,24 @@ async function handleCallbackQuery(bot, callbackQuery) {
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
         const landedCostFlow = require('../flows/landedCostFlow');
         await landedCostFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'daily_branch_ops': {
+        // BR-OPS C1 — branch manager's daily routine (camera check +
+        // opening cash). No admin gate; per-user visibility is enforced
+        // by the Departments.allowed_activities CSV at menu-render time.
+        // The flow itself is idempotent — re-tapping after open just
+        // shows the status panel.
+        const dailyBranchOpsFlow = require('../flows/dailyBranchOpsFlow');
+        await dailyBranchOpsFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'office_expense': {
+        // BR-OPS C1 — batch entry of office expenses. Single-admin
+        // sign-off (record_office_expense ∈ WRITE_ACTIONS). Same
+        // department-driven visibility model as daily_branch_ops.
+        const officeExpenseFlow = require('../flows/officeExpenseFlow');
+        await officeExpenseFlow.start(bot, chatId, uid, messageId);
         break;
       }
       case 'manage_wh': {

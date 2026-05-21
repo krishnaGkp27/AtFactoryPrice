@@ -257,6 +257,22 @@ const REQUIRED_SHEETS = {
       'amount_usd', 'entered_by', 'entered_at', 'notes',
     ],
   },
+  // BR-OPS C1 — single umbrella sheet for the branch managers' daily
+  // routine (Abdul / Muhammad). Polymorphic via `kind`: daily_open,
+  // camera_check, opening_cash, expense, sample_issued, receipt_logged,
+  // customer_registered, marketer_registered, day_close. Detailed
+  // entities (samples, receipts, customers, marketers) stay in their
+  // own sheets — this sheet only stores pointers (ref_id) so the
+  // daily timeline view + weekly finance roll-up read ONE place.
+  // Adding a new daily-routine item later = new kind value, no new sheet.
+  BranchOpsLog: {
+    headers: [
+      'op_id', 'date', 'branch', 'manager_id', 'manager_name',
+      'kind', 'subject', 'amount', 'ref_id', 'photo_url',
+      'status', 'approval_request_id', 'notes',
+      'created_at', 'updated_at',
+    ],
+  },
 };
 
 const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];

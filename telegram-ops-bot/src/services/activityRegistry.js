@@ -20,6 +20,10 @@ const HUBS = [
   { id: 'catalog',    label: 'Catalog',              icon: '📷' },
   { id: 'reports',    label: 'Reports',              icon: '📊' },
   { id: 'tasks',      label: 'Tasks',                icon: '📌' },
+  // BR-OPS C1 — branch managers' daily routine hub. Visibility per-user
+  // via the standard Departments.allowed_activities CSV (no special
+  // controller injection). Owns: Open Branch (Daily) + Office Expense.
+  { id: 'daily',      label: 'Daily',                icon: '🌅' },
   { id: 'admin',      label: 'Admin Settings',       icon: '⚙️' },
 ];
 
@@ -142,6 +146,18 @@ const ACTIVITIES = [
   { code: 'finalize_landed_cost',  label: 'Finalize Landed Cost',      icon: '💵', callback: 'act:finalize_landed_cost', hub: 'admin' },
 
   { code: 'upload_receipt',        label: 'Upload Receipt',            icon: '🧾', callback: 'act:upload_receipt',     hub: null },
+
+  // BR-OPS C1 — branch managers' daily routine.
+  // * daily_branch_ops opens the morning card (camera + opening cash) and
+  //   collapses to the status panel for the rest of the day. Idempotent
+  //   — re-tapping after open shows the panel, not a duplicate open.
+  // * office_expense queues a batch of expenses (water, fuel, sundries)
+  //   for single-admin sign-off (record_office_expense ∈ WRITE_ACTIONS).
+  // Per-user visibility via Departments.allowed_activities CSV — add
+  // these codes to Abdul's and Muhammad's department row, no code
+  // change needed when a 3rd manager joins.
+  { code: 'daily_branch_ops',      label: 'Open Branch (Daily)',       icon: '🌅', callback: 'act:daily_branch_ops',   hub: 'daily' },
+  { code: 'office_expense',        label: 'Office Expense',            icon: '💸', callback: 'act:office_expense',     hub: 'daily' },
 ];
 
 const byCode = new Map(ACTIVITIES.map((a) => [a.code, a]));

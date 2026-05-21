@@ -394,6 +394,16 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       category: aj.category, credit_limit: aj.credit_limit,
       payment_terms: aj.payment_terms, notes: aj.notes,
     });
+    // BR-OPS C1 — pointer for the branch daily roll-up. Fire-and-forget;
+    // swallows its own errors so a roll-up blip never fails a customer add.
+    try {
+      const branchOpsService = require('./branchOpsService');
+      await branchOpsService.logPointer({
+        kind: 'customer_registered', userId: item.user,
+        ref_id: aj.name || '', subject: `Customer: ${aj.name || ''}`,
+        notes: aj.category || '',
+      });
+    } catch (_) { /* swallowed in service; second guard for safety */ }
   } else if (aj.action === 'add_bank') {
     const settingsRepo2 = require('../repositories/settingsRepository');
     const all = await settingsRepo2.getAll();
@@ -639,6 +649,20 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       poId: aj.po_id || '', poUpdate,
       source: aj.source || 'bulk_csv', fileHash, fileName: aj.fileName || '',
     };
+  } else if (aj.action === 'record_office_expense') {
+    // BR-OPS C1 — flip the eager pending rows on BranchOpsLog to
+    // approved. All inputs (items, branch, manager) were snapshotted
+    // into the action JSON at submit time, so we don't need to re-read
+    // any free-text after the approver tapped Approve.
+    const branchOpsService = require('./branchOpsService');
+    try {
+      const res = await branchOpsService.applyExpenseBatch({ aj, approvedBy, requestId });
+      if (!res.ok) return { ok: false, message: res.message || 'Could not apply expense batch.' };
+      return { ok: true, message: `Approved ${res.count} item(s) for ${res.branch}: total ₦${(res.total || 0).toLocaleString()}.` };
+    } catch (e) {
+      logger.error(`record_office_expense apply failed: ${e.message}`);
+      return { ok: false, message: e.message || 'Failed to apply expense batch.' };
+    }
   } else if (aj.action === 'finalize_landed_cost') {
     // LANDED-COST C1 — write the container charges + seal the GRN row's
     // lc_* columns. All inputs (USD/yard, charges, FX) are snapshotted
@@ -932,7 +956,7 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     if (!r.ok) return { ok: false, message: r.message || 'Could not activate design photo asset.' };
   } else if (aj.action === 'give_sample') {
     const samplesRepo = require('../repositories/samplesRepository');
-    await samplesRepo.append({
+    const sampleSaved = await samplesRepo.append({
       design: aj.design || '',
       shade: aj.shade || '',
       sample_type: aj.sample_type || '',
@@ -942,11 +966,29 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       status: 'with_customer',
       updated_by: approvedBy,
     });
+    // BR-OPS C1 — pointer for the branch daily roll-up.
+    try {
+      const branchOpsService = require('./branchOpsService');
+      await branchOpsService.logPointer({
+        kind: 'sample_issued', userId: item.user,
+        ref_id: sampleSaved?.sample_id || '',
+        subject: `Sample to ${aj.customer || ''}: ${aj.design || ''} / ${aj.shade || ''}`,
+      });
+    } catch (_) { /* swallowed in service */ }
   } else if (aj.action === 'register_marketer') {
     const marketersRepo = require('../repositories/marketersRepository');
     const row = await marketersRepo.findByApprovalRequestId(requestId);
     if (!row) return { ok: false, message: 'Marketer record not found.' };
     await marketersRepo.updateStatus(row.rowIndex, 'active', approvedBy);
+    // BR-OPS C1 — pointer for the branch daily roll-up.
+    try {
+      const branchOpsService = require('./branchOpsService');
+      await branchOpsService.logPointer({
+        kind: 'marketer_registered', userId: item.user,
+        ref_id: row.marketer_id || row.name || '',
+        subject: `Marketer: ${row.name || ''}`,
+      });
+    } catch (_) { /* swallowed in service */ }
   } else if (aj.action === 'catalog_supply' || aj.action === 'catalog_loan') {
     const catalogStockRepo = require('../repositories/catalogStockRepository');
     const catalogLedgerRepo = require('../repositories/catalogLedgerRepository');
@@ -1022,6 +1064,18 @@ async function rejectApproval(requestId, rejectedBy) {
       const designAssetsService = require('./designAssetsService');
       await designAssetsService.rejectByApprovalRequestId(requestId, rejectedBy);
     } catch (_) { /* non-fatal: row stays pending; admin can clean up via Manage hub */ }
+  }
+  if (aj.action === 'record_office_expense') {
+    // BR-OPS C1 — flip the eager pending rows on BranchOpsLog to
+    // rejected so the manager's "Today" lens reflects the decision.
+    // Non-fatal: even if the cell-write fails the approval row is
+    // already marked rejected by the caller.
+    try {
+      const branchOpsService = require('./branchOpsService');
+      await branchOpsService.cancelExpenseBatch({ requestId, rejectedBy });
+    } catch (e) {
+      logger.warn(`record_office_expense reject cleanup failed: ${e.message}`);
+    }
   }
   if (aj.action === 'finalize_landed_cost' && aj.grn_id) {
     // LANDED-COST C1 — flip the GRN back to provisional so the admin

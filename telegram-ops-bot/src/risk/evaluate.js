@@ -38,6 +38,10 @@ const WRITE_ACTIONS = [
   // for admins; broadcasts to many recipients use the always-approval
   // action below.
   'notify_wholesaler',
+  // BR-OPS C1 — branch manager submits a daily office-expense batch
+  // (water, fuel, sundries). Single-admin sign-off for V1 (just you).
+  // Flip to ALWAYS_APPROVAL_ACTIONS when finance joins the chain.
+  'record_office_expense',
 ];
 
 // Actions that ALWAYS go through the approval queue, regardless of whether
@@ -151,6 +155,7 @@ function formatAction(action) {
     broadcast_wholesalers: 'wholesaler broadcast',
     confirm_bank_reconciliation: 'bank reconciliation confirmation',
     finalize_landed_cost: 'landed cost finalization',
+    record_office_expense: 'office expense batch',
   };
   return map[action] || action.replace(/_/g, ' ');
 }

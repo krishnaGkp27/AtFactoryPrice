@@ -4528,6 +4528,296 @@ async function runS27() {
 }
 
 // ---------------------------------------------------------------------------
+// S28 — BR-OPS C1 (Daily branch ops + Office expenses)
+// ---------------------------------------------------------------------------
+async function runS28() {
+  // ---- S28.1: schema declares BranchOpsLog ----
+  const schemaSrc28 = fs.readFileSync(path.join(__dirname, '../src/services/schemaMapper.js'), 'utf8');
+  if (/\bBranchOpsLog\s*:\s*\{/.test(schemaSrc28)) pass('S28.1 schemaMapper: BranchOpsLog declared');
+  else fail('S28.1', 'BranchOpsLog block missing in schemaMapper');
+
+  // Verify the 15 columns are all there.
+  const bopsCols = ['op_id', 'date', 'branch', 'manager_id', 'manager_name',
+                    'kind', 'subject', 'amount', 'ref_id', 'photo_url',
+                    'status', 'approval_request_id', 'notes',
+                    'created_at', 'updated_at'];
+  const missBops = bopsCols.filter((c) => !schemaSrc28.includes(`'${c}'`));
+  if (missBops.length === 0) pass('S28.2 schemaMapper: BranchOpsLog has all 15 columns');
+  else fail('S28.2 BranchOpsLog cols', missBops.join(', '));
+
+  // ---- S28.3: evaluate.js has record_office_expense in WRITE_ACTIONS ----
+  const evSrcRaw28 = fs.readFileSync(path.join(__dirname, '../src/risk/evaluate.js'), 'utf8');
+  const evSrc28 = evSrcRaw28.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const mWrite28 = evSrc28.match(new RegExp('const\\s+WRITE_ACTIONS\\s*=\\s*\\[([\\s\\S]*?)\\]', 'm'));
+  const write28 = mWrite28 ? (mWrite28[1].match(/'([^']+)'/g) || []).map((s) => s.replace(/'/g, '')) : [];
+  const mAlways28 = evSrc28.match(new RegExp('const\\s+ALWAYS_APPROVAL_ACTIONS\\s*=\\s*\\[([\\s\\S]*?)\\]', 'm'));
+  const always28 = mAlways28 ? (mAlways28[1].match(/'([^']+)'/g) || []).map((s) => s.replace(/'/g, '')) : [];
+  if (write28.includes('record_office_expense') && !always28.includes('record_office_expense')) {
+    pass('S28.3 evaluate: record_office_expense ∈ WRITE_ACTIONS (single-admin), not in ALWAYS_APPROVAL');
+  } else fail('S28.3 evaluate', JSON.stringify({ inWrite: write28.includes('record_office_expense'), inAlways: always28.includes('record_office_expense') }));
+
+  // ---- S28.4: activity registry + new 'daily' hub ----
+  delete require.cache[require.resolve('../src/services/activityRegistry')];
+  const reg28 = require('../src/services/activityRegistry');
+  const all28 = reg28.getAll();
+  const dailyOps = all28.find((a) => a.code === 'daily_branch_ops');
+  const ofex = all28.find((a) => a.code === 'office_expense');
+  if (dailyOps && dailyOps.hub === 'daily' && ofex && ofex.hub === 'daily') {
+    pass('S28.4 activityRegistry: daily_branch_ops + office_expense in new "daily" hub');
+  } else fail('S28.4', JSON.stringify({ dailyOps, ofex }));
+
+  // ---- Set up stubs for the service-level tests ----
+  const stubs28 = {
+    bopsRows: [],          // BranchOpsLog
+    queue: [],              // ApprovalQueue
+    auditAppended: [],
+    user: {
+      user_id: '5001', name: 'Abdul Lagos', status: 'active',
+      role: 'manager',
+      warehouses: ['Lagos'],
+      manages: 'Lagos',
+    },
+  };
+
+  let _seq = 0;
+  function nextRow(payload) {
+    _seq += 1;
+    const now = new Date().toISOString();
+    return {
+      rowIndex: 100 + _seq,
+      op_id: payload.op_id || `BOP-${Date.now()}-${String(_seq).padStart(4, '0')}`,
+      date: payload.date || now.slice(0, 10),
+      branch: payload.branch || '',
+      manager_id: payload.manager_id || '',
+      manager_name: payload.manager_name || '',
+      kind: payload.kind || '',
+      subject: payload.subject || '',
+      amount: payload.amount == null || payload.amount === '' ? 0 : Number(payload.amount),
+      ref_id: payload.ref_id || '',
+      photo_url: payload.photo_url || '',
+      status: payload.status || 'logged',
+      approval_request_id: payload.approval_request_id || '',
+      notes: payload.notes || '',
+      created_at: now,
+      updated_at: now,
+    };
+  }
+
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async () => [],
+    appendRows: async () => {},
+    updateRange: async () => {},
+    getSheetNames: async () => [],
+    addSheet: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/branchOpsLogRepository'), {
+    getAll: async () => stubs28.bopsRows.slice(),
+    findByDate: async (d) => stubs28.bopsRows.filter((r) => r.date === d),
+    findByBranchDate: async (b, d) => stubs28.bopsRows.filter((r) => r.branch.toLowerCase() === String(b).toLowerCase() && r.date === d),
+    findByApprovalRequestId: async (id) => stubs28.bopsRows.filter((r) => r.approval_request_id === id),
+    isDayOpen: async (b, d) => stubs28.bopsRows.some((r) => r.branch.toLowerCase() === String(b).toLowerCase() && r.date === d && r.kind === 'daily_open'),
+    getRecentExpenseTitles: async (managerId, { days = 30, limit = 8 } = {}) => {
+      const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      const mine = stubs28.bopsRows
+        .filter((r) => r.kind === 'expense' && r.manager_id === String(managerId)
+          && r.date >= cutoff && r.subject)
+        .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+      const out = []; const seen = new Set();
+      for (const r of mine) {
+        const k = r.subject.toLowerCase();
+        if (seen.has(k)) continue; seen.add(k);
+        out.push(r.subject);
+        if (out.length >= limit) break;
+      }
+      return out;
+    },
+    append: async (row) => { const r = nextRow(row); stubs28.bopsRows.push(r); return r; },
+    appendMany: async (rows) => {
+      const out = []; for (const row of rows) { const r = nextRow(row); stubs28.bopsRows.push(r); out.push(r); } return out;
+    },
+    updateStatusByApprovalRequestId: async (id, st) => {
+      let n = 0;
+      for (const r of stubs28.bopsRows) {
+        if (r.approval_request_id === id) { r.status = st; r.updated_at = new Date().toISOString(); n++; }
+      }
+      return n;
+    },
+  });
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    findByUserId: async (id) => (String(id) === '5001' ? { ...stubs28.user } : null),
+    getAll: async () => [{ ...stubs28.user }],
+  });
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    append: async (r) => { stubs28.queue.push(r); return r; },
+    getAllPending: async () => stubs28.queue.slice(),
+    updateStatus: async () => true,
+  });
+  stubModule(require.resolve('../src/repositories/auditLogRepository'), {
+    append: async (...args) => { stubs28.auditAppended.push(args); },
+  });
+  stubModule(require.resolve('../src/risk/evaluate'), {
+    evaluate: async () => ({ risk: 'approval_required', reason: 'admin_approval_required' }),
+    WRITE_ACTIONS: ['record_office_expense'], ALWAYS_APPROVAL_ACTIONS: [],
+    SUPER_ADMIN_APPROVAL_ACTIONS: [],
+  });
+
+  delete require.cache[require.resolve('../src/services/branchOpsService')];
+  const bopsSvc = require('../src/services/branchOpsService');
+
+  // ---- S28.5: resolveBranch reads user.warehouses[0] ----
+  const branch5 = await bopsSvc.resolveBranch('5001');
+  if (branch5 === 'Lagos') pass('S28.5 resolveBranch: uses user.warehouses[0]');
+  else fail('S28.5', branch5);
+
+  // ---- S28.6: openDay writes daily_open + camera_check + opening_cash ----
+  const open6 = await bopsSvc.openDay({ userId: '5001', cash: 185400, cameraOk: true });
+  const opened = stubs28.bopsRows.filter((r) => r.branch === 'Lagos');
+  if (!open6.alreadyOpen
+      && opened.find((r) => r.kind === 'daily_open' && r.amount === 185400)
+      && opened.find((r) => r.kind === 'camera_check' && r.subject === 'Camera OK')
+      && opened.find((r) => r.kind === 'opening_cash' && r.amount === 185400)) {
+    pass('S28.6 openDay: writes 3 rows (daily_open + camera_check + opening_cash)');
+  } else fail('S28.6', JSON.stringify(opened.map((r) => ({ kind: r.kind, amt: r.amount }))));
+
+  // ---- S28.7: openDay idempotent — second call returns alreadyOpen=true, no duplicate rows ----
+  const lenBefore = stubs28.bopsRows.length;
+  const open7 = await bopsSvc.openDay({ userId: '5001', cash: 9999, cameraOk: false });
+  if (open7.alreadyOpen && stubs28.bopsRows.length === lenBefore) {
+    pass('S28.7 openDay: idempotent — second call leaves row count unchanged');
+  } else fail('S28.7', JSON.stringify({ alreadyOpen: open7.alreadyOpen, lenBefore, lenAfter: stubs28.bopsRows.length }));
+
+  // ---- S28.8: validateExpenseItems — happy + error codes ----
+  const ok8 = bopsSvc.validateExpenseItems([
+    { title: 'Water', amount: 800 },
+    { title: ' Bike fuel ', amount: 2500.5 },
+  ]);
+  if (ok8.length === 2 && ok8[1].title === 'Bike fuel' && ok8[1].amount === 2500.5) {
+    pass('S28.8a validateExpenseItems: trims + 2-dp rounds');
+  } else fail('S28.8a', JSON.stringify(ok8));
+
+  let valErr = null;
+  try { bopsSvc.validateExpenseItems([]); } catch (e) { valErr = e; }
+  let valErr2 = null;
+  try { bopsSvc.validateExpenseItems([{ title: '', amount: 100 }]); } catch (e) { valErr2 = e; }
+  let valErr3 = null;
+  try { bopsSvc.validateExpenseItems([{ title: 'X', amount: 0 }]); } catch (e) { valErr3 = e; }
+  if (valErr?.code === 'BOPS_NO_ITEMS' && valErr2?.code === 'BOPS_BAD_TITLE' && valErr3?.code === 'BOPS_BAD_AMOUNT') {
+    pass('S28.8b validateExpenseItems: empty / bad-title / bad-amount all fail-fast');
+  } else fail('S28.8b', JSON.stringify({ a: valErr?.code, b: valErr2?.code, c: valErr3?.code }));
+
+  // ---- S28.9: submitExpenseBatch — queues approval + eager pending rows ----
+  const submit9 = await bopsSvc.submitExpenseBatch({
+    userId: '5001',
+    items: [
+      { title: 'Water for Mr Adamu', amount: 800 },
+      { title: 'Bike fuel', amount: 2500 },
+      { title: 'Print toner', amount: 900 },
+    ],
+  });
+  const pendingRows = stubs28.bopsRows.filter(
+    (r) => r.kind === 'expense' && r.status === 'pending_approval'
+  );
+  if (submit9.requestId
+      && submit9.total === 4200
+      && stubs28.queue.length === 1
+      && stubs28.queue[0].actionJSON.action === 'record_office_expense'
+      && stubs28.queue[0].actionJSON.items.length === 3
+      && pendingRows.length === 3) {
+    pass('S28.9 submitExpenseBatch: queues 1 approval + writes 3 eager pending rows');
+  } else fail('S28.9', JSON.stringify({
+    req: submit9.requestId, total: submit9.total,
+    queueLen: stubs28.queue.length, pendingLen: pendingRows.length,
+  }));
+
+  // ---- S28.10: applyExpenseBatch flips pending → approved ----
+  const aj10 = stubs28.queue[0].actionJSON;
+  const apply10 = await bopsSvc.applyExpenseBatch({
+    aj: aj10, approvedBy: 'admin-1', requestId: submit9.requestId,
+  });
+  const approvedRows = stubs28.bopsRows.filter(
+    (r) => r.kind === 'expense' && r.status === 'approved' && r.approval_request_id === submit9.requestId
+  );
+  const stillPending = stubs28.bopsRows.filter(
+    (r) => r.kind === 'expense' && r.status === 'pending_approval'
+  );
+  if (apply10.ok && apply10.count === 3 && apply10.total === 4200
+      && approvedRows.length === 3 && stillPending.length === 0) {
+    pass('S28.10 applyExpenseBatch: 3 rows flip to approved, 0 remain pending');
+  } else fail('S28.10', JSON.stringify({
+    apply: apply10.ok, count: apply10.count, approvedLen: approvedRows.length, pendingLen: stillPending.length,
+  }));
+
+  // ---- S28.11: cancelExpenseBatch flips pending → rejected ----
+  const submit11 = await bopsSvc.submitExpenseBatch({
+    userId: '5001',
+    items: [{ title: 'Stationery', amount: 1500 }],
+  });
+  const cancel11 = await bopsSvc.cancelExpenseBatch({ requestId: submit11.requestId, rejectedBy: 'admin-1' });
+  const rejectedRows = stubs28.bopsRows.filter(
+    (r) => r.kind === 'expense' && r.status === 'rejected' && r.approval_request_id === submit11.requestId
+  );
+  if (cancel11.count === 1 && rejectedRows.length === 1) {
+    pass('S28.11 cancelExpenseBatch: pending row flips to rejected');
+  } else fail('S28.11', JSON.stringify({ cancelCount: cancel11.count, rejectedLen: rejectedRows.length }));
+
+  // ---- S28.12: logPointer writes a pointer row ----
+  const lenBefore12 = stubs28.bopsRows.length;
+  await bopsSvc.logPointer({
+    kind: 'sample_issued', userId: '5001',
+    ref_id: 'SMP-12345', subject: 'Sample to Mr Bello: Lagos / Red',
+  });
+  const ptr = stubs28.bopsRows[stubs28.bopsRows.length - 1];
+  if (stubs28.bopsRows.length === lenBefore12 + 1
+      && ptr.kind === 'sample_issued'
+      && ptr.ref_id === 'SMP-12345'
+      && ptr.branch === 'Lagos'
+      && ptr.manager_id === '5001') {
+    pass('S28.12 logPointer: writes pointer row with auto-resolved branch + manager');
+  } else fail('S28.12', JSON.stringify(ptr));
+
+  // ---- S28.13: getDailySummary rolls everything up correctly ----
+  const today13 = bopsSvc.todayInTz();
+  const sum13 = await bopsSvc.getDailySummary({ branch: 'Lagos', date: today13 });
+  if (sum13.isOpen
+      && sum13.openingCash === 185400
+      && sum13.camera?.ok === true
+      && sum13.expenses.approved.count === 3 && sum13.expenses.approved.total === 4200
+      && sum13.expenses.rejected.count === 1
+      && sum13.pointers.samples_issued === 1) {
+    pass('S28.13 getDailySummary: rolls open + approved + rejected + pointer correctly');
+  } else fail('S28.13', JSON.stringify(sum13));
+
+  // ---- S28.14: opening cash sanity ceiling refuses bad input ----
+  let cashErr = null;
+  try { await bopsSvc.openDay({ userId: '5001', cash: -100, cameraOk: true }); } catch (e) { cashErr = e; }
+  if (cashErr?.code === 'BOPS_BAD_CASH') pass('S28.14 openDay: negative cash refuses');
+  else fail('S28.14', cashErr?.message);
+
+  // ---- S28.15: recent expense titles dedup by title (case-insensitive) ----
+  // Add another "water for mr adamu" to stubs and confirm dedup.
+  stubs28.bopsRows.push(nextRow({
+    date: today13, branch: 'Lagos', manager_id: '5001', kind: 'expense',
+    subject: 'water for mr adamu', status: 'approved', amount: 600,
+  }));
+  const recent15 = await require('../src/repositories/branchOpsLogRepository')
+    .getRecentExpenseTitles('5001', { days: 30, limit: 8 });
+  const lowered = recent15.map((s) => s.toLowerCase());
+  if (lowered.length === new Set(lowered).size && lowered.includes('water for mr adamu')) {
+    pass('S28.15 getRecentExpenseTitles: dedup case-insensitive, most-recent kept');
+  } else fail('S28.15', JSON.stringify(recent15));
+
+  // ---- Cleanup ----
+  for (const p of [
+    '../src/repositories/sheetsClient', '../src/repositories/branchOpsLogRepository',
+    '../src/repositories/usersRepository', '../src/repositories/approvalQueueRepository',
+    '../src/repositories/auditLogRepository', '../src/risk/evaluate',
+    '../src/services/branchOpsService', '../src/services/activityRegistry',
+  ]) {
+    delete require.cache[require.resolve(p)];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -4565,6 +4855,7 @@ async function runS27() {
   try { runS25();       } catch (e) { fail('S25 unexpected error', e.message); }
   try { runS26();       } catch (e) { fail('S26 unexpected error', e.message); }
   try { await runS27(); } catch (e) { fail('S27 unexpected error', e.message); }
+  try { await runS28(); } catch (e) { fail('S28 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

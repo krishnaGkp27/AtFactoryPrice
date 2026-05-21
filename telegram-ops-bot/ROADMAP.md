@@ -563,6 +563,121 @@ Harness: 216 green (was 153).
 
 All 💭 Discuss — never start without an explicit owner decision (see §4.6).
 
+### 2.11 BR-OPS C1 · Branch managers' daily routine + Office expenses (2026-05-22)
+
+Quantum-style daily workflow for the two branch managers (Abdul / Lagos,
+Muhammad / Kano). Captures the morning operational state of each
+branch and itemises office expenses with single-admin sign-off. Heavy
+reuse — most of the morning routine is shortcuts to flows that already
+exist (samples, receipts, customers, marketers); only the daily-open
+log + the expense batch are genuinely new.
+
+**Sheet discipline (owner-asked constraint — "without compromising
+scalability"):** ONE new umbrella sheet `BranchOpsLog`, polymorphic
+via a `kind` discriminator. Adding a new daily-routine item later =
+new `kind` value, no new sheet, no new repo, no new migration. Per-bale
+inventory math and finance ledger stay in their existing sheets — this
+one only holds the operational timeline (and pointers into those sheets).
+
+**Decisions (owner brief, all approved as defaults on 2026-05-22):**
+
+| Q | Decision |
+|---|---|
+| Branch resolution     | Read `user.warehouses[0]` (existing column). Manager never picks. Falls back to `manages` then `'HQ'`. |
+| Cash currency         | NGN. (USD landed-cost lives in §2.10.) |
+| Camera check          | Single yes/no for V1 (per-camera list deferred until a camera roster exists). |
+| Expense approval      | Single-admin (you) via `WRITE_ACTIONS`. Flip to dual-admin when finance joins by moving `record_office_expense` to `ALWAYS_APPROVAL_ACTIONS` — one-line edit, no schema or flow change. |
+| Recurring titles      | Top-8 from THIS manager's last 30 days. 80% of typing disappears after a week of use. |
+| Day-close             | Deferred to V2 — open + expenses + reused flows ship now; closing-cash + day-summary card lands once daily routine is in steady use. |
+| "Yesterday outstanding" | Read-only summary on step 3 of the open card + 2 deep-link buttons. Doesn't bloat the daily routine. |
+| Auto-open on first morning interaction | No — tap-only. Daily card opens via the menu, not after attendance mark. |
+| Discovery placement   | New top-level **Daily** hub holding the 2 entries. Cleaner than nesting under Tasks. |
+| Reused flows          | They keep their existing entry doors AND show up as shortcuts inside the Daily status panel — same code, two doors. |
+
+**Sheet:**
+
+`BranchOpsLog` (single umbrella, append-only; status flips happen on
+the existing row, not by writing a new row):
+
+```
+op_id | date | branch | manager_id | manager_name
+kind        — daily_open | camera_check | opening_cash | expense
+            | sample_issued | receipt_logged | customer_registered
+            | marketer_registered | day_close (V2)
+subject     — free-text title or human label
+amount      — NGN when relevant, else blank
+ref_id      — sample_id / receipt_id / customer name / marketer_id when
+              this row is a pointer into another sheet
+photo_url   — Drive URL when relevant
+status      — logged | pending_approval | approved | rejected
+approval_request_id
+notes
+created_at | updated_at
+```
+
+**Files:**
+
+- `src/repositories/branchOpsLogRepository.js` (sole owner of the new sheet: `append`, `appendMany`, `findByBranchDate`, `findByApprovalRequestId`, `isDayOpen`, `getRecentExpenseTitles`, `updateStatusByApprovalRequestId`)
+- `src/services/branchOpsService.js` (`resolveBranch`, `openDay` (idempotent), `submitExpenseBatch`, `applyExpenseBatch`, `cancelExpenseBatch`, `logPointer`, `getDailySummary`, `validateExpenseItems`, `todayInTz`)
+- `src/flows/dailyBranchOpsFlow.js` (manager-facing — 3-step open card → collapses to a status panel with shortcuts; idempotent re-tap)
+- `src/flows/officeExpenseFlow.js` (batch entry — 2-field form per item, quick-pick from manager's last-30d top-8 titles, undo last, submit)
+- `src/risk/evaluate.js` (`record_office_expense` appended to `WRITE_ACTIONS`; display name added)
+- `src/services/activityRegistry.js` (new `daily` hub; 2 codes `daily_branch_ops` + `office_expense`)
+- `src/services/inventoryService.js` (post-approval branch for `record_office_expense`; reject-path cleanup; pointer hooks inside `add_customer` / `give_sample` / `register_marketer` post-approval branches)
+- `src/controllers/telegramController.js` (act-dispatcher cases + `bops:*` + `ofex:*` callback routers + text-input routers + pointer hook after `receiptsRepo.append`)
+
+**Discovery / per-user gating:**
+
+`daily_branch_ops` and `office_expense` follow the standard
+`Departments.allowed_activities` CSV gate — add the two codes to
+Abdul's department and Muhammad's department. No controller injection,
+no env var, no special-case visibility logic. A 3rd manager joining
+next quarter = one CSV cell edit.
+
+**Approval policy:**
+
+| Action | Bucket | Why |
+|---|---|---|
+| `record_office_expense` | `WRITE_ACTIONS` (single-admin) | Owner: "Goes to admin approval (me for now)". |
+| `daily_open` (camera + cash) | None | Operational log, not state-changing. |
+| `give_sample` / `upload_receipt` / `add_customer` / `register_marketer` | Existing policies — unchanged | We only add pointer rows; the underlying actions are untouched. |
+
+**Pointer rule (key to keeping the sheet count down):**
+
+Detailed sample / receipt / customer / marketer rows STILL live in
+their own sheets. `BranchOpsLog` only stores pointer rows
+(`kind=sample_issued, ref_id=<sample_id>`) so the manager's "Today"
+panel + the weekly finance read both query ONE sheet. Pointer writes
+are fire-and-forget — failures swallow into a warn log so a roll-up
+blip never fails the underlying business action.
+
+**Smoke (`S28`, 16 checks):** schema declared with all 15 cols +
+policy in `WRITE_ACTIONS` (and explicitly NOT in `ALWAYS_APPROVAL`) +
+activityRegistry entries in `daily` hub + `resolveBranch` reads
+`warehouses[0]` + `openDay` writes 3 rows + `openDay` idempotent on
+re-tap + `validateExpenseItems` trims + rounds + fail-fast errors +
+`submitExpenseBatch` queues 1 approval + writes 3 eager pending rows +
+`applyExpenseBatch` flips to approved + `cancelExpenseBatch` flips to
+rejected + `logPointer` writes auto-resolved branch+manager +
+`getDailySummary` rolls everything up + negative-cash refuses +
+`getRecentExpenseTitles` dedups case-insensitively.
+
+**Smoke total:** 370 ok / 0 failed (was 354).
+
+**Substrate unlocked for:**
+
+- §1.4 financial reporting — weekly finance roll-up reads `kind=expense, status=approved` from `BranchOpsLog` per branch, no new joins.
+- §1.10 task management — branch-scoped task lens can use `branch` + `manager_id` as filter dimensions.
+- BR-OPS C1.5 (V2 day-close): same flow, adds `day_close` kind + closing-cash field. ~150 LOC follow-up.
+
+**Follow-ups (deliberately not in this commit):**
+
+- Day-close flow (closing cash + day summary card; auto-roll opening
+  cash forward to next morning).
+- Per-camera check once cameras are inventoried in a sheet.
+- Manager-scoped variant of the attendance report restricted by `branch`.
+- Promote `record_office_expense` to dual-admin when finance joins (single-line edit in `risk/evaluate.js`).
+
 ### 2.10 LANDED-COST C1 · USD landed cost + import charges (2026-05-21)
 
 Admin-driven feature for sealing the true cost of received goods.
