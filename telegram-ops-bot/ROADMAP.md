@@ -748,6 +748,36 @@ Smoke `S23`–`S26` enforce the rules. Follow-ups (admin Forex Rates UI,
 monitoring wiring in `server.js`, WhatsApp inbound, live banking
 endpoints) tracked separately.
 
+### 4.0a Vision — Textile Trading Bot 📘 (2026-05-21)
+
+Owner brief captured in `docs/vision-textile-trading.md` — 11 work
+clusters covering marketer flows, wholesaler-direct negotiation,
+warehouse audit, financial reporting, HR/payroll, key management,
+sample tracking, document repository, customer-data discipline, task
+close-tracking, and data-hygiene migration. Document is the discussion
+substrate, not a commitment list. Re-read before each planning session.
+
+### 4.0b LANDED-COST · USD cost + import charges + NGN landed cost 🚧 In design (2026-05-21)
+
+**Scope (pending owner answers — see chat questions Q1–Q7):**
+- Admin sets per-item USD cost on receipt.
+- Container-level fixed charges (clearance, clearing agent, logistics,
+  customs, etc.) entered against the GRN; bot allocates them across
+  bales (allocation rule TBD — recommended per-yard).
+- Bot locks the FX rate at receipt from `ForexRates` (manual-rate
+  provider shipped in TG-INT-A1), computes `ngn_landed_cost_per_yard`,
+  and writes new columns to `Inventory` alongside existing
+  `PricePerYard` (which becomes unambiguous "selling price").
+- Dual-admin gated (recommended) — directly drives margin reports.
+
+**Substrate unlocked for:** §1.4 financial reporting (accurate COGS),
+§1.2 wholesaler direct negotiation (real wholesale floor pricing),
+§1.7 sample-cost accounting.
+
+Build plan + 4 new columns + 1 new sheet (`ContainerCharges`) + 1 new
+flow ("💵 Finalize Landed Cost") to be drafted after owner answers
+the 7 tuning questions captured in chat on 2026-05-21.
+
 ### 4.1 Commit 4 — Reports 📋 Planned (next)
 
 **Deliverable:**
