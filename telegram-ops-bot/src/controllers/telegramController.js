@@ -3319,6 +3319,17 @@ async function handleMessage(bot, msg) {
     }
   }
 
+  // BUNDLE-SALE C1 — Kano poly-colour bundle picker accepts free-text
+  // input for smart-pack target yardage, customer search, and rate entry.
+  {
+    const bsSession = sessionStore.get(userId);
+    if (bsSession && bsSession.type === 'bundle_sale_flow') {
+      const bundleSaleFlow = require('../flows/bundleSaleFlow');
+      const handled = await bundleSaleFlow.handleText(bot, msg);
+      if (handled) return;
+    }
+  }
+
   // USR-C3 — Add Employee flow accepts free-text input for telegram_id,
   // name, and new-department steps.
   {
@@ -5812,6 +5823,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (handled) return;
   }
 
+  // BUNDLE-SALE C1 — Kano poly-colour bundle picker callbacks (bs:*).
+  if (data.startsWith('bs:')) {
+    const bundleSaleFlow = require('../flows/bundleSaleFlow');
+    const handled = await bundleSaleFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
   // USR-C3 — Add Employee flow callbacks.
   if (data.startsWith('usr:')) {
     const userAddFlow = require('../flows/userAddFlow');
@@ -8045,6 +8063,15 @@ async function handleCallbackQuery(bot, callbackQuery) {
         // shows the status panel.
         const dailyBranchOpsFlow = require('../flows/dailyBranchOpsFlow');
         await dailyBranchOpsFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'bundle_sale': {
+        // BUNDLE-SALE C1 — Kano poly-colour design-first picker.
+        // Reuses the dual-admin sale_bundle gate at submit, so any
+        // employee with sell permission can launch it; the approval
+        // queue still enforces 2nd-admin review.
+        const bundleSaleFlow = require('../flows/bundleSaleFlow');
+        await bundleSaleFlow.start(bot, chatId, uid, messageId);
         break;
       }
       case 'office_expense': {

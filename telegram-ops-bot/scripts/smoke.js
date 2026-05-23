@@ -1699,10 +1699,15 @@ async function runS14c() {
   const invService = require('../src/services/inventoryService');
   const result = await invService.executeApprovedAction('req-test-1', 'ADM-1');
   // Append-only contract: 1 bale × 2 thans should produce 2 new Inventory
-  // rows, zero mutations of existing rows. bundleReport surfaces the
+  // rows, zero mutations of existing DATA rows. bundleReport surfaces the
   // distinction: baleCount=1, thanCount=2.
+  // BUNDLE-SALE C1: the schema gained a `bin_location` column on
+  // Inventory, so ensureHeader writes a fresh A1:U1 row on first call
+  // for older test fixtures. That header write is benign migration —
+  // filter it out before asserting "no data-row mutation".
   const appendedThanRows = writes.Inventory.append;
   const thanNosWritten = appendedThanRows.map((r) => r[5]); // column F = ThanNo
+  const dataRowUpdates = writes.Inventory.update.filter((u) => !/^A1:[A-Z]+1$/.test(String(u.range || '')));
   if (result && result.ok && result.bundleReport
       && result.bundleReport.baleCount === 1
       && result.bundleReport.thanCount === 2
@@ -1710,12 +1715,12 @@ async function runS14c() {
       && result.bundleReport.fileHash === 'ffffffffffffff01'
       && appendedThanRows.length === 2
       && thanNosWritten[0] === 1 && thanNosWritten[1] === 2
-      && writes.Inventory.update.length === 0
+      && dataRowUpdates.length === 0
       && writes.Inventory.batch.length === 0) {
-    pass('S14c.8 service: bulk_receive_goods append-only — 1 bale × 2 thans, ThanNo persisted, 0 mutations');
+    pass('S14c.8 service: bulk_receive_goods append-only — 1 bale × 2 thans, ThanNo persisted, 0 data-row mutations');
   } else {
     fail('S14c.8 service append-only', JSON.stringify({
-      result, invWrites: writes.Inventory, thanNosWritten,
+      result, invWrites: writes.Inventory, thanNosWritten, dataRowUpdates,
     }));
   }
 
@@ -4818,6 +4823,465 @@ async function runS28() {
 }
 
 // ---------------------------------------------------------------------------
+// S29 — BUNDLE-SALE C1 (Kano poly-colour design-first bundle picker)
+// ---------------------------------------------------------------------------
+async function runS29() {
+  // ---- S29.1: schema declares Shades sheet + bin_location lazy migration ----
+  const schemaSrc29 = fs.readFileSync(path.join(__dirname, '../src/services/schemaMapper.js'), 'utf8');
+  if (/\bShades\s*:\s*\{/.test(schemaSrc29)) pass('S29.1a schemaMapper: Shades declared');
+  else fail('S29.1a', 'Shades block missing in schemaMapper');
+  if (/INV_NEW_COLS[^=]*=[^]*bin_location/.test(schemaSrc29)) pass('S29.1b schemaMapper: bin_location lazy migration on Inventory');
+  else fail('S29.1b', 'bin_location not registered for Inventory lazy migration');
+
+  // ---- S29.2: Shades sheet has all 8 columns + a few seed rows ----
+  const shadeCols = ['shade_id', 'shade_name', 'display_emoji', 'supplier_colour_no',
+                     'active', 'aliases', 'created_at', 'notes'];
+  const missShade = shadeCols.filter((c) => !schemaSrc29.includes(`'${c}'`));
+  if (missShade.length === 0) pass('S29.2a schemaMapper: Shades has all 8 columns');
+  else fail('S29.2a Shades cols', missShade.join(', '));
+  if (/SHD-001.*Red.*🔴/.test(schemaSrc29) && /SHD-008.*Black.*⚫/.test(schemaSrc29)) {
+    pass('S29.2b schemaMapper: Shades seeded with Red+Black canonical entries');
+  } else fail('S29.2b', 'expected seed rows for Red and Black not found');
+
+  // ---- S29.3: activity registry surfaces bundle_sale in stock hub ----
+  delete require.cache[require.resolve('../src/services/activityRegistry')];
+  const reg29 = require('../src/services/activityRegistry');
+  const entry29 = reg29.getAll().find((a) => a.code === 'bundle_sale');
+  if (entry29 && entry29.hub === 'stock' && entry29.callback === 'act:bundle_sale') {
+    pass('S29.3 activityRegistry: bundle_sale in stock hub');
+  } else fail('S29.3 activityRegistry', JSON.stringify(entry29));
+
+  // ---- S29.4: controller wiring — act dispatcher + bs:* router + text router ----
+  const ctrlSrc29 = fs.readFileSync(path.join(__dirname, '../src/controllers/telegramController.js'), 'utf8');
+  const wiringOk =
+    /case 'bundle_sale':/.test(ctrlSrc29)
+    && /data\.startsWith\('bs:'\)/.test(ctrlSrc29)
+    && /bundleSaleFlow\.handleText/.test(ctrlSrc29)
+    && /bundleSaleFlow\.handleCallback/.test(ctrlSrc29);
+  if (wiringOk) pass('S29.4 telegramController: act+text+callback dispatchers wired for bundle_sale');
+  else fail('S29.4 controller wiring', JSON.stringify({
+    actCase: /case 'bundle_sale':/.test(ctrlSrc29),
+    bsCb:    /data\.startsWith\('bs:'\)/.test(ctrlSrc29),
+    bsText:  /bundleSaleFlow\.handleText/.test(ctrlSrc29),
+    bsCbFn:  /bundleSaleFlow\.handleCallback/.test(ctrlSrc29),
+  }));
+
+  // ---- S29.5: goodsReceiptFlow mono/poly fork wired in ----
+  const grnSrc29 = fs.readFileSync(path.join(__dirname, '../src/flows/goodsReceiptFlow.js'), 'utf8');
+  const forkOk =
+    /step\s*=\s*'bale_type'/.test(grnSrc29)
+    && /gr:bt:mono/.test(grnSrc29)
+    && /gr:bt:multi/.test(grnSrc29)
+    && /showMultiShadesStep/.test(grnSrc29)
+    && /baleType === 'multi'/.test(grnSrc29);
+  if (forkOk) pass('S29.5 goodsReceiptFlow: mono/poly fork wired (bale_type + multi sub-steps)');
+  else fail('S29.5 grn fork', JSON.stringify({
+    btStep:  /step\s*=\s*'bale_type'/.test(grnSrc29),
+    monoCb:  /gr:bt:mono/.test(grnSrc29),
+    multiCb: /gr:bt:multi/.test(grnSrc29),
+    mshFn:   /showMultiShadesStep/.test(grnSrc29),
+    polyBr:  /baleType === 'multi'/.test(grnSrc29),
+  }));
+
+  // ---- S29.6: inventoryService receive_goods honours per-bale shade ----
+  const invSvcSrc29 = fs.readFileSync(path.join(__dirname, '../src/services/inventoryService.js'), 'utf8');
+  if (/shade:\s*b\.shade\s*\|\|\s*aj\.shade/.test(invSvcSrc29)) {
+    pass('S29.6 inventoryService: receive_goods uses per-bale shade override');
+  } else fail('S29.6', 'per-bale shade fallback `b.shade || aj.shade` not found');
+
+  // ---- Set up stubs for the math/service-level tests ----
+  // Inventory baleline: 2 design (KAFTAN, AGBADA) at warehouse Kano.
+  // KAFTAN has 3 bales: B-K1 (Red×2, Green×2, Blue×2), B-K2 (Red×3, Yellow×3), B-K3 (Red×2).
+  // All thans yards=25 except where noted. KAFTAN therefore has Red=7×25=175y, Green=2×25=50y,
+  // Blue=2×25=50y, Yellow=3×25=75y, total 350y across 3 bales.
+  const invRows = [];
+  let _seq29 = 0;
+  function row(packageNo, baleUid, design, shade, thanNo, yards, status, addedAt, binLocation = '', grnId = '') {
+    _seq29 += 1;
+    return {
+      rowIndex: 100 + _seq29,
+      packageNo, indent: '', csNo: '', design, shade,
+      thanNo, yards, status,
+      warehouse: 'Kano', pricePerYard: 0, dateReceived: addedAt.slice(0, 10),
+      soldTo: '', soldDate: '', netMtrs: 0, netWeight: 0, updatedAt: addedAt,
+      productType: 'fabric',
+      baleUid: baleUid || `BAL-${packageNo}-${thanNo}`,
+      addedAt, grnId,
+      binLocation,
+      _legacy: false,
+    };
+  }
+  // B-K1 — packageNo 6101, added 90d ago (ageing)
+  const aged90 = new Date(Date.now() - 90 * 86400000).toISOString();
+  const aged30 = new Date(Date.now() - 30 * 86400000).toISOString();
+  const aged10 = new Date(Date.now() - 10 * 86400000).toISOString();
+  ;['Red', 'Red', 'Green', 'Green', 'Blue', 'Blue'].forEach((sh, i) => {
+    invRows.push(row('6101', 'BAL-K-001', 'KAFTAN', sh, i + 1, 25, 'available', aged90, 'K-shelf-1', 'GRN-1'));
+  });
+  // B-K2 — packageNo 6102, added 30d ago
+  ;['Red', 'Red', 'Red', 'Yellow', 'Yellow', 'Yellow'].forEach((sh, i) => {
+    invRows.push(row('6102', 'BAL-K-002', 'KAFTAN', sh, i + 1, 25, 'available', aged30, 'K-shelf-2', 'GRN-2'));
+  });
+  // B-K3 — packageNo 6103, added 10d ago. One than already sold.
+  invRows.push(row('6103', 'BAL-K-003', 'KAFTAN', 'Red', 1, 25, 'available', aged10, 'K-shelf-3', 'GRN-2'));
+  invRows.push(row('6103', 'BAL-K-003', 'KAFTAN', 'Red', 2, 25, 'sold',      aged10, 'K-shelf-3', 'GRN-2'));
+  // AGBADA — just one bale, all available.
+  ;['Red', 'Green'].forEach((sh, i) => {
+    invRows.push(row('6201', 'BAL-K-004', 'AGBADA', sh, i + 1, 30, 'available', aged30, '', 'GRN-2'));
+  });
+
+  // Stub sheetsClient + inventoryRepository so service code can run.
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async () => [],
+    appendRows: async () => {},
+    updateRange: async () => {},
+    batchUpdateRanges: async () => {},
+    getSheetNames: async () => [],
+    addSheet: async () => {},
+  });
+  // Reset inventoryRepository in cache so subsequent require picks up our stub
+  // of getAll + invalidateCache via the real module. Easier: stub the whole module.
+  let invRowsState = invRows.slice();
+  stubModule(require.resolve('../src/repositories/inventoryRepository'), {
+    getAll: async () => invRowsState.slice(),
+    getWarehouses: async () => ['Kano'],
+    getDistinctDesigns: async () => ([
+      { design: 'KAFTAN', shade: 'Red' },
+      { design: 'AGBADA', shade: 'Red' },
+    ]),
+    // delegate to the real groupByBaleAndShade math — we re-require it below.
+    groupByBaleAndShade: null, // set right after we load the real module
+    markThanSold: async (pkg, thanNo) => {
+      const r = invRowsState.find((x) => x.packageNo === pkg && x.thanNo === thanNo && x.status === 'available');
+      if (!r) return null;
+      r.status = 'sold';
+      return r;
+    },
+    invalidateCache: () => {},
+  });
+
+  // Load the REAL groupByBaleAndShade by clearing the cache for the file we
+  // just stubbed and re-requiring a *separate* path — but stubs target the
+  // exports object. Easier: re-implement a thin wrapper here that uses the
+  // pure logic from the source, exercised by reading the live rows.
+  // For now we'll inline a minimal reference implementation and assert that
+  // the live one (loaded from a fresh require) produces the same shape.
+  delete require.cache[require.resolve('../src/repositories/sheetsClient')];
+  delete require.cache[require.resolve('../src/repositories/inventoryRepository')];
+  // Re-stub the sheetsClient so the real inventoryRepository can be required
+  // without hitting Google. We feed inventory rows via readRange.
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async (sheet) => {
+      if (sheet !== 'Inventory') return [];
+      return invRowsState.map((r) => ([
+        r.packageNo, r.indent, r.csNo, r.design, r.shade,
+        r.thanNo, r.yards, r.status, r.warehouse, r.pricePerYard,
+        r.dateReceived, r.soldTo, r.soldDate, r.netMtrs, r.netWeight,
+        r.updatedAt, r.productType, r.baleUid, r.addedAt, r.grnId,
+        r.binLocation,
+      ]));
+    },
+    appendRows: async () => {},
+    updateRange: async () => {},
+    batchUpdateRanges: async () => {},
+    getSheetNames: async () => [],
+    addSheet: async () => {},
+  });
+  const invRepoReal = require('../src/repositories/inventoryRepository');
+
+  // ---- S29.7: groupByBaleAndShade aggregates correctly ----
+  const grouped = await invRepoReal.groupByBaleAndShade('KAFTAN', 'Kano');
+  const red    = grouped.shades.find((s) => s.shadeKey === 'RED');
+  const green  = grouped.shades.find((s) => s.shadeKey === 'GREEN');
+  const blue   = grouped.shades.find((s) => s.shadeKey === 'BLUE');
+  const yellow = grouped.shades.find((s) => s.shadeKey === 'YELLOW');
+  if (red && red.summary.thanCount === 6 && red.summary.yards === 150 && red.summary.baleCount === 3
+      && green && green.summary.thanCount === 2 && green.summary.yards === 50
+      && blue && blue.summary.yards === 50
+      && yellow && yellow.summary.yards === 75) {
+    pass('S29.7a groupByBaleAndShade: per-shade totals correct (Red 6×25=150 across 3 bales)');
+  } else fail('S29.7a', JSON.stringify({
+    red: red?.summary, green: green?.summary, blue: blue?.summary, yellow: yellow?.summary,
+  }));
+  // The sold than on bale 6103 must not appear under Red.
+  const k3Red = red?.bales.find((b) => b.packageNo === '6103');
+  if (k3Red && k3Red.thans.length === 1 && k3Red.thans[0].thanNo === 1) {
+    pass('S29.7b groupByBaleAndShade: sold than excluded from Red/6103 (only than #1 remains)');
+  } else fail('S29.7b', JSON.stringify(k3Red));
+  // Bales returned in FIFO order (oldest first).
+  if (red?.bales[0]?.packageNo === '6101' && red?.bales[red.bales.length - 1]?.packageNo === '6103') {
+    pass('S29.7c groupByBaleAndShade: bales sorted oldest-first (FIFO)');
+  } else fail('S29.7c', JSON.stringify(red?.bales.map((b) => b.packageNo)));
+
+  // ---- S29.8: bundleSaleService pure helpers ----
+  delete require.cache[require.resolve('../src/services/bundleSaleService')];
+  // Stub approvalQueueRepository + auditLogRepository before the service loads.
+  const queueAppended29 = [];
+  const auditAppended29 = [];
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    append: async (r) => { queueAppended29.push(r); return r; },
+  });
+  stubModule(require.resolve('../src/repositories/auditLogRepository'), {
+    append: async (...args) => { auditAppended29.push(args); },
+  });
+  // Stub idGenerator
+  stubModule(require.resolve('../src/utils/idGenerator'), {
+    requestId: () => 'AR-TEST-001',
+    baleUid: (p) => `BAL-${p}-X`,
+    grn: () => 'GRN-X',
+    stockLedger: () => 'SL-X',
+  });
+  const bsSvc = require('../src/services/bundleSaleService');
+
+  // Cart math: add two thans, then attempt duplicate, then remove one.
+  const cart = bsSvc.emptyCart();
+  const addedA = bsSvc.addLines(cart, [
+    { baleUid: 'BAL-K-001', packageNo: '6101', thanNo: 1, yards: 25, design: 'KAFTAN', shade: 'Red' },
+    { baleUid: 'BAL-K-001', packageNo: '6101', thanNo: 3, yards: 25, design: 'KAFTAN', shade: 'Green' },
+  ]);
+  const addedDup = bsSvc.addLines(cart, [
+    { baleUid: 'BAL-K-001', packageNo: '6101', thanNo: 1, yards: 25, design: 'KAFTAN', shade: 'Red' },
+  ]);
+  const totals29 = bsSvc.totals(cart);
+  if (addedA === 2 && addedDup === 0 && totals29.thans === 2 && totals29.yards === 50 && totals29.bales === 1) {
+    pass('S29.8a bundleSaleService.addLines: dedupe by key + totals correct');
+  } else fail('S29.8a', JSON.stringify({ addedA, addedDup, totals29 }));
+
+  // Summarise — collapses by shade and bale.
+  const sum29 = bsSvc.summarise(cart);
+  if (sum29.length === 2 && sum29[0].shadeKey === 'RED' && sum29[0].bales[0].thans.length === 1) {
+    pass('S29.8b bundleSaleService.summarise: 2 shades, 1 bale each');
+  } else fail('S29.8b', JSON.stringify(sum29.map((s) => ({ shade: s.shadeKey, yards: s.yards }))));
+
+  // Remove one line and re-check totals.
+  bsSvc.removeLines(cart, ['BAL-K-001|1']);
+  const totals29b = bsSvc.totals(cart);
+  if (totals29b.thans === 1 && totals29b.yards === 25) {
+    pass('S29.8c bundleSaleService.removeLines: removes single key correctly');
+  } else fail('S29.8c', JSON.stringify(totals29b));
+
+  // Age bucket math.
+  const age15 = bsSvc.ageBucket(15);
+  const age60 = bsSvc.ageBucket(60);
+  const age120 = bsSvc.ageBucket(120);
+  const age200 = bsSvc.ageBucket(200);
+  if (age15.label === 'fresh' && age60.label === 'settled' && age120.label === 'ageing' && age200.label === 'stale') {
+    pass('S29.8d bundleSaleService.ageBucket: 15d=fresh / 60d=settled / 120d=ageing / 200d=stale');
+  } else fail('S29.8d', JSON.stringify({ age15, age60, age120, age200 }));
+
+  // ---- S29.9: smartPackForTarget greedy FIFO ----
+  // Build a pool: 6 thans of 25y each, ages 90d / 30d / 10d (paired).
+  const pool = [];
+  ;[[90, '6101', 'BAL-K-001'], [30, '6102', 'BAL-K-002'], [10, '6103', 'BAL-K-003']].forEach(([days, pkg, uid]) => {
+    const at = new Date(Date.now() - days * 86400000).toISOString();
+    pool.push({ baleUid: uid, packageNo: pkg, thanNo: 1, yards: 25, addedAt: at });
+    pool.push({ baleUid: uid, packageNo: pkg, thanNo: 2, yards: 25, addedAt: at });
+  });
+  const target100 = bsSvc.smartPackForTarget({ targetYards: 100, thans: pool });
+  if (target100.picks.length === 4 && target100.pickedYards === 100 && target100.shortBy === 0 && target100.overshoot === 0) {
+    pass('S29.9a smartPackForTarget: target 100y → exactly 4 thans, no over/short');
+  } else fail('S29.9a', JSON.stringify(target100));
+  const target70 = bsSvc.smartPackForTarget({ targetYards: 70, thans: pool });
+  // Should take 3 thans = 75y (overshoot 5).
+  if (target70.picks.length === 3 && target70.pickedYards === 75 && target70.overshoot === 5 && target70.shortBy === 0) {
+    pass('S29.9b smartPackForTarget: target 70y → 3 thans (75y), overshoot=5');
+  } else fail('S29.9b', JSON.stringify(target70));
+  const target500 = bsSvc.smartPackForTarget({ targetYards: 500, thans: pool });
+  // Pool only has 150y; expect all picked, shortBy=350.
+  if (target500.picks.length === 6 && target500.pickedYards === 150 && target500.shortBy === 350) {
+    pass('S29.9c smartPackForTarget: under-supplied target → picks all + shortBy reported');
+  } else fail('S29.9c', JSON.stringify(target500));
+  // FIFO discipline: oldest bale (90d) should be picked first.
+  if (target100.picks[0].baleUid === 'BAL-K-001' && target100.picks[1].baleUid === 'BAL-K-001') {
+    pass('S29.9d smartPackForTarget: FIFO — oldest bale exhausted first');
+  } else fail('S29.9d', JSON.stringify(target100.picks.map((p) => p.baleUid)));
+
+  // ---- S29.10: reconcileWithLive drops sold/missing thans ----
+  // Build a cart from live rows, then flip one to sold, then reconcile.
+  // inventoryRepository caches getAll() for 5s; in production the human
+  // user spends >> 5s between cart-build and submit so this never bites,
+  // but the smoke test races through both in milliseconds. Drop the cache
+  // explicitly to simulate the cross-second gap.
+  const cart10 = bsSvc.emptyCart();
+  const allRows = invRowsState.filter((r) => r.status === 'available' && r.design === 'KAFTAN').slice(0, 3);
+  bsSvc.addLines(cart10, allRows.map((r) => ({
+    baleUid: r.baleUid, packageNo: r.packageNo, thanNo: r.thanNo, yards: r.yards,
+    design: r.design, shade: r.shade,
+  })));
+  const targetRow = invRowsState.find((r) => r.baleUid === allRows[0].baleUid && r.thanNo === allRows[0].thanNo);
+  if (targetRow) targetRow.status = 'sold';
+  invRepoReal.invalidateCache && invRepoReal.invalidateCache();
+  const rec = await bsSvc.reconcileWithLive(cart10);
+  if (rec.ok === false && rec.dropped.length === 1 && rec.stillValid.length === 2
+      && rec.dropped[0].reason === 'sold') {
+    pass('S29.10 reconcileWithLive: detects sold-since-pick item and reports reason');
+  } else fail('S29.10', JSON.stringify({ ok: rec.ok, dropped: rec.dropped.map((d) => d.reason), still: rec.stillValid.length }));
+  if (targetRow) targetRow.status = 'available';
+  invRepoReal.invalidateCache && invRepoReal.invalidateCache();
+
+  // ---- S29.11: buildApprovalPayload yields sale_bundle items[] ----
+  const payload11 = bsSvc.buildApprovalPayload(
+    cart10,
+    { customer: 'Alhaji Bello', salesDate: '2026-05-23', paymentMode: 'Cash', pricePerYard: 4500, designSummary: 'KAFTAN', warehouse: 'Kano' },
+    { id: 9991, username: 'mohammed' },
+  );
+  if (payload11.action === 'sale_bundle'
+      && Array.isArray(payload11.items)
+      && payload11.items.length === 3
+      && payload11.items.every((it) => it.type === 'than' && it.packageNo && it.thanNo)
+      && payload11.customer === 'Alhaji Bello'
+      && payload11.pricePerYard === 4500
+      && payload11.bundleFlow === 'BUNDLE-SALE-C1') {
+    pass('S29.11 buildApprovalPayload: action=sale_bundle, items[3] type=than, pricePerYard carried');
+  } else fail('S29.11', JSON.stringify({
+    action: payload11.action, items: payload11.items.length,
+    types: payload11.items.map((i) => i.type),
+    rate: payload11.pricePerYard, flow: payload11.bundleFlow,
+  }));
+
+  // ---- S29.12: submitForApproval queues row + audit row ----
+  const submitted = await bsSvc.submitForApproval({
+    cart: cart10,
+    sale: { customer: 'Alhaji Bello', salesDate: '2026-05-23', paymentMode: 'Cash', pricePerYard: 4500, designSummary: 'KAFTAN', warehouse: 'Kano' },
+    user: { id: 9991 },
+    riskReason: 'Test risk reason.',
+  });
+  const queued = queueAppended29[0];
+  if (queueAppended29.length === 1
+      && queued.requestId === submitted.requestId
+      && queued.status === 'pending'
+      && queued.actionJSON.action === 'sale_bundle'
+      && queued.actionJSON.items.length === 3
+      && queued.actionJSON.enrichment?.ratePerUnitByDesign?.KAFTAN === 4500
+      && auditAppended29.some((a) => a[0] === 'approval_queued')) {
+    pass('S29.12 submitForApproval: 1 queue row + audit row, enrichment.rate carried');
+  } else fail('S29.12', JSON.stringify({
+    queueLen: queueAppended29.length, queued,
+    audit: auditAppended29.map((a) => a[0]),
+  }));
+
+  // ---- S29.13: rateSuggestionService median + suggestion shape ----
+  delete require.cache[require.resolve('../src/services/rateSuggestionService')];
+  const rateSvc = require('../src/services/rateSuggestionService');
+  // median is exported and pure.
+  if (rateSvc.median([1, 2, 3, 4, 5]) === 3
+      && rateSvc.median([1, 2, 3, 4]) === 2.5
+      && rateSvc.median([]) === null) {
+    pass('S29.13a rateSuggestionService.median: odd/even/empty all correct');
+  } else fail('S29.13a', 'median math wrong');
+  const fmt = rateSvc.formatSuggestionLines({
+    lastCustomerRate: 4500, lastCustomerAt: '',
+    lastAnyRate: 4400, lastAnyCustomer: '', lastAnyAt: '',
+    median30dRate: 4350, median30dCount: 12,
+    floorRate: 3800,
+  });
+  if (fmt.includes('Last to this customer') && fmt.includes('30-day median') && fmt.includes('Floor (landed cost)')) {
+    pass('S29.13b rateSuggestionService.formatSuggestionLines: all 3 hint lines rendered');
+  } else fail('S29.13b', fmt);
+  // Floor missing: shows "set landed cost first" hint.
+  const fmtNoFloor = rateSvc.formatSuggestionLines({
+    lastCustomerRate: 4500, median30dRate: 4350, median30dCount: 5, floorRate: null,
+  });
+  if (fmtNoFloor.includes('set landed cost first')) {
+    pass('S29.13c rateSuggestionService.formatSuggestionLines: missing floor → hint');
+  } else fail('S29.13c', fmtNoFloor);
+
+  // ---- S29.14: shadesRepository.resolveFrom + chipFromList ----
+  delete require.cache[require.resolve('../src/repositories/shadesRepository')];
+  const shadesRepo = require('../src/repositories/shadesRepository');
+  const seed = [
+    { shade_id: 'SHD-001', shade_name: 'Red',   display_emoji: '🔴', supplier_colour_no: '', active: true, aliases: ['red', 'crimson', 'maroon'], created_at: '', notes: '' },
+    { shade_id: 'SHD-008', shade_name: 'Black', display_emoji: '⚫', supplier_colour_no: '', active: true, aliases: ['black', 'jet', 'blk'],     created_at: '', notes: '' },
+  ];
+  const resolvedRed   = shadesRepo.resolveFrom(seed, 'Red');
+  const resolvedMaroon= shadesRepo.resolveFrom(seed, 'maroon');
+  const resolvedBlk   = shadesRepo.resolveFrom(seed, 'BLK');
+  const resolvedNone  = shadesRepo.resolveFrom(seed, 'NeonPink');
+  if (resolvedRed?.shade_id === 'SHD-001'
+      && resolvedMaroon?.shade_id === 'SHD-001'
+      && resolvedBlk?.shade_id === 'SHD-008'
+      && resolvedNone === null) {
+    pass('S29.14a shadesRepository.resolveFrom: name+alias match, unknown returns null');
+  } else fail('S29.14a', JSON.stringify({
+    red: resolvedRed?.shade_id, maroon: resolvedMaroon?.shade_id,
+    blk: resolvedBlk?.shade_id, none: resolvedNone,
+  }));
+  if (shadesRepo.chipFromList(seed, 'Red')     === '🔴'
+      && shadesRepo.chipFromList(seed, 'maroon')   === '🔴'
+      && shadesRepo.chipFromList(seed, 'unknown')  === shadesRepo.DEFAULT_EMOJI) {
+    pass('S29.14b shadesRepository.chipFromList: emoji lookup + fallback');
+  } else fail('S29.14b', JSON.stringify({
+    red: shadesRepo.chipFromList(seed, 'Red'),
+    mar: shadesRepo.chipFromList(seed, 'maroon'),
+    unk: shadesRepo.chipFromList(seed, 'unknown'),
+    def: shadesRepo.DEFAULT_EMOJI,
+  }));
+
+  // ---- S29.15: inventoryRepository reads bin_location (col U) ----
+  // Re-read after the schema change. Pull rows for KAFTAN and confirm
+  // binLocation made it through parseRow.
+  const allRows15 = await invRepoReal.getAll();
+  const k1Sample = allRows15.find((r) => r.baleUid === 'BAL-K-001');
+  const k3Sample = allRows15.find((r) => r.baleUid === 'BAL-K-003');
+  if (k1Sample?.binLocation === 'K-shelf-1' && k3Sample?.binLocation === 'K-shelf-3') {
+    pass('S29.15 inventoryRepository.parseRow: bin_location surfaces from column U');
+  } else fail('S29.15', JSON.stringify({ k1: k1Sample?.binLocation, k3: k3Sample?.binLocation }));
+
+  // ---- S29.16: bundleSaleFlow exports + can require without crash ----
+  delete require.cache[require.resolve('../src/flows/bundleSaleFlow')];
+  // Stub the auth + customers + transactions + sessionStore + approvalEvents + logger
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: (id) => String(id) === '1', isEmployee: (id) => String(id) === '2',
+  });
+  stubModule(require.resolve('../src/repositories/customersRepository'), {
+    searchByName: async () => [],
+  });
+  stubModule(require.resolve('../src/repositories/transactionsRepository'), {
+    getCustomersByDesign: async () => [],
+    parseRow: () => ({}), append: async () => {},
+  });
+  stubModule(require.resolve('../src/utils/sessionStore'), {
+    get: () => null, set: () => {}, clear: () => {},
+  });
+  stubModule(require.resolve('../src/events/approvalEvents'), {
+    notifyAdminsApprovalRequest: async () => {},
+  });
+  stubModule(require.resolve('../src/utils/logger'), {
+    info: () => {}, warn: () => {}, error: () => {},
+  });
+  const bsFlow = require('../src/flows/bundleSaleFlow');
+  if (typeof bsFlow.start === 'function'
+      && typeof bsFlow.handleCallback === 'function'
+      && typeof bsFlow.handleText === 'function'
+      && bsFlow._internals
+      && typeof bsFlow._internals.renderShadePicker === 'function') {
+    pass('S29.16 bundleSaleFlow: exports start/handleCallback/handleText + _internals');
+  } else fail('S29.16', 'flow exports missing');
+
+  // ---- Cleanup ----
+  for (const p of [
+    '../src/repositories/sheetsClient',
+    '../src/repositories/inventoryRepository',
+    '../src/repositories/shadesRepository',
+    '../src/repositories/customersRepository',
+    '../src/repositories/transactionsRepository',
+    '../src/repositories/approvalQueueRepository',
+    '../src/repositories/auditLogRepository',
+    '../src/utils/idGenerator',
+    '../src/utils/sessionStore',
+    '../src/utils/logger',
+    '../src/middlewares/auth',
+    '../src/events/approvalEvents',
+    '../src/services/activityRegistry',
+    '../src/services/bundleSaleService',
+    '../src/services/rateSuggestionService',
+    '../src/flows/bundleSaleFlow',
+  ]) {
+    try { delete require.cache[require.resolve(p)]; } catch (_) {}
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -4856,6 +5320,7 @@ async function runS28() {
   try { runS26();       } catch (e) { fail('S26 unexpected error', e.message); }
   try { await runS27(); } catch (e) { fail('S27 unexpected error', e.message); }
   try { await runS28(); } catch (e) { fail('S28 unexpected error', e.message); }
+  try { await runS29(); } catch (e) { fail('S29 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

@@ -447,12 +447,18 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       notes: aj.notes || '',
     });
     const baleRows = bales.map((b) => ({
-      packageNo: b.packageNo, design: aj.design, shade: aj.shade,
+      packageNo: b.packageNo,
+      design: b.design || aj.design,
+      // BUNDLE-SALE C1 — poly-colour bales pass a per-than shade.
+      // Fall back to the top-level shade when the receive flow set one
+      // (existing mono-colour case stays untouched).
+      shade: b.shade || aj.shade,
       thanNo: b.thanNo || 1, yards: parseFloat(b.yards) || 0,
       warehouse: aj.warehouse, pricePerYard: b.pricePerYard || 0,
       dateReceived: aj.dateReceived || new Date().toISOString().split('T')[0],
       productType: aj.productType || 'fabric',
       grnId: grn.grn_id,
+      binLocation: b.binLocation || aj.binLocation || '',
     }));
     const persisted = await inventoryRepository.appendBale(baleRows);
     try {

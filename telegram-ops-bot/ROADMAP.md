@@ -563,6 +563,201 @@ Harness: 216 green (was 153).
 
 All 💭 Discuss — never start without an explicit owner decision (see §4.6).
 
+### 2.12 BS-C1 · Kano poly-colour bundle sale (design-first picker) (2026-05-23)
+
+Dedicated sale flow for warehouses that hold poly-colour bales (the
+Kano model: one bale = 150 yd = 6 shades × 25 yd). Lagos mono-colour
+bales keep using the existing `sale_bundle` path; this flow opens a
+parallel door for the cases where the current "pick a bale" UI maps
+poorly onto a customer conversation that runs "shade-first, then which
+bale".
+
+**Owner brief (2026-05-22, full conversation):**
+
+> "In kano they prefer to take all the colours in one bale with combined
+> all colour present in the catelogue of the particular design having
+> 150yards (6 colour of 25 yards each bundle [than])."
+> "Please let me know how my office manager in kano can mark the
+> bundle (than) sold in interactive way with more tappable infographic
+> option rather than more manual entry."
+> "Add one more option to sell in thans/bundles. Show them the total
+> thans/bundle against the colour within the design selected. Once
+> sales boy taps the colour/shade he will be seen total yards and with
+> bundle present with different bale number. User can tap on the all
+> or some from one bale than next bale in sequence."
+
+**UX — "design-first, colour-aggregate, bale-by-bale bundle picker":**
+
+```
+1. Warehouse  (auto-skipped if user has 1 home warehouse)
+2. Design     (chips, sorted by available yards desc)
+3. Shade      (per-shade aggregate: yards · than count · bale count;
+               🎯 Pack target yardage escape hatch lives here)
+4. Bales      (per-bale picker for the chosen shade, oldest-first
+               with 🟢/⚪/🟠/🔴 age chips, "📦 Take all N remaining"
+               shortcut, sticky cart counter)
+5. Cart       (collapsible by shade: summary by default; expand →
+               per-bale than breakdown; per-line/per-bale remove)
+6. Customer   (recent buyers of this design as quick chips,
+               + 🔎 search, + ➕ Walk-in)
+7. Rate       (typed, with last-to-this-customer / last-any /
+               30d-median / floor (landed cost) suggestions as
+               one-tap chips; "below floor" confirm gate when entered
+               rate < floorRate)
+8. Payment    (Cash / Bank Transfer / Pending)
+9. Confirm    (LIVE re-check vs Inventory; conflicts auto-drop with
+               actionable list; total = yards × rate)
+10. Submitted (existing sale_bundle approval pipeline)
+```
+
+**Schema additions:**
+
+- `Shades` sheet (8 cols, seeded with 10 canonical entries — Red/Green/Blue/Yellow/Purple/Orange/White/Black/Brown/Pink). Admin-editable name → display emoji → supplier_colour_no → aliases. Falls back to a generic 🎨 chip when a name has no entry — picker never breaks on a new shade.
+- `Inventory.bin_location` (col U, lazy-migrated). Optional shelf/bin reference rendered next to bale headers in the bundle picker. Empty for warehouses that don't track shelves.
+
+**Receive-side fork (`goodsReceiptFlow.js`):**
+
+After picking design, the flow asks "Bale type": Mono-colour (Lagos —
+unchanged) or Multi-colour (Kano — 6 shades × 25 yd). The poly path:
+
+1. Multi-select shades from the design's existing palette + ➕ new shade.
+2. Pick yards-per-than (chips: 20 / 25 / 30 / 40 / 50 / ✏️ custom).
+3. Bale numbers (CSV or range — same parser as mono).
+4. Expand: each physical bale × each picked shade → 1 Inventory row
+   (thanNo = 1..N). 5 bales × 6 shades × 25 yd = 30 thans / 750 yd.
+5. Confirm preview rolls up by packageNo: `Bale 6101 → Red (25y),
+   Green (25y), Blue (25y), Yellow (25y), Purple (25y), Orange (25y) = 150 yd`.
+
+`inventoryService.executeApprovedAction` for `receive_goods` now reads
+`b.shade || aj.shade` and `b.binLocation || aj.binLocation || ''` — the
+per-bale override falls back to the existing top-level value, so the
+mono-colour code path is byte-identical to today's behaviour.
+
+**Smart-Pack assist:**
+
+"🎯 Pack target yardage" prompts the manager to type a target (e.g.
+`75`). The bot flattens all available thans for the design (across
+all shades), sorts oldest-first (FIFO), and greedily takes thans until
+the cumulative yardage meets the target. Returns three numbers:
+`pickedYards`, `shortBy` (when stock is insufficient), `overshoot`
+(when whole-than rounding lands above the target). Manager sees a
+shade-grouped preview and a single tap commits the whole basket to
+the cart. No backtracking on rounding overshoot — textile customers
+generally accept "a few extra" over "a few short", and the manual
+picker is one tap away if a finer dial is needed.
+
+**Conflict re-check (no row locks):**
+
+Optimistic concurrency. The cart holds rowIndex+baleUid+thanNo for
+each line. On entering the Confirm step AND again on Submit,
+`bundleSaleService.reconcileWithLive` re-reads the live Inventory and
+compares every cart line. Anything sold/transferred since cart-build
+is dropped with an actionable reason (`sold`, `not_found`, etc.) and
+the manager sees a refresh banner. Avoids reservation timeouts and
+"why is my row locked" support tickets.
+
+**Rate suggestion (`rateSuggestionService.js`):**
+
+Reads `Transactions` for design-matching approved sales and joins on
+`Inventory.grn_id → GoodsReceipts.lc_ngn_per_yard` for the floor:
+
+| Suggestion | Source |
+|---|---|
+| Last to this customer | most recent sale_bundle row matching design+customer |
+| Last (any customer) | most recent sale_bundle row matching design |
+| 30-day median | median of last-30-day `pricePerYard` for design |
+| Floor (landed cost) | max `lc_ngn_per_yard` across available bales' GRNs |
+
+When the typed rate falls below the floor, the flow opens a "Below
+cost-recovery floor" confirm card before advancing to payment. Owner
+can override (sale-at-loss is sometimes deliberate), but the gesture
+is explicit.
+
+**Approval payload (reuses existing pipeline):**
+
+```json
+{
+  "action": "sale_bundle",
+  "items": [
+    { "type": "than", "packageNo": "6101", "thanNo": 1, "baleUid": "BAL-K-001", "yards": 25, "design": "KAFTAN", "shade": "Red" },
+    ...
+  ],
+  "customer": "Alhaji Bello",
+  "salesDate": "2026-05-23",
+  "paymentMode": "Cash",
+  "pricePerYard": 4500,
+  "bundleFlow": "BUNDLE-SALE-C1",
+  "enrichment": { "ratePerUnitByDesign": { "KAFTAN": 4500 }, "paymentMode": "Cash", "amountPaid": ... }
+}
+```
+
+`inventoryService.executeApprovedAction(sale_bundle)` already handles
+this exact shape (markThanSold loop → ledger DR → transactions row).
+Zero changes to `approvalEvents`, `inventoryService`, or any approval
+UI. The new flow ships entirely behind a new entry door + 4 new files.
+
+**Files:**
+
+- `src/repositories/shadesRepository.js` (sole owner of the new sheet; `getAll`, `getActive`, `resolve`, `resolveFrom`, `chipFor`, `chipFromList`, 60 s TTL cache, alias matching, case-insensitive)
+- `src/repositories/inventoryRepository.js` (added `bin_location` to header / parseRow / toRow / read range `A2:U` / +`groupByBaleAndShade` 2-level aggregator with FIFO bale sorting + per-shade summary + age stamping)
+- `src/services/bundleSaleService.js` (cart model + `addLines`/`removeLines`/`removeBale`/`clearCart`/`totals`/`summarise` + `smartPackForTarget` (greedy FIFO) + `reconcileWithLive` + `buildApprovalPayload` + `submitForApproval` + `ageBucket` helper)
+- `src/services/rateSuggestionService.js` (`suggestFor` (last-to-customer / last-any / 30d-median / floor), `formatSuggestionLines`, `recentSalesForDesign`, `computeFloorRate`, `median`)
+- `src/flows/bundleSaleFlow.js` (10-step anchored card flow; `bs:*` callback namespace; smart-pack sub-flow; collapsible cart; below-floor confirm gate; auto-skip warehouse picker when single warehouse)
+- `src/flows/goodsReceiptFlow.js` (added `bale_type` step + `showMultiShadesStep` + `showMultiYardsStep` + multi-colour text/callback handlers + back-routing for new steps + multi-bale confirm rendering)
+- `src/services/schemaMapper.js` (declared `Shades` sheet with 10-row seed; extended Inventory lazy migration `INV_NEW_COLS` to include `bin_location`)
+- `src/services/inventoryService.js` (`receive_goods` now reads `b.shade`/`b.binLocation` per-bale with fallback to `aj.shade`/`aj.binLocation`)
+- `src/services/activityRegistry.js` (new `bundle_sale` entry in `stock` hub; 🧵 icon)
+- `src/controllers/telegramController.js` (act-dispatcher `case 'bundle_sale'`; `bs:*` callback router; text-input router)
+
+**Decisions (owner brief, all approved as defaults on 2026-05-22):**
+
+| Q | Decision |
+|---|---|
+| Entry door            | Single `bundle_sale` in Stock hub (icon 🧵). Discoverable by everyone with Stock hub access — the role gate is the existing `sale_bundle` approval, not the flow door. |
+| Mono vs poly fork (sell side) | Always offer the new flow; the picker simply renders 1-shade aggregate when a design only has 1 shade. Zero forks at the user level — the same UX works for Lagos. |
+| Mono vs poly fork (receive side) | Explicit "Bale type" step after design. Lagos managers tap "Mono" once; their flow is unchanged from there. |
+| Smart-Pack rounding | Whole-than overshoot (e.g. target 70 yd → 75 yd basket). Manager can always trim manually. No fractional-than UX. |
+| Conflict handling   | Optimistic, no row reservations. Re-check on Confirm + on Submit. Drop unavailable lines with `dropped[].reason` and show a refresh banner. |
+| Below-floor sale    | Confirm gate, not block. Selling at a loss is sometimes deliberate (closeout, distress). |
+| Cart UI             | Collapsible by shade. Default = 1 line per shade. Tap shade → expand → per-bale than chips. |
+| Customer picker     | Recent buyers of THIS design at top, + 🔎 search, + ➕ Walk-in. Same pattern as supply-request flow. |
+| Shades catalogue    | Own sheet (`Shades`), seeded with 10 canonical entries. Admin can append/edit without code change. Fallback emoji (🎨) for unknown names — picker never breaks. |
+| Bin / shelf reference | Optional. New `bin_location` column on Inventory, empty for warehouses that don't track shelves. Rendered next to bale headers when present. |
+| Rate suggestion sources | Transactions (most-recent / 30d-median, per design ± per customer) + GoodsReceipts (lc_ngn_per_yard for floor). No new sheets. |
+
+**Smoke (`S29`, 23 checks):** schema declared with all 8 Shades cols +
+bin_location in INV_NEW_COLS + canonical seed rows verified +
+activityRegistry surfaces `bundle_sale` in stock hub + controller
+wiring (act-dispatcher + `bs:*` callback + text router) + grn flow
+mono/poly fork wired + inventoryService receive_goods honours
+per-bale shade + `groupByBaleAndShade` per-shade totals correct +
+sold than excluded + bales sorted oldest-first (FIFO) +
+bundleSaleService `addLines` dedupe + `summarise` 2-level groupping +
+`removeLines` single key + ageBucket math (fresh/settled/ageing/stale)
++ `smartPackForTarget` exact target + overshoot + under-supplied +
+FIFO discipline + `reconcileWithLive` detects sold-since-pick +
+`buildApprovalPayload` produces `action: 'sale_bundle'` with
+`items[].type='than'` + `submitForApproval` queues row + audit +
+`rateSuggestionService` median odd/even/empty + format renders all
+hint lines + no-floor hint + `shadesRepository.resolveFrom` name+alias
++ `chipFromList` emoji lookup + fallback + bin_location reads from
+column U + `bundleSaleFlow` exports surface area present.
+
+**Smoke total:** 399 ok / 0 failed (was 370).
+
+**Substrate unlocked for:**
+
+- §1.5 demand-driven pricing engine — same `groupByBaleAndShade` aggregator powers per-warehouse demand visibility (Kano demand pulls bales from HQ).
+- §1.7 customer-facing wholesale negotiation — same cart + conflict-recheck pattern; just swap the customer-picker for the customer-self picker.
+- §1.10 OCR receipt → cart pre-fill — Smart-Pack target yardage step is the natural landing zone for "OCR says they want 75 yd"; one-tap apply.
+
+**Follow-ups (deliberately not in this commit):**
+
+- Demand-driven pricing engine (§1.5) — separate commit; will reuse `rateSuggestionService.suggestFor` and add a `demandIndex` term per warehouse.
+- Customer-history pre-select chips on the shade picker ("you usually buy 4 Red + 2 Green" — pre-tick from prior cart).
+- Photo of a basket (cart) on submission — useful for cross-region distribution disputes.
+- A per-shade demand counter / re-order suggestion fed back to the procurement hub when a shade dips below a configurable floor.
+
 ### 2.11 BR-OPS C1 · Branch managers' daily routine + Office expenses (2026-05-22)
 
 Quantum-style daily workflow for the two branch managers (Abdul / Lagos,

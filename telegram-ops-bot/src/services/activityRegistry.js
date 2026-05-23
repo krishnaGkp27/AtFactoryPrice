@@ -49,6 +49,11 @@ const ACTIVITIES = [
   { code: 'transfer_package',      label: 'Transfer Package',          icon: '🚚', callback: 'act:transfer_package',   hub: 'stock' },
   { code: 'transfer_than',         label: 'Transfer Than',             icon: '↔️', callback: 'act:transfer_than',      hub: 'stock' },
   { code: 'return_than',           label: 'Return Than',               icon: '↩️', callback: 'act:return_than',        hub: 'stock' },
+  // BUNDLE-SALE C1 — design-first, colour-aggregate, bale-by-bale than
+  // picker for Kano (and any warehouse holding poly-colour bales).
+  // Reuses the existing `sale_bundle` action so the approval pipeline,
+  // ledger emission, and audit log keep working unchanged.
+  { code: 'bundle_sale',           label: 'Sell Bundles / Than',       icon: '🧵', callback: 'act:bundle_sale',        hub: 'stock' },
 
   // Customer Details: single-tap entry that opens a customer card with
   // [History / Pattern / Notes / Add Note] tabs (and Ranking for admins).

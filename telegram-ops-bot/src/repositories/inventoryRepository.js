@@ -23,11 +23,14 @@ const sheets = require('./sheetsClient');
 const idGenerator = require('../utils/idGenerator');
 
 const SHEET = 'Inventory';
-const COL_COUNT = 20;
+const COL_COUNT = 21;
 const HEADERS = [
   'PackageNo', 'Indent', 'CSNo', 'Design', 'Shade', 'ThanNo', 'Yards', 'Status',
   'Warehouse', 'PricePerYard', 'DateReceived', 'SoldTo', 'SoldDate', 'NetMtrs', 'NetWeight', 'UpdatedAt',
   'ProductType', 'bale_uid', 'addedAt', 'grn_id',
+  // BUNDLE-SALE C1 — optional shelf / bin reference rendered next to the
+  // bale header in the bundle picker. Empty for rows that don't track it.
+  'bin_location',
 ];
 
 /** Short-lived cache for getAll() to avoid hammering the API during batch ops. */
@@ -65,6 +68,7 @@ function parseRow(r, rowIndex) {
     baleUid: rawUid || `BAL-LEGACY-${rowIndex}`,
     addedAt: rawAddedAt || str(r[10]) || '',
     grnId: str(r[19]),
+    binLocation: str(r[20]),
     _legacy: isLegacy,
   };
 }
@@ -76,21 +80,21 @@ function toRow(o) {
     o.warehouse ?? '', o.pricePerYard ?? 0, o.dateReceived ?? '',
     o.soldTo ?? '', o.soldDate ?? '', o.netMtrs ?? '', o.netWeight ?? '',
     o.updatedAt ?? '', o.productType ?? 'fabric',
-    o.baleUid ?? '', o.addedAt ?? '', o.grnId ?? '',
+    o.baleUid ?? '', o.addedAt ?? '', o.grnId ?? '', o.binLocation ?? '',
   ];
 }
 
 async function ensureHeader() {
-  const rows = await sheets.readRange(SHEET, 'A1:T1');
+  const rows = await sheets.readRange(SHEET, 'A1:U1');
   if (!rows.length || rows[0].length < COL_COUNT) {
-    await sheets.updateRange(SHEET, 'A1:T1', [HEADERS]);
+    await sheets.updateRange(SHEET, 'A1:U1', [HEADERS]);
   }
 }
 
 async function getAll() {
   const now = Date.now();
   if (_allCache && (now - _allCacheTs) < CACHE_TTL_MS) return _allCache;
-  const rows = await sheets.readRange(SHEET, 'A2:T');
+  const rows = await sheets.readRange(SHEET, 'A2:U');
   _allCache = rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.packageNo || r.design);
   _allCacheTs = Date.now();
   return _allCache;
@@ -239,7 +243,10 @@ async function appendBale(bales) {
  * suffices.
  */
 async function backfillLegacyBales() {
-  const rows = await sheets.readRange(SHEET, 'A2:T');
+  // BUNDLE-SALE C1 — read range bumped to A2:U for bin_location, but the
+  // back-fill itself only writes to R:S (bale_uid + addedAt), so the
+  // extra column is harmless if absent.
+  const rows = await sheets.readRange(SHEET, 'A2:U');
   const updates = [];
   let count = 0;
   rows.forEach((r, i) => {
@@ -354,6 +361,86 @@ async function getDistinctDesigns() {
   return Array.from(map.values());
 }
 
+/**
+ * BUNDLE-SALE C1 — build a 2-level grouping of AVAILABLE thans for a given
+ * design+warehouse, suitable for the Kano bundle picker.
+ *
+ *   designKey         (UPPER design)
+ *     └─ shades       (UPPER shade)
+ *          ├─ summary { thanCount, yards, baleCount }
+ *          └─ bales[] { packageNo, baleUid, binLocation, ageDays, thans[] }
+ *
+ * Rules:
+ *   – Only rows with status='available'.
+ *   – Warehouse filter is case-insensitive; null/empty includes all.
+ *   – Shade dictionary lookup happens in the flow (this helper stays pure).
+ *   – Empty / blank shades are bucketed as '(no-shade)'.
+ */
+async function groupByBaleAndShade(design, warehouse = null) {
+  const all = await getAll();
+  const d = upper(design);
+  const w = warehouse ? upper(warehouse) : null;
+  const matches = all.filter((r) =>
+    r.status === 'available' &&
+    upper(r.design) === d &&
+    (!w || upper(r.warehouse) === w)
+  );
+  const byShade = new Map();
+  const nowMs = Date.now();
+  for (const t of matches) {
+    const shadeKey = upper(t.shade) || '(NO-SHADE)';
+    if (!byShade.has(shadeKey)) {
+      byShade.set(shadeKey, {
+        shade: t.shade || '',
+        shadeKey,
+        summary: { thanCount: 0, yards: 0, baleCount: 0 },
+        balesByUid: new Map(),
+      });
+    }
+    const bucket = byShade.get(shadeKey);
+    bucket.summary.thanCount += 1;
+    bucket.summary.yards += t.yards || 0;
+    const baleKey = t.baleUid || `pkg:${t.packageNo}`;
+    if (!bucket.balesByUid.has(baleKey)) {
+      const addedMs = Date.parse(t.addedAt || t.dateReceived || '');
+      const ageDays = isFinite(addedMs) ? Math.max(0, Math.round((nowMs - addedMs) / 86400000)) : null;
+      bucket.balesByUid.set(baleKey, {
+        baleUid: t.baleUid,
+        packageNo: t.packageNo,
+        binLocation: t.binLocation || '',
+        addedAt: t.addedAt || '',
+        ageDays,
+        thans: [],
+      });
+      bucket.summary.baleCount += 1;
+    }
+    bucket.balesByUid.get(baleKey).thans.push({
+      rowIndex: t.rowIndex,
+      thanNo: t.thanNo,
+      yards: t.yards,
+      packageNo: t.packageNo,
+      baleUid: t.baleUid,
+      shade: t.shade,
+    });
+  }
+  // Flatten bales map to array, sort by oldest-first (FIFO) so the picker
+  // can render "Take ALL" against the bale that's been sitting longest.
+  const shades = Array.from(byShade.values()).map((b) => ({
+    shade: b.shade,
+    shadeKey: b.shadeKey,
+    summary: b.summary,
+    bales: Array.from(b.balesByUid.values())
+      .sort((a, b2) => {
+        const ax = Date.parse(a.addedAt || '') || 0;
+        const bx = Date.parse(b2.addedAt || '') || 0;
+        return ax - bx;
+      })
+      .map((bale) => ({ ...bale, thans: bale.thans.sort((x, y) => (x.thanNo || 0) - (y.thanNo || 0)) })),
+  }));
+  shades.sort((a, b2) => b2.summary.yards - a.summary.yards);
+  return { design, designKey: d, warehouse: warehouse || '', shades };
+}
+
 module.exports = {
   HEADERS,
   getAll,
@@ -374,6 +461,7 @@ module.exports = {
   backfillLegacyBales,
   getWarehouses,
   getDistinctDesigns,
+  groupByBaleAndShade,
   ensureHeader,
   parseRow,
   toRow,

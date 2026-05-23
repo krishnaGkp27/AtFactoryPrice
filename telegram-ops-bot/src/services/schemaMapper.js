@@ -257,6 +257,25 @@ const REQUIRED_SHEETS = {
       'amount_usd', 'entered_by', 'entered_at', 'notes',
     ],
   },
+  // BUNDLE-SALE C1 — lookup table for colour-name → display-emoji and the
+  // supplier's COLOUR NO (printed on each bale tag). Admin can append rows
+  // over time without a code change. Bot falls back to a generic chip
+  // when a shade isn't in the table.
+  Shades: {
+    headers: ['shade_id', 'shade_name', 'display_emoji', 'supplier_colour_no', 'active', 'aliases', 'created_at', 'notes'],
+    seed: [
+      ['SHD-001', 'Red',    '🔴', '', 'TRUE', 'red,crimson,maroon',  '', ''],
+      ['SHD-002', 'Green',  '🟢', '', 'TRUE', 'green,olive,emerald', '', ''],
+      ['SHD-003', 'Blue',   '🔵', '', 'TRUE', 'blue,navy,royal',     '', ''],
+      ['SHD-004', 'Yellow', '🟡', '', 'TRUE', 'yellow,gold',         '', ''],
+      ['SHD-005', 'Purple', '🟣', '', 'TRUE', 'purple,wine,violet',  '', ''],
+      ['SHD-006', 'Orange', '🟠', '', 'TRUE', 'orange,peach',        '', ''],
+      ['SHD-007', 'White',  '⚪', '', 'TRUE', 'white,cream,off-white','', ''],
+      ['SHD-008', 'Black',  '⚫', '', 'TRUE', 'black,jet,blk',       '', ''],
+      ['SHD-009', 'Brown',  '🟤', '', 'TRUE', 'brown,coffee,khaki',  '', ''],
+      ['SHD-010', 'Pink',   '🌸', '', 'TRUE', 'pink,rose,fuchsia',   '', ''],
+    ],
+  },
   // BR-OPS C1 — single umbrella sheet for the branch managers' daily
   // routine (Abdul / Muhammad). Polymorphic via `kind`: daily_open,
   // camera_check, opening_cash, expense, sample_issued, receipt_logged,
@@ -406,7 +425,10 @@ async function initialize() {
       // synthetic BAL-LEGACY-<rowIndex> bale_uid at read time, and
       // backfillLegacyBales() may be invoked to persist them in a single
       // batch when the operator is ready.
-      const INV_NEW_COLS = ['bale_uid', 'addedAt', 'grn_id'];
+      // BUNDLE-SALE C1 — added optional `bin_location` so the bundle picker
+      // can show "Bale 6035 · shelf K-3" alongside the than chips. Empty
+      // for warehouses that don't track shelves; cheap to add.
+      const INV_NEW_COLS = ['bale_uid', 'addedAt', 'grn_id', 'bin_location'];
       const missingInv = INV_NEW_COLS.filter((c) => !h.includes(c));
       if (missingInv.length) {
         const startCol = colLetter(h.length + 1);
