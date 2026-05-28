@@ -12,6 +12,9 @@
     <!-- Styles -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="../css/density-refinement.css">
+    <!-- Phase 4 design system (additive) -->
+    <link rel="stylesheet" href="../css/tokens.css">
+    <link rel="stylesheet" href="../css/components.css">
     
     <style>
         * {
@@ -264,22 +267,37 @@
         }
     </style>
 </head>
-<body>
-    <nav class="navbar">
-        <div class="nav-container">
-            <a href="../index.html" class="logo"><img src="../images/logo.png" alt="AtFactoryPrice"></a>
-            <a href="../index.html" class="back-link">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M19 12H5M12 19l-7-7 7-7"/>
-                </svg>
-                Back to Home
-            </a>
-        </div>
-    </nav>
+<body class="afp-v2">
+<nav class="afp-nav">
+  <div class="afp-nav-c">
+    <div class="afp-nav-l">
+      <a href="../index.html" class="afp-logo">
+        <span class="afp-logo-mark">
+          <svg width="34" height="34" viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="14" width="5" height="7" fill="#0A0A0B"/>
+            <rect x="9" y="9" width="5" height="12" fill="#D8262C"/>
+            <rect x="15" y="3" width="5" height="18" fill="#0A0A0B"/>
+            <path d="M11.5 9 L11.5 4 Q11.5 2 13 2.5 L13 9.5" stroke="#D8262C" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <span class="afp-logo-tx"><span class="at">At</span><span class="nm">Factory</span><span class="pr">Price</span></span>
+      </a>
+      <div class="afp-nav-mid">
+        <a href="../index.html">Home</a>
+        <a href="../products.html">Products</a>
+        <a href="../orders.html">Orders</a>
+      </div>
+    </div>
+    <div class="afp-nav-end">
+      <a href="../cart.html" class="afp-btn afp-btn-brand afp-btn--sm">Cart</a>
+    </div>
+  </div>
+</nav>
 
     <div class="policy-container">
         <div class="policy-header">
-            <h1>Refund Policy</h1>
+            <span class="afp-eyebrow"><span class="afp-eyebrow-dot"></span>Policies</span>
+            <h1 class="afp-h1">Refund Policy</h1>
             <p class="last-updated">Last Updated: February 2026</p>
         </div>
 
@@ -406,5 +424,49 @@
             </div>
         </div>
     </div>
+
+<footer class="afp-ft">
+  <div class="afp-ft-c">
+    <div>
+      <span class="afp-logo">
+        <span class="afp-logo-mark">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="14" width="5" height="7" fill="#fff"/>
+            <rect x="9" y="9" width="5" height="12" fill="#D8262C"/>
+            <rect x="15" y="3" width="5" height="18" fill="#fff"/>
+            <path d="M11.5 9 L11.5 4 Q11.5 2 13 2.5 L13 9.5" stroke="#D8262C" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <span class="afp-logo-tx" style="color:#fff"><span class="at">At</span><span class="nm">Factory</span><span class="pr" style="background:#fff;color:#0A0A0B">Price</span></span>
+      </span>
+      <p style="max-width:300px;margin-top:14px;">Premium fabrics and garments at factory direct prices. Lagos, Nigeria.</p>
+    </div>
+    <div>
+      <h5>Shop</h5>
+      <a href="../products.html">Fabrics</a>
+      <a href="../products.html">Garments</a>
+    </div>
+    <div>
+      <h5>Account</h5>
+      <a href="../login.html">Sign in</a>
+      <a href="../orders.html">Orders</a>
+    </div>
+    <div>
+      <h5>Help</h5>
+      <a href="https://wa.me/2348138475360" target="_blank">WhatsApp</a>
+      <a href="mailto:Johngn09@gmail.com">Contact</a>
+    </div>
+    <div>
+      <h5>Policies</h5>
+      <a href="return-policy.html">Return</a>
+      <a href="refund-policy.html">Refund</a>
+      <a href="cancellation-policy.html">Cancellation</a>
+    </div>
+  </div>
+  <div class="afp-ft-end">
+    <span>© 2026 AtFactoryPrice · Lagos, NG</span>
+    <span>Direct from factory</span>
+  </div>
+</footer>
 </body>
 </html>
