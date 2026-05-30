@@ -645,6 +645,22 @@ logistics + operational surcharges on top of the base price so each
 region (Lagos, Kano, …) sees its effective price. Mirrors the existing
 landed-cost allocation pattern; still zero Inventory schema changes.
 
+**Follow-up (same day) — Check Stock cleanup + Stock Value report**
+
+* Terminology: **Selling price** = quoted price (`PricePerYard`, set via
+  `update_price`). **Sold price** = rate confirmed at sale (per
+  transaction row; no new UI yet).
+* **Check Stock** no longer shows `Value:` totals or per-shade price
+  tails. One `Selling: ₦X/yd` line sits directly under the design number
+  (`·varies` when shade prices differ). Qty-by-shade breakdown unchanged.
+* **Reports → Stock Value** (`act:stock_value`, admin-only Phase 1):
+  two-step flow — (1) all designs ranked by `selling × available yards`
+  with grand total, paginated 10/page; (2) tap a design for shade-level
+  value breakdown with per-shade `(Selling: …/yd)` only when that shade
+  differs from the design dominant. Callback namespace `svr:*`.
+  Pure helpers in `src/services/stockValueReport.js`. Smoke **S30.5**
+  extends coverage.
+
 ### 2.12 BS-C1 · Kano poly-colour bundle sale (design-first picker) (2026-05-23)
 
 Dedicated sale flow for warehouses that hold poly-colour bales (the

@@ -90,6 +90,8 @@ const ACTIVITIES = [
 
   { code: 'sales_report',          label: 'Sales Report',              icon: '📊', callback: 'act:sales_report',       hub: 'reports' },
   { code: 'supply_details',        label: 'Supply Details',            icon: '📦', callback: 'act:supply_details',     hub: 'reports' },
+  // PRICE-VIS — admin-only stock value (selling × yards); Phase 2 widens via permissions.
+  { code: 'stock_value',           label: 'Stock Value',               icon: '💰', callback: 'act:stock_value',        hub: 'reports' },
   // ATT-RPT-1 — read-only attendance report (today + window stats per
   // employee). Admin-only for now; manager-scoped variant ships later
   // when the hierarchy hook is wired.

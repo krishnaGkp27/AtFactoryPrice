@@ -34,6 +34,7 @@ const userPrefsRepo = require('../repositories/userPrefsRepository');
 const designAssetsRepo = require('../repositories/designAssetsRepository');
 const designAssetsService = require('../services/designAssetsService');
 const pricingService = require('../services/pricingService');
+const stockValueReport = require('../services/stockValueReport');
 const goodsReceiptsRepository = require('../repositories/goodsReceiptsRepository');
 const colorDetector = require('../ai/colorDetector');
 const catalogFlows = require('./catalogFlowController');
@@ -2726,29 +2727,31 @@ async function sendListPackagesReport(bot, chatId, design, shade = null) {
   await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
 }
 
-/** Format a sale-price tail, given a pricingService.resolveSalePrice() result. */
-function fmtSaleTail({ price, mixed }) {
-  if (!price) return ' · Sale: not set';
-  return ` · Sale: ${fmtMoney(price)}/yd${mixed ? ' ·mixed' : ''}`;
+/** Design-level selling price line for Check Stock (quoted price, not sold price). */
+function fmtSellingHeaderLine({ price, mixed }) {
+  if (!price) return 'Selling: not set\n';
+  return `Selling: ${fmtMoney(price)}/yd${mixed ? ' ·varies' : ''}\n`;
 }
 
-/** Reusable Check Stock report — shows totals + shade/warehouse breakdown. */
+/** Reusable Check Stock report — qty breakdown only; value totals live in Stock Value report. */
 async function sendCheckStockReport(bot, chatId, design, userId = null) {
   const stock = await inventoryService.checkStock({ design });
   if (!stock || stock.totalThans === 0) {
     await bot.sendMessage(chatId, `⚠️ No available stock for design ${design}.`);
     return;
   }
-  const canSale = userId ? pricingService.canSeeSalePrice(userId) : false;
+  const canSelling = userId ? pricingService.canSeeSalePrice(userId) : false;
   let reply = `📦 *Stock — Design ${design}*\n`;
+  const allInv = await inventoryRepository.getAll();
+  if (canSelling) {
+    const sp = pricingService.resolveSalePrice(allInv, design);
+    reply += fmtSellingHeaderLine(sp);
+  }
   const labels = await productTypesRepo.getLabels('fabric');
   reply += `Available: ${stock.totalPackages} ${productTypesRepo.pluralize(labels.container_label, stock.totalPackages).toLowerCase()} `;
   reply += `(${stock.totalThans} ${productTypesRepo.pluralize(labels.subunit_label, stock.totalThans).toLowerCase()}), `;
   reply += `${fmtQty(stock.totalYards)} ${labels.measure_unit}\n`;
-  if (canSale) reply += `Value: ${fmtMoney(stock.totalValue)}\n`;
 
-  // Break down by shade + warehouse for a richer picture
-  const allInv = await inventoryRepository.getAll();
   const avail = allInv.filter((r) => r.status === 'available' && r.design === design);
   if (avail.length) {
     const byShade = new Map();
@@ -2763,12 +2766,129 @@ async function sendCheckStockReport(bot, chatId, design, userId = null) {
     reply += `\n*By shade:*\n`;
     for (const [sh, s] of [...byShade.entries()].sort((a, b) => b[1].yards - a[1].yards)) {
       const whList = [...s.warehouses.keys()].join(', ');
-      // PRICE-VIS-C1 — per design+shade sale price (admin-only in Phase 1)
-      const saleTail = canSale ? fmtSaleTail(pricingService.resolveSalePrice(allInv, design, sh)) : '';
-      reply += `  Shade ${sh}: ${s.pkgs.size} Bales, ${fmtQty(s.yards)} yds (${whList})${saleTail}\n`;
+      reply += `  Shade ${sh}: ${s.pkgs.size} Bales, ${fmtQty(s.yards)} yds (${whList})\n`;
     }
   }
   await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
+}
+
+const STOCK_VALUE_PAGE_SIZE = 10;
+
+/** Reports hub — Step 1: designs ranked by stock value (paginated). */
+async function startStockValueFlow(bot, chatId, userId, messageId = null) {
+  if (!pricingService.canSeeSalePrice(userId)) {
+    await bot.sendMessage(chatId, 'Stock Value is available to admins only.');
+    return;
+  }
+  const page = 0;
+  sessionStore.set(userId, { type: 'stock_value', step: 'list', page, flowMessageId: messageId || null });
+  await renderStockValueList(bot, chatId, userId, page);
+}
+
+async function renderStockValueList(bot, chatId, userId, page) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'stock_value') return;
+
+  const allInv = await inventoryRepository.getAll();
+  const summaries = stockValueReport.computeDesignSummaries(allInv);
+  const { grandValue, grandYards, designCount } = stockValueReport.computeGrandTotals(summaries);
+
+  if (!summaries.length) {
+    await editOrSend(bot, chatId, session.flowMessageId,
+      '💰 *Stock Value*\n\n_No available stock in inventory._',
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Close', callback_data: 'svr:cancel' }]] } });
+    return;
+  }
+
+  let activeDesigns = new Set();
+  try {
+    const active = await designAssetsRepo.list('active');
+    activeDesigns = new Set(active.map((a) => String(a.design).toUpperCase()));
+  } catch (_) { /* graceful */ }
+
+  const totalPages = Math.max(1, Math.ceil(summaries.length / STOCK_VALUE_PAGE_SIZE));
+  const safePage = Math.max(0, Math.min(page, totalPages - 1));
+  const slice = summaries.slice(safePage * STOCK_VALUE_PAGE_SIZE, (safePage + 1) * STOCK_VALUE_PAGE_SIZE);
+
+  let text = '💰 *Stock Value*\n';
+  text += '_Selling × available yards. Tap a design to drill into shade detail._\n\n';
+
+  for (const s of slice) {
+    const hasPhoto = activeDesigns.has(String(s.design).toUpperCase());
+    const icon = hasPhoto ? '🖼 ' : '';
+    const sellStr = s.priceSet
+      ? `${fmtMoney(s.dominantSelling)}/yd${s.varies ? ' ·varies' : ''}`
+      : 'price not set';
+    text += `${icon}*${s.design}* — ${fmtMoney(s.value)} (${fmtQty(s.availYards)} yds · ${sellStr})\n`;
+  }
+
+  if (totalPages > 1) {
+    text += `\n_Page ${safePage + 1} of ${totalPages}_\n`;
+  }
+  text += `\n🧮 *Grand Total:* ${fmtMoney(grandValue)} · ${fmtQty(grandYards)} yds · ${designCount} design${designCount === 1 ? '' : 's'}`;
+
+  const rows = slice.map((s) => ([{
+    text: `${s.design} · ${fmtMoneyShort(s.value)}`,
+    callback_data: `svr:dg:${s.design.slice(0, 50)}`,
+  }]));
+
+  const nav = [];
+  if (safePage > 0) nav.push({ text: '⬅ Prev', callback_data: `svr:pg:${safePage - 1}` });
+  if (safePage < totalPages - 1) nav.push({ text: 'Next ➡', callback_data: `svr:pg:${safePage + 1}` });
+  if (nav.length) rows.push(nav);
+  rows.push([{ text: '🔄 Refresh', callback_data: `svr:pg:${safePage}` }]);
+  rows.push([{ text: '❌ Close', callback_data: 'svr:cancel' }]);
+
+  session.page = safePage;
+  sessionStore.set(userId, session);
+  await editOrSend(bot, chatId, session.flowMessageId, text,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+/** Reports hub — Step 2: shade-level value breakdown for one design. */
+async function showStockValueDesign(bot, chatId, userId, design) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'stock_value') return;
+
+  const allInv = await inventoryRepository.getAll();
+  const bd = stockValueReport.computeShadeBreakdown(allInv, design);
+
+  if (!bd.rows.length) {
+    await editOrSend(bot, chatId, session.flowMessageId,
+      `💰 *Stock Value — ${design}*\n\n_No available stock for this design._`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '⬅ Back', callback_data: 'svr:back' }]] } });
+    return;
+  }
+
+  session.step = 'design';
+  session.drillDesign = design;
+  sessionStore.set(userId, session);
+
+  let text = `💰 *Stock Value — Design ${bd.design}*\n\n`;
+  if (bd.dominantSelling > 0) {
+    text += `Selling: ${fmtMoney(bd.dominantSelling)}/yd${bd.varies ? ' ·varies' : ''}\n`;
+  } else {
+    text += 'Selling: not set\n';
+  }
+  text += `Available: ${bd.availPkgs} Bales · ${fmtQty(bd.availYards)} yds · ${fmtMoney(bd.designTotal)}\n\n`;
+  text += '*By shade (value-ranked):*\n';
+
+  for (const row of bd.rows) {
+    let line = `  Shade ${row.shade}: ${row.pkgs} Bales · ${fmtQty(row.yards)} yds · ${fmtMoney(row.value)}`;
+    if (row.differsFromDominant && row.sellingPrice > 0) {
+      line += ` _(Selling: ${fmtMoney(row.sellingPrice)}/yd)_`;
+    }
+    text += `${line}\n`;
+  }
+  text += `\n🧮 *Design Total:* ${fmtMoney(bd.designTotal)}`;
+
+  await editOrSend(bot, chatId, session.flowMessageId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [
+      [{ text: '⬅ Back to all designs', callback_data: 'svr:back' }],
+      [{ text: '❌ Close', callback_data: 'svr:cancel' }],
+    ] },
+  });
 }
 
 /** Reusable Mark-Order-Delivered executor — shared by text intent and button. */
@@ -3761,12 +3881,13 @@ async function handleMessage(bot, msg) {
           intent.warehouse ? `Warehouse: ${intent.warehouse}` : null,
         ].filter(Boolean).join(', ') || 'All stock';
         let reply = `📦 *${label}*\n`;
+        if (intent.design && pricingService.canSeeSalePrice(userId)) {
+          const allInv = await inventoryRepository.getAll();
+          reply += fmtSellingHeaderLine(pricingService.resolveSalePrice(allInv, intent.design));
+        }
         const stockLabels = await productTypesRepo.getLabels('fabric');
         reply += `Available: ${stock.totalPackages} ${productTypesRepo.pluralize(stockLabels.container_label, stock.totalPackages).toLowerCase()} (${stock.totalThans} ${productTypesRepo.pluralize(stockLabels.subunit_label, stock.totalThans).toLowerCase()}), ${fmtQty(stock.totalYards)} ${stockLabels.measure_unit}\n`;
-        if (pricingService.canSeeSalePrice(userId)) {
-          reply += `Value: ${fmtMoney(stock.totalValue)}`;
-        }
-        if (stock.totalThans === 0) reply += '\n⚠️ No available stock matching these filters.';
+        if (stock.totalThans === 0) reply += '⚠️ No available stock matching these filters.';
         await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
         return;
       }
@@ -7915,6 +8036,61 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await maybeSendDesignPreview(bot, chatId, design);
     await sendListPackagesReport(bot, chatId, design);
 
+  /* ─── STOCK VALUE REPORT (Reports hub) ─── */
+  } else if (data.startsWith('svr:')) {
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const messageId = callbackQuery.message.message_id;
+    if (!pricingService.canSeeSalePrice(uid)) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' });
+      return;
+    }
+    await bot.answerCallbackQuery(callbackQuery.id);
+
+    if (data === 'svr:cancel') {
+      sessionStore.clear(uid);
+      await bot.editMessageText('❌ Stock Value closed.', {
+        chat_id: chatId, message_id: messageId,
+        reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] },
+      }).catch(() => {});
+      return;
+    }
+
+    if (data === 'svr:back') {
+      const session = sessionStore.get(uid);
+      const page = (session && session.type === 'stock_value') ? (session.page || 0) : 0;
+      sessionStore.set(uid, { type: 'stock_value', step: 'list', page, flowMessageId: messageId });
+      await renderStockValueList(bot, chatId, uid, page);
+      return;
+    }
+
+    if (data.startsWith('svr:pg:')) {
+      const page = parseInt(data.slice('svr:pg:'.length), 10) || 0;
+      const session = sessionStore.get(uid);
+      sessionStore.set(uid, {
+        type: 'stock_value',
+        step: 'list',
+        page,
+        flowMessageId: messageId || (session && session.flowMessageId) || null,
+      });
+      await renderStockValueList(bot, chatId, uid, page);
+      return;
+    }
+
+    if (data.startsWith('svr:dg:')) {
+      const design = data.slice('svr:dg:'.length);
+      const session = sessionStore.get(uid);
+      sessionStore.set(uid, {
+        type: 'stock_value',
+        step: 'design',
+        page: session && session.page != null ? session.page : 0,
+        drillDesign: design,
+        flowMessageId: messageId,
+      });
+      await showStockValueDesign(bot, chatId, uid, design);
+      return;
+    }
+
   /* ─── CHECK STOCK: DESIGN PICK ─── */
   } else if (data.startsWith('cks:')) {
     const design = data.slice(4);
@@ -8016,6 +8192,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
             menuNav.backToMenuRow(),
           ] },
         });
+        break;
+      case 'stock_value':
+        if (!pricingService.canSeeSalePrice(uid)) {
+          await bot.sendMessage(chatId, 'Stock Value is available to admins only.');
+          break;
+        }
+        await startStockValueFlow(bot, chatId, uid, messageId);
         break;
       case 'customer_details':
         await showCustomerDetailsPicker(bot, chatId, uid, messageId);

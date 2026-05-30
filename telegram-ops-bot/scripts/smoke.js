@@ -5399,33 +5399,77 @@ async function runS30() {
   try { delete require.cache[require.resolve('../src/services/queryEngine')]; } catch (_) {}
   const queryEngine = require('../src/services/queryEngine');
 
-  // Admin path
+  // Admin path — Selling per line, no aggregate Value total
   const adminText = await queryEngine.stockSummary('1');
-  if (adminText.includes('Sale:') && /Sale:.+?\/yd/.test(adminText) && adminText.includes('Total:')) {
-    pass('S30.4a stockSummary(admin): includes Sale/yd line and totals');
-  } else fail('S30.4a', adminText.slice(0, 300));
+  if (adminText.includes('Selling:') && /Selling:.+?\/yd/.test(adminText)
+      && adminText.includes('Total:') && !/Total:.*₦|Total:.*NGN/i.test(adminText)) {
+    pass('S30.4a stockSummary(admin): includes Selling/yd, no value grand total');
+  } else fail('S30.4a', adminText.slice(0, 400));
 
-  // Non-admin path — no money at all
+  // Non-admin path — no selling price
   const employeeText = await queryEngine.stockSummary('2');
-  if (!employeeText.includes('Sale:')
-      && !employeeText.includes('/yd')
-      && !/—\s*₦|—\s*NGN|—\s*\$/i.test(employeeText)) {
-    pass('S30.4b stockSummary(non-admin): Sale + Value tails hidden');
+  if (!employeeText.includes('Selling:') && !employeeText.includes('Selling')) {
+    pass('S30.4b stockSummary(non-admin): Selling tails hidden');
   } else fail('S30.4b', employeeText.slice(0, 300));
 
   // No userId → defensively non-admin
   const anonText = await queryEngine.stockSummary();
-  if (!anonText.includes('Sale:')) {
-    pass('S30.4c stockSummary(no userId): no Sale/Value leakage');
+  if (!anonText.includes('Selling:')) {
+    pass('S30.4c stockSummary(no userId): no Selling leakage');
   } else fail('S30.4c', anonText.slice(0, 300));
+
+  // ---- S30.5 stockValueReport helpers ----
+  delete require.cache[require.resolve('../src/services/stockValueReport')];
+  const stockValueReport = require('../src/services/stockValueReport');
+  const invSvr = [
+    { design: '9006', shade: '11', packageNo: 'P1', yards: 100, pricePerYard: 3416, status: 'available' },
+    { design: '9006', shade: '3',  packageNo: 'P2', yards: 90,  pricePerYard: 3500, status: 'available' },
+    { design: '7104', shade: '1',  packageNo: 'P3', yards: 200, pricePerYard: 3300, status: 'available' },
+    { design: '2200', shade: '1',  packageNo: 'P4', yards: 50,  pricePerYard: 0,    status: 'available' },
+  ];
+  const summaries = stockValueReport.computeDesignSummaries(invSvr);
+  const s9006 = summaries.find((s) => s.design === '9006');
+  const s2200 = summaries.find((s) => s.design === '2200');
+  if (summaries.length === 3
+      && summaries[0].value >= summaries[1].value
+      && s9006 && s9006.value === 100 * 3416 + 90 * 3500
+      && s9006.varies === true
+      && s2200 && !s2200.priceSet
+      && summaries[summaries.length - 1].design === '2200') {
+    pass('S30.5a computeDesignSummaries: value-ranked, varies flag, unset price last');
+  } else fail('S30.5a', JSON.stringify(summaries));
+
+  const bd = stockValueReport.computeShadeBreakdown(invSvr, '9006');
+  const shade11 = bd.rows.find((r) => r.shade === '11');
+  const shade3 = bd.rows.find((r) => r.shade === '3');
+  if (bd.designTotal === 100 * 3416 + 90 * 3500
+      && bd.rows.length === 2
+      && shade11 && shade11.differsFromDominant
+      && shade3 && !shade3.differsFromDominant) {
+    pass('S30.5b computeShadeBreakdown: per-shade value + differsFromDominant only when price differs');
+  } else fail('S30.5b', JSON.stringify(bd));
+
+  const gt = stockValueReport.computeGrandTotals(summaries);
+  if (gt.grandValue === summaries.reduce((s, x) => s + x.value, 0) && gt.designCount === 3) {
+    pass('S30.5c computeGrandTotals: sums all designs');
+  } else fail('S30.5c', JSON.stringify(gt));
+
+  // activityRegistry exposes stock_value in reports hub
+  const actReg = require('../src/services/activityRegistry');
+  const svAct = actReg.getAll().find((a) => a.code === 'stock_value');
+  if (svAct && svAct.hub === 'reports' && svAct.callback === 'act:stock_value') {
+    pass('S30.5d activityRegistry: stock_value in reports hub');
+  } else fail('S30.5d', JSON.stringify(svAct));
 
   // ---- Cleanup ----
   for (const p of [
     '../src/middlewares/auth',
     '../src/services/pricingService',
+    '../src/services/stockValueReport',
     '../src/services/queryEngine',
     '../src/repositories/inventoryRepository',
     '../src/ai/analytics',
+    '../src/services/activityRegistry',
   ]) {
     try { delete require.cache[require.resolve(p)]; } catch (_) {}
   }
