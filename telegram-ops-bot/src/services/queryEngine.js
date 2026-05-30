@@ -9,21 +9,35 @@ const customersRepo = require('../repositories/customersRepository');
 const analytics = require('../ai/analytics');
 const config = require('../config');
 const { fmtMoney, fmtQty } = require('../utils/format');
+const pricingService = require('./pricingService');
 
 const openai = config.openai.apiKey ? new OpenAI({ apiKey: config.openai.apiKey }) : null;
 
 // ─── TIER 1: Predefined Reports (no AI cost) ───
 
-async function stockSummary() {
+async function stockSummary(userId = null) {
   const designs = await analytics.stockByDesign();
   designs.sort((a, b) => b.availableYards - a.availableYards);
+  const canSale = userId ? pricingService.canSeeSalePrice(userId) : false;
+  // Cheap: inventoryRepository caches getAll() so this is at most one fetch
+  // even when stockByDesign already triggered one a moment ago.
+  const allRows = canSale ? await inventoryRepository.getAll() : [];
   let totalPkgs = 0, totalThans = 0, totalYards = 0, totalValue = 0;
   let text = `📦 *Stock Summary*\n\n`;
   designs.forEach((d) => {
-    text += `${d.design} ${d.shade}: ${d.availPkgs} pkgs (${d.available} thans), ${fmtQty(d.availableYards)} yds — ${fmtMoney(d.value)}\n`;
+    let tail = '';
+    if (canSale) {
+      const sp = pricingService.resolveSalePrice(allRows, d.design, d.shade);
+      const saleStr = sp.price
+        ? ` · Sale: ${fmtMoney(sp.price)}/yd${sp.mixed ? ' ·mixed' : ''}`
+        : ' · Sale: not set';
+      tail = ` — ${fmtMoney(d.value)}${saleStr}`;
+    }
+    text += `${d.design} ${d.shade}: ${d.availPkgs} pkgs (${d.available} thans), ${fmtQty(d.availableYards)} yds${tail}\n`;
     totalPkgs += d.availPkgs; totalThans += d.available; totalYards += d.availableYards; totalValue += d.value;
   });
-  text += `\n*Total: ${totalPkgs} packages (${totalThans} thans), ${fmtQty(totalYards)} yards — ${fmtMoney(totalValue)}*`;
+  const totalTail = canSale ? ` — ${fmtMoney(totalValue)}` : '';
+  text += `\n*Total: ${totalPkgs} packages (${totalThans} thans), ${fmtQty(totalYards)} yards${totalTail}*`;
   return text;
 }
 

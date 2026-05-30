@@ -5282,6 +5282,156 @@ async function runS29() {
 }
 
 // ---------------------------------------------------------------------------
+// S30 — PRICE-VIS-C1 — Phase 1 foundation for layered price visibility
+//   * canSeeSalePrice / canSeeBasePrice gates
+//   * resolveSalePrice (latest non-zero PricePerYard + mixed flag)
+//   * resolveBasePriceByDesign (latest finalized GRN per design + pending)
+//   * queryEngine.stockSummary admin vs non-admin rendering
+// ---------------------------------------------------------------------------
+async function runS30() {
+  // Reset modules so we can stub auth before pricingService consumes it.
+  for (const p of [
+    '../src/middlewares/auth',
+    '../src/services/pricingService',
+    '../src/services/queryEngine',
+    '../src/repositories/inventoryRepository',
+    '../src/ai/analytics',
+  ]) {
+    try { delete require.cache[require.resolve(p)]; } catch (_) {}
+  }
+
+  // Stub auth: only id '1' is admin.
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: (id) => String(id) === '1',
+    isEmployee: (id) => String(id) === '2',
+    isSuperAdmin: () => false,
+    isAllowed: (id) => ['1', '2', '3'].includes(String(id)),
+    refresh: async () => {},
+    invalidate: async () => {},
+  });
+
+  const pricingService = require('../src/services/pricingService');
+
+  // ---- S30.1 canSeeSalePrice / canSeeBasePrice = isAdmin in Phase 1 ----
+  if (pricingService.canSeeSalePrice('1') === true
+      && pricingService.canSeeSalePrice('2') === false
+      && pricingService.canSeeBasePrice('1') === true
+      && pricingService.canSeeBasePrice('2') === false) {
+    pass('S30.1 pricingService: canSeeSalePrice + canSeeBasePrice gated to isAdmin');
+  } else fail('S30.1', JSON.stringify({
+    sale1: pricingService.canSeeSalePrice('1'), sale2: pricingService.canSeeSalePrice('2'),
+    base1: pricingService.canSeeBasePrice('1'), base2: pricingService.canSeeBasePrice('2'),
+  }));
+
+  // ---- S30.2 resolveSalePrice: latest non-zero wins, no rows → not set ----
+  const rowsA = [
+    { design: 'D1', shade: 'Red', pricePerYard: 1000 },
+    { design: 'D1', shade: 'Red', pricePerYard: 0 },     // zero ignored
+    { design: 'D1', shade: 'Red', pricePerYard: 1200 },  // latest non-zero
+    { design: 'D1', shade: 'Blue', pricePerYard: 900 },  // different shade
+    { design: 'D2', shade: 'Red', pricePerYard: 500 },   // different design
+  ];
+  const spRed = pricingService.resolveSalePrice(rowsA, 'D1', 'Red');
+  if (spRed.price === 1200 && spRed.mixed === true) {
+    pass('S30.2a resolveSalePrice: returns latest non-zero + mixed=true when distinct');
+  } else fail('S30.2a', JSON.stringify(spRed));
+
+  const spBlue = pricingService.resolveSalePrice(rowsA, 'D1', 'Blue');
+  if (spBlue.price === 900 && spBlue.mixed === false) {
+    pass('S30.2b resolveSalePrice: single value → mixed=false');
+  } else fail('S30.2b', JSON.stringify(spBlue));
+
+  const spMissing = pricingService.resolveSalePrice(rowsA, 'D1', 'Green');
+  if (spMissing.price === 0 && spMissing.mixed === false) {
+    pass('S30.2c resolveSalePrice: no rows → price=0 (not set)');
+  } else fail('S30.2c', JSON.stringify(spMissing));
+
+  // ---- S30.3 resolveBasePriceByDesign: latest finalized GRN wins ----
+  const items = [
+    { design: 'D1', grn_id: 'GRN-A' },
+    { design: 'D1', grn_id: 'GRN-B' },
+    { design: 'D2', grn_id: 'GRN-C' },
+    { design: 'D3', grn_id: 'GRN-D' },  // unfinalized → pending
+  ];
+  const grns = [
+    { grn_id: 'GRN-A', lc_status: 'finalized',    lc_ngn_per_yard: 1100, received_at: '2026-01-10T00:00:00Z' },
+    { grn_id: 'GRN-B', lc_status: 'finalized',    lc_ngn_per_yard: 1300, received_at: '2026-05-12T00:00:00Z' },
+    { grn_id: 'GRN-C', lc_status: 'finalized',    lc_ngn_per_yard:  800, received_at: '2026-03-01T00:00:00Z' },
+    { grn_id: 'GRN-D', lc_status: 'provisional',  lc_ngn_per_yard:    0, received_at: '2026-05-25T00:00:00Z' },
+  ];
+  const byDesign = pricingService.resolveBasePriceByDesign(items, grns);
+  const d1 = byDesign.get('D1');
+  const d2 = byDesign.get('D2');
+  const d3 = byDesign.get('D3');
+  if (d1 && d1.lcNgn === 1300 && d1.grnId === 'GRN-B') {
+    pass('S30.3a resolveBasePriceByDesign: D1 → latest finalized (GRN-B / ₦1300)');
+  } else fail('S30.3a', JSON.stringify(d1));
+  if (d2 && d2.lcNgn === 800 && d2.grnId === 'GRN-C') {
+    pass('S30.3b resolveBasePriceByDesign: D2 → single finalized (GRN-C / ₦800)');
+  } else fail('S30.3b', JSON.stringify(d2));
+  if (d3 === null) {
+    pass('S30.3c resolveBasePriceByDesign: D3 → null (only provisional GRN, pending)');
+  } else fail('S30.3c', JSON.stringify(d3));
+
+  // Empty inputs → empty map.
+  const empty = pricingService.resolveBasePriceByDesign([], []);
+  if (empty instanceof Map && empty.size === 0) {
+    pass('S30.3d resolveBasePriceByDesign: empty inputs → empty map');
+  } else fail('S30.3d', JSON.stringify([...empty.entries()]));
+
+  // ---- S30.4 queryEngine.stockSummary: admin sees Value + Sale, non-admin sees neither ----
+  // Stub analytics + inventoryRepository to feed deterministic data.
+  stubModule(require.resolve('../src/ai/analytics'), {
+    stockByDesign: async () => ([
+      { design: 'D1', shade: 'Red',  availPkgs: 2, available: 5, availableYards: 100, value: 100000 },
+      { design: 'D2', shade: 'Blue', availPkgs: 1, available: 3, availableYards:  50, value:  40000 },
+    ]),
+  });
+  stubModule(require.resolve('../src/repositories/inventoryRepository'), {
+    getAll: async () => ([
+      { design: 'D1', shade: 'Red',  pricePerYard: 1000, status: 'available', yards: 50 },
+      { design: 'D1', shade: 'Red',  pricePerYard: 1000, status: 'available', yards: 50 },
+      { design: 'D2', shade: 'Blue', pricePerYard:  800, status: 'available', yards: 50 },
+    ]),
+  });
+  // pricingService cache holds the stub auth from earlier; force a fresh
+  // require of queryEngine so it picks up the latest module graph.
+  try { delete require.cache[require.resolve('../src/services/queryEngine')]; } catch (_) {}
+  const queryEngine = require('../src/services/queryEngine');
+
+  // Admin path
+  const adminText = await queryEngine.stockSummary('1');
+  if (adminText.includes('Sale:') && /Sale:.+?\/yd/.test(adminText) && adminText.includes('Total:')) {
+    pass('S30.4a stockSummary(admin): includes Sale/yd line and totals');
+  } else fail('S30.4a', adminText.slice(0, 300));
+
+  // Non-admin path — no money at all
+  const employeeText = await queryEngine.stockSummary('2');
+  if (!employeeText.includes('Sale:')
+      && !employeeText.includes('/yd')
+      && !/—\s*₦|—\s*NGN|—\s*\$/i.test(employeeText)) {
+    pass('S30.4b stockSummary(non-admin): Sale + Value tails hidden');
+  } else fail('S30.4b', employeeText.slice(0, 300));
+
+  // No userId → defensively non-admin
+  const anonText = await queryEngine.stockSummary();
+  if (!anonText.includes('Sale:')) {
+    pass('S30.4c stockSummary(no userId): no Sale/Value leakage');
+  } else fail('S30.4c', anonText.slice(0, 300));
+
+  // ---- Cleanup ----
+  for (const p of [
+    '../src/middlewares/auth',
+    '../src/services/pricingService',
+    '../src/services/queryEngine',
+    '../src/repositories/inventoryRepository',
+    '../src/ai/analytics',
+  ]) {
+    try { delete require.cache[require.resolve(p)]; } catch (_) {}
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -5321,6 +5471,7 @@ async function runS29() {
   try { await runS27(); } catch (e) { fail('S27 unexpected error', e.message); }
   try { await runS28(); } catch (e) { fail('S28 unexpected error', e.message); }
   try { await runS29(); } catch (e) { fail('S29 unexpected error', e.message); }
+  try { await runS30(); } catch (e) { fail('S30 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

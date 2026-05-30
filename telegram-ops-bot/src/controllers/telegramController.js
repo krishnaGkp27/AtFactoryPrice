@@ -33,6 +33,8 @@ const customersRepo = require('../repositories/customersRepository');
 const userPrefsRepo = require('../repositories/userPrefsRepository');
 const designAssetsRepo = require('../repositories/designAssetsRepository');
 const designAssetsService = require('../services/designAssetsService');
+const pricingService = require('../services/pricingService');
+const goodsReceiptsRepository = require('../repositories/goodsReceiptsRepository');
 const colorDetector = require('../ai/colorDetector');
 const catalogFlows = require('./catalogFlowController');
 const taskFlow = require('../flows/taskFlow');
@@ -594,8 +596,24 @@ function buildInventoryWarehouseReport(allItems, opts = {}) {
   return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
-function buildInventoryDesignReport(allItems, opts = {}) {
+async function buildInventoryDesignReport(allItems, opts = {}) {
   const expandKey = (opts.expand || '').trim().toLowerCase();
+  const userId = opts.userId || null;
+  const canBase = userId ? pricingService.canSeeBasePrice(userId) : false;
+
+  // PRICE-VIS-C1 — load finalized landed costs once and resolve per
+  // design. Cheap (GRN sheet is small) and joined by grn_id back-pointer
+  // already on each inventory row.
+  let baseByDesign = new Map();
+  if (canBase) {
+    try {
+      const grns = await goodsReceiptsRepository.getAll();
+      baseByDesign = pricingService.resolveBasePriceByDesign(allItems, grns);
+    } catch (e) {
+      logger.warn(`buildInventoryDesignReport: GRN lookup failed, base prices will show pending: ${e.message}`);
+    }
+  }
+
   const designs = new Map();
   for (const r of allItems) {
     const key = r.design || 'Unknown';
@@ -616,8 +634,15 @@ function buildInventoryDesignReport(allItems, opts = {}) {
     const rows = aggregateShadeRows(items);
     const summary = _invGroupSummary(rows);
     // Design is the group header — already promoted, so per-row only
-    // shows shades.
-    text += `📦 *${design}* — ${_invSummaryLine(summary)}\n`;
+    // shows shades. Base price is appended ONLY for admins (Phase 1).
+    let baseTail = '';
+    if (canBase) {
+      const bp = baseByDesign.get(String(design).toUpperCase());
+      baseTail = bp
+        ? ` · Base: ${fmtMoney(bp.lcNgn)}/yd`
+        : ' · Base: pending';
+    }
+    text += `📦 *${design}* — ${_invSummaryLine(summary)}${baseTail}\n`;
     const expandThis = expandKey === design.toLowerCase();
     const limit = expandThis ? rows.length : Math.min(3, rows.length);
     for (let i = 0; i < limit; i++) {
@@ -2079,7 +2104,12 @@ async function showUpdatePriceShadePicker(bot, chatId, userId) {
     { text: '❌ Cancel', callback_data: 'upcanc:0' },
   ]);
 
-  const text = `💲 *Update Price*\n\n✓ Design: *${session.design}*\n\nSelect shade:`;
+  // PRICE-VIS-C1 — non-blocking sample-photo warning. Flag was set on the
+  // `upd:` callback when maybeSendDesignPreview reported no active asset.
+  const warnLine = session.sampleOnFile === false
+    ? `\n⚠️ *No sample photo on file for ${session.design}* — upload via Design Photos so you can visually distinguish batches. You can still proceed.\n`
+    : '';
+  const text = `💲 *Update Price*\n\n✓ Design: *${session.design}*${warnLine}\n\nSelect shade:`;
   await editOrSend(bot, chatId, session.flowMessageId, text,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
@@ -2120,7 +2150,43 @@ async function showUpdatePriceConfirm(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
   const shadeLabel = session.shade === '__all__' ? 'All shades' : session.shade;
+
+  // PRICE-VIS-C1 — context lines so the admin knows exactly which batch
+  // they're pricing. Sample status reflects whether DesignAssets has an
+  // active card; latest stock month/year is the most recent dateReceived
+  // among matching inventory rows.
+  const sampleLine = session.sampleOnFile === false
+    ? '📷 Sample: ⚠️ no photo on file'
+    : '📷 Sample: ✓ on file';
+
+  let stockLine = '';
+  try {
+    const all = await inventoryRepository.getAll();
+    const designUC = String(session.design).toUpperCase();
+    const matchDates = all
+      .filter((r) => String(r.design || '').trim().toUpperCase() === designUC)
+      .filter((r) => session.shade === '__all__'
+        || String(r.shade || '').trim().toUpperCase() === String(session.shade).toUpperCase())
+      .map((r) => String(r.dateReceived || '').trim())
+      .filter(Boolean);
+    if (matchDates.length) {
+      matchDates.sort();
+      const latest = matchDates[matchDates.length - 1];
+      // Expect YYYY-MM-DD; otherwise display as-is.
+      const m = /^(\d{4})-(\d{2})/.exec(latest);
+      if (m) {
+        const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        stockLine = `📅 Stock received: *${MONTHS[parseInt(m[2], 10) - 1] || m[2]} ${m[1]}*\n`;
+      } else {
+        stockLine = `📅 Stock received: *${latest}*\n`;
+      }
+    } else {
+      stockLine = `📅 Stock received: *(no dates on file)*\n`;
+    }
+  } catch (_) { /* non-fatal: confirm without the date line */ }
+
   const text = `💲 *Confirm Price Update*\n\nDesign: *${session.design}*\nShade: *${shadeLabel}*\n` +
+               `${sampleLine}\n${stockLine}` +
                `Before: *${session.currentPrice ? fmtMoney(session.currentPrice) : '—'}/yard*\n` +
                `After:  *${fmtMoney(session.newPrice)}/yard*\n\n_Will be queued for 2-admin approval._`;
   await editOrSend(bot, chatId, session.flowMessageId, text, {
@@ -2660,19 +2726,26 @@ async function sendListPackagesReport(bot, chatId, design, shade = null) {
   await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
 }
 
+/** Format a sale-price tail, given a pricingService.resolveSalePrice() result. */
+function fmtSaleTail({ price, mixed }) {
+  if (!price) return ' · Sale: not set';
+  return ` · Sale: ${fmtMoney(price)}/yd${mixed ? ' ·mixed' : ''}`;
+}
+
 /** Reusable Check Stock report — shows totals + shade/warehouse breakdown. */
-async function sendCheckStockReport(bot, chatId, design) {
+async function sendCheckStockReport(bot, chatId, design, userId = null) {
   const stock = await inventoryService.checkStock({ design });
   if (!stock || stock.totalThans === 0) {
     await bot.sendMessage(chatId, `⚠️ No available stock for design ${design}.`);
     return;
   }
+  const canSale = userId ? pricingService.canSeeSalePrice(userId) : false;
   let reply = `📦 *Stock — Design ${design}*\n`;
   const labels = await productTypesRepo.getLabels('fabric');
   reply += `Available: ${stock.totalPackages} ${productTypesRepo.pluralize(labels.container_label, stock.totalPackages).toLowerCase()} `;
   reply += `(${stock.totalThans} ${productTypesRepo.pluralize(labels.subunit_label, stock.totalThans).toLowerCase()}), `;
   reply += `${fmtQty(stock.totalYards)} ${labels.measure_unit}\n`;
-  reply += `Value: ${fmtMoney(stock.totalValue)}\n`;
+  if (canSale) reply += `Value: ${fmtMoney(stock.totalValue)}\n`;
 
   // Break down by shade + warehouse for a richer picture
   const allInv = await inventoryRepository.getAll();
@@ -2690,7 +2763,9 @@ async function sendCheckStockReport(bot, chatId, design) {
     reply += `\n*By shade:*\n`;
     for (const [sh, s] of [...byShade.entries()].sort((a, b) => b[1].yards - a[1].yards)) {
       const whList = [...s.warehouses.keys()].join(', ');
-      reply += `  Shade ${sh}: ${s.pkgs.size} Bales, ${fmtQty(s.yards)} yds (${whList})\n`;
+      // PRICE-VIS-C1 — per design+shade sale price (admin-only in Phase 1)
+      const saleTail = canSale ? fmtSaleTail(pricingService.resolveSalePrice(allInv, design, sh)) : '';
+      reply += `  Shade ${sh}: ${s.pkgs.size} Bales, ${fmtQty(s.yards)} yds (${whList})${saleTail}\n`;
     }
   }
   await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
@@ -3688,7 +3763,9 @@ async function handleMessage(bot, msg) {
         let reply = `📦 *${label}*\n`;
         const stockLabels = await productTypesRepo.getLabels('fabric');
         reply += `Available: ${stock.totalPackages} ${productTypesRepo.pluralize(stockLabels.container_label, stock.totalPackages).toLowerCase()} (${stock.totalThans} ${productTypesRepo.pluralize(stockLabels.subunit_label, stock.totalThans).toLowerCase()}), ${fmtQty(stock.totalYards)} ${stockLabels.measure_unit}\n`;
-        reply += `Value: ${fmtMoney(stock.totalValue)}`;
+        if (pricingService.canSeeSalePrice(userId)) {
+          reply += `Value: ${fmtMoney(stock.totalValue)}`;
+        }
         if (stock.totalThans === 0) reply += '\n⚠️ No available stock matching these filters.';
         await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
         return;
@@ -3716,7 +3793,9 @@ async function handleMessage(bot, msg) {
         let reply = `📦 *Bale ${summary.packageNo}*\n`;
         reply += `Design: ${summary.design} | Shade: ${summary.shade}\n`;
         reply += `Indent: ${summary.indent} | Warehouse: ${summary.warehouse}\n`;
-        reply += `Price: ${fmtMoney(summary.pricePerYard)}/yard\n\n`;
+        if (pricingService.canSeeSalePrice(userId)) {
+          reply += `Price: ${fmtMoney(summary.pricePerYard)}/yard\n\n`;
+        }
         reply += `Thans (${summary.availableThans}/${summary.totalThans} available):\n`;
         summary.thans.forEach((t) => {
           const icon = t.status === 'available' ? '🟢' : '🔴';
@@ -3908,7 +3987,7 @@ async function handleMessage(bot, msg) {
       }
 
       case 'report_stock': {
-        await sendLong(bot, chatId, await queryEngine.stockSummary(), { parse_mode: 'Markdown' });
+        await sendLong(bot, chatId, await queryEngine.stockSummary(userId), { parse_mode: 'Markdown' });
         return;
       }
       case 'report_valuation': {
@@ -5997,7 +6076,9 @@ async function handleCallbackQuery(bot, callbackQuery) {
     try {
       const allItems = await inventoryRepository.getAll();
       if (!allItems.length) { await bot.sendMessage(callbackQuery.message.chat.id, 'No inventory data found.'); return; }
-      const report = view === 'wh' ? buildInventoryWarehouseReport(allItems) : buildInventoryDesignReport(allItems);
+      const report = view === 'wh'
+        ? buildInventoryWarehouseReport(allItems)
+        : await buildInventoryDesignReport(allItems, { userId: uid });
       await sendLong(bot, callbackQuery.message.chat.id, report.text, {
         parse_mode: 'Markdown',
         ...(report.keyboard ? { reply_markup: report.keyboard } : {}),
@@ -6516,7 +6597,14 @@ async function handleCallbackQuery(bot, callbackQuery) {
     session.design = design;
     session.step = 'shade';
     sessionStore.set(uid, session);
-    await maybeSendDesignPreview(bot, callbackQuery.message.chat.id, design, null, uid);
+    // PRICE-VIS-C1 — sample photo guardrail. maybeSendDesignPreview returns
+    // false when no active DesignAssets card exists, in which case we warn
+    // (non-blocking) at the next step rather than silently letting the
+    // admin re-price the wrong batch.
+    const preview = await maybeSendDesignPreview(bot, callbackQuery.message.chat.id, design, null, uid);
+    const refreshed = sessionStore.get(uid) || session;
+    refreshed.sampleOnFile = !!preview;
+    sessionStore.set(uid, refreshed);
     await showUpdatePriceShadePicker(bot, callbackQuery.message.chat.id, uid);
 
   } else if (data.startsWith('ups:')) {
@@ -7601,7 +7689,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         }
         case 'inv_d': {
           const allItems = await inventoryRepository.getAll();
-          const expanded = buildInventoryDesignReport(allItems, { expand: payload });
+          const expanded = await buildInventoryDesignReport(allItems, { expand: payload, userId: uid });
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
             ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
@@ -7832,6 +7920,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const design = data.slice(4);
     const chatId = callbackQuery.message.chat.id;
     const messageId = callbackQuery.message.message_id;
+    const uid = String(callbackQuery.from.id);
     await bot.answerCallbackQuery(callbackQuery.id);
     if (design === '__more__') {
       await showDesignPickerForReport(bot, chatId, 'cks', true, messageId);
@@ -7840,7 +7929,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.editMessageReplyMarkup({ inline_keyboard: [] },
       { chat_id: chatId, message_id: messageId }).catch(() => {});
     await maybeSendDesignPreview(bot, chatId, design);
-    await sendCheckStockReport(bot, chatId, design);
+    await sendCheckStockReport(bot, chatId, design, uid);
 
   /* ─── MARK ORDER DELIVERED: ORDER PICK ─── */
   } else if (data.startsWith('mdo:')) {

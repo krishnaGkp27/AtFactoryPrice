@@ -563,6 +563,88 @@ Harness: 216 green (was 153).
 
 All 💭 Discuss — never start without an explicit owner decision (see §4.6).
 
+### 2.13 PRICE-VIS-C1 · Phase 1 foundation for layered price visibility (2026-05-30)
+
+Surfaces two existing prices in the bot, both gated behind a single
+new helper module so we can widen visibility per department later
+without churning every callsite. No new sheets, no new columns, no
+new price-entry flows.
+
+* **Two prices, one identity each — both already admin-set with 2-admin
+  approval today**
+  * **Sale price** = `Inventory.PricePerYard` (set via `update_price`).
+    The real selling price for that design+shade. Phase 1: admin only.
+    Shown in **Check Stock** as `Sale: ₦X/yd` per design+shade plus the
+    existing `Value:` totals.
+  * **Base price = landed cost** = `GoodsReceipts.lc_ngn_per_yard` (set
+    via `finalize_landed_cost`). The owner's "base price" — what the
+    design cost us. Phase 1: admin only. Shown in **Inventory Details →
+    Design Wise** as `Base: ₦X/yd` on each design header.
+
+* **Foundation: one tiny service, two predicates** —
+  `src/services/pricingService.js` exports
+  * `canSeeSalePrice(userId)` → Phase 1: `auth.isAdmin`. Phase 2 will
+    widen via `Departments.permissions` (`see_sale_price` capability),
+    granted/revoked from Department Management with 2nd-admin approval.
+  * `canSeeBasePrice(userId)` → Phase 1+: `auth.isAdmin`. Stays
+    restrictive (your buying cost).
+  * Plus pure helpers `resolveSalePrice(rows, design, shade?)` (latest
+    non-zero PricePerYard + mixed flag) and `resolveBasePriceByDesign
+    (items, grns)` (per-design `lc_ngn_per_yard` from the latest
+    finalized GRN, joined by `grn_id`). Both helpers are pure / sync /
+    smoke-testable.
+
+* **Display changes** (Phase 1 = admin-only everywhere)
+  * `sendCheckStockReport` — appends `· Sale: ₦X/yd` per shade row;
+    `Value:` total gated.
+  * `queryEngine.stockSummary` — appends `Sale: ₦X/yd` per design+shade
+    line; per-line and total `— ₦value` tails gated.
+  * Free-text intent handlers — `Value:` in `check_stock` and
+    `Price: …/yard` in `package_detail` now gated.
+  * `buildInventoryDesignReport` — appends `· Base: ₦X/yd` (or
+    `· Base: pending` when the GRN hasn't been finalized yet) to each
+    design header. `pending` doubles as a signal to finalize that
+    landed cost.
+
+* **Behavior change worth noting** — a handful of money lines were
+  ungated before (Check Stock `Value:`, package detail `Price:/yard`,
+  free-text stock-summary value). Phase 1 tightens these to admin-only,
+  matching the owner rule "right now only admin can see the price".
+  Phase 2 reopens them to chosen departments.
+
+* **Sample-photo guardrail on `update_price`** (non-blocking)
+  * On design pick the existing `maybeSendDesignPreview` sends the
+    DesignAssets card (the 9006-style shade card). Its return value
+    now stamps `session.sampleOnFile`.
+  * Shade picker prepends `⚠️ No sample photo on file for <design> —
+    upload via Design Photos. You can still proceed.` when missing.
+  * Confirm card adds two context lines so the admin knows exactly
+    what's being priced: `📷 Sample: ✓ on file` (or ⚠️ none) and
+    `📅 Stock received: <Month Year>` from the latest matching
+    inventory `dateReceived`. The 2-admin `update_price` approval
+    itself is unchanged.
+
+Files touched: `src/services/pricingService.js` (new),
+`src/services/queryEngine.js`, `src/controllers/telegramController.js`
+(`sendCheckStockReport`, free-text `check_stock`/`package_detail`,
+`buildInventoryDesignReport`, `upd:` callback, `showUpdatePriceShadePicker`,
+`showUpdatePriceConfirm`).
+
+Smoke coverage: `scripts/smoke.js` adds **S30** (11 checks) — gate
+return values, `resolveSalePrice` latest-non-zero + mixed handling,
+`resolveBasePriceByDesign` latest-finalized + pending case + empty
+inputs, `stockSummary` admin/non-admin/anon paths.
+
+Phase 2 (deferred) — extend the two predicates to honor a
+`Departments.permissions` CSV column (`see_sale_price`, `see_base_price`),
+granted/revoked from Department Management. **No display changes
+needed** because the gate is already centralized.
+
+Phase 3 (deferred, "last in queue") — `RegionSurcharges` sheet to layer
+logistics + operational surcharges on top of the base price so each
+region (Lagos, Kano, …) sees its effective price. Mirrors the existing
+landed-cost allocation pattern; still zero Inventory schema changes.
+
 ### 2.12 BS-C1 · Kano poly-colour bundle sale (design-first picker) (2026-05-23)
 
 Dedicated sale flow for warehouses that hold poly-colour bales (the
