@@ -5656,6 +5656,178 @@ function runS31() {
 }
 
 // ---------------------------------------------------------------------------
+// S32 — SDN-1: normalizeSalesDate converts all observed input shapes to ISO
+//       YYYY-MM-DD. Guarantees Inventory.SoldDate + Transactions.SalesDate
+//       stay sortable / report-friendly regardless of how the sales person
+//       typed the date.
+// ---------------------------------------------------------------------------
+function runS32() {
+  // Fresh require to avoid cache pollution from earlier tests that may
+  // have stubbed `../src/config`.
+  delete require.cache[require.resolve('../src/utils/dates')];
+  const { normalizeSalesDate, todayInLagos } = require('../src/utils/dates');
+
+  const cases = [
+    // [input, expected, label]
+    ['2026-04-07',         '2026-04-07', 'S32.1  ISO YYYY-MM-DD pass-through'],
+    ['2026/04/07',         '2026-04-07', 'S32.2  ISO YYYY/MM/DD slash variant'],
+    ['07-04-2026',         '2026-04-07', 'S32.3  DMY hyphenated numeric'],
+    ['7/4/2026',           '2026-04-07', 'S32.4  DMY slash, non-padded'],
+    ['07.04.2026',         '2026-04-07', 'S32.5  DMY dotted'],
+    ['25-02-2026',         '2026-02-25', 'S32.6  DMY observed-in-prod intent-parser shape'],
+    ['28-March-2026',      '2026-03-28', 'S32.7  D-MonthName-YYYY (one of the bad shapes Abdul produced)'],
+    ['07 April 2026',      '2026-04-07', 'S32.8  D MonthName YYYY (the other bad shape)'],
+    ['7-Apr-2026',         '2026-04-07', 'S32.9  D-MonthAbbrev-YYYY'],
+    ['April 7, 2026',      '2026-04-07', 'S32.10 American "Month D, YYYY" comma form'],
+    [' 28-March-2026 ',    '2026-03-28', 'S32.11 leading/trailing whitespace tolerated'],
+    ['  ',                 null,         'S32.12 whitespace-only -> null'],
+    ['',                   null,         'S32.13 empty string -> null'],
+    [null,                 null,         'S32.14 null -> null'],
+    [undefined,            null,         'S32.15 undefined -> null'],
+    ['not a date',         null,         'S32.16 nonsense -> null (caller defaults to today)'],
+    ['31-02-2026',         null,         'S32.17 invalid calendar date (Feb 31) -> null'],
+    ['2026-13-01',         null,         'S32.18 month > 12 -> null'],
+  ];
+  for (const [input, expected, label] of cases) {
+    const got = normalizeSalesDate(input);
+    if (got === expected) {
+      pass(label);
+    } else {
+      fail(label, `input=${JSON.stringify(input)} expected=${JSON.stringify(expected)} got=${JSON.stringify(got)}`);
+    }
+  }
+
+  // S32.19 "today" returns Lagos today
+  const todayOut = normalizeSalesDate('today');
+  if (todayOut === todayInLagos()) {
+    pass('S32.19 "today" -> Lagos today');
+  } else {
+    fail('S32.19 "today"', `expected=${todayInLagos()} got=${todayOut}`);
+  }
+
+  // S32.20 "yesterday" is exactly one day before today
+  const ytdOut = normalizeSalesDate('yesterday');
+  const today = todayInLagos();
+  const expectedYtd = (() => {
+    const [y, m, d] = today.split('-').map((v) => parseInt(v, 10));
+    const dt = new Date(Date.UTC(y, m - 1, d - 1));
+    return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+  })();
+  if (ytdOut === expectedYtd) {
+    pass('S32.20 "yesterday" -> Lagos today minus 1 day');
+  } else {
+    fail('S32.20 "yesterday"', `expected=${expectedYtd} got=${ytdOut}`);
+  }
+
+  // S32.21 idempotency — feeding the output back in must produce the same value
+  const once = normalizeSalesDate('28-March-2026');
+  const twice = normalizeSalesDate(once);
+  if (once === twice && once === '2026-03-28') {
+    pass('S32.21 idempotent — normalising the ISO output again returns the same string');
+  } else {
+    fail('S32.21 idempotency', `once=${once} twice=${twice}`);
+  }
+
+  // S32.22 wired into inventoryRepository.markPackageSold / markThanSold —
+  //        the function is imported, so a fresh require of the module must
+  //        not throw and the export must reference the same helper used
+  //        at write time. We just check the module loads cleanly.
+  try {
+    delete require.cache[require.resolve('../src/repositories/inventoryRepository')];
+    const invRepo = require('../src/repositories/inventoryRepository');
+    if (typeof invRepo.markPackageSold === 'function' && typeof invRepo.markThanSold === 'function') {
+      pass('S32.22 inventoryRepository exports markPackageSold + markThanSold (SDN-1 wired in)');
+    } else {
+      fail('S32.22 inventoryRepository exports', JSON.stringify(Object.keys(invRepo)));
+    }
+  } catch (e) {
+    fail('S32.22 inventoryRepository load', e.message);
+  }
+
+  // S32.23 wired into transactionsRepository.append
+  try {
+    delete require.cache[require.resolve('../src/repositories/transactionsRepository')];
+    const txnRepo = require('../src/repositories/transactionsRepository');
+    if (typeof txnRepo.append === 'function') {
+      pass('S32.23 transactionsRepository exports append (SDN-1 wired in)');
+    } else {
+      fail('S32.23 transactionsRepository exports', JSON.stringify(Object.keys(txnRepo)));
+    }
+  } catch (e) {
+    fail('S32.23 transactionsRepository load', e.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// S33 — FDD-1: Telegram date display is DD-MMM-YYYY (4-digit year) across
+//       the canonical fmtDate and every local date-formatter copy. Guards
+//       against any drift back to 2-digit years.
+// ---------------------------------------------------------------------------
+function runS33() {
+  delete require.cache[require.resolve('../src/utils/formatDate')];
+  const fmtDate = require('../src/utils/formatDate');
+
+  const cases = [
+    // [input, expected, label]
+    ['2026-03-26',           '26-Mar-2026', 'S33.1  ISO YYYY-MM-DD -> DD-MMM-YYYY'],
+    ['2026-12-01',           '01-Dec-2026', 'S33.2  ISO with leading-zero day'],
+    ['2025-07-04',           '04-Jul-2025', 'S33.3  4-digit year disambiguates 2025 vs 2125'],
+    ['26-03-2026',           '26-Mar-2026', 'S33.4  DMY hyphenated -> same display'],
+    ['26/03/2026',           '26-Mar-2026', 'S33.5  DMY slash -> same display'],
+    ['28-March-2026',        '28-Mar-2026', 'S33.6  D-MonthName-YYYY legacy text row renders correctly'],
+    ['2026/03/26',           '26-Mar-2026', 'S33.7  ISO with slashes'],
+    ['',                     '—',           'S33.8  empty input -> em-dash placeholder'],
+    [null,                   '—',           'S33.9  null -> em-dash'],
+    [undefined,              '—',           'S33.10 undefined -> em-dash'],
+  ];
+  for (const [input, expected, label] of cases) {
+    const got = fmtDate(input);
+    if (got === expected) pass(label);
+    else fail(label, `input=${JSON.stringify(input)} expected=${JSON.stringify(expected)} got=${JSON.stringify(got)}`);
+  }
+
+  // S33.11 — guard: NEVER again output a 2-digit year. Catches any
+  //          regression from someone copying back to `.slice(-2)`.
+  const samples = ['2026-03-26', '2025-01-01', '1999-12-31', '2030-06-15'];
+  let allFourDigit = true;
+  const offenders = [];
+  for (const s of samples) {
+    const out = fmtDate(s);
+    if (!/^\d{2}-[A-Z][a-z]{2}-\d{4}$/.test(out)) {
+      allFourDigit = false;
+      offenders.push(`${s} -> ${out}`);
+    }
+  }
+  if (allFourDigit) {
+    pass('S33.11 GUARD: fmtDate output always matches DD-MMM-YYYY regex (no 2-digit year regression)');
+  } else {
+    fail('S33.11 GUARD: 2-digit-year regression', offenders.join('; '));
+  }
+
+  // S33.12 — taskFlow + salesWorkflowView local date formatters must also
+  //          produce 4-digit years. We can't easily call them directly
+  //          (they're internal), so we read the source and assert that
+  //          `slice(-2)` is no longer present in the date-formatting
+  //          block of either file.
+  const fs = require('fs');
+  const path = require('path');
+  for (const relFile of ['../src/flows/taskFlow.js', '../src/flows/salesWorkflowView.js']) {
+    const filePath = path.resolve(__dirname, relFile);
+    const src = fs.readFileSync(filePath, 'utf8');
+    // Find any line that combines getFullYear() with slice(-2) — that's
+    // the exact 2-digit-year pattern we're guarding against.
+    const offending = src.split('\n')
+      .map((line, idx) => ({ line, idx: idx + 1 }))
+      .filter(({ line }) => /getFullYear\(\)\)?\.slice\(-2\)/.test(line));
+    if (!offending.length) {
+      pass(`S33.12 GUARD: ${path.basename(relFile)} has no getFullYear().slice(-2) pattern`);
+    } else {
+      fail(`S33.12 GUARD: ${path.basename(relFile)} still has 2-digit year`, offending.map((o) => `L${o.idx}: ${o.line.trim()}`).join(' | '));
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -5697,6 +5869,8 @@ function runS31() {
   try { await runS29(); } catch (e) { fail('S29 unexpected error', e.message); }
   try { await runS30(); } catch (e) { fail('S30 unexpected error', e.message); }
   try { runS31(); } catch (e) { fail('S31 unexpected error', e.message); }
+  try { runS32(); } catch (e) { fail('S32 unexpected error', e.message); }
+  try { runS33(); } catch (e) { fail('S33 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

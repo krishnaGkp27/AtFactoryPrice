@@ -43,8 +43,9 @@ function fmtDate(iso) {
     if (isNaN(d.getTime())) return iso;
     const dd = String(d.getDate()).padStart(2, '0');
     const mmm = d.toLocaleString('en-US', { month: 'short' });
-    const yy = String(d.getFullYear()).slice(-2);
-    return `${dd}-${mmm}-${yy}`;
+    // 4-digit year to match the canonical fmtDate() output (DD-MMM-YYYY).
+    const yyyy = String(d.getFullYear());
+    return `${dd}-${mmm}-${yyyy}`;
   } catch (_) { return iso; }
 }
 

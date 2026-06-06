@@ -5,6 +5,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { normalizeSalesDate } = require('../utils/dates');
 
 const SHEET = 'Transactions';
 const HEADERS = ['Timestamp', 'User', 'Action', 'Design', 'Color', 'Qty', 'Before', 'After', 'Status',
@@ -29,7 +30,10 @@ async function append(record) {
     record.before ?? '',
     record.after ?? '',
     record.status ?? 'completed',
-    record.salesDate ?? '',
+    // SDN-1: normalise any incoming shape (typed natural-language, ISO,
+    // DMY numeric, monthname) to ISO YYYY-MM-DD so the Transactions
+    // sheet stays consistent and downstream sales reports keep working.
+    (record.salesDate != null && record.salesDate !== '') ? (normalizeSalesDate(record.salesDate) || record.salesDate) : '',
     record.warehouse ?? '',
     record.customerName ?? '',
     record.salesPerson ?? '',
