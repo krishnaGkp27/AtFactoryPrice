@@ -42,7 +42,12 @@ const ACTIVITIES = [
   { code: 'receive_goods',         label: 'Receive Goods',             icon: '📥', callback: 'act:receive_goods',      hub: 'stock' },
   // P2.5 — Bulk Receive (CSV/XLSX upload). ALWAYS dual-admin gated
   // regardless of who submits (see ALWAYS_APPROVAL_ACTIONS).
-  { code: 'bulk_receive_goods',    label: 'Bulk Receive (CSV/XLSX)',   icon: '📤', callback: 'act:bulk_receive_goods', hub: 'stock' },
+  // TCSI-2: tile renamed to umbrella 'Add Stock (CSV)'. The act:bulk_receive_goods
+  // callback now opens a Strict/Lenient sub-menu in the controller so the two
+  // policies share one tile (no feature spilling). The activity code is kept
+  // unchanged so department permissions, approval queue, and audit history
+  // continue to reference the same identifier.
+  { code: 'bulk_receive_goods',    label: 'Add Stock (CSV)',           icon: '📦', callback: 'act:bulk_receive_goods', hub: 'stock' },
   // P5 — Photo Receive (image/PDF + OCR). Submits through the same
   // bulk_receive_goods approval gate; the OCR layer is purely capture.
   { code: 'photo_receive_goods',   label: 'Photo Receive (image/PDF)', icon: '📷', callback: 'act:photo_receive_goods', hub: 'stock' },

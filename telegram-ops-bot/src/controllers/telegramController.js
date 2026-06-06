@@ -3335,6 +3335,15 @@ async function handleFileMessage(bot, msg) {
     if (handled) return;
   }
 
+  // TCSI-2: strict Add-stock flow — CSV upload routed to the new flow's
+  // document handler, which adds R1/R2 inventory conflict scan on top of
+  // upstream's bulkValidator before handing off to the dual-admin queue.
+  if (session && session.type === 'add_stock:awaiting_file' && msg.document) {
+    const addStockFlow = require('../flows/addStockFlow');
+    const handled = await addStockFlow.handleDocument({ bot, chatId, userId, msg, session });
+    if (handled) return;
+  }
+
   // P5 — Photo Receive: accepts both compressed photos (msg.photo) and
   // documents (msg.document, including PDFs and full-quality images).
   // The flow's handleFile decides which is which.
@@ -3580,6 +3589,17 @@ async function handleMessage(bot, msg) {
     const tskSession = sessionStore.get(userId);
     if (tskSession && tskSession.type === 'task_assign_flow') {
       const handled = await taskFlow.handleTextStep(bot, msg);
+      if (handled) return;
+    }
+  }
+
+  // TCSI-2: strict Add-stock flow — typed new-warehouse name, or
+  // reminders during awaiting-file / conflict-blocked stages.
+  {
+    const ascSession = sessionStore.get(userId);
+    if (ascSession && typeof ascSession.type === 'string' && ascSession.type.startsWith('add_stock:')) {
+      const addStockFlow = require('../flows/addStockFlow');
+      const handled = await addStockFlow.handleTextMessage({ bot, chatId, userId, text, session: ascSession });
       if (handled) return;
     }
   }
@@ -3860,7 +3880,10 @@ async function handleMessage(bot, msg) {
 
   const intent = await intentParser.parse(text);
 
-  if (intent.confidence < 0.75 && intent.clarification) {
+  // TCSI-2: 'add' starts a tappable wizard that collects every detail
+  // itself (warehouse, then CSV). Bypass the clarification gate so the
+  // wizard runs even when the parser is unsure about the params.
+  if (intent.confidence < 0.75 && intent.clarification && intent.action !== 'add') {
     await bot.sendMessage(chatId, `Need more info: ${intent.clarification}`);
     return;
   }
@@ -4097,7 +4120,8 @@ async function handleMessage(bot, msg) {
       }
 
       case 'add': {
-        await bot.sendMessage(chatId, 'To add stock, use the CSV import or add data directly to the Inventory sheet. Bulk import: place CSV in the project folder and run the import script.');
+        const addStockFlow = require('../flows/addStockFlow');
+        await addStockFlow.start({ bot, chatId, userId });
         return;
       }
 
@@ -5988,6 +6012,37 @@ async function handleCallbackQuery(bot, callbackQuery) {
   if (data.startsWith('br:')) {
     const handled = await bulkReceiveFlow.handleCallback(bot, callbackQuery);
     if (handled) return;
+  }
+
+  // TCSI-2: strict Add-stock flow callbacks (warehouse picker / cancel /
+  // retry). Final 'Submit' uses the upstream `br:submit` callback so the
+  // dual-admin approval path is shared, not duplicated.
+  if (data.startsWith('addstock:')) {
+    const addStockFlow = require('../flows/addStockFlow');
+    const handled = await addStockFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
+  // TCSI-2 (M1): Strict/Lenient mode sub-menu under the umbrella "Add Stock
+  // (CSV)" tile. We delegate to the existing flow start() of the chosen
+  // mode — no duplication, no upstream modification.
+  if (data.startsWith('bulkrcv:mode:')) {
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const mode = data.slice('bulkrcv:mode:'.length);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+      chat_id: chatId, message_id: callbackQuery.message.message_id,
+    }).catch(() => {});
+    if (mode === 'strict') {
+      const addStockFlow = require('../flows/addStockFlow');
+      await addStockFlow.start({ bot, chatId, userId: uid });
+    } else if (mode === 'lenient') {
+      await bulkReceiveFlow.start(bot, chatId, uid, callbackQuery.message.message_id);
+    } else if (mode === 'back') {
+      await bot.sendMessage(chatId, '↩️ Returned to menu. Type "Hi" to re-open the activity hub.');
+    }
+    return;
   }
 
   // P5 — Photo Receive Goods (image/PDF OCR) flow.
@@ -8470,9 +8525,24 @@ async function handleCallbackQuery(bot, callbackQuery) {
         await goodsReceiptFlow.start(bot, chatId, uid, messageId);
         break;
       case 'bulk_receive_goods':
-        // P2.5 — Bulk Receive (CSV/XLSX upload). Always dual-admin gated
-        // regardless of who submits (see ALWAYS_APPROVAL_ACTIONS).
-        await bulkReceiveFlow.start(bot, chatId, uid, messageId);
+        // TCSI-2: tile now opens a Strict/Lenient sub-menu so both modes
+        // share one umbrella tile ("Add Stock (CSV)"). Each branch reuses
+        // its own flow's start() — neither flow is modified here.
+        await bot.sendMessage(chatId,
+          '📦 *Add Stock (CSV) — choose mode*\n\n' +
+          '🛡️ *Strict* — block if same bale # or design # already exists in the chosen warehouse. ' +
+          'Recommended for normal restock.\n\n' +
+          '🔄 *Lenient* — batch-aware (P2.5 original). Same bale # is welcomed as a new physical bale ' +
+          'with its own `bale_uid`. Use when re-baling or re-importing legitimately.\n\n' +
+          '_Both modes share the same dual-admin approval, file-hash idempotency, and audit trail._',
+          {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [
+              [{ text: '🛡️ Strict (recommended)',     callback_data: 'bulkrcv:mode:strict' }],
+              [{ text: '🔄 Lenient (batch-aware)',    callback_data: 'bulkrcv:mode:lenient' }],
+              [{ text: '⬅️ Back',                     callback_data: 'bulkrcv:mode:back' }],
+            ] },
+          });
         break;
       case 'photo_receive_goods':
         // P5 — Photo Receive (image/PDF + OCR). Same dual-admin gate as

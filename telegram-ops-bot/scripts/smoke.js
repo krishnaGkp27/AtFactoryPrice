@@ -1569,7 +1569,9 @@ async function runS14c() {
   delete require.cache[require.resolve('../src/services/activityRegistry')];
   const reg = require('../src/services/activityRegistry');
   const a = reg.getActivity('bulk_receive_goods');
-  if (a && a.hub === 'stock' && a.callback === 'act:bulk_receive_goods' && /Bulk/i.test(a.label)) {
+  // Label renamed to 'Add Stock (CSV)' in TCSI-2 (M1 sub-menu). Code +
+  // callback preserved for permissions / approval-history compatibility.
+  if (a && a.hub === 'stock' && a.callback === 'act:bulk_receive_goods' && /Add Stock/i.test(a.label)) {
     pass('S14c.2 activityRegistry: bulk_receive_goods in stock hub with correct callback');
   } else fail('S14c.2 activityRegistry', JSON.stringify(a));
 
@@ -5476,6 +5478,184 @@ async function runS30() {
 }
 
 // ---------------------------------------------------------------------------
+// S31 — TCSI-2: strict Add-stock flow (R1/R2 inventory conflict scan +
+//       warehouse-column injection on top of upstream bulkValidator)
+// ---------------------------------------------------------------------------
+function runS31() {
+  const { detectInventoryConflicts } = require('../src/services/stockImportService');
+  const { _internals: addStockInternals } = require('../src/flows/addStockFlow');
+  const bulkValidator = require('../src/utils/bulkRowValidator');
+  const { parseCsv } = require('../src/utils/csvParser');
+
+  // Upstream CSV format: one row per than. Three bales, 5 thans each.
+  const csv = [
+    'PackageNo,ThanNo,Design,Shade,Yards,Warehouse,Supplier',
+    '5503,1,77007,4,30,Idumota,SA-1273',
+    '5503,2,77007,4,30,Idumota,SA-1273',
+    '5503,3,77007,4,30,Idumota,SA-1273',
+    '5503,4,77007,4,30,Idumota,SA-1273',
+    '5503,5,77007,4,30,Idumota,SA-1273',
+    '5477,1,77007,4,30,Idumota,SA-1273',
+    '5477,2,77007,4,30,Idumota,SA-1273',
+    '5477,3,77007,4,30,Idumota,SA-1273',
+    '5477,4,77007,4,30,Idumota,SA-1273',
+    '5477,5,77007,4,30,Idumota,SA-1273',
+    '5479,1,77007,4,30,Idumota,SA-1273',
+    '5479,2,77007,4,30,Idumota,SA-1273',
+    '5479,3,77007,4,30,Idumota,SA-1273',
+    '5479,4,77007,4,30,Idumota,SA-1273',
+    '5479,5,77007,4,30,Idumota,SA-1273',
+  ].join('\n');
+
+  const parsed = parseCsv(csv);
+  const verdict = bulkValidator.validate(parsed, { allowedWarehouses: ['Idumota'] });
+
+  // S17.1 upstream validator accepts our format
+  if (verdict.ok && verdict.summary.totalBales === 3 && verdict.summary.totalThans === 15
+      && verdict.summary.totalYards === 450) {
+    pass('S31.1 upstream bulkValidator accepts strict-flow CSV: 3 bales/15 thans/450y');
+  } else {
+    fail('S31.1 upstream bulkValidator accepts strict-flow CSV', JSON.stringify(verdict));
+  }
+
+  // S17.2 conflict scan: empty inventory → ok=true
+  const cleanScan = detectInventoryConflicts('Idumota', verdict.bales, []);
+  if (cleanScan.ok && cleanScan.r1.length === 0 && cleanScan.r2.length === 0) {
+    pass('S31.2 detectInventoryConflicts: clean import → ok=true');
+  } else {
+    fail('S31.2 detectInventoryConflicts: clean import → ok=true', JSON.stringify(cleanScan));
+  }
+
+  // S17.3 R1: same bale # already in same warehouse → block (collapsed
+  //       to ONE conflict per bale even if incoming has 5 thans)
+  const existingR1 = [
+    { packageNo: '5503', design: '77001', shade: '2', warehouse: 'Idumota',
+      status: 'available', thanNo: 1, dateReceived: '2026-05-12' },
+  ];
+  const scanR1 = detectInventoryConflicts('Idumota', verdict.bales, existingR1);
+  if (!scanR1.ok && scanR1.r1.length === 1 && scanR1.r1[0].packageNo === '5503'
+      && scanR1.r1[0].existing.design === '77001') {
+    pass('S31.3 R1: same bale# in same warehouse blocks (one conflict per bale, not per than)');
+  } else {
+    fail('S31.3 R1: same bale# in same warehouse blocks', JSON.stringify(scanR1));
+  }
+
+  // S17.4 R1 NOT triggered when bale exists in DIFFERENT warehouse
+  const existingCross = [
+    { packageNo: '5503', design: '99999', shade: '1', warehouse: 'Lagos',
+      status: 'available', thanNo: 1, dateReceived: '2026-05-12' },
+  ];
+  const scanCross = detectInventoryConflicts('Idumota', verdict.bales, existingCross);
+  if (scanCross.ok && scanCross.r1.length === 0
+      && scanCross.crossWarehouseBaleNotes.length === 1
+      && scanCross.crossWarehouseBaleNotes[0].existingWarehouses.includes('Lagos')) {
+    pass('S31.4 cross-warehouse bale# = note only, not a conflict');
+  } else {
+    fail('S31.4 cross-warehouse bale# = note only', JSON.stringify(scanCross));
+  }
+
+  // S17.5 R2: same design in same warehouse → block (strict — even sold-out)
+  const existingR2SoldOut = [
+    { packageNo: '9999', design: '77007', shade: '4', warehouse: 'Idumota',
+      status: 'sold', thanNo: 1, dateReceived: '2026-04-01' },
+    { packageNo: '9999', design: '77007', shade: '4', warehouse: 'Idumota',
+      status: 'sold', thanNo: 2, dateReceived: '2026-04-01' },
+  ];
+  const scanR2 = detectInventoryConflicts('Idumota', verdict.bales, existingR2SoldOut);
+  if (!scanR2.ok && scanR2.r2.length === 1 && scanR2.r2[0].design === '77007'
+      && scanR2.r2[0].existing.availableThans === 0) {
+    pass('S31.5 R2: design in same warehouse blocks even when sold-out (strict)');
+  } else {
+    fail('S31.5 R2: design in same warehouse blocks even when sold-out', JSON.stringify(scanR2));
+  }
+
+  // S17.6 combined R1+R2
+  const existingMix = [
+    { packageNo: '5503', design: '77007', shade: '4', warehouse: 'Idumota',
+      status: 'available', thanNo: 1, dateReceived: '2026-05-12' },
+  ];
+  const scanMix = detectInventoryConflicts('Idumota', verdict.bales, existingMix);
+  if (!scanMix.ok && scanMix.r1.length === 1 && scanMix.r2.length === 1) {
+    pass('S31.6 combined R1+R2 reported in one scan');
+  } else {
+    fail('S31.6 combined R1+R2 reported in one scan', JSON.stringify(scanMix));
+  }
+
+  // S17.7 warehouse-column injection — CSV omits Warehouse, picker
+  //       chose Idumota → injected into every row.
+  const csvNoWh = [
+    'PackageNo,ThanNo,Design,Shade,Yards',
+    '5503,1,77007,4,30',
+    '5503,2,77007,4,30',
+  ].join('\n');
+  const parsedNoWh = parseCsv(csvNoWh);
+  const enforced = addStockInternals._enforceWarehouseColumn(parsedNoWh, 'Idumota');
+  if (enforced.mismatches.length === 0
+      && enforced.parsed.headers.includes('warehouse')
+      && enforced.parsed.rows.every((r) => r.warehouse === 'Idumota')) {
+    pass('S31.7 warehouse injection: missing Warehouse column auto-filled with picked value');
+  } else {
+    fail('S31.7 warehouse injection: missing Warehouse column auto-filled', JSON.stringify(enforced));
+  }
+
+  // S17.8 warehouse-column mismatch — CSV has Warehouse=Lagos but picker
+  //       chose Idumota → mismatches collected (will be rejected).
+  const csvMismatch = [
+    'PackageNo,ThanNo,Design,Shade,Yards,Warehouse',
+    '5503,1,77007,4,30,Lagos',
+    '5503,2,77007,4,30,Lagos',
+  ].join('\n');
+  const parsedMismatch = parseCsv(csvMismatch);
+  const enforcedMismatch = addStockInternals._enforceWarehouseColumn(parsedMismatch, 'Idumota');
+  if (enforcedMismatch.mismatches.length === 2
+      && enforcedMismatch.mismatches[0].found === 'Lagos') {
+    pass('S31.8 warehouse injection: mismatched warehouse column flagged for rejection');
+  } else {
+    fail('S31.8 warehouse injection: mismatched warehouse column flagged', JSON.stringify(enforcedMismatch));
+  }
+
+  // S17.9 warehouse-column case-insensitive match — CSV says "idumota"
+  //       (lowercase), picker chose "Idumota" → treated as match (no mismatch).
+  const csvCi = [
+    'PackageNo,ThanNo,Design,Shade,Yards,Warehouse',
+    '5503,1,77007,4,30,idumota',
+  ].join('\n');
+  const parsedCi = parseCsv(csvCi);
+  const enforcedCi = addStockInternals._enforceWarehouseColumn(parsedCi, 'Idumota');
+  if (enforcedCi.mismatches.length === 0) {
+    pass('S31.9 warehouse injection: case-insensitive match (Idumota vs idumota) accepted');
+  } else {
+    fail('S31.9 warehouse injection: case-insensitive match accepted', JSON.stringify(enforcedCi));
+  }
+
+  // S31.10 — activityRegistry: 'bulk_receive_goods' tile renamed to the
+  // umbrella label, but its code/callback are preserved so existing
+  // department-permission entries and approval-history rows still match.
+  delete require.cache[require.resolve('../src/services/activityRegistry')];
+  const reg = require('../src/services/activityRegistry');
+  const tile = reg.getAll().find((a) => a.code === 'bulk_receive_goods');
+  if (tile && tile.label === 'Add Stock (CSV)' && tile.callback === 'act:bulk_receive_goods' && tile.hub === 'stock') {
+    pass('S31.10 activityRegistry tile renamed to umbrella label, code/callback preserved');
+  } else {
+    fail('S31.10 activityRegistry tile renamed', JSON.stringify(tile));
+  }
+
+  // S31.11 — both flows still export start(); the sub-menu dispatcher
+  // routes to one of these. Smoke-check the surface contracts.
+  const addStockFlow = require('../src/flows/addStockFlow');
+  const bulkReceiveFlow = require('../src/flows/bulkReceiveFlow');
+  if (typeof addStockFlow.start === 'function'
+      && typeof bulkReceiveFlow.start === 'function'
+      && typeof addStockFlow.handleCallback === 'function'
+      && typeof addStockFlow.handleDocument === 'function'
+      && typeof addStockFlow.handleTextMessage === 'function') {
+    pass('S31.11 both flow start() entrypoints + addStockFlow handlers exported');
+  } else {
+    fail('S31.11 flow exports', `addStock=${Object.keys(addStockFlow).join(',')} br=${Object.keys(bulkReceiveFlow).join(',')}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -5516,6 +5696,7 @@ async function runS30() {
   try { await runS28(); } catch (e) { fail('S28 unexpected error', e.message); }
   try { await runS29(); } catch (e) { fail('S29 unexpected error', e.message); }
   try { await runS30(); } catch (e) { fail('S30 unexpected error', e.message); }
+  try { runS31(); } catch (e) { fail('S31 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;
