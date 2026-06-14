@@ -100,6 +100,10 @@ const {
 } = require('../utils/format');
 const CURRENCY_SYMBOL = _currencySymbol(CURRENCY);
 const supplyDetailsReport = require('../services/supplyDetailsReport');
+// MG-1 — Marketing Group Catalog overlay (spec:
+// telegram-ops-bot/specs/marketing-group-catalog.md). Only consumed by
+// startSupplyRequestFlow today; later commits (MG-2/3) extend its use.
+const marketerOverlay = require('../services/marketerOverlay');
 
 function fmtQty(n) { return fmtQtyBase(n, { maxFraction: 2 }); }
 
@@ -4932,10 +4936,17 @@ async function getAdjustedAvailability(warehouse, cart) {
 
 async function startSupplyRequestFlow(bot, chatId, userId) {
   const user = await usersRepository.findByUserId(userId);
-  const warehouses = user && user.warehouses.length ? user.warehouses : [];
+  // MG-1: marketers are pinned to their marketing group's warehouse(s)
+  // (spec: marketing-group-catalog.md §4.1). For non-marketers, admins,
+  // or when the master flag is off, getGroupWarehouses returns [] and
+  // we fall through to the existing user.warehouses path unchanged.
+  const isAdminUser = config.access.adminIds.includes(userId);
+  const groupWhs = await marketerOverlay.getGroupWarehouses(user, isAdminUser);
+  const warehouses = groupWhs.length
+    ? groupWhs
+    : (user && user.warehouses.length ? user.warehouses : []);
 
   if (!warehouses.length) {
-    const isAdminUser = config.access.adminIds.includes(userId);
     if (isAdminUser) {
       const allWarehouses = await inventoryRepository.getWarehouses();
       if (!allWarehouses.length) {

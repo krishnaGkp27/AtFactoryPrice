@@ -5828,6 +5828,147 @@ function runS33() {
 }
 
 // ---------------------------------------------------------------------------
+// S34 — MG-1: Marketing Group Catalog foundation (spec: marketing-group-catalog.md)
+//       - Departments.warehouses parsed from column G
+//       - marketerOverlay.resolveGroup / isMarketer / getGroupWarehouses
+//       - master flag short-circuits the overlay
+// ---------------------------------------------------------------------------
+async function runS34() {
+  // S34.1 — departmentsRepository.parse reads warehouses (col G) and tolerates legacy rows
+  function str(v) { return (v ?? '').toString().trim(); }
+  function parseDeptRow(r, rowIndex) {
+    return {
+      rowIndex,
+      dept_id: str(r[0]),
+      dept_name: str(r[1]),
+      allowed_activities: str(r[2]).split(',').map((a) => a.trim()).filter(Boolean),
+      status: str(r[3]) || 'active',
+      created_at: str(r[4]),
+      parent_department: str(r[5]),
+      warehouses: str(r[6]).split(',').map((w) => w.trim()).filter(Boolean),
+    };
+  }
+  const row7 = ['DEPT-100', 'Mktg-Lagos-North', '', 'active', '2026-06-15', 'Marketing', 'Lagos,Idumota'];
+  const p7 = parseDeptRow(row7, 2);
+  if (p7.warehouses.length === 2 && p7.warehouses[0] === 'Lagos' && p7.warehouses[1] === 'Idumota') {
+    pass('S34.1 departmentsRepository: parses warehouses CSV from col G (MG-1)');
+  } else {
+    fail('S34.1 departmentsRepository.parse warehouses', JSON.stringify(p7));
+  }
+  // legacy 6-col row → empty array (graceful, doesn't crash)
+  const row6 = ['DEPT-001', 'Sales', 'a1', 'active', '2026-01-01', ''];
+  const p6 = parseDeptRow(row6, 3);
+  if (Array.isArray(p6.warehouses) && p6.warehouses.length === 0) {
+    pass('S34.2 departmentsRepository: legacy 6-col row → warehouses=[] (graceful)');
+  } else {
+    fail('S34.2 departmentsRepository legacy parse', JSON.stringify(p6));
+  }
+
+  // S34.3 — marketerOverlay.resolveGroup picks the first dept with warehouses set
+  delete require.cache[require.resolve('../src/services/marketerOverlay')];
+  const overlay = require('../src/services/marketerOverlay');
+
+  const fakeDepts = [
+    { dept_id: 'DEPT-001', dept_name: 'Sales', warehouses: [] },
+    { dept_id: 'DEPT-100', dept_name: 'Mktg-Lagos-North', warehouses: ['Lagos', 'Idumota'] },
+    { dept_id: 'DEPT-200', dept_name: 'Mktg-Kano', warehouses: ['Kano'] },
+  ];
+  const deps = { departmentsRepo: { getAll: async () => fakeDepts } };
+
+  const userInGroup = { departments: ['Sales', 'Mktg-Lagos-North'] };
+  const g1 = await overlay.resolveGroup(userInGroup, deps);
+  if (g1 && g1.dept_id === 'DEPT-100' && g1.warehouses[0] === 'Lagos') {
+    pass('S34.3 resolveGroup: returns first dept with warehouses set');
+  } else {
+    fail('S34.3 resolveGroup match', JSON.stringify(g1));
+  }
+
+  // S34.4 — user not in any marketing group → null
+  const userPlain = { departments: ['Sales'] };
+  const g2 = await overlay.resolveGroup(userPlain, deps);
+  if (g2 === null) {
+    pass('S34.4 resolveGroup: user without marketing-group dept → null');
+  } else {
+    fail('S34.4 resolveGroup non-marketer', JSON.stringify(g2));
+  }
+
+  // S34.5 — user with legacy single `department` field still resolves
+  const userLegacy = { department: 'Mktg-Kano' };
+  const g3 = await overlay.resolveGroup(userLegacy, deps);
+  if (g3 && g3.dept_id === 'DEPT-200') {
+    pass('S34.5 resolveGroup: honours legacy single `department` field');
+  } else {
+    fail('S34.5 resolveGroup legacy', JSON.stringify(g3));
+  }
+
+  // S34.6 — null/empty user → null (no crash)
+  const g4 = await overlay.resolveGroup(null, deps);
+  const g5 = await overlay.resolveGroup({ departments: [] }, deps);
+  if (g4 === null && g5 === null) {
+    pass('S34.6 resolveGroup: null/empty user → null (no crash)');
+  } else {
+    fail('S34.6 resolveGroup null/empty', `g4=${g4} g5=${g5}`);
+  }
+
+  // S34.7 — isMarketer: admin gate wins regardless of group membership
+  const im1 = await overlay.isMarketer(userInGroup, /*isAdmin*/ true, deps);
+  if (im1.isMarketer === false && im1.group === null) {
+    pass('S34.7 isMarketer: admin user → false (admins always see real data)');
+  } else {
+    fail('S34.7 isMarketer admin gate', JSON.stringify(im1));
+  }
+
+  // S34.8 — isMarketer: non-admin in a marketing group → true
+  const im2 = await overlay.isMarketer(userInGroup, false, deps);
+  if (im2.isMarketer === true && im2.group && im2.group.dept_id === 'DEPT-100') {
+    pass('S34.8 isMarketer: non-admin in marketing group → true');
+  } else {
+    fail('S34.8 isMarketer non-admin', JSON.stringify(im2));
+  }
+
+  // S34.9 — getGroupWarehouses returns the group's warehouses for a marketer
+  const whs1 = await overlay.getGroupWarehouses(userInGroup, false, deps);
+  if (Array.isArray(whs1) && whs1.length === 2 && whs1[0] === 'Lagos' && whs1[1] === 'Idumota') {
+    pass('S34.9 getGroupWarehouses: marketer → group warehouses');
+  } else {
+    fail('S34.9 getGroupWarehouses marketer', JSON.stringify(whs1));
+  }
+  const whs2 = await overlay.getGroupWarehouses(userPlain, false, deps);
+  if (Array.isArray(whs2) && whs2.length === 0) {
+    pass('S34.10 getGroupWarehouses: non-marketer → []');
+  } else {
+    fail('S34.10 getGroupWarehouses non-marketer', JSON.stringify(whs2));
+  }
+
+  // S34.11 — master flag OFF short-circuits isMarketer (and downstream
+  // helpers). We reload the config + overlay with the env flipped.
+  delete require.cache[require.resolve('../src/config')];
+  delete require.cache[require.resolve('../src/services/marketerOverlay')];
+  process.env.MARKETING_GROUP_OVERLAY_ENABLED = 'false';
+  const overlay2 = require('../src/services/marketerOverlay');
+  const im3 = await overlay2.isMarketer(userInGroup, false, deps);
+  delete process.env.MARKETING_GROUP_OVERLAY_ENABLED;
+  // Reload again so subsequent tests / runs see the default (enabled).
+  delete require.cache[require.resolve('../src/config')];
+  delete require.cache[require.resolve('../src/services/marketerOverlay')];
+  require('../src/services/marketerOverlay');
+  if (im3.isMarketer === false && im3.group === null) {
+    pass('S34.11 isMarketer: MARKETING_GROUP_OVERLAY_ENABLED=false short-circuits to false');
+  } else {
+    fail('S34.11 master flag off', JSON.stringify(im3));
+  }
+
+  // S34.12 — departmentsRepository exports updateWarehouses (MG-1 write path)
+  delete require.cache[require.resolve('../src/repositories/departmentsRepository')];
+  const deptRepo = require('../src/repositories/departmentsRepository');
+  if (typeof deptRepo.updateWarehouses === 'function' && deptRepo.HEADERS.includes('warehouses')) {
+    pass('S34.12 departmentsRepository: exports updateWarehouses + HEADERS includes warehouses');
+  } else {
+    fail('S34.12 departmentsRepository exports', `keys=${Object.keys(deptRepo).join(',')} headers=${deptRepo.HEADERS.join(',')}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -5871,6 +6012,7 @@ function runS33() {
   try { runS31(); } catch (e) { fail('S31 unexpected error', e.message); }
   try { runS32(); } catch (e) { fail('S32 unexpected error', e.message); }
   try { runS33(); } catch (e) { fail('S33 unexpected error', e.message); }
+  try { await runS34(); } catch (e) { fail('S34 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

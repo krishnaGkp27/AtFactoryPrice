@@ -109,6 +109,18 @@ const config = {
     localArchiveDir: process.env.OCR_ARCHIVE_DIR || 'data/ocr',
   },
 
+  /**
+   * MG-1 — Marketing Group Catalog feature flag (spec:
+   * telegram-ops-bot/specs/marketing-group-catalog.md).
+   * Master kill-switch for the overlay that pins marketers to their
+   * group's warehouse(s) and (in MG-2+) shows a group price badge and
+   * filters the design list. OFF = every user sees today's standard
+   * supply_request flow regardless of department config. Default ON.
+   */
+  marketing: {
+    overlayEnabled: (process.env.MARKETING_GROUP_OVERLAY_ENABLED || 'true').toLowerCase() !== 'false',
+  },
+
   /** Optional: set BOT_API_KEY so admin page can update settings with X-API-Key header */
   botApiKey: process.env.BOT_API_KEY || '',
 

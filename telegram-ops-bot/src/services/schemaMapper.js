@@ -36,11 +36,16 @@ const REQUIRED_SHEETS = {
     headers: ['user_id', 'name', 'role', 'branch', 'access_level', 'status', 'created_at', 'department', 'warehouses', 'manages', 'notification_prefs'],
   },
   Departments: {
-    headers: ['dept_id', 'dept_name', 'allowed_activities', 'status', 'created_at', 'parent_department'],
+    // MG-1: column G `warehouses` is a CSV of warehouse names this
+    // department (when used as a marketing group) draws stock from.
+    // Empty for non-marketing departments — harmless. resolveGroup()
+    // in marketerOverlay.js keys "is this dept a marketing group?" on
+    // whether this column is non-empty.
+    headers: ['dept_id', 'dept_name', 'allowed_activities', 'status', 'created_at', 'parent_department', 'warehouses'],
     seed: [
-      ['DEPT-001', 'Sales', 'supply_request,upload_receipt,my_orders,give_sample,supply_details,customer_details,add_customer_note', 'active', '', ''],
-      ['DEPT-002', 'Dispatch', 'mark_order_delivered,my_orders', 'active', '', ''],
-      ['DEPT-003', 'Admin', '__all__', 'active', '', ''],
+      ['DEPT-001', 'Sales', 'supply_request,upload_receipt,my_orders,give_sample,supply_details,customer_details,add_customer_note', 'active', '', '', ''],
+      ['DEPT-002', 'Dispatch', 'mark_order_delivered,my_orders', 'active', '', '', ''],
+      ['DEPT-003', 'Admin', '__all__', 'active', '', '', ''],
     ],
   },
   Tasks: {
@@ -372,12 +377,20 @@ async function initialize() {
 
   if (existing.includes('Departments')) {
     try {
-      const deptHeader = await sheets.readRange('Departments', 'A1:Z1');
-      const h = deptHeader[0] || [];
+      let deptHeader = await sheets.readRange('Departments', 'A1:Z1');
+      let h = deptHeader[0] || [];
       if (!h.includes('parent_department')) {
         const nextCol = colLetter(h.length + 1);
         await sheets.updateRange('Departments', `${nextCol}1:${nextCol}1`, [['parent_department']]);
         logger.info('SchemaMapper: extended Departments with parent_department (TG-7.5)');
+        deptHeader = await sheets.readRange('Departments', 'A1:Z1');
+        h = deptHeader[0] || [];
+      }
+      // MG-1: marketing-group warehouses column (CSV of warehouse names).
+      if (!h.includes('warehouses')) {
+        const nextCol = colLetter(h.length + 1);
+        await sheets.updateRange('Departments', `${nextCol}1:${nextCol}1`, [['warehouses']]);
+        logger.info('SchemaMapper: extended Departments with warehouses (MG-1)');
       }
     } catch (e) {
       logger.warn('SchemaMapper: could not extend Departments —', e.message);

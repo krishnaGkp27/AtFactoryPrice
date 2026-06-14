@@ -1326,6 +1326,24 @@ Detailed design: §5.6 (placeholder for now; full spec to be written when commit
 - Tier downgrades happen silently; only upgrades celebrated via DM.
 - Each subsystem has its own feature flag for independent rollback.
 
+### 4.10 DBP-1 — Dispatch Bale Picker 📋 Planned
+
+**Full spec:** [`specs/dispatch-bale-picker.md`](specs/dispatch-bale-picker.md)
+
+**Summary:** Collapses supply-request confirmation + dispatch picking + the manual sell command into one approval cycle with a tappable, inline-expanding bale picker, PDF photo proof, and a single admin sell approval. In-flight picklist state lives in `ApprovalQueue.ActionJSON._dispatch.*` (restart-safe). One append-only `Transactions.RequestID` column. New `pdf-lib` dependency. Single commit on `feat/dispatch-bale-picker`.
+
+### 4.11 MG — Marketing Group Catalog 📋 Planned
+
+**Full spec:** [`specs/marketing-group-catalog.md`](specs/marketing-group-catalog.md)
+
+**Summary:** An **overlay on the existing `supply_request` flow** (NOT a new tile) that controls what a marketer (= salesman = employee user) sees. A **marketing group IS a department**, with warehouses attached via one new append-only `Departments.warehouses` column; the marketer is **pinned** to the group's warehouse. **Scope now is design-level:** `MarketingGroupPrices` (`group × warehouse × design → price`) sets a **compulsory** `/yard` price badge under **dual-admin approval** (new `set_group_price` ∈ `ALWAYS_APPROVAL_ACTIONS`, owner-approved); an `active` price row **also makes the design visible** to the group (pricing = enabling). Quantity stays **real/original** this phase (admins and marketers see the same per-shade stock); the only quantity moderation now is **which designs are visible**. **Per-shade quantity + shade-level pricing are deferred to MG-3** (the screenshot's reduced per-shade counts). Commits: MG-1 (warehouses + pinning) + MG-2 (design price + visibility, dual-admin). MG-3+ with the finance pass.
+
+### 4.12 DA — Dispatch Assignment 📋 Planned
+
+**Full spec:** [`specs/dispatch-assignment.md`](specs/dispatch-assignment.md)
+
+**Summary:** Sits upstream of DBP-1. Receipt-aware supply approval (receipt optional for rep; admin can attach + confirm payment), then **broadcast, first-accept-wins** assignment to a candidate pool of warehouse dispatchers (hyper-delivery style). Task created **only on accept**; sibling cards edited in place to "Taken" (no DMs). Accepted task is workable immediately (dispatch day = deadline). No-accept → admin inbox with re-broadcast / force-assign. State in `ApprovalQueue.ActionJSON._supply` + `._assign`. Exactly **one** new `taskStateMachine` transition (`assigner_proposed`). Commits: DA-1 (receipt approval) + DA-2 (broadcast/accept) + DA-3 (bridge into DBP-1).
+
 ### 4.9 Deferred items (legacy Phase 4)
 
 | ID | Topic | When to revisit |
