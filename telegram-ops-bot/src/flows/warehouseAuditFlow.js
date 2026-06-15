@@ -32,6 +32,7 @@ const sessionStore        = require('../utils/sessionStore');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const inventoryService    = require('../services/inventoryService');
 const shadesRepository    = require('../repositories/shadesRepository');
+const settingsRepository  = require('../repositories/settingsRepository');
 const auth                = require('../middlewares/auth');
 const config              = require('../config');
 const logger              = require('../utils/logger');
@@ -40,6 +41,19 @@ const SESSION_TYPE   = 'wh_audit_flow';
 const MAX_DESIGNS    = 30;
 const MAX_SHADES     = 40;
 const THANS_PER_ROW  = 3;
+const TILES_PER_ROW  = 2;
+
+/**
+ * Per-warehouse audit-mode setting (Settings sheet, key=`AUDIT_MODE.<wh>`).
+ *   'than' = full per-than audit (Kano-style; every available than is a chip).
+ *   'bale' = bale-level audit with Closed/Open prompt (Lagos-style); the
+ *            Open branch falls into the than-chip view for that one bale.
+ * Default is 'bale' — closed-by-default is the safer assumption for
+ * warehouses that sell whole bales.
+ */
+const AUDIT_MODE_KEY_PREFIX = 'AUDIT_MODE.';
+const AUDIT_MODE_THAN = 'than';
+const AUDIT_MODE_BALE = 'bale';
 
 /** Presence-mark cycle: unmarked -> present -> missing -> unmarked. */
 const MARK_PRESENT = 'present';
@@ -77,6 +91,55 @@ function fmtQty(n) { return (Math.round((n || 0) * 100) / 100).toLocaleString('e
 function closeRow() { return [{ text: '❌ Close', callback_data: 'wai:close' }]; }
 function backRow(label) { return [{ text: label || '⬅ Back', callback_data: 'wai:back' }]; }
 
+/**
+ * Chunk a flat list of inline-keyboard buttons into rows of `perRow` tiles.
+ * Used by the shade and bale pickers to render a graceful 2-column grid.
+ */
+function chunkButtons(buttons, perRow) {
+  const out = [];
+  for (let i = 0; i < buttons.length; i += perRow) out.push(buttons.slice(i, i + perRow));
+  return out;
+}
+
+/**
+ * Look up the per-warehouse audit mode from the Settings sheet.
+ * Returns 'than' or 'bale'; defaults to 'bale' when unset, blank, or on
+ * any read error (so the flow always has a safe fallback).
+ * @param {string} warehouse Warehouse name as it appears in Inventory.
+ * @returns {Promise<'than'|'bale'>}
+ */
+async function getAuditMode(warehouse) {
+  if (!warehouse) return AUDIT_MODE_BALE;
+  try {
+    const all = await settingsRepository.getAll();
+    const v = String(all[`${AUDIT_MODE_KEY_PREFIX}${warehouse}`] || '').toLowerCase().trim();
+    return v === AUDIT_MODE_THAN ? AUDIT_MODE_THAN : AUDIT_MODE_BALE;
+  } catch (e) {
+    logger.warn(`warehouseAuditFlow.getAuditMode: ${e.message}`);
+    return AUDIT_MODE_BALE;
+  }
+}
+
+/**
+ * Whether the admin has tapped/marked any than of the given bale in this
+ * audit session. Used to decorate the bale tile (✅ when fully verified
+ * by the Closed shortcut, 🔍 when partially audited).
+ */
+function baleAuditState(session, packageNo, availableCount) {
+  if (!session || !session.marks) return 'untouched';
+  let present = 0; let missing = 0;
+  const prefix = `${packageNo}|`;
+  for (const k of Object.keys(session.marks)) {
+    if (!k.startsWith(prefix)) continue;
+    const m = session.marks[k];
+    if (m === MARK_PRESENT) present += 1;
+    else if (m === MARK_MISSING) missing += 1;
+  }
+  if (present === 0 && missing === 0) return 'untouched';
+  if (missing === 0 && present >= availableCount) return 'verified';
+  return 'in_progress';
+}
+
 /* ───────────────────────────── entry ───────────────────────────── */
 
 /**
@@ -103,6 +166,7 @@ async function start(bot, chatId, userId, messageId) {
     flowMessageId: messageId || null,
     startedAt: new Date().toISOString(),
     warehouse: '',
+    auditMode: AUDIT_MODE_BALE,
     design: '',
     shade: '',
     packageNo: '',
@@ -131,6 +195,7 @@ async function renderWarehousePicker(bot, chatId, userId) {
   }
   if (warehouses.length === 1) {
     session.warehouse = warehouses[0];
+    session.auditMode = await getAuditMode(warehouses[0]);
     session.step = 'pick_design';
     sessionStore.set(userId, session);
     await renderDesignPicker(bot, chatId, userId);
@@ -138,6 +203,8 @@ async function renderWarehousePicker(bot, chatId, userId) {
   }
   session._warehouses = warehouses;
   sessionStore.set(userId, session);
+  // Warehouses are usually few (2–3) and have long names; keep one per row
+  // so the names don't get truncated on phone screens.
   const rows = warehouses.map((w, i) => ([{ text: `🏬 ${w}`, callback_data: `wai:wh:${i}` }]));
   rows.push(closeRow());
   await render(bot, chatId, userId,
@@ -173,15 +240,19 @@ async function renderDesignPicker(bot, chatId, userId) {
   }
   session._designs = list.map((d) => ({ design: d.design }));
   sessionStore.set(userId, session);
-  const rows = list.slice(0, MAX_DESIGNS).map((d, i) => ([{
-    text: `🎨 ${d.design} · ${d.bales.size} bale(s) · ${d.shades.size} shade(s)`,
+  // Designs render as 2-col tiles (compact, like the marketer view) so
+  // long lists don't scroll forever.
+  const tiles = list.slice(0, MAX_DESIGNS).map((d, i) => ({
+    text: `🎨 ${d.design} · ${d.bales.size}b · ${d.shades.size}sh`,
     callback_data: `wai:design:${i}`,
-  }]));
+  }));
+  const rows = chunkButtons(tiles, TILES_PER_ROW);
   const more = list.length > MAX_DESIGNS ? `\n\n(+${list.length - MAX_DESIGNS} more — narrow by warehouse)` : '';
   rows.push(backRow('⬅ Warehouses'));
   rows.push(closeRow());
+  const modeChip = session.auditMode === AUDIT_MODE_THAN ? 'than-mode' : 'bale-mode';
   await render(bot, chatId, userId,
-    `🔍 ${session.warehouse}\n\nPick a design:${more}`, rows);
+    `🔍 ${session.warehouse} · ${modeChip}\n\nPick a design:${more}`, rows);
 }
 
 /* ───────────────────────────── shade ───────────────────────────── */
@@ -214,25 +285,33 @@ async function renderShadePicker(bot, chatId, userId) {
   try { shadesList = await shadesRepository.getAll(); } catch (_) { shadesList = []; }
   session._shades = list.map((s) => ({ shade: s.shade }));
   sessionStore.set(userId, session);
-  const rows = list.slice(0, MAX_SHADES).map((s, i) => {
+  // 2-col tile grid mirrors the marketer view's compact look. Labels are
+  // shortened to "<chip> <shade> (Nb · Nt)" so two tiles fit per row.
+  const tiles = list.slice(0, MAX_SHADES).map((s, i) => {
     let chip = '🎨';
     try { chip = shadesRepository.chipFromList(shadesList, s.shade) || '🎨'; } catch (_) { /* keep default */ }
-    return [{
-      text: `${chip} ${s.shade} (${s.bales.size} bale${s.bales.size === 1 ? '' : 's'} · ${s.thans} than)`,
+    return {
+      text: `${chip} ${s.shade} (${s.bales.size}b · ${s.thans}t)`,
       callback_data: `wai:shade:${i}`,
-    }];
+    };
   });
+  const rows = chunkButtons(tiles, TILES_PER_ROW);
   rows.push(backRow('⬅ Designs'));
   rows.push(closeRow());
+  const modeChip = session.auditMode === AUDIT_MODE_THAN ? 'than-mode' : 'bale-mode';
   await render(bot, chatId, userId,
-    `🔍 ${session.design} — ${session.warehouse}\n\nPick a shade:`, rows);
+    `🔍 ${session.design} — ${session.warehouse} · ${modeChip}\n\nPick a shade:`, rows);
 }
 
 /* ───────────────────────────── bale list ───────────────────────────── */
 
 /**
- * Build the bale list for the current warehouse+design+shade, ordered
- * front/LIFO (newest addedAt first). Returns the list and caches it.
+ * Build the bale list for the current warehouse+design+shade. Bales with
+ * zero available thans are excluded — audit only inspects what the system
+ * believes is physically present. Order is currently the natural read
+ * order from the sheet (random / by row); ordering by physical pull-out
+ * is deferred until layout in the warehouse warrants it.
+ * @returns {Promise<Array<{packageNo:string,total:number,available:number,yards:number,availableYards:number,binLocation:string}>>}
  */
 async function loadBales(session) {
   const all = await inventoryRepository.getAll();
@@ -245,17 +324,17 @@ async function loadBales(session) {
     if (!byPkg.has(r.packageNo)) {
       byPkg.set(r.packageNo, {
         packageNo: r.packageNo, total: 0, available: 0, yards: 0,
-        availableYards: 0, addedAt: r.addedAt || '', binLocation: r.binLocation || '',
+        availableYards: 0, binLocation: r.binLocation || '',
       });
     }
     const e = byPkg.get(r.packageNo);
     e.total += 1;
     e.yards += r.yards;
     if (r.status === 'available') { e.available += 1; e.availableYards += r.yards; }
-    if ((r.addedAt || '') > e.addedAt) e.addedAt = r.addedAt || e.addedAt;
   }
-  // Front/LIFO: last-in (newest addedAt) first.
-  return Array.from(byPkg.values()).sort((a, b) => String(b.addedAt).localeCompare(String(a.addedAt)));
+  // Drop bales with no available thans — they're already fully sold and
+  // outside the audit's scope (point #3: hide sold).
+  return Array.from(byPkg.values()).filter((b) => b.available > 0);
 }
 
 async function renderBaleList(bot, chatId, userId) {
@@ -264,40 +343,81 @@ async function renderBaleList(bot, chatId, userId) {
   const bales = await loadBales(session);
   if (!bales.length) {
     await render(bot, chatId, userId,
-      `🔍 ${session.design} · ${session.shade}\n\nNo bales found.`,
+      `🔍 ${session.design} · ${session.shade}\n\nNo bales with available thans.`,
       [backRow('⬅ Shades'), closeRow()]);
     return;
   }
-  // Single-bale shade: skip the list, open the than card directly (§9A.2).
+  session._bales = bales.map((b) => ({ packageNo: b.packageNo, total: b.total, available: b.available }));
+  // Single-bale shade: skip the list. In than-mode go straight to the
+  // than card; in bale-mode go to the Closed/Open prompt.
   if (bales.length === 1) {
     session.skippedBaleList = true;
     session.packageNo = bales[0].packageNo;
-    session.step = 'view_than';
-    session._bales = bales.map((b) => ({ packageNo: b.packageNo }));
-    sessionStore.set(userId, session);
-    await renderThanCard(bot, chatId, userId);
+    if (session.auditMode === AUDIT_MODE_BALE) {
+      session.step = 'bale_choice';
+      sessionStore.set(userId, session);
+      await renderBaleChoice(bot, chatId, userId);
+    } else {
+      session.step = 'view_than';
+      sessionStore.set(userId, session);
+      await renderThanCard(bot, chatId, userId);
+    }
     return;
   }
   session.skippedBaleList = false;
-  session._bales = bales.map((b) => ({ packageNo: b.packageNo }));
   sessionStore.set(userId, session);
 
   const totThans = bales.reduce((s, b) => s + b.available, 0);
   const totYards = bales.reduce((s, b) => s + b.availableYards, 0);
-  const rows = bales.map((b, i) => {
-    const open = b.available < b.total;
-    const tag = i === 0 ? '🟢 front' : (open ? '🟠 open' : '🟢');
-    return [{
-      text: `📦 Bale ${b.packageNo} · ${b.available}/${b.total} · ${fmtQty(b.availableYards)}y · ${tag}`,
+  const tiles = bales.map((b, i) => {
+    const state = baleAuditState(session, b.packageNo, b.available);
+    const prefix = state === 'verified' ? '✅' : state === 'in_progress' ? '🔍' : '📦';
+    return {
+      text: `${prefix} ${b.packageNo} · ${b.available}/${b.total} · ${fmtQty(b.availableYards)}y`,
       callback_data: `wai:bale:${i}`,
-    }];
+    };
   });
+  const rows = chunkButtons(tiles, TILES_PER_ROW);
+  rows.push([{ text: '📋 Reconciliation', callback_data: 'wai:recon' }]);
   rows.push(backRow('⬅ Shades'));
   rows.push(closeRow());
+  const modeChip = session.auditMode === AUDIT_MODE_THAN ? 'than-mode' : 'bale-mode';
+  const hint = session.auditMode === AUDIT_MODE_BALE
+    ? 'Tap a bale to mark it Closed or Open.'
+    : 'Tap a bale to inspect its thans.';
   await render(bot, chatId, userId,
-    `🔍 ${session.design} · ${session.shade} — ${session.warehouse}\n`
-    + `Available: ${totThans} thans · ${fmtQty(totYards)} yds across ${bales.length} bales\n\n`
-    + 'Tap a bale to inspect its thans:', rows);
+    `🔍 ${session.design} · ${session.shade} — ${session.warehouse} · ${modeChip}\n`
+    + `${bales.length} bales · ${totThans} thans · ${fmtQty(totYards)} yds available\n\n`
+    + hint, rows);
+}
+
+/**
+ * Bale-mode prompt: ask whether the physical bale is Closed (sealed, all
+ * available thans implicitly verified) or Open (drill into the than card
+ * for that one bale). Only used when session.auditMode === 'bale'.
+ */
+async function renderBaleChoice(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const summary = await inventoryService.getPackageSummary(session.packageNo);
+  if (!summary) {
+    await render(bot, chatId, userId,
+      `🔍 Bale ${session.packageNo} not found.`,
+      [backRow(session.skippedBaleList ? '⬅ Shades' : '⬅ Bales'), closeRow()]);
+    return;
+  }
+  const head =
+    `📦 Bale ${summary.packageNo} — ${summary.design} · ${summary.shade}\n`
+    + `Indent: ${summary.indent || '—'} · ${summary.warehouse}\n`
+    + `System: ${summary.availableThans} thans · ${fmtQty(summary.availableYards)} yds available\n\n`
+    + 'Is this bale physically:';
+  const rows = [
+    [{ text: `✅ Closed (sealed, all ${summary.availableThans} present)`, callback_data: 'wai:closed' }],
+    [{ text: '🟠 Open (some thans missing)', callback_data: 'wai:open' }],
+    backRow(session.skippedBaleList ? '⬅ Shades' : '⬅ Bales'),
+    closeRow(),
+  ];
+  await render(bot, chatId, userId, head, rows);
 }
 
 /* ───────────────────────────── than card ───────────────────────────── */
@@ -317,41 +437,49 @@ async function renderThanCard(bot, chatId, userId) {
   if (!summary) {
     await render(bot, chatId, userId,
       `🔍 Bale ${session.packageNo} not found.`,
-      [backRow(session.skippedBaleList ? '⬅ Shades' : '⬅ Bales'), closeRow()]);
+      [backRow(thanCardBackLabel(session)), closeRow()]);
     return;
   }
-  const open = summary.availableThans < summary.totalThans;
+  // Audit only inspects what the system says is on the shelf — sold thans
+  // are hidden entirely (point #3). Mark counters tally the available set.
+  const availableThans = summary.thans.filter((t) => t.status === 'available');
   let present = 0; let missing = 0; let unmarked = 0;
   const chipRows = [];
   let row = [];
-  for (const t of summary.thans) {
+  for (const t of availableThans) {
     const icon = markIcon(session, summary.packageNo, t.thanNo, t.status);
-    if (t.status === 'available') {
-      const m = session.marks[`${summary.packageNo}|${t.thanNo}`];
-      if (m === MARK_PRESENT) present += 1;
-      else if (m === MARK_MISSING) missing += 1;
-      else unmarked += 1;
-      row.push({ text: `${icon} #${t.thanNo} ${fmtQty(t.yards)}y`, callback_data: `wai:than:${t.thanNo}` });
-    } else {
-      row.push({ text: `${icon} #${t.thanNo}`, callback_data: 'wai:noop' });
-    }
+    const m = session.marks[`${summary.packageNo}|${t.thanNo}`];
+    if (m === MARK_PRESENT) present += 1;
+    else if (m === MARK_MISSING) missing += 1;
+    else unmarked += 1;
+    row.push({ text: `${icon} #${t.thanNo} ${fmtQty(t.yards)}y`, callback_data: `wai:than:${t.thanNo}` });
     if (row.length === THANS_PER_ROW) { chipRows.push(row); row = []; }
   }
   if (row.length) chipRows.push(row);
 
   const header =
     `📦 Bale ${summary.packageNo} — ${summary.design} · ${summary.shade}\n`
-    + `Indent: ${summary.indent || '—'} · ${summary.warehouse} · ${open ? '🟠 open' : '🟢 intact'}\n`
+    + `Indent: ${summary.indent || '—'} · ${summary.warehouse}\n`
     + (summary.pricePerYard ? `Price: ₦${fmtQty(summary.pricePerYard)}/yard\n` : '')
     + '\nTap a than: ⬜ → ✅ present → ❌ missing\n'
-    + `System available: ${summary.availableThans} · 🔴 sold: ${summary.soldThans}\n`
+    + `Available: ${summary.availableThans} thans · ${fmtQty(summary.availableYards)} yds\n`
     + `Verified — ✅ ${present} · ❌ ${missing} · ⬜ ${unmarked} unchecked`;
 
   const rows = chipRows.slice();
   rows.push([{ text: '📋 Reconciliation', callback_data: 'wai:recon' }]);
-  rows.push(backRow(session.skippedBaleList ? '⬅ Shades' : '⬅ Bales'));
+  rows.push(backRow(thanCardBackLabel(session)));
   rows.push(closeRow());
   await render(bot, chatId, userId, header, rows);
+}
+
+/**
+ * Back-button label for the than card. Depends on (a) whether the bale
+ * list was skipped, (b) whether we entered via a bale-mode Open drill.
+ */
+function thanCardBackLabel(session) {
+  if (session && session.auditMode === AUDIT_MODE_BALE) return '⬅ Bale';
+  if (session && session.skippedBaleList) return '⬅ Shades';
+  return '⬅ Bales';
 }
 
 /* ───────────────────────────── reconciliation ───────────────────────────── */
@@ -410,8 +538,29 @@ async function stepBack(bot, chatId, userId) {
       sessionStore.set(userId, session);
       await renderShadePicker(bot, chatId, userId);
       break;
-    case 'view_than':
+    case 'bale_choice':
+      // Back from the Closed/Open prompt: to the bale list (or shades
+      // when the list was skipped because the shade had only one bale).
       if (session.skippedBaleList) {
+        session.step = 'pick_shade';
+        session.packageNo = '';
+        sessionStore.set(userId, session);
+        await renderShadePicker(bot, chatId, userId);
+      } else {
+        session.step = 'view_bale';
+        session.packageNo = '';
+        sessionStore.set(userId, session);
+        await renderBaleList(bot, chatId, userId);
+      }
+      break;
+    case 'view_than':
+      if (session.auditMode === AUDIT_MODE_BALE) {
+        // In bale-mode the than card is the Open drill-down for one bale,
+        // so back returns to that bale's Closed/Open prompt.
+        session.step = 'bale_choice';
+        sessionStore.set(userId, session);
+        await renderBaleChoice(bot, chatId, userId);
+      } else if (session.skippedBaleList) {
         session.step = 'pick_shade';
         session.packageNo = '';
         sessionStore.set(userId, session);
@@ -464,6 +613,7 @@ async function handleCallback(bot, query) {
     const wh = (session._warehouses || [])[i];
     if (wh) {
       session.warehouse = wh;
+      session.auditMode = await getAuditMode(wh);
       session.step = 'pick_design';
       sessionStore.set(userId, session);
       await renderDesignPicker(bot, chatId, userId);
@@ -500,10 +650,54 @@ async function handleCallback(bot, query) {
     const b = (session._bales || [])[i];
     if (b) {
       session.packageNo = b.packageNo;
-      session.step = 'view_than';
-      sessionStore.set(userId, session);
-      await renderThanCard(bot, chatId, userId);
+      if (session.auditMode === AUDIT_MODE_BALE) {
+        session.step = 'bale_choice';
+        sessionStore.set(userId, session);
+        await renderBaleChoice(bot, chatId, userId);
+      } else {
+        session.step = 'view_than';
+        sessionStore.set(userId, session);
+        await renderThanCard(bot, chatId, userId);
+      }
     }
+    return true;
+  }
+
+  if (data === 'wai:closed') {
+    // Bale-mode shortcut: bale is sealed → mark all available thans of
+    // this bale as ✅ present implicitly, then go back to the bale list
+    // (or shades, if the list was skipped). NO inventory writes — pure
+    // session state, like every other mark in this flow.
+    if (session.auditMode !== AUDIT_MODE_BALE || !session.packageNo) return true;
+    const summary = await inventoryService.getPackageSummary(session.packageNo);
+    if (summary) {
+      for (const t of summary.thans) {
+        if (t.status === 'available') {
+          session.marks[`${session.packageNo}|${t.thanNo}`] = MARK_PRESENT;
+        }
+      }
+    }
+    if (session.skippedBaleList) {
+      session.step = 'pick_shade';
+      session.packageNo = '';
+      sessionStore.set(userId, session);
+      await renderShadePicker(bot, chatId, userId);
+    } else {
+      session.step = 'view_bale';
+      session.packageNo = '';
+      sessionStore.set(userId, session);
+      await renderBaleList(bot, chatId, userId);
+    }
+    return true;
+  }
+
+  if (data === 'wai:open') {
+    // Bale-mode drill-down: bale is partially open → fall into the
+    // than-card view restricted to this single bale's available thans.
+    if (session.auditMode !== AUDIT_MODE_BALE || !session.packageNo) return true;
+    session.step = 'view_than';
+    sessionStore.set(userId, session);
+    await renderThanCard(bot, chatId, userId);
     return true;
   }
 
@@ -527,7 +721,8 @@ module.exports = {
   handleCallback,
   _internals: {
     renderWarehousePicker, renderDesignPicker, renderShadePicker,
-    renderBaleList, renderThanCard, renderReconciliation, stepBack,
-    loadBales, markIcon, SESSION_TYPE,
+    renderBaleList, renderBaleChoice, renderThanCard, renderReconciliation,
+    stepBack, loadBales, markIcon, getAuditMode, baleAuditState, chunkButtons,
+    SESSION_TYPE, AUDIT_MODE_THAN, AUDIT_MODE_BALE, AUDIT_MODE_KEY_PREFIX,
   },
 };

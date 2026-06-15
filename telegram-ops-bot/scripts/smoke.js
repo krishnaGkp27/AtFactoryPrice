@@ -6018,25 +6018,32 @@ async function runS35() {
   if (ok4) pass('S35.4 markIcon: ✅ present / ❌ missing / ⬜ unmarked / 🔴 sold');
   else fail('S35.4 markIcon', 'icon mapping mismatch');
 
-  // S35.5 — loadBales orders front/LIFO (newest addedAt first) + flags open
+  // S35.5 — loadBales: drops fully-sold bales (audit hides sold), keeps
+  // partially-open bales with their available/total counts intact.
   const invRepo = require('../src/repositories/inventoryRepository');
   const origGetAll = invRepo.getAll;
   invRepo.getAll = async () => ([
-    // Bale 6205: 5 thans, 3 sold → open; older
+    // Bale 6205: 5 thans, 3 sold → 2 available (open); should appear
     { packageNo: '6205', design: '9006', shade: '6', thanNo: 1, yards: 30, status: 'available', warehouse: 'Kano office', addedAt: '2026-05-01', binLocation: '' },
     { packageNo: '6205', design: '9006', shade: '6', thanNo: 2, yards: 30, status: 'available', warehouse: 'Kano office', addedAt: '2026-05-01', binLocation: '' },
     { packageNo: '6205', design: '9006', shade: '6', thanNo: 3, yards: 30, status: 'sold', warehouse: 'Kano office', addedAt: '2026-05-01', binLocation: '' },
     { packageNo: '6205', design: '9006', shade: '6', thanNo: 4, yards: 30, status: 'sold', warehouse: 'Kano office', addedAt: '2026-05-01', binLocation: '' },
     { packageNo: '6205', design: '9006', shade: '6', thanNo: 5, yards: 30, status: 'sold', warehouse: 'Kano office', addedAt: '2026-05-01', binLocation: '' },
-    // Bale 6215: 5 thans available; newer → front
+    // Bale 6215: 5 thans, all available
     { packageNo: '6215', design: '9006', shade: '6', thanNo: 1, yards: 30, status: 'available', warehouse: 'Kano office', addedAt: '2026-05-20', binLocation: '' },
     { packageNo: '6215', design: '9006', shade: '6', thanNo: 2, yards: 30, status: 'available', warehouse: 'Kano office', addedAt: '2026-05-20', binLocation: '' },
+    // Bale 6300: 2 thans, all sold → must be EXCLUDED
+    { packageNo: '6300', design: '9006', shade: '6', thanNo: 1, yards: 30, status: 'sold', warehouse: 'Kano office', addedAt: '2026-04-01', binLocation: '' },
+    { packageNo: '6300', design: '9006', shade: '6', thanNo: 2, yards: 30, status: 'sold', warehouse: 'Kano office', addedAt: '2026-04-01', binLocation: '' },
   ]);
   try {
     const bales = await flow._internals.loadBales({ warehouse: 'Kano office', design: '9006', shade: '6' });
-    const orderOk = bales.length === 2 && bales[0].packageNo === '6215' && bales[1].packageNo === '6205';
-    const openOk = bales[1].available === 2 && bales[1].total === 5;
-    if (orderOk && openOk) pass('S35.5 loadBales: front/LIFO order (newest first) + open bale availability');
+    const pkgs = bales.map((b) => b.packageNo).sort();
+    const ok = bales.length === 2 && pkgs[0] === '6205' && pkgs[1] === '6215'
+      && !bales.some((b) => b.packageNo === '6300');
+    const openBale = bales.find((b) => b.packageNo === '6205');
+    const openOk = openBale && openBale.available === 2 && openBale.total === 5;
+    if (ok && openOk) pass('S35.5 loadBales: drops fully-sold bales; keeps partial open bales with counts');
     else fail('S35.5 loadBales', JSON.stringify(bales.map((b) => ({ p: b.packageNo, a: b.available, t: b.total }))));
   } finally {
     invRepo.getAll = origGetAll;
@@ -6083,6 +6090,168 @@ async function runS35() {
   } finally {
     sessionStore.clear(USER);
     invSvc.getPackageSummary = origSummary;
+  }
+
+  // S35.7 — getAuditMode reads Settings sheet; defaults to 'bale'
+  const settingsRepo = require('../src/repositories/settingsRepository');
+  const origSettings = settingsRepo.getAll;
+  settingsRepo.getAll = async () => ({ 'AUDIT_MODE.Kano office': 'than', 'AUDIT_MODE.Garbage': 'banana' });
+  try {
+    const a = await flow._internals.getAuditMode('Kano office');
+    const b = await flow._internals.getAuditMode('Lagos');
+    const c = await flow._internals.getAuditMode('Garbage');
+    if (a === 'than' && b === 'bale' && c === 'bale') {
+      pass('S35.7 getAuditMode: Settings AUDIT_MODE.<wh>=than honoured; missing/garbage default to bale');
+    } else {
+      fail('S35.7 getAuditMode', `a=${a} b=${b} c=${c}`);
+    }
+  } finally {
+    settingsRepo.getAll = origSettings;
+  }
+
+  // S35.8 — chunkButtons: 2-col grid layout
+  const c8 = flow._internals.chunkButtons([1, 2, 3, 4, 5], 2);
+  if (c8.length === 3 && c8[0].length === 2 && c8[2].length === 1 && c8[2][0] === 5) {
+    pass('S35.8 chunkButtons: rows of 2 with trailing odd item');
+  } else {
+    fail('S35.8 chunkButtons', JSON.stringify(c8));
+  }
+
+  // S35.9 — baleAuditState: untouched / in_progress / verified
+  const sn = { marks: {} };
+  const sip = { marks: { '6205|1': 'present' } };
+  const sv = { marks: { '6205|1': 'present', '6205|2': 'present' } };
+  const okState = flow._internals.baleAuditState(sn, '6205', 2) === 'untouched'
+    && flow._internals.baleAuditState(sip, '6205', 2) === 'in_progress'
+    && flow._internals.baleAuditState(sv, '6205', 2) === 'verified';
+  if (okState) pass('S35.9 baleAuditState: untouched / in_progress / verified transitions');
+  else fail('S35.9 baleAuditState', 'state transitions wrong');
+
+  // S35.10 — bale-mode tap routes to bale_choice; than-mode routes to view_than
+  const origSummary2 = invSvc.getPackageSummary;
+  invSvc.getPackageSummary = async () => ({
+    packageNo: '6201', indent: 'CV SIRO', design: '9006', shade: '4', warehouse: 'Lagos',
+    totalThans: 5, availableThans: 5, soldThans: 0, totalYards: 180, availableYards: 180, soldYards: 0,
+    pricePerYard: 400,
+    thans: [
+      { thanNo: 1, yards: 30, status: 'available', soldTo: null, soldDate: null },
+      { thanNo: 2, yards: 30, status: 'available', soldTo: null, soldDate: null },
+      { thanNo: 3, yards: 30, status: 'available', soldTo: null, soldDate: null },
+      { thanNo: 4, yards: 30, status: 'available', soldTo: null, soldDate: null },
+      { thanNo: 5, yards: 60, status: 'available', soldTo: null, soldDate: null },
+    ],
+  });
+  try {
+    // bale-mode
+    sessionStore.set(USER, {
+      type: flow._internals.SESSION_TYPE, step: 'view_bale', flowMessageId: 200,
+      warehouse: 'Lagos', auditMode: 'bale', design: '9006', shade: '4', packageNo: '',
+      skippedBaleList: false, marks: {}, _warehouses: [], _designs: [], _shades: [],
+      _bales: [{ packageNo: '6201', total: 5, available: 5 }],
+    });
+    await flow.handleCallback(fakeBot, { id: 'q', data: 'wai:bale:0', from: { id: USER }, message: { chat: { id: CHAT } } });
+    const stepBale = sessionStore.get(USER).step;
+    // than-mode
+    sessionStore.set(USER, {
+      type: flow._internals.SESSION_TYPE, step: 'view_bale', flowMessageId: 201,
+      warehouse: 'Kano office', auditMode: 'than', design: '9006', shade: '4', packageNo: '',
+      skippedBaleList: false, marks: {}, _warehouses: [], _designs: [], _shades: [],
+      _bales: [{ packageNo: '6201', total: 5, available: 5 }],
+    });
+    await flow.handleCallback(fakeBot, { id: 'q', data: 'wai:bale:0', from: { id: USER }, message: { chat: { id: CHAT } } });
+    const stepThan = sessionStore.get(USER).step;
+    if (stepBale === 'bale_choice' && stepThan === 'view_than') {
+      pass('S35.10 wai:bale routes to bale_choice in bale-mode and view_than in than-mode');
+    } else {
+      fail('S35.10 routing', `bale=${stepBale} than=${stepThan}`);
+    }
+  } finally {
+    sessionStore.clear(USER);
+    invSvc.getPackageSummary = origSummary2;
+  }
+
+  // S35.11 — wai:closed marks ALL available thans of the bale as 'present';
+  // sold thans are NOT marked.
+  const origSummary3 = invSvc.getPackageSummary;
+  invSvc.getPackageSummary = async () => ({
+    packageNo: '6201', indent: 'CV SIRO', design: '9006', shade: '4', warehouse: 'Lagos',
+    totalThans: 5, availableThans: 4, soldThans: 1, totalYards: 150, availableYards: 120, soldYards: 30,
+    pricePerYard: 400,
+    thans: [
+      { thanNo: 1, yards: 30, status: 'available', soldTo: null, soldDate: null },
+      { thanNo: 2, yards: 30, status: 'available', soldTo: null, soldDate: null },
+      { thanNo: 3, yards: 30, status: 'sold',      soldTo: 'X',  soldDate: '2026-05-01' },
+      { thanNo: 4, yards: 30, status: 'available', soldTo: null, soldDate: null },
+      { thanNo: 5, yards: 30, status: 'available', soldTo: null, soldDate: null },
+    ],
+  });
+  try {
+    sessionStore.set(USER, {
+      type: flow._internals.SESSION_TYPE, step: 'bale_choice', flowMessageId: 300,
+      warehouse: 'Lagos', auditMode: 'bale', design: '9006', shade: '4', packageNo: '6201',
+      skippedBaleList: false, marks: {}, _warehouses: [], _designs: [], _shades: [],
+      _bales: [{ packageNo: '6201', total: 5, available: 4 }],
+    });
+    // Stub repo so renderBaleList (post-Closed) can run without sheets calls.
+    const _origGetAll = invRepo.getAll;
+    invRepo.getAll = async () => ([]);
+    try {
+      await flow.handleCallback(fakeBot, { id: 'q', data: 'wai:closed', from: { id: USER }, message: { chat: { id: CHAT } } });
+    } finally {
+      invRepo.getAll = _origGetAll;
+    }
+    const m = sessionStore.get(USER).marks;
+    const okClosed = m['6201|1'] === 'present' && m['6201|2'] === 'present'
+      && m['6201|4'] === 'present' && m['6201|5'] === 'present'
+      && m['6201|3'] === undefined;
+    if (okClosed) pass('S35.11 wai:closed marks all 4 available thans as present; sold than untouched');
+    else fail('S35.11 wai:closed marks', JSON.stringify(m));
+  } finally {
+    sessionStore.clear(USER);
+    invSvc.getPackageSummary = origSummary3;
+  }
+
+  // S35.12 — than-mode: sold thans are dropped from chips, only available
+  // thans appear (and yield wai:than:N callbacks).
+  const origSummary4 = invSvc.getPackageSummary;
+  invSvc.getPackageSummary = async () => ({
+    packageNo: '6205', indent: 'CV', design: '9006', shade: '6', warehouse: 'Kano office',
+    totalThans: 5, availableThans: 2, soldThans: 3, totalYards: 150, availableYards: 60, soldYards: 90,
+    pricePerYard: 3416,
+    thans: [
+      { thanNo: 1, yards: 30, status: 'available', soldTo: null, soldDate: null },
+      { thanNo: 2, yards: 30, status: 'available', soldTo: null, soldDate: null },
+      { thanNo: 3, yards: 30, status: 'sold',      soldTo: 'A',  soldDate: '' },
+      { thanNo: 4, yards: 30, status: 'sold',      soldTo: 'B',  soldDate: '' },
+      { thanNo: 5, yards: 30, status: 'sold',      soldTo: 'C',  soldDate: '' },
+    ],
+  });
+  try {
+    let captured = null;
+    const captureBot = {
+      answerCallbackQuery: async () => {},
+      sendMessage: async (chatId, text, opts) => { captured = { text, opts }; return { message_id: 9 }; },
+      editMessageText: async (text, opts) => { captured = { text, opts }; return true; },
+    };
+    sessionStore.set(USER, {
+      type: flow._internals.SESSION_TYPE, step: 'view_than', flowMessageId: null,
+      warehouse: 'Kano office', auditMode: 'than', design: '9006', shade: '6', packageNo: '6205',
+      skippedBaleList: false, marks: {}, _warehouses: [], _designs: [], _shades: [], _bales: [{ packageNo: '6205' }],
+    });
+    await flow._internals.renderThanCard(captureBot, CHAT, USER);
+    const buttons = ((captured && captured.opts && captured.opts.reply_markup
+      && captured.opts.reply_markup.inline_keyboard) || []).flat();
+    const thanChips = buttons.filter((b) => String(b.callback_data || '').startsWith('wai:than:'));
+    const noopChips = buttons.filter((b) => b.callback_data === 'wai:noop');
+    const hasSoldEmoji = JSON.stringify(captured.text || '').includes('🔴');
+    if (thanChips.length === 2 && noopChips.length === 0 && !hasSoldEmoji) {
+      pass('S35.12 renderThanCard: sold thans hidden; only 2 available chips render; no sold counter in header');
+    } else {
+      fail('S35.12 sold-hidden', `than=${thanChips.length} noop=${noopChips.length} hasSold=${hasSoldEmoji}`);
+    }
+  } finally {
+    sessionStore.clear(USER);
+    invSvc.getPackageSummary = origSummary4;
   }
 }
 
