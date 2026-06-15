@@ -5969,6 +5969,124 @@ async function runS34() {
 }
 
 // ---------------------------------------------------------------------------
+// S35 — DBP-1.5 Concept A: Admin Warehouse Audit Picker (warehouseAuditFlow)
+// ---------------------------------------------------------------------------
+async function runS35() {
+  // S35.1 — activityRegistry: warehouse_audit tile in admin hub
+  delete require.cache[require.resolve('../src/services/activityRegistry')];
+  const reg = require('../src/services/activityRegistry');
+  const wa = reg.getByCallback('act:warehouse_audit');
+  if (wa && wa.code === 'warehouse_audit' && wa.hub === 'admin') {
+    pass('S35.1 activityRegistry: warehouse_audit in admin hub with act:warehouse_audit');
+  } else {
+    fail('S35.1 activityRegistry warehouse_audit', JSON.stringify(wa));
+  }
+
+  // S35.2 — config flag defaults ON; env=false flips it
+  delete require.cache[require.resolve('../src/config')];
+  const cfgOn = require('../src/config');
+  const defaultOn = cfgOn.warehouseAudit && cfgOn.warehouseAudit.enabled === true;
+  delete require.cache[require.resolve('../src/config')];
+  process.env.WAREHOUSE_AUDIT_ENABLED = 'false';
+  const cfgOff = require('../src/config');
+  const flipped = cfgOff.warehouseAudit && cfgOff.warehouseAudit.enabled === false;
+  delete process.env.WAREHOUSE_AUDIT_ENABLED;
+  delete require.cache[require.resolve('../src/config')];
+  require('../src/config');
+  if (defaultOn && flipped) {
+    pass('S35.2 config.warehouseAudit.enabled: default ON, WAREHOUSE_AUDIT_ENABLED=false flips off');
+  } else {
+    fail('S35.2 config flag', `defaultOn=${defaultOn} flipped=${flipped}`);
+  }
+
+  // S35.3 — flow module exports
+  delete require.cache[require.resolve('../src/flows/warehouseAuditFlow')];
+  const flow = require('../src/flows/warehouseAuditFlow');
+  if (typeof flow.start === 'function' && typeof flow.handleCallback === 'function' && flow._internals) {
+    pass('S35.3 warehouseAuditFlow: exports start + handleCallback + _internals');
+  } else {
+    fail('S35.3 warehouseAuditFlow exports', `keys=${Object.keys(flow).join(',')}`);
+  }
+
+  // S35.4 — markIcon: present/missing/unmarked/sold
+  const { markIcon } = flow._internals;
+  const sMarks = { marks: { '6205|1': 'present', '6205|2': 'missing' } };
+  const ok4 = markIcon(sMarks, '6205', 1, 'available') === '✅'
+    && markIcon(sMarks, '6205', 2, 'available') === '❌'
+    && markIcon(sMarks, '6205', 3, 'available') === '⬜'
+    && markIcon(sMarks, '6205', 4, 'sold') === '🔴';
+  if (ok4) pass('S35.4 markIcon: ✅ present / ❌ missing / ⬜ unmarked / 🔴 sold');
+  else fail('S35.4 markIcon', 'icon mapping mismatch');
+
+  // S35.5 — loadBales orders front/LIFO (newest addedAt first) + flags open
+  const invRepo = require('../src/repositories/inventoryRepository');
+  const origGetAll = invRepo.getAll;
+  invRepo.getAll = async () => ([
+    // Bale 6205: 5 thans, 3 sold → open; older
+    { packageNo: '6205', design: '9006', shade: '6', thanNo: 1, yards: 30, status: 'available', warehouse: 'Kano office', addedAt: '2026-05-01', binLocation: '' },
+    { packageNo: '6205', design: '9006', shade: '6', thanNo: 2, yards: 30, status: 'available', warehouse: 'Kano office', addedAt: '2026-05-01', binLocation: '' },
+    { packageNo: '6205', design: '9006', shade: '6', thanNo: 3, yards: 30, status: 'sold', warehouse: 'Kano office', addedAt: '2026-05-01', binLocation: '' },
+    { packageNo: '6205', design: '9006', shade: '6', thanNo: 4, yards: 30, status: 'sold', warehouse: 'Kano office', addedAt: '2026-05-01', binLocation: '' },
+    { packageNo: '6205', design: '9006', shade: '6', thanNo: 5, yards: 30, status: 'sold', warehouse: 'Kano office', addedAt: '2026-05-01', binLocation: '' },
+    // Bale 6215: 5 thans available; newer → front
+    { packageNo: '6215', design: '9006', shade: '6', thanNo: 1, yards: 30, status: 'available', warehouse: 'Kano office', addedAt: '2026-05-20', binLocation: '' },
+    { packageNo: '6215', design: '9006', shade: '6', thanNo: 2, yards: 30, status: 'available', warehouse: 'Kano office', addedAt: '2026-05-20', binLocation: '' },
+  ]);
+  try {
+    const bales = await flow._internals.loadBales({ warehouse: 'Kano office', design: '9006', shade: '6' });
+    const orderOk = bales.length === 2 && bales[0].packageNo === '6215' && bales[1].packageNo === '6205';
+    const openOk = bales[1].available === 2 && bales[1].total === 5;
+    if (orderOk && openOk) pass('S35.5 loadBales: front/LIFO order (newest first) + open bale availability');
+    else fail('S35.5 loadBales', JSON.stringify(bales.map((b) => ({ p: b.packageNo, a: b.available, t: b.total }))));
+  } finally {
+    invRepo.getAll = origGetAll;
+  }
+
+  // S35.6 — presence-mark cycle via handleCallback: unmarked → present → missing → cleared
+  const invSvc = require('../src/services/inventoryService');
+  const origSummary = invSvc.getPackageSummary;
+  invSvc.getPackageSummary = async () => ({
+    packageNo: '6205', indent: 'CV', design: '9006', shade: '6', warehouse: 'Kano office',
+    totalThans: 2, availableThans: 2, soldThans: 0, totalYards: 60, availableYards: 60, soldYards: 0,
+    pricePerYard: 3416,
+    thans: [
+      { thanNo: 1, yards: 30, status: 'available', soldTo: null, soldDate: null },
+      { thanNo: 2, yards: 30, status: 'available', soldTo: null, soldDate: null },
+    ],
+  });
+  const sessionStore = require('../src/utils/sessionStore');
+  const USER = '999999';
+  const CHAT = 111;
+  const fakeBot = {
+    answerCallbackQuery: async () => {},
+    sendMessage: async () => ({ message_id: 7 }),
+    editMessageText: async () => true,
+  };
+  const mkQuery = () => ({ id: 'q', data: 'wai:than:1', from: { id: USER }, message: { chat: { id: CHAT } } });
+  try {
+    sessionStore.set(USER, {
+      type: flow._internals.SESSION_TYPE, step: 'view_than', flowMessageId: 100,
+      warehouse: 'Kano office', design: '9006', shade: '6', packageNo: '6205',
+      skippedBaleList: false, marks: {}, _warehouses: [], _designs: [], _shades: [], _bales: [{ packageNo: '6205' }],
+    });
+    await flow.handleCallback(fakeBot, mkQuery());
+    const m1 = sessionStore.get(USER).marks['6205|1'];
+    await flow.handleCallback(fakeBot, mkQuery());
+    const m2 = sessionStore.get(USER).marks['6205|1'];
+    await flow.handleCallback(fakeBot, mkQuery());
+    const m3 = sessionStore.get(USER).marks['6205|1'];
+    if (m1 === 'present' && m2 === 'missing' && m3 === undefined) {
+      pass('S35.6 handleCallback wai:than cycles unmarked → present → missing → cleared');
+    } else {
+      fail('S35.6 mark cycle', `m1=${m1} m2=${m2} m3=${m3}`);
+    }
+  } finally {
+    sessionStore.clear(USER);
+    invSvc.getPackageSummary = origSummary;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -6013,6 +6131,7 @@ async function runS34() {
   try { runS32(); } catch (e) { fail('S32 unexpected error', e.message); }
   try { runS33(); } catch (e) { fail('S33 unexpected error', e.message); }
   try { await runS34(); } catch (e) { fail('S34 unexpected error', e.message); }
+  try { await runS35(); } catch (e) { fail('S35 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

@@ -121,6 +121,17 @@ const config = {
     overlayEnabled: (process.env.MARKETING_GROUP_OVERLAY_ENABLED || 'true').toLowerCase() !== 'false',
   },
 
+  /**
+   * DBP-1.5 Concept A — Admin Warehouse Audit Picker (spec:
+   * telegram-ops-bot/specs/dbp-1.5-than-bale-allocation.md §9A).
+   * Admin-only tappable bale -> than drill-down for self warehouse audit.
+   * Read/inspect only: presence marks live in session, NO inventory writes.
+   * Default ON; flip to false to hide the tile and short-circuit the flow.
+   */
+  warehouseAudit: {
+    enabled: (process.env.WAREHOUSE_AUDIT_ENABLED || 'true').toLowerCase() !== 'false',
+  },
+
   /** Optional: set BOT_API_KEY so admin page can update settings with X-API-Key header */
   botApiKey: process.env.BOT_API_KEY || '',
 

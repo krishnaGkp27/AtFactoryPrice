@@ -5862,6 +5862,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (handled) return;
   }
 
+  // DBP-1.5 Concept A — admin Warehouse Audit picker callbacks (wai:*).
+  if (data.startsWith('wai:')) {
+    const warehouseAuditFlow = require('../flows/warehouseAuditFlow');
+    const handled = await warehouseAuditFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
   // USR-C3 — Add Employee flow callbacks.
   if (data.startsWith('usr:')) {
     const userAddFlow = require('../flows/userAddFlow');
@@ -8176,6 +8183,15 @@ async function handleCallbackQuery(bot, callbackQuery) {
         // queue still enforces 2nd-admin review.
         const bundleSaleFlow = require('../flows/bundleSaleFlow');
         await bundleSaleFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'warehouse_audit': {
+        // DBP-1.5 Concept A — admin-only tappable bale->than audit picker
+        // (spec dbp-1.5-than-bale-allocation.md §9A). Read/inspect only;
+        // no inventory writes. Admin gate mirrors other admin-only tiles.
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        const warehouseAuditFlow = require('../flows/warehouseAuditFlow');
+        await warehouseAuditFlow.start(bot, chatId, uid, messageId);
         break;
       }
       case 'office_expense': {

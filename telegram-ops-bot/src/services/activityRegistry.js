@@ -149,6 +149,11 @@ const ACTIVITIES = [
   // T3 — admin read-only lens on the supply-order pipeline (Orders +
   // Customers + LedgerBalanceCache joined into one view).
   { code: 'sales_workflow_view',   label: 'Sales Workflow',            icon: '📊', callback: 'act:sales_workflow',     hub: 'admin' },
+  // DBP-1.5 Concept A — admin-only tappable bale->than warehouse audit
+  // picker (spec dbp-1.5-than-bale-allocation.md §9A). Read/inspect only,
+  // no inventory writes. Admin-only via the hub:'admin' tile + an isAdmin
+  // gate at launch; never listed in any department's allowed_activities.
+  { code: 'warehouse_audit',       label: 'Warehouse Audit',           icon: '🔍', callback: 'act:warehouse_audit',    hub: 'admin' },
   // P4 — admin Procurement Plan: low-stock alerts + open POs + new PO flow.
   // Visibility gated to admins in the controller; not listed in any
   // department's allowed_activities CSV.
