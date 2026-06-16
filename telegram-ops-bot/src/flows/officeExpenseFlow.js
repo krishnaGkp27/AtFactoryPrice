@@ -6,32 +6,40 @@
  * Batch entry of office expenses (water, fuel, sundries) by a branch
  * manager. Single anchored card (UX-C1), one TWO-FIELD form per item:
  *
- *   1. Title  — quick-pick from manager's last-30d most-used titles
- *                (8 max), or [✏️ Other] for free text
- *   2. Amount — number only (NGN)
+ *   1. Title  — adaptive quick-pick: a seed set of routine titles blended
+ *                with the manager's own most-used titles (time-decayed
+ *                frequency, see branchOpsService.rankExpenseTitles), or
+ *                [✏️ Other] for free text. As the manager logs expenses,
+ *                their real titles get promoted into the grid.
+ *   2. Amount — number only (NGN). For a previously-used title the manager
+ *                gets a one-tap "✓ ₦X (last time)" suggestion.
  *
  * After each item, manager sees the running batch + a single tap:
  *   [➕ Add another] [✅ Submit batch] [❌ Cancel]
  *
  * `✅ Submit batch` queues ONE approval row (action=record_office_expense)
- * carrying all items. Single-admin sign-off (WRITE_ACTIONS). After
- * approval, branchOpsService.applyExpenseBatch flips the eager pending
- * rows on BranchOpsLog to status=approved.
+ * carrying all items. Single-admin sign-off (WRITE_ACTIONS); the admin
+ * card lists every item so a typo is visible and can be corrected on the
+ * BranchOpsLog sheet before approving (approval only flips status, never
+ * rewrites subject/amount). After approval, branchOpsService.applyExpenseBatch
+ * flips the eager pending rows on BranchOpsLog to status=approved.
  *
  * Session shape (type: 'office_expense_flow'):
  *   {
  *     step:           'pick_title' | 'free_title' | 'amount' | 'review',
  *     flowMessageId,  startedAt,
  *     items:          [{ title, amount }],
- *     pendingTitle:   string,   // mid-form state
- *     recentTitles:   string[], // loaded once at start (cached for the session)
+ *     pendingTitle:   string,        // mid-form state
+ *     pendingAmount:  number|null,   // last-used amount for pendingTitle (suggestion)
+ *     quickPicks:     [{ title, lastAmount }], // loaded once at start
  *   }
  *
  * Callback namespace `ofex:*`:
  *   ofex:cancel
  *   ofex:back
- *   ofex:pick:<index>      pick a recent title by index
+ *   ofex:pick:<index>      pick a quick-pick title by index
  *   ofex:other             free-text title
+ *   ofex:useamt            accept the suggested (last-used) amount
  *   ofex:add_more
  *   ofex:submit
  *   ofex:undo              remove last item from the batch
@@ -39,12 +47,12 @@
 
 const sessionStore = require('../utils/sessionStore');
 const branchOpsService = require('../services/branchOpsService');
-const branchOpsLogRepository = require('../repositories/branchOpsLogRepository');
 const approvalEvents = require('../events/approvalEvents');
 const auth = require('../middlewares/auth');
 const logger = require('../utils/logger');
 
 const MAX_ITEMS = 20;
+const MAX_CARD_ITEMS = 15;  // cap item lines shown on the admin approval card
 
 // ---------------------------------------------------------------------------
 // Rendering helpers
@@ -93,8 +101,8 @@ function escapeMd(s) {
 // ---------------------------------------------------------------------------
 
 async function start(bot, chatId, userId, messageId) {
-  const recent = await branchOpsLogRepository
-    .getRecentExpenseTitles(String(userId), { days: 30, limit: 8 })
+  const quickPicks = await branchOpsService
+    .getExpenseQuickPicks(String(userId))
     .catch(() => []);
   sessionStore.set(userId, {
     type: 'office_expense_flow',
@@ -102,7 +110,8 @@ async function start(bot, chatId, userId, messageId) {
     flowMessageId: messageId || null,
     items: [],
     pendingTitle: '',
-    recentTitles: recent || [],
+    pendingAmount: null,
+    quickPicks: quickPicks || [],
     startedAt: new Date().toISOString(),
   });
   await renderTitlePicker(bot, chatId, userId);
@@ -117,12 +126,13 @@ async function renderTitlePicker(bot, chatId, userId) {
   if (!session) return;
 
   const rows = [];
-  if (session.recentTitles && session.recentTitles.length) {
-    // Two-per-row chips for the recent titles.
-    for (let i = 0; i < session.recentTitles.length; i += 2) {
-      const r = [{ text: session.recentTitles[i].slice(0, 30), callback_data: `ofex:pick:${i}` }];
-      if (session.recentTitles[i + 1]) {
-        r.push({ text: session.recentTitles[i + 1].slice(0, 30), callback_data: `ofex:pick:${i + 1}` });
+  const picks = session.quickPicks || [];
+  if (picks.length) {
+    // Two-per-row chips for the adaptive quick-pick titles.
+    for (let i = 0; i < picks.length; i += 2) {
+      const r = [{ text: picks[i].title.slice(0, 30), callback_data: `ofex:pick:${i}` }];
+      if (picks[i + 1]) {
+        r.push({ text: picks[i + 1].title.slice(0, 30), callback_data: `ofex:pick:${i + 1}` });
       }
       rows.push(r);
     }
@@ -142,13 +152,11 @@ async function renderTitlePicker(bot, chatId, userId) {
     const total = session.items.reduce((s, it) => s + it.amount, 0);
     lines.push(`  *Total: ₦${fmtNgn(total)}*`);
     lines.push('');
-    lines.push('Add another expense — pick a frequent title or type a new one:');
+    lines.push('Add another expense — pick a routine title or type a new one:');
+  } else if (picks.length) {
+    lines.push('Pick a routine expense, or tap *✏️ Other* to type a new one:');
   } else {
-    if (session.recentTitles.length) {
-      lines.push('Pick a frequent title (your last 30 days), or tap *✏️ Other* to type a new one:');
-    } else {
-      lines.push('Tap *✏️ Other* to type the first expense title.');
-    }
+    lines.push('Tap *✏️ Other* to type the first expense title.');
   }
   await render(bot, chatId, userId, lines.join('\n'), rows);
 }
@@ -156,9 +164,10 @@ async function renderTitlePicker(bot, chatId, userId) {
 async function pickTitle(bot, chatId, userId, idx) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const title = session.recentTitles[idx];
-  if (!title) { await renderError(bot, chatId, userId, 'That option is no longer available — pick another.'); return; }
-  session.pendingTitle = title;
+  const pick = (session.quickPicks || [])[idx];
+  if (!pick) { await renderError(bot, chatId, userId, 'That option is no longer available — pick another.'); return; }
+  session.pendingTitle = pick.title;
+  session.pendingAmount = pick.lastAmount != null && pick.lastAmount > 0 ? pick.lastAmount : null;
   session.step = 'amount';
   sessionStore.set(userId, session);
   await renderAmountStep(bot, chatId, userId);
@@ -187,13 +196,20 @@ async function startFreeTitle(bot, chatId, userId) {
 async function renderAmountStep(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
+  const rows = [];
+  const suggest = session.pendingAmount;
+  if (suggest != null && suggest > 0) {
+    rows.push([{ text: `✓ ₦${fmtNgn(suggest)} (last time)`, callback_data: 'ofex:useamt' }]);
+  }
+  rows.push(backRow());
+  rows.push(cancelRow());
+  const hint = suggest != null && suggest > 0
+    ? 'Reply with the *amount in NGN*, or tap your usual below.'
+    : 'Reply with the *amount in NGN*.';
   await render(bot, chatId, userId,
     `💸 *${escapeMd(session.pendingTitle)}*\n\n`
-    + 'Reply with the *amount in NGN*.\nExample: `800`  (no commas, no ₦ symbol)',
-    [
-      backRow(),
-      cancelRow(),
-    ],
+    + `${hint}\nExample: \`800\`  (no commas, no ₦ symbol)`,
+    rows,
   );
 }
 
@@ -213,6 +229,7 @@ async function handleText(bot, msg) {
     const title = raw.slice(0, branchOpsService.MAX_EXPENSE_TITLE_LEN);
     if (!title) { await renderError(bot, chatId, userId, 'Title cannot be empty.'); return true; }
     session.pendingTitle = title;
+    session.pendingAmount = null;  // free-text title — no learned suggestion
     session.step = 'amount';
     sessionStore.set(userId, session);
     await renderAmountStep(bot, chatId, userId);
@@ -225,22 +242,38 @@ async function handleText(bot, msg) {
       await renderError(bot, chatId, userId, `Amount must be > 0 and ≤ ₦${branchOpsService.MAX_EXPENSE_AMOUNT.toLocaleString()}.`);
       return true;
     }
-    const amount = +v.toFixed(2);
-    session.items.push({ title: session.pendingTitle, amount });
-    session.pendingTitle = '';
-    if (session.items.length >= MAX_ITEMS) {
-      session.step = 'review';
-      sessionStore.set(userId, session);
-      await renderReview(bot, chatId, userId);
-      return true;
-    }
-    session.step = 'pick_title';
-    sessionStore.set(userId, session);
-    await renderTitlePicker(bot, chatId, userId);
+    await commitItem(bot, chatId, userId, +v.toFixed(2));
     return true;
   }
 
   return false;
+}
+
+/**
+ * Append the pending {title, amount} to the batch and route to the next
+ * screen (review once MAX_ITEMS is hit, else back to the title picker).
+ * Shared by the typed-amount path and the one-tap "use last amount" button.
+ *
+ * @param {object} bot Telegram bot
+ * @param {number|string} chatId
+ * @param {string} userId
+ * @param {number} amount validated NGN amount
+ */
+async function commitItem(bot, chatId, userId, amount) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.items.push({ title: session.pendingTitle, amount });
+  session.pendingTitle = '';
+  session.pendingAmount = null;
+  if (session.items.length >= MAX_ITEMS) {
+    session.step = 'review';
+    sessionStore.set(userId, session);
+    await renderReview(bot, chatId, userId);
+    return;
+  }
+  session.step = 'pick_title';
+  sessionStore.set(userId, session);
+  await renderTitlePicker(bot, chatId, userId);
 }
 
 // ---------------------------------------------------------------------------
@@ -277,13 +310,22 @@ async function submit(bot, chatId, userId) {
     return;
   }
   try {
-    const { requestId, branch, total } = await branchOpsService.submitExpenseBatch({
+    const { requestId, branch, total, items } = await branchOpsService.submitExpenseBatch({
       userId, items: session.items,
     });
     const isAdm = auth.isAdmin(userId);
     const excludeId = isAdm ? userId : undefined;
+    // Itemise the admin card so a spelling mistake is visible: the admin
+    // can correct the title/amount on the BranchOpsLog sheet before
+    // approving (approval only flips status, never rewrites the cells).
+    const itemLines = (items || session.items).map((it) => `• ${it.title} — ₦${fmtNgn(it.amount)}`);
+    const shown = itemLines.length > MAX_CARD_ITEMS
+      ? itemLines.slice(0, MAX_CARD_ITEMS).concat([`…and ${itemLines.length - MAX_CARD_ITEMS} more`])
+      : itemLines;
+    const cardSummary = `💸 Office expenses (${branch}) — ${itemLines.length} item(s), ₦${fmtNgn(total)}\n`
+      + `${shown.join('\n')}`;
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, String(userId),
-      `💸 Office expenses (${branch}): ${session.items.length} items · ₦${fmtNgn(total)}`,
+      cardSummary,
       'record_office_expense single-admin sign-off', excludeId);
 
     await render(bot, chatId, userId,
@@ -348,6 +390,15 @@ async function handleCallback(bot, query) {
     await pickTitle(bot, chatId, userId, idx);
     return true;
   }
+  if (data === 'ofex:useamt') {
+    const amt = session.pendingAmount;
+    if (session.step !== 'amount' || amt == null || !(amt > 0)) {
+      await renderError(bot, chatId, userId, 'No suggested amount — please type the amount.');
+      return true;
+    }
+    await commitItem(bot, chatId, userId, +Number(amt).toFixed(2));
+    return true;
+  }
   if (data === 'ofex:submit') {
     await submit(bot, chatId, userId);
     return true;
@@ -367,6 +418,7 @@ async function stepBack(bot, chatId, userId) {
     case 'amount':
       session.step = 'pick_title';
       session.pendingTitle = '';
+      session.pendingAmount = null;
       sessionStore.set(userId, session);
       await renderTitlePicker(bot, chatId, userId);
       break;

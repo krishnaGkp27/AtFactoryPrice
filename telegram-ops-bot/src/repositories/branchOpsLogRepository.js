@@ -132,6 +132,30 @@ async function getRecentExpenseTitles(managerId, { days = 30, limit = 8 } = {}) 
 }
 
 /**
+ * Pull this manager's expense rows (title + amount + date) within the
+ * last `days` days, for the Office Expense flow's adaptive quick-pick
+ * ranking. Excludes rejected rows — we only learn from expenses the
+ * manager actually intends to keep. Most-recent-first.
+ *
+ * @param {string} managerId
+ * @param {{days?: number}} [opts]
+ * @returns {Promise<Array<{title: string, amount: number, date: string}>>}
+ */
+async function getExpenseHistory(managerId, { days = 90 } = {}) {
+  const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000)
+    .toISOString().slice(0, 10);
+  const all = await getAll();
+  return all
+    .filter((r) => r.kind === 'expense'
+      && r.manager_id === String(managerId)
+      && r.date >= cutoff
+      && r.subject
+      && r.status !== 'rejected')
+    .map((r) => ({ title: r.subject, amount: r.amount, date: r.date }))
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+}
+
+/**
  * Generic append. Caller is responsible for setting `kind`, `status`,
  * etc. — we just stamp op_id and timestamps.
  */
@@ -215,6 +239,7 @@ module.exports = {
   findByApprovalRequestId,
   isDayOpen,
   getRecentExpenseTitles,
+  getExpenseHistory,
   append,
   appendMany,
   updateStatusByApprovalRequestId,

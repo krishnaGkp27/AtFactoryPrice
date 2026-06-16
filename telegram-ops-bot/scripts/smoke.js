@@ -4644,6 +4644,14 @@ async function runS28() {
       }
       return out;
     },
+    getExpenseHistory: async (managerId, { days = 90 } = {}) => {
+      const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      return stubs28.bopsRows
+        .filter((r) => r.kind === 'expense' && r.manager_id === String(managerId)
+          && r.date >= cutoff && r.subject && r.status !== 'rejected')
+        .map((r) => ({ title: r.subject, amount: r.amount, date: r.date }))
+        .sort((a, b) => (a.date < b.date ? 1 : -1));
+    },
     append: async (row) => { const r = nextRow(row); stubs28.bopsRows.push(r); return r; },
     appendMany: async (rows) => {
       const out = []; for (const row of rows) { const r = nextRow(row); stubs28.bopsRows.push(r); out.push(r); } return out;
@@ -4818,6 +4826,56 @@ async function runS28() {
   if (lowered.length === new Set(lowered).size && lowered.includes('water for mr adamu')) {
     pass('S28.15 getRecentExpenseTitles: dedup case-insensitive, most-recent kept');
   } else fail('S28.15', JSON.stringify(recent15));
+
+  // ---- S28.16: rankExpenseTitles — empty history returns seeds only ----
+  const NOW16 = Date.parse('2026-06-16T00:00:00Z');
+  const rank16 = bopsSvc.rankExpenseTitles([], { now: NOW16 });
+  const seedSet16 = new Set(bopsSvc.SEED_EXPENSE_TITLES);
+  if (rank16.length === bopsSvc.SEED_EXPENSE_TITLES.length
+      && rank16.every((e) => seedSet16.has(e.title))
+      && rank16.every((e) => e.lastAmount === null)) {
+    pass('S28.16 rankExpenseTitles: empty history → seed titles only, no amount');
+  } else fail('S28.16', JSON.stringify(rank16));
+
+  // ---- S28.17: frequent+recent title outranks old single-use; dedup + lastAmount ----
+  const hist17 = [
+    // "Bike fuel" used 3x recently (incl. most recent amount 1500)
+    { title: 'Bike fuel', amount: 1200, date: '2026-06-10' },
+    { title: 'bike fuel', amount: 1300, date: '2026-06-12' },
+    { title: 'Bike fuel', amount: 1500, date: '2026-06-15' },
+    // "Old toner" used once, ~80 days ago
+    { title: 'Old toner', amount: 9000, date: '2026-03-28' },
+  ];
+  const rank17 = bopsSvc.rankExpenseTitles(hist17, { now: NOW16 });
+  const bike17 = rank17.find((e) => e.title.toLowerCase() === 'bike fuel');
+  const old17 = rank17.find((e) => e.title.toLowerCase() === 'old toner');
+  if (bike17 && old17
+      && rank17.filter((e) => e.title.toLowerCase() === 'bike fuel').length === 1  // dedup
+      && bike17.title === 'Bike fuel'                                              // most-recent casing
+      && bike17.lastAmount === 1500                                               // most-recent amount
+      && bike17.score > old17.score                                              // frequent+recent wins
+      && rank17[0].title === 'Bike fuel') {                                       // and ranks first overall
+    pass('S28.17 rankExpenseTitles: time-decayed frequency ranks bike fuel #1, dedup, lastAmount=1500');
+  } else fail('S28.17', JSON.stringify({ bike17, old17, top: rank17[0] }));
+
+  // ---- S28.18: maxTitles cap is respected ----
+  const many18 = Array.from({ length: 25 }, (_, i) => ({ title: `T${i}`, amount: 100 + i, date: '2026-06-15' }));
+  const rank18 = bopsSvc.rankExpenseTitles(many18, { now: NOW16, maxTitles: 10 });
+  if (rank18.length === 10) pass('S28.18 rankExpenseTitles: caps at maxTitles');
+  else fail('S28.18', String(rank18.length));
+
+  // ---- S28.19: getExpenseQuickPicks integrates repo history + seeds ----
+  // Manager 5001 already has expense rows from earlier sub-tests; quick
+  // picks must be objects {title,lastAmount} and include the seed set.
+  const picks19 = await bopsSvc.getExpenseQuickPicks('5001', { now: NOW16 });
+  const titles19 = new Set(picks19.map((p) => p.title.toLowerCase()));
+  const seedsPresent19 = bopsSvc.SEED_EXPENSE_TITLES.every((s) => titles19.has(s.toLowerCase()));
+  if (picks19.length > 0
+      && picks19.every((p) => typeof p.title === 'string' && ('lastAmount' in p))
+      && picks19.length <= bopsSvc.MAX_QUICK_PICK_TITLES
+      && seedsPresent19) {
+    pass('S28.19 getExpenseQuickPicks: {title,lastAmount} objects, seeds present, capped');
+  } else fail('S28.19', JSON.stringify(picks19));
 
   // ---- Cleanup ----
   for (const p of [

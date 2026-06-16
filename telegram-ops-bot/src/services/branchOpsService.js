@@ -45,6 +45,25 @@ const MAX_EXPENSE_TITLE_LEN = 80;
 const MAX_EXPENSE_ITEMS = 20;               // per batch
 const MAX_OPENING_CASH = 50_000_000;        // ₦50M sanity ceiling
 
+// BR-OPS C1 — adaptive Office-Expense quick-pick.
+// Seed titles give a brand-new manager tappable chips on day one; as the
+// manager logs their own expenses, time-decayed frequency promotes their
+// real titles into the grid and rarely-tapped seeds fall away. Titles are
+// stored verbatim in BranchOpsLog.subject — no new column, no redundancy.
+const SEED_EXPENSE_TITLES = [
+  'Fuel',
+  'Transportation',
+  'Office Supplies',
+  'Water / Refreshment',
+  'Repairs / Maintenance',
+  'Generator / Diesel',
+];
+const TITLE_DECAY_HALF_LIFE_DAYS = 30;  // a use loses half its weight every 30 days
+const TITLE_HISTORY_WINDOW_DAYS = 90;   // ignore expenses older than this
+const MAX_QUICK_PICK_TITLES = 10;       // chips shown in the picker grid
+const SEED_BASE_SCORE = 0.25;           // floor score so seeds always rank above nothing
+const DAY_MS = 24 * 3600 * 1000;
+
 function todayInTz(tz = 'Africa/Lagos') {
   // Mirrors attendanceService.todayInTz to keep "today" definition
   // consistent across morning routines.
@@ -271,6 +290,88 @@ async function logPointer({ kind, userId, ref_id, subject, amount, photo_url, no
 }
 
 /**
+ * Pure adaptive ranking of expense titles for the quick-pick grid.
+ *
+ * Each past use of a title contributes 0.5 ^ (ageDays / halfLifeDays) to
+ * that title's score, so frequent + recent titles rank highest and stale
+ * ones fade. Seed titles are guaranteed a baseline score so they always
+ * appear for a manager with little/no history, but a genuinely-used title
+ * outranks an untouched seed. Titles are grouped case-insensitively; the
+ * most-recent casing + amount are surfaced (last amount feeds the
+ * one-tap suggestion on the amount step).
+ *
+ * @param {Array<{title: string, amount: number, date: string}>} history
+ * @param {{now?: number, seed?: string[], halfLifeDays?: number,
+ *          windowDays?: number, maxTitles?: number, seedBase?: number}} [opts]
+ * @returns {Array<{title: string, lastAmount: number|null, score: number}>}
+ */
+function rankExpenseTitles(history, opts = {}) {
+  const now = opts.now == null ? Date.now() : opts.now;
+  const seed = opts.seed || SEED_EXPENSE_TITLES;
+  const halfLifeDays = opts.halfLifeDays || TITLE_DECAY_HALF_LIFE_DAYS;
+  const windowDays = opts.windowDays || TITLE_HISTORY_WINDOW_DAYS;
+  const maxTitles = opts.maxTitles || MAX_QUICK_PICK_TITLES;
+  const seedBase = opts.seedBase == null ? SEED_BASE_SCORE : opts.seedBase;
+
+  const byKey = new Map(); // lowerTitle -> { title, score, lastAmount, lastTs }
+  for (const row of (history || [])) {
+    const title = String(row.title || '').trim();
+    if (!title) continue;
+    const ts = new Date(`${row.date}T00:00:00Z`).getTime();
+    if (!isFinite(ts)) continue;
+    const ageDays = (now - ts) / DAY_MS;
+    if (ageDays > windowDays) continue;
+    const weight = Math.pow(0.5, Math.max(0, ageDays) / halfLifeDays);
+    const key = title.toLowerCase();
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, { title, score: weight, lastAmount: row.amount == null ? null : Number(row.amount), lastTs: ts });
+    } else {
+      prev.score += weight;
+      if (ts >= prev.lastTs) {
+        prev.lastTs = ts;
+        prev.title = title;
+        prev.lastAmount = row.amount == null ? null : Number(row.amount);
+      }
+    }
+  }
+
+  // Guarantee seed titles a baseline score so they always have a chip.
+  for (const s of seed) {
+    const key = String(s).toLowerCase();
+    const prev = byKey.get(key);
+    if (!prev) byKey.set(key, { title: s, score: seedBase, lastAmount: null, lastTs: 0 });
+    else if (prev.score < seedBase) prev.score = seedBase;
+  }
+
+  return Array.from(byKey.values())
+    .sort((a, b) => (b.score - a.score) || (b.lastTs - a.lastTs) || a.title.localeCompare(b.title))
+    .slice(0, maxTitles)
+    .map((e) => ({ title: e.title, lastAmount: e.lastAmount, score: +e.score.toFixed(4) }));
+}
+
+/**
+ * Resolve the adaptive quick-pick titles (each with its last-used amount)
+ * for a manager's Office Expense picker. Reads the manager's own expense
+ * history and blends it with the seed list via rankExpenseTitles. Falls
+ * back to seeds-only if the history read fails.
+ *
+ * @param {string} userId
+ * @param {{now?: number}} [opts]
+ * @returns {Promise<Array<{title: string, lastAmount: number|null}>>}
+ */
+async function getExpenseQuickPicks(userId, opts = {}) {
+  let history = [];
+  try {
+    history = await branchOpsLogRepository.getExpenseHistory(String(userId), { days: TITLE_HISTORY_WINDOW_DAYS });
+  } catch (e) {
+    logger.warn(`branchOps.getExpenseQuickPicks(${userId}): ${e.message} — seeds only`);
+  }
+  return rankExpenseTitles(history, { now: opts.now || Date.now() })
+    .map((e) => ({ title: e.title, lastAmount: e.lastAmount }));
+}
+
+/**
  * Roll-up for the manager's "Today" card and the weekly finance read.
  * Tallies opening cash + approved/pending expenses + counts of
  * pointer rows (samples, receipts, customers, marketers).
@@ -317,10 +418,17 @@ module.exports = {
   logPointer,
   getDailySummary,
   validateExpenseItems,
+  rankExpenseTitles,
+  getExpenseQuickPicks,
   todayInTz,
   // tunable constants — exposed for smoke
   MAX_EXPENSE_AMOUNT,
   MAX_EXPENSE_TITLE_LEN,
   MAX_EXPENSE_ITEMS,
   MAX_OPENING_CASH,
+  SEED_EXPENSE_TITLES,
+  TITLE_DECAY_HALF_LIFE_DAYS,
+  TITLE_HISTORY_WINDOW_DAYS,
+  MAX_QUICK_PICK_TITLES,
+  SEED_BASE_SCORE,
 };
