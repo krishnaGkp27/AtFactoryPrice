@@ -51,7 +51,7 @@ function fmtDate(iso) {
 
 function navFooterRow() {
   return [
-    { text: '⬅ Back to Admin', callback_data: 'act:__hub__:admin' },
+    { text: '⬅ Back to Reporting', callback_data: 'act:__hub__:reporting' },
     { text: '🏠 Menu',          callback_data: 'act:__back__' },
   ];
 }
@@ -59,7 +59,7 @@ function navFooterRow() {
 function listNavRow() {
   return [
     { text: '🔄 Refresh',       callback_data: 'swv:list' },
-    { text: '⬅ Back to Admin', callback_data: 'act:__hub__:admin' },
+    { text: '⬅ Back to Reporting', callback_data: 'act:__hub__:reporting' },
   ];
 }
 

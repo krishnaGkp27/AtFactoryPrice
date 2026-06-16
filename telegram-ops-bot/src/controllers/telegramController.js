@@ -4808,9 +4808,14 @@ async function renderHubSubmenu(bot, chatId, messageId, userId, hubId) {
   } catch (e) {
     logger.warn(`renderHubSubmenu: taskFlow visibility failed: ${e.message}`);
   }
-  const subs = allowed.filter((a) => a.hub === hubId);
+  // A hub renders its visible child sub-hubs (each holding ≥1 allowed
+  // activity) PLUS the activities that sit directly on it. Sub-hub tiles
+  // re-enter this same handler via act:__hub__:<childId>.
+  const childHubs = activityRegistry.getChildHubs(hubId)
+    .filter((ch) => allowed.some((a) => a.hub === ch.id));
+  const directSubs = allowed.filter((a) => a.hub === hubId);
 
-  if (!subs.length) {
+  if (!childHubs.length && !directSubs.length) {
     await bot.editMessageText(`${hub.icon} *${hub.label}*\n\n_No actions available in this section._`, {
       chat_id: chatId,
       message_id: messageId,
@@ -4821,17 +4826,35 @@ async function renderHubSubmenu(bot, chatId, messageId, userId, hubId) {
   }
 
   const counts = await userPrefsRepo.getCountsForUser(userId);
-  const sorted = [...subs].sort((a, b) => (counts[b.code] || 0) - (counts[a.code] || 0));
+  // Unified, usage-sorted entry list: sub-hub tiles + direct actions.
+  const entries = [];
+  for (const ch of childHubs) {
+    const agg = allowed
+      .filter((a) => a.hub === ch.id)
+      .reduce((s, a) => s + (counts[a.code] || 0), 0);
+    entries.push({ kind: 'hub', hub: ch, count: agg });
+  }
+  for (const a of directSubs) {
+    entries.push({ kind: 'activity', activity: a, count: counts[a.code] || 0 });
+  }
+  entries.sort((a, b) => b.count - a.count);
 
   const rows = [];
-  for (let i = 0; i < sorted.length; i += 2) {
-    const row = [{ text: `${sorted[i].icon} ${sorted[i].label}`, callback_data: sorted[i].callback }];
-    if (sorted[i + 1]) {
-      row.push({ text: `${sorted[i + 1].icon} ${sorted[i + 1].label}`, callback_data: sorted[i + 1].callback });
-    }
+  for (let i = 0; i < entries.length; i += 2) {
+    const row = [entryToButton(entries[i])];
+    if (entries[i + 1]) row.push(entryToButton(entries[i + 1]));
     rows.push(row);
   }
-  rows.push([{ text: '⬅ Back', callback_data: 'act:__back__' }]);
+  // Back goes to the parent module for a sub-hub, else to the greeting menu.
+  if (hub.parent) {
+    const parent = activityRegistry.getHub(hub.parent);
+    rows.push([
+      { text: `⬅ ${parent ? parent.label : 'Back'}`, callback_data: `act:__hub__:${hub.parent}` },
+      { text: '🏠 Menu', callback_data: 'act:__back__' },
+    ]);
+  } else {
+    rows.push([{ text: '⬅ Back', callback_data: 'act:__back__' }]);
+  }
 
   await bot.editMessageText(`${hub.icon} *${hub.label}*\n\nPick an action:`, {
     chat_id: chatId,

@@ -1571,8 +1571,8 @@ async function runS14c() {
   const a = reg.getActivity('bulk_receive_goods');
   // Label renamed to 'Add Stock (CSV)' in TCSI-2 (M1 sub-menu). Code +
   // callback preserved for permissions / approval-history compatibility.
-  if (a && a.hub === 'stock' && a.callback === 'act:bulk_receive_goods' && /Add Stock/i.test(a.label)) {
-    pass('S14c.2 activityRegistry: bulk_receive_goods in stock hub with correct callback');
+  if (a && a.hub === 'stock_add' && a.callback === 'act:bulk_receive_goods' && /Add Stock/i.test(a.label)) {
+    pass('S14c.2 activityRegistry: bulk_receive_goods in stock_add hub with correct callback');
   } else fail('S14c.2 activityRegistry', JSON.stringify(a));
 
   // S14c.3 — flow.parseBuffer routes by extension
@@ -2256,10 +2256,10 @@ async function runS15c() {
     : (activityRegistry.ACTIVITIES || activityRegistry);
   const list = Array.isArray(acts) ? acts : Object.values(acts);
   const photoAct = list.find((a) => a && a.code === 'photo_receive_goods');
-  if (photoAct && photoAct.hub === 'stock'
+  if (photoAct && photoAct.hub === 'stock_add'
       && photoAct.callback === 'act:photo_receive_goods'
       && photoAct.icon === '📷') {
-    pass('S15c.1 activityRegistry: photo_receive_goods registered in stock hub with 📷 icon');
+    pass('S15c.1 activityRegistry: photo_receive_goods registered in stock_add hub with 📷 icon');
   } else fail('S15c.1 activity registered', JSON.stringify(photoAct));
 
   // S15c.2 — reviewProgress aggregates row states correctly
@@ -2640,8 +2640,8 @@ async function runS16() {
   const idxAdd = flat.findIndex((a) => a.code === 'add_warehouse');
   const idxManage = flat.findIndex((a) => a.code === 'manage_warehouses');
   if (idxAdd >= 0 && idxManage >= 0 && idxAdd < idxManage
-      && flat[idxAdd].callback === 'act:add_warehouse' && flat[idxAdd].hub === 'admin') {
-    pass('S16.8 activityRegistry: Add Warehouse in admin hub, just before Manage Warehouses');
+      && flat[idxAdd].callback === 'act:add_warehouse' && flat[idxAdd].hub === 'warehouses') {
+    pass('S16.8 activityRegistry: Add Warehouse in warehouses hub, just before Manage Warehouses');
   } else fail('S16.8', JSON.stringify({ idxAdd, idxManage, entry: flat[idxAdd] }));
 
   // S16.9 — dedup bug fix: name existing ONLY in Inventory is rejected by service handler
@@ -2924,8 +2924,8 @@ async function runS19() {
   const idxAdd = flat.findIndex((a) => a.code === 'add_user');
   const idxMU = flat.findIndex((a) => a.code === 'manage_users');
   if (idxAdd >= 0 && idxMU >= 0 && idxAdd < idxMU
-      && flat[idxAdd].callback === 'act:add_user' && flat[idxAdd].hub === 'admin') {
-    pass('S19.2 activityRegistry: Add Employee in admin hub, just before Manage Users');
+      && flat[idxAdd].callback === 'act:add_user' && flat[idxAdd].hub === 'hr') {
+    pass('S19.2 activityRegistry: Add Employee in hr hub, just before Manage Users');
   } else fail('S19.2', JSON.stringify({ idxAdd, idxMU, entry: flat[idxAdd] }));
 
   // ---- S19.3 — flow exports surface ----
@@ -3132,8 +3132,8 @@ async function runS20() {
   const flat = typeof reg.getAll === 'function' ? reg.getAll() : [];
   const promote = flat.find((a) => a.code === 'promote_admin');
   const deact = flat.find((a) => a.code === 'deactivate_user');
-  if (promote && promote.hub === 'admin' && promote.callback === 'umg:start:promote'
-      && deact && deact.hub === 'admin' && deact.callback === 'umg:start:deactivate') {
+  if (promote && promote.hub === 'hr' && promote.callback === 'umg:start:promote'
+      && deact && deact.hub === 'hr' && deact.callback === 'umg:start:deactivate') {
     pass('S20.2 registry: Promote Admin + Deactivate User entries wired with umg:start:* callbacks');
   } else fail('S20.2', JSON.stringify({ promote, deact }));
 
@@ -3462,9 +3462,9 @@ async function runS21() {
   const flat = typeof reg.getAll === 'function' ? reg.getAll() : [];
   const mark = flat.find((a) => a.code === 'mark_attendance');
   const admin = flat.find((a) => a.code === 'attendance_admin');
-  if (mark && mark.callback === 'act:mark_attendance' && mark.hub === null
-      && admin && admin.callback === 'act:attendance_admin' && admin.hub === 'admin') {
-    pass('S21.13 registry: mark_attendance hub=null (injected at runtime); attendance_admin in admin hub');
+  if (mark && mark.callback === 'act:mark_attendance' && mark.hub === 'hr'
+      && admin && admin.callback === 'act:attendance_admin' && admin.hub === 'hr') {
+    pass('S21.13 registry: mark_attendance + attendance_admin in hr hub (mark_attendance still injected at runtime)');
   } else fail('S21.13', JSON.stringify({ mark, admin }));
 
   await att.setConfigKey('ATTENDANCE_REMINDER_TIME', '08:30');
@@ -3780,8 +3780,8 @@ async function runS22() {
   const reg = require('../src/services/activityRegistry');
   const all = reg.getAll();
   const e = all.find((a) => a.code === 'attendance_report');
-  if (e && e.hub === 'reports' && e.callback === 'act:attendance_report' && /Attendance/.test(e.label)) {
-    pass('S22.1 activityRegistry: attendance_report under reports hub with act:attendance_report');
+  if (e && e.hub === 'reporting' && e.callback === 'act:attendance_report' && /Attendance/.test(e.label)) {
+    pass('S22.1 activityRegistry: attendance_report under reporting hub with act:attendance_report');
   } else fail('S22.1', JSON.stringify(e));
 
   // ---- Set up fresh stubs (scoped to this block) ----
@@ -4274,8 +4274,8 @@ async function runS27() {
   delete require.cache[require.resolve('../src/services/activityRegistry')];
   const reg27 = require('../src/services/activityRegistry');
   const entry27 = reg27.getAll().find((a) => a.code === 'finalize_landed_cost');
-  if (entry27 && entry27.hub === 'admin' && entry27.callback === 'act:finalize_landed_cost') {
-    pass('S27.4 activityRegistry: finalize_landed_cost in admin hub');
+  if (entry27 && entry27.hub === 'finance' && entry27.callback === 'act:finalize_landed_cost') {
+    pass('S27.4 activityRegistry: finalize_landed_cost in finance hub');
   } else fail('S27.4 activityRegistry', JSON.stringify(entry27));
 
   // ---- S27.5..S27.10: pure allocation math ----
@@ -4913,8 +4913,8 @@ async function runS29() {
   delete require.cache[require.resolve('../src/services/activityRegistry')];
   const reg29 = require('../src/services/activityRegistry');
   const entry29 = reg29.getAll().find((a) => a.code === 'bundle_sale');
-  if (entry29 && entry29.hub === 'stock' && entry29.callback === 'act:bundle_sale') {
-    pass('S29.3 activityRegistry: bundle_sale in stock hub');
+  if (entry29 && entry29.hub === 'orders' && entry29.callback === 'act:bundle_sale') {
+    pass('S29.3 activityRegistry: bundle_sale in orders hub');
   } else fail('S29.3 activityRegistry', JSON.stringify(entry29));
 
   // ---- S29.4: controller wiring — act dispatcher + bs:* router + text router ----
@@ -5520,11 +5520,11 @@ async function runS30() {
     pass('S30.5c computeGrandTotals: sums all designs');
   } else fail('S30.5c', JSON.stringify(gt));
 
-  // activityRegistry exposes stock_value in reports hub
+  // activityRegistry exposes stock_value in inventory hub
   const actReg = require('../src/services/activityRegistry');
   const svAct = actReg.getAll().find((a) => a.code === 'stock_value');
-  if (svAct && svAct.hub === 'reports' && svAct.callback === 'act:stock_value') {
-    pass('S30.5d activityRegistry: stock_value in reports hub');
+  if (svAct && svAct.hub === 'inventory' && svAct.callback === 'act:stock_value') {
+    pass('S30.5d activityRegistry: stock_value in inventory hub');
   } else fail('S30.5d', JSON.stringify(svAct));
 
   // ---- Cleanup ----
@@ -5698,7 +5698,7 @@ function runS31() {
   delete require.cache[require.resolve('../src/services/activityRegistry')];
   const reg = require('../src/services/activityRegistry');
   const tile = reg.getAll().find((a) => a.code === 'bulk_receive_goods');
-  if (tile && tile.label === 'Add Stock (CSV)' && tile.callback === 'act:bulk_receive_goods' && tile.hub === 'stock') {
+  if (tile && tile.label === 'Add Stock (CSV)' && tile.callback === 'act:bulk_receive_goods' && tile.hub === 'stock_add') {
     pass('S31.10 activityRegistry tile renamed to umbrella label, code/callback preserved');
   } else {
     fail('S31.10 activityRegistry tile renamed', JSON.stringify(tile));
@@ -6036,12 +6036,12 @@ async function runS34() {
 // S35 — DBP-1.5 Concept A: Admin Warehouse Audit Picker (warehouseAuditFlow)
 // ---------------------------------------------------------------------------
 async function runS35() {
-  // S35.1 — activityRegistry: warehouse_audit tile in admin hub
+  // S35.1 — activityRegistry: warehouse_audit tile in warehouses hub
   delete require.cache[require.resolve('../src/services/activityRegistry')];
   const reg = require('../src/services/activityRegistry');
   const wa = reg.getByCallback('act:warehouse_audit');
-  if (wa && wa.code === 'warehouse_audit' && wa.hub === 'admin') {
-    pass('S35.1 activityRegistry: warehouse_audit in admin hub with act:warehouse_audit');
+  if (wa && wa.code === 'warehouse_audit' && wa.hub === 'warehouses') {
+    pass('S35.1 activityRegistry: warehouse_audit in warehouses hub with act:warehouse_audit');
   } else {
     fail('S35.1 activityRegistry warehouse_audit', JSON.stringify(wa));
   }

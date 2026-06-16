@@ -48,7 +48,7 @@ const DEFAULT_LOW_STOCK_THRESHOLD = 5; // bales
 
 function backRow() {
   return [
-    { text: '⬅ Back to Admin', callback_data: 'act:__hub__:admin' },
+    { text: '⬅ Back to Planning', callback_data: 'act:__hub__:planning' },
     { text: '🏠 Menu',          callback_data: 'act:__back__' },
   ];
 }

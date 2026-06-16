@@ -199,14 +199,14 @@ function backRow(step) {
 
 function navFooterRow() {
   return [
-    { text: '⬅ Back to Tasks', callback_data: 'act:__hub__:tasks' },
+    { text: '⬅ Back to Tasks', callback_data: 'act:__hub__:planning' },
     { text: '🏠 Menu',          callback_data: 'act:__back__' },
   ];
 }
 
 function firstStepFooterRow() {
   return [
-    { text: '⬅ Back to Tasks', callback_data: 'act:__hub__:tasks' },
+    { text: '⬅ Back to Tasks', callback_data: 'act:__hub__:planning' },
     { text: '❌ Cancel',        callback_data: 'tsk:cancel' },
   ];
 }
@@ -1143,7 +1143,7 @@ async function startPriorityPicker(bot, callbackQuery, taskId) {
       reply_markup: { inline_keyboard: [
         row.slice(0, 2),
         row.slice(2, 4),
-        [{ text: '⬅ Back to Team Tasks', callback_data: 'act:__hub__:tasks' }],
+        [{ text: '⬅ Back to Team Tasks', callback_data: 'act:__hub__:planning' }],
       ] },
     });
 }
