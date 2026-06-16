@@ -54,6 +54,16 @@ const MAX_NAME_LEN = 80;
 const TG_RE = /^[0-9]{6,12}$/;
 const PENDING_PAGE_SIZE = 8;            // pending-user tiles per page (2-col × 4 rows)
 const PENDING_NAME_MAX = 18;            // truncate long names to keep tiles tidy
+const FLOW_TTL_MS = 30 * 60 * 1000;     // 30 min — onboarding may pause for dept/role lookup
+
+/**
+ * Escape Telegram Markdown-v1 reserved characters in user-supplied values so a
+ * stray "_", "*", "`" or "[" in a name/dept/warehouse cannot break entity
+ * parsing on the Confirm card and silently bury the flow at Step 5/6.
+ */
+function mdEscape(s) {
+  return String(s == null ? '' : s).replace(/([_*`\[\]])/g, '\\$1');
+}
 
 function truncate(s, n) {
   const str = String(s == null ? '' : s);
@@ -107,6 +117,9 @@ async function loadPendingCandidates() {
 async function render(bot, chatId, userId, text, keyboardRows) {
   const session = sessionStore.get(userId);
   const reply_markup = { inline_keyboard: keyboardRows };
+  // Try edit-with-Markdown → edit-plain → send-with-Markdown → send-plain.
+  // Plain-text fallbacks guarantee the user always sees the next step even if
+  // a stray Markdown character in user-supplied data trips the parser.
   if (session && session.flowMessageId) {
     try {
       await bot.editMessageText(text, {
@@ -114,11 +127,28 @@ async function render(bot, chatId, userId, text, keyboardRows) {
         parse_mode: 'Markdown', reply_markup, disable_web_page_preview: true,
       });
       return session.flowMessageId;
-    } catch (_) { /* fall through to send fresh */ }
+    } catch (e1) {
+      logger.warn(`userAddFlow.render: edit-md failed: ${e1.message}`);
+      try {
+        await bot.editMessageText(text, {
+          chat_id: chatId, message_id: session.flowMessageId,
+          reply_markup, disable_web_page_preview: true,
+        });
+        return session.flowMessageId;
+      } catch (_) { /* fall through to send fresh */ }
+    }
   }
-  const sent = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown', reply_markup, disable_web_page_preview: true,
-  });
+  let sent;
+  try {
+    sent = await bot.sendMessage(chatId, text, {
+      parse_mode: 'Markdown', reply_markup, disable_web_page_preview: true,
+    });
+  } catch (e2) {
+    logger.warn(`userAddFlow.render: send-md failed: ${e2.message}`);
+    sent = await bot.sendMessage(chatId, text, {
+      reply_markup, disable_web_page_preview: true,
+    });
+  }
   if (session) {
     session.flowMessageId = sent.message_id;
     sessionStore.set(userId, session);
@@ -183,6 +213,9 @@ async function start(bot, chatId, userId, messageId = null, prefill = null) {
     flowMessageId: messageId || null,
     data,
     startedAt: new Date().toISOString(),
+    // Per-flow TTL override (sessionStore reads top-level `ttlMs`).
+    // Onboarding may pause for dept/role lookup, so 5 min default is too tight.
+    ttlMs: FLOW_TTL_MS,
   });
   if (data.telegram_id) {
     await renderNameStep(bot, chatId, userId);
@@ -303,7 +336,7 @@ async function applyTelegramId(bot, chatId, userId, raw) {
 
 async function renderNameStep(bot, chatId, userId) {
   const session = sessionStore.get(userId);
-  const prefilled = session?.data?.name ? `\n\n_Pre-filled from /start:_ *${session.data.name}* — accept or replace by typing.` : '';
+  const prefilled = session?.data?.name ? `\n\n_Pre-filled from /start:_ *${mdEscape(session.data.name)}* — accept or replace by typing.` : '';
   const buttons = [];
   if (session?.data?.name) {
     buttons.push([{ text: `✅ Use "${session.data.name}"`, callback_data: 'usr:name:accept' }]);
@@ -464,17 +497,19 @@ async function applyRole(bot, chatId, userId, role) {
 async function renderConfirmStep(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   const d = session.data;
-  const whLine = d.warehouses && d.warehouses.length ? d.warehouses.join(', ') : '_none_';
+  const whLine = d.warehouses && d.warehouses.length
+    ? d.warehouses.map((w) => mdEscape(w)).join(', ')
+    : '_none_';
   const prefillNote = d.prefillSource === 'pending_user'
     ? '\n\n_Pre-filled from a /start by this user; they will be DMed a welcome message after approval._'
     : '\n\n_The user must send `/start` to the bot once before they can receive notifications._';
   await render(bot, chatId, userId,
     '➕ *Add Employee — Confirm*\n\n_Step 6 of 6_\n\n'
-    + `*Telegram ID:* \`${d.telegram_id}\`\n`
-    + `*Name:* ${d.name}\n`
-    + `*Department:* ${d.department}\n`
+    + `*Telegram ID:* \`${mdEscape(d.telegram_id)}\`\n`
+    + `*Name:* ${mdEscape(d.name)}\n`
+    + `*Department:* ${mdEscape(d.department)}\n`
     + `*Warehouses:* ${whLine}\n`
-    + `*Role:* ${d.role}\n`
+    + `*Role:* ${mdEscape(d.role)}\n`
     + `${prefillNote}\n\n`
     + '_Submitting queues this for 2nd-admin approval — you cannot self-approve._',
     [
@@ -513,7 +548,7 @@ async function submit(bot, chatId, userId) {
     );
     sessionStore.clear(userId);
     await render(bot, chatId, userId,
-      `⏳ *Submitted for 2nd-admin approval*\n\n*${d.name}* (\`${d.telegram_id}\`)\nRequest: \`${requestId}\`\n\n_You'll be notified when another admin approves or rejects._`,
+      `⏳ *Submitted for 2nd-admin approval*\n\n*${mdEscape(d.name)}* (\`${mdEscape(d.telegram_id)}\`)\nRequest: \`${mdEscape(requestId)}\`\n\n_You'll be notified when another admin approves or rejects._`,
       [[{ text: '🏠 Back to menu', callback_data: 'menu:home' }]],
     );
   } catch (e) {
@@ -546,13 +581,64 @@ async function handleText(bot, msg) {
 
 async function handleCallback(bot, query) {
   const userId = String(query.from.id);
-  const session = sessionStore.get(userId);
-  if (!session || session.type !== 'user_add_flow') return false;
-  const chatId = query.message.chat.id;
   const data = query.data || '';
   if (!data.startsWith('usr:')) return false;
+  const chatId = query.message.chat.id;
+  const session = sessionStore.get(userId);
+
+  // Graceful expired-session card: if a usr:* tap arrives but the session is
+  // gone (TTL expired or overwritten by another concurrent flow), surface a
+  // visible "session expired" message with a Restart button instead of
+  // silently swallowing the click.
+  if (!session || session.type !== 'user_add_flow') {
+    if (data === 'usr:cancel') return true;        // already cancelled
+    const hint = sessionStore.getLastSessionHint(userId);
+    const wasOurs = hint && hint.type === 'user_add_flow';
+    await bot.answerCallbackQuery(query.id, {
+      text: wasOurs ? 'Session expired — please restart.' : 'No active session.',
+      show_alert: false,
+    }).catch(() => {});
+    if (wasOurs) {
+      try {
+        await bot.sendMessage(chatId,
+          '⏱ *Add Employee — session expired*\n\nYour onboarding session timed out or was interrupted. Please restart from the menu.',
+          {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[
+              { text: '🔁 Restart Add Employee', callback_data: 'act:add_user' },
+              { text: '🏠 Back to menu', callback_data: 'menu:home' },
+            ]] },
+          },
+        );
+      } catch (_) { /* best effort */ }
+    }
+    return true;                                   // claimed → no fall-through
+  }
 
   await bot.answerCallbackQuery(query.id).catch(() => {});
+
+  try {
+    return await _dispatchCallback(bot, query, session, chatId, userId, data);
+  } catch (err) {
+    logger.error(`userAddFlow.handleCallback: ${err && err.message}\n${err && err.stack}`);
+    try {
+      await bot.sendMessage(chatId,
+        `⚠️ Something failed in Add Employee: ${err && err.message ? err.message : 'unknown error'}.\n\nPlease tap Restart and try again.`,
+        { reply_markup: { inline_keyboard: [[
+          { text: '🔁 Restart Add Employee', callback_data: 'act:add_user' },
+          { text: '🏠 Back to menu', callback_data: 'menu:home' },
+        ]] } },
+      );
+    } catch (_) { /* best effort */ }
+    return true;
+  }
+}
+
+/**
+ * Inner dispatcher — extracted so the outer handleCallback can wrap every
+ * branch in a single try/catch and surface visible errors.
+ */
+async function _dispatchCallback(bot, query, session, chatId, userId, data) {
 
   if (data === 'usr:cancel') {
     sessionStore.clear(userId);
@@ -702,7 +788,7 @@ module.exports = {
   handleCallback,
   // exported for tests:
   _internals: {
-    TG_RE, MAX_NAME_LEN, PENDING_PAGE_SIZE,
-    truncate, timeAgo, pendingDisplayName, loadPendingCandidates,
+    TG_RE, MAX_NAME_LEN, PENDING_PAGE_SIZE, FLOW_TTL_MS,
+    truncate, timeAgo, pendingDisplayName, loadPendingCandidates, mdEscape,
   },
 };

@@ -6395,6 +6395,196 @@ async function runS36() {
 }
 
 // ---------------------------------------------------------------------------
+// S37 — Add Employee: defensive Step-5/6 hardening (USR-C5 follow-up)
+// ---------------------------------------------------------------------------
+async function runS37() {
+  const sessionStore = require('../src/utils/sessionStore');
+
+  // Common stubs identical to S36 so the flow loads cleanly.
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => true, isEmployee: () => false, isAllowed: () => true,
+    refresh: async () => {}, invalidate: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/departmentsRepository'), {
+    getAll: async () => [{ dept_name: 'Sales' }], findByName: async (n) => ({ dept_name: n }), append: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    findByUserId: async () => null, append: async () => {}, getAll: async () => [],
+  });
+  stubModule(require.resolve('../src/repositories/pendingUsersRepository'), {
+    getAll: async () => [], findByTelegramId: async () => null,
+  });
+  stubModule(require.resolve('../src/flows/warehouseFlow'), {
+    listMergedWarehouses: async () => ({ raw: ['Lagos', 'Kano'], lower: new Set() }),
+  });
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    append: async () => {}, getAllPending: async () => [], getByRequestId: async () => null,
+  });
+  stubModule(require.resolve('../src/repositories/auditLogRepository'), { append: async () => {} });
+  stubModule(require.resolve('../src/events/approvalEvents'), {
+    notifyAdminsApprovalRequest: async () => {}, handleReasonReply: async () => false,
+  });
+  delete require.cache[require.resolve('../src/flows/userAddFlow')];
+  const flow = require('../src/flows/userAddFlow');
+
+  // ---- S37.1 — mdEscape: escapes Markdown breakers, leaves safe chars alone ----
+  const e = flow._internals.mdEscape;
+  if (e('a_b*c`d[e]') === 'a\\_b\\*c\\`d\\[e\\]'
+      && e('plain text 123') === 'plain text 123'
+      && e(null) === '' && e(undefined) === '') {
+    pass('S37.1 mdEscape: escapes _ * ` [ ] / safe chars unchanged / nullish → ""');
+  } else {
+    fail('S37.1', JSON.stringify({ a: e('a_b*c`d[e]'), b: e('plain text 123'), c: e(null) }));
+  }
+
+  // ---- S37.2 — flow session uses extended 30-min TTL ----
+  if (flow._internals.FLOW_TTL_MS === 30 * 60 * 1000) {
+    pass('S37.2 FLOW_TTL_MS = 30 min (overrides 5-min default)');
+  } else fail('S37.2', String(flow._internals.FLOW_TTL_MS));
+
+  sessionStore.clear('adm-37a');
+  const fakeBot = { sendMessage: async () => ({ message_id: 7 }), editMessageText: async () => {} };
+  await flow.start(fakeBot, 'c1', 'adm-37a', null);
+  const s37a = sessionStore.get('adm-37a');
+  // sessionStore reads ttlMs from the TOP level of the stored entry.
+  if (s37a && s37a.ttlMs === flow._internals.FLOW_TTL_MS
+      && (s37a.expiresAt - Date.now()) > (25 * 60 * 1000)) {
+    pass('S37.2b session.ttlMs persisted at top level; expiresAt > 25 min from now');
+  } else {
+    fail('S37.2b', JSON.stringify({ ttlMs: s37a && s37a.ttlMs,
+      remainingMin: s37a && Math.round((s37a.expiresAt - Date.now()) / 60000) }));
+  }
+
+  // ---- S37.2c — TTL stays at 30 min after a step transition (set carries it) ----
+  await flow.handleCallback({ sendMessage: async () => ({ message_id: 7 }),
+    editMessageText: async () => ({}), answerCallbackQuery: async () => {} },
+    { id: 'q', from: { id: 'adm-37a' }, message: { chat: { id: 'c1' }, message_id: 7 },
+      data: 'usr:cancel' });
+  // Re-prime then advance one step to verify ttlMs survives a sessionStore.set roundtrip.
+  await flow.start(fakeBot, 'c1', 'adm-37a', null);
+  const sBefore = sessionStore.get('adm-37a');
+  sessionStore.set('adm-37a', { ...sBefore, step: 'name' });
+  const sAfter = sessionStore.get('adm-37a');
+  if (sAfter && sAfter.ttlMs === flow._internals.FLOW_TTL_MS
+      && (sAfter.expiresAt - Date.now()) > (25 * 60 * 1000)) {
+    pass('S37.2c ttlMs survives sessionStore.set roundtrip after step change');
+  } else {
+    fail('S37.2c', JSON.stringify({ ttlMs: sAfter && sAfter.ttlMs,
+      remainingMin: sAfter && Math.round((sAfter.expiresAt - Date.now()) / 60000) }));
+  }
+
+  // ---- S37.3 — Confirm card: risky values are escaped (no raw _ * ` [ ] in body) ----
+  sessionStore.set('adm-37b', {
+    type: 'user_add_flow', step: 'confirm', flowMessageId: 99,
+    data: { telegram_id: '888777', name: 'Bob_The*Builder`X[Y]',
+      department: 'R_&_D', warehouses: ['La*gos', 'Ka_no'], role: 'manager',
+      prefillSource: 'pending_user', ttlMs: flow._internals.FLOW_TTL_MS },
+  });
+  let captured = null;
+  const captureBot = {
+    sendMessage: async (cid, t, opts) => { captured = { t, opts }; return { message_id: 99 }; },
+    editMessageText: async (t, opts) => { captured = { t, opts }; return { message_id: 99 }; },
+    answerCallbackQuery: async () => {},
+  };
+  await flow.handleCallback(captureBot, { id: 'q', from: { id: 'adm-37b' },
+    message: { chat: { id: 'c2' }, message_id: 99 }, data: 'usr:back:confirm' });
+  await flow.handleCallback(captureBot, { id: 'q2', from: { id: 'adm-37b' },
+    message: { chat: { id: 'c2' }, message_id: 99 }, data: 'usr:role:manager' });
+  // Now session is at 'confirm'; the captured text is the Confirm card.
+  const txt = (captured && captured.t) || '';
+  // Body lines we control (after the "*Name:* " label) must contain escaped breakers, not raw ones.
+  const nameLine = (txt.match(/\*Name:\* (.+)/) || [])[1] || '';
+  const deptLine = (txt.match(/\*Department:\* (.+)/) || [])[1] || '';
+  const whLine = (txt.match(/\*Warehouses:\* (.+)/) || [])[1] || '';
+  const allEscapedNoRaw = (s, syms) => syms.every((c) =>
+    !new RegExp(`(^|[^\\\\])\\${c}`).test(s));   // every breaker must be preceded by a backslash
+  if (allEscapedNoRaw(nameLine, ['_', '*', '`', '[', ']'])
+      && allEscapedNoRaw(deptLine, ['_'])
+      && allEscapedNoRaw(whLine, ['_', '*'])) {
+    pass('S37.3 Confirm card: name/dept/warehouses Markdown-escaped (no unescaped _ * ` [ ])');
+  } else {
+    fail('S37.3', JSON.stringify({ nameLine, deptLine, whLine }));
+  }
+
+  // ---- S37.4 — Expired session → friendly card + Restart button (no silent drop) ----
+  sessionStore.clear('adm-37c');
+  // Plant a recent hint so the flow recognises this user just had a user_add_flow session.
+  sessionStore.set('adm-37c', { type: 'user_add_flow', step: 'role',
+    flowMessageId: null, data: { telegram_id: '111', name: 'X', warehouses: [], role: '' } });
+  sessionStore.clear('adm-37c');                 // → stashes hint, drops session
+  let sentExp = null;
+  let answeredExp = null;
+  const expBot = {
+    sendMessage: async (cid, t, opts) => { sentExp = { t, opts }; return { message_id: 1 }; },
+    editMessageText: async () => {},
+    answerCallbackQuery: async (id, opts) => { answeredExp = opts || {}; },
+  };
+  const handled = await flow.handleCallback(expBot, { id: 'q3', from: { id: 'adm-37c' },
+    message: { chat: { id: 'c3' }, message_id: 1 }, data: 'usr:role:manager' });
+  const expFlat = ((sentExp && sentExp.opts && sentExp.opts.reply_markup
+    && sentExp.opts.reply_markup.inline_keyboard) || []).flat();
+  const hasRestart = expFlat.some((b) => b.callback_data === 'act:add_user');
+  if (handled === true
+      && answeredExp && /expired|restart/i.test(answeredExp.text || '')
+      && sentExp && /expired/i.test(sentExp.t)
+      && hasRestart) {
+    pass('S37.4 expired session → toast + visible "Restart Add Employee" card');
+  } else {
+    fail('S37.4', JSON.stringify({ handled, answeredExp,
+      sentText: sentExp && sentExp.t, hasRestart }));
+  }
+
+  // ---- S37.5 — Inner throw is caught and surfaced (no silent freeze) ----
+  // Force an error by stubbing approvalQueueRepository.append to throw on submit.
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    append: async () => { throw new Error('boom-from-test'); },
+    getAllPending: async () => [], getByRequestId: async () => null,
+  });
+  delete require.cache[require.resolve('../src/flows/userAddFlow')];
+  const flowErr = require('../src/flows/userAddFlow');
+  sessionStore.set('adm-37d', {
+    type: 'user_add_flow', step: 'confirm', flowMessageId: 5,
+    data: { telegram_id: '999000', name: 'Tester', department: 'Sales',
+      warehouses: ['Lagos'], role: 'employee', prefillSource: null,
+      ttlMs: flowErr._internals.FLOW_TTL_MS },
+  });
+  // Submit happens to NOT throw to the outer handler because submit() catches
+  // its own approval-append errors. Instead trigger an error via a stubbed bot.
+  let surfaced = null;
+  const errBot = {
+    // Force every render path to fail, so applyRole's renderConfirmStep throws.
+    sendMessage: async (cid, t, opts) => {
+      if (/Something failed/i.test(t)) { surfaced = { t, opts }; return { message_id: 8 }; }
+      throw new Error('telegram-edge-case');
+    },
+    editMessageText: async () => { throw new Error('telegram-edit-fail'); },
+    answerCallbackQuery: async () => {},
+  };
+  // Drop into role step so role:employee triggers renderConfirmStep → throws.
+  sessionStore.set('adm-37d', {
+    type: 'user_add_flow', step: 'role', flowMessageId: 5,
+    data: { telegram_id: '999000', name: 'Tester', department: 'Sales',
+      warehouses: ['Lagos'], role: '', prefillSource: null,
+      ttlMs: flowErr._internals.FLOW_TTL_MS },
+  });
+  const handledErr = await flowErr.handleCallback(errBot, { id: 'q5', from: { id: 'adm-37d' },
+    message: { chat: { id: 'c5' }, message_id: 5 }, data: 'usr:role:employee' });
+  const flatErr = ((surfaced && surfaced.opts && surfaced.opts.reply_markup
+    && surfaced.opts.reply_markup.inline_keyboard) || []).flat();
+  const errHasRestart = flatErr.some((b) => b.callback_data === 'act:add_user');
+  if (handledErr === true && surfaced && /Something failed/i.test(surfaced.t) && errHasRestart) {
+    pass('S37.5 inner throw → visible "Something failed" card with Restart button (no silent freeze)');
+  } else {
+    fail('S37.5', JSON.stringify({ handledErr, surfaced: surfaced && surfaced.t }));
+  }
+
+  sessionStore.clear('adm-37a');
+  sessionStore.clear('adm-37b');
+  sessionStore.clear('adm-37c');
+  sessionStore.clear('adm-37d');
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -6441,6 +6631,7 @@ async function runS36() {
   try { await runS34(); } catch (e) { fail('S34 unexpected error', e.message); }
   try { await runS35(); } catch (e) { fail('S35 unexpected error', e.message); }
   try { await runS36(); } catch (e) { fail('S36 unexpected error', e.message); }
+  try { await runS37(); } catch (e) { fail('S37 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;
