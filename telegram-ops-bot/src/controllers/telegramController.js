@@ -3465,7 +3465,12 @@ async function handleMessage(bot, msg) {
       srfSession.newCustomerName = name;
       srfSession.step = 'new_srf_customer_phone';
       sessionStore.set(userId, srfSession);
-      await bot.sendMessage(chatId, '📱 Enter customer phone number:');
+      await bot.sendMessage(chatId, '📱 Enter customer phone number:', {
+        reply_markup: { inline_keyboard: [[
+          { text: '⬅️ Back to customers', callback_data: 'srf_back:customer' },
+          { text: '❌ Cancel', callback_data: 'srf_cart:cancel' },
+        ]] },
+      });
       return;
     }
     if (srfSession.step === 'new_srf_customer_phone') {
@@ -4954,6 +4959,7 @@ async function startSupplyRequestFlow(bot, chatId, userId) {
         return;
       }
       const rows = allWarehouses.map((w) => [{ text: `🏭 ${w}`, callback_data: `srf_wh:${w}` }]);
+      rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
       await bot.sendMessage(chatId, '📦 *Supply Request*\n\nSelect warehouse:', {
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: rows },
@@ -4971,6 +4977,7 @@ async function startSupplyRequestFlow(bot, chatId, userId) {
   }
 
   const rows = warehouses.map((w) => [{ text: `🏭 ${w}`, callback_data: `srf_wh:${w}` }]);
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   await bot.sendMessage(chatId, '📦 *Supply Request*\n\nSelect warehouse:', {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
@@ -5023,6 +5030,19 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   if (page > 0) nav.push({ text: '⬅️ Prev', callback_data: 'srf_dgpg:prev' });
   if (start + MAX_VISIBLE < designs.length) nav.push({ text: `More (${designs.length - start - MAX_VISIBLE}) ➡️`, callback_data: 'srf_dgpg:next' });
   if (nav.length) rows.push(nav);
+  // Navigation footer: the design picker is reachable as the first
+  // interactive step (single-warehouse user), after picking a warehouse
+  // (multi-warehouse), or via "Add More" with items already in the cart.
+  // Offer the right "back" target for each case and always a Cancel so the
+  // user is never stranded on a one-way screen.
+  const backRow = [];
+  if (cart.length) {
+    backRow.push({ text: '⬅️ Back to cart', callback_data: 'srf_back:cart' });
+  } else if (session && session.multiWarehouse) {
+    backRow.push({ text: '⬅️ Back to warehouses', callback_data: 'srf_back:warehouse' });
+  }
+  backRow.push({ text: '❌ Cancel', callback_data: 'srf_cart:cancel' });
+  rows.push(backRow);
   const cartNote = cart.length ? `\n🛒 Cart: ${cart.length} item(s)` : '';
   const pageNote = designs.length > MAX_VISIBLE ? ` (${start + 1}–${Math.min(start + MAX_VISIBLE, designs.length)} of ${designs.length})` : '';
   const resolvedMsgId = messageId || (session && session.flowMessageId) || null;
@@ -5386,7 +5406,7 @@ async function finalizeSupplyRequest(bot, chatId, userId) {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [
       [{ text: '✅ Confirm & Submit', callback_data: 'srf_conf:yes' }],
-      [{ text: '❌ Cancel', callback_data: 'srf_conf:cancel' }],
+      [{ text: '⬅️ Back', callback_data: 'srf_back:document' }, { text: '❌ Cancel', callback_data: 'srf_conf:cancel' }],
     ] },
   });
 }
@@ -8362,7 +8382,9 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const uid = String(callbackQuery.from.id);
     await bot.answerCallbackQuery(callbackQuery.id);
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
-    sessionStore.set(uid, { type: 'supply_req_flow', warehouse, cart: [], step: 'design' });
+    // multiWarehouse: the user reached the design picker by choosing from a
+    // warehouse list, so the design picker can offer "Back to warehouses".
+    sessionStore.set(uid, { type: 'supply_req_flow', warehouse, cart: [], step: 'design', multiWarehouse: true });
     await showDesignsForWarehouse(bot, chatId, uid, warehouse);
 
   /* ─── SUPPLY REQUEST FLOW: DESIGN PAGE NAV ─── */
@@ -8452,6 +8474,23 @@ async function handleCallbackQuery(bot, callbackQuery) {
       delete session.docFileId;
       sessionStore.set(uid, session);
       await showSupplyDatePicker(bot, chatId, uid);
+    } else if (target === 'warehouse') {
+      // Only offered on the design picker while the cart is empty, so a
+      // clean restart of the warehouse step is safe. Drop the current
+      // picker + any preview and re-run the entry point.
+      if (session.flowMessageId) {
+        await bot.deleteMessage(chatId, session.flowMessageId).catch(() => {});
+      }
+      await clearDesignPreview(bot, chatId, uid);
+      sessionStore.clear(uid);
+      await startSupplyRequestFlow(bot, chatId, uid);
+    } else if (target === 'quantity') {
+      session.step = 'quantity';
+      sessionStore.set(uid, session);
+      const lbl = await productTypesRepo.getLabels(session.productType || 'fabric');
+      await showQuantityPicker(bot, chatId, uid, session.currentDesign, session.currentShade, session.warehouse, session.currentAvailPkgs, lbl);
+    } else if (target === 'document') {
+      await showSupplyConfirmation(bot, chatId, uid);
     }
 
   /* ─── SUPPLY REQUEST FLOW: DESIGN ─── */
@@ -8530,7 +8569,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
       sessionStore.set(uid, session);
       const lbl = await productTypesRepo.getLabels(session.productType || 'fabric');
       const cPlural = productTypesRepo.pluralize(lbl.container_label, 2).toLowerCase();
-      await bot.sendMessage(chatId, `Type the number of ${cPlural} (max ${session.currentAvailPkgs}):`);
+      await bot.sendMessage(chatId, `Type the number of ${cPlural} (max ${session.currentAvailPkgs}):`, {
+        reply_markup: { inline_keyboard: [[
+          { text: '⬅️ Back', callback_data: 'srf_back:quantity' },
+          { text: '❌ Cancel', callback_data: 'srf_cart:cancel' },
+        ]] },
+      });
       return;
     }
 
@@ -8639,7 +8683,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (val === '__new__') {
       session.step = 'new_srf_customer_name';
       sessionStore.set(uid, session);
-      await editOrSendAnchored(bot, chatId, uid, '📝 Enter new customer *full name*:', { parse_mode: 'Markdown' });
+      await editOrSendAnchored(bot, chatId, uid, '📝 Enter new customer *full name*:', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[
+          { text: '⬅️ Back to customers', callback_data: 'srf_back:customer' },
+          { text: '❌ Cancel', callback_data: 'srf_cart:cancel' },
+        ]] },
+      });
       return;
     }
     session.customer = val;
@@ -8691,11 +8741,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (data.startsWith('srf_dtcal:')) {
       const offset = parseInt(data.replace('srf_dtcal:', '') || '0');
       const rows = buildDatePicker('srf_dt', offset);
+      rows.push([{ text: '⬅️ Back to dates', callback_data: 'srf_back:date' }]);
       await bot.answerCallbackQuery(callbackQuery.id);
       await bot.editMessageReplyMarkup({ inline_keyboard: rows }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
     } else if (data.startsWith('srf_dtnav:')) {
       const offset = parseInt(data.replace('srf_dtnav:', ''));
       const rows = buildDatePicker('srf_dt', offset);
+      rows.push([{ text: '⬅️ Back to dates', callback_data: 'srf_back:date' }]);
       await bot.answerCallbackQuery(callbackQuery.id);
       await bot.editMessageReplyMarkup({ inline_keyboard: rows }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
     } else if (data.startsWith('srf_dtpick:')) {
