@@ -39,6 +39,7 @@ const sessionStore = require('../utils/sessionStore');
 const auth = require('../middlewares/auth');
 const departmentsRepo = require('../repositories/departmentsRepository');
 const usersRepo = require('../repositories/usersRepository');
+const pendingUsersRepo = require('../repositories/pendingUsersRepository');
 const warehouseFlow = require('./warehouseFlow');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
@@ -51,6 +52,53 @@ const MIN_TG_DIGITS = 6;
 const MAX_TG_DIGITS = 12;
 const MAX_NAME_LEN = 80;
 const TG_RE = /^[0-9]{6,12}$/;
+const PENDING_PAGE_SIZE = 8;            // pending-user tiles per page (2-col × 4 rows)
+const PENDING_NAME_MAX = 18;            // truncate long names to keep tiles tidy
+
+function truncate(s, n) {
+  const str = String(s == null ? '' : s);
+  return str.length > n ? `${str.slice(0, n - 1)}…` : str;
+}
+
+/** Compact "Nm/Nh/Nd" age from an ISO timestamp; '' when unparseable. */
+function timeAgo(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const mins = Math.max(1, Math.round((Date.now() - t) / 60000));
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  return `${Math.round(hrs / 24)}d`;
+}
+
+/** Display name for a PendingUsers row: full name → @username → bare id. */
+function pendingDisplayName(pu) {
+  const nm = [pu.first_name, pu.last_name].filter(Boolean).join(' ').trim();
+  if (nm) return nm;
+  if (pu.username) return `@${pu.username}`;
+  return String(pu.telegram_id || '');
+}
+
+/**
+ * Pending people still awaiting onboarding, newest first, with anyone who is
+ * already an active user removed (covers races where they got onboarded
+ * through another path). Pure data — safe to unit-test offline.
+ */
+async function loadPendingCandidates() {
+  let pendings = [];
+  try { pendings = await pendingUsersRepo.getAll(); } catch (_) { pendings = []; }
+  pendings = pendings.filter((p) => p && p.telegram_id && (p.status || 'pending') === 'pending');
+  let activeIds = new Set();
+  try {
+    const users = await usersRepo.getAll();
+    activeIds = new Set(
+      users.filter((u) => (u.status || 'active') === 'active').map((u) => String(u.user_id)),
+    );
+  } catch (_) { /* no users sheet yet → treat none as active */ }
+  return pendings
+    .filter((p) => !activeIds.has(String(p.telegram_id)))
+    .sort((a, b) => (b.arrived_at || '').localeCompare(a.arrived_at || ''));
+}
 
 // ---------------------------------------------------------------------------
 // Anchored rendering — single card edited in place to avoid stranding.
@@ -128,7 +176,10 @@ async function start(bot, chatId, userId, messageId = null, prefill = null) {
   }
   sessionStore.set(userId, {
     type: 'user_add_flow',
-    step: data.telegram_id ? 'name' : 'telegram_id',
+    // Prefilled (onboard-from-card) jumps straight to name. A cold start
+    // opens the pending-user picker (which itself falls back to manual
+    // Telegram-ID entry when nobody is waiting).
+    step: data.telegram_id ? 'name' : 'pick_pending',
     flowMessageId: messageId || null,
     data,
     startedAt: new Date().toISOString(),
@@ -136,8 +187,65 @@ async function start(bot, chatId, userId, messageId = null, prefill = null) {
   if (data.telegram_id) {
     await renderNameStep(bot, chatId, userId);
   } else {
-    await renderTelegramIdStep(bot, chatId, userId);
+    await renderPendingPickStep(bot, chatId, userId);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Step 1 (cold start) — Pick a pending user OR enter an ID manually
+// ---------------------------------------------------------------------------
+
+/**
+ * Render the "Who?" picker: every still-pending /start stranger as a tappable
+ * name tile, plus a manual-entry escape. When nobody is pending, transparently
+ * falls through to the manual Telegram-ID step so the cold path is unchanged.
+ */
+async function renderPendingPickStep(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const candidates = await loadPendingCandidates();
+
+  if (!candidates.length) {
+    session.data.pickAvailable = false;
+    session.step = 'telegram_id';
+    sessionStore.set(userId, session);
+    await renderTelegramIdStep(bot, chatId, userId);
+    return;
+  }
+
+  session.data.pickAvailable = true;
+  session.step = 'pick_pending';
+  const page = Math.max(0, session.data.pendingPage || 0);
+  const startIdx = page * PENDING_PAGE_SIZE;
+  const visible = candidates.slice(startIdx, startIdx + PENDING_PAGE_SIZE);
+
+  const tile = (p) => ({
+    text: `👤 ${truncate(pendingDisplayName(p), PENDING_NAME_MAX)}${p.arrived_at ? ` · ${timeAgo(p.arrived_at)}` : ''}`,
+    callback_data: `usr:pu:${p.telegram_id}`,
+  });
+  const rows = [];
+  for (let i = 0; i < visible.length; i += 2) {
+    const row = [tile(visible[i])];
+    if (visible[i + 1]) row.push(tile(visible[i + 1]));
+    rows.push(row);
+  }
+  const nav = [];
+  if (page > 0) nav.push({ text: '⬅️ Prev', callback_data: 'usr:pu_pg:prev' });
+  if (startIdx + PENDING_PAGE_SIZE < candidates.length) nav.push({ text: 'More ▸', callback_data: 'usr:pu_pg:next' });
+  if (nav.length) rows.push(nav);
+  rows.push([{ text: '⌨️ Enter Telegram ID manually', callback_data: 'usr:manual' }]);
+  rows.push(cancelRow());
+  sessionStore.set(userId, session);
+
+  const total = candidates.length;
+  const pageNote = total > PENDING_PAGE_SIZE
+    ? ` (${startIdx + 1}–${Math.min(startIdx + PENDING_PAGE_SIZE, total)} of ${total})`
+    : '';
+  await render(bot, chatId, userId,
+    '➕ *Add Employee*\n\n_Step 1 of 6 — Who?_\n\n'
+    + 'Tap a person who messaged the bot, or enter a Telegram ID manually.' + pageNote,
+    rows,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +253,12 @@ async function start(bot, chatId, userId, messageId = null, prefill = null) {
 // ---------------------------------------------------------------------------
 
 async function renderTelegramIdStep(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  // When we got here from the pending-user picker, offer a way back to it;
+  // otherwise this is the genuine first step and Cancel is the only escape.
+  const footer = (session && session.data && session.data.pickAvailable)
+    ? [backCancelRow('usr:back:pick')]
+    : [cancelRow()];
   await render(bot, chatId, userId,
     '➕ *Add Employee*\n\n_Step 1 of 6 — Telegram ID_\n\n'
     + 'Type the new user\'s *numeric Telegram ID* (reply in chat).\n\n'
@@ -152,7 +266,7 @@ async function renderTelegramIdStep(bot, chatId, userId) {
     + `• ${MIN_TG_DIGITS}–${MAX_TG_DIGITS} digits, numbers only\n`
     + '• Must not already be an active user\n\n'
     + '_Hint: ask them to message_ `@userinfobot` _and forward you the `Id` number._',
-    [cancelRow()],
+    footer,
   );
 }
 
@@ -194,7 +308,12 @@ async function renderNameStep(bot, chatId, userId) {
   if (session?.data?.name) {
     buttons.push([{ text: `✅ Use "${session.data.name}"`, callback_data: 'usr:name:accept' }]);
   }
-  buttons.push(backCancelRow('usr:back:name'));
+  // Back goes to the pending picker when the identity came from a tapped
+  // pending user; otherwise to the manual Telegram-ID step.
+  const nameBack = (session?.data?.pickAvailable && session?.data?.prefillSource === 'pending_user')
+    ? 'usr:back:pick'
+    : 'usr:back:name';
+  buttons.push(backCancelRow(nameBack));
   await render(bot, chatId, userId,
     '➕ *Add Employee*\n\n_Step 2 of 6 — Display Name_\n\n'
     + 'Type the user\'s display name (1–80 chars).' + prefilled,
@@ -473,6 +592,56 @@ async function handleCallback(bot, query) {
     await renderRoleStep(bot, chatId, userId);
     return true;
   }
+  if (data === 'usr:back:pick') {
+    session.step = 'pick_pending';
+    sessionStore.set(userId, session);
+    await renderPendingPickStep(bot, chatId, userId);
+    return true;
+  }
+
+  // Cold-start Step 1 — pending-user picker.
+  if (data === 'usr:manual') {
+    // Came from the picker; keep pickAvailable so the manual screen still
+    // offers "Back" to the list.
+    session.data.pickAvailable = true;
+    session.step = 'telegram_id';
+    sessionStore.set(userId, session);
+    await renderTelegramIdStep(bot, chatId, userId);
+    return true;
+  }
+  if (data === 'usr:pu_pg:prev' || data === 'usr:pu_pg:next') {
+    const delta = data.endsWith('next') ? 1 : -1;
+    session.data.pendingPage = Math.max(0, (session.data.pendingPage || 0) + delta);
+    sessionStore.set(userId, session);
+    await renderPendingPickStep(bot, chatId, userId);
+    return true;
+  }
+  if (data.startsWith('usr:pu:')) {
+    const tgId = data.slice('usr:pu:'.length);
+    let pu = null;
+    try { pu = await pendingUsersRepo.findByTelegramId(tgId); } catch (_) {}
+    if (!pu) {
+      await renderError(bot, chatId, userId, 'That pending user is no longer available.', 'usr:back:pick');
+      return true;
+    }
+    try {
+      const existing = await usersRepo.findByUserId(tgId);
+      if (existing && (existing.status || 'active') === 'active') {
+        await renderError(bot, chatId, userId,
+          `\`${tgId}\` is already an active user (*${existing.name || existing.user_id}*).`,
+          'usr:back:pick');
+        return true;
+      }
+    } catch (_) { /* dup check best-effort */ }
+    const composed = [pu.first_name, pu.last_name].filter(Boolean).join(' ').trim();
+    session.data.telegram_id = String(pu.telegram_id);
+    session.data.name = composed ? composed.slice(0, MAX_NAME_LEN) : '';
+    session.data.prefillSource = 'pending_user';
+    session.step = 'name';
+    sessionStore.set(userId, session);
+    await renderNameStep(bot, chatId, userId);
+    return true;
+  }
 
   if (data === 'usr:name:accept') {
     if (session.data.name) {
@@ -532,5 +701,8 @@ module.exports = {
   handleText,
   handleCallback,
   // exported for tests:
-  _internals: { TG_RE, MAX_NAME_LEN },
+  _internals: {
+    TG_RE, MAX_NAME_LEN, PENDING_PAGE_SIZE,
+    truncate, timeAgo, pendingDisplayName, loadPendingCandidates,
+  },
 };

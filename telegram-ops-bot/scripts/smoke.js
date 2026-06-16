@@ -2945,6 +2945,12 @@ async function runS19() {
     append: async () => {},
     getAll: async () => [],
   });
+  // No pending strangers in S19 → cold start falls through to manual ID entry,
+  // keeping S19.5's step=telegram_id assertion deterministic.
+  stubModule(require.resolve('../src/repositories/pendingUsersRepository'), {
+    getAll: async () => [],
+    findByTelegramId: async () => null,
+  });
   stubModule(require.resolve('../src/flows/warehouseFlow'), {
     listMergedWarehouses: async () => ({ raw: ['Kano Main', 'Lagos South', 'IDUMOTA'], lower: new Set() }),
   });
@@ -6256,6 +6262,139 @@ async function runS35() {
 }
 
 // ---------------------------------------------------------------------------
+// S36 — Add Employee: pending-user picker (cold-start "Who?" step)
+// ---------------------------------------------------------------------------
+async function runS36() {
+  const sessionStore = require('../src/utils/sessionStore');
+
+  function stubCommon(pendingRows, activeUsers) {
+    stubModule(require.resolve('../src/middlewares/auth'), {
+      isAdmin: () => true, isEmployee: () => false, isAllowed: () => true,
+      refresh: async () => {}, invalidate: async () => {},
+    });
+    stubModule(require.resolve('../src/repositories/departmentsRepository'), {
+      getAll: async () => [{ dept_name: 'Sales' }], findByName: async (n) => ({ dept_name: n }), append: async () => {},
+    });
+    stubModule(require.resolve('../src/repositories/usersRepository'), {
+      findByUserId: async (id) => (activeUsers || []).find((u) => String(u.user_id) === String(id)) || null,
+      append: async () => {},
+      getAll: async () => (activeUsers || []),
+    });
+    stubModule(require.resolve('../src/repositories/pendingUsersRepository'), {
+      getAll: async () => pendingRows,
+      findByTelegramId: async (id) => pendingRows.find((p) => String(p.telegram_id) === String(id)) || null,
+    });
+    stubModule(require.resolve('../src/flows/warehouseFlow'), {
+      listMergedWarehouses: async () => ({ raw: ['Kano', 'Lagos'], lower: new Set() }),
+    });
+    stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+      append: async () => {}, getAllPending: async () => [], getByRequestId: async () => null,
+    });
+    stubModule(require.resolve('../src/repositories/auditLogRepository'), { append: async () => {} });
+    stubModule(require.resolve('../src/events/approvalEvents'), {
+      notifyAdminsApprovalRequest: async () => {}, handleReasonReply: async () => false,
+    });
+    delete require.cache[require.resolve('../src/flows/userAddFlow')];
+    return require('../src/flows/userAddFlow');
+  }
+
+  const PENDING = [
+    { telegram_id: '111111', first_name: 'Ada', last_name: 'Obi', username: 'ada', arrived_at: '2026-06-16T10:00:00Z', status: 'pending' },
+    { telegram_id: '222222', first_name: '', last_name: '', username: 'ngozi', arrived_at: '2026-06-16T12:00:00Z', status: 'pending' },
+    { telegram_id: '333333', first_name: 'Sani', last_name: '', username: '', arrived_at: '2026-06-15T09:00:00Z', status: 'ignored' },
+    { telegram_id: '444444', first_name: 'Active', last_name: 'Joe', username: '', arrived_at: '2026-06-16T08:00:00Z', status: 'pending' },
+  ];
+  const ACTIVE = [{ user_id: '444444', status: 'active' }];
+
+  const capBot = () => {
+    const cap = { texts: [], kbs: [] };
+    return {
+      cap,
+      sendMessage: async (cid, t, opts) => { cap.texts.push(t); cap.kbs.push(opts && opts.reply_markup); return { message_id: 99 }; },
+      editMessageText: async (t, opts) => { cap.texts.push(t); cap.kbs.push(opts && opts.reply_markup); return { message_id: 99 }; },
+      answerCallbackQuery: async () => {},
+    };
+  };
+
+  // ---- S36.1 — loadPendingCandidates filters non-pending + already-active, newest first ----
+  const flow = stubCommon(PENDING, ACTIVE);
+  const cands = await flow._internals.loadPendingCandidates();
+  if (cands.length === 2 && cands[0].telegram_id === '222222' && cands[1].telegram_id === '111111') {
+    pass('S36.1 loadPendingCandidates: drops ignored + already-active; sorts newest-first');
+  } else {
+    fail('S36.1', JSON.stringify(cands.map((c) => c.telegram_id)));
+  }
+
+  // ---- S36.2 — cold start opens the pending picker ----
+  const b2 = capBot();
+  sessionStore.clear('adm-36a');
+  await flow.start(b2, 'c1', 'adm-36a', null);
+  const s2 = sessionStore.get('adm-36a');
+  const flatKb2 = ((b2.cap.kbs[b2.cap.kbs.length - 1] || {}).inline_keyboard || []).flat();
+  const hasPuTiles = flatKb2.some((btn) => String(btn.callback_data || '').startsWith('usr:pu:'));
+  const hasManual = flatKb2.some((btn) => btn.callback_data === 'usr:manual');
+  if (s2 && s2.step === 'pick_pending' && s2.data.pickAvailable === true && hasPuTiles && hasManual) {
+    pass('S36.2 cold start → pick_pending step with name tiles + manual fallback');
+  } else {
+    fail('S36.2', JSON.stringify({ step: s2 && s2.step, pickAvailable: s2 && s2.data.pickAvailable, hasPuTiles, hasManual }));
+  }
+
+  // ---- S36.3 — tapping a pending name auto-fills identity and advances to name ----
+  const b3 = capBot();
+  await flow.handleCallback(b3, { id: 'q1', from: { id: 'adm-36a' }, message: { chat: { id: 'c1' }, message_id: 99 }, data: 'usr:pu:111111' });
+  const s3 = sessionStore.get('adm-36a');
+  if (s3 && s3.step === 'name' && s3.data.telegram_id === '111111'
+      && s3.data.name === 'Ada Obi' && s3.data.prefillSource === 'pending_user') {
+    pass('S36.3 usr:pu:<id> → auto-fills id+name (pending_user), advances to name step');
+  } else {
+    fail('S36.3', JSON.stringify(s3 && s3.data));
+  }
+
+  // ---- S36.4 — manual fallback keeps a way back to the picker ----
+  sessionStore.set('adm-36b', { type: 'user_add_flow', step: 'pick_pending', flowMessageId: 99,
+    data: { telegram_id: '', name: '', warehouses: [], role: '', prefillSource: null, pickAvailable: true } });
+  const b4 = capBot();
+  await flow.handleCallback(b4, { id: 'q2', from: { id: 'adm-36b' }, message: { chat: { id: 'c2' }, message_id: 99 }, data: 'usr:manual' });
+  const s4 = sessionStore.get('adm-36b');
+  const flatKb4 = ((b4.cap.kbs[b4.cap.kbs.length - 1] || {}).inline_keyboard || []).flat();
+  const backToPick = flatKb4.some((btn) => btn.callback_data === 'usr:back:pick');
+  if (s4 && s4.step === 'telegram_id' && s4.data.pickAvailable === true && backToPick) {
+    pass('S36.4 usr:manual → telegram_id step retains Back-to-picker');
+  } else {
+    fail('S36.4', JSON.stringify({ step: s4 && s4.step, backToPick }));
+  }
+
+  // ---- S36.5 — display/format helpers ----
+  const dnFull = flow._internals.pendingDisplayName({ first_name: 'Ada', last_name: 'Obi' });
+  const dnUser = flow._internals.pendingDisplayName({ username: 'ngozi' });
+  const dnId = flow._internals.pendingDisplayName({ telegram_id: '777' });
+  const trunc = flow._internals.truncate('abcdefghij', 5);
+  const ago = flow._internals.timeAgo('2026-06-16T12:00:00Z');
+  if (dnFull === 'Ada Obi' && dnUser === '@ngozi' && dnId === '777'
+      && trunc.length === 5 && trunc.endsWith('…') && /^[0-9]+[mhd]$/.test(ago)) {
+    pass('S36.5 helpers: pendingDisplayName / truncate / timeAgo');
+  } else {
+    fail('S36.5', JSON.stringify({ dnFull, dnUser, dnId, trunc, ago }));
+  }
+
+  // ---- S36.6 — no pending users → cold start falls back to manual ID entry ----
+  const flowEmpty = stubCommon([], []);
+  const b6 = capBot();
+  sessionStore.clear('adm-36c');
+  await flowEmpty.start(b6, 'c3', 'adm-36c', null);
+  const s6 = sessionStore.get('adm-36c');
+  if (s6 && s6.step === 'telegram_id' && s6.data.pickAvailable === false) {
+    pass('S36.6 no pending users → cold start lands on manual telegram_id (pickAvailable=false)');
+  } else {
+    fail('S36.6', JSON.stringify({ step: s6 && s6.step, pickAvailable: s6 && s6.data.pickAvailable }));
+  }
+
+  sessionStore.clear('adm-36a');
+  sessionStore.clear('adm-36b');
+  sessionStore.clear('adm-36c');
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -6301,6 +6440,7 @@ async function runS35() {
   try { runS33(); } catch (e) { fail('S33 unexpected error', e.message); }
   try { await runS34(); } catch (e) { fail('S34 unexpected error', e.message); }
   try { await runS35(); } catch (e) { fail('S35 unexpected error', e.message); }
+  try { await runS36(); } catch (e) { fail('S36 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;
