@@ -35,12 +35,23 @@ A marketer/salesman opens the bot and sees a **single tile — "📦 My Products
 - Unit: `test/unit/services/fieldRoles.test.js`, `fieldCatalog.test.js` (warehouse scoping, per-role price, empty states).
 - Characterization: `test/characterization/fieldRoles.myProducts.test.js` (menu = only My Products; salesman price shown, marketer not; other-warehouse stock excluded).
 
+## Onboarding from the bot (no sheet edit)
+
+Admin → **Manage Users → ➕ Add New User** (or the Add Employee tile). The
+Step-5 role picker now offers **📣 Marketer** and **💼 Salesman** alongside
+Employee/Manager. Pick the warehouse(s) at Step 4 (the confirm card warns if a
+field role has none), choose the role, and submit for the usual 2nd-admin
+approval. On approval the user is written to `Users` with that role + warehouses
+and can use the bot immediately. Implemented in `src/flows/userAddFlow.js`
+(picker + validation) and `src/services/inventoryService.js` (`add_user`
+executor allow-list); covered by `test/unit/flows/userAddFlow.roles.test.js`
+and `test/unit/services/inventoryService.addUser.test.js`.
+
 ## How to test on your phone
 
-1. In the **Users** sheet, set your test user's:
-   - `role` = `marketer` (or `salesman`)
-   - `status` = `active`
-   - `warehouses` = e.g. `Lagos` (the warehouse(s) they should see)
+1. Onboard the test phone via **Manage Users → Add New User** (above), choosing
+   role **Marketer** (or **Salesman**) and at least one warehouse — *or* set the
+   `Users` row manually (`role`, `status=active`, `warehouses`).
 2. Open the bot and send **hi** → you should see only **📦 My Products**.
 3. Tap it:
    - **marketer** → designs + shades + quantities for Lagos, **no price**.
@@ -49,7 +60,10 @@ A marketer/salesman opens the bot and sees a **single tile — "📦 My Products
 
 > Tip: the allow-list refreshes from the Users sheet within ~10s; if the bot says "not authorized" right after editing the sheet, wait a moment and resend **hi**.
 
-## Follow-ups (not in MKT-1)
-- **Manage-Users role picker:** add `marketer`/`salesman` options to the admin Manage-Users flow (today the role is set directly in the sheet).
-- **Free-text guard:** field-role users currently only get the menu tile; a guard that routes any free-text back to their catalog (so they can't reach other read paths via typing) is a small future hardening.
+## Done since first cut
+- **Free-text guard:** ✅ field-role users are strictly view-only — any free text just re-shows their My Products tile (never reaches the intent parser).
+- **Manage-Users role picker:** ✅ Add Employee Step-5 now offers Marketer/Salesman; onboarding no longer needs a sheet edit.
+
+## Follow-ups (not yet)
+- **Change an EXISTING user's role from the bot:** today Manage Users edits dept/warehouses; flipping an existing employee to marketer/salesman is still a sheet edit (or re-add). A small role-change subflow could cover it.
 - **MG-2 (separate):** the dual-admin per-design "group price" model in `specs/marketing-group-catalog.md` remains available if richer governance is later wanted.
