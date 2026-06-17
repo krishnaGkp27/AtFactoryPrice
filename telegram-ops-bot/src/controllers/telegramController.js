@@ -104,6 +104,8 @@ const supplyDetailsReport = require('../services/supplyDetailsReport');
 // telegram-ops-bot/specs/marketing-group-catalog.md). Only consumed by
 // startSupplyRequestFlow today; later commits (MG-2/3) extend its use.
 const marketerOverlay = require('../services/marketerOverlay');
+const fieldRoles = require('../services/fieldRoles');
+const fieldCatalog = require('../services/fieldCatalog');
 
 function fmtQty(n) { return fmtQtyBase(n, { maxFraction: 2 }); }
 
@@ -4640,9 +4642,16 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
     : (user && user.department ? [user.department] : (isAdminUser ? ['Admin'] : []));
   const deptName = userDepts[0] || (isAdminUser ? 'Admin' : '');
 
+  // MKT-1 — marketer / salesman get a controlled, single-tile menu ("My
+  // Products"), independent of any department activities. Admins are never
+  // treated as a field role.
+  const fieldRole = (!isAdminUser && user) ? fieldRoles.classify(user.role) : null;
+
   let allowed = [];
   const TASK_CODES = new Set(['assign_task', 'my_tasks', 'team_tasks', 'pending_signoff', 'payouts']);
-  if (isAdminUser) {
+  if (fieldRole) {
+    allowed = activityRegistry.filterByCodes(['my_products']);
+  } else if (isAdminUser) {
     // Admin sees the entire registry; we'll still let taskFlow gate the
     // Task hub entries below so non-managing admins are not noisy with
     // every task tile (admins ARE managers by definition, so all 4 show).
@@ -4665,7 +4674,7 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
   }
 
   // Inject Task hub activities based on user attributes (admin / manages).
-  try {
+  if (!fieldRole) try {
     const taskCodes = await taskFlow.visibleTaskActivityCodes(userId);
     for (const a of activityRegistry.filterByCodes(taskCodes)) {
       allowed.push(a);
@@ -4678,7 +4687,7 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
   // added to ATTENDANCE_REQUIRED_USERS. Hub is null on the registry entry,
   // so this is the ONLY path that surfaces the tile. Admins also get the
   // tile if they happen to be in the required list (test path).
-  try {
+  if (!fieldRole) try {
     const attendanceService = require('../services/attendanceService');
     const isReq = await attendanceService.isRequired(userId);
     if (isReq) {
@@ -8052,6 +8061,20 @@ async function handleCallbackQuery(bot, callbackQuery) {
         }
         await startStockValueFlow(bot, chatId, uid, messageId);
         break;
+      case 'my_products': {
+        // MKT-1 — warehouse-scoped catalog for marketer/salesman. Salesman
+        // also sees today's selling price; marketer sees quantities only.
+        const u = await usersRepository.findByUserId(uid);
+        const items = await inventoryRepository.getAll();
+        const cat = fieldCatalog.buildCatalog(items, (u && u.warehouses) || [], {
+          showPrice: fieldRoles.canSeePrice(u && u.role),
+        });
+        await sendLong(bot, chatId, cat.text, {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] },
+        });
+        break;
+      }
       case 'customer_details':
         await showCustomerDetailsPicker(bot, chatId, uid, messageId);
         break;

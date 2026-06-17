@@ -32,6 +32,10 @@ function createFakeBot() {
       record('editMessageText', { text, opts });
       return { message_id: (opts && opts.message_id) || (messageId += 1), text };
     },
+    async editMessageReplyMarkup(replyMarkup, opts) {
+      record('editMessageReplyMarkup', { replyMarkup, opts });
+      return { message_id: (opts && opts.message_id) || (messageId += 1) };
+    },
     async answerCallbackQuery(callbackQueryId, opts) {
       record('answerCallbackQuery', { callbackQueryId, opts });
       return true;
