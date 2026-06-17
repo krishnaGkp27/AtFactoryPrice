@@ -90,13 +90,20 @@ The test pyramid we are building toward, widest tier first:
    faking only the three boundaries it reaches: `sheetsClient` (the single
    googleapis seam), `intentParser` (OpenAI), and the injected `bot`.
 
-   First golden suite: `characterization/handleMessage.authgate.test.js`
-   (authorization gate). To extend, seed the relevant sheets via
-   `createFakeSheets({...})`, stub the intent with `installFakeIntent(...)`,
-   drive `controller.handleMessage` / `handleCallbackQuery`, and assert against
-   `bot.calls`. Build out the major message/callback paths here before TG-8
-   begins. Note: set `process.env.ADMIN_IDS` / `EMPLOYEE_IDS` at the top of the
-   test file (auth.js seeds its allow-set from env at load).
+   Golden suites so far (`test/characterization/`):
+   - `handleMessage.authgate.test.js` — authorization gate (reject / capture /
+     menu).
+   - `slashCommands.ledger.test.js` — admin-only gating on `/ledger`,
+     `/balance`, `/payment` + `/payment` amount validation.
+   - `handleCallbackQuery.unknown.test.js` — unknown callback is acknowledged
+     ("Unknown action."), never left spinning.
+
+   To extend, seed the relevant sheets via `createFakeSheets({...})`, stub the
+   intent with `installFakeIntent(...)`, drive `controller.handleMessage` /
+   `handleCallbackQuery`, and assert against `bot.calls`. Build out the
+   remaining major message/callback paths here before TG-8 begins. Note: set
+   `process.env.ADMIN_IDS` / `EMPLOYEE_IDS` at the top of the test file
+   (auth.js seeds its allow-set from env at load).
 
 ## Out of scope here (needs explicit go-ahead)
 
