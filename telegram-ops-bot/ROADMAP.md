@@ -1404,8 +1404,8 @@ Detailed design: §5.6 (placeholder for now; full spec to be written when commit
 | TG-22 | `Store` interface + Redis backend | When we go multi-instance |
 | TG-23 | Sheets → Firestore migration | When Sheets API quota hurts |
 | TG-24 | Webhook queue (Cloud Tasks / BullMQ) | When error rate matters |
-| TG-25 | Containerize + CI | Anytime; mechanical |
-| TG-26 | ESLint + Prettier | Anytime; format on touch |
+| TG-25 | Containerize + CI | 🚧 CI done (GitHub Actions: lint + test + smoke + check-org on telegram-ops-bot/**); containerize deferred |
+| TG-26 | ESLint + Prettier | ✅ Done — flat ESLint (bug-focused, errors block CI) + Prettier (format-on-touch); see §2.14 |
 | TG-27 | Automated `node:test` suite + TG-8 characterization gate | 🚧 In progress — see §2.14 |
 
 ---

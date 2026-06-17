@@ -41,6 +41,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Blocking: any ESLint *error* (real-bug rules) fails the build.
+      # Hygiene findings are warnings and do not fail CI.
+      - name: Lint (ESLint — errors only block)
+        run: npm run lint
+
       - name: Unit + characterization tests (node:test)
         run: npm test
 
