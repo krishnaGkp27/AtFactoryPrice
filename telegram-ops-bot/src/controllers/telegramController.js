@@ -3224,6 +3224,22 @@ async function handleMessage(bot, msg) {
     return;
   }
 
+  // MKT-1 — marketer / salesman are strictly view-only. Greetings and the
+  // empty-text menu are handled above; ANY other free text is ignored and
+  // simply re-shows their single "My Products" tile. They have no
+  // text-driven actions (sell, transfer, reports, CRM, samples, etc.), so
+  // we short-circuit before every flow/intent handler below.
+  {
+    const fieldUser = await usersRepository.findByUserId(userId);
+    if (fieldUser
+      && !config.access.adminIds.includes(userId)
+      && fieldRoles.isFieldRole(fieldUser.role)) {
+      await bot.sendMessage(chatId, '👋 Tap *📦 My Products* to see the designs and quantities available in your warehouse.', { parse_mode: 'Markdown' });
+      await buildGreetingMenu(bot, chatId, userId);
+      return;
+    }
+  }
+
   // Stage-1 reject reason / Stage-3 decline reason — these run on a
   // separate pendingReason map inside approvalEvents (not on the
   // shared sessionStore), so we check them BEFORE any other text

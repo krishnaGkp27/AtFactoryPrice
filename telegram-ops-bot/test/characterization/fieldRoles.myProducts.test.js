@@ -99,3 +99,16 @@ test('marketer My Products shows the same designs WITHOUT price', async () => {
   assert.doesNotMatch(out, /\/yd/);
   assert.doesNotMatch(out, /₦/);
 });
+
+test('marketer is view-only: free-text commands do not trigger actions', async () => {
+  let intentCalls = 0;
+  installFakeIntent(() => { intentCalls += 1; return { action: 'sell', confidence: 0.99 }; });
+  const bot = createFakeBot();
+  await controller.handleMessage(bot, message(MARKETER_ID, 'Sell 5801 to Ibrahim cash'));
+  const out = bot.allText();
+  // No sell flow / confirmation; just the view-only nudge + their menu tile.
+  assert.match(out, /My Products/);
+  assert.doesNotMatch(out, /[Ss]ell|[Cc]onfirm|[Ii]brahim/);
+  assert.equal(intentCalls, 0, 'field-role text must never reach the intent parser');
+  installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
+});
