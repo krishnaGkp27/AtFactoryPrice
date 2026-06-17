@@ -1407,6 +1407,7 @@ Detailed design: §5.6 (placeholder for now; full spec to be written when commit
 | TG-25 | Containerize + CI | 🚧 CI done (GitHub Actions: lint + test + smoke + check-org on telegram-ops-bot/**); containerize deferred |
 | TG-26 | ESLint + Prettier | ✅ Done — flat ESLint (bug-focused, errors block CI) + Prettier (format-on-touch); see §2.14 |
 | TG-27 | Automated `node:test` suite + TG-8 characterization gate | 🚧 In progress — see §2.14 |
+| MKT-1 | Marketer & Salesman roles — warehouse-scoped "My Products" view (salesman sees price) | ✅ Done — see `specs/marketer-salesman-roles.md` |
 
 ---
 
