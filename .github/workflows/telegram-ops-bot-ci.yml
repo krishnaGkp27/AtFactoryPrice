@@ -1,0 +1,51 @@
+name: telegram-ops-bot CI
+
+# Runs the offline test gates for the Telegram ops bot on every push / PR that
+# touches telegram-ops-bot/. All three gates run with ZERO credentials — the
+# suites mock Telegram, Google Sheets and OpenAI — so no secrets are required.
+on:
+  push:
+    paths:
+      - 'telegram-ops-bot/**'
+      - '.github/workflows/telegram-ops-bot-ci.yml'
+  pull_request:
+    paths:
+      - 'telegram-ops-bot/**'
+      - '.github/workflows/telegram-ops-bot-ci.yml'
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: tgbot-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: telegram-ops-bot
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Node 22 matches the production runtime. engines requires >=18, but the
+      # built-in test runner's glob handling is version-sensitive, so CI pins
+      # to the deployed version.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: telegram-ops-bot/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit + characterization tests (node:test)
+        run: npm test
+
+      - name: Offline smoke harness
+        run: npm run smoke
+
+      - name: Org-graph assertions
+        run: npm run check-org
