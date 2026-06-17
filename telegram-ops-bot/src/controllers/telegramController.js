@@ -1976,7 +1976,7 @@ async function showUpdatePriceConfirm(bot, chatId, userId) {
 async function startTransferPackageFlow(bot, chatId, userId, messageId = null) {
   const all = await inventoryRepository.getAll();
   // Packages with at least one available than.
-  const byBale = new Map();
+  const byPkg = new Map();
   all.forEach((r) => {
     if (r.status !== 'available') return;
     const key = String(r.packageNo || '').trim();
@@ -7562,13 +7562,6 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await bot.sendMessage(callbackQuery.message.chat.id, `⏳ Receipt ${receiptId} submitted for admin approval.`);
     }
     sessionStore.clear(uid);
-
-  } else if (data.startsWith('rccanc:')) {
-    const uid = String(callbackQuery.from.id);
-    sessionStore.clear(uid);
-    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
-    await bot.sendMessage(callbackQuery.message.chat.id, 'Receipt upload cancelled.');
 
   } else if (data.startsWith('rcapr:')) {
     const receiptId = data.slice(6);
