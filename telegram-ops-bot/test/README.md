@@ -27,11 +27,17 @@ the next, there's no coverage signal, no watch mode, and no filtering. The
 
 ```
 test/
-  unit/         # pure functions & engines — no I/O, no mocks needed
-    org/        # deptGraph (department tree helpers)
-    utils/      # idGenerator, dates, formatters, parsers …
-  helpers/      # shared offline mocks (Telegram bot, sheetsClient, OpenAI)
-  fixtures/     # static sample rows / payloads
+  unit/             # pure functions & engines — no I/O, no mocks needed
+    org/            # deptGraph (department tree helpers)
+    utils/          # idGenerator, dates, formatters, parsers …
+    risk/           # evaluate policy snapshot
+    flows/          # taskStateMachine pure surface
+  characterization/ # golden tests that drive the REAL controller offline
+  helpers/          # shared offline harness:
+                    #   fakeBot.js          — recording Telegram bot
+                    #   fakeSheets.js       — in-memory sheetsClient
+                    #   controllerHarness.js— installs fakes + loads controller
+  fixtures/         # static sample rows / payloads
 ```
 
 ## Conventions
@@ -72,14 +78,25 @@ The test pyramid we are building toward, widest tier first:
 2. **Integration** — services + repositories driven through the shared mocks in
    `test/helpers/`, asserting Sheets row shapes without touching a live sheet.
    Much of this logic already has `smoke.js` coverage that can be ported.
-3. **Characterization (the TG-8 gate)** — before
+3. **Characterization (the TG-8 gate) — harness landed.** Before
    `src/controllers/telegramController.js` is split (roadmap **TG-8**, deferred),
    we capture its *current* observable behavior (messages sent, keyboards,
-   approval-queue writes) for the major message/callback paths as golden
-   snapshots. The refactor is then provably behavior-preserving: the
-   characterization suite must stay green across the split. **This is the
-   prerequisite for starting TG-8** — do not begin the controller split until
-   this tier exists and is green.
+   approval-queue writes) as golden snapshots, so the refactor is provably
+   behavior-preserving — the characterization suite must stay green across the
+   split. **This is the prerequisite for starting TG-8.**
+
+   The reusable offline harness now exists in `test/helpers/`. It drives the
+   **real** controller (which is never modified — it's parked for TG-8) by
+   faking only the three boundaries it reaches: `sheetsClient` (the single
+   googleapis seam), `intentParser` (OpenAI), and the injected `bot`.
+
+   First golden suite: `characterization/handleMessage.authgate.test.js`
+   (authorization gate). To extend, seed the relevant sheets via
+   `createFakeSheets({...})`, stub the intent with `installFakeIntent(...)`,
+   drive `controller.handleMessage` / `handleCallbackQuery`, and assert against
+   `bot.calls`. Build out the major message/callback paths here before TG-8
+   begins. Note: set `process.env.ADMIN_IDS` / `EMPLOYEE_IDS` at the top of the
+   test file (auth.js seeds its allow-set from env at load).
 
 ## Out of scope here (needs explicit go-ahead)
 

@@ -1138,13 +1138,20 @@ controller; it needs a runner that can prove behavior is preserved.
 - `test/README.md` — the test pyramid and the road to comprehensive
   coverage.
 
+**Follow-up commits (same initiative):**
+1. ✅ Unit tier first pass — `utils/*` (idGenerator, format, dates, formatDate),
+   bulk-receive/quick-add/csv parsers, a **read-only** `risk/evaluate.js`
+   policy snapshot (no semantic changes), and the `taskStateMachine` pure
+   surface.
+2. ✅ Characterization harness landed — `test/helpers/` (recording fakeBot,
+   in-memory fakeSheets at the sole googleapis seam, controllerHarness) drives
+   the **real, unmodified** `telegramController` offline. First golden suite:
+   `handleMessage` authorization gate.
+
 **Next rungs (planned, in `test/README.md`):**
-1. Port pure modules/parsers already covered by smoke into isolated unit
-   tests (`utils/*`, bulk-receive/quick-add parsers, a **read-only**
-   `risk/evaluate.js` policy snapshot — no semantic changes).
-2. Integration tier for services/repositories via shared mocks.
-3. **Characterization (golden) tests for `telegramController.js`** — the
-   explicit prerequisite gate for starting TG-8.
+- Widen the characterization golden suites across the major message/callback
+  paths (the explicit prerequisite gate for starting **TG-8**).
+- Integration tier for services/repositories via the shared fakes.
 
 **Out of scope / needs owner go-ahead:** CI workflow (TG-25) lives at repo
 root `.github/` (outside `telegram-ops-bot/`); ESLint/Prettier (TG-26)
