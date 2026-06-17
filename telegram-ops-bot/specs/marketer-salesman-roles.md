@@ -62,8 +62,8 @@ and `test/unit/services/inventoryService.addUser.test.js`.
 
 ## Done since first cut
 - **Free-text guard:** ✅ field-role users are strictly view-only — any free text just re-shows their My Products tile (never reaches the intent parser).
-- **Manage-Users role picker:** ✅ Add Employee Step-5 now offers Marketer/Salesman; onboarding no longer needs a sheet edit.
+- **Manage-Users role picker (onboarding):** ✅ Add Employee Step-5 offers Marketer/Salesman; onboarding no longer needs a sheet edit.
+- **Change an EXISTING user's role:** ✅ Manage Users → **🎚 Change Role** (`src/flows/roleEditFlow.js`, `rol:*`). Pick an active non-admin user → pick employee/manager/marketer/salesman → writes directly (admin-only, like Assign Dept/Warehouses), refreshes auth, warns + offers Assign-Warehouses when a field role has none. Admins are excluded (use Promote/Deactivate). Covered by `test/unit/flows/roleEditFlow.test.js`.
 
 ## Follow-ups (not yet)
-- **Change an EXISTING user's role from the bot:** today Manage Users edits dept/warehouses; flipping an existing employee to marketer/salesman is still a sheet edit (or re-add). A small role-change subflow could cover it.
 - **MG-2 (separate):** the dual-admin per-design "group price" model in `specs/marketing-group-catalog.md` remains available if richer governance is later wanted.

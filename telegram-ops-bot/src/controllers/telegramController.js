@@ -5454,6 +5454,7 @@ async function showUserManagement(bot, chatId) {
     reply_markup: { inline_keyboard: [
       [{ text: '🏢 Assign Department', callback_data: 'adm:assign_dept' }],
       [{ text: '🏭 Assign Warehouses', callback_data: 'adm:assign_wh' }],
+      [{ text: '🎚 Change Role', callback_data: 'rol:start' }],
       [{ text: '➕ Add New User', callback_data: 'adm:add_user' }],
     ] },
   });
@@ -5925,6 +5926,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
   if (data.startsWith('umg:')) {
     const userManageFlow = require('../flows/userManageFlow');
     const handled = await userManageFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
+  // MKT-1 — Change Role (existing users) flow.
+  if (data.startsWith('rol:')) {
+    const roleEditFlow = require('../flows/roleEditFlow');
+    const handled = await roleEditFlow.handleCallback(bot, callbackQuery);
     if (handled) return;
   }
 
