@@ -1104,6 +1104,52 @@ change, not a code rewrite.
   `BANKING_NOT_WIRED` until credentials are finalised, so an
   accidental env flip cannot silently return empty data.
 
+### 2.14 TG-27 · Automated test suite foundation (2026-06-17)
+
+A proper, industry-standard automated test layer alongside the existing
+offline harnesses — the regression net that must exist **before** the
+`telegramController.js` split (TG-8) can safely begin.
+
+**Why now:** `scripts/smoke.js` (502 checks) and
+`scripts/check-org-graph.js` are excellent *content*, but each is a single
+`console.log` script — no per-test isolation, no coverage signal, no watch
+mode, no filtering. TG-8 is a high-risk refactor of a ~9.7k-LOC god
+controller; it needs a runner that can prove behavior is preserved.
+
+**Locked decisions:**
+- **Runner:** Node's built-in `node:test` + `node:assert/strict`. **Zero new
+  dependencies**, runs on the project's Node 22, fully offline, no credentials
+  — consistent with the repo rule that test code mocks Telegram / Sheets /
+  OpenAI.
+- **Additive, not a replacement.** `npm run smoke` and `npm run check-org`
+  stay as-is (the broad integration net + fast org gate). The new
+  `npm test` (`test/**`) grows the isolated/unit + coverage tier.
+- **Layout:** `test/unit/`, `test/helpers/` (shared mocks), `test/fixtures/`.
+  Strategy + conventions documented in `test/README.md`.
+
+**This commit ships:**
+- `test/unit/org/deptGraph.test.js` — the proper-runner successor to
+  `check-org-graph.js` / smoke S1. 38 isolated sub-tests covering all 8
+  exported helpers, including `listAssignableUsers` (admin vs manager vs
+  excludeSelf vs inactive-filter) which the legacy harnesses skip.
+  Coverage of `deptGraph.js`: **100% line / 100% function / ~90% branch**.
+- npm scripts: `test`, `test:unit`, `test:watch`, `test:coverage`
+  (built-in `--experimental-test-coverage`).
+- `test/README.md` — the test pyramid and the road to comprehensive
+  coverage.
+
+**Next rungs (planned, in `test/README.md`):**
+1. Port pure modules/parsers already covered by smoke into isolated unit
+   tests (`utils/*`, bulk-receive/quick-add parsers, a **read-only**
+   `risk/evaluate.js` policy snapshot — no semantic changes).
+2. Integration tier for services/repositories via shared mocks.
+3. **Characterization (golden) tests for `telegramController.js`** — the
+   explicit prerequisite gate for starting TG-8.
+
+**Out of scope / needs owner go-ahead:** CI workflow (TG-25) lives at repo
+root `.github/` (outside `telegram-ops-bot/`); ESLint/Prettier (TG-26)
+would add the first devDependencies.
+
 ---
 
 ## §3 · Active subsystems (reference)
@@ -1353,6 +1399,7 @@ Detailed design: §5.6 (placeholder for now; full spec to be written when commit
 | TG-24 | Webhook queue (Cloud Tasks / BullMQ) | When error rate matters |
 | TG-25 | Containerize + CI | Anytime; mechanical |
 | TG-26 | ESLint + Prettier | Anytime; format on touch |
+| TG-27 | Automated `node:test` suite + TG-8 characterization gate | 🚧 In progress — see §2.14 |
 
 ---
 
