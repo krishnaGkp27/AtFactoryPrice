@@ -58,14 +58,17 @@ test/
 
 The test pyramid we are building toward, widest tier first:
 
-1. **Unit (in progress)** — pure modules with no I/O. Highest value per line,
-   trivially fast. Targets, in priority order:
-   - `src/org/deptGraph.js` ✅ (this commit)
-   - `src/utils/*` (id generation, date math, formatters)
-   - `src/risk/evaluate.js` policy table (read-only assertions — **no semantic
-     changes**, per the repo's "approval semantics are sacred" rule)
-   - pure parsers/validators already exercised by `smoke.js` (bulk-receive CSV,
-     quick-add-customer, bale-list) — ported to isolated tests
+1. **Unit (first pass complete)** — pure modules with no I/O. Highest value per
+   line, trivially fast. Done so far:
+   - `src/org/deptGraph.js` ✅
+   - `src/utils/idGenerator.js`, `format.js`, `dates.js`, `formatDate.js` ✅
+   - `src/utils/csvParser.js`, `quickAddParser.js`, `bulkRowValidator.js` ✅
+   - `src/risk/evaluate.js` policy table + gate (read-only assertions — **no
+     semantic changes**, per the "approval semantics are sacred" rule) ✅
+   - `src/flows/taskStateMachine.js` pure surface (`canTransition`, table,
+     errors) ✅
+   - Remaining: `stockCalculator.js`, `menuNav.js`, and other pure helpers as
+     they prove worth the lock.
 2. **Integration** — services + repositories driven through the shared mocks in
    `test/helpers/`, asserting Sheets row shapes without touching a live sheet.
    Much of this logic already has `smoke.js` coverage that can be ported.
