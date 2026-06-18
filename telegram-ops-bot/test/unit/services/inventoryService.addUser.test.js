@@ -24,8 +24,9 @@ function stub(actionJSON) {
     { requestId: 'R1', user: 'admin1', actionJSON },
   ];
   approvalQueueRepository.updateStatus = async () => {};     // success-tail marks resolved
-  usersRepository.findByUserId = async () => null;           // no dup
+  usersRepository.findByUserId = async () => null;           // no dup by default
   usersRepository.append = async (row) => { captured.row = row; };
+  usersRepository.reactivate = async (id, fields) => { captured.reactivated = { id, fields }; return true; };
   departmentsRepository.findByName = async () => ({ dept_name: actionJSON.department });
   departmentsRepository.append = async () => {};
   pendingUserService.markOnboarded = async () => {};
@@ -50,6 +51,28 @@ test('approves a marketer and persists role + warehouses', async () => {
   assert.equal(captured.row.role, 'marketer');
   assert.deepEqual(captured.row.warehouses, ['Lagos', 'Kano']);
   assert.equal(captured.row.status, 'active');
+});
+
+test('re-onboarding an inactive user REACTIVATES the row (no duplicate append)', async () => {
+  const captured = stub(baseAj('marketer'));
+  // Existing INACTIVE row for this id → must reactivate in place, not append.
+  usersRepository.findByUserId = async () => ({ user_id: '12345678', status: 'inactive', name: 'Old' });
+  const res = await inventoryService.executeApprovedAction('R1', 'admin2', {});
+  assert.equal(res.ok, true);
+  assert.equal(captured.row, undefined, 'must NOT append a duplicate row');
+  assert.equal(captured.reactivated.id, '12345678');
+  assert.equal(captured.reactivated.fields.role, 'marketer');
+  assert.deepEqual(captured.reactivated.fields.warehouses, ['Lagos', 'Kano']);
+});
+
+test('still rejects re-onboarding an already-ACTIVE user', async () => {
+  const captured = stub(baseAj('marketer'));
+  usersRepository.findByUserId = async () => ({ user_id: '12345678', status: 'active', name: 'Live' });
+  const res = await inventoryService.executeApprovedAction('R1', 'admin2', {});
+  assert.equal(res.ok, false);
+  assert.match(res.message, /already an active user/i);
+  assert.equal(captured.row, undefined);
+  assert.equal(captured.reactivated, undefined);
 });
 
 test('approves a salesman', async () => {

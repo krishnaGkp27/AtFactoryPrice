@@ -766,20 +766,25 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       logger.warn(`add_user: dept-ensure failed (${e.message}) — continuing with append`);
     }
 
-    // Append the user row. If a row already exists but inactive, reactivate
-    // by appending a fresh row (simpler than updating; the older row
-    // remains as audit trail with status=inactive).
-    await usersRepo.append({
-      user_id: tgId,
-      name,
-      role,
-      branch: '',
-      access_level: 'branch_only',
-      status: 'active',
-      departments: [dept],
-      warehouses,
-      manages: '',
-    });
+    // Write the user row. If a row already exists for this id (inactive — an
+    // active one was rejected above), REACTIVATE it in place so we never end
+    // up with two rows mapping to one Telegram ID (which used to shadow each
+    // other and break deactivate / role reads). History lives in AuditLog.
+    if (dup) {
+      await usersRepo.reactivate(tgId, { name, role, departments: [dept], warehouses });
+    } else {
+      await usersRepo.append({
+        user_id: tgId,
+        name,
+        role,
+        branch: '',
+        access_level: 'branch_only',
+        status: 'active',
+        departments: [dept],
+        warehouses,
+        manages: '',
+      });
+    }
 
     // Mark any PendingUsers row as onboarded (best-effort).
     try {

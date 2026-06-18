@@ -171,6 +171,37 @@ async function updateWarehouses(userId, warehouses) {
 }
 
 /**
+ * USR-C4 — re-onboard an existing user by REACTIVATING their row in place
+ * (status→active + refresh name/role/departments/warehouses) instead of
+ * appending a duplicate row. Avoids two rows mapping to one Telegram ID.
+ * History is preserved in AuditLog, not via stale duplicate Users rows.
+ * Returns false if no row exists for the id.
+ *
+ * @param {string} userId
+ * @param {{name?:string, role?:string, departments?:string[]|string, warehouses?:string[]|string}} fields
+ */
+async function reactivate(userId, fields = {}) {
+  const u = await findByUserId(userId);
+  if (!u) return false;
+  const ri = u.rowIndex;
+  const deptCsv = Array.isArray(fields.departments)
+    ? fields.departments.map((d) => String(d).trim()).filter(Boolean).join(',')
+    : String(fields.departments || '').trim();
+  const whCsv = Array.isArray(fields.warehouses)
+    ? fields.warehouses.map((w) => String(w).trim()).filter(Boolean).join(',')
+    : String(fields.warehouses || '').trim();
+  // B=name, C=role | F=status | H=departments, I=warehouses. Leaves
+  // D(branch), E(access_level), G(created_at), J(manages), K(prefs) intact.
+  await sheets.updateRange(SHEET, `B${ri}:C${ri}`, [[
+    fields.name != null ? String(fields.name) : (u.name || ''),
+    fields.role != null ? String(fields.role) : (u.role || 'employee'),
+  ]]);
+  await sheets.updateRange(SHEET, `F${ri}`, [['active']]);
+  await sheets.updateRange(SHEET, `H${ri}:I${ri}`, [[deptCsv, whCsv]]);
+  return true;
+}
+
+/**
  * CSV of department names this user manages (heads). Empty = not a dept head.
  */
 async function updateManages(userId, manages) {
@@ -225,6 +256,7 @@ module.exports = {
   findByDepartment,
   inDepartment,
   append,
+  reactivate,
   updateDepartment,
   updateWarehouses,
   updateManages,

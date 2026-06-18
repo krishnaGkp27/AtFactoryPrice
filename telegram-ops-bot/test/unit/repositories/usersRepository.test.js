@@ -57,3 +57,33 @@ test('single row behaves normally; missing id returns null', async () => {
     assert.equal(await usersRepo.findByUserId('404'), null);
   });
 });
+
+test('reactivate updates the existing row in place (no append)', async () => {
+  const origRead = sheets.readRange;
+  const origWrite = sheets.updateRange;
+  // One inactive row at sheet row 2 (rowIndex = i + 2, i=0).
+  sheets.readRange = async () => [row('999', 'Old Name', 'employee', 'inactive')];
+  const writes = [];
+  sheets.updateRange = async (sheet, range, values) => { writes.push({ range, values }); };
+  try {
+    const ok = await usersRepo.reactivate('999', { name: 'New Name', role: 'marketer', departments: ['Marketing'], warehouses: ['Lagos', 'Kano'] });
+    assert.equal(ok, true);
+    const byRange = Object.fromEntries(writes.map((w) => [w.range, w.values]));
+    assert.deepEqual(byRange['B2:C2'], [['New Name', 'marketer']]);
+    assert.deepEqual(byRange.F2, [['active']]);                   // status reactivated
+    assert.deepEqual(byRange['H2:I2'], [['Marketing', 'Lagos,Kano']]); // dept, warehouses
+  } finally {
+    sheets.readRange = origRead;
+    sheets.updateRange = origWrite;
+  }
+});
+
+test('reactivate returns false when no row exists', async () => {
+  const origRead = sheets.readRange;
+  sheets.readRange = async () => [];
+  try {
+    assert.equal(await usersRepo.reactivate('404', { name: 'X' }), false);
+  } finally {
+    sheets.readRange = origRead;
+  }
+});
