@@ -138,8 +138,17 @@ async function notify(bot, eventType, text, opts = {}, extra = {}) {
       await bot.sendMessage(id, text, opts);
       sent += 1;
     } catch (e) {
-      logger.warn(`adminFeed.notify: send to ${id} failed for ${eventType}: ${e.message}`);
-      skipped += 1;
+      // A Markdown parse failure (unescaped user data in `text`) must not
+      // silently drop the notification — retry once as plain text.
+      try {
+        const plainOpts = { ...opts };
+        delete plainOpts.parse_mode;
+        await bot.sendMessage(id, text, plainOpts);
+        sent += 1;
+      } catch (e2) {
+        logger.warn(`adminFeed.notify: send to ${id} failed for ${eventType}: ${e2.message}`);
+        skipped += 1;
+      }
     }
   }
   return { sent, skipped };

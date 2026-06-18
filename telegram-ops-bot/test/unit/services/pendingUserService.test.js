@@ -85,6 +85,19 @@ test('sheet write failure does NOT suppress the admin notification', async () =>
   assert.equal(notifies.length, 1, 'admin is notified even when the row write throws');
 });
 
+test('admin card escapes Markdown specials in the name (e.g. "Office_BPanther")', () => {
+  const { _adminCard } = svc._internals;
+  const card = _adminCard({
+    telegram_id: '5009', username: 'b_panther',
+    first_name: 'Office_BPanther', last_name: '*VIP*', arrived_at: '2026-06-18T14:45:00Z',
+  });
+  // The raw underscore/asterisks must be escaped so Telegram can parse it.
+  assert.match(card, /Office\\_BPanther \\\*VIP\\\*/);
+  assert.match(card, /@b\\_panther/);
+  // No stray unescaped "**" (invalid Markdown-v1 bold) in the hint line.
+  assert.doesNotMatch(card, /\*\*/);
+});
+
 test('rate limit caps the flood (no notify beyond the cap)', async () => {
   svc._internals._resetRateLimitForTests();
   notifies = [];
