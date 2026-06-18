@@ -68,16 +68,26 @@ function _politeReply() {
   );
 }
 
+/**
+ * Escape Telegram Markdown-v1 reserved chars so a stray "_", "*", "`" or "["
+ * in a user's name/username can't break entity parsing on the admin card —
+ * which would make bot.sendMessage throw and silently drop the notification
+ * (e.g. a user literally named "Office_BPanther").
+ */
+function _mdEscape(s) {
+  return String(s == null ? '' : s).replace(/([_*`\[\]])/g, '\\$1');
+}
+
 function _adminCard(entry) {
-  const username = entry.username ? `@${entry.username}` : '_(no username)_';
-  const name = [entry.first_name, entry.last_name].filter(Boolean).join(' ') || '_(no name set)_';
+  const username = entry.username ? `@${_mdEscape(entry.username)}` : '(no username)';
+  const name = _mdEscape([entry.first_name, entry.last_name].filter(Boolean).join(' ')) || '(no name set)';
   return (
     '🆕 *New /start from an unknown user*\n\n'
     + `Name: ${name}\n`
     + `Telegram: ${username}\n`
     + `ID: \`${entry.telegram_id}\`\n`
     + `When: ${entry.arrived_at}\n\n`
-    + '_Tap **Onboard** to start the Add Employee flow with these details pre-filled, or **Ignore** if this is spam._'
+    + 'Tap *Onboard* to start the Add Employee flow with these details pre-filled, or *Ignore* if this is spam.'
   );
 }
 
@@ -202,5 +212,7 @@ module.exports = {
     RATE_LIMIT_MAX,
     RATE_LIMIT_WINDOW_MS,
     _resetRateLimitForTests,
+    _adminCard,
+    _mdEscape,
   },
 };
