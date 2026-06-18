@@ -5135,18 +5135,19 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
       session.currentShade = s.shade;
       session.currentShadeName = nameMap.get(String(s.shade)) || '';
       session.currentAvailPkgs = s.availPkgs;
+      // Drives the quantity picker to show the catalog photo AND a
+      // "Back to designs" button (there is no shade step to return to).
+      session.singleShadeDesign = true;
       session.step = 'quantity';
       sessionStore.set(userId, session);
     }
-    // Single-shade designs skip the shade picker (where multi-shade designs
-    // get their catalog photo), so ask the quantity picker to carry the photo
-    // here — otherwise single-shade designs would never show their image.
-    await showQuantityPicker(bot, chatId, userId, design, s.shade, warehouse, s.availPkgs, labels, { withPhoto: true });
+    await showQuantityPicker(bot, chatId, userId, design, s.shade, warehouse, s.availPkgs, labels);
     return;
   }
 
   if (session && session.type === 'supply_req_flow') {
     session.currentDesign = design;
+    session.singleShadeDesign = false;
     session.step = 'shade';
     sessionStore.set(userId, session);
   }
@@ -5242,17 +5243,23 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
     rows.push(row);
   }
   rows.push([{ text: '✏️ Custom Quantity', callback_data: 'srf_qty:__custom__' }]);
-  rows.push([{ text: '⬅️ Back to shades', callback_data: 'srf_back:shade' }]);
+  // Single-shade designs have no shade-selection step, so "Back to shades"
+  // would just loop straight back to this same quantity page. Send them to
+  // the design picker instead. Multi-shade designs keep "Back to shades".
+  const singleShade = !!(session && session.singleShadeDesign);
+  rows.push([singleShade
+    ? { text: '⬅️ Back to designs', callback_data: 'srf_back:design' }
+    : { text: '⬅️ Back to shades', callback_data: 'srf_back:shade' }]);
 
   const caption = `📦 *${design}* │ Shade: *${shadeRef}* │ 🏭 *${warehouse}*\n${availPkgs} ${containerPlural} available\n\nHow many ${containerPlural} to supply?`;
 
   // SINGLE-SHADE PHOTO PARITY: multi-shade designs show the catalog photo on
   // the shade picker (Path A in showShadesForDesign), but single-shade designs
-  // skip that step and land straight here — leaving them photo-less. When the
-  // caller asks (opts.withPhoto), render the quantity step as a photo+buttons
-  // combo so single-shade designs get the same visual. Falls back to the text
-  // picker when there's no catalog asset or the send fails.
-  if (opts.withPhoto && session) {
+  // skip that step and land straight here — leaving them photo-less. For a
+  // single-shade design, render the quantity step as a photo+buttons combo so
+  // it gets the same visual. Falls back to the text picker when there's no
+  // catalog asset or the send fails.
+  if (singleShade && session) {
     try {
       const photoAsset = await designAssetsService.getPhotoForSend(design);
       if (photoAsset && photoAsset.photo) {
