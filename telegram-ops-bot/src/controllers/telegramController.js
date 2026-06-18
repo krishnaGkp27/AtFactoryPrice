@@ -104,6 +104,8 @@ const supplyDetailsReport = require('../services/supplyDetailsReport');
 // telegram-ops-bot/specs/marketing-group-catalog.md). Only consumed by
 // startSupplyRequestFlow today; later commits (MG-2/3) extend its use.
 const marketerOverlay = require('../services/marketerOverlay');
+const fieldRoles = require('../services/fieldRoles');
+const fieldCatalog = require('../services/fieldCatalog');
 
 function fmtQty(n) { return fmtQtyBase(n, { maxFraction: 2 }); }
 
@@ -1976,7 +1978,7 @@ async function showUpdatePriceConfirm(bot, chatId, userId) {
 async function startTransferPackageFlow(bot, chatId, userId, messageId = null) {
   const all = await inventoryRepository.getAll();
   // Packages with at least one available than.
-  const byBale = new Map();
+  const byPkg = new Map();
   all.forEach((r) => {
     if (r.status !== 'available') return;
     const key = String(r.packageNo || '').trim();
@@ -3220,6 +3222,22 @@ async function handleMessage(bot, msg) {
   if (GREETINGS.test(text.trim())) {
     await buildGreetingMenu(bot, chatId, userId);
     return;
+  }
+
+  // MKT-1 — marketer / salesman are strictly view-only. Greetings and the
+  // empty-text menu are handled above; ANY other free text is ignored and
+  // simply re-shows their single "My Products" tile. They have no
+  // text-driven actions (sell, transfer, reports, CRM, samples, etc.), so
+  // we short-circuit before every flow/intent handler below.
+  {
+    const fieldUser = await usersRepository.findByUserId(userId);
+    if (fieldUser
+      && !config.access.adminIds.includes(userId)
+      && fieldRoles.isFieldRole(fieldUser.role)) {
+      await bot.sendMessage(chatId, '👋 Tap *📦 My Products* to see the designs and quantities available in your warehouse.', { parse_mode: 'Markdown' });
+      await buildGreetingMenu(bot, chatId, userId);
+      return;
+    }
   }
 
   // Stage-1 reject reason / Stage-3 decline reason — these run on a
@@ -4640,9 +4658,16 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
     : (user && user.department ? [user.department] : (isAdminUser ? ['Admin'] : []));
   const deptName = userDepts[0] || (isAdminUser ? 'Admin' : '');
 
+  // MKT-1 — marketer / salesman get a controlled, single-tile menu ("My
+  // Products"), independent of any department activities. Admins are never
+  // treated as a field role.
+  const fieldRole = (!isAdminUser && user) ? fieldRoles.classify(user.role) : null;
+
   let allowed = [];
   const TASK_CODES = new Set(['assign_task', 'my_tasks', 'team_tasks', 'pending_signoff', 'payouts']);
-  if (isAdminUser) {
+  if (fieldRole) {
+    allowed = activityRegistry.filterByCodes(['my_products']);
+  } else if (isAdminUser) {
     // Admin sees the entire registry; we'll still let taskFlow gate the
     // Task hub entries below so non-managing admins are not noisy with
     // every task tile (admins ARE managers by definition, so all 4 show).
@@ -4665,7 +4690,7 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
   }
 
   // Inject Task hub activities based on user attributes (admin / manages).
-  try {
+  if (!fieldRole) try {
     const taskCodes = await taskFlow.visibleTaskActivityCodes(userId);
     for (const a of activityRegistry.filterByCodes(taskCodes)) {
       allowed.push(a);
@@ -4678,7 +4703,7 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
   // added to ATTENDANCE_REQUIRED_USERS. Hub is null on the registry entry,
   // so this is the ONLY path that surfaces the tile. Admins also get the
   // tile if they happen to be in the required list (test path).
-  try {
+  if (!fieldRole) try {
     const attendanceService = require('../services/attendanceService');
     const isReq = await attendanceService.isRequired(userId);
     if (isReq) {
@@ -5452,6 +5477,7 @@ async function showUserManagement(bot, chatId) {
     reply_markup: { inline_keyboard: [
       [{ text: '🏢 Assign Department', callback_data: 'adm:assign_dept' }],
       [{ text: '🏭 Assign Warehouses', callback_data: 'adm:assign_wh' }],
+      [{ text: '🎚 Change Role', callback_data: 'rol:start' }],
       [{ text: '➕ Add New User', callback_data: 'adm:add_user' }],
     ] },
   });
@@ -5923,6 +5949,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
   if (data.startsWith('umg:')) {
     const userManageFlow = require('../flows/userManageFlow');
     const handled = await userManageFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
+  // MKT-1 — Change Role (existing users) flow.
+  if (data.startsWith('rol:')) {
+    const roleEditFlow = require('../flows/roleEditFlow');
+    const handled = await roleEditFlow.handleCallback(bot, callbackQuery);
     if (handled) return;
   }
 
@@ -7586,13 +7619,6 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
     sessionStore.clear(uid);
 
-  } else if (data.startsWith('rccanc:')) {
-    const uid = String(callbackQuery.from.id);
-    sessionStore.clear(uid);
-    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
-    await bot.sendMessage(callbackQuery.message.chat.id, 'Receipt upload cancelled.');
-
   } else if (data.startsWith('rcapr:')) {
     const receiptId = data.slice(6);
     const adminId = String(callbackQuery.from.id);
@@ -8082,6 +8108,20 @@ async function handleCallbackQuery(bot, callbackQuery) {
         }
         await startStockValueFlow(bot, chatId, uid, messageId);
         break;
+      case 'my_products': {
+        // MKT-1 — warehouse-scoped catalog for marketer/salesman. Salesman
+        // also sees today's selling price; marketer sees quantities only.
+        const u = await usersRepository.findByUserId(uid);
+        const items = await inventoryRepository.getAll();
+        const cat = fieldCatalog.buildCatalog(items, (u && u.warehouses) || [], {
+          showPrice: fieldRoles.canSeePrice(u && u.role),
+        });
+        await sendLong(bot, chatId, cat.text, {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] },
+        });
+        break;
+      }
       case 'customer_details':
         await showCustomerDetailsPicker(bot, chatId, uid, messageId);
         break;

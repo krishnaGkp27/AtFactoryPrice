@@ -7,6 +7,14 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "set-webhook": "node scripts/set-webhook.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "test:unit": "node --test \"test/unit/**/*.test.js\"",
+    "test:watch": "node --test --watch \"test/**/*.test.js\"",
+    "test:coverage": "node --test --experimental-test-coverage \"test/**/*.test.js\"",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "check-org": "node scripts/check-org-graph.js",
     "onboard": "node scripts/onboard-employee.js",
     "smoke": "node scripts/smoke.js",
@@ -24,5 +32,12 @@
     "openai": "^4.73.0",
     "sharp": "^0.34.5",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.5.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.4"
   }
 }

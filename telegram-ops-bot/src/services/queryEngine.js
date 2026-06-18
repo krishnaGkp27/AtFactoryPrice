@@ -8,7 +8,7 @@ const inventoryRepository = require('../repositories/inventoryRepository');
 const customersRepo = require('../repositories/customersRepository');
 const analytics = require('../ai/analytics');
 const config = require('../config');
-const { fmtMoney, fmtQty } = require('../utils/format');
+const { fmtMoney, fmtQty, CURRENCY } = require('../utils/format');
 const pricingService = require('./pricingService');
 
 const openai = config.openai.apiKey ? new OpenAI({ apiKey: config.openai.apiKey }) : null;

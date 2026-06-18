@@ -740,7 +740,7 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     if (!tgId || !name || !dept || !role) {
       return { ok: false, message: 'add_user: missing one of telegram_id / name / department / role.' };
     }
-    if (!['employee', 'manager'].includes(role)) {
+    if (!['employee', 'manager', 'marketer', 'salesman'].includes(role)) {
       return { ok: false, message: `add_user: role "${role}" not allowed via this flow.` };
     }
 

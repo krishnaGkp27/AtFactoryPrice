@@ -74,6 +74,9 @@ const ACTIVITIES = [
 
   // ── Inventory (stock lookups — shallow, high-frequency) ──────────────
   { code: 'check_stock',           label: 'Check Stock',               icon: '📦', callback: 'act:check_stock',        hub: 'inventory' },
+  // MKT-1 — warehouse-scoped read-only catalog for marketer/salesman roles.
+  // Standalone (hub: null); surfaced only to field roles by the greeting menu.
+  { code: 'my_products',           label: 'My Products',               icon: '📦', callback: 'act:my_products',        hub: null },
   { code: 'list_packages',         label: 'List Packages',             icon: '📋', callback: 'act:list_packages',      hub: 'inventory' },
   { code: 'inventory_details',     label: 'Inventory Details',         icon: '🏭', callback: 'act:inventory_details',  hub: 'inventory' },
   // PRICE-VIS — admin-only stock value (selling × yards); Phase 2 widens via permissions.

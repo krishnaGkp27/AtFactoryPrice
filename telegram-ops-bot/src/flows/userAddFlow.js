@@ -12,7 +12,9 @@
  *   2. name          — 1–80 char text input
  *   3. department    — picker from existing OR ➕ create new
  *   4. warehouses    — multi-select checkboxes (Inventory ∪ WAREHOUSE_LIST)
- *   5. role          — employee | manager   (admin reserved for USR-C3b)
+ *   5. role          — employee | manager | marketer | salesman
+ *                      (marketer/salesman = view-only field roles, MKT-1;
+ *                       admin reserved for USR-C3b)
  *   6. confirm       — full summary + submit
  *
  * Session shape:
@@ -46,6 +48,7 @@ const auditLogRepository = require('../repositories/auditLogRepository');
 const approvalEvents = require('../events/approvalEvents');
 const riskEvaluate = require('../risk/evaluate');
 const idGenerator = require('../utils/idGenerator');
+const fieldRoles = require('../services/fieldRoles');
 const logger = require('../utils/logger');
 
 const MIN_TG_DIGITS = 6;
@@ -466,12 +469,19 @@ async function renderRoleStep(bot, chatId, userId) {
     '➕ *Add Employee*\n\n_Step 5 of 6 — Role_\n\n'
     + 'Pick the user\'s role:\n\n'
     + '• *Employee* — uses the bot for daily ops in their department.\n'
-    + '• *Manager* — same as employee, plus can submit approvals for activities flagged manager-only.\n\n'
+    + '• *Manager* — same as employee, plus can submit approvals for activities flagged manager-only.\n'
+    + '• *Marketer* — view-only field role: sees designs + quantities available in their assigned warehouse(s). No price, no other actions.\n'
+    + '• *Salesman* — same as marketer, plus today\'s selling price.\n\n'
+    + '_Marketer/Salesman get the controlled "My Products" view regardless of department; be sure to assign at least one warehouse (Step 4) or they\'ll see nothing._\n'
     + '_To promote someone to admin, use the Promote Admin flow (USR-C3b) — requires a super-admin approver._',
     [
       [
         { text: '👤 Employee', callback_data: 'usr:role:employee' },
         { text: '🧭 Manager',  callback_data: 'usr:role:manager' },
+      ],
+      [
+        { text: '📣 Marketer', callback_data: 'usr:role:marketer' },
+        { text: '💼 Salesman', callback_data: 'usr:role:salesman' },
       ],
       backCancelRow('usr:back:role'),
     ],
@@ -479,7 +489,7 @@ async function renderRoleStep(bot, chatId, userId) {
 }
 
 async function applyRole(bot, chatId, userId, role) {
-  if (!['employee', 'manager'].includes(role)) {
+  if (!['employee', 'manager', 'marketer', 'salesman'].includes(role)) {
     await renderError(bot, chatId, userId, 'Invalid role.', 'usr:back:role');
     return;
   }
@@ -500,6 +510,11 @@ async function renderConfirmStep(bot, chatId, userId) {
   const whLine = d.warehouses && d.warehouses.length
     ? d.warehouses.map((w) => mdEscape(w)).join(', ')
     : '_none_';
+  // Field roles (marketer/salesman) are useless without a warehouse — their
+  // "My Products" view is scoped to Users.warehouses. Warn before submit.
+  const fieldRoleNote = (fieldRoles.isFieldRole(d.role) && !(d.warehouses && d.warehouses.length))
+    ? '\n\n⚠️ *No warehouse selected.* A marketer/salesman with no warehouse will see no products — go ⬅ Back to Step 4 to assign one.'
+    : '';
   const prefillNote = d.prefillSource === 'pending_user'
     ? '\n\n_Pre-filled from a /start by this user; they will be DMed a welcome message after approval._'
     : '\n\n_The user must send `/start` to the bot once before they can receive notifications._';
@@ -510,7 +525,7 @@ async function renderConfirmStep(bot, chatId, userId) {
     + `*Department:* ${mdEscape(d.department)}\n`
     + `*Warehouses:* ${whLine}\n`
     + `*Role:* ${mdEscape(d.role)}\n`
-    + `${prefillNote}\n\n`
+    + `${fieldRoleNote}${prefillNote}\n\n`
     + '_Submitting queues this for 2nd-admin approval — you cannot self-approve._',
     [
       [{ text: '✅ Submit for approval', callback_data: 'usr:submit' }],
