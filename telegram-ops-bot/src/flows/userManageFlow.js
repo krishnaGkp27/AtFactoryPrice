@@ -43,6 +43,16 @@ const logger = require('../utils/logger');
 
 const PAGE_SIZE = 8;
 
+/**
+ * Escape Telegram Markdown-v1 reserved characters in user-supplied values so a
+ * stray "_", "*", "`" or "[" in a name/department cannot break entity parsing
+ * on the confirm card (USR-C4 deactivate bug: ETELEGRAM 400 "can't parse
+ * entities" / "can't find end of the entity").
+ */
+function mdEscape(s) {
+  return String(s == null ? '' : s).replace(/([_*`\[\]])/g, '\\$1');
+}
+
 const FLOW_LABEL = {
   promote: { title: '👑 Promote to Admin', verb: 'promote', actionField: 'promote_admin', successHint: 'super-admin' },
   deactivate: { title: '🛑 Deactivate User',  verb: 'deactivate',  actionField: 'deactivate_user', successHint: '2nd admin' },
@@ -51,6 +61,10 @@ const FLOW_LABEL = {
 async function render(bot, chatId, userId, text, keyboardRows) {
   const session = sessionStore.get(userId);
   const reply_markup = { inline_keyboard: keyboardRows };
+  // Try edit-md → edit-plain → send-md → send-plain. The plain-text fallbacks
+  // guarantee the step is always delivered even if a stray Markdown character
+  // in user-supplied data (name/department) trips Telegram's entity parser —
+  // otherwise the throw surfaces as "Lookup failed: ETELEGRAM 400".
   if (session && session.flowMessageId) {
     try {
       await bot.editMessageText(text, {
@@ -58,11 +72,26 @@ async function render(bot, chatId, userId, text, keyboardRows) {
         parse_mode: 'Markdown', reply_markup, disable_web_page_preview: true,
       });
       return session.flowMessageId;
-    } catch (_) {}
+    } catch (e1) {
+      try {
+        await bot.editMessageText(text, {
+          chat_id: chatId, message_id: session.flowMessageId,
+          reply_markup, disable_web_page_preview: true,
+        });
+        return session.flowMessageId;
+      } catch (_) { /* fall through to a fresh send */ }
+    }
   }
-  const sent = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown', reply_markup, disable_web_page_preview: true,
-  });
+  let sent;
+  try {
+    sent = await bot.sendMessage(chatId, text, {
+      parse_mode: 'Markdown', reply_markup, disable_web_page_preview: true,
+    });
+  } catch (e2) {
+    sent = await bot.sendMessage(chatId, text, {
+      reply_markup, disable_web_page_preview: true,
+    });
+  }
   if (session) {
     session.flowMessageId = sent.message_id;
     sessionStore.set(userId, session);
@@ -180,10 +209,10 @@ async function renderConfirmStep(bot, chatId, userId) {
     : '\n\n_Deactivating revokes bot access on the next message; the row + full history are preserved. Re-activation requires another in-bot flow._';
   await render(bot, chatId, userId,
     `${label.title} — *Confirm*\n\n_Step 2 of 2_\n\n`
-    + `*Name:* ${t.name || '—'}\n`
+    + `*Name:* ${mdEscape(t.name || '—')}\n`
     + `*Telegram ID:* \`${t.telegram_id}\`\n`
-    + `*Role today:* ${t.role || 'employee'}\n`
-    + `*Department:* ${dept}\n`
+    + `*Role today:* ${mdEscape(t.role || 'employee')}\n`
+    + `*Department:* ${mdEscape(dept)}\n`
     + `${note}\n\n`
     + `_Submitting queues this for ${label.successHint} approval — you cannot self-approve._`,
     [
@@ -213,9 +242,10 @@ async function submit(bot, chatId, userId) {
     await auditLogRepository.append('approval_queued', { requestId, action: label.actionField }, userId);
     const isAdm = auth.isAdmin(userId);
     const excludeId = isAdm ? userId : undefined;
+    const safeName = mdEscape(t.name || t.telegram_id);
     const summary = session.flow === 'promote'
-      ? `👑 Promote to admin: *${t.name || t.telegram_id}* (\`${t.telegram_id}\`)`
-      : `🛑 Deactivate user: *${t.name || t.telegram_id}* (\`${t.telegram_id}\`)`;
+      ? `👑 Promote to admin: *${safeName}* (\`${t.telegram_id}\`)`
+      : `🛑 Deactivate user: *${safeName}* (\`${t.telegram_id}\`)`;
     await approvalEvents.notifyAdminsApprovalRequest(
       bot, requestId, String(userId), summary, risk.reason, excludeId,
     );
@@ -298,5 +328,5 @@ module.exports = {
   start,
   handleCallback,
   // exported for tests:
-  _internals: { PAGE_SIZE, FLOW_LABEL },
+  _internals: { PAGE_SIZE, FLOW_LABEL, mdEscape },
 };
