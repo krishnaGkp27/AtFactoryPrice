@@ -87,7 +87,14 @@ async function getAll() {
 
 async function findByUserId(userId) {
   const all = await getAll();
-  return all.find((u) => u.user_id === String(userId)) || null;
+  const matches = all.filter((u) => u.user_id === String(userId));
+  if (!matches.length) return null;
+  // Re-onboarding a previously-deactivated user APPENDS a fresh row (the prior
+  // row stays as an inactive audit trail), so one Telegram ID can map to
+  // several rows. Returning the first row would surface the stale inactive
+  // record (e.g. deactivate → "already inactive"). Prefer the ACTIVE row;
+  // otherwise the most recent (last) row reflects the user's current state.
+  return matches.find((u) => (u.status || 'active') === 'active') || matches[matches.length - 1];
 }
 
 /**
