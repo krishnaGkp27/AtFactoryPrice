@@ -171,6 +171,17 @@ async function updateWarehouses(userId, warehouses) {
 }
 
 /**
+ * Update the user's branch (city/region) in column D. A branch groups one or
+ * more warehouses; see services/branchService.js.
+ */
+async function updateBranch(userId, branch) {
+  const u = await findByUserId(userId);
+  if (!u) return false;
+  await sheets.updateRange(SHEET, `D${u.rowIndex}`, [[String(branch || '')]]);
+  return true;
+}
+
+/**
  * USR-C4 — re-onboard an existing user by REACTIVATING their row in place
  * (status→active + refresh name/role/departments/warehouses) instead of
  * appending a duplicate row. Avoids two rows mapping to one Telegram ID.
@@ -178,7 +189,7 @@ async function updateWarehouses(userId, warehouses) {
  * Returns false if no row exists for the id.
  *
  * @param {string} userId
- * @param {{name?:string, role?:string, departments?:string[]|string, warehouses?:string[]|string}} fields
+ * @param {{name?:string, role?:string, branch?:string, departments?:string[]|string, warehouses?:string[]|string, manages?:string[]|string}} fields
  */
 async function reactivate(userId, fields = {}) {
   const u = await findByUserId(userId);
@@ -191,13 +202,24 @@ async function reactivate(userId, fields = {}) {
     ? fields.warehouses.map((w) => String(w).trim()).filter(Boolean).join(',')
     : String(fields.warehouses || '').trim();
   // B=name, C=role | F=status | H=departments, I=warehouses. Leaves
-  // D(branch), E(access_level), G(created_at), J(manages), K(prefs) intact.
+  // E(access_level), G(created_at), K(prefs) intact.
   await sheets.updateRange(SHEET, `B${ri}:C${ri}`, [[
     fields.name != null ? String(fields.name) : (u.name || ''),
     fields.role != null ? String(fields.role) : (u.role || 'employee'),
   ]]);
   await sheets.updateRange(SHEET, `F${ri}`, [['active']]);
   await sheets.updateRange(SHEET, `H${ri}:I${ri}`, [[deptCsv, whCsv]]);
+  // D(branch) + J(manages) only when explicitly supplied, so a plain
+  // reactivate doesn't wipe existing values.
+  if (fields.branch != null) {
+    await sheets.updateRange(SHEET, `D${ri}`, [[String(fields.branch || '')]]);
+  }
+  if (fields.manages != null) {
+    const managesCsv = Array.isArray(fields.manages)
+      ? fields.manages.map((d) => String(d).trim()).filter(Boolean).join(',')
+      : String(fields.manages || '').trim();
+    await sheets.updateRange(SHEET, `J${ri}`, [[managesCsv]]);
+  }
   return true;
 }
 
@@ -258,6 +280,7 @@ module.exports = {
   append,
   reactivate,
   updateDepartment,
+  updateBranch,
   updateWarehouses,
   updateManages,
   updateRole,

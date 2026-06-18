@@ -735,7 +735,11 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     const name = String(aj.name || '').trim();
     const dept = String(aj.department || '').trim();
     const role = String(aj.role || 'employee').trim();
+    const branch = String(aj.branch || '').trim();
     const warehouses = Array.isArray(aj.warehouses) ? aj.warehouses : [];
+    // Manager scope: department(s) this user heads (Users column J). Only
+    // meaningful for the 'manager' role.
+    const manages = (role === 'manager' && Array.isArray(aj.manages)) ? aj.manages.filter(Boolean) : [];
 
     if (!tgId || !name || !dept || !role) {
       return { ok: false, message: 'add_user: missing one of telegram_id / name / department / role.' };
@@ -771,18 +775,18 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     // up with two rows mapping to one Telegram ID (which used to shadow each
     // other and break deactivate / role reads). History lives in AuditLog.
     if (dup) {
-      await usersRepo.reactivate(tgId, { name, role, departments: [dept], warehouses });
+      await usersRepo.reactivate(tgId, { name, role, branch, departments: [dept], warehouses, manages });
     } else {
       await usersRepo.append({
         user_id: tgId,
         name,
         role,
-        branch: '',
+        branch,
         access_level: 'branch_only',
         status: 'active',
         departments: [dept],
         warehouses,
-        manages: '',
+        manages,
       });
     }
 

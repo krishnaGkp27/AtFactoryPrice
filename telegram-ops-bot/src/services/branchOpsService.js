@@ -83,6 +83,10 @@ async function resolveBranch(userId) {
   try {
     const u = await usersRepository.findByUserId(String(userId));
     if (!u) return 'HQ';
+    // Prefer the explicit branch field (set during onboarding). Fall back to
+    // the legacy guess (warehouses[0] → manages → HQ) only when it's blank,
+    // so pre-existing rows keep working unchanged.
+    if (u.branch && String(u.branch).trim()) return String(u.branch).trim();
     if (Array.isArray(u.warehouses) && u.warehouses.length) return u.warehouses[0];
     const manages = (u.manages || '').toString().trim();
     if (manages) return manages.split(',')[0].trim();

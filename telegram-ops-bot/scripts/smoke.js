@@ -6647,6 +6647,180 @@ async function runS37() {
 }
 
 // ---------------------------------------------------------------------------
+// S38 — USR onboarding cleanup: branch step, manager→manages, branch-filtered
+//       warehouse pre-tick, add_user execute persists branch + manages
+// ---------------------------------------------------------------------------
+async function runS38() {
+  const sessionStore = require('../src/utils/sessionStore');
+
+  // ---- S38.1 — branchService reads BRANCH_LIST + BRANCH_WAREHOUSES.<branch> ----
+  stubModule(require.resolve('../src/repositories/settingsRepository'), {
+    getAll: async () => ({
+      BRANCH_LIST: 'Lagos,Kano',
+      'BRANCH_WAREHOUSES.Lagos': 'IDUMOTA,OKE-ARIN',
+      'BRANCH_WAREHOUSES.Kano': 'Kano office',
+    }),
+    set: async () => {},
+  });
+  delete require.cache[require.resolve('../src/services/branchService')];
+  const branchSvc = require('../src/services/branchService');
+  const branches = await branchSvc.getBranches();
+  const lagosWh = await branchSvc.getBranchWarehouses('lagos'); // case-insensitive
+  const noWh = await branchSvc.getBranchWarehouses('Nowhere');
+  if (branches.length === 2 && branches[0] === 'Lagos' && branches[1] === 'Kano'
+      && lagosWh.length === 2 && lagosWh.includes('IDUMOTA') && lagosWh.includes('OKE-ARIN')
+      && noWh.length === 0) {
+    pass('S38.1 branchService: BRANCH_LIST + per-branch warehouse map (case-insensitive)');
+  } else fail('S38.1', JSON.stringify({ branches, lagosWh, noWh }));
+
+  // Common flow stubs + fresh flow that sees the stubbed branchService.
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => true, isEmployee: () => false, isAllowed: () => true,
+    refresh: async () => {}, invalidate: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/departmentsRepository'), {
+    getAll: async () => [{ dept_name: 'Sales' }, { dept_name: 'Inventory' }],
+    findByName: async (n) => ({ dept_name: n }), append: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    findByUserId: async () => null, append: async () => {}, getAll: async () => [],
+  });
+  stubModule(require.resolve('../src/repositories/pendingUsersRepository'), {
+    getAll: async () => [], findByTelegramId: async () => null,
+  });
+  stubModule(require.resolve('../src/flows/warehouseFlow'), {
+    listMergedWarehouses: async () => ({ raw: ['Lagos', 'Kano', 'IDUMOTA'], lower: new Set() }),
+  });
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    append: async () => {}, getAllPending: async () => [], getByRequestId: async () => null,
+  });
+  stubModule(require.resolve('../src/repositories/auditLogRepository'), { append: async () => {} });
+  stubModule(require.resolve('../src/events/approvalEvents'), {
+    notifyAdminsApprovalRequest: async () => {}, handleReasonReply: async () => false,
+  });
+  delete require.cache[require.resolve('../src/services/branchService')];
+  delete require.cache[require.resolve('../src/flows/userAddFlow')];
+  const flow = require('../src/flows/userAddFlow');
+  const ttl = flow._internals.FLOW_TTL_MS;
+  const quietBot = {
+    sendMessage: async () => ({ message_id: 1 }),
+    editMessageText: async () => ({}), answerCallbackQuery: async () => {},
+  };
+
+  // ---- S38.2 — name step advances to branch (not department) ----
+  sessionStore.set('adm-38a', { type: 'user_add_flow', step: 'name', flowMessageId: 1,
+    data: { telegram_id: '700100', name: '', branch: '', department: '', warehouses: [],
+      whInit: false, role: '', manages: [], prefillSource: null }, ttlMs: ttl });
+  await flow.handleText(quietBot, { from: { id: 'adm-38a' }, chat: { id: 'c1' }, text: 'Bob' });
+  const s38a = sessionStore.get('adm-38a');
+  if (s38a && s38a.step === 'branch' && s38a.data.name === 'Bob') {
+    pass('S38.2 name → branch step');
+  } else fail('S38.2', JSON.stringify(s38a));
+
+  // ---- S38.3 — picking a branch advances to department and stores branch ----
+  await flow.handleCallback(quietBot, { id: 'q', from: { id: 'adm-38a' },
+    message: { chat: { id: 'c1' }, message_id: 1 }, data: 'usr:branch:Lagos' });
+  const s38b = sessionStore.get('adm-38a');
+  if (s38b && s38b.step === 'department' && s38b.data.branch === 'Lagos' && s38b.data.whInit === false) {
+    pass('S38.3 branch select → department; branch stored; whInit reset');
+  } else fail('S38.3', JSON.stringify(s38b));
+
+  // ---- S38.4 — department select pre-ticks the branch's warehouses ----
+  await flow.handleCallback(quietBot, { id: 'q', from: { id: 'adm-38a' },
+    message: { chat: { id: 'c1' }, message_id: 1 }, data: 'usr:dept:Sales' });
+  const s38c = sessionStore.get('adm-38a');
+  if (s38c && s38c.step === 'warehouses' && s38c.data.whInit === true
+      && s38c.data.warehouses.length === 2
+      && s38c.data.warehouses.includes('IDUMOTA') && s38c.data.warehouses.includes('OKE-ARIN')) {
+    pass('S38.4 department → warehouses, pre-ticked to branch warehouses');
+  } else fail('S38.4', JSON.stringify(s38c && s38c.data));
+
+  // ---- S38.5 — field role (marketer) skips manages, goes straight to confirm ----
+  sessionStore.set('adm-38b', { type: 'user_add_flow', step: 'role', flowMessageId: 2,
+    data: { telegram_id: '700200', name: 'Mk', branch: 'Lagos', department: 'Sales',
+      warehouses: ['IDUMOTA'], whInit: true, role: '', manages: [], prefillSource: null }, ttlMs: ttl });
+  await flow.handleCallback(quietBot, { id: 'q', from: { id: 'adm-38b' },
+    message: { chat: { id: 'c1' }, message_id: 2 }, data: 'usr:role:marketer' });
+  const s38d = sessionStore.get('adm-38b');
+  if (s38d && s38d.step === 'confirm' && s38d.data.role === 'marketer' && s38d.data.manages.length === 0) {
+    pass('S38.5 marketer role → confirm (no manages step)');
+  } else fail('S38.5', JSON.stringify(s38d && s38d.data));
+
+  // ---- S38.6 — manager role opens manages step; toggle + done → confirm ----
+  sessionStore.set('adm-38c', { type: 'user_add_flow', step: 'role', flowMessageId: 3,
+    data: { telegram_id: '700300', name: 'Mg', branch: 'Lagos', department: 'Sales',
+      warehouses: ['IDUMOTA'], whInit: true, role: '', manages: [], prefillSource: null }, ttlMs: ttl });
+  await flow.handleCallback(quietBot, { id: 'q', from: { id: 'adm-38c' },
+    message: { chat: { id: 'c1' }, message_id: 3 }, data: 'usr:role:manager' });
+  const s38e = sessionStore.get('adm-38c');
+  await flow.handleCallback(quietBot, { id: 'q', from: { id: 'adm-38c' },
+    message: { chat: { id: 'c1' }, message_id: 3 }, data: 'usr:mng:Sales' });
+  await flow.handleCallback(quietBot, { id: 'q', from: { id: 'adm-38c' },
+    message: { chat: { id: 'c1' }, message_id: 3 }, data: 'usr:mng_done' });
+  const s38f = sessionStore.get('adm-38c');
+  if (s38e && s38e.step === 'manages'
+      && s38f && s38f.step === 'confirm' && s38f.data.manages.length === 1 && s38f.data.manages[0] === 'Sales') {
+    pass('S38.6 manager role → manages step; toggle + done → confirm with manages');
+  } else fail('S38.6', JSON.stringify({ step1: s38e && s38e.step, after: s38f && s38f.data }));
+
+  // ---- S38.7 — submit payload carries branch + manages ----
+  let queued = null;
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    append: async (row) => { queued = row; }, getAllPending: async () => [], getByRequestId: async () => null,
+  });
+  delete require.cache[require.resolve('../src/flows/userAddFlow')];
+  const flow7 = require('../src/flows/userAddFlow');
+  sessionStore.set('adm-38d', { type: 'user_add_flow', step: 'confirm', flowMessageId: 4,
+    data: { telegram_id: '700400', name: 'Sub', branch: 'Kano', department: 'Inventory',
+      warehouses: ['Kano office'], whInit: true, role: 'manager', manages: ['Inventory'],
+      prefillSource: null }, ttlMs: ttl });
+  await flow7.handleCallback(quietBot, { id: 'q', from: { id: 'adm-38d' },
+    message: { chat: { id: 'c1' }, message_id: 4 }, data: 'usr:submit' });
+  const aj7 = queued && queued.actionJSON;
+  if (aj7 && aj7.branch === 'Kano' && Array.isArray(aj7.manages) && aj7.manages[0] === 'Inventory'
+      && aj7.role === 'manager') {
+    pass('S38.7 submit payload carries branch + manages');
+  } else fail('S38.7', JSON.stringify(aj7));
+
+  // ---- S38.8 — execute add_user(manager): branch + manages persisted to Users row ----
+  const _cap = { user: null };
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    findByUserId: async () => null, append: async (u) => { _cap.user = u; },
+    reactivate: async () => true, getAll: async () => [],
+  });
+  stubModule(require.resolve('../src/repositories/departmentsRepository'), {
+    findByName: async () => ({ dept_name: 'Inventory' }), append: async () => {}, getAll: async () => [],
+  });
+  stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
+    getByRequestId: async () => _pendMgr(), getAllPending: async () => [_pendMgr()],
+    markApproved: async () => {}, markRejected: async () => {}, updateStatus: async () => {}, append: async () => {},
+  });
+  stubModule(require.resolve('../src/repositories/auditLogRepository'), { append: async () => {} });
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => true, isEmployee: () => false, isAllowed: () => true,
+    refresh: async () => {}, invalidate: async () => {},
+  });
+  stubModule(require.resolve('../src/services/pendingUserService'), { markOnboarded: async () => true });
+  function _pendMgr() {
+    return { requestId: 'req-mgr-1', user: 'admin-x', status: 'pending', actionJSON: {
+      action: 'add_user', telegram_id: '700600', name: 'Boss', branch: 'Kano',
+      department: 'Inventory', warehouses: ['Kano office'], role: 'manager', manages: ['Inventory', 'Sales'],
+      prefillSource: null,
+    } };
+  }
+  delete require.cache[require.resolve('../src/services/inventoryService')];
+  const invSvc = require('../src/services/inventoryService');
+  const rMgr = await invSvc.executeApprovedAction('req-mgr-1', 'admin-y', {});
+  if (rMgr && rMgr.ok && _cap.user && _cap.user.branch === 'Kano'
+      && Array.isArray(_cap.user.manages) && _cap.user.manages.includes('Inventory')
+      && _cap.user.manages.includes('Sales')) {
+    pass('S38.8 execute add_user(manager): branch + manages persisted to Users row');
+  } else fail('S38.8', JSON.stringify(_cap.user));
+
+  ['adm-38a', 'adm-38b', 'adm-38c', 'adm-38d'].forEach((k) => sessionStore.clear(k));
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -6694,6 +6868,7 @@ async function runS37() {
   try { await runS35(); } catch (e) { fail('S35 unexpected error', e.message); }
   try { await runS36(); } catch (e) { fail('S36 unexpected error', e.message); }
   try { await runS37(); } catch (e) { fail('S37 unexpected error', e.message); }
+  try { await runS38(); } catch (e) { fail('S38 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

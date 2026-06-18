@@ -4217,26 +4217,16 @@ async function handleMessage(bot, msg) {
           await bot.sendMessage(chatId, 'Only admin can add users.');
           return;
         }
+        // Consolidated onboarding: every add-user path funnels into the single
+        // Add Employee flow (branch → dept → warehouses → role → dual-admin
+        // approval). When the NL command carried an ID/name, prefill them.
+        const userAddFlow = require('../flows/userAddFlow');
         const telegramId = intent.price != null ? String(Math.floor(Number(intent.price))) : null;
-        const newUserName = intent.customer || intent.salesperson || '';
-        if (!telegramId || telegramId === 'NaN' || !newUserName) {
-          await bot.sendMessage(chatId, 'Usage: Add user <telegram_id> as <name>. Example: Add user 123456789 as Yarima. (Get Telegram ID from the user when they message the bot or from your logs.)');
-          return;
-        }
-        const existing = await usersRepository.findByUserId(telegramId);
-        if (existing) {
-          await bot.sendMessage(chatId, `User with ID ${telegramId} already exists: ${existing.name}.`);
-          return;
-        }
-        await usersRepository.append({
-          user_id: telegramId,
-          name: newUserName.trim(),
-          role: 'employee',
-          branch: '',
-          access_level: 'branch_only',
-          status: 'active',
-        });
-        await bot.sendMessage(chatId, `✅ User added: ${newUserName} (ID: ${telegramId}). You can now assign tasks to them.`);
+        const newUserName = (intent.customer || intent.salesperson || '').trim();
+        const prefill = (telegramId && telegramId !== 'NaN')
+          ? { telegram_id: telegramId, first_name: newUserName, source: 'admin' }
+          : null;
+        await userAddFlow.start(bot, chatId, String(userId), null, prefill);
         return;
       }
 
@@ -8989,8 +8979,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
       sessionStore.set(uid, { type: 'adm_flow', action: 'assign_wh', step: 'pick_user' });
       await bot.sendMessage(chatId, '🏭 Select user to assign warehouse:', { reply_markup: { inline_keyboard: rows } });
     } else if (action === 'add_user') {
-      sessionStore.set(uid, { type: 'adm_flow', action: 'add_user', step: 'enter_id' });
-      await bot.sendMessage(chatId, 'Enter the new user Telegram ID (numeric):');
+      // Consolidated: legacy 2-field admin-flow add-user now launches the full
+      // Add Employee flow (branch/dept/warehouses/role + dual-admin approval).
+      const userAddFlow = require('../flows/userAddFlow');
+      await userAddFlow.start(bot, chatId, String(uid), null, null);
     }
 
   } else if (data.startsWith('adm_du:')) {
@@ -9127,30 +9119,11 @@ async function handleCallbackQuery(bot, callbackQuery) {
   }
 }
 
-async function handleAdminFlowText(bot, chatId, userId, text, session) {
-  if (session.action === 'add_user' && session.step === 'enter_id') {
-    const numId = text.trim();
-    if (!/^\d+$/.test(numId)) {
-      await bot.sendMessage(chatId, 'Please enter a valid numeric Telegram ID.');
-      return true;
-    }
-    session.newUserId = numId;
-    session.step = 'enter_name';
-    sessionStore.set(userId, session);
-    await bot.sendMessage(chatId, 'Enter the user name:');
-    return true;
-  }
-  if (session.action === 'add_user' && session.step === 'enter_name') {
-    const name = text.trim();
-    if (!name) {
-      await bot.sendMessage(chatId, 'Please enter a name.');
-      return true;
-    }
-    await usersRepository.append({ user_id: session.newUserId, name, role: 'employee' });
-    sessionStore.clear(userId);
-    await bot.sendMessage(chatId, `✅ User *${name}* (${session.newUserId}) added successfully. Assign department and warehouses via 👥 Manage Users.`, { parse_mode: 'Markdown' });
-    return true;
-  }
+async function handleAdminFlowText(_bot, _chatId, _userId, _text, _session) {
+  // The legacy 2-field add-user text steps were retired (USR onboarding
+  // cleanup): all add-user paths now go through the anchored Add Employee
+  // flow (flows/userAddFlow.js), which handles its own text input. No
+  // adm_flow action currently collects free-text, so this is a no-op guard.
   return false;
 }
 

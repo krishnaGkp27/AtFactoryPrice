@@ -10,21 +10,24 @@
  * Steps:
  *   1. telegram_id   — numeric input, validated (6–12 digits, not already a user)
  *   2. name          — 1–80 char text input
- *   3. department    — picker from existing OR ➕ create new
- *   4. warehouses    — multi-select checkboxes (Inventory ∪ WAREHOUSE_LIST)
- *   5. role          — employee | manager | marketer | salesman
+ *   3. branch        — city/region picker (Settings BRANCH_LIST)
+ *   4. department    — picker from existing OR ➕ create new
+ *   5. warehouses    — multi-select, pre-ticked to the branch's warehouses
+ *   6. role          — employee | manager | marketer | salesman
  *                      (marketer/salesman = view-only field roles, MKT-1;
  *                       admin reserved for USR-C3b)
- *   6. confirm       — full summary + submit
+ *      6b. manages    — (managers only) which department(s) they head
+ *   7. confirm       — full summary + submit
  *
  * Session shape:
  *   {
  *     type: 'user_add_flow',
- *     step: 'telegram_id' | 'name' | 'department' | 'new_department' |
- *           'warehouses' | 'role' | 'confirm',
+ *     step: 'telegram_id' | 'name' | 'branch' | 'department' | 'new_department' |
+ *           'warehouses' | 'role' | 'manages' | 'confirm',
  *     flowMessageId: number | null,
  *     data: {
- *       telegram_id, name, department, warehouses[], role,
+ *       telegram_id, name, branch, department, warehouses[], role, manages[],
+ *       whInit: bool,            // warehouses pre-tick applied for this branch
  *       prefillSource: 'pending_user' | 'admin' | null,
  *     },
  *   }
@@ -43,6 +46,7 @@ const departmentsRepo = require('../repositories/departmentsRepository');
 const usersRepo = require('../repositories/usersRepository');
 const pendingUsersRepo = require('../repositories/pendingUsersRepository');
 const warehouseFlow = require('./warehouseFlow');
+const branchService = require('../services/branchService');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const approvalEvents = require('../events/approvalEvents');
@@ -196,9 +200,12 @@ async function start(bot, chatId, userId, messageId = null, prefill = null) {
   const data = {
     telegram_id: prefill && prefill.telegram_id ? String(prefill.telegram_id) : '',
     name: '',
+    branch: '',
     department: '',
     warehouses: [],
+    whInit: false,
     role: '',
+    manages: [],
     prefillSource: prefill ? (prefill.source || 'pending_user') : null,
   };
   if (prefill) {
@@ -278,7 +285,7 @@ async function renderPendingPickStep(bot, chatId, userId) {
     ? ` (${startIdx + 1}–${Math.min(startIdx + PENDING_PAGE_SIZE, total)} of ${total})`
     : '';
   await render(bot, chatId, userId,
-    '➕ *Add Employee*\n\n_Step 1 of 6 — Who?_\n\n'
+    '➕ *Add Employee*\n\n_Step 1 of 7 — Who?_\n\n'
     + 'Tap a person who messaged the bot, or enter a Telegram ID manually.' + pageNote,
     rows,
   );
@@ -296,7 +303,7 @@ async function renderTelegramIdStep(bot, chatId, userId) {
     ? [backCancelRow('usr:back:pick')]
     : [cancelRow()];
   await render(bot, chatId, userId,
-    '➕ *Add Employee*\n\n_Step 1 of 6 — Telegram ID_\n\n'
+    '➕ *Add Employee*\n\n_Step 1 of 7 — Telegram ID_\n\n'
     + 'Type the new user\'s *numeric Telegram ID* (reply in chat).\n\n'
     + '_Rules:_\n'
     + `• ${MIN_TG_DIGITS}–${MAX_TG_DIGITS} digits, numbers only\n`
@@ -351,7 +358,7 @@ async function renderNameStep(bot, chatId, userId) {
     : 'usr:back:name';
   buttons.push(backCancelRow(nameBack));
   await render(bot, chatId, userId,
-    '➕ *Add Employee*\n\n_Step 2 of 6 — Display Name_\n\n'
+    '➕ *Add Employee*\n\n_Step 2 of 7 — Display Name_\n\n'
     + 'Type the user\'s display name (1–80 chars).' + prefilled,
     buttons,
   );
@@ -367,13 +374,57 @@ async function applyName(bot, chatId, userId, raw) {
   }
   const session = sessionStore.get(userId);
   session.data.name = name;
+  session.step = 'branch';
+  sessionStore.set(userId, session);
+  await renderBranchStep(bot, chatId, userId);
+}
+
+// ---------------------------------------------------------------------------
+// Step 3 — Branch (city/region) picker
+// ---------------------------------------------------------------------------
+
+async function renderBranchStep(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  let branches = [];
+  try { branches = await branchService.getBranches(); } catch (_) {}
+  const rows = [];
+  for (let i = 0; i < branches.length; i += 2) {
+    const a = branches[i];
+    const b = branches[i + 1];
+    const mark = (n) => (session.data.branch === n ? '✅' : '🏙');
+    const row = [{ text: `${mark(a)} ${a}`, callback_data: `usr:branch:${encodeURIComponent(a)}` }];
+    if (b) row.push({ text: `${mark(b)} ${b}`, callback_data: `usr:branch:${encodeURIComponent(b)}` });
+    rows.push(row);
+  }
+  // When no branches are configured yet, don't strand the admin: let them
+  // skip (branch stays blank) and seed BRANCH_LIST in Settings later.
+  if (!branches.length) {
+    rows.push([{ text: '⏭ Skip (no branch yet)', callback_data: 'usr:branch_skip' }]);
+  }
+  rows.push(backCancelRow('usr:back:branch'));
+  const body = branches.length
+    ? 'Which *branch* (city/region) is this person based in? '
+      + 'Warehouses in the next step are filtered to the branch you pick.'
+    : '_No branches configured yet._ Add them in Settings as `BRANCH_LIST` '
+      + '(e.g. `Lagos,Kano`). You can skip for now and set the branch later.';
+  await render(bot, chatId, userId,
+    `➕ *Add Employee*\n\n_Step 3 of 7 — Branch_\n\n${body}`,
+    rows,
+  );
+}
+
+async function applyBranch(bot, chatId, userId, branch) {
+  const session = sessionStore.get(userId);
+  session.data.branch = String(branch || '').trim();
+  // Branch changed → re-default the warehouse pre-tick on next entry.
+  session.data.whInit = false;
   session.step = 'department';
   sessionStore.set(userId, session);
   await renderDepartmentStep(bot, chatId, userId);
 }
 
 // ---------------------------------------------------------------------------
-// Step 3 — Department picker
+// Step 4 — Department picker
 // ---------------------------------------------------------------------------
 
 async function renderDepartmentStep(bot, chatId, userId) {
@@ -392,8 +443,8 @@ async function renderDepartmentStep(bot, chatId, userId) {
   rows.push([{ text: '➕ New department', callback_data: 'usr:dept_new' }]);
   rows.push(backCancelRow('usr:back:department'));
   const prompt = names.length
-    ? '➕ *Add Employee*\n\n_Step 3 of 6 — Department_\n\nWhich department does this person belong to?'
-    : '➕ *Add Employee*\n\n_Step 3 of 6 — Department_\n\n_No departments exist yet._ Tap ➕ to create one.';
+    ? '➕ *Add Employee*\n\n_Step 4 of 7 — Department_\n\nWhich department does this person belong to?'
+    : '➕ *Add Employee*\n\n_Step 4 of 7 — Department_\n\n_No departments exist yet._ Tap ➕ to create one.';
   await render(bot, chatId, userId, prompt, rows);
 }
 
@@ -402,10 +453,10 @@ async function renderNewDeptStep(bot, chatId, userId) {
   session.step = 'new_department';
   sessionStore.set(userId, session);
   await render(bot, chatId, userId,
-    '➕ *Add Employee*\n\n_Step 3 of 6 — Department (new)_\n\n'
+    '➕ *Add Employee*\n\n_Step 4 of 7 — Department (new)_\n\n'
     + 'Type the new department name (e.g. `Sales`, `Inventory`, `Finance`).\n\n'
     + '_It will be created with no special activities; the admin can later grant them via Manage Departments._',
-    [backCancelRow('usr:back:department')],
+    [backCancelRow('usr:back:newdept')],
   );
 }
 
@@ -423,14 +474,40 @@ async function applyDepartment(bot, chatId, userId, deptName) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 4 — Warehouses (multi-select)
+// Step 5 — Warehouses (multi-select, pre-ticked to the branch's warehouses)
 // ---------------------------------------------------------------------------
+
+/**
+ * Resolve which warehouses to show. Prefer the chosen branch's mapped
+ * warehouses (Settings BRANCH_WAREHOUSES.<branch>); fall back to the full
+ * merged list when the branch has no mapping (or no branch was picked).
+ * @returns {Promise<{ list: string[], scoped: boolean }>}
+ */
+async function resolveWarehouseChoices(branch) {
+  if (branch) {
+    let branchWh = [];
+    try { branchWh = await branchService.getBranchWarehouses(branch); } catch (_) {}
+    if (branchWh.length) return { list: branchWh, scoped: true };
+  }
+  let merged = { raw: [] };
+  try { merged = await warehouseFlow.listMergedWarehouses(); } catch (_) {}
+  return { list: merged.raw || [], scoped: false };
+}
 
 async function renderWarehousesStep(bot, chatId, userId) {
   const session = sessionStore.get(userId);
-  let merged = { raw: [] };
-  try { merged = await warehouseFlow.listMergedWarehouses(); } catch (_) {}
-  const all = merged.raw;
+  const branch = session.data.branch || '';
+  const { list: all, scoped } = await resolveWarehouseChoices(branch);
+
+  // Pre-tick the branch's warehouses the first time we land here for this
+  // branch. The admin can still untick any. `whInit` guards re-entry so we
+  // never clobber their manual edits on back/forward.
+  if (!session.data.whInit) {
+    session.data.warehouses = scoped ? [...all] : [];
+    session.data.whInit = true;
+    sessionStore.set(userId, session);
+  }
+
   const selected = new Set(session.data.warehouses || []);
   const rows = [];
   for (let i = 0; i < all.length; i += 2) {
@@ -446,10 +523,12 @@ async function renderWarehousesStep(bot, chatId, userId) {
     { text: '🔘 Clear', callback_data: 'usr:wh_clear' },
   ]);
   rows.push(backCancelRow('usr:back:warehouses'));
+  const scopeNote = scoped
+    ? `Showing warehouses in *${mdEscape(branch)}* (pre-ticked). Untick any that don't apply.`
+    : 'Tap each warehouse this user should operate from. '
+      + 'You can pick *zero or more* — admins and finance roles often work across all.';
   await render(bot, chatId, userId,
-    '➕ *Add Employee*\n\n_Step 4 of 6 — Warehouses_\n\n'
-    + 'Tap each warehouse this user should be able to operate from. '
-    + 'You can pick *zero or more* — admins and finance roles often work across all.',
+    `➕ *Add Employee*\n\n_Step 5 of 7 — Warehouses_\n\n${scopeNote}`,
     rows,
   );
 }
@@ -461,18 +540,18 @@ function toggleWarehouse(session, name) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 5 — Role
+// Step 6 — Role
 // ---------------------------------------------------------------------------
 
 async function renderRoleStep(bot, chatId, userId) {
   await render(bot, chatId, userId,
-    '➕ *Add Employee*\n\n_Step 5 of 6 — Role_\n\n'
+    '➕ *Add Employee*\n\n_Step 6 of 7 — Role_\n\n'
     + 'Pick the user\'s role:\n\n'
     + '• *Employee* — uses the bot for daily ops in their department.\n'
-    + '• *Manager* — same as employee, plus can submit approvals for activities flagged manager-only.\n'
+    + '• *Manager* — same as employee, plus heads one or more departments (you\'ll pick which next).\n'
     + '• *Marketer* — view-only field role: sees designs + quantities available in their assigned warehouse(s). No price, no other actions.\n'
     + '• *Salesman* — same as marketer, plus today\'s selling price.\n\n'
-    + '_Marketer/Salesman get the controlled "My Products" view regardless of department; be sure to assign at least one warehouse (Step 4) or they\'ll see nothing._\n'
+    + '_Marketer/Salesman get the controlled "My Products" view regardless of department; be sure to assign at least one warehouse (Step 5) or they\'ll see nothing._\n'
     + '_To promote someone to admin, use the Promote Admin flow (USR-C3b) — requires a super-admin approver._',
     [
       [
@@ -495,9 +574,56 @@ async function applyRole(bot, chatId, userId, role) {
   }
   const session = sessionStore.get(userId);
   session.data.role = role;
+  // Managers carry a managed-department list; gather it before confirming.
+  if (role === 'manager') {
+    session.step = 'manages';
+    sessionStore.set(userId, session);
+    await renderManagesStep(bot, chatId, userId);
+    return;
+  }
+  session.data.manages = [];
   session.step = 'confirm';
   sessionStore.set(userId, session);
   await renderConfirmStep(bot, chatId, userId);
+}
+
+// ---------------------------------------------------------------------------
+// Step 6b — Manager scope (which department(s) they head) — managers only
+// ---------------------------------------------------------------------------
+
+async function renderManagesStep(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  let depts = [];
+  try { depts = await departmentsRepo.getAll(); } catch (_) {}
+  const names = depts
+    .map((d) => (d.dept_name || '').trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+  const selected = new Set(session.data.manages || []);
+  const rows = [];
+  for (let i = 0; i < names.length; i += 2) {
+    const a = names[i];
+    const b = names[i + 1];
+    const mark = (n) => (selected.has(n) ? '✅' : '⬜');
+    const row = [{ text: `${mark(a)} ${a}`, callback_data: `usr:mng:${encodeURIComponent(a)}` }];
+    if (b) row.push({ text: `${mark(b)} ${b}`, callback_data: `usr:mng:${encodeURIComponent(b)}` });
+    rows.push(row);
+  }
+  rows.push([{ text: `✅ Done (${selected.size})`, callback_data: 'usr:mng_done' }]);
+  rows.push(backCancelRow('usr:back:manages'));
+  await render(bot, chatId, userId,
+    '➕ *Add Employee*\n\n_Step 6b of 7 — Manager scope_\n\n'
+    + 'Which department(s) does this *manager* head? Their access expands to '
+    + 'the union of those departments\' activities.\n\n'
+    + '_Pick zero or more — you can also leave it empty and set it later via Manage Users._',
+    rows,
+  );
+}
+
+function toggleManages(session, name) {
+  const set = new Set(session.data.manages || []);
+  if (set.has(name)) set.delete(name); else set.add(name);
+  session.data.manages = Array.from(set);
 }
 
 // ---------------------------------------------------------------------------
@@ -518,13 +644,18 @@ async function renderConfirmStep(bot, chatId, userId) {
   const prefillNote = d.prefillSource === 'pending_user'
     ? '\n\n_Pre-filled from a /start by this user; they will be DMed a welcome message after approval._'
     : '\n\n_The user must send `/start` to the bot once before they can receive notifications._';
+  const branchLine = d.branch ? mdEscape(d.branch) : '_none_';
+  const managesLine = (d.role === 'manager' && d.manages && d.manages.length)
+    ? `\n*Manages:* ${d.manages.map((m) => mdEscape(m)).join(', ')}`
+    : '';
   await render(bot, chatId, userId,
-    '➕ *Add Employee — Confirm*\n\n_Step 6 of 6_\n\n'
+    '➕ *Add Employee — Confirm*\n\n_Step 7 of 7_\n\n'
     + `*Telegram ID:* \`${mdEscape(d.telegram_id)}\`\n`
     + `*Name:* ${mdEscape(d.name)}\n`
+    + `*Branch:* ${branchLine}\n`
     + `*Department:* ${mdEscape(d.department)}\n`
     + `*Warehouses:* ${whLine}\n`
-    + `*Role:* ${mdEscape(d.role)}\n`
+    + `*Role:* ${mdEscape(d.role)}${managesLine}\n`
     + `${fieldRoleNote}${prefillNote}\n\n`
     + '_Submitting queues this for 2nd-admin approval — you cannot self-approve._',
     [
@@ -542,9 +673,11 @@ async function submit(bot, chatId, userId) {
     action: 'add_user',
     telegram_id: d.telegram_id,
     name: d.name,
+    branch: d.branch || '',
     department: d.department,
     warehouses: d.warehouses || [],
     role: d.role,
+    manages: d.role === 'manager' ? (d.manages || []) : [],
     prefillSource: d.prefillSource || null,
   };
   const risk = await riskEvaluate.evaluate({ action: 'add_user', userId });
@@ -557,7 +690,8 @@ async function submit(bot, chatId, userId) {
     await auditLogRepository.append('approval_queued', { requestId, action: 'add_user' }, userId);
     const isAdm = auth.isAdmin(userId);
     const excludeId = isAdm ? userId : undefined;
-    const summary = `➕👤 Add user: *${d.name}* (\`${d.telegram_id}\`) · ${d.department} · ${d.role}`;
+    const branchTag = d.branch ? `${d.branch} · ` : '';
+    const summary = `➕👤 Add user: *${d.name}* (\`${d.telegram_id}\`) · ${branchTag}${d.department} · ${d.role}`;
     await approvalEvents.notifyAdminsApprovalRequest(
       bot, requestId, String(userId), summary, risk.reason, excludeId,
     );
@@ -669,10 +803,22 @@ async function _dispatchCallback(bot, query, session, chatId, userId, data) {
     await renderTelegramIdStep(bot, chatId, userId);
     return true;
   }
-  if (data === 'usr:back:department') {
+  if (data === 'usr:back:branch') {
     session.step = 'name';
     sessionStore.set(userId, session);
     await renderNameStep(bot, chatId, userId);
+    return true;
+  }
+  if (data === 'usr:back:department') {
+    session.step = 'branch';
+    sessionStore.set(userId, session);
+    await renderBranchStep(bot, chatId, userId);
+    return true;
+  }
+  if (data === 'usr:back:newdept') {
+    session.step = 'department';
+    sessionStore.set(userId, session);
+    await renderDepartmentStep(bot, chatId, userId);
     return true;
   }
   if (data === 'usr:back:warehouses') {
@@ -687,10 +833,23 @@ async function _dispatchCallback(bot, query, session, chatId, userId, data) {
     await renderWarehousesStep(bot, chatId, userId);
     return true;
   }
-  if (data === 'usr:back:confirm') {
+  if (data === 'usr:back:manages') {
     session.step = 'role';
     sessionStore.set(userId, session);
     await renderRoleStep(bot, chatId, userId);
+    return true;
+  }
+  if (data === 'usr:back:confirm') {
+    // Managers came through the manages step; everyone else through role.
+    if (session.data.role === 'manager') {
+      session.step = 'manages';
+      sessionStore.set(userId, session);
+      await renderManagesStep(bot, chatId, userId);
+    } else {
+      session.step = 'role';
+      sessionStore.set(userId, session);
+      await renderRoleStep(bot, chatId, userId);
+    }
     return true;
   }
   if (data === 'usr:back:pick') {
@@ -746,10 +905,20 @@ async function _dispatchCallback(bot, query, session, chatId, userId, data) {
 
   if (data === 'usr:name:accept') {
     if (session.data.name) {
-      session.step = 'department';
+      session.step = 'branch';
       sessionStore.set(userId, session);
-      await renderDepartmentStep(bot, chatId, userId);
+      await renderBranchStep(bot, chatId, userId);
     }
+    return true;
+  }
+
+  if (data.startsWith('usr:branch:')) {
+    const branch = decodeURIComponent(data.slice('usr:branch:'.length));
+    await applyBranch(bot, chatId, userId, branch);
+    return true;
+  }
+  if (data === 'usr:branch_skip') {
+    await applyBranch(bot, chatId, userId, '');
     return true;
   }
 
@@ -786,6 +955,20 @@ async function _dispatchCallback(bot, query, session, chatId, userId, data) {
   if (data.startsWith('usr:role:')) {
     const role = data.slice('usr:role:'.length);
     await applyRole(bot, chatId, userId, role);
+    return true;
+  }
+
+  if (data.startsWith('usr:mng:')) {
+    const name = decodeURIComponent(data.slice('usr:mng:'.length));
+    toggleManages(session, name);
+    sessionStore.set(userId, session);
+    await renderManagesStep(bot, chatId, userId);
+    return true;
+  }
+  if (data === 'usr:mng_done') {
+    session.step = 'confirm';
+    sessionStore.set(userId, session);
+    await renderConfirmStep(bot, chatId, userId);
     return true;
   }
 
