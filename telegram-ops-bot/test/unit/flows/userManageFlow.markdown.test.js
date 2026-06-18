@@ -22,9 +22,10 @@ const ADMIN = '777';
 auth.isAdmin = (id) => String(id) === ADMIN;
 
 // A user whose name + department contain Markdown specials that broke parsing.
+// NOTE: mirrors the real usersRepository shape — `user_id`, NOT `telegram_id`.
 const TRICKY = {
   user_id: '101', name: 'Bola_X *VIP*', role: 'employee', status: 'active',
-  departments: ['Sales_North'], telegram_id: '101',
+  departments: ['Sales_North'],
 };
 usersRepo.getAll = async () => [{ ...TRICKY }];
 usersRepo.findByUserId = async (id) => (String(id) === '101' ? { ...TRICKY } : null);
@@ -48,6 +49,41 @@ test('deactivate confirm card escapes a tricky name/department (no raw specials)
   assert.match(out, /Bola\\_X \\\*VIP\\\*/);     // name escaped
   assert.match(out, /Sales\\_North/);            // department escaped
   assert.doesNotMatch(out, /Lookup failed/i);    // bug message must NOT appear
+});
+
+test('confirm card shows the real Telegram ID (regression: was "undefined")', async () => {
+  sessionStore.clear(ADMIN);
+  const bot = createPlainBot();
+  await userManageFlow.handleCallback(bot, query('umg:start:deactivate'));
+  await userManageFlow.handleCallback(bot, query('umg:pick:101'));
+  const out = bot.allText();
+  assert.match(out, /Telegram ID:.*101/);        // real id from user_id
+  assert.doesNotMatch(out, /undefined/);
+});
+
+test('submit payload carries the real Telegram ID (so the executor can find the user)', async () => {
+  sessionStore.clear(ADMIN);
+  let queued = null;
+  const aqr = require('../../../src/repositories/approvalQueueRepository');
+  const origAppend = aqr.append;
+  aqr.append = async (row) => { queued = row; };
+  const origNotify = require('../../../src/events/approvalEvents').notifyAdminsApprovalRequest;
+  require('../../../src/events/approvalEvents').notifyAdminsApprovalRequest = async () => {};
+  const origAudit = require('../../../src/repositories/auditLogRepository').append;
+  require('../../../src/repositories/auditLogRepository').append = async () => {};
+  try {
+    const bot = createPlainBot();
+    await userManageFlow.handleCallback(bot, query('umg:start:deactivate'));
+    await userManageFlow.handleCallback(bot, query('umg:pick:101'));
+    await userManageFlow.handleCallback(bot, query('umg:submit'));
+    assert.ok(queued, 'expected an approval row to be queued');
+    assert.equal(queued.actionJSON.action, 'deactivate_user');
+    assert.equal(queued.actionJSON.telegram_id, '101');
+  } finally {
+    aqr.append = origAppend;
+    require('../../../src/events/approvalEvents').notifyAdminsApprovalRequest = origNotify;
+    require('../../../src/repositories/auditLogRepository').append = origAudit;
+  }
 });
 
 test('render survives Telegram rejecting Markdown (plain-text fallback)', async () => {

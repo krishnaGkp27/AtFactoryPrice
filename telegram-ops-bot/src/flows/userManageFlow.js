@@ -301,6 +301,10 @@ async function handleCallback(bot, query) {
       if (session.flow === 'promote' && String(target.role || '').toLowerCase() === 'admin') {
         await renderError(bot, chatId, userId, 'This user is already an admin.'); return true;
       }
+      // usersRepository exposes the id as `user_id` (the Users-sheet user_id
+      // IS the Telegram ID); the confirm card + approval payload read
+      // `telegram_id`, so populate it from the picked id.
+      target.telegram_id = String(target.user_id || tgId);
       session.target = target;
       session.step = 'confirm';
       sessionStore.set(userId, session);
