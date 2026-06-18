@@ -122,6 +122,33 @@ function layoutShadeRows(buttons) {
 }
 
 /**
+ * Build the cart lines for the "Take ALL shades" shortcut on a design's
+ * shade picker. Given the (already cart-adjusted) availability rows for a
+ * single design, returns one line per in-stock shade at its FULL remaining
+ * quantity. Shades with no remaining stock are skipped so we never queue a
+ * zero-quantity line.
+ *
+ * Pure + side-effect free so it can be unit-tested offline; the controller
+ * feeds each returned line into addToCart().
+ *
+ * @param {Array<{design:string, shade:string|number, availPkgs:number}>} shades
+ *        cart-adjusted availability rows for one design.
+ * @param {Map<string,string>} [nameMap]  shadeKey → catalog name (optional).
+ * @returns {Array<{design:string, shade:string|number, shadeName:string, quantity:number}>}
+ */
+function buildSelectAllLines(shades, nameMap) {
+  if (!Array.isArray(shades)) return [];
+  return shades
+    .filter((s) => s && Number.isFinite(s.availPkgs) && s.availPkgs > 0)
+    .map((s) => ({
+      design: s.design,
+      shade: s.shade,
+      shadeName: (nameMap && nameMap.get(String(s.shade))) || '',
+      quantity: s.availPkgs,
+    }));
+}
+
+/**
  * Format a "shade reference" for headers and inline text — the form
  * "<#> - <name>" when a name is known, plain "<#>" otherwise. Used in
  * picker headers, cart summaries, and admin notifications so the user
@@ -143,5 +170,6 @@ module.exports = {
   buildShadeLabel,
   pickColumns,
   layoutShadeRows,
+  buildSelectAllLines,
   formatShadeRef,
 };

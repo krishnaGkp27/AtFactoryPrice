@@ -15,7 +15,7 @@ const crmService = require('../services/crmService');
 const accountingService = require('../services/accountingService');
 const salesFlow = require('../services/salesFlowService');
 const sessionStore = require('../utils/sessionStore');
-const { buildShadeNameMap, buildShadeLabel, layoutShadeRows, formatShadeRef } = require('../utils/shadeButtons');
+const { buildShadeNameMap, buildShadeLabel, layoutShadeRows, buildSelectAllLines, formatShadeRef } = require('../utils/shadeButtons');
 const settingsRepo = require('../repositories/settingsRepository');
 const usersRepository = require('../repositories/usersRepository');
 const inventoryRepository = require('../repositories/inventoryRepository');
@@ -5157,6 +5157,16 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
     callback_data: `srf_sh:${design}|${s.shade}|${s.availPkgs}`,
   }));
   const rows = layoutShadeRows(buttons);
+  // Bulk shortcut: take every shade of this design at its full remaining
+  // quantity in one tap (cart-adjusted), instead of picking shade-by-shade.
+  const totalBales = shades.reduce((sum, s) => sum + (s.availPkgs > 0 ? s.availPkgs : 0), 0);
+  if (totalBales > 0) {
+    const balesWord = totalBales === 1 ? unit.singular : unit.plural;
+    rows.push([{
+      text: `✅ Take ALL ${shades.length} shades (${totalBales} ${balesWord})`,
+      callback_data: `srf_all:${design}`,
+    }]);
+  }
   rows.push([{ text: '⬅️ Back to designs', callback_data: 'srf_back:design' }]);
 
   // ── Path A: catalog photo exists → send a single photo+caption+buttons
@@ -8571,6 +8581,47 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await showShadesForDesign(bot, chatId, uid, design, wh);
 
   /* ─── SUPPLY REQUEST FLOW: SHADE ─── */
+  } else if (data.startsWith('srf_all:')) {
+    /* ─── SUPPLY REQUEST FLOW: TAKE ALL SHADES OF A DESIGN ─── */
+    const design = data.slice('srf_all:'.length);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'supply_req_flow') {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired. Start again.' });
+      return;
+    }
+    // Recompute availability against the live cart so we never over-add a
+    // shade the user already put some of into the cart.
+    const adjusted = await getAdjustedAvailability(session.warehouse, session.cart || []);
+    const designShades = adjusted.filter((a) => a.design === design);
+    let nameMap;
+    try {
+      const asset = await designAssetsRepo.findActive(design);
+      nameMap = buildShadeNameMap(asset);
+    } catch (_) {
+      nameMap = new Map();
+    }
+    const lines = buildSelectAllLines(designShades, nameMap);
+    if (!lines.length) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Nothing left to add for this design.' });
+      return;
+    }
+    for (const line of lines) {
+      session.currentShadeName = line.shadeName;
+      addToCart(session, line.design, line.shade, line.quantity);
+    }
+    session.currentShadeName = '';
+    sessionStore.set(uid, session);
+    const totalAdded = lines.reduce((sum, l) => sum + l.quantity, 0);
+    await bot.answerCallbackQuery(callbackQuery.id, {
+      text: `Added all ${lines.length} shades (${totalAdded}) of ${design}.`,
+    });
+    // The shade picker may be a photo+buttons combo; drop it like srf_sh does
+    // so the cart summary is the only live message.
+    await clearDesignPreview(bot, chatId, uid);
+    await showCartSummary(bot, chatId, uid);
+
   } else if (data.startsWith('srf_sh:')) {
     const parts = data.slice(7).split('|');
     const design = parts[0];

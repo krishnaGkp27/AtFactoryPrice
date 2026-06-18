@@ -6821,6 +6821,46 @@ async function runS38() {
 }
 
 // ---------------------------------------------------------------------------
+// S39 — Supply Request "Take ALL shades" shortcut: buildSelectAllLines()
+// ---------------------------------------------------------------------------
+function runS39() {
+  const { buildSelectAllLines } = require('../src/utils/shadeButtons');
+
+  // ---- S39.1 — full quantity per in-stock shade; names resolved ----
+  const nameMap = new Map([['7', 'Charcoal'], ['1', 'Beige']]);
+  const shades = [
+    { design: '80045', shade: '7', availPkgs: 2 },
+    { design: '80045', shade: '1', availPkgs: 1 },
+    { design: '80045', shade: '9', availPkgs: 3 }, // no catalog name
+  ];
+  const lines = buildSelectAllLines(shades, nameMap);
+  const total = lines.reduce((s, l) => s + l.quantity, 0);
+  if (lines.length === 3 && total === 6
+      && lines[0].shade === '7' && lines[0].quantity === 2 && lines[0].shadeName === 'Charcoal'
+      && lines[1].shadeName === 'Beige'
+      && lines[2].shade === '9' && lines[2].quantity === 3 && lines[2].shadeName === '') {
+    pass('S39.1 buildSelectAllLines: one full-qty line per shade, names resolved');
+  } else fail('S39.1', JSON.stringify(lines));
+
+  // ---- S39.2 — zero-stock shades are skipped (never a 0-qty cart line) ----
+  const lines2 = buildSelectAllLines([
+    { design: 'D1', shade: 'A', availPkgs: 0 },
+    { design: 'D1', shade: 'B', availPkgs: 4 },
+    { design: 'D1', shade: 'C', availPkgs: -1 },
+  ], new Map());
+  if (lines2.length === 1 && lines2[0].shade === 'B' && lines2[0].quantity === 4) {
+    pass('S39.2 buildSelectAllLines: skips zero / negative-stock shades');
+  } else fail('S39.2', JSON.stringify(lines2));
+
+  // ---- S39.3 — defensive: non-array / empty input → [] ----
+  if (buildSelectAllLines(null).length === 0
+      && buildSelectAllLines(undefined).length === 0
+      && buildSelectAllLines([]).length === 0) {
+    pass('S39.3 buildSelectAllLines: non-array / empty input returns []');
+  } else fail('S39.3', 'expected [] for null/undefined/empty');
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -6869,6 +6909,7 @@ async function runS38() {
   try { await runS36(); } catch (e) { fail('S36 unexpected error', e.message); }
   try { await runS37(); } catch (e) { fail('S37 unexpected error', e.message); }
   try { await runS38(); } catch (e) { fail('S38 unexpected error', e.message); }
+  try { runS39(); } catch (e) { fail('S39 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;
