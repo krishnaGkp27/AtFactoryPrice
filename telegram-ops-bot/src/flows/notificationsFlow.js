@@ -24,7 +24,7 @@ const { editOrSend } = require('../utils/telegramUI');
 
 function backRow() {
   return [
-    { text: '⬅ Back to Admin', callback_data: 'act:__hub__:admin' },
+    { text: '⬅ Back to Reporting', callback_data: 'act:__hub__:reporting' },
     { text: '🏠 Menu',          callback_data: 'act:__back__' },
   ];
 }

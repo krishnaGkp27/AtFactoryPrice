@@ -3,181 +3,198 @@
  * Used by the role-based greeting menu to build tappable options.
  *
  * Each activity entry: { code, label, icon, callback, hub }
- *   hub: id of the menu hub the activity lives under, or null for top-level.
+ *   hub: id of the menu hub the activity lives under, or null for a
+ *        top-level standalone tile, or '_hidden' to keep it resolvable
+ *        (text intents) without surfacing it in any menu grid.
  *
- * Each hub entry: { id, label, icon }
+ * Each hub entry: { id, label, icon, parent? }
  *   Hubs are virtual groupings; they do not have their own callback — the
  *   greeting menu emits callback_data `act:__hub__:<hubId>` when a hub is
- *   tapped, which expands to the sub-activities belonging to that hub.
+ *   tapped, which expands to that hub's contents. A hub may declare a
+ *   `parent` hub id, making it a SUB-HUB rendered one level below its
+ *   parent module (nesting is capped at two levels: module → sub-hub →
+ *   activity).
+ *
+ * Top-level hubs follow an ERP-style module layout (Sales & Marketing,
+ * Inventory, CRM, Finance, HR, Reporting, Tasks & Planning, Daily). There
+ * is intentionally no catch-all "Admin" hub — admin-only actions live in
+ * the business module they belong to and are gated by visibility (admin /
+ * department CSV / per-user injection) in the controller, not by location.
  */
 
 const HUBS = [
-  { id: 'new_order',  label: 'New Order / Supply',   icon: '📦' },
-  { id: 'orders',     label: 'Orders',               icon: '📋' },
-  { id: 'stock',      label: 'Stock',                icon: '📦' },
-  { id: 'customers',  label: 'Customers',            icon: '👤' },
-  { id: 'samples',    label: 'Samples',              icon: '🧪' },
-  { id: 'catalog',    label: 'Catalog',              icon: '📷' },
-  { id: 'reports',    label: 'Reports',              icon: '📊' },
-  { id: 'tasks',      label: 'Tasks',                icon: '📌' },
-  // BR-OPS C1 — branch managers' daily routine hub. Visibility per-user
-  // via the standard Departments.allowed_activities CSV (no special
-  // controller injection). Owns: Open Branch (Daily) + Office Expense.
-  { id: 'daily',      label: 'Daily',                icon: '🌅' },
-  { id: 'admin',      label: 'Admin Settings',       icon: '⚙️' },
+  // ── Top-level ERP-style modules ──────────────────────────────────────
+  { id: 'sales',      label: 'Sales & Marketing', icon: '🛒' },
+  { id: 'inventory',  label: 'Inventory',         icon: '📦' },
+  { id: 'crm',        label: 'CRM',               icon: '👥' },
+  { id: 'finance',    label: 'Finance',           icon: '💰' },
+  { id: 'hr',         label: 'Human Resources',   icon: '🗓' },
+  { id: 'reporting',  label: 'Reporting',         icon: '📊' },
+  { id: 'planning',   label: 'Tasks & Planning',  icon: '📋' },
+  { id: 'daily',      label: 'Daily',             icon: '🌅' },
+
+  // ── Sub-hubs (one level below a parent module) ───────────────────────
+  // Sales & Marketing splits into its three concerns so no single screen
+  // is overcrowded.
+  { id: 'orders',     label: 'Orders',     icon: '📝', parent: 'sales' },
+  { id: 'marketers',  label: 'Marketers',  icon: '🧑‍💼', parent: 'sales' },
+  { id: 'designs',    label: 'Designs',    icon: '🎨', parent: 'sales' },
+  // Inventory keeps stock lookups shallow; the rarer write ops + warehouse
+  // admin sit one tap deeper.
+  { id: 'stock_add',  label: 'Add Stock',  icon: '📥', parent: 'inventory' },
+  { id: 'stock_move', label: 'Move Stock', icon: '🔁', parent: 'inventory' },
+  { id: 'warehouses', label: 'Warehouses', icon: '🏭', parent: 'inventory' },
 ];
 
 const ACTIVITIES = [
-  { code: 'supply_request',        label: 'Supply Request (detailed)', icon: '🏭', callback: 'act:supply_request',     hub: 'new_order' },
-  { code: 'create_order',          label: 'Quick Order Entry',         icon: '📝', callback: 'act:create_order',       hub: 'new_order' },
-
+  // ── Sales & Marketing › Orders ───────────────────────────────────────
+  { code: 'supply_request',        label: 'Supply Request (detailed)', icon: '🏭', callback: 'act:supply_request',     hub: 'orders' },
+  { code: 'create_order',          label: 'Quick Order Entry',         icon: '📝', callback: 'act:create_order',       hub: 'orders' },
   { code: 'my_orders',             label: 'My Orders',                 icon: '📋', callback: 'act:my_orders',          hub: 'orders' },
   { code: 'mark_order_delivered',  label: 'Mark Order Delivered',      icon: '✅', callback: 'act:mark_delivered',     hub: 'orders' },
+  // BUNDLE-SALE C1 — design-first, colour-aggregate, bale-by-bale than
+  // picker. Reuses the existing `sale_bundle` action so the approval
+  // pipeline, ledger emission, and audit log keep working unchanged.
+  { code: 'bundle_sale',           label: 'Sell Bundles / Than',       icon: '🧵', callback: 'act:bundle_sale',        hub: 'orders' },
 
-  { code: 'check_stock',           label: 'Check Stock',               icon: '📦', callback: 'act:check_stock',        hub: 'stock' },
+  // ── Sales & Marketing › Marketers (catalog consignment) ──────────────
+  { code: 'register_marketer',     label: 'Register Marketer',         icon: '🧑‍💼', callback: 'act:register_marketer',    hub: 'marketers' },
+  { code: 'supply_catalog',        label: 'Supply Catalog',            icon: '📦', callback: 'act:supply_catalog',       hub: 'marketers' },
+  { code: 'loan_catalog',          label: 'Loan to Marketer',          icon: '📋', callback: 'act:loan_catalog',         hub: 'marketers' },
+  { code: 'return_catalog',        label: 'Return Catalog',            icon: '↩️', callback: 'act:return_catalog',       hub: 'marketers' },
+  { code: 'catalog_tracker',       label: 'Catalog Tracker',           icon: '📊', callback: 'act:catalog_tracker',      hub: 'marketers' },
+  { code: 'manage_catalog_stock',  label: 'Manage Catalog Stock',      icon: '🗂️', callback: 'act:manage_catalog_stock', hub: 'marketers' },
+
+  // ── Sales & Marketing › Designs (photo catalog) ──────────────────────
+  { code: 'upload_design_photo',   label: 'Upload Product Photo',      icon: '📷', callback: 'act:upload_design_photo',  hub: 'designs' },
+  { code: 'manage_design_photos',  label: 'Manage Product Photos',     icon: '🖼️', callback: 'act:manage_design_photos', hub: 'designs' },
+  { code: 'browse_catalog',        label: 'Browse Catalog',            icon: '📖', callback: 'act:browse_catalog',       hub: 'designs' },
+  { code: 'search_design_photo',   label: 'Search Design Photo',       icon: '🔎', callback: 'act:search_design_photo',  hub: 'designs' },
+  { code: 'catalog_stats',         label: 'Catalog Stats',             icon: '📊', callback: 'act:catalog_stats',        hub: 'designs' },
+
+  // ── Inventory (stock lookups — shallow, high-frequency) ──────────────
+  { code: 'check_stock',           label: 'Check Stock',               icon: '📦', callback: 'act:check_stock',        hub: 'inventory' },
   // MKT-1 — warehouse-scoped read-only catalog for marketer/salesman roles.
   // Standalone (hub: null); surfaced only to field roles by the greeting menu.
   { code: 'my_products',           label: 'My Products',               icon: '📦', callback: 'act:my_products',        hub: null },
-  { code: 'list_packages',         label: 'List Packages',             icon: '📋', callback: 'act:list_packages',      hub: 'stock' },
-  { code: 'inventory_details',     label: 'Inventory Details',         icon: '🏭', callback: 'act:inventory_details',  hub: 'stock' },
+  { code: 'list_packages',         label: 'List Packages',             icon: '📋', callback: 'act:list_packages',      hub: 'inventory' },
+  { code: 'inventory_details',     label: 'Inventory Details',         icon: '🏭', callback: 'act:inventory_details',  hub: 'inventory' },
+  // PRICE-VIS — admin-only stock value (selling × yards); Phase 2 widens via permissions.
+  { code: 'stock_value',           label: 'Stock Value',               icon: '💰', callback: 'act:stock_value',        hub: 'inventory' },
+
+  // ── Inventory › Add Stock (inbound) ──────────────────────────────────
   // P2 — Goods Receipt Note. Admin executes directly; employee routes
   // through approval (see WRITE_ACTIONS in risk/evaluate.js).
-  { code: 'receive_goods',         label: 'Receive Goods',             icon: '📥', callback: 'act:receive_goods',      hub: 'stock' },
-  // P2.5 — Bulk Receive (CSV/XLSX upload). ALWAYS dual-admin gated
-  // regardless of who submits (see ALWAYS_APPROVAL_ACTIONS).
-  // TCSI-2: tile renamed to umbrella 'Add Stock (CSV)'. The act:bulk_receive_goods
-  // callback now opens a Strict/Lenient sub-menu in the controller so the two
-  // policies share one tile (no feature spilling). The activity code is kept
-  // unchanged so department permissions, approval queue, and audit history
-  // continue to reference the same identifier.
-  { code: 'bulk_receive_goods',    label: 'Add Stock (CSV)',           icon: '📦', callback: 'act:bulk_receive_goods', hub: 'stock' },
+  { code: 'receive_goods',         label: 'Receive Goods',             icon: '📥', callback: 'act:receive_goods',      hub: 'stock_add' },
+  // P2.5 / TCSI-2 — Bulk Receive (CSV/XLSX). ALWAYS dual-admin gated.
+  // Tile renamed to umbrella 'Add Stock (CSV)'; the callback opens a
+  // Strict/Lenient sub-menu in the controller. Code/callback preserved so
+  // department permissions, approval queue, and audit history keep
+  // referencing the same identifier.
+  { code: 'bulk_receive_goods',    label: 'Add Stock (CSV)',           icon: '📦', callback: 'act:bulk_receive_goods', hub: 'stock_add' },
   // P5 — Photo Receive (image/PDF + OCR). Submits through the same
-  // bulk_receive_goods approval gate; the OCR layer is purely capture.
-  { code: 'photo_receive_goods',   label: 'Photo Receive (image/PDF)', icon: '📷', callback: 'act:photo_receive_goods', hub: 'stock' },
-  { code: 'transfer_package',      label: 'Transfer Package',          icon: '🚚', callback: 'act:transfer_package',   hub: 'stock' },
-  { code: 'transfer_than',         label: 'Transfer Than',             icon: '↔️', callback: 'act:transfer_than',      hub: 'stock' },
-  { code: 'return_than',           label: 'Return Than',               icon: '↩️', callback: 'act:return_than',        hub: 'stock' },
-  // BUNDLE-SALE C1 — design-first, colour-aggregate, bale-by-bale than
-  // picker for Kano (and any warehouse holding poly-colour bales).
-  // Reuses the existing `sale_bundle` action so the approval pipeline,
-  // ledger emission, and audit log keep working unchanged.
-  { code: 'bundle_sale',           label: 'Sell Bundles / Than',       icon: '🧵', callback: 'act:bundle_sale',        hub: 'stock' },
+  // bulk_receive_goods approval gate; OCR is purely capture.
+  { code: 'photo_receive_goods',   label: 'Photo Receive (image/PDF)', icon: '📷', callback: 'act:photo_receive_goods', hub: 'stock_add' },
 
-  // Customer Details: single-tap entry that opens a customer card with
-  // [History / Pattern / Notes / Add Note] tabs (and Ranking for admins).
-  // Replaces four separate hub entries that each required a separate
-  // pick-customer round trip.
-  { code: 'customer_details',      label: 'Customer Details',          icon: '👤', callback: 'act:customer_details',   hub: 'customers' },
-  { code: 'add_customer_note',     label: 'Add Note',                  icon: '✏️', callback: 'act:add_note',           hub: 'customers' },
-  { code: 'add_customer',          label: 'Add Customer',              icon: '➕', callback: 'act:add_customer',       hub: 'customers' },
+  // ── Inventory › Move Stock (transfers / returns) ─────────────────────
+  { code: 'transfer_package',      label: 'Transfer Package',          icon: '🚚', callback: 'act:transfer_package',   hub: 'stock_move' },
+  { code: 'transfer_than',         label: 'Transfer Than',             icon: '↔️', callback: 'act:transfer_than',      hub: 'stock_move' },
+  { code: 'return_than',           label: 'Return Than',               icon: '↩️', callback: 'act:return_than',        hub: 'stock_move' },
+
+  // ── Inventory › Warehouses (admin org assets) ────────────────────────
+  // WH-C1 — add_warehouse (dual-admin gated, ALWAYS_APPROVAL_ACTIONS).
+  // Placed just before Manage Warehouses so the two related entries sit
+  // side by side.
+  { code: 'add_warehouse',         label: 'Add Warehouse',             icon: '🏭', callback: 'act:add_warehouse',     hub: 'warehouses' },
+  { code: 'manage_warehouses',     label: 'Manage Warehouses',         icon: '🏭', callback: 'act:manage_wh',          hub: 'warehouses' },
+  // DBP-1.5 Concept A — admin-only bale→than warehouse audit picker
+  // (read/inspect only). Admin-gated at launch; never in a department CSV.
+  { code: 'warehouse_audit',       label: 'Warehouse Audit',           icon: '🔍', callback: 'act:warehouse_audit',    hub: 'warehouses' },
+
+  // ── CRM (customers + samples) ────────────────────────────────────────
+  // Customer Details: single-tap card with [History / Pattern / Notes /
+  // Add Note] tabs (and Ranking for admins). Replaced four separate hub
+  // entries that each required a pick-customer round trip.
+  { code: 'customer_details',      label: 'Customer Details',          icon: '👤', callback: 'act:customer_details',   hub: 'crm' },
+  { code: 'add_customer_note',     label: 'Add Note',                  icon: '✏️', callback: 'act:add_note',           hub: 'crm' },
+  { code: 'add_customer',          label: 'Add Customer',              icon: '➕', callback: 'act:add_customer',       hub: 'crm' },
+  { code: 'give_sample',           label: 'Give Sample',               icon: '🧪', callback: 'act:give_sample',        hub: 'crm' },
+  { code: 'sample_status',         label: 'Sample Status',             icon: '📊', callback: 'act:sample_status',      hub: 'crm' },
 
   // Deprecated read-only customer activities: still resolvable so text
-  // intents ("Customer history CJE") keep working, but their hub is set
-  // to '_hidden' so they no longer appear in the Customers hub grid.
-  // filterByCodes() auto-substitutes `customer_details` when any of these
-  // are present in a department's allowed_activities CSV.
+  // intents ("Customer history CJE") keep working, but hub '_hidden' keeps
+  // them out of every menu grid. filterByCodes() auto-substitutes
+  // `customer_details` when any of these appear in a department CSV.
   { code: 'customer_history',      label: 'Customer History',          icon: '📋', callback: 'act:customer_history',   hub: '_hidden' },
   { code: 'customer_pattern',      label: 'Customer Pattern',          icon: '🔍', callback: 'act:customer_pattern',   hub: '_hidden' },
   { code: 'show_customer_notes',   label: 'Customer Notes',            icon: '📝', callback: 'act:customer_notes',     hub: '_hidden' },
   { code: 'customer_ranking',      label: 'Customer Ranking',          icon: '🏆', callback: 'act:customer_ranking',   hub: '_hidden' },
 
-  { code: 'give_sample',           label: 'Give Sample',               icon: '🧪', callback: 'act:give_sample',        hub: 'samples' },
-  { code: 'sample_status',         label: 'Sample Status',             icon: '📊', callback: 'act:sample_status',      hub: 'samples' },
+  // ── Finance & Accounting ─────────────────────────────────────────────
+  { code: 'update_price',          label: 'Update Price',              icon: '💲', callback: 'act:update_price',       hub: 'finance' },
+  { code: 'add_bank',              label: 'Manage Banks',              icon: '🏦', callback: 'act:manage_banks',       hub: 'finance' },
+  // Finance-only — Incentives queue with one-tap Mark Paid. Visibility
+  // gated by config.access.financeIds, injected per-user (still in the
+  // controller's TASK_CODES injection set).
+  { code: 'payouts',               label: 'Payouts',                   icon: '💰', callback: 'act:payouts',            hub: 'finance' },
+  // LANDED-COST C1 — admin finalises USD cost/yard + import charges for a
+  // GRN. Dual-admin gated via `finalize_landed_cost`.
+  { code: 'finalize_landed_cost',  label: 'Finalize Landed Cost',      icon: '💵', callback: 'act:finalize_landed_cost', hub: 'finance' },
 
-  { code: 'upload_design_photo',   label: 'Upload Product Photo',      icon: '📷', callback: 'act:upload_design_photo', hub: 'catalog' },
-  { code: 'manage_design_photos',  label: 'Manage Product Photos',     icon: '🖼️', callback: 'act:manage_design_photos', hub: 'catalog' },
-  { code: 'browse_catalog',        label: 'Browse Catalog',            icon: '📖', callback: 'act:browse_catalog',       hub: 'catalog' },
-  { code: 'search_design_photo',   label: 'Search Design Photo',       icon: '🔎', callback: 'act:search_design_photo',  hub: 'catalog' },
-  { code: 'catalog_stats',         label: 'Catalog Stats',             icon: '📊', callback: 'act:catalog_stats',        hub: 'catalog' },
-  { code: 'supply_catalog',        label: 'Supply Catalog',            icon: '📦', callback: 'act:supply_catalog',       hub: 'catalog' },
-  { code: 'loan_catalog',          label: 'Loan to Marketer',          icon: '📋', callback: 'act:loan_catalog',         hub: 'catalog' },
-  { code: 'return_catalog',        label: 'Return Catalog',            icon: '↩️', callback: 'act:return_catalog',       hub: 'catalog' },
-  { code: 'register_marketer',     label: 'Register Marketer',         icon: '🧑‍💼', callback: 'act:register_marketer',    hub: 'catalog' },
-  { code: 'catalog_tracker',       label: 'Catalog Tracker',           icon: '📊', callback: 'act:catalog_tracker',      hub: 'catalog' },
-  { code: 'manage_catalog_stock', label: 'Manage Catalog Stock',      icon: '🗂️', callback: 'act:manage_catalog_stock', hub: 'catalog' },
-
-  { code: 'sales_report',          label: 'Sales Report',              icon: '📊', callback: 'act:sales_report',       hub: 'reports' },
-  { code: 'supply_details',        label: 'Supply Details',            icon: '📦', callback: 'act:supply_details',     hub: 'reports' },
-  // PRICE-VIS — admin-only stock value (selling × yards); Phase 2 widens via permissions.
-  { code: 'stock_value',           label: 'Stock Value',               icon: '💰', callback: 'act:stock_value',        hub: 'reports' },
-  // ATT-RPT-1 — read-only attendance report (today + window stats per
-  // employee). Admin-only for now; manager-scoped variant ships later
-  // when the hierarchy hook is wired.
-  { code: 'attendance_report',     label: 'Attendance Report',         icon: '🗓', callback: 'act:attendance_report',  hub: 'reports' },
-
-  // Tasks hub — visibility is *injected* per-user by the controller
-  // (admin / has-manages → sees assign/team/signoff; everyone else
-  // sees only My Tasks). Do not list these codes in any department's
-  // allowed_activities — controller decides visibility from
-  // user.manages / isAdmin, not from the Departments sheet.
-  { code: 'assign_task',           label: 'Assign Task',               icon: '➕', callback: 'act:assign_task',        hub: 'tasks' },
-  { code: 'my_tasks',              label: 'My Tasks',                  icon: '📋', callback: 'act:my_tasks',           hub: 'tasks' },
-  { code: 'team_tasks',            label: 'Team Tasks',                icon: '👥', callback: 'act:team_tasks',         hub: 'tasks' },
-  { code: 'pending_signoff',       label: 'Pending Sign-off',          icon: '⏳', callback: 'act:pending_signoff',    hub: 'tasks' },
-  // Finance-only — sees the Incentives queue with one-tap Mark Paid.
-  // Visibility gated by config.access.financeIds, injected per-user.
-  { code: 'payouts',               label: 'Payouts',                   icon: '💰', callback: 'act:payouts',            hub: 'tasks' },
-
-  { code: 'update_price',          label: 'Update Price',              icon: '💲', callback: 'act:update_price',       hub: 'admin' },
-  // ATT-C1 — Mark Attendance (employee-facing). Not anchored to a
-  // department; injected at menu-render time for users whose Telegram ID
-  // is in Settings.ATTENDANCE_REQUIRED_USERS. Hub is intentionally null
-  // so it never appears automatically from a department's activity list.
-  { code: 'mark_attendance',       label: 'Mark Attendance',           icon: '📍', callback: 'act:mark_attendance',   hub: null },
-  // ATT-C2 — admin hub entry to manage attendance: required users,
-  // locations, reminder/report times, working days, today view,
-  // mark-on-behalf. Admin-only.
-  { code: 'attendance_admin',      label: 'Attendance',                icon: '🗓', callback: 'act:attendance_admin', hub: 'admin' },
-  // USR-C3 — in-bot add employee (dual-admin gated, ALWAYS_APPROVAL_ACTIONS).
-  // Listed above Manage Users so the two related entries sit together.
-  { code: 'add_user',              label: 'Add Employee',              icon: '➕', callback: 'act:add_user',          hub: 'admin' },
-  // USR-C3b — promote an existing user to admin. Approval is super-admin
-  // gated (SUPER_ADMIN_APPROVAL_ACTIONS in risk/evaluate).
-  { code: 'promote_admin',         label: 'Promote to Admin',          icon: '👑', callback: 'umg:start:promote',    hub: 'admin' },
+  // ── Human Resources (people + attendance) ────────────────────────────
+  // ATT-C1 — Mark Attendance (employee-facing). Injected at menu-render
+  // time for users in Settings.ATTENDANCE_REQUIRED_USERS; never listed in
+  // a department CSV. Housed in HR so that, once surfaced, it sits with the
+  // other people/attendance actions — a user whose only HR activity is
+  // this one still gets it promoted to a top-level tile.
+  { code: 'mark_attendance',       label: 'Mark Attendance',           icon: '📍', callback: 'act:mark_attendance',   hub: 'hr' },
+  // ATT-C2 — admin attendance management (required users, locations,
+  // reminder/report times, working days, today view, mark-on-behalf).
+  { code: 'attendance_admin',      label: 'Attendance',                icon: '🗓', callback: 'act:attendance_admin',  hub: 'hr' },
+  // USR-C3 — in-bot add employee (dual-admin gated). Listed just above
+  // Manage Users so the two related entries sit together.
+  { code: 'add_user',              label: 'Add Employee',              icon: '➕', callback: 'act:add_user',          hub: 'hr' },
+  { code: 'manage_users',          label: 'Manage Users',              icon: '👥', callback: 'act:manage_users',       hub: 'hr' },
+  // USR-C3b — promote an existing user to admin (super-admin gated).
+  { code: 'promote_admin',         label: 'Promote to Admin',          icon: '👑', callback: 'umg:start:promote',    hub: 'hr' },
   // USR-C4 — deactivate (status=inactive). Dual-admin gated.
-  { code: 'deactivate_user',       label: 'Deactivate User',           icon: '🛑', callback: 'umg:start:deactivate', hub: 'admin' },
-  { code: 'manage_users',          label: 'Manage Users',              icon: '👥', callback: 'act:manage_users',       hub: 'admin' },
-  { code: 'manage_departments',    label: 'Manage Departments',        icon: '🏢', callback: 'act:manage_depts',       hub: 'admin' },
-  // WH-C1: standalone add-warehouse activity. Same `add_warehouse`
-  // action under the hood (dual-admin gated, ALWAYS_APPROVAL_ACTIONS).
-  // Placed just before Manage Warehouses so the two related entries
-  // sit side-by-side in the admin hub.
-  { code: 'add_warehouse',         label: 'Add Warehouse',             icon: '🏭', callback: 'act:add_warehouse',     hub: 'admin' },
-  { code: 'manage_warehouses',     label: 'Manage Warehouses',         icon: '🏭', callback: 'act:manage_wh',          hub: 'admin' },
-  { code: 'add_bank',              label: 'Manage Banks',              icon: '🏦', callback: 'act:manage_banks',       hub: 'admin' },
-  // T2 — per-user opt-in/out toggles for the Admin Activity Feed.
-  // Injected per-user by the controller (admin-only); not listed in any
-  // department's allowed_activities CSV.
-  { code: 'notifications_settings',label: 'Notifications',             icon: '⚙️', callback: 'act:notifications',      hub: 'admin' },
+  { code: 'deactivate_user',       label: 'Deactivate User',           icon: '🛑', callback: 'umg:start:deactivate', hub: 'hr' },
+  { code: 'manage_departments',    label: 'Manage Departments',        icon: '🏢', callback: 'act:manage_depts',       hub: 'hr' },
+
+  // ── Reporting ────────────────────────────────────────────────────────
+  { code: 'sales_report',          label: 'Sales Report',              icon: '📊', callback: 'act:sales_report',       hub: 'reporting' },
+  { code: 'supply_details',        label: 'Supply Details',            icon: '📦', callback: 'act:supply_details',     hub: 'reporting' },
+  // ATT-RPT-1 — read-only attendance report (today + window stats). Admin-only for now.
+  { code: 'attendance_report',     label: 'Attendance Report',         icon: '🗓', callback: 'act:attendance_report',  hub: 'reporting' },
   // T3 — admin read-only lens on the supply-order pipeline (Orders +
   // Customers + LedgerBalanceCache joined into one view).
-  { code: 'sales_workflow_view',   label: 'Sales Workflow',            icon: '📊', callback: 'act:sales_workflow',     hub: 'admin' },
-  // DBP-1.5 Concept A — admin-only tappable bale->than warehouse audit
-  // picker (spec dbp-1.5-than-bale-allocation.md §9A). Read/inspect only,
-  // no inventory writes. Admin-only via the hub:'admin' tile + an isAdmin
-  // gate at launch; never listed in any department's allowed_activities.
-  { code: 'warehouse_audit',       label: 'Warehouse Audit',           icon: '🔍', callback: 'act:warehouse_audit',    hub: 'admin' },
+  { code: 'sales_workflow_view',   label: 'Sales Workflow',            icon: '📊', callback: 'act:sales_workflow',     hub: 'reporting' },
+  // T2 — per-user opt-in/out toggles for the Admin Activity Feed. Injected
+  // per-user by the controller (admin-only); not in any department CSV.
+  { code: 'notifications_settings',label: 'Notifications',             icon: '⚙️', callback: 'act:notifications',      hub: 'reporting' },
+
+  // ── Tasks & Planning ─────────────────────────────────────────────────
+  // Task codes are injected per-user by the controller (admin / has-manages
+  // → assign/team/signoff; everyone → My Tasks); never from a department
+  // CSV. Do not list these in any department's allowed_activities.
+  { code: 'assign_task',           label: 'Assign Task',               icon: '➕', callback: 'act:assign_task',        hub: 'planning' },
+  { code: 'my_tasks',              label: 'My Tasks',                  icon: '📋', callback: 'act:my_tasks',           hub: 'planning' },
+  { code: 'team_tasks',            label: 'Team Tasks',                icon: '👥', callback: 'act:team_tasks',         hub: 'planning' },
+  { code: 'pending_signoff',       label: 'Pending Sign-off',          icon: '⏳', callback: 'act:pending_signoff',    hub: 'planning' },
   // P4 — admin Procurement Plan: low-stock alerts + open POs + new PO flow.
-  // Visibility gated to admins in the controller; not listed in any
-  // department's allowed_activities CSV.
-  { code: 'procurement_plan',      label: 'Procurement Plan',          icon: '📋', callback: 'act:procurement_plan',   hub: 'admin' },
-  // LANDED-COST C1 — admin finalises USD cost-per-yard + import charges
-  // for a GRN. Dual-admin gated via `finalize_landed_cost`.
-  { code: 'finalize_landed_cost',  label: 'Finalize Landed Cost',      icon: '💵', callback: 'act:finalize_landed_cost', hub: 'admin' },
+  // Admin-gated in the controller; not in any department CSV.
+  { code: 'procurement_plan',      label: 'Procurement Plan',          icon: '📋', callback: 'act:procurement_plan',   hub: 'planning' },
 
-  { code: 'upload_receipt',        label: 'Upload Receipt',            icon: '🧾', callback: 'act:upload_receipt',     hub: null },
-
-  // BR-OPS C1 — branch managers' daily routine.
+  // ── Daily / Branch Ops ───────────────────────────────────────────────
+  // BR-OPS C1 — branch managers' daily routine. Per-user visibility via the
+  // Departments.allowed_activities CSV.
   // * daily_branch_ops opens the morning card (camera + opening cash) and
-  //   collapses to the status panel for the rest of the day. Idempotent
-  //   — re-tapping after open shows the panel, not a duplicate open.
-  // * office_expense queues a batch of expenses (water, fuel, sundries)
-  //   for single-admin sign-off (record_office_expense ∈ WRITE_ACTIONS).
-  // Per-user visibility via Departments.allowed_activities CSV — add
-  // these codes to Abdul's and Muhammad's department row, no code
-  // change needed when a 3rd manager joins.
+  //   collapses to the status panel for the rest of the day (idempotent).
+  // * office_expense queues a batch of expenses for single-admin sign-off.
+  // * upload_receipt captures a payment/expense receipt photo.
   { code: 'daily_branch_ops',      label: 'Open Branch (Daily)',       icon: '🌅', callback: 'act:daily_branch_ops',   hub: 'daily' },
   { code: 'office_expense',        label: 'Office Expense',            icon: '💸', callback: 'act:office_expense',     hub: 'daily' },
+  { code: 'upload_receipt',        label: 'Upload Receipt',            icon: '🧾', callback: 'act:upload_receipt',     hub: 'daily' },
 ];
 
 const byCode = new Map(ACTIVITIES.map((a) => [a.code, a]));
@@ -197,7 +214,7 @@ function getAll() { return ACTIVITIES; }
 // Codes that have been consolidated into the unified `customer_details`
 // hub entry. Departments seeded before the consolidation may still list
 // these in their allowed_activities CSV; filterByCodes() detects them and
-// injects `customer_details` so the customers hub keeps populating without
+// injects `customer_details` so the CRM hub keeps populating without
 // requiring a Departments-sheet migration.
 const DEPRECATED_CUSTOMER_READS = new Set([
   'customer_history',
@@ -223,25 +240,48 @@ function getHubs() { return HUBS; }
 
 function getHub(id) { return hubsById.get(id) || null; }
 
+/** Top-level modules only (hubs without a parent), in declaration order. */
+function getTopHubs() { return HUBS.filter((h) => !h.parent); }
+
+/** Direct child sub-hubs of a parent hub, in declaration order. */
+function getChildHubs(parentId) { return HUBS.filter((h) => h.parent === parentId); }
+
 /**
- * Group a list of allowed activities by hub.
- * Returns:
+ * Resolve the TOP-LEVEL module id for any hub id. Walks at most one parent
+ * hop, since nesting is capped at two levels (module → sub-hub → activity).
+ * Returns null for unknown hub ids (e.g. '_hidden').
+ */
+function topHubIdOf(hubId) {
+  const h = hubsById.get(hubId);
+  if (!h) return null;
+  return h.parent || h.id;
+}
+
+/**
+ * Group a list of allowed activities by their TOP-LEVEL module for the
+ * greeting menu. Activities living in a sub-hub roll up to the sub-hub's
+ * parent, so the greeting only ever shows the top-level modules (or a
+ * single promoted action). Returns:
  *   {
- *     hubs: [{ hub, activities: [...] }, ...],   // only hubs that have ≥1 allowed activity
+ *     hubs: [{ hub, activities: [...] }, ...],  // top-level hubs with ≥1 allowed descendant
  *     standalone: [...]                          // activities with hub === null
  *   }
- * Order of hubs follows the declaration order in HUBS.
+ * Order of hubs follows the declaration order in HUBS. Activities with an
+ * unknown/'_hidden' hub are not surfaced.
  */
 function groupByHub(activities) {
   const map = new Map();
   const standalone = [];
   for (const a of activities) {
     if (!a.hub) { standalone.push(a); continue; }
-    if (!map.has(a.hub)) map.set(a.hub, []);
-    map.get(a.hub).push(a);
+    const top = topHubIdOf(a.hub);
+    if (!top) continue; // unknown / '_hidden' — never surfaced
+    if (!map.has(top)) map.set(top, []);
+    map.get(top).push(a);
   }
   const hubs = [];
   for (const h of HUBS) {
+    if (h.parent) continue; // only top-level modules surface at the greeting
     if (map.has(h.id)) hubs.push({ hub: h, activities: map.get(h.id) });
   }
   return { hubs, standalone };
@@ -254,5 +294,8 @@ module.exports = {
   filterByCodes,
   getHubs,
   getHub,
+  getTopHubs,
+  getChildHubs,
+  topHubIdOf,
   groupByHub,
 };
