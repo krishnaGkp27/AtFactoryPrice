@@ -12,10 +12,13 @@
  * incoming /start messages from strangers; legitimate onboarding happens
  * in ones and twos so the cap is generous.
  *
- * "Stranger" = a Telegram ID that auth.isAllowed() rejects AND is not yet
- * sitting in PendingUsers with status=pending (re-pings from the same
- * person are absorbed without re-notifying admins, except to refresh the
- * notification message if the admin lost it).
+ * "Stranger" = any Telegram ID that auth.isAllowed() rejects — a brand-new
+ * /start OR a previously-onboarded user who was later DEACTIVATED and is
+ * reaching out again. Every such /start re-notifies admins with a fresh
+ * Onboard card (capped by the rate limit) and (re-)flags the PendingUsers
+ * row to `pending` so the person resurfaces in the Add Employee picker. The
+ * admin notification is decoupled from the sheet write: a PendingUsers write
+ * failure is logged but never suppresses the notification.
  */
 
 'use strict';
@@ -101,20 +104,18 @@ async function captureStranger(bot, msg) {
   const telegramId = String(msg.from.id);
   const chatId = msg.chat.id;
 
-  // Idempotency: already known? Just re-send the polite reply.
+  // Look up any existing pending row (best-effort — drives append-vs-update).
   let existing = null;
   try { existing = await pendingUsersRepo.findByTelegramId(telegramId); } catch (_) {}
-  const wasAlreadyPending = !!(existing && existing.status === 'pending');
 
-  // For brand-new entries: enforce the rate limit BEFORE writing or
-  // notifying. Re-pings from the same person bypass the cap because we
-  // don't write a new row.
-  if (!wasAlreadyPending && !existing) {
-    if (!_checkRateLimit()) {
-      logger.warn(`pendingUser: rate-limit drop for ${telegramId} (${_windowCount}/${RATE_LIMIT_MAX} in window)`);
-      // Stay silent — do NOT confirm receipt to a likely spammer.
-      return { captured: false, reason: 'rate_limited' };
-    }
+  // Rate-limit EVERY capture — brand-new strangers AND re-pings from someone
+  // who already has a row (e.g. a deactivated user saying "hi" again). This
+  // lets us re-notify admins on each /start so a returning user reliably
+  // resurfaces, while still capping how fast a spammer can flood the feed.
+  // Beyond the cap we stay silent (no reply, no notify).
+  if (!_checkRateLimit()) {
+    logger.warn(`pendingUser: rate-limit drop for ${telegramId} (${_windowCount}/${RATE_LIMIT_MAX} in window)`);
+    return { captured: false, reason: 'rate_limited' };
   }
 
   // Always send the polite reply (re-pings included — they may have lost it).
@@ -124,7 +125,6 @@ async function captureStranger(bot, msg) {
     logger.warn(`pendingUser: polite reply failed for ${telegramId}: ${e.message}`);
   }
 
-  // Write or refresh the pending row.
   const entry = {
     telegram_id: telegramId,
     username: msg.from.username || '',
@@ -134,43 +134,35 @@ async function captureStranger(bot, msg) {
     status: 'pending',
   };
 
-  let notify = false;
-  if (!existing) {
-    try {
+  // Upsert the PendingUsers row so the person shows up in the Add Employee
+  // picker. BEST-EFFORT: a sheet failure here must NOT suppress the admin
+  // notification below — the notification (with its Onboard button) is what
+  // actually gets the person onboarded, even if the picker is unavailable.
+  try {
+    if (!existing) {
       await pendingUsersRepo.append(entry);
-      notify = true;
-    } catch (e) {
-      logger.error(`pendingUser: append failed for ${telegramId}: ${e.message}`);
-    }
-  } else if (existing.status !== 'pending') {
-    // Previously handled (onboarded or ignored) but now reaching out again
-    // — re-flag as pending. This covers the rare case where an admin
-    // ignored someone who then turned out to be a legitimate hire.
-    try {
+    } else if (existing.status !== 'pending') {
+      // Previously onboarded (then deactivated) or ignored, now reaching out
+      // again — re-flag as pending so they reappear in the picker.
       await pendingUsersRepo.updateStatus(telegramId, 'pending', '');
-      notify = true;
-    } catch (e) {
-      logger.error(`pendingUser: re-pend failed for ${telegramId}: ${e.message}`);
     }
+    // else: already pending — leave the row as-is.
+  } catch (e) {
+    logger.error(`pendingUser: PendingUsers upsert failed for ${telegramId} (admin will still be notified): ${e.message}`);
   }
 
-  // Notify admins (best-effort; failures don't propagate).
-  if (notify) {
-    try {
-      const text = _adminCard(entry);
-      const reply_markup = _adminCardKeyboard(telegramId);
-      // adminFeed.notify dispatches to every opted-in admin and returns
-      // a delivery count (no per-message id today). last_notified_msg_id
-      // stays empty for now — the column is reserved for a future
-      // "cross out the card once handled" enhancement.
-      await adminFeed.notify(
-        bot, 'user.pending',
-        text,
-        { parse_mode: 'Markdown', reply_markup },
-      );
-    } catch (e) {
-      logger.warn(`pendingUser: admin notify failed for ${telegramId}: ${e.message}`);
-    }
+  // ALWAYS notify admins — a fresh Onboard card on every /start from an
+  // unknown or deactivated user (capped by the rate limit above). Decoupled
+  // from the sheet write so a PendingUsers hiccup can't silently swallow the
+  // one signal that gets the person onboarded.
+  try {
+    await adminFeed.notify(
+      bot, 'user.pending',
+      _adminCard(entry),
+      { parse_mode: 'Markdown', reply_markup: _adminCardKeyboard(telegramId) },
+    );
+  } catch (e) {
+    logger.warn(`pendingUser: admin notify failed for ${telegramId}: ${e.message}`);
   }
 
   // Audit (best-effort).
