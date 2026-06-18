@@ -5138,7 +5138,10 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
       session.step = 'quantity';
       sessionStore.set(userId, session);
     }
-    await showQuantityPicker(bot, chatId, userId, design, s.shade, warehouse, s.availPkgs, labels);
+    // Single-shade designs skip the shade picker (where multi-shade designs
+    // get their catalog photo), so ask the quantity picker to carry the photo
+    // here — otherwise single-shade designs would never show their image.
+    await showQuantityPicker(bot, chatId, userId, design, s.shade, warehouse, s.availPkgs, labels, { withPhoto: true });
     return;
   }
 
@@ -5214,7 +5217,7 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   });
 }
 
-async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse, availPkgs, labelsOverride) {
+async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse, availPkgs, labelsOverride, opts = {}) {
   const labels = labelsOverride || await productTypesRepo.getLabels('fabric');
   const containerPlural = productTypesRepo.pluralize(labels.container_label, availPkgs).toLowerCase();
   const session = sessionStore.get(userId);
@@ -5241,11 +5244,44 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
   rows.push([{ text: '✏️ Custom Quantity', callback_data: 'srf_qty:__custom__' }]);
   rows.push([{ text: '⬅️ Back to shades', callback_data: 'srf_back:shade' }]);
 
-  await editOrSendAnchored(bot, chatId, userId,
-    `📦 *${design}* │ Shade: *${shadeRef}* │ 🏭 *${warehouse}*\n${availPkgs} ${containerPlural} available\n\nHow many ${containerPlural} to supply?`, {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: rows },
-    });
+  const caption = `📦 *${design}* │ Shade: *${shadeRef}* │ 🏭 *${warehouse}*\n${availPkgs} ${containerPlural} available\n\nHow many ${containerPlural} to supply?`;
+
+  // SINGLE-SHADE PHOTO PARITY: multi-shade designs show the catalog photo on
+  // the shade picker (Path A in showShadesForDesign), but single-shade designs
+  // skip that step and land straight here — leaving them photo-less. When the
+  // caller asks (opts.withPhoto), render the quantity step as a photo+buttons
+  // combo so single-shade designs get the same visual. Falls back to the text
+  // picker when there's no catalog asset or the send fails.
+  if (opts.withPhoto && session) {
+    try {
+      const photoAsset = await designAssetsService.getPhotoForSend(design);
+      if (photoAsset && photoAsset.photo) {
+        await clearDesignPreview(bot, chatId, userId);
+        const sent = await bot.sendPhoto(chatId, photoAsset.photo, {
+          caption,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: rows },
+        });
+        if (photoAsset.photoSource !== 'telegram_file_id' && sent && sent.photo && sent.photo.length) {
+          const fid = sent.photo[sent.photo.length - 1].file_id;
+          designAssetsService.cacheTelegramFileId(photoAsset.rowIndex, fid).catch(() => {});
+        }
+        if (sent && sent.message_id) {
+          session.previewMessageId = sent.message_id;
+          session.flowMessageId = null;
+          sessionStore.set(userId, session);
+          return;
+        }
+      }
+    } catch (e) {
+      logger.warn(`showQuantityPicker(${design}): photo combo failed, text fallback — ${e.message}`);
+    }
+  }
+
+  await editOrSendAnchored(bot, chatId, userId, caption, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
 }
 
 function addToCart(session, design, shade, quantity) {
