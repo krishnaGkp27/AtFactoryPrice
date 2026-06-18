@@ -1,12 +1,12 @@
 'use strict';
 
 /**
- * Supply flow — single-shade designs must show the catalog photo too.
+ * Supply flow — single-shade designs (a) show the catalog photo on the quantity
+ * step, and (b) offer "Back to designs" (not the looping "Back to shades").
+ * Multi-shade designs keep "Back to shades".
  *
- * Bug: multi-shade designs render the photo on the shade picker, but a
- * single-shade design auto-skips that step and landed on a TEXT-only quantity
- * picker — so its image never showed (reported for design 16040, 1 shade).
- * Fix: the single-shade branch asks the quantity picker to carry the photo.
+ * Bug history: single-shade designs auto-skip the shade picker, so they were
+ * photo-less AND their "Back to shades" button looped to the same page.
  */
 
 process.env.ADMIN_IDS = '777';
@@ -33,45 +33,75 @@ const designAssetsService = require(path.join(SRC, 'services/designAssetsService
 const UID = '4242';
 
 productTypesRepo.getLabels = async () => ({ container_label: 'Bale', subunit_label: 'Than', measure_unit: 'yards' });
-designAssetsRepo.findActive = async () => null; // name map empty; photo comes via getPhotoForSend
+designAssetsRepo.findActive = async () => null;
+designAssetsService.cacheTelegramFileId = async () => {};
 
-// One design, ONE shade, 8 bales available in Lagos.
-inventoryRepository.getAll = async () => {
-  const rows = [];
-  for (let i = 1; i <= 8; i += 1) {
-    rows.push({ design: '16040', shade: 'Black', warehouse: 'Lagos', status: 'available', packageNo: `B${i}`, productType: 'fabric' });
+function inv(rows) { inventoryRepository.getAll = async () => rows; }
+function rowsFor(design, shades) {
+  const out = [];
+  for (const [shade, n] of Object.entries(shades)) {
+    for (let i = 0; i < n; i += 1) out.push({ design, shade, warehouse: 'Lagos', status: 'available', packageNo: `${shade}${i}`, productType: 'fabric' });
   }
-  return rows;
-};
-
-function seedSupplySession() {
-  sessionStore.set(UID, {
-    type: 'supply_req_flow', warehouse: 'Lagos', cart: [],
-    step: 'design', productType: 'fabric', flowMessageId: 50,
-  });
+  return out;
 }
-function tapDesign() {
-  return { id: 'cb', data: 'srf_dg:16040', from: { id: UID }, message: { chat: { id: UID }, message_id: 50 } };
+function seed() {
+  sessionStore.set(UID, { type: 'supply_req_flow', warehouse: 'Lagos', cart: [], step: 'design', productType: 'fabric', flowMessageId: 50 });
+}
+function cb(data) { return { id: 'cb', data, from: { id: UID }, message: { chat: { id: UID }, message_id: 50 } }; }
+function lastKeyboardCallbacks(bot) {
+  const withKb = bot.calls.filter((c) => ['sendPhoto', 'sendMessage', 'editMessageText'].includes(c.method) && c.args.opts && c.args.opts.reply_markup);
+  const last = withKb[withKb.length - 1];
+  const kb = last ? last.args.opts.reply_markup.inline_keyboard : [];
+  return kb.flat().map((b) => b.callback_data);
 }
 
-test('single-shade design shows the catalog photo on the quantity step', async () => {
+test('single-shade design: photo on quantity step + "Back to designs"', async () => {
+  inv(rowsFor('16040', { Black: 8 }));
   designAssetsService.getPhotoForSend = async () => ({ photo: 'FAKE_FILE_ID', photoSource: 'telegram_file_id', rowIndex: 2 });
-  designAssetsService.cacheTelegramFileId = async () => {};
-  seedSupplySession();
+  seed();
   const bot = createFakeBot();
-  await controller.handleCallbackQuery(bot, tapDesign());
+  await controller.handleCallbackQuery(bot, cb('srf_dg:16040'));
   const photos = bot.callsTo('sendPhoto');
-  assert.equal(photos.length, 1, 'expected the catalog photo on a single-shade quantity step');
-  assert.equal(photos[0].args.photo, 'FAKE_FILE_ID');
+  assert.equal(photos.length, 1, 'expected the catalog photo');
   assert.match(photos[0].args.opts.caption, /16040/);
   assert.match(photos[0].args.opts.caption, /How many .*to supply/i);
+  const cbs = lastKeyboardCallbacks(bot);
+  assert.ok(cbs.includes('srf_back:design'), 'single-shade must offer Back to designs');
+  assert.ok(!cbs.includes('srf_back:shade'), 'single-shade must NOT loop via Back to shades');
 });
 
-test('single-shade design with NO catalog photo falls back to the text picker', async () => {
+test('single-shade design with no photo: text picker + "Back to designs"', async () => {
+  inv(rowsFor('16040', { Black: 8 }));
   designAssetsService.getPhotoForSend = async () => null;
-  seedSupplySession();
+  seed();
   const bot = createFakeBot();
-  await controller.handleCallbackQuery(bot, tapDesign());
-  assert.equal(bot.callsTo('sendPhoto').length, 0, 'no photo when there is no asset');
+  await controller.handleCallbackQuery(bot, cb('srf_dg:16040'));
+  assert.equal(bot.callsTo('sendPhoto').length, 0);
   assert.match(bot.allText(), /How many .*to supply/i);
+  const cbs = lastKeyboardCallbacks(bot);
+  assert.ok(cbs.includes('srf_back:design'));
+  assert.ok(!cbs.includes('srf_back:shade'));
+});
+
+test('tapping "Back to designs" from a single-shade quantity step shows the design picker', async () => {
+  inv(rowsFor('16040', { Black: 8 }));
+  designAssetsService.getPhotoForSend = async () => null;
+  seed();
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:16040'));     // → single-shade quantity
+  await controller.handleCallbackQuery(bot, cb('srf_back:design'));  // → design picker
+  // The design picker lists designs as srf_dg:* buttons.
+  assert.ok(lastKeyboardCallbacks(bot).some((c) => /^srf_dg:/.test(c)), 'should land on the design picker');
+});
+
+test('multi-shade design keeps "Back to shades" on the quantity step', async () => {
+  inv(rowsFor('20000', { Red: 2, Blue: 1 }));
+  designAssetsService.getPhotoForSend = async () => null;
+  seed();
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:20000'));       // → shade picker (2 shades)
+  await controller.handleCallbackQuery(bot, cb('srf_sh:20000|Red|2')); // pick a shade → quantity
+  const cbs = lastKeyboardCallbacks(bot);
+  assert.ok(cbs.includes('srf_back:shade'), 'multi-shade quantity offers Back to shades');
+  assert.ok(!cbs.includes('srf_back:design'), 'multi-shade should not use Back to designs here');
 });
