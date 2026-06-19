@@ -16,6 +16,9 @@
     <link rel="stylesheet" href="css/pwa.css">
     <!-- UI Density & Elegance Refinement -->
     <link rel="stylesheet" href="css/density-refinement.css">
+    <!-- Phase 4 design system (additive) -->
+    <link rel="stylesheet" href="css/tokens.css">
+    <link rel="stylesheet" href="css/components.css">
     
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -783,70 +786,117 @@
                 gap: 12px;
             }
         }
+
+        /* Phase 4 — cart page re-skin (afp-v2 scope) */
+        .afp-v2 .cart-page .container{max-width:920px;margin:0 auto;padding:24px 32px 80px;}
+        .afp-v2 .cart-items{background:#fff;border:1px solid var(--afp-line);border-radius:var(--afp-r-3);overflow:hidden;margin-top:20px;}
+        .afp-v2 .cart-item{padding:24px 28px;display:grid;grid-template-columns:88px 1fr 140px auto;gap:16px;align-items:center;border-bottom:1px solid var(--afp-line-2);background:#fff;}
+        .afp-v2 .cart-item:last-child{border-bottom:0;}
+        .afp-v2 .cart-item-image{width:88px;height:88px;border-radius:var(--afp-r-2);overflow:hidden;background:var(--afp-line-2);object-fit:cover;}
+        .afp-v2 .cart-item-info h3{font:500 15px/1.3 var(--afp-sans);letter-spacing:-.01em;color:var(--afp-ink);margin:0;}
+        .afp-v2 .cart-item-info p{font-family:var(--afp-mono);font-size:11px;color:var(--afp-ink-3);text-transform:uppercase;letter-spacing:.06em;margin-top:4px;}
+        .afp-v2 .quantity-controls{display:inline-flex;align-items:center;border:1px solid var(--afp-line);border-radius:var(--afp-r-pill);padding:3px;width:max-content;}
+        .afp-v2 .quantity-controls .qty-btn{width:30px;height:30px;border:0;background:transparent;cursor:pointer;border-radius:99px;color:var(--afp-ink);font-size:16px;display:flex;align-items:center;justify-content:center;}
+        .afp-v2 .quantity-controls .qty-btn:hover{background:var(--afp-line-2);}
+        .afp-v2 .cart-item-price{text-align:right;}
+        .afp-v2 .cart-item-price .price{font:600 17px/1 var(--afp-sans);letter-spacing:-.01em;}
+        .afp-v2 .btn-remove{margin-top:8px;background:transparent;border:0;color:var(--afp-ink-3);cursor:pointer;border-radius:99px;padding:4px 8px;}
+        .afp-v2 .btn-remove:hover{background:var(--afp-line-2);color:var(--afp-crit);}
+        .afp-v2 .cart-summary{background:#fff;border:1px solid var(--afp-line);border-radius:var(--afp-r-3);padding:28px;margin-top:20px;}
+        .afp-v2 .cart-summary .summary-header{font:600 18px/1.2 var(--afp-sans);letter-spacing:-.015em;margin:0 0 18px;}
+        .afp-v2 .checkout-btn,.afp-v2 .btn-checkout{display:flex;align-items:center;justify-content:center;width:100%;background:var(--afp-red);color:#fff;border:0;border-radius:var(--afp-r-pill);padding:0 24px;height:52px;font:500 16px/1 var(--afp-sans);cursor:pointer;margin-top:18px;}
+        .afp-v2 .checkout-btn:hover,.afp-v2 .btn-checkout:hover{background:var(--afp-red-600);}
+        @media (max-width:768px){.afp-v2 .cart-item{grid-template-columns:64px 1fr;}}
     </style>
 </head>
-<body>
-    <nav class="navbar">
-        <div class="nav-container">
-            <h1 class="logo">
-                <a href="index.html" style="display: flex; align-items: center; gap: 12px;">
-                   <img src="images/logo.png" alt="At Factory Price Logo" class="logo-image" onerror="this.style.display='none'" style="
-    width: 120px;
-    height: 80px;
-">
-                </a>
-            </h1>
-            <div class="nav-links">
-                <a href="index.html" class="nav-link" title="Home">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-                        <polyline points="9 22 9 12 15 12 15 22"></polyline>
-                    </svg>
-                </a>
-                <a href="products.html" class="nav-link">Products</a>
-                <a href="cart.html" class="nav-link cart-link active" title="Cart">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="9" cy="21" r="1"></circle>
-                        <circle cx="20" cy="21" r="1"></circle>
-                        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
-                    </svg>
-                    <span class="cart-count" id="cartCount">0</span>
-                </a>
-            </div>
+<body class="afp-v2">
+    <nav class="afp-nav">
+      <div class="afp-nav-c">
+        <div class="afp-nav-l">
+          <a href="index.html" class="afp-logo">
+            <span class="afp-logo-mark">
+              <svg width="34" height="34" viewBox="0 0 24 24" fill="none">
+                <rect x="3" y="14" width="5" height="7" fill="#0A0A0B"/>
+                <rect x="9" y="9" width="5" height="12" fill="#D8262C"/>
+                <rect x="15" y="3" width="5" height="18" fill="#0A0A0B"/>
+                <path d="M11.5 9 L11.5 4 Q11.5 2 13 2.5 L13 9.5" stroke="#D8262C" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <span class="afp-logo-tx"><span class="at">At</span><span class="nm">Factory</span><span class="pr">Price</span></span>
+          </a>
+          <div class="afp-nav-mid">
+            <a href="index.html">Home</a>
+            <a href="products.html">Products</a>
+            <a href="orders.html">Orders</a>
+          </div>
         </div>
+        <div class="afp-nav-end">
+          <a href="cart.html" class="cart-link afp-btn afp-btn-brand afp-btn--sm">
+            Cart · <span class="cart-count" id="cartCount">0</span>
+          </a>
+        </div>
+      </div>
     </nav>
 
     <main class="cart-page">
+        <section style="max-width:1280px;margin:0 auto;padding:48px 32px 0;">
+          <div class="afp-mono afp-mute" style="margin-bottom:14px;">
+            <a href="index.html">Home</a> /
+            <b style="color:var(--afp-ink);font-weight:500;">Cart</b>
+          </div>
+          <h1 class="afp-h1" style="font-size:48px;">Your cart.</h1>
+          <p class="afp-body-m afp-mute" style="margin-top:6px;">Review your items before checkout.</p>
+        </section>
         <div class="container">
-            <h1 class="page-title">Shopping Cart</h1>
-            
             <div id="cartContent">
                 <!-- Cart items will be loaded here -->
             </div>
         </div>
     </main>
 
-    <footer class="footer">
-        <div class="footer-content">
-            <div class="footer-section">
-                <h3>At Factory Price</h3>
-                <p>Premium products at factory direct prices</p>
-            </div>
-            <div class="footer-section">
-                <h4>Quick Links</h4>
-                <a href="products.html">Products</a>
-                <a href="cart.html">Cart</a>
-                <a href="checkout.html">Checkout</a>
-            </div>
-            <div class="footer-section">
-                <h4>Contact</h4>
-                <p>Email: hello@minimalshop.com</p>
-                <p>Phone: +1 234 567 8900</p>
-            </div>
+    <footer class="afp-ft">
+      <div class="afp-ft-c">
+        <div>
+          <span class="afp-logo">
+            <span class="afp-logo-mark">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+                <rect x="3" y="14" width="5" height="7" fill="#fff"/>
+                <rect x="9" y="9" width="5" height="12" fill="#D8262C"/>
+                <rect x="15" y="3" width="5" height="18" fill="#fff"/>
+                <path d="M11.5 9 L11.5 4 Q11.5 2 13 2.5 L13 9.5" stroke="#D8262C" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <span class="afp-logo-tx" style="color:#fff"><span class="at">At</span><span class="nm">Factory</span><span class="pr" style="background:#fff;color:#0A0A0B">Price</span></span>
+          </span>
+          <p style="max-width:300px;margin-top:14px;">Premium fabrics and garments at factory direct prices. Lagos, Nigeria.</p>
         </div>
-        <div class="footer-bottom">
-            <p>&copy; 2024 At Factory Price. All rights reserved.</p>
+        <div>
+          <h5>Shop</h5>
+          <a href="products.html">Products</a>
+          <a href="cart.html">Cart</a>
+          <a href="checkout.html">Checkout</a>
         </div>
+        <div>
+          <h5>Account</h5>
+          <a href="login.html">Sign in</a>
+          <a href="orders.html">Orders</a>
+        </div>
+        <div>
+          <h5>Help</h5>
+          <a href="https://wa.me/2348138475360" target="_blank">WhatsApp</a>
+          <a href="mailto:Johngn09@gmail.com">Contact</a>
+        </div>
+        <div>
+          <h5>Policies</h5>
+          <a href="policies/return-policy.html">Return</a>
+          <a href="policies/refund-policy.html">Refund</a>
+          <a href="policies/cancellation-policy.html">Cancellation</a>
+        </div>
+      </div>
+      <div class="afp-ft-end">
+        <span>© 2026 AtFactoryPrice · Lagos, NG</span>
+        <span>Direct from factory</span>
+      </div>
     </footer>
 
     <script>
