@@ -7,6 +7,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- UI Density & Elegance Refinement -->
     <link rel="stylesheet" href="css/density-refinement.css">
+    <!-- Phase 4 design system (additive) -->
+    <link rel="stylesheet" href="css/tokens.css">
+    <link rel="stylesheet" href="css/components.css">
     <style>
         * {
             margin: 0;
@@ -802,32 +805,33 @@
         }
     </style>
 </head>
-<body>
-    <nav class="navbar">
-        <div class="nav-container">
-            <h1 class="logo">
-                <a href="index.html">
-                    <img src="images/logo.png" alt="AtFactoryPrice Logo" class="logo-image" onerror="this.style.display='none'; this.parentElement.innerHTML='AtFactoryPrice'" style="width: 120px; height: 80px;">
-                </a>
-            </h1>
-            <div class="nav-links">
-                <a href="index.html" class="nav-link" title="Home">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-                        <polyline points="9 22 9 12 15 12 15 22"></polyline>
-                    </svg>
-                </a>
-                <a href="products.html" class="nav-link">Products</a>
-                <a href="cart.html" class="nav-link cart-link" title="Cart">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="9" cy="21" r="1"></circle>
-                        <circle cx="20" cy="21" r="1"></circle>
-                        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
-                    </svg>
-                    <span class="cart-count" id="cartCount">0</span>
-                </a>
-            </div>
+<body class="afp-v2">
+    <nav class="afp-nav">
+      <div class="afp-nav-c">
+        <div class="afp-nav-l">
+          <a href="index.html" class="afp-logo">
+            <span class="afp-logo-mark">
+              <svg width="34" height="34" viewBox="0 0 24 24" fill="none">
+                <rect x="3" y="14" width="5" height="7" fill="#0A0A0B"/>
+                <rect x="9" y="9" width="5" height="12" fill="#D8262C"/>
+                <rect x="15" y="3" width="5" height="18" fill="#0A0A0B"/>
+                <path d="M11.5 9 L11.5 4 Q11.5 2 13 2.5 L13 9.5" stroke="#D8262C" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <span class="afp-logo-tx"><span class="at">At</span><span class="nm">Factory</span><span class="pr">Price</span></span>
+          </a>
+          <div class="afp-nav-mid">
+            <a href="index.html">Home</a>
+            <a href="products.html">Products</a>
+            <a href="orders.html">Orders</a>
+          </div>
         </div>
+        <div class="afp-nav-end">
+          <a href="cart.html" class="cart-link afp-btn afp-btn-brand afp-btn--sm">
+            Cart · <span class="cart-count" id="cartCount">0</span>
+          </a>
+        </div>
+      </div>
     </nav>
 
     <div class="loading-overlay" id="loadingOverlay">
@@ -836,8 +840,9 @@
 
     <main class="container">
         <div class="page-header">
-            <h1>My Profile</h1>
-            <p>Manage your account settings and preferences</p>
+            <span class="afp-eyebrow"><span class="afp-eyebrow-dot"></span>Account · Profile</span>
+            <h1 class="afp-h1" style="font-size:40px;margin-top:8px;">Your profile.</h1>
+            <p class="afp-mute">Manage your account settings and preferences</p>
         </div>
 
         <div class="profile-grid">
