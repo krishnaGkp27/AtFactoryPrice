@@ -367,6 +367,31 @@ async function getDistinctDesigns() {
 }
 
 /**
+ * TRF-1 — transition a set of bales (by packageNo) from one status to another,
+ * optionally rewriting their warehouse. Used by the staged warehouse-transfer
+ * flow: available→in_transit (dispatch) and in_transit→available (receive /
+ * revert). Only rows whose current status === fromStatus are touched.
+ * @returns {Promise<Array>} the rows that were updated
+ */
+async function transitionBales(packageNos, fromStatus, toStatus, toWarehouse = null) {
+  const set = new Set((packageNos || []).map((p) => String(p)));
+  if (!set.size) return [];
+  const all = await getAll();
+  const rows = all.filter((r) => set.has(String(r.packageNo)) && r.status === fromStatus);
+  if (!rows.length) return [];
+  const now = new Date().toISOString();
+  const updates = [];
+  for (const r of rows) {
+    updates.push({ range: `H${r.rowIndex}`, values: [[toStatus]] });
+    if (toWarehouse != null) updates.push({ range: `I${r.rowIndex}`, values: [[toWarehouse]] });
+    updates.push({ range: `P${r.rowIndex}`, values: [[now]] });
+  }
+  await sheets.batchUpdateRanges(SHEET, updates);
+  invalidateCache();
+  return rows.map((r) => ({ ...r, status: toStatus, warehouse: toWarehouse != null ? toWarehouse : r.warehouse, updatedAt: now }));
+}
+
+/**
  * BUNDLE-SALE C1 — build a 2-level grouping of AVAILABLE thans for a given
  * design+warehouse, suitable for the Kano bundle picker.
  *
@@ -461,6 +486,7 @@ module.exports = {
   updatePrice,
   transferThan,
   transferPackage,
+  transitionBales,
   appendThans,
   appendBale,
   backfillLegacyBales,

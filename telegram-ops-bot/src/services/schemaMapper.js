@@ -188,6 +188,16 @@ const REQUIRED_SHEETS = {
       'handled_by', 'handled_at',
     ],
   },
+  // TRF-1 — warehouse→warehouse transfers with two-step acceptance
+  // (source dispatcher accepts → destination receiver confirms). One row
+  // per transfer; bale packageNos live in items_json.
+  Transfers: {
+    headers: [
+      'transfer_id', 'from_warehouse', 'to_warehouse', 'items_json', 'status',
+      'requested_by', 'requested_at', 'source_person', 'dispatched_at',
+      'dest_person', 'received_at', 'note', 'requested_by_name',
+    ],
+  },
   // ATT-C1 — daily attendance log. One row per (date, telegram_id).
   // V1 stores only 'present' marks; missing rows imply not-yet-logged
   // (the C3 scheduler will later auto-stamp `not_logged` after the

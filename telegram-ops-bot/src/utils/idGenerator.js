@@ -58,6 +58,7 @@ module.exports = {
   department: () => generate('DEPT'),
   grn: () => generate('GRN'),
   procurementOrder: () => generate('PO'),
+  transfer: () => generate('TR'),
   baleUid,
   requestId,
   generate,
