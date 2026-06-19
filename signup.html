@@ -7,9 +7,6 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- UI Density & Elegance Refinement -->
     <link rel="stylesheet" href="css/density-refinement.css">
-    <!-- Phase 4 design system (additive) -->
-    <link rel="stylesheet" href="css/tokens.css">
-    <link rel="stylesheet" href="css/components.css">
     <style>
         * {
             margin: 0;
@@ -202,50 +199,17 @@
         .success-message.show {
             display: block;
         }
-
-        /* Phase 4 — auth layout + form styling (afp-v2 scope) */
-        .afp-v2 .afp-auth-single{min-height:100vh;display:flex;justify-content:center;align-items:flex-start;padding:56px 24px;background:var(--afp-paper);}
-        .afp-v2 .form-group{margin-bottom:16px;}
-        .afp-v2 input[type="text"],
-        .afp-v2 input[type="email"],
-        .afp-v2 input[type="tel"],
-        .afp-v2 input[type="password"]{
-          height:46px;padding:0 14px;border:1px solid var(--afp-line);background:#fff;
-          border-radius:var(--afp-r-2);font:400 15px/1 var(--afp-sans);color:var(--afp-ink);outline:0;
-          width:100%;transition:border-color var(--afp-d-1) var(--afp-ease),box-shadow var(--afp-d-1) var(--afp-ease);
-        }
-        .afp-v2 input:focus{border-color:var(--afp-ink);box-shadow:var(--afp-sh-focus);}
-        .afp-v2 .form-group label{font:500 13px/1.4 var(--afp-sans);color:var(--afp-ink-2);display:block;margin-bottom:6px;}
-        .afp-v2 .referral-section{padding:16px 18px;background:var(--afp-red-soft);border-radius:var(--afp-r-3);border:1px solid rgba(216,38,44,.15);margin:6px 0 16px;}
-        .afp-v2 .referral-section h3{font-family:var(--afp-mono);font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--afp-red-600);margin:0 0 8px;font-weight:500;}
-        .afp-v2 .referral-section p{font-size:12px;color:var(--afp-ink-2);margin:0 0 10px;}
-        .afp-v2 .referral-input-group{display:flex;gap:8px;}
-        .afp-v2 .referral-section input{background:#fff;border:1px solid var(--afp-line);}
-        .afp-v2 .btn-validate{flex:0 0 auto;border:1px solid var(--afp-ink);background:transparent;color:var(--afp-ink);border-radius:var(--afp-r-2);padding:0 16px;height:46px;font:500 13px/1 var(--afp-sans);cursor:pointer;}
-        .afp-v2 .btn-validate:hover{background:var(--afp-ink);color:#fff;}
-        .afp-v2 .login-link{margin-top:24px;font-size:14px;color:var(--afp-ink-2);text-align:center;}
-        .afp-v2 .login-link a{color:var(--afp-red-600);font-weight:500;cursor:pointer;}
     </style>
 </head>
-<body class="afp-v2">
-    <div class="afp-auth-single">
-    <div class="signup-container" style="background:transparent;box-shadow:none;max-width:480px;width:100%;">
-        <div class="logo" style="text-align:center;">
-            <a href="index.html" class="afp-logo" style="justify-content:center;">
-              <span class="afp-logo-mark">
-                <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
-                  <rect x="3" y="14" width="5" height="7" fill="#0A0A0B"/>
-                  <rect x="9" y="9" width="5" height="12" fill="#D8262C"/>
-                  <rect x="15" y="3" width="5" height="18" fill="#0A0A0B"/>
-                  <path d="M11.5 9 L11.5 4 Q11.5 2 13 2.5 L13 9.5" stroke="#D8262C" stroke-width="1.5" fill="none" stroke-linecap="round"/>
-                </svg>
-              </span>
-              <span class="afp-logo-tx"><span class="at">At</span><span class="nm">Factory</span><span class="pr">Price</span></span>
+<body>
+    <div class="signup-container">
+        <div class="logo">
+            <a href="index.html">
+                <img src="images/logo.png" alt="AtFactoryPrice Logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='block'" style="width: 150px; height: 100px; margin: 0 auto;">
+                <h1 style="display: none;">AtFactoryPrice</h1>
             </a>
+            <p style="color: #666; margin-top: 5px;">Create Your Account</p>
         </div>
-        <span class="afp-eyebrow" style="margin-top:28px;"><span class="afp-eyebrow-dot"></span>Create account · free</span>
-        <h1 class="afp-h1" style="font-size:38px;margin-top:12px;">Join AtFactoryPrice.</h1>
-        <p class="afp-body-m afp-mute" style="margin-top:8px;margin-bottom:20px;">3,200+ buyers shop direct. You're 30 seconds away.</p>
 
         <div id="errorMessage" class="error-message"></div>
         <div id="successMessage" class="success-message"></div>
@@ -281,13 +245,12 @@
                 <div id="referralStatus" class="referral-status"></div>
             </div>
 
-            <button type="submit" class="btn-submit afp-btn afp-btn-brand afp-btn--lg afp-btn--block" id="submitBtn">Create Account</button>
+            <button type="submit" class="btn-submit" id="submitBtn">Create Account</button>
         </form>
 
         <div class="login-link">
             Already have an account? <a href="login.html">Log in</a>
         </div>
-    </div>
     </div>
 
     <!-- Firebase SDK -->

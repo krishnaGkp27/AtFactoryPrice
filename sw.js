@@ -9,8 +9,8 @@
  * - Fails gracefully when offline
  */
 
-const CACHE_NAME = 'afp-static-v2';
-const STATIC_CACHE_NAME = 'afp-static-v2';
+const CACHE_NAME = 'afp-static-v1';
+const STATIC_CACHE_NAME = 'afp-static-v1';
 
 // Static assets to cache (only safe, static files)
 const STATIC_ASSETS = [
