@@ -42,7 +42,9 @@
  *   bs:wh:<warehouse>
  *   bs:design:<DESIGN>             (uppercased, callback-safe key)
  *   bs:shade:<shadeKey>
- *   bs:bale:<baleUid|pkg:..>
+ *   bs:all_shades                  (take every remaining than of design)
+ *   bs:bale:<baleUid|pkg:..>       (drill into bale-detail than picker)
+ *   bs:wholebale:<baleUid|pkg:..>  (toggle whole bale from the bale list)
  *   bs:than:<key>                  (toggle one than)
  *   bs:take_all:<baleUid|pkg:..>   (every available than in bale)
  *   bs:smartpack                   (start target-yardage assist)
@@ -61,15 +63,56 @@ const sessionStore        = require('../utils/sessionStore');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const customersRepository = require('../repositories/customersRepository');
 const shadesRepository    = require('../repositories/shadesRepository');
+const designAssetsRepository = require('../repositories/designAssetsRepository');
 const transactionsRepository = require('../repositories/transactionsRepository');
 const bundleSaleService   = require('../services/bundleSaleService');
 const rateSuggestionService = require('../services/rateSuggestionService');
 const approvalEvents      = require('../events/approvalEvents');
 const auth                = require('../middlewares/auth');
 const logger              = require('../utils/logger');
+const {
+  buildShadeNameMap, buildShadeLabel, layoutShadeRows, formatShadeRef,
+} = require('../utils/shadeButtons');
 
 const MAX_RATE_NGN = 5_000_000;
 const PAYMENT_MODES = ['Cash', 'Bank Transfer', 'Pending'];
+// This flow sells in individual than(s), so the shade/bale buttons count
+// thans rather than the "bale" unit the Supply picker uses.
+const THAN_UNIT = { singular: 'than', plural: 'thans' };
+
+/**
+ * Stable cart key for one physical than — mirrors bundleSaleService.keyOf
+ * so selection state can be reconciled against cart.byKey.
+ * @param {{baleUid?:string, packageNo:string|number, thanNo:string|number}} t
+ * @returns {string}
+ */
+function thanKey(t) {
+  return `${t.baleUid || `pkg:${t.packageNo}`}|${t.thanNo}`;
+}
+
+/**
+ * Resolve the bale identifier used as a callback-safe key + cart match.
+ * @param {{baleUid?:string, packageNo:string|number}} bale
+ * @returns {string}
+ */
+function baleKeyOf(bale) {
+  return bale.baleUid || `pkg:${bale.packageNo}`;
+}
+
+/**
+ * Load the design's catalog shade-name map (number → name), best-effort.
+ * Returns an empty Map when the design has no catalog asset.
+ * @param {string} design
+ * @returns {Promise<Map<string,string>>}
+ */
+async function loadShadeNameMap(design) {
+  try {
+    const asset = await designAssetsRepository.findActive(design);
+    return buildShadeNameMap(asset);
+  } catch (_) {
+    return new Map();
+  }
+}
 
 /* ───────────────────────────────────────────────────────────────────── */
 /*  Rendering helpers — single anchored card (UX-C1)                    */
@@ -213,7 +256,7 @@ async function renderShadePicker(bot, chatId, userId) {
   const grouped = await inventoryRepository.groupByBaleAndShade(session.design, session.warehouse);
   session._grouped = grouped; // cached for sub-views
   sessionStore.set(userId, session);
-  const shadesList = await shadesRepository.getAll();
+  const nameMap = await loadShadeNameMap(session.design);
 
   // Subtract whatever is already in the cart from the available count,
   // so the picker is honest about how much is left to take.
@@ -227,81 +270,99 @@ async function renderShadePicker(bot, chatId, userId) {
     e.yards += l.yards;
   }
 
-  const lines = [];
-  const rows = [];
+  // Supply-Details-style shade buttons: "<#> - <name> (<n> thans)", two
+  // per row, names sourced from the design catalog. No catalogue photo.
+  const buttons = [];
+  let totalRemThans = 0;
+  let availableShades = 0;
   for (const sh of grouped.shades) {
-    const emoji = shadesRepository.chipFromList(shadesList, sh.shade) || '🎨';
-    const used  = inCart.get(sh.shadeKey) || { thans: 0, yards: 0 };
+    const used = inCart.get(sh.shadeKey) || { thans: 0 };
     const remThans = Math.max(0, sh.summary.thanCount - used.thans);
-    const remYards = Math.max(0, sh.summary.yards - used.yards);
-    const tag = used.thans ? ` _(in cart: ${used.thans})_` : '';
-    lines.push(`${emoji} *${escapeMd(sh.shade || '—')}* — ${fmtQty(remYards)} yd across ${remThans} than(s)${tag}`);
-    if (remThans > 0) {
-      rows.push([{ text: `${emoji} ${sh.shade || '—'} (${remThans} thans)`, callback_data: `bs:shade:${sh.shadeKey}` }]);
-    }
+    if (remThans <= 0) continue;
+    totalRemThans += remThans;
+    availableShades += 1;
+    buttons.push({
+      text: buildShadeLabel(sh.shadeKey, nameMap, remThans, THAN_UNIT),
+      callback_data: `bs:shade:${sh.shadeKey}`,
+    });
   }
 
-  if (!rows.length) {
-    rows.push([{ text: '🛒 Review cart', callback_data: 'bs:cart' }]);
-  } else {
+  const rows = layoutShadeRows(buttons);
+  if (totalRemThans > 0) {
+    // Bulk shortcut mirroring Supply's "Take ALL shades": queue every
+    // remaining than of every shade for this design in one tap.
+    rows.push([{
+      text: `✅ Take ALL ${availableShades} shade${availableShades === 1 ? '' : 's'} (${totalRemThans} ${totalRemThans === 1 ? THAN_UNIT.singular : THAN_UNIT.plural})`,
+      callback_data: 'bs:all_shades',
+    }]);
+    // Smart-pack stays as an extra escape hatch (not present in Supply).
     rows.push([{ text: '🎯 Pack target yardage', callback_data: 'bs:smartpack' }]);
+  } else {
+    rows.push([{ text: '🛒 Review cart', callback_data: 'bs:cart' }]);
   }
   const totals = bundleSaleService.totals(session.cart);
   const cr = cartRow(totals.yards, totals.thans);
   if (cr) rows.push(cr);
-  rows.push(backRow());
+  rows.push([{ text: '⬅️ Back to designs', callback_data: 'bs:back' }]);
   rows.push(cancelRow());
 
   await render(bot, chatId, userId,
     `🧵 *${escapeMd(session.design)}* @ *${escapeMd(session.warehouse || '—')}*\n\n`
-    + `Shades available:\n${lines.join('\n')}\n\n`
-    + `Pick a shade to open the bale list, or *🎯 Pack target yardage* to let the bot suggest a basket.`,
+    + (totalRemThans > 0
+      ? 'Pick a shade to open its bales:'
+      : '_All shades for this design are already in your cart._'),
     rows,
   );
 }
 
+/**
+ * Resolve {shadeBucket, emoji, shadeRef} for the active shade, loading the
+ * grouped cache + catalog names on demand. Returns null when the shade is
+ * gone (caller renders an error).
+ */
+async function resolveActiveShade(session) {
+  if (!session._grouped) {
+    session._grouped = await inventoryRepository.groupByBaleAndShade(session.design, session.warehouse);
+  }
+  const shadeBucket = session._grouped.shades.find((s) => s.shadeKey === session.shadeKey);
+  if (!shadeBucket) return null;
+  const shadesList = await shadesRepository.getAll();
+  const emoji = shadesRepository.chipFromList(shadesList, shadeBucket.shade) || '🎨';
+  const nameMap = await loadShadeNameMap(session.design);
+  const shadeRef = formatShadeRef(shadeBucket.shade, nameMap.get(String(shadeBucket.shadeKey)) || nameMap.get(String(shadeBucket.shade)));
+  return { shadeBucket, emoji, shadeRef };
+}
+
+/**
+ * Bale list — one tappable row per bale (tap = take/untake the whole bale,
+ * the leading box reflects selection state) plus a drill-down arrow that
+ * opens the bale-detail card to pick individual thans. Mirrors the elegant,
+ * uncluttered Supply-Details bale list.
+ */
 async function renderBalePicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  if (!session._grouped) {
-    session._grouped = await inventoryRepository.groupByBaleAndShade(session.design, session.warehouse);
-    sessionStore.set(userId, session);
-  }
-  const shadesList = await shadesRepository.getAll();
-  const shadeBucket = session._grouped.shades.find((s) => s.shadeKey === session.shadeKey);
-  if (!shadeBucket) { await renderError(bot, chatId, userId, 'Shade no longer available.'); return; }
-  const emoji = shadesRepository.chipFromList(shadesList, shadeBucket.shade) || '🎨';
+  const resolved = await resolveActiveShade(session);
+  sessionStore.set(userId, session);
+  if (!resolved) { await renderError(bot, chatId, userId, 'Shade no longer available.'); return; }
+  const { shadeBucket, emoji, shadeRef } = resolved;
 
   const inCart = new Set(session.cart.lines.map((l) => l._key));
   const rows = [];
-  let header = `🧵 *${escapeMd(session.design)}*  ${emoji} *${escapeMd(shadeBucket.shade || '—')}*  @ ${escapeMd(session.warehouse || '—')}\n\n`;
-  header += 'Pick than(s). Newest bales are at the bottom — clear oldest stock first.\n';
-
   for (const bale of shadeBucket.bales) {
-    const age = bundleSaleService.ageBucket(bale.ageDays);
     const total = bale.thans.length;
-    const remaining = bale.thans.filter((t) => !inCart.has(`${t.baleUid || `pkg:${t.packageNo}`}|${t.thanNo}`));
-    const taken = total - remaining.length;
-    const bin = bale.binLocation ? `  ·  shelf *${escapeMd(bale.binLocation)}*` : '';
-    const ageLine = bale.ageDays != null
-      ? `${age.emoji} *Bale ${escapeMd(bale.packageNo)}*  · ${bale.ageDays}d (${age.label})${bin}`
-      : `*Bale ${escapeMd(bale.packageNo)}*${bin}`;
-    rows.push([{ text: `── ${ageLine.replace(/[*`_]/g, '')} ──`, callback_data: 'bs:noop' }]);
-    // One row per than (up to 6 per row to stay under 100-row TG limit)
-    let currentRow = [];
-    for (const t of bale.thans) {
-      const k = `${t.baleUid || `pkg:${t.packageNo}`}|${t.thanNo}`;
-      const isTaken = inCart.has(k);
-      const label = isTaken ? `✅ #${t.thanNo}` : `#${t.thanNo} · ${fmtQty(t.yards)}y`;
-      currentRow.push({ text: label, callback_data: `bs:than:${k}` });
-      if (currentRow.length === 3) { rows.push(currentRow); currentRow = []; }
-    }
-    if (currentRow.length) rows.push(currentRow);
-    if (remaining.length) {
-      rows.push([{ text: `📦 Take all ${remaining.length} remaining`, callback_data: `bs:take_all:${bale.baleUid || `pkg:${bale.packageNo}`}` }]);
-    } else if (taken > 0) {
-      rows.push([{ text: `↩ Untake bale ${bale.packageNo}`, callback_data: `bs:rm_bale:${bale.baleUid || `pkg:${bale.packageNo}`}` }]);
-    }
+    const takenCount = bale.thans.filter((t) => inCart.has(thanKey(t))).length;
+    // ⬜ none · ◪ partial · ✅ whole bale selected.
+    const icon = takenCount === 0 ? '⬜' : (takenCount === total ? '✅' : '◪');
+    const age = bundleSaleService.ageBucket(bale.ageDays);
+    const countTag = takenCount > 0 ? `${takenCount}/${total}` : `${total}`;
+    rows.push([
+      {
+        text: `${icon} ${age.emoji} ${bale.packageNo} · ${countTag} than`,
+        callback_data: `bs:wholebale:${baleKeyOf(bale)}`,
+      },
+      { text: '➡️', callback_data: `bs:bale:${baleKeyOf(bale)}` },
+    ]);
   }
 
   const totals = bundleSaleService.totals(session.cart);
@@ -310,6 +371,57 @@ async function renderBalePicker(bot, chatId, userId) {
   rows.push([{ text: '🎨 Change shade', callback_data: 'bs:back' }]);
   rows.push(cancelRow());
 
+  const header = `🧵 *${escapeMd(session.design)}*  ${emoji} *${escapeMd(shadeRef || '—')}*  @ ${escapeMd(session.warehouse || '—')}\n\n`
+    + 'Tap a *bale number* to take the whole bale, or *➡️* to pick thans inside it.\n'
+    + '⬜ none · ◪ some · ✅ whole bale.';
+  await render(bot, chatId, userId, header, rows);
+}
+
+/**
+ * Bale-detail card — full bale info + a checkbox per than (tap to toggle),
+ * with whole-bale take/clear shortcuts. Reached via the ➡️ arrow.
+ */
+async function renderBaleDetail(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const resolved = await resolveActiveShade(session);
+  if (!resolved) { await renderError(bot, chatId, userId, 'Shade no longer available.'); return; }
+  const { shadeBucket, emoji, shadeRef } = resolved;
+  const bale = shadeBucket.bales.find((b) => baleKeyOf(b) === session.activeBaleUid);
+  if (!bale) { await renderError(bot, chatId, userId, 'Bale no longer available.'); return; }
+
+  const inCart = new Set(session.cart.lines.map((l) => l._key));
+  const total = bale.thans.length;
+  const takenCount = bale.thans.filter((t) => inCart.has(thanKey(t))).length;
+  const baleYards = bale.thans.reduce((sum, t) => sum + (t.yards || 0), 0);
+  const age = bundleSaleService.ageBucket(bale.ageDays);
+  const ageBit = bale.ageDays != null ? ` · ${age.emoji} ${bale.ageDays}d (${age.label})` : '';
+  const binBit = bale.binLocation ? ` · shelf *${escapeMd(bale.binLocation)}*` : '';
+
+  const rows = [];
+  let currentRow = [];
+  for (const t of bale.thans) {
+    const isTaken = inCart.has(thanKey(t));
+    const label = `${isTaken ? '☑️' : '⬜'} #${t.thanNo} · ${fmtQty(t.yards)}y`;
+    currentRow.push({ text: label, callback_data: `bs:than:${thanKey(t)}` });
+    if (currentRow.length === 3) { rows.push(currentRow); currentRow = []; }
+  }
+  if (currentRow.length) rows.push(currentRow);
+
+  const actionRow = [];
+  if (takenCount < total) actionRow.push({ text: '📦 Take whole bale', callback_data: `bs:take_all:${baleKeyOf(bale)}` });
+  if (takenCount > 0) actionRow.push({ text: '🧹 Clear bale', callback_data: `bs:rm_bale:${baleKeyOf(bale)}` });
+  if (actionRow.length) rows.push(actionRow);
+
+  const totals = bundleSaleService.totals(session.cart);
+  const cr = cartRow(totals.yards, totals.thans);
+  if (cr) rows.push(cr);
+  rows.push([{ text: '⬅ Back to bales', callback_data: 'bs:back' }]);
+  rows.push(cancelRow());
+
+  const header = `📦 *Bale ${escapeMd(bale.packageNo)}*  ·  ${total} than · ${fmtQty(baleYards)} yd\n`
+    + `${emoji} *${escapeMd(shadeRef || '—')}* · ${escapeMd(session.design)} @ ${escapeMd(session.warehouse || '—')}${ageBit}${binBit}\n\n`
+    + `Selected: *${takenCount}/${total}* than. Tap a than to toggle it.`;
   await render(bot, chatId, userId, header, rows);
 }
 
@@ -776,6 +888,62 @@ async function handleCallback(bot, query) {
     return true;
   }
 
+  if (data === 'bs:all_shades') {
+    if (!session._grouped) {
+      session._grouped = await inventoryRepository.groupByBaleAndShade(session.design, session.warehouse);
+    }
+    const inCart = new Set(session.cart.lines.map((l) => l._key));
+    const lines = [];
+    for (const sh of session._grouped.shades) {
+      for (const b of sh.bales) {
+        for (const t of b.thans) {
+          if (inCart.has(thanKey(t))) continue;
+          lines.push({
+            baleUid: t.baleUid, packageNo: t.packageNo, thanNo: t.thanNo,
+            yards: t.yards, design: session.design, shade: sh.shade, binLocation: b.binLocation,
+          });
+        }
+      }
+    }
+    const added = bundleSaleService.addLines(session.cart, lines);
+    session.step = 'cart_review';
+    sessionStore.set(userId, session);
+    logger.info(`bundleSaleFlow.all_shades: user=${userId} added=${added} cart=${session.cart.lines.length}`);
+    await renderCart(bot, chatId, userId);
+    return true;
+  }
+
+  if (data.startsWith('bs:bale:')) {
+    session.shadeKey = session.shadeKey || '';
+    session.activeBaleUid = data.slice('bs:bale:'.length);
+    session.step = 'bale_detail';
+    sessionStore.set(userId, session);
+    await renderBaleDetail(bot, chatId, userId);
+    return true;
+  }
+
+  if (data.startsWith('bs:wholebale:')) {
+    const baleKey = data.slice('bs:wholebale:'.length);
+    const bucket = session._grouped?.shades.find((s) => s.shadeKey === session.shadeKey);
+    const bale = bucket && bucket.bales.find((b) => baleKeyOf(b) === baleKey);
+    if (bale) {
+      const inCart = new Set(session.cart.lines.map((l) => l._key));
+      const allTaken = bale.thans.every((t) => inCart.has(thanKey(t)));
+      if (allTaken) {
+        // Toggle off: untake the whole bale.
+        bundleSaleService.removeLines(session.cart, bale.thans.map((t) => thanKey(t)));
+      } else {
+        bundleSaleService.addLines(session.cart, bale.thans.map((t) => ({
+          baleUid: t.baleUid, packageNo: t.packageNo, thanNo: t.thanNo,
+          yards: t.yards, design: session.design, shade: bucket.shade, binLocation: bale.binLocation,
+        })));
+      }
+      sessionStore.set(userId, session);
+    }
+    await renderBalePicker(bot, chatId, userId);
+    return true;
+  }
+
   if (data.startsWith('bs:than:')) {
     const k = data.slice('bs:than:'.length);
     // Toggle: if already in cart, remove it; else find row in cached
@@ -801,7 +969,8 @@ async function handleCallback(bot, query) {
       }
     }
     sessionStore.set(userId, session);
-    await renderBalePicker(bot, chatId, userId);
+    if (session.step === 'bale_detail') await renderBaleDetail(bot, chatId, userId);
+    else await renderBalePicker(bot, chatId, userId);
     return true;
   }
 
@@ -809,7 +978,7 @@ async function handleCallback(bot, query) {
     const baleKey = data.slice('bs:take_all:'.length);
     const bucket = session._grouped?.shades.find((s) => s.shadeKey === session.shadeKey);
     if (bucket) {
-      const bale = bucket.bales.find((b) => (b.baleUid || `pkg:${b.packageNo}`) === baleKey);
+      const bale = bucket.bales.find((b) => baleKeyOf(b) === baleKey);
       if (bale) {
         const lines = bale.thans.map((t) => ({
           baleUid: t.baleUid, packageNo: t.packageNo, thanNo: t.thanNo,
@@ -819,7 +988,8 @@ async function handleCallback(bot, query) {
         sessionStore.set(userId, session);
       }
     }
-    await renderBalePicker(bot, chatId, userId);
+    if (session.step === 'bale_detail') await renderBaleDetail(bot, chatId, userId);
+    else await renderBalePicker(bot, chatId, userId);
     return true;
   }
 
@@ -834,7 +1004,8 @@ async function handleCallback(bot, query) {
       bundleSaleService.removeBale(session.cart, baleKey);
     }
     sessionStore.set(userId, session);
-    if (session.step === 'pick_bales') await renderBalePicker(bot, chatId, userId);
+    if (session.step === 'bale_detail') await renderBaleDetail(bot, chatId, userId);
+    else if (session.step === 'pick_bales') await renderBalePicker(bot, chatId, userId);
     else await renderCart(bot, chatId, userId);
     return true;
   }
@@ -937,6 +1108,12 @@ async function stepBack(bot, chatId, userId) {
       sessionStore.set(userId, session);
       await renderShadePicker(bot, chatId, userId);
       break;
+    case 'bale_detail':
+      session.step = 'pick_bales';
+      session.activeBaleUid = '';
+      sessionStore.set(userId, session);
+      await renderBalePicker(bot, chatId, userId);
+      break;
     case 'await_smartpack_target':
     case 'preview_smartpack':
       session.step = 'pick_shade';
@@ -983,8 +1160,8 @@ module.exports = {
   handleText,
   _internals: {
     renderWarehousePicker, renderDesignPicker, renderShadePicker,
-    renderBalePicker, renderCart, renderCustomerPicker, renderRatePicker,
-    renderPaymentPicker, renderConfirm, submit, applySmartPack,
-    commitSmartPack, stepBack,
+    renderBalePicker, renderBaleDetail, renderCart, renderCustomerPicker,
+    renderRatePicker, renderPaymentPicker, renderConfirm, submit,
+    applySmartPack, commitSmartPack, stepBack, thanKey, baleKeyOf,
   },
 };

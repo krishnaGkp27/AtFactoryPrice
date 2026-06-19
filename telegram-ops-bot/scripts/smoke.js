@@ -6861,6 +6861,145 @@ function runS39() {
 }
 
 // ---------------------------------------------------------------------------
+// S40 — BUNDLE-SALE UI facelift — Supply-Details-style shade picker +
+//   decluttered bale list (whole-bale toggle) + bale-detail than picker.
+//   Drives the real flow render helpers against stubbed repositories.
+// ---------------------------------------------------------------------------
+async function runS40() {
+  // Fixed grouped stock for design 9006 @ Lagos: shade "11" (catalog
+  // name "White") with two bales (BAL-1 = 2 thans, BAL-2 = 1 than).
+  const grouped = {
+    shades: [{
+      shade: '11', shadeKey: '11',
+      summary: { thanCount: 3, yards: 75, baleCount: 2 },
+      bales: [
+        {
+          baleUid: 'BAL-1', packageNo: '6534', binLocation: 'A1', addedAt: '', ageDays: 5,
+          thans: [
+            { rowIndex: 1, thanNo: '1', yards: 25, packageNo: '6534', baleUid: 'BAL-1', shade: '11' },
+            { rowIndex: 2, thanNo: '2', yards: 25, packageNo: '6534', baleUid: 'BAL-1', shade: '11' },
+          ],
+        },
+        {
+          baleUid: 'BAL-2', packageNo: '6535', binLocation: '', addedAt: '', ageDays: 60,
+          thans: [
+            { rowIndex: 3, thanNo: '1', yards: 25, packageNo: '6535', baleUid: 'BAL-2', shade: '11' },
+          ],
+        },
+      ],
+    }],
+  };
+
+  // Stub repos the render path touches; keep bundleSaleService + sessionStore real.
+  const bundleSaleService = require('../src/services/bundleSaleService');
+  const sessionStore = require('../src/utils/sessionStore');
+  stubModule(require.resolve('../src/repositories/inventoryRepository'), {
+    groupByBaleAndShade: async () => grouped,
+  });
+  stubModule(require.resolve('../src/repositories/shadesRepository'), {
+    getAll: async () => [],
+    chipFromList: () => '🎨',
+  });
+  stubModule(require.resolve('../src/repositories/designAssetsRepository'), {
+    findActive: async () => ({ shades: [{ number: 11, name: 'White' }] }),
+  });
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: () => true, isEmployee: () => true,
+  });
+  stubModule(require.resolve('../src/utils/logger'), {
+    info: () => {}, warn: () => {}, error: () => {},
+  });
+  delete require.cache[require.resolve('../src/flows/bundleSaleFlow')];
+  const flow = require('../src/flows/bundleSaleFlow');
+
+  let captured = { text: '', rows: [] };
+  const bot = {
+    answerCallbackQuery: async () => {},
+    editMessageText: async (text, opts) => { captured = { text, rows: opts.reply_markup.inline_keyboard }; },
+    sendMessage: async (_c, text, opts) => { captured = { text, rows: opts.reply_markup.inline_keyboard }; return { message_id: 1 }; },
+  };
+  const flatten = (rows) => rows.reduce((a, r) => a.concat(r), []);
+
+  const uid = '2';
+  sessionStore.set(uid, {
+    type: 'bundle_sale_flow', step: 'pick_shade', flowMessageId: null,
+    warehouse: 'Lagos', design: '9006', designKey: '9006', shadeKey: '',
+    activeBaleUid: '', cart: bundleSaleService.emptyCart(),
+    expandedShade: '', smartPack: null,
+  });
+
+  // ---- S40.1 — shade picker: named button + Take ALL + Back to designs ----
+  await flow._internals.renderShadePicker(bot, 1, uid);
+  const shadeBtns = flatten(captured.rows);
+  const namedShade = shadeBtns.find((b) => b.callback_data === 'bs:shade:11');
+  const takeAll = shadeBtns.find((b) => b.callback_data === 'bs:all_shades');
+  const backDesigns = shadeBtns.find((b) => b.callback_data === 'bs:back' && /designs/i.test(b.text));
+  if (namedShade && namedShade.text === '11 - White (3 thans)'
+      && takeAll && /Take ALL 1 shade \(3 thans\)/.test(takeAll.text)
+      && backDesigns) {
+    pass('S40.1 renderShadePicker: Supply-style "11 - White (3 thans)" + Take ALL shades + Back to designs');
+  } else fail('S40.1', JSON.stringify({ namedShade, takeAll, backDesigns }));
+
+  // ---- S40.2 — bale list: tappable bale row + drill-down arrow ----
+  const s = sessionStore.get(uid);
+  s.shadeKey = '11'; s.step = 'pick_bales';
+  sessionStore.set(uid, s);
+  await flow._internals.renderBalePicker(bot, 1, uid);
+  const baleRow = captured.rows.find((r) => r.some((b) => b.callback_data === 'bs:wholebale:BAL-1'));
+  const arrow = baleRow && baleRow.find((b) => b.callback_data === 'bs:bale:BAL-1');
+  const wholeBtn = baleRow && baleRow.find((b) => b.callback_data === 'bs:wholebale:BAL-1');
+  if (baleRow && arrow && arrow.text === '➡️'
+      && wholeBtn && wholeBtn.text.startsWith('⬜') && /6534/.test(wholeBtn.text)) {
+    pass('S40.2 renderBalePicker: ⬜ tappable bale row (6534) + ➡️ drill-down arrow');
+  } else fail('S40.2', JSON.stringify(baleRow));
+
+  // ---- S40.3 — bale-detail: per-than checkboxes + whole-bale shortcuts ----
+  const s3 = sessionStore.get(uid);
+  s3.activeBaleUid = 'BAL-1'; s3.step = 'bale_detail';
+  sessionStore.set(uid, s3);
+  await flow._internals.renderBaleDetail(bot, 1, uid);
+  const detailBtns = flatten(captured.rows);
+  const than1 = detailBtns.find((b) => b.callback_data === 'bs:than:BAL-1|1');
+  const takeWhole = detailBtns.find((b) => b.callback_data === 'bs:take_all:BAL-1');
+  const backBales = detailBtns.find((b) => b.callback_data === 'bs:back' && /bales/i.test(b.text));
+  if (than1 && /⬜ #1/.test(than1.text) && takeWhole && backBales) {
+    pass('S40.3 renderBaleDetail: ⬜ #than checkboxes + Take whole bale + Back to bales');
+  } else fail('S40.3', JSON.stringify({ than1, takeWhole, backBales }));
+
+  // ---- S40.4 — whole-bale toggle adds BAL-1 (2 thans) to the cart ----
+  const cbq = (data) => ({ data, from: { id: uid }, message: { chat: { id: 1 } }, id: 'x' });
+  // reset cart + ensure _grouped cached on the session for the handler
+  const s4 = sessionStore.get(uid);
+  s4.step = 'pick_bales'; s4._grouped = grouped;
+  sessionStore.set(uid, s4);
+  await flow.handleCallback(bot, cbq('bs:wholebale:BAL-1'));
+  const afterWhole = bundleSaleService.totals(sessionStore.get(uid).cart);
+  if (afterWhole.thans === 2 && afterWhole.bales === 1) {
+    pass('S40.4 bs:wholebale: whole bale (2 thans) added in one tap');
+  } else fail('S40.4', JSON.stringify(afterWhole));
+
+  // ---- S40.5 — Take ALL shades tops cart up to every remaining than ----
+  await flow.handleCallback(bot, cbq('bs:all_shades'));
+  const afterAll = bundleSaleService.totals(sessionStore.get(uid).cart);
+  if (afterAll.thans === 3 && afterAll.bales === 2) {
+    pass('S40.5 bs:all_shades: cart topped up to all 3 thans across 2 bales');
+  } else fail('S40.5', JSON.stringify(afterAll));
+
+  // ---- Cleanup: drop stubbed + flow modules so later suites get reals ----
+  sessionStore.clear(uid);
+  for (const p of [
+    '../src/repositories/inventoryRepository',
+    '../src/repositories/shadesRepository',
+    '../src/repositories/designAssetsRepository',
+    '../src/middlewares/auth',
+    '../src/utils/logger',
+    '../src/flows/bundleSaleFlow',
+  ]) {
+    try { delete require.cache[require.resolve(p)]; } catch (_) {}
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -6910,6 +7049,7 @@ function runS39() {
   try { await runS37(); } catch (e) { fail('S37 unexpected error', e.message); }
   try { await runS38(); } catch (e) { fail('S38 unexpected error', e.message); }
   try { runS39(); } catch (e) { fail('S39 unexpected error', e.message); }
+  try { await runS40(); } catch (e) { fail('S40 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;
