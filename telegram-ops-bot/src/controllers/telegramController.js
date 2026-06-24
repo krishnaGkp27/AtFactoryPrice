@@ -2470,6 +2470,8 @@ async function showDesignPickerForReport(bot, chatId, prefix, showAll = false, m
   if (!showAll && designs.length > MAX_VISIBLE) {
     rows.push([{ text: `📋 See All (${designs.length})`, callback_data: `${prefix}:__more__` }]);
   }
+  // Navigation footer — return to the Inventory hub or the greeting menu.
+  rows.push(menuNav.hubAndMenuFooterRow('inventory', 'Inventory'));
 
   const text = `${meta.icon} *${meta.label}*\n\n${meta.prompt}${activeDesigns.size ? '\n\n_🖼 = product photo on file. Tap to use; tap and hold to copy the design number._' : ''}`;
   const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
@@ -2485,9 +2487,15 @@ async function showDesignPickerForReport(bot, chatId, prefix, showAll = false, m
 
 /** Reusable List Packages report — mirrors the text intent handler. */
 async function sendListPackagesReport(bot, chatId, design, shade = null) {
+  // Footer: back to the design list (re-opens the picker) or out to the menu.
+  const navFooter = { inline_keyboard: [[
+    { text: '⬅ Back to designs', callback_data: 'lpk:__designs__' },
+    { text: '🏠 Menu', callback_data: 'act:__back__' },
+  ]] };
   const packages = await inventoryService.listPackages(design, shade);
   if (!packages.length) {
-    await bot.sendMessage(chatId, `No Bales found for design ${design}${shade ? ' ' + shade : ''}.`);
+    await bot.sendMessage(chatId, `No Bales found for design ${design}${shade ? ' ' + shade : ''}.`,
+      { reply_markup: navFooter });
     return;
   }
     let reply = `📋 *Bales for ${design}${shade ? ' ' + shade : ''}:*\n\n`;
@@ -2496,7 +2504,7 @@ async function sendListPackagesReport(bot, chatId, design, shade = null) {
   });
   const totalAvail = packages.reduce((s, p) => s + p.availableYards, 0);
   reply += `\n*Total: ${packages.length} Bale${packages.length === 1 ? '' : 's'}, ${fmtQty(totalAvail)} yards*`;
-  await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
+  await sendLong(bot, chatId, reply, { parse_mode: 'Markdown', reply_markup: navFooter });
 }
 
 /** Design-level selling price line for Check Stock (quoted price, not sold price). */
@@ -2507,9 +2515,15 @@ function fmtSellingHeaderLine({ price, mixed }) {
 
 /** Reusable Check Stock report — qty breakdown only; value totals live in Stock Value report. */
 async function sendCheckStockReport(bot, chatId, design, userId = null) {
+  // Footer: back to the design list (re-opens the picker) or out to the menu.
+  const navFooter = { inline_keyboard: [[
+    { text: '⬅ Back to designs', callback_data: 'cks:__designs__' },
+    { text: '🏠 Menu', callback_data: 'act:__back__' },
+  ]] };
   const stock = await inventoryService.checkStock({ design });
   if (!stock || stock.totalThans === 0) {
-    await bot.sendMessage(chatId, `⚠️ No available stock for design ${design}.`);
+    await bot.sendMessage(chatId, `⚠️ No available stock for design ${design}.`,
+      { reply_markup: navFooter });
     return;
   }
   const canSelling = userId ? pricingService.canSeeSalePrice(userId) : false;
@@ -2541,7 +2555,7 @@ async function sendCheckStockReport(bot, chatId, design, userId = null) {
       reply += `  Shade ${sh}: ${s.pkgs.size} Bales, ${fmtQty(s.yards)} yds (${whList})\n`;
     }
   }
-  await sendLong(bot, chatId, reply, { parse_mode: 'Markdown' });
+  await sendLong(bot, chatId, reply, { parse_mode: 'Markdown', reply_markup: navFooter });
 }
 
 const STOCK_VALUE_PAGE_SIZE = 10;
@@ -2568,7 +2582,10 @@ async function renderStockValueList(bot, chatId, userId, page) {
   if (!summaries.length) {
     await editOrSend(bot, chatId, session.flowMessageId,
       '💰 *Stock Value*\n\n_No available stock in inventory._',
-      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Close', callback_data: 'svr:cancel' }]] } });
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
+        [{ text: '❌ Close', callback_data: 'svr:cancel' }],
+        menuNav.backToMenuRow(),
+      ] } });
     return;
   }
 
@@ -6154,17 +6171,29 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
     try {
       const allItems = await inventoryRepository.getAll();
-      if (!allItems.length) { await bot.sendMessage(callbackQuery.message.chat.id, 'No inventory data found.'); return; }
+      // Append a hub/menu footer unless the report already carries act: nav.
+      const withInvFooter = (rows) => {
+        const base = Array.isArray(rows) ? rows : [];
+        const hasNav = base.some((r) => Array.isArray(r) && r.some((b) =>
+          b && typeof b.callback_data === 'string' && b.callback_data.startsWith('act:')));
+        return hasNav ? base : [...base, menuNav.hubAndMenuFooterRow('inventory', 'Inventory')];
+      };
+      if (!allItems.length) {
+        await bot.sendMessage(callbackQuery.message.chat.id, 'No inventory data found.',
+          { reply_markup: { inline_keyboard: withInvFooter([]) } });
+        return;
+      }
       const report = view === 'wh'
         ? buildInventoryWarehouseReport(allItems)
         : await buildInventoryDesignReport(allItems, { userId: uid });
       await sendLong(bot, callbackQuery.message.chat.id, report.text, {
         parse_mode: 'Markdown',
-        ...(report.keyboard ? { reply_markup: report.keyboard } : {}),
+        reply_markup: { inline_keyboard: withInvFooter(report.keyboard ? report.keyboard.inline_keyboard : []) },
       });
     } catch (e) {
       logger.error('Inventory details error', e);
-      await bot.sendMessage(callbackQuery.message.chat.id, `Report error: ${e.message}`);
+      await bot.sendMessage(callbackQuery.message.chat.id, `Report error: ${e.message}`,
+        { reply_markup: { inline_keyboard: [menuNav.hubAndMenuFooterRow('inventory', 'Inventory')] } });
     }
 
   } else if (data.startsWith('sr:')) {
@@ -6736,7 +6765,8 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (session.flowMessageId) {
       await bot.editMessageText(
         `💲 *Update Price — submitted*\n\nDesign: *${session.design}*\nShade: *${shadeLabel}*\nNew: *${fmtMoney(session.newPrice)}/yard*\n\n⏳ Waiting for 2nd-admin approval.\nRequest: \`${requestId}\``,
-        { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
+        { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [menuNav.hubAndMenuFooterRow('finance', 'Finance')] } },
       ).catch(() => {});
     }
     const userLabel = await getRequesterDisplayName(uid, null);
@@ -7017,7 +7047,8 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (session.flowMessageId) {
       await bot.editMessageText(
         `↩️ *Return Than — submitted*\n\nBale: *${session.packageNo}* · Than: *#${session.thanNo}*\n\n⏳ Waiting for ${approverLabel} approval.\nRequest: \`${requestId}\``,
-        { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
+        { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [menuNav.hubAndMenuFooterRow('stock_move', 'Move Stock')] } },
       ).catch(() => {});
     }
     const userLabel = await getRequesterDisplayName(uid, null);
@@ -7982,6 +8013,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await showDesignPickerForReport(bot, chatId, 'lpk', true, messageId);
       return;
     }
+    if (design === '__designs__') {
+      await showDesignPickerForReport(bot, chatId, 'lpk', false, messageId);
+      return;
+    }
     await bot.editMessageReplyMarkup({ inline_keyboard: [] },
       { chat_id: chatId, message_id: messageId }).catch(() => {});
     await maybeSendDesignPreview(bot, chatId, design);
@@ -8051,6 +8086,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.answerCallbackQuery(callbackQuery.id);
     if (design === '__more__') {
       await showDesignPickerForReport(bot, chatId, 'cks', true, messageId);
+      return;
+    }
+    if (design === '__designs__') {
+      await showDesignPickerForReport(bot, chatId, 'cks', false, messageId);
       return;
     }
     await bot.editMessageReplyMarkup({ inline_keyboard: [] },
