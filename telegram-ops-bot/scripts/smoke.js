@@ -7000,6 +7000,113 @@ async function runS40() {
 }
 
 // ---------------------------------------------------------------------------
+// S41 — SOLD-BALES LOOKUP (SBL-1) — customer -> date -> bale/than detail
+//   drill-down over Inventory sold rows. Price/value gated by canSeeSalePrice.
+// ---------------------------------------------------------------------------
+async function runS41() {
+  // Fake sold inventory: CJE (two dates) + Ibrahim (one date).
+  const sold = [
+    { status: 'sold', soldTo: 'CJE', soldDate: '2026-06-25', design: '9006', shade: '11', packageNo: '6534', baleUid: 'BAL-1', thanNo: 1, yards: 25, pricePerYard: 1200 },
+    { status: 'sold', soldTo: 'CJE', soldDate: '2026-06-25', design: '9006', shade: '11', packageNo: '6534', baleUid: 'BAL-1', thanNo: 2, yards: 25, pricePerYard: 1200 },
+    { status: 'sold', soldTo: 'CJE', soldDate: '2026-06-25', design: '80045', shade: '7', packageNo: '6101', baleUid: 'BAL-2', thanNo: 2, yards: 25, pricePerYard: 1150 },
+    { status: 'sold', soldTo: 'CJE', soldDate: '2026-06-20', design: '9006', shade: '11', packageNo: '6500', baleUid: 'BAL-3', thanNo: 1, yards: 30, pricePerYard: 1100 },
+    { status: 'sold', soldTo: 'Ibrahim', soldDate: '2026-06-24', design: '9006', shade: '9', packageNo: '6700', baleUid: 'BAL-4', thanNo: 1, yards: 20, pricePerYard: 1000 },
+  ];
+  const assets = {
+    '9006': { shades: [{ number: 11, name: 'White' }, { number: 9, name: 'Navy' }] },
+    '80045': { shades: [{ number: 7, name: 'Charcoal' }] },
+  };
+
+  const sessionStore = require('../src/utils/sessionStore');
+  stubModule(require.resolve('../src/repositories/inventoryRepository'), {
+    getSoldRows: async () => sold,
+  });
+  stubModule(require.resolve('../src/repositories/designAssetsRepository'), {
+    findActive: async (d) => assets[d] || null,
+  });
+  stubModule(require.resolve('../src/services/pricingService'), {
+    canSeeSalePrice: (id) => String(id) === 'admin',
+  });
+  stubModule(require.resolve('../src/middlewares/auth'), {
+    isAdmin: (id) => String(id) === 'admin', isEmployee: () => true,
+  });
+  stubModule(require.resolve('../src/utils/logger'), {
+    info: () => {}, warn: () => {}, error: () => {},
+  });
+  delete require.cache[require.resolve('../src/flows/soldBalesFlow')];
+  const flow = require('../src/flows/soldBalesFlow');
+
+  let captured = { text: '', rows: [] };
+  const bot = {
+    answerCallbackQuery: async () => {},
+    editMessageText: async (text, opts) => { captured = { text, rows: opts.reply_markup.inline_keyboard }; },
+    sendMessage: async (_c, text, opts) => { captured = { text, rows: opts.reply_markup.inline_keyboard }; return { message_id: 1 }; },
+  };
+  const flatten = (rows) => rows.reduce((a, r) => a.concat(r), []);
+  const cbq = (uid, data) => ({ data, from: { id: uid }, message: { chat: { id: 1 } }, id: 'x' });
+
+  // ---- S41.1 — customer list, most-recent buyer first ----
+  await flow.start(bot, 1, 'admin', null);
+  const custBtns = flatten(captured.rows);
+  const cje = custBtns.find((b) => b.callback_data === 'sbl:c:0');
+  const ibr = custBtns.find((b) => b.callback_data === 'sbl:c:1');
+  if (cje && /CJE/.test(cje.text) && /4t/.test(cje.text) && ibr && /Ibrahim/.test(ibr.text)) {
+    pass('S41.1 customer list: most-recent buyer first (CJE 4t before Ibrahim)');
+  } else fail('S41.1', JSON.stringify(custBtns));
+
+  // ---- S41.2 — date list for the chosen customer, newest first ----
+  await flow.handleCallback(bot, cbq('admin', 'sbl:c:0'));
+  const dateBtns = flatten(captured.rows);
+  const d0 = dateBtns.find((b) => b.callback_data === 'sbl:d:0');
+  const d1 = dateBtns.find((b) => b.callback_data === 'sbl:d:1');
+  if (d0 && /25 Jun 2026/.test(d0.text) && /2b · 3t/.test(d0.text)
+      && d1 && /20 Jun 2026/.test(d1.text)) {
+    pass('S41.2 date list: newest-first dates with bale/than summary');
+  } else fail('S41.2', JSON.stringify(dateBtns));
+
+  // ---- S41.3 — detail card (price-visible role): bales, thans, ₦ totals ----
+  await flow.handleCallback(bot, cbq('admin', 'sbl:d:0'));
+  const t = captured.text;
+  if (/Bale 6534/.test(t) && /11 - White/.test(t) && /2 than \(#1,#2\)/.test(t)
+      && /60,000/.test(t) && /Bale 6101/.test(t) && /7 - Charcoal/.test(t)
+      && /Total/.test(t) && /75 yd/.test(t) && /88,750/.test(t)) {
+    pass('S41.3 detail (price role): bale/than breakdown + ₦ per-bale + ₦ total');
+  } else fail('S41.3', JSON.stringify(t));
+
+  // ---- S41.4 — back navigation detail -> dates -> customers ----
+  await flow.handleCallback(bot, cbq('admin', 'sbl:back'));
+  const backToDates = flatten(captured.rows).some((b) => b.callback_data === 'sbl:d:0');
+  await flow.handleCallback(bot, cbq('admin', 'sbl:back'));
+  const backToCusts = flatten(captured.rows).some((b) => b.callback_data === 'sbl:c:0');
+  if (backToDates && backToCusts) {
+    pass('S41.4 back navigation: detail → dates → customers');
+  } else fail('S41.4', JSON.stringify({ backToDates, backToCusts }));
+
+  // ---- S41.5 — non-price role sees quantities but NO ₦ figures ----
+  await flow.start(bot, 1, 'emp', null);
+  await flow.handleCallback(bot, cbq('emp', 'sbl:c:0'));
+  await flow.handleCallback(bot, cbq('emp', 'sbl:d:0'));
+  const te = captured.text;
+  if (/Bale 6534/.test(te) && /75 yd/.test(te) && !/₦/.test(te)) {
+    pass('S41.5 detail (non-price role): quantities shown, ₦ figures hidden');
+  } else fail('S41.5', JSON.stringify(te));
+
+  // ---- Cleanup ----
+  sessionStore.clear('admin');
+  sessionStore.clear('emp');
+  for (const p of [
+    '../src/repositories/inventoryRepository',
+    '../src/repositories/designAssetsRepository',
+    '../src/services/pricingService',
+    '../src/middlewares/auth',
+    '../src/utils/logger',
+    '../src/flows/soldBalesFlow',
+  ]) {
+    try { delete require.cache[require.resolve(p)]; } catch (_) {}
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -7050,6 +7157,7 @@ async function runS40() {
   try { await runS38(); } catch (e) { fail('S38 unexpected error', e.message); }
   try { runS39(); } catch (e) { fail('S39 unexpected error', e.message); }
   try { await runS40(); } catch (e) { fail('S40 unexpected error', e.message); }
+  try { await runS41(); } catch (e) { fail('S41 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

@@ -114,6 +114,20 @@ async function findByDesign(design, shade) {
 }
 
 /**
+ * All sold than-rows that carry a buyer + sale date — the source of truth
+ * for sold-history drill-downs (Sold Bales Lookup). Each row retains
+ * design/shade/packageNo/baleUid/thanNo/yards/pricePerYard/soldTo/soldDate,
+ * so callers can group by customer -> date -> bale without touching
+ * Transactions (which only stores aggregated totals).
+ *
+ * @returns {Promise<Array<object>>} parsed Inventory rows with status 'sold'.
+ */
+async function getSoldRows() {
+  const all = await getAll();
+  return all.filter((r) => r.status === 'sold' && r.soldTo && r.soldDate);
+}
+
+/**
  * Find all Inventory rows matching a human-printed PackageNo.
  *
  * Because PackageNo may legitimately repeat across intake dates, this returns
@@ -474,6 +488,7 @@ async function groupByBaleAndShade(design, warehouse = null) {
 module.exports = {
   HEADERS,
   getAll,
+  getSoldRows,
   findByDesign,
   findByPackage,
   findByBaleUid,

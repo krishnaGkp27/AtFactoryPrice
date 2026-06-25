@@ -5998,6 +5998,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (handled) return;
   }
 
+  // SBL-1 — Sold Bales Lookup drill-down callbacks (sbl:*).
+  if (data.startsWith('sbl:')) {
+    const soldBalesFlow = require('../flows/soldBalesFlow');
+    const handled = await soldBalesFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
   // USR-C3 — Add Employee flow callbacks.
   if (data.startsWith('usr:')) {
     const userAddFlow = require('../flows/userAddFlow');
@@ -8357,6 +8364,15 @@ async function handleCallbackQuery(bot, callbackQuery) {
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
         const warehouseAuditFlow = require('../flows/warehouseAuditFlow');
         await warehouseAuditFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'sold_bales_lookup': {
+        // SBL-1 — read-only sold-bale drill-down (customer → date → bale
+        // detail). Visibility is via the Reporting hub; sale price/value
+        // inside the flow is gated by pricingService.canSeeSalePrice, so
+        // no admin gate here (non-price roles see quantities only).
+        const soldBalesFlow = require('../flows/soldBalesFlow');
+        await soldBalesFlow.start(bot, chatId, uid, messageId);
         break;
       }
       case 'office_expense': {
