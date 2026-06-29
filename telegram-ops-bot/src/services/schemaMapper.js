@@ -451,7 +451,10 @@ async function initialize() {
       // BUNDLE-SALE C1 — added optional `bin_location` so the bundle picker
       // can show "Bale 6035 · shelf K-3" alongside the than chips. Empty
       // for warehouses that don't track shelves; cheap to add.
-      const INV_NEW_COLS = ['bale_uid', 'addedAt', 'grn_id', 'bin_location'];
+      // ARRIVAL-BATCH C1 — added `arrival_batch` (e.g. "Mar26") so the
+      // Supply/Bundle pickers can offer a "Select Container" step. Existing
+      // rows stay empty until the one-time backfill stamps them "Mar26".
+      const INV_NEW_COLS = ['bale_uid', 'addedAt', 'grn_id', 'bin_location', 'arrival_batch'];
       const missingInv = INV_NEW_COLS.filter((c) => !h.includes(c));
       if (missingInv.length) {
         const startCol = colLetter(h.length + 1);

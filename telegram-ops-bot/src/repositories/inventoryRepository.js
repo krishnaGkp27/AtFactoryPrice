@@ -24,7 +24,7 @@ const idGenerator = require('../utils/idGenerator');
 const { normalizeSalesDate } = require('../utils/dates');
 
 const SHEET = 'Inventory';
-const COL_COUNT = 21;
+const COL_COUNT = 22;
 const HEADERS = [
   'PackageNo', 'Indent', 'CSNo', 'Design', 'Shade', 'ThanNo', 'Yards', 'Status',
   'Warehouse', 'PricePerYard', 'DateReceived', 'SoldTo', 'SoldDate', 'NetMtrs', 'NetWeight', 'UpdatedAt',
@@ -32,6 +32,12 @@ const HEADERS = [
   // BUNDLE-SALE C1 — optional shelf / bin reference rendered next to the
   // bale header in the bundle picker. Empty for rows that don't track it.
   'bin_location',
+  // ARRIVAL-BATCH C1 — operator-facing shipment/arrival label (e.g. "Mar26",
+  // "July26") chosen at intake. Drives the "Select Container" step in the
+  // Supply Request + Bundle Sale pickers. Distinct from the productTypes
+  // "container" label (which means the packaging unit — bale/box). Empty
+  // rows are treated as unlabelled until backfilled.
+  'arrival_batch',
 ];
 
 /** Short-lived cache for getAll() to avoid hammering the API during batch ops. */
@@ -70,6 +76,7 @@ function parseRow(r, rowIndex) {
     addedAt: rawAddedAt || str(r[10]) || '',
     grnId: str(r[19]),
     binLocation: str(r[20]),
+    arrivalBatch: str(r[21]),
     _legacy: isLegacy,
   };
 }
@@ -82,20 +89,21 @@ function toRow(o) {
     o.soldTo ?? '', o.soldDate ?? '', o.netMtrs ?? '', o.netWeight ?? '',
     o.updatedAt ?? '', o.productType ?? 'fabric',
     o.baleUid ?? '', o.addedAt ?? '', o.grnId ?? '', o.binLocation ?? '',
+    o.arrivalBatch ?? '',
   ];
 }
 
 async function ensureHeader() {
-  const rows = await sheets.readRange(SHEET, 'A1:U1');
+  const rows = await sheets.readRange(SHEET, 'A1:V1');
   if (!rows.length || rows[0].length < COL_COUNT) {
-    await sheets.updateRange(SHEET, 'A1:U1', [HEADERS]);
+    await sheets.updateRange(SHEET, 'A1:V1', [HEADERS]);
   }
 }
 
 async function getAll() {
   const now = Date.now();
   if (_allCache && (now - _allCacheTs) < CACHE_TTL_MS) return _allCache;
-  const rows = await sheets.readRange(SHEET, 'A2:U');
+  const rows = await sheets.readRange(SHEET, 'A2:V');
   _allCache = rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.packageNo || r.design);
   _allCacheTs = Date.now();
   return _allCache;
@@ -262,10 +270,10 @@ async function appendBale(bales) {
  * suffices.
  */
 async function backfillLegacyBales() {
-  // BUNDLE-SALE C1 — read range bumped to A2:U for bin_location, but the
-  // back-fill itself only writes to R:S (bale_uid + addedAt), so the
-  // extra column is harmless if absent.
-  const rows = await sheets.readRange(SHEET, 'A2:U');
+  // BUNDLE-SALE C1 — read range bumped to A2:V (bin_location + arrival_batch),
+  // but the back-fill itself only writes to R:S (bale_uid + addedAt), so the
+  // extra columns are harmless if absent.
+  const rows = await sheets.readRange(SHEET, 'A2:V');
   const updates = [];
   let count = 0;
   rows.forEach((r, i) => {
@@ -287,11 +295,80 @@ async function backfillLegacyBales() {
   return count;
 }
 
+/**
+ * One-time backfill of the arrival_batch column (V). Stamps `label` onto
+ * every row whose arrival_batch cell is currently empty — both available
+ * and already-sold rows — so existing stock is "wrapped" into a named
+ * container (e.g. "Mar26"). Idempotent: rows that already carry a label are
+ * left untouched, so re-running never clobbers later uploads.
+ *
+ * @param {string} label  the batch label to stamp (e.g. "Mar26").
+ * @param {{dryRun?: boolean}} [opts] when dryRun is true, computes the count
+ *        of rows that WOULD change without writing anything.
+ * @returns {Promise<{matched:number, written:number}>}
+ */
+async function backfillArrivalBatch(label, opts = {}) {
+  const value = str(label);
+  if (!value) throw new Error('inventoryRepository.backfillArrivalBatch: label required');
+  const dryRun = !!opts.dryRun;
+  const rows = await sheets.readRange(SHEET, 'A2:V');
+  const updates = [];
+  rows.forEach((r, i) => {
+    const rowIndex = i + 2;
+    const packageNo = str(r[0]);
+    const design = str(r[3]);
+    if (!packageNo && !design) return; // skip blank spacer rows
+    if (str(r[21])) return;            // already labelled — leave as-is
+    updates.push({ range: `V${rowIndex}:V${rowIndex}`, values: [[value]] });
+  });
+  if (!dryRun && updates.length) {
+    await sheets.batchUpdateRanges(SHEET, updates);
+    invalidateCache();
+  }
+  return { matched: updates.length, written: dryRun ? 0 : updates.length };
+}
+
 async function getWarehouses() {
   const all = await getAll();
   const set = new Set();
   all.forEach((r) => { if (r.warehouse) set.add(r.warehouse); });
   return Array.from(set).sort();
+}
+
+/**
+ * ARRIVAL-BATCH C1 — distinct arrival_batch labels that currently have
+ * AVAILABLE stock, with a bale + than count per label. Powers the "Select
+ * Container" step. Rows with an empty arrival_batch are bucketed under a
+ * synthetic '(unlabelled)' key so nothing is silently hidden pre-backfill.
+ *
+ * @param {{warehouse?: string, warehouses?: string[]}} [opts] optional
+ *        case-insensitive warehouse scope. Pass a single `warehouse` or an
+ *        array of `warehouses`; empty/absent includes every warehouse.
+ * @returns {Promise<Array<{batch:string, label:string, bales:number, thans:number}>>}
+ *          sorted by than count desc, then label asc.
+ */
+const UNLABELLED_BATCH = '(unlabelled)';
+async function getArrivalBatches(opts = {}) {
+  const all = await getAll();
+  const scope = new Set();
+  if (opts && opts.warehouse) scope.add(upper(opts.warehouse));
+  if (opts && Array.isArray(opts.warehouses)) {
+    for (const w of opts.warehouses) { if (w) scope.add(upper(w)); }
+  }
+  const byBatch = new Map();
+  for (const r of all) {
+    if (r.status !== 'available') continue;
+    if (scope.size && !scope.has(upper(r.warehouse))) continue;
+    const label = str(r.arrivalBatch);
+    const key = label || UNLABELLED_BATCH;
+    if (!byBatch.has(key)) byBatch.set(key, { batch: key, label: label || UNLABELLED_BATCH, bales: new Set(), thans: 0 });
+    const e = byBatch.get(key);
+    e.thans += 1;
+    e.bales.add(r.baleUid || `pkg:${r.packageNo}`);
+  }
+  return Array.from(byBatch.values())
+    .map((e) => ({ batch: e.batch, label: e.label, bales: e.bales.size, thans: e.thans }))
+    .sort((a, b) => b.thans - a.thans || a.label.localeCompare(b.label));
 }
 
 async function markThanAvailable(packageNo, thanNo) {
@@ -417,17 +494,25 @@ async function transitionBales(packageNos, fromStatus, toStatus, toWarehouse = n
  * Rules:
  *   – Only rows with status='available'.
  *   – Warehouse filter is case-insensitive; null/empty includes all.
+ *   – Optional arrivalBatch filter (case-insensitive exact); null/empty
+ *     includes all containers.
  *   – Shade dictionary lookup happens in the flow (this helper stays pure).
  *   – Empty / blank shades are bucketed as '(no-shade)'.
+ *
+ * @param {string} design
+ * @param {string|null} [warehouse]
+ * @param {{arrivalBatch?: string}} [opts]
  */
-async function groupByBaleAndShade(design, warehouse = null) {
+async function groupByBaleAndShade(design, warehouse = null, opts = {}) {
   const all = await getAll();
   const d = upper(design);
   const w = warehouse ? upper(warehouse) : null;
+  const ab = opts && opts.arrivalBatch ? upper(opts.arrivalBatch) : null;
   const matches = all.filter((r) =>
     r.status === 'available' &&
     upper(r.design) === d &&
-    (!w || upper(r.warehouse) === w)
+    (!w || upper(r.warehouse) === w) &&
+    (!ab || upper(r.arrivalBatch) === ab)
   );
   const byShade = new Map();
   const nowMs = Date.now();
@@ -505,7 +590,10 @@ module.exports = {
   appendThans,
   appendBale,
   backfillLegacyBales,
+  backfillArrivalBatch,
   getWarehouses,
+  getArrivalBatches,
+  UNLABELLED_BATCH,
   getDistinctDesigns,
   groupByBaleAndShade,
   ensureHeader,

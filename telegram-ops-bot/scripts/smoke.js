@@ -7107,6 +7107,113 @@ async function runS41() {
 }
 
 // ---------------------------------------------------------------------------
+// S42 — Arrival-batch ("Container") dimension (ARRIVAL-BATCH C1)
+// ---------------------------------------------------------------------------
+async function runS42() {
+  delete require.cache[require.resolve('../src/repositories/sheetsClient')];
+  delete require.cache[require.resolve('../src/repositories/inventoryRepository')];
+
+  // 22-col rows (A–V). Index 21 = arrival_batch.
+  const row = (pkg, design, shade, than, yards, status, wh, uid, batch) => {
+    const r = new Array(22).fill('');
+    r[0] = pkg; r[3] = design; r[4] = shade; r[5] = than; r[6] = yards;
+    r[7] = status; r[8] = wh; r[16] = 'fabric'; r[17] = uid; r[18] = '2026-01-01T00:00:00.000Z';
+    r[21] = batch;
+    return r;
+  };
+  const sheetRows = [
+    row('100', '9006', '11', 1, 25, 'available', 'Kano', 'BAL-A', 'Mar26'),
+    row('100', '9006', '11', 2, 25, 'available', 'Kano', 'BAL-A', 'Mar26'),
+    row('200', '9006', '11', 1, 30, 'available', 'Kano', 'BAL-B', 'July26'),
+    row('300', '9006', '9', 1, 20, 'available', 'Lagos', 'BAL-C', ''),       // unlabelled
+    row('400', '9006', '11', 1, 25, 'sold', 'Kano', 'BAL-D', 'Mar26'),       // sold — excluded
+  ];
+  const updateLog = [];
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async (sheet, range) => (range.startsWith('A1') ? [['PackageNo']] : sheetRows),
+    appendRows: async (sheet, rows) => { rows.forEach((r) => sheetRows.push(r)); },
+    updateRange: async (sheet, range, values) => { updateLog.push({ range, values }); },
+    batchUpdateRanges: async (sheet, updates) => { updateLog.push(...updates); },
+  });
+
+  const invRepo = require('../src/repositories/inventoryRepository');
+
+  // S42.1 — getArrivalBatches: available-only, scoped to a warehouse
+  invRepo.invalidateCache();
+  const kanoBatches = await invRepo.getArrivalBatches({ warehouse: 'Kano' });
+  const mar = kanoBatches.find((b) => b.batch === 'Mar26');
+  const jul = kanoBatches.find((b) => b.batch === 'July26');
+  if (mar && mar.bales === 1 && mar.thans === 2 && jul && jul.thans === 1
+      && !kanoBatches.some((b) => b.batch === invRepo.UNLABELLED_BATCH)
+      && kanoBatches[0].batch === 'Mar26') {
+    pass('S42.1 getArrivalBatches: warehouse-scoped, available-only, sorted by thans (Mar26 first)');
+  } else fail('S42.1', JSON.stringify(kanoBatches));
+
+  // S42.2 — unlabelled stock surfaces under the synthetic key (no scope)
+  invRepo.invalidateCache();
+  const allBatches = await invRepo.getArrivalBatches();
+  if (allBatches.some((b) => b.batch === invRepo.UNLABELLED_BATCH && b.thans === 1)) {
+    pass('S42.2 getArrivalBatches: empty arrival_batch bucketed under UNLABELLED_BATCH');
+  } else fail('S42.2', JSON.stringify(allBatches));
+
+  // S42.3 — groupByBaleAndShade respects the arrivalBatch filter
+  invRepo.invalidateCache();
+  const gMar = await invRepo.groupByBaleAndShade('9006', 'Kano', { arrivalBatch: 'Mar26' });
+  const gJul = await invRepo.groupByBaleAndShade('9006', 'Kano', { arrivalBatch: 'July26' });
+  const marThans = gMar.shades.reduce((s, sh) => s + sh.summary.thanCount, 0);
+  const julThans = gJul.shades.reduce((s, sh) => s + sh.summary.thanCount, 0);
+  if (marThans === 2 && julThans === 1) {
+    pass('S42.3 groupByBaleAndShade: arrivalBatch filter isolates Mar26 (2) vs July26 (1)');
+  } else fail('S42.3', JSON.stringify({ marThans, julThans }));
+
+  // S42.4 — backfillArrivalBatch: dry-run counts only empty rows, no writes
+  invRepo.invalidateCache();
+  updateLog.length = 0;
+  const dry = await invRepo.backfillArrivalBatch('Mar26', { dryRun: true });
+  if (dry.matched === 1 && dry.written === 0 && updateLog.length === 0) {
+    pass('S42.4 backfillArrivalBatch dry-run: 1 empty row matched, nothing written');
+  } else fail('S42.4', JSON.stringify({ dry, writes: updateLog.length }));
+
+  // S42.5 — backfillArrivalBatch: commit writes the V column for empty rows only
+  invRepo.invalidateCache();
+  updateLog.length = 0;
+  const wet = await invRepo.backfillArrivalBatch('Mar26', { dryRun: false });
+  const wroteV = updateLog.some((u) => /^V\d+/.test(u.range) && u.values?.[0]?.[0] === 'Mar26');
+  if (wet.written === 1 && wroteV) {
+    pass('S42.5 backfillArrivalBatch commit: stamps Mar26 into column V of the unlabelled row');
+  } else fail('S42.5', JSON.stringify({ wet, updateLog }));
+
+  // S42.6 — toRow/parseRow round-trip of arrival_batch (column V)
+  invRepo.invalidateCache();
+  const created = await invRepo.appendBale([{
+    packageNo: '900', design: '9006', shade: '11', thanNo: 1, yards: 25,
+    warehouse: 'Kano', arrivalBatch: 'Sept26',
+  }]);
+  invRepo.invalidateCache();
+  const readBack = (await invRepo.getAll()).find((r) => r.packageNo === '900');
+  if (created[0]?.arrivalBatch === 'Sept26' && readBack && readBack.arrivalBatch === 'Sept26') {
+    pass('S42.6 appendBale + parseRow: arrival_batch persists round-trip');
+  } else fail('S42.6', JSON.stringify({ created: created[0], readBack }));
+
+  // S42.7 — bundleSaleFlow.rowInBatch matching semantics
+  delete require.cache[require.resolve('../src/flows/bundleSaleFlow')];
+  const bs = require('../src/flows/bundleSaleFlow');
+  const ri = bs._internals.rowInBatch;
+  if (ri({ arrivalBatch: 'Mar26' }, 'Mar26') === true
+      && ri({ arrivalBatch: 'Mar26' }, 'July26') === false
+      && ri({ arrivalBatch: '' }, invRepo.UNLABELLED_BATCH) === true
+      && ri({ arrivalBatch: 'Mar26' }, '') === true) {
+    pass('S42.7 rowInBatch: exact / mismatch / unlabelled / no-filter semantics');
+  } else fail('S42.7 rowInBatch semantics');
+
+  for (const p of [
+    '../src/repositories/sheetsClient',
+    '../src/repositories/inventoryRepository',
+    '../src/flows/bundleSaleFlow',
+  ]) { try { delete require.cache[require.resolve(p)]; } catch (_) {} }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -7158,6 +7265,7 @@ async function runS41() {
   try { runS39(); } catch (e) { fail('S39 unexpected error', e.message); }
   try { await runS40(); } catch (e) { fail('S40 unexpected error', e.message); }
   try { await runS41(); } catch (e) { fail('S41 unexpected error', e.message); }
+  try { await runS42(); } catch (e) { fail('S42 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

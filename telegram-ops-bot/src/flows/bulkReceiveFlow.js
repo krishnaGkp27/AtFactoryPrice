@@ -360,16 +360,40 @@ async function showPreviewStep(bot, chatId, userId) {
   if (s.totalNetMtrs > 0) lines.push(`*Net m:*      ${fmtQty(s.totalNetMtrs, { maxFraction: 2 })}`);
   if (s.totalNetWeight > 0) lines.push(`*Net kg:*     ${fmtQty(s.totalNetWeight, { maxFraction: 2 })}`);
   lines.push(`*Hash:*      \`${session.fileHash}\``);
+  // ARRIVAL-BATCH C1 — operator must tag the incoming stock with a container
+  // (arrival batch) label, e.g. "July26", so the Supply/Bundle pickers can
+  // scope by it. Shown here and required before submit.
+  lines.push(`*Container:* ${session.arrivalBatch ? `\`${session.arrivalBatch}\`` : '_— pick below —_'}`);
   lines.push('');
   lines.push(`_${s.totalThans} thans across ${s.totalBales} bale${s.totalBales === 1 ? '' : 's'} will be appended to Inventory with fresh bale_uid + addedAt per row._`);
   if (session.po_id && session.po_id !== '__skip__') {
     lines.splice(1, 0, `*PO:*        \`${session.po_id}\``);
   }
-  const rows = [
-    [{ text: '✅ Submit for approval', callback_data: 'br:submit' }],
-    [{ text: '🔄 Re-upload different file', callback_data: 'br:retry' }],
-    cancelRow(),
-  ];
+
+  const rows = [];
+  // Existing containers (with available stock) as one-tap chips, plus a
+  // "type new" escape hatch for a brand-new arrival like "July26".
+  let existing = [];
+  try {
+    existing = await inventoryRepository.getArrivalBatches();
+  } catch (_) { existing = []; }
+  const chipRow = [];
+  for (const c of existing.slice(0, 4)) {
+    if (c.batch === inventoryRepository.UNLABELLED_BATCH) continue;
+    const mark = session.arrivalBatch === c.batch ? '✅ ' : '🚢 ';
+    chipRow.push({ text: `${mark}${c.label}`, callback_data: `br:ct:${c.batch}` });
+    if (chipRow.length === 2) { rows.push(chipRow.splice(0, 2)); }
+  }
+  if (chipRow.length) rows.push(chipRow);
+  rows.push([{ text: '✏️ Type new container', callback_data: 'br:ct_new' }]);
+  if (session.arrivalBatch) {
+    rows.push([{ text: '✅ Submit for approval', callback_data: 'br:submit' }]);
+  } else {
+    lines.push('');
+    lines.push('⚠️ _Pick or type a container before submitting._');
+  }
+  rows.push([{ text: '🔄 Re-upload different file', callback_data: 'br:retry' }]);
+  rows.push(cancelRow());
   await render(bot, chatId, userId, lines.join('\n'), rows);
 }
 
@@ -417,6 +441,8 @@ async function submit(bot, chatId, userId) {
     driveFileId: session.driveFileId || '',
     dateReceived: new Date().toISOString().split('T')[0],
     productType: 'fabric',
+    // ARRIVAL-BATCH C1 — container label stamped on every appended bale row.
+    arrivalBatch: session.arrivalBatch || '',
   };
 
   // ALWAYS_APPROVAL_ACTIONS — risk.evaluate returns 'approval_required'
@@ -536,11 +562,61 @@ async function handleCallback(bot, callbackQuery) {
     await showAwaitFileStep(bot, chatId, userId);
     return true;
   }
+  if (data.startsWith('br:ct:')) {
+    session.arrivalBatch = data.slice('br:ct:'.length);
+    if (session.step === 'await_container') session.step = 'await_submit';
+    sessionStore.set(userId, session);
+    await showPreviewStep(bot, chatId, userId);
+    return true;
+  }
+  if (data === 'br:ct_new') {
+    session.step = 'await_container';
+    sessionStore.set(userId, session);
+    await render(bot, chatId, userId,
+      '🚢 *New container*\n\nType the container / arrival-batch label for this stock (e.g. `July26`).',
+      [[{ text: '⬅ Back', callback_data: 'br:ct_back' }], cancelRow()]);
+    return true;
+  }
+  if (data === 'br:ct_back') {
+    session.step = 'await_submit';
+    sessionStore.set(userId, session);
+    await showPreviewStep(bot, chatId, userId);
+    return true;
+  }
   if (data === 'br:submit') {
+    if (!session.arrivalBatch) {
+      await showPreviewStep(bot, chatId, userId);
+      return true;
+    }
     await submit(bot, chatId, userId);
     return true;
   }
   return false;
+}
+
+/**
+ * ARRIVAL-BATCH C1 — capture the free-typed container label during the
+ * `await_container` step. Returns true when the message was consumed.
+ */
+async function handleText(bot, msg) {
+  const userId = String(msg.from.id);
+  const chatId = msg.chat.id;
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'bulk_receive_flow' || session.step !== 'await_container') return false;
+  const raw = String(msg.text || '').trim();
+  // Keep labels short, single-line, and free of markdown/callback hazards.
+  const label = raw.replace(/[`*_\[\]()\n\r|]/g, '').trim().slice(0, 24);
+  if (!label) {
+    await render(bot, chatId, userId,
+      '🚢 *New container*\n\n⚠️ _That doesn\'t look like a valid label._ Type something like `July26`.',
+      [[{ text: '⬅ Back', callback_data: 'br:ct_back' }], cancelRow()]);
+    return true;
+  }
+  session.arrivalBatch = label;
+  session.step = 'await_submit';
+  sessionStore.set(userId, session);
+  await showPreviewStep(bot, chatId, userId);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -579,6 +655,7 @@ module.exports = {
   start,
   handleCallback,
   handleDocument,
+  handleText,
   sendTemplate,
   _internals: { parseBuffer, listAllowedWarehouses, formatErrorsForChat, UPLOADS_DIR, MAX_FILE_BYTES },
 };

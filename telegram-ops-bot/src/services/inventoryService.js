@@ -459,6 +459,8 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       productType: aj.productType || 'fabric',
       grnId: grn.grn_id,
       binLocation: b.binLocation || aj.binLocation || '',
+      // ARRIVAL-BATCH C1 — operator-chosen container label (e.g. "July26").
+      arrivalBatch: aj.arrivalBatch || '',
     }));
     const persisted = await inventoryRepository.appendBale(baleRows);
     try {
@@ -592,6 +594,8 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       dateReceived: aj.dateReceived || new Date().toISOString().split('T')[0],
       productType: aj.productType || 'fabric',
       grnId: grn.grn_id,
+      // ARRIVAL-BATCH C1 — operator-chosen container label (e.g. "July26").
+      arrivalBatch: aj.arrivalBatch || '',
     }));
     const persisted = await inventoryRepository.appendBale(baleRows);
 

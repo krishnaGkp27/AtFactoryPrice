@@ -166,9 +166,11 @@ async function start(bot, chatId, userId, messageId) {
   }
   sessionStore.set(userId, {
     type: 'bundle_sale_flow',
-    step: 'pick_warehouse',
+    // ARRIVAL-BATCH C1 — the flow now opens on a "Select Container" step.
+    step: 'pick_container',
     flowMessageId: messageId || null,
     startedAt: new Date().toISOString(),
+    arrivalBatch: '',
     warehouse: '',
     design: '',
     designKey: '',
@@ -181,31 +183,95 @@ async function start(bot, chatId, userId, messageId) {
     expandedShade: '',
     smartPack: null,
   });
-  await renderWarehousePicker(bot, chatId, userId);
+  await renderContainerPicker(bot, chatId, userId);
 }
 
-async function renderWarehousePicker(bot, chatId, userId) {
-  const warehouses = await inventoryRepository.getWarehouses();
-  if (!warehouses.length) {
+/**
+ * ARRIVAL-BATCH C1 — true when a row belongs to the selected container.
+ * An empty `arrivalBatch` selection (or none) matches everything; the
+ * synthetic UNLABELLED_BATCH key matches rows whose arrival_batch is blank
+ * (pre-backfill stock).
+ * @param {{arrivalBatch?: string}} r
+ * @param {string} arrivalBatch
+ */
+function rowInBatch(r, arrivalBatch) {
+  if (!arrivalBatch) return true;
+  const ab = String(arrivalBatch).toUpperCase();
+  const rab = (r.arrivalBatch || '').toUpperCase();
+  if (ab === String(inventoryRepository.UNLABELLED_BATCH).toUpperCase()) return rab === '';
+  return rab === ab;
+}
+
+/** Distinct warehouses with available stock in the given arrival batch. */
+async function listWarehousesInBatch(arrivalBatch) {
+  const all = await inventoryRepository.getAll();
+  const set = new Set();
+  for (const r of all) {
+    if (r.status !== 'available') continue;
+    if (!rowInBatch(r, arrivalBatch)) continue;
+    if (r.warehouse) set.add(r.warehouse);
+  }
+  return Array.from(set).sort();
+}
+
+/**
+ * Step 0 — "Select Container" (arrival batch). Always shown (even for a
+ * single container) so the dimension is explicit, mirroring the Supply
+ * Request flow.
+ */
+async function renderContainerPicker(bot, chatId, userId) {
+  const containers = await inventoryRepository.getArrivalBatches();
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  if (!containers.length) {
     sessionStore.clear(userId);
     await render(bot, chatId, userId,
-      '🧵 *Bundle Sale*\n\n_No warehouses with available stock._',
+      '🧵 *Bundle Sale*\n\n_No containers with available stock._',
       [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
     return;
   }
+  const rows = [];
+  for (let i = 0; i < containers.length; i += 2) {
+    const a = containers[i];
+    const row = [{ text: `🚢 ${a.label} · ${a.thans} than`, callback_data: `bs:ct:${a.batch}` }];
+    const b = containers[i + 1];
+    if (b) row.push({ text: `🚢 ${b.label} · ${b.thans} than`, callback_data: `bs:ct:${b.batch}` });
+    rows.push(row);
+  }
+  rows.push(cancelRow());
+  await render(bot, chatId, userId,
+    '🧵 *Bundle Sale — pick container*\n\n🚢 Select container (arrival batch):',
+    rows,
+  );
+}
+
+async function renderWarehousePicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  // Scope warehouses to the chosen container (ARRIVAL-BATCH C1).
+  const warehouses = await listWarehousesInBatch(session.arrivalBatch);
+  if (!warehouses.length) {
+    await render(bot, chatId, userId,
+      '🧵 *Bundle Sale*\n\n_No warehouses with available stock in this container._',
+      [[{ text: '⬅ Back to containers', callback_data: 'bs:back' }], [{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+    return;
+  }
   if (warehouses.length === 1) {
-    // Skip step 1 entirely.
-    const session = sessionStore.get(userId);
+    // Only one warehouse in this container — skip the warehouse step.
     session.warehouse = warehouses[0];
+    session._multiWarehouse = false;
     session.step = 'pick_design';
     sessionStore.set(userId, session);
     await renderDesignPicker(bot, chatId, userId);
     return;
   }
+  session._multiWarehouse = true;
+  sessionStore.set(userId, session);
   const rows = warehouses.map((w) => ([{ text: `🏬 ${w}`, callback_data: `bs:wh:${w}` }]));
+  rows.push([{ text: '⬅ Back to containers', callback_data: 'bs:back' }]);
   rows.push(cancelRow());
   await render(bot, chatId, userId,
-    '🧵 *Bundle Sale — pick warehouse*\n\nWhich location are you selling from?',
+    `🧵 *Bundle Sale — pick warehouse*\n🚢 Container: *${escapeMd(session.arrivalBatch)}*\n\nWhich location are you selling from?`,
     rows,
   );
 }
@@ -219,6 +285,7 @@ async function renderDesignPicker(bot, chatId, userId) {
   for (const r of all) {
     if (r.status !== 'available') continue;
     if (w && r.warehouse.toLowerCase() !== w) continue;
+    if (!rowInBatch(r, session.arrivalBatch)) continue;
     if (!r.design) continue;
     const k = r.design.toUpperCase();
     if (!designs.has(k)) designs.set(k, { design: r.design, designKey: k, thans: 0, yards: 0, shades: new Set() });
@@ -230,7 +297,7 @@ async function renderDesignPicker(bot, chatId, userId) {
   const list = Array.from(designs.values()).sort((a, b) => b.yards - a.yards);
   if (!list.length) {
     await render(bot, chatId, userId,
-      `🧵 *Bundle Sale — ${escapeMd(session.warehouse || 'all warehouses')}*\n\n_No available stock in this warehouse._`,
+      `🧵 *Bundle Sale — ${escapeMd(session.warehouse || 'all warehouses')}*\n🚢 Container: *${escapeMd(session.arrivalBatch)}*\n\n_No available stock in this container/warehouse._`,
       [backRow(), cancelRow()],
     );
     return;
@@ -245,7 +312,7 @@ async function renderDesignPicker(bot, chatId, userId) {
   rows.push(backRow());
   rows.push(cancelRow());
   await render(bot, chatId, userId,
-    `🧵 *Bundle Sale — ${escapeMd(session.warehouse || 'all warehouses')}*\n\nPick a design to drill into:`,
+    `🧵 *Bundle Sale — ${escapeMd(session.warehouse || 'all warehouses')}*\n🚢 Container: *${escapeMd(session.arrivalBatch)}*\n\nPick a design to drill into:`,
     rows,
   );
 }
@@ -253,7 +320,7 @@ async function renderDesignPicker(bot, chatId, userId) {
 async function renderShadePicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const grouped = await inventoryRepository.groupByBaleAndShade(session.design, session.warehouse);
+  const grouped = await inventoryRepository.groupByBaleAndShade(session.design, session.warehouse, { arrivalBatch: session.arrivalBatch });
   session._grouped = grouped; // cached for sub-views
   sessionStore.set(userId, session);
   const nameMap = await loadShadeNameMap(session.design);
@@ -322,7 +389,7 @@ async function renderShadePicker(bot, chatId, userId) {
  */
 async function resolveActiveShade(session) {
   if (!session._grouped) {
-    session._grouped = await inventoryRepository.groupByBaleAndShade(session.design, session.warehouse);
+    session._grouped = await inventoryRepository.groupByBaleAndShade(session.design, session.warehouse, { arrivalBatch: session.arrivalBatch });
   }
   const shadeBucket = session._grouped.shades.find((s) => s.shadeKey === session.shadeKey);
   if (!shadeBucket) return null;
@@ -444,7 +511,7 @@ async function applySmartPack(bot, chatId, userId, target) {
   const session = sessionStore.get(userId);
   if (!session) return;
   if (!session._grouped) {
-    session._grouped = await inventoryRepository.groupByBaleAndShade(session.design, session.warehouse);
+    session._grouped = await inventoryRepository.groupByBaleAndShade(session.design, session.warehouse, { arrivalBatch: session.arrivalBatch });
   }
   const inCart = new Set(session.cart.lines.map((l) => l._key));
   // Flatten all eligible thans across all shades, excluding ones already in cart.
@@ -859,6 +926,20 @@ async function handleCallback(bot, query) {
     return true;
   }
 
+  if (data.startsWith('bs:ct:')) {
+    session.arrivalBatch = data.slice('bs:ct:'.length);
+    session.step = 'pick_warehouse';
+    // Reset any downstream selection captured before re-picking a container.
+    session.warehouse = '';
+    session.designKey = '';
+    session.design = '';
+    session.shadeKey = '';
+    session._grouped = null;
+    sessionStore.set(userId, session);
+    await renderWarehousePicker(bot, chatId, userId);
+    return true;
+  }
+
   if (data.startsWith('bs:wh:')) {
     session.warehouse = data.slice('bs:wh:'.length);
     session.step = 'pick_design';
@@ -890,7 +971,7 @@ async function handleCallback(bot, query) {
 
   if (data === 'bs:all_shades') {
     if (!session._grouped) {
-      session._grouped = await inventoryRepository.groupByBaleAndShade(session.design, session.warehouse);
+      session._grouped = await inventoryRepository.groupByBaleAndShade(session.design, session.warehouse, { arrivalBatch: session.arrivalBatch });
     }
     const inCart = new Set(session.cart.lines.map((l) => l._key));
     const lines = [];
@@ -1090,10 +1171,30 @@ async function stepBack(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
   switch (session.step) {
-    case 'pick_design':
-      session.step = 'pick_warehouse';
+    case 'pick_warehouse':
+      // ARRIVAL-BATCH C1 — back to the Select Container step.
+      session.step = 'pick_container';
+      session.arrivalBatch = '';
+      session.warehouse = '';
       sessionStore.set(userId, session);
-      await renderWarehousePicker(bot, chatId, userId);
+      await renderContainerPicker(bot, chatId, userId);
+      break;
+    case 'pick_design':
+      // When the warehouse step was auto-skipped (single warehouse in the
+      // container) there is nothing to go back to there — return to the
+      // container picker instead.
+      if (session._multiWarehouse) {
+        session.step = 'pick_warehouse';
+        session.warehouse = '';
+        sessionStore.set(userId, session);
+        await renderWarehousePicker(bot, chatId, userId);
+      } else {
+        session.step = 'pick_container';
+        session.arrivalBatch = '';
+        session.warehouse = '';
+        sessionStore.set(userId, session);
+        await renderContainerPicker(bot, chatId, userId);
+      }
       break;
     case 'pick_shade':
       session.step = 'pick_design';
@@ -1159,9 +1260,10 @@ module.exports = {
   handleCallback,
   handleText,
   _internals: {
-    renderWarehousePicker, renderDesignPicker, renderShadePicker,
+    renderContainerPicker, renderWarehousePicker, renderDesignPicker, renderShadePicker,
     renderBalePicker, renderBaleDetail, renderCart, renderCustomerPicker,
     renderRatePicker, renderPaymentPicker, renderConfirm, submit,
     applySmartPack, commitSmartPack, stepBack, thanKey, baleKeyOf,
+    rowInBatch, listWarehousesInBatch,
   },
 };

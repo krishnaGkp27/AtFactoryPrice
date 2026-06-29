@@ -3287,6 +3287,16 @@ async function handleMessage(bot, msg) {
     }
   }
 
+  // ARRIVAL-BATCH C1 — Bulk Receive accepts a free-typed container label
+  // (e.g. "July26") during its `await_container` step on the preview card.
+  {
+    const brSession = sessionStore.get(userId);
+    if (brSession && brSession.type === 'bulk_receive_flow') {
+      const handled = await bulkReceiveFlow.handleText(bot, msg);
+      if (handled) return;
+    }
+  }
+
   // WH-C1 — standalone Add Warehouse flow accepts the new warehouse
   // name via free-text reply during the `await_name` step.
   {
@@ -4976,9 +4986,19 @@ function getCartQtyForDesign(cart, design) {
   return (cart || []).filter((c) => c.design === design).reduce((s, c) => s + c.quantity, 0);
 }
 
-async function getAdjustedAvailability(warehouse, cart) {
+async function getAdjustedAvailability(warehouse, cart, arrivalBatch = null) {
   const all = await inventoryRepository.getAll();
-  const available = all.filter((r) => r.warehouse === warehouse && r.status === 'available');
+  // ARRIVAL-BATCH C1 — when a container is selected upstream, restrict
+  // availability to that batch. UNLABELLED_BATCH matches rows whose
+  // arrival_batch is still empty (pre-backfill). null = all containers.
+  const ab = arrivalBatch ? String(arrivalBatch).toUpperCase() : null;
+  const isUnlabelled = ab === String(inventoryRepository.UNLABELLED_BATCH).toUpperCase();
+  const available = all.filter((r) => {
+    if (r.warehouse !== warehouse || r.status !== 'available') return false;
+    if (!ab) return true;
+    const rab = (r.arrivalBatch || '').toUpperCase();
+    return isUnlabelled ? rab === '' : rab === ab;
+  });
   const designMap = new Map();
   for (const r of available) {
     const key = `${r.design}||${r.shade || 'DEFAULT'}`;
@@ -5002,38 +5022,125 @@ async function startSupplyRequestFlow(bot, chatId, userId) {
   // we fall through to the existing user.warehouses path unchanged.
   const isAdminUser = config.access.adminIds.includes(userId);
   const groupWhs = await marketerOverlay.getGroupWarehouses(user, isAdminUser);
-  const warehouses = groupWhs.length
+  const scopeWarehouses = groupWhs.length
     ? groupWhs
     : (user && user.warehouses.length ? user.warehouses : []);
 
-  if (!warehouses.length) {
-    if (isAdminUser) {
-      const allWarehouses = await inventoryRepository.getWarehouses();
-      if (!allWarehouses.length) {
-        await bot.sendMessage(chatId, '⚠️ No warehouses found in inventory.');
-        return;
-      }
-      const rows = allWarehouses.map((w) => [{ text: `🏭 ${w}`, callback_data: `srf_wh:${w}` }]);
-      rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
-      await bot.sendMessage(chatId, '📦 *Supply Request*\n\nSelect warehouse:', {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: rows },
-      });
-      return;
-    }
+  // Non-admins with no assigned warehouse can't supply.
+  if (!scopeWarehouses.length && !isAdminUser) {
     await bot.sendMessage(chatId, '⚠️ You have no warehouses assigned. Ask your admin to assign you.');
     return;
   }
 
-  if (warehouses.length === 1) {
-    sessionStore.set(userId, { type: 'supply_req_flow', warehouse: warehouses[0], cart: [], step: 'design' });
-    await showDesignsForWarehouse(bot, chatId, userId, warehouses[0]);
+  // ARRIVAL-BATCH C1 — the flow now opens on a "Select Container" step. The
+  // container list is scoped to the warehouses this user may supply from
+  // (all warehouses for an admin with none assigned). A container is the
+  // arrival/shipment batch label (e.g. "Mar26") stamped on stock at intake.
+  const containers = await inventoryRepository.getArrivalBatches({ warehouses: scopeWarehouses });
+  if (!containers.length) {
+    await bot.sendMessage(chatId, scopeWarehouses.length
+      ? '⚠️ No available stock in your warehouse(s).'
+      : '⚠️ No available stock in inventory.');
     return;
   }
 
-  const rows = warehouses.map((w) => [{ text: `🏭 ${w}`, callback_data: `srf_wh:${w}` }]);
+  sessionStore.set(userId, {
+    type: 'supply_req_flow',
+    step: 'container',
+    arrivalBatch: '',
+    cart: [],
+    _scopeWarehouses: scopeWarehouses,
+  });
+  await showContainerPicker(bot, chatId, userId, containers);
+}
+
+/** Inline button for one arrival-batch (container) tile. */
+function containerButton(c) {
+  return { text: `🚢 ${c.label} (${c.bales} bls)`, callback_data: `srf_ct:${c.batch}` };
+}
+
+/**
+ * Render the "Select Container" step (2-col tiles). `containers` may be
+ * pre-fetched; when omitted it is recomputed from the session scope. Edits
+ * the anchored flow message in place when one exists.
+ */
+async function showContainerPicker(bot, chatId, userId, containers = null, messageId = null) {
+  const session = sessionStore.get(userId);
+  const list = containers
+    || await inventoryRepository.getArrivalBatches({ warehouses: (session && session._scopeWarehouses) || [] });
+  const resolvedMsgId = messageId || (session && session.flowMessageId) || null;
+  if (!list.length) {
+    await editOrSend(bot, chatId, resolvedMsgId, '⚠️ No available stock to supply.', { parse_mode: 'Markdown' });
+    return;
+  }
+  const rows = [];
+  for (let i = 0; i < list.length; i += 2) {
+    const row = [containerButton(list[i])];
+    if (list[i + 1]) row.push(containerButton(list[i + 1]));
+    rows.push(row);
+  }
   rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
-  await bot.sendMessage(chatId, '📦 *Supply Request*\n\nSelect warehouse:', {
+  const sent = await editOrSend(bot, chatId, resolvedMsgId,
+    '📦 *Supply Request*\n\n🚢 Select container (arrival batch):', {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
+  if (session && session.type === 'supply_req_flow' && sent && sent.message_id) {
+    session.flowMessageId = sent.message_id;
+    sessionStore.set(userId, session);
+  }
+}
+
+/**
+ * Distinct warehouses (within the user's scope) that have AVAILABLE stock in
+ * the given arrival batch. UNLABELLED_BATCH matches rows with an empty
+ * arrival_batch (pre-backfill).
+ */
+async function getSupplyWarehouses(arrivalBatch, scopeWarehouses) {
+  const all = await inventoryRepository.getAll();
+  const scope = new Set((scopeWarehouses || []).map((w) => String(w).toLowerCase()));
+  const ab = arrivalBatch ? String(arrivalBatch).toUpperCase() : null;
+  const isUnlabelled = ab === String(inventoryRepository.UNLABELLED_BATCH).toUpperCase();
+  const set = new Set();
+  for (const r of all) {
+    if (r.status !== 'available') continue;
+    const rab = (r.arrivalBatch || '').toUpperCase();
+    if (ab && (isUnlabelled ? rab !== '' : rab !== ab)) continue;
+    if (scope.size && !scope.has(String(r.warehouse || '').toLowerCase())) continue;
+    if (r.warehouse) set.add(r.warehouse);
+  }
+  return Array.from(set).sort();
+}
+
+/**
+ * After a container is chosen, advance to the warehouse step: auto-skip to
+ * the design picker when exactly one warehouse has stock in that batch,
+ * otherwise render the warehouse picker.
+ */
+async function proceedAfterContainer(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const warehouses = await getSupplyWarehouses(session.arrivalBatch, session._scopeWarehouses);
+  if (!warehouses.length) {
+    await editOrSendAnchored(bot, chatId, userId, '⚠️ No available stock in this container.', { parse_mode: 'Markdown' });
+    return;
+  }
+  if (warehouses.length === 1) {
+    session.warehouse = warehouses[0];
+    session.multiWarehouse = false;
+    session.step = 'design';
+    sessionStore.set(userId, session);
+    await showDesignsForWarehouse(bot, chatId, userId, warehouses[0], session.flowMessageId);
+    return;
+  }
+  session.multiWarehouse = true;
+  session.step = 'warehouse';
+  sessionStore.set(userId, session);
+  const rows = warehouses.map((w) => [{ text: `🏭 ${w}`, callback_data: `srf_wh:${w}` }]);
+  rows.push([{ text: '⬅️ Back to containers', callback_data: 'srf_back:container' }]);
+  const safeBatch = String(session.arrivalBatch).replace(/[*_`[\]]/g, '\\$&');
+  await editOrSendAnchored(bot, chatId, userId,
+    `📦 *Supply Request*\n🚢 Container: *${safeBatch}*\n\nSelect warehouse:`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
@@ -5042,7 +5149,7 @@ async function startSupplyRequestFlow(bot, chatId, userId) {
 async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId = null) {
   const session = sessionStore.get(userId);
   const cart = session ? session.cart || [] : [];
-  const avail = await getAdjustedAvailability(warehouse, cart);
+  const avail = await getAdjustedAvailability(warehouse, cart, session && session.arrivalBatch);
 
   const designAgg = new Map();
   let detectedType = 'fabric';
@@ -5095,6 +5202,10 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
     backRow.push({ text: '⬅️ Back to cart', callback_data: 'srf_back:cart' });
   } else if (session && session.multiWarehouse) {
     backRow.push({ text: '⬅️ Back to warehouses', callback_data: 'srf_back:warehouse' });
+  } else {
+    // Single-warehouse container: no warehouse step to return to, so the
+    // back target is the Select Container step (ARRIVAL-BATCH C1).
+    backRow.push({ text: '⬅️ Back to containers', callback_data: 'srf_back:container' });
   }
   backRow.push({ text: '❌ Cancel', callback_data: 'srf_cart:cancel' });
   rows.push(backRow);
@@ -5116,7 +5227,7 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
 async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   const session = sessionStore.get(userId);
   const cart = session ? session.cart || [] : [];
-  const avail = await getAdjustedAvailability(warehouse, cart);
+  const avail = await getAdjustedAvailability(warehouse, cart, session && session.arrivalBatch);
   const shades = avail.filter((a) => a.design === design).sort((a, b) => b.availPkgs - a.availPkgs);
   const labels = await productTypesRepo.getLabels(session?.productType || 'fabric');
 
@@ -8536,17 +8647,42 @@ async function handleCallbackQuery(bot, callbackQuery) {
         await bot.sendMessage(chatId, 'Feature coming soon.');
     }
 
+  /* ─── SUPPLY REQUEST FLOW: CONTAINER (arrival batch) ─── */
+  } else if (data.startsWith('srf_ct:')) {
+    const batch = data.slice('srf_ct:'.length);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    let session = sessionStore.get(uid);
+    if (!session || session.type !== 'supply_req_flow') {
+      // Session expired mid-flow — rebuild a minimal one so the pick still works.
+      session = { type: 'supply_req_flow', cart: [], _scopeWarehouses: [], flowMessageId: callbackQuery.message.message_id };
+    }
+    session.arrivalBatch = batch;
+    session.step = 'warehouse';
+    session.flowMessageId = session.flowMessageId || callbackQuery.message.message_id;
+    sessionStore.set(uid, session);
+    await proceedAfterContainer(bot, chatId, uid);
+
   /* ─── SUPPLY REQUEST FLOW: WAREHOUSE ─── */
   } else if (data.startsWith('srf_wh:')) {
     const warehouse = data.slice(7);
     const chatId = callbackQuery.message.chat.id;
     const uid = String(callbackQuery.from.id);
     await bot.answerCallbackQuery(callbackQuery.id);
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
-    // multiWarehouse: the user reached the design picker by choosing from a
-    // warehouse list, so the design picker can offer "Back to warehouses".
-    sessionStore.set(uid, { type: 'supply_req_flow', warehouse, cart: [], step: 'design', multiWarehouse: true });
-    await showDesignsForWarehouse(bot, chatId, uid, warehouse);
+    // Preserve the container choice (+ scope) made on the prior step; only
+    // stamp the warehouse and advance. multiWarehouse stays true since the
+    // user reached here from a warehouse list (design picker offers "Back
+    // to warehouses").
+    const session = sessionStore.get(uid) || { type: 'supply_req_flow', cart: [], arrivalBatch: '' };
+    session.type = 'supply_req_flow';
+    session.warehouse = warehouse;
+    session.cart = session.cart || [];
+    session.step = 'design';
+    session.multiWarehouse = true;
+    session.flowMessageId = session.flowMessageId || callbackQuery.message.message_id;
+    sessionStore.set(uid, session);
+    await showDesignsForWarehouse(bot, chatId, uid, warehouse, session.flowMessageId);
 
   /* ─── SUPPLY REQUEST FLOW: DESIGN PAGE NAV ─── */
   } else if (data.startsWith('srf_dgpg:')) {
@@ -8636,15 +8772,30 @@ async function handleCallbackQuery(bot, callbackQuery) {
       sessionStore.set(uid, session);
       await showSupplyDatePicker(bot, chatId, uid);
     } else if (target === 'warehouse') {
-      // Only offered on the design picker while the cart is empty, so a
-      // clean restart of the warehouse step is safe. Drop the current
-      // picker + any preview and re-run the entry point.
-      if (session.flowMessageId) {
-        await bot.deleteMessage(chatId, session.flowMessageId).catch(() => {});
-      }
+      // Back to the warehouse list for the CURRENT container (preserve the
+      // arrival-batch pick). Only offered on the design picker while the
+      // cart is empty, so resetting the warehouse step is safe.
       await clearDesignPreview(bot, chatId, uid);
-      sessionStore.clear(uid);
-      await startSupplyRequestFlow(bot, chatId, uid);
+      session.step = 'warehouse';
+      delete session.warehouse;
+      delete session.currentDesign;
+      delete session.designPage;
+      sessionStore.set(uid, session);
+      await proceedAfterContainer(bot, chatId, uid);
+    } else if (target === 'container') {
+      // ARRIVAL-BATCH C1 — back to the Select Container step. Clear the
+      // warehouse + any design-level selection; keep cart + scope. Offered
+      // on the warehouse picker, and on the design picker for single-
+      // warehouse containers (where there is no warehouse step to go to).
+      await clearDesignPreview(bot, chatId, uid);
+      session.step = 'container';
+      session.arrivalBatch = '';
+      delete session.warehouse;
+      delete session.multiWarehouse;
+      delete session.currentDesign;
+      delete session.designPage;
+      sessionStore.set(uid, session);
+      await showContainerPicker(bot, chatId, uid);
     } else if (target === 'quantity') {
       session.step = 'quantity';
       sessionStore.set(uid, session);
@@ -8691,7 +8842,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
     // Recompute availability against the live cart so we never over-add a
     // shade the user already put some of into the cart.
-    const adjusted = await getAdjustedAvailability(session.warehouse, session.cart || []);
+    const adjusted = await getAdjustedAvailability(session.warehouse, session.cart || [], session.arrivalBatch);
     const designShades = adjusted.filter((a) => a.design === design);
     let nameMap;
     try {
@@ -9006,6 +9157,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const actionJSON = {
       action: 'supply_request',
       warehouse: session.warehouse,
+      arrivalBatch: session.arrivalBatch || '',
       productType: session.productType || 'fabric',
       cart,
       customer: session.customer,
