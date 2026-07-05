@@ -383,6 +383,12 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       user: item.user, action: 'update_price', design: (aj.filters?.design) || '', color: (aj.filters?.shade) || '',
       qty: count, before: '', after: `${aj.price}/yd`, status: 'approved',
     });
+  } else if (aj.action === 'set_unit_display') {
+    // TV-2 — flip a warehouse's supply-screen display unit (bales ⇄ thans).
+    // Applies the REQUESTED end-state (idempotent), so a stale approval can
+    // never double-flip; cache is invalidated so it takes effect at once.
+    const unitDisplayService = require('./unitDisplayService');
+    await unitDisplayService.setWarehouseMode(aj.warehouse, aj.mode);
   } else if (aj.action === 'record_payment') {
     const crmService = require('./crmService');
     const payRes = await crmService.recordPayment({ customer: aj.customer, amount: aj.amount, method: aj.method, userId: item.user });

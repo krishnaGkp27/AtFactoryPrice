@@ -91,6 +91,10 @@ const ALWAYS_APPROVAL_ACTIONS = [
   // container charges + FX rate). Sealing wrong numbers cascades into
   // every margin report + sales decision, so always dual-admin.
   'finalize_landed_cost',
+  // TV-2 — switch a warehouse's supply-screen display unit (bales ⇄ thans,
+  // Settings THAN_VISIBILITY_WAREHOUSES). Admins + managers may request;
+  // an admin (≠ an admin requester) must approve before it applies.
+  'set_unit_display',
 ];
 
 /**

@@ -110,6 +110,9 @@ const ACTIVITIES = [
   // DBP-1.5 Concept A — admin-only bale→than warehouse audit picker
   // (read/inspect only). Admin-gated at launch; never in a department CSV.
   { code: 'warehouse_audit',       label: 'Warehouse Audit',           icon: '🔍', callback: 'act:warehouse_audit',    hub: 'warehouses' },
+  // TV-2 — bales ⇄ thans display-unit switch (admin/manager request,
+  // admin approval via set_unit_display in ALWAYS_APPROVAL_ACTIONS).
+  { code: 'display_units',         label: 'Display Units',             icon: '📐', callback: 'act:display_units',      hub: 'warehouses' },
 
   // ── CRM (customers + samples) ────────────────────────────────────────
   // Customer Details: single-tap card with [History / Pattern / Notes /

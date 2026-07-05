@@ -67,10 +67,54 @@ function invalidateCache() {
   _cacheTs = 0;
 }
 
+/**
+ * TV-2 — pure CSV rewrite: set `warehouse` to `mode` inside a CSV of
+ * than-visibility warehouse names. Case-insensitive and idempotent;
+ * preserves the original casing/order of other entries.
+ * @param {*} csv current Settings value
+ * @param {string} warehouse warehouse name (casing preserved on add)
+ * @param {'thans'|'bales'} mode target display mode
+ * @returns {string} the new CSV value
+ */
+function computeWarehouseCsv(csv, warehouse, mode) {
+  const raw = typeof csv === 'string' ? csv : '';
+  const target = String(warehouse || '').trim();
+  const targetLc = target.toLowerCase();
+  const kept = raw.split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((name) => name.toLowerCase() !== targetLc);
+  if (mode === 'thans' && target) kept.push(target);
+  return kept.join(', ');
+}
+
+/**
+ * TV-2 — persist a warehouse's display mode to the Settings sheet and
+ * invalidate the cache so it takes effect immediately.
+ * @param {string} warehouse warehouse name
+ * @param {'thans'|'bales'} mode target display mode
+ * @returns {Promise<string>} the CSV that was written
+ */
+async function setWarehouseMode(warehouse, mode) {
+  if (!warehouse || !String(warehouse).trim()) {
+    throw new Error('unitDisplayService: warehouse required');
+  }
+  if (mode !== 'thans' && mode !== 'bales') {
+    throw new Error('unitDisplayService: mode must be "thans" or "bales"');
+  }
+  const settings = await settingsRepository.getAll();
+  const next = computeWarehouseCsv(settings[SETTINGS_KEY], warehouse, mode);
+  await settingsRepository.set(SETTINGS_KEY, next);
+  invalidateCache();
+  return next;
+}
+
 module.exports = {
   SETTINGS_KEY,
   parseWarehouseCsv,
+  computeWarehouseCsv,
   getThanVisibilityWarehouses,
   isThanVisibilityWarehouse,
+  setWarehouseMode,
   invalidateCache,
 };

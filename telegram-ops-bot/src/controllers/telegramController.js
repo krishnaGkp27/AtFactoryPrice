@@ -6141,6 +6141,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (handled) return;
   }
 
+  // TV-2 — Warehouse Display Units flow callbacks (udf:*).
+  if (data.startsWith('udf:')) {
+    const unitDisplayFlow = require('../flows/unitDisplayFlow');
+    const handled = await unitDisplayFlow.handleCallback(bot, callbackQuery);
+    if (handled) return;
+  }
+
   // SBL-1 — Sold Bales Lookup drill-down callbacks (sbl:*).
   if (data.startsWith('sbl:')) {
     const soldBalesFlow = require('../flows/soldBalesFlow');
@@ -8507,6 +8514,14 @@ async function handleCallbackQuery(bot, callbackQuery) {
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
         const warehouseAuditFlow = require('../flows/warehouseAuditFlow');
         await warehouseAuditFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'display_units': {
+        // TV-2 — bales ⇄ thans display-unit switch. Admin/manager request
+        // gate lives inside the flow; the change itself only applies after
+        // admin approval (set_unit_display, ALWAYS_APPROVAL_ACTIONS).
+        const unitDisplayFlow = require('../flows/unitDisplayFlow');
+        await unitDisplayFlow.start(bot, chatId, uid, messageId);
         break;
       }
       case 'sold_bales_lookup': {
