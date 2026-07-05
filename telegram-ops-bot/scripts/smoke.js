@@ -4931,18 +4931,23 @@ async function runS29() {
   } else fail('S29.3 activityRegistry', JSON.stringify(entry29));
 
   // ---- S29.4: controller wiring — act dispatcher + bs:* router + text router ----
+  // The bs:* callback route lives in the FLOW_CALLBACK_ROUTES table
+  // (registry-dispatch refactor); accept either the table entry or the
+  // legacy inline if-block so this lint pins the wiring, not the shape.
   const ctrlSrc29 = fs.readFileSync(path.join(__dirname, '../src/controllers/telegramController.js'), 'utf8');
+  const bsRouted = /prefixes: \['bs:'\]/.test(ctrlSrc29) || /data\.startsWith\('bs:'\)/.test(ctrlSrc29);
+  const bsHandler = /bundleSaleFlow'?\)?\.handleCallback/.test(ctrlSrc29);
   const wiringOk =
     /case 'bundle_sale':/.test(ctrlSrc29)
-    && /data\.startsWith\('bs:'\)/.test(ctrlSrc29)
+    && bsRouted
     && /bundleSaleFlow\.handleText/.test(ctrlSrc29)
-    && /bundleSaleFlow\.handleCallback/.test(ctrlSrc29);
+    && bsHandler;
   if (wiringOk) pass('S29.4 telegramController: act+text+callback dispatchers wired for bundle_sale');
   else fail('S29.4 controller wiring', JSON.stringify({
     actCase: /case 'bundle_sale':/.test(ctrlSrc29),
-    bsCb:    /data\.startsWith\('bs:'\)/.test(ctrlSrc29),
+    bsCb:    bsRouted,
     bsText:  /bundleSaleFlow\.handleText/.test(ctrlSrc29),
-    bsCbFn:  /bundleSaleFlow\.handleCallback/.test(ctrlSrc29),
+    bsCbFn:  bsHandler,
   }));
 
   // ---- S29.5: goodsReceiptFlow mono/poly fork wired in ----

@@ -6019,71 +6019,60 @@ async function startOrderFlow(bot, chatId, userId) {
   await bot.sendMessage(chatId, '📦 *Create Supply Order*\n\nSelect a design:', { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
+// ── Flow-module callback routes ──────────────────────────────────────────
+// Uniform delegation table for handleCallbackQuery: the first route whose
+// prefix matches gets the callback; a truthy return means handled. Thunks
+// keep the original lazy-require semantics. Inline/legacy branches (e.g.
+// bulkrcv:mode:, pu:, the approval chain) stay in the dispatcher body.
+// Register new flows HERE (one line) — see CLAUDE.md "Feature recipe".
+const FLOW_CALLBACK_ROUTES = [
+  // Catalog hub: design assets / browse / search / catalog + CMS flows.
+  { prefixes: ['dap:', 'dam:'], handle: (bot, cq) => handleDesignAssetCallback(bot, cq) },
+  { prefixes: ['dav:'], handle: (bot, cq) => handleDesignAssetViewCallback(bot, cq) },
+  { prefixes: ['dab:', 'das:', 'dat:'], handle: (bot, cq) => handleCatalogBrowseSearchCallback(bot, cq) },
+  { prefixes: ['csf:', 'clf:', 'crf:', 'mkr:', 'ctr:'], handle: (bot, cq) => catalogFlows.handleCatalogFlowCallback(bot, cq) },
+  { prefixes: ['cms:'], handle: (bot, cq) => catalogFlows.handleCmsCallback(bot, cq) },
+  // Hubs + admin lenses.
+  { prefixes: ['tsk:'], handle: (bot, cq) => taskFlow.handleCallback(bot, cq) },
+  { prefixes: ['nf:'], handle: (bot, cq) => notificationsFlow.handleCallback(bot, cq) },
+  { prefixes: ['swv:'], handle: (bot, cq) => salesWorkflowView.handleCallback(bot, cq) },
+  { prefixes: ['pp:'], handle: (bot, cq) => procurementPlanView.handleCallback(bot, cq) },
+  // Inbound stock flows.
+  { prefixes: ['gr:'], handle: (bot, cq) => goodsReceiptFlow.handleCallback(bot, cq) },
+  { prefixes: ['br:'], handle: (bot, cq) => bulkReceiveFlow.handleCallback(bot, cq) },
+  { prefixes: ['addstock:'], handle: (bot, cq) => require('../flows/addStockFlow').handleCallback(bot, cq) },
+  { prefixes: ['pr:'], handle: (bot, cq) => photoReceiveFlow.handleCallback(bot, cq) },
+  // Warehouse / inventory flows.
+  { prefixes: ['wh:'], handle: (bot, cq) => warehouseFlow.handleCallback(bot, cq) },
+  { prefixes: ['lcost:'], handle: (bot, cq) => require('../flows/landedCostFlow').handleCallback(bot, cq) },
+  { prefixes: ['bops:'], handle: (bot, cq) => require('../flows/dailyBranchOpsFlow').handleCallback(bot, cq) },
+  { prefixes: ['ofex:'], handle: (bot, cq) => require('../flows/officeExpenseFlow').handleCallback(bot, cq) },
+  { prefixes: ['bs:'], handle: (bot, cq) => require('../flows/bundleSaleFlow').handleCallback(bot, cq) },
+  { prefixes: ['wai:'], handle: (bot, cq) => require('../flows/warehouseAuditFlow').handleCallback(bot, cq) },
+  { prefixes: ['udf:'], handle: (bot, cq) => require('../flows/unitDisplayFlow').handleCallback(bot, cq) },
+  { prefixes: ['sbl:'], handle: (bot, cq) => require('../flows/soldBalesFlow').handleCallback(bot, cq) },
+  // People / HR flows.
+  { prefixes: ['usr:'], handle: (bot, cq) => require('../flows/userAddFlow').handleCallback(bot, cq) },
+  { prefixes: ['umg:'], handle: (bot, cq) => require('../flows/userManageFlow').handleCallback(bot, cq) },
+  { prefixes: ['rol:'], handle: (bot, cq) => require('../flows/roleEditFlow').handleCallback(bot, cq) },
+  { prefixes: ['atd:'], handle: (bot, cq) => require('../flows/attendanceFlow').handleCallback(bot, cq) },
+  { prefixes: ['atd_rpt:'], handle: (bot, cq) => require('../flows/attendanceReportFlow').handleCallback(bot, cq) },
+  { prefixes: ['atd_adm:'], handle: (bot, cq) => require('../flows/attendanceAdminFlow').handleCallback(bot, cq) },
+];
+
 async function handleCallbackQuery(bot, callbackQuery) {
   const data = (callbackQuery.data || '').trim();
 
-  // Catalog hub: design-asset upload flow / manage flow / view-on-demand /
-  // browse / search / stats.
-  // Routed first to keep these self-contained and avoid prefix collisions.
-  if (data.startsWith('dap:') || data.startsWith('dam:')) {
-    const handled = await handleDesignAssetCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-  if (data.startsWith('dav:')) {
-    const handled = await handleDesignAssetViewCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-  if (data.startsWith('dab:') || data.startsWith('das:') || data.startsWith('dat:')) {
-    const handled = await handleCatalogBrowseSearchCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-  if (data.startsWith('csf:') || data.startsWith('clf:') || data.startsWith('crf:') ||
-      data.startsWith('mkr:') || data.startsWith('ctr:')) {
-    const handled = await catalogFlows.handleCatalogFlowCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-  if (data.startsWith('cms:')) {
-    const handled = await catalogFlows.handleCmsCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // Task hub: tappable assign flow + mark-done + sign-off cards.
-  if (data.startsWith('tsk:')) {
-    const handled = await taskFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // Admin notifications settings (T2): per-event opt-in toggles.
-  if (data.startsWith('nf:')) {
-    const handled = await notificationsFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // Admin sales workflow view (T3): read-only order/customer/ledger lens.
-  if (data.startsWith('swv:')) {
-    const handled = await salesWorkflowView.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // P2 — Goods Receipt Note flow (Receive Goods button).
-  if (data.startsWith('gr:')) {
-    const handled = await goodsReceiptFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // P2.5 — Bulk Receive Goods (CSV/XLSX upload) flow.
-  if (data.startsWith('br:')) {
-    const handled = await bulkReceiveFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // TCSI-2: strict Add-stock flow callbacks (warehouse picker / cancel /
-  // retry). Final 'Submit' uses the upstream `br:submit` callback so the
-  // dual-admin approval path is shared, not duplicated.
-  if (data.startsWith('addstock:')) {
-    const addStockFlow = require('../flows/addStockFlow');
-    const handled = await addStockFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
+  // Uniform flow-module delegation (see FLOW_CALLBACK_ROUTES above). All
+  // route prefixes are disjoint, so at most one route can match; an
+  // unhandled match falls through to the legacy chain below, exactly as
+  // the old per-prefix if-blocks did.
+  for (const route of FLOW_CALLBACK_ROUTES) {
+    if (route.prefixes.some((p) => data.startsWith(p))) {
+      const handled = await route.handle(bot, callbackQuery);
+      if (handled) return;
+      break;
+    }
   }
 
   // TCSI-2 (M1): Strict/Lenient mode sub-menu under the umbrella "Add Stock
@@ -6106,107 +6095,6 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await bot.sendMessage(chatId, '↩️ Returned to menu. Type "Hi" to re-open the activity hub.');
     }
     return;
-  }
-
-  // P5 — Photo Receive Goods (image/PDF OCR) flow.
-  if (data.startsWith('pr:')) {
-    const handled = await photoReceiveFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // WH-C1 — standalone Add Warehouse flow.
-  if (data.startsWith('wh:')) {
-    const handled = await warehouseFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // LANDED-COST C1 — Finalize Landed Cost callbacks (lcost:*).
-  if (data.startsWith('lcost:')) {
-    const landedCostFlow = require('../flows/landedCostFlow');
-    const handled = await landedCostFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // BR-OPS C1 — Daily branch ops callbacks (bops:*).
-  if (data.startsWith('bops:')) {
-    const dailyBranchOpsFlow = require('../flows/dailyBranchOpsFlow');
-    const handled = await dailyBranchOpsFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // BR-OPS C1 — Office expense flow callbacks (ofex:*).
-  if (data.startsWith('ofex:')) {
-    const officeExpenseFlow = require('../flows/officeExpenseFlow');
-    const handled = await officeExpenseFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // BUNDLE-SALE C1 — Kano poly-colour bundle picker callbacks (bs:*).
-  if (data.startsWith('bs:')) {
-    const bundleSaleFlow = require('../flows/bundleSaleFlow');
-    const handled = await bundleSaleFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // DBP-1.5 Concept A — admin Warehouse Audit picker callbacks (wai:*).
-  if (data.startsWith('wai:')) {
-    const warehouseAuditFlow = require('../flows/warehouseAuditFlow');
-    const handled = await warehouseAuditFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // TV-2 — Warehouse Display Units flow callbacks (udf:*).
-  if (data.startsWith('udf:')) {
-    const unitDisplayFlow = require('../flows/unitDisplayFlow');
-    const handled = await unitDisplayFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // SBL-1 — Sold Bales Lookup drill-down callbacks (sbl:*).
-  if (data.startsWith('sbl:')) {
-    const soldBalesFlow = require('../flows/soldBalesFlow');
-    const handled = await soldBalesFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // USR-C3 — Add Employee flow callbacks.
-  if (data.startsWith('usr:')) {
-    const userAddFlow = require('../flows/userAddFlow');
-    const handled = await userAddFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // USR-C3b / USR-C4 — Promote Admin & Deactivate User flows.
-  if (data.startsWith('umg:')) {
-    const userManageFlow = require('../flows/userManageFlow');
-    const handled = await userManageFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // MKT-1 — Change Role (existing users) flow.
-  if (data.startsWith('rol:')) {
-    const roleEditFlow = require('../flows/roleEditFlow');
-    const handled = await roleEditFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // ATT-C1 — Mark Attendance (employee) callback dispatch.
-  if (data.startsWith('atd:')) {
-    const attendanceFlow = require('../flows/attendanceFlow');
-    const handled = await attendanceFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-
-  // ATT-C2 — Attendance Admin hub callback dispatch.
-  if (data.startsWith('atd_rpt:')) {
-    const attendanceReportFlow = require('../flows/attendanceReportFlow');
-    const handled = await attendanceReportFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
-  }
-  if (data.startsWith('atd_adm:')) {
-    const attendanceAdminFlow = require('../flows/attendanceAdminFlow');
-    const handled = await attendanceAdminFlow.handleCallback(bot, callbackQuery);
-    if (handled) return;
   }
 
   // USR-C2 — Pending user actions from the admin-feed notification card.
@@ -6261,12 +6149,6 @@ async function handleCallbackQuery(bot, callbackQuery) {
       }
       return;
     }
-  }
-
-  // P4 — Procurement Plan view + PO drafting flow.
-  if (data.startsWith('pp:')) {
-    const handled = await procurementPlanView.handleCallback(bot, callbackQuery);
-    if (handled) return;
   }
 
   if (data.startsWith('approve:')) {
