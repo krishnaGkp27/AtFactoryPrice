@@ -5003,12 +5003,15 @@ async function getAdjustedAvailability(warehouse, cart, arrivalBatch = null) {
   const designMap = new Map();
   for (const r of available) {
     const key = `${r.design}||${r.shade || 'DEFAULT'}`;
-    if (!designMap.has(key)) designMap.set(key, { design: r.design, shade: r.shade || 'DEFAULT', pkgs: new Set(), pkgThans: new Map(), productType: r.productType || 'fabric' });
+    if (!designMap.has(key)) designMap.set(key, { design: r.design, shade: r.shade || 'DEFAULT', pkgs: new Set(), pkgThans: new Map(), pkgValues: new Map(), productType: r.productType || 'fabric' });
     const entry = designMap.get(key);
     entry.pkgs.add(r.packageNo);
     // TV-1 — each Inventory row is one than; track per-bale than counts so
     // than-visibility warehouses can list subunit availability.
     entry.pkgThans.set(r.packageNo, (entry.pkgThans.get(r.packageNo) || 0) + 1);
+    // WH-SUM — per-bale stock value (yards × price) for the admin-only
+    // warehouse header summary.
+    entry.pkgValues.set(r.packageNo, (entry.pkgValues.get(r.packageNo) || 0) + (r.yards || 0) * (r.pricePerYard || 0));
   }
   const result = [];
   for (const [, entry] of designMap) {
@@ -5018,8 +5021,10 @@ async function getAdjustedAvailability(warehouse, cart, arrivalBatch = null) {
       // TV-1 — thans of the remaining bales, assuming the cart consumes
       // bales in sheet order (exact whenever the cart is empty).
       const sizes = Array.from(entry.pkgThans.values());
-      const availThans = sizes.slice(inCart > 0 ? inCart : 0).reduce((a, b) => a + b, 0);
-      result.push({ design: entry.design, shade: entry.shade, availPkgs: remaining, availThans, productType: entry.productType });
+      const skip = inCart > 0 ? inCart : 0;
+      const availThans = sizes.slice(skip).reduce((a, b) => a + b, 0);
+      const availValue = Array.from(entry.pkgValues.values()).slice(skip).reduce((a, b) => a + b, 0);
+      result.push({ design: entry.design, shade: entry.shade, availPkgs: remaining, availThans, availValue, productType: entry.productType });
     }
   }
   return result;
@@ -5229,9 +5234,18 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   rows.push(backRow);
   const cartNote = cart.length ? `\n🛒 Cart: ${cart.length} item(s)` : '';
   const pageNote = designs.length > MAX_VISIBLE ? ` (${start + 1}–${Math.min(start + MAX_VISIBLE, designs.length)} of ${designs.length})` : '';
+  // WH-SUM — warehouse totals under the header: unit total for everyone
+  // (thans on TV-1 warehouses, bales elsewhere); stock value admin-only.
+  const totalUnits = avail.reduce((s, a) => s + (useThans ? (a.availThans || 0) : a.availPkgs), 0);
+  const unitWord = productTypesRepo.pluralize(useThans ? labels.subunit_label : labels.container_label, totalUnits).toLowerCase();
+  let summaryNote = `\n📊 Total: ${fmtQty(totalUnits)} ${unitWord}`;
+  if (config.access.adminIds.includes(String(userId))) {
+    const totalValue = avail.reduce((s, a) => s + (a.availValue || 0), 0);
+    summaryNote += ` · 💰 ${fmtMoneyShort(totalValue)}`;
+  }
   const resolvedMsgId = messageId || (session && session.flowMessageId) || null;
   const sent = await editOrSend(bot, chatId, resolvedMsgId,
-    `📦 *Warehouse: ${warehouse}*${cartNote}\n\nSelect design:${pageNote}`, {
+    `📦 *Warehouse: ${warehouse}*${summaryNote}${cartNote}\n\nSelect design:${pageNote}`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
