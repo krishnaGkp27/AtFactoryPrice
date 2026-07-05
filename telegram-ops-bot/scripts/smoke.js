@@ -3860,8 +3860,17 @@ async function runS22() {
 
   // ---- S22.3: per-employee sorted by % desc ----
   // Mohammad logged today + yest; Abdul only yest. Mohammad should rank
-  // higher when the window covers today.
-  if (r7.perEmployee[0].name === 'Mohammad Sani' && r7.perEmployee[0].pct >= r7.perEmployee[1].pct) {
+  // higher when the window covers today — but ONLY when today is a working
+  // day (fixture: Mon–Sat). On a Sunday run today's mark doesn't count,
+  // both tie on yesterday alone, so assert the tie instead of the order
+  // (ordering between equal percentages is not defined).
+  const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const todayName = WEEKDAY_NAMES[new Date(today + 'T12:00:00Z').getUTCDay()];
+  const todayIsWorking = settings22.ATTENDANCE_WORKING_DAYS.split(',').map((s) => s.trim()).includes(todayName);
+  const sortedDesc = r7.perEmployee[0].pct >= r7.perEmployee[1].pct;
+  if (todayIsWorking
+    ? (r7.perEmployee[0].name === 'Mohammad Sani' && sortedDesc)
+    : (sortedDesc && r7.perEmployee[0].pct === r7.perEmployee[1].pct)) {
     pass('S22.3 perEmployee sorted by pct desc');
   } else fail('S22.3', JSON.stringify(r7.perEmployee.map((e2) => ({ n: e2.name, p: e2.pct }))));
 
