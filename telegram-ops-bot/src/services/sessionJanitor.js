@@ -159,6 +159,9 @@ async function tick(bot) {
 
 /**
  * Install the minutely janitor. Call once from server startup.
+ * SJ-2 — also registers the read-expiry hook: when a RETURNING user's own
+ * tap/message discovers their expired session, the hanging message is
+ * tombstoned immediately (no grace wait — they're looking at it).
  * @param {object} bot Telegram bot instance
  * @param {{intervalMs?:number}} [opts]
  */
@@ -167,12 +170,16 @@ function start(bot, opts = {}) {
   const every = opts.intervalMs || TICK_MS;
   _timer = setInterval(() => { tick(bot).catch((e) => logger.warn(`sessionJanitor tick failed: ${e.message}`)); }, every);
   if (_timer.unref) _timer.unref();
-  logger.info(`sessionJanitor started (every ${Math.round(every / 1000)}s)`);
+  sessionStore.onExpiredByRead((snap) => {
+    tombstone(bot, snap).catch((e) => logger.warn(`sessionJanitor: instant cleanup failed for ${snap.userId}/${snap.type}: ${e.message}`));
+  });
+  logger.info(`sessionJanitor started (every ${Math.round(every / 1000)}s, instant cleanup on user return)`);
 }
 
 function stop() {
   if (_timer) clearInterval(_timer);
   _timer = null;
+  sessionStore.onExpiredByRead(null);
 }
 
 module.exports = {

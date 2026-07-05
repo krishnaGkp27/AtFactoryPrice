@@ -102,3 +102,38 @@ test('humanize: known labels + generic fallback', () => {
   assert.equal(sessionJanitor._internals.humanize('add_note_flow'), 'Add note');
   assert.equal(sessionJanitor._internals.humanize(''), 'This process');
 });
+
+test('SJ-2: user returning to an expired flow triggers an INSTANT tombstone (no grace wait)', async () => {
+  drainAll();
+  const bot = createFakeBot();
+  sessionJanitor.start(bot, { intervalMs: 3600 * 1000 }); // interval never fires in-test
+  try {
+    sessionStore.set('u8', { type: 'supply_req_flow', step: 'design', flowMessageId: 88, ttlMs: 1 });
+    await sleep(5);
+    // The user comes back: any handler reading their session discovers expiry.
+    assert.equal(sessionStore.get('u8'), null);
+    await sleep(10); // hook tombstones asynchronously
+    const edit = bot.callsTo('editMessageText')[0];
+    assert.ok(edit, 'hanging message transformed immediately on return');
+    assert.match(edit.args.text, /Supply Request timed out/);
+    assert.equal(edit.args.opts.message_id, 88);
+    // Consumed by the hook — nothing left for the grace-period sweep.
+    assert.equal(sessionStore.drainExpiredForCleanup().length, 0, 'no double-clean later');
+  } finally {
+    sessionJanitor.stop();
+  }
+});
+
+test('SJ-2: stop() detaches the hook — expiry falls back to the grace queue', async () => {
+  drainAll();
+  const bot = createFakeBot();
+  sessionJanitor.start(bot, { intervalMs: 3600 * 1000 });
+  sessionJanitor.stop();
+  sessionStore.set('u9', { type: 'sample_flow', flowMessageId: 99, ttlMs: 1 });
+  await sleep(5);
+  assert.equal(sessionStore.get('u9'), null);
+  await sleep(10);
+  assert.equal(bot.callsTo('editMessageText').length, 0, 'no instant edit after stop()');
+  const q = sessionStore.drainExpiredForCleanup();
+  assert.deepEqual(q.map((e) => e.userId), ['u9'], 'queued for the sweep instead');
+});

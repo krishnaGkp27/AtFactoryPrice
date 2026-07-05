@@ -39,9 +39,20 @@ function _ttlFor(data) {
 const EXPIRED_QUEUE_MAX = 500;
 const expiredQueue = [];
 
-function _stashExpired(userId, s) {
-  if (!s || !s.type) return;
-  expiredQueue.push({
+// SJ-2 — when a get() discovers the expiry (i.e. the USER just came back
+// and interacted), this hook fires immediately instead of queueing for
+// the grace-period sweep — the janitor tombstones the hanging message
+// right away. Null (not registered) falls back to the queue.
+let _onExpiredByRead = null;
+
+/** Register/replace the read-expiry hook (janitor). Pass null to detach. */
+function onExpiredByRead(cb) {
+  _onExpiredByRead = typeof cb === 'function' ? cb : null;
+}
+
+function _snapshotOf(userId, s) {
+  if (!s || !s.type) return null;
+  return {
     userId: String(userId),
     type: s.type,
     step: s.step || null,
@@ -49,7 +60,13 @@ function _stashExpired(userId, s) {
     previewMessageId: s.previewMessageId || null,
     comboMessageId: s.comboMessageId || null,
     lastActiveAt: s._setAt || (s.expiresAt - _ttlFor(s)),
-  });
+  };
+}
+
+function _stashExpired(userId, s) {
+  const snap = _snapshotOf(userId, s);
+  if (!snap) return;
+  expiredQueue.push(snap);
   if (expiredQueue.length > EXPIRED_QUEUE_MAX) expiredQueue.shift();
 }
 
@@ -59,7 +76,16 @@ function get(userId) {
   if (!s) return null;
   if (Date.now() > s.expiresAt) {
     _stashHint(key, s);
-    _stashExpired(key, s);
+    const snap = _snapshotOf(key, s);
+    if (snap) {
+      // User-driven discovery → instant cleanup; otherwise grace queue.
+      if (_onExpiredByRead) {
+        try { _onExpiredByRead(snap); } catch (_) { /* hook must never break flows */ }
+      } else {
+        expiredQueue.push(snap);
+        if (expiredQueue.length > EXPIRED_QUEUE_MAX) expiredQueue.shift();
+      }
+    }
     sessions.delete(key);
     return null;
   }
@@ -133,6 +159,6 @@ function drainExpiredForCleanup() {
 module.exports = {
   get, set, clear, touch,
   getLastSessionHint, clearLastSessionHint,
-  sweepExpired, drainExpiredForCleanup,
+  sweepExpired, drainExpiredForCleanup, onExpiredByRead,
   DEFAULT_TTL_MS,
 };
