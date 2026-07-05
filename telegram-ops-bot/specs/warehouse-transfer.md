@@ -1,121 +1,67 @@
-# Spec: Warehouse → Warehouse Transfer (two-step acceptance)
+# Spec: Warehouse → Warehouse Transfer (two-step acceptance) — v2, simplified
 
-**Status:** 🚧 Approved to build (TRF-1). Owner decisions captured below.
-**Replaces:** the instant `transfer_than` / `transfer_package` / `transfer_batch` actions (one-shot warehouse rewrite).
-
----
+**Status:** 🚧 Approved to build (TRF-2). Supersedes v1 — owner chose the LEAN design.
+**Replaces:** the instant `transfer_than` / `transfer_package` / `transfer_batch` actions (final stage).
 
 ## 1. Goal
 
-Move bales between warehouses (e.g. **Lagos → Kano**) as a tracked, multi-party
-operation instead of an instant rewrite:
+Move bales between warehouses as a short, tracked, three-party operation:
+**admin requests → source dispatcher accepts → destination receiver confirms.**
+Crisp UX is a hard requirement — 5 taps to create, 1 tap for each counterparty.
 
-1. **Admin requests** the transfer (which bales: design + shade + quantity, or
-   specific bale numbers; from warehouse → to warehouse) and **picks the source
-   dispatcher and the destination receiver**.
-2. **Source dispatcher** (e.g. Abdul @ Lagos) **Accepts & dispatches**.
-3. **Destination receiver** (Kano) **Confirms receipt** after checking the goods
-   against the supplied details — only then are the bales fully "live" at Kano.
+## 2. Owner decisions (locked, v2)
 
-The admin has full visibility of every transfer and its stage throughout.
+| Decision | Choice |
+|---|---|
+| Storage | **NO dedicated Transfers sheet.** Request rides an `ApprovalQueue` row (actionJSON payload, like sales/supply); history = `AuditLog` events + one `Transactions` row on completion. |
+| Selection | **Design + shade + qty only** — the bot auto-picks the actual bales (sheet order). Specific-bale-numbers mode: dropped. |
+| People | Admin-only creation. Dispatcher/receiver **auto-picked when a warehouse has exactly one assigned active user**; otherwise a one-screen picker. |
+| Cancel | **No admin cancel.** Dispatcher Decline / receiver Reject are the only aborts (bales auto-revert to source). |
+| In-transit | Bales flip `available → in_transit` @ destination on send: **visible at the destination (tagged 🚚), NOT sellable/supplyable** until receipt is confirmed. Reuses the Inventory `Status` column — no new column. |
+| Approval gate | None beyond the chain itself — the dispatcher+receiver steps ARE the control. `transfer_stock` stays OUT of the intentParser enum and OUT of risk policy lists (own `trf:` callbacks, like the srf multi-stage). |
 
-## 2. Owner decisions (locked)
-
-| # | Decision | Choice |
-|---|----------|--------|
-| Routing | Who accepts at source / confirms at destination | **Admin picks each person** when creating the transfer |
-| Visibility / lock | In-transit bale behaviour at destination | **Visible at Kano the whole time (tagged), NOT sellable until receipt confirmed** |
-| Existing transfer | Relationship to the instant transfer | **Replace it entirely** with the staged flow |
-| Selection | How bales are chosen | **Both** — design + shade + quantity (auto-pick), *or* specific bale numbers |
-
-## 3. State machine
-
-A transfer is a row in a new **`Transfers`** sheet, moving through:
+## 3. Flow
 
 ```
-                ┌─ source declines ──────────────► CANCELLED  (bales → back to source, available)
-requested ──────┤
-   │            └─ source accepts ─► in_transit ──┬─ dest confirms ─► RECEIVED  (bales → available @ dest)
-   │ (bales already tagged in_transit @ dest)     └─ dest rejects ──► DECLINED  (bales → back to source, available)
+requested ──dispatcher declines──► DECLINED  (bales → available @ source)
+   │
+   └─dispatcher accepts─► in_transit ──receiver rejects──► REJECTED (revert to source)
+                              └───────receiver confirms──► RECEIVED (available @ dest)
 ```
 
-**Inventory effects (no column reorder — only new Status value + the existing
-`warehouse` field is rewritten):**
+Inventory effects (via existing `inventoryRepository.transitionBales`):
+send = `available→in_transit` + warehouse→destination · confirm = `in_transit→available` ·
+decline/reject = `in_transit→available` + warehouse→source.
 
-| Transfer event | Bale `status` | Bale `warehouse` |
-|----------------|---------------|------------------|
-| **requested** (admin submits) | `available` → **`in_transit`** | source → **destination** |
-| **source accepts** (dispatch) | `in_transit` (unchanged) | destination (unchanged) |
-| **dest confirms** (receipt) | `in_transit` → **`available`** | destination (unchanged) |
-| source declines / dest rejects | `in_transit` → **`available`** | destination → **source** (revert) |
+## 4. Screens
 
-The selected bale identifiers (packageNos / bale UIDs) are stored on the transfer
-row, so we flip exactly those rows — **no new Inventory column needed.**
+**Admin wizard** (`trf:` namespace; Inventory → Move Stock → 🚚 Transfer Stock):
+1. Source warehouse (chips) → 2. Design (tiles w/ counts) → 3. Shade (chips w/ counts) →
+4. Qty (chips `1 2 5 … All`) → 5. Destination (chips, source excluded) →
+6. Confirm card (shows auto-picked dispatcher + receiver) → **Send**.
+Extra picker screens appear only when a warehouse has >1 assigned user.
 
-## 4. Visibility & sellability rules (the key behaviour)
+**Dispatcher DM:** `🚚 TR-xxxx — 5 bales 9006 · Shade 3 → Kano office` `[✅ Accept & dispatch] [❌ Decline]`
+**Receiver DM (after dispatch):** `📦 TR-xxxx incoming from Lagos` `[✅ Received] [⚠️ Reject]`
+Admin (+requester) notified at every transition. One-tap decline/reject, no typed reason (AuditLog records who/when).
 
-- **Sellable / supply-able everywhere = `status === 'available'` only.** In-transit
-  bales are excluded from Check Stock totals, the Supply flow, and Sell — so a bale
-  that's mid-transfer can never be committed to a sale until the destination
-  confirms it. (Existing code already filters on `available`, so this is automatic.)
-- **Destination (Kano) display:** Check Stock / My Products for the destination
-  warehouse **also lists in-transit bales**, under a clearly separated
-  **"🚚 Incoming / in transit — N bales (Transfer TR-xxxx)"** section, so the Kano
-  team can see and pre-market the design and cross-check details at any time. They
-  are visible *the whole time*, from request until confirmed — never hidden.
-- **Source (Lagos) display:** in-transit bales are gone (their warehouse is now the
-  destination) — they've left.
+## 5. Data
 
-## 5. Roles & routing
+`ApprovalQueue.actionJSON` = `{ action:'transfer_stock', from, to, design, shade, qty, bales:[packageNo…], dispatcher, receiver, stage }`
+`stage` advances via `updateActionJSON` (`requested|in_transit`); terminal state via `updateStatus`
+(`approved` = received, `rejected` = declined/rejected). AuditLog: `transfer.requested|dispatched|received|declined|rejected`.
 
-- **Initiator:** admin (creates the transfer; picks people).
-- **Source dispatcher:** a user the admin selects (filtered to those assigned to the
-  source warehouse via `Users.warehouses`, else any active employee/manager).
-- **Destination receiver:** a user the admin selects (filtered to the destination
-  warehouse). Receives the confirm card on (physical) arrival.
-- Admin is notified at every stage transition.
+## 6. Destination visibility
 
-## 6. Data model
+Check Stock at the destination appends a `🚚 Incoming (in transit): N bales — not yet sellable`
+line for that warehouse's `in_transit` rows. Sell/supply pickers already filter `status==='available'`,
+so unsellability is automatic.
 
-### New sheet: `Transfers`
-| Col | Field | Notes |
-|-----|-------|-------|
-| A | transfer_id | `TR-<short>` |
-| B | from_warehouse | source |
-| C | to_warehouse | destination |
-| D | items_json | `[{design, shade, bales:[packageNo…], qty}]` |
-| E | status | `requested\|in_transit\|received\|declined\|cancelled` |
-| F | requested_by | admin user_id |
-| G | requested_at | ISO |
-| H | source_person | user_id who accepts/dispatches |
-| I | dispatched_at | ISO (set on source accept) |
-| J | dest_person | user_id who confirms |
-| K | received_at | ISO (set on dest confirm) |
-| L | note | decline/reject reason, discrepancies |
-| M | created_by_name / audit | display helper |
+## 7. Build stages
 
-History also lands in `AuditLog` (`transfer.requested|dispatched|received|declined`).
+1. `transferService` v2 — adapt the (tested) state machine to queue-row storage; drop `transfersRepository` + the `Transfers` schemaMapper entry (owner deletes the empty tab manually).
+2. `transferFlow.js` — wizard + dispatcher/receiver cards (`trf:` callbacks; flowKit).
+3. Check Stock incoming line + minimal 🚚 Transfers list (open transfers) under Move Stock.
+4. Retire instant transfer (`transfer_*` from enum/policy/menu) — separate sign-off, after owner tests end-to-end on Telegram.
 
-## 7. Callback namespace & flow
-
-- Admin create wizard (`trf:*`): source wh → selection mode → design/shade/qty (or bale numbers) → destination wh → source person → dest person → confirm → submit.
-- Source accept/decline: `xfer:acc:<id>` / `xfer:dec:<id>`.
-- Dest confirm/reject: `xfer:rcv:<id>` / `xfer:rej:<id>`.
-- Admin dashboard activity `transfers` → grouped **⏳ Awaiting dispatch / 🚚 In transit / ✅ Received / ❌ Declined**.
-
-## 8. Module plan (tested, staged)
-
-1. **`transfersRepository.js`** — Transfers sheet CRUD; **schemaMapper** bootstrap entry.
-2. **inventoryRepository** — `setStatusForBales(ids, status, warehouse)` (the in_transit/confirm/revert transitions) keyed by packageNo/bale UID.
-3. **`transferService.js`** — pure state machine + transitions (validate stage, apply inventory effects via injected repos); item selection (design+shade+qty → bale list).
-4. **`transferFlow.js`** — admin create wizard + accept/confirm callbacks (anchored card, mdEscape, plain-text fallback — same conventions as userAddFlow/userManageFlow).
-5. **Destination display** — include in_transit (tagged) in destination Check Stock / My Products.
-6. **Admin dashboard** — `transfers` activity listing.
-7. **Replace instant transfer** — remove `transfer_*` from intent enum, `WRITE_ACTIONS`, `executeApprovedAction`, and the Move-Stock activities; point Move Stock at the new staged flow.
-
-Each stage ships with unit/characterization tests; suite + lint + smoke green before merge.
-
-## 9. Scope flags (require sign-off — granted)
-- New status value `in_transit` (no column reorder).
-- New `Transfers` sheet (schema add).
-- Edits to `risk/evaluate.js` (drop instant transfer actions) and approval/inventory routing.
+Each stage: tests green (`npm test`, smoke, lint 0 errors) before push; one commit per stage.
