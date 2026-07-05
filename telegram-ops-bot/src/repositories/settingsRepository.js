@@ -12,6 +12,10 @@ const HEADERS = ['Key', 'Value', 'UpdatedAt'];
 const DEFAULTS = {
   RISK_THRESHOLD: 300,
   LOW_STOCK_THRESHOLD: 100,
+  // TV-1 — CSV of warehouse names whose stock listings show than counts
+  // instead of bale counts. Override via a Settings sheet row of the same
+  // key; an empty value disables the behavior everywhere.
+  THAN_VISIBILITY_WAREHOUSES: 'Kano office',
 };
 
 async function ensureHeader() {

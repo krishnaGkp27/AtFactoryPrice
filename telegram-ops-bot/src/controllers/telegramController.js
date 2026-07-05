@@ -34,6 +34,7 @@ const userPrefsRepo = require('../repositories/userPrefsRepository');
 const designAssetsRepo = require('../repositories/designAssetsRepository');
 const designAssetsService = require('../services/designAssetsService');
 const pricingService = require('../services/pricingService');
+const unitDisplayService = require('../services/unitDisplayService');
 const stockValueReport = require('../services/stockValueReport');
 const goodsReceiptsRepository = require('../repositories/goodsReceiptsRepository');
 const colorDetector = require('../ai/colorDetector');
@@ -5002,14 +5003,24 @@ async function getAdjustedAvailability(warehouse, cart, arrivalBatch = null) {
   const designMap = new Map();
   for (const r of available) {
     const key = `${r.design}||${r.shade || 'DEFAULT'}`;
-    if (!designMap.has(key)) designMap.set(key, { design: r.design, shade: r.shade || 'DEFAULT', pkgs: new Set(), productType: r.productType || 'fabric' });
-    designMap.get(key).pkgs.add(r.packageNo);
+    if (!designMap.has(key)) designMap.set(key, { design: r.design, shade: r.shade || 'DEFAULT', pkgs: new Set(), pkgThans: new Map(), productType: r.productType || 'fabric' });
+    const entry = designMap.get(key);
+    entry.pkgs.add(r.packageNo);
+    // TV-1 — each Inventory row is one than; track per-bale than counts so
+    // than-visibility warehouses can list subunit availability.
+    entry.pkgThans.set(r.packageNo, (entry.pkgThans.get(r.packageNo) || 0) + 1);
   }
   const result = [];
   for (const [, entry] of designMap) {
     const inCart = getCartQtyForDesignShade(cart, entry.design, entry.shade);
     const remaining = entry.pkgs.size - inCart;
-    if (remaining > 0) result.push({ design: entry.design, shade: entry.shade, availPkgs: remaining, productType: entry.productType });
+    if (remaining > 0) {
+      // TV-1 — thans of the remaining bales, assuming the cart consumes
+      // bales in sheet order (exact whenever the cart is empty).
+      const sizes = Array.from(entry.pkgThans.values());
+      const availThans = sizes.slice(inCart > 0 ? inCart : 0).reduce((a, b) => a + b, 0);
+      result.push({ design: entry.design, shade: entry.shade, availPkgs: remaining, availThans, productType: entry.productType });
+    }
   }
   return result;
 }
@@ -5154,8 +5165,9 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   const designAgg = new Map();
   let detectedType = 'fabric';
   for (const a of avail) {
-    if (!designAgg.has(a.design)) designAgg.set(a.design, { design: a.design, totalPkgs: 0 });
+    if (!designAgg.has(a.design)) designAgg.set(a.design, { design: a.design, totalPkgs: 0, totalThans: 0 });
     designAgg.get(a.design).totalPkgs += a.availPkgs;
+    designAgg.get(a.design).totalThans += a.availThans || 0;
     if (a.productType) detectedType = a.productType;
   }
   const designs = Array.from(designAgg.values()).sort((a, b) => b.totalPkgs - a.totalPkgs);
@@ -5178,14 +5190,20 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   }
 
   const cShort = labels.container_short;
+  // TV-1 — warehouses flagged in Settings list stock by than (subunit),
+  // not bale. Display-only: selection + cart semantics stay in bales.
+  const useThans = await unitDisplayService.isThanVisibilityWarehouse(warehouse);
+  const designTag = (d) => (useThans
+    ? `${d.totalThans} ${productTypesRepo.pluralize(labels.subunit_label, d.totalThans).toLowerCase()}`
+    : `${d.totalPkgs} ${cShort}`);
   const MAX_VISIBLE = 8;
   const page = (session && session.designPage) || 0;
   const start = page * MAX_VISIBLE;
   const visible = designs.slice(start, start + MAX_VISIBLE);
   const rows = [];
   for (let i = 0; i < visible.length; i += 2) {
-    const row = [{ text: `${visible[i].design} (${visible[i].totalPkgs} ${cShort})`, callback_data: `srf_dg:${visible[i].design}` }];
-    if (visible[i + 1]) row.push({ text: `${visible[i + 1].design} (${visible[i + 1].totalPkgs} ${cShort})`, callback_data: `srf_dg:${visible[i + 1].design}` });
+    const row = [{ text: `${visible[i].design} (${designTag(visible[i])})`, callback_data: `srf_dg:${visible[i].design}` }];
+    if (visible[i + 1]) row.push({ text: `${visible[i + 1].design} (${designTag(visible[i + 1])})`, callback_data: `srf_dg:${visible[i + 1].design}` });
     rows.push(row);
   }
   const nav = [];
@@ -5283,9 +5301,20 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
     singular: labels.container_label.toLowerCase(),
     plural: productTypesRepo.pluralize(labels.container_label, 2).toLowerCase(),
   };
+  // TV-1 — flagged warehouses show shade availability in thans (subunit).
+  // Display-only: callback payloads, quantity picking and the cart stay
+  // in bales exactly as before.
+  const useThans = await unitDisplayService.isThanVisibilityWarehouse(warehouse);
+  const dispUnit = useThans
+    ? {
+      singular: labels.subunit_label.toLowerCase(),
+      plural: productTypesRepo.pluralize(labels.subunit_label, 2).toLowerCase(),
+    }
+    : unit;
+  const dispQty = (s) => (useThans ? (s.availThans || 0) : s.availPkgs);
 
   const buttons = shades.map((s) => ({
-    text: buildShadeLabel(s.shade, nameMap, s.availPkgs, unit),
+    text: buildShadeLabel(s.shade, nameMap, dispQty(s), dispUnit),
     callback_data: `srf_sh:${design}|${s.shade}|${s.availPkgs}`,
   }));
   const rows = layoutShadeRows(buttons);
@@ -5293,9 +5322,12 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   // quantity in one tap (cart-adjusted), instead of picking shade-by-shade.
   const totalBales = shades.reduce((sum, s) => sum + (s.availPkgs > 0 ? s.availPkgs : 0), 0);
   if (totalBales > 0) {
-    const balesWord = totalBales === 1 ? unit.singular : unit.plural;
+    const totalDisplay = useThans
+      ? shades.reduce((sum, s) => sum + (s.availPkgs > 0 ? (s.availThans || 0) : 0), 0)
+      : totalBales;
+    const balesWord = totalDisplay === 1 ? dispUnit.singular : dispUnit.plural;
     rows.push([{
-      text: `✅ Take ALL ${shades.length} shades (${totalBales} ${balesWord})`,
+      text: `✅ Take ALL ${shades.length} shades (${totalDisplay} ${balesWord})`,
       callback_data: `srf_all:${design}`,
     }]);
   }
