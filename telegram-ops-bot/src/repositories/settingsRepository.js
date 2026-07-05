@@ -16,6 +16,13 @@ const DEFAULTS = {
   // instead of bale counts. Override via a Settings sheet row of the same
   // key; an empty value disables the behavior everywhere.
   THAN_VISIBILITY_WAREHOUSES: 'Kano office',
+  // SJ-1 — stale-flow janitor grace periods (minutes from last activity
+  // before an abandoned flow's hanging message is tombstoned). Generous
+  // defaults because field connectivity is inconsistent; tune via
+  // Settings sheet rows of the same keys, no deploy needed.
+  FLOW_CLEANUP_MINUTES: 30,
+  FLOW_CLEANUP_MINUTES_HEAVY: 60,
+  FLOW_CLEANUP_HEAVY_TYPES: 'supply_req_flow,grn_flow,bulk_receive_flow,photo_receive_flow,bundle_sale_flow,order_flow,receipt_flow,landed_cost_flow,po_new_flow',
 };
 
 async function ensureHeader() {

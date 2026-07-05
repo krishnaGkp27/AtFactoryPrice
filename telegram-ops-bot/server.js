@@ -215,6 +215,9 @@ const server = app.listen(PORT, async () => {
     logger.info('ERP modules initialized');
     setInterval(() => { checkOrderReminders(); checkSampleFollowups(); checkCustomerFollowups(); checkColdCustomerAlerts(); }, REMINDER_INTERVAL_MS);
     logger.info('Scheduler started (hourly): orders, samples, follow-ups, cold alerts');
+    // SJ-1 — minutely stale-flow janitor: tombstones hanging flow messages
+    // after their (Settings-tunable) per-activity grace period lapses.
+    require('./src/services/sessionJanitor').start(bot);
   } catch (e) {
     logger.error('Init error (bot still running):', e.message);
   }
