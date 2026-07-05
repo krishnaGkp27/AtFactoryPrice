@@ -1,35 +1,40 @@
-/**
- * transferService — warehouse→warehouse transfer logic (TRF-1).
- *
- * Two concerns:
- *   1. Pure bale-selection helpers (operate on a passed inventory snapshot,
- *      no I/O) used by the create wizard.
- *   2. Lifecycle orchestration (createTransfer / dispatch / confirmReceipt /
- *      abort) that drives the Transfers sheet and flips the matching bales
- *      via inventoryRepository.transitionBales.
- *
- * Inventory effects (see specs/warehouse-transfer.md):
- *   created     available → in_transit @ destination  (visible at dest, not sellable)
- *   dispatched  (no inventory change — operational ack)
- *   received    in_transit → available @ destination  (now sellable)
- *   aborted     in_transit → available @ source        (reverted)
- */
-
 'use strict';
 
-const transfersRepo = require('../repositories/transfersRepository');
-const inventoryRepo = require('../repositories/inventoryRepository');
+/**
+ * transferService — warehouse→warehouse transfer logic (TRF-2, lean).
+ *
+ * The transfer request rides an ApprovalQueue row (NO dedicated sheet —
+ * owner decision, spec §2): actionJSON carries the payload, `stage`
+ * advances requested→in_transit via updateActionJSON, and the terminal
+ * state lands via updateStatus ('approved' = received, 'rejected' =
+ * declined/rejected). History: AuditLog events + one Transactions row on
+ * completion.
+ *
+ * Inventory effects (existing transitionBales; Status column only):
+ *   create   available  → in_transit @ destination (visible, not sellable)
+ *   dispatch (no inventory change — operational ack by the source person)
+ *   receive  in_transit → available  @ destination (now sellable)
+ *   abort    in_transit → available  @ source      (decline/reject revert)
+ */
+
+const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+const inventoryRepository = require('../repositories/inventoryRepository');
+const transactionsRepository = require('../repositories/transactionsRepository');
+const auditLogRepository = require('../repositories/auditLogRepository');
 const idGenerator = require('../utils/idGenerator');
 
-const { STATUSES } = transfersRepo;
+const ACTION = 'transfer_stock';
 const AVAILABLE = 'available';
 const IN_TRANSIT = 'in_transit';
+const STAGES = Object.freeze({ REQUESTED: 'requested', IN_TRANSIT: 'in_transit' });
 
 function norm(v) { return String(v == null ? '' : v).trim().toLowerCase(); }
 
+/* ── pure selection helpers (operate on an inventory snapshot) ─────────── */
+
 /**
  * Distinct AVAILABLE bale packageNos of a design+shade in a warehouse.
- * @returns {string[]} packageNos, in sheet order
+ * @returns {string[]} packageNos in sheet order
  */
 function availableBales(inventory, warehouse, design, shade) {
   const w = norm(warehouse);
@@ -39,9 +44,7 @@ function availableBales(inventory, warehouse, design, shade) {
   const out = [];
   for (const r of (inventory || [])) {
     if (r.status !== AVAILABLE) continue;
-    if (norm(r.warehouse) !== w) continue;
-    if (norm(r.design) !== d) continue;
-    if (norm(r.shade) !== s) continue;
+    if (norm(r.warehouse) !== w || norm(r.design) !== d || norm(r.shade) !== s) continue;
     const pkg = String(r.packageNo);
     if (!seen.has(pkg)) { seen.add(pkg); out.push(pkg); }
   }
@@ -49,155 +52,117 @@ function availableBales(inventory, warehouse, design, shade) {
 }
 
 /**
- * Select bales for a list of { design, shade, qty } requests from a warehouse.
- * qty is a BALE count. Picks the first `qty` available bales per request.
- * @returns {{ ok:boolean, items:Array, shortfalls:Array }}
+ * Auto-pick the first `qty` available bales of design+shade (sheet order).
+ * @returns {{ ok:boolean, bales:string[], available:number }}
  */
-function selectByQuantity(inventory, fromWarehouse, requests) {
-  const items = [];
-  const shortfalls = [];
-  for (const req of (requests || [])) {
-    const qty = Math.max(0, parseInt(req.qty, 10) || 0);
-    const bales = availableBales(inventory, fromWarehouse, req.design, req.shade);
-    if (bales.length < qty) {
-      shortfalls.push({
-        design: req.design, shade: req.shade, requested: qty, available: bales.length,
-      });
-    }
-    const take = bales.slice(0, qty);
-    if (take.length) {
-      items.push({ design: req.design, shade: req.shade, qty: take.length, bales: take });
-    }
-  }
-  return { ok: shortfalls.length === 0 && items.length > 0, items, shortfalls };
+function selectByQuantity(inventory, fromWarehouse, design, shade, qty) {
+  const n = Math.max(0, parseInt(qty, 10) || 0);
+  const bales = availableBales(inventory, fromWarehouse, design, shade);
+  return { ok: n > 0 && bales.length >= n, bales: bales.slice(0, n), available: bales.length };
+}
+
+/* ── lifecycle (queue-carried) ─────────────────────────────────────────── */
+
+/** Open (pending) transfer rows, newest last. */
+async function getOpenTransfers() {
+  const pending = await approvalQueueRepository.getAllPending();
+  return pending.filter((p) => p.actionJSON && p.actionJSON.action === ACTION);
+}
+
+/** One transfer row by id (any status). Null when not a transfer. */
+async function findTransfer(requestId) {
+  const row = await approvalQueueRepository.getByRequestId(requestId);
+  if (!row || !row.actionJSON || row.actionJSON.action !== ACTION) return null;
+  return row;
 }
 
 /**
- * Select by explicit bale numbers; validates each packageNo is AVAILABLE in the
- * source warehouse and groups them into items by design+shade.
- * @returns {{ ok:boolean, items:Array, missing:string[] }}
+ * Create a transfer: bales → in_transit @ destination, queue row appended.
+ * @returns {Promise<{requestId:string, aj:object}>}
  */
-function selectByBaleNumbers(inventory, fromWarehouse, packageNos) {
-  const wanted = new Set((packageNos || []).map((p) => String(p).trim()).filter(Boolean));
-  const w = norm(fromWarehouse);
-  const groups = new Map();
-  const found = new Set();
-  for (const r of (inventory || [])) {
-    const pkg = String(r.packageNo);
-    if (!wanted.has(pkg)) continue;
-    if (r.status !== AVAILABLE) continue;
-    if (norm(r.warehouse) !== w) continue;
-    found.add(pkg);
-    const key = `${norm(r.design)}||${norm(r.shade)}`;
-    if (!groups.has(key)) groups.set(key, { design: r.design, shade: r.shade, bales: new Set() });
-    groups.get(key).bales.add(pkg);
-  }
-  const missing = [...wanted].filter((p) => !found.has(p));
-  const items = [...groups.values()].map((g) => ({
-    design: g.design, shade: g.shade, qty: g.bales.size, bales: [...g.bales],
-  }));
-  return { ok: missing.length === 0 && items.length > 0, items, missing };
-}
-
-// ---------------------------------------------------------------------------
-// Lifecycle orchestration
-// ---------------------------------------------------------------------------
-
-/**
- * Create a transfer: persist the row and move its bales to in_transit @ dest.
- * @returns {Promise<object>} the created transfer
- */
-async function createTransfer({
-  fromWarehouse, toWarehouse, items, requestedBy, requestedByName, sourcePerson, destPerson,
-}) {
-  const transfer = {
-    transfer_id: idGenerator.transfer(),
-    from_warehouse: fromWarehouse,
-    to_warehouse: toWarehouse,
-    items: items || [],
-    status: STATUSES.REQUESTED,
-    requested_by: String(requestedBy || ''),
-    requested_at: new Date().toISOString(),
-    source_person: String(sourcePerson || ''),
-    dest_person: String(destPerson || ''),
-    requested_by_name: requestedByName || '',
+async function createTransfer({ from, to, design, shade, qty, bales, requestedBy, dispatcher, receiver }) {
+  const requestId = idGenerator.transfer();
+  const aj = {
+    action: ACTION,
+    from, to, design, shade,
+    qty: bales.length || qty,
+    bales: bales.map(String),
+    dispatcher: String(dispatcher || ''),
+    receiver: String(receiver || ''),
+    stage: STAGES.REQUESTED,
   };
-  const pkgs = transfersRepo.packageNosOf(transfer);
-  // available → in_transit, warehouse rewritten to destination.
-  await inventoryRepo.transitionBales(pkgs, AVAILABLE, IN_TRANSIT, toWarehouse);
-  await transfersRepo.append(transfer);
-  return transfer;
+  await inventoryRepository.transitionBales(aj.bales, AVAILABLE, IN_TRANSIT, to);
+  await approvalQueueRepository.append({
+    requestId, user: String(requestedBy || ''),
+    actionJSON: aj,
+    riskReason: 'Warehouse transfer — dispatcher + receiver confirmation chain.',
+    status: 'pending',
+  });
+  await auditLogRepository.append('transfer.requested', { requestId, from, to, design, shade, qty: aj.qty }, String(requestedBy || ''));
+  return { requestId, aj };
 }
 
 /**
- * Source dispatcher accepts: requested → in_transit (operational ack; bales
- * already in_transit @ dest). No inventory change.
- * @returns {Promise<{ok:boolean, transfer?:object, message?:string}>}
+ * Source dispatcher accepts: stage requested → in_transit (ack only).
+ * @returns {Promise<{ok:boolean, aj?:object, message?:string}>}
  */
-async function dispatch(transferId) {
-  const t = await transfersRepo.findById(transferId);
-  if (!t) return { ok: false, message: 'transferService: transfer not found' };
-  if (t.status !== STATUSES.REQUESTED) {
-    return { ok: false, message: `transferService: cannot dispatch a ${t.status} transfer` };
+async function dispatch(requestId, byUserId) {
+  const row = await findTransfer(requestId);
+  if (!row) return { ok: false, message: 'transferService: transfer not found' };
+  if (row.status !== 'pending' || row.actionJSON.stage !== STAGES.REQUESTED) {
+    return { ok: false, message: `transferService: cannot dispatch (${row.status}/${row.actionJSON.stage})` };
   }
-  const transfer = await transfersRepo.update(transferId, {
-    status: STATUSES.IN_TRANSIT,
-    dispatched_at: new Date().toISOString(),
-  });
-  return { ok: true, transfer };
+  await approvalQueueRepository.updateActionJSON(requestId, { stage: STAGES.IN_TRANSIT, dispatchedAt: new Date().toISOString() });
+  await auditLogRepository.append('transfer.dispatched', { requestId }, String(byUserId || ''));
+  return { ok: true, aj: { ...row.actionJSON, stage: STAGES.IN_TRANSIT } };
 }
 
 /**
- * Destination receiver confirms: in_transit → received; bales become available
- * (sellable) at the destination warehouse.
- * @returns {Promise<{ok:boolean, transfer?:object, message?:string}>}
+ * Destination receiver confirms: bales sellable @ destination; row closed.
+ * @returns {Promise<{ok:boolean, aj?:object, message?:string}>}
  */
-async function confirmReceipt(transferId) {
-  const t = await transfersRepo.findById(transferId);
-  if (!t) return { ok: false, message: 'transferService: transfer not found' };
-  if (t.status !== STATUSES.IN_TRANSIT) {
-    return { ok: false, message: `transferService: cannot confirm a ${t.status} transfer` };
+async function confirmReceipt(requestId, byUserId) {
+  const row = await findTransfer(requestId);
+  if (!row) return { ok: false, message: 'transferService: transfer not found' };
+  if (row.status !== 'pending' || row.actionJSON.stage !== STAGES.IN_TRANSIT) {
+    return { ok: false, message: `transferService: cannot confirm (${row.status}/${row.actionJSON.stage})` };
   }
-  const pkgs = transfersRepo.packageNosOf(t);
-  // in_transit → available; warehouse already destination, so leave it.
-  await inventoryRepo.transitionBales(pkgs, IN_TRANSIT, AVAILABLE, null);
-  const transfer = await transfersRepo.update(transferId, {
-    status: STATUSES.RECEIVED,
-    received_at: new Date().toISOString(),
+  const aj = row.actionJSON;
+  await inventoryRepository.transitionBales(aj.bales || [], IN_TRANSIT, AVAILABLE, null);
+  await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString());
+  await transactionsRepository.append({
+    user: String(byUserId || ''), action: ACTION, design: aj.design || '', color: aj.shade || '',
+    qty: aj.qty || (aj.bales || []).length, before: aj.from || '', after: aj.to || '', status: 'completed',
   });
-  return { ok: true, transfer };
+  await auditLogRepository.append('transfer.received', { requestId }, String(byUserId || ''));
+  return { ok: true, aj };
 }
 
 /**
- * Abort a transfer before receipt: revert bales to AVAILABLE @ source.
- * `cancelled` for a source decline (pre-dispatch), `declined` for a dest reject.
- * @returns {Promise<{ok:boolean, transfer?:object, message?:string}>}
+ * Decline (pre-dispatch) or reject (in transit): bales revert to source.
+ * @returns {Promise<{ok:boolean, aj?:object, kind?:string, message?:string}>}
  */
-async function abort(transferId, { reason = '', cancelled = false } = {}) {
-  const t = await transfersRepo.findById(transferId);
-  if (!t) return { ok: false, message: 'transferService: transfer not found' };
-  const terminal = [STATUSES.RECEIVED, STATUSES.DECLINED, STATUSES.CANCELLED];
-  if (terminal.includes(t.status)) {
-    return { ok: false, message: `transferService: transfer already ${t.status}` };
-  }
-  const pkgs = transfersRepo.packageNosOf(t);
-  // in_transit → available, warehouse back to source.
-  await inventoryRepo.transitionBales(pkgs, IN_TRANSIT, AVAILABLE, t.from_warehouse);
-  const transfer = await transfersRepo.update(transferId, {
-    status: cancelled ? STATUSES.CANCELLED : STATUSES.DECLINED,
-    note: reason || '',
-  });
-  return { ok: true, transfer };
+async function abort(requestId, byUserId) {
+  const row = await findTransfer(requestId);
+  if (!row) return { ok: false, message: 'transferService: transfer not found' };
+  if (row.status !== 'pending') return { ok: false, message: `transferService: transfer already ${row.status}` };
+  const aj = row.actionJSON;
+  const kind = aj.stage === STAGES.IN_TRANSIT ? 'rejected' : 'declined';
+  await inventoryRepository.transitionBales(aj.bales || [], IN_TRANSIT, AVAILABLE, aj.from);
+  await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString());
+  await auditLogRepository.append(`transfer.${kind}`, { requestId }, String(byUserId || ''));
+  return { ok: true, aj, kind };
 }
 
 module.exports = {
+  ACTION,
+  STAGES,
   availableBales,
   selectByQuantity,
-  selectByBaleNumbers,
+  getOpenTransfers,
+  findTransfer,
   createTransfer,
   dispatch,
   confirmReceipt,
   abort,
-  AVAILABLE,
-  IN_TRANSIT,
 };
