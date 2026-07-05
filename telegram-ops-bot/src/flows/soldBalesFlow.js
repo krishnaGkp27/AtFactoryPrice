@@ -30,6 +30,7 @@
  */
 
 const sessionStore        = require('../utils/sessionStore');
+const { makeRenderer } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const designAssetsRepository = require('../repositories/designAssetsRepository');
 const pricingService      = require('../services/pricingService');
@@ -75,22 +76,8 @@ function baleGroupKey(r) { return r.baleUid || `pkg:${r.packageNo}`; }
 
 /* ───────────────────────────── render helper ───────────────────────────── */
 
-async function render(bot, chatId, userId, text, rows) {
-  const session = sessionStore.get(userId);
-  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
-  const mid = session && session.flowMessageId;
-  if (mid) {
-    try {
-      await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
-      return;
-    } catch (_) { /* fall through to fresh send */ }
-  }
-  const sent = await bot.sendMessage(chatId, text, opts);
-  if (session) {
-    session.flowMessageId = sent.message_id;
-    sessionStore.set(userId, session);
-  }
-}
+// Anchored edit-else-send renderer — shared flowKit implementation.
+const render = makeRenderer();
 
 /* ───────────────────────────── entry ───────────────────────────── */
 

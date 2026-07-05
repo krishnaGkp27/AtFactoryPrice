@@ -15,12 +15,10 @@
 'use strict';
 
 const settingsRepository = require('../repositories/settingsRepository');
+const { ttlCache } = require('../utils/ttlCache');
 
 const SETTINGS_KEY = 'THAN_VISIBILITY_WAREHOUSES';
 const CACHE_TTL_MS = 60 * 1000;
-
-let _cache = null;
-let _cacheTs = 0;
 
 /**
  * Parse a CSV of warehouse names into a normalized lookup Set.
@@ -34,21 +32,22 @@ function parseWarehouseCsv(csv) {
   return new Set(raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean));
 }
 
+// Cached ~60s; loader swallows sheet errors → feature off, never block a picker.
+const _warehouseCache = ttlCache(CACHE_TTL_MS, async () => {
+  let csv = '';
+  try {
+    const settings = await settingsRepository.getAll();
+    csv = settings[SETTINGS_KEY];
+  } catch (_) { /* sheet unreachable → feature off */ }
+  return parseWarehouseCsv(csv);
+});
+
 /**
  * Warehouses flagged for than-count visibility (cached ~60s).
  * @returns {Promise<Set<string>>}
  */
 async function getThanVisibilityWarehouses() {
-  const now = Date.now();
-  if (_cache && now - _cacheTs < CACHE_TTL_MS) return _cache;
-  let csv = '';
-  try {
-    const settings = await settingsRepository.getAll();
-    csv = settings[SETTINGS_KEY];
-  } catch (_) { /* sheet unreachable → feature off, never block the picker */ }
-  _cache = parseWarehouseCsv(csv);
-  _cacheTs = now;
-  return _cache;
+  return _warehouseCache.get();
 }
 
 /**
@@ -63,8 +62,7 @@ async function isThanVisibilityWarehouse(warehouse) {
 
 /** Drop the cached list (tests / after Settings writes). */
 function invalidateCache() {
-  _cache = null;
-  _cacheTs = 0;
+  _warehouseCache.invalidate();
 }
 
 /**

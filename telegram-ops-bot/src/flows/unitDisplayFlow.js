@@ -23,6 +23,7 @@
  */
 
 const sessionStore = require('../utils/sessionStore');
+const { makeRenderer } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const usersRepository = require('../repositories/usersRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
@@ -43,22 +44,8 @@ function closeRow() {
   return [{ text: '❌ Close', callback_data: 'udf:cancel' }];
 }
 
-async function render(bot, chatId, userId, text, rows) {
-  const session = sessionStore.get(userId);
-  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
-  const mid = session && session.flowMessageId;
-  if (mid) {
-    try {
-      await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
-      return;
-    } catch (_) { /* fall through to fresh send */ }
-  }
-  const sent = await bot.sendMessage(chatId, text, opts);
-  if (session) {
-    session.flowMessageId = sent.message_id;
-    sessionStore.set(userId, session);
-  }
-}
+// Anchored edit-else-send renderer — shared flowKit implementation.
+const render = makeRenderer();
 
 /**
  * TV-2 gate: admins and (active) managers may request a switch.

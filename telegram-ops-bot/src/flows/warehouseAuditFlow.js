@@ -29,6 +29,7 @@
  */
 
 const sessionStore        = require('../utils/sessionStore');
+const { makeRenderer } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const inventoryService    = require('../services/inventoryService');
 const shadesRepository    = require('../repositories/shadesRepository');
@@ -70,22 +71,8 @@ const MARK_MISSING = 'missing';
  * @param {Array<Array<object>>} rows Inline keyboard rows.
  * @returns {Promise<void>}
  */
-async function render(bot, chatId, userId, text, rows) {
-  const session = sessionStore.get(userId);
-  const opts = { reply_markup: { inline_keyboard: rows } };
-  const mid = session && session.flowMessageId;
-  if (mid) {
-    try {
-      await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
-      return;
-    } catch (_) { /* fall through to fresh send */ }
-  }
-  const sent = await bot.sendMessage(chatId, text, opts);
-  if (session) {
-    session.flowMessageId = sent.message_id;
-    sessionStore.set(userId, session);
-  }
-}
+// Anchored edit-else-send renderer — shared flowKit implementation.
+const render = makeRenderer({ parseMode: null });
 
 function fmtQty(n) { return (Math.round((n || 0) * 100) / 100).toLocaleString('en-NG'); }
 function closeRow() { return [{ text: '❌ Close', callback_data: 'wai:close' }]; }

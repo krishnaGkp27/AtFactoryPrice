@@ -31,6 +31,7 @@
 const sessionStore = require('../utils/sessionStore');
 const settingsRepository = require('../repositories/settingsRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
+const { ttlCache } = require('../utils/ttlCache');
 const logger = require('../utils/logger');
 
 const TICK_MS = 60 * 1000;
@@ -60,8 +61,6 @@ const FLOW_LABELS = {
 };
 
 const pending = [];
-let _settingsCache = null;
-let _settingsCacheTs = 0;
 let _timer = null;
 
 function humanize(type) {
@@ -70,28 +69,29 @@ function humanize(type) {
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'This process';
 }
 
-/** Resolve grace config from Settings (cached ~5 min). */
-async function getConfig() {
-  const now = Date.now();
-  if (_settingsCache && now - _settingsCacheTs < SETTINGS_CACHE_MS) return _settingsCache;
+// Grace config from Settings, cached ~5 min; loader falls back to defaults
+// on sheet errors so the janitor never stalls.
+const _configCache = ttlCache(SETTINGS_CACHE_MS, async () => {
   let s = {};
   try {
     s = await settingsRepository.getAll();
   } catch (_) { /* fall back to defaults below */ }
   const num = (v, dflt) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : dflt);
   const heavyCsv = typeof s.FLOW_CLEANUP_HEAVY_TYPES === 'string' ? s.FLOW_CLEANUP_HEAVY_TYPES : '';
-  _settingsCache = {
+  return {
     defaultMs: num(s.FLOW_CLEANUP_MINUTES, 30) * 60 * 1000,
     heavyMs: num(s.FLOW_CLEANUP_MINUTES_HEAVY, 60) * 60 * 1000,
     heavyTypes: new Set(heavyCsv.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean)),
   };
-  _settingsCacheTs = now;
-  return _settingsCache;
+});
+
+/** Resolve grace config from Settings (cached ~5 min). */
+async function getConfig() {
+  return _configCache.get();
 }
 
 function invalidateConfigCache() {
-  _settingsCache = null;
-  _settingsCacheTs = 0;
+  _configCache.invalidate();
 }
 
 function graceMsFor(type, cfg) {

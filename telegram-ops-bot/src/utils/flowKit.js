@@ -24,13 +24,17 @@ const sessionStore = require('./sessionStore');
  * @param {object} [opts]
  * @param {string|null} [opts.parseMode='Markdown']  null → plain text
  * @param {boolean} [opts.disablePreview=false]      disable_web_page_preview
+ * @param {boolean} [opts.requireSession=false]      render nothing when the
+ *        session is gone (the strict variant several flows use — their
+ *        screens are meaningless without live state)
  * @returns {(bot:object, chatId:number|string, userId:string, text:string, rows:Array) => Promise<number|null>}
  *          resolves with the message id the render landed on (null if unknown)
  */
 function makeRenderer(opts = {}) {
-  const { parseMode = 'Markdown', disablePreview = false } = opts;
+  const { parseMode = 'Markdown', disablePreview = false, requireSession = false } = opts;
   return async function render(bot, chatId, userId, text, rows) {
     const session = sessionStore.get(userId);
+    if (requireSession && !session) return null;
     const sendOpts = { reply_markup: { inline_keyboard: rows } };
     if (parseMode) sendOpts.parse_mode = parseMode;
     if (disablePreview) sendOpts.disable_web_page_preview = true;

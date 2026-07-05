@@ -46,6 +46,15 @@ test('render without a session still sends (no crash, no anchor)', async () => {
   assert.equal(sessionStore.get('r3'), null);
 });
 
+test('renderer option requireSession: renders nothing without a session', async () => {
+  sessionStore.clear('r5');
+  const bot = createFakeBot();
+  const render = makeRenderer({ requireSession: true });
+  const mid = await render(bot, 'c', 'r5', 'hello', []);
+  assert.equal(mid, null);
+  assert.equal(bot.callsTo('sendMessage').length, 0, 'strict variant sends nothing');
+});
+
 test('renderer options: plain text + disabled preview', async () => {
   sessionStore.clear('r4');
   const bot = createFakeBot();

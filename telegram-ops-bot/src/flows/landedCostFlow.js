@@ -51,6 +51,7 @@
  */
 
 const sessionStore               = require('../utils/sessionStore');
+const { makeRenderer } = require('../utils/flowKit');
 const goodsReceiptsRepository    = require('../repositories/goodsReceiptsRepository');
 const landedCostTypesRepository  = require('../repositories/landedCostTypesRepository');
 const landedCostService          = require('../services/landedCostService');
@@ -64,21 +65,8 @@ const MAX_CHARGE_AMOUNT = 10_000_000; // $10M sanity ceiling per single charge
 // Rendering helpers (single anchored card; UX-C1)
 // ---------------------------------------------------------------------------
 
-async function render(bot, chatId, userId, text, rows) {
-  const session = sessionStore.get(userId);
-  if (!session) return;
-  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
-  const mid = session.flowMessageId;
-  if (mid) {
-    try {
-      await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
-      return;
-    } catch (_) { /* message gone / identical — fall through */ }
-  }
-  const sent = await bot.sendMessage(chatId, text, opts);
-  session.flowMessageId = sent.message_id;
-  sessionStore.set(userId, session);
-}
+// Anchored edit-else-send renderer — shared flowKit implementation.
+const render = makeRenderer({ requireSession: true });
 
 function cancelRow()  { return [{ text: '❌ Cancel', callback_data: 'lcost:cancel' }]; }
 function backRow()    { return [{ text: '⬅ Back',   callback_data: 'lcost:back'   }]; }

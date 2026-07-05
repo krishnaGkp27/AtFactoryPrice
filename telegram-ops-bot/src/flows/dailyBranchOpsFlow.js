@@ -48,6 +48,7 @@
  */
 
 const sessionStore = require('../utils/sessionStore');
+const { makeRenderer } = require('../utils/flowKit');
 const branchOpsService = require('../services/branchOpsService');
 const branchOpsLogRepository = require('../repositories/branchOpsLogRepository');
 const logger = require('../utils/logger');
@@ -56,21 +57,8 @@ const logger = require('../utils/logger');
 // Rendering helpers
 // ---------------------------------------------------------------------------
 
-async function render(bot, chatId, userId, text, rows) {
-  const session = sessionStore.get(userId);
-  if (!session) return;
-  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
-  const mid = session.flowMessageId;
-  if (mid) {
-    try {
-      await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
-      return;
-    } catch (_) { /* message gone / identical — fall through */ }
-  }
-  const sent = await bot.sendMessage(chatId, text, opts);
-  session.flowMessageId = sent.message_id;
-  sessionStore.set(userId, session);
-}
+// Anchored edit-else-send renderer — shared flowKit implementation.
+const render = makeRenderer({ requireSession: true });
 
 function backRow()   { return [{ text: '⬅ Back',   callback_data: 'bops:back'   }]; }
 function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'bops:cancel' }]; }
