@@ -5521,6 +5521,10 @@ async function showCartSummary(bot, chatId, userId) {
     [{ text: '➕ Add More', callback_data: 'srf_cart:add' }, { text: '🗑️ Remove', callback_data: 'srf_cart:remove' }],
     [{ text: '➡️ Checkout', callback_data: 'srf_cart:proceed' }, { text: '❌ Cancel', callback_data: 'srf_cart:cancel' }],
   ];
+  // Admin-only handoff into the TRF-2 transfer wizard (prefilled from cart).
+  if (auth.isAdmin(String(userId))) {
+    rows.splice(1, 0, [{ text: '🚚 Transfer', callback_data: 'srf_cart:transfer' }]);
+  }
   await editOrSendAnchored(bot, chatId, userId, text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
@@ -8945,6 +8949,23 @@ async function handleCallbackQuery(bot, callbackQuery) {
       session.step = 'customer';
       sessionStore.set(uid, session);
       await showSupplyCustomerPicker(bot, chatId, uid);
+    } else if (action === 'transfer') {
+      if (!auth.isAdmin(uid)) {
+        await bot.sendMessage(chatId, '🚚 Transfers can be created by admins only.');
+        await showCartSummary(bot, chatId, uid);
+        return;
+      }
+      // Hand the cart context to the TRF-2 wizard: warehouse always; the
+      // full line (design/shade/qty) only when the cart has exactly one.
+      const single = session.cart && session.cart.length === 1 ? session.cart[0] : null;
+      await clearDesignPreview(bot, chatId, uid);
+      sessionStore.clear(uid);
+      await require('../flows/transferFlow').start(bot, chatId, uid, null, {
+        from: session.warehouse,
+        design: single ? single.design : undefined,
+        shade: single ? single.shade : undefined,
+        qty: single ? single.quantity : undefined,
+      });
     } else if (action === 'cancel') {
       await clearDesignPreview(bot, chatId, uid);
       sessionStore.clear(uid);

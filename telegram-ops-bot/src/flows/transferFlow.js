@@ -317,14 +317,61 @@ async function showList(bot, chatId, userId, messageId) {
  * Start the transfer wizard (admin only).
  * @param {object} bot @param {number|string} chatId
  * @param {string} userId @param {number|null} messageId
+ * @param {{from: string, design?: string, shade?: string, qty?: number}} [prefill]
+ *   Optional context handoff (e.g. from the supply cart). The wizard resumes
+ *   at the furthest step the prefill validates against live stock; invalid
+ *   parts degrade gracefully to the nearest earlier step.
  */
-async function start(bot, chatId, userId, messageId) {
+async function start(bot, chatId, userId, messageId, prefill) {
   if (!auth.isAdmin(String(userId))) {
     await bot.sendMessage(chatId, '🚚 Transfers can be created by admins only.');
     return;
   }
   sessionStore.set(userId, { type: SESSION_TYPE, step: 'source', flowMessageId: messageId || null });
+  if (prefill && prefill.from) {
+    await startPrefilled(bot, chatId, userId, prefill);
+    return;
+  }
   await showSource(bot, chatId, userId);
+}
+
+/**
+ * Enter the wizard with prefilled context, validating each part against
+ * live available stock. Falls back: bad warehouse → source screen, bad
+ * design/shade → design screen, bad qty → qty screen.
+ * @param {object} bot @param {number|string} chatId @param {string} userId
+ * @param {{from: string, design?: string, shade?: string, qty?: number}} prefill
+ */
+async function startPrefilled(bot, chatId, userId, prefill) {
+  const session = sessionStore.get(userId);
+  const inv = await availableInventory();
+  if (!inv.some((r) => r.warehouse === prefill.from)) {
+    await showSource(bot, chatId, userId);
+    return;
+  }
+  session.from = prefill.from;
+  sessionStore.set(userId, session);
+  if (!prefill.design || prefill.shade === undefined || prefill.shade === null) {
+    await showDesigns(bot, chatId, userId);
+    return;
+  }
+  const avail = transferService.availableBales(inv, prefill.from, prefill.design, prefill.shade).length;
+  if (!avail) {
+    await showDesigns(bot, chatId, userId);
+    return;
+  }
+  session.design = prefill.design;
+  session.shade = prefill.shade;
+  sessionStore.set(userId, session);
+  const qty = parseInt(prefill.qty, 10);
+  if (!qty || qty < 1 || qty > avail) {
+    await showQty(bot, chatId, userId);
+    return;
+  }
+  session.qty = qty;
+  session.availBales = avail;
+  sessionStore.set(userId, session);
+  await showDest(bot, chatId, userId);
 }
 
 /** Step back one wizard screen. */
@@ -415,5 +462,5 @@ module.exports = {
   start,
   showList,
   handleCallback,
-  _internals: { candidatesFor, resolvePeople, submit, handleAction, SESSION_TYPE },
+  _internals: { candidatesFor, resolvePeople, submit, handleAction, startPrefilled, SESSION_TYPE },
 };
