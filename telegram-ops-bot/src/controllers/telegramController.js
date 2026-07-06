@@ -2539,6 +2539,20 @@ async function sendCheckStockReport(bot, chatId, design, userId = null) {
   reply += `(${stock.totalThans} ${productTypesRepo.pluralize(labels.subunit_label, stock.totalThans).toLowerCase()}), `;
   reply += `${fmtQty(stock.totalYards)} ${labels.measure_unit}\n`;
 
+  // TRF-2 — bales mid-transfer sit at the destination as in_transit:
+  // visible here so the receiving team can see what's coming, but not
+  // sellable until the receiver confirms.
+  const inTransit = allInv.filter((r) => r.status === 'in_transit' && r.design === design);
+  if (inTransit.length) {
+    const byDest = new Map();
+    for (const r of inTransit) {
+      if (!byDest.has(r.warehouse)) byDest.set(r.warehouse, new Set());
+      byDest.get(r.warehouse).add(r.packageNo);
+    }
+    const parts = [...byDest.entries()].map(([w, pkgs]) => `${pkgs.size} bale${pkgs.size === 1 ? '' : 's'} → ${w}`);
+    reply += `🚚 In transit (not yet sellable): ${parts.join(', ')}\n`;
+  }
+
   const avail = allInv.filter((r) => r.status === 'available' && r.design === design);
   if (avail.length) {
     const byShade = new Map();
@@ -6050,6 +6064,7 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['bs:'], handle: (bot, cq) => require('../flows/bundleSaleFlow').handleCallback(bot, cq) },
   { prefixes: ['wai:'], handle: (bot, cq) => require('../flows/warehouseAuditFlow').handleCallback(bot, cq) },
   { prefixes: ['udf:'], handle: (bot, cq) => require('../flows/unitDisplayFlow').handleCallback(bot, cq) },
+  { prefixes: ['trf:'], handle: (bot, cq) => require('../flows/transferFlow').handleCallback(bot, cq) },
   { prefixes: ['sbl:'], handle: (bot, cq) => require('../flows/soldBalesFlow').handleCallback(bot, cq) },
   // People / HR flows.
   { prefixes: ['usr:'], handle: (bot, cq) => require('../flows/userAddFlow').handleCallback(bot, cq) },
@@ -8418,6 +8433,19 @@ async function handleCallbackQuery(bot, callbackQuery) {
         // admin approval (set_unit_display, ALWAYS_APPROVAL_ACTIONS).
         const unitDisplayFlow = require('../flows/unitDisplayFlow');
         await unitDisplayFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'transfer_stock': {
+        // TRF-2 — staged warehouse transfer wizard (admin-only gate lives
+        // inside the flow; dispatcher/receiver chain is the control).
+        const transferFlow = require('../flows/transferFlow');
+        await transferFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'transfers_view': {
+        // TRF-2 — read-only open-transfers list.
+        const transferFlow = require('../flows/transferFlow');
+        await transferFlow.showList(bot, chatId, uid, messageId);
         break;
       }
       case 'sold_bales_lookup': {

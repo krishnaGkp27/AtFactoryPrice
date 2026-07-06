@@ -97,6 +97,11 @@ const ACTIVITIES = [
   { code: 'photo_receive_goods',   label: 'Photo Receive (image/PDF)', icon: '📷', callback: 'act:photo_receive_goods', hub: 'stock_add' },
 
   // ── Inventory › Move Stock (transfers / returns) ─────────────────────
+  // TRF-2 — staged warehouse transfer (dispatcher → receiver chain) + the
+  // read-only open-transfers list. Will replace the instant transfer tiles
+  // below once the owner signs off after live testing.
+  { code: 'transfer_stock',        label: 'Transfer Stock',            icon: '🚚', callback: 'act:transfer_stock',     hub: 'stock_move' },
+  { code: 'transfers_view',        label: 'Transfers',                 icon: '📋', callback: 'act:transfers_view',     hub: 'stock_move' },
   { code: 'transfer_package',      label: 'Transfer Package',          icon: '🚚', callback: 'act:transfer_package',   hub: 'stock_move' },
   { code: 'transfer_than',         label: 'Transfer Than',             icon: '↔️', callback: 'act:transfer_than',      hub: 'stock_move' },
   { code: 'return_than',           label: 'Return Than',               icon: '↩️', callback: 'act:return_than',        hub: 'stock_move' },
