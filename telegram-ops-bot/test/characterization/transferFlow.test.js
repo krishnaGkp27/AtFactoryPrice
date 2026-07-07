@@ -89,28 +89,30 @@ async function runWizard() {
   return { bot, calls, requestId: calls.appended.requestId };
 }
 
-test('wizard: 5 taps, auto-picked people, queue row + in-transit flip + dispatcher DM', async () => {
+test('wizard: 5 taps, auto-picked people, ORDER queued — nothing locked at send', async () => {
   const { bot, calls, requestId } = await runWizard();
   assert.match(requestId, /^TR-/);
   const aj = calls.appended.actionJSON;
   assert.deepEqual(
-    { from: aj.from, to: aj.to, bales: aj.bales, dispatcher: aj.dispatcher, receiver: aj.receiver, stage: aj.stage },
-    { from: 'Lagos', to: 'Kano office', bales: ['P1', 'P2'], dispatcher: 'abdul', receiver: 'musa', stage: 'requested' },
+    { from: aj.from, to: aj.to, lines: aj.lines, dispatcher: aj.dispatcher, receiver: aj.receiver, stage: aj.stage },
+    { from: 'Lagos', to: 'Kano office', lines: [{ design: '9006', shade: '3', qty: 2 }], dispatcher: 'abdul', receiver: 'musa', stage: 'requested' },
   );
-  assert.deepEqual(calls.transitions[0], { pkgs: ['P1', 'P2'], from: 'available', to: 'in_transit', wh: 'Kano office' });
+  assert.equal(calls.transitions.length, 0, 'TRF-3: no bales flipped at send — dispatcher logs them');
   const dm = bot.callsTo('sendMessage').find((m) => m.args.chatId === 'abdul');
   assert.ok(dm, 'dispatcher got the card');
   const dmCbs = dm.args.opts.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
   assert.deepEqual(dmCbs, [`trf:acc:${requestId}`, `trf:dec:${requestId}`]);
 });
 
-test('dispatch → receive: receiver DM, then bales unlocked at destination', async () => {
+test('dispatch logs ACTUAL bales + flips in-transit; receive unlocks at destination', async () => {
   const { calls, requestId } = await runWizard();
-  // Abdul accepts.
+  // Abdul accepts → bales picked live and flipped now.
   const bot2 = createFakeBot();
   await controller.handleCallbackQuery(bot2, cb(`trf:acc:${requestId}`, 'abdul'));
+  assert.deepEqual(calls.transitions[0], { pkgs: ['P1', 'P2'], from: 'available', to: 'in_transit', wh: 'Kano office' });
   const rdm = bot2.callsTo('sendMessage').find((m) => m.args.chatId === 'musa');
   assert.ok(rdm, 'receiver got the incoming card');
+  assert.match(rdm.args.text, /2× 9006\/3/, 'receiver sees what was actually dispatched');
   assert.ok(rdm.args.opts.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === `trf:rcv:${requestId}`));
   // Musa confirms receipt.
   const bot3 = createFakeBot();
@@ -122,13 +124,23 @@ test('dispatch → receive: receiver DM, then bales unlocked at destination', as
   assert.ok(bot3.callsTo('sendMessage').some((m) => String(m.args.chatId) === '777'), 'admin notified');
 });
 
-test('dispatcher decline reverts bales to source', async () => {
+test('shortfall at dispatch: partial send recorded and flagged', async () => {
+  const { calls, requestId } = await runWizard();
+  // Between order and dispatch, Lagos sold a bale: only P1 remains.
+  inventoryRepository.getAll = async () => [invRow('P1'), invRow('P9', 'available', 'Kano office')];
+  const bot2 = createFakeBot();
+  await controller.handleCallbackQuery(bot2, cb(`trf:acc:${requestId}`, 'abdul'));
+  assert.deepEqual(calls.transitions[0].pkgs, ['P1'], 'only the existing bale dispatched');
+  assert.match(bot2.allText(), /1\/2× 9006\/3 ⚠️ short/, 'per-line shortfall shown');
+  assert.match(bot2.allText(), /Partially dispatched/i);
+});
+
+test('dispatcher decline (pre-dispatch): nothing was moved, nothing reverted', async () => {
   const { calls, requestId } = await runWizard();
   const bot2 = createFakeBot();
   await controller.handleCallbackQuery(bot2, cb(`trf:dec:${requestId}`, 'abdul'));
-  const revert = calls.transitions.find((t) => t.from === 'in_transit' && t.to === 'available' && t.wh === 'Lagos');
-  assert.ok(revert, 'bales reverted to Lagos');
-  assert.match(bot2.allText(), /declined.*reverted to \*Lagos\*/i);
+  assert.equal(calls.transitions.length, 0, 'no inventory touch on pre-dispatch decline');
+  assert.match(bot2.allText(), /declined.*nothing was moved/i);
 });
 
 test('a stranger cannot act on someone else\'s transfer card', async () => {

@@ -8955,16 +8955,14 @@ async function handleCallbackQuery(bot, callbackQuery) {
         await showCartSummary(bot, chatId, uid);
         return;
       }
-      // Hand the cart context to the TRF-2 wizard: warehouse always; the
-      // full line (design/shade/qty) only when the cart has exactly one.
-      const single = session.cart && session.cart.length === 1 ? session.cart[0] : null;
+      // TRF-3 — hand the FULL cart to the transfer flow: every line
+      // (design/shade/qty) carries over, so nothing is re-selected. The
+      // flow jumps straight to the destination step.
       await clearDesignPreview(bot, chatId, uid);
       sessionStore.clear(uid);
       await require('../flows/transferFlow').start(bot, chatId, uid, null, {
         from: session.warehouse,
-        design: single ? single.design : undefined,
-        shade: single ? single.shade : undefined,
-        qty: single ? single.quantity : undefined,
+        lines: (session.cart || []).map((c) => ({ design: c.design, shade: c.shade, qty: c.quantity })),
       });
     } else if (action === 'cancel') {
       await clearDesignPreview(bot, chatId, uid);

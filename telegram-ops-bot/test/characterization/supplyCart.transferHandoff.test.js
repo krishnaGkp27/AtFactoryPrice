@@ -73,39 +73,42 @@ test('non-admin cart summary hides the 🚚 Transfer button', async () => {
   assert.ok(!kb.some((b) => b.includes('srf_cart:transfer')), 'no Transfer button for non-admin');
 });
 
-test('single-line cart: handoff lands on destination with design/shade/qty prefilled', async () => {
+test('single-line cart: handoff lands on destination with the line carried', async () => {
   seedCartSession('777', [cartLine(2)]);
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_cart:transfer', 777));
   const session = sessionStore.get('777');
   assert.equal(session.type, 'transfer_flow');
-  assert.deepEqual(
-    { from: session.from, design: session.design, shade: session.shade, qty: session.qty, step: session.step },
-    { from: 'Lagos', design: '9006', shade: '3', qty: 2, step: 'dest' },
-  );
+  assert.equal(session.step, 'dest');
+  assert.deepEqual(session.lines, [{ design: '9006', shade: '3', qty: 2 }]);
   assert.match(bot.allText(), /To which warehouse\?/);
   assert.ok(lastKb(bot).some((b) => b.includes('trf:dest:')), 'destination picker shown');
 });
 
-test('multi-line cart: handoff prefills warehouse only and lands on design picker', async () => {
+test('multi-line cart: ALL lines carried — straight to destination, no re-picking', async () => {
   seedCartSession('777', [cartLine(1), cartLine(1, '5')]);
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_cart:transfer', 777));
   const session = sessionStore.get('777');
   assert.equal(session.type, 'transfer_flow');
   assert.equal(session.from, 'Lagos');
-  assert.equal(session.step, 'design');
-  assert.match(bot.allText(), /Pick a design/);
+  assert.equal(session.step, 'dest', 'no design picker — lines already chosen in the cart');
+  assert.deepEqual(session.lines, [
+    { design: '9006', shade: '3', qty: 1 },
+    { design: '9006', shade: '5', qty: 1 },
+  ]);
+  assert.match(bot.allText(), /1× 9006\/3 \+ 1× 9006\/5/, 'header summarizes the cart lines');
+  assert.match(bot.allText(), /To which warehouse\?/);
 });
 
-test('cart qty above availability falls back to the qty screen', async () => {
+test('cart qty above availability still lands on destination (order model — dispatcher logs actuals)', async () => {
   seedCartSession('777', [cartLine(99)]);
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_cart:transfer', 777));
   const session = sessionStore.get('777');
   assert.equal(session.type, 'transfer_flow');
-  assert.equal(session.step, 'qty');
-  assert.match(bot.allText(), /How many bales to transfer\?/);
+  assert.equal(session.step, 'dest');
+  assert.deepEqual(session.lines, [{ design: '9006', shade: '3', qty: 99 }]);
 });
 
 test('non-admin direct tap on srf_cart:transfer is rejected, cart re-shown', async () => {

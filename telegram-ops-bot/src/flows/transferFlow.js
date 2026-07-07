@@ -144,10 +144,17 @@ async function showDest(bot, chatId, userId) {
     await render(bot, chatId, userId, '⚠️ No destination warehouse found. Assign users to the target warehouse first.', [cancelRow()]);
     return;
   }
+  // Wizard mode carries design/shade/qty — normalize to the lines shape the
+  // service expects (cart handoffs arrive with session.lines already set).
+  if (session.design) {
+    session.lines = [{ design: session.design, shade: session.shade, qty: session.qty }];
+  }
   session._dests = dests; session.step = 'dest'; sessionStore.set(userId, session);
   const rows = chunk(dests.map((w, i) => ({ text: `🏭 ${w}`, callback_data: `trf:dest:${i}` })), 2);
-  rows.push(navRow());
-  await render(bot, chatId, userId, `🚚 *${session.qty} bales · ${session.design}/${session.shade}*\n\nTo which warehouse?`, rows);
+  // Cart handoffs have no wizard steps to go back to — change the cart instead.
+  rows.push(session.cartOrigin ? cancelRow() : navRow());
+  const summary = (session.lines || []).map((l) => `${l.qty}× ${l.design}/${l.shade}`).join(' + ');
+  await render(bot, chatId, userId, `🚚 *${summary}*\nFrom *${session.from}*\n\nTo which warehouse?`, rows);
 }
 
 /** After destination: resolve people (auto-pick singles) then confirm. */
@@ -184,53 +191,59 @@ async function showPersonPicker(bot, chatId, userId, role, cands) {
 async function showConfirm(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   session.step = 'confirm'; sessionStore.set(userId, session);
+  const items = (session.lines || []).map((l) => `  🧵 ${l.design} · Shade ${l.shade} · ×${l.qty} bls`).join('\n');
+  const total = (session.lines || []).reduce((s, l) => s + l.qty, 0);
   await render(bot, chatId, userId,
-    `🚚 *Confirm transfer*\n\n*${session.qty} bales* · ${session.design} · Shade ${session.shade}\n`
-    + `*${session.from}* → *${session.to}*\n\n`
+    `🚚 *Confirm transfer* — ${total} bale(s)\n\n${items}\n\n`
+    + `*${session.from}* → *${session.to}*\n`
     + `Dispatcher: *${session.dispatcher.name}*\nReceiver: *${session.receiver.name}*\n\n`
-    + `_Bales will show as 🚚 in transit at ${session.to} (not sellable) until ${session.receiver.name} confirms receipt._`,
-    [[{ text: '✅ Send', callback_data: 'trf:send' }], navRow()]);
+    + `_This sends an ORDER — ${session.dispatcher.name} logs the actual bales when dispatching; nothing is locked until then._`,
+    [[{ text: '✅ Send', callback_data: 'trf:send' }], session.cartOrigin ? cancelRow() : navRow()]);
 }
 
 async function submit(bot, chatId, userId) {
   const session = sessionStore.get(userId);
-  const inv = await availableInventory();
-  const sel = transferService.selectByQuantity(inv, session.from, session.design, session.shade, session.qty);
-  if (!sel.ok) {
-    await render(bot, chatId, userId,
-      `⚠️ Only ${sel.available} bale(s) of ${session.design}/${session.shade} remain in ${session.from} — someone moved stock meanwhile. Pick again.`,
-      [navRow()]);
-    return;
-  }
   try {
-    const { requestId } = await transferService.createTransfer({
-      from: session.from, to: session.to, design: session.design, shade: session.shade,
-      qty: session.qty, bales: sel.bales, requestedBy: userId,
+    const { requestId, aj } = await transferService.createTransferRequest({
+      from: session.from, to: session.to, lines: session.lines, requestedBy: userId,
       dispatcher: session.dispatcher.user_id, receiver: session.receiver.user_id,
     });
-    const line = `${session.qty} bales · ${session.design}/${session.shade} · ${session.from} → ${session.to}`;
+    const line = lineOf(aj);
     // Dispatcher card (best-effort DM).
     try {
       await bot.sendMessage(session.dispatcher.user_id,
-        `🚚 *Transfer ${requestId} — please dispatch*\n${line}\nReceiver: ${session.receiver.name}`,
+        `🚚 *Transfer ${requestId} — please dispatch*\n${line}\nReceiver: ${session.receiver.name}\n\n_Accepting logs the actual bales you send._`,
         { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[
           { text: '✅ Accept & dispatch', callback_data: `trf:acc:${requestId}` },
           { text: '❌ Decline', callback_data: `trf:dec:${requestId}` },
         ]] } });
     } catch (e) { logger.warn(`transferFlow: dispatcher DM failed: ${e.message}`); }
-    sessionStore.clear(userId);
+    // Render the receipt BEFORE clearing — the renderer is session-guarded.
     await render(bot, chatId, userId,
       `✅ *Transfer ${requestId} sent*\n${line}\n\n⏳ Waiting for *${session.dispatcher.name}* to dispatch.`,
       [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]);
+    sessionStore.clear(userId);
   } catch (e) {
     logger.error(`transferFlow: submit failed: ${e.message}`);
-    await render(bot, chatId, userId, `⚠️ Could not create the transfer: ${e.message}`, [navRow()]);
+    await render(bot, chatId, userId, `⚠️ Could not create the transfer: ${e.message}`,
+      [session.cartOrigin ? cancelRow() : navRow()]);
   }
 }
 
 /* ── counterparty actions (session-free, keyed by requestId) ───────────── */
 
-function lineOf(aj) { return `${aj.qty} bales · ${aj.design}/${aj.shade} · ${aj.from} → ${aj.to}`; }
+/** "2× 9006/3 + 1× 9032/4 · Lagos → Kano office" from an actionJSON. */
+function lineOf(aj) {
+  const parts = (aj.lines || []).map((l) => `${l.qty}× ${l.design}/${l.shade}`);
+  return `${parts.join(' + ')} · ${aj.from} → ${aj.to}`;
+}
+
+/** Per-line dispatch outcome, marking shortfalls. */
+function dispatchedSummary(aj) {
+  return (aj.dispatched || []).map((d) => (d.sent < d.requested
+    ? `${d.sent}/${d.requested}× ${d.design}/${d.shade} ⚠️ short`
+    : `${d.sent}× ${d.design}/${d.shade}`)).join(' + ');
+}
 
 async function notifyAdmins(bot, text, excludeId) {
   for (const adminId of config.access.adminIds) {
@@ -258,12 +271,16 @@ async function handleAction(bot, query, requestId, action) {
 
   let res; let card;
   if (action === 'acc') {
+    // TRF-3 — accepting IS the logging moment: the actual bales are
+    // live-selected now and flipped in-transit; shortfalls are recorded.
     res = await transferService.dispatch(requestId, userId);
     if (res.ok) {
-      card = `🚚 *${requestId} dispatched*\n${lineOf(aj)}`;
+      const sent = dispatchedSummary(res.aj);
+      const shortNote = res.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
+      card = `🚚 *${requestId} dispatched* — bales logged\n${sent} · ${aj.from} → ${aj.to}${shortNote}`;
       try {
         await bot.sendMessage(aj.receiver,
-          `📦 *Transfer ${requestId} incoming*\n${lineOf(aj)}\n\nConfirm when the goods arrive and match:`,
+          `📦 *Transfer ${requestId} incoming*\n${sent} · from ${aj.from}${shortNote}\n\nConfirm when the goods arrive and match:`,
           { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[
             { text: '✅ Received', callback_data: `trf:rcv:${requestId}` },
             { text: '⚠️ Reject', callback_data: `trf:rej:${requestId}` },
@@ -272,10 +289,14 @@ async function handleAction(bot, query, requestId, action) {
     }
   } else if (action === 'rcv') {
     res = await transferService.confirmReceipt(requestId, userId);
-    if (res.ok) card = `✅ *${requestId} received* — bales are now live at *${aj.to}*.\n${lineOf(aj)}`;
+    if (res.ok) card = `✅ *${requestId} received* — bales are now live at *${aj.to}*.\n${dispatchedSummary(aj) || lineOf(aj)}`;
   } else { // dec / rej
     res = await transferService.abort(requestId, userId);
-    if (res.ok) card = `❌ *${requestId} ${res.kind}* — bales reverted to *${aj.from}*.\n${lineOf(aj)}`;
+    if (res.ok) {
+      card = res.kind === 'declined'
+        ? `❌ *${requestId} declined* — nothing was moved.\n${lineOf(aj)}`
+        : `❌ *${requestId} rejected* — bales reverted to *${aj.from}*.\n${lineOf(aj)}`;
+    }
   }
 
   if (!res.ok) {
@@ -351,6 +372,19 @@ async function startPrefilled(bot, chatId, userId, prefill) {
   }
   session.from = prefill.from;
   sessionStore.set(userId, session);
+  // TRF-3 — full cart handoff: the lines ARE the selection; go straight to
+  // the destination step. No re-picking of designs/shades/quantities.
+  if (Array.isArray(prefill.lines) && prefill.lines.length) {
+    session.lines = prefill.lines
+      .map((l) => ({ design: l.design, shade: l.shade, qty: Math.max(0, parseInt(l.qty, 10) || 0) }))
+      .filter((l) => l.design && l.qty > 0);
+    if (session.lines.length) {
+      session.cartOrigin = true;
+      sessionStore.set(userId, session);
+      await showDest(bot, chatId, userId);
+      return;
+    }
+  }
   if (!prefill.design || prefill.shade === undefined || prefill.shade === null) {
     await showDesigns(bot, chatId, userId);
     return;

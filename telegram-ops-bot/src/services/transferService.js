@@ -1,20 +1,24 @@
 'use strict';
 
 /**
- * transferService — warehouse→warehouse transfer logic (TRF-2, lean).
+ * transferService — warehouse→warehouse transfer logic (TRF-3, lean).
  *
  * The transfer request rides an ApprovalQueue row (NO dedicated sheet —
- * owner decision, spec §2): actionJSON carries the payload, `stage`
- * advances requested→in_transit via updateActionJSON, and the terminal
- * state lands via updateStatus ('approved' = received, 'rejected' =
- * declined/rejected). History: AuditLog events + one Transactions row on
- * completion.
+ * owner decision): actionJSON carries multi-line ORDER payload
+ * `lines: [{design, shade, qty}]`. The admin's request reserves nothing —
+ * the DISPATCHER's accept is the moment the actual physical bales are
+ * logged (live-selected, sheet order) and flipped to in_transit at the
+ * destination. Short stock at dispatch time → partial dispatch with the
+ * shortfall recorded per line.
  *
- * Inventory effects (existing transitionBales; Status column only):
- *   create   available  → in_transit @ destination (visible, not sellable)
- *   dispatch (no inventory change — operational ack by the source person)
- *   receive  in_transit → available  @ destination (now sellable)
- *   abort    in_transit → available  @ source      (decline/reject revert)
+ *   create   (order only — no inventory change, source keeps selling)
+ *   dispatch  live-select bales per line → available → in_transit @ dest
+ *   receive   in_transit → available @ destination (now sellable)
+ *   abort     pre-dispatch decline: close only (nothing was moved);
+ *             post-dispatch reject: in_transit → available @ source
+ *
+ * Terminal state via updateStatus ('approved' = received, 'rejected' =
+ * declined/rejected); history = AuditLog + one Transactions row on receipt.
  */
 
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
@@ -52,7 +56,8 @@ function availableBales(inventory, warehouse, design, shade) {
 }
 
 /**
- * Auto-pick the first `qty` available bales of design+shade (sheet order).
+ * Pick up to `qty` available bales of design+shade (sheet order).
+ * `bales` holds what could be picked even when short (ok=false).
  * @returns {{ ok:boolean, bales:string[], available:number }}
  */
 function selectByQuantity(inventory, fromWarehouse, design, shade, qty) {
@@ -63,7 +68,7 @@ function selectByQuantity(inventory, fromWarehouse, design, shade, qty) {
 
 /* ── lifecycle (queue-carried) ─────────────────────────────────────────── */
 
-/** Open (pending) transfer rows, newest last. */
+/** Open (pending) transfer rows. */
 async function getOpenTransfers() {
   const pending = await approvalQueueRepository.getAllPending();
   return pending.filter((p) => p.actionJSON && p.actionJSON.action === ACTION);
@@ -77,34 +82,40 @@ async function findTransfer(requestId) {
 }
 
 /**
- * Create a transfer: bales → in_transit @ destination, queue row appended.
+ * Create a transfer ORDER: queue row only — no bales are picked or locked
+ * yet (the dispatcher logs the physical bales at dispatch time).
+ * @param {{from:string,to:string,lines:Array<{design:string,shade:string,qty:number}>,requestedBy:string,dispatcher:string,receiver:string}} p
  * @returns {Promise<{requestId:string, aj:object}>}
  */
-async function createTransfer({ from, to, design, shade, qty, bales, requestedBy, dispatcher, receiver }) {
+async function createTransferRequest({ from, to, lines, requestedBy, dispatcher, receiver }) {
+  const cleanLines = (lines || [])
+    .map((l) => ({ design: l.design, shade: l.shade, qty: Math.max(0, parseInt(l.qty, 10) || 0) }))
+    .filter((l) => l.design && l.qty > 0);
+  if (!cleanLines.length) throw new Error('transferService: at least one line with qty > 0 required');
   const requestId = idGenerator.transfer();
   const aj = {
     action: ACTION,
-    from, to, design, shade,
-    qty: bales.length || qty,
-    bales: bales.map(String),
+    from, to,
+    lines: cleanLines,
     dispatcher: String(dispatcher || ''),
     receiver: String(receiver || ''),
     stage: STAGES.REQUESTED,
   };
-  await inventoryRepository.transitionBales(aj.bales, AVAILABLE, IN_TRANSIT, to);
   await approvalQueueRepository.append({
     requestId, user: String(requestedBy || ''),
     actionJSON: aj,
     riskReason: 'Warehouse transfer — dispatcher + receiver confirmation chain.',
     status: 'pending',
   });
-  await auditLogRepository.append('transfer.requested', { requestId, from, to, design, shade, qty: aj.qty }, String(requestedBy || ''));
+  await auditLogRepository.append('transfer.requested', { requestId, from, to, lines: cleanLines }, String(requestedBy || ''));
   return { requestId, aj };
 }
 
 /**
- * Source dispatcher accepts: stage requested → in_transit (ack only).
- * @returns {Promise<{ok:boolean, aj?:object, message?:string}>}
+ * Dispatcher accepts: log the ACTUAL bales now — live-select per line,
+ * flip them in_transit @ destination, record per-line sent vs requested.
+ * Partial dispatch allowed; fails only when nothing is available at all.
+ * @returns {Promise<{ok:boolean, aj?:object, short?:boolean, message?:string}>}
  */
 async function dispatch(requestId, byUserId) {
   const row = await findTransfer(requestId);
@@ -112,9 +123,24 @@ async function dispatch(requestId, byUserId) {
   if (row.status !== 'pending' || row.actionJSON.stage !== STAGES.REQUESTED) {
     return { ok: false, message: `transferService: cannot dispatch (${row.status}/${row.actionJSON.stage})` };
   }
-  await approvalQueueRepository.updateActionJSON(requestId, { stage: STAGES.IN_TRANSIT, dispatchedAt: new Date().toISOString() });
-  await auditLogRepository.append('transfer.dispatched', { requestId }, String(byUserId || ''));
-  return { ok: true, aj: { ...row.actionJSON, stage: STAGES.IN_TRANSIT } };
+  const aj = row.actionJSON;
+  const inv = await inventoryRepository.getAll();
+  const picked = [];
+  const dispatched = [];
+  for (const l of (aj.lines || [])) {
+    const sel = selectByQuantity(inv, aj.from, l.design, l.shade, l.qty);
+    picked.push(...sel.bales);
+    dispatched.push({ design: l.design, shade: l.shade, requested: l.qty, sent: sel.bales.length });
+  }
+  if (!picked.length) {
+    return { ok: false, message: 'No stock left for any line — decline the transfer instead.' };
+  }
+  const short = dispatched.some((d) => d.sent < d.requested);
+  await inventoryRepository.transitionBales(picked, AVAILABLE, IN_TRANSIT, aj.to);
+  const patch = { stage: STAGES.IN_TRANSIT, bales: picked, dispatched, short, dispatchedAt: new Date().toISOString() };
+  await approvalQueueRepository.updateActionJSON(requestId, patch);
+  await auditLogRepository.append('transfer.dispatched', { requestId, dispatched, short }, String(byUserId || ''));
+  return { ok: true, aj: { ...aj, ...patch }, short };
 }
 
 /**
@@ -130,16 +156,20 @@ async function confirmReceipt(requestId, byUserId) {
   const aj = row.actionJSON;
   await inventoryRepository.transitionBales(aj.bales || [], IN_TRANSIT, AVAILABLE, null);
   await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString());
+  const totalSent = (aj.dispatched || []).reduce((s, d) => s + d.sent, 0) || (aj.bales || []).length;
   await transactionsRepository.append({
-    user: String(byUserId || ''), action: ACTION, design: aj.design || '', color: aj.shade || '',
-    qty: aj.qty || (aj.bales || []).length, before: aj.from || '', after: aj.to || '', status: 'completed',
+    user: String(byUserId || ''), action: ACTION,
+    design: (aj.lines || []).map((l) => l.design).join('+'),
+    color: (aj.lines || []).map((l) => l.shade).join('+'),
+    qty: totalSent, before: aj.from || '', after: aj.to || '', status: 'completed',
   });
   await auditLogRepository.append('transfer.received', { requestId }, String(byUserId || ''));
   return { ok: true, aj };
 }
 
 /**
- * Decline (pre-dispatch) or reject (in transit): bales revert to source.
+ * Decline (pre-dispatch: nothing was moved, just close) or reject
+ * (post-dispatch: revert the logged bales to the source).
  * @returns {Promise<{ok:boolean, aj?:object, kind?:string, message?:string}>}
  */
 async function abort(requestId, byUserId) {
@@ -148,7 +178,10 @@ async function abort(requestId, byUserId) {
   if (row.status !== 'pending') return { ok: false, message: `transferService: transfer already ${row.status}` };
   const aj = row.actionJSON;
   const kind = aj.stage === STAGES.IN_TRANSIT ? 'rejected' : 'declined';
-  await inventoryRepository.transitionBales(aj.bales || [], IN_TRANSIT, AVAILABLE, aj.from);
+  if (kind === 'rejected') {
+    // Bales were logged at dispatch — send them home.
+    await inventoryRepository.transitionBales(aj.bales || [], IN_TRANSIT, AVAILABLE, aj.from);
+  }
   await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString());
   await auditLogRepository.append(`transfer.${kind}`, { requestId }, String(byUserId || ''));
   return { ok: true, aj, kind };
@@ -161,7 +194,7 @@ module.exports = {
   selectByQuantity,
   getOpenTransfers,
   findTransfer,
-  createTransfer,
+  createTransferRequest,
   dispatch,
   confirmReceipt,
   abort,

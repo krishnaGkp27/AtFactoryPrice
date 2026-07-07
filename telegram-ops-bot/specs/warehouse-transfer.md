@@ -29,9 +29,14 @@ requested ──dispatcher declines──► DECLINED  (bales → available @ so
                               └───────receiver confirms──► RECEIVED (available @ dest)
 ```
 
-Inventory effects (via existing `inventoryRepository.transitionBales`):
-send = `available→in_transit` + warehouse→destination · confirm = `in_transit→available` ·
-decline/reject = `in_transit→available` + warehouse→source.
+Inventory effects (via existing `inventoryRepository.transitionBales`) — **TRF-3 timing**:
+the admin's request is an ORDER (`lines:[{design,shade,qty}]`, multi-line, e.g. a whole supply
+cart) and locks NOTHING; the DISPATCHER's accept is the logging moment — bales are live-selected
+per line (partial dispatch allowed, shortfalls recorded per line) and flipped
+`available→in_transit` @ destination. Confirm = `in_transit→available`. Pre-dispatch decline
+closes the order without touching inventory; post-dispatch reject reverts the logged bales to
+source. Cart handoff (`srf_cart:transfer`, admin-only) carries ALL cart lines straight to the
+destination step — no re-selection.
 
 ## 4. Screens
 
