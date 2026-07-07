@@ -870,12 +870,16 @@ async function handleCallback(bot, query) {
   // Session-free actions first (cards live in counterparties' / admins' DMs).
   const m = data.match(/^trf:(acc|dec|rcv|rej):(.+)$/);
   if (m) return handleAction(bot, query, m[2], m[1]);
-  let mm;
-  if ((mm = data.match(/^trf:info:(.+)$/))) return showInfo(bot, query, mm[1], true);
-  if ((mm = data.match(/^trf:less:(.+)$/))) return showInfo(bot, query, mm[1], false);
-  if ((mm = data.match(/^trf:dsk:([dr]):(.+)$/))) return skipDoc(bot, query, mm[1], mm[2]);
-  if ((mm = data.match(/^trf:att:([dr]):(.+)$/))) return rearmDoc(bot, query, mm[1], mm[2]);
-  if ((mm = data.match(/^trf:card:(.+)$/))) return showActionCard(bot, query, mm[1]);
+  const mInfo = data.match(/^trf:info:(.+)$/);
+  if (mInfo) return showInfo(bot, query, mInfo[1], true);
+  const mLess = data.match(/^trf:less:(.+)$/);
+  if (mLess) return showInfo(bot, query, mLess[1], false);
+  const mSkip = data.match(/^trf:dsk:([dr]):(.+)$/);
+  if (mSkip) return skipDoc(bot, query, mSkip[1], mSkip[2]);
+  const mAtt = data.match(/^trf:att:([dr]):(.+)$/);
+  if (mAtt) return rearmDoc(bot, query, mAtt[1], mAtt[2]);
+  const mCard = data.match(/^trf:card:(.+)$/);
+  if (mCard) return showActionCard(bot, query, mCard[1]);
   if (data === 'trf:list') {
     await bot.answerCallbackQuery(query.id).catch(() => {});
     await showList(bot, chatId, userId, query.message.message_id);

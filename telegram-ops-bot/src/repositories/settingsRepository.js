@@ -23,6 +23,12 @@ const DEFAULTS = {
   FLOW_CLEANUP_MINUTES: 30,
   FLOW_CLEANUP_MINUTES_HEAVY: 60,
   FLOW_CLEANUP_HEAVY_TYPES: 'supply_req_flow,grn_flow,bulk_receive_flow,photo_receive_flow,bundle_sale_flow,order_flow,receipt_flow,landed_cost_flow,po_new_flow',
+  // BKP-1 — automated daily snapshot of the master sheet into the backup
+  // Drive folder. Hour is UTC (1 = 02:00 Lagos); copies older than the
+  // retention window are trashed (recoverable for 30 more days).
+  SHEET_BACKUP_ENABLED: 1,
+  SHEET_BACKUP_HOUR_UTC: 1,
+  SHEET_BACKUP_RETENTION_DAYS: 14,
 };
 
 async function ensureHeader() {

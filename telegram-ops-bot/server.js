@@ -218,6 +218,9 @@ const server = app.listen(PORT, async () => {
     // SJ-1 — minutely stale-flow janitor: tombstones hanging flow messages
     // after their (Settings-tunable) per-activity grace period lapses.
     require('./src/services/sessionJanitor').start(bot);
+    // BKP-1 — daily snapshot of the master sheet into the backup Drive
+    // folder (Settings-tunable hour/retention; admins DM'd on failure).
+    require('./src/services/sheetBackup').start(bot);
   } catch (e) {
     logger.error('Init error (bot still running):', e.message);
   }
