@@ -10,6 +10,13 @@ functions/          ← Firebase Cloud Functions (separate workstream)
 mobile/             ← Flutter app (separate workstream)
 ```
 
+## ⚠️ Pending live test — FIRST TASK of the next session
+
+**TRF-5 (My Tasks transfer queue + legacy-transfer retirement, commit `28d9121f`) is
+deployed but NOT yet tested on production.** Before any other work on this repo, run
+`telegram-ops-bot/specs/TRF-5_TEST_STEPS.md` end-to-end (needs 3 Telegram IDs: admin,
+dispatcher, receiver; ~20 min). Remove this section once it's signed off.
+
 ## Session start ritual (do this BEFORE any work)
 
 Multiple tools (Claude Code, Cursor, humans) push to this repo in parallel.
