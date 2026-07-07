@@ -224,12 +224,9 @@ async function submit(bot, chatId, userId) {
     const line = lineOf(aj);
     // Dispatcher card (best-effort DM).
     try {
-      await bot.sendMessage(session.dispatcher.user_id,
-        `🚚 *Transfer ${requestId} — please dispatch*\n${line}\nReceiver: ${session.receiver.name}\n\n_Accepting logs the actual bales you send._`,
-        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[
-          { text: '✅ Accept & dispatch', callback_data: `trf:acc:${requestId}` },
-          { text: '❌ Decline', callback_data: `trf:dec:${requestId}` },
-        ]] } });
+      const card = dispatcherCard(requestId, aj, session.receiver.name);
+      await bot.sendMessage(session.dispatcher.user_id, card.text,
+        { parse_mode: 'Markdown', reply_markup: card.kb });
     } catch (e) { logger.warn(`transferFlow: dispatcher DM failed: ${e.message}`); }
     // Render the receipt BEFORE clearing — the renderer is session-guarded.
     await render(bot, chatId, userId,
@@ -269,6 +266,38 @@ function baleListPreview(bales, max = BALE_PREVIEW_MAX) {
 /** Total requested bales across every line. */
 function totalBales(aj) {
   return (aj.lines || []).reduce((s, l) => s + (l.qty || 0), 0);
+}
+
+/**
+ * Dispatcher's action card (Accept & dispatch / Decline). Used for the
+ * submit-time DM and for re-sends from the My Tasks transfer queue.
+ * @returns {{text:string, kb:object}}
+ */
+function dispatcherCard(requestId, aj, receiverName) {
+  return {
+    text: `🚚 *Transfer ${requestId} — please dispatch*\n${lineOf(aj)}\nReceiver: ${receiverName}\n\n_Accepting logs the actual bales you send._`,
+    kb: { inline_keyboard: [[
+      { text: '✅ Accept & dispatch', callback_data: `trf:acc:${requestId}` },
+      { text: '❌ Decline', callback_data: `trf:dec:${requestId}` },
+    ]] },
+  };
+}
+
+/**
+ * Receiver's action card (Received / Reject). Used for the dispatch-time DM
+ * and for re-sends from the My Tasks transfer queue.
+ * @returns {{text:string, kb:object}}
+ */
+function receiverCard(requestId, aj) {
+  const sent = dispatchedSummary(aj) || lineOf(aj);
+  const shortNote = aj.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
+  return {
+    text: `📦 *Transfer ${requestId} incoming*\n${sent} · from ${aj.from}${shortNote}\n📦 Bales: ${baleListPreview(aj.bales)}\n\nConfirm when the goods arrive and match:`,
+    kb: { inline_keyboard: [[
+      { text: '✅ Received', callback_data: `trf:rcv:${requestId}` },
+      { text: '⚠️ Reject', callback_data: `trf:rej:${requestId}` },
+    ]] },
+  };
 }
 
 /** Human state label from a live queue row (status + stage). */
@@ -511,12 +540,8 @@ async function finalizeDispatch(bot, chatId, userId) {
   const sent = dispatchedSummary(aj);
   const shortNote = res.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
   try {
-    await bot.sendMessage(aj.receiver,
-      `📦 *Transfer ${requestId} incoming*\n${sent} · from ${aj.from}${shortNote}\n📦 Bales: ${baleListPreview(aj.bales)}\n\nConfirm when the goods arrive and match:`,
-      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[
-        { text: '✅ Received', callback_data: `trf:rcv:${requestId}` },
-        { text: '⚠️ Reject', callback_data: `trf:rej:${requestId}` },
-      ]] } });
+    const card = receiverCard(requestId, aj);
+    await bot.sendMessage(aj.receiver, card.text, { parse_mode: 'Markdown', reply_markup: card.kb });
   } catch (e) { logger.warn(`transferFlow: receiver DM failed: ${e.message}`); }
   await notifyAdmins(bot, requestId, aj, 'dispatched 🚚', userId);
   if (row) await notifyRequester(bot, row, requestId, aj, 'dispatched 🚚', userId);
@@ -655,6 +680,78 @@ async function handleFile(bot, msg) {
   return true;
 }
 
+/* ── My Tasks integration: "transfers waiting on you" queue ────────────── */
+
+// My Tasks stays scannable — the queue shows at most this many transfers.
+const MY_QUEUE_MAX = 6;
+
+/**
+ * Build the "🚚 Transfers waiting on you" section for the My Tasks view.
+ * Session-free: reads the live ApprovalQueue, so it survives bot restarts
+ * and deleted DMs. Each entry gets one button that re-sends the actionable
+ * card (Accept & dispatch / Received) via `trf:card:<requestId>`.
+ *
+ * @param {string} userId Telegram id of the viewer
+ * @returns {Promise<{lines: string[], rows: Array<Array<object>>}>}
+ *   Markdown lines + inline-keyboard rows; both empty when nothing pends.
+ */
+async function myQueueSection(userId) {
+  const pend = await transferService.getActionableFor(userId);
+  if (!pend.length) return { lines: [], rows: [] };
+  const lines = ['🚚 *Transfers waiting on you*'];
+  const rows = [];
+  for (const t of pend.slice(0, MY_QUEUE_MAX)) {
+    const aj = t.actionJSON;
+    const toDispatch = aj.stage !== 'in_transit';
+    const n = (aj.dispatched || []).reduce((s, d) => s + d.sent, 0) || totalBales(aj);
+    lines.push(`   \`${t.requestId}\` ${n} bale(s) · ${aj.from} → ${aj.to}`);
+    lines.push(`     ${toDispatch ? '⏳ waiting for you to dispatch' : '🚚 in transit — confirm receipt'}`);
+    rows.push([{
+      text: toDispatch ? `🚚 Dispatch — ${t.requestId}` : `📦 Receive — ${t.requestId}`,
+      callback_data: `trf:card:${t.requestId}`,
+    }]);
+  }
+  if (pend.length > MY_QUEUE_MAX) lines.push(`   _…and ${pend.length - MY_QUEUE_MAX} more_`);
+  return { lines, rows };
+}
+
+/**
+ * Re-send the actionable card for a transfer (tapped from the My Tasks
+ * queue). Session-free — rebuilt from the live queue row every time.
+ * Only the assigned actor (or an admin) gets the card.
+ * @returns {Promise<boolean>} true (callback consumed)
+ */
+async function showActionCard(bot, query, requestId) {
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+  const chatId = query.message.chat.id;
+  const userId = String(query.from.id);
+  const row = await transferService.findTransfer(requestId);
+  if (!row) {
+    await bot.sendMessage(chatId, '🚚 Transfer not found or already closed.');
+    return true;
+  }
+  const aj = row.actionJSON;
+  if (row.status !== 'pending') {
+    await bot.sendMessage(chatId, `🚚 *${requestId}* — ${stateLabel(row)}\n${lineOf(aj)}`, { parse_mode: 'Markdown' });
+    return true;
+  }
+  const toDispatch = aj.stage !== 'in_transit';
+  const allowed = toDispatch ? aj.dispatcher : aj.receiver;
+  if (userId !== String(allowed) && !auth.isAdmin(userId)) {
+    await bot.answerCallbackQuery(query.id, { text: 'This card is for the assigned person only.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  let card;
+  if (toDispatch) {
+    const names = await nameMap([aj.receiver]);
+    card = dispatcherCard(requestId, aj, names[String(aj.receiver)]);
+  } else {
+    card = receiverCard(requestId, aj);
+  }
+  await bot.sendMessage(chatId, card.text, { parse_mode: 'Markdown', reply_markup: card.kb });
+  return true;
+}
+
 /* ── open-transfers list (read-only) ───────────────────────────────────── */
 
 async function showList(bot, chatId, userId, messageId) {
@@ -778,6 +875,7 @@ async function handleCallback(bot, query) {
   if ((mm = data.match(/^trf:less:(.+)$/))) return showInfo(bot, query, mm[1], false);
   if ((mm = data.match(/^trf:dsk:([dr]):(.+)$/))) return skipDoc(bot, query, mm[1], mm[2]);
   if ((mm = data.match(/^trf:att:([dr]):(.+)$/))) return rearmDoc(bot, query, mm[1], mm[2]);
+  if ((mm = data.match(/^trf:card:(.+)$/))) return showActionCard(bot, query, mm[1]);
   if (data === 'trf:list') {
     await bot.answerCallbackQuery(query.id).catch(() => {});
     await showList(bot, chatId, userId, query.message.message_id);
@@ -879,9 +977,10 @@ module.exports = {
   showList,
   handleCallback,
   handleFile,
+  myQueueSection,
   _internals: {
     candidatesFor, resolvePeople, submit, handleAction, startPrefilled,
     startDispatchPicker, finalizeDispatch, showInfo, promptForDoc, handleFile,
-    detailCard, shortCard, SESSION_TYPE,
+    detailCard, shortCard, showActionCard, dispatcherCard, receiverCard, SESSION_TYPE,
   },
 };

@@ -74,6 +74,24 @@ async function getOpenTransfers() {
   return pending.filter((p) => p.actionJSON && p.actionJSON.action === ACTION);
 }
 
+/**
+ * Open transfers waiting on a specific user's action (their "queue"):
+ * stage `requested` → waiting on the dispatcher; stage `in_transit` →
+ * waiting on the receiver. Feeds the My Tasks transfer section.
+ * @param {string} userId Telegram id
+ * @returns {Promise<Array>} pending ApprovalQueue rows where this user is the pending actor
+ */
+async function getActionableFor(userId) {
+  const uid = String(userId);
+  const open = await getOpenTransfers();
+  return open.filter((t) => {
+    const aj = t.actionJSON;
+    if (aj.stage === STAGES.REQUESTED) return String(aj.dispatcher) === uid;
+    if (aj.stage === STAGES.IN_TRANSIT) return String(aj.receiver) === uid;
+    return false;
+  });
+}
+
 /** One transfer row by id (any status). Null when not a transfer. */
 async function findTransfer(requestId) {
   const row = await approvalQueueRepository.getByRequestId(requestId);
@@ -248,6 +266,7 @@ module.exports = {
   availableBales,
   selectByQuantity,
   getOpenTransfers,
+  getActionableFor,
   findTransfer,
   createTransferRequest,
   dispatch,

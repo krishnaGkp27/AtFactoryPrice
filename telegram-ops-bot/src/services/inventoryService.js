@@ -877,20 +877,12 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       }
     } catch (_) {}
     bundleReport = { renamed: matches.length, from: oldName, to: newName };
-  } else if (aj.action === 'transfer_than') {
-    const result = await inventoryRepository.transferThan(aj.packageNo, aj.thanNo, aj.toWarehouse);
-    if (!result) return { ok: false, message: 'Than not found or not available.' };
-    await transactionsRepository.append({ user: item.user, action: 'transfer_than', design: result.design, color: result.shade, qty: result.yards, before: result.fromWarehouse, after: aj.toWarehouse, status: 'approved' });
-  } else if (aj.action === 'transfer_package') {
-    const results = await inventoryRepository.transferPackage(aj.packageNo, aj.toWarehouse);
-    if (!results.length) return { ok: false, message: 'Bale not found or no available thans.' };
-    const totalYards = results.reduce((s, t) => s + t.yards, 0);
-    await transactionsRepository.append({ user: item.user, action: 'transfer_package', design: results[0]?.design, color: results[0]?.shade, qty: totalYards, before: results[0]?.fromWarehouse, after: aj.toWarehouse, status: 'approved' });
-  } else if (aj.action === 'transfer_batch') {
-    for (const pkgNo of (aj.packageNos || [])) {
-      await inventoryRepository.transferPackage(pkgNo, aj.toWarehouse);
-    }
-    await transactionsRepository.append({ user: item.user, action: 'transfer_batch', design: '', color: '', qty: (aj.packageNos || []).length, before: '', after: aj.toWarehouse, status: 'approved' });
+  } else if (aj.action === 'transfer_than' || aj.action === 'transfer_package' || aj.action === 'transfer_batch') {
+    // TRF-5 — legacy instant transfers retired: every entry point now
+    // redirects to the staged Transfer Stock flow (dispatcher logs bales,
+    // receiver confirms, photos attach). Refuse stale pending rows too, so
+    // approving one can never teleport stock the unaccountable way.
+    return { ok: false, message: 'Legacy instant transfers are retired — use 🚚 Transfer Stock (dispatcher + receiver confirmation) instead.' };
   } else if (aj.action === 'sale_bundle') {
     const byDesign = {};
     let totalYards = 0, totalThans = 0;

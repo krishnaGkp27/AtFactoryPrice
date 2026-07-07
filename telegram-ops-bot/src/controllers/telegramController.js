@@ -3891,74 +3891,19 @@ async function handleMessage(bot, msg) {
         return;
       }
 
-      case 'transfer_than': {
-        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Transfer than 3 from Bale 5801 to Kano"'); return; }
-        if (!intent.thanNo) { await bot.sendMessage(chatId, 'Which than number?'); return; }
-        if (!intent.warehouse) { await bot.sendMessage(chatId, 'To which warehouse? e.g. "Transfer than 3 from Bale 5801 to Kano"'); return; }
-        const ttInfo = await inventoryService.getPackageSummary(intent.packageNo);
-        const ttThan = ttInfo?.thans?.find((t) => t.thanNo === intent.thanNo);
-        const ttFrom = ttInfo?.warehouse || '?';
-        const ttDetail = `Transfer Than\nBale: ${intent.packageNo}\nThan: ${intent.thanNo} (${ttThan ? fmtQty(ttThan.yards) + ' yds' : '?'})\nDesign: ${ttInfo?.design || '?'} ${ttInfo?.shade || ''}\nFrom: ${ttFrom}\nTo: ${intent.warehouse}`;
-        const ttQueued = await requireApproval(bot, chatId, msg, userId, 'transfer_than',
-          { action: 'transfer_than', packageNo: intent.packageNo, thanNo: intent.thanNo, toWarehouse: intent.warehouse },
-          ttDetail);
-        if (ttQueued) return;
-        const ttRes = await inventoryService.transferThan(intent.packageNo, intent.thanNo, intent.warehouse, userId);
-        if (ttRes.status === 'completed') {
-          await bot.sendMessage(chatId, `✅ Transferred than ${intent.thanNo} from Bale ${intent.packageNo} (${fmtQty(ttRes.than.yards)} yds): ${ttRes.than.fromWarehouse} → ${intent.warehouse}`);
-        } else {
-          await bot.sendMessage(chatId, ttRes.message || 'Could not transfer.');
-        }
-        return;
-      }
-
-      case 'transfer_package': {
-        if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Transfer Bale 5801 to Kano"'); return; }
-        if (!intent.warehouse) { await bot.sendMessage(chatId, 'To which warehouse?'); return; }
-        const tpInfo = await inventoryService.getPackageSummary(intent.packageNo);
-        const tpFrom = tpInfo?.warehouse || '?';
-        const tpDetail = `Transfer Bale\nBale: ${intent.packageNo}\nDesign: ${tpInfo?.design || '?'} ${tpInfo?.shade || ''}\nThans: ${tpInfo?.availableThans || '?'} available\nYards: ${tpInfo ? fmtQty(tpInfo.availableYards) : '?'}\nFrom: ${tpFrom}\nTo: ${intent.warehouse}`;
-        const tpQueued = await requireApproval(bot, chatId, msg, userId, 'transfer_package',
-          { action: 'transfer_package', packageNo: intent.packageNo, toWarehouse: intent.warehouse },
-          tpDetail);
-        if (tpQueued) return;
-        const tpRes = await inventoryService.transferPackage(intent.packageNo, intent.warehouse, userId);
-        if (tpRes.status === 'completed') {
-          await bot.sendMessage(chatId, `✅ Transferred Bale ${intent.packageNo}: 1 Bale (${tpRes.transferredThans} thans), ${fmtQty(tpRes.totalYards)} yds — ${tpRes.fromWarehouse} → ${intent.warehouse}`);
-        } else {
-          await bot.sendMessage(chatId, tpRes.message || 'Could not transfer.');
-        }
-        return;
-      }
-
+      case 'transfer_than':
+      case 'transfer_package':
       case 'transfer_batch': {
-        if (!intent.packageNos || !intent.packageNos.length) { await bot.sendMessage(chatId, 'Which Bales? e.g. "Transfer Bales 5801, 5802, 5803 to Kano"'); return; }
-        if (!intent.warehouse) { await bot.sendMessage(chatId, 'To which warehouse?'); return; }
-        let batchDetail = `Transfer Batch\nBales: ${intent.packageNos.join(', ')}\nTo: ${intent.warehouse}\n\nDetails:\n`;
-        let batchTotalThans = 0, batchTotalYards = 0;
-        for (const pkgNo of intent.packageNos) {
-          const pkgInfo = await inventoryService.getPackageSummary(pkgNo);
-          if (pkgInfo) {
-            batchDetail += `  Bale ${pkgNo}: ${pkgInfo.design} ${pkgInfo.shade}, ${pkgInfo.availableThans} thans, ${fmtQty(pkgInfo.availableYards)} yds (from ${pkgInfo.warehouse})\n`;
-            batchTotalThans += pkgInfo.availableThans;
-            batchTotalYards += pkgInfo.availableYards;
-          } else {
-            batchDetail += `  Bale ${pkgNo}: not found\n`;
-          }
-        }
-        batchDetail += `\nTotal: ${intent.packageNos.length} Bales (${batchTotalThans} thans), ${fmtQty(batchTotalYards)} yards`;
-        const tbQueued = await requireApproval(bot, chatId, msg, userId, 'transfer_batch',
-          { action: 'transfer_batch', packageNos: intent.packageNos, toWarehouse: intent.warehouse },
-          batchDetail);
-        if (tbQueued) return;
-        const tbRes = await inventoryService.transferBatch(intent.packageNos, intent.warehouse, userId);
-        let tbReply = `✅ Batch transfer to ${intent.warehouse}:\n`;
-        tbRes.details.forEach((d) => {
-          const icon = d.status === 'completed' ? '✅' : '⚠️';
-          tbReply += `${icon} Bale ${d.packageNo}: ${d.status === 'completed' ? `${d.transferredThans} thans, ${fmtQty(d.totalYards)} yds` : (d.message || d.status)}\n`;
-        });
-        tbReply += `\n*Total: ${tbRes.totalPackages} Bales (${tbRes.totalThans} thans), ${fmtQty(tbRes.totalYards)} yards*`;
-        await sendLong(bot, chatId, tbReply, { parse_mode: 'Markdown' });
+        // TRF-5 — legacy instant transfers retired: no dispatcher/receiver
+        // chain, no in-transit stage, no photos. Typed requests are still
+        // recognised but redirect into the staged Transfer Stock flow.
+        await bot.sendMessage(chatId,
+          '🚚 Warehouse transfers now go through *Transfer Stock* — the staged flow where the dispatcher logs the actual bales and the receiver confirms arrival.', {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [
+              [{ text: '🚚 Open Transfer Stock', callback_data: 'act:transfer_stock' }],
+            ] },
+          });
         return;
       }
 
@@ -8539,10 +8484,17 @@ async function handleCallbackQuery(bot, callbackQuery) {
         await startUpdatePriceFlow(bot, chatId, uid, messageId);
         break;
       case 'transfer_package':
-        await startTransferPackageFlow(bot, chatId, uid, messageId);
-        break;
       case 'transfer_than':
-        await startTransferThanFlow(bot, chatId, uid, messageId);
+        // TRF-5 — legacy instant transfers retired: no dispatcher/receiver
+        // chain, no in-transit stage, no photos. Redirect to Transfer Stock.
+        await editOrSend(bot, chatId, messageId,
+          '🚚 Warehouse transfers now go through *Transfer Stock* — the staged flow where the dispatcher logs the actual bales and the receiver confirms arrival.', {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [
+              [{ text: '🚚 Open Transfer Stock', callback_data: 'act:transfer_stock' }],
+              menuNav.backToMenuRow(),
+            ] },
+          });
         break;
       case 'return_than':
         await startReturnThanFlow(bot, chatId, uid, messageId);

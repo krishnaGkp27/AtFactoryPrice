@@ -1963,11 +1963,28 @@ function buttonsForMyTask(task) {
 }
 
 async function showMyTasks(bot, chatId, userId, messageId) {
+  // TRF-5 — transfers waiting on this user (dispatch / receive) surface at
+  // the top of My Tasks. Session-free: rebuilt from the live ApprovalQueue.
+  // Lazy require avoids a load-order cycle; failures never hide the tasks.
+  let transferQueue = { lines: [], rows: [] };
+  try {
+    transferQueue = await require('./transferFlow').myQueueSection(userId);
+  } catch (e) {
+    logger.warn(`taskFlow: transfer queue section failed: ${e.message}`);
+  }
   const tasks = await tasksRepository.getByAssignedTo(userId);
-  if (!tasks.length) {
+  if (!tasks.length && !transferQueue.lines.length) {
     await editOrSend(bot, chatId, messageId, 'You have no assigned tasks.', {
       reply_markup: { inline_keyboard: [navFooterRow()] },
     });
+    return;
+  }
+  if (!tasks.length) {
+    await editOrSend(bot, chatId, messageId,
+      [...transferQueue.lines, '', '_No other assigned tasks._'].join('\n'), {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [...transferQueue.rows, navFooterRow()] },
+      });
     return;
   }
 
@@ -2000,8 +2017,13 @@ async function showMyTasks(bot, chatId, userId, messageId) {
     t.status === 'declined' || t.status === 'cancelled' || t.status === 'dropped'
   ).slice(-3);
 
-  const lines = ['📋 *Your Tasks* — _by priority, soonest first_', ''];
+  const lines = [];
   const rows = [];
+  if (transferQueue.lines.length) {
+    lines.push(...transferQueue.lines, '');
+    rows.push(...transferQueue.rows);
+  }
+  lines.push('📋 *Your Tasks* — _by priority, soonest first_', '');
 
   // Render with a tiny priority header that resets each time the priority
   // tier changes — easier to scan when the list is long.
