@@ -5086,7 +5086,7 @@ async function startSupplyRequestFlow(bot, chatId, userId) {
 
 /** Inline button for one arrival-batch (container) tile. */
 function containerButton(c) {
-  return { text: `🚢 ${c.label} (${c.bales} bls)`, callback_data: `srf_ct:${c.batch}` };
+  return { text: `🚢 ${c.label} (${c.bales} bls · ${c.thans} thans)`, callback_data: `srf_ct:${c.batch}` };
 }
 
 /**

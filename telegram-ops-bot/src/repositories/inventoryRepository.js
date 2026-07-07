@@ -364,7 +364,11 @@ async function getArrivalBatches(opts = {}) {
     if (!byBatch.has(key)) byBatch.set(key, { batch: key, label: label || UNLABELLED_BATCH, bales: new Set(), thans: 0 });
     const e = byBatch.get(key);
     e.thans += 1;
-    e.bales.add(r.baleUid || `pkg:${r.packageNo}`);
+    // A physical bale is identified by its printed PackageNo (column A). Each
+    // Inventory row is one than and carries a per-row bale_uid, so counting
+    // bale_uid would count thans; count distinct PackageNo instead. Fall back
+    // to bale_uid only when a row has no PackageNo, so blanks stay distinct.
+    e.bales.add(String(r.packageNo).trim() || r.baleUid);
   }
   return Array.from(byBatch.values())
     .map((e) => ({ batch: e.batch, label: e.label, bales: e.bales.size, thans: e.thans }))
