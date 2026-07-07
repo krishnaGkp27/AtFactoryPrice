@@ -1,0 +1,147 @@
+# Code Audit — 2026-07-07 (pre-implementation analysis)
+
+Full-codebase review of `telegram-ops-bot/` covering security, correctness (bugs/races),
+performance, and dependency health. **No fixes applied yet** — this document is the
+analysis and the proposed fix plan, awaiting owner sign-off per phase.
+
+Method: five parallel deep-dive reviews (webhook/auth surface · controller authorization ·
+data layer/races · flows/file handling · services/approval pipeline) + `npm audit` +
+spot verification of every CRITICAL claim against the code.
+
+---
+
+## Severity summary
+
+| Severity | Count | Themes |
+|---|---|---|
+| CRITICAL | 6 | forgeable webhook (if secret unset), no global callback auth, sale-confirm IDOR, approval double-execution race, re-sellable thans, unbounded file downloads |
+| HIGH | 12 | admin self-approval, price/revenue leaks via NL reports, transfer TOCTOU races, ledger drift, REST API auth, CORS, silent ERP failures |
+| MEDIUM | ~15 | RMW races (balances, settings CSV, PO counters), Markdown injection clusters, missing rate limits, per-cell writes |
+| LOW | ~8 | formula injection, `/health` recon, janitor labels, audit-trail gaps |
+
+Dependency audit: **17 vulnerabilities (2 critical, 3 high, 12 moderate)** — most fixable
+with `npm audit fix`; `xlsx` has NO fixed version on npm (needs migration or mitigation).
+
+---
+
+## CRITICAL findings
+
+### C1. Webhook authentication is optional
+`server.js:64-76`, `scripts/set-webhook.js`. If `TELEGRAM_WEBHOOK_SECRET` is unset, any
+POST to `/webhook` is accepted — an attacker knowing the Railway URL can forge updates
+with any `from.id` (including admins) and drive the whole bot. **Verify the env var is set
+on Railway TODAY; then make the server fail closed when missing.**
+
+### C2. `handleCallbackQuery` has no global allow-list gate
+`telegramController.js:6063`. Messages and file uploads check `auth.isAllowed()`;
+callbacks never do. Revoked/inactive users (or forged updates via C1) can still drive
+flow callbacks. Fix: one `isAllowed` check at the top of `handleCallbackQuery`.
+
+### C3. `confirm_sale:` / `cancel_sale:` IDOR (verified)
+`telegramController.js:6172-6188`. The target userId rides the callback data and the
+handler never checks the clicker is that user — any allowed user can confirm/cancel
+ANOTHER user's pending sale (admin sales execute inventory writes directly). Fix:
+require `callbackQuery.from.id === saleUserId`.
+
+### C4. Approval double-execution race (two admins, same request)
+`inventoryService.executeApprovedAction` + `approvalQueueRepository.updateStatus`.
+Check-then-act on `status=pending` with no conditional write: two simultaneous
+approvals both execute (duplicate sales/payments/stock moves). Sheets has no
+transactions, so fix = claim the row first (flip pending→executing, re-read to confirm
+you won) or a per-request in-process mutex + idempotency marker.
+
+### C5. `markThanSold` re-sells sold thans
+`inventoryRepository.js:184-197`. Unlike `markPackageSold`, it never checks
+`status === 'available'` before writing — amplifies C4 into corrupted customer
+attribution. Fix: guard on current status at write time.
+
+### C6. Unbounded in-memory file downloads
+`telegramFiles.js:33-48` has no size cap; `photoReceiveFlow` and `transferFlow.handleFile`
+call it without checking `file_size` first (bulk/add-stock flows DO check 5 MB). A large
+document can OOM the Railway process. Fix: cap inside `downloadTelegramFile` (shared
+constant) + `file_size` pre-checks in the two flows.
+
+---
+
+## HIGH findings
+
+| # | Finding | Where | Fix direction |
+|---|---|---|---|
+| H1 | Admin requester can SELF-APPROVE own dual-admin actions — exclusion is notification-only; `handleApprovalCallback` never checks `adminId !== item.user` | `approvalEvents.js:657-714` | reject self-approval at execution |
+| H2 | NL/AI reports leak prices & revenue to non-admin roles (`analyze`, `report_valuation`, `report_sales`, `ask_data` → full NGN values) while tap flows gate via `canSeeSalePrice` | `telegramController.js:3916-3980`, `queryEngine.js` | thread userId through, gate value lines |
+| H3 | Transfer dispatch/receive/abort TOCTOU races (double-tap dispatch; receive vs reject interleave) | `transferService.js:149-233` | conditional stage transition |
+| H4 | Money drift: 3 parallel balance systems; `check_balance` reads `Customers.outstanding_balance` which sales never increment | `crmService.js`, `accountingService.js` | single source of truth (ledger) |
+| H5 | `PUT /api/settings` trusts forgeable `X-Telegram-User-Id` header + permissive CORS reflects any origin | `apiController.js:25-31`, `server.js:29-34` | API-key only + strict CORS |
+| H6 | Silent ERP hook failures: inventory mutated, ledger append fails in `catch(_){}`, user told success | `inventoryService.js:316-338` | surface failures, retry queue |
+| H7 | Early-return approval branches (`record_office_expense`, `finalize_landed_cost`) never mark the row approved → re-executable | `inventoryService.js:668-696` | unified status+audit footer |
+| H8 | Report drill-down callbacks (`rxw:inv_*`, `smsd:`) + `upconf:` price-write + `bulkrcv:mode:` skip admin re-checks at callback time | controller various | mirror entry gates on write/report callbacks |
+| H9 | Supply Stage-3 accept (`srf_acc:`) lacks assignee + stage + status guards | `approvalEvents.js:1107-1121` | mirror stage-1 guards |
+| H10 | Users sheet read on EVERY message (no cache in `usersRepository`; auth refresh every 10s; greeting reads it 2-3×) | `usersRepository.js:81-98` | TTL cache + invalidate on write |
+| H11 | Unbounded local archive `data/ocr/` on ephemeral disk | `driveBackup.js:126-137` | retention sweep |
+| H12 | Dependency vulns: `form-data` (critical, via deprecated `request` in node-telegram-bot-api), `lodash`, `path-to-regexp`, `qs`, `tough-cookie`, `uuid` — most auto-fixable; `xlsx` prototype-pollution/ReDoS has NO npm fix | `package.json` | `npm audit fix` + xlsx mitigation/migration |
+
+---
+
+## MEDIUM (clustered)
+
+- **Read-modify-write races**: customer `outstanding_balance` (`crmService.js:52-67`),
+  Settings CSV lists (`BANK_LIST`/`WAREHOUSE_LIST`), PO received counters
+  (`procurementOrdersRepository.js:170-184`), catalog stock quantities, ApprovalQueue
+  `actionJSON` merges. Same family as C4 — fix pattern is shared.
+- **Markdown injection cluster**: user/sheet-sourced names interpolated into
+  `parse_mode: 'Markdown'` without escaping in `soldBalesFlow`, `goodsReceiptFlow`,
+  `transferFlow` cards, `photoReceiveFlow.rowSummary`, `procurementPlanView`,
+  `officeExpenseFlow` approval card, `taskFlow` assignee picker. A name with `*`/`_`
+  breaks the message (Telegram 400) → feature fails for that record. Fix: shared
+  `escapeMd` in `telegramUI.js`, applied per flow.
+- **No rate limiting**: per-user token bucket missing before OpenAI calls; stranger
+  capture limit is global (one spammer exhausts it); no JSON body size limit.
+- **`executeApprovedAction` trusts `actionJSON`** — no positive-amount/enum re-validation
+  at execution time for most branches.
+- **Per-cell writes**: `tasksRepository.updateFields` does one API call per field
+  (batchUpdateRanges exists and should be used).
+- **Session hygiene**: `srf_ct:`/`srf_wh:` reuse stale sessions without clearing foreign
+  fields; `trf:bl:t:` missing `session.idx` bounds check.
+- **AuditLog header re-read on every message** (`ensureHeader` before every append).
+
+## LOW (clustered)
+
+Formula injection (`=` prefix in user strings evaluated when sheet opened), `/health`
+service fingerprint, `GET /api/settings` unauthenticated (thresholds readable), sample
+qty button values unvalidated, `sr:` period parseInt unbounded, session-janitor labels
+missing for newer flows, `promote_admin` execution lacks defense-in-depth super-admin
+re-check, incomplete audit trail on early-return approvals.
+
+---
+
+## Performance snapshot (Sheets API quota)
+
+- One plain "hi" message ≈ **6–10 read calls + 1 write** (Users 2-3×, Departments,
+  Settings, UserPrefs, AuditLog header).
+- One `approve:` tap ≈ **3-4 full ApprovalQueue scans + ≥1 full Inventory read + 3-6
+  writes**; a sale approval can reach **15-25+ API calls**.
+- Repos WITH TTL caches: inventory (5s), catalog*, marketers, designAssets,
+  productTypes, shades, auth allow-list (10s). WITHOUT: users, customers, departments,
+  settings, approvalQueue, orders, tasks, transactions, ledger — these dominate quota.
+
+---
+
+## Proposed fix plan (phased, each phase = one commit, tests included)
+
+| Phase | Scope | Contents | Risk |
+|---|---|---|---|
+| **P1 — Critical security (do first)** | small, surgical | C1 fail-closed webhook secret (+ verify Railway env), C2 global callback auth gate, C3 confirm_sale binding, H1 self-approval block, H5 API auth + CORS | low |
+| **P2 — Money & inventory integrity** | medium | C4 approval claim-before-execute + idempotency, C5 markThanSold guard, H3 transfer stage CAS, H7 unified approval footer, H6 ERP failure surfacing | medium |
+| **P3 — Resource safety** | small | C6 download size cap + flow pre-checks, H11 local archive retention sweep, JSON body limit, per-user rate limit before OpenAI | low |
+| **P4 — Access-control polish** | small | H2 gate NL value reports, H8 callback admin re-checks, H9 srf_acc guards, MEDIUM session/bounds items | low |
+| **P5 — Dependencies** | careful | `npm audit fix` (non-breaking set), xlsx mitigation decision (keep+sandbox vs migrate to exceljs), pin versions | medium (regression risk — full suite after) |
+| **P6 — Performance** | opt-in | usersRepository TTL cache + invalidation, approvalQueue targeted reads, tasks batch writes, AuditLog header bootstrap, Markdown-escape shared helper rollout | medium |
+| **P7 — Money model (design task)** | discussion first | H4 single source of truth for customer balance — needs an owner decision on which ledger wins | needs sign-off |
+
+Constraint notes: P1/P4 touch `telegramController.js` and `approvalEvents.js`
+(protected files — changes stay surgical: auth gates only). P2 touches approval
+semantics *implementation* (not the WRITE_ACTIONS/ALWAYS_APPROVAL_ACTIONS lists).
+Characterization tests pin current behavior before each phase.
+
+**Status: awaiting owner approval per phase. Recommended order: P1 today, P2+P3 next,
+then P4-P6. P7 is a design discussion, not a patch.**
