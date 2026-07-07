@@ -10,12 +10,19 @@ functions/          ← Firebase Cloud Functions (separate workstream)
 mobile/             ← Flutter app (separate workstream)
 ```
 
-## ⚠️ Pending live test — FIRST TASK of the next session
+## ⚠️ Pending human tasks — check status BEFORE new feature work
 
-**TRF-5 (My Tasks transfer queue + legacy-transfer retirement, commit `28d9121f`) is
-deployed but NOT yet tested on production.** Before any other work on this repo, run
-`telegram-ops-bot/specs/TRF-5_TEST_STEPS.md` end-to-end (needs 3 Telegram IDs: admin,
-dispatcher, receiver; ~20 min). Remove this section once it's signed off.
+Two tracks are open (owners assigned by the owner on 07-Jul-2026). At session start,
+ask for their status instead of starting new features; help execute them if asked.
+
+| Priority | Task | Owner | Steps doc |
+|---|---|---|---|
+| 1 (for Emin) | Backup fix + Drive-quota / photo-archive diagnosis (BKP-1) | **Emin** | `telegram-ops-bot/specs/BKP-1_EMIN_CHECKLIST.md` |
+| 1 (for owner) | TRF-5 manual live test — transfer queue + single-flow retirement (commit `28d9121f`) | **Owner** | `telegram-ops-bot/specs/TRF-5_TEST_STEPS.md` |
+
+Known follow-up waiting on Emin's Task-4 finding: if photo archives to Drive are failing
+(service-account quota), build the OAuth-as-user upload fix for `driveBackup`.
+Remove each row (and this section when empty) once signed off.
 
 ## Session start ritual (do this BEFORE any work)
 
