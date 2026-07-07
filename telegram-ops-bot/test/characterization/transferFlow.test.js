@@ -106,9 +106,11 @@ test('wizard: 5 taps, auto-picked people, ORDER queued — nothing locked at sen
 
 test('dispatch logs ACTUAL bales + flips in-transit; receive unlocks at destination', async () => {
   const { calls, requestId } = await runWizard();
-  // Abdul accepts → bales picked live and flipped now.
+  // Abdul accepts → opens the bale picker; he auto-picks FIFO then dispatches.
   const bot2 = createFakeBot();
   await controller.handleCallbackQuery(bot2, cb(`trf:acc:${requestId}`, 'abdul'));
+  await controller.handleCallbackQuery(bot2, cb('trf:bl:auto', 'abdul'));
+  await controller.handleCallbackQuery(bot2, cb('trf:bl:go', 'abdul'));
   assert.deepEqual(calls.transitions[0], { pkgs: ['P1', 'P2'], from: 'available', to: 'in_transit', wh: 'Kano office' });
   const rdm = bot2.callsTo('sendMessage').find((m) => m.args.chatId === 'musa');
   assert.ok(rdm, 'receiver got the incoming card');
@@ -126,10 +128,12 @@ test('dispatch logs ACTUAL bales + flips in-transit; receive unlocks at destinat
 
 test('shortfall at dispatch: partial send recorded and flagged', async () => {
   const { calls, requestId } = await runWizard();
-  // Between order and dispatch, Lagos sold a bale: only P1 remains.
+  // Between order and dispatch, Lagos sold a bale: only P1 remains. With no
+  // real choice, the picker goes straight to the dispatch-confirm screen.
   inventoryRepository.getAll = async () => [invRow('P1'), invRow('P9', 'available', 'Kano office')];
   const bot2 = createFakeBot();
   await controller.handleCallbackQuery(bot2, cb(`trf:acc:${requestId}`, 'abdul'));
+  await controller.handleCallbackQuery(bot2, cb('trf:bl:go', 'abdul'));
   assert.deepEqual(calls.transitions[0].pkgs, ['P1'], 'only the existing bale dispatched');
   assert.match(bot2.allText(), /1\/2× 9006\/3 ⚠️ short/, 'per-line shortfall shown');
   assert.match(bot2.allText(), /Partially dispatched/i);

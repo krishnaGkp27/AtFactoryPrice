@@ -112,12 +112,23 @@ async function createTransferRequest({ from, to, lines, requestedBy, dispatcher,
 }
 
 /**
- * Dispatcher accepts: log the ACTUAL bales now — live-select per line,
- * flip them in_transit @ destination, record per-line sent vs requested.
- * Partial dispatch allowed; fails only when nothing is available at all.
+ * Dispatcher accepts: log the ACTUAL bales now — flip them in_transit @
+ * destination, record per-line sent vs requested. Partial dispatch allowed;
+ * fails only when nothing is available at all.
+ *
+ * When `manualPicks` is provided it is an array parallel to `aj.lines`, each
+ * element a list of chosen packageNos for that line. Chosen bales are still
+ * validated against LIVE availability (someone may have moved stock since the
+ * picker opened), capped to the line qty, and de-duped. When omitted, bales
+ * are auto-selected FIFO in sheet order (original TRF-3 behaviour, also used
+ * by the picker's "Auto-pick remaining" path).
+ *
+ * @param {string} requestId
+ * @param {string} byUserId
+ * @param {Array<Array<string>>} [manualPicks] per-line chosen packageNos
  * @returns {Promise<{ok:boolean, aj?:object, short?:boolean, message?:string}>}
  */
-async function dispatch(requestId, byUserId) {
+async function dispatch(requestId, byUserId, manualPicks) {
   const row = await findTransfer(requestId);
   if (!row) return { ok: false, message: 'transferService: transfer not found' };
   if (row.status !== 'pending' || row.actionJSON.stage !== STAGES.REQUESTED) {
@@ -125,12 +136,29 @@ async function dispatch(requestId, byUserId) {
   }
   const aj = row.actionJSON;
   const inv = await inventoryRepository.getAll();
+  const useManual = Array.isArray(manualPicks);
   const picked = [];
   const dispatched = [];
-  for (const l of (aj.lines || [])) {
-    const sel = selectByQuantity(inv, aj.from, l.design, l.shade, l.qty);
-    picked.push(...sel.bales);
-    dispatched.push({ design: l.design, shade: l.shade, requested: l.qty, sent: sel.bales.length });
+  const lines = aj.lines || [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const l = lines[i];
+    let balesForLine;
+    if (useManual) {
+      // Keep only chosen bales still available for this exact line, de-duped,
+      // in the operator's tap order, capped to the requested qty.
+      const availSet = new Set(availableBales(inv, aj.from, l.design, l.shade));
+      const seen = new Set();
+      balesForLine = [];
+      for (const p of (manualPicks[i] || [])) {
+        const pkg = String(p);
+        if (availSet.has(pkg) && !seen.has(pkg)) { seen.add(pkg); balesForLine.push(pkg); }
+        if (balesForLine.length >= l.qty) break;
+      }
+    } else {
+      balesForLine = selectByQuantity(inv, aj.from, l.design, l.shade, l.qty).bales;
+    }
+    picked.push(...balesForLine);
+    dispatched.push({ design: l.design, shade: l.shade, requested: l.qty, sent: balesForLine.length });
   }
   if (!picked.length) {
     return { ok: false, message: 'No stock left for any line — decline the transfer instead.' };
@@ -187,6 +215,33 @@ async function abort(requestId, byUserId) {
   return { ok: true, aj, kind };
 }
 
+/**
+ * Attach a dispatch- or receive-time document (photo / PDF of the load) to a
+ * transfer. The link rides the existing ApprovalQueue actionJSON — no schema
+ * change — under `dispatchDoc` / `receiveDoc`. Best-effort metadata only; it
+ * never moves inventory or changes the stage.
+ *
+ * @param {string} requestId
+ * @param {'dispatch'|'receive'} kind
+ * @param {{url?:string, name?:string, fileId?:string, by?:string}} doc
+ * @returns {Promise<{ok:boolean, key?:string, message?:string}>}
+ */
+async function attachDoc(requestId, kind, doc = {}) {
+  const row = await findTransfer(requestId);
+  if (!row) return { ok: false, message: 'transferService: transfer not found' };
+  const key = kind === 'receive' ? 'receiveDoc' : 'dispatchDoc';
+  const entry = {
+    url: doc.url || '',
+    name: doc.name || '',
+    fileId: doc.fileId || '',
+    by: String(doc.by || ''),
+    at: new Date().toISOString(),
+  };
+  await approvalQueueRepository.updateActionJSON(requestId, { [key]: entry });
+  await auditLogRepository.append(`transfer.${kind}_doc`, { requestId, url: entry.url, name: entry.name }, entry.by);
+  return { ok: true, key };
+}
+
 module.exports = {
   ACTION,
   STAGES,
@@ -198,4 +253,5 @@ module.exports = {
   dispatch,
   confirmReceipt,
   abort,
+  attachDoc,
 };

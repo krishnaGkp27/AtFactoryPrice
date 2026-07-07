@@ -73,7 +73,7 @@ test('non-admin cart summary hides the 🚚 Transfer button', async () => {
   assert.ok(!kb.some((b) => b.includes('srf_cart:transfer')), 'no Transfer button for non-admin');
 });
 
-test('single-line cart: handoff lands on destination with the line carried', async () => {
+test('single-line cart: handoff lands on the minimal destination screen', async () => {
   seedCartSession('777', [cartLine(2)]);
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_cart:transfer', 777));
@@ -81,11 +81,22 @@ test('single-line cart: handoff lands on destination with the line carried', asy
   assert.equal(session.type, 'transfer_flow');
   assert.equal(session.step, 'dest');
   assert.deepEqual(session.lines, [{ design: '9006', shade: '3', qty: 2 }]);
-  assert.match(bot.allText(), /To which warehouse\?/);
+  // Minimal cart-origin prompt: source once, no re-listed lines.
+  assert.match(bot.allText(), /Lagos.*to which warehouse\?/i);
   assert.ok(lastKb(bot).some((b) => b.includes('trf:dest:')), 'destination picker shown');
 });
 
-test('multi-line cart: ALL lines carried — straight to destination, no re-picking', async () => {
+test('transfer tap relabels the cart message to a grouped Transfer Cart', async () => {
+  seedCartSession('777', [cartLine(1), cartLine(1, '5')]);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_cart:transfer', 777));
+  const relabel = bot.callsTo('editMessageText').find((c) => /Transfer Cart/.test(c.args.text || ''));
+  assert.ok(relabel, 'cart message relabeled to Transfer Cart');
+  assert.match(relabel.args.text, /🏭 Lagos · 2 bales/, 'header carries warehouse + total');
+  assert.match(relabel.args.text, /\*9006\*/, 'design shown once as a header');
+});
+
+test('multi-line cart: ALL lines carried — straight to the minimal destination', async () => {
   seedCartSession('777', [cartLine(1), cartLine(1, '5')]);
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_cart:transfer', 777));
@@ -97,8 +108,9 @@ test('multi-line cart: ALL lines carried — straight to destination, no re-pick
     { design: '9006', shade: '3', qty: 1 },
     { design: '9006', shade: '5', qty: 1 },
   ]);
-  assert.match(bot.allText(), /1× 9006\/3 \+ 1× 9006\/5/, 'header summarizes the cart lines');
-  assert.match(bot.allText(), /To which warehouse\?/);
+  // The line list is NOT repeated on the destination card (it's on the cart).
+  assert.ok(!/1× 9006\/3 \+ 1× 9006\/5/.test(bot.allText()), 'lines not re-listed on destination');
+  assert.match(bot.allText(), /to which warehouse\?/i);
 });
 
 test('cart qty above availability still lands on destination (order model — dispatcher logs actuals)', async () => {

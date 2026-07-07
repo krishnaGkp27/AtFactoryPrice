@@ -3157,6 +3157,14 @@ async function handleFileMessage(bot, msg) {
     if (handled) return;
   }
 
+  // TRF-3 — dispatch / receive load photo: when the transfer flow has armed
+  // an await_doc session, route the uploaded photo/PDF to it.
+  if (session && session.type === 'transfer_flow' && session.step === 'await_doc'
+      && (msg.photo || msg.document)) {
+    const handled = await require('../flows/transferFlow').handleFile(bot, msg);
+    if (handled) return;
+  }
+
   if (session && session.type === 'sale_flow' && session.awaitingDocument) {
     let telegramFileId, fileType, mimeType;
     if (msg.photo && msg.photo.length) {
@@ -5508,6 +5516,34 @@ async function buildCartText(session) {
   const total = cart.reduce((s, c) => s + c.quantity, 0);
   const containerPlural = productTypesRepo.pluralize(labels.container_label, total).toLowerCase();
   return `🛒 *Supply Cart* — 🏭 ${session.warehouse}\n━━━━━━━━━━━━━━━━━━━━━━\n${lines.join('\n')}\n━━━━━━━━━━━━━━━━━━━━━━\n📦 Total: ${total} ${containerPlural}`;
+}
+
+/**
+ * Minimalist cart view for the Transfer handoff: design shown once as a
+ * header, shades folded into bullet lines, total in the header. Distinct from
+ * buildCartText (the supply-checkout view) so the supply flow is untouched.
+ * @param {object} session supply_req_flow session with a `cart`
+ * @returns {Promise<string>} Markdown text
+ */
+async function buildTransferCartText(session) {
+  const cart = session.cart || [];
+  if (!cart.length) return '🚚 Transfer cart is empty.';
+  const labels = await productTypesRepo.getLabels(session.productType || 'fabric');
+  const total = cart.reduce((s, c) => s + c.quantity, 0);
+  const balesPlural = productTypesRepo.pluralize(labels.container_label, total).toLowerCase();
+  const byDesign = new Map();
+  for (const c of cart) {
+    if (!byDesign.has(c.design)) byDesign.set(c.design, []);
+    byDesign.get(c.design).push(c);
+  }
+  const blocks = [];
+  for (const [design, items] of byDesign) {
+    const m = getMaterialInfo(design);
+    const head = `${m.icon} *${design}* ${m.name}`.trimEnd();
+    const bullets = items.map((c) => ` • ${formatShadeRef(c.shade, c.shadeName)} ×${c.quantity}`);
+    blocks.push([head, ...bullets].join('\n'));
+  }
+  return `🚚 *Transfer Cart* · 🏭 ${session.warehouse} · ${total} ${balesPlural}\n\n${blocks.join('\n\n')}`;
 }
 
 async function showCartSummary(bot, chatId, userId) {
@@ -8957,12 +8993,19 @@ async function handleCallbackQuery(bot, callbackQuery) {
       }
       // TRF-3 — hand the FULL cart to the transfer flow: every line
       // (design/shade/qty) carries over, so nothing is re-selected. The
-      // flow jumps straight to the destination step.
+      // flow jumps straight to the destination step. Relabel the leftover
+      // cart message to a compact "Transfer Cart" so it reads as the
+      // previous step rather than a stray supply cart.
+      const transferCartText = await buildTransferCartText(session);
+      await bot.editMessageText(transferCartText, {
+        chat_id: chatId, message_id: callbackQuery.message.message_id, parse_mode: 'Markdown',
+      }).catch(() => {});
+      const transferLines = (session.cart || []).map((c) => ({ design: c.design, shade: c.shade, qty: c.quantity }));
       await clearDesignPreview(bot, chatId, uid);
       sessionStore.clear(uid);
       await require('../flows/transferFlow').start(bot, chatId, uid, null, {
         from: session.warehouse,
-        lines: (session.cart || []).map((c) => ({ design: c.design, shade: c.shade, qty: c.quantity })),
+        lines: transferLines,
       });
     } else if (action === 'cancel') {
       await clearDesignPreview(bot, chatId, uid);

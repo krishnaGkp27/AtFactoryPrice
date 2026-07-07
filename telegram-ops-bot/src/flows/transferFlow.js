@@ -28,9 +28,15 @@ const { makeRenderer } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const usersRepository = require('../repositories/usersRepository');
 const transferService = require('../services/transferService');
+const driveBackup = require('../services/vision/driveBackup');
+const telegramFiles = require('../utils/telegramFiles');
 const auth = require('../middlewares/auth');
 const config = require('../config');
 const logger = require('../utils/logger');
+
+// Accepted upload types for the dispatch / receive load photo (image or PDF).
+const DOC_MIMES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
+const BALE_PREVIEW_MAX = 8;
 
 const SESSION_TYPE = 'transfer_flow';
 const STEPS = ['source', 'design', 'shade', 'qty', 'dest', 'dispatcher', 'receiver', 'confirm'];
@@ -153,8 +159,15 @@ async function showDest(bot, chatId, userId) {
   const rows = chunk(dests.map((w, i) => ({ text: `🏭 ${w}`, callback_data: `trf:dest:${i}` })), 2);
   // Cart handoffs have no wizard steps to go back to — change the cart instead.
   rows.push(session.cartOrigin ? cancelRow() : navRow());
-  const summary = (session.lines || []).map((l) => `${l.qty}× ${l.design}/${l.shade}`).join(' + ');
-  await render(bot, chatId, userId, `🚚 *${summary}*\nFrom *${session.from}*\n\nTo which warehouse?`, rows);
+  // Cart handoffs already showed the full line list on the Transfer Cart
+  // card just above — don't repeat it. Wizard-started transfers have no such
+  // card, so they keep the inline line summary as their only reference.
+  if (session.cartOrigin) {
+    await render(bot, chatId, userId, `🚚 *${session.from}* → to which warehouse?`, rows);
+  } else {
+    const summary = (session.lines || []).map((l) => `${l.qty}× ${l.design}/${l.shade}`).join(' + ');
+    await render(bot, chatId, userId, `🚚 *${summary}*\nFrom *${session.from}*\n\nTo which warehouse?`, rows);
+  }
 }
 
 /** After destination: resolve people (auto-pick singles) then confirm. */
@@ -245,11 +258,114 @@ function dispatchedSummary(aj) {
     : `${d.sent}× ${d.design}/${d.shade}`)).join(' + ');
 }
 
-async function notifyAdmins(bot, text, excludeId) {
+/** Compact "8801, 8804 … (+N)" preview of a bale-number list. */
+function baleListPreview(bales, max = BALE_PREVIEW_MAX) {
+  const arr = bales || [];
+  if (!arr.length) return '—';
+  if (arr.length <= max) return arr.join(', ');
+  return `${arr.slice(0, max).join(', ')} … (+${arr.length - max})`;
+}
+
+/** Total requested bales across every line. */
+function totalBales(aj) {
+  return (aj.lines || []).reduce((s, l) => s + (l.qty || 0), 0);
+}
+
+/** Human state label from a live queue row (status + stage). */
+function stateLabel(row) {
+  if (!row) return 'unknown';
+  if (row.status === 'approved') return 'received ✅';
+  if (row.status === 'rejected') return 'closed ❌';
+  const stage = row.actionJSON && row.actionJSON.stage;
+  return stage === 'in_transit' ? 'in transit 🚚' : 'awaiting dispatch ⏳';
+}
+
+/* ── admin cards: short by default, expand on demand ───────────────────── */
+
+/** One-line admin card (the default the admin sees). */
+function shortCard(requestId, aj, label) {
+  const n = (aj.dispatched || []).reduce((s, d) => s + d.sent, 0) || totalBales(aj);
+  return `🚚 *${requestId}* ${label} — ${n} bale(s) · ${aj.from} → ${aj.to}`;
+}
+function viewMoreKb(requestId) {
+  return { inline_keyboard: [[{ text: '🔍 View details', callback_data: `trf:info:${requestId}` }]] };
+}
+
+/** Best-effort id→name map for the people on a transfer. */
+async function nameMap(ids) {
+  const out = {};
+  try {
+    const users = await usersRepository.getAll();
+    for (const u of users) out[String(u.user_id)] = u.name || String(u.user_id);
+  } catch (_) { /* repo absent — fall back to raw ids */ }
+  for (const id of ids) if (!out[String(id)]) out[String(id)] = String(id);
+  return out;
+}
+
+/** Full detail card for the "View details" expansion. */
+async function detailCard(row) {
+  const aj = row.actionJSON;
+  const names = await nameMap([aj.dispatcher, aj.receiver]);
+  const lines = (aj.lines || []).map((l) => ` • ${l.design} · Shade ${l.shade} · ×${l.qty}`).join('\n');
+  const out = [
+    `🚚 *${row.requestId}* — ${stateLabel(row)}`,
+    `*${aj.from}* → *${aj.to}*`,
+    `Dispatcher: ${names[String(aj.dispatcher)]} · Receiver: ${names[String(aj.receiver)]}`,
+    '',
+    lines,
+  ];
+  if (aj.bales && aj.bales.length) out.push('', `📦 Bales: ${baleListPreview(aj.bales, 30)}`);
+  if (aj.dispatchDoc && aj.dispatchDoc.url) out.push(`📸 Dispatch photo: ${aj.dispatchDoc.url}`);
+  if (aj.receiveDoc && aj.receiveDoc.url) out.push(`📸 Receipt photo: ${aj.receiveDoc.url}`);
+  return out.join('\n');
+}
+
+/** Brief every admin (except the actor) with the short card + expander. */
+async function notifyAdmins(bot, requestId, aj, label, excludeId) {
+  const text = shortCard(requestId, aj, label);
   for (const adminId of config.access.adminIds) {
     if (String(adminId) === String(excludeId)) continue;
-    try { await bot.sendMessage(adminId, text, { parse_mode: 'Markdown' }); } catch (_) { /* best-effort */ }
+    try {
+      await bot.sendMessage(adminId, text, { parse_mode: 'Markdown', reply_markup: viewMoreKb(requestId) });
+    } catch (_) { /* best-effort */ }
   }
+}
+
+/** Brief the original requester when they're not an admin (avoids dupes). */
+async function notifyRequester(bot, row, requestId, aj, label, actorId) {
+  if (!row.user) return;
+  if (String(row.user) === String(actorId)) return;
+  if (config.access.adminIds.includes(String(row.user))) return;
+  try {
+    await bot.sendMessage(row.user, shortCard(requestId, aj, label), { parse_mode: 'Markdown', reply_markup: viewMoreKb(requestId) });
+  } catch (_) { /* best-effort */ }
+}
+
+/**
+ * Expand / collapse an admin card in place. Session-free — reads the live
+ * queue row, so it works on any card at any time, even days later.
+ */
+async function showInfo(bot, query, requestId, expand) {
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+  const row = await transferService.findTransfer(requestId);
+  const chatId = query.message.chat.id;
+  const messageId = query.message.message_id;
+  if (!row) {
+    await bot.editMessageText('🚚 Transfer not found or already purged.', {
+      chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+    }).catch(() => {});
+    return true;
+  }
+  const aj = row.actionJSON;
+  const text = expand ? await detailCard(row) : shortCard(requestId, aj, stateLabel(row));
+  const kb = expand
+    ? { inline_keyboard: [[{ text: '◀ Less', callback_data: `trf:less:${requestId}` }]] }
+    : viewMoreKb(requestId);
+  await bot.editMessageText(text, {
+    chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+    disable_web_page_preview: true, reply_markup: kb,
+  }).catch(() => {});
+  return true;
 }
 
 async function handleAction(bot, query, requestId, action) {
@@ -269,48 +385,273 @@ async function handleAction(bot, query, requestId, action) {
   }
   await bot.answerCallbackQuery(query.id).catch(() => {});
 
-  let res; let card;
+  // Accept → open the dispatcher's bale picker anchored on the tapped card.
+  // The actual dispatch happens when he confirms his selection (trf:bl:go).
   if (action === 'acc') {
-    // TRF-3 — accepting IS the logging moment: the actual bales are
-    // live-selected now and flipped in-transit; shortfalls are recorded.
-    res = await transferService.dispatch(requestId, userId);
-    if (res.ok) {
-      const sent = dispatchedSummary(res.aj);
-      const shortNote = res.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
-      card = `🚚 *${requestId} dispatched* — bales logged\n${sent} · ${aj.from} → ${aj.to}${shortNote}`;
-      try {
-        await bot.sendMessage(aj.receiver,
-          `📦 *Transfer ${requestId} incoming*\n${sent} · from ${aj.from}${shortNote}\n\nConfirm when the goods arrive and match:`,
-          { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[
-            { text: '✅ Received', callback_data: `trf:rcv:${requestId}` },
-            { text: '⚠️ Reject', callback_data: `trf:rej:${requestId}` },
-          ]] } });
-      } catch (e) { logger.warn(`transferFlow: receiver DM failed: ${e.message}`); }
-    }
-  } else if (action === 'rcv') {
-    res = await transferService.confirmReceipt(requestId, userId);
-    if (res.ok) card = `✅ *${requestId} received* — bales are now live at *${aj.to}*.\n${dispatchedSummary(aj) || lineOf(aj)}`;
-  } else { // dec / rej
-    res = await transferService.abort(requestId, userId);
-    if (res.ok) {
-      card = res.kind === 'declined'
-        ? `❌ *${requestId} declined* — nothing was moved.\n${lineOf(aj)}`
-        : `❌ *${requestId} rejected* — bales reverted to *${aj.from}*.\n${lineOf(aj)}`;
-    }
-  }
-
-  if (!res.ok) {
-    await bot.sendMessage(chatId, `⚠️ ${res.message}`);
+    await startDispatchPicker(bot, chatId, userId, row, query.message.message_id);
     return true;
   }
-  // Seal the tapped card, tell the actor, brief admins + requester.
+
+  if (action === 'rcv') {
+    const res = await transferService.confirmReceipt(requestId, userId);
+    if (!res.ok) { await bot.sendMessage(chatId, `⚠️ ${res.message}`); return true; }
+    await notifyAdmins(bot, requestId, aj, 'received ✅', userId);
+    await notifyRequester(bot, row, requestId, aj, 'received ✅', userId);
+    // Seal the receiver's tapped card into the receive-photo prompt.
+    const base = `✅ *${requestId} received* — bales are now live at *${aj.to}*.\n${dispatchedSummary(aj) || lineOf(aj)}`;
+    await promptForDoc(bot, chatId, userId, requestId, 'receive', base, query.message.message_id);
+    return true;
+  }
+
+  // dec / rej
+  const res = await transferService.abort(requestId, userId);
+  if (!res.ok) { await bot.sendMessage(chatId, `⚠️ ${res.message}`); return true; }
+  const label = res.kind === 'declined' ? 'declined ❌' : 'rejected ❌';
+  const card = res.kind === 'declined'
+    ? `❌ *${requestId} declined* — nothing was moved.\n${lineOf(aj)}`
+    : `❌ *${requestId} rejected* — bales reverted to *${aj.from}*.\n${lineOf(aj)}`;
   await bot.editMessageText(card, {
     chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown',
   }).catch(() => {});
-  await notifyAdmins(bot, card, userId);
-  if (row.user && String(row.user) !== userId && !config.access.adminIds.includes(String(row.user))) {
-    try { await bot.sendMessage(row.user, card, { parse_mode: 'Markdown' }); } catch (_) { /* best-effort */ }
+  await notifyAdmins(bot, requestId, aj, label, userId);
+  await notifyRequester(bot, row, requestId, aj, label, userId);
+  return true;
+}
+
+/* ── dispatcher bale picker (session-backed, anchored on the DM card) ───── */
+
+/**
+ * Open the bale picker after the dispatcher accepts. Pre-selects FIFO bales
+ * per line; lines with no real choice (candidates ≤ qty) are auto-filled and
+ * skipped. When no line needs a decision, jumps straight to the confirm
+ * screen. Anchored on the tapped card so everything edits in place.
+ */
+async function startDispatchPicker(bot, chatId, userId, row, messageId) {
+  const aj = row.actionJSON;
+  const inv = await availableInventory();
+  const pl = (aj.lines || []).map((l) => {
+    const cands = transferService.availableBales(inv, aj.from, l.design, l.shade);
+    return {
+      design: l.design, shade: l.shade, qty: l.qty,
+      cands,
+      sel: cands.slice(0, l.qty),       // FIFO pre-selection
+      choice: cands.length > l.qty,      // is there anything to decide?
+    };
+  });
+  sessionStore.set(userId, {
+    type: SESSION_TYPE, step: 'dispatch_pick',
+    requestId: row.requestId, from: aj.from, to: aj.to,
+    pl, idx: 0, flowMessageId: messageId || null,
+  });
+  const first = pl.findIndex((p) => p.choice);
+  if (first === -1) { await showDispatchConfirm(bot, chatId, userId); return; }
+  const session = sessionStore.get(userId);
+  session.idx = first; sessionStore.set(userId, session);
+  await showBalePicker(bot, chatId, userId);
+}
+
+function nextChoiceIdx(session, fromIdx) {
+  for (let i = fromIdx + 1; i < session.pl.length; i += 1) if (session.pl[i].choice) return i;
+  return -1;
+}
+function prevChoiceIdx(session, fromIdx) {
+  for (let i = fromIdx - 1; i >= 0; i -= 1) if (session.pl[i].choice) return i;
+  return -1;
+}
+
+/** Render the current line's bale-picker screen. */
+async function showBalePicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  const line = session.pl[session.idx];
+  const selSet = new Set(line.sel);
+  const chips = line.cands.map((pkg, i) => ({
+    text: `${selSet.has(pkg) ? '✅ ' : ''}${pkg}`, callback_data: `trf:bl:t:${i}`,
+  }));
+  const rows = chunk(chips, 3);
+  rows.push([{ text: nextChoiceIdx(session, session.idx) === -1 ? '✅ Review' : '➡ Next', callback_data: 'trf:bl:nx' }]);
+  rows.push([{ text: '⏭ Auto-pick remaining', callback_data: 'trf:bl:auto' }]);
+  rows.push([{ text: '❌ Decline', callback_data: `trf:dec:${session.requestId}` }]);
+  await render(bot, chatId, userId,
+    `🚚 *${session.requestId}* — line ${session.idx + 1} of ${session.pl.length}\n`
+    + `${line.design} · Shade ${line.shade} — pick ${line.qty} bale(s)   _(${line.cands.length} in stock)_\n`
+    + `Selected: *${line.sel.length}/${line.qty}*`,
+    rows);
+}
+
+/** Final confirm before the goods actually move. */
+async function showDispatchConfirm(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  session.step = 'dispatch_confirm'; sessionStore.set(userId, session);
+  const picked = session.pl.flatMap((p) => p.sel);
+  const perLine = session.pl.map((p) => (p.sel.length < p.qty
+    ? ` • ${p.design}/${p.shade}: ${p.sel.length}/${p.qty} ⚠️ short`
+    : ` • ${p.design}/${p.shade}: ${p.sel.join(', ')}`)).join('\n');
+  await render(bot, chatId, userId,
+    `🚚 *${session.requestId}* — dispatch ${picked.length} bale(s)?\n${perLine}\n\n*${session.from}* → *${session.to}*`,
+    [[{ text: '🚚 Dispatch', callback_data: 'trf:bl:go' }],
+      [{ text: '◀ Back', callback_data: 'trf:bl:bk' }, { text: '❌ Decline', callback_data: `trf:dec:${session.requestId}` }]]);
+}
+
+/**
+ * Commit the picked bales: dispatch, DM the receiver, brief admins +
+ * requester, then prompt the dispatcher for the load photo.
+ */
+async function finalizeDispatch(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  const requestId = session.requestId;
+  const manualPicks = session.pl.map((p) => p.sel);
+  const row = await transferService.findTransfer(requestId);
+  const res = await transferService.dispatch(requestId, userId, manualPicks);
+  if (!res.ok) {
+    await render(bot, chatId, userId, `⚠️ ${res.message}`, [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+    sessionStore.clear(userId);
+    return;
   }
+  const aj = res.aj;
+  const sent = dispatchedSummary(aj);
+  const shortNote = res.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
+  try {
+    await bot.sendMessage(aj.receiver,
+      `📦 *Transfer ${requestId} incoming*\n${sent} · from ${aj.from}${shortNote}\n📦 Bales: ${baleListPreview(aj.bales)}\n\nConfirm when the goods arrive and match:`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[
+        { text: '✅ Received', callback_data: `trf:rcv:${requestId}` },
+        { text: '⚠️ Reject', callback_data: `trf:rej:${requestId}` },
+      ]] } });
+  } catch (e) { logger.warn(`transferFlow: receiver DM failed: ${e.message}`); }
+  await notifyAdmins(bot, requestId, aj, 'dispatched 🚚', userId);
+  if (row) await notifyRequester(bot, row, requestId, aj, 'dispatched 🚚', userId);
+  const base = `🚚 *${requestId} dispatched* — bales logged\n${sent} · ${aj.from} → ${aj.to}\n📦 ${baleListPreview(aj.bales)}${shortNote}`;
+  await promptForDoc(bot, chatId, userId, requestId, 'dispatch', base, session.flowMessageId);
+}
+
+/* ── load photo / PDF (dispatch + receive), reusing driveBackup ────────── */
+
+/**
+ * Seal the actor's card into a "send a photo / PDF" prompt and arm an
+ * await_doc session so their next upload is captured. `base` is the state
+ * text shown above the prompt.
+ */
+async function promptForDoc(bot, chatId, userId, requestId, docKind, base, messageId) {
+  sessionStore.set(userId, {
+    type: SESSION_TYPE, step: 'await_doc', requestId, docKind, flowMessageId: messageId || null,
+  });
+  const verb = docKind === 'receive' ? 'received goods' : 'load';
+  const code = docKind === 'receive' ? 'r' : 'd';
+  await render(bot, chatId, userId,
+    `${base}\n\n📸 Send a photo or PDF of the ${verb} — or tap Skip.`,
+    [[{ text: '⏭ Skip photo', callback_data: `trf:dsk:${code}:${requestId}` }]]);
+}
+
+/** Skip the photo (session-free — works even after the session expires). */
+async function skipDoc(bot, query, code, requestId) {
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+  const userId = String(query.from.id);
+  const session = sessionStore.get(userId);
+  if (session && session.type === SESSION_TYPE && session.step === 'await_doc') sessionStore.clear(userId);
+  const row = await transferService.findTransfer(requestId);
+  const base = row ? `🚚 *${requestId}* — ${stateLabel(row)}\n${lineOf(row.actionJSON)}` : `🚚 *${requestId}*`;
+  await bot.editMessageText(`${base}\n\n_No photo attached._`, {
+    chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [[{ text: '📎 Attach photo', callback_data: `trf:att:${code}:${requestId}` }]] },
+  }).catch(() => {});
+  return true;
+}
+
+/** Re-arm the photo prompt (fallback after a session expiry). */
+async function rearmDoc(bot, query, code, requestId) {
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+  const userId = String(query.from.id);
+  const row = await transferService.findTransfer(requestId);
+  if (!row) { await bot.sendMessage(query.message.chat.id, '🚚 Transfer not found or already closed.'); return true; }
+  const aj = row.actionJSON;
+  const kind = code === 'r' ? 'receive' : 'dispatch';
+  const allowed = kind === 'receive' ? aj.receiver : aj.dispatcher;
+  if (userId !== String(allowed) && !auth.isAdmin(userId)) {
+    await bot.answerCallbackQuery(query.id, { text: 'Only the assigned person can attach this.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  const base = `🚚 *${requestId}* — ${stateLabel(row)}`;
+  await promptForDoc(bot, query.message.chat.id, userId, requestId, kind, base, query.message.message_id);
+  return true;
+}
+
+/**
+ * Capture a dispatch/receive photo or PDF while an await_doc session is live.
+ * Archives to Drive (best-effort — never blocks the transfer), stores the
+ * link on the transfer's actionJSON, forwards the file to the counterparty +
+ * admins, then seals the prompt. Returns true when consumed.
+ */
+async function handleFile(bot, msg) {
+  const userId = String(msg.from.id);
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== SESSION_TYPE || session.step !== 'await_doc') return false;
+  const chatId = msg.chat.id;
+  const { requestId } = session;
+  const kind = session.docKind || 'dispatch';
+
+  let fileId = null; let mimeType = ''; let fileName = '';
+  if (msg.photo && msg.photo.length) {
+    fileId = msg.photo[msg.photo.length - 1].file_id;
+    mimeType = 'image/jpeg';
+    fileName = `transfer-${requestId}.jpg`;
+  } else if (msg.document) {
+    fileId = msg.document.file_id;
+    mimeType = (msg.document.mime_type || '').toLowerCase();
+    fileName = msg.document.file_name || `transfer-${requestId}`;
+    if (!DOC_MIMES.includes(mimeType)) {
+      const ext = (fileName.split('.').pop() || '').toLowerCase();
+      mimeType = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', pdf: 'application/pdf' }[ext] || mimeType;
+    }
+  } else {
+    return false;
+  }
+  if (!DOC_MIMES.includes(mimeType)) {
+    await bot.sendMessage(chatId, '⚠️ Send a photo (JPG/PNG) or a PDF — or tap Skip.');
+    return true;
+  }
+
+  let archive = null;
+  try {
+    const dl = await telegramFiles.downloadTelegramFile(bot, fileId);
+    let uploader = msg.from.first_name || `user-${userId}`;
+    try { const u = await usersRepository.findByUserId(userId); if (u && u.name) uploader = u.name; } catch (_) { /* fall back */ }
+    archive = await driveBackup.archiveFile(dl.buffer, dl.mimeType || mimeType, {
+      uploader, originalName: fileName, kind: 'photo',
+    });
+  } catch (e) {
+    logger.warn(`transferFlow: doc archive failed: ${e.message}`);
+  }
+  const url = (archive && archive.drive && archive.drive.webViewLink) || '';
+  await transferService.attachDoc(requestId, kind, {
+    url, name: (archive && archive.readableName) || fileName, fileId, by: userId,
+  });
+
+  // Forward the file for eyes-on to the counterparty, admins, and requester.
+  const row = await transferService.findTransfer(requestId);
+  const aj = row && row.actionJSON;
+  const caption = `📸 ${kind === 'receive' ? 'Receipt' : 'Dispatch'} photo — ${requestId}`;
+  const targets = new Set();
+  if (aj) {
+    targets.add(String(kind === 'receive' ? aj.dispatcher : aj.receiver));
+    for (const a of config.access.adminIds) targets.add(String(a));
+    if (row.user) targets.add(String(row.user));
+  }
+  targets.delete(userId);
+  for (const t of targets) {
+    if (!t) continue;
+    try {
+      if (msg.photo && msg.photo.length) await bot.sendPhoto(t, fileId, { caption });
+      else await bot.sendDocument(t, fileId, { caption });
+    } catch (_) { /* best-effort */ }
+  }
+
+  const flowMessageId = session.flowMessageId;
+  sessionStore.clear(userId);
+  const linkNote = url ? `\n🔗 ${url}` : '';
+  await bot.editMessageText(
+    `📸 *${kind === 'receive' ? 'Receipt' : 'Dispatch'} photo attached* — ${requestId}${linkNote}`,
+    { chat_id: chatId, message_id: flowMessageId, parse_mode: 'Markdown', disable_web_page_preview: true },
+  ).catch(() => {});
   return true;
 }
 
@@ -429,9 +770,14 @@ async function handleCallback(bot, query) {
   const chatId = query.message && query.message.chat && query.message.chat.id;
   const userId = String(query.from.id);
 
-  // Session-free actions first (cards live in counterparties' DMs).
+  // Session-free actions first (cards live in counterparties' / admins' DMs).
   const m = data.match(/^trf:(acc|dec|rcv|rej):(.+)$/);
   if (m) return handleAction(bot, query, m[2], m[1]);
+  let mm;
+  if ((mm = data.match(/^trf:info:(.+)$/))) return showInfo(bot, query, mm[1], true);
+  if ((mm = data.match(/^trf:less:(.+)$/))) return showInfo(bot, query, mm[1], false);
+  if ((mm = data.match(/^trf:dsk:([dr]):(.+)$/))) return skipDoc(bot, query, mm[1], mm[2]);
+  if ((mm = data.match(/^trf:att:([dr]):(.+)$/))) return rearmDoc(bot, query, mm[1], mm[2]);
   if (data === 'trf:list') {
     await bot.answerCallbackQuery(query.id).catch(() => {});
     await showList(bot, chatId, userId, query.message.message_id);
@@ -489,6 +835,42 @@ async function handleCallback(bot, query) {
   }
   if (data === 'trf:send') { await submit(bot, chatId, userId); return true; }
 
+  // Dispatcher bale picker (session-backed; anchored on the DM card).
+  if (data.startsWith('trf:bl:')) {
+    if (session.step !== 'dispatch_pick' && session.step !== 'dispatch_confirm') return true;
+    const rest = data.slice('trf:bl:'.length);
+    if (rest.startsWith('t:')) {
+      const line = session.pl[session.idx];
+      const pkg = line.cands[parseInt(rest.slice(2), 10)];
+      if (pkg !== undefined) {
+        const at = line.sel.indexOf(pkg);
+        if (at >= 0) line.sel.splice(at, 1);              // deselect
+        else if (line.sel.length < line.qty) line.sel.push(pkg); // add
+        else { line.sel.shift(); line.sel.push(pkg); }    // at cap → swap oldest
+        sessionStore.set(userId, session);
+        await showBalePicker(bot, chatId, userId);
+      }
+      return true;
+    }
+    if (rest === 'nx') {
+      const next = nextChoiceIdx(session, session.idx);
+      if (next === -1) { await showDispatchConfirm(bot, chatId, userId); }
+      else { session.idx = next; sessionStore.set(userId, session); await showBalePicker(bot, chatId, userId); }
+      return true;
+    }
+    if (rest === 'auto') { await showDispatchConfirm(bot, chatId, userId); return true; }
+    if (rest === 'bk') {
+      const prev = prevChoiceIdx(session, session.pl.length);
+      session.step = 'dispatch_pick';
+      if (prev !== -1) session.idx = prev;
+      sessionStore.set(userId, session);
+      await showBalePicker(bot, chatId, userId);
+      return true;
+    }
+    if (rest === 'go') { await finalizeDispatch(bot, chatId, userId); return true; }
+    return true;
+  }
+
   return false;
 }
 
@@ -496,5 +878,10 @@ module.exports = {
   start,
   showList,
   handleCallback,
-  _internals: { candidatesFor, resolvePeople, submit, handleAction, startPrefilled, SESSION_TYPE },
+  handleFile,
+  _internals: {
+    candidatesFor, resolvePeople, submit, handleAction, startPrefilled,
+    startDispatchPicker, finalizeDispatch, showInfo, promptForDoc, handleFile,
+    detailCard, shortCard, SESSION_TYPE,
+  },
 };
