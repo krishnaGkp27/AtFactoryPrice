@@ -322,6 +322,18 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   // marked approved + audited (previously it stayed 'pending' and could be
   // re-approved). Null for branches that have no custom message.
   let customMessage = null;
+  // H6 — ERP/ledger hook failures on money paths. Inventory mutations are
+  // already applied when these run, so a failure here means BOOKS ≠ STOCK.
+  // Collected (not thrown) and returned so approvalEvents can warn the
+  // admin loudly instead of reporting a clean success.
+  const erpFailures = [];
+  const recordErpFailure = async (stage, e) => {
+    logger.error(`H6 erp hook failed [${requestId}] ${stage}: ${e.message}`);
+    erpFailures.push({ stage, error: e.message });
+    try {
+      await auditLogRepository.append('erp_hook_failed', { requestId, stage, error: e.message }, approvedBy);
+    } catch { /* audit is best-effort here */ }
+  };
 
   if (aj.action === 'sell_than') {
     const result = await inventoryRepository.markThanSold(aj.packageNo, aj.thanNo, aj.customer, aj.salesDate);
@@ -336,12 +348,12 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     });
     try {
       await erpEmitAsync('sale', { type: 'sell_than', packageNo: aj.packageNo, thanNo: aj.thanNo, customer: aj.customer, yards: aj.yards, pricePerYard, design: aj.design, shade: aj.shade, userId: item.user, txnId: `ST-${aj.packageNo}-${aj.thanNo}`, paymentMode: enrichment?.paymentMode ?? '', amountPaid: enrichment?.amountPaid ?? 0 });
-    } catch (_) {}
+    } catch (e) { await recordErpFailure('sale ledger (sell_than)', e); }
     if (enrichment?.amountPaid > 0) {
       try {
         const crmService = require('./crmService');
         await crmService.recordPayment({ customer: aj.customer, amount: enrichment.amountPaid, method: enrichment.paymentMode || 'Cash', userId: approvedBy });
-      } catch (_) {}
+      } catch (e) { await recordErpFailure('payment record (sell_than)', e); }
     }
   } else if (aj.action === 'sell_package') {
     const results = await inventoryRepository.markPackageSold(aj.packageNo, aj.customer, aj.salesDate);
@@ -356,12 +368,12 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     });
     try {
       await erpEmitAsync('sale', { type: 'sell_package', packageNo: aj.packageNo, customer: aj.customer, yards: aj.yards, pricePerYard, design: aj.design, shade: aj.shade, userId: item.user, txnId: `SP-${aj.packageNo}`, paymentMode: enrichment?.paymentMode ?? '', amountPaid: enrichment?.amountPaid ?? 0 });
-    } catch (_) {}
+    } catch (e) { await recordErpFailure('sale ledger (sell_package)', e); }
     if (enrichment?.amountPaid > 0) {
       try {
         const crmService = require('./crmService');
         await crmService.recordPayment({ customer: aj.customer, amount: enrichment.amountPaid, method: enrichment.paymentMode || 'Cash', userId: approvedBy });
-      } catch (_) {}
+      } catch (e) { await recordErpFailure('payment record (sell_package)', e); }
     }
   } else if (aj.action === 'return_than') {
     const result = await inventoryRepository.markThanAvailable(aj.packageNo, aj.thanNo);
@@ -997,13 +1009,13 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       const payload = { type: 'sale_bundle', customer: aj.customer, yards, pricePerYard, design: design || undefined, shade: '', userId: item.user, txnId: `${requestId}-${design || 'sale'}`, paymentMode: enrichment?.paymentMode ?? '', amountPaid: enrichment?.amountPaid ?? 0 };
       try {
         await erpEmitAsync('sale', payload);
-      } catch (_) {}
+      } catch (e) { await recordErpFailure(`sale ledger (bundle${design ? ` ${design}` : ''})`, e); }
     }
     if (enrichment?.amountPaid > 0) {
       try {
         const crmService = require('./crmService');
         await crmService.recordPayment({ customer: aj.customer, amount: enrichment.amountPaid, method: enrichment.paymentMode || 'Cash', userId: approvedBy });
-      } catch (_) {}
+      } catch (e) { await recordErpFailure('payment record (bundle)', e); }
     }
   } else if (aj.action === 'supply_request') {
     // Intimation only — no inventory changes. Approval + assignment handled in approvalEvents.
@@ -1110,7 +1122,8 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
 
   await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString());
   await auditLogRepository.append('approval_approved', { requestId, approvedBy }, approvedBy);
-  return { ok: true, bundleReport, message: customMessage };
+  // H6 — erpFailures non-empty means stock moved but books did not.
+  return { ok: true, bundleReport, message: customMessage, erpFailures };
 }
 
 async function rejectApproval(requestId, rejectedBy) {

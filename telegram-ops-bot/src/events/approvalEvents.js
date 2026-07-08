@@ -234,11 +234,22 @@ async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, it
         const balesWord = rep.appliedPkgCount === 1 ? 'Bale' : 'Bales';
         partialTail = `\n\n⚠️ Partial apply — ${rep.failedItems.length} of ${rep.requestedItems} item(s) did NOT apply (${rep.appliedPkgCount} ${balesWord} / ${rep.appliedThans} thans / ${rep.appliedYards} yds were recorded):\n${lines}`;
       }
+      // H6 — inventory applied but one or more ledger/book writes failed.
+      // Loud, admin-facing: silent success here is how balances drift.
+      const erpFails = Array.isArray(result.erpFailures) ? result.erpFailures : [];
+      let erpTail = '';
+      if (erpFails.length) {
+        const failLines = erpFails.map((f) => `  • ${f.stage}: ${f.error}`).join('\n');
+        erpTail = `\n\n🛑 BOOKS NOT UPDATED — the sale was applied to stock but these ledger entries FAILED:\n${failLines}\nCustomer balance may be off. Check LedgerTransactions for ${requestId} and re-post manually (details in AuditLog under erp_hook_failed).`;
+      }
       const balesWordMsg = rep && rep.appliedPkgCount === 1 ? 'Bale' : 'Bales';
       let msg = partial
         ? `⚠️ Request ${requestId} approved, but applied only ${rep.appliedPkgCount} of ${rep.requestedItems} ${balesWordMsg}. Ledger updated for what was applied.`
-        : `✅ Request ${requestId} approved. Sale and ledger updated.`;
+        : (erpFails.length
+          ? `⚠️ Request ${requestId} approved — stock updated, but the LEDGER write failed (see below).`
+          : `✅ Request ${requestId} approved. Sale and ledger updated.`);
       msg += partialTail;
+      msg += erpTail;
       if (driveInfo) msg += `\n📎 [View Sales Bill](${driveInfo.webViewLink})`;
       await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', disable_web_page_preview: true });
       const employeeMsg = partial
@@ -740,7 +751,14 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
 
       const result = await inventoryService.executeApprovedAction(requestId, adminId);
       if (result.ok) {
-        await bot.sendMessage(chatIdCb, `✅ Request ${requestId} approved. Changes applied.`);
+        // H6 — surface "applied but books failed" instead of a clean ✅.
+        const erpFails = Array.isArray(result.erpFailures) ? result.erpFailures : [];
+        let approvedMsg = `✅ Request ${requestId} approved. Changes applied.`;
+        if (erpFails.length) {
+          const failLines = erpFails.map((f) => `  • ${f.stage}: ${f.error}`).join('\n');
+          approvedMsg = `⚠️ Request ${requestId} approved — changes applied, but these ledger/book entries FAILED:\n${failLines}\nCheck AuditLog (erp_hook_failed) and re-post manually.`;
+        }
+        await bot.sendMessage(chatIdCb, approvedMsg);
         await notifyEmployee(bot, requestingUser, requestId, `✅ Your request (${requestId}) has been approved by admin. Changes applied.`);
 
         // USR-C3 — welcome DM to the new user (best-effort; fails silently
