@@ -22,6 +22,11 @@ const MIME_BY_EXT = {
   xls: 'application/vnd.ms-excel',
 };
 
+// P3 (C6) — hard cap on downloaded bytes so a huge document can't balloon
+// memory on the single Railway instance. 20 MB matches the Telegram Bot
+// API's own getFile ceiling, so legitimate files always fit.
+const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024;
+
 async function downloadTelegramFile(bot, fileId) {
   if (!fileId) throw new Error('fileId is required');
   if (!config.telegram.token) throw new Error('TELEGRAM_TOKEN not configured');
@@ -37,8 +42,22 @@ async function downloadTelegramFile(bot, fileId) {
         res.resume();
         return;
       }
+      const declared = Number(res.headers['content-length'] || 0);
+      if (declared > MAX_DOWNLOAD_BYTES) {
+        res.destroy();
+        reject(new Error(`telegramFiles: file too large (${declared} bytes > ${MAX_DOWNLOAD_BYTES} cap)`));
+        return;
+      }
       const chunks = [];
-      res.on('data', (c) => chunks.push(c));
+      let received = 0;
+      res.on('data', (c) => {
+        received += c.length;
+        if (received > MAX_DOWNLOAD_BYTES) {
+          res.destroy(new Error(`telegramFiles: download exceeded ${MAX_DOWNLOAD_BYTES} byte cap`));
+          return;
+        }
+        chunks.push(c);
+      });
       res.on('end', () => resolve(Buffer.concat(chunks)));
       res.on('error', reject);
     });

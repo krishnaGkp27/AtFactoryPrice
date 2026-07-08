@@ -3730,7 +3730,8 @@ async function handleMessage(bot, msg) {
     if (handled) return;
   }
 
-  const intent = await intentParser.parse(text);
+  // P3 — userId enables the per-user OpenAI rate limit inside the parser.
+  const intent = await intentParser.parse(text, userId);
 
   // TCSI-2: 'add' starts a tappable wizard that collects every detail
   // itself (warehouse, then CSV). Bypass the clarification gate so the

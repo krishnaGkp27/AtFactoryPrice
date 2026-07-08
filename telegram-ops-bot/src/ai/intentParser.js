@@ -5,8 +5,16 @@
 
 const OpenAI = require('openai');
 const config = require('../config');
+const { createLimiter } = require('../utils/rateLimiter');
 
 const openai = config.openai.apiKey ? new OpenAI({ apiKey: config.openai.apiKey }) : null;
+
+// P3 — cap OpenAI spend per user: 20 NL parses per rolling minute is far
+// beyond human typing speed. Over the cap we DEGRADE to the regex fallback
+// (the user still gets an answer for simple commands; nothing is billed).
+const OPENAI_LIMIT_WINDOW_MS = 60_000;
+const OPENAI_LIMIT_MAX = 20;
+const openaiLimiter = createLimiter({ windowMs: OPENAI_LIMIT_WINDOW_MS, max: OPENAI_LIMIT_MAX });
 
 const SYSTEM = `You are an intent parser for a textile inventory bot that tracks fabric in packages and thans (pieces).
 
@@ -244,8 +252,16 @@ User: "Show my orders" → {"action":"my_orders","confidence":0.95,"clarificatio
 User: "Mark order ORD-20260221-001 delivered" → {"action":"mark_order_delivered","orderId":"ORD-20260221-001","confidence":0.95,"clarification":null}
 User: "Order ORD-20260221-001 done" → {"action":"mark_order_delivered","orderId":"ORD-20260221-001","confidence":0.95,"clarification":null}`;
 
-async function parse(userMessage) {
+/**
+ * Parse a natural-language message into a structured intent.
+ * @param {string} userMessage Raw text from Telegram.
+ * @param {string|number} [userId] Sender id — enables the per-user OpenAI
+ *   rate limit (P3). Omitted (internal/test callers) = no limit applied.
+ * @returns {Promise<object>} Normalized intent object.
+ */
+async function parse(userMessage, userId = null) {
   if (!openai) return fallbackParse(userMessage);
+  if (userId != null && !openaiLimiter.allow(String(userId))) return fallbackParse(userMessage);
   try {
     const completion = await openai.chat.completions.create({
       model: config.openai.model,
