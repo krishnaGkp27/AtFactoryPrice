@@ -64,6 +64,9 @@ const ACTIVITIES = [
   { code: 'return_catalog',        label: 'Return Catalog',            icon: '↩️', callback: 'act:return_catalog',       hub: 'marketers' },
   { code: 'catalog_tracker',       label: 'Catalog Tracker',           icon: '📊', callback: 'act:catalog_tracker',      hub: 'marketers' },
   { code: 'manage_catalog_stock',  label: 'Manage Catalog Stock',      icon: '🗂️', callback: 'act:manage_catalog_stock', hub: 'marketers' },
+  // MKT-2 — admin controls each marketer's My Products (designs + bale
+  // quantities). Admin-only entry gate in the controller; direct write.
+  { code: 'allocate_marketer',     label: 'Allocate to Marketer',      icon: '🧑‍💼', callback: 'act:allocate_marketer',    hub: 'marketers' },
 
   // ── Sales & Marketing › Designs (photo catalog) ──────────────────────
   { code: 'upload_design_photo',   label: 'Upload Product Photo',      icon: '📷', callback: 'act:upload_design_photo',  hub: 'designs' },
@@ -71,6 +74,10 @@ const ACTIVITIES = [
   { code: 'browse_catalog',        label: 'Browse Catalog',            icon: '📖', callback: 'act:browse_catalog',       hub: 'designs' },
   { code: 'search_design_photo',   label: 'Search Design Photo',       icon: '🔎', callback: 'act:search_design_photo',  hub: 'designs' },
   { code: 'catalog_stats',         label: 'Catalog Stats',             icon: '📊', callback: 'act:catalog_stats',        hub: 'designs' },
+  // DCAT-1 — design → product-category mapping (Cashmere / Chinos / …).
+  // Admin-only entry (controller gate); dual-admin approval at submit
+  // (set_design_category ∈ ALWAYS_APPROVAL_ACTIONS).
+  { code: 'set_design_category',   label: 'Set Design Category',       icon: '🏷️', callback: 'act:set_design_category',  hub: 'designs' },
 
   // ── Inventory (stock lookups — shallow, high-frequency) ──────────────
   { code: 'check_stock',           label: 'Check Stock',               icon: '📦', callback: 'act:check_stock',        hub: 'inventory' },

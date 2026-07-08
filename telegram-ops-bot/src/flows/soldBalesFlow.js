@@ -33,6 +33,7 @@ const sessionStore        = require('../utils/sessionStore');
 const { makeRenderer } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const designAssetsRepository = require('../repositories/designAssetsRepository');
+const designCategoriesRepository = require('../repositories/designCategoriesRepository');
 const pricingService      = require('../services/pricingService');
 const auth                = require('../middlewares/auth');
 const logger              = require('../utils/logger');
@@ -270,7 +271,9 @@ async function renderDetail(bot, chatId, userId) {
     const nameMap = nameMaps.get(g.design) || new Map();
     const shadeRef = formatShadeRef(g.shade, nameMap.get(String(g.shade))) || (g.shade || '—');
     const thanNos = g.thans.slice().sort((a, b) => a - b).map((t) => `#${t}`).join(',');
-    let line = `\n📦 *Bale ${g.packageNo}* — ${g.design} · ${shadeRef}\n`
+    // DCAT-1: category label rides along with the design number.
+    const cat = designCategoriesRepository.categoryOfSync(g.design);
+    let line = `\n📦 *Bale ${g.packageNo}* — ${g.design}${cat ? ` · ${cat}` : ''} · ${shadeRef}\n`
       + `   ${g.thans.length} than (${thanNos}) · ${fmtQty(g.yards)} yd`;
     if (showMoney) {
       const uniform = g.prices.size === 1 ? [...g.prices][0] : null;

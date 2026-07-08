@@ -123,8 +123,12 @@ session arrays, `cbSafe()` from `src/utils/telegramUI.js`).
 `Inventory`, `Transactions`, `Customers`, `Users`, `Departments`, `Orders`,
 `Samples`, `ApprovalQueue`, `Tasks`, `Contacts`, `ProductTypes`, `Settings`,
 `Receipts`, `AuditLog`, `DesignAssets`, `CatalogStock`, `CatalogLedger`,
-`Marketers`, `UserPrefs`, `LedgerTransactions`, `LedgerBalanceCache`,
-`Transfers`, `GoodsReceipts`, `PendingUsers`.
+`Marketers`, `MarketerAllocations`, `UserPrefs`, `LedgerTransactions`,
+`LedgerBalanceCache`, `Transfers`, `GoodsReceipts`, `PendingUsers`.
+
+Inventory column W = `design_category` (Cashmere / Chinos / Gaberdine /
+Senator / TR / …), stamped per DESIGN by the dual-admin Set Design Category
+flow (DCAT-1) — owner chose an Inventory column over a separate mapping sheet.
 
 ## Settings-sheet toggles (owner-editable, no deploy)
 

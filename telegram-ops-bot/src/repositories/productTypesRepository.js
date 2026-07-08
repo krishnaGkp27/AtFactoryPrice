@@ -80,10 +80,22 @@ function fmtQtyShort(count, labels) {
   return `${count} ${labels.container_short}`;
 }
 
+/**
+ * Display info for a design number — DCAT-1.
+ *
+ * Previously hardcoded (44200 → Cashmere, everything else → "Senator",
+ * which was simply wrong for non-Senator designs). Now backed by the
+ * DesignCategories sheet via a sync snapshot: `name` is the admin-approved
+ * category or '' when the design is unmapped, so callers render a bare
+ * design number instead of a made-up label. Kept sync (snapshot-based) so
+ * the many `.map()` call sites don't need an async rewrite.
+ * @param {string|number} design Design number.
+ * @returns {{icon: string, name: string}} Icon + category label ('' when unmapped).
+ */
 function getMaterialInfo(design) {
-  const d = String(design).trim();
-  if (d === '44200') return { icon: '🧣', name: 'Cashmere' };
-  return { icon: '🧵', name: 'Senator' };
+  const designCategories = require('./designCategoriesRepository');
+  const name = designCategories.categoryOfSync(design);
+  return { icon: designCategories.iconFor(name), name };
 }
 
 module.exports = {

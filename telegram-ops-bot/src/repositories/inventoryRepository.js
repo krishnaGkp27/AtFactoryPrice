@@ -24,7 +24,7 @@ const idGenerator = require('../utils/idGenerator');
 const { normalizeSalesDate } = require('../utils/dates');
 
 const SHEET = 'Inventory';
-const COL_COUNT = 22;
+const COL_COUNT = 23;
 const HEADERS = [
   'PackageNo', 'Indent', 'CSNo', 'Design', 'Shade', 'ThanNo', 'Yards', 'Status',
   'Warehouse', 'PricePerYard', 'DateReceived', 'SoldTo', 'SoldDate', 'NetMtrs', 'NetWeight', 'UpdatedAt',
@@ -38,6 +38,13 @@ const HEADERS = [
   // "container" label (which means the packaging unit — bale/box). Empty
   // rows are treated as unlabelled until backfilled.
   'arrival_batch',
+  // DCAT-1 — product-category label for the row's DESIGN (Cashmere / Chinos /
+  // Gaberdine / Senator / TR / …). Owner chose an Inventory column over a
+  // separate mapping sheet. Category is a per-DESIGN fact: the dual-admin
+  // "Set Design Category" flow stamps every row of the design, and readers
+  // (designCategoriesRepository) take the first non-empty cell per design so
+  // later-received unstamped rows still inherit the label on screens.
+  'design_category',
 ];
 
 /** Short-lived cache for getAll() to avoid hammering the API during batch ops. */
@@ -77,6 +84,7 @@ function parseRow(r, rowIndex) {
     grnId: str(r[19]),
     binLocation: str(r[20]),
     arrivalBatch: str(r[21]),
+    designCategory: str(r[22]),
     _legacy: isLegacy,
   };
 }
@@ -89,21 +97,21 @@ function toRow(o) {
     o.soldTo ?? '', o.soldDate ?? '', o.netMtrs ?? '', o.netWeight ?? '',
     o.updatedAt ?? '', o.productType ?? 'fabric',
     o.baleUid ?? '', o.addedAt ?? '', o.grnId ?? '', o.binLocation ?? '',
-    o.arrivalBatch ?? '',
+    o.arrivalBatch ?? '', o.designCategory ?? '',
   ];
 }
 
 async function ensureHeader() {
-  const rows = await sheets.readRange(SHEET, 'A1:V1');
+  const rows = await sheets.readRange(SHEET, 'A1:W1');
   if (!rows.length || rows[0].length < COL_COUNT) {
-    await sheets.updateRange(SHEET, 'A1:V1', [HEADERS]);
+    await sheets.updateRange(SHEET, 'A1:W1', [HEADERS]);
   }
 }
 
 async function getAll() {
   const now = Date.now();
   if (_allCache && (now - _allCacheTs) < CACHE_TTL_MS) return _allCache;
-  const rows = await sheets.readRange(SHEET, 'A2:V');
+  const rows = await sheets.readRange(SHEET, 'A2:W');
   _allCache = rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.packageNo || r.design);
   _allCacheTs = Date.now();
   return _allCache;
@@ -428,6 +436,30 @@ async function updatePrice(filters, newPrice) {
   return matches.length;
 }
 
+/**
+ * DCAT-1 — stamp a product-category label onto EVERY row of a design
+ * (column W), sold and available alike, so the sheet reads consistently.
+ * Same batch-write pattern as updatePrice. Case-insensitive design match.
+ *
+ * @param {string} design Design number.
+ * @param {string} category Category label (already canonicalized by caller).
+ * @returns {Promise<number>} Count of rows stamped.
+ */
+async function updateDesignCategory(design, category) {
+  const d = upper(design);
+  if (!d) throw new Error('inventoryRepository.updateDesignCategory: design required');
+  const all = await getAll();
+  const matches = all.filter((r) => upper(r.design) === d);
+  if (!matches.length) return 0;
+  const updates = [];
+  for (const row of matches) {
+    updates.push({ range: `W${row.rowIndex}`, values: [[str(category)]] });
+  }
+  await sheets.batchUpdateRanges(SHEET, updates);
+  invalidateCache();
+  return matches.length;
+}
+
 async function transferThan(packageNo, thanNo, toWarehouse) {
   const than = await findThan(packageNo, thanNo);
   if (!than) return null;
@@ -594,6 +626,7 @@ module.exports = {
   markThanAvailable,
   markPackageAvailable,
   updatePrice,
+  updateDesignCategory,
   transferThan,
   transferPackage,
   transitionBales,

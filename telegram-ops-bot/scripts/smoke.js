@@ -7228,6 +7228,214 @@ async function runS42() {
 }
 
 // ---------------------------------------------------------------------------
+// S43 — DCAT-1: design categories (Inventory column W, repo, risk, wiring)
+// ---------------------------------------------------------------------------
+async function runS43() {
+  // ---- S43.1 — risk: set_design_category ∈ ALWAYS_APPROVAL_ACTIONS ----
+  delete require.cache[require.resolve('../src/risk/evaluate')];
+  const risk43 = require('../src/risk/evaluate');
+  if (Array.isArray(risk43.ALWAYS_APPROVAL_ACTIONS)
+      && risk43.ALWAYS_APPROVAL_ACTIONS.includes('set_design_category')) {
+    pass('S43.1 risk: set_design_category ∈ ALWAYS_APPROVAL_ACTIONS — dual-admin inherited');
+  } else fail('S43.1', JSON.stringify(risk43.ALWAYS_APPROVAL_ACTIONS));
+
+  // ---- S43.2 — activity registry: 🏷️ Set Design Category in designs hub ----
+  delete require.cache[require.resolve('../src/services/activityRegistry')];
+  const reg43 = require('../src/services/activityRegistry');
+  const flat43 = typeof reg43.getAll === 'function' ? reg43.getAll() : [];
+  const entry43 = flat43.find((a) => a.code === 'set_design_category');
+  if (entry43 && entry43.hub === 'designs' && entry43.callback === 'act:set_design_category') {
+    pass('S43.2 activityRegistry: set_design_category in designs hub → act:set_design_category');
+  } else fail('S43.2', JSON.stringify(entry43));
+
+  // ---- S43.3 — storage: Inventory gains design_category (column W); NO new sheet ----
+  const schemaSrc43 = fs.readFileSync(path.join(__dirname, '../src/services/schemaMapper.js'), 'utf8');
+  const invRepoSrc43 = fs.readFileSync(path.join(__dirname, '../src/repositories/inventoryRepository.js'), 'utf8');
+  if (schemaSrc43.includes("'design_category'")
+      && !schemaSrc43.includes('DesignCategories:')
+      && invRepoSrc43.includes("'design_category'")
+      && invRepoSrc43.includes('COL_COUNT = 23')) {
+    pass('S43.3 storage: design_category rides the Inventory sheet (owner: no separate sheet)');
+  } else fail('S43.3', 'design_category column wiring missing (or stray DesignCategories sheet)');
+
+  // ---- S43.4 — repo: derive per-design category from Inventory rows ----
+  const invRows43 = [
+    { design: '9006', designCategory: 'Chinos', status: 'available', packageNo: 'P1', warehouse: 'Kano' },
+    { design: '9006', designCategory: '', status: 'available', packageNo: 'P2', warehouse: 'Kano' }, // later bale, unstamped
+    { design: '80045', designCategory: '', status: 'available', packageNo: 'P3', warehouse: 'Lagos' },
+  ];
+  const stamped43 = [];
+  stubModule(require.resolve('../src/repositories/inventoryRepository'), {
+    getAll: async () => invRows43,
+    updateDesignCategory: async (design, category) => {
+      stamped43.push({ design, category });
+      for (const r of invRows43) {
+        if (r.design.toUpperCase() === String(design).toUpperCase()) r.designCategory = category;
+      }
+      return invRows43.filter((r) => r.design.toUpperCase() === String(design).toUpperCase()).length;
+    },
+  });
+  delete require.cache[require.resolve('../src/repositories/designCategoriesRepository')];
+  const dcRepo = require('../src/repositories/designCategoriesRepository');
+
+  if (dcRepo.canonicalizeCategory('senator') === 'Senator'
+      && dcRepo.canonicalizeCategory('tr') === 'TR'
+      && dcRepo.canonicalizeCategory('  poly   cotton ') === 'Poly Cotton') {
+    pass('S43.4a canonicalizeCategory: snaps to known casing (TR) + Title-Cases new labels');
+  } else {
+    fail('S43.4a', JSON.stringify([dcRepo.canonicalizeCategory('senator'), dcRepo.canonicalizeCategory('tr'), dcRepo.canonicalizeCategory('  poly   cotton ')]));
+  }
+
+  const map43 = await dcRepo.getMap();
+  if (map43.get('9006') === 'Chinos' && dcRepo.categoryOfSync('9006') === 'Chinos'
+      && dcRepo.categoryOfSync('80045') === '') {
+    pass('S43.4b getMap: first non-empty cell per design wins; unstamped rows inherit; unmapped bare');
+  } else fail('S43.4b', JSON.stringify([...map43.entries()]));
+
+  const cats43 = await dcRepo.listCategories();
+  if (cats43[0] === 'Cashmere' && cats43.includes('TR') && cats43.includes('Chinos')
+      && cats43.filter((c) => c === 'Chinos').length === 1) {
+    pass('S43.4c listCategories: defaults first, inventory labels deduped');
+  } else fail('S43.4c', JSON.stringify(cats43));
+
+  await dcRepo.setCategory({ design: '80045', category: 'senator' });
+  const allStamped43 = stamped43.length === 1
+    && stamped43[0].design === '80045' && stamped43[0].category === 'Senator';
+  let zeroRowsRejected43 = false;
+  try { await dcRepo.setCategory({ design: 'GHOST', category: 'TR' }); } catch { zeroRowsRejected43 = true; }
+  if (allStamped43 && dcRepo.categoryOfSync('80045') === 'Senator' && zeroRowsRejected43) {
+    pass('S43.4d setCategory: stamps every row via updateDesignCategory, refreshes snapshot, rejects unknown design');
+  } else fail('S43.4d', JSON.stringify({ stamped43, zeroRowsRejected43 }));
+
+  if (dcRepo.iconFor('Cashmere') === '🧣' && dcRepo.iconFor('Senator') === '🧵' && dcRepo.iconFor('') === '🧵') {
+    pass('S43.4e iconFor: Cashmere keeps 🧣, everything else 🧵');
+  } else fail('S43.4e', '');
+
+  // ---- S43.5 — flow surface + controller wiring ----
+  delete require.cache[require.resolve('../src/flows/designCategoryFlow')];
+  const dcFlow = require('../src/flows/designCategoryFlow');
+  const missingFns43 = ['start', 'handleCallback'].filter((k) => typeof dcFlow[k] !== 'function');
+  const ctrlSrc43 = fs.readFileSync(path.join(__dirname, '../src/controllers/telegramController.js'), 'utf8');
+  if (!missingFns43.length
+      && ctrlSrc43.includes("prefixes: ['dcat:']")
+      && ctrlSrc43.includes("case 'set_design_category':")) {
+    pass('S43.5 flow exports + controller wiring: dcat: route + act:set_design_category case');
+  } else fail('S43.5', missingFns43.join(', ') || 'controller wiring missing');
+
+  // ---- S43.6 — executeApprovedAction has the set_design_category branch ----
+  const invSrc43 = fs.readFileSync(path.join(__dirname, '../src/services/inventoryService.js'), 'utf8');
+  if (invSrc43.includes("aj.action === 'set_design_category'")) {
+    pass('S43.6 inventoryService: executeApprovedAction handles set_design_category');
+  } else fail('S43.6', 'branch missing');
+
+  // ---- S43.7 — getMaterialInfo is data-driven (no hardcoded Senator) ----
+  delete require.cache[require.resolve('../src/repositories/productTypesRepository')];
+  const pt43 = require('../src/repositories/productTypesRepository');
+  const mapped43 = pt43.getMaterialInfo('80045');
+  const unmapped43 = pt43.getMaterialInfo('NOPE');
+  if (mapped43.name === 'Senator' && unmapped43.name === '' && unmapped43.icon === '🧵') {
+    pass('S43.7 getMaterialInfo: reads the category snapshot; unmapped designs render bare');
+  } else fail('S43.7', JSON.stringify({ mapped43, unmapped43 }));
+
+  for (const p of [
+    '../src/repositories/inventoryRepository',
+    '../src/repositories/designCategoriesRepository',
+    '../src/repositories/productTypesRepository',
+    '../src/flows/designCategoryFlow',
+  ]) { try { delete require.cache[require.resolve(p)]; } catch (_) {} }
+}
+
+// ---------------------------------------------------------------------------
+// S44 — MKT-2: marketer allocations + category-first My Products
+// ---------------------------------------------------------------------------
+async function runS44() {
+  // ---- S44.1 — schemaMapper: MarketerAllocations sheet registered ----
+  const schemaSrc44 = fs.readFileSync(path.join(__dirname, '../src/services/schemaMapper.js'), 'utf8');
+  const cols44 = ['marketer_id', 'marketer_name', 'design', 'allocated_qty', 'updated_by', 'updated_at'];
+  const missing44 = schemaSrc44.includes('MarketerAllocations')
+    ? cols44.filter((c) => !schemaSrc44.includes(`'${c}'`))
+    : cols44;
+  if (missing44.length === 0) {
+    pass('S44.1 schemaMapper: MarketerAllocations sheet with allocation columns');
+  } else fail('S44.1', missing44.join(', '));
+
+  // ---- S44.2 — activity registry: 🧑‍💼 Allocate to Marketer in marketers hub ----
+  delete require.cache[require.resolve('../src/services/activityRegistry')];
+  const reg44 = require('../src/services/activityRegistry');
+  const entry44 = reg44.getAll().find((a) => a.code === 'allocate_marketer');
+  if (entry44 && entry44.hub === 'marketers' && entry44.callback === 'act:allocate_marketer') {
+    pass('S44.2 activityRegistry: allocate_marketer in marketers hub → act:allocate_marketer');
+  } else fail('S44.2', JSON.stringify(entry44));
+
+  // ---- S44.3 — allocations repo: upsert + list + counts on stub sheets ----
+  const store44 = [];
+  stubModule(require.resolve('../src/repositories/sheetsClient'), {
+    readRange: async () => store44.map((r) => [...r]),
+    appendRows: async (sheet, rows) => { for (const r of rows) store44.push([...r]); },
+    updateRange: async (sheet, range, values) => {
+      const m = range.match(/^A(\d+):G\d+$/);
+      if (m) store44[parseInt(m[1], 10) - 2] = [...values[0]];
+    },
+  });
+  delete require.cache[require.resolve('../src/repositories/marketerAllocationsRepository')];
+  const malRepo = require('../src/repositories/marketerAllocationsRepository');
+
+  await malRepo.setAllocation({ marketerId: 'M1', marketerName: 'Musa', design: '44200', qty: 10, updatedBy: 'A' });
+  await malRepo.setAllocation({ marketerId: 'M1', marketerName: 'Musa', design: '9006', qty: 4, updatedBy: 'A' });
+  await malRepo.setAllocation({ marketerId: 'M1', marketerName: 'Musa', design: '9006', qty: 6, updatedBy: 'A' }); // overwrite
+  await malRepo.setAllocation({ marketerId: 'M2', marketerName: 'Bala', design: '9006', qty: 2, updatedBy: 'A' });
+  await malRepo.setAllocation({ marketerId: 'M1', marketerName: 'Musa', design: '44200', qty: 0, updatedBy: 'A' }); // remove
+
+  const m1 = await malRepo.listForMarketer('M1');
+  const counts44 = await malRepo.countsByMarketer();
+  if (store44.length === 3 // 3 distinct (marketer, design) rows — overwrites did not append
+      && m1.length === 1 && m1[0].design === '9006' && m1[0].allocated_qty === 6
+      && counts44.get('M1') === 1 && counts44.get('M2') === 1) {
+    pass('S44.3 allocations repo: upsert overwrites, qty 0 hides, per-marketer list + counts');
+  } else fail('S44.3', JSON.stringify({ rows: store44.length, m1, counts: [...counts44] }));
+
+  // ---- S44.4 — marketer catalog groups allocations by category (Others last) ----
+  stubModule(require.resolve('../src/repositories/designCategoriesRepository'), {
+    getMap: async () => new Map([['44200', 'Cashmere'], ['9006', 'Chinos']]),
+    normalizeDesign: (d) => String(d || '').trim().toUpperCase(),
+    iconFor: (c) => (/cashmere/i.test(c || '') ? '🧣' : '🧵'),
+    DEFAULT_CATEGORIES: ['Cashmere', 'Chinos', 'Gaberdine', 'Senator', 'TR'],
+    categoryOfSync: () => '',
+  });
+  stubModule(require.resolve('../src/repositories/marketerAllocationsRepository'), {
+    listForMarketer: async () => [
+      { marketer_id: 'M1', design: '44200', allocated_qty: 10 },
+      { marketer_id: 'M1', design: '9006', allocated_qty: 6 },
+      { marketer_id: 'M1', design: 'ZZZ', allocated_qty: 1 }, // uncategorized
+    ],
+  });
+  delete require.cache[require.resolve('../src/flows/marketerCatalogFlow')];
+  const mkpFlow = require('../src/flows/marketerCatalogFlow');
+  const grouped44 = await mkpFlow._internals.allocationsByCategory('M1');
+  if (grouped44.get('Cashmere')?.[0]?.design === '44200'
+      && grouped44.get('Chinos')?.[0]?.design === '9006'
+      && grouped44.get('Others')?.[0]?.design === 'ZZZ') {
+    pass('S44.4 marketerCatalogFlow: allocations grouped by category, uncategorized → Others');
+  } else fail('S44.4', JSON.stringify([...grouped44.keys()]));
+
+  // ---- S44.5 — controller wiring: routes + admin case + marketer branch ----
+  const ctrlSrc44 = fs.readFileSync(path.join(__dirname, '../src/controllers/telegramController.js'), 'utf8');
+  if (ctrlSrc44.includes("prefixes: ['mal:']")
+      && ctrlSrc44.includes("prefixes: ['mkp:']")
+      && ctrlSrc44.includes("case 'allocate_marketer':")
+      && ctrlSrc44.includes('fieldRoles.MARKETER')) {
+    pass('S44.5 controller: mal:/mkp: routes + allocate_marketer case + marketer My-Products branch');
+  } else fail('S44.5', 'controller wiring missing');
+
+  for (const p of [
+    '../src/repositories/sheetsClient',
+    '../src/repositories/marketerAllocationsRepository',
+    '../src/repositories/designCategoriesRepository',
+    '../src/flows/marketerCatalogFlow',
+  ]) { try { delete require.cache[require.resolve(p)]; } catch (_) {} }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 (async function main() {
@@ -7280,6 +7488,8 @@ async function runS42() {
   try { await runS40(); } catch (e) { fail('S40 unexpected error', e.message); }
   try { await runS41(); } catch (e) { fail('S41 unexpected error', e.message); }
   try { await runS42(); } catch (e) { fail('S42 unexpected error', e.message); }
+  try { await runS43(); } catch (e) { fail('S43 unexpected error', e.message); }
+  try { await runS44(); } catch (e) { fail('S44 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

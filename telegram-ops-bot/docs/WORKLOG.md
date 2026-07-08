@@ -5,6 +5,55 @@ Newest first. One entry per working session; each entry lists what shipped
 
 ---
 
+## 2026-07-08 (later) — DCAT-1 design categories + MKT-2 marketer allocations
+
+### DCAT-1 — product categories on top of design numbers (everyone sees them)
+
+- **Storage (owner decision): NO new sheet** — new `design_category` column
+  appended at the END of Inventory (column W, after `arrival_batch`). The
+  dual-admin flow stamps every row of the design; readers take the first
+  non-empty cell per design so later-received unstamped bales still inherit
+  the label on screens.
+- **Assignment flow (shortest, 4 taps):** Designs hub → 🏷️ Set Design
+  Category (admin-only) → design chip → category chip (Cashmere / Chinos /
+  Gaberdine / Senator / TR + any label already in use) → Submit →
+  `set_design_category` ∈ `ALWAYS_APPROVAL_ACTIONS` → 2nd admin approves
+  (self-approval already blocked) → Inventory stamped, labels live at once.
+- **Display rollout:** supply/transfer carts, supply approval summaries
+  (`approvalEvents` — 3 one-line bracket fixes), transfer cards + wizard
+  chips (`transferFlow`), Check Stock header + design-picker chips, bale
+  detail, sold-bales lines. `getMaterialInfo()` is no longer hardcoded
+  (was: everything → "Senator", 44200 → "Cashmere"); unmapped designs render
+  as the bare number, no more fake labels.
+
+### MKT-2 — marketer My Products v2 (exclusive to role=marketer)
+
+- **First screen = tappable category chips** (🧣 Cashmere, 🧵 Senator, …)
+  built ONLY from designs an admin allocated to that marketer; tap → designs
+  with allocated bale qty + live "available now" reference. No price.
+  Uncategorized designs group under "Others". No allocations → "ask your
+  admin" empty state. Salesman/employee paths unchanged.
+- **Admin control:** Marketers hub → 🧑‍💼 Allocate to Marketer (admin-only):
+  marketer → design (category-labelled chips) → qty chips (0 = remove) →
+  Save. Direct write (no approval queue — owner wants fast test cycles),
+  audit-logged, marketer gets a DM on every change.
+- **Storage:** ONE new sheet `MarketerAllocations` (marketer_id ×  design →
+  allocated_qty) — a many-to-many fact that can't ride Inventory or Users;
+  owner's "minimize sheets" rule honoured everywhere else.
+
+Tests: 396 pass (11 new characterization: dual-admin category path,
+allocation flow, marketer catalog, salesman-unchanged; fieldRoles pin
+updated to the allocation-scoped view). Smoke 546/546 (S43 + S44 added).
+Lint: 0 errors. fakeSheets updateRange now honours the start CELL (column
+offsets like `W3` no longer clobber whole rows).
+
+**Owner testing path:** onboard a Telegram ID with role=marketer → 🧑‍💼
+Allocate to Marketer (e.g. 44200 ×10) → their 📦 My Products shows the
+category chip → tap → allocated qty. Categories: 🏷️ Set Design Category +
+2nd-admin approve; label then shows bot-wide.
+
+---
+
 ## 2026-07-08 — TRF-6: mandatory transfer photos + card UX (live-test feedback)
 
 First live run (TR-20260708-001, 12 bales Lagos → Kano office, cart path)

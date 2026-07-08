@@ -311,7 +311,8 @@ async function buildSupplyDispatchFullSummary(aj) {
     const m = productTypesRepo.getMaterialInfo(c.design);
     const shadeName = c.shadeName || '';
     const shadeRef = shadeName ? `${c.shade} - ${shadeName}` : String(c.shade || '');
-    return `${m.icon} ${c.design} [${m.name}] │ Shade: ${shadeRef} │ ×${c.quantity} ${cShort}`;
+    // DCAT-1: omit the [category] chip when the design is unmapped.
+    return `${m.icon} ${c.design}${m.name ? ` [${m.name}]` : ''} │ Shade: ${shadeRef} │ ×${c.quantity} ${cShort}`;
   }).join('\n');
   const totalQty = cart.reduce((s, c) => s + (Number(c.quantity) || 0), 0);
   const containerPlural = productTypesRepo.pluralize(labels.container_label, totalQty).toLowerCase();
@@ -837,7 +838,8 @@ async function showWarehouseBoyPicker(bot, chatId, requestId, item, requestingUs
   const cShort = labels.container_short;
   const cartLines = (aj.cart || []).map((ci) => {
     const m = productTypesRepo.getMaterialInfo(ci.design);
-    return `${m.icon} ${ci.design} [${m.name}] │ Shade: ${ci.shade} │ ×${ci.quantity} ${cShort}`;
+    // DCAT-1: omit the [category] chip when the design is unmapped.
+    return `${m.icon} ${ci.design}${m.name ? ` [${m.name}]` : ''} │ Shade: ${ci.shade} │ ×${ci.quantity} ${cShort}`;
   }).join('\n');
   const totalQty = (aj.cart || []).reduce((s, c) => s + c.quantity, 0);
   const containerPlural = productTypesRepo.pluralize(labels.container_label, totalQty).toLowerCase();
@@ -906,7 +908,8 @@ async function handleSupplyAssign(bot, callbackQuery) {
   const cShort = labels.container_short;
   const cartLines = (aj.cart || []).map((ci) => {
     const m = productTypesRepo.getMaterialInfo(ci.design);
-    return `${m.icon} ${ci.design} [${m.name}] │ Shade: ${ci.shade} │ ×${ci.quantity} ${cShort}`;
+    // DCAT-1: omit the [category] chip when the design is unmapped.
+    return `${m.icon} ${ci.design}${m.name ? ` [${m.name}]` : ''} │ Shade: ${ci.shade} │ ×${ci.quantity} ${cShort}`;
   }).join('\n');
   const totalQty = (aj.cart || []).reduce((s, c) => s + c.quantity, 0);
   const containerPlural = productTypesRepo.pluralize(labels.container_label, totalQty).toLowerCase();

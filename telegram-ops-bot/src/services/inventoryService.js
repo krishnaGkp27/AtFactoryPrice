@@ -755,6 +755,25 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // approval-events handler if/when we want it. For now the
     // requester + approver both get direct messages via the existing
     // approval pipeline, which is sufficient signal.
+  } else if (aj.action === 'set_design_category') {
+    // DCAT-1 — dual-admin design-category mapping (ALWAYS_APPROVAL_ACTIONS).
+    // Stamps the Inventory `design_category` column (W) on every row of the
+    // design; setCategory() also force-refreshes the read snapshot so every
+    // screen (carts, transfer cards, Check Stock, pickers) shows the new
+    // label immediately.
+    const designCategoriesRepo = require('../repositories/designCategoriesRepository');
+    const design = String(aj.design || '').trim();
+    const category = String(aj.category || '').trim();
+    if (!design || !category) {
+      return { ok: false, message: 'set_design_category: design and category are required.' };
+    }
+    try {
+      const res = await designCategoriesRepo.setCategory({ design, category });
+      customMessage = `Design ${res.design} is now labelled "${res.category}" (${res.rows} inventory rows stamped).`;
+    } catch (e) {
+      logger.error(`set_design_category apply failed: ${e.message}`);
+      return { ok: false, message: e.message || 'Failed to set design category.' };
+    }
   } else if (aj.action === 'add_user') {
     // USR-C3 — in-bot user onboarding. Validates one more time (someone
     // else might have added this Telegram ID since the request was

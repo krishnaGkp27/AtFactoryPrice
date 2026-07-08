@@ -36,6 +36,7 @@ const sessionStore = require('../utils/sessionStore');
 const { makeRenderer } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const usersRepository = require('../repositories/usersRepository');
+const designCategoriesRepository = require('../repositories/designCategoriesRepository');
 const transferService = require('../services/transferService');
 const driveBackup = require('../services/vision/driveBackup');
 const telegramFiles = require('../utils/telegramFiles');
@@ -110,7 +111,13 @@ async function showDesigns(bot, chatId, userId) {
     return;
   }
   session._designs = designs.map((d) => d.design); session.step = 'design'; sessionStore.set(userId, session);
-  const rows = chunk(designs.map((d, i) => ({ text: `${d.design} (${d.bales} bls)`, callback_data: `trf:dg:${i}` })), 2);
+  // DCAT-1: chips carry the category label ("80045 · Senator (12 bls)").
+  let catMap = new Map();
+  try { catMap = await designCategoriesRepository.getMap(); } catch { /* bare chips */ }
+  const rows = chunk(designs.map((d, i) => {
+    const cat = catMap.get(designCategoriesRepository.normalizeDesign(d.design)) || '';
+    return { text: `${d.design}${cat ? ` · ${cat}` : ''} (${d.bales} bls)`, callback_data: `trf:dg:${i}` };
+  }), 2);
   rows.push(navRow());
   await render(bot, chatId, userId, `🚚 *Transfer from ${session.from}*\n\nPick a design:`, rows);
 }
@@ -267,10 +274,21 @@ function linesBlock(lines) {
   }
   const out = [];
   for (const [design, ls] of byDesign) {
-    out.push(`🧵 *${design}*`);
+    out.push(designHead(design));
     for (const l of ls) out.push(` • Shade ${l.shade} ×${l.qty}`);
   }
   return out.join('\n');
+}
+
+/**
+ * DCAT-1 — grouped-block design header with the admin-approved category
+ * label ("🧵 *80045* · Senator"); bare when the design is unmapped. Sync
+ * snapshot read: server boot warms it and setCategory refreshes it.
+ */
+function designHead(design) {
+  const cat = designCategoriesRepository.categoryOfSync(design);
+  const icon = designCategoriesRepository.iconFor(cat);
+  return cat ? `${icon} *${design}* · ${cat}` : `${icon} *${design}*`;
 }
 
 /** Grouped dispatch-outcome block, marking per-line shortfalls. */
@@ -284,7 +302,7 @@ function dispatchedBlock(aj) {
   }
   const out = [];
   for (const [design, list] of byDesign) {
-    out.push(`🧵 *${design}*`);
+    out.push(designHead(design));
     for (const d of list) {
       out.push(d.sent < d.requested
         ? ` • Shade ${d.shade} — ${d.sent}/${d.requested} ⚠️ short`
@@ -300,9 +318,12 @@ function headOf(aj) {
   return `*${aj.from}* → *${aj.to}* · ${n} bale(s)`;
 }
 
-/** Compact one-liner for list rows: "12 bale(s) · 80045 · Lagos → Kano office". */
+/** Compact one-liner for list rows: "12 bale(s) · 80045 Senator · Lagos → Kano office". */
 function compactOf(aj) {
-  const designs = [...new Set((aj.lines || []).map((l) => l.design))].join(', ');
+  const designs = [...new Set((aj.lines || []).map((l) => l.design))].map((d) => {
+    const cat = designCategoriesRepository.categoryOfSync(d);
+    return cat ? `${d} ${cat}` : String(d);
+  }).join(', ');
   return `${totalBales(aj)} bale(s) · ${designs} · ${aj.from} → ${aj.to}`;
 }
 
@@ -1160,7 +1181,7 @@ module.exports = {
     candidatesFor, resolvePeople, submit, handleAction, startPrefilled,
     startDispatchPicker, askDispatchDoc, completeDispatch, completeReceipt,
     armDocGate, gateNotNow, showInfo, promptForDoc, handleFile,
-    linesBlock, dispatchedBlock, headOf, compactOf,
+    linesBlock, dispatchedBlock, headOf, compactOf, designHead,
     detailCard, shortCard, showActionCard, dispatcherCard, receiverCard, SESSION_TYPE,
   },
 };

@@ -9,9 +9,11 @@
  * no network.
  *
  * The data model is a Map of sheetName → 2D array of cells (row 0 is the
- * header, matching how the real sheet stores data). Ranges are handled by
- * their starting row only (e.g. "A2:Z" skips the header); column bounds are
- * ignored because repositories index cells by known column positions.
+ * header, matching how the real sheet stores data). Reads are handled by
+ * their starting row only (e.g. "A2:Z" skips the header). Writes honour the
+ * starting CELL (row + column) and merge into the existing row — matching
+ * the real API — so single-column updates like `W3` or `J5` don't clobber
+ * the rest of the row (DCAT-1 fix; previously writes always started at A).
  */
 
 /** Zero-based start-row index implied by an A1 range like "A2:Z" / "A:Z". */
@@ -19,6 +21,16 @@ function startRowIndex(range) {
   const left = String(range || '').split(':')[0];
   const m = left.match(/\d+/);
   return m ? Math.max(0, parseInt(m[0], 10) - 1) : 0;
+}
+
+/** Zero-based {row, col} of the top-left cell of an A1 range like "W3:W3". */
+function startCell(range) {
+  const left = String(range || '').split(':')[0];
+  const m = left.match(/^([A-Za-z]*)(\d*)$/) || [];
+  let col = 0;
+  for (const ch of (m[1] || '').toUpperCase()) col = col * 26 + (ch.charCodeAt(0) - 64);
+  const row = m[2] ? parseInt(m[2], 10) : 1;
+  return { row: Math.max(0, row - 1), col: Math.max(0, col - 1) };
 }
 
 /**
@@ -53,9 +65,13 @@ function createFakeSheets(initial = {}) {
 
     async updateRange(sheetName, range, values) {
       const s = ensure(sheetName);
-      let idx = startRowIndex(range);
+      const { row: startRow, col: startCol } = startCell(range);
+      let idx = startRow;
       for (const row of values) {
-        s[idx] = [...row];
+        if (!s[idx]) s[idx] = [];
+        for (let j = 0; j < row.length; j += 1) {
+          s[idx][startCol + j] = row[j];
+        }
         idx += 1;
       }
     },

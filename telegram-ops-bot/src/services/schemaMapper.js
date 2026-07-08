@@ -137,6 +137,16 @@ const REQUIRED_SHEETS = {
   Marketers: {
     headers: ['MarketerId', 'Name', 'Phone', 'Area', 'PersonPhotoFileId', 'PersonPhotoDriveId', 'CatalogPhotoFileId', 'CatalogPhotoDriveId', 'Status', 'ApprovedBy', 'ApprovalRequestId', 'Notes', 'CreatedAt'],
   },
+  // MKT-2 — admin-controlled per-marketer design allocation. One row per
+  // (marketer_id, design); allocated_qty is the bale quantity the admin has
+  // released to that marketer. Powers the marketer's category-first
+  // "My Products" view: only allocated designs (qty > 0) are visible.
+  // A marketer×design allocation is a many-to-many fact — it cannot be
+  // folded into Inventory (per-bale rows) or Users (one row per person)
+  // without JSON blobs, so this is a genuinely necessary sheet.
+  MarketerAllocations: {
+    headers: ['marketer_id', 'marketer_name', 'design', 'allocated_qty', 'updated_by', 'updated_at', 'notes'],
+  },
   // P2 — Goods Receipt Note (GRN) header doc. Bales themselves go into the
   // Inventory sheet directly with grn_id back-pointer; this sheet groups
   // them per "delivery" for audit and supplier reconciliation.
@@ -444,7 +454,10 @@ async function initialize() {
       // ARRIVAL-BATCH C1 — added `arrival_batch` (e.g. "Mar26") so the
       // Supply/Bundle pickers can offer a "Select Container" step. Existing
       // rows stay empty until the one-time backfill stamps them "Mar26".
-      const INV_NEW_COLS = ['bale_uid', 'addedAt', 'grn_id', 'bin_location', 'arrival_batch'];
+      // DCAT-1 — added `design_category` (Cashmere / Chinos / Gaberdine /
+      // Senator / TR / …), stamped per DESIGN by the dual-admin Set Design
+      // Category flow. Owner chose an Inventory column over a new sheet.
+      const INV_NEW_COLS = ['bale_uid', 'addedAt', 'grn_id', 'bin_location', 'arrival_batch', 'design_category'];
       const missingInv = INV_NEW_COLS.filter((c) => !h.includes(c));
       if (missingInv.length) {
         const startCol = colLetter(h.length + 1);

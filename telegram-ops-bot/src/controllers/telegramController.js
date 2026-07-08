@@ -20,6 +20,7 @@ const settingsRepo = require('../repositories/settingsRepository');
 const usersRepository = require('../repositories/usersRepository');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const productTypesRepo = require('../repositories/productTypesRepository');
+const designCategoriesRepo = require('../repositories/designCategoriesRepository');
 const ordersRepo = require('../repositories/ordersRepository');
 const samplesRepo = require('../repositories/samplesRepository');
 const customerFollowupsRepo = require('../repositories/customerFollowupsRepository');
@@ -2458,13 +2459,19 @@ async function showDesignPickerForReport(bot, chatId, prefix, showAll = false, m
     activeDesigns = new Set(active.map((a) => String(a.design).toUpperCase()));
   } catch (_) { /* graceful */ }
 
+  // DCAT-1: append the category label to each chip ("80045 · Senator").
+  let pickerCats = new Map();
+  try { pickerCats = await designCategoriesRepo.getMap(); } catch (_) { /* bare chips */ }
+
   const rows = [];
   for (let i = 0; i < visible.length; i += 3) {
     const row = [];
     for (let j = i; j < i + 3 && j < visible.length; j++) {
       const d = visible[j];
       const hasPhoto = activeDesigns.has(d.toUpperCase());
-      row.push({ text: hasPhoto ? `🖼 ${d}` : d, callback_data: `${prefix}:${d.slice(0, 55)}` });
+      const cat = pickerCats.get(designCategoriesRepo.normalizeDesign(d)) || '';
+      const chip = cat ? `${d} · ${cat}` : d;
+      row.push({ text: hasPhoto ? `🖼 ${chip}` : chip, callback_data: `${prefix}:${d.slice(0, 55)}` });
     }
     rows.push(row);
   }
@@ -2528,7 +2535,9 @@ async function sendCheckStockReport(bot, chatId, design, userId = null) {
     return;
   }
   const canSelling = userId ? pricingService.canSeeSalePrice(userId) : false;
-  let reply = `📦 *Stock — Design ${design}*\n`;
+  // DCAT-1: show the admin-approved category next to the design number.
+  const stockCat = await designCategoriesRepo.categoryOf(design);
+  let reply = `📦 *Stock — Design ${design}${stockCat ? ` · ${stockCat}` : ''}*\n`;
   const allInv = await inventoryRepository.getAll();
   if (canSelling) {
     const sp = pricingService.resolveSalePrice(allInv, design);
@@ -3778,7 +3787,9 @@ async function handleMessage(bot, msg) {
           return;
         }
         let reply = `📦 *Bale ${summary.packageNo}*\n`;
-        reply += `Design: ${summary.design} | Shade: ${summary.shade}\n`;
+        // DCAT-1: category label rides along with the design number.
+        const pkgCat = await designCategoriesRepo.categoryOf(summary.design);
+        reply += `Design: ${summary.design}${pkgCat ? ` · ${pkgCat}` : ''} | Shade: ${summary.shade}\n`;
         reply += `Indent: ${summary.indent} | Warehouse: ${summary.warehouse}\n`;
         if (pricingService.canSeeSalePrice(userId)) {
           reply += `Price: ${fmtMoney(summary.pricePerYard)}/yard\n\n`;
@@ -5456,7 +5467,8 @@ async function buildCartText(session) {
   const lines = cart.map((c) => {
     const m = getMaterialInfo(c.design);
     const shadeRef = formatShadeRef(c.shade, c.shadeName);
-    return `${m.icon} ${c.design} [${m.name}] │ Shade: ${shadeRef} │ ×${c.quantity} ${cShort}`;
+    // DCAT-1: omit the [category] chip when the design is unmapped.
+    return `${m.icon} ${c.design}${m.name ? ` [${m.name}]` : ''} │ Shade: ${shadeRef} │ ×${c.quantity} ${cShort}`;
   });
   const total = cart.reduce((s, c) => s + c.quantity, 0);
   const containerPlural = productTypesRepo.pluralize(labels.container_label, total).toLowerCase();
@@ -6051,6 +6063,11 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['udf:'], handle: (bot, cq) => require('../flows/unitDisplayFlow').handleCallback(bot, cq) },
   { prefixes: ['trf:'], handle: (bot, cq) => require('../flows/transferFlow').handleCallback(bot, cq) },
   { prefixes: ['sbl:'], handle: (bot, cq) => require('../flows/soldBalesFlow').handleCallback(bot, cq) },
+  // DCAT-1 — design → product-category mapping (dual-admin approval).
+  { prefixes: ['dcat:'], handle: (bot, cq) => require('../flows/designCategoryFlow').handleCallback(bot, cq) },
+  // MKT-2 — marketer allocations: admin flow + marketer category catalog.
+  { prefixes: ['mal:'], handle: (bot, cq) => require('../flows/allocateMarketerFlow').handleCallback(bot, cq) },
+  { prefixes: ['mkp:'], handle: (bot, cq) => require('../flows/marketerCatalogFlow').handleCallback(bot, cq) },
   // People / HR flows.
   { prefixes: ['usr:'], handle: (bot, cq) => require('../flows/userAddFlow').handleCallback(bot, cq) },
   { prefixes: ['umg:'], handle: (bot, cq) => require('../flows/userManageFlow').handleCallback(bot, cq) },
@@ -8278,6 +8295,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
         // MKT-1 — warehouse-scoped catalog for marketer/salesman. Salesman
         // also sees today's selling price; marketer sees quantities only.
         const u = await usersRepository.findByUserId(uid);
+        // MKT-2 — marketers get the category-first, allocation-scoped view
+        // (admin controls which designs + quantities they see). Salesman
+        // and everyone else keep the classic warehouse catalog.
+        if (fieldRoles.classify(u && u.role) === fieldRoles.MARKETER) {
+          await require('../flows/marketerCatalogFlow').start(bot, chatId, uid, messageId);
+          break;
+        }
         const items = await inventoryRepository.getAll();
         const cat = fieldCatalog.buildCatalog(items, (u && u.warehouses) || [], {
           showPrice: fieldRoles.canSeePrice(u && u.role),
@@ -8403,6 +8427,22 @@ async function handleCallbackQuery(bot, callbackQuery) {
         // self-approve at the queue stage).
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
         await warehouseFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'set_design_category': {
+        // DCAT-1: design → product-category mapping. Admin-only entry;
+        // the action itself sits in ALWAYS_APPROVAL_ACTIONS so a 2nd
+        // admin must approve before the label goes live anywhere.
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        await require('../flows/designCategoryFlow').start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'allocate_marketer': {
+        // MKT-2: admin controls which designs (and how many bales) each
+        // marketer sees in My Products. Direct admin write — no approval
+        // queue — so allocation changes are instant during field testing.
+        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        await require('../flows/allocateMarketerFlow').start(bot, chatId, uid, messageId);
         break;
       }
       case 'finalize_landed_cost': {
@@ -9207,7 +9247,8 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const cShort = labels.container_short;
     const cartLines = cart.map((c) => {
       const m = getMaterialInfo(c.design);
-      return `${m.icon} ${c.design} [${m.name}] │ Shade: ${formatShadeRef(c.shade, c.shadeName)} │ ×${c.quantity} ${cShort}`;
+      // DCAT-1: omit the [category] chip when the design is unmapped.
+      return `${m.icon} ${c.design}${m.name ? ` [${m.name}]` : ''} │ Shade: ${formatShadeRef(c.shade, c.shadeName)} │ ×${c.quantity} ${cShort}`;
     }).join('\n');
     const totalPkgs = cart.reduce((s, c) => s + c.quantity, 0);
     const containerPlural = productTypesRepo.pluralize(labels.container_label, totalPkgs).toLowerCase();

@@ -87,6 +87,10 @@ const ALWAYS_APPROVAL_ACTIONS = [
   // (e.g. wholesaler price update). Always dual-admin to prevent any
   // single admin from blasting incorrect / unauthorised messages.
   'broadcast_wholesalers',
+  // DCAT-1 — design → product-category mapping (Cashmere / Chinos / …).
+  // Owner mandated 2-admin sign-off (Jul 2026): the label shows on every
+  // sales/stock screen, so a wrong label misleads the whole team.
+  'set_design_category',
   // LANDED-COST C1 — finalize a GRN's landed cost (USD cost-per-yard +
   // container charges + FX rate). Sealing wrong numbers cascades into
   // every margin report + sales decision, so always dual-admin.
@@ -155,6 +159,7 @@ function formatAction(action) {
     receive_goods: 'goods receipt', add_warehouse: 'warehouse creation', rename_warehouse: 'warehouse rename',
     bulk_receive_goods: 'bulk goods receipt',
     set_forex_rate: 'forex rate update',
+    set_design_category: 'design category update',
     notify_wholesaler: 'wholesaler notification',
     broadcast_wholesalers: 'wholesaler broadcast',
     confirm_bank_reconciliation: 'bank reconciliation confirmation',

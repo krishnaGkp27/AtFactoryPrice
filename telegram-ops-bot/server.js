@@ -243,6 +243,9 @@ const server = app.listen(PORT, async () => {
     // the very first message after boot sees sheet-managed employees, not
     // only env-driven IDs. Failure is non-fatal — the env IDs still work.
     try { await require('./src/middlewares/auth').refresh(); } catch (_) {}
+    // DCAT-1: warm the design→category snapshot so the very first card
+    // after boot shows category labels (categoryOfSync reads this cache).
+    try { await require('./src/repositories/designCategoriesRepository').getMap(); } catch (_) {}
     logger.info('ERP modules initialized');
     setInterval(() => { checkOrderReminders(); checkSampleFollowups(); checkCustomerFollowups(); checkColdCustomerAlerts(); }, REMINDER_INTERVAL_MS);
     logger.info('Scheduler started (hourly): orders, samples, follow-ups, cold alerts');

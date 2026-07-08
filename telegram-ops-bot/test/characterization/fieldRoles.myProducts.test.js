@@ -7,12 +7,13 @@
  * Pins:
  *   - a field-role user's greeting menu = ONLY the My Products tile;
  *   - salesman's My Products shows today's selling price;
- *   - marketer's My Products shows the same designs WITHOUT price;
+ *   - marketer's My Products = MKT-2 category-first view scoped to ADMIN
+ *     ALLOCATIONS (not raw warehouse stock), no price anywhere;
  *   - warehouse scoping (other-warehouse stock excluded).
  *
  * EMPLOYEE_IDS makes the test users authorized; their field-role behavior
  * comes from Users.role in the faked sheet. inventoryRepository.getAll is
- * stubbed with parsed fixture rows (simpler than seeding 21 raw columns).
+ * stubbed with parsed fixture rows (simpler than seeding 23 raw columns).
  */
 
 process.env.ADMIN_IDS = '777';
@@ -41,6 +42,11 @@ installFakeSheets(createFakeSheets({
     userRow(MARKETER_ID, 'marketer'),
     userRow(SALESMAN_ID, 'salesman'),
   ],
+  // MKT-2 — the marketer's view is scoped to what an admin allocated.
+  MarketerAllocations: [
+    ['marketer_id', 'marketer_name', 'design', 'allocated_qty', 'updated_by', 'updated_at', 'notes'],
+    [String(MARKETER_ID), 'U101', '44200', '5', '777', '', ''],
+  ],
   AuditLog: [['timestamp', 'type', 'data', 'user_id']],
   UserPrefs: [['user_id', 'activity', 'count']],
 }));
@@ -50,12 +56,13 @@ const controller = loadController();
 
 // Stub inventory with parsed rows: available stock in Lagos (two designs)
 // plus one Kano row that must NOT appear for a Lagos-scoped user.
+// designCategory (Inventory col W) feeds the marketer's category chips.
 const inventoryRepository = require(path.join(SRC, 'repositories/inventoryRepository'));
 inventoryRepository.getAll = async () => [
-  { status: 'available', design: '44200', shade: 'BLACK', packageNo: '5801', thanNo: 1, yards: 25, warehouse: 'Lagos', pricePerYard: 1500 },
-  { status: 'available', design: '44200', shade: 'BLACK', packageNo: '5801', thanNo: 2, yards: 25, warehouse: 'Lagos', pricePerYard: 1500 },
-  { status: 'available', design: '9006', shade: 'RED', packageNo: '7001', thanNo: 1, yards: 40, warehouse: 'Lagos', pricePerYard: 2000 },
-  { status: 'available', design: '44200', shade: 'BLACK', packageNo: '9901', thanNo: 1, yards: 25, warehouse: 'Kano', pricePerYard: 1500 },
+  { status: 'available', design: '44200', shade: 'BLACK', packageNo: '5801', thanNo: 1, yards: 25, warehouse: 'Lagos', pricePerYard: 1500, designCategory: 'Cashmere' },
+  { status: 'available', design: '44200', shade: 'BLACK', packageNo: '5801', thanNo: 2, yards: 25, warehouse: 'Lagos', pricePerYard: 1500, designCategory: 'Cashmere' },
+  { status: 'available', design: '9006', shade: 'RED', packageNo: '7001', thanNo: 1, yards: 40, warehouse: 'Lagos', pricePerYard: 2000, designCategory: '' },
+  { status: 'available', design: '44200', shade: 'BLACK', packageNo: '9901', thanNo: 1, yards: 25, warehouse: 'Kano', pricePerYard: 1500, designCategory: 'Cashmere' },
 ];
 
 function message(fromId, text) {
@@ -90,12 +97,26 @@ test('salesman My Products shows designs + selling price (Lagos only)', async ()
   assert.doesNotMatch(out, /9901/); // Kano bale excluded
 });
 
-test('marketer My Products shows the same designs WITHOUT price', async () => {
+test('marketer My Products = allocation-scoped category chips, then designs, no price (MKT-2)', async () => {
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, callback(MARKETER_ID, 'act:my_products'));
-  const out = bot.allText();
+  let out = bot.allText();
+  assert.match(out, /Pick a category/);
+
+  // Only the allocated design's category shows — 9006 was never allocated.
+  const kb = bot.calls
+    .filter((c) => ['sendMessage', 'editMessageText'].includes(c.method) && c.args.opts && c.args.opts.reply_markup)
+    .pop().args.opts.reply_markup.inline_keyboard.flat();
+  const cashmere = kb.find((b) => /Cashmere/.test(b.text));
+  assert.ok(cashmere, 'Cashmere category chip expected');
+  assert.ok(!kb.some((b) => /Others|9006/.test(b.text)), 'unallocated designs get no chip');
+
+  // Tap the category → allocated qty + Lagos-scoped availability, no price.
+  await controller.handleCallbackQuery(bot, callback(MARKETER_ID, cashmere.callback_data));
+  out = bot.allText();
   assert.match(out, /44200/);
-  assert.match(out, /9006/);
+  assert.match(out, /Allocated to you: \*5 bales\*/);
+  assert.match(out, /Available now: 1 bale/); // 5801 only — Kano 9901 excluded
   assert.doesNotMatch(out, /\/yd/);
   assert.doesNotMatch(out, /₦/);
 });
