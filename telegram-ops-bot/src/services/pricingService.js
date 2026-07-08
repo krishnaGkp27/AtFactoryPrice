@@ -28,14 +28,15 @@
  * need fine-grained gating without churning every callsite again.
  */
 
-const auth = require('../middlewares/auth');
+const { CAP, can } = require('../access/capabilities');
 
 function canSeeSalePrice(userId /* , ctx */) {
-  return auth.isAdmin(String(userId));
+  // CAP-1: admin-only today; widening later = edit the ROLE_GRANTS table.
+  return can({ userId }, CAP.SEE_SALE_PRICE);
 }
 
 function canSeeBasePrice(userId /* , ctx */) {
-  return auth.isAdmin(String(userId));
+  return can({ userId }, CAP.SEE_BASE_PRICE);
 }
 
 // ---------------------------------------------------------------------------

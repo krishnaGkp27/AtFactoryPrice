@@ -12,6 +12,8 @@
  * "is this a field role?" and "may this role see price?".
  */
 
+const { CAP, roleHas } = require('../access/capabilities');
+
 const MARKETER = 'marketer';
 const SALESMAN = 'salesman';
 
@@ -36,7 +38,8 @@ function isFieldRole(role) {
 
 /** Only the salesman sees the selling price; the marketer does not. */
 function canSeePrice(role) {
-  return normalize(role) === SALESMAN;
+  // CAP-1: grant lives in the central capability table now.
+  return roleHas(role, CAP.SEE_CATALOG_PRICE);
 }
 
 module.exports = { MARKETER, SALESMAN, normalize, classify, isFieldRole, canSeePrice };
