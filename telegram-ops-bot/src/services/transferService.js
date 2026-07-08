@@ -26,6 +26,7 @@ const inventoryRepository = require('../repositories/inventoryRepository');
 const transactionsRepository = require('../repositories/transactionsRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const idGenerator = require('../utils/idGenerator');
+const mutex = require('../utils/asyncMutex');
 
 const ACTION = 'transfer_stock';
 const AVAILABLE = 'available';
@@ -147,6 +148,14 @@ async function createTransferRequest({ from, to, lines, requestedBy, dispatcher,
  * @returns {Promise<{ok:boolean, aj?:object, short?:boolean, message?:string}>}
  */
 async function dispatch(requestId, byUserId, manualPicks) {
+  // SEC-P2 (H3): serialize the stage transition per request so a double-tapped
+  // Dispatch (or Dispatch racing a Reject) can't both read stage=requested and
+  // transition the same bales twice. The re-read + stage guard run inside the
+  // lock, so the second caller sees the new stage and bails cleanly.
+  return mutex.runExclusive(requestId, () => dispatchInner(requestId, byUserId, manualPicks));
+}
+
+async function dispatchInner(requestId, byUserId, manualPicks) {
   const row = await findTransfer(requestId);
   if (!row) return { ok: false, message: 'transferService: transfer not found' };
   if (row.status !== 'pending' || row.actionJSON.stage !== STAGES.REQUESTED) {
@@ -194,6 +203,11 @@ async function dispatch(requestId, byUserId, manualPicks) {
  * @returns {Promise<{ok:boolean, aj?:object, message?:string}>}
  */
 async function confirmReceipt(requestId, byUserId) {
+  // SEC-P2 (H3): serialized with dispatch/abort on the same request.
+  return mutex.runExclusive(requestId, () => confirmReceiptInner(requestId, byUserId));
+}
+
+async function confirmReceiptInner(requestId, byUserId) {
   const row = await findTransfer(requestId);
   if (!row) return { ok: false, message: 'transferService: transfer not found' };
   if (row.status !== 'pending' || row.actionJSON.stage !== STAGES.IN_TRANSIT) {
@@ -219,6 +233,11 @@ async function confirmReceipt(requestId, byUserId) {
  * @returns {Promise<{ok:boolean, aj?:object, kind?:string, message?:string}>}
  */
 async function abort(requestId, byUserId) {
+  // SEC-P2 (H3): serialized with dispatch/confirmReceipt on the same request.
+  return mutex.runExclusive(requestId, () => abortInner(requestId, byUserId));
+}
+
+async function abortInner(requestId, byUserId) {
   const row = await findTransfer(requestId);
   if (!row) return { ok: false, message: 'transferService: transfer not found' };
   if (row.status !== 'pending') return { ok: false, message: `transferService: transfer already ${row.status}` };

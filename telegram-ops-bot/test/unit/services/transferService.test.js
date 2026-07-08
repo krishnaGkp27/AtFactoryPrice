@@ -153,3 +153,32 @@ test('getOpenTransfers filters to pending transfer_stock rows', async () => {
   ];
   assert.equal((await transferService.getOpenTransfers()).length, 0);
 });
+
+test('SEC-P2 H3: concurrent double-dispatch transitions bales only once', async () => {
+  const calls = stub(ROW('requested'));
+  // Both taps fire "at once"; the per-request lock must serialize them so the
+  // second sees stage=in_transit and bails instead of re-transitioning.
+  const [r1, r2] = await Promise.all([
+    transferService.dispatch('TR-1', 'abdul'),
+    transferService.dispatch('TR-1', 'abdul'),
+  ]);
+  const okCount = [r1, r2].filter((r) => r.ok).length;
+  assert.equal(okCount, 1, 'exactly one dispatch succeeds');
+  assert.equal(calls.transitions.length, 1, 'bales transitioned exactly once');
+  const loser = [r1, r2].find((r) => !r.ok);
+  assert.match(loser.message, /cannot dispatch/);
+});
+
+test('SEC-P2 H3: dispatch racing abort — bales are not both moved and reverted', async () => {
+  const calls = stub(ROW('requested'));
+  const [d, a] = await Promise.all([
+    transferService.dispatch('TR-1', 'abdul'),
+    transferService.abort('TR-1', 'admin1'),
+  ]);
+  // Whichever wins the lock first: if dispatch wins, abort then sees
+  // stage=in_transit and reverts (rejected); if abort wins (declined),
+  // dispatch sees status=rejected and bails. Either way the row ends
+  // terminal and inventory nets out — never a half-applied double move.
+  assert.ok(d.ok || a.ok, 'at least one op resolves the row');
+  assert.deepEqual(calls.statusUpdates.map((s) => s.status).filter(Boolean).slice(-1), ['rejected']);
+});

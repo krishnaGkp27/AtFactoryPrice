@@ -10,6 +10,7 @@ const approvalQueueRepository = require('../repositories/approvalQueueRepository
 const riskEvaluate = require('../risk/evaluate');
 const config = require('../config');
 const logger = require('../utils/logger');
+const mutex = require('../utils/asyncMutex');
 const { bus: erpBus, emitAsync: erpEmitAsync } = require('../events/erpEventBus');
 
 const CURRENCY = config.currency || 'NGN';
@@ -126,6 +127,9 @@ async function sellThan(packageNo, thanNo, customer, userId, salesDate) {
   }
 
   const result = await inventoryRepository.markThanSold(packageNo, thanNo, customer, salesDate);
+  // SEC-P2 (C5): markThanSold returns null when the than was sold/moved between
+  // our earlier read and this write — don't record a phantom sale for it.
+  if (!result) return { status: 'already_sold', message: `Than ${thanNo} in Bale ${packageNo} is no longer available.` };
   await transactionsRepository.append({
     user: userId, action: 'sell_than', design: than.design, color: than.shade,
     qty: than.yards, before: 'available', after: 'sold', status: 'completed',
@@ -291,8 +295,20 @@ function getPricePerYard(enrichment, design) {
 /**
  * Execute an approved action from the ApprovalQueue.
  * For sale actions, optional enrichment = { unit, ratePerUnitByDesign, paymentMode, amountPaid }.
+ *
+ * SEC-P2 (C4): the body is serialized per requestId with rejectApproval so
+ * two admins tapping Approve (or Approve vs Reject) at the same instant cannot
+ * both pass the "still pending?" check and double-apply the side effect
+ * (duplicate sales/payments/stock moves). Sheets has no transactions and the
+ * bot is single-process, so an in-process per-request lock + the pending
+ * re-check INSIDE it is atomic enough: the first caller marks the row
+ * approved; the second re-reads, finds it resolved, and no-ops.
  */
 async function executeApprovedAction(requestId, approvedBy, enrichment) {
+  return mutex.runExclusive(requestId, () => executeApprovedActionInner(requestId, approvedBy, enrichment));
+}
+
+async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   const pending = await approvalQueueRepository.getAllPending();
   const item = pending.find((p) => p.requestId === requestId);
   if (!item) return { ok: false, message: 'Request not found or already resolved.' };
@@ -301,10 +317,15 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
   // Fix B — captured by the sale_bundle branch so the caller can surface
   // partially-applied sales.
   let bundleReport = null;
+  // SEC-P2 (H7): branches that used to `return { ok: true }` early now set
+  // this and fall through to the shared footer, so the ApprovalQueue row is
+  // marked approved + audited (previously it stayed 'pending' and could be
+  // re-approved). Null for branches that have no custom message.
+  let customMessage = null;
 
   if (aj.action === 'sell_than') {
     const result = await inventoryRepository.markThanSold(aj.packageNo, aj.thanNo, aj.customer, aj.salesDate);
-    if (!result) return { ok: false, message: 'Than not found.' };
+    if (!result) return { ok: false, message: 'Than not found or no longer available.' };
     const pricePerYard = getPricePerYard(enrichment, aj.design);
     if (pricePerYard > 0) await inventoryRepository.updatePrice({ packageNo: aj.packageNo }, pricePerYard);
     await transactionsRepository.append({
@@ -674,7 +695,9 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
     try {
       const res = await branchOpsService.applyExpenseBatch({ aj, approvedBy, requestId });
       if (!res.ok) return { ok: false, message: res.message || 'Could not apply expense batch.' };
-      return { ok: true, message: `Approved ${res.count} item(s) for ${res.branch}: total ₦${(res.total || 0).toLocaleString()}.` };
+      // SEC-P2 (H7): fall through to the footer (marks the queue row approved
+      // + writes the approval_approved audit) instead of returning early.
+      customMessage = `Approved ${res.count} item(s) for ${res.branch}: total ₦${(res.total || 0).toLocaleString()}.`;
     } catch (e) {
       logger.error(`record_office_expense apply failed: ${e.message}`);
       return { ok: false, message: e.message || 'Failed to apply expense batch.' };
@@ -689,7 +712,8 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
       const result = await landedCostService.applyApproved({
         aj, approvedBy, requestId,
       });
-      return { ok: true, message: `Landed cost finalized for ${result.grnId} at ₦${result.allocation.ngnLandedPerYard.toFixed(2)}/yd.` };
+      // SEC-P2 (H7): fall through to the footer (see record_office_expense).
+      customMessage = `Landed cost finalized for ${result.grnId} at ₦${result.allocation.ngnLandedPerYard.toFixed(2)}/yd.`;
     } catch (e) {
       logger.error(`finalize_landed_cost apply failed: ${e.message}`);
       return { ok: false, message: e.message || 'Failed to finalize landed cost.' };
@@ -1067,10 +1091,15 @@ async function executeApprovedAction(requestId, approvedBy, enrichment) {
 
   await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString());
   await auditLogRepository.append('approval_approved', { requestId, approvedBy }, approvedBy);
-  return { ok: true, bundleReport };
+  return { ok: true, bundleReport, message: customMessage };
 }
 
 async function rejectApproval(requestId, rejectedBy) {
+  // SEC-P2 (C4): serialized with executeApprovedAction on the same requestId.
+  return mutex.runExclusive(requestId, () => rejectApprovalInner(requestId, rejectedBy));
+}
+
+async function rejectApprovalInner(requestId, rejectedBy) {
   const pending = await approvalQueueRepository.getAllPending();
   const item = pending.find((p) => p.requestId === requestId);
   if (!item) return { ok: false, message: 'Request not found or already resolved.' };

@@ -184,6 +184,12 @@ async function findThan(packageNo, thanNo) {
 async function markThanSold(packageNo, thanNo, customer, soldDateOverride) {
   const than = await findThan(packageNo, thanNo);
   if (!than) return null;
+  // SEC-P2 (C5): never overwrite a than that is not currently available.
+  // markPackageSold already filters on 'available'; markThanSold did not, so a
+  // second approved sell (or a sale racing a transfer/return) could re-flip an
+  // already-sold than and re-emit a sale — double-selling one physical than.
+  // Returning null here lets every caller treat it as "no longer available".
+  if (than.status !== 'available') return null;
   const now = new Date().toISOString();
   // SDN-1: bottom-of-write normalisation. Whatever shape the caller passed
   // (natural-language string, picker ISO, AI-parsed text), the sheet always

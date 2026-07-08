@@ -173,5 +173,42 @@ New tests: `test/characterization/handleCallbackQuery.authz.test.js` (C2/C3),
    disabled (safe) and GET still works.
 3. Optional: set `ADMIN_ALLOWED_ORIGINS` to the admin page origin(s).
 
-**Status: P1 committed locally, awaiting owner review + the env prerequisites
-above before push/deploy. P2-P6 not started. P7 is a design discussion.**
+---
+
+## P2 — IMPLEMENTED 2026-07-08 (money & inventory integrity; committed locally, NOT pushed)
+
+Continued after P1. All changes are in **non-protected** files (`inventoryService`,
+`transferService`, `inventoryRepository`, new `utils/asyncMutex`) — no edits to
+`telegramController.js`, `approvalEvents.js`, or `risk/evaluate.js`, and the
+`WRITE_ACTIONS` / `ALWAYS_APPROVAL_ACTIONS` lists are untouched. Test status:
+`npm test` 379 pass · `npm run smoke` 530/530 · `npm run lint` 0 errors.
+
+| ID | Change | Files |
+|---|---|---|
+| — | New `asyncMutex` — in-process per-key serialization (single-process lock) | `src/utils/asyncMutex.js` |
+| C4 | `executeApprovedAction` + `rejectApproval` serialized per `requestId`; the pending re-check now runs inside the lock, so concurrent Approve (or Approve vs Reject) applies the side effect exactly once | `inventoryService.js` |
+| C5 | `markThanSold` refuses to overwrite a than that isn't `available` (matches `markPackageSold`); `sellThan` + the `sell_than` approval branch handle the null | `inventoryRepository.js`, `inventoryService.js` |
+| H3 | `transferService.dispatch` / `confirmReceipt` / `abort` serialized per `requestId` — no double-dispatch / dispatch-vs-abort double move | `transferService.js` |
+| H7 | `record_office_expense` + `finalize_landed_cost` now fall through to the shared footer, so the queue row is marked `approved` + audited (was left `pending` → re-approvable) | `inventoryService.js` |
+
+New tests: `test/unit/utils/asyncMutex.test.js`, `inventoryService.doubleExecute.test.js`,
+`inventoryService.approvalFooter.test.js`, `inventoryRepository.markThanSoldGuard.test.js`,
+plus 2 concurrency cases appended to `transferService.test.js`.
+
+### Deferred from P2 → follow-up
+
+- **H6 (silent ERP-hook failures)**: surfacing "inventory applied but ledger
+  update failed" to the admin requires a change in `approvalEvents.js` (a
+  protected file) to display the warning, so it's split out as a small,
+  P1-style follow-up rather than bundled here.
+
+### Single-process caveat (important)
+
+`asyncMutex` protects ONE Node process. Today the bot runs as a single Railway
+instance (webhook mode), so this fully closes the double-tap races. If the bot
+is ever scaled to multiple instances, C4/H3 must be upgraded to a sheet-level
+claim (conditional write) or an external lock — noted in the util's header.
+
+**Status: P1 + P2 committed locally, awaiting owner review. P1 still needs the
+env prerequisites (webhook secret) before deploy. P3–P6 not started; H6 + P7
+remain. Nothing is pushed.**

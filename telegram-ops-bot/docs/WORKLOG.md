@@ -47,6 +47,15 @@ Newest first. One entry per working session; each entry lists what shipped
   IMPLEMENTED" section for the deploy-order prerequisites (set
   `TELEGRAM_WEBHOOK_SECRET` + re-run `set-webhook` FIRST, or prod won't boot).
 
+### Follow-up same session — P2 (money & inventory integrity)
+
+- **P2 implemented, committed locally, NOT pushed**: C4 approval
+  double-execution guard (per-request `asyncMutex` + in-lock pending re-check on
+  `executeApprovedAction`/`rejectApproval`), C5 `markThanSold` available-guard,
+  H3 transfer dispatch/receive/abort serialization, H7 office-expense +
+  landed-cost now mark the queue row approved. All in non-protected files.
+  Deferred: H6 (ERP-failure surfacing — needs an `approvalEvents` tweak).
+
 ### Test status at close
 
-`npm test` 366 pass · `npm run smoke` 530/530 · `npm run lint` 0 errors (378 pre-existing warnings).
+`npm test` 379 pass · `npm run smoke` 530/530 · `npm run lint` 0 errors (378 pre-existing warnings).
