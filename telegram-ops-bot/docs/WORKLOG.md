@@ -5,6 +5,36 @@ Newest first. One entry per working session; each entry lists what shipped
 
 ---
 
+## 2026-07-08 (night) — future-ready chunk 1: CAP-1 + H6 + P3-lite
+
+Owner greenlit the architecture roadmap (capability layer → integrity fixes →
+Postgres as source of truth → controller split). Three chunks shipped, one
+commit each:
+
+- **CAP-1 (`feat(access)`)** — `src/access/capabilities.js`: single role →
+  capability table (`can(user, CAP.SEE_SALE_PRICE)`), admin wildcard via
+  auth.isAdmin, unknown roles fall back to employee grants.
+  `pricingService.canSeeSalePrice/canSeeBasePrice` and
+  `fieldRoles.canSeePrice` now delegate (behavior-identical, tested). Rule
+  going forward: NEW gates use `can()`; the ~85 inline admin checks migrate
+  opportunistically when their file is touched.
+- **H6 (`fix(integrity)`)** — money-path ERP hook failures no longer vanish:
+  `erpEventBus.emitAsync` now PROPAGATES handler errors (bus.emit stays
+  fire-and-forget), `executeApprovedAction` collects them as `erpFailures`
+  (+ `erp_hook_failed` AuditLog rows), and approvalEvents shows the admin a
+  loud "🛑 BOOKS NOT UPDATED" tail instead of a clean ✅ when stock moved but
+  the ledger write failed.
+- **P3-lite (`fix(safety)`)** — `src/utils/rateLimiter.js` sliding-window
+  limiter; intentParser degrades to the regex fallback beyond 20 OpenAI
+  parses/user/minute (no billing on spam). `telegramFiles.downloadTelegramFile`
+  caps downloads at 20 MB (Telegram's own getFile ceiling).
+- Tests: 411 pass (13 new) · lint 0 errors.
+- **Next (PG-1, needs owner go):** provision Railway Postgres, mirror
+  Inventory, parity-check, then flip hot reads. P3 leftovers: ocr retention
+  sweep, JSON body limit. P4–P6 open.
+
+---
+
 ## 2026-07-08 (evening) — SRF-CAT: category step inside Supply Request
 
 - **New step between container and warehouse** (owner spec, confirmed twice:
