@@ -136,6 +136,16 @@ const config = {
   botApiKey: process.env.BOT_API_KEY || '',
 
   /**
+   * SEC-P1 (H5): explicit CORS allow-list for the admin settings API
+   * (comma-separated origins, e.g. "https://admin.example.com"). When empty,
+   * the server falls back to `Access-Control-Allow-Origin: *` for reads but
+   * never reflects an arbitrary caller's Origin. Set this in production so a
+   * random webpage cannot script the settings endpoints from a victim's
+   * browser.
+   */
+  adminAllowedOrigins: parseIds(process.env.ADMIN_ALLOWED_ORIGINS),
+
+  /**
    * TG-INT — third-party integration adapter selection. Every block
    * defaults to 'stub' so the bot boots without credentials. Set the
    * provider env var + its secrets to enable a real provider.

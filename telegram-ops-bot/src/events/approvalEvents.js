@@ -665,6 +665,32 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
 
   const { item, requestingUser } = await resolveRequest(requestId);
 
+  // SEC-P1 (H1): an admin may not approve their OWN queued request when a
+  // second admin exists to review it. Excluding the requester from the
+  // approval NOTIFICATION (requireApproval's excludeId) was cosmetic — the
+  // requester still knows the requestId and could forge `approve:<id>`,
+  // defeating the dual-admin gate on sales, price changes, add_user, etc.
+  // If the requester is the ONLY admin in the system, self-approval is
+  // allowed (otherwise nothing they raise could ever clear). Never blocks
+  // on its own failure.
+  if (item && String(item.user) === adminId) {
+    try {
+      const authMod = require('../middlewares/auth');
+      const envAdmins = config.access.adminIds.map(String);
+      let sheetAdmins = [];
+      try { sheetAdmins = (authMod._internals.snapshotAdmins() || []).map(String); } catch { /* cache not ready */ }
+      const allAdmins = new Set([...envAdmins, ...sheetAdmins]);
+      const anotherAdminExists = [...allAdmins].some((id) => id !== adminId);
+      if (anotherAdminExists) {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: '🔒 You cannot approve your own request — a second admin must review it.',
+          show_alert: true,
+        });
+        return;
+      }
+    } catch { /* fall through; never block on this guard's own failure */ }
+  }
+
   // USR-C3b — restricted approvals: actions in SUPER_ADMIN_APPROVAL_ACTIONS
   // (e.g. promote_admin) require the APPROVER to be in SUPER_ADMIN_IDS.
   // We surface the gate as an alert so the admin understands why their

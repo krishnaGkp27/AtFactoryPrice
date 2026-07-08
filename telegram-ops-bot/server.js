@@ -25,11 +25,27 @@ const bot = config.telegram.token ? new TelegramBot(config.telegram.token) : nul
 const app = express();
 app.use(express.json());
 
-// Allow admin page (and any origin) to call /api/settings
+// SEC-P1 (H5): CORS for the admin settings page. Previously this reflected
+// ANY `Origin` back (`req.headers.origin || '*'`), which — combined with the
+// old forgeable `X-Telegram-User-Id` auth — let a malicious webpage call
+// `PUT /api/settings` from a victim admin's browser. Now the allowed origins
+// are an explicit env allow-list (ADMIN_ALLOWED_ORIGINS, comma-separated);
+// when unset we fall back to `*` for GET-style reads but never echo an
+// arbitrary origin. The forgeable Telegram-ID header is no longer an accepted
+// auth header (see apiController) so it is dropped from the allow list too.
+const ADMIN_ALLOWED_ORIGINS = config.adminAllowedOrigins || [];
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+  const origin = req.headers.origin;
+  if (ADMIN_ALLOWED_ORIGINS.length) {
+    if (origin && ADMIN_ALLOWED_ORIGINS.includes(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, X-Telegram-User-Id');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
@@ -63,7 +79,19 @@ app.put('/api/settings', apiController.updateSettings);
 // spoofed requests don't even get a "delivered" signal.
 const WEBHOOK_SECRET = config.telegram.webhookSecret || '';
 if (!WEBHOOK_SECRET) {
-  logger.warn('TELEGRAM_WEBHOOK_SECRET not set — webhook is unauthenticated. Set the env var and re-run `npm run set-webhook` to enable.');
+  // SEC-P1 (C1): an unauthenticated webhook lets anyone who knows the public
+  // URL POST forged updates with any `from.id` (including an admin's) and
+  // drive sales/approvals/sheet writes. In production we now FAIL CLOSED —
+  // the process refuses to boot rather than expose an open webhook. In
+  // development we only warn so local runs without a tunnel still work.
+  //
+  // Deploy order to avoid a crash-loop: set TELEGRAM_WEBHOOK_SECRET on the
+  // host AND run `npm run set-webhook` with it set, THEN deploy this code.
+  if (config.nodeEnv === 'production') {
+    logger.error('FATAL: TELEGRAM_WEBHOOK_SECRET is required in production. Set it, run `npm run set-webhook`, then redeploy. Refusing to start with an unauthenticated webhook.');
+    process.exit(1);
+  }
+  logger.warn('TELEGRAM_WEBHOOK_SECRET not set — webhook is unauthenticated (allowed in non-production only). Set the env var and re-run `npm run set-webhook` to enable.');
 }
 
 app.post('/webhook', (req, res) => {

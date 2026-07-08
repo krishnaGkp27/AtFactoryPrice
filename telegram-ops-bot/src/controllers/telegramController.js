@@ -6063,6 +6063,23 @@ const FLOW_CALLBACK_ROUTES = [
 async function handleCallbackQuery(bot, callbackQuery) {
   const data = (callbackQuery.data || '').trim();
 
+  // SEC-P1 (C2): global allow-list gate for button taps — the same boundary
+  // handleMessage/handleFileMessage already enforce. Without it, a revoked or
+  // never-approved user (or, on an unauthenticated webhook, a forged update)
+  // could drive any flow callback below. Telegram lets clients send arbitrary
+  // callback_data, so per-callback checks are defence-in-depth, not the fence;
+  // this is the fence.
+  const cbUserId = String(callbackQuery.from?.id || '');
+  if (!auth.isAllowed(cbUserId)) {
+    try {
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: 'You are not authorized to use this bot.',
+        show_alert: true,
+      });
+    } catch { /* stale callback id — nothing to answer */ }
+    return;
+  }
+
   // Uniform flow-module delegation (see FLOW_CALLBACK_ROUTES above). All
   // route prefixes are disjoint, so at most one route can match; an
   // unhandled match falls through to the legacy chain below, exactly as
@@ -6171,6 +6188,14 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await approvalEvents.handleDispatchManagerCallback(bot, callbackQuery);
   } else if (data.startsWith('confirm_sale:')) {
     const saleUserId = data.replace('confirm_sale:', '');
+    // SEC-P1 (C3): the pending sale session belongs to `saleUserId`, but the
+    // id rode in on forgeable callback_data. Only the owner of that sale may
+    // confirm it — otherwise any allowed user could execute (or, below,
+    // cancel) another user's pending sale by guessing their Telegram id.
+    if (String(callbackQuery.from.id) !== saleUserId) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'This confirmation is not yours to make.', show_alert: true });
+      return;
+    }
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Processing sale...' });
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
       chat_id: callbackQuery.message.chat.id,
@@ -6179,6 +6204,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await executeSale(bot, callbackQuery.message.chat.id, saleUserId);
   } else if (data.startsWith('cancel_sale:')) {
     const cancelUserId = data.replace('cancel_sale:', '');
+    // SEC-P1 (C3): same ownership check as confirm_sale — don't let one user
+    // clear another user's pending-sale session.
+    if (String(callbackQuery.from.id) !== cancelUserId) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'This action is not yours to make.', show_alert: true });
+      return;
+    }
     sessionStore.clear(cancelUserId);
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {

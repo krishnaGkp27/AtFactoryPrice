@@ -143,5 +143,35 @@ Constraint notes: P1/P4 touch `telegramController.js` and `approvalEvents.js`
 semantics *implementation* (not the WRITE_ACTIONS/ALWAYS_APPROVAL_ACTIONS lists).
 Characterization tests pin current behavior before each phase.
 
-**Status: awaiting owner approval per phase. Recommended order: P1 today, P2+P3 next,
-then P4-P6. P7 is a design discussion, not a patch.**
+---
+
+## P1 — IMPLEMENTED 2026-07-07 (awaiting review; NOT yet pushed)
+
+Owner approved "P1 only, then stop for review." All five P1 fixes are committed
+locally on `main`. Test status: `npm test` 366 pass · `npm run smoke` 530/530 ·
+`npm run lint` 0 errors (378 warnings = unchanged baseline).
+
+| ID | Change | Files |
+|---|---|---|
+| C1 | Server FAILS CLOSED in production when `TELEGRAM_WEBHOOK_SECRET` is unset (was: warn-only) | `server.js` |
+| C2 | Global `auth.isAllowed` gate at the top of `handleCallbackQuery` | `telegramController.js` |
+| C3 | `confirm_sale:` / `cancel_sale:` bound to `callbackQuery.from.id` (blocks cross-user IDOR) | `telegramController.js` |
+| H1 | `handleApprovalCallback` blocks self-approval when a 2nd admin exists (sole-admin still allowed) | `approvalEvents.js` |
+| H5 | `/api/settings` accepts ONLY `X-API-Key` (forgeable `X-Telegram-User-Id` removed); CORS uses an explicit allow-list | `apiController.js`, `server.js`, `config/index.js` |
+
+New tests: `test/characterization/handleCallbackQuery.authz.test.js` (C2/C3),
+`test/unit/events/approvalEvents.selfApproval.test.js` + `…soleAdmin.test.js` (H1).
+
+### ⚠️ Operational prerequisites BEFORE deploying P1 (order matters)
+
+1. **Set `TELEGRAM_WEBHOOK_SECRET`** on Railway (32+ random chars) **and run
+   `npm run set-webhook`** with it set — otherwise the production process will
+   refuse to boot (that is the C1 fix working as intended). Owner confirmed it
+   was NOT set, so this must be done first.
+2. **`BOT_API_KEY`**: if the admin settings page needs to *write* thresholds,
+   set this and update the page to send `X-API-Key`. If left blank, PUT is
+   disabled (safe) and GET still works.
+3. Optional: set `ADMIN_ALLOWED_ORIGINS` to the admin page origin(s).
+
+**Status: P1 committed locally, awaiting owner review + the env prerequisites
+above before push/deploy. P2-P6 not started. P7 is a design discussion.**

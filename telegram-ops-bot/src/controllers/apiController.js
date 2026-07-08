@@ -4,9 +4,31 @@
 
 const settingsRepository = require('../repositories/settingsRepository');
 const config = require('../config');
-const auth = require('../middlewares/auth');
+
+/**
+ * SEC-P1 (H5): the ONLY accepted credential for the settings API is
+ * BOT_API_KEY, presented via the `X-API-Key` header (or `?apiKey=`). The
+ * previous `X-Telegram-User-Id` + `isAdmin()` path was removed because a
+ * Telegram numeric ID is not a secret — anyone who knew an admin's ID could
+ * change RISK_THRESHOLD / LOW_STOCK_THRESHOLD, and permissive CORS let a
+ * webpage do it from a victim's browser.
+ *
+ * @param {import('express').Request} req
+ * @returns {boolean} true when the request carries the configured key.
+ */
+function hasValidApiKey(req) {
+  if (!config.botApiKey) return false;
+  const apiKey = req.headers['x-api-key'] || req.query.apiKey;
+  return apiKey === config.botApiKey;
+}
 
 async function getSettings(req, res) {
+  // Reads are gated by the key only when one is configured. This keeps
+  // back-compat for deployments that expose read-only thresholds without a
+  // key, while writes (below) are always key-gated.
+  if (config.botApiKey && !hasValidApiKey(req)) {
+    return res.status(403).json({ ok: false, error: 'Invalid or missing X-API-Key.' });
+  }
   try {
     const settings = await settingsRepository.getAll();
     const riskThreshold = Number(settings.RISK_THRESHOLD) || config.risk.defaultDeductionLimit;
@@ -23,12 +45,11 @@ async function getSettings(req, res) {
 }
 
 async function updateSettings(req, res) {
-  const apiKey = req.headers['x-api-key'] || req.query.apiKey;
-  const telegramId = req.headers['x-telegram-user-id'] || req.query.telegramId;
-  const keyValid = config.botApiKey && apiKey === config.botApiKey;
-  const adminValid = telegramId && auth.isAdmin(String(telegramId));
-  if (!keyValid && !adminValid) {
-    return res.status(403).json({ ok: false, error: 'Provide X-API-Key (if set) or admin Telegram ID.' });
+  if (!config.botApiKey) {
+    return res.status(503).json({ ok: false, error: 'Settings API is disabled: server has no BOT_API_KEY configured.' });
+  }
+  if (!hasValidApiKey(req)) {
+    return res.status(403).json({ ok: false, error: 'Invalid or missing X-API-Key.' });
   }
   const { riskThreshold, lowStockThreshold } = req.body || {};
   try {

@@ -36,6 +36,17 @@ Newest first. One entry per working session; each entry lists what shipped
   broken, build OAuth-as-user uploads for `driveBackup`.
 - **Data cleanup**: reject any still-pending legacy `transfer_*` rows in ApprovalQueue.
 
+### Follow-up same session — full codebase audit + P1 security fixes
+
+- **Audit**: `docs/CODE_AUDIT_2026-07-07.md` — 6 CRITICAL / 12 HIGH / ~15 MED / ~8 LOW
+  across security, races, and performance, plus a 7-phase fix plan. Pushed.
+- **P1 (critical security) implemented, committed locally, NOT pushed** pending
+  owner review + env prerequisites: C1 webhook fail-closed in prod, C2 global
+  callback auth gate, C3 sale-confirm IDOR fix, H1 admin self-approval block,
+  H5 settings-API key-only auth + CORS allow-list. See the audit doc's "P1 —
+  IMPLEMENTED" section for the deploy-order prerequisites (set
+  `TELEGRAM_WEBHOOK_SECRET` + re-run `set-webhook` FIRST, or prod won't boot).
+
 ### Test status at close
 
-`npm test` green · `npm run smoke` 530/530 · `npm run lint` 0 errors (378 pre-existing warnings).
+`npm test` 366 pass · `npm run smoke` 530/530 · `npm run lint` 0 errors (378 pre-existing warnings).
