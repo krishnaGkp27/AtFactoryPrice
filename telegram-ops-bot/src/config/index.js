@@ -38,6 +38,15 @@ const config = {
     webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || '',
   },
 
+  /**
+   * SEC-P1 (C1): opt-in switch for webhook-secret enforcement. When truthy
+   * ('1' or 'true') and TELEGRAM_WEBHOOK_SECRET is empty, the server refuses
+   * to boot (fail closed). Default off so the hardening can be deployed before
+   * the secret is provisioned on the host without crash-looping. Flip on only
+   * after the secret is set AND registered via `npm run set-webhook`.
+   */
+  requireWebhookSecret: ['1', 'true'].includes(String(process.env.REQUIRE_WEBHOOK_SECRET || '').toLowerCase()),
+
   openai: {
     apiKey: process.env.OPENAI_API_KEY || '',
     model: process.env.OPENAI_MODEL || 'gpt-4o-mini',

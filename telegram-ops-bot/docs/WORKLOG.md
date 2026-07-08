@@ -56,6 +56,15 @@ Newest first. One entry per working session; each entry lists what shipped
   landed-cost now mark the queue row approved. All in non-protected files.
   Deferred: H6 (ERP-failure surfacing — needs an `approvalEvents` tweak).
 
+### Pushed to `main` (C1 made deploy-safe)
+
+- Made C1 webhook enforcement **opt-in** via `REQUIRE_WEBHOOK_SECRET` (default
+  off) so P1+P2 could ship without a Railway secret dependency. Pushed P1, P2,
+  and the C1-opt-in commit to `main` (auto-deploy).
+- Owner pickup task: activate webhook enforcement +
+  optional `BOT_API_KEY` — steps in `specs/SEC-P1-P2_PICKUP.md`.
+- Not done (fresh session): H6 (ERP-failure surfacing), P3–P7. See audit doc.
+
 ### Test status at close
 
 `npm test` 379 pass · `npm run smoke` 530/530 · `npm run lint` 0 errors (378 pre-existing warnings).

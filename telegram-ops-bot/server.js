@@ -81,17 +81,20 @@ const WEBHOOK_SECRET = config.telegram.webhookSecret || '';
 if (!WEBHOOK_SECRET) {
   // SEC-P1 (C1): an unauthenticated webhook lets anyone who knows the public
   // URL POST forged updates with any `from.id` (including an admin's) and
-  // drive sales/approvals/sheet writes. In production we now FAIL CLOSED —
-  // the process refuses to boot rather than expose an open webhook. In
-  // development we only warn so local runs without a tunnel still work.
+  // drive sales/approvals/sheet writes.
   //
-  // Deploy order to avoid a crash-loop: set TELEGRAM_WEBHOOK_SECRET on the
-  // host AND run `npm run set-webhook` with it set, THEN deploy this code.
-  if (config.nodeEnv === 'production') {
-    logger.error('FATAL: TELEGRAM_WEBHOOK_SECRET is required in production. Set it, run `npm run set-webhook`, then redeploy. Refusing to start with an unauthenticated webhook.');
+  // Enforcement is OPT-IN via REQUIRE_WEBHOOK_SECRET so this hardening can
+  // ship BEFORE the secret exists on the host — turning fail-closed on by
+  // default would crash-loop a running deploy that hasn't set the secret yet.
+  // Activation order (see specs/SEC-P1-P2_PICKUP.md): set
+  // TELEGRAM_WEBHOOK_SECRET → run `npm run set-webhook` → set
+  // REQUIRE_WEBHOOK_SECRET=1 → redeploy. Once on, the process refuses to boot
+  // without a secret instead of exposing an open webhook.
+  if (config.requireWebhookSecret) {
+    logger.error('FATAL: REQUIRE_WEBHOOK_SECRET=1 but TELEGRAM_WEBHOOK_SECRET is not set. Set the secret, run `npm run set-webhook`, then redeploy. Refusing to start with an unauthenticated webhook.');
     process.exit(1);
   }
-  logger.warn('TELEGRAM_WEBHOOK_SECRET not set — webhook is unauthenticated (allowed in non-production only). Set the env var and re-run `npm run set-webhook` to enable.');
+  logger.warn('TELEGRAM_WEBHOOK_SECRET not set — webhook is UNAUTHENTICATED. Set it, run `npm run set-webhook`, then set REQUIRE_WEBHOOK_SECRET=1 to enforce.');
 }
 
 app.post('/webhook', (req, res) => {
