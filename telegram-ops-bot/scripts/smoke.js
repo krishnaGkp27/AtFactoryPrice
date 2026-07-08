@@ -5376,6 +5376,7 @@ async function runS30() {
   // Reset modules so we can stub auth before pricingService consumes it.
   for (const p of [
     '../src/middlewares/auth',
+    '../src/access/capabilities',
     '../src/services/pricingService',
     '../src/services/queryEngine',
     '../src/repositories/inventoryRepository',
@@ -7435,6 +7436,37 @@ async function runS44() {
   ]) { try { delete require.cache[require.resolve(p)]; } catch (_) {} }
 }
 
+async function runS45() {
+  // ---- S45 PG-1: Postgres inventory mirror wiring ----
+  const cfgSrc = fs.readFileSync(path.join(__dirname, '../src/config/index.js'), 'utf8');
+  if (cfgSrc.includes('postgres:') && cfgSrc.includes('INVENTORY_MIRROR_ENABLED')) {
+    pass('S45.1 config: postgres block + INVENTORY_MIRROR_ENABLED');
+  } else fail('S45.1', 'postgres config missing');
+
+  const srvSrc = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
+  if (srvSrc.includes("require('./src/services/inventoryMirrorService').start()")) {
+    pass('S45.2 server.js: inventoryMirrorService.start on boot');
+  } else fail('S45.2', 'mirror start not wired');
+
+  const mirror = require('../src/services/inventoryMirrorService');
+  const sheetM = mirror._internals.computeMetrics([
+    { packageNo: 'P1', design: 'A', status: 'available', warehouse: 'Lagos' },
+    { packageNo: 'P2', design: 'B', status: 'available', warehouse: 'Lagos' },
+  ]);
+  const pgM = mirror._internals.computeMetrics([
+    { packageNo: 'P1', design: 'A', status: 'available', warehouse: 'Lagos' },
+  ]);
+  const diff45 = mirror._internals.diffMetrics(sheetM, pgM);
+  if (sheetM.total === 2 && diff45.length >= 1) {
+    pass('S45.3 inventoryMirrorService: parity diff detects mismatch');
+  } else fail('S45.3', JSON.stringify({ sheetM, diff45 }));
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
+  if (pkg.dependencies && pkg.dependencies.pg && pkg.scripts['pg:sync']) {
+    pass('S45.4 package.json: pg dependency + pg:sync script');
+  } else fail('S45.4', 'pg dep or script missing');
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -7490,6 +7522,7 @@ async function runS44() {
   try { await runS42(); } catch (e) { fail('S42 unexpected error', e.message); }
   try { await runS43(); } catch (e) { fail('S43 unexpected error', e.message); }
   try { await runS44(); } catch (e) { fail('S44 unexpected error', e.message); }
+  try { await runS45(); } catch (e) { fail('S45 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

@@ -255,6 +255,11 @@ const server = app.listen(PORT, async () => {
     // BKP-1 — daily snapshot of the master sheet into the backup Drive
     // folder (Settings-tunable hour/retention; admins DM'd on failure).
     require('./src/services/sheetBackup').start(bot);
+    // PG-1 — mirror Inventory → Postgres for parity checks (reads stay on
+    // Sheets until PG-2). No-op when DATABASE_URL unset or mirror disabled.
+    try { require('./src/services/inventoryMirrorService').start(); } catch (e) {
+      logger.warn(`inventoryMirror start skipped: ${e.message}`);
+    }
   } catch (e) {
     logger.error('Init error (bot still running):', e.message);
   }

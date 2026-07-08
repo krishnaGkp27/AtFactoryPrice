@@ -85,6 +85,20 @@ const config = {
 
   currency: process.env.CURRENCY || 'NGN',
 
+  /**
+   * PG-1 — Postgres mirror (Inventory sheet → Postgres). Reads still come
+   * from Sheets until PG-2. Set DATABASE_URL (Railway Postgres reference)
+   * + INVENTORY_MIRROR_ENABLED=1 to activate the background sync.
+   */
+  postgres: {
+    url: process.env.DATABASE_URL || '',
+    ssl: ['1', 'true'].includes(String(process.env.DATABASE_SSL || '').toLowerCase())
+      || /railway|sslmode=require/i.test(process.env.DATABASE_URL || ''),
+    mirrorEnabled: ['1', 'true'].includes(String(process.env.INVENTORY_MIRROR_ENABLED || '').toLowerCase()),
+    mirrorIntervalMs: parseInt(process.env.INVENTORY_MIRROR_INTERVAL_MS, 10) || 300_000,
+    poolMax: parseInt(process.env.PG_POOL_MAX, 10) || 5,
+  },
+
   drive: {
     folderId: process.env.GOOGLE_DRIVE_FOLDER_ID || '',
     /** Where photo-receive backups land. Falls back to folderId if unset. */

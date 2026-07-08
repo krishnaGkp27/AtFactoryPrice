@@ -18,6 +18,8 @@
     "check-org": "node scripts/check-org-graph.js",
     "onboard": "node scripts/onboard-employee.js",
     "smoke": "node scripts/smoke.js",
+    "pg:sync": "node scripts/pg-inventory-sync.js",
+    "pg:parity": "node scripts/pg-inventory-sync.js --parity",
     "snapshot": "node scripts/snapshot.js",
     "snapshot:list": "node scripts/snapshot-list.js"
   },
@@ -30,6 +32,7 @@
     "googleapis": "^144.0.0",
     "node-telegram-bot-api": "^0.66.0",
     "openai": "^4.73.0",
+    "pg": "^8.22.0",
     "sharp": "^0.34.5",
     "xlsx": "^0.18.5"
   },

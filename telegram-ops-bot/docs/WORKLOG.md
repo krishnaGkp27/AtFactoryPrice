@@ -5,6 +5,26 @@ Newest first. One entry per working session; each entry lists what shipped
 
 ---
 
+## 2026-07-08 (late) — PG-1 Postgres inventory mirror (Sheets still read path)
+
+Owner said **go PG-1**. Shipped mirror-only — no read-path change yet (PG-2).
+
+- **`pg` client** + `src/db/postgresPool.js` (lazy pool; no-op when `DATABASE_URL` unset).
+- **Schema** `inventory_rows` (one row per sheet row / than, PK = `sheet_row_index`) +
+  `mirror_meta` in `src/db/inventorySchema.js`.
+- **`inventoryMirrorService`**: boot + 5-min sync when `INVENTORY_MIRROR_ENABLED=1`;
+  full upsert + stale-row prune; parity (row count, available bales, designs,
+  available-thans per warehouse).
+- **Scripts:** `npm run pg:sync` / `pg:parity` → `scripts/pg-inventory-sync.js`.
+- **Railway setup:** `specs/PG-1_RAILWAY_SETUP.md` (add Postgres plugin, reference
+  `DATABASE_URL`, set `INVENTORY_MIRROR_ENABLED=1`).
+- Smoke S45 + smoke S30 fix (reset `capabilities` cache in pricing gate test).
+- Tests: 414 pass · smoke 550 ok · 0 lint errors.
+- **Owner step:** provision Postgres on Railway (MCP blocked auto-create); wire vars
+  per spec; confirm boot log `inventoryMirror: synced N rows, parity=OK`.
+
+---
+
 ## 2026-07-08 (night) — future-ready chunk 1: CAP-1 + H6 + P3-lite
 
 Owner greenlit the architecture roadmap (capability layer → integrity fixes →
