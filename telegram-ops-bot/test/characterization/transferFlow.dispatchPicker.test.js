@@ -1,15 +1,16 @@
 'use strict';
 
 /**
- * TRF-4 — dispatcher bale picker + dispatch/receive load photos + short
- * admin cards that expand on demand. Driven through the real controller
+ * TRF-4/TRF-6 — dispatcher bale picker + MANDATORY dispatch/receive photos +
+ * short admin cards that expand on demand. Driven through the real controller
  * (callbacks + handleFileMessage). The Telegram download and Drive upload
  * are stubbed so the whole thing runs offline.
  *
- *   admin wizard → order → dispatcher picks EXACT bales → dispatch
- *   → dispatcher sends a load photo (archived, link stored, forwarded)
- *   → receiver confirms → sends a receipt photo
+ *   admin wizard → order → dispatcher picks EXACT bales → photo GATE
+ *   (dispatch applies only when the load photo lands; archived + forwarded)
+ *   → receiver confirms → photo GATE again (receipt applies on the file)
  *   → every admin card is a one-liner with a working "View details".
+ *   No Skip anywhere; legacy Skip buttons answer "photos are now required".
  */
 
 process.env.ADMIN_IDS = '777';
@@ -111,63 +112,104 @@ test('accept opens a bale picker with FIFO pre-selection', async () => {
   assert.ok(kb.some((b) => b.includes('trf:bl:auto')), 'auto-pick offered');
 });
 
-test('dispatcher picks exact bales — chosen numbers are what dispatch', async () => {
+/** Send the gate photo for `uid`; returns the recording bot. */
+async function sendPhoto(uid, fileId = 'F1') {
+  const bf = createFakeBot();
+  await controller.handleFileMessage(bf, {
+    chat: { id: uid }, from: { id: uid, first_name: uid }, photo: [{ file_id: fileId }],
+  });
+  return bf;
+}
+
+test('dispatcher picks exact bales — chosen numbers dispatch once the photo lands', async () => {
   const { calls, requestId } = await runWizard();
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb(`trf:acc:${requestId}`, 'abdul'));
   await controller.handleCallbackQuery(bot, cb('trf:bl:t:0', 'abdul')); // deselect P1
   await controller.handleCallbackQuery(bot, cb('trf:bl:t:3', 'abdul')); // select P4
   await controller.handleCallbackQuery(bot, cb('trf:bl:nx', 'abdul'));  // review
-  await controller.handleCallbackQuery(bot, cb('trf:bl:go', 'abdul'));  // dispatch
+  await controller.handleCallbackQuery(bot, cb('trf:bl:go', 'abdul'));  // arm photo gate
+  assert.equal(calls.transitions.length, 0, 'TRF-6: no move before the photo');
+  await sendPhoto('abdul');
   assert.deepEqual(calls.transitions[0].pkgs, ['P2', 'P4'], 'exact chosen bales flipped in-transit');
   assert.equal(calls.transitions[0].to, 'in_transit');
 });
 
-test('dispatch photo: archived to Drive, link stored on actionJSON, prompt sealed', async () => {
+test('dispatch photo gate: fresh bottom prompt, archive + link, forward, seal', async () => {
   const { requestId } = await runWizard();
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb(`trf:acc:${requestId}`, 'abdul'));
   await controller.handleCallbackQuery(bot, cb('trf:bl:auto', 'abdul'));
   await controller.handleCallbackQuery(bot, cb('trf:bl:go', 'abdul'));
-  assert.equal(sessionStore.get('abdul').step, 'await_doc', 'photo session armed after dispatch');
+  const s = sessionStore.get('abdul');
+  assert.equal(s.step, 'await_doc', 'photo gate armed');
+  assert.equal(s.gate, true, 'gate flag set — file will trigger the dispatch');
+  // The prompt is a FRESH message (bottom of chat), not an edit of the card.
+  const prompt = bot.callsTo('sendMessage').find((m) => /Photo required/i.test(m.args.text || ''));
+  assert.ok(prompt, 'prompt sent fresh');
+  const promptKb = prompt.args.opts.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(!promptKb.some((d) => d.startsWith('trf:dsk:')), 'no Skip button — photo is mandatory');
+  assert.ok(promptKb.includes('trf:bl:bk'), 'Back to bales offered');
 
   nextArchive = { drive: { webViewLink: 'https://drive/dispatch' }, readableName: 'load.jpg' };
-  const bf = createFakeBot();
-  await controller.handleFileMessage(bf, {
-    chat: { id: 'abdul' }, from: { id: 'abdul', first_name: 'Abdul' }, photo: [{ file_id: 'F1' }],
-  });
+  const bf = await sendPhoto('abdul');
   const row = await approvalQueueRepository.getByRequestId(requestId);
   assert.equal(row.actionJSON.dispatchDoc.url, 'https://drive/dispatch', 'link stored');
+  assert.equal(row.actionJSON.stage, 'in_transit', 'dispatch applied by the photo');
   assert.match(bf.allText(), /Dispatch photo attached/i);
   assert.ok(!sessionStore.get('abdul'), 'photo session cleared after upload');
   // Forwarded to the receiver for eyes-on.
   assert.ok(bf.callsTo('sendPhoto').some((c) => String(c.args.chatId) === 'musa'), 'photo forwarded to receiver');
 });
 
-test('skip photo leaves an Attach-photo fallback button', async () => {
+test('Back to bales from the photo gate returns to the review screen', async () => {
+  const { calls, requestId } = await runWizard();
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb(`trf:acc:${requestId}`, 'abdul'));
+  await controller.handleCallbackQuery(bot, cb('trf:bl:auto', 'abdul'));
+  await controller.handleCallbackQuery(bot, cb('trf:bl:go', 'abdul'));
+  const bb = createFakeBot();
+  await controller.handleCallbackQuery(bb, cb('trf:bl:bk', 'abdul'));
+  assert.equal(sessionStore.get('abdul').step, 'dispatch_confirm', 'back on the review screen');
+  assert.match(bb.allText(), /dispatch 2 bale\(s\)\?/i);
+  // Dispatch again + photo → still exactly one transition.
+  await controller.handleCallbackQuery(bb, cb('trf:bl:go', 'abdul'));
+  await sendPhoto('abdul');
+  assert.equal(calls.transitions.length, 1, 'one dispatch, no double-move');
+});
+
+test('legacy Skip button answers "photos are now required" and re-arms attach', async () => {
   const { requestId } = await runWizard();
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb(`trf:acc:${requestId}`, 'abdul'));
   await controller.handleCallbackQuery(bot, cb('trf:bl:auto', 'abdul'));
   await controller.handleCallbackQuery(bot, cb('trf:bl:go', 'abdul'));
+  await sendPhoto('abdul'); // dispatch complete
+  // An old pre-TRF-6 message still carries a Skip button — tap it.
   const bs = createFakeBot();
   await controller.handleCallbackQuery(bs, cb(`trf:dsk:d:${requestId}`, 'abdul'));
-  assert.ok(!sessionStore.get('abdul'), 'session cleared on skip');
-  const kb = lastKb(bs);
-  assert.ok(kb.some((b) => b.includes(`trf:att:d:${requestId}`)), 'attach-photo fallback offered');
+  const alert = bs.callsTo('answerCallbackQuery').find((c) => c.args.opts && c.args.opts.show_alert);
+  assert.ok(alert, 'alert shown');
+  assert.match(alert.args.opts.text, /now required/i);
+  assert.match(bs.allText(), /Send a photo or PDF/i, 'attach prompt re-armed');
 });
 
-test('receive photo: stored as receiveDoc, session cleared', async () => {
-  const { requestId } = await runWizard();
+test('receive photo gate: receipt applies on the file, stored as receiveDoc', async () => {
+  const { calls, requestId } = await runWizard();
   const bd = createFakeBot();
   await controller.handleCallbackQuery(bd, cb(`trf:acc:${requestId}`, 'abdul'));
   await controller.handleCallbackQuery(bd, cb('trf:bl:auto', 'abdul'));
   await controller.handleCallbackQuery(bd, cb('trf:bl:go', 'abdul'));
-  sessionStore.clear('abdul'); // drop dispatcher's photo session for isolation
+  await sendPhoto('abdul');
 
   const br = createFakeBot();
   await controller.handleCallbackQuery(br, cb(`trf:rcv:${requestId}`, 'musa'));
-  assert.equal(sessionStore.get('musa').step, 'await_doc', 'receive photo session armed');
+  const s = sessionStore.get('musa');
+  assert.equal(s.step, 'await_doc', 'receive photo gate armed');
+  assert.equal(s.gate, true);
+  assert.ok(!calls.transitions.some((t) => t.from === 'in_transit'), 'no unlock before the file');
+  const promptKb = lastKb(br);
+  assert.ok(promptKb.some((b) => b.includes(`trf:nn:${requestId}`)), 'Not-now escape offered');
 
   nextArchive = { drive: { webViewLink: 'https://drive/receipt' }, readableName: 'rcv.pdf' };
   const bf = createFakeBot();
@@ -177,8 +219,29 @@ test('receive photo: stored as receiveDoc, session cleared', async () => {
   });
   const row = await approvalQueueRepository.getByRequestId(requestId);
   assert.equal(row.actionJSON.receiveDoc.url, 'https://drive/receipt');
+  assert.equal(row.status, 'approved', 'receipt applied by the file');
   assert.match(bf.allText(), /Receipt photo attached/i);
   assert.ok(!sessionStore.get('musa'), 'session cleared after receipt upload');
+});
+
+test('receiver "Not now" stands down: card restored, still in transit', async () => {
+  const { requestId } = await runWizard();
+  const bd = createFakeBot();
+  await controller.handleCallbackQuery(bd, cb(`trf:acc:${requestId}`, 'abdul'));
+  await controller.handleCallbackQuery(bd, cb('trf:bl:auto', 'abdul'));
+  await controller.handleCallbackQuery(bd, cb('trf:bl:go', 'abdul'));
+  await sendPhoto('abdul');
+
+  const br = createFakeBot();
+  await controller.handleCallbackQuery(br, cb(`trf:rcv:${requestId}`, 'musa'));
+  const bn = createFakeBot();
+  await controller.handleCallbackQuery(bn, cb(`trf:nn:${requestId}`, 'musa'));
+  assert.ok(!sessionStore.get('musa'), 'gate session cleared');
+  const kb = lastKb(bn);
+  assert.ok(kb.some((b) => b.includes(`trf:rcv:${requestId}`)), 'Received button restored');
+  const row = await approvalQueueRepository.getByRequestId(requestId);
+  assert.equal(row.status, 'pending', 'nothing confirmed');
+  assert.equal(row.actionJSON.stage, 'in_transit', 'still in transit');
 });
 
 test('admin short card expands to full detail then collapses', async () => {
@@ -187,8 +250,9 @@ test('admin short card expands to full detail then collapses', async () => {
   await controller.handleCallbackQuery(bd, cb(`trf:acc:${requestId}`, 'abdul'));
   await controller.handleCallbackQuery(bd, cb('trf:bl:auto', 'abdul'));
   await controller.handleCallbackQuery(bd, cb('trf:bl:go', 'abdul'));
+  const bp = await sendPhoto('abdul'); // gate: admin brief goes out with the photo
 
-  const adminCard = bd.callsTo('sendMessage').find((m) => String(m.args.chatId) === '777');
+  const adminCard = bp.callsTo('sendMessage').find((m) => String(m.args.chatId) === '777');
   assert.ok(adminCard, 'admin briefed on dispatch');
   assert.match(adminCard.args.text, /dispatched/i);
   assert.ok(!/•/.test(adminCard.args.text), 'admin card is a one-liner (no per-line breakdown)');

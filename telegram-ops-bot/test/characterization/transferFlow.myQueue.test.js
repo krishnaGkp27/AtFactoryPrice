@@ -35,11 +35,16 @@ const transactionsRepository = require(path.join(SRC, 'repositories/transactions
 const auditLogRepository = require(path.join(SRC, 'repositories/auditLogRepository'));
 const taskFlow = require(path.join(SRC, 'flows/taskFlow'));
 const activityRegistry = require(path.join(SRC, 'services/activityRegistry'));
+const telegramFiles = require(path.join(SRC, 'utils/telegramFiles'));
+const driveBackup = require(path.join(SRC, 'services/vision/driveBackup'));
 
 productTypesRepo.getLabels = async () => ({ container_label: 'Bale', container_short: 'bls', subunit_label: 'Than', measure_unit: 'yards' });
 designAssetsRepo.findActive = async () => null;
 auditLogRepository.append = async () => {};
 transactionsRepository.append = async () => {};
+// TRF-6: the mandatory photo gate downloads + archives the file — keep it offline.
+telegramFiles.downloadTelegramFile = async () => ({ buffer: Buffer.from('bytes'), mimeType: 'image/jpeg', ext: 'jpg' });
+driveBackup.archiveFile = async () => ({ drive: { webViewLink: 'https://drive/xyz' }, readableName: 'file.jpg' });
 usersRepository.getAll = async () => [
   { user_id: 'abdul', name: 'Abdul', role: 'employee', status: 'active', warehouses: ['Lagos'] },
   { user_id: 'musa', name: 'Musa', role: 'employee', status: 'active', warehouses: ['Kano office'] },
@@ -91,13 +96,17 @@ async function runWizard() {
   return { calls, requestId: calls.appended.requestId };
 }
 
-/** Drive the dispatcher through auto-pick → dispatch. */
+/** Drive the dispatcher through auto-pick → photo gate → dispatched. */
 async function dispatchAll(requestId) {
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb(`trf:acc:${requestId}`, 'abdul'));
   await controller.handleCallbackQuery(bot, cb('trf:bl:auto', 'abdul'));
   await controller.handleCallbackQuery(bot, cb('trf:bl:go', 'abdul'));
-  sessionStore.clear('abdul'); // drop the photo prompt session for isolation
+  // TRF-6: dispatch applies only when the mandatory load photo lands.
+  await controller.handleFileMessage(bot, {
+    chat: { id: 'abdul' }, from: { id: 'abdul', first_name: 'Abdul' }, photo: [{ file_id: 'F1' }],
+  });
+  sessionStore.clear('abdul');
 }
 
 test("dispatcher's My Tasks lists the pending transfer with a Dispatch button", async () => {
@@ -159,6 +168,10 @@ test('trf:card on a settled transfer shows its state, no action buttons', async 
   await dispatchAll(requestId);
   const br = createFakeBot();
   await controller.handleCallbackQuery(br, cb(`trf:rcv:${requestId}`, 'musa'));
+  // TRF-6: the receipt applies only when the mandatory photo lands.
+  await controller.handleFileMessage(br, {
+    chat: { id: 'musa' }, from: { id: 'musa', first_name: 'Musa' }, photo: [{ file_id: 'F2' }],
+  });
   sessionStore.clear('musa');
 
   const bot = createFakeBot();

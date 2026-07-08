@@ -5,6 +5,40 @@ Newest first. One entry per working session; each entry lists what shipped
 
 ---
 
+## 2026-07-08 — TRF-6: mandatory transfer photos + card UX (live-test feedback)
+
+First live run (TR-20260708-001, 12 bales Lagos → Kano office, cart path)
+completed end-to-end but surfaced 3 owner complaints. All fixed as TRF-6:
+
+1. **Photo/PDF is now a MANDATORY GATE** on both dispatch and receive.
+   Tapping 🚚 Dispatch (after bale review) or ✅ Received arms the gate;
+   **nothing moves and nobody is notified until the file arrives** (then:
+   apply → attach → notify → forward). No Skip button anywhere; legacy Skip
+   buttons alert "photos are now required". Receiver gate has ↩ Not now;
+   dispatcher gate has ◀ Back to bales. Drive archiving stays best-effort —
+   the Telegram file itself is always forwarded.
+2. **Grouped line cards** — all transfer cards (dispatcher/receiver DMs, sent
+   receipt, detail expansion, decline/reject) now render 🧵 design headers
+   with ` • Shade N ×qty` rows instead of the unreadable "+"-joined one-liner.
+   Admin short cards stay one-liners.
+3. **Photo prompt is always the LAST message** — sent fresh at the bottom of
+   the chat (tapped card gets sealed), so there's no Attach/Skip toggling and
+   no drift up the history.
+4. Stale-card guard: acc/rcv taps on cards that no longer match the live
+   stage answer "Transfer is <state> — nothing to do here".
+5. Bale picker no-show explained: picker only opens when a line has MORE
+   candidates than requested; exact-match stock auto-fills FIFO — the review
+   screen now says "auto-filled … nothing to choose".
+
+Tests: 381 pass (23 transfer-specific, gate semantics re-pinned), smoke
+530/530, lint 0 errors. `specs/TRF-5_TEST_STEPS.md` updated for the re-run
+(cast: Neha dispatches Leg 1, Tessa receives; reversed on Leg 2).
+
+**Note:** TR-20260708-001 moved 12×80045 bales to Kano office for real — the
+re-test Leg 2 (reverse transfer) brings them home.
+
+---
+
 ## 2026-07-07 — TRF-5 transfer queue · single transfer flow · daily backups (BKP-1)
 
 ### Shipped (all on `main`, auto-deployed via Railway)

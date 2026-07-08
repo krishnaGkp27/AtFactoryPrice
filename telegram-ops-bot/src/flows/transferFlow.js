@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * src/flows/transferFlow.js — WAREHOUSE TRANSFER (TRF-2, lean).
+ * src/flows/transferFlow.js — WAREHOUSE TRANSFER (TRF-2..TRF-6).
  *
  * 5-tap admin wizard + one-tap counterparty cards. The request rides an
  * ApprovalQueue row (see transferService); bales sit `in_transit` at the
@@ -11,9 +11,17 @@
  *                   confirm (auto-picked dispatcher/receiver) → Send.
  *                   Person pickers appear only when a warehouse has >1
  *                   assigned active user.
- *   Dispatcher DM:  ✅ Accept & dispatch / ❌ Decline
- *   Receiver DM:    ✅ Received / ⚠️ Reject
+ *   Dispatcher DM:  ✅ Accept & dispatch → bale picker → review →
+ *                   📸 MANDATORY load photo/PDF → dispatch applies.
+ *   Receiver DM:    ✅ Received → 📸 MANDATORY receipt photo/PDF →
+ *                   receipt applies (stock goes live at the destination).
  *   Declines/rejects revert the bales to the source — no admin cancel.
+ *
+ * TRF-6: the dispatch/receive photo is a GATE, not an afterthought — nothing
+ * moves and nobody is notified until the file arrives. The photo prompt is
+ * always sent as a FRESH message (bottom of the chat) so the required next
+ * step is unambiguous. There is no Skip; legacy Skip buttons answer with
+ * "photos are now required".
  *
  * Callback namespace `trf:*` (wizard callbacks need the session; the
  * acc/dec/rcv/rej action callbacks are session-FREE, keyed by requestId):
@@ -21,6 +29,7 @@
  *   trf:dp:<i> · trf:rc:<i>      dispatcher / receiver pickers
  *   trf:send · trf:back · trf:cancel · trf:list
  *   trf:acc:<id> · trf:dec:<id> · trf:rcv:<id> · trf:rej:<id>
+ *   trf:nn:<id>                  receiver "not now" on the photo gate
  */
 
 const sessionStore = require('../utils/sessionStore');
@@ -221,7 +230,6 @@ async function submit(bot, chatId, userId) {
       from: session.from, to: session.to, lines: session.lines, requestedBy: userId,
       dispatcher: session.dispatcher.user_id, receiver: session.receiver.user_id,
     });
-    const line = lineOf(aj);
     // Dispatcher card (best-effort DM).
     try {
       const card = dispatcherCard(requestId, aj, session.receiver.name);
@@ -230,7 +238,7 @@ async function submit(bot, chatId, userId) {
     } catch (e) { logger.warn(`transferFlow: dispatcher DM failed: ${e.message}`); }
     // Render the receipt BEFORE clearing — the renderer is session-guarded.
     await render(bot, chatId, userId,
-      `✅ *Transfer ${requestId} sent*\n${line}\n\n⏳ Waiting for *${session.dispatcher.name}* to dispatch.`,
+      `✅ *Transfer ${requestId} sent*\n${headOf(aj)}\n${linesBlock(aj.lines)}\n\n⏳ Waiting for *${session.dispatcher.name}* to dispatch.`,
       [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]);
     sessionStore.clear(userId);
   } catch (e) {
@@ -242,17 +250,60 @@ async function submit(bot, chatId, userId) {
 
 /* ── counterparty actions (session-free, keyed by requestId) ───────────── */
 
-/** "2× 9006/3 + 1× 9032/4 · Lagos → Kano office" from an actionJSON. */
-function lineOf(aj) {
-  const parts = (aj.lines || []).map((l) => `${l.qty}× ${l.design}/${l.shade}`);
-  return `${parts.join(' + ')} · ${aj.from} → ${aj.to}`;
+/**
+ * TRF-6 — grouped, indented line block (matches the Transfer Cart layout):
+ *
+ *   🧵 *80045*
+ *    • Shade 1 ×1
+ *    • Shade 7 ×2
+ *
+ * Long multi-line transfers were unreadable as a "+"-joined one-liner.
+ */
+function linesBlock(lines) {
+  const byDesign = new Map();
+  for (const l of (lines || [])) {
+    if (!byDesign.has(l.design)) byDesign.set(l.design, []);
+    byDesign.get(l.design).push(l);
+  }
+  const out = [];
+  for (const [design, ls] of byDesign) {
+    out.push(`🧵 *${design}*`);
+    for (const l of ls) out.push(` • Shade ${l.shade} ×${l.qty}`);
+  }
+  return out.join('\n');
 }
 
-/** Per-line dispatch outcome, marking shortfalls. */
-function dispatchedSummary(aj) {
-  return (aj.dispatched || []).map((d) => (d.sent < d.requested
-    ? `${d.sent}/${d.requested}× ${d.design}/${d.shade} ⚠️ short`
-    : `${d.sent}× ${d.design}/${d.shade}`)).join(' + ');
+/** Grouped dispatch-outcome block, marking per-line shortfalls. */
+function dispatchedBlock(aj) {
+  const ds = aj.dispatched || [];
+  if (!ds.length) return linesBlock(aj.lines);
+  const byDesign = new Map();
+  for (const d of ds) {
+    if (!byDesign.has(d.design)) byDesign.set(d.design, []);
+    byDesign.get(d.design).push(d);
+  }
+  const out = [];
+  for (const [design, list] of byDesign) {
+    out.push(`🧵 *${design}*`);
+    for (const d of list) {
+      out.push(d.sent < d.requested
+        ? ` • Shade ${d.shade} — ${d.sent}/${d.requested} ⚠️ short`
+        : ` • Shade ${d.shade} ×${d.sent}`);
+    }
+  }
+  return out.join('\n');
+}
+
+/** One-line header: "*Lagos* → *Kano office* · 12 bale(s)". */
+function headOf(aj) {
+  const n = (aj.dispatched || []).reduce((s, d) => s + d.sent, 0) || totalBales(aj);
+  return `*${aj.from}* → *${aj.to}* · ${n} bale(s)`;
+}
+
+/** Compact one-liner for list rows: "12 bale(s) · 80045 · Lagos → Kano office". */
+function compactOf(aj) {
+  const designs = [...new Set((aj.lines || []).map((l) => l.design))].join(', ');
+  return `${totalBales(aj)} bale(s) · ${designs} · ${aj.from} → ${aj.to}`;
 }
 
 /** Compact "8801, 8804 … (+N)" preview of a bale-number list. */
@@ -275,7 +326,7 @@ function totalBales(aj) {
  */
 function dispatcherCard(requestId, aj, receiverName) {
   return {
-    text: `🚚 *Transfer ${requestId} — please dispatch*\n${lineOf(aj)}\nReceiver: ${receiverName}\n\n_Accepting logs the actual bales you send._`,
+    text: `🚚 *Transfer ${requestId} — please dispatch*\n${headOf(aj)}\n${linesBlock(aj.lines)}\nReceiver: ${receiverName}\n\n_Accepting logs the actual bales you send. A load photo/PDF is required to complete the dispatch._`,
     kb: { inline_keyboard: [[
       { text: '✅ Accept & dispatch', callback_data: `trf:acc:${requestId}` },
       { text: '❌ Decline', callback_data: `trf:dec:${requestId}` },
@@ -289,10 +340,9 @@ function dispatcherCard(requestId, aj, receiverName) {
  * @returns {{text:string, kb:object}}
  */
 function receiverCard(requestId, aj) {
-  const sent = dispatchedSummary(aj) || lineOf(aj);
   const shortNote = aj.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
   return {
-    text: `📦 *Transfer ${requestId} incoming*\n${sent} · from ${aj.from}${shortNote}\n📦 Bales: ${baleListPreview(aj.bales)}\n\nConfirm when the goods arrive and match:`,
+    text: `📦 *Transfer ${requestId} incoming*\n${headOf(aj)}\n${dispatchedBlock(aj)}${shortNote}\n📦 Bales: ${baleListPreview(aj.bales)}\n\nConfirm when the goods arrive and match — a photo/PDF of the received goods is required:`,
     kb: { inline_keyboard: [[
       { text: '✅ Received', callback_data: `trf:rcv:${requestId}` },
       { text: '⚠️ Reject', callback_data: `trf:rej:${requestId}` },
@@ -335,13 +385,12 @@ async function nameMap(ids) {
 async function detailCard(row) {
   const aj = row.actionJSON;
   const names = await nameMap([aj.dispatcher, aj.receiver]);
-  const lines = (aj.lines || []).map((l) => ` • ${l.design} · Shade ${l.shade} · ×${l.qty}`).join('\n');
   const out = [
     `🚚 *${row.requestId}* — ${stateLabel(row)}`,
-    `*${aj.from}* → *${aj.to}*`,
+    headOf(aj),
     `Dispatcher: ${names[String(aj.dispatcher)]} · Receiver: ${names[String(aj.receiver)]}`,
     '',
-    lines,
+    aj.dispatched && aj.dispatched.length ? dispatchedBlock(aj) : linesBlock(aj.lines),
   ];
   if (aj.bales && aj.bales.length) out.push('', `📦 Bales: ${baleListPreview(aj.bales, 30)}`);
   if (aj.dispatchDoc && aj.dispatchDoc.url) out.push(`📸 Dispatch photo: ${aj.dispatchDoc.url}`);
@@ -412,23 +461,34 @@ async function handleAction(bot, query, requestId, action) {
     await bot.answerCallbackQuery(query.id, { text: 'This action is for the assigned person only.', show_alert: true });
     return true;
   }
+  // TRF-6: stale-card guard — cards can be tapped days later; refuse taps
+  // that no longer match the live stage instead of relying on the service.
+  if (row.status !== 'pending'
+      || (action === 'acc' && aj.stage !== 'requested')
+      || (action === 'rcv' && aj.stage !== 'in_transit')) {
+    await bot.answerCallbackQuery(query.id, { text: `Transfer is ${stateLabel(row)} — nothing to do here.`, show_alert: true }).catch(() => {});
+    return true;
+  }
   await bot.answerCallbackQuery(query.id).catch(() => {});
 
   // Accept → open the dispatcher's bale picker anchored on the tapped card.
-  // The actual dispatch happens when he confirms his selection (trf:bl:go).
+  // Dispatch applies only after bales are reviewed AND the load photo lands.
   if (action === 'acc') {
     await startDispatchPicker(bot, chatId, userId, row, query.message.message_id);
     return true;
   }
 
+  // TRF-6: Received → photo gate. The receipt is applied by handleFile once
+  // the mandatory photo/PDF arrives; nothing changes until then.
   if (action === 'rcv') {
-    const res = await transferService.confirmReceipt(requestId, userId);
-    if (!res.ok) { await bot.sendMessage(chatId, `⚠️ ${res.message}`); return true; }
-    await notifyAdmins(bot, requestId, aj, 'received ✅', userId);
-    await notifyRequester(bot, row, requestId, aj, 'received ✅', userId);
-    // Seal the receiver's tapped card into the receive-photo prompt.
-    const base = `✅ *${requestId} received* — bales are now live at *${aj.to}*.\n${dispatchedSummary(aj) || lineOf(aj)}`;
-    await promptForDoc(bot, chatId, userId, requestId, 'receive', base, query.message.message_id);
+    await armDocGate(bot, chatId, userId, requestId, 'receive', {
+      sealMessageId: query.message.message_id,
+      sealText: `📦 *${requestId}* — receipt pending 📸`,
+      promptText: `📸 *Photo required — ${requestId}*\n`
+        + `Send a photo or PDF of the received goods now to confirm receipt.\n`
+        + `_Stock goes live at *${aj.to}* when it arrives._`,
+      kb: [[{ text: '↩ Not now', callback_data: `trf:nn:${requestId}` }]],
+    });
     return true;
   }
 
@@ -437,8 +497,8 @@ async function handleAction(bot, query, requestId, action) {
   if (!res.ok) { await bot.sendMessage(chatId, `⚠️ ${res.message}`); return true; }
   const label = res.kind === 'declined' ? 'declined ❌' : 'rejected ❌';
   const card = res.kind === 'declined'
-    ? `❌ *${requestId} declined* — nothing was moved.\n${lineOf(aj)}`
-    : `❌ *${requestId} rejected* — bales reverted to *${aj.from}*.\n${lineOf(aj)}`;
+    ? `❌ *${requestId} declined* — nothing was moved.\n${headOf(aj)}\n${linesBlock(aj.lines)}`
+    : `❌ *${requestId} rejected* — bales reverted to *${aj.from}*.\n${headOf(aj)}\n${dispatchedBlock(aj)}`;
   await bot.editMessageText(card, {
     chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown',
   }).catch(() => {});
@@ -507,84 +567,143 @@ async function showBalePicker(bot, chatId, userId) {
     rows);
 }
 
-/** Final confirm before the goods actually move. */
+/** Final review before the photo gate. Notes auto-filled lines (TRF-6). */
 async function showDispatchConfirm(bot, chatId, userId) {
   const session = sessionStore.get(userId);
-  session.step = 'dispatch_confirm'; sessionStore.set(userId, session);
+  session.step = 'dispatch_confirm';
+  delete session.docKind; delete session.gate;
+  sessionStore.set(userId, session);
   const picked = session.pl.flatMap((p) => p.sel);
   const perLine = session.pl.map((p) => (p.sel.length < p.qty
     ? ` • ${p.design}/${p.shade}: ${p.sel.length}/${p.qty} ⚠️ short`
     : ` • ${p.design}/${p.shade}: ${p.sel.join(', ')}`)).join('\n');
+  // When stock exactly matched the request there was no picker to show —
+  // say so, or the operator wonders where the bale-picking step went.
+  const autoNote = session.pl.every((p) => !p.choice)
+    ? '\n_Bales auto-filled (oldest first) — stock matched the request, nothing to choose._'
+    : '';
   await render(bot, chatId, userId,
-    `🚚 *${session.requestId}* — dispatch ${picked.length} bale(s)?\n${perLine}\n\n*${session.from}* → *${session.to}*`,
+    `🚚 *${session.requestId}* — dispatch ${picked.length} bale(s)?\n${perLine}${autoNote}\n\n*${session.from}* → *${session.to}*\n📸 _A load photo/PDF is required next._`,
     [[{ text: '🚚 Dispatch', callback_data: 'trf:bl:go' }],
       [{ text: '◀ Back', callback_data: 'trf:bl:bk' }, { text: '❌ Decline', callback_data: `trf:dec:${session.requestId}` }]]);
 }
 
 /**
- * Commit the picked bales: dispatch, DM the receiver, brief admins +
- * requester, then prompt the dispatcher for the load photo.
+ * TRF-6 — arm the mandatory-photo gate: seal the tapped/anchored card (no
+ * buttons left behind), then send the photo prompt as a FRESH message at the
+ * bottom of the chat and anchor the flow on it. The actual state change
+ * happens in handleFile when the photo/PDF arrives.
+ *
+ * @param {object} bot @param {number|string} chatId @param {string} userId
+ * @param {string} requestId
+ * @param {'dispatch'|'receive'} docKind
+ * @param {{sealMessageId?:number, sealText?:string, promptText:string, kb:Array, keep?:object}} p
+ *   `keep` = extra session fields to retain (e.g. the dispatcher's picks).
  */
-async function finalizeDispatch(bot, chatId, userId) {
+async function armDocGate(bot, chatId, userId, requestId, docKind, p) {
+  if (p.sealMessageId && p.sealText) {
+    await bot.editMessageText(p.sealText, {
+      chat_id: chatId, message_id: p.sealMessageId, parse_mode: 'Markdown',
+    }).catch(() => { /* deleted / identical — the fresh prompt still lands */ });
+  }
+  const sent = await bot.sendMessage(chatId, p.promptText, {
+    parse_mode: 'Markdown', reply_markup: { inline_keyboard: p.kb || [] },
+  });
+  sessionStore.set(userId, {
+    type: SESSION_TYPE, step: 'await_doc', gate: true, requestId, docKind,
+    flowMessageId: (sent && sent.message_id) || null,
+    ...(p.keep || {}),
+  });
+}
+
+/**
+ * TRF-6 — bale review confirmed: DON'T dispatch yet. Require the load
+ * photo/PDF first; handleFile applies the dispatch when it arrives.
+ */
+async function askDispatchDoc(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   const requestId = session.requestId;
-  const manualPicks = session.pl.map((p) => p.sel);
+  const picked = session.pl.flatMap((p) => p.sel);
+  await armDocGate(bot, chatId, userId, requestId, 'dispatch', {
+    sealMessageId: session.flowMessageId,
+    sealText: `🚚 *${requestId}* — ${picked.length} bale(s) picked ✔`,
+    promptText: `📸 *Photo required — ${requestId}*\n`
+      + `Send a photo or PDF of the load now to complete the dispatch.\n`
+      + `_Nothing moves until it arrives._`,
+    kb: [[{ text: '◀ Back to bales', callback_data: 'trf:bl:bk' },
+      { text: '❌ Decline', callback_data: `trf:dec:${requestId}` }]],
+    keep: { pl: session.pl, from: session.from, to: session.to, idx: session.idx || 0 },
+  });
+}
+
+/** Apply the dispatch once the gate photo has landed (TRF-6). */
+async function completeDispatch(bot, session, userId) {
+  const requestId = session.requestId;
+  const manualPicks = (session.pl || []).map((p) => p.sel);
   const row = await transferService.findTransfer(requestId);
   const res = await transferService.dispatch(requestId, userId, manualPicks);
-  if (!res.ok) {
-    await render(bot, chatId, userId, `⚠️ ${res.message}`, [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-    sessionStore.clear(userId);
-    return;
-  }
+  if (!res.ok) return { ok: false, message: res.message };
   const aj = res.aj;
-  const sent = dispatchedSummary(aj);
-  const shortNote = res.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
   try {
     const card = receiverCard(requestId, aj);
     await bot.sendMessage(aj.receiver, card.text, { parse_mode: 'Markdown', reply_markup: card.kb });
   } catch (e) { logger.warn(`transferFlow: receiver DM failed: ${e.message}`); }
   await notifyAdmins(bot, requestId, aj, 'dispatched 🚚', userId);
   if (row) await notifyRequester(bot, row, requestId, aj, 'dispatched 🚚', userId);
-  const base = `🚚 *${requestId} dispatched* — bales logged\n${sent} · ${aj.from} → ${aj.to}\n📦 ${baleListPreview(aj.bales)}${shortNote}`;
-  await promptForDoc(bot, chatId, userId, requestId, 'dispatch', base, session.flowMessageId);
+  const shortNote = res.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
+  return {
+    ok: true,
+    sealText: `🚚 *${requestId} dispatched* — bales logged\n${headOf(aj)}\n${dispatchedBlock(aj)}${shortNote}\n📦 ${baleListPreview(aj.bales)}`,
+  };
+}
+
+/** Apply the receipt once the gate photo has landed (TRF-6). */
+async function completeReceipt(bot, session, userId) {
+  const requestId = session.requestId;
+  const row = await transferService.findTransfer(requestId);
+  const res = await transferService.confirmReceipt(requestId, userId);
+  if (!res.ok) return { ok: false, message: res.message };
+  const aj = res.aj;
+  await notifyAdmins(bot, requestId, aj, 'received ✅', userId);
+  if (row) await notifyRequester(bot, row, requestId, aj, 'received ✅', userId);
+  return {
+    ok: true,
+    sealText: `✅ *${requestId} received* — bales are now live at *${aj.to}*.\n${headOf(aj)}\n${dispatchedBlock(aj)}`,
+  };
 }
 
 /* ── load photo / PDF (dispatch + receive), reusing driveBackup ────────── */
 
 /**
- * Seal the actor's card into a "send a photo / PDF" prompt and arm an
- * await_doc session so their next upload is captured. `base` is the state
- * text shown above the prompt.
+ * Post-hoc attach prompt (non-gate) — used only by rearmDoc for transfers
+ * whose stage already applied (e.g. legacy cards from before TRF-6). Arms an
+ * await_doc session WITHOUT the gate flag: handleFile just attaches the file,
+ * it does not move stock.
  */
 async function promptForDoc(bot, chatId, userId, requestId, docKind, base, messageId) {
   sessionStore.set(userId, {
     type: SESSION_TYPE, step: 'await_doc', requestId, docKind, flowMessageId: messageId || null,
   });
   const verb = docKind === 'receive' ? 'received goods' : 'load';
-  const code = docKind === 'receive' ? 'r' : 'd';
   await render(bot, chatId, userId,
-    `${base}\n\n📸 Send a photo or PDF of the ${verb} — or tap Skip.`,
-    [[{ text: '⏭ Skip photo', callback_data: `trf:dsk:${code}:${requestId}` }]]);
+    `${base}\n\n📸 Send a photo or PDF of the ${verb} now to attach it.`, []);
 }
 
-/** Skip the photo (session-free — works even after the session expires). */
+/**
+ * TRF-6 — Skip is retired: photos are mandatory. Old messages may still
+ * carry the button; answer with the new rule and re-arm the attach prompt.
+ */
 async function skipDoc(bot, query, code, requestId) {
-  await bot.answerCallbackQuery(query.id).catch(() => {});
-  const userId = String(query.from.id);
-  const session = sessionStore.get(userId);
-  if (session && session.type === SESSION_TYPE && session.step === 'await_doc') sessionStore.clear(userId);
-  const row = await transferService.findTransfer(requestId);
-  const base = row ? `🚚 *${requestId}* — ${stateLabel(row)}\n${lineOf(row.actionJSON)}` : `🚚 *${requestId}*`;
-  await bot.editMessageText(`${base}\n\n_No photo attached._`, {
-    chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: [[{ text: '📎 Attach photo', callback_data: `trf:att:${code}:${requestId}` }]] },
+  await bot.answerCallbackQuery(query.id, {
+    text: '📸 Photos are now required for transfers — please send the photo/PDF.',
+    show_alert: true,
   }).catch(() => {});
-  return true;
+  return rearmDoc(bot, query, code, requestId, { answered: true });
 }
 
-/** Re-arm the photo prompt (fallback after a session expiry). */
-async function rearmDoc(bot, query, code, requestId) {
-  await bot.answerCallbackQuery(query.id).catch(() => {});
+/** Re-arm the attach prompt (legacy Attach buttons / after session expiry). */
+async function rearmDoc(bot, query, code, requestId, opts = {}) {
+  if (!opts.answered) await bot.answerCallbackQuery(query.id).catch(() => {});
   const userId = String(query.from.id);
   const row = await transferService.findTransfer(requestId);
   if (!row) { await bot.sendMessage(query.message.chat.id, '🚚 Transfer not found or already closed.'); return true; }
@@ -601,10 +720,37 @@ async function rearmDoc(bot, query, code, requestId) {
 }
 
 /**
+ * TRF-6 — receiver's "Not now" on the photo gate: stand down without
+ * confirming. The prompt message turns back into the actionable receiver
+ * card, and the transfer stays in_transit (still in My Tasks).
+ */
+async function gateNotNow(bot, query, requestId) {
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+  const userId = String(query.from.id);
+  const session = sessionStore.get(userId);
+  if (session && session.type === SESSION_TYPE && session.step === 'await_doc' && session.gate) {
+    sessionStore.clear(userId);
+  }
+  const row = await transferService.findTransfer(requestId);
+  if (!row || row.status !== 'pending') return true;
+  const card = receiverCard(requestId, row.actionJSON);
+  await bot.editMessageText(card.text, {
+    chat_id: query.message.chat.id, message_id: query.message.message_id,
+    parse_mode: 'Markdown', reply_markup: card.kb,
+  }).catch(() => {});
+  return true;
+}
+
+/**
  * Capture a dispatch/receive photo or PDF while an await_doc session is live.
- * Archives to Drive (best-effort — never blocks the transfer), stores the
- * link on the transfer's actionJSON, forwards the file to the counterparty +
- * admins, then seals the prompt. Returns true when consumed.
+ *
+ * TRF-6 gate sessions (armed by askDispatchDoc / the Received tap): the file
+ * IS the trigger — the dispatch/receipt is applied first, and only then are
+ * the counterparty + admins notified, so nobody hears about a move that
+ * didn't happen. Non-gate sessions (legacy post-hoc attach) just store the
+ * file. Archiving to Drive stays best-effort — the Telegram file itself is
+ * always forwarded, so a Drive outage never blocks the transfer.
+ * Returns true when consumed.
  */
 async function handleFile(bot, msg) {
   const userId = String(msg.from.id);
@@ -631,8 +777,27 @@ async function handleFile(bot, msg) {
     return false;
   }
   if (!DOC_MIMES.includes(mimeType)) {
-    await bot.sendMessage(chatId, '⚠️ Send a photo (JPG/PNG) or a PDF — or tap Skip.');
+    await bot.sendMessage(chatId, '⚠️ Send a photo (JPG/PNG) or a PDF to continue.');
     return true;
+  }
+
+  // TRF-6: gate sessions apply the state change FIRST. A stale gate (someone
+  // else already dispatched/declined) fails cleanly here, before any
+  // notification goes out.
+  let sealText = null;
+  if (session.gate) {
+    const done = kind === 'receive'
+      ? await completeReceipt(bot, session, userId)
+      : await completeDispatch(bot, session, userId);
+    if (!done.ok) {
+      const flowMessageId = session.flowMessageId;
+      sessionStore.clear(userId);
+      await bot.editMessageText(`⚠️ *${requestId}* — ${done.message}`, {
+        chat_id: chatId, message_id: flowMessageId, parse_mode: 'Markdown',
+      }).catch(() => {});
+      return true;
+    }
+    sealText = done.sealText;
   }
 
   let archive = null;
@@ -673,8 +838,9 @@ async function handleFile(bot, msg) {
   const flowMessageId = session.flowMessageId;
   sessionStore.clear(userId);
   const linkNote = url ? `\n🔗 ${url}` : '';
+  const head = sealText || `🚚 *${requestId}*`;
   await bot.editMessageText(
-    `📸 *${kind === 'receive' ? 'Receipt' : 'Dispatch'} photo attached* — ${requestId}${linkNote}`,
+    `${head}\n📸 *${kind === 'receive' ? 'Receipt' : 'Dispatch'} photo attached*${linkNote}`,
     { chat_id: chatId, message_id: flowMessageId, parse_mode: 'Markdown', disable_web_page_preview: true },
   ).catch(() => {});
   return true;
@@ -732,7 +898,7 @@ async function showActionCard(bot, query, requestId) {
   }
   const aj = row.actionJSON;
   if (row.status !== 'pending') {
-    await bot.sendMessage(chatId, `🚚 *${requestId}* — ${stateLabel(row)}\n${lineOf(aj)}`, { parse_mode: 'Markdown' });
+    await bot.sendMessage(chatId, `🚚 *${requestId}* — ${stateLabel(row)}\n${compactOf(aj)}`, { parse_mode: 'Markdown' });
     return true;
   }
   const toDispatch = aj.stage !== 'in_transit';
@@ -760,7 +926,7 @@ async function showList(bot, chatId, userId, messageId) {
   if (!open.length) text += '\n_None — everything is settled._';
   for (const t of open.slice(0, 15)) {
     const badge = t.actionJSON.stage === 'in_transit' ? '🚚 in transit' : '⏳ awaiting dispatch';
-    text += `\n\`${t.requestId}\` ${lineOf(t.actionJSON)} — ${badge}`;
+    text += `\n\`${t.requestId}\` ${compactOf(t.actionJSON)} — ${badge}`;
   }
   const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]] } };
   if (messageId) {
@@ -878,6 +1044,8 @@ async function handleCallback(bot, query) {
   if (mSkip) return skipDoc(bot, query, mSkip[1], mSkip[2]);
   const mAtt = data.match(/^trf:att:([dr]):(.+)$/);
   if (mAtt) return rearmDoc(bot, query, mAtt[1], mAtt[2]);
+  const mNn = data.match(/^trf:nn:(.+)$/);
+  if (mNn) return gateNotNow(bot, query, mNn[1]);
   const mCard = data.match(/^trf:card:(.+)$/);
   if (mCard) return showActionCard(bot, query, mCard[1]);
   if (data === 'trf:list') {
@@ -889,7 +1057,7 @@ async function handleCallback(bot, query) {
   const session = sessionStore.get(userId);
   try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
   if (!session || session.type !== SESSION_TYPE) {
-    await bot.sendMessage(chatId, '🚚 This transfer session has expired — open Transfer Stock again from the menu.');
+    await bot.sendMessage(chatId, '🚚 This transfer session has expired — open 📋 My Tasks to pick it up again (admins: Transfer Stock for a new one).');
     return true;
   }
 
@@ -939,6 +1107,12 @@ async function handleCallback(bot, query) {
 
   // Dispatcher bale picker (session-backed; anchored on the DM card).
   if (data.startsWith('trf:bl:')) {
+    const atGate = session.step === 'await_doc' && session.gate && session.docKind === 'dispatch';
+    // "Back to bales" on the photo-gate prompt → return to the review screen.
+    if (atGate) {
+      if (data === 'trf:bl:bk') await showDispatchConfirm(bot, chatId, userId);
+      return true;
+    }
     if (session.step !== 'dispatch_pick' && session.step !== 'dispatch_confirm') return true;
     const rest = data.slice('trf:bl:'.length);
     if (rest.startsWith('t:')) {
@@ -969,7 +1143,7 @@ async function handleCallback(bot, query) {
       await showBalePicker(bot, chatId, userId);
       return true;
     }
-    if (rest === 'go') { await finalizeDispatch(bot, chatId, userId); return true; }
+    if (rest === 'go') { await askDispatchDoc(bot, chatId, userId); return true; }
     return true;
   }
 
@@ -984,7 +1158,9 @@ module.exports = {
   myQueueSection,
   _internals: {
     candidatesFor, resolvePeople, submit, handleAction, startPrefilled,
-    startDispatchPicker, finalizeDispatch, showInfo, promptForDoc, handleFile,
+    startDispatchPicker, askDispatchDoc, completeDispatch, completeReceipt,
+    armDocGate, gateNotNow, showInfo, promptForDoc, handleFile,
+    linesBlock, dispatchedBlock, headOf, compactOf,
     detailCard, shortCard, showActionCard, dispatcherCard, receiverCard, SESSION_TYPE,
   },
 };

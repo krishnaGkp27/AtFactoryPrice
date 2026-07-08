@@ -1,10 +1,13 @@
 'use strict';
 
 /**
- * TRF-2 — staged warehouse transfer, end to end through the real controller:
+ * TRF-2..TRF-6 — staged warehouse transfer, end to end through the real
+ * controller:
  *   admin wizard (source→design→shade→qty→dest→confirm, auto-picked people)
- *   → dispatcher Accept (receiver DM goes out)
- *   → receiver Received (bales unlocked at destination, row closed)
+ *   → dispatcher Accept → bale review → MANDATORY load photo (TRF-6 gate:
+ *     nothing moves and the receiver hears nothing until the photo lands)
+ *   → receiver Received → MANDATORY receipt photo → bales unlocked at the
+ *     destination, row closed
  * plus: decline reverts, stranger taps blocked, non-admin can't start,
  * and Check Stock shows the 🚚 in-transit line.
  */
@@ -32,11 +35,16 @@ const designAssetsRepo = require(path.join(SRC, 'repositories/designAssetsReposi
 const approvalQueueRepository = require(path.join(SRC, 'repositories/approvalQueueRepository'));
 const transactionsRepository = require(path.join(SRC, 'repositories/transactionsRepository'));
 const auditLogRepository = require(path.join(SRC, 'repositories/auditLogRepository'));
+const telegramFiles = require(path.join(SRC, 'utils/telegramFiles'));
+const driveBackup = require(path.join(SRC, 'services/vision/driveBackup'));
 
 productTypesRepo.getLabels = async () => ({ container_label: 'Bale', container_short: 'bls', subunit_label: 'Than', measure_unit: 'yards' });
 designAssetsRepo.findActive = async () => null;
 auditLogRepository.append = async () => {};
 transactionsRepository.append = async () => {};
+// TRF-6: the mandatory photo gate downloads + archives the file — keep it offline.
+telegramFiles.downloadTelegramFile = async () => ({ buffer: Buffer.from('bytes'), mimeType: 'image/jpeg', ext: 'jpg' });
+driveBackup.archiveFile = async () => ({ drive: { webViewLink: 'https://drive/xyz' }, readableName: 'file.jpg' });
 usersRepository.getAll = async () => [
   { user_id: 'abdul', name: 'Abdul', role: 'employee', status: 'active', warehouses: ['Lagos'] },
   { user_id: 'musa', name: 'Musa', role: 'employee', status: 'active', warehouses: ['Kano office'] },
@@ -104,39 +112,55 @@ test('wizard: 5 taps, auto-picked people, ORDER queued — nothing locked at sen
   assert.deepEqual(dmCbs, [`trf:acc:${requestId}`, `trf:dec:${requestId}`]);
 });
 
-test('dispatch logs ACTUAL bales + flips in-transit; receive unlocks at destination', async () => {
+test('dispatch applies only after the mandatory load photo; receive after the receipt photo', async () => {
   const { calls, requestId } = await runWizard();
-  // Abdul accepts → opens the bale picker; he auto-picks FIFO then dispatches.
+  // Abdul accepts → picker → review → Dispatch tap arms the photo GATE.
   const bot2 = createFakeBot();
   await controller.handleCallbackQuery(bot2, cb(`trf:acc:${requestId}`, 'abdul'));
   await controller.handleCallbackQuery(bot2, cb('trf:bl:auto', 'abdul'));
   await controller.handleCallbackQuery(bot2, cb('trf:bl:go', 'abdul'));
+  assert.equal(calls.transitions.length, 0, 'TRF-6: nothing moves before the load photo');
+  assert.ok(!bot2.callsTo('sendMessage').some((m) => m.args.chatId === 'musa'), 'receiver hears nothing before the photo');
+  assert.match(bot2.allText(), /Photo required/i);
+  // The load photo lands → dispatch applies, receiver DM goes out.
+  const bp = createFakeBot();
+  await controller.handleFileMessage(bp, { chat: { id: 'abdul' }, from: { id: 'abdul', first_name: 'Abdul' }, photo: [{ file_id: 'F1' }] });
   assert.deepEqual(calls.transitions[0], { pkgs: ['P1', 'P2'], from: 'available', to: 'in_transit', wh: 'Kano office' });
-  const rdm = bot2.callsTo('sendMessage').find((m) => m.args.chatId === 'musa');
+  const rdm = bp.callsTo('sendMessage').find((m) => m.args.chatId === 'musa');
   assert.ok(rdm, 'receiver got the incoming card');
-  assert.match(rdm.args.text, /2× 9006\/3/, 'receiver sees what was actually dispatched');
+  assert.match(rdm.args.text, /Shade 3 ×2/, 'receiver sees the grouped dispatched lines');
   assert.ok(rdm.args.opts.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === `trf:rcv:${requestId}`));
-  // Musa confirms receipt.
+  // Musa taps Received → receipt photo GATE; unlock waits for the file.
   const bot3 = createFakeBot();
   await controller.handleCallbackQuery(bot3, cb(`trf:rcv:${requestId}`, 'musa'));
+  assert.ok(!calls.transitions.some((t) => t.from === 'in_transit'), 'no unlock before the receipt photo');
+  assert.match(bot3.allText(), /Photo required/i);
+  const br = createFakeBot();
+  await controller.handleFileMessage(br, { chat: { id: 'musa' }, from: { id: 'musa', first_name: 'Musa' }, photo: [{ file_id: 'F2' }] });
   const unlock = calls.transitions.find((t) => t.from === 'in_transit' && t.to === 'available' && t.wh === null);
-  assert.ok(unlock, 'bales unlocked at destination');
-  assert.match(bot3.allText(), /received.*now live at \*Kano office\*/i);
-  // Admin 777 briefed.
-  assert.ok(bot3.callsTo('sendMessage').some((m) => String(m.args.chatId) === '777'), 'admin notified');
+  assert.ok(unlock, 'bales unlocked at destination after the receipt photo');
+  assert.match(br.allText(), /received.*now live at \*Kano office\*/i);
+  // Admin 777 briefed (after the photo, not before).
+  assert.ok(br.callsTo('sendMessage').some((m) => String(m.args.chatId) === '777'), 'admin notified');
 });
 
 test('shortfall at dispatch: partial send recorded and flagged', async () => {
   const { calls, requestId } = await runWizard();
   // Between order and dispatch, Lagos sold a bale: only P1 remains. With no
-  // real choice, the picker goes straight to the dispatch-confirm screen.
+  // real choice, the picker goes straight to the dispatch-confirm screen —
+  // which now says WHY there was no picker (auto-filled).
   inventoryRepository.getAll = async () => [invRow('P1'), invRow('P9', 'available', 'Kano office')];
   const bot2 = createFakeBot();
   await controller.handleCallbackQuery(bot2, cb(`trf:acc:${requestId}`, 'abdul'));
+  assert.match(bot2.allText(), /9006\/3: 1\/2 ⚠️ short/, 'per-line shortfall shown on review');
+  assert.match(bot2.allText(), /auto-filled/i, 'review explains the skipped picker');
   await controller.handleCallbackQuery(bot2, cb('trf:bl:go', 'abdul'));
+  assert.equal(calls.transitions.length, 0, 'gate: still nothing moved');
+  const bp = createFakeBot();
+  await controller.handleFileMessage(bp, { chat: { id: 'abdul' }, from: { id: 'abdul', first_name: 'Abdul' }, photo: [{ file_id: 'F1' }] });
   assert.deepEqual(calls.transitions[0].pkgs, ['P1'], 'only the existing bale dispatched');
-  assert.match(bot2.allText(), /1\/2× 9006\/3 ⚠️ short/, 'per-line shortfall shown');
-  assert.match(bot2.allText(), /Partially dispatched/i);
+  assert.match(bp.allText(), /Shade 3 — 1\/2 ⚠️ short/, 'grouped shortfall shown');
+  assert.match(bp.allText(), /Partially dispatched/i);
 });
 
 test('dispatcher decline (pre-dispatch): nothing was moved, nothing reverted', async () => {
