@@ -4965,8 +4965,37 @@ function getCartQtyForDesign(cart, design) {
   return (cart || []).filter((c) => c.design === design).reduce((s, c) => s + c.quantity, 0);
 }
 
-async function getAdjustedAvailability(warehouse, cart, arrivalBatch = null) {
+/**
+ * SRF-CAT — sentinel for the "Others" category chip (designs with no
+ * design_category stamped yet). Kept short: callback_data is 64-byte capped.
+ */
+const SUPPLY_OTHERS_CATEGORY = '__others__';
+
+/**
+ * SRF-CAT — does a design belong to the supply-flow category filter?
+ * Empty/absent filter matches everything (step skipped or legacy session).
+ * @param {string} design Design number.
+ * @param {string} category Canonical label or SUPPLY_OTHERS_CATEGORY.
+ * @returns {boolean} True when the design passes the filter.
+ */
+function matchesSupplyCategory(design, category) {
+  if (!category) return true;
+  const cat = designCategoriesRepo.categoryOfSync(design);
+  if (category === SUPPLY_OTHERS_CATEGORY) return !cat;
+  return String(cat).toLowerCase() === String(category).toLowerCase();
+}
+
+/** SRF-CAT — human label for a session category value ('' when unset). */
+function supplyCategoryLabel(category) {
+  if (!category) return '';
+  return category === SUPPLY_OTHERS_CATEGORY ? 'Others' : String(category);
+}
+
+async function getAdjustedAvailability(warehouse, cart, arrivalBatch = null, category = null) {
   const all = await inventoryRepository.getAll();
+  // SRF-CAT — make sure the design→category snapshot is fresh before the
+  // sync lookups below (no-op within its 60 s TTL).
+  if (category) await designCategoriesRepo.getMap();
   // ARRIVAL-BATCH C1 — when a container is selected upstream, restrict
   // availability to that batch. UNLABELLED_BATCH matches rows whose
   // arrival_batch is still empty (pre-backfill). null = all containers.
@@ -4974,6 +5003,7 @@ async function getAdjustedAvailability(warehouse, cart, arrivalBatch = null) {
   const isUnlabelled = ab === String(inventoryRepository.UNLABELLED_BATCH).toUpperCase();
   const available = all.filter((r) => {
     if (r.warehouse !== warehouse || r.status !== 'available') return false;
+    if (category && !matchesSupplyCategory(r.design, category)) return false;
     if (!ab) return true;
     const rab = (r.arrivalBatch || '').toUpperCase();
     return isUnlabelled ? rab === '' : rab === ab;
@@ -5088,10 +5118,12 @@ async function showContainerPicker(bot, chatId, userId, containers = null, messa
 /**
  * Distinct warehouses (within the user's scope) that have AVAILABLE stock in
  * the given arrival batch. UNLABELLED_BATCH matches rows with an empty
- * arrival_batch (pre-backfill).
+ * arrival_batch (pre-backfill). SRF-CAT: optionally restricted to one
+ * design category.
  */
-async function getSupplyWarehouses(arrivalBatch, scopeWarehouses) {
+async function getSupplyWarehouses(arrivalBatch, scopeWarehouses, category = null) {
   const all = await inventoryRepository.getAll();
+  if (category) await designCategoriesRepo.getMap();
   const scope = new Set((scopeWarehouses || []).map((w) => String(w).toLowerCase()));
   const ab = arrivalBatch ? String(arrivalBatch).toUpperCase() : null;
   const isUnlabelled = ab === String(inventoryRepository.UNLABELLED_BATCH).toUpperCase();
@@ -5101,20 +5133,119 @@ async function getSupplyWarehouses(arrivalBatch, scopeWarehouses) {
     const rab = (r.arrivalBatch || '').toUpperCase();
     if (ab && (isUnlabelled ? rab !== '' : rab !== ab)) continue;
     if (scope.size && !scope.has(String(r.warehouse || '').toLowerCase())) continue;
+    if (category && !matchesSupplyCategory(r.design, category)) continue;
     if (r.warehouse) set.add(r.warehouse);
   }
   return Array.from(set).sort();
 }
 
 /**
- * After a container is chosen, advance to the warehouse step: auto-skip to
- * the design picker when exactly one warehouse has stock in that batch,
- * otherwise render the warehouse picker.
+ * SRF-CAT — categories with AVAILABLE stock in the chosen container within
+ * the user's warehouse scope. Bale counts are distinct packageNos. Order:
+ * DEFAULT_CATEGORIES first (owner's canonical order), extras alphabetically,
+ * "Others" (uncategorized designs) last.
+ * @returns {Promise<Array<{category: string, label: string, bales: number}>>}
+ */
+async function getSupplyCategories(arrivalBatch, scopeWarehouses) {
+  const all = await inventoryRepository.getAll();
+  await designCategoriesRepo.getMap();
+  const scope = new Set((scopeWarehouses || []).map((w) => String(w).toLowerCase()));
+  const ab = arrivalBatch ? String(arrivalBatch).toUpperCase() : null;
+  const isUnlabelled = ab === String(inventoryRepository.UNLABELLED_BATCH).toUpperCase();
+  const baleSets = new Map(); // label ('' = Others) -> Set of warehouse||packageNo
+  for (const r of all) {
+    if (r.status !== 'available') continue;
+    const rab = (r.arrivalBatch || '').toUpperCase();
+    if (ab && (isUnlabelled ? rab !== '' : rab !== ab)) continue;
+    if (scope.size && !scope.has(String(r.warehouse || '').toLowerCase())) continue;
+    const cat = designCategoriesRepo.categoryOfSync(r.design) || '';
+    if (!baleSets.has(cat)) baleSets.set(cat, new Set());
+    baleSets.get(cat).add(`${r.warehouse}||${r.packageNo}`);
+  }
+  const defaults = designCategoriesRepo.DEFAULT_CATEGORIES.map((c) => c.toLowerCase());
+  const labels = Array.from(baleSets.keys()).filter((c) => c !== '');
+  labels.sort((a, b) => {
+    const ia = defaults.indexOf(a.toLowerCase());
+    const ib = defaults.indexOf(b.toLowerCase());
+    if (ia !== -1 && ib !== -1) return ia - ib;
+    if (ia !== -1) return -1;
+    if (ib !== -1) return 1;
+    return a.localeCompare(b);
+  });
+  const result = labels.map((c) => ({ category: c, label: c, bales: baleSets.get(c).size }));
+  if (baleSets.has('')) {
+    result.push({ category: SUPPLY_OTHERS_CATEGORY, label: 'Others', bales: baleSets.get('').size });
+  }
+  return result;
+}
+
+/**
+ * SRF-CAT — render the "Select category" step (between container and
+ * warehouse). `cats` may be pre-fetched by proceedAfterContainerToCategory.
+ */
+async function showSupplyCategoryPicker(bot, chatId, userId, cats = null) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const list = cats || await getSupplyCategories(session.arrivalBatch, session._scopeWarehouses);
+  if (!list.length) {
+    await editOrSendAnchored(bot, chatId, userId, '⚠️ No available stock in this container.', { parse_mode: 'Markdown' });
+    return;
+  }
+  const catButton = (c) => ({
+    text: `${c.category === SUPPLY_OTHERS_CATEGORY ? '📦' : designCategoriesRepo.iconFor(c.label)} ${c.label} (${c.bales} bls)`,
+    callback_data: `srf_cg:${c.category.slice(0, 55)}`,
+  });
+  const rows = [];
+  for (let i = 0; i < list.length; i += 2) {
+    const row = [catButton(list[i])];
+    if (list[i + 1]) row.push(catButton(list[i + 1]));
+    rows.push(row);
+  }
+  rows.push([{ text: '⬅️ Back to containers', callback_data: 'srf_back:container' }]);
+  const safeBatch = String(session.arrivalBatch).replace(/[*_`[\]]/g, '\\$&');
+  await editOrSendAnchored(bot, chatId, userId,
+    `📦 *Supply Request*\n🚢 Container: *${safeBatch}*\n\nSelect category:`, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
+}
+
+/**
+ * SRF-CAT — after a container is chosen, advance to the category step.
+ * Auto-skips (straight to warehouse) when the container holds a single
+ * category, so the flow feels exactly like before when there is no choice.
+ */
+async function proceedAfterContainerToCategory(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const cats = await getSupplyCategories(session.arrivalBatch, session._scopeWarehouses);
+  if (!cats.length) {
+    await editOrSendAnchored(bot, chatId, userId, '⚠️ No available stock in this container.', { parse_mode: 'Markdown' });
+    return;
+  }
+  if (cats.length === 1) {
+    session.category = cats[0].category;
+    session.categoryStepShown = false;
+    session.step = 'warehouse';
+    sessionStore.set(userId, session);
+    await proceedAfterContainer(bot, chatId, userId);
+    return;
+  }
+  session.categoryStepShown = true;
+  session.step = 'category';
+  sessionStore.set(userId, session);
+  await showSupplyCategoryPicker(bot, chatId, userId, cats);
+}
+
+/**
+ * After a container (and SRF-CAT category) is chosen, advance to the
+ * warehouse step: auto-skip to the design picker when exactly one warehouse
+ * has matching stock, otherwise render the warehouse picker.
  */
 async function proceedAfterContainer(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const warehouses = await getSupplyWarehouses(session.arrivalBatch, session._scopeWarehouses);
+  const warehouses = await getSupplyWarehouses(session.arrivalBatch, session._scopeWarehouses, session.category);
   if (!warehouses.length) {
     await editOrSendAnchored(bot, chatId, userId, '⚠️ No available stock in this container.', { parse_mode: 'Markdown' });
     return;
@@ -5131,10 +5262,17 @@ async function proceedAfterContainer(bot, chatId, userId) {
   session.step = 'warehouse';
   sessionStore.set(userId, session);
   const rows = warehouses.map((w) => [{ text: `🏭 ${w}`, callback_data: `srf_wh:${w}` }]);
-  rows.push([{ text: '⬅️ Back to containers', callback_data: 'srf_back:container' }]);
+  rows.push([{
+    text: session.categoryStepShown ? '⬅️ Back to categories' : '⬅️ Back to containers',
+    callback_data: session.categoryStepShown ? 'srf_back:category' : 'srf_back:container',
+  }]);
   const safeBatch = String(session.arrivalBatch).replace(/[*_`[\]]/g, '\\$&');
+  const catLabel = supplyCategoryLabel(session.category);
+  const catLine = catLabel
+    ? `\n${session.category === SUPPLY_OTHERS_CATEGORY ? '📦' : designCategoriesRepo.iconFor(catLabel)} Category: *${catLabel.replace(/[*_`[\]]/g, '\\$&')}*`
+    : '';
   await editOrSendAnchored(bot, chatId, userId,
-    `📦 *Supply Request*\n🚢 Container: *${safeBatch}*\n\nSelect warehouse:`, {
+    `📦 *Supply Request*\n🚢 Container: *${safeBatch}*${catLine}\n\nSelect warehouse:`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
@@ -5143,7 +5281,7 @@ async function proceedAfterContainer(bot, chatId, userId) {
 async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId = null) {
   const session = sessionStore.get(userId);
   const cart = session ? session.cart || [] : [];
-  const avail = await getAdjustedAvailability(warehouse, cart, session && session.arrivalBatch);
+  const avail = await getAdjustedAvailability(warehouse, cart, session && session.arrivalBatch, session && session.category);
 
   const designAgg = new Map();
   let detectedType = 'fabric';
@@ -5203,6 +5341,10 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
     backRow.push({ text: '⬅️ Back to cart', callback_data: 'srf_back:cart' });
   } else if (session && session.multiWarehouse) {
     backRow.push({ text: '⬅️ Back to warehouses', callback_data: 'srf_back:warehouse' });
+  } else if (session && session.categoryStepShown) {
+    // SRF-CAT — single-warehouse category: the previous screen was the
+    // Select Category step, not the container list.
+    backRow.push({ text: '⬅️ Back to categories', callback_data: 'srf_back:category' });
   } else {
     // Single-warehouse container: no warehouse step to return to, so the
     // back target is the Select Container step (ARRIVAL-BATCH C1).
@@ -5222,8 +5364,14 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
     summaryNote += ` · 💰 ${fmtMoneyShort(totalValue)}`;
   }
   const resolvedMsgId = messageId || (session && session.flowMessageId) || null;
+  // SRF-CAT — surface the active category filter in the header so the user
+  // always knows which slice of the warehouse they are browsing.
+  const catLabel = supplyCategoryLabel(session && session.category);
+  const catNote = catLabel
+    ? ` · ${session.category === SUPPLY_OTHERS_CATEGORY ? '📦' : designCategoriesRepo.iconFor(catLabel)} ${catLabel.replace(/[*_`[\]]/g, '\\$&')}`
+    : '';
   const sent = await editOrSend(bot, chatId, resolvedMsgId,
-    `📦 *Warehouse: ${warehouse}*${summaryNote}${cartNote}\n\nSelect design:${pageNote}`, {
+    `📦 *Warehouse: ${warehouse}*${catNote}${summaryNote}${cartNote}\n\nSelect design:${pageNote}`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
@@ -5237,7 +5385,7 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
 async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   const session = sessionStore.get(userId);
   const cart = session ? session.cart || [] : [];
-  const avail = await getAdjustedAvailability(warehouse, cart, session && session.arrivalBatch);
+  const avail = await getAdjustedAvailability(warehouse, cart, session && session.arrivalBatch, session && session.category);
   const shades = avail.filter((a) => a.design === design).sort((a, b) => b.availPkgs - a.availPkgs);
   const labels = await productTypesRepo.getLabels(session?.productType || 'fabric');
 
@@ -8693,8 +8841,28 @@ async function handleCallbackQuery(bot, callbackQuery) {
       session = { type: 'supply_req_flow', cart: [], _scopeWarehouses: [], flowMessageId: callbackQuery.message.message_id };
     }
     session.arrivalBatch = batch;
-    session.step = 'warehouse';
+    // SRF-CAT — a new container invalidates any earlier category pick.
+    delete session.category;
+    delete session.categoryStepShown;
+    session.step = 'category';
     session.flowMessageId = session.flowMessageId || callbackQuery.message.message_id;
+    sessionStore.set(uid, session);
+    await proceedAfterContainerToCategory(bot, chatId, uid);
+
+  /* ─── SUPPLY REQUEST FLOW: CATEGORY (SRF-CAT) ─── */
+  } else if (data.startsWith('srf_cg:')) {
+    const cat = data.slice('srf_cg:'.length);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'supply_req_flow') {
+      await bot.sendMessage(chatId, '⚠️ Session expired. Open 📦 Supply Request again.');
+      return;
+    }
+    session.category = cat;
+    session.categoryStepShown = true;
+    session.step = 'warehouse';
     sessionStore.set(uid, session);
     await proceedAfterContainer(bot, chatId, uid);
 
@@ -8816,6 +8984,19 @@ async function handleCallbackQuery(bot, callbackQuery) {
       delete session.designPage;
       sessionStore.set(uid, session);
       await proceedAfterContainer(bot, chatId, uid);
+    } else if (target === 'category') {
+      // SRF-CAT — back to the Select Category step for the CURRENT
+      // container. Clear the category + everything below it; keep the
+      // arrival batch, cart and scope.
+      await clearDesignPreview(bot, chatId, uid);
+      session.step = 'category';
+      delete session.category;
+      delete session.warehouse;
+      delete session.multiWarehouse;
+      delete session.currentDesign;
+      delete session.designPage;
+      sessionStore.set(uid, session);
+      await showSupplyCategoryPicker(bot, chatId, uid);
     } else if (target === 'container') {
       // ARRIVAL-BATCH C1 — back to the Select Container step. Clear the
       // warehouse + any design-level selection; keep cart + scope. Offered
@@ -8824,6 +9005,8 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await clearDesignPreview(bot, chatId, uid);
       session.step = 'container';
       session.arrivalBatch = '';
+      delete session.category;
+      delete session.categoryStepShown;
       delete session.warehouse;
       delete session.multiWarehouse;
       delete session.currentDesign;
@@ -8876,7 +9059,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
     // Recompute availability against the live cart so we never over-add a
     // shade the user already put some of into the cart.
-    const adjusted = await getAdjustedAvailability(session.warehouse, session.cart || [], session.arrivalBatch);
+    const adjusted = await getAdjustedAvailability(session.warehouse, session.cart || [], session.arrivalBatch, session.category);
     const designShades = adjusted.filter((a) => a.design === design);
     let nameMap;
     try {

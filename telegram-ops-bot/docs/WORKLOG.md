@@ -5,6 +5,35 @@ Newest first. One entry per working session; each entry lists what shipped
 
 ---
 
+## 2026-07-08 (evening) — SRF-CAT: category step inside Supply Request
+
+- **New step between container and warehouse** (owner spec, confirmed twice:
+  container FIRST, then categories): after picking a container the user gets
+  tappable category chips — only categories with AVAILABLE stock in that
+  container within the user's warehouse scope, with container-scoped bale
+  counts (`🧣 Cashmere (58 bls)`). Source = Inventory column W via
+  `designCategoriesRepository` (no new storage).
+- **Others** chip (last) groups designs with no category yet, so no stock is
+  unreachable; sentinel `__others__` in `srf_cg:` callback data.
+- **Auto-skip:** a single-category container skips the screen (category still
+  stamped on the session, so headers show it) — flow feels unchanged when
+  there is no real choice.
+- **Downstream filter:** `getSupplyWarehouses` + `getAdjustedAvailability`
+  take a `category` arg; warehouse picker, design list, shade list and
+  Select-All all respect it. Headers show `Container · Category`.
+- **Back nav:** category screen → containers; warehouse/design screens →
+  categories when the step was shown (else containers, as before).
+  `srf_back:category` clears the pick; picking a new container clears it too.
+- Scope: Supply Request only (Bundle Sale untouched, per plan).
+- Tests: `test/characterization/supplyFlow.categoryStep.test.js` (6 cases:
+  chips + counts + order, downstream filtering, Others, auto-skip,
+  multi-warehouse filter, back nav). Full suite 398 pass · smoke 546 ok ·
+  0 lint errors.
+- **Pending owner test:** container → category chips → warehouse → designs on
+  production data (small).
+
+---
+
 ## 2026-07-08 (later) — DCAT-1 design categories + MKT-2 marketer allocations
 
 ### DCAT-1 — product categories on top of design numbers (everyone sees them)
