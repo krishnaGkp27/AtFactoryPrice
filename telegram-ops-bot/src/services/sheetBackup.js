@@ -35,17 +35,34 @@ const settingsRepository = require('../repositories/settingsRepository');
 
 const NAME_PREFIX = 'daily-backup__';
 const CHECK_INTERVAL_MS = 15 * 60 * 1000; // cheap local check; real work runs once/day
+// BKP-1b — transient failures retry after 4h, not on every 15-min tick.
+const TRANSIENT_RETRY_MS = 4 * 60 * 60 * 1000;
 
 let _drive = null;
 let _timer = null;
 let _lastSuccessDay = '';
 let _lastFailNotifyDay = '';
+let _quotaFailDay = '';
+let _nextRetryAtMs = 0;
+
+/**
+ * BKP-1b — Google gives service accounts NO My-Drive storage, so a quota
+ * error is STRUCTURAL: retrying the same day can never succeed. Detect it
+ * so the scheduler attempts at most once per day instead of every tick
+ * (the log/DM spam this caused ran 96×/day in production).
+ */
+function isQuotaError(message) {
+  return /storage quota|quota (has been )?exceeded/i.test(String(message || ''));
+}
 
 /** Test hook — inject a stub Drive client. */
 function _setDriveClient(stubOrReal) { _drive = stubOrReal; }
 
 /** Test hook — reset module memory between test cases. */
-function _resetForTests() { _lastSuccessDay = ''; _lastFailNotifyDay = ''; _drive = null; }
+function _resetForTests() {
+  _lastSuccessDay = ''; _lastFailNotifyDay = ''; _drive = null;
+  _quotaFailDay = ''; _nextRetryAtMs = 0;
+}
 
 async function getDriveClient() {
   if (_drive) return _drive;
@@ -161,10 +178,15 @@ async function runDailyBackup({ now = new Date() } = {}) {
 async function notifyFailure(bot, message, label) {
   if (_lastFailNotifyDay === label) return;
   _lastFailNotifyDay = label;
+  const hint = isQuotaError(message)
+    ? '_The service account has NO Drive storage — this cannot succeed by retrying. '
+      + 'Fix: install the Apps Script backup (specs/BKP-1\\_EMIN\\_CHECKLIST.md, Task 1), '
+      + 'then set `SHEET_BACKUP_ENABLED=0` in the Settings sheet (Task 2)._'
+    : '_You can run it manually: `npm run snapshot`_';
   for (const adminId of config.access.adminIds) {
     try {
       await bot.sendMessage(adminId,
-        `⚠️ *Daily sheet backup failed*\n${message}\n\n_You can run it manually: \`npm run snapshot\`_`,
+        `⚠️ *Daily sheet backup failed*\n${message}\n\n${hint}`,
         { parse_mode: 'Markdown' });
     } catch (_) { /* best-effort */ }
   }
@@ -174,10 +196,17 @@ async function notifyFailure(bot, message, label) {
  * One scheduler tick. Fires the daily run on the first tick at/after the
  * configured UTC hour; in-memory day guard keeps subsequent ticks free
  * (the Drive existence check covers restarts).
+ *
+ * Failure pacing (BKP-1b):
+ *   quota error     → at most ONE attempt per day (structural — see
+ *                     isQuotaError); previously this retried every tick.
+ *   any other error → next retry no sooner than TRANSIENT_RETRY_MS.
  */
 async function tick(bot, now = new Date()) {
   const label = dayLabel(now);
   if (_lastSuccessDay === label) return;
+  if (_quotaFailDay === label) return;
+  if (now.getTime() < _nextRetryAtMs) return;
   let hour = 1;
   try {
     const settings = await settingsRepository.getAll();
@@ -189,7 +218,13 @@ async function tick(bot, now = new Date()) {
   const res = await runDailyBackup({ now });
   if (res.ok) {
     _lastSuccessDay = label;
+    _nextRetryAtMs = 0;
   } else {
+    if (isQuotaError(res.message)) {
+      _quotaFailDay = label;
+    } else {
+      _nextRetryAtMs = now.getTime() + TRANSIENT_RETRY_MS;
+    }
     await notifyFailure(bot, res.message || 'unknown error', label);
   }
 }
@@ -221,5 +256,7 @@ module.exports = {
     backupExists,
     pruneOldBackups,
     dayLabel,
+    isQuotaError,
+    TRANSIENT_RETRY_MS,
   },
 };

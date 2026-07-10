@@ -144,3 +144,53 @@ test('failure DMs admins once per day, then recovers next day', async () => {
   await sheetBackup.tick(bot, new Date('2026-07-07T03:00:00Z'));
   assert.equal(bot.sent.length, 1, 'same-day failures throttled to one DM');
 });
+
+/** Drive stub that always fails with `message`, counting attempts. */
+function failingDrive(message) {
+  const state = { attempts: 0 };
+  _setDriveClient({
+    files: {
+      list: async () => { state.attempts += 1; throw new Error(message); },
+      copy: async () => { throw new Error(message); },
+      update: async () => { throw new Error(message); },
+    },
+  });
+  return state;
+}
+
+test('BKP-1b quota error: ONE attempt per day, not one per tick', async () => {
+  fresh();
+  const bot = fakeBot();
+  const state = failingDrive("The user's Drive storage quota has been exceeded.");
+  // Simulate the production pattern: a tick every 15 minutes all day long.
+  for (let m = 0; m < 22 * 60; m += 15) {
+    await sheetBackup.tick(bot, new Date(Date.UTC(2026, 6, 7, 2, 0, 0) + m * 60 * 1000));
+  }
+  assert.equal(state.attempts, 1, 'structural failure attempted exactly once today (was 96×)');
+  assert.equal(bot.sent.length, 1, 'one admin DM');
+  assert.match(bot.sent[0].text, /Apps Script backup/i, 'DM points at the BKP-1 checklist fix');
+  // Next day: one fresh attempt (config may have been fixed overnight).
+  await sheetBackup.tick(bot, new Date('2026-07-08T02:00:00Z'));
+  assert.equal(state.attempts, 2, 'retries once the day rolls over');
+});
+
+test('BKP-1b transient error: retry waits 4 hours, not 15 minutes', async () => {
+  fresh();
+  const bot = fakeBot();
+  const state = failingDrive('socket hang up');
+  await sheetBackup.tick(bot, new Date('2026-07-07T02:00:00Z'));
+  assert.equal(state.attempts, 1);
+  await sheetBackup.tick(bot, new Date('2026-07-07T02:15:00Z'));
+  await sheetBackup.tick(bot, new Date('2026-07-07T05:59:00Z'));
+  assert.equal(state.attempts, 1, 'inside the 4h backoff window — no retry');
+  await sheetBackup.tick(bot, new Date('2026-07-07T06:01:00Z'));
+  assert.equal(state.attempts, 2, 'retried after the backoff lapsed');
+});
+
+test('isQuotaError matches Google quota messages only', () => {
+  const { isQuotaError } = sheetBackup._internals;
+  assert.equal(isQuotaError("The user's Drive storage quota has been exceeded."), true);
+  assert.equal(isQuotaError('Quota exceeded for storage'), true);
+  assert.equal(isQuotaError('socket hang up'), false);
+  assert.equal(isQuotaError(''), false);
+});
