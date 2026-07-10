@@ -26,7 +26,12 @@ const DEFAULTS = {
   // BKP-1 — automated daily snapshot of the master sheet into the backup
   // Drive folder. Hour is UTC (1 = 02:00 Lagos); copies older than the
   // retention window are trashed (recoverable for 30 more days).
-  SHEET_BACKUP_ENABLED: 1,
+  // BKP-1c (10-Jul-2026) — DISABLED by owner request: the service account
+  // has no Drive storage, so the job can only fail and DM admins daily.
+  // Re-enable by adding a Settings sheet row SHEET_BACKUP_ENABLED=1 (no
+  // deploy needed) once the Apps Script backup (checklist Task 1) — or a
+  // storage-capable upload path — is in place.
+  SHEET_BACKUP_ENABLED: 0,
   SHEET_BACKUP_HOUR_UTC: 1,
   SHEET_BACKUP_RETENTION_DAYS: 14,
 };
