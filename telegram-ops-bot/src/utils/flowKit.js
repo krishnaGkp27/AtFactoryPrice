@@ -27,12 +27,16 @@ const sessionStore = require('./sessionStore');
  * @param {boolean} [opts.requireSession=false]      render nothing when the
  *        session is gone (the strict variant several flows use — their
  *        screens are meaningless without live state)
+ * @param {string} [opts.titlePrefix='']             prepended to every text —
+ *        for flows whose screens all share one header (e.g. "🏷️ *Set
+ *        Design Category*\n\n")
  * @returns {(bot:object, chatId:number|string, userId:string, text:string, rows:Array) => Promise<number|null>}
  *          resolves with the message id the render landed on (null if unknown)
  */
 function makeRenderer(opts = {}) {
-  const { parseMode = 'Markdown', disablePreview = false, requireSession = false } = opts;
-  return async function render(bot, chatId, userId, text, rows) {
+  const { parseMode = 'Markdown', disablePreview = false, requireSession = false, titlePrefix = '' } = opts;
+  return async function render(bot, chatId, userId, body, rows) {
+    const text = titlePrefix + body;
     const session = sessionStore.get(userId);
     if (requireSession && !session) return null;
     const sendOpts = { reply_markup: { inline_keyboard: rows } };
@@ -99,4 +103,26 @@ async function guardSession(bot, query, sessionType, opts = {}) {
   return { session, chatId, userId };
 }
 
-module.exports = { makeRenderer, rowsFor, guardSession };
+/**
+ * Lay out flat buttons into keyboard rows of `perRow` (the pattern every
+ * flow re-implemented as a local `chunk`).
+ * @param {Array} items @param {number} perRow
+ * @returns {Array<Array>}
+ */
+function chunk(items, perRow) {
+  const rows = [];
+  const n = Math.max(1, perRow | 0);
+  for (let i = 0; i < (items || []).length; i += n) rows.push(items.slice(i, i + n));
+  return rows;
+}
+
+/**
+ * Escape the Markdown-v1 specials Telegram trips on inside user-supplied
+ * strings (names, notes) rendered with parse_mode 'Markdown'.
+ * @param {*} s @returns {string}
+ */
+function mdEscape(s) {
+  return String(s == null ? '' : s).replace(/([_*`[\]])/g, '\\$1');
+}
+
+module.exports = { makeRenderer, rowsFor, guardSession, chunk, mdEscape };

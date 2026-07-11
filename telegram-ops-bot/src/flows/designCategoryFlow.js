@@ -44,6 +44,7 @@
 'use strict';
 
 const sessionStore = require('../utils/sessionStore');
+const { makeRenderer, chunk } = require('../utils/flowKit');
 const auth = require('../middlewares/auth');
 const idGenerator = require('../utils/idGenerator');
 const riskEvaluate = require('../risk/evaluate');
@@ -60,11 +61,6 @@ const PAGE_SIZE = 24; // 8 rows × 3 chips
 const CHIPS_PER_ROW = 3;
 
 /** Split an array of buttons into keyboard rows. */
-function chunk(items, size) {
-  const rows = [];
-  for (let i = 0; i < items.length; i += size) rows.push(items.slice(i, i + size));
-  return rows;
-}
 
 function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'dcat:cancel' }]; }
 function navRow() {
@@ -81,23 +77,8 @@ function navRow() {
  * @param {Array} rows Inline-keyboard rows.
  * @returns {Promise<void>}
  */
-async function render(bot, chatId, userId, prompt, rows) {
-  const session = sessionStore.get(userId);
-  const text = `🏷️ *Set Design Category*\n\n${prompt}`;
-  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
-  const mid = session && session.flowMessageId;
-  if (mid) {
-    try {
-      await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
-      return;
-    } catch { /* message gone or identical — fall through */ }
-  }
-  const sent = await bot.sendMessage(chatId, text, opts);
-  if (session) {
-    session.flowMessageId = sent.message_id;
-    sessionStore.set(userId, session);
-  }
-}
+// Shared flowKit renderer with this flow's fixed header.
+const render = makeRenderer({ titlePrefix: '🏷️ *Set Design Category*\n\n' });
 
 // ---------------------------------------------------------------------------
 // Steps

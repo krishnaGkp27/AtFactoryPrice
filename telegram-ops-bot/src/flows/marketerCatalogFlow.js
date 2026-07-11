@@ -23,6 +23,7 @@
 'use strict';
 
 const sessionStore = require('../utils/sessionStore');
+const { makeRenderer, chunk } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const marketerAllocationsRepository = require('../repositories/marketerAllocationsRepository');
 const designCategoriesRepository = require('../repositories/designCategoriesRepository');
@@ -31,31 +32,12 @@ const logger = require('../utils/logger');
 const SESSION_TYPE = 'mkp_flow';
 const OTHERS = 'Others';
 
-function chunk(items, size) {
-  const rows = [];
-  for (let i = 0; i < items.length; i += size) rows.push(items.slice(i, i + size));
-  return rows;
-}
 
 function menuRow() { return [{ text: '🏠 Menu', callback_data: 'act:__back__' }]; }
 
 /** Anchored-card renderer (edit in place, fall back to fresh message). */
-async function render(bot, chatId, userId, text, rows) {
-  const session = sessionStore.get(userId);
-  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
-  const mid = session && session.flowMessageId;
-  if (mid) {
-    try {
-      await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
-      return;
-    } catch { /* message gone or identical — fall through */ }
-  }
-  const sent = await bot.sendMessage(chatId, text, opts);
-  if (session) {
-    session.flowMessageId = sent.message_id;
-    sessionStore.set(userId, session);
-  }
-}
+// Anchored edit-else-send renderer — shared flowKit implementation.
+const render = makeRenderer();
 
 /**
  * Group the marketer's live allocations by category.

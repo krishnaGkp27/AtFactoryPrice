@@ -32,6 +32,7 @@
 'use strict';
 
 const sessionStore = require('../utils/sessionStore');
+const { mdEscape } = require('../utils/flowKit');
 const auth = require('../middlewares/auth');
 const usersRepo = require('../repositories/usersRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
@@ -49,9 +50,6 @@ const PAGE_SIZE = 8;
  * on the confirm card (USR-C4 deactivate bug: ETELEGRAM 400 "can't parse
  * entities" / "can't find end of the entity").
  */
-function mdEscape(s) {
-  return String(s == null ? '' : s).replace(/([_*`\[\]])/g, '\\$1');
-}
 
 const FLOW_LABEL = {
   promote: { title: '👑 Promote to Admin', verb: 'promote', actionField: 'promote_admin', successHint: 'super-admin' },

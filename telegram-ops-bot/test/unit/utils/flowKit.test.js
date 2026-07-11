@@ -65,6 +65,30 @@ test('renderer options: plain text + disabled preview', async () => {
   assert.equal(sent.args.opts.disable_web_page_preview, true);
 });
 
+test('renderer option titlePrefix: every screen carries the flow header', async () => {
+  sessionStore.clear('r6');
+  const bot = createFakeBot();
+  const render = makeRenderer({ titlePrefix: '🏷️ *Header*\n\n' });
+  await render(bot, 'c', 'r6', 'body text', []);
+  assert.equal(bot.callsTo('sendMessage')[0].args.text, '🏷️ *Header*\n\nbody text');
+});
+
+// ---- chunk + mdEscape (the per-flow clones, consolidated) ----
+
+test('chunk lays flat buttons into rows; guards bad input', () => {
+  const { chunk } = require('../../../src/utils/flowKit');
+  assert.deepEqual(chunk([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+  assert.deepEqual(chunk([], 3), []);
+  assert.deepEqual(chunk([1, 2], 0), [[1], [2]], 'perRow floor of 1');
+});
+
+test('mdEscape escapes Markdown-v1 specials only', () => {
+  const { mdEscape } = require('../../../src/utils/flowKit');
+  assert.equal(mdEscape('a_b*c`d[e]'), 'a\\_b\\*c\\`d\\[e\\]');
+  assert.equal(mdEscape('plain'), 'plain');
+  assert.equal(mdEscape(null), '');
+});
+
 // ---- rowsFor ----
 
 test('rowsFor builds namespaced rows + session-free menu row', () => {

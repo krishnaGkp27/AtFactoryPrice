@@ -25,6 +25,7 @@
 'use strict';
 
 const sessionStore = require('../utils/sessionStore');
+const { makeRenderer, chunk } = require('../utils/flowKit');
 const auth = require('../middlewares/auth');
 const usersRepository = require('../repositories/usersRepository');
 const inventoryRepository = require('../repositories/inventoryRepository');
@@ -38,11 +39,6 @@ const SESSION_TYPE = 'mal_flow';
 const PAGE_SIZE = 24;
 const QTY_CHIPS = [1, 2, 3, 5, 10, 20];
 
-function chunk(items, size) {
-  const rows = [];
-  for (let i = 0; i < items.length; i += size) rows.push(items.slice(i, i + size));
-  return rows;
-}
 
 function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'mal:cancel' }]; }
 function navRow() {
@@ -50,23 +46,8 @@ function navRow() {
 }
 
 /** Anchored-card renderer (edit in place, fall back to fresh message). */
-async function render(bot, chatId, userId, prompt, rows) {
-  const session = sessionStore.get(userId);
-  const text = `🧑‍💼 *Allocate to Marketer*\n\n${prompt}`;
-  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
-  const mid = session && session.flowMessageId;
-  if (mid) {
-    try {
-      await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
-      return;
-    } catch { /* message gone or identical — fall through */ }
-  }
-  const sent = await bot.sendMessage(chatId, text, opts);
-  if (session) {
-    session.flowMessageId = sent.message_id;
-    sessionStore.set(userId, session);
-  }
-}
+// Shared flowKit renderer with this flow's fixed header.
+const render = makeRenderer({ titlePrefix: '🧑‍💼 *Allocate to Marketer*\n\n' });
 
 /** Decorated design label: "80045 · Senator". */
 function designLabel(design, catMap) {

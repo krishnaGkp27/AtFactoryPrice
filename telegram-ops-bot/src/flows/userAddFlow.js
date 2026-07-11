@@ -41,6 +41,7 @@
 'use strict';
 
 const sessionStore = require('../utils/sessionStore');
+const { mdEscape } = require('../utils/flowKit');
 const auth = require('../middlewares/auth');
 const departmentsRepo = require('../repositories/departmentsRepository');
 const usersRepo = require('../repositories/usersRepository');
@@ -68,9 +69,6 @@ const FLOW_TTL_MS = 30 * 60 * 1000;     // 30 min — onboarding may pause for d
  * stray "_", "*", "`" or "[" in a name/dept/warehouse cannot break entity
  * parsing on the Confirm card and silently bury the flow at Step 5/6.
  */
-function mdEscape(s) {
-  return String(s == null ? '' : s).replace(/([_*`\[\]])/g, '\\$1');
-}
 
 function truncate(s, n) {
   const str = String(s == null ? '' : s);

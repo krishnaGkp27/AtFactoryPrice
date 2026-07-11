@@ -33,7 +33,7 @@
  */
 
 const sessionStore = require('../utils/sessionStore');
-const { makeRenderer } = require('../utils/flowKit');
+const { makeRenderer, chunk } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const usersRepository = require('../repositories/usersRepository');
 const designCategoriesRepository = require('../repositories/designCategoriesRepository');
@@ -56,7 +56,6 @@ const render = makeRenderer({ requireSession: true });
 
 function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'trf:cancel' }]; }
 function navRow() { return [{ text: '⬅ Back', callback_data: 'trf:back' }, { text: '❌ Cancel', callback_data: 'trf:cancel' }]; }
-function chunk(btns, n) { const out = []; for (let i = 0; i < btns.length; i += n) out.push(btns.slice(i, i + n)); return out; }
 
 /* ── data helpers ──────────────────────────────────────────────────────── */
 
