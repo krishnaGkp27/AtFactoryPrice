@@ -23,9 +23,52 @@ function row(id, name, role, status) {
 
 function withRows(rows, fn) {
   const orig = sheets.readRange;
+  // P6 — getAll is cached now; drop the cache so each test's stub rows win.
+  usersRepo.invalidateCache();
   sheets.readRange = async () => rows;
-  return Promise.resolve(fn()).finally(() => { sheets.readRange = orig; });
+  return Promise.resolve(fn()).finally(() => {
+    sheets.readRange = orig;
+    usersRepo.invalidateCache();
+  });
 }
+
+test('P6 cache: repeated reads hit the sheet once; invalidateCache forces a re-read', async () => {
+  const orig = sheets.readRange;
+  usersRepo.invalidateCache();
+  let reads = 0;
+  sheets.readRange = async () => { reads += 1; return [row('1', 'A', 'employee', 'active')]; };
+  try {
+    await usersRepo.getAll();
+    await usersRepo.getAll();
+    await usersRepo.findByUserId('1');
+    assert.equal(reads, 1, 'served from cache inside the TTL');
+    usersRepo.invalidateCache();
+    await usersRepo.getAll();
+    assert.equal(reads, 2, 'invalidate forces a fresh sheet read');
+  } finally {
+    sheets.readRange = orig;
+    usersRepo.invalidateCache();
+  }
+});
+
+test('P6 cache: a write invalidates so the next read is fresh', async () => {
+  const orig = { readRange: sheets.readRange, updateRange: sheets.updateRange };
+  usersRepo.invalidateCache();
+  let reads = 0;
+  sheets.readRange = async () => { reads += 1; return [row('7', 'Before', 'employee', 'active')]; };
+  sheets.updateRange = async () => {};
+  try {
+    await usersRepo.getAll();
+    assert.equal(reads, 1);
+    await usersRepo.updateRole('7', 'manager');  // findByUserId uses the cache, then write invalidates
+    await usersRepo.getAll();
+    assert.equal(reads, 2, 'mutation dropped the cache');
+  } finally {
+    sheets.readRange = orig.readRange;
+    sheets.updateRange = orig.updateRange;
+    usersRepo.invalidateCache();
+  }
+});
 
 test('prefers the ACTIVE row when an inactive audit row precedes it', async () => {
   await withRows([

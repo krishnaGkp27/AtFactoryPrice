@@ -8,6 +8,10 @@ const sheets = require('./sheetsClient');
 const SHEET = 'AuditLog';
 const HEADERS = ['Timestamp', 'EventType', 'Payload', 'User'];
 
+// P6 — the header only needs bootstrapping once per process; without this
+// guard every audit append paid an extra read of row 1 first.
+let _headerReady = false;
+
 async function ensureHeader() {
   const rows = await sheets.readRange(SHEET, 'A1:D1');
   if (!rows.length || rows[0].length < 4) {
@@ -16,7 +20,10 @@ async function ensureHeader() {
 }
 
 async function append(eventType, payload, user) {
-  await ensureHeader();
+  if (!_headerReady) {
+    await ensureHeader();
+    _headerReady = true;
+  }
   const row = [
     new Date().toISOString(),
     eventType,

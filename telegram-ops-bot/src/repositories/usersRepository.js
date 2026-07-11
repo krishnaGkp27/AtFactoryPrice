@@ -78,11 +78,29 @@ function inDepartment(user, name) {
   return String(user.department || '').trim().toLowerCase() === target;
 }
 
+// P6 — the Users sheet is read on almost every interaction (auth checks,
+// person pickers, dispatch routing) but changes rarely. Short TTL cache;
+// every mutation below invalidates so in-process writes are visible at
+// once (cross-process edits — e.g. a manual sheet fix — appear within
+// CACHE_TTL_MS, same trade-off inventoryRepository already makes).
+const CACHE_TTL_MS = 30 * 1000;
+let _allCache = null;
+let _allCacheTs = 0;
+
+function invalidateCache() {
+  _allCache = null;
+  _allCacheTs = 0;
+}
+
 async function getAll() {
+  const now = Date.now();
+  if (_allCache && now - _allCacheTs < CACHE_TTL_MS) return _allCache;
   // K = notification_prefs (T2). Older deployments may still have only
   // A:J — sheets API returns shorter rows; the parser handles undefined.
   const rows = await sheets.readRange(SHEET, 'A2:K');
-  return rows.map((r, i) => parse(r, i + 2)).filter((u) => u.user_id);
+  _allCache = rows.map((r, i) => parse(r, i + 2)).filter((u) => u.user_id);
+  _allCacheTs = Date.now();
+  return _allCache;
 }
 
 async function findByUserId(userId) {
@@ -122,6 +140,7 @@ async function append(user) {
     deptCsv, Array.isArray(user.warehouses) ? user.warehouses.join(',') : (user.warehouses || ''),
     managesCsv,
   ]]);
+  invalidateCache();
 }
 
 /**
@@ -136,6 +155,7 @@ async function updateDepartment(userId, department) {
     ? department.map((d) => String(d).trim()).filter(Boolean).join(',')
     : String(department || '').trim();
   await sheets.updateRange(SHEET, `H${u.rowIndex}`, [[csv]]);
+  invalidateCache();
   return true;
 }
 
@@ -147,6 +167,7 @@ async function updateRole(userId, role) {
   const u = await findByUserId(userId);
   if (!u) return false;
   await sheets.updateRange(SHEET, `C${u.rowIndex}`, [[String(role || 'employee')]]);
+  invalidateCache();
   return true;
 }
 
@@ -159,6 +180,7 @@ async function updateStatus(userId, status) {
   const u = await findByUserId(userId);
   if (!u) return false;
   await sheets.updateRange(SHEET, `F${u.rowIndex}`, [[String(status || 'active')]]);
+  invalidateCache();
   return true;
 }
 
@@ -167,6 +189,7 @@ async function updateWarehouses(userId, warehouses) {
   if (!u) return false;
   const csv = Array.isArray(warehouses) ? warehouses.join(',') : warehouses;
   await sheets.updateRange(SHEET, `I${u.rowIndex}`, [[csv]]);
+  invalidateCache();
   return true;
 }
 
@@ -178,6 +201,7 @@ async function updateBranch(userId, branch) {
   const u = await findByUserId(userId);
   if (!u) return false;
   await sheets.updateRange(SHEET, `D${u.rowIndex}`, [[String(branch || '')]]);
+  invalidateCache();
   return true;
 }
 
@@ -220,6 +244,7 @@ async function reactivate(userId, fields = {}) {
       : String(fields.manages || '').trim();
     await sheets.updateRange(SHEET, `J${ri}`, [[managesCsv]]);
   }
+  invalidateCache();
   return true;
 }
 
@@ -233,6 +258,7 @@ async function updateManages(userId, manages) {
     ? manages.map((d) => String(d).trim()).filter(Boolean).join(',')
     : String(manages || '').trim();
   await sheets.updateRange(SHEET, `J${u.rowIndex}`, [[csv]]);
+  invalidateCache();
   return true;
 }
 
@@ -250,6 +276,7 @@ async function updateNotificationPrefs(userId, prefs) {
     try { json = JSON.stringify(prefs); } catch (_) { json = ''; }
   }
   await sheets.updateRange(SHEET, `K${u.rowIndex}`, [[json]]);
+  invalidateCache();
   return true;
 }
 
@@ -274,6 +301,7 @@ async function setNotificationPref(userId, eventType, enabled) {
 
 module.exports = {
   getAll,
+  invalidateCache,
   findByUserId,
   findByDepartment,
   inDepartment,
