@@ -70,6 +70,7 @@ const rateSuggestionService = require('../services/rateSuggestionService');
 const approvalEvents      = require('../events/approvalEvents');
 const auth                = require('../middlewares/auth');
 const logger              = require('../utils/logger');
+const { chunk }           = require('../utils/flowKit');
 const {
   buildShadeNameMap, buildShadeLabel, layoutShadeRows, formatShadeRef,
 } = require('../utils/shadeButtons');
@@ -643,6 +644,9 @@ async function renderCustomerPicker(bot, chatId, userId) {
   const rows = recent.slice(0, 6).map((name, i) => ([{ text: `👤 ${name}`, callback_data: `bs:cust:r:${i}` }]));
   session._recentCustomers = recent.slice(0, 6);
   sessionStore.set(userId, session);
+  // TAP-1 — browse-all comes before search so field staff never HAVE to
+  // type: recent buyers → 📋 all customers (paginated) → search fallback.
+  rows.push([{ text: '📋 All customers', callback_data: 'bs:cust:all:0' }]);
   rows.push([{ text: '🔎 Search by name', callback_data: 'bs:cust:search' }]);
   rows.push([{ text: '➕ Walk-in (no record)', callback_data: 'bs:cust:walkin' }]);
   rows.push(backRow());
@@ -650,8 +654,50 @@ async function renderCustomerPicker(bot, chatId, userId) {
 
   let head = '👤 *Pick customer*\n\n';
   if (recent.length) head += `_Recent buyers of_ *${escapeMd(session.design)}*:`;
-  else head += `_No recorded sales of_ *${escapeMd(session.design)}* _yet. Pick search or walk-in._`;
+  else head += `_No recorded sales of_ *${escapeMd(session.design)}* _yet. Browse all, search, or walk-in._`;
   await render(bot, chatId, userId, head, rows);
+}
+
+const CUST_PAGE_SIZE = 10;
+
+/**
+ * TAP-1 — tappable, paginated list of ALL (non-inactive) customers so a
+ * seller can always pick without typing. Mirrors the supply flow's
+ * "See All" customer picker.
+ */
+async function renderAllCustomersPage(bot, chatId, userId, page = 0) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'pick_customer';
+  let all = [];
+  try { all = await customersRepository.getAll(); } catch (_) { /* empty list path below */ }
+  const names = [...new Set(all
+    .filter((c) => String(c.status || 'Active').toLowerCase() !== 'inactive')
+    .map((c) => c.name)
+    .filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  if (!names.length) {
+    session._allCustSlice = [];
+    sessionStore.set(userId, session);
+    await render(bot, chatId, userId,
+      '👤 *All customers*\n\n_No customers recorded yet — use search or walk-in._',
+      [[{ text: '🔎 Search by name', callback_data: 'bs:cust:search' }], backRow(), cancelRow()]);
+    return;
+  }
+  const pages = Math.max(1, Math.ceil(names.length / CUST_PAGE_SIZE));
+  const p = Math.min(Math.max(0, page), pages - 1);
+  const slice = names.slice(p * CUST_PAGE_SIZE, (p + 1) * CUST_PAGE_SIZE);
+  session._allCustSlice = slice;
+  sessionStore.set(userId, session);
+  const rows = chunk(slice.map((n, i) => ({ text: `👤 ${n}`, callback_data: `bs:cust:a:${i}` })), 2);
+  const nav = [];
+  if (p > 0) nav.push({ text: '⬅️ Prev', callback_data: `bs:cust:all:${p - 1}` });
+  if (p < pages - 1) nav.push({ text: `More (${names.length - (p + 1) * CUST_PAGE_SIZE}) ➡️`, callback_data: `bs:cust:all:${p + 1}` });
+  if (nav.length) rows.push(nav);
+  rows.push([{ text: '🔎 Search by name', callback_data: 'bs:cust:search' }]);
+  rows.push(backRow());
+  rows.push(cancelRow());
+  await render(bot, chatId, userId,
+    `👤 *All customers* — page ${p + 1}/${pages} (${names.length})\n\nPick one:`, rows);
 }
 
 async function renderCustomerSearchPrompt(bot, chatId, userId) {
@@ -1132,6 +1178,19 @@ async function handleCallback(bot, query) {
     const i = parseInt(data.slice('bs:cust:s:'.length), 10);
     const hit = (session._searchHits || [])[i];
     if (hit) await pickCustomer(bot, chatId, userId, hit.name);
+    return true;
+  }
+  // TAP-1 — paginated all-customers browse ('bs:cust:all:<page>' pages,
+  // 'bs:cust:a:<i>' picks from the current page slice).
+  if (data.startsWith('bs:cust:all:')) {
+    const page = parseInt(data.slice('bs:cust:all:'.length), 10) || 0;
+    await renderAllCustomersPage(bot, chatId, userId, page);
+    return true;
+  }
+  if (data.startsWith('bs:cust:a:')) {
+    const i = parseInt(data.slice('bs:cust:a:'.length), 10);
+    const name = (session._allCustSlice || [])[i];
+    if (name) await pickCustomer(bot, chatId, userId, name);
     return true;
   }
   if (data === 'bs:cust:search')       { await renderCustomerSearchPrompt(bot, chatId, userId); return true; }
