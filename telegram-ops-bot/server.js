@@ -260,6 +260,10 @@ const server = app.listen(PORT, async () => {
     try { require('./src/services/inventoryMirrorService').start(); } catch (e) {
       logger.warn(`inventoryMirror start skipped: ${e.message}`);
     }
+    // TRF-5 cleanup — close any still-pending legacy transfer_* approval
+    // rows (retired actions the executor refuses anyway). One-shot, async.
+    require('./src/services/legacyCleanup').rejectStaleLegacyTransfers()
+      .catch((e) => logger.warn(`legacyCleanup failed: ${e.message}`));
   } catch (e) {
     logger.error('Init error (bot still running):', e.message);
   }
