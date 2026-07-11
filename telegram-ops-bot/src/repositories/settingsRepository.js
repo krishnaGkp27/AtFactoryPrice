@@ -43,7 +43,22 @@ async function ensureHeader() {
   }
 }
 
+// P6 — Settings is consulted on nearly every action (risk thresholds,
+// display toggles, cleanup grace…) yet only changes when a human edits
+// the sheet. 30s TTL; set() invalidates so in-bot changes apply at once,
+// manual sheet edits show within 30s (same trade-off as the Users cache).
+const CACHE_TTL_MS = 30 * 1000;
+let _cache = null;
+let _cacheTs = 0;
+
+function invalidateCache() {
+  _cache = null;
+  _cacheTs = 0;
+}
+
 async function getAll() {
+  const now = Date.now();
+  if (_cache && now - _cacheTs < CACHE_TTL_MS) return { ..._cache };
   try {
     const rows = await sheets.readRange(SHEET, 'A2:C');
     const map = { ...DEFAULTS };
@@ -52,8 +67,11 @@ async function getAll() {
       const v = (r[1] || '').toString().trim();
       if (k) map[k] = isNaN(Number(v)) ? v : Number(v);
     });
-    return map;
+    _cache = map;
+    _cacheTs = Date.now();
+    return { ...map };
   } catch (e) {
+    // Errors are NOT cached — next caller retries the sheet.
     return { ...DEFAULTS };
   }
 }
@@ -70,7 +88,8 @@ async function set(key, value) {
   } else {
     await sheets.appendRows(SHEET, [[key, valueStr, updatedAt]]);
   }
+  invalidateCache();
   return { key, value: isNaN(Number(value)) ? value : Number(value), updatedAt };
 }
 
-module.exports = { getAll, set, ensureHeader, DEFAULTS };
+module.exports = { getAll, set, invalidateCache, ensureHeader, DEFAULTS };
