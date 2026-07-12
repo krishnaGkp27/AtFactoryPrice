@@ -568,23 +568,100 @@ function prevChoiceIdx(session, fromIdx) {
   return -1;
 }
 
+// TRF-7 — bale-number search inside the picker. The chip grid is capped so
+// big warehouses don't render 60+ buttons; 🔎 finds any bale by typing part
+// of its number (Telegram bots can't filter per keystroke — each sent
+// message returns instant checkbox matches).
+const BALE_CHIPS_MAX = 21;
+const SEARCH_MIN = 7;
+
 /** Render the current line's bale-picker screen. */
 async function showBalePicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   const line = session.pl[session.idx];
   const selSet = new Set(line.sel);
-  const chips = line.cands.map((pkg, i) => ({
+  const visible = line.cands.slice(0, BALE_CHIPS_MAX);
+  const chips = visible.map((pkg, i) => ({
     text: `${selSet.has(pkg) ? '✅ ' : ''}${pkg}`, callback_data: `trf:bl:t:${i}`,
   }));
   const rows = chunk(chips, 3);
+  if (line.cands.length >= SEARCH_MIN) {
+    rows.push([{ text: '🔎 Search bale #', callback_data: 'trf:bl:sr' }]);
+  }
   rows.push([{ text: nextChoiceIdx(session, session.idx) === -1 ? '✅ Review' : '➡ Next', callback_data: 'trf:bl:nx' }]);
   rows.push([{ text: '⏭ Auto-pick remaining', callback_data: 'trf:bl:auto' }]);
   rows.push([{ text: '❌ Decline', callback_data: `trf:dec:${session.requestId}` }]);
+  const moreNote = line.cands.length > visible.length
+    ? `\n_Showing first ${visible.length} of ${line.cands.length} — 🔎 search finds any bale number._`
+    : '';
   await render(bot, chatId, userId,
     `🚚 *${session.requestId}* — line ${session.idx + 1} of ${session.pl.length}\n`
     + `${line.design} · Shade ${line.shade} — pick ${line.qty} bale(s)   _(${line.cands.length} in stock)_\n`
-    + `Selected: *${line.sel.length}/${line.qty}*`,
+    + `Selected: *${line.sel.length}/${line.qty}*${moreNote}`,
     rows);
+}
+
+/** TRF-7 — prompt for a partial bale number to search this line. */
+async function showBaleSearchPrompt(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  const line = session.pl[session.idx];
+  session.step = 'dispatch_search';
+  session._q = null;
+  session._matches = [];
+  sessionStore.set(userId, session);
+  await render(bot, chatId, userId,
+    `🔎 *Search bale number* — ${line.design} · Shade ${line.shade}\n`
+    + `Selected: *${line.sel.length}/${line.qty}*\n\n`
+    + 'Type part of the bale number (e.g. `58`) — matches appear as checkboxes.',
+    [[{ text: '◀ Back to bales', callback_data: 'trf:bl:bks' }]]);
+}
+
+/** TRF-7 — checkbox results for the current query; ticking adds to the dispatch. */
+async function showBaleSearchResults(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  const line = session.pl[session.idx];
+  const q = String(session._q || '').toLowerCase();
+  const matches = line.cands.filter((p) => String(p).toLowerCase().includes(q)).slice(0, 24);
+  session._matches = matches;
+  sessionStore.set(userId, session);
+  const selSet = new Set(line.sel);
+  const rows = chunk(matches.map((pkg, j) => ({
+    text: `${selSet.has(pkg) ? '✅' : '⬜'} ${pkg}`, callback_data: `trf:bl:m:${j}`,
+  })), 3);
+  let note = '';
+  if (!matches.length) {
+    const other = session.pl.findIndex((p, k) => k !== session.idx
+      && p.cands.some((c) => String(c).toLowerCase().includes(q)));
+    note = other >= 0
+      ? `\n_Not in this line — that bale is under ${session.pl[other].design}/${session.pl[other].shade} (line ${other + 1})._`
+      : '\n_No available bale matches — it may be sold, already in transit, or in another warehouse._';
+  }
+  rows.push([
+    { text: '🔄 New search', callback_data: 'trf:bl:sr' },
+    { text: '◀ Back to bales', callback_data: 'trf:bl:bks' },
+  ]);
+  await render(bot, chatId, userId,
+    `🔎 *"${session._q}"* — ${matches.length} match(es) · ${line.design}/${line.shade}\n`
+    + `Selected: *${line.sel.length}/${line.qty}*${note}\n\nTap to tick / untick:`,
+    rows);
+}
+
+/**
+ * TRF-7 — free-text hook for the bale search step (routed by the
+ * controller's text dispatcher when step === 'dispatch_search').
+ * @returns {Promise<boolean>} true when consumed.
+ */
+async function handleText(bot, msg) {
+  const userId = String(msg.from.id);
+  const chatId = msg.chat.id;
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== SESSION_TYPE || session.step !== 'dispatch_search') return false;
+  const q = String(msg.text || '').trim();
+  if (!q) return true;
+  session._q = q;
+  sessionStore.set(userId, session);
+  await showBaleSearchResults(bot, chatId, userId);
+  return true;
 }
 
 /** Final review before the photo gate. Notes auto-filled lines (TRF-6). */
@@ -1133,8 +1210,31 @@ async function handleCallback(bot, query) {
       if (data === 'trf:bl:bk') await showDispatchConfirm(bot, chatId, userId);
       return true;
     }
-    if (session.step !== 'dispatch_pick' && session.step !== 'dispatch_confirm') return true;
+    if (!['dispatch_pick', 'dispatch_confirm', 'dispatch_search'].includes(session.step)) return true;
     const rest = data.slice('trf:bl:'.length);
+    // TRF-7 — bale-number search: open prompt / toggle a match / back to grid.
+    if (rest === 'sr') { await showBaleSearchPrompt(bot, chatId, userId); return true; }
+    if (rest === 'bks') {
+      session.step = 'dispatch_pick';
+      sessionStore.set(userId, session);
+      await showBalePicker(bot, chatId, userId);
+      return true;
+    }
+    if (rest.startsWith('m:')) {
+      if (session.step !== 'dispatch_search') return true;
+      const line = session.pl[session.idx];
+      const pkg = (session._matches || [])[parseInt(rest.slice(2), 10)];
+      if (pkg !== undefined) {
+        const at = line.sel.indexOf(pkg);
+        if (at >= 0) line.sel.splice(at, 1);              // untick
+        else if (line.sel.length < line.qty) line.sel.push(pkg); // tick
+        else { line.sel.shift(); line.sel.push(pkg); }    // at cap → swap oldest
+        sessionStore.set(userId, session);
+        await showBaleSearchResults(bot, chatId, userId);
+      }
+      return true;
+    }
+    if (session.step === 'dispatch_search') return true; // grid actions need the grid
     if (rest.startsWith('t:')) {
       const line = session.pl[session.idx];
       const pkg = line.cands[parseInt(rest.slice(2), 10)];
@@ -1175,6 +1275,7 @@ module.exports = {
   showList,
   handleCallback,
   handleFile,
+  handleText,
   myQueueSection,
   _internals: {
     candidatesFor, resolvePeople, submit, handleAction, startPrefilled,

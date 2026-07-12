@@ -13,7 +13,7 @@
  */
 
 process.env.ADMIN_IDS = '777';
-process.env.EMPLOYEE_IDS = '4242,5555';
+process.env.EMPLOYEE_IDS = '4242,5555,abdul,musa';
 
 const path = require('path');
 const test = require('node:test');
@@ -201,4 +201,62 @@ test('Check Stock shows the 🚚 in-transit line at the destination', async () =
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('cks:9006', 777));
   assert.match(bot.allText(), /🚚 In transit \(not yet sellable\): 2 bales → Kano office/);
+});
+
+/* ── TRF-7 — dispatcher bale-number search ─────────────────────────────── */
+
+function txt(text, uid) { return { chat: { id: uid }, from: { id: uid, first_name: 'T' }, text }; }
+
+/** Wizard run against a 9-bale warehouse so the picker has real choice. */
+async function runWizard9() {
+  inventoryRepository.getAll = async () => [
+    ...Array.from({ length: 9 }, (_, i) => invRow(`P${i + 1}`)),
+    invRow('P0', 'available', 'Kano office'),
+  ];
+  const calls = armQueue();
+  sessionStore.clear('777');
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('act:transfer_stock', 777));
+  await controller.handleCallbackQuery(bot, cb('trf:wh:1', 777));
+  await controller.handleCallbackQuery(bot, cb('trf:dg:0', 777));
+  await controller.handleCallbackQuery(bot, cb('trf:sh:0', 777));
+  await controller.handleCallbackQuery(bot, cb('trf:qty:2', 777));
+  await controller.handleCallbackQuery(bot, cb('trf:dest:0', 777));
+  await controller.handleCallbackQuery(bot, cb('trf:send', 777));
+  return { calls, requestId: calls.appended.requestId };
+}
+
+test('TRF-7: search a bale number, tick the checkbox, it joins the dispatch selection', async () => {
+  const { requestId } = await runWizard9();
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb(`trf:acc:${requestId}`, 'abdul'));
+  assert.ok(kbTexts(bot).some((t) => t.includes('🔎 Search bale #')), 'search button on the picker');
+
+  await controller.handleCallbackQuery(bot, cb('trf:bl:sr', 'abdul'));
+  assert.match(bot.allText(), /Type part of the bale number/);
+
+  // Dispatcher types a partial number → instant checkbox matches.
+  await controller.handleMessage(bot, txt('8', 'abdul'));
+  let boxes = kbTexts(bot);
+  assert.ok(boxes.some((t) => t === '⬜ P8|trf:bl:m:0'), `unticked match shown, got ${boxes}`);
+
+  // Tick it — at qty cap (2, FIFO P1+P2) the oldest swaps out for P8.
+  await controller.handleCallbackQuery(bot, cb('trf:bl:m:0', 'abdul'));
+  boxes = kbTexts(bot);
+  assert.ok(boxes.some((t) => t.startsWith('✅ P8|')), 'ticked after tap');
+
+  // Back to the grid, then to review — the selection carries P8.
+  await controller.handleCallbackQuery(bot, cb('trf:bl:bks', 'abdul'));
+  await controller.handleCallbackQuery(bot, cb('trf:bl:nx', 'abdul'));
+  assert.match(bot.allText(), /P2, P8/, 'review lists the searched bale');
+});
+
+test('TRF-7: no-match search explains why instead of a dead end', async () => {
+  const { requestId } = await runWizard9();
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb(`trf:acc:${requestId}`, 'abdul'));
+  await controller.handleCallbackQuery(bot, cb('trf:bl:sr', 'abdul'));
+  await controller.handleMessage(bot, txt('ZZZ', 'abdul'));
+  assert.match(bot.allText(), /No available bale matches/);
+  assert.ok(kbTexts(bot).some((t) => t.includes('🔄 New search')), 'retry offered');
 });
