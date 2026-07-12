@@ -230,3 +230,21 @@ re-test Leg 2 (reverse transfer) brings them home.
 ### Test status at close
 
 `npm test` 379 pass · `npm run smoke` 530/530 · `npm run lint` 0 errors (378 pre-existing warnings).
+
+---
+
+## Session 10–12 Jul 2026 (Claude Code) — ops hardening, UX, infra
+
+| Commit | What |
+|---|---|
+| `78fcdd36` | **TRF-3** — full-cart transfer carry-over; dispatch-time bale logging (order model, partial dispatch w/ shortfall notes) |
+| `cc3cb398`/`10a175c6` | **BKP-1b/c** — killed the 15-min Drive-quota retry storm; then disabled the bot backup job by owner request (⚠️ NO daily sheet backups until Apps Script Task 1 is installed) |
+| `067e4b18` | Boot sweep auto-rejected 4 stale legacy `transfer_*` queue rows (verified in prod logs) |
+| `ffbd6d02`/`6e720e2d` | **P6 perf** — Users + Settings 30s read caches (writes invalidate), audit-header once-per-process |
+| `61af967a` | flowKit consolidation: chunk/mdEscape/renderer clones from parallel-session flows |
+| `d20cb4d7` | **TAP-1** — Bundle Sale paginated 📋 All-customers browse (last frequent typed input removed) |
+| `719730dc` | **TRF-7** — dispatcher 🔎 bale-number search w/ checkbox picks; chip grid capped at 21 |
+
+Infra: Railway API wired (token + network allowlist in claude.ai env; logs/deploy monitoring proven live). Google Drive MCP connected. Direct psql to Railway PG blocked by sandbox proxy (HTTPS-only) — use Railway API/logs or a bot-side endpoint.
+
+Pending (unchanged owners): BKP-1 Apps Script (Emin/owner — backups OFF), webhook enforcement activation (owner), TRF-5 live test (owner), P7 ledger-source-of-truth decision (owner), portal decisions (owner), P4/P5 audit phases + heavy-flow TTL raise (agent, on request).
