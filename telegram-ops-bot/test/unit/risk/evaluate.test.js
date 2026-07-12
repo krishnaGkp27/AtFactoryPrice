@@ -80,12 +80,56 @@ test('evaluate() — always-approval actions', async (t) => {
     });
   });
 
-  await t.test('employee needs an admin', async () => {
+  await t.test('employee needs TWO admins on dual actions (DUAL-1)', async () => {
     await asAdmin(false, async () => {
       const r = await risk.evaluate({ action: 'sell_package', userId: '2' });
       assert.equal(r.risk, 'approval_required');
+      assert.match(r.reason, /require two-admin approval/i);
+    });
+  });
+
+  await t.test('employee needs a single admin on non-dual always actions', async () => {
+    await asAdmin(false, async () => {
+      const r = await risk.evaluate({ action: 'supply_request', userId: '2' });
+      assert.equal(r.risk, 'approval_required');
       assert.match(r.reason, /require admin approval/i);
     });
+  });
+});
+
+// ── DUAL-1 policy (specs/DUAL-1_TWO_ADMIN_APPROVAL.md) ─────────────────────
+
+test('DUAL-1 — dual-admin policy tables', async (t) => {
+  await t.test('every dual action is also in ALWAYS_APPROVAL_ACTIONS', () => {
+    for (const a of risk.DUAL_ADMIN_ACTIONS) {
+      assert.ok(risk.ALWAYS_APPROVAL_ACTIONS.includes(a), `${a} must be ALWAYS-gated`);
+    }
+  });
+
+  await t.test('inventory writes formerly admin-direct are now ALWAYS-gated', () => {
+    for (const a of ['add', 'add_stock', 'transfer_than', 'transfer_package', 'transfer_batch',
+      'receive_goods', 'set_forex_rate', 'add_bank', 'remove_bank', 'record_office_expense']) {
+      assert.ok(risk.ALWAYS_APPROVAL_ACTIONS.includes(a), `${a} must be in ALWAYS_APPROVAL_ACTIONS`);
+      assert.ok(risk.DUAL_ADMIN_ACTIONS.includes(a), `${a} must be in DUAL_ADMIN_ACTIONS`);
+    }
+  });
+
+  await t.test('staged flows stay out of the dual list (owner decision #3)', () => {
+    assert.ok(!risk.DUAL_ADMIN_ACTIONS.includes('supply_request'));
+  });
+
+  await t.test('requiredAdminApprovals matrix', () => {
+    // Non-dual action → always a single approval tap.
+    assert.equal(risk.requiredAdminApprovals({ action: 'add_contact', requesterIsAdmin: false, adminCount: 5 }), 1);
+    // Admin requester counts as the 1st admin → one other approver.
+    assert.equal(risk.requiredAdminApprovals({ action: 'receive_goods', requesterIsAdmin: true, adminCount: 5 }), 1);
+    // Employee requester → two distinct admin approvers.
+    assert.equal(risk.requiredAdminApprovals({ action: 'receive_goods', requesterIsAdmin: false, adminCount: 3 }), 2);
+    // Degrades instead of deadlocking a 1-admin deployment.
+    assert.equal(risk.requiredAdminApprovals({ action: 'receive_goods', requesterIsAdmin: false, adminCount: 1 }), 1);
+    assert.equal(risk.requiredAdminApprovals({ action: 'receive_goods', requesterIsAdmin: false, adminCount: 0 }), 1);
+    // Unknown headcount → strict default of 2.
+    assert.equal(risk.requiredAdminApprovals({ action: 'receive_goods', requesterIsAdmin: false, adminCount: undefined }), 2);
   });
 });
 

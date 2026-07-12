@@ -723,6 +723,89 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
     }
   } catch (_) { /* fall through; never block on this guard's own failure */ }
 
+  // DUAL-1 (specs/DUAL-1_TWO_ADMIN_APPROVAL.md) — inventory + finance
+  // actions must involve TWO admins before execution. An admin requester
+  // counts as the first (the H1 guard above already forces a different
+  // admin to tap), so employee requests need two distinct signoffs: the
+  // first tap is recorded in ActionJSON.approvals and the request stays
+  // pending until a second admin taps their own copy of the card.
+  // Rejection stays single-admin at any stage (fail-closed bias).
+  if (action === 'approve') {
+    try {
+      const riskMod = require('../risk/evaluate');
+      const actName = item && item.actionJSON && item.actionJSON.action;
+      if (actName && riskMod.DUAL_ADMIN_ACTIONS.includes(actName)) {
+        const prior = Array.isArray(item.actionJSON.approvals)
+          ? item.actionJSON.approvals.map(String) : [];
+        if (prior.includes(adminId)) {
+          await bot.answerCallbackQuery(callbackQuery.id, {
+            text: '🔏 You already gave the first approval — a different admin must give the second.',
+            show_alert: true,
+          });
+          return;
+        }
+        const authMod = require('../middlewares/auth');
+        const requesterIsAdmin = authMod.isAdmin(String(item.user));
+        // Distinct admins able to approve (env + sheet cache, minus an
+        // admin requester). Lets requiredAdminApprovals degrade a 1-admin
+        // deployment instead of deadlocking it — same tradeoff as the
+        // update_price "Only 1 admin configured — auto-approved" path.
+        let adminCount = 2;
+        try {
+          const envAdmins = config.access.adminIds.map(String);
+          let sheetAdmins = [];
+          try { sheetAdmins = (authMod._internals.snapshotAdmins() || []).map(String); } catch { /* cache not ready */ }
+          const pool = new Set([...envAdmins, ...sheetAdmins]);
+          if (requesterIsAdmin) pool.delete(String(item.user));
+          adminCount = pool.size;
+        } catch { /* keep default 2 — fail strict, not open */ }
+        const required = riskMod.requiredAdminApprovals({
+          action: actName, requesterIsAdmin, adminCount,
+        });
+        if (prior.length + 1 < required) {
+          await approvalQueueRepository.updateActionJSON(requestId, {
+            approvals: [...prior, adminId],
+          });
+          try {
+            const auditLogRepository = require('../repositories/auditLogRepository');
+            await auditLogRepository.append('approval_first_signoff',
+              { requestId, action: actName, signedBy: adminId }, adminId);
+          } catch (e) { logger.warn(`DUAL-1 first-signoff audit failed: ${e.message}`); }
+          await bot.answerCallbackQuery(callbackQuery.id, { text: `🔏 Approval 1 of ${required} recorded.` });
+          // Freeze THIS admin's card; other admins' cards stay live so one
+          // of them can give the second signoff.
+          try {
+            await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+              chat_id: callbackQuery.message.chat.id,
+              message_id: callbackQuery.message.message_id,
+            });
+          } catch (_) { /* stale card; not fatal */ }
+          await bot.sendMessage(callbackQuery.message.chat.id,
+            `🔏 Request ${requestId}: your approval is recorded (1 of ${required}). Waiting for a second admin.`);
+          await notifyEmployee(bot, requestingUser, requestId,
+            `🔏 Your request (${requestId}) has 1 of ${required} admin approvals. One more to go.`);
+          // Ping the remaining env admins so the request doesn't stall
+          // silently (sheet-cache admins still have live cards; best-effort).
+          const others = config.access.adminIds
+            .map(String)
+            .filter((id) => id !== adminId && id !== String(item.user));
+          for (const otherId of others) {
+            try {
+              await bot.sendMessage(otherId,
+                `🔔 Request ${requestId} (${actName.replace(/_/g, ' ')}) has its first admin approval and needs a SECOND. Use the approval card in your chat.`);
+            } catch (e) { logger.warn(`DUAL-1 second-signoff ping failed for ${otherId}: ${e.message}`); }
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      // House style for approval guards: log loudly, fall through to
+      // single-approval semantics rather than blocking ALL approvals on a
+      // gate bug (matches the H1 / super-admin guards above).
+      logger.error(`DUAL-1 dual-approval gate error (falling back to single approval): ${e.message}`);
+    }
+  }
+
   const chatIdCb = callbackQuery.message.chat.id;
   const msgIdCb = callbackQuery.message.message_id;
 

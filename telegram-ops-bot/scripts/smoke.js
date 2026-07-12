@@ -4578,8 +4578,11 @@ async function runS28() {
   const write28 = mWrite28 ? (mWrite28[1].match(/'([^']+)'/g) || []).map((s) => s.replace(/'/g, '')) : [];
   const mAlways28 = evSrc28.match(new RegExp('const\\s+ALWAYS_APPROVAL_ACTIONS\\s*=\\s*\\[([\\s\\S]*?)\\]', 'm'));
   const always28 = mAlways28 ? (mAlways28[1].match(/'([^']+)'/g) || []).map((s) => s.replace(/'/g, '')) : [];
-  if (write28.includes('record_office_expense') && !always28.includes('record_office_expense')) {
-    pass('S28.3 evaluate: record_office_expense ∈ WRITE_ACTIONS (single-admin), not in ALWAYS_APPROVAL');
+  // DUAL-1 (12-Jul-2026) flipped record_office_expense into ALWAYS_APPROVAL —
+  // the "single-admin V1" era ended when the owner mandated two-admin signoff
+  // for all finance actions (specs/DUAL-1_TWO_ADMIN_APPROVAL.md).
+  if (write28.includes('record_office_expense') && always28.includes('record_office_expense')) {
+    pass('S28.3 evaluate: record_office_expense ∈ WRITE_ACTIONS and ALWAYS_APPROVAL (DUAL-1)');
   } else fail('S28.3 evaluate', JSON.stringify({ inWrite: write28.includes('record_office_expense'), inAlways: always28.includes('record_office_expense') }));
 
   // ---- S28.4: activity registry + new 'daily' hub ----
@@ -7467,6 +7470,43 @@ async function runS45() {
   } else fail('S45.4', 'pg dep or script missing');
 }
 
+function runS46() {
+  // ---- S46 DUAL-1: two-admin approval for inventory + finance actions ----
+  // (specs/DUAL-1_TWO_ADMIN_APPROVAL.md)
+  const risk46 = require('../src/risk/evaluate');
+
+  if (Array.isArray(risk46.DUAL_ADMIN_ACTIONS) && risk46.DUAL_ADMIN_ACTIONS.length &&
+      typeof risk46.requiredAdminApprovals === 'function') {
+    pass('S46.1 evaluate: DUAL_ADMIN_ACTIONS + requiredAdminApprovals exported');
+  } else fail('S46.1', 'DUAL-1 exports missing');
+
+  const notAlways = risk46.DUAL_ADMIN_ACTIONS.filter((a) => !risk46.ALWAYS_APPROVAL_ACTIONS.includes(a));
+  if (!notAlways.length) {
+    pass('S46.2 evaluate: DUAL ⊆ ALWAYS (no dual action can bypass the queue)');
+  } else fail('S46.2', `dual actions missing from ALWAYS_APPROVAL: ${notAlways.join(', ')}`);
+
+  const closedGaps = ['add', 'add_stock', 'transfer_than', 'transfer_package', 'transfer_batch',
+    'receive_goods', 'set_forex_rate', 'add_bank', 'remove_bank', 'record_office_expense'];
+  const stillOpen = closedGaps.filter((a) => !risk46.ALWAYS_APPROVAL_ACTIONS.includes(a));
+  if (!stillOpen.length) {
+    pass('S46.3 evaluate: formerly admin-direct inventory/finance actions are queue-gated');
+  } else fail('S46.3', `still admin-direct: ${stillOpen.join(', ')}`);
+
+  const m = risk46.requiredAdminApprovals;
+  if (m({ action: 'receive_goods', requesterIsAdmin: false, adminCount: 3 }) === 2 &&
+      m({ action: 'receive_goods', requesterIsAdmin: true, adminCount: 3 }) === 1 &&
+      m({ action: 'receive_goods', requesterIsAdmin: false, adminCount: 1 }) === 1 &&
+      m({ action: 'add_contact', requesterIsAdmin: false, adminCount: 3 }) === 1) {
+    pass('S46.4 requiredAdminApprovals: employee→2, admin-requester→1, degrades at 1 admin');
+  } else fail('S46.4', 'approval matrix wrong');
+
+  const evtSrc = fs.readFileSync(path.join(__dirname, '../src/events/approvalEvents.js'), 'utf8');
+  if (evtSrc.includes('DUAL_ADMIN_ACTIONS') && evtSrc.includes('approvals: [...prior, adminId]') &&
+      evtSrc.includes('approval_first_signoff')) {
+    pass('S46.5 approvalEvents: dual gate wired (signoff persistence + audit)');
+  } else fail('S46.5', 'dual gate not wired in handleApprovalCallback');
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -7523,6 +7563,7 @@ async function runS45() {
   try { await runS43(); } catch (e) { fail('S43 unexpected error', e.message); }
   try { await runS44(); } catch (e) { fail('S44 unexpected error', e.message); }
   try { await runS45(); } catch (e) { fail('S45 unexpected error', e.message); }
+  try { runS46(); } catch (e) { fail('S46 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

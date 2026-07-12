@@ -99,7 +99,65 @@ const ALWAYS_APPROVAL_ACTIONS = [
   // Settings THAN_VISIBILITY_WAREHOUSES). Admins + managers may request;
   // an admin (≠ an admin requester) must approve before it applies.
   'set_unit_display',
+  // DUAL-1 (owner mandate 12-Jul-2026, specs/DUAL-1_TWO_ADMIN_APPROVAL.md):
+  // every Inventory write + finance action goes through the queue — admins
+  // no longer execute these directly. The legacy transfer_* queue path is
+  // gated; the staged Transfer Stock flow (TRF) is not (dispatcher+receiver
+  // already review). set_forex_rate has no bot write path yet — listed so
+  // the gate exists the day one ships. sale_bundle/give_sample queue
+  // unconditionally from their tap flows; listed to keep DUAL ⊆ ALWAYS.
+  'add', 'add_stock',
+  'transfer_than', 'transfer_package', 'transfer_batch',
+  'receive_goods',
+  'set_forex_rate',
+  'add_bank', 'remove_bank',
+  'record_office_expense',
+  'sale_bundle', 'give_sample',
 ];
+
+/**
+ * DUAL-1 — actions that must involve TWO admins before execution:
+ * an employee request needs two distinct admin signoffs; an admin request
+ * counts the requester as the first admin, so one OTHER admin approves
+ * (self-approval is already blocked by the SEC-P1 H1 guard). Signoffs
+ * accumulate in the ApprovalQueue row's ActionJSON (`approvals: [...]`),
+ * no sheet schema change. Every entry here MUST also be in
+ * ALWAYS_APPROVAL_ACTIONS (unit test pins the invariant).
+ */
+const DUAL_ADMIN_ACTIONS = [
+  // Inventory writes
+  'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell',
+  'sale_bundle', 'give_sample',
+  'return_than', 'return_package', 'revert_sale_bundle',
+  'add', 'add_stock',
+  'transfer_than', 'transfer_package', 'transfer_batch',
+  'receive_goods', 'bulk_receive_goods',
+  // Finance
+  'record_payment', 'update_price', 'set_forex_rate',
+  'add_bank', 'remove_bank',
+  'record_office_expense', 'finalize_landed_cost',
+  'confirm_bank_reconciliation',
+];
+
+/**
+ * DUAL-1 — how many distinct admin APPROVAL TAPS a request needs.
+ * Pure so tests can pin the matrix; callers supply the admin headcount.
+ *
+ * @param {object} p
+ * @param {string} p.action
+ * @param {boolean} p.requesterIsAdmin  requester counts as the 1st admin
+ * @param {number} p.adminCount  distinct admins able to approve (i.e.
+ *   excluding an admin requester). Degrades the requirement instead of
+ *   deadlocking a 1-admin deployment — mirrors the update_price
+ *   "Only 1 admin configured — auto-approved" precedent.
+ * @returns {number} required approval taps (>= 1)
+ */
+function requiredAdminApprovals({ action, requesterIsAdmin, adminCount }) {
+  if (!DUAL_ADMIN_ACTIONS.includes(action)) return 1;
+  if (requesterIsAdmin) return 1;
+  const available = Number.isFinite(adminCount) ? adminCount : 2;
+  return Math.max(1, Math.min(2, available));
+}
 
 /**
  * USR-C3b — actions whose APPROVAL is restricted further: only super-
@@ -128,7 +186,10 @@ async function evaluate(params) {
   logger.info(`Risk evaluate: action=${action}, userId=${userId}, isAdmin=${isAdm}`);
 
   if (ALWAYS_APPROVAL_ACTIONS.includes(action)) {
-    const who = isAdm ? '2nd admin' : 'admin';
+    // DUAL-1: employee requests on dual actions need two admin signoffs;
+    // an admin requester counts as the first, so "2nd admin" reads right.
+    const isDual = DUAL_ADMIN_ACTIONS.includes(action);
+    const who = isAdm ? '2nd admin' : (isDual ? 'two-admin' : 'admin');
     return {
       risk: 'approval_required',
       reason: `All ${formatAction(action)} operations require ${who} approval.`,
@@ -170,6 +231,7 @@ function formatAction(action) {
 }
 
 module.exports = {
-  evaluate, getThresholds,
+  evaluate, getThresholds, requiredAdminApprovals,
   WRITE_ACTIONS, ALWAYS_APPROVAL_ACTIONS, SUPER_ADMIN_APPROVAL_ACTIONS,
+  DUAL_ADMIN_ACTIONS,
 };
