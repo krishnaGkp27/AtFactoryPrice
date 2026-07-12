@@ -50,6 +50,28 @@ function onExpiredByRead(cb) {
   _onExpiredByRead = typeof cb === 'function' ? cb : null;
 }
 
+// ANL-1 — passive analytics observers. Distinct from the janitor hook above
+// (single slot, owns cleanup): these only OBSERVE. Both are fired inside
+// try/catch — an observer can never break a flow.
+let _onSetObserver = null;
+let _onExpiredObserver = null;
+
+/** ANL-1: observe every set() (usageTracker flow_started). Null detaches. */
+function onSet(cb) {
+  _onSetObserver = typeof cb === 'function' ? cb : null;
+}
+
+/** ANL-1: observe every timeout-expiry (usageTracker flow_abandoned). */
+function onExpired(cb) {
+  _onExpiredObserver = typeof cb === 'function' ? cb : null;
+}
+
+function _notifyExpiredObserver(snap) {
+  if (_onExpiredObserver && snap) {
+    try { _onExpiredObserver(snap); } catch (_) { /* observers never break flows */ }
+  }
+}
+
 function _snapshotOf(userId, s) {
   if (!s || !s.type) return null;
   return {
@@ -78,6 +100,7 @@ function get(userId) {
     _stashHint(key, s);
     const snap = _snapshotOf(key, s);
     if (snap) {
+      _notifyExpiredObserver(snap);
       // User-driven discovery → instant cleanup; otherwise grace queue.
       if (_onExpiredByRead) {
         try { _onExpiredByRead(snap); } catch (_) { /* hook must never break flows */ }
@@ -95,6 +118,9 @@ function get(userId) {
 function set(userId, data) {
   const ttl = _ttlFor(data);
   sessions.set(String(userId), { ...data, _setAt: Date.now(), expiresAt: Date.now() + ttl });
+  if (_onSetObserver) {
+    try { _onSetObserver(String(userId), data); } catch (_) { /* observers never break flows */ }
+  }
 }
 
 function clear(userId) {
@@ -139,6 +165,7 @@ function sweepExpired() {
   for (const [key, s] of sessions) {
     if (now > s.expiresAt) {
       _stashHint(key, s);
+      _notifyExpiredObserver(_snapshotOf(key, s));
       _stashExpired(key, s);
       sessions.delete(key);
       swept += 1;
@@ -160,5 +187,6 @@ module.exports = {
   get, set, clear, touch,
   getLastSessionHint, clearLastSessionHint,
   sweepExpired, drainExpiredForCleanup, onExpiredByRead,
+  onSet, onExpired,
   DEFAULT_TTL_MS,
 };

@@ -72,6 +72,8 @@ async function getRequesterDisplayName(userId, msgOrNull) {
 const genId = require('../utils/idGenerator').requestId;
 
 const { editOrSend, editOrSendAnchored, sendLong } = require('../utils/telegramUI');
+// ANL-1 — usage analytics capture (fire-and-forget; no-op until enabled).
+const usageTracker = require('../services/usageTracker');
 
 async function requireApproval(bot, chatId, msg, userId, action, actionJSON, summary) {
   const risk = await riskEvaluate.evaluate({ action, userId });
@@ -81,6 +83,7 @@ async function requireApproval(bot, chatId, msg, userId, action, actionJSON, sum
     requestId, user: userId, actionJSON, riskReason: risk.reason, status: 'pending',
   });
   await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
+  usageTracker.track({ userId, surface: 'approval', feature: action, event: 'approval_queued', requestId });
   const isAdm = config.access.adminIds.includes(userId);
   const approverLabel = isAdm ? '2nd admin' : 'admin';
   await bot.sendMessage(chatId, `⏳ Needs ${approverLabel} approval (${risk.reason}). Request: ${requestId}`);
@@ -3742,6 +3745,8 @@ async function handleMessage(bot, msg) {
 
   // P3 — userId enables the per-user OpenAI rate limit inside the parser.
   const intent = await intentParser.parse(text, userId);
+  // ANL-1 — typed-command usage (surface=nlp); no-op until analytics enabled.
+  usageTracker.track({ userId, surface: 'nlp', feature: (intent && intent.action) || 'unknown', event: 'nlp_intent', meta: { confidence: intent && intent.confidence } });
 
   // TCSI-2: 'add' starts a tappable wizard that collects every detail
   // itself (warehouse, then CSV). Bypass the clarification gate so the
@@ -6255,6 +6260,8 @@ async function handleCallbackQuery(bot, callbackQuery) {
     } catch { /* stale callback id — nothing to answer */ }
     return;
   }
+  // ANL-1 — every authorized tap (tiles, hubs, flow steps); no-op until enabled.
+  usageTracker.trackCallback(cbUserId, data);
 
   // Uniform flow-module delegation (see FLOW_CALLBACK_ROUTES above). All
   // route prefixes are disjoint, so at most one route can match; an

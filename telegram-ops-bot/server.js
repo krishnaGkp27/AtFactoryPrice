@@ -71,6 +71,11 @@ app.get('/health', (req, res) => {
 app.get('/api/settings', apiController.getSettings);
 app.put('/api/settings', apiController.updateSettings);
 
+// ANL-1 — read-only usage analytics for the admin dashboard. Always
+// key-gated (503 until BOT_API_KEY is set); serves usage_daily rollups only.
+app.get('/api/analytics/summary', apiController.getAnalyticsSummary);
+app.get('/api/analytics/feature/:code', apiController.getAnalyticsFeature);
+
 // TG-2: when TELEGRAM_WEBHOOK_SECRET is set, Telegram includes it in the
 // `X-Telegram-Bot-Api-Secret-Token` header on every webhook POST. Reject
 // any request that arrives without the matching token — this is the
@@ -259,6 +264,15 @@ const server = app.listen(PORT, async () => {
     // Sheets until PG-2). No-op when DATABASE_URL unset or mirror disabled.
     try { require('./src/services/inventoryMirrorService').start(); } catch (e) {
       logger.warn(`inventoryMirror start skipped: ${e.message}`);
+    }
+    // ANL-1 — usage analytics capture. No-op until ANALYTICS_ENABLED=1
+    // (plus DATABASE_URL). Fire-and-forget: can never block a flow.
+    try { require('./src/services/usageTracker').init(); } catch (e) {
+      logger.warn(`usageTracker init skipped: ${e.message}`);
+    }
+    // ANL-1 — nightly usage_events → usage_daily rollup (02:00; D4).
+    try { require('./src/services/usageRollupJob').start(); } catch (e) {
+      logger.warn(`usageRollup start skipped: ${e.message}`);
     }
     // TRF-5 cleanup — close any still-pending legacy transfer_* approval
     // rows (retired actions the executor refuses anyway). One-shot, async.

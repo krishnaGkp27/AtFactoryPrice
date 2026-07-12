@@ -7507,6 +7507,62 @@ function runS46() {
   } else fail('S46.5', 'dual gate not wired in handleApprovalCallback');
 }
 
+function runS47() {
+  // ---- S47 ANL-1: usage analytics capture (specs/ANL-1_USAGE_ANALYTICS.md) ----
+  const cfgSrc47 = fs.readFileSync(path.join(__dirname, '../src/config/index.js'), 'utf8');
+  if (cfgSrc47.includes('analytics:') && cfgSrc47.includes('ANALYTICS_ENABLED')) {
+    pass('S47.1 config: analytics block + ANALYTICS_ENABLED (default dark)');
+  } else fail('S47.1', 'analytics config missing');
+
+  const srvSrc47 = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
+  if (srvSrc47.includes("require('./src/services/usageTracker').init()")) {
+    pass('S47.2 server.js: usageTracker.init on boot');
+  } else fail('S47.2', 'usageTracker init not wired');
+
+  const ctlSrc47 = fs.readFileSync(path.join(__dirname, '../src/controllers/telegramController.js'), 'utf8');
+  if (ctlSrc47.includes('usageTracker.trackCallback(cbUserId, data)') &&
+      ctlSrc47.includes("event: 'nlp_intent'") &&
+      ctlSrc47.includes("event: 'approval_queued'")) {
+    pass('S47.3 controller: callback + nlp + approval-queue hooks present');
+  } else fail('S47.3', 'controller hooks missing');
+
+  const ssMod47 = require('../src/utils/sessionStore');
+  if (typeof ssMod47.onSet === 'function' && typeof ssMod47.onExpired === 'function') {
+    pass('S47.4 sessionStore: onSet/onExpired analytics observers exported');
+  } else fail('S47.4', 'sessionStore observers missing');
+
+  const { DDL_STATEMENTS: ddl47 } = require('../src/db/usageSchema');
+  const ddlAll47 = ddl47.join('\n');
+  if (ddlAll47.includes('usage_events') && ddlAll47.includes('usage_daily')) {
+    pass('S47.5 usageSchema: usage_events + usage_daily DDL');
+  } else fail('S47.5', 'usage tables missing from DDL');
+
+  const tracker47 = require('../src/services/usageTracker');
+  const c47 = tracker47._internals.classifyCallback('act:check_stock');
+  if (c47.event === 'tile_tapped' && c47.feature === 'check_stock' &&
+      tracker47._internals.classifyCallback('gr:x').feature === 'receive_goods') {
+    pass('S47.6 usageTracker: callback classification (tiles + prefix map)');
+  } else fail('S47.6', JSON.stringify(c47));
+
+  const evtSrc47 = fs.readFileSync(path.join(__dirname, '../src/events/approvalEvents.js'), 'utf8');
+  if (evtSrc47.includes("event: 'approval_approved'") && evtSrc47.includes("event: 'approval_rejected'") &&
+      evtSrc47.includes("event: 'approval_signed'")) {
+    pass('S47.7 approvalEvents: decision + DUAL-1 signoff events tracked');
+  } else fail('S47.7', 'approval analytics hooks missing');
+
+  const rollup47 = require('../src/services/usageRollupJob');
+  if (typeof rollup47.runOnce === 'function' &&
+      /ON CONFLICT \(day, feature, role\)/.test(rollup47._internals.ROLLUP_SQL) &&
+      srvSrc47.includes("require('./src/services/usageRollupJob').start()")) {
+    pass('S47.8 usageRollupJob: upsert SQL + nightly wiring in server.js');
+  } else fail('S47.8', 'rollup job missing or unwired');
+
+  if (srvSrc47.includes("app.get('/api/analytics/summary', apiController.getAnalyticsSummary)") &&
+      srvSrc47.includes("app.get('/api/analytics/feature/:code', apiController.getAnalyticsFeature)")) {
+    pass('S47.9 server.js: /api/analytics routes registered (key-gated)');
+  } else fail('S47.9', 'analytics routes missing');
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -7564,6 +7620,7 @@ function runS46() {
   try { await runS44(); } catch (e) { fail('S44 unexpected error', e.message); }
   try { await runS45(); } catch (e) { fail('S45 unexpected error', e.message); }
   try { runS46(); } catch (e) { fail('S46 unexpected error', e.message); }
+  try { runS47(); } catch (e) { fail('S47 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

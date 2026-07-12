@@ -19,6 +19,8 @@ const fmtDate = require('../utils/formatDate');
 // surface-visible and prevents the bug from re-appearing in a stray
 // require deeper in the file.
 const sessionStore = require('../utils/sessionStore');
+// ANL-1 — usage analytics capture (fire-and-forget; no-op until enabled).
+const usageTracker = require('../services/usageTracker');
 
 const SALE_ACTIONS = ['sell_than', 'sell_package', 'sale_bundle'];
 const DEFAULT_SALE_UNIT = 'yard';
@@ -771,6 +773,7 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
             await auditLogRepository.append('approval_first_signoff',
               { requestId, action: actName, signedBy: adminId }, adminId);
           } catch (e) { logger.warn(`DUAL-1 first-signoff audit failed: ${e.message}`); }
+          usageTracker.track({ userId: adminId, surface: 'approval', feature: actName, event: 'approval_signed', requestId });
           await bot.answerCallbackQuery(callbackQuery.id, { text: `🔏 Approval 1 of ${required} recorded.` });
           // Freeze THIS admin's card; other admins' cards stay live so one
           // of them can give the second signoff.
@@ -809,10 +812,15 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
   const chatIdCb = callbackQuery.message.chat.id;
   const msgIdCb = callbackQuery.message.message_id;
 
+  // ANL-1 — time-to-decision KPI: queue row createdAt → this tap.
+  const _decisionMs = item && item.createdAt ? Date.now() - Date.parse(item.createdAt) : undefined;
+  const _actFeature = (item && item.actionJSON && item.actionJSON.action) || 'unknown';
+
   try {
     if (action === 'approve') {
       await bot.answerCallbackQuery(callbackQuery.id, { text: 'Approving...' });
       await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatIdCb, message_id: msgIdCb });
+      usageTracker.track({ userId: adminId, surface: 'approval', feature: _actFeature, event: 'approval_approved', requestId, durationMs: _decisionMs });
 
       const isNewCustomer = item && item.actionJSON && item.actionJSON.action === 'new_customer';
       if (isNewCustomer) {
@@ -898,6 +906,7 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
     } else {
       await bot.answerCallbackQuery(callbackQuery.id, { text: 'Rejecting...' });
       await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatIdCb, message_id: msgIdCb });
+      usageTracker.track({ userId: adminId, surface: 'approval', feature: _actFeature, event: 'approval_rejected', requestId, durationMs: _decisionMs });
 
       const isNewCustReject = item && item.actionJSON && item.actionJSON.action === 'new_customer';
       if (isNewCustReject) {

@@ -99,6 +99,17 @@ const config = {
     poolMax: parseInt(process.env.PG_POOL_MAX, 10) || 5,
   },
 
+  /**
+   * ANL-1 — usage analytics capture (specs/ANL-1_USAGE_ANALYTICS.md).
+   * Ships dark: set ANALYTICS_ENABLED=1 (plus DATABASE_URL) to activate.
+   * Events buffer in memory and batch-flush; analytics never block flows.
+   */
+  analytics: {
+    enabled: ['1', 'true'].includes(String(process.env.ANALYTICS_ENABLED || '').toLowerCase()),
+    flushMs: parseInt(process.env.ANALYTICS_FLUSH_MS, 10) || 15_000,
+    bufferMax: parseInt(process.env.ANALYTICS_BUFFER_MAX, 10) || 500,
+  },
+
   drive: {
     folderId: process.env.GOOGLE_DRIVE_FOLDER_ID || '',
     /** Where photo-receive backups land. Falls back to folderId if unset. */

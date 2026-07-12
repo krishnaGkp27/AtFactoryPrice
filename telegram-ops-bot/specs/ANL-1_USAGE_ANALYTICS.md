@@ -142,16 +142,19 @@ managed analytics SaaS (Mixpanel/Amplitude), self-hosted Metabase/Grafana
 
 ## 7 · Rollout plan (one commit per step, tests green each)
 
-| Step | Ships | Verify |
+| Step | Ships | Status (12-Jul-2026) |
 |---|---|---|
-| 1 | usageTracker + schema bootstrap + hooks, `ANALYTICS_ENABLED=0` | unit tests (buffer, flush, drop-on-down); deploy dark |
-| 2 | Flip `ANALYTICS_ENABLED=1` on Railway | rows appearing; bot latency unchanged |
-| 3 | Nightly rollup + 90-day purge job | usage_daily populated next morning |
-| 4 | /api/analytics endpoints + smoke checks | curl with API key returns rollups |
-| 5 | Dashboard page (+ Functions proxy if D1=a) | owner sees charts after admin login |
-| 6 | Monthly KPI-matrix updater: script rewrites Growth % in docs/FEATURE_KPI_MATRIX.md from usage_daily | matrix shows measured data |
+| 1 | usageTracker + schema bootstrap + hooks, `ANALYTICS_ENABLED=0` | ✅ SHIPPED dark — 7 unit tests + smoke S47.1-7 |
+| 2 | Flip `ANALYTICS_ENABLED=1` on Railway | ⏳ **OWNER** — one Railway variable (needs DATABASE_URL from PG-1 too) |
+| 3 | Nightly 02:00 rollup job (no purge per D2) | ✅ SHIPPED — usageRollupJob + tests + smoke S47.8 |
+| 4 | /api/analytics endpoints + smoke checks | ✅ SHIPPED — always key-gated; live-verified 403/503 gating |
+| 5 | Dashboard `admin-analytics.html` (D1 v1: key in page) | ✅ SHIPPED — Firebase login gate + ranking/friction/drill-down; deploy with next `firebase deploy --only hosting` |
+| 6 | KPI-matrix usage updater (`npm run kpi:usage`) | ✅ SHIPPED — appends "Measured usage" section; run monthly |
 
-Estimated effort: steps 1–4 ≈ two working sessions; 5–6 ≈ one session.
+**Owner activation checklist:** ① set `BOT_API_KEY` + `ADMIN_ALLOWED_ORIGINS`
+(docs/BOT_API_KEY_SETUP.md) → ② set `ANALYTICS_ENABLED=1` (+ `DATABASE_URL`
+reference if PG-1 isn't wired yet) → ③ deploy hosting for the dashboard page
+→ ④ open atfactoryprice.com/admin-analytics.html, sign in, paste key.
 After 30 days of data: first real "which feature to improve" review.
 
 ## 8 · Owner decisions — LOCKED 12-Jul-2026

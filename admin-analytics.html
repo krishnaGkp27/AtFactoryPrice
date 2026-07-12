@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Bot Analytics — AtFactoryPrice Admin</title>
+<style>
+  :root { --navy:#0e2a47; --blue:#1d6fa5; --teal:#2e9e77; --bg:#f4f7fa; --line:#dfe6ee; --ink:#1a2332; --mut:#6b7a8c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"Segoe UI",Arial,sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:linear-gradient(135deg,var(--navy),var(--blue)); color:#fff; padding:16px 24px;
+           display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+  header h1 { margin:0; font-size:18px; }
+  header .sub { font-size:12px; opacity:.85; }
+  .wrap { max-width:1080px; margin:0 auto; padding:18px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:14px; }
+  .card h2 { margin:0 0 10px 0; font-size:15px; color:var(--navy); }
+  label { display:block; font-size:12px; color:var(--mut); margin:8px 0 3px; }
+  input, select { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px; font-size:14px; }
+  button { background:var(--blue); color:#fff; border:0; border-radius:6px; padding:9px 16px; font-size:14px;
+           cursor:pointer; margin-top:10px; }
+  button.ghost { background:#e8eef4; color:var(--navy); }
+  .row { display:flex; gap:12px; flex-wrap:wrap; }
+  .row > div { flex:1; min-width:220px; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:14px; }
+  .tile { background:#fff; border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .tile .v { font-size:22px; font-weight:700; color:var(--navy); }
+  .tile .k { font-size:11px; color:var(--mut); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; padding:6px 8px; background:var(--navy); color:#fff; font-size:11px; }
+  td { padding:6px 8px; border-bottom:1px solid var(--line); }
+  tr:nth-child(even) td { background:#f7fafc; }
+  .bar { height:9px; background:#e4ebf2; border-radius:5px; min-width:90px; }
+  .bar i { display:block; height:100%; border-radius:5px; background:linear-gradient(90deg,var(--blue),var(--teal)); }
+  .bad i { background:linear-gradient(90deg,#c9702a,#d8552f); }
+  .err { color:#a3232a; font-size:13px; margin-top:8px; }
+  .hint { color:var(--mut); font-size:12px; }
+  .clickable { color:var(--blue); cursor:pointer; text-decoration:underline; }
+  #app, #drill { display:none; }
+  .right { text-align:right; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>📊 Telegram Bot — Usage Analytics</h1>
+    <div class="sub">Daily rollups from the ops bot (ANL-1) · admin only</div>
+  </div>
+  <div><button class="ghost" id="logoutBtn" style="display:none">Sign out</button></div>
+</header>
+<div class="wrap">
+
+  <div class="card" id="loginCard">
+    <h2>Admin sign in</h2>
+    <div class="row">
+      <div><label>Email</label><input id="email" type="email" autocomplete="username"></div>
+      <div><label>Password</label><input id="password" type="password" autocomplete="current-password"></div>
+    </div>
+    <button id="loginBtn">Sign in</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+
+  <div id="app">
+    <div class="card">
+      <h2>Bot connection</h2>
+      <div class="row">
+        <div><label>Bot base URL (Railway app)</label><input id="botUrl" placeholder="https://your-app.up.railway.app"></div>
+        <div><label>API key (X-API-Key — stored only in this browser)</label><input id="botKey" type="password" placeholder="paste BOT_API_KEY"></div>
+        <div style="max-width:140px"><label>Range</label>
+          <select id="days"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select>
+        </div>
+      </div>
+      <button id="loadBtn">Load analytics</button>
+      <div class="err" id="loadErr"></div>
+      <div class="hint">Data refreshes nightly at 02:00 (daily rollups). Setup guide: docs/BOT_API_KEY_SETUP.md in the repo.</div>
+    </div>
+
+    <div class="tiles" id="tiles"></div>
+
+    <div class="card">
+      <h2>Feature ranking — most used first <span class="hint">(click a feature for its daily detail)</span></h2>
+      <table id="rankTable">
+        <thead><tr><th>Feature</th><th>Starts</th><th style="width:24%">Volume</th><th>Completed</th><th>Abandoned</th><th>Friction %</th><th>Median steps</th><th>Median secs</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Improve-me list — highest friction first</h2>
+      <table id="frictionTable">
+        <thead><tr><th>Feature</th><th>Abandon rate</th><th style="width:30%"></th><th>Abandons</th><th>Starts</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="hint">Friction = abandons ÷ starts. High friction + high volume = fix first.</div>
+    </div>
+
+    <div class="card" id="drill">
+      <h2 id="drillTitle">Feature detail</h2>
+      <table id="drillTable">
+        <thead><tr><th>Day</th><th>Role</th><th>Starts</th><th>Completed</th><th>Abandoned</th><th>Errors</th><th>Users</th><th>Median steps</th><th>Median secs</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+<script>
+  firebase.initializeApp({
+    apiKey: "AIzaSyA3SzcQWEgWv51hA5CsNyj6WG1cp-sZYKA",
+    authDomain: "atfactoryprice-6ba8f.firebaseapp.com",
+    projectId: "atfactoryprice-6ba8f",
+  });
+  const auth = firebase.auth();
+  const $ = (id) => document.getElementById(id);
+
+  // ---- auth gate (client-side convenience; the REAL gate is the API key) ----
+  auth.onAuthStateChanged((user) => {
+    $('loginCard').style.display = user ? 'none' : 'block';
+    $('app').style.display = user ? 'block' : 'none';
+    $('logoutBtn').style.display = user ? 'inline-block' : 'none';
+  });
+  $('loginBtn').onclick = async () => {
+    $('loginErr').textContent = '';
+    try { await auth.signInWithEmailAndPassword($('email').value.trim(), $('password').value); }
+    catch (e) { $('loginErr').textContent = e.message; }
+  };
+  $('logoutBtn').onclick = () => auth.signOut();
+
+  // ---- bot connection (localStorage, this browser only — decision D1 v1) ----
+  $('botUrl').value = localStorage.getItem('anl.botBaseUrl') || '';
+  $('botKey').value = localStorage.getItem('anl.botApiKey') || '';
+
+  const pct = (a, b) => b ? Math.round((a / b) * 100) : 0;
+  const secs = (ms) => ms == null ? '—' : Math.round(ms / 1000);
+
+  async function api(path) {
+    const base = $('botUrl').value.trim().replace(/\/+$/, '');
+    const key = $('botKey').value.trim();
+    if (!base || !key) throw new Error('Enter the bot base URL and API key first.');
+    localStorage.setItem('anl.botBaseUrl', base);
+    localStorage.setItem('anl.botApiKey', key);
+    const res = await fetch(base + path, { headers: { 'X-API-Key': key } });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || ('HTTP ' + res.status));
+    return body;
+  }
+
+  async function load() {
+    $('loadErr').textContent = '';
+    $('drill').style.display = 'none';
+    try {
+      const days = $('days').value;
+      const data = await api('/api/analytics/summary?days=' + days);
+      render(data);
+    } catch (e) { $('loadErr').textContent = e.message; }
+  }
+  $('loadBtn').onclick = load;
+
+  function render(data) {
+    const f = data.features || [];
+    const totStarts = f.reduce((s, x) => s + (x.starts || 0), 0);
+    const totDone = f.reduce((s, x) => s + (x.completions || 0), 0);
+    const totAband = f.reduce((s, x) => s + (x.abandons || 0), 0);
+    $('tiles').innerHTML = [
+      ['Features in use', f.filter((x) => x.starts > 0).length],
+      ['Total starts', totStarts],
+      ['Completions', totDone],
+      ['Abandons', totAband],
+      ['Overall friction', pct(totAband, totStarts) + '%'],
+    ].map(([k, v]) => `<div class="tile"><div class="v">${v}</div><div class="k">${k} · last ${data.days}d</div></div>`).join('');
+
+    const maxStarts = Math.max(1, ...f.map((x) => x.starts || 0));
+    $('rankTable').querySelector('tbody').innerHTML = f.map((x) => `
+      <tr><td><span class="clickable" onclick="drill('${x.feature}')">${x.feature}</span></td>
+      <td>${x.starts || 0}</td>
+      <td><div class="bar"><i style="width:${pct(x.starts || 0, maxStarts)}%"></i></div></td>
+      <td>${x.completions || 0}</td><td>${x.abandons || 0}</td>
+      <td>${pct(x.abandons || 0, x.starts || 0)}%</td>
+      <td>${x.p50_steps ?? '—'}</td><td>${secs(x.p50_duration_ms)}</td></tr>`).join('')
+      || '<tr><td colspan="8">No data yet — rollups appear the morning after ANALYTICS_ENABLED=1.</td></tr>';
+
+    const friction = f.filter((x) => (x.starts || 0) >= 5)
+      .map((x) => ({ ...x, fr: pct(x.abandons || 0, x.starts || 0) }))
+      .sort((a, b) => b.fr - a.fr).slice(0, 10);
+    $('frictionTable').querySelector('tbody').innerHTML = friction.map((x) => `
+      <tr><td><span class="clickable" onclick="drill('${x.feature}')">${x.feature}</span></td>
+      <td>${x.fr}%</td>
+      <td><div class="bar bad"><i style="width:${x.fr}%"></i></div></td>
+      <td>${x.abandons || 0}</td><td>${x.starts || 0}</td></tr>`).join('')
+      || '<tr><td colspan="5">Not enough volume yet (needs ≥5 starts per feature).</td></tr>';
+  }
+
+  async function drill(code) {
+    try {
+      const data = await api('/api/analytics/feature/' + encodeURIComponent(code) + '?days=' + $('days').value);
+      $('drillTitle').textContent = 'Feature detail — ' + code;
+      $('drillTable').querySelector('tbody').innerHTML = (data.rows || []).map((r) => `
+        <tr><td>${String(r.day).slice(0, 10)}</td><td>${r.role}</td><td>${r.starts}</td>
+        <td>${r.completions}</td><td>${r.abandons}</td><td>${r.errors}</td>
+        <td>${r.unique_users}</td><td>${r.p50_steps ?? '—'}</td><td>${secs(r.p50_duration_ms)}</td></tr>`).join('')
+        || '<tr><td colspan="9">No rows for this range.</td></tr>';
+      $('drill').style.display = 'block';
+      $('drill').scrollIntoView({ behavior: 'smooth' });
+    } catch (e) { $('loadErr').textContent = e.message; }
+  }
+</script>
+</body>
+</html>

@@ -21,7 +21,8 @@
     "pg:sync": "node scripts/pg-inventory-sync.js",
     "pg:parity": "node scripts/pg-inventory-sync.js --parity",
     "snapshot": "node scripts/snapshot.js",
-    "snapshot:list": "node scripts/snapshot-list.js"
+    "snapshot:list": "node scripts/snapshot-list.js",
+    "kpi:usage": "node scripts/update-kpi-matrix.js"
   },
   "engines": {
     "node": ">=18"

@@ -66,4 +66,86 @@ async function updateSettings(req, res) {
   }
 }
 
-module.exports = { getSettings, updateSettings };
+// ---------------------------------------------------------------------------
+// ANL-1 — read-only usage analytics (specs/ANL-1_USAGE_ANALYTICS.md §5).
+// Unlike getSettings, these are ALWAYS key-gated: no key configured → 503,
+// wrong/missing key → 403. Reads come from usage_daily rollups only (D4).
+// ---------------------------------------------------------------------------
+
+function analyticsGate(req, res) {
+  if (!config.botApiKey) {
+    res.status(503).json({ ok: false, error: 'Analytics API is disabled: server has no BOT_API_KEY configured.' });
+    return false;
+  }
+  if (!hasValidApiKey(req)) {
+    res.status(403).json({ ok: false, error: 'Invalid or missing X-API-Key.' });
+    return false;
+  }
+  const postgresPool = require('../db/postgresPool');
+  if (!postgresPool.isEnabled() || !config.analytics.enabled) {
+    res.status(503).json({ ok: false, error: 'Analytics is not enabled on this server (ANALYTICS_ENABLED / DATABASE_URL).' });
+    return false;
+  }
+  return true;
+}
+
+function clampDays(raw, dflt, max) {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return dflt;
+  return Math.min(n, max);
+}
+
+/** GET /api/analytics/summary?days=30 — per-feature totals + daily series. */
+async function getAnalyticsSummary(req, res) {
+  if (!analyticsGate(req, res)) return;
+  const postgresPool = require('../db/postgresPool');
+  const days = clampDays(req.query.days, 30, 365);
+  try {
+    const features = await postgresPool.query(
+      `SELECT feature,
+              SUM(starts)::int AS starts,
+              SUM(completions)::int AS completions,
+              SUM(abandons)::int AS abandons,
+              SUM(errors)::int AS errors,
+              MAX(unique_users)::int AS peak_daily_users,
+              (percentile_cont(0.5) WITHIN GROUP (ORDER BY p50_duration_ms) FILTER (WHERE p50_duration_ms IS NOT NULL))::int AS p50_duration_ms,
+              (percentile_cont(0.5) WITHIN GROUP (ORDER BY p50_steps) FILTER (WHERE p50_steps IS NOT NULL))::int AS p50_steps
+       FROM usage_daily
+       WHERE role = '*' AND day >= CURRENT_DATE - $1::int
+       GROUP BY feature
+       ORDER BY starts DESC`,
+      [days],
+    );
+    const series = await postgresPool.query(
+      `SELECT day, SUM(starts)::int AS starts, SUM(completions)::int AS completions
+       FROM usage_daily WHERE role = '*' AND day >= CURRENT_DATE - $1::int
+       GROUP BY day ORDER BY day`,
+      [days],
+    );
+    res.json({ ok: true, days, features: features.rows, series: series.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
+/** GET /api/analytics/feature/:code?days=90 — per-day rows incl. role split. */
+async function getAnalyticsFeature(req, res) {
+  if (!analyticsGate(req, res)) return;
+  const postgresPool = require('../db/postgresPool');
+  const days = clampDays(req.query.days, 90, 365);
+  const code = String(req.params.code || '').slice(0, 64);
+  try {
+    const rows = await postgresPool.query(
+      `SELECT day, role, starts, completions, abandons, errors, unique_users, p50_duration_ms, p50_steps
+       FROM usage_daily
+       WHERE feature = $1 AND day >= CURRENT_DATE - $2::int
+       ORDER BY day, role`,
+      [code, days],
+    );
+    res.json({ ok: true, feature: code, days, rows: rows.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
+module.exports = { getSettings, updateSettings, getAnalyticsSummary, getAnalyticsFeature };
