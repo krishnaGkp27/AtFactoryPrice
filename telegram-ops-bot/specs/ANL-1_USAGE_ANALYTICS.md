@@ -1,6 +1,6 @@
 # ANL-1 — Usage Analytics: capture → Postgres → atfactoryprice.com dashboard
 
-**Status:** DRAFT — awaiting owner sign-off on §8 decisions before any code.
+**Status:** SIGNED OFF 12-Jul-2026 — §8 decisions locked by owner; ready to build.
 **Goal (owner, 12-Jul-2026):** capture all user activity in the bot to learn which
 features need improvement, store it in the online DB (Railway Postgres, PG-1),
 and monitor it on atfactoryprice.com behind admin login. Cost-optimized.
@@ -88,7 +88,8 @@ CREATE TABLE IF NOT EXISTS usage_daily (
 ```
 
 - Volume estimate: a heavy day ≈ 3–5k events ≈ <1 MB → **<150 MB/year raw**;
-  rollups are KBs. Nightly purge deletes raw rows older than 90 days.
+  rollups are KBs. D2 (locked): raw rows are kept forever — no purge job;
+  revisit if the Railway disk approaches its plan limit.
 - Tables created by `schemaMapper`-style bootstrap inside usageTracker
   (`CREATE TABLE IF NOT EXISTS` on boot, same as inventoryMirrorService).
 - Bot behavior if Postgres is down: buffer caps at 500 events then drops
@@ -153,11 +154,11 @@ managed analytics SaaS (Mixpanel/Amplitude), self-hosted Metabase/Grafana
 Estimated effort: steps 1–4 ≈ two working sessions; 5–6 ≈ one session.
 After 30 days of data: first real "which feature to improve" review.
 
-## 8 · Owner decisions to lock before build
+## 8 · Owner decisions — LOCKED 12-Jul-2026
 
-| # | Question | Recommendation |
+| # | Decision | Owner's call |
 |---|---|---|
-| D1 | Dashboard auth: (a) Functions proxy or (b) API-key-in-page v1? | (a); (b) acceptable as interim |
-| D2 | Raw-event retention 90 days (rollups forever)? | yes |
-| D3 | Track admins' own activity too? | yes — admins are the heaviest users; excluding them blinds the data |
-| D4 | Dashboard freshness: daily rollups (cheap) or live raw queries? | daily; add a "today so far" light query later if missed |
+| D1 | Dashboard auth | **(b) API key in page — quick v1.** Functions-proxy upgrade stays on the backlog as the hardening step; endpoints remain read-only aggregates. |
+| D2 | Raw-event retention | **Keep raw events FOREVER** (no purge job). Storage ~150 MB/yr — revisit only if the Railway Postgres plan nears its disk limit; §3's purge paragraph is superseded. |
+| D3 | Track admins | **Yes — everyone**, dashboard filters by role. |
+| D4 | Freshness | **Daily rollups**; optional "today so far" panel later. |
