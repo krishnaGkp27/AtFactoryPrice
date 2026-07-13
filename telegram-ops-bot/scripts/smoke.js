@@ -7563,6 +7563,37 @@ function runS47() {
   } else fail('S47.9', 'analytics routes missing');
 }
 
+function runS48() {
+  // ---- S48 PL-1: direct packing-list upload (specs/PL-1_PACKING_LIST_UPLOAD.md) ----
+  const plMod = require('../src/services/packingListImportService');
+  if (typeof plMod.detect === 'function' && typeof plMod.transform === 'function') {
+    pass('S48.1 packingListImportService: detect + transform exported');
+  } else fail('S48.1', 'service exports missing');
+
+  const asSrc48 = fs.readFileSync(path.join(__dirname, '../src/flows/addStockFlow.js'), 'utf8');
+  if (asSrc48.includes("'csv', 'xlsx'") && asSrc48.includes('packingListImportService') &&
+      asSrc48.includes('PL_MAX_ROWS') && asSrc48.includes('_formatPlBlock')) {
+    pass('S48.2 addStockFlow: xlsx accepted + PL detect/transform + summary block');
+  } else fail('S48.2', 'strict flow PL branch missing');
+
+  const brSrc48 = fs.readFileSync(path.join(__dirname, '../src/flows/bulkReceiveFlow.js'), 'utf8');
+  if (brSrc48.includes('STAGE_THRESHOLD') && brSrc48.includes('balesStagedPath') &&
+      brSrc48.includes('stagedSha256')) {
+    pass('S48.3 bulkReceiveFlow: big-container staging (sha256 reference in actionJSON)');
+  } else fail('S48.3', 'submit staging branch missing');
+
+  const invSrc48 = fs.readFileSync(path.join(__dirname, '../src/services/inventoryService.js'), 'utf8');
+  if (invSrc48.includes('aj.balesStagedPath') && invSrc48.includes('failed integrity check') &&
+      invSrc48.includes('unlinkSync(aj.balesStagedPath)')) {
+    pass('S48.4 executor: staged read + hash verify + fail-closed + cleanup');
+  } else fail('S48.4', 'executor staged branch missing');
+
+  const cliSrc48 = fs.readFileSync(path.join(__dirname, 'convert-packing-list.js'), 'utf8');
+  if (cliSrc48.includes("require('../src/services/packingListImportService')")) {
+    pass('S48.5 convert-packing-list CLI delegates to the shared service');
+  } else fail('S48.5', 'CLI not delegating');
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -7621,6 +7652,7 @@ function runS47() {
   try { await runS45(); } catch (e) { fail('S45 unexpected error', e.message); }
   try { runS46(); } catch (e) { fail('S46 unexpected error', e.message); }
   try { runS47(); } catch (e) { fail('S47 unexpected error', e.message); }
+  try { runS48(); } catch (e) { fail('S48 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

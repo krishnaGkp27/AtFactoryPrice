@@ -576,7 +576,30 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       }
     }
 
-    const thans = Array.isArray(aj.bales) ? aj.bales : [];
+    // PL-1 — whole-container uploads stage their rows to disk (the
+    // ApprovalQueue cell can't hold 3k+ rows). Re-read + hash-verify here;
+    // fail CLOSED if the staged file vanished (bot redeploy between submit
+    // and approval) — the operator simply re-uploads the packing list.
+    let thans = Array.isArray(aj.bales) ? aj.bales : [];
+    if (!thans.length && aj.balesStagedPath) {
+      const fs = require('fs');
+      const crypto = require('crypto');
+      let payload;
+      try {
+        payload = fs.readFileSync(aj.balesStagedPath, 'utf8');
+      } catch (_) {
+        return { ok: false, message: 'Staged container file is gone (bot restarted since submission). Please re-upload the packing list and submit again.' };
+      }
+      const sha = crypto.createHash('sha256').update(payload).digest('hex');
+      if (aj.stagedSha256 && sha !== aj.stagedSha256) {
+        return { ok: false, message: 'Staged container file failed integrity check. Please re-upload the packing list and submit again.' };
+      }
+      try {
+        thans = JSON.parse(payload);
+      } catch (_) {
+        return { ok: false, message: 'Staged container file is corrupted. Please re-upload the packing list and submit again.' };
+      }
+    }
     if (!thans.length) return { ok: false, message: 'No thans in payload.' };
     const totalThans = thans.length;
     const totalYards = thans.reduce((s, b) => s + (parseFloat(b.yards) || 0), 0);
@@ -641,6 +664,10 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       csNo: b.csNo || '',
     }));
     const persisted = await inventoryRepository.appendBale(baleRows);
+    // PL-1 — staged rows are in the sheet now; drop the temp file.
+    if (aj.balesStagedPath) {
+      try { require('fs').unlinkSync(aj.balesStagedPath); } catch (_) { /* best-effort */ }
+    }
 
     try {
       const idGen = require('../utils/idGenerator');

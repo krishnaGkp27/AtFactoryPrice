@@ -45,7 +45,12 @@ const logger = require('../utils/logger');
 const SESSION_TTL_MS = 15 * 60 * 1000;
 const MAX_WAREHOUSE_NAME_LEN = 40;
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
-const ACCEPTED_EXTS = new Set(['csv']); // v1: CSV only (matches upstream + simpler)
+// PL-1: .xlsx accepted for DIRECT supplier packing-list uploads (auto-detected
+// layout); a non-packing-list .xlsx is still pointed at Bulk Receive.
+const ACCEPTED_EXTS = new Set(['csv', 'xlsx']);
+// PL-1: whole-container uploads far exceed the 500-row CSV cap; the approval
+// payload is staged to disk above STAGE threshold (see bulkReceiveFlow).
+const PL_MAX_ROWS = 6000;
 
 const SESSION_AWAIT_WAREHOUSE   = 'add_stock:awaiting_warehouse';
 const SESSION_AWAIT_NEW_WH_NAME = 'add_stock:awaiting_new_warehouse_name';
@@ -142,8 +147,7 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
   const ext = (fileName.split('.').pop() || '').toLowerCase();
   if (!ACCEPTED_EXTS.has(ext)) {
     await bot.sendMessage(chatId,
-      `🚫 Only .csv accepted (got .${ext || 'unknown'}).\n` +
-      'For .xlsx use *📤 Bulk Receive (CSV/XLSX)* from the Stock menu.',
+      `🚫 Only .csv or .xlsx accepted (got .${ext || 'unknown'}).`,
       { parse_mode: 'Markdown', reply_markup: _retryKeyboard() });
     return true;
   }
@@ -154,7 +158,7 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
     return true;
   }
 
-  await bot.sendMessage(chatId, '⏳ Parsing CSV…');
+  await bot.sendMessage(chatId, '⏳ Parsing file…');
 
   let buffer;
   try {
@@ -183,12 +187,52 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
     logger?.warn?.(`[addStockFlow] file_hash dedup read failed (continuing): ${e.message}`);
   }
 
-  // Parse with upstream parser (handles BOM, quoted fields, etc.).
-  const parsed = parseCsv(buffer.toString('utf8'));
-  if (!parsed.ok) {
-    await bot.sendMessage(chatId, `🚫 Could not parse: ${parsed.error}\nFix and re-upload.`,
-      { reply_markup: _retryKeyboard() });
-    return true;
+  // PL-1: an .xlsx is only accepted when it IS a recognizable supplier
+  // packing list — the bot converts it to than rows itself. Any other
+  // xlsx keeps the historical pointer to Bulk Receive.
+  let parsed;
+  let plSummary = null;
+  if (ext === 'xlsx') {
+    let detected = null;
+    let pl = null;
+    try {
+      const XLSX = require('xlsx');
+      const plImport = require('../services/packingListImportService');
+      detected = plImport.detect(XLSX.read(buffer, { type: 'buffer' }));
+      if (detected) pl = plImport.transform(detected);
+    } catch (err) {
+      logger?.error?.(`[addStockFlow] packing-list parse failed: ${err.message}`);
+    }
+    if (!pl) {
+      await bot.sendMessage(chatId,
+        '🚫 This .xlsx is not a recognizable supplier packing list.\n' +
+        'For plain tables use *📤 Bulk Receive (CSV/XLSX)* or the CSV template.',
+        { parse_mode: 'Markdown', reply_markup: _retryKeyboard() });
+      return true;
+    }
+    if (!pl.thans.length) {
+      await bot.sendMessage(chatId, '🚫 Packing list recognized but contains no sellable bales.',
+        { parse_mode: 'Markdown', reply_markup: _retryKeyboard() });
+      return true;
+    }
+    plSummary = pl.summary;
+    parsed = {
+      ok: true,
+      headers: ['packageno', 'thanno', 'design', 'shade', 'yards', 'indent', 'csno', 'supplier'],
+      rows: pl.thans.map((t, i) => ({
+        packageno: t.packageNo, thanno: String(t.thanNo), design: t.design,
+        shade: t.shade, yards: String(t.yards), indent: t.indent, csno: t.csNo,
+        supplier: pl.supplier || '', _rowNum: i + 2,
+      })),
+    };
+  } else {
+    // Parse with upstream parser (handles BOM, quoted fields, etc.).
+    parsed = parseCsv(buffer.toString('utf8'));
+    if (!parsed.ok) {
+      await bot.sendMessage(chatId, `🚫 Could not parse: ${parsed.error}\nFix and re-upload.`,
+        { reply_markup: _retryKeyboard() });
+      return true;
+    }
   }
 
   // Inject the picked warehouse into rows that omit it, OR reject mismatches.
@@ -211,7 +255,8 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
   // typed by admin passes the registered-warehouse check.
   const allowed = Array.from(new Set([...allowedWarehouses, session.warehouse]));
   const verdict = bulkValidator.validate(injected.parsed, {
-    maxRows: bulkValidator.MAX_ROWS_DEFAULT,
+    // PL-1: a whole container in one file legitimately exceeds the CSV cap.
+    maxRows: plSummary ? PL_MAX_ROWS : bulkValidator.MAX_ROWS_DEFAULT,
     allowedWarehouses: allowed,
   });
 
@@ -273,7 +318,7 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
     flowMessageId: null,
     po_id: '__skip__',
     fileName,
-    fileExt: 'csv',
+    fileExt: ext,
     fileHash: hash,
     fileSize: buffer.length,
     archivedPath: '',
@@ -285,7 +330,7 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
     startedAt: new Date().toISOString(),
     ttlMs: SESSION_TTL_MS,
     // Marker so the audit log can show this came through the strict flow.
-    _strict: { source: 'add_stock', conflictScanPassed: true },
+    _strict: { source: plSummary ? 'packing_list' : 'add_stock', conflictScanPassed: true },
   });
 
   await _auditOutcome(userId, 'preview_ready', {
@@ -296,7 +341,9 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
     crossWarehouseNotes: scan.crossWarehouseBaleNotes.length,
   });
 
-  await bot.sendMessage(chatId, _formatPreview(session.warehouse, verdict.summary, scan.crossWarehouseBaleNotes, hash),
+  const previewText = (plSummary ? _formatPlBlock(plSummary) + '\n\n' : '')
+    + _formatPreview(session.warehouse, verdict.summary, scan.crossWarehouseBaleNotes, hash);
+  await bot.sendMessage(chatId, previewText,
     {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: [
@@ -471,6 +518,35 @@ function _formatValidatorErrors(errors) {
   }).join('\n');
   const more = errors.length > 15 ? `\n  _…and ${errors.length - 15} more — fix above first._` : '';
   return head + shown + more + '\n\nFix and re-upload.';
+}
+
+/**
+ * PL-1 — short owner-facing summary of what the packing list converts to,
+ * shown ABOVE the standard strict preview.
+ */
+function _formatPlBlock(pl) {
+  const lines = [
+    '📦 *Packing list recognized — converted automatically*',
+    `New packages: *${pl.bales} bales / ${pl.thans} thans / ${pl.yards} yards*`,
+    `Designs (${pl.designs.length}): ${pl.designs.slice(0, 6).join(', ')}${pl.designs.length > 6 ? '…' : ''}`,
+  ];
+  if (pl.indents.length) lines.push(`Indents: ${pl.indents.join(', ')}`);
+  if (pl.excluded.length) {
+    lines.push(`Excluded (not for sale): ${pl.excluded.map((e) => e.carton).join(', ')}`);
+  }
+  if (pl.thanCountFix.length) {
+    lines.push(`⚠️ Than-count corrections (yardage cells trusted): ${pl.thanCountFix.length} bale(s)`);
+  }
+  if (pl.yardMismatch.length) {
+    lines.push(`⚠️ Yard-total mismatches (cell sums used): ${pl.yardMismatch.length}`);
+  }
+  if (pl.dupCartons.length) {
+    lines.push(`⚠️ Duplicate cartons in file (first kept): ${pl.dupCartons.join(', ')}`);
+  }
+  if (pl.noYardCells.length) {
+    lines.push(`⚠️ Skipped, no yardage cells: ${pl.noYardCells.join(', ')}`);
+  }
+  return lines.join('\n');
 }
 
 function _formatConflictReport(warehouse, scan, summary) {

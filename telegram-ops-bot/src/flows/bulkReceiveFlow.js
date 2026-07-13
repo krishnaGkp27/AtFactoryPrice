@@ -410,22 +410,44 @@ async function submit(bot, chatId, userId) {
     return;
   }
 
+  const mappedBales = session.bales.map((b) => ({
+    packageNo: b.packageNo,
+    thanNo: b.thanNo,
+    design: b.design, shade: b.shade, color: b.color,
+    yards: b.yards,
+    netMtrs: b.netMtrs || 0, netWeight: b.netWeight || 0,
+    notes: b.notes,
+    // BULK-INDENT — supplier indent + CS number ride through to the
+    // Inventory columns so container uploads match hand-entered rows.
+    indent: b.indent || '', csNo: b.csNo || '',
+  }));
+
+  // PL-1 — a whole-container upload cannot ride inside the ApprovalQueue's
+  // ActionJSON cell (~50k char cap). Above the threshold the rows are staged
+  // to disk and the approval carries a sha256-verified reference instead.
+  // If the bot redeploys before approval the executor fails CLOSED with a
+  // clear "re-upload" message — nothing partial is ever written.
+  const STAGE_THRESHOLD = 400;
+  let balesField = { bales: mappedBales };
+  if (mappedBales.length > STAGE_THRESHOLD) {
+    const fs = require('fs');
+    const path = require('path');
+    const crypto = require('crypto');
+    const payload = JSON.stringify(mappedBales);
+    const sha = crypto.createHash('sha256').update(payload).digest('hex');
+    const dir = path.join(__dirname, '../../data/uploads');
+    fs.mkdirSync(dir, { recursive: true });
+    const stagedPath = path.join(dir, `pl-${sha.slice(0, 16)}.json`);
+    fs.writeFileSync(stagedPath, payload);
+    balesField = { bales: [], balesStagedPath: stagedPath, stagedSha256: sha, stagedCount: mappedBales.length };
+  }
+
   const aj = {
     action: 'bulk_receive_goods',
     warehouse: session.summary.warehouses[0] || '',
     supplier: session.summary.suppliers[0] || '',
     po_id: session.po_id && session.po_id !== '__skip__' ? session.po_id : '',
-    bales: session.bales.map((b) => ({
-      packageNo: b.packageNo,
-      thanNo: b.thanNo,
-      design: b.design, shade: b.shade, color: b.color,
-      yards: b.yards,
-      netMtrs: b.netMtrs || 0, netWeight: b.netWeight || 0,
-      notes: b.notes,
-      // BULK-INDENT — supplier indent + CS number ride through to the
-      // Inventory columns so container uploads match hand-entered rows.
-      indent: b.indent || '', csNo: b.csNo || '',
-    })),
+    ...balesField,
     totalBales: session.summary.totalBales,
     totalThans: session.summary.totalThans,
     totalYards: session.summary.totalYards,
