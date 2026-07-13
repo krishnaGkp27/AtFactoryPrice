@@ -852,6 +852,20 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
         await bot.sendMessage(chatIdCb, approvedMsg);
         await notifyEmployee(bot, requestingUser, requestId, `✅ Your request (${requestId}) has been approved by admin. Changes applied.`);
 
+        // CAT-C1 — a container landed with designs lacking fresh catalogue
+        // photos (shades differ per shipment): ONE checklist card to every
+        // env admin (specs/CAT-C1_CONTAINER_PHOTOS.md, owner decision #2).
+        const photoChk = result.bundleReport && result.bundleReport.photoChecklist;
+        if (photoChk && Array.isArray(photoChk.missingDesigns) && photoChk.missingDesigns.length) {
+          const shown = photoChk.missingDesigns.slice(0, 20).join(', ')
+            + (photoChk.missingDesigns.length > 20 ? ` …+${photoChk.missingDesigns.length - 20} more` : '');
+          const chkTxt = `📸 New container *${photoChk.batch}* landed — ${photoChk.missingDesigns.length} design(s) need a FRESH catalogue photo:\n${shown}\n\n_Upload via 🖼 Upload Design Photo → design → pick ${photoChk.batch}. Shades can differ per shipment, so old photos are not shown for this container._`;
+          for (const admId of config.access.adminIds) {
+            try { await bot.sendMessage(admId, chkTxt, { parse_mode: 'Markdown' }); }
+            catch (e) { logger.warn(`CAT-C1 checklist DM failed for ${admId}: ${e.message}`); }
+          }
+        }
+
         // USR-C3 — welcome DM to the new user (best-effort; fails silently
         // if they haven't /start-ed the bot, which is the expected case
         // for admin-initiated add without prefill).

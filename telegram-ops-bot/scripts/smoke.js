@@ -7594,6 +7594,42 @@ function runS48() {
   } else fail('S48.5', 'CLI not delegating');
 }
 
+function runS49() {
+  // ---- S49 CAT-C1: container-aware catalogue photos ----
+  const daRepo = require('../src/repositories/designAssetsRepository');
+  if (daRepo.HEADERS[15] === 'ArrivalBatch' && typeof daRepo.pickActive === 'function') {
+    pass('S49.1 designAssetsRepository: ArrivalBatch column P + pickActive');
+  } else fail('S49.1', 'batch column/resolver missing');
+
+  const r49 = [
+    { design: 'D', status: 'active', arrivalBatch: 'Jul26', uploadedAt: '2' },
+    { design: 'D', status: 'active', arrivalBatch: 'Mar26', uploadedAt: '1' },
+  ];
+  if (daRepo.pickActive(r49, 'D', 'Mar26').arrivalBatch === 'Mar26'
+    && daRepo.pickActive(r49, 'D', 'X') === null
+    && daRepo.pickActive(r49, 'D').arrivalBatch === 'Jul26') {
+    pass('S49.2 pickActive: batch-exact, no cross-batch fallback, newest without batch');
+  } else fail('S49.2', 'resolution rules wrong');
+
+  const daSvc = require('../src/services/designAssetsService');
+  if (typeof daSvc.listDesignsMissingBatchPhoto === 'function'
+    && typeof daSvc.maybeSendPendingNotice === 'function') {
+    pass('S49.3 designAssetsService: missing-list + pending-notice helpers');
+  } else fail('S49.3', 'service helpers missing');
+
+  const ctl49 = fs.readFileSync(path.join(__dirname, '../src/controllers/telegramController.js'), 'utf8');
+  if (ctl49.includes('showDesignAssetContainerPicker') && ctl49.includes("dap:ct:")
+    && ctl49.includes('arrivalBatch: session.arrivalBatch') ) {
+    pass('S49.4 upload flow: container step wired (dap:ct:) + batch persisted');
+  } else fail('S49.4', 'upload container step missing');
+
+  const inv49 = fs.readFileSync(path.join(__dirname, '../src/services/inventoryService.js'), 'utf8');
+  const evt49 = fs.readFileSync(path.join(__dirname, '../src/events/approvalEvents.js'), 'utf8');
+  if (inv49.includes('photoChecklist') && evt49.includes('photoChecklist')) {
+    pass('S49.5 checklist: executor computes + approvalEvents broadcasts to admins');
+  } else fail('S49.5', 'photo checklist wiring missing');
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -7653,6 +7689,7 @@ function runS48() {
   try { runS46(); } catch (e) { fail('S46 unexpected error', e.message); }
   try { runS47(); } catch (e) { fail('S47 unexpected error', e.message); }
   try { runS48(); } catch (e) { fail('S48 unexpected error', e.message); }
+  try { runS49(); } catch (e) { fail('S49 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

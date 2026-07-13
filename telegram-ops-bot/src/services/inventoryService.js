@@ -721,6 +721,21 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       }
     }
 
+    // CAT-C1 — fresh-photo checklist for the landed container: which of its
+    // designs still lack an active (design, batch) catalogue photo. Consumed
+    // by approvalEvents to broadcast ONE card to env admins.
+    let photoChecklist = null;
+    if (aj.arrivalBatch) {
+      try {
+        const designAssetsService2 = require('./designAssetsService');
+        const landedDesigns = [...new Set(thans.map((b) => String(b.design || '').trim()).filter(Boolean))];
+        const missing = await designAssetsService2.listDesignsMissingBatchPhoto(landedDesigns, aj.arrivalBatch);
+        if (missing.length) photoChecklist = { batch: aj.arrivalBatch, missingDesigns: missing };
+      } catch (e) {
+        logger.warn(`CAT-C1 photo checklist skipped: ${e.message}`);
+      }
+    }
+
     bundleReport = {
       grnId: grn.grn_id,
       baleCount: totalBales,
@@ -728,6 +743,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       totalYards,
       poId: aj.po_id || '', poUpdate,
       source: aj.source || 'bulk_csv', fileHash, fileName: aj.fileName || '',
+      photoChecklist,
     };
   } else if (aj.action === 'record_office_expense') {
     // BR-OPS C1 — flip the eager pending rows on BranchOpsLog to

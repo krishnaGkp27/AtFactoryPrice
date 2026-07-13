@@ -37,6 +37,10 @@ const HEADERS = [
   'RawDriveFileId', 'RawDriveUrl', 'LabeledDriveFileId', 'LabeledDriveUrl',
   'TelegramFileId', 'Status',
   'UploadedBy', 'UploadedAt', 'ApprovalRequestId', 'ApprovedBy', 'Notes',
+  // CAT-C1 — column P: shipment container (arrival batch) this photo shows.
+  // Same design can carry different shades per container, so one active
+  // photo may exist PER (design, batch). Empty = generic/legacy photo.
+  'ArrivalBatch',
 ];
 const COL_COUNT = HEADERS.length;
 
@@ -104,6 +108,7 @@ function parseRow(r, rowIndex) {
     approvalRequestId: str(r[12]),
     approvedBy: str(r[13]),
     notes: str(r[14]),
+    arrivalBatch: str(r[15]),
   };
 }
 
@@ -133,6 +138,7 @@ function toRow(o) {
     o.approvalRequestId ?? '',
     o.approvedBy ?? '',
     o.notes ?? '',
+    o.arrivalBatch ?? '',
   ];
 }
 
@@ -174,12 +180,29 @@ async function getAll() {
   return _cache;
 }
 
-/** Find the *active* asset for a design, or null if none. */
-async function findActive(design) {
+/**
+ * CAT-C1 — pure resolution over a row array (unit-testable):
+ * with `arrivalBatch`: the active exact (design, batch) match or null —
+ * NEVER another batch's photo (shades differ across shipments).
+ * Without: the NEWEST active for the design (uploadedAt desc), so the
+ * latest shipment's look wins on container-less screens.
+ */
+function pickActive(rows, design, arrivalBatch) {
+  const d = upper(design);
+  const actives = rows.filter((r) => upper(r.design) === d && r.status === 'active');
+  if (!actives.length) return null;
+  if (arrivalBatch !== undefined && arrivalBatch !== null && String(arrivalBatch).trim() !== '') {
+    const b = upper(arrivalBatch);
+    return actives.find((r) => upper(r.arrivalBatch) === b) || null;
+  }
+  return actives.sort((a, b) => (b.uploadedAt || '').localeCompare(a.uploadedAt || ''))[0];
+}
+
+/** Find the *active* asset for a design (optionally batch-scoped), or null. */
+async function findActive(design, arrivalBatch) {
   if (!design) return null;
   const all = await getAll();
-  const d = upper(design);
-  return all.find((r) => upper(r.design) === d && r.status === 'active') || null;
+  return pickActive(all, design, arrivalBatch);
 }
 
 /** Find the most recent asset for a design regardless of status, or null. */
@@ -220,11 +243,18 @@ async function updateStatus(rowIndex, newStatus, approvedBy) {
   invalidateCache();
 }
 
-/** Mark all currently-active assets for `design` as 'replaced' (idempotent). */
-async function deactivatePriorActive(design) {
+/**
+ * Mark currently-active assets for `design` as 'replaced' (idempotent).
+ * CAT-C1: batch-scoped — only actives of the SAME arrival batch are
+ * retired, so each (design, batch) keeps its own active photo. A blank
+ * batch replaces only blank-batch (generic/legacy) actives.
+ */
+async function deactivatePriorActive(design, arrivalBatch) {
   const all = await getAll();
   const d = upper(design);
-  const active = all.filter((r) => upper(r.design) === d && r.status === 'active');
+  const b = upper(arrivalBatch || '');
+  const active = all.filter((r) => upper(r.design) === d && r.status === 'active'
+    && upper(r.arrivalBatch || '') === b);
   if (!active.length) return 0;
   const updates = active.map((r) => ({ range: `J${r.rowIndex}`, values: [['replaced']] }));
   await sheets.batchUpdateRanges(SHEET, updates);
@@ -271,6 +301,7 @@ module.exports = {
   ensureHeader,
   getAll,
   findActive,
+  pickActive,
   findLatest,
   findByApprovalRequestId,
   list,

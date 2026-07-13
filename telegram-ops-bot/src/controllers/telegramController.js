@@ -9804,7 +9804,7 @@ async function showDesignAssetDesignPicker(bot, chatId, userId) {
   rows.push([{ text: '✏️ Type a design number', callback_data: 'dap:dtype' }]);
   rows.push([{ text: '❌ Cancel', callback_data: 'dap:cancel' }]);
 
-  const text = '📷 *Upload Product Photo*\n\nStep 1 / 3 — Pick a design number.\n_(✓ = photo already exists; submitting again will replace it after admin approval)_';
+  const text = '📷 *Upload Product Photo*\n\nStep 1 / 4 — Pick a design number.\n_(✓ = photo already exists; submitting again will replace it after admin approval)_';
   const sent = await bot.sendMessage(chatId, text, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
@@ -9813,6 +9813,37 @@ async function showDesignAssetDesignPicker(bot, chatId, userId) {
     session.flowMessageId = sent.message_id;
     sessionStore.set(userId, session);
   }
+}
+
+/**
+ * CAT-C1 — Step 2/4: which shipment container does this photo show?
+ * Same design can carry different shades per container, so photos are
+ * keyed by (design, batch). Index-based callbacks (64-byte safe); the
+ * label list rides in the session. "Generic" = blank batch (legacy look,
+ * shown on container-less screens as fallback).
+ */
+async function showDesignAssetContainerPicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  let batches = [];
+  try {
+    batches = (await inventoryRepository.getArrivalBatches())
+      .map((c) => c.batch)
+      .filter((b) => b && b !== inventoryRepository.UNLABELLED_BATCH);
+  } catch (_) { /* chips optional — Generic is always available */ }
+  session.containerChoices = batches;
+  sessionStore.set(userId, session);
+  const rows = [];
+  for (let i = 0; i < batches.length; i += 2) {
+    const row = [{ text: `🚢 ${batches[i]}`, callback_data: `dap:ct:${i}` }];
+    if (batches[i + 1]) row.push({ text: `🚢 ${batches[i + 1]}`, callback_data: `dap:ct:${i + 1}` });
+    rows.push(row);
+  }
+  rows.push([{ text: '🌐 Generic (all containers)', callback_data: 'dap:ct:generic' }]);
+  rows.push([{ text: '❌ Cancel', callback_data: 'dap:cancel' }]);
+  await editOrSend(bot, chatId, session.flowMessageId,
+    `📷 *Upload Product Photo*\n\nStep 2 / 4 — Which container (shipment) does *${session.design}* look like in this photo?\n_Shades can differ per shipment — the photo shows only for the container you pick._`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
 /**
@@ -9890,8 +9921,8 @@ async function showDesignAssetPhotoPrompt(bot, chatId, userId) {
   sessionStore.set(userId, session);
   await editOrSend(bot, chatId, session.flowMessageId,
     `📷 *Upload Product Photo*\n\n` +
-    `✓ Design: *${session.design}*\n\n` +
-    `Step 2 / 3 — *Send the product photo* now (as a Telegram photo, not a file).\n\n` +
+    `✓ Design: *${session.design}*${session.arrivalBatch ? `\n✓ Container: *${session.arrivalBatch}*` : '\n✓ Container: 🌐 generic'}\n\n` +
+    `Step 3 / 4 — *Send the product photo* now (as a Telegram photo, not a file).\n\n` +
     `💡 Lay shades L→R with paper tabs (numbers/letters) visible on each — you'll map them to colours in the next step using the photo as reference.`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'dap:cancel' }]] } });
 }
@@ -9912,7 +9943,7 @@ async function showDesignAssetShadeNamesPromptAfterPhoto(bot, chatId, userId, se
     `📷 *Upload Product Photo*\n\n` +
     `✓ Design: *${session.design}*\n` +
     `✓ Photo received\n\n` +
-    `Step 3 / 3 — *Enter shade numbers + names*, comma-separated, in the order they appear in the photo above.\n\n` +
+    `Step 4 / 4 — *Enter shade numbers + names*, comma-separated, in the order they appear in the photo above.\n\n` +
     `🅰 *Numbered* (use the physical tab numbers visible on the photo):\n` +
     `\`${ex.numbered}\`\n\n` +
     `🅱 *Or plain names* (sequential 1…N is auto-assigned):\n` +
@@ -10119,6 +10150,8 @@ async function submitDesignAssetForApproval(bot, chatId, userId, msg) {
       telegramFileId: session.previewFileId || '',
       uploadedBy: staged.uploadedBy,
       uploadedAt: staged.uploadedAt,
+      // CAT-C1 — which shipment container this photo shows ('' = generic).
+      arrivalBatch: session.arrivalBatch || '',
     }, requestId);
   } catch (e) {
     logger.error('design_asset_flow: persistPending failed', e.message);
@@ -10139,6 +10172,7 @@ async function submitDesignAssetForApproval(bot, chatId, userId, msg) {
       shadeNames: staged.shadeNames,
       labeledDriveUrl: staged.labeledDriveUrl,
       uploaderUserId: userId,
+      arrivalBatch: session.arrivalBatch || '',
     },
     riskReason: 'Product-photo asset must be approved before it appears to consumers.',
     status: 'pending',
@@ -10228,7 +10262,7 @@ async function handleDesignAssetTextStep(bot, chatId, userId, text) {
     }
     session.design = d;
     sessionStore.set(userId, session);
-    await showDesignAssetPhotoPrompt(bot, chatId, userId);
+    await showDesignAssetContainerPicker(bot, chatId, userId);
     return true;
   }
   if (session.step === 'shade_names') {
@@ -10408,7 +10442,7 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
     sessionStore.set(uid, session);
     await bot.answerCallbackQuery(callbackQuery.id);
     await editOrSend(bot, chatId, session.flowMessageId,
-      `📷 *Upload Product Photo*\n\nStep 1 / 3 — Type the design number (e.g. \`9006\`).`,
+      `📷 *Upload Product Photo*\n\nStep 1 / 4 — Type the design number (e.g. \`9006\`).`,
       { parse_mode: 'Markdown' });
     return true;
   }
@@ -10420,6 +10454,31 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
       return true;
     }
     session.design = design;
+    sessionStore.set(uid, session);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await showDesignAssetContainerPicker(bot, chatId, uid);
+    return true;
+  }
+  // CAT-C1 — container pick (index into session.containerChoices, or generic).
+  if (data.startsWith('dap:ct:')) {
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'design_asset_flow') {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' });
+      return true;
+    }
+    const pick = data.slice('dap:ct:'.length);
+    if (pick === 'generic') {
+      session.arrivalBatch = '';
+    } else {
+      const idx = parseInt(pick, 10);
+      const b = Array.isArray(session.containerChoices) ? session.containerChoices[idx] : undefined;
+      if (b === undefined) {
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired — start again.', show_alert: true });
+        return true;
+      }
+      session.arrivalBatch = b;
+    }
+    delete session.containerChoices;
     sessionStore.set(uid, session);
     await bot.answerCallbackQuery(callbackQuery.id);
     await showDesignAssetPhotoPrompt(bot, chatId, uid);
@@ -10567,13 +10626,14 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
     await bot.answerCallbackQuery(callbackQuery.id);
     sessionStore.clear(uid);
     sessionStore.set(uid, { type: 'design_asset_flow', step: 'photo', design, shadeNames: [], ttlMs: DESIGN_ASSET_TTL_MS });
-    // Send a fresh prompt instance so showDesignAssetPhotoPrompt has a flowMessageId to edit.
+    // Send a fresh prompt instance so the next step has a flowMessageId to edit.
     const sent = await bot.sendMessage(chatId, '📷 *Upload Product Photo*\n\nLoading…', { parse_mode: 'Markdown' });
     if (sent && sent.message_id) {
       const s = sessionStore.get(uid);
       if (s) { s.flowMessageId = sent.message_id; sessionStore.set(uid, s); }
     }
-    await showDesignAssetPhotoPrompt(bot, chatId, uid);
+    // CAT-C1 — re-uploads also declare which container the photo shows.
+    await showDesignAssetContainerPicker(bot, chatId, uid);
     return true;
   }
   if (data.startsWith('dam:editnames:')) {
@@ -10662,9 +10722,20 @@ async function maybeSendDesignPreview(bot, chatId, design, captionExtra, userId)
       }
     }
     const captionPrefix = captionExtra ? `${captionExtra}\n` : '';
+    // CAT-C1 — container-scoped flows (supply, bundle sale) carry
+    // session.arrivalBatch: show THAT container's photo or the pending
+    // notice, never another shipment's shades. The '(unlabelled)' sentinel
+    // and container-less flows resolve to the newest active photo.
+    let arrivalBatch;
+    if (userId) {
+      const s = sessionStore.get(userId);
+      if (s && s.arrivalBatch && s.arrivalBatch !== inventoryRepository.UNLABELLED_BATCH) {
+        arrivalBatch = s.arrivalBatch;
+      }
+    }
     const sent = await designAssetsService.sendDesignPhoto({
-      bot, chatId, design,
-      caption: `${captionPrefix}📷 *${design}*`,
+      bot, chatId, design, arrivalBatch,
+      caption: `${captionPrefix}📷 *${design}*${arrivalBatch ? ` · 🚢 ${arrivalBatch}` : ''}`,
       returnSentMessage: true,
     });
     if (!sent) {

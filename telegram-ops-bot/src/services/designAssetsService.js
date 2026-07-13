@@ -178,6 +178,8 @@ async function persistPending(staged, approvalRequestId) {
     approvalRequestId: approvalRequestId || '',
     approvedBy: '',
     notes: staged.notes || '',
+    // CAT-C1 — which shipment container this photo shows ('' = generic).
+    arrivalBatch: staged.arrivalBatch || '',
   });
 }
 
@@ -193,10 +195,11 @@ async function activateByApprovalRequestId(approvalRequestId, approvedBy) {
   const row = await designAssetsRepo.findByApprovalRequestId(approvalRequestId);
   if (!row) return { ok: false, message: 'Asset not found.' };
 
-  // Supersede any prior active version for this design (idempotent).
-  await designAssetsRepo.deactivatePriorActive(row.design);
+  // Supersede any prior active version for this (design, batch) — CAT-C1:
+  // photos of OTHER batches stay active (one look per shipment).
+  await designAssetsRepo.deactivatePriorActive(row.design, row.arrivalBatch);
   await designAssetsRepo.updateStatus(row.rowIndex, 'active', approvedBy || '');
-  return { ok: true, design: row.design };
+  return { ok: true, design: row.design, arrivalBatch: row.arrivalBatch || '' };
 }
 
 /**
@@ -225,11 +228,14 @@ async function rejectByApprovalRequestId(approvalRequestId, rejectedBy) {
  *   telegramFileId, labeledDriveUrl, labeledDriveFileId
  * }>}
  */
-async function getPhotoForSend(design) {
+async function getPhotoForSend(design, opts = {}) {
   if (!design) return null;
-  const row = await designAssetsRepo.findActive(design);
+  // CAT-C1 — batch-scoped lookups NEVER fall back to another container's
+  // photo (shades differ across shipments); container-less lookups get the
+  // newest active photo for the design.
+  const row = await designAssetsRepo.findActive(design, opts.arrivalBatch);
   if (!row) {
-    logger.info(`getPhotoForSend(${design}): no active asset`);
+    logger.info(`getPhotoForSend(${design}${opts.arrivalBatch ? ', batch=' + opts.arrivalBatch : ''}): no active asset`);
     return null;
   }
 
@@ -312,9 +318,12 @@ async function cacheTelegramFileId(rowIndex, telegramFileId) {
  * @param {number} [params.buttonsPerRow=3]
  * @returns {Promise<boolean>} true if photo sent, false if no asset (caller falls back)
  */
-async function sendShadePicker({ bot, chatId, design, captionPrefix, buildShadeButton, extraRows, buttonsPerRow }) {
-  const asset = await getPhotoForSend(design);
-  if (!asset) return false;
+async function sendShadePicker({ bot, chatId, design, arrivalBatch, captionPrefix, buildShadeButton, extraRows, buttonsPerRow }) {
+  const asset = await getPhotoForSend(design, { arrivalBatch });
+  if (!asset) {
+    await maybeSendPendingNotice(bot, chatId, design, arrivalBatch);
+    return false;
+  }
   const perRow = Math.max(1, Math.min(4, buttonsPerRow || 3));
 
   // Prefer the structured {number, name} list so buttons reflect the
@@ -357,6 +366,38 @@ async function sendShadePicker({ bot, chatId, design, captionPrefix, buildShadeB
 }
 
 /**
+ * CAT-C1 — when a CONTAINER-scoped photo lookup misses, tell the operator
+ * why there is no picture instead of silently showing nothing (and never
+ * another batch's shades). No-op for container-less lookups — those keep
+ * the callers' legacy text-only fallback.
+ */
+async function maybeSendPendingNotice(bot, chatId, design, arrivalBatch) {
+  if (!arrivalBatch || !String(arrivalBatch).trim()) return;
+  try {
+    await bot.sendMessage(chatId,
+      `📷 Fresh catalogue pending for *${design}* in container *${arrivalBatch}* — shades can differ per shipment.\n_Admins: 🖼 Upload Design Photo → ${design} → pick ${arrivalBatch}._`,
+      { parse_mode: 'Markdown' });
+  } catch (_) { /* notice is best-effort; the flow continues without a photo */ }
+}
+
+/**
+ * CAT-C1 — which of `designs` still lack an ACTIVE photo for `arrivalBatch`.
+ * Powers the all-admins checklist card when a new container lands.
+ * @param {string[]} designs
+ * @param {string} arrivalBatch
+ * @returns {Promise<string[]>} designs missing a fresh (design,batch) photo
+ */
+async function listDesignsMissingBatchPhoto(designs, arrivalBatch) {
+  if (!arrivalBatch || !Array.isArray(designs) || !designs.length) return [];
+  const all = await designAssetsRepo.getAll();
+  const missing = [];
+  for (const d of designs) {
+    if (!designAssetsRepo.pickActive(all, d, arrivalBatch)) missing.push(d);
+  }
+  return missing;
+}
+
+/**
  * Send the product photo *only* (no shade buttons), useful for design-only
  * pickers (e.g. order flow where shade isn't selected).
  *
@@ -366,9 +407,12 @@ async function sendShadePicker({ bot, chatId, design, captionPrefix, buildShadeB
  *
  * @returns {Promise<boolean | object>}
  */
-async function sendDesignPhoto({ bot, chatId, design, caption, extraRows, returnSentMessage }) {
-  const asset = await getPhotoForSend(design);
-  if (!asset) return false;
+async function sendDesignPhoto({ bot, chatId, design, arrivalBatch, caption, extraRows, returnSentMessage }) {
+  const asset = await getPhotoForSend(design, { arrivalBatch });
+  if (!asset) {
+    await maybeSendPendingNotice(bot, chatId, design, arrivalBatch);
+    return false;
+  }
   try {
     const sent = await bot.sendPhoto(chatId, asset.photo, {
       caption: caption || `📷 *${asset.design}*`,
@@ -397,4 +441,6 @@ module.exports = {
   sendShadePicker,
   sendDesignPhoto,
   detectProductType,
+  listDesignsMissingBatchPhoto,
+  maybeSendPendingNotice,
 };
