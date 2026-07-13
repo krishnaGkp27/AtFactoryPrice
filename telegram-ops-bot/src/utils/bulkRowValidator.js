@@ -31,7 +31,9 @@
 'use strict';
 
 const REQUIRED = ['packageno', 'thanno', 'design', 'yards', 'warehouse'];
-const OPTIONAL = ['shade', 'supplier', 'netmtrs', 'netweight', 'notes', 'color'];
+// BULK-INDENT (13-Jul-2026): indent + csno ride through to the Inventory
+// columns of the same name so container uploads match hand-entered rows.
+const OPTIONAL = ['shade', 'supplier', 'netmtrs', 'netweight', 'notes', 'color', 'indent', 'csno'];
 const ALL_KNOWN = new Set([...REQUIRED, ...OPTIONAL]);
 
 const MAX_ROWS_DEFAULT = 500;
@@ -101,6 +103,8 @@ function validate(parsed, opts = {}) {
     const supplier = String(row.supplier || '').trim();
     const notes = String(row.notes || '').trim();
     const color = String(row.color || '').trim();
+    const indent = String(row.indent || '').trim();
+    const csNo = String(row.csno || '').trim();
     const netMtrsRaw = row.netmtrs;
     const netWeightRaw = row.netweight;
     const netMtrs = netMtrsRaw === '' || netMtrsRaw == null ? 0 : parseFloat(netMtrsRaw);
@@ -153,6 +157,12 @@ function validate(parsed, opts = {}) {
     if (supplier.length > NAME_MAX) {
       errors.push({ row: rn, column: 'supplier', message: `Supplier too long (max ${NAME_MAX} chars).` });
     }
+    if (indent.length > NAME_MAX) {
+      errors.push({ row: rn, column: 'indent', message: `Indent too long (max ${NAME_MAX} chars).` });
+    }
+    if (csNo.length > NAME_MAX) {
+      errors.push({ row: rn, column: 'csno', message: `CSNo too long (max ${NAME_MAX} chars).` });
+    }
     if (notes.length > NOTES_MAX) {
       errors.push({ row: rn, column: 'notes', message: `Notes too long (max ${NOTES_MAX} chars).` });
     }
@@ -165,6 +175,7 @@ function validate(parsed, opts = {}) {
       netMtrs: isFinite(netMtrs) && netMtrs > 0 ? netMtrs : 0,
       netWeight: isFinite(netWeight) && netWeight > 0 ? netWeight : 0,
       warehouse, supplier, notes,
+      indent, csNo,
       _rowNum: rn,
     });
     if (packageNo) distinctBales.add(packageNo);

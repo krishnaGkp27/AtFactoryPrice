@@ -635,6 +635,10 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       grnId: grn.grn_id,
       // ARRIVAL-BATCH C1 — operator-chosen container label (e.g. "July26").
       arrivalBatch: aj.arrivalBatch || '',
+      // BULK-INDENT — supplier indent + CS number from the upload file, so
+      // container rows match hand-entered rows (Indent / CSNo columns).
+      indent: b.indent || '',
+      csNo: b.csNo || '',
     }));
     const persisted = await inventoryRepository.appendBale(baleRows);
 

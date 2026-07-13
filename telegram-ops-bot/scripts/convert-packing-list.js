@@ -91,10 +91,11 @@ function main() {
     if (yardCells.length !== declared) problems.thanCountFix.push({ carton, declared, actual: yardCells.length });
 
     const shade = str(r[COL.shade]);
+    const csNo = str(r[COL.cs]);
     yardCells.forEach((yards, i) => {
-      thanRows.push({ packageNo: carton, thanNo: i + 1, design, shade, yards });
+      thanRows.push({ packageNo: carton, thanNo: i + 1, design, shade, yards, indent, csNo });
     });
-    perBale.push({ carton, indent, cs: str(r[COL.cs]), design, shade, thans: yardCells.length, yards: cellSum });
+    perBale.push({ carton, indent, cs: csNo, design, shade, thans: yardCells.length, yards: cellSum });
   }
 
   // Split into files on bale boundaries: group thans per bale, then pack
@@ -119,9 +120,9 @@ function main() {
   files.forEach((f, i) => {
     const name = `${PREFIX}-part${i + 1}of${files.length}.csv`;
     const out = path.join(OUT_DIR, name);
-    const lines = [`PackageNo,ThanNo,Design,Shade,Yards${supplierCol}`];
+    const lines = [`PackageNo,ThanNo,Design,Shade,Yards,Indent,CSNo${supplierCol}`];
     for (const t of f) {
-      lines.push(`${t.packageNo},${t.thanNo},${t.design},${t.shade},${t.yards}${SUPPLIER ? ',' + SUPPLIER : ''}`);
+      lines.push(`${t.packageNo},${t.thanNo},${t.design},${t.shade},${t.yards},${t.indent},${t.csNo}${SUPPLIER ? ',' + SUPPLIER : ''}`);
     }
     fs.writeFileSync(out, lines.join('\n') + '\n');
     written.push({ name, out, rows: f.length, bales: new Set(f.map((t) => t.packageNo)).size });
@@ -146,7 +147,7 @@ function main() {
     ...written.map((w) => `  - ${w.name}: ${w.rows} than-rows, ${w.bales} bales`),
     '',
     'NOT carried into Inventory by the bulk format (kept in this packing list archive only):',
-    '  - per-bale Indent + CS No · bale-level Net MTRS / weights · "No of COL"',
+    '  - bale-level Net MTRS / weights · "No of COL" (Indent + CSNo ARE carried since BULK-INDENT)',
   ].join('\n');
   const reportPath = path.join(OUT_DIR, `${PREFIX}-conversion-report.md`);
   fs.writeFileSync(reportPath, report + '\n');

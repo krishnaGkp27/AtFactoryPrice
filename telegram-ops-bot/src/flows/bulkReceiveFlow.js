@@ -422,6 +422,9 @@ async function submit(bot, chatId, userId) {
       yards: b.yards,
       netMtrs: b.netMtrs || 0, netWeight: b.netWeight || 0,
       notes: b.notes,
+      // BULK-INDENT — supplier indent + CS number ride through to the
+      // Inventory columns so container uploads match hand-entered rows.
+      indent: b.indent || '', csNo: b.csNo || '',
     })),
     totalBales: session.summary.totalBales,
     totalThans: session.summary.totalThans,
