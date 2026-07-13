@@ -365,7 +365,10 @@ async function showPreviewStep(bot, chatId, userId) {
   // scope by it. Shown here and required before submit.
   lines.push(`*Container:* ${session.arrivalBatch ? `\`${session.arrivalBatch}\`` : '_— pick below —_'}`);
   lines.push('');
-  lines.push(`_${s.totalThans} thans across ${s.totalBales} bale${s.totalBales === 1 ? '' : 's'} will be appended to Inventory with fresh bale_uid + addedAt per row._`);
+  // "bale-uid", not "bale_uid": a raw underscore inside this _italic_ line
+  // gives Telegram an odd underscore count → 400 can't-parse-entities → the
+  // whole container card fails to send (found live 13-Jul, byte offset 528).
+  lines.push(`_${s.totalThans} thans across ${s.totalBales} bale${s.totalBales === 1 ? '' : 's'} will be appended to Inventory with fresh bale-uid + addedAt per row._`);
   if (session.po_id && session.po_id !== '__skip__') {
     lines.splice(1, 0, `*PO:*        \`${session.po_id}\``);
   }

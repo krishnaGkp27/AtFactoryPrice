@@ -507,7 +507,7 @@ async function _renderWarehousePicker(bot, chatId, userId) {
   _setSession(userId, { type: SESSION_AWAIT_WAREHOUSE, warehouses });
   const text = '🏭 *Add stock — which warehouse?*\n\n' +
     'Strict mode: this flow blocks duplicate bale # or design # in the chosen warehouse.\n' +
-    'For the lenient model (batch-aware via bale_uid) use *📤 Bulk Receive (CSV/XLSX)* from the Stock menu.';
+    'For the lenient model (batch-aware via bale-uid) use *📤 Bulk Receive (CSV/XLSX)* from the Stock menu.';
   try {
     await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
   } catch (err) {
