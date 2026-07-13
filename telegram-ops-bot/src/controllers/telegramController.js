@@ -5094,6 +5094,17 @@ async function startSupplyRequestFlow(bot, chatId, userId) {
   await showContainerPicker(bot, chatId, userId, containers);
 }
 
+/**
+ * CV-1/CV-2 — who may see ₦ container values: ONLY Railway env IDs
+ * (ADMIN_IDS ∪ FINANCE_IDS), per owner mandate 13-Jul-2026. Deliberately
+ * NOT auth.isAdmin(): sheet-promoted admins are excluded until the owner
+ * adds them to the env lists.
+ */
+function canSeeContainerValues(userId) {
+  const uid = String(userId);
+  return config.access.adminIds.includes(uid) || config.access.financeIds.includes(uid);
+}
+
 /** Inline button for one arrival-batch (container) tile. */
 function containerButton(c) {
   return { text: `🚢 ${c.label} (${c.bales} bls · ${c.thans} thans)`, callback_data: `srf_ct:${c.batch}` };
@@ -5120,12 +5131,16 @@ async function showContainerPicker(bot, chatId, userId, containers = null, messa
     rows.push(row);
   }
   rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
-  // CV-1 — per-container value lines for admins (PRICE-VIS); everyone else
-  // keeps the unchanged picker (bale/than counts live on the buttons).
+  // CV-1 — per-container value lines for env admins/finance (PRICE-VIS);
+  // everyone else keeps the unchanged picker (counts live on the buttons).
+  // CV-2 — Σ grand total across all containers at the end of the block.
   let cvBlock = '';
-  if (auth.isAdmin(String(userId))) {
+  if (canSeeContainerValues(userId)) {
+    const sumYards = list.reduce((s, c) => s + (c.yards || 0), 0);
+    const sumValue = list.reduce((s, c) => s + (c.value || 0), 0);
     cvBlock = '\n' + list.map((c) =>
-      `  · ${c.label}: ${fmtQty(c.yards || 0)} yds · *${fmtMoney(c.value || 0)}*`).join('\n') + '\n';
+      `  · ${c.label}: ${fmtQty(c.yards || 0)} yds · *${fmtMoney(c.value || 0)}*`).join('\n')
+      + `\n  Σ *All containers:* ${fmtQty(sumYards)} yds · *${fmtMoney(sumValue)}*\n`;
   }
   const sent = await editOrSend(bot, chatId, resolvedMsgId,
     `📦 *Supply Request*\n${cvBlock}\n🚢 Select container (arrival batch):`, {
@@ -5244,7 +5259,7 @@ async function showSupplyCategoryPicker(bot, chatId, userId, cats = null) {
   const totYards = list.reduce((s, c) => s + (c.yards || 0), 0);
   const totValue = list.reduce((s, c) => s + (c.value || 0), 0);
   let totalsBlock = `📊 Total: ${totBales} bls · ${fmtQty(totYards)} yds`;
-  if (auth.isAdmin(String(userId))) {
+  if (canSeeContainerValues(userId)) {
     totalsBlock += ` · *${fmtMoney(totValue)}*`;
     for (const c of list) {
       totalsBlock += `\n  · ${c.label}: ${fmtQty(c.yards || 0)} yds · ${fmtMoney(c.value || 0)}`;
