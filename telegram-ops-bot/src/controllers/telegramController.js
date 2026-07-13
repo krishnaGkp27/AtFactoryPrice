@@ -5131,19 +5131,19 @@ async function showContainerPicker(bot, chatId, userId, containers = null, messa
     rows.push(row);
   }
   rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
-  // CV-1 — per-container value lines for env admins/finance (PRICE-VIS);
-  // everyone else keeps the unchanged picker (counts live on the buttons).
-  // CV-2 — Σ grand total across all containers at the end of the block.
+  // CV-1/CV-2 — value block for env admins/finance only (PRICE-VIS):
+  // bold grand total on top, then one clean line per container (owner's
+  // approved layout, 13-Jul). Everyone else keeps the unchanged picker.
   let cvBlock = '';
   if (canSeeContainerValues(userId)) {
     const sumYards = list.reduce((s, c) => s + (c.yards || 0), 0);
     const sumValue = list.reduce((s, c) => s + (c.value || 0), 0);
-    cvBlock = '\n' + list.map((c) =>
-      `  · ${c.label}: ${fmtQty(c.yards || 0)} yds · *${fmtMoney(c.value || 0)}*`).join('\n')
-      + `\n  Σ *All containers:* ${fmtQty(sumYards)} yds · *${fmtMoney(sumValue)}*\n`;
+    cvBlock = `💰 *Total: ${fmtQty(sumYards)} yds · ${fmtMoney(sumValue)}*\n\n`
+      + list.map((c) => `· ${c.label}: ${fmtQty(c.yards || 0)} yds · ${fmtMoney(c.value || 0)}`).join('\n')
+      + '\n\n';
   }
   const sent = await editOrSend(bot, chatId, resolvedMsgId,
-    `📦 *Supply Request*\n${cvBlock}\n🚢 Select container (arrival batch):`, {
+    `📦 *Supply Request*\n${cvBlock}🚢 Select container (arrival batch):`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
@@ -5253,20 +5253,22 @@ async function showSupplyCategoryPicker(bot, chatId, userId, cats = null) {
   }
   rows.push([{ text: '⬅️ Back to containers', callback_data: 'srf_back:container' }]);
   const safeBatch = String(session.arrivalBatch).replace(/[*_`[\]]/g, '\\$&');
-  // CV-1 — container totals. Yards are quantity (safe for every role);
-  // ₦ value is PRICE-VIS-gated to admins, per category + container total.
+  // CV-1 — container totals: bold total on top, clean per-category lines
+  // (owner's approved layout, 13-Jul). Yards are safe for every role; the
+  // ₦ value parts render only for env admins/finance (PRICE-VIS).
   const totBales = list.reduce((s, c) => s + (c.bales || 0), 0);
   const totYards = list.reduce((s, c) => s + (c.yards || 0), 0);
   const totValue = list.reduce((s, c) => s + (c.value || 0), 0);
-  let totalsBlock = `📊 Total: ${totBales} bls · ${fmtQty(totYards)} yds`;
+  let totalsBlock;
   if (canSeeContainerValues(userId)) {
-    totalsBlock += ` · *${fmtMoney(totValue)}*`;
-    for (const c of list) {
-      totalsBlock += `\n  · ${c.label}: ${fmtQty(c.yards || 0)} yds · ${fmtMoney(c.value || 0)}`;
-    }
+    totalsBlock = `💰 *Total: ${totBales} bls · ${fmtQty(totYards)} yds · ${fmtMoney(totValue)}*\n\n`
+      + list.map((c) => `· ${c.label}: ${fmtQty(c.yards || 0)} yds · ${fmtMoney(c.value || 0)}`).join('\n')
+      + '\n';
+  } else {
+    totalsBlock = `Total: ${totBales} bls · ${fmtQty(totYards)} yds\n`;
   }
   await editOrSendAnchored(bot, chatId, userId,
-    `📦 *Supply Request*\n🚢 Container: *${safeBatch}*\n${totalsBlock}\n\nSelect category:`, {
+    `📦 *Supply Request*\n🚢 Container: *${safeBatch}*\n${totalsBlock}\nSelect category:`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });

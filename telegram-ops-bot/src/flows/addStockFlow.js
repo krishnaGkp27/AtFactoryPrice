@@ -40,6 +40,7 @@ const stockImportService = require('../services/stockImportService');
 const { parseCsv } = require('../utils/csvParser');
 const bulkValidator = require('../utils/bulkRowValidator');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
+const { fmtQty } = require('../utils/format');
 const logger = require('../utils/logger');
 
 const SESSION_TTL_MS = 15 * 60 * 1000;
@@ -568,7 +569,7 @@ function _formatValidatorErrors(errors) {
 function _formatPlBlock(pl) {
   const lines = [
     '📦 *Packing list recognized — converted automatically*',
-    `New packages: *${pl.bales} bales / ${pl.thans} thans / ${pl.yards} yards*`,
+    `New packages: *${fmtQty(pl.bales)} bales / ${fmtQty(pl.thans)} thans / ${fmtQty(pl.yards, { maxFraction: 2 })} yards*`,
     `Designs (${pl.designs.length}): ${pl.designs.slice(0, 6).join(', ')}${pl.designs.length > 6 ? '…' : ''}`,
   ];
   if (pl.indents.length) lines.push(`Indents: ${pl.indents.join(', ')}`);
@@ -629,12 +630,12 @@ function _formatPreview(warehouse, s, crossNotes, hash) {
     `*Warehouse:* ${warehouse}`,
     `*Supplier:*  ${s.suppliers[0] || '_none_'}`,
     `*Designs:*   ${s.designs.length} (${s.designs.slice(0, 4).join(', ')}${s.designs.length > 4 ? '…' : ''})`,
-    `*Bales:*     ${s.totalBales}`,
-    `*Thans:*     ${s.totalThans}`,
-    `*Yards:*     ${s.totalYards}`,
+    `*Bales:*     ${fmtQty(s.totalBales)}`,
+    `*Thans:*     ${fmtQty(s.totalThans)}`,
+    `*Yards:*     ${fmtQty(s.totalYards, { maxFraction: 2 })}`,
   ];
-  if (s.totalNetMtrs > 0) lines.push(`*Net m:*      ${s.totalNetMtrs}`);
-  if (s.totalNetWeight > 0) lines.push(`*Net kg:*     ${s.totalNetWeight}`);
+  if (s.totalNetMtrs > 0) lines.push(`*Net m:*      ${fmtQty(s.totalNetMtrs, { maxFraction: 2 })}`);
+  if (s.totalNetWeight > 0) lines.push(`*Net kg:*     ${fmtQty(s.totalNetWeight, { maxFraction: 2 })}`);
   lines.push(`*Hash:*      \`${hash}\``);
 
   if (crossNotes && crossNotes.length) {
