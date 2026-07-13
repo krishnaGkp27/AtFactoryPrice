@@ -66,12 +66,31 @@ function canonicalizeCategory(input, known = DEFAULT_CATEGORIES) {
     .join(' ');
 }
 
+/**
+ * DCAT-G1 — plausibility gate for category labels read from the sheet.
+ * Column W is owner-editable, and sheet-side AI assist once pasted a full
+ * Gemini refusal sentence ("The necessary data is beyond the provided
+ * context. Please use the side panel for help.") into cells, which then
+ * rendered as a CATEGORY across the supply pickers (live, 13-Jul-2026).
+ * A real label is short, single-line prose without sentence punctuation.
+ * Junk cells are SKIPPED — a later valid cell for the design can still
+ * win; with none, the design correctly falls back to "Others".
+ */
+const LABEL_MAX_CHARS = 24;
+function isPlausibleLabel(s) {
+  const v = String(s == null ? '' : s).trim();
+  if (!v || v.length > LABEL_MAX_CHARS) return false;
+  if (/[.!?:;\n\r]/.test(v)) return false;
+  return true;
+}
+
 /** Rebuild the design→category snapshot from Inventory rows. */
 async function refresh() {
   const rows = await inventoryRepository.getAll();
   const m = new Map();
   for (const r of rows) {
     if (!r.design || !r.designCategory) continue;
+    if (!isPlausibleLabel(r.designCategory)) continue; // DCAT-G1
     const key = normalizeDesign(r.design);
     if (!m.has(key)) m.set(key, r.designCategory); // first non-empty per design wins
   }
@@ -187,5 +206,6 @@ module.exports = {
   iconFor,
   normalizeDesign,
   canonicalizeCategory,
+  isPlausibleLabel,
   DEFAULT_CATEGORIES,
 };
