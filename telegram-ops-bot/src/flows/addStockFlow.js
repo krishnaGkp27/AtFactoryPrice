@@ -477,11 +477,16 @@ function _enforceWarehouseColumn(parsed, pickedWarehouse) {
 }
 
 async function _renderWarehousePicker(bot, chatId, userId) {
+  // WH-C2: list the MERGED registry (Inventory-derived ∪ Settings
+  // WAREHOUSE_LIST) — a freshly registered warehouse has no stock rows yet,
+  // so the Inventory-only list hid it (owner hit this with IDUMOTA store:
+  // registered via dual-admin add_warehouse, invisible in this picker).
+  // _listAllowedWarehouses is the same source the validator trusts.
   let warehouses = [];
   try {
-    warehouses = await inventoryRepository.getWarehouses();
+    warehouses = await _listAllowedWarehouses();
   } catch (err) {
-    logger?.error?.(`[addStockFlow] getWarehouses failed: ${err.message}`);
+    logger?.error?.(`[addStockFlow] warehouse list failed: ${err.message}`);
   }
 
   // Index-based callbacks: a warehouse name > 52 chars would push raw
