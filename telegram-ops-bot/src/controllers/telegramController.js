@@ -5120,8 +5120,15 @@ async function showContainerPicker(bot, chatId, userId, containers = null, messa
     rows.push(row);
   }
   rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
+  // CV-1 — per-container value lines for admins (PRICE-VIS); everyone else
+  // keeps the unchanged picker (bale/than counts live on the buttons).
+  let cvBlock = '';
+  if (auth.isAdmin(String(userId))) {
+    cvBlock = '\n' + list.map((c) =>
+      `  · ${c.label}: ${fmtQty(c.yards || 0)} yds · *${fmtMoney(c.value || 0)}*`).join('\n') + '\n';
+  }
   const sent = await editOrSend(bot, chatId, resolvedMsgId,
-    '📦 *Supply Request*\n\n🚢 Select container (arrival batch):', {
+    `📦 *Supply Request*\n${cvBlock}\n🚢 Select container (arrival batch):`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
@@ -5169,6 +5176,8 @@ async function getSupplyCategories(arrivalBatch, scopeWarehouses) {
   const ab = arrivalBatch ? String(arrivalBatch).toUpperCase() : null;
   const isUnlabelled = ab === String(inventoryRepository.UNLABELLED_BATCH).toUpperCase();
   const baleSets = new Map(); // label ('' = Others) -> Set of warehouse||packageNo
+  // CV-1 — yards + selling value per category (value rendered admin-only).
+  const totals = new Map(); // label -> { yards, value }
   for (const r of all) {
     if (r.status !== 'available') continue;
     const rab = (r.arrivalBatch || '').toUpperCase();
@@ -5177,6 +5186,10 @@ async function getSupplyCategories(arrivalBatch, scopeWarehouses) {
     const cat = designCategoriesRepo.categoryOfSync(r.design) || '';
     if (!baleSets.has(cat)) baleSets.set(cat, new Set());
     baleSets.get(cat).add(`${r.warehouse}||${r.packageNo}`);
+    if (!totals.has(cat)) totals.set(cat, { yards: 0, value: 0 });
+    const t = totals.get(cat);
+    t.yards += r.yards || 0;
+    t.value += (r.pricePerYard || 0) * (r.yards || 0);
   }
   const defaults = designCategoriesRepo.DEFAULT_CATEGORIES.map((c) => c.toLowerCase());
   const labels = Array.from(baleSets.keys()).filter((c) => c !== '');
@@ -5188,9 +5201,15 @@ async function getSupplyCategories(arrivalBatch, scopeWarehouses) {
     if (ib !== -1) return 1;
     return a.localeCompare(b);
   });
-  const result = labels.map((c) => ({ category: c, label: c, bales: baleSets.get(c).size }));
+  const result = labels.map((c) => ({
+    category: c, label: c, bales: baleSets.get(c).size,
+    yards: (totals.get(c) || {}).yards || 0, value: (totals.get(c) || {}).value || 0,
+  }));
   if (baleSets.has('')) {
-    result.push({ category: SUPPLY_OTHERS_CATEGORY, label: 'Others', bales: baleSets.get('').size });
+    result.push({
+      category: SUPPLY_OTHERS_CATEGORY, label: 'Others', bales: baleSets.get('').size,
+      yards: (totals.get('') || {}).yards || 0, value: (totals.get('') || {}).value || 0,
+    });
   }
   return result;
 }
@@ -5219,8 +5238,20 @@ async function showSupplyCategoryPicker(bot, chatId, userId, cats = null) {
   }
   rows.push([{ text: '⬅️ Back to containers', callback_data: 'srf_back:container' }]);
   const safeBatch = String(session.arrivalBatch).replace(/[*_`[\]]/g, '\\$&');
+  // CV-1 — container totals. Yards are quantity (safe for every role);
+  // ₦ value is PRICE-VIS-gated to admins, per category + container total.
+  const totBales = list.reduce((s, c) => s + (c.bales || 0), 0);
+  const totYards = list.reduce((s, c) => s + (c.yards || 0), 0);
+  const totValue = list.reduce((s, c) => s + (c.value || 0), 0);
+  let totalsBlock = `📊 Total: ${totBales} bls · ${fmtQty(totYards)} yds`;
+  if (auth.isAdmin(String(userId))) {
+    totalsBlock += ` · *${fmtMoney(totValue)}*`;
+    for (const c of list) {
+      totalsBlock += `\n  · ${c.label}: ${fmtQty(c.yards || 0)} yds · ${fmtMoney(c.value || 0)}`;
+    }
+  }
   await editOrSendAnchored(bot, chatId, userId,
-    `📦 *Supply Request*\n🚢 Container: *${safeBatch}*\n\nSelect category:`, {
+    `📦 *Supply Request*\n🚢 Container: *${safeBatch}*\n${totalsBlock}\n\nSelect category:`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });

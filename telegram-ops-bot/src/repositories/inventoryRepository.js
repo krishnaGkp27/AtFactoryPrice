@@ -375,9 +375,15 @@ async function getArrivalBatches(opts = {}) {
     if (scope.size && !scope.has(upper(r.warehouse))) continue;
     const label = str(r.arrivalBatch);
     const key = label || UNLABELLED_BATCH;
-    if (!byBatch.has(key)) byBatch.set(key, { batch: key, label: label || UNLABELLED_BATCH, bales: new Set(), thans: 0 });
+    if (!byBatch.has(key)) byBatch.set(key, { batch: key, label: label || UNLABELLED_BATCH, bales: new Set(), thans: 0, yards: 0, value: 0 });
     const e = byBatch.get(key);
     e.thans += 1;
+    // CV-1 — per-container totals for the owner's value display: yards is
+    // safe for everyone; `value` (selling price × yards) is rendered by
+    // ADMIN-gated callers only (PRICE-VIS). Zero-priced rows contribute 0
+    // until Update Price runs.
+    e.yards += r.yards || 0;
+    e.value += (r.pricePerYard || 0) * (r.yards || 0);
     // A physical bale is identified by its printed PackageNo (column A). Each
     // Inventory row is one than and carries a per-row bale_uid, so counting
     // bale_uid would count thans; count distinct PackageNo instead. Fall back
@@ -385,7 +391,7 @@ async function getArrivalBatches(opts = {}) {
     e.bales.add(String(r.packageNo).trim() || r.baleUid);
   }
   return Array.from(byBatch.values())
-    .map((e) => ({ batch: e.batch, label: e.label, bales: e.bales.size, thans: e.thans }))
+    .map((e) => ({ batch: e.batch, label: e.label, bales: e.bales.size, thans: e.thans, yards: e.yards, value: e.value }))
     .sort((a, b) => b.thans - a.thans || a.label.localeCompare(b.label));
 }
 
