@@ -548,6 +548,20 @@ async function handleCallback(bot, callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
 
+  // Never fail silently: the ACK above already cleared the spinner, so any
+  // unreported throw below looks like a dead button to the operator.
+  try {
+    return await _dispatch(bot, callbackQuery, data, userId, chatId, messageId);
+  } catch (err) {
+    logger.error(`[bulkReceiveFlow] ${data} failed: ${err.message}`);
+    try {
+      await bot.sendMessage(chatId, `🚫 That action failed (${err.message}). If this repeats, re-upload the file.`);
+    } catch (_) { /* chat unreachable */ }
+    return true;
+  }
+}
+
+async function _dispatch(bot, callbackQuery, data, userId, chatId, messageId) {
   if (data === 'br:cancel') {
     sessionStore.clear(userId);
     await editOrSend(bot, chatId, messageId, '❌ Cancelled.', {});
@@ -559,7 +573,15 @@ async function handleCallback(bot, callbackQuery) {
   }
 
   const session = sessionStore.get(userId);
-  if (!session || session.type !== 'bulk_receive_flow') return false;
+  if (!session || session.type !== 'bulk_receive_flow') {
+    // In-memory session lost (TTL, or the bot restarted/redeployed between
+    // the preview and this tap). Silence here cost the owner three upload
+    // attempts on 13-Jul — say it out loud instead.
+    await bot.sendMessage(chatId,
+      '⌛ This upload session has expired (or the bot restarted since the preview). ' +
+      'Nothing was submitted. Please re-upload the file and submit again.');
+    return true;
+  }
 
   if (data.startsWith('br:po:')) {
     session.po_id = data.slice('br:po:'.length);
