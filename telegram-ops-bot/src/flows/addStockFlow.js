@@ -68,7 +68,16 @@ async function start({ bot, chatId, userId }) {
       { parse_mode: 'Markdown' });
     return;
   }
-  await _renderWarehousePicker(bot, chatId, userId);
+  // Never fail silently — the mode tap was already ACKed by the controller,
+  // so an unreported throw here looks like a dead bot to the operator.
+  try {
+    await _renderWarehousePicker(bot, chatId, userId);
+  } catch (err) {
+    logger?.error?.(`[addStockFlow] start failed: ${err.message}`);
+    try {
+      await bot.sendMessage(chatId, `🚫 Add stock could not open (${err.message}). Type "Add stock" or tap the tile to retry.`);
+    } catch (_) { /* chat unreachable — nothing more we can do */ }
+  }
 }
 
 async function handleCallback(bot, callbackQuery) {
@@ -112,6 +121,24 @@ async function handleCallback(bot, callbackQuery) {
       return true;
     }
 
+    // Index-based pick (current cards). The name list was stored in the
+    // session by the picker; expiry means the indexes are meaningless.
+    if (data.startsWith('addstock:whi:')) {
+      const session = sessionStore.get(userId);
+      const idx = parseInt(data.slice('addstock:whi:'.length), 10);
+      const warehouse = session && Array.isArray(session.warehouses) ? session.warehouses[idx] : null;
+      if (!warehouse) {
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired. Type "Add stock" to restart.', show_alert: true });
+        return true;
+      }
+      _setSession(userId, { type: SESSION_AWAIT_FILE, warehouse });
+      await bot.answerCallbackQuery(callbackQuery.id, { text: `→ ${warehouse}` });
+      await _editToPlainText(bot, callbackQuery.message, `🏭 Target warehouse: *${warehouse}*`, { parse_mode: 'Markdown' });
+      await _promptForFile(bot, chatId, warehouse);
+      return true;
+    }
+
+    // Legacy name-based pick (cards sent before the whi: upgrade).
     if (data.startsWith('addstock:wh:')) {
       const warehouse = data.slice('addstock:wh:'.length);
       _setSession(userId, { type: SESSION_AWAIT_FILE, warehouse });
@@ -457,23 +484,32 @@ async function _renderWarehousePicker(bot, chatId, userId) {
     logger?.error?.(`[addStockFlow] getWarehouses failed: ${err.message}`);
   }
 
+  // Index-based callbacks: a warehouse name > 52 chars would push raw
+  // `addstock:wh:<name>` past Telegram's 64-byte callback_data cap, which
+  // rejects the ENTIRE message (silent dead picker). Indexes are immune;
+  // the name list rides in the session. Legacy wh:<name> taps still work.
   const rows = [];
   for (let i = 0; i < warehouses.length; i += 2) {
-    const chunk = warehouses.slice(i, i + 2).map((w) => ({
+    const chunk = warehouses.slice(i, i + 2).map((w, j) => ({
       text: `🏭 ${w}`,
-      callback_data: `addstock:wh:${w}`,
+      callback_data: `addstock:whi:${i + j}`,
     }));
     rows.push(chunk);
   }
   rows.push([{ text: '➕ New warehouse', callback_data: 'addstock:wh:NEW' }]);
   rows.push([{ text: '❌ Cancel',        callback_data: 'addstock:cancel' }]);
 
-  _setSession(userId, { type: SESSION_AWAIT_WAREHOUSE });
-  await bot.sendMessage(chatId,
-    '🏭 *Add stock — which warehouse?*\n\n' +
+  _setSession(userId, { type: SESSION_AWAIT_WAREHOUSE, warehouses });
+  const text = '🏭 *Add stock — which warehouse?*\n\n' +
     'Strict mode: this flow blocks duplicate bale # or design # in the chosen warehouse.\n' +
-    'For the lenient model (batch-aware via bale_uid) use *📤 Bulk Receive (CSV/XLSX)* from the Stock menu.',
-    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+    'For the lenient model (batch-aware via bale_uid) use *📤 Bulk Receive (CSV/XLSX)* from the Stock menu.';
+  try {
+    await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+  } catch (err) {
+    // Markdown or keyboard rejected — degrade to plain text, never silence.
+    logger?.warn?.(`[addStockFlow] picker send failed (${err.message}); retrying plain`);
+    await bot.sendMessage(chatId, text.replace(/\*/g, ''), { reply_markup: { inline_keyboard: rows } });
+  }
 }
 
 async function _promptForFile(bot, chatId, warehouse) {
