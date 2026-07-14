@@ -6127,18 +6127,23 @@ async function executeSale(bot, chatId, userId) {
     let totalYards = 0, totalThans = 0;
     const renderedPkgs = new Set();
     const phantomLines = [];
+    // ST-1 Part B — per-design yardage snapshot so the enrichment "Paid in
+    // full" chip can compute the sale total at approval time.
+    const yardsByDesign = {};
     for (const item of session.items) {
       const info = await inventoryService.getPackageSummary(item.packageNo);
       if (item.type === 'package' && info) {
         detailText += `  Bale ${item.packageNo}: ${info.design} ${info.shade}, ${info.availableThans} thans, ${fmtQty(info.availableYards)} yds (${info.warehouse})\n`;
         totalThans += info.availableThans;
         totalYards += info.availableYards;
+        yardsByDesign[info.design] = (yardsByDesign[info.design] || 0) + info.availableYards;
         renderedPkgs.add(item.packageNo);
       } else if (item.type === 'than' && info) {
         const t = info.thans?.find((th) => th.thanNo === item.thanNo);
         detailText += `  Bale ${item.packageNo} Than ${item.thanNo}: ${info.design} ${info.shade}, ${t ? fmtQty(t.yards) + ' yds' : '?'} (${info.warehouse})\n`;
         totalThans += 1;
         totalYards += t ? t.yards : 0;
+        if (t) yardsByDesign[info.design] = (yardsByDesign[info.design] || 0) + t.yards;
         renderedPkgs.add(item.packageNo);
       } else {
         phantomLines.push(`  ⚠️ Bale ${item.packageNo}${item.type === 'than' ? ` Than ${item.thanNo}` : ''}: UNRESOLVED (skipped)`);
@@ -6157,7 +6162,7 @@ async function executeSale(bot, chatId, userId) {
     const effectiveRiskReason = backdatedNote + (risk.reason || (isBackdated ? 'All backdated sales require admin approval.' : 'All sale operations require admin approval.'));
     await approvalQueueRepository.append({
       requestId, user: userId,
-      actionJSON: { action: 'sale_bundle', items: session.items, customer: session.collected.customer, salesDate: sDate, salesPerson: details.salesPerson, paymentMode: details.paymentMode, backdated: isBackdated, daysBack, ...saleDocInfo },
+      actionJSON: { action: 'sale_bundle', items: session.items, customer: session.collected.customer, salesDate: sDate, salesPerson: details.salesPerson, paymentMode: details.paymentMode, backdated: isBackdated, daysBack, totalYards, yardsByDesign, ...saleDocInfo },
       riskReason: effectiveRiskReason, status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
@@ -6401,7 +6406,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
   }
 
-  if (data.startsWith('approve:')) {
+  if (data.startsWith('enr:')) {
+    // ST-1 Part B — tappable sale-enrichment chips (rate / payment / amount).
+    await approvalEvents.handleEnrichmentCallback(bot, callbackQuery);
+  } else if (data.startsWith('approve:')) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'approve');
   } else if (data.startsWith('reject:')) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'reject');

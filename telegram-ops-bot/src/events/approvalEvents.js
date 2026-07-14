@@ -100,6 +100,42 @@ async function getDesignsForSale(item) {
   return [];
 }
 
+/**
+ * ST-1 Part B — the customer's LAST PAID rate for a design (owner-locked
+ * rate chip source). Reads recent sale rows from the Transactions sheet
+ * (they carry customerName + pricePerYard since the sale executors write
+ * them). Returns null when no prior matching sale exists.
+ */
+async function getLastPaidRate(customer, design) {
+  if (!customer || !design) return null;
+  try {
+    const transactionsRepository = require('../repositories/transactionsRepository');
+    const rows = await transactionsRepository.getLast(400);
+    const cust = String(customer).trim().toLowerCase();
+    const dgn = String(design).trim().toUpperCase();
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i];
+      if (!/^(sell|sale)/i.test(String(r.action || ''))) continue;
+      if (String(r.customerName || '').trim().toLowerCase() !== cust) continue;
+      if (String(r.design || '').trim().toUpperCase() !== dgn) continue;
+      const rate = parseFloat(r.pricePerYard);
+      if (Number.isFinite(rate) && rate > 0) return rate;
+    }
+  } catch (e) {
+    logger.warn(`getLastPaidRate(${customer}, ${design}) failed: ${e.message}`);
+  }
+  return null;
+}
+
+/** ST-1 Part B — registered banks (Settings BANK_LIST) for payment chips. */
+async function getRegisteredBanks() {
+  try {
+    const settingsRepository = require('../repositories/settingsRepository');
+    const all = await settingsRepository.getAll();
+    return (all.BANK_LIST || '').split(',').map((b) => b.trim()).filter(Boolean);
+  } catch (_) { return []; }
+}
+
 async function startApprovalEnrichment(bot, adminId, chatId, requestId, item, requestingUser) {
   const designs = await getDesignsForSale(item);
   const unit = DEFAULT_SALE_UNIT;
@@ -107,7 +143,149 @@ async function startApprovalEnrichment(bot, adminId, chatId, requestId, item, re
     requestId, step: 'rate', item, requestingUser, designs, unit,
   });
   const designList = designs.length ? designs.join(', ') : 'this item';
-  await bot.sendMessage(chatId, `📋 *Confirm sale details*\n\nDesign(s): ${designList}\nUnit: ${unit} (Naira per ${unit})\n\n*Step 1 — Rate:* Reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\``);
+
+  // ST-1 Part B — tappable rate step: single-design sales offer the
+  // customer's last-paid rate as a one-tap chip (owner decision); typing
+  // a rate still works exactly as before at every step.
+  const aj = (item && item.actionJSON) || {};
+  const rows = [];
+  if (designs.length === 1) {
+    const last = await getLastPaidRate(aj.customer, designs[0]);
+    if (last) {
+      const st = pendingEnrichment.get(adminId);
+      st.lastPaidRate = last;
+      rows.push([{ text: `₦${Number(last).toLocaleString('en-NG')}/yd — last paid by ${String(aj.customer || '').slice(0, 24)}`, callback_data: `enr:rate:v` }]);
+    }
+  }
+  rows.push([{ text: '✏️ Type a custom rate', callback_data: 'enr:rate:custom' }]);
+  await bot.sendMessage(chatId,
+    `📋 *Confirm sale details*\n\nDesign(s): ${designList}\nUnit: ${unit} (Naira per ${unit})\n\n*Step 1 — Rate:* tap below, or reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\``,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+/** ST-1 Part B — Step 2 with payment-mode chips (banks from Settings). */
+async function sendPaymentStep(bot, chatId, state) {
+  state.step = 'payment';
+  state.banks = await getRegisteredBanks();
+  const rows = [[{ text: '💵 Cash', callback_data: 'enr:pay:cash' }, { text: '🕐 Not yet paid', callback_data: 'enr:pay:nyp' }]];
+  for (let i = 0; i < state.banks.length; i += 2) {
+    const row = [{ text: `🏦 ${state.banks[i]}`, callback_data: `enr:pay:b:${i}` }];
+    if (state.banks[i + 1]) row.push({ text: `🏦 ${state.banks[i + 1]}`, callback_data: `enr:pay:b:${i + 1}` });
+    rows.push(row);
+  }
+  rows.push([{ text: '✏️ Type payment mode', callback_data: 'enr:pay:custom' }]);
+  try {
+    await bot.sendMessage(chatId, '*Step 2 — Payment mode:* tap below, or reply with one of:\n• Cash\n• Credit\n• Paid to [Bank]\n• Not yet paid',
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+  } catch (_) { /* best-effort */ }
+}
+
+/** ST-1 Part B — Step 3 with a computed "Paid in full" chip when possible. */
+async function sendAmountStep(bot, chatId, state) {
+  state.step = 'amount_paid';
+  const aj = (state.item && state.item.actionJSON) || {};
+  let full = 0;
+  const rates = state.ratePerUnitByDesign || {};
+  if (aj.yardsByDesign && Object.keys(aj.yardsByDesign).length) {
+    for (const [d, yds] of Object.entries(aj.yardsByDesign)) {
+      const r = rates[d] ?? rates[Object.keys(rates)[0]];
+      if (Number.isFinite(r) && r > 0 && Number.isFinite(yds)) full += r * yds;
+    }
+  } else if (Number.isFinite(parseFloat(aj.yards)) && state.designs.length === 1) {
+    const r = rates[state.designs[0]];
+    if (Number.isFinite(r)) full = r * parseFloat(aj.yards);
+  }
+  state.fullAmount = full > 0 ? Math.round(full) : null;
+  const rows = [];
+  if (state.fullAmount) {
+    rows.push([{ text: `✅ Paid in full — ₦${state.fullAmount.toLocaleString('en-NG')}`, callback_data: 'enr:amt:full' }]);
+  }
+  rows.push([{ text: '✏️ Type the amount', callback_data: 'enr:amt:custom' }]);
+  try {
+    await bot.sendMessage(chatId, '*Step 3 — Amount paid:* tap below, or reply with the amount received (Naira), e.g. 50000',
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+  } catch (_) { /* best-effort */ }
+}
+
+/**
+ * ST-1 Part B — enrichment chip taps (enr: namespace). Mirrors the typed
+ * transitions in handleEnrichmentMessage exactly; typing keeps working at
+ * every step. All acks are best-effort (stale-query hardening).
+ */
+async function handleEnrichmentCallback(bot, callbackQuery) {
+  const data = callbackQuery.data || '';
+  if (!data.startsWith('enr:')) return false;
+  const adminId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const ack = async (text) => { try { await bot.answerCallbackQuery(callbackQuery.id, text ? { text } : undefined); } catch (_) {} };
+  const state = pendingEnrichment.get(adminId);
+  if (!state) { await ack('No sale confirmation in progress.'); return true; }
+  const CURRENCY = config.currency || 'NGN';
+  const fmt = (n) => `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
+
+  const finish = async (amountPaid) => {
+    state.amountPaid = amountPaid;
+    state.step = null;
+    pendingEnrichment.delete(adminId);
+    const enrichment = {
+      unit: state.unit,
+      ratePerUnitByDesign: state.ratePerUnitByDesign,
+      paymentMode: state.paymentMode,
+      amountPaid,
+    };
+    await runApprovedSaleWithEnrichment(bot, chatId, adminId, state.requestId, state.item, state.requestingUser, enrichment, fmt);
+  };
+
+  if (data === 'enr:rate:v' && state.step === 'rate' && state.lastPaidRate) {
+    const rateByDesign = {};
+    state.designs.forEach((d) => { rateByDesign[d] = state.lastPaidRate; });
+    state.ratePerUnitByDesign = rateByDesign;
+    await ack(`Rate: ₦${state.lastPaidRate}/yd`);
+    await sendPaymentStep(bot, chatId, state);
+    return true;
+  }
+  if (data === 'enr:rate:custom') {
+    await ack();
+    try { await bot.sendMessage(chatId, 'Reply with the rate per yard, e.g. `1500` (or `44200:1500, 44201:1200`).', { parse_mode: 'Markdown' }); } catch (_) {}
+    return true;
+  }
+  if (data === 'enr:pay:cash' && state.step === 'payment') {
+    state.paymentMode = 'Cash';
+    await ack('Cash');
+    await sendAmountStep(bot, chatId, state);
+    return true;
+  }
+  if (data === 'enr:pay:nyp' && state.step === 'payment') {
+    state.paymentMode = 'Not yet paid';
+    await ack('Not yet paid');
+    await finish(0);
+    return true;
+  }
+  if (data.startsWith('enr:pay:b:') && state.step === 'payment') {
+    const bank = (state.banks || [])[parseInt(data.slice('enr:pay:b:'.length), 10)];
+    if (!bank) { await ack('Expired — pick again.'); return true; }
+    state.paymentMode = `Paid to ${bank}`;
+    await ack(bank);
+    await sendAmountStep(bot, chatId, state);
+    return true;
+  }
+  if (data === 'enr:pay:custom') {
+    await ack();
+    try { await bot.sendMessage(chatId, 'Reply with the payment mode (e.g. `Paid to GTBank`, `Credit`).', { parse_mode: 'Markdown' }); } catch (_) {}
+    return true;
+  }
+  if (data === 'enr:amt:full' && state.step === 'amount_paid' && state.fullAmount) {
+    await ack(`₦${state.fullAmount.toLocaleString('en-NG')}`);
+    await finish(state.fullAmount);
+    return true;
+  }
+  if (data === 'enr:amt:custom') {
+    await ack();
+    try { await bot.sendMessage(chatId, 'Reply with the amount received (Naira), e.g. 50000.'); } catch (_) {}
+    return true;
+  }
+  await ack();
+  return true;
 }
 
 async function handleEnrichmentMessage(bot, chatId, adminId, text) {
@@ -140,8 +318,8 @@ async function handleEnrichmentMessage(bot, chatId, adminId, text) {
       }
     }
     state.ratePerUnitByDesign = rateByDesign;
-    state.step = 'payment';
-    await bot.sendMessage(chatId, '*Step 2 — Payment mode:* Reply with one of:\n• Cash\n• Credit\n• Paid to [Bank] (e.g. Paid to GTBank)\n• Not yet paid');
+    // ST-1 Part B — typed rate advances to the same tappable payment step.
+    await sendPaymentStep(bot, chatId, state);
     return true;
   }
 
@@ -150,8 +328,8 @@ async function handleEnrichmentMessage(bot, chatId, adminId, text) {
     state.paymentMode = mode;
     const isPaid = /^paid\s+to\s+/i.test(mode) || /^cash$/i.test(mode);
     if (isPaid) {
-      state.step = 'amount_paid';
-      await bot.sendMessage(chatId, '*Step 3 — Amount paid:* Reply with the amount received (Naira), e.g. 50000');
+      // ST-1 Part B — typed mode advances to the same tappable amount step.
+      await sendAmountStep(bot, chatId, state);
       return true;
     }
     state.amountPaid = 0;
@@ -1348,10 +1526,12 @@ module.exports = {
   notifyAdminsApprovalRequest,
   handleApprovalCallback,
   handleEnrichmentMessage,
+  handleEnrichmentCallback,
   handleSupplyAssign,
   handleSupplyAccept,
   handleSupplyDecline,
   handleDispatchManagerCallback,
   handleReasonReply,
   notifyDispatchManagers,
+  _internals: { pendingEnrichment, getLastPaidRate },
 };

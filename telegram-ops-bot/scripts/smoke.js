@@ -7630,6 +7630,27 @@ function runS49() {
   } else fail('S49.5', 'photo checklist wiring missing');
 }
 
+function runS50() {
+  // ---- S50 ST-1 Part B: tappable sale enrichment (specs/ST-1_TAPPABLE_SALE.md) ----
+  // Source-text check (earlier sections stubModule() approvalEvents in the
+  // require cache, so a live require here would see the stub).
+  const evt50 = fs.readFileSync(path.join(__dirname, '../src/events/approvalEvents.js'), 'utf8');
+  if (evt50.includes('handleEnrichmentCallback,') && evt50.includes('function getLastPaidRate')) {
+    pass('S50.1 approvalEvents: enrichment chip handler + last-paid lookup exported');
+  } else fail('S50.1', 'enrichment chip exports missing');
+
+  const ctl50 = fs.readFileSync(path.join(__dirname, '../src/controllers/telegramController.js'), 'utf8');
+  if (ctl50.includes("data.startsWith('enr:')") && ctl50.includes('yardsByDesign')) {
+    pass('S50.2 controller: enr: route + per-design yardage snapshot in sale actionJSON');
+  } else fail('S50.2', 'enr: wiring missing');
+
+  const evtSrc50 = fs.readFileSync(path.join(__dirname, '../src/events/approvalEvents.js'), 'utf8');
+  if (evtSrc50.includes('enr:rate:v') && evtSrc50.includes('enr:pay:b:')
+    && evtSrc50.includes('enr:amt:full') && evtSrc50.includes('sendPaymentStep')) {
+    pass('S50.3 enrichment: rate/payment/amount chips wired, typed fallbacks intact');
+  } else fail('S50.3', 'chip steps missing');
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -7690,6 +7711,7 @@ function runS49() {
   try { runS47(); } catch (e) { fail('S47 unexpected error', e.message); }
   try { runS48(); } catch (e) { fail('S48 unexpected error', e.message); }
   try { runS49(); } catch (e) { fail('S49 unexpected error', e.message); }
+  try { runS50(); } catch (e) { fail('S50 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;
