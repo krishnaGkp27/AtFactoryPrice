@@ -260,6 +260,14 @@ const server = app.listen(PORT, async () => {
     // BKP-1 — daily snapshot of the master sheet into the backup Drive
     // folder (Settings-tunable hour/retention; admins DM'd on failure).
     require('./src/services/sheetBackup').start(bot);
+    // APR-1 — pending-approval reminder: re-sends admin cards for stale
+    // pending ApprovalQueue rows, covering approvals queued outside this
+    // process (Drive photo imports) and missed one-shot cards. First pass
+    // shortly after boot, then the service self-paces per
+    // APPROVAL_REMINDER_HOURS (Settings, 0 disables).
+    const approvalReminder = require('./src/services/approvalReminder');
+    setTimeout(() => approvalReminder.sweep(bot), 60 * 1000);
+    setInterval(() => approvalReminder.sweep(bot), 60 * 60 * 1000);
     // PG-1 — mirror Inventory → Postgres for parity checks (reads stay on
     // Sheets until PG-2). No-op when DATABASE_URL unset or mirror disabled.
     try { require('./src/services/inventoryMirrorService').start(); } catch (e) {

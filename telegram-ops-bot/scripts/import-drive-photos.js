@@ -85,15 +85,25 @@ async function sendCards(requestId, design, batch, shades, link) {
     { text: '❌ Reject', callback_data: `reject:${requestId}` },
   ]] };
   const text = `🔔 Approval required\n\nRequest ID: ${requestId}\nAction: catalogue photo — design ${design} · container ${batch}\nShades: ${shades.map((s) => `${s.number}:${s.name}`).join(', ')}\nPhoto: ${link}\nSource: Drive batch import\n\nUse buttons below to approve or reject.`;
+  let delivered = 0;
   for (const a of admins) {
+    // Per-admin best effort, but NEVER silent: a sandboxed/proxied machine
+    // can fail every send while the script otherwise reports success.
     try {
-      await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/sendMessage`, {
+      const resp = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/sendMessage`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: a.user_id, text, reply_markup: keyboard }),
       });
-    } catch (_) { /* per-admin best effort */ }
+      if (resp.ok) delivered += 1;
+      else console.error(`      card to ${a.user_id} failed: HTTP ${resp.status}`);
+    } catch (e) {
+      console.error(`      card to ${a.user_id} failed: ${e.message}`);
+    }
   }
-  return admins.length > 0;
+  if (!delivered && admins.length) {
+    console.error('      NO cards delivered — if this machine cannot reach api.telegram.org, the bot\'s APR-1 reminder will re-send them within the hour.');
+  }
+  return delivered > 0;
 }
 
 async function main() {
