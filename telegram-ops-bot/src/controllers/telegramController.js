@@ -5939,8 +5939,9 @@ async function startSaleFlow(bot, chatId, msg, userId, saleType, items, intent) 
     '🛒 Sales now run through *💰 Sell Bale* — tap your way through container, bales, customer, bank and date. No more typos.',
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '💰 Open Sell Bale', callback_data: 'act:sell_bale' }]] } });
   return;
-  // eslint-disable-next-line no-unreachable -- typed path retained below for
-  // a fast rollback (delete the redirect block above to restore it).
+  // Typed path retained below for a fast rollback (delete the redirect
+  // block above to restore it).
+  // eslint-disable-next-line no-unreachable
   salesFlow.startSession(userId, saleType, items, intent);
   const session = salesFlow.getSession(userId);
   const missing = salesFlow.getMissingFields(session.collected);
