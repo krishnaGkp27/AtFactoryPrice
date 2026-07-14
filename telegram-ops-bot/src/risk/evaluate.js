@@ -125,9 +125,13 @@ const ALWAYS_APPROVAL_ACTIONS = [
  * ALWAYS_APPROVAL_ACTIONS (unit test pins the invariant).
  */
 const DUAL_ADMIN_ACTIONS = [
-  // Inventory writes
-  'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell',
-  'sale_bundle', 'give_sample',
+  // Inventory writes.
+  // DUAL-1a (owner amendment 14-Jul-2026): the SALE family dropped back to
+  // single-admin approval — two-admin latency was blocking live sales
+  // (customers waiting on a 2nd admin). Sales stay in
+  // ALWAYS_APPROVAL_ACTIONS, so one non-requester admin still signs off.
+  // Returns/reverts stay dual (they roll back approved sales).
+  'give_sample',
   'return_than', 'return_package', 'revert_sale_bundle',
   'add', 'add_stock',
   'transfer_than', 'transfer_package', 'transfer_batch',

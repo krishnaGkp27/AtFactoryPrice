@@ -1,5 +1,12 @@
 # DUAL-1 — Two-admin approval for Inventory + Finance actions
 
+> **DUAL-1a amendment (owner, 14-Jul-2026):** the SALE family
+> (`sell_than sell_package sell_batch sell_mixed sell sale_bundle`) is
+> **single-admin** again — two-admin latency was blocking live sales.
+> Sales remain in `ALWAYS_APPROVAL_ACTIONS` (one non-requester admin
+> signs off every sale). Returns/reverts, samples, and everything else
+> below stay two-admin.
+
 Owner decisions locked 12-Jul-2026 (chat with owner):
 
 1. **Rule:** every in-scope action must involve **2 admins** before it executes.

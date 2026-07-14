@@ -82,9 +82,20 @@ test('evaluate() — always-approval actions', async (t) => {
 
   await t.test('employee needs TWO admins on dual actions (DUAL-1)', async () => {
     await asAdmin(false, async () => {
-      const r = await risk.evaluate({ action: 'sell_package', userId: '2' });
+      const r = await risk.evaluate({ action: 'receive_goods', userId: '2' });
       assert.equal(r.risk, 'approval_required');
       assert.match(r.reason, /require two-admin approval/i);
+    });
+  });
+
+  await t.test('DUAL-1a: sales are single-admin again (owner amendment 14-Jul)', async () => {
+    assert.ok(!risk.DUAL_ADMIN_ACTIONS.includes('sell_package'), 'sales must not be dual');
+    assert.ok(!risk.DUAL_ADMIN_ACTIONS.includes('sale_bundle'), 'bundle sale must not be dual');
+    assert.ok(risk.ALWAYS_APPROVAL_ACTIONS.includes('sell_package'), 'sales still always need ONE approval');
+    await asAdmin(false, async () => {
+      const r = await risk.evaluate({ action: 'sell_package', userId: '2' });
+      assert.equal(r.risk, 'approval_required');
+      assert.match(r.reason, /require admin approval/i);
     });
   });
 
