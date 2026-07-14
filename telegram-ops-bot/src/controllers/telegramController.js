@@ -6119,7 +6119,9 @@ async function executeSale(bot, chatId, userId) {
         if (cust.address) detailText += `\nAddress: ${cust.address}`;
       }
     } catch (_) {}
-    detailText += `\nSalesperson: ${details.salesPerson}\nPayment: ${details.paymentMode}\nDate: ${sDate}\n\nItems:\n`;
+    // Owner mandate 14-Jul: the approval card ALWAYS shows the canonical
+    // DD-MMM-YYYY date regardless of how the requester typed it.
+    detailText += `\nSalesperson: ${details.salesPerson}\nPayment: ${details.paymentMode}\nDate: ${fmtDate(sDate)}\n\nItems:\n`;
     // Fix A — count only items actually rendered; surface any phantom that
     // slipped through (defence-in-depth; Fix C should prevent this entirely).
     let totalYards = 0, totalThans = 0;

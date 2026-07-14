@@ -740,10 +740,14 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
         const prior = Array.isArray(item.actionJSON.approvals)
           ? item.actionJSON.approvals.map(String) : [];
         if (prior.includes(adminId)) {
-          await bot.answerCallbackQuery(callbackQuery.id, {
-            text: '🔏 You already gave the first approval — a different admin must give the second.',
-            show_alert: true,
-          });
+          // Ack is best-effort (stale queries throw) — the refusal must
+          // hold either way.
+          try {
+            await bot.answerCallbackQuery(callbackQuery.id, {
+              text: '🔏 You already gave the first approval — a different admin must give the second.',
+              show_alert: true,
+            });
+          } catch (_) { /* stale query */ }
           return;
         }
         const authMod = require('../middlewares/auth');
@@ -774,7 +778,10 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
               { requestId, action: actName, signedBy: adminId }, adminId);
           } catch (e) { logger.warn(`DUAL-1 first-signoff audit failed: ${e.message}`); }
           usageTracker.track({ userId: adminId, surface: 'approval', feature: actName, event: 'approval_signed', requestId });
-          await bot.answerCallbackQuery(callbackQuery.id, { text: `🔏 Approval 1 of ${required} recorded.` });
+          // From here on the signoff IS recorded (updateActionJSON above):
+          // every messaging step is best-effort — a stale ack or failed DM
+          // must never fall through to the execute path with one signoff.
+          try { await bot.answerCallbackQuery(callbackQuery.id, { text: `🔏 Approval 1 of ${required} recorded.` }); } catch (_) { /* stale query */ }
           // Freeze THIS admin's card; other admins' cards stay live so one
           // of them can give the second signoff.
           try {
@@ -783,10 +790,14 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
               message_id: callbackQuery.message.message_id,
             });
           } catch (_) { /* stale card; not fatal */ }
-          await bot.sendMessage(callbackQuery.message.chat.id,
-            `🔏 Request ${requestId}: your approval is recorded (1 of ${required}). Waiting for a second admin.`);
-          await notifyEmployee(bot, requestingUser, requestId,
-            `🔏 Your request (${requestId}) has 1 of ${required} admin approvals. One more to go.`);
+          try {
+            await bot.sendMessage(callbackQuery.message.chat.id,
+              `🔏 Request ${requestId}: your approval is recorded (1 of ${required}). Waiting for a second admin.`);
+          } catch (_) { /* chat unreachable */ }
+          try {
+            await notifyEmployee(bot, requestingUser, requestId,
+              `🔏 Your request (${requestId}) has 1 of ${required} admin approvals. One more to go.`);
+          } catch (_) { /* best-effort */ }
           // Ping the remaining env admins so the request doesn't stall
           // silently (sheet-cache admins still have live cards; best-effort).
           const others = config.access.adminIds
@@ -818,8 +829,13 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
 
   try {
     if (action === 'approve') {
-      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Approving...' });
-      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatIdCb, message_id: msgIdCb });
+      // Stale-ack hardening (live 14-Jul): when the bot was redeploying at
+      // tap time, Telegram redelivers the update later and the callback id
+      // has expired — answerCallbackQuery throws "query is too old". The
+      // tap is still a valid admin decision: cosmetic ack/edit failures
+      // must NEVER abort the approval.
+      try { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Approving...' }); } catch (_) { /* stale query */ }
+      try { await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatIdCb, message_id: msgIdCb }); } catch (_) { /* stale card */ }
       usageTracker.track({ userId: adminId, surface: 'approval', feature: _actFeature, event: 'approval_approved', requestId, durationMs: _decisionMs });
 
       const isNewCustomer = item && item.actionJSON && item.actionJSON.action === 'new_customer';
@@ -918,8 +934,9 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
         await notifyEmployee(bot, requestingUser, requestId, `⚠️ Your request (${requestId}) was approved but could not be completed. Admin has been notified. Please follow up.`);
       }
     } else {
-      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Rejecting...' });
-      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatIdCb, message_id: msgIdCb });
+      // Same stale-ack hardening as the approve branch above.
+      try { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Rejecting...' }); } catch (_) { /* stale query */ }
+      try { await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatIdCb, message_id: msgIdCb }); } catch (_) { /* stale card */ }
       usageTracker.track({ userId: adminId, surface: 'approval', feature: _actFeature, event: 'approval_rejected', requestId, durationMs: _decisionMs });
 
       const isNewCustReject = item && item.actionJSON && item.actionJSON.action === 'new_customer';
