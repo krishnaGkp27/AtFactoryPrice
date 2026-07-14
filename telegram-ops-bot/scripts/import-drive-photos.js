@@ -111,10 +111,13 @@ async function main() {
   for (const m of manifest) {
     const label = `${m.design} (${m.fileName})`;
     // Skip if a pending/active asset already exists for this (design, batch)
-    // — reruns must not double-queue approvals.
-    const dupe = existing.find((r) => r.design.toUpperCase() === String(m.design).toUpperCase()
-      && (r.arrivalBatch || '').toUpperCase() === String(m.arrivalBatch || '').toUpperCase()
-      && (r.status === 'pending' || r.status === 'active'));
+    // — reruns must not double-queue approvals. A pending row outranks an
+    // active one here so --cards-only re-sends the card for the queued
+    // version instead of skipping on the photo it is about to supersede.
+    const sameKey = (r) => r.design.toUpperCase() === String(m.design).toUpperCase()
+      && (r.arrivalBatch || '').toUpperCase() === String(m.arrivalBatch || '').toUpperCase();
+    const dupe = existing.find((r) => sameKey(r) && r.status === 'pending')
+      || existing.find((r) => sameKey(r) && r.status === 'active');
     if (dupe && !(REPLACE && dupe.status === 'active')) {
       if (CARDS_ONLY && dupe.status === 'pending' && dupe.approvalRequestId) {
         const sent = await sendCards(dupe.approvalRequestId, m.design, m.arrivalBatch, dupe.shades || m.shades, dupe.rawDriveUrl || m.fileName);
