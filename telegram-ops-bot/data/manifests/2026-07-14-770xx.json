@@ -1,0 +1,62 @@
+[
+  {
+    "design": "77014",
+    "fileName": "77014.jpg",
+    "folderId": "1O4HP0vImNjg_O88IX19VibTRUd2mXQBv",
+    "arrivalBatch": "",
+    "shades": [
+      { "number": 1, "name": "BLACK" },
+      { "number": 2, "name": "SAND BEIGE" },
+      { "number": 3, "name": "CREAM WHITE" },
+      { "number": 4, "name": "NAVY BLUE" },
+      { "number": 6, "name": "ICE GREY" },
+      { "number": 7, "name": "DARK BROWN" },
+      { "number": 8, "name": "BOTTLE GREEN" }
+    ]
+  },
+  {
+    "design": "77016",
+    "fileName": "77016.jpg",
+    "folderId": "1O4HP0vImNjg_O88IX19VibTRUd2mXQBv",
+    "arrivalBatch": "",
+    "shades": [
+      { "number": 1, "name": "NAVY BLACK" },
+      { "number": 2, "name": "STONE BEIGE" },
+      { "number": 3, "name": "CREAM WHITE" },
+      { "number": 4, "name": "SLATE GREY" },
+      { "number": 5, "name": "PALE GREEN" },
+      { "number": 6, "name": "DARK BROWN" },
+      { "number": 7, "name": "SKY BLUE" }
+    ]
+  },
+  {
+    "design": "77018",
+    "fileName": "77018.jpg",
+    "folderId": "1O4HP0vImNjg_O88IX19VibTRUd2mXQBv",
+    "arrivalBatch": "",
+    "shades": [
+      { "number": 1, "name": "BLACK" },
+      { "number": 2, "name": "KHAKI CAMEL" },
+      { "number": 3, "name": "WHITE" },
+      { "number": 4, "name": "BLUE GREY" },
+      { "number": 5, "name": "PALE GREEN" },
+      { "number": 6, "name": "DARK BROWN" },
+      { "number": 7, "name": "SKY BLUE" }
+    ]
+  },
+  {
+    "design": "77019",
+    "fileName": "77019.jpg",
+    "folderId": "1O4HP0vImNjg_O88IX19VibTRUd2mXQBv",
+    "arrivalBatch": "",
+    "shades": [
+      { "number": 1, "name": "DARK GREY" },
+      { "number": 2, "name": "KHAKI TAN" },
+      { "number": 3, "name": "WHITE" },
+      { "number": 4, "name": "DENIM BLUE" },
+      { "number": 6, "name": "PALE GREY GREEN" },
+      { "number": 7, "name": "GREY TAUPE" },
+      { "number": 8, "name": "SAGE GREEN" }
+    ]
+  }
+]

@@ -7,11 +7,19 @@
  * until a second admin approves each photo card.
  *
  * Usage:
- *   node scripts/import-drive-photos.js --manifest data/uploads/manifest.json [--dry-run]
+ *   node scripts/import-drive-photos.js --manifest data/uploads/manifest.json [--dry-run] [--replace]
  *
  * Manifest shape (one entry per photo):
  *   [{ "design": "44200", "driveFileId": "1abc…", "fileName": "44200.jpg",
  *      "arrivalBatch": "Jul26", "shades": [{"number":1,"name":"BLACK"}] }]
+ *
+ * `driveFileId` may be omitted when `folderId` + `fileName` are given: the
+ * script resolves the id at run time (newest match in the folder wins), so a
+ * manifest can be written BEFORE the photo lands in Drive — drop the file in,
+ * then run. `--replace` queues a fresh pending asset even when an active one
+ * exists for the same (design, arrivalBatch): on approval the executor marks
+ * the prior photo 'replaced' (designAssetsService.activateByApprovalRequestId),
+ * which is how a photo UPDATE ships without touching the sheet by hand.
  *
  * Requires .env: GOOGLE_SHEET_ID + GOOGLE_CREDENTIALS_JSON (the service
  * account must have Viewer on the Drive files — verified per file here).
@@ -40,6 +48,26 @@ const DRY = process.argv.includes('--dry-run');
 // --cards-only: send approval cards for ALREADY-queued pending imports
 // (used when the first run happened before TELEGRAM_TOKEN was set).
 const CARDS_ONLY = process.argv.includes('--cards-only');
+// --replace: an ACTIVE asset for the same (design, batch) no longer skips —
+// a new pending version is queued and supersedes the old photo on approval.
+const REPLACE = process.argv.includes('--replace');
+
+/** Resolve a manifest entry's Drive file id by (folderId, fileName) when
+ *  driveFileId is not pinned. Newest modified match wins, so re-uploading a
+ *  same-named photo automatically points the import at the fresh copy. */
+async function resolveDriveFileId(drive, m) {
+  if (m.driveFileId) return m.driveFileId;
+  if (!m.folderId || !m.fileName) return null;
+  const name = String(m.fileName).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const res = await drive.files.list({
+    q: `'${m.folderId}' in parents and name = '${name}' and trashed = false`,
+    fields: 'files(id, name, modifiedTime)',
+    orderBy: 'modifiedTime desc',
+    pageSize: 5,
+  });
+  const hit = (res.data.files || [])[0];
+  return hit ? hit.id : null;
+}
 
 async function sendCards(requestId, design, batch, shades, link) {
   if (!process.env.TELEGRAM_TOKEN) return false;
@@ -87,16 +115,29 @@ async function main() {
     const dupe = existing.find((r) => r.design.toUpperCase() === String(m.design).toUpperCase()
       && (r.arrivalBatch || '').toUpperCase() === String(m.arrivalBatch || '').toUpperCase()
       && (r.status === 'pending' || r.status === 'active'));
-    if (dupe) {
+    if (dupe && !(REPLACE && dupe.status === 'active')) {
       if (CARDS_ONLY && dupe.status === 'pending' && dupe.approvalRequestId) {
         const sent = await sendCards(dupe.approvalRequestId, m.design, m.arrivalBatch, dupe.shades || m.shades, dupe.rawDriveUrl || m.fileName);
         results.push(`CARD  ${label} — ${sent ? 'approval card re-sent' : 'no admins/token'} (${dupe.approvalRequestId})`);
       } else {
-        results.push(`SKIP  ${label} — ${dupe.status} asset already exists for ${m.arrivalBatch}`);
+        results.push(`SKIP  ${label} — ${dupe.status} asset already exists for ${m.arrivalBatch}${dupe.status === 'active' ? ' (use --replace to supersede)' : ''}`);
       }
       continue;
     }
     if (CARDS_ONLY) { results.push(`SKIP  ${label} — not yet queued (run without --cards-only first)`); continue; }
+    if (dupe) results.push(`REPL  ${label} — will supersede the active photo once approved`);
+
+    // Resolve by (folderId, fileName) when the manifest doesn't pin an id.
+    try {
+      m.driveFileId = await resolveDriveFileId(drive, m);
+    } catch (e) {
+      results.push(`FAIL  ${label} — Drive lookup by name failed (${e.message})`);
+      continue;
+    }
+    if (!m.driveFileId) {
+      results.push(`FAIL  ${label} — no Drive file named ${m.fileName} in the photos folder yet (upload it, then re-run)`);
+      continue;
+    }
 
     // Service-account visibility check (proves the folder share worked).
     let meta;
