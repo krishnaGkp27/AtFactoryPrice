@@ -62,7 +62,11 @@ async function sweep(bot, { now = Date.now() } = {}) {
         const last = _remindedAt.get(q.requestId) || 0;
         return now - last >= windowMs;
       })
-      .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+      // Newest first: recent requests are the actionable ones. A months-old
+      // pending row is almost certainly abandoned — surfacing 10 of those
+      // (prod has a 40+ backlog) would bury the card someone is waiting on.
+      // Backlog expiry is a separate owner decision (approval semantics).
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
       .slice(0, MAX_CARDS_PER_SWEEP);
 
     let sent = 0;

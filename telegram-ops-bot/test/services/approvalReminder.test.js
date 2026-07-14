@@ -75,13 +75,13 @@ test('APPROVAL_REMINDER_HOURS=0 disables the sweep entirely', async () => {
   settings = { APPROVAL_REMINDER_HOURS: 6 };
 });
 
-test('cap: at most 10 cards per sweep, oldest first', async () => {
+test('cap: at most 10 cards per sweep, newest first', async () => {
   reminder._resetForTests();
   pendingRows = Array.from({ length: 14 }, (_, i) =>
     row(`req-${String(i).padStart(2, '0')}`, new Date(NOW - (i + 1) * 3600e3).toISOString(), { action: 'transfer_stock' }));
   const bot = createFakeBot();
   const sent = await reminder.sweep(bot, { now: NOW });
   assert.equal(sent, 10, 'capped at 10');
-  assert.match(bot.allText(), /req\-13/, 'oldest request included');
-  assert.ok(!/req\-00/.test(bot.allText()), 'newest of the backlog deferred to the next window');
+  assert.match(bot.allText(), /req\-00/, 'newest request included');
+  assert.ok(!/req\-13/.test(bot.allText()), 'oldest of the backlog waits — likely abandoned');
 });
