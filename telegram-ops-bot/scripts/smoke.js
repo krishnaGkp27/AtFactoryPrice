@@ -7651,6 +7651,32 @@ function runS50() {
   } else fail('S50.3', 'chip steps missing');
 }
 
+function runS51() {
+  // ---- S51 ST-1 Part A: tappable Sell Bale flow (specs/ST-1_TAPPABLE_SALE.md) ----
+  const sbSrc = fs.readFileSync(path.join(__dirname, '../src/flows/sellBaleFlow.js'), 'utf8');
+  if (sbSrc.includes("'sell_bale_flow'") && sbSrc.includes('salesFlow.startSession')
+    && sbSrc.includes('awaitingDocument = true')) {
+    pass('S51.1 sellBaleFlow: chip flow hands off into the proven sale pipeline');
+  } else fail('S51.1', 'flow/handoff missing');
+
+  const ctl51 = fs.readFileSync(path.join(__dirname, '../src/controllers/telegramController.js'), 'utf8');
+  if (ctl51.includes("prefixes: ['sb:']") && ctl51.includes("case 'sell_bale':")
+    && ctl51.includes("type === 'sell_bale_flow'")) {
+    pass('S51.2 controller: sb: route + act:sell_bale case + customer-search text hook');
+  } else fail('S51.2', 'controller wiring missing');
+
+  if (ctl51.includes('Sales now run through')) {
+    pass('S51.3 migration: typed sale commands redirect to 💰 Sell Bale (TRF-5 pattern)');
+  } else fail('S51.3', 'typed-sale redirect missing');
+
+  delete require.cache[require.resolve('../src/services/activityRegistry')];
+  const reg51 = require('../src/services/activityRegistry');
+  const tile = reg51.getAll().find((a) => a.code === 'sell_bale');
+  if (tile && tile.callback === 'act:sell_bale') {
+    pass('S51.4 activityRegistry: Sell Bale tile registered');
+  } else fail('S51.4', 'tile missing');
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -7712,6 +7738,7 @@ function runS50() {
   try { runS48(); } catch (e) { fail('S48 unexpected error', e.message); }
   try { runS49(); } catch (e) { fail('S49 unexpected error', e.message); }
   try { runS50(); } catch (e) { fail('S50 unexpected error', e.message); }
+  try { runS51(); } catch (e) { fail('S51 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

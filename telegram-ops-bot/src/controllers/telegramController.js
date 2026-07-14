@@ -3330,6 +3330,11 @@ async function handleMessage(bot, msg) {
       const handled = await bulkReceiveFlow.handleText(bot, msg);
       if (handled) return;
     }
+    // ST-1 — typing during the Sell Bale customer step = search filter.
+    if (brSession && brSession.type === 'sell_bale_flow') {
+      const handled = await require('../flows/sellBaleFlow').handleText(bot, msg);
+      if (handled) return;
+    }
   }
 
   // WH-C1 — standalone Add Warehouse flow accepts the new warehouse
@@ -5927,6 +5932,15 @@ async function showUserManagement(bot, chatId) {
  * Start a sale flow: collect all required fields, then show summary for confirmation.
  */
 async function startSaleFlow(bot, chatId, msg, userId, saleType, items, intent) {
+  // ST-1 migration (owner mandate 14-Jul): typed sale commands now route
+  // into the tappable 💰 Sell Bale flow — chips for customer, salesperson,
+  // bank and date eliminate the typo class entirely (TRF-5 pattern).
+  await bot.sendMessage(chatId,
+    '🛒 Sales now run through *💰 Sell Bale* — tap your way through container, bales, customer, bank and date. No more typos.',
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '💰 Open Sell Bale', callback_data: 'act:sell_bale' }]] } });
+  return;
+  // eslint-disable-next-line no-unreachable -- typed path retained below for
+  // a fast rollback (delete the redirect block above to restore it).
   salesFlow.startSession(userId, saleType, items, intent);
   const session = salesFlow.getSession(userId);
   const missing = salesFlow.getMissingFields(session.collected);
@@ -6256,6 +6270,8 @@ async function startOrderFlow(bot, chatId, userId) {
 // bulkrcv:mode:, pu:, the approval chain) stay in the dispatcher body.
 // Register new flows HERE (one line) — see CLAUDE.md "Feature recipe".
 const FLOW_CALLBACK_ROUTES = [
+  // ST-1 — tappable Sell Bale flow.
+  { prefixes: ['sb:'], handle: (bot, cq) => require('../flows/sellBaleFlow').handleCallback(bot, cq) },
   // Catalog hub: design assets / browse / search / catalog + CMS flows.
   { prefixes: ['dap:', 'dam:'], handle: (bot, cq) => handleDesignAssetCallback(bot, cq) },
   { prefixes: ['dav:'], handle: (bot, cq) => handleDesignAssetViewCallback(bot, cq) },
@@ -8687,6 +8703,14 @@ async function handleCallbackQuery(bot, callbackQuery) {
         // shows the status panel.
         const dailyBranchOpsFlow = require('../flows/dailyBranchOpsFlow');
         await dailyBranchOpsFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'sell_bale': {
+        // ST-1 — fully tappable sale (container → bales → customer →
+        // salesperson → bank → date), typo-free by construction. Hands off
+        // to the proven sale pipeline (bill photo → approval → enrichment).
+        const sellBaleFlow = require('../flows/sellBaleFlow');
+        await sellBaleFlow.start(bot, chatId, uid);
         break;
       }
       case 'bundle_sale': {

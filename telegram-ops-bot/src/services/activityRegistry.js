@@ -56,6 +56,10 @@ const ACTIVITIES = [
   // picker. Reuses the existing `sale_bundle` action so the approval
   // pipeline, ledger emission, and audit log keep working unchanged.
   { code: 'bundle_sale',           label: 'Sell Bundles / Than',       icon: '🧵', callback: 'act:bundle_sale',        hub: 'orders' },
+  // ST-1 — fully tappable bale sale: container → warehouse → design →
+  // bale cart → customer/salesperson/bank/date chips. Typed sale commands
+  // redirect here (owner mandate 14-Jul).
+  { code: 'sell_bale',             label: 'Sell Bale',                 icon: '💰', callback: 'act:sell_bale',          hub: 'orders' },
 
   // ── Sales & Marketing › Marketers (catalog consignment) ──────────────
   { code: 'register_marketer',     label: 'Register Marketer',         icon: '🧑‍💼', callback: 'act:register_marketer',    hub: 'marketers' },
