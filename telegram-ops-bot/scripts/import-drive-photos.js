@@ -43,7 +43,15 @@ const CARDS_ONLY = process.argv.includes('--cards-only');
 
 async function sendCards(requestId, design, batch, shades, link) {
   if (!process.env.TELEGRAM_TOKEN) return false;
-  const admins = (await usersRepository.getAll()).filter((u) => (u.role || '').toLowerCase() === 'admin' && (u.status || 'active').toLowerCase() === 'active');
+  // Recipients = env ADMIN_IDS ∪ sheet admins ∪ --to override — matching how
+  // the bot itself resolves admins (env-first; production keeps ADMIN_IDS
+  // in Railway variables, often with no admin rows in the Users sheet).
+  const sheetAdmins = (await usersRepository.getAll())
+    .filter((u) => (u.role || '').toLowerCase() === 'admin' && (u.status || 'active').toLowerCase() === 'active')
+    .map((u) => String(u.user_id));
+  const envAdmins = String(process.env.ADMIN_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const toArg = String(arg('to', '')).split(',').map((s) => s.trim()).filter(Boolean);
+  const admins = [...new Set([...envAdmins, ...sheetAdmins, ...toArg])].map((id) => ({ user_id: id }));
   const keyboard = { inline_keyboard: [[
     { text: '✅ Approve', callback_data: `approve:${requestId}` },
     { text: '❌ Reject', callback_data: `reject:${requestId}` },
