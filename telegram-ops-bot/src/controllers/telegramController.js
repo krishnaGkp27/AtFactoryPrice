@@ -16,6 +16,7 @@ const accountingService = require('../services/accountingService');
 const salesFlow = require('../services/salesFlowService');
 const sessionStore = require('../utils/sessionStore');
 const { buildShadeNameMap, buildShadeLabel, layoutShadeRows, buildSelectAllLines, formatShadeRef } = require('../utils/shadeButtons');
+const cartFormat = require('../utils/cartFormat');
 const settingsRepo = require('../repositories/settingsRepository');
 const usersRepository = require('../repositories/usersRepository');
 const inventoryRepository = require('../repositories/inventoryRepository');
@@ -5681,12 +5682,11 @@ async function buildCartText(session) {
   if (!cart.length) return '🛒 Cart is empty.';
   const labels = await productTypesRepo.getLabels(session.productType || 'fabric');
   const cShort = labels.container_short;
-  const lines = cart.map((c) => {
+  // SRF-UX: shades of one design fold into a single line.
+  const lines = cartFormat.formatCartLines(cart.map((c) => {
     const m = getMaterialInfo(c.design);
-    const shadeRef = formatShadeRef(c.shade, c.shadeName);
-    // DCAT-1: omit the [category] chip when the design is unmapped.
-    return `${m.icon} ${c.design}${m.name ? ` [${m.name}]` : ''} │ Shade: ${shadeRef} │ ×${c.quantity} ${cShort}`;
-  });
+    return { icon: m.icon, design: c.design, name: m.name, shadeRef: formatShadeRef(c.shade, c.shadeName), quantity: c.quantity };
+  }), cShort);
   const total = cart.reduce((s, c) => s + c.quantity, 0);
   const containerPlural = productTypesRepo.pluralize(labels.container_label, total).toLowerCase();
   return `🛒 *Supply Cart* — 🏭 ${session.warehouse}\n━━━━━━━━━━━━━━━━━━━━━━\n${lines.join('\n')}\n━━━━━━━━━━━━━━━━━━━━━━\n📦 Total: ${total} ${containerPlural}`;
@@ -9529,11 +9529,11 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const userLabel = await getRequesterDisplayName(uid, null);
     const labels = await productTypesRepo.getLabels(session.productType || 'fabric');
     const cShort = labels.container_short;
-    const cartLines = cart.map((c) => {
+    // SRF-UX: shades of one design fold into a single line.
+    const cartLines = cartFormat.formatCartLines(cart.map((c) => {
       const m = getMaterialInfo(c.design);
-      // DCAT-1: omit the [category] chip when the design is unmapped.
-      return `${m.icon} ${c.design}${m.name ? ` [${m.name}]` : ''} │ Shade: ${formatShadeRef(c.shade, c.shadeName)} │ ×${c.quantity} ${cShort}`;
-    }).join('\n');
+      return { icon: m.icon, design: c.design, name: m.name, shadeRef: formatShadeRef(c.shade, c.shadeName), quantity: c.quantity };
+    }), cShort).join('\n');
     const totalPkgs = cart.reduce((s, c) => s + c.quantity, 0);
     const containerPlural = productTypesRepo.pluralize(labels.container_label, totalPkgs).toLowerCase();
 
