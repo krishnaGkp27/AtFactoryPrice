@@ -113,24 +113,12 @@ bot-API + pasted BOT_API_KEY):
 - Same key-paste v1 auth as ANL-1; Firebase-Functions proxy stays the
   shared hardening backlog item.
 
-## 8. Telegram as-you-type search (owner addition, 16-Jul) — FEASIBLE
+## 8. ~~Telegram as-you-type search~~ — MOVED (owner correction 16-Jul)
 
-Telegram bots CANNOT see keystrokes in normal chat (send-partial → results,
-as in TRF-7 bale search, is the in-flow fallback and stays). But Telegram
-**inline mode** delivers exactly as-you-type suggestions:
-- Owner enables inline mode once in BotFather (`/setinline` on the bot,
-  ~1 minute — the only owner action).
-- Typing `@<bot> cash…` in the bot chat fires `inline_query` updates PER
-  KEYSTROKE; the bot answers with live-filtered suggestion rows (people +
-  designs/categories, ranked prefix-first) that update as the user types.
-- Tapping a suggestion deep-links into the person's `cn:` card in the bot.
-- SECURITY: inline queries arrive from ANY Telegram user who mentions the
-  bot — the inline handler hard-gates on the staff allow-list (same
-  auth.isAllowed as messages; per locked decision 1, browse scope applies)
-  and answers strangers with an empty result set. Results are also marked
-  `cache_time: 0, is_personal: true`.
-- Plumbing: server.js webhook dispatch gains an `update.inline_query`
-  branch → `contactNetworkFlow.handleInlineQuery` (answerInlineQuery).
+The as-you-type search is NOT part of the contact network. It is a
+standalone INVENTORY search (bale numbers, design numbers, …) and lives in
+its own spec: **specs/SRCH-1_INLINE_INVENTORY_SEARCH.md**. The contact
+flow keeps only its ordinary in-flow browse + typed name search (§3).
 
 ## 9. Build order
 
@@ -138,6 +126,6 @@ as in TRF-7 bale search, is the in-flow fallback and stays). But Telegram
    contactsRepository.update + appended columns, ContactLinks sheet + repo,
    contactGraphService (cycle-safe), getCustomersByCategory, tests.
 2. **CNET-1b bot UX**: contactNetworkFlow (cn:) + tile + sendContact cards
-   + add-person-with-approval (`add_contact_link`), inline-mode search.
+   + add-person-with-approval (`add_contact_link`).
 3. **CNET-1c dashboard**: /api/contacts/* endpoints + contacts.html page +
    `firebase deploy` handoff to owner.
