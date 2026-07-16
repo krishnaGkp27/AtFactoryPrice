@@ -1,8 +1,78 @@
-# INV-1 — Customer invoices: bot-issued, live web copy, WhatsApp-ready PDF (DRAFT)
+# INV-1 — Customer invoices: bot-issued, live web copy, WhatsApp-ready PDF
 
-Status: **draft — owner to lock the decisions in §6.**
-Requested 14-Jul-2026. Grounded in a 4-reader code audit (HTTP surface, sale
-data model, existing specs, website/PDF/WhatsApp assets) — findings in §7.
+Status: **decisions LOCKED 14-Jul-2026 (owner)** — see §6. Template layout
+pending owner's pick from the two mockups; numbering scheme pending pick
+from §6a. Grounded in a 4-reader code audit — findings in §7.
+
+## 0. Locked decisions (owner, 14-Jul-2026)
+
+1. Invoice on **approved sales only** (sell_* family + sale_bundle). No
+   supply-request invoicing.
+2. Numbering: owner asked for elaboration → §6a; recommendation
+   `INV-2026-0001` (yearly series, sheet-derived, restart-safe).
+3. **No VAT for now** — vat_rate column ships defaulted 0 and the line is
+   hidden whenever 0; flipping a Settings row enables 7.5% later, no deploy.
+4. Design: **simple and elegant; owner confirms template from mockups
+   BEFORE implementation** (two options delivered 14-Jul).
+5. **OTP-based login required** for the web copy — see §2a.
+6. **WhatsApp Meta API prioritised NOW**, with minimal owner-side
+   configuration — see §4a checklist (3 values to paste into Railway).
+7. Backdated sales show sale date + issue date separately — OK.
+8. Domain: **invoices.atfactoryprice.live** (owner moved the brand domain
+   from atfactoryprice.com to atfactoryprice.live).
+
+## 2a. OTP access model (replaces V1 token-only access)
+
+Link stays unguessable (`/i/<token>`), but opening it shows a lock screen:
+- "Invoice INV-2026-0001 for Alabi Johnson — tap to receive a 6-digit code
+  on WhatsApp •••‑••34" (masked number from the Customers sheet row).
+- Code sent via the Meta WhatsApp adapter (same rail as invoice delivery;
+  authentication-category template). 10-min expiry, 3 sends/hour/invoice,
+  5 verify attempts; HMAC-signed stateless codes so bot restarts don't
+  invalidate flows. Success sets a signed cookie valid 7 days per invoice.
+- The PDF download route sits behind the same cookie.
+- Escape hatches: Settings `INVOICE_OTP_REQUIRED` (default 1) global
+  kill-switch, and per-invoice `otp_exempt` flag an admin can set from the
+  bot when a customer's phone in the Customers sheet is wrong (data-hygiene
+  dependency: OTP goes to the registered phone ONLY).
+
+## 4a. Meta WhatsApp onboarding — owner's minimal checklist
+
+Owner does once (~20 min, needs Facebook account + the business phone):
+1. business.facebook.com → create/confirm the Business Portfolio.
+2. developers.facebook.com → Create App → type "Business" → add the
+   WhatsApp product. Meta gives a test number instantly; attach the real
+   number when ready (number must NOT be simultaneously registered on the
+   WhatsApp mobile app — use a separate SIM/number for the business sender).
+3. From the app's WhatsApp → API Setup page, copy THREE values into
+   Railway → AtFactoryPrice service → Variables:
+   `WHATSAPP_PROVIDER=metaWhatsApp`, `WHATSAPP_TOKEN=<permanent token>`,
+   `WHATSAPP_PHONE_NUMBER_ID=<from the same page>`.
+   (Permanent token: Business Settings → System Users → generate with
+   whatsapp_business_messaging permission — the API Setup page token
+   expires in 24 h.)
+4. Tell me — I take it from there (template registration for the invoice
+   message + OTP template, sandbox test to the owner's own number first).
+
+Bot-side work I do (no owner action): fix the provider-selector env bug
+(MESSAGING_PROVIDER vs WHATSAPP_PROVIDER), template definitions, wire
+invoice + OTP sends through src/integrations/messaging with the
+WhatsAppOutbound audit trail.
+
+## 6a. Numbering — elaboration (owner to pick A/B/C)
+
+The number is minted from the Invoices sheet itself (MAX existing + 1 under
+the SEC-P2 mutex) — restart-safe, gap-free, voided invoices keep their
+number (a void is recorded, never reused — Nigerian audit convention).
+
+| Option | Looks like | Resets | Notes |
+|---|---|---|---|
+| **A (recommended)** | `INV-2026-0001` | yearly | year visible at a glance; 4 digits ≈ 9,999 invoices/yr |
+| B | `INV-000123` | never | one continuous series forever; simplest |
+| C | `INV-2607-042` | monthly | month visible (YYMM); shorter counter |
+
+Also choose the starting number (e.g. 0001, or continue an existing paper
+series such as 0501).
 
 ## 1. Owner's vision (as understood)
 
@@ -18,7 +88,7 @@ Every supply/sale the bot executes (and posts to the ledger) produces an
 **Serve both surfaces from the bot's own Railway app** (Express already
 public at `https://<app>.up.railway.app`, healthchecked, CORS'd):
 
-- `GET /i/<token>` — mobile-first HTML invoice. Status strip (UNPAID /
+- `GET /i/<token>` — mobile-first HTML invoice (behind OTP, §2a). Status strip (UNPAID /
   PART-PAID ₦x of ₦y / PAID), line items, payments received so far, balance.
   Recomputed per request → this is the "dynamic copy".
 - `GET /i/<token>.pdf` — branded PDF (snapshot at issue; regenerated on
@@ -26,7 +96,7 @@ public at `https://<app>.up.railway.app`, healthchecked, CORS'd):
 - Token = fresh unguessable id per invoice (not the internal requestId), so a
   leaked link can be voided/reissued. No customer login in V1 — the link is
   the access (bank-e-receipt model). Custom domain
-  `invoices.atfactoryprice.com` → Railway CNAME later (cosmetic, Phase c).
+  `invoices.atfactoryprice.live` → Railway CNAME later (cosmetic, Phase c).
 
 Why not the Firebase website? It is a static PWA + Firestore with 38 Cloud
 Functions for MLM/loyalty — no PDF capability, separate identity system, and
