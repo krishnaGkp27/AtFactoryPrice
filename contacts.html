@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Contact Network — AtFactoryPrice Admin</title>
+<style>
+  :root { --navy:#0e2a47; --blue:#1d6fa5; --teal:#2e9e77; --gold:#c9a24b; --bg:#f4f7fa; --line:#dfe6ee; --ink:#1a2332; --mut:#6b7a8c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"Segoe UI",Arial,sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:linear-gradient(135deg,var(--navy),var(--blue)); color:#fff; padding:16px 24px;
+           display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+  header h1 { margin:0; font-size:18px; }
+  header .sub { font-size:12px; opacity:.85; }
+  .wrap { max-width:900px; margin:0 auto; padding:18px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:14px; }
+  .card h2 { margin:0 0 10px 0; font-size:15px; color:var(--navy); }
+  label { display:block; font-size:12px; color:var(--mut); margin:8px 0 3px; }
+  input { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:6px; font-size:14px; }
+  button { background:var(--blue); color:#fff; border:0; border-radius:6px; padding:9px 16px; font-size:14px; cursor:pointer; margin-top:10px; }
+  button.ghost { background:#e8eef4; color:var(--navy); }
+  .err { color:#a3232a; font-size:13px; margin-top:8px; }
+  .hint { color:var(--mut); font-size:12px; }
+  #app { display:none; }
+  #search { font-size:16px; padding:12px 14px; }
+  details { border:1px solid var(--line); border-radius:8px; background:#fff; margin-bottom:8px; }
+  details > summary { cursor:pointer; padding:10px 14px; font-weight:600; list-style:none; display:flex; justify-content:space-between; }
+  details > summary::after { content:'▸'; color:var(--mut); }
+  details[open] > summary::after { content:'▾'; }
+  details .inner { padding:4px 14px 10px; }
+  details.cat > summary { background:#f0f4f8; border-radius:8px 8px 0 0; color:var(--navy); }
+  .person { border-left:3px solid var(--gold); margin:6px 0 6px 4px; padding:7px 10px; background:#fcfbf8; border-radius:0 8px 8px 0; }
+  .person .nm { font-weight:600; }
+  .person .role { color:var(--mut); font-size:12px; margin-left:6px; }
+  .person .links { margin-top:3px; font-size:13px; }
+  .person .links a { color:var(--blue); text-decoration:none; margin-right:14px; }
+  .person .sub { margin-left:16px; }
+  .badge { font-size:11px; color:var(--mut); }
+  .noresult { color:var(--mut); padding:14px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>📇 Contact Network</h1>
+    <div class="sub">Buyers by product · their people · live from the ops bot (CNET-1c) · admin only</div>
+  </div>
+  <div><button class="ghost" id="setupBtn" style="display:none">API setup</button></div>
+</header>
+<div class="wrap">
+
+  <div class="card" id="setup">
+    <h2>Connect to the bot</h2>
+    <label>Bot API base URL</label>
+    <input id="apiBase" placeholder="https://your-app.up.railway.app">
+    <label>API key (BOT_API_KEY)</label>
+    <input id="apiKey" type="password" placeholder="paste the key">
+    <button id="loadBtn">Load network</button>
+    <div class="err" id="setupErr"></div>
+    <div class="hint">Stored only in this browser (localStorage). Same key as the analytics dashboard.</div>
+  </div>
+
+  <div id="app">
+    <div class="card">
+      <input id="search" placeholder="🔎 Search any name, phone or note — filters as you type">
+      <div class="hint" id="meta"></div>
+    </div>
+    <div id="results"></div>
+    <div id="tree"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var DATA = null, SUBS = {}, NODE = {};
+  var $ = function (id) { return document.getElementById(id); };
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); };
+
+  $('apiBase').value = localStorage.getItem('afp_api_base') || '';
+  $('apiKey').value = localStorage.getItem('afp_api_key') || '';
+  $('loadBtn').onclick = load;
+  $('setupBtn').onclick = function () { $('setup').style.display = 'block'; $('app').style.display = 'none'; };
+  $('search').oninput = function () { renderSearch(this.value); };
+  if ($('apiBase').value && $('apiKey').value) load();
+
+  function load() {
+    var base = $('apiBase').value.trim().replace(/\/$/, '');
+    var key = $('apiKey').value.trim();
+    if (!base || !key) { $('setupErr').textContent = 'Both fields are required.'; return; }
+    $('setupErr').textContent = '';
+    fetch(base + '/api/contacts/graph', { headers: { 'X-API-Key': key } })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); })
+      .then(function (j) {
+        localStorage.setItem('afp_api_base', base);
+        localStorage.setItem('afp_api_key', key);
+        DATA = j; index(); renderTree();
+        $('setup').style.display = 'none'; $('app').style.display = 'block'; $('setupBtn').style.display = 'inline-block';
+        $('meta').textContent = j.nodes.length + ' people · ' + j.edges.length + ' links · ' + Object.keys(j.categories).length + ' product groups · loaded ' + new Date(j.generatedAt).toLocaleString();
+      })
+      .catch(function (e) { $('setupErr').textContent = 'Could not load: ' + e.message; });
+  }
+
+  function index() {
+    SUBS = {}; NODE = {};
+    DATA.nodes.forEach(function (n) { NODE[n.id] = n; });
+    DATA.edges.forEach(function (e) { (SUBS[e.to] = SUBS[e.to] || []).push(e.from); });
+  }
+
+  function personHtml(n, depth) {
+    if (!n || depth > 6) return '';
+    var kids = (SUBS[n.id] || []).map(function (id) { return personHtml(NODE[id], depth + 1); }).join('');
+    var links = '';
+    if (n.phone) {
+      var digits = String(n.phone).replace(/[^\d]/g, '');
+      links += '<a href="tel:' + esc(n.phone) + '">📞 ' + esc(n.phone) + '</a>';
+      if (digits.length >= 10) links += '<a target="_blank" rel="noopener" href="https://wa.me/' + digits + '">💬 WhatsApp</a>';
+    } else { links += '<span class="badge">no number on file — fill it from the bot</span>'; }
+    return '<div class="person"><span class="nm">' + esc(n.name) + '</span>'
+      + (n.notes ? '<span class="role">' + esc(n.notes) + '</span>' : (n.type && n.type !== 'other' ? '<span class="role">' + esc(n.type) + '</span>' : ''))
+      + '<div class="links">' + links + '</div>'
+      + (kids ? '<div class="sub">' + kids + '</div>' : '')
+      + '</div>';
+  }
+
+  function nodeForBuyer(name) {
+    var lower = String(name).toLowerCase();
+    return DATA.nodes.find(function (n) { return n.name.toLowerCase() === lower; }) || null;
+  }
+
+  function renderTree() {
+    var html = '';
+    Object.keys(DATA.categories).forEach(function (cat) {
+      var buyers = DATA.categories[cat];
+      html += '<details class="cat"><summary>' + esc(cat) + '<span class="badge">' + buyers.length + ' buyers</span></summary><div class="inner">';
+      buyers.forEach(function (b) {
+        var n = nodeForBuyer(b.name);
+        html += '<details><summary>' + esc(b.name) + '<span class="badge">last bought ' + esc(b.lastDate || '—') + '</span></summary><div class="inner">'
+          + (n ? personHtml(n, 0) : '<div class="noresult">Open this buyer once in the bot (📇 Contact Network) to activate their card here.</div>')
+          + '</div></details>';
+      });
+      html += '</div></details>';
+    });
+    $('tree').innerHTML = html || '<div class="card noresult">No sold stock with categories yet.</div>';
+  }
+
+  function renderSearch(q) {
+    q = q.trim().toLowerCase();
+    if (!q) { $('results').innerHTML = ''; $('tree').style.display = 'block'; return; }
+    $('tree').style.display = 'none';
+    var hits = DATA.nodes.filter(function (n) {
+      return n.name.toLowerCase().indexOf(q) !== -1
+        || String(n.phone).replace(/\D/g, '').indexOf(q.replace(/\D/g, '') || '§') !== -1
+        || n.notes.toLowerCase().indexOf(q) !== -1;
+    }).slice(0, 30);
+    var bossOf = {};
+    DATA.edges.forEach(function (e) { (bossOf[e.from] = bossOf[e.from] || []).push(e.to); });
+    $('results').innerHTML = hits.length
+      ? '<div class="card">' + hits.map(function (n) {
+          var bosses = (bossOf[n.id] || []).map(function (id) { return NODE[id] ? NODE[id].name : ''; }).filter(Boolean);
+          return personHtml(n, 5).replace('</span>', '</span>' + (bosses.length ? '<span class="badge"> · under ' + esc(bosses.join(', ')) + '</span>' : ''));
+        }).join('') + '</div>'
+      : '<div class="card noresult">No match for “' + esc(q) + '”.</div>';
+  }
+}());
+</script>
+</body>
+</html>

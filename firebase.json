@@ -33,6 +33,10 @@
     ],
     "rewrites": [
       {
+        "source": "/contacts",
+        "destination": "/contacts.html"
+      },
+      {
         "source": "/payment/redirect",
         "destination": "/payment/redirect.html"
       },
