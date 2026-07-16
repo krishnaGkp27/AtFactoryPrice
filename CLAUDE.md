@@ -46,6 +46,11 @@ Multiple tools (Claude Code, Cursor, humans) push to this repo in parallel.
 3. **Never change approval semantics** (`WRITE_ACTIONS`, `ALWAYS_APPROVAL_ACTIONS` in `src/risk/evaluate.js`) without explicit instruction. Adding a NEW action code still requires the user's sign-off.
 4. **Never alter Google Sheets column order or rename existing columns.** New columns go to the end of the range only. New sheets are registered in `src/services/schemaMapper.js`.
 5. **Never commit secrets** — no `.env`, no raw API keys, no credentials JSON.
+5b. **Storage layering (owner rule, 16-Jul-2026):** Google Sheets hold RAW
+   tabular business records only (masters, ledgers, edges, invoices) — no new
+   log/telemetry/state sheets. Logging, event trails, and operational state
+   belong in the Railway Postgres DB (PG-1; owner is expanding its config).
+   Derived facts are computed at read time, never persisted to a sheet.
 6. **All test/script files run with zero real credentials** — mock Telegram, Sheets, OpenAI.
 7. **One task = one commit.** Do not bundle unrelated changes.
 
