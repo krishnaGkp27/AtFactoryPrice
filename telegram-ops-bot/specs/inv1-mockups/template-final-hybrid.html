@@ -1,0 +1,52 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:Helvetica,Arial,sans-serif; background:#f1efe9; color:#20242a; padding:14px; }
+  .sheet { background:#fffdf9; max-width:420px; margin:0 auto; border-radius:10px; overflow:hidden; box-shadow:0 1px 10px rgba(32,36,42,.14); }
+  .band { background:#20242a; color:#fff; padding:20px 24px 16px; }
+  .wordmark { font-family:Georgia,serif; font-size:18px; font-weight:bold; letter-spacing:2px; }
+  .wordmark span { color:#c9a24b; }
+  .tagline { font-size:9px; color:#9aa2ad; letter-spacing:2px; text-transform:uppercase; margin-top:2px; }
+  .band .meta { display:flex; justify-content:space-between; margin-top:14px; font-size:12px; }
+  .band .lbl { color:#8f97a3; font-size:9.5px; text-transform:uppercase; letter-spacing:1px; display:block; margin-bottom:2px; }
+  .statusbar { background:#f7ead0; color:#7d5f1d; font-weight:600; text-align:center; font-size:12.5px; padding:9px; letter-spacing:.4px; border-bottom:1px solid #eadfc4; }
+  .body { padding:18px 24px 22px; }
+  .row { display:flex; justify-content:space-between; font-size:12.5px; margin:4px 0; }
+  .lbl2 { color:#8a8578; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; margin-top:12px; }
+  th { text-align:left; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:#8a8578; padding:6px 0; border-bottom:2px solid #20242a; font-weight:normal; }
+  td { padding:9px 0; border-bottom:1px solid #ece8dd; vertical-align:top; }
+  .num { text-align:right; white-space:nowrap; padding-left:14px; }
+  .totrow td { font-family:Georgia,serif; font-weight:bold; font-size:15.5px; border-bottom:none; padding:12px 0 2px; }
+  .pill { display:inline-block; background:#eef4ea; color:#3c6e35; font-size:10.5px; padding:2px 8px; border-radius:10px; margin-left:6px; }
+  .pay { margin-top:16px; font-size:11.5px; line-height:1.55; background:#f8f5ee; border-left:3px solid #c9a24b; padding:12px 14px; }
+  .btn { display:block; text-align:center; background:#20242a; color:#fff; border-radius:8px; padding:11px; font-size:12.5px; font-weight:600; margin-top:16px; letter-spacing:.3px; }
+  .foot { font-size:9.5px; color:#a49d8e; text-align:center; padding:0 20px 18px; line-height:1.5; }
+</style></head><body>
+<div class="sheet">
+  <div class="band">
+    <div class="wordmark">ATFACTORY<span>PRICE</span></div>
+    <div class="tagline">Textiles · Lagos · Kano</div>
+    <div class="meta">
+      <div><span class="lbl">Invoice</span><b>INV-2026-0001</b></div>
+      <div><span class="lbl">Sale date</span>15 Jul 2026</div>
+      <div><span class="lbl">Warehouse</span>IDUMOTA</div>
+    </div>
+  </div>
+  <div class="statusbar">◔ PART-PAID · ₦400,000 received of ₦609,000</div>
+  <div class="body">
+    <div class="row"><span class="lbl2">Billed to</span><span><b>Alabi Johnson</b></span></div>
+    <div class="row"><span class="lbl2">Salesperson</span><span>Yarima</span></div>
+    <table>
+      <tr><th>Item</th><th class="num">Rate/yd</th><th class="num">Amount</th></tr>
+      <tr><td>Design <b>77019</b><br><span style="color:#8a8578; font-size:11px;">Shades 1, 2, 3, 4, 6, 7, 8 · 7 bales · 420 yds</span></td>
+          <td class="num">₦1,450</td><td class="num">₦609,000</td></tr>
+      <tr><td style="color:#8a8578;">Payment received — 15 Jul <span class="pill">GTBank ✓</span></td><td></td><td class="num">− ₦400,000</td></tr>
+      <tr class="totrow"><td>Balance due</td><td></td><td class="num">₦209,000</td></tr>
+    </table>
+    <div class="pay"><b>Pay to:</b> AtFactoryPrice Ltd · GTBank 0123456789<br>Send your transfer receipt on WhatsApp after payment.</div>
+    <div class="btn">⬇ Download PDF</div>
+  </div>
+  <div class="foot">Live invoice: invoices.atfactoryprice.live/i/x7Kp… · secured with WhatsApp code<br>AtFactoryPrice · Lagos · Kano · +234 ••• ••• ••34</div>
+</div>
+</body></html>
