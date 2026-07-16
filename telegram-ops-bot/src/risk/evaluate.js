@@ -42,6 +42,9 @@ const WRITE_ACTIONS = [
   // (water, fuel, sundries). Single-admin sign-off for V1 (just you).
   // Flip to ALWAYS_APPROVAL_ACTIONS when finance joins the chain.
   'record_office_expense',
+  // CNET-1b (owner-locked spec §5-2): staff add a person/relation to the
+  // contact network; one non-requester admin approves.
+  'add_contact_link',
 ];
 
 // Actions that ALWAYS go through the approval queue, regardless of whether
@@ -113,6 +116,9 @@ const ALWAYS_APPROVAL_ACTIONS = [
   'add_bank', 'remove_bank',
   'record_office_expense',
   'sale_bundle', 'give_sample',
+  // CNET-1b — single non-requester admin (NOT dual): the network is the
+  // commercial customer web, but a link is cheap to reverse (deactivate).
+  'add_contact_link',
 ];
 
 /**
@@ -230,6 +236,7 @@ function formatAction(action) {
     confirm_bank_reconciliation: 'bank reconciliation confirmation',
     finalize_landed_cost: 'landed cost finalization',
     record_office_expense: 'office expense batch',
+    add_contact_link: 'contact-network addition',
   };
   return map[action] || action.replace(/_/g, ' ');
 }

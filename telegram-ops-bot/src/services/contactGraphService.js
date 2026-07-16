@@ -106,18 +106,19 @@ async function buyersOfCategory(category) {
     const c = catByDesign.get(String(d || '').toUpperCase()) || '';
     return c.toLowerCase() === String(want).toLowerCase();
   };
-  const byBuyer = new Map(); // name → { name, lastDate, designs:Set }
+  const byBuyer = new Map(); // name → { name, lastDate, designs:Set, warehouses:Set }
   for (const r of rows) {
     if (r.status !== 'sold' || !(r.soldTo || '').trim() || !matches(r.design)) continue;
     const key = r.soldTo.trim();
-    if (!byBuyer.has(key)) byBuyer.set(key, { name: key, lastDate: '', designs: new Set() });
+    if (!byBuyer.has(key)) byBuyer.set(key, { name: key, lastDate: '', designs: new Set(), warehouses: new Set() });
     const b = byBuyer.get(key);
     b.designs.add(String(r.design));
+    if ((r.warehouse || '').trim()) b.warehouses.add(r.warehouse.trim());
     if ((r.soldDate || '') > b.lastDate) b.lastDate = r.soldDate || '';
   }
   return [...byBuyer.values()]
     .sort((a, b) => b.lastDate.localeCompare(a.lastDate))
-    .map((b) => ({ name: b.name, lastDate: b.lastDate, designs: [...b.designs] }));
+    .map((b) => ({ name: b.name, lastDate: b.lastDate, designs: [...b.designs], warehouses: [...b.warehouses] }));
 }
 
 /**

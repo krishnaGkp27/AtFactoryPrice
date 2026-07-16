@@ -3399,6 +3399,14 @@ async function handleMessage(bot, msg) {
       if (handled) return;
     }
   }
+  // CNET-1b — contact-network add-person typed steps (name/phone/note).
+  {
+    const cnSession = sessionStore.get(userId);
+    if (cnSession && cnSession.type === 'contact_network_flow' && String(cnSession.step || '').startsWith('add_')) {
+      const handled = await require('../flows/contactNetworkFlow').handleText(bot, msg);
+      if (handled) return;
+    }
+  }
 
   // USR-C3 — Add Employee flow accepts free-text input for telegram_id,
   // name, and new-department steps.
@@ -6311,6 +6319,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['atd:'], handle: (bot, cq) => require('../flows/attendanceFlow').handleCallback(bot, cq) },
   { prefixes: ['atd_rpt:'], handle: (bot, cq) => require('../flows/attendanceReportFlow').handleCallback(bot, cq) },
   { prefixes: ['atd_adm:'], handle: (bot, cq) => require('../flows/attendanceAdminFlow').handleCallback(bot, cq) },
+  // CNET-1b — contact network (category → buyers → people, recursive).
+  { prefixes: ['cn:'], handle: (bot, cq) => require('../flows/contactNetworkFlow').handleCallback(bot, cq) },
 ];
 
 async function handleCallbackQuery(bot, callbackQuery) {
@@ -8555,6 +8565,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
       }
       case 'customer_details':
         await showCustomerDetailsPicker(bot, chatId, uid, messageId);
+        break;
+      // CNET-1b — 📇 Contact Network flow.
+      case 'contact_network':
+        await require('../flows/contactNetworkFlow').start(bot, chatId, uid, messageId);
         break;
       // Legacy entry points — kept so text intents that still hit these
       // callbacks (older keyboards in a user's chat history, etc.) keep

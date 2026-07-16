@@ -1094,6 +1094,25 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
         subject: `Sample to ${aj.customer || ''}: ${aj.design || ''} / ${aj.shade || ''}`,
       });
     } catch (_) { /* swallowed in service */ }
+  } else if (aj.action === 'add_contact_link') {
+    // CNET-1b — create/reuse the person node, then the subordinate edge.
+    const contactsRepo = require('../repositories/contactsRepository');
+    const contactLinksRepo = require('../repositories/contactLinksRepository');
+    let personId = aj.existing_contact_id;
+    if (!personId) {
+      const created = await contactsRepo.append({
+        name: aj.name || '', phone: aj.phone || '', type: 'worker',
+        notes: aj.notes || '', updated_by: approvedBy,
+      });
+      personId = created.contact_id;
+    }
+    const link = await contactLinksRepo.append({
+      from_contact_id: personId, to_contact_id: aj.boss_contact_id,
+      relation: 'subordinate_of', notes: aj.notes || '', created_by: item.user,
+    });
+    customMessage = link.duplicate
+      ? `ℹ️ ${aj.name} was already linked under ${aj.boss_name}.`
+      : `✅ ${aj.name} added under ${aj.boss_name}.`;
   } else if (aj.action === 'register_marketer') {
     const marketersRepo = require('../repositories/marketersRepository');
     const row = await marketersRepo.findByApprovalRequestId(requestId);
