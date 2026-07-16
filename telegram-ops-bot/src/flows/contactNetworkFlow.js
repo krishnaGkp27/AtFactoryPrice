@@ -120,7 +120,7 @@ async function showCard(bot, chatId, userId, contactId) {
   if (e164) actions.push({ text: '💬 WhatsApp', url: `https://wa.me/${e164.slice(1)}` });
   if (actions.length) rows.push(actions);
   rows.push(...chunk(subs.map((s, i) => ({ text: `👥 ${s.name}`, callback_data: `${NS}p:${i}` })), 2));
-  const util = [{ text: `➕ Add person`, callback_data: `${NS}add` }];
+  const util = [{ text: `➕ Add person`, callback_data: `${NS}add` }, { text: '✏️ Update details', callback_data: `${NS}ed` }];
   if (sups.length) util.push({ text: '⬆ Works for', callback_data: `${NS}up` });
   rows.push(util);
   rows.push(navRow([{ text: '◀ Back', callback_data: `${NS}bk` }]));
@@ -203,6 +203,59 @@ async function handleCallback(bot, callbackQuery) {
     }
     return true;
   }
+  // CNET-1b.1 — staff propose an edit on the current card; admin approves.
+  if (rest === 'ed') {
+    const graph = await contactGraph.loadGraph();
+    const node = graph.nodes.get(session.current);
+    if (!node) return true;
+    session.step = 'edit_pick';
+    session._editDraft = { contact_id: node.contact_id, name: node.name, customer_id: node.customer_id || '' };
+    sessionStore.set(userId, session);
+    await render(bot, chatId, userId, `✏️ *Update ${mdEscape(node.name)}* — what do you want to fill in or correct?`,
+      [
+        [{ text: '📞 Phone', callback_data: `${NS}ef:phone` }, { text: '💬 WhatsApp', callback_data: `${NS}ef:whatsapp` }],
+        [{ text: '🏠 Address', callback_data: `${NS}ef:address` }, { text: '📝 Note', callback_data: `${NS}ef:notes` }],
+        [{ text: '❌ Cancel', callback_data: `${NS}cancel` }],
+      ]);
+    return true;
+  }
+  if (rest.startsWith('ef:')) {
+    const field = rest.slice(3);
+    if (!['phone', 'whatsapp', 'address', 'notes'].includes(field) || !session._editDraft) return true;
+    session._editDraft.field = field;
+    session.step = 'edit_value';
+    sessionStore.set(userId, session);
+    const label = { phone: 'phone number', whatsapp: 'WhatsApp number', address: 'address', notes: 'note' }[field];
+    await render(bot, chatId, userId, `✏️ Type the new *${label}* for *${mdEscape(session._editDraft.name)}*:`,
+      [[{ text: '❌ Cancel', callback_data: `${NS}cancel` }]]);
+    return true;
+  }
+  if (rest === 'edok') {
+    const d = session._editDraft;
+    if (!d || !d.field) return true;
+    const requestId = idGenerator.requestId();
+    const actionJSON = {
+      action: 'update_contact_info',
+      contact_id: d.contact_id, name: d.name, customer_id: d.customer_id || '',
+      field: d.field, old_value: d.old_value || '', new_value: d.new_value || '',
+    };
+    await approvalQueueRepository.append({
+      requestId, user: userId, actionJSON,
+      riskReason: 'Contact detail changes are reviewed by an admin.', status: 'pending',
+    });
+    await auditLogRepository.append('approval_queued', { requestId, action: 'update_contact_info', contact: d.name, field: d.field }, userId);
+    try {
+      const approvalEvents = require('../events/approvalEvents');
+      await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userId,
+        `contact update — ${d.name}: ${d.field} → ${d.new_value || '(cleared)'}`, 'Contact detail change', userId);
+    } catch (e) { logger.warn(`cn edit approval cards: ${e.message}`); }
+    session.step = 'browse'; delete session._editDraft; sessionStore.set(userId, session);
+    await render(bot, chatId, userId,
+      `✅ Update submitted for admin approval.\n\n👤 *${mdEscape(d.name)}* — ${d.field}\nNew value: ${mdEscape(d.new_value || '(cleared)')}\nRequest: \`${requestId}\``,
+      [navRow([{ text: '◀ Back to card', callback_data: `${NS}bk` }])]);
+    session._stack.push(session.current); sessionStore.set(userId, session);
+    return true;
+  }
   if (rest === 'add') {
     const graph = await contactGraph.loadGraph();
     const boss = graph.nodes.get(session.current);
@@ -227,7 +280,7 @@ async function handleCallback(bot, callbackQuery) {
   }
   if (rest === 'skipphone') { session._addDraft.phone = ''; session.step = 'add_note'; sessionStore.set(userId, session); await promptNote(bot, chatId, userId); return true; }
   if (rest === 'skipnote') { session._addDraft.notes = ''; session.step = 'confirm'; sessionStore.set(userId, session); await showAddConfirm(bot, chatId, userId); return true; }
-  if (rest === 'cancel') { session.step = 'browse'; delete session._addDraft; sessionStore.set(userId, session); await showCard(bot, chatId, userId, session.current); return true; }
+  if (rest === 'cancel') { session.step = 'browse'; delete session._addDraft; delete session._editDraft; sessionStore.set(userId, session); await showCard(bot, chatId, userId, session.current); return true; }
   if (rest === 'ok') {
     const d = session._addDraft;
     if (!d) return true;
@@ -310,6 +363,30 @@ async function handleText(bot, msg) {
     session.step = 'confirm';
     sessionStore.set(userId, session);
     await showAddConfirm(bot, chatId, userId);
+    return true;
+  }
+  if (session.step === 'edit_value') {
+    const d = session._editDraft;
+    if (!d) return false;
+    let value = text.slice(0, d.field === 'notes' ? 120 : 60);
+    if (d.field === 'phone' || d.field === 'whatsapp') {
+      const r = phoneUtil.normalizePhone(text);
+      if (!r.ok) {
+        await render(bot, chatId, userId, `⚠️ That doesn't look like a phone number (${r.reason}). Try again:`,
+          [[{ text: '❌ Cancel', callback_data: `${NS}cancel` }]]);
+        return true;
+      }
+      value = r.value;
+    }
+    const graph = await contactGraph.loadGraph();
+    const node = graph.nodes.get(d.contact_id);
+    d.old_value = node ? (d.field === 'phone' ? await contactGraph.livePhoneOf(node) : node[d.field] || '') : '';
+    d.new_value = value;
+    session.step = 'edit_confirm';
+    sessionStore.set(userId, session);
+    await render(bot, chatId, userId,
+      `✏️ *${mdEscape(d.name)}* — ${d.field}\n\nOld: ${mdEscape(d.old_value || '(empty)')}\nNew: *${mdEscape(d.new_value)}*\n\nAn admin will approve before it changes.`,
+      [[{ text: '✅ Submit', callback_data: `${NS}edok` }, { text: '❌ Cancel', callback_data: `${NS}cancel` }]]);
     return true;
   }
   return false;

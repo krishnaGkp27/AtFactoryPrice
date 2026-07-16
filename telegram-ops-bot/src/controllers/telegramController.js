@@ -3399,10 +3399,11 @@ async function handleMessage(bot, msg) {
       if (handled) return;
     }
   }
-  // CNET-1b — contact-network add-person typed steps (name/phone/note).
+  // CNET-1b — contact-network typed steps (add-person + update-details).
   {
     const cnSession = sessionStore.get(userId);
-    if (cnSession && cnSession.type === 'contact_network_flow' && String(cnSession.step || '').startsWith('add_')) {
+    const cnStep = String((cnSession && cnSession.step) || '');
+    if (cnSession && cnSession.type === 'contact_network_flow' && (cnStep.startsWith('add_') || cnStep.startsWith('edit_'))) {
       const handled = await require('../flows/contactNetworkFlow').handleText(bot, msg);
       if (handled) return;
     }

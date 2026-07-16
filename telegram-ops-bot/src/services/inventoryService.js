@@ -1113,6 +1113,20 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     customMessage = link.duplicate
       ? `ℹ️ ${aj.name} was already linked under ${aj.boss_name}.`
       : `✅ ${aj.name} added under ${aj.boss_name}.`;
+  } else if (aj.action === 'update_contact_info') {
+    // CNET-1b.1 — apply the approved detail change to the Contacts row;
+    // phone/address also mirror to the CRM Customers row when the person
+    // is a registered buyer (the card reads the LIVE CRM value for them).
+    const contactsRepo = require('../repositories/contactsRepository');
+    const updated = await contactsRepo.update(aj.contact_id, { [aj.field]: aj.new_value }, approvedBy);
+    if (!updated) return { ok: false, message: 'Contact not found.' };
+    if (aj.customer_id && (aj.field === 'phone' || aj.field === 'address')) {
+      try {
+        const customersRepo = require('../repositories/customersRepository');
+        await customersRepo.updateRow(aj.customer_id, { [aj.field]: updated[aj.field] });
+      } catch (e) { await recordErpFailure('contact update CRM mirror', e); }
+    }
+    customMessage = `✅ ${aj.name}: ${aj.field} updated.`;
   } else if (aj.action === 'register_marketer') {
     const marketersRepo = require('../repositories/marketersRepository');
     const row = await marketersRepo.findByApprovalRequestId(requestId);

@@ -45,6 +45,9 @@ const WRITE_ACTIONS = [
   // CNET-1b (owner-locked spec §5-2): staff add a person/relation to the
   // contact network; one non-requester admin approves.
   'add_contact_link',
+  // CNET-1b.1 — staff propose phone/whatsapp/address/note corrections on
+  // an existing contact; one non-requester admin approves.
+  'update_contact_info',
 ];
 
 // Actions that ALWAYS go through the approval queue, regardless of whether
@@ -119,6 +122,7 @@ const ALWAYS_APPROVAL_ACTIONS = [
   // CNET-1b — single non-requester admin (NOT dual): the network is the
   // commercial customer web, but a link is cheap to reverse (deactivate).
   'add_contact_link',
+  'update_contact_info',
 ];
 
 /**
@@ -237,6 +241,7 @@ function formatAction(action) {
     finalize_landed_cost: 'landed cost finalization',
     record_office_expense: 'office expense batch',
     add_contact_link: 'contact-network addition',
+    update_contact_info: 'contact detail update',
   };
   return map[action] || action.replace(/_/g, ' ');
 }

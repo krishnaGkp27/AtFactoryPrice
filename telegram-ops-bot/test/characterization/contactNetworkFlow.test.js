@@ -118,5 +118,35 @@ test('add-person wizard: typed name + phone + note → approval queued; executor
   assert.equal(links.length, 1, 'edge created');
   assert.equal(links[0].to_contact_id, contacts[0].contact_id, 'linked under CJE');
   assert.equal(contacts.length, 2, 'Musa node created');
+});
+
+test('update-details wizard: pick field, typed value, approval; executor mirrors buyer phone to CRM', async () => {
+  const bot = createFakeBot();
+  // Back on CJE's card (session preserved from the previous test's stack).
+  await controller.handleCallbackQuery(bot, cb('cn:bk', '777'));
+  await controller.handleCallbackQuery(bot, cb('cn:ed', '777'));
+  assert.match(bot.allText(), /what do you want to fill in or correct/);
+  await controller.handleCallbackQuery(bot, cb('cn:ef:phone', '777'));
+  await controller.handleMessage(bot, txt('0805 999 0000', '777'));
+  assert.match(bot.allText(), /New: \*\+2348059990000\*/, 'old→new confirm with normalized number');
+  await controller.handleCallbackQuery(bot, cb('cn:edok', '777'));
+  const editReq = queued.find((q) => q.actionJSON.action === 'update_contact_info');
+  assert.ok(editReq, 'edit approval queued');
+  assert.equal(editReq.actionJSON.field, 'phone');
+  assert.equal(editReq.actionJSON.customer_id, 'CUST-9');
+
+  const crmUpdates = [];
+  const customersRepositoryLive = require(path.join(SRC, 'repositories/customersRepository'));
+  customersRepositoryLive.updateRow = async (id, fields) => { crmUpdates.push({ id, fields }); return true; };
+  contactsRepository.update = async (id, patch) => {
+    const row = contacts.find((c) => c.contact_id === id);
+    Object.assign(row, patch);
+    return { ...row };
+  };
+  approvalQueueRepository.getAllPending = async () => [{ requestId: editReq.requestId, user: '777', actionJSON: editReq.actionJSON, status: 'pending' }];
+  const res = await inventoryService.executeApprovedAction(editReq.requestId, '888');
+  assert.equal(res.ok, true);
+  assert.equal(contacts[0].phone, '+2348059990000', 'Contacts row updated');
+  assert.deepEqual(crmUpdates, [{ id: 'CUST-9', fields: { phone: '+2348059990000' } }], 'CRM row mirrored for the buyer');
   sessionStore.clear('777');
 });
