@@ -51,8 +51,10 @@ async function searchByName(query) {
 
 async function append(customer) {
   const now = new Date().toISOString();
+  // CNET-1a — phones normalize to one canonical shape on every write.
+  const phone = require('../utils/phone');
   await sheets.appendRows(SHEET, [[
-    customer.customer_id, customer.name, customer.phone || '', customer.address || '',
+    customer.customer_id, customer.name, phone.toStored(customer.phone), customer.address || '',
     customer.category || 'Retail', customer.credit_limit || 0, customer.outstanding_balance || 0,
     customer.payment_terms || 'COD', customer.notes || '', customer.status || 'Active',
     now, now,

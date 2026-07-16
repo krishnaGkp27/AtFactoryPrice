@@ -77,7 +77,17 @@ const REQUIRED_SHEETS = {
     ],
   },
   Contacts: {
-    headers: ['contact_id', 'name', 'phone', 'type', 'address', 'notes', 'created_at'],
+    // CNET-1a: cols H-L appended (node registry of the contact network).
+    // customer_id backlinks Customers when the person IS a buyer.
+    headers: ['contact_id', 'name', 'phone', 'type', 'address', 'notes', 'created_at',
+      'whatsapp', 'customer_id', 'status', 'updated_by', 'updated_at'],
+  },
+  // CNET-1a — edge table of the contact network: one row per typed
+  // relation between two Contacts rows (from=subordinate, to=boss for
+  // relation subordinate_of). Raw business facts only (storage rule 5b).
+  ContactLinks: {
+    headers: ['link_id', 'from_contact_id', 'to_contact_id', 'relation',
+      'notes', 'status', 'created_by', 'created_at'],
   },
   // Industry-standard customer ledger architecture (scalable for invoices, analytics, reports)
   Ledger_Customers: {
