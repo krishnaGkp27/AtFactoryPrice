@@ -148,4 +148,46 @@ async function getAnalyticsFeature(req, res) {
   }
 }
 
-module.exports = { getSettings, updateSettings, getAnalyticsSummary, getAnalyticsFeature };
+/**
+ * CNET-1c — the whole contact network in ONE payload for the website
+ * dashboard (spec §7): nodes, subordinate edges, and buyers grouped by
+ * DCAT-1 category. Always key-gated (commercially sensitive data), same
+ * contract as the analytics endpoints: 503 without a configured key,
+ * 403 on a wrong/missing key. The dashboard filters client-side, so no
+ * per-keystroke endpoint is needed.
+ */
+async function getContactsGraph(req, res) {
+  if (!config.botApiKey) {
+    return res.status(503).json({ ok: false, error: 'Contacts API is disabled: server has no BOT_API_KEY configured.' });
+  }
+  if (!hasValidApiKey(req)) {
+    return res.status(403).json({ ok: false, error: 'Invalid or missing X-API-Key.' });
+  }
+  try {
+    const contactGraph = require('../services/contactGraphService');
+    const designCategoriesRepo = require('../repositories/designCategoriesRepository');
+    const contactLinksRepository = require('../repositories/contactLinksRepository');
+    const graph = await contactGraph.loadGraph();
+    const nodes = [];
+    for (const node of graph.nodes.values()) {
+      nodes.push({
+        id: node.contact_id, name: node.name, type: node.type,
+        phone: await contactGraph.livePhoneOf(node),
+        whatsapp: node.whatsapp || '', notes: node.notes || '',
+        customer_id: node.customer_id || '',
+      });
+    }
+    const edges = (await contactLinksRepository.getActive())
+      .map((l) => ({ from: l.from_contact_id, to: l.to_contact_id, relation: l.relation }));
+    const categories = {};
+    for (const cat of await designCategoriesRepo.listCategories()) {
+      const buyers = await contactGraph.buyersOfCategory(cat);
+      if (buyers.length) categories[cat] = buyers;
+    }
+    res.json({ ok: true, generatedAt: new Date().toISOString(), nodes, edges, categories });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
+module.exports = { getSettings, updateSettings, getAnalyticsSummary, getAnalyticsFeature, getContactsGraph };

@@ -75,6 +75,9 @@ app.put('/api/settings', apiController.updateSettings);
 // key-gated (503 until BOT_API_KEY is set); serves usage_daily rollups only.
 app.get('/api/analytics/summary', apiController.getAnalyticsSummary);
 app.get('/api/analytics/feature/:code', apiController.getAnalyticsFeature);
+// CNET-1c — contact-network payload for the atfactoryprice.live admin
+// dashboard (contacts.html). Always key-gated.
+app.get('/api/contacts/graph', apiController.getContactsGraph);
 
 // TG-2: when TELEGRAM_WEBHOOK_SECRET is set, Telegram includes it in the
 // `X-Telegram-Bot-Api-Secret-Token` header on every webhook POST. Reject
