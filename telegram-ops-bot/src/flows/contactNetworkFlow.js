@@ -232,7 +232,10 @@ async function handleCallback(bot, callbackQuery) {
   }
   if (rest === 'edok') {
     const d = session._editDraft;
-    if (!d || !d.field) return true;
+    // Step guard (audit 16-Jul): edok is only valid on the confirm screen —
+    // without this, tapping ef:<field> then edok directly would queue a
+    // blank-value "clear" that an admin might approve unread.
+    if (!d || !d.field || session.step !== 'edit_confirm') return true;
     const requestId = idGenerator.requestId();
     const actionJSON = {
       action: 'update_contact_info',
@@ -283,7 +286,9 @@ async function handleCallback(bot, callbackQuery) {
   if (rest === 'cancel') { session.step = 'browse'; delete session._addDraft; delete session._editDraft; sessionStore.set(userId, session); await showCard(bot, chatId, userId, session.current); return true; }
   if (rest === 'ok') {
     const d = session._addDraft;
-    if (!d) return true;
+    // Step guard (audit 16-Jul): submissions only from the confirm screen,
+    // never from a half-built draft.
+    if (!d || session.step !== 'confirm' || !d.name) return true;
     const requestId = idGenerator.requestId();
     const actionJSON = {
       action: 'add_contact_link',

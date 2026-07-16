@@ -99,12 +99,19 @@ test('tile → Cashmere buyers → CJE card with live phone and WhatsApp button'
 test('add-person wizard: typed name + phone + note → approval queued; executor links', async () => {
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('cn:add', '777'));
+  // Gate probe: premature submit from a half-built draft must be a no-op.
+  await controller.handleCallbackQuery(bot, cb('cn:ok', '777'));
+  assert.equal(queued.length, 0, 'no submission before the confirm screen');
   await controller.handleMessage(bot, txt('Musa', '777'));
   await controller.handleMessage(bot, txt('0803 555 1212', '777'));
   await controller.handleMessage(bot, txt('receives goods', '777'));
   assert.match(bot.allText(), /Add person under CJE/);
   await controller.handleCallbackQuery(bot, cb('cn:ok', '777'));
   assert.equal(queued.length, 1, 'approval row queued');
+  // ZERO-WRITE invariant: submitting queues ONLY — nothing touches the
+  // graph sheets until an admin's approval executes.
+  assert.equal(links.length, 0, 'no edge written before approval');
+  assert.equal(contacts.length, 1, 'no contact row written before approval');
   const aj = queued[0].actionJSON;
   assert.equal(aj.action, 'add_contact_link');
   assert.equal(aj.phone, '+2348035551212', 'phone normalized in the draft');
