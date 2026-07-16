@@ -21,6 +21,11 @@ const crmService = require('../../../src/services/crmService');
 const accountingService = require('../../../src/services/accountingService');
 const stockLedgerService = require('../../../src/services/stockLedgerService');
 const auditService = require('../../../src/services/auditService');
+const invoiceService = require('../../../src/services/invoiceService');
+
+// INV-1a issues an invoice on every approved sale; this suite pins the
+// LEDGER-hook surfacing contract, so keep invoicing inert here.
+invoiceService.createForSale = async () => null;
 
 function harness(item) {
   const calls = { statusUpdates: [], audits: [] };

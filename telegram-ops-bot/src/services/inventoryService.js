@@ -1167,10 +1167,29 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     return { ok: false, message: 'Unknown action type.' };
   }
 
+  // INV-1a — issue a customer invoice for every approved sale (owner
+  // decision 14-Jul: sales only). Best-effort like the erp hooks: a failed
+  // invoice must never fail the applied sale. The admin-entered enrichment
+  // is persisted onto the queue row first so the invoice (and any future
+  // regeneration) has the rates/payment that were previously lost.
+  const INVOICED_ACTIONS = ['sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell', 'sale_bundle'];
+  let invoice = null;
+  if (INVOICED_ACTIONS.includes(aj.action)) {
+    if (enrichment) {
+      try {
+        await approvalQueueRepository.updateActionJSON(requestId, { ...aj, enrichment });
+      } catch (e) { await recordErpFailure('enrichment persist', e); }
+    }
+    try {
+      const invoiceService = require('./invoiceService');
+      invoice = await invoiceService.createForSale({ item, enrichment, approvedBy });
+    } catch (e) { await recordErpFailure('invoice issue', e); }
+  }
+
   await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString());
   await auditLogRepository.append('approval_approved', { requestId, approvedBy }, approvedBy);
   // H6 — erpFailures non-empty means stock moved but books did not.
-  return { ok: true, bundleReport, message: customMessage, erpFailures };
+  return { ok: true, bundleReport, message: customMessage, erpFailures, invoice };
 }
 
 async function rejectApproval(requestId, rejectedBy) {

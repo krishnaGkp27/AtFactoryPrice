@@ -109,6 +109,17 @@ const REQUIRED_SHEETS = {
   CustomerNotes: {
     headers: ['note_id', 'customer', 'note', 'created_by', 'created_at'],
   },
+  // INV-1a — one row per issued customer invoice (statement-style; line
+  // items frozen as JSON at issue; token gates the /i/<token> web copy).
+  Invoices: {
+    headers: [
+      'invoice_no', 'token', 'request_id', 'customer_id', 'customer_name',
+      'issue_date', 'sale_date', 'lines_json', 'subtotal', 'vat_rate',
+      'vat_amount', 'total', 'amount_paid_at_issue', 'balance_after_issue',
+      'payment_mode', 'bank', 'salesperson', 'warehouse', 'status',
+      'pdf_drive_id', 'created_by', 'created_at',
+    ],
+  },
   Receipts: {
     headers: [
       'receipt_id', 'customer', 'amount', 'bank_account',

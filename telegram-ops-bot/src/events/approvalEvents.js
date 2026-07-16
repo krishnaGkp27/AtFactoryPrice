@@ -445,6 +445,15 @@ async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, it
           await bot.sendMessage(chatId, `📒 *${customer}* — Outstanding as of today: ${fmt(outstandingAsOfToday)}`);
         } catch (_) {}
       }
+      // INV-1a — deliver the issued invoice PDF to approver + requester
+      // (statement-style, WhatsApp-forwardable). Best-effort: the sale is
+      // already applied; a delivery hiccup only logs.
+      if (result.invoice) {
+        try {
+          const invoiceService = require('../services/invoiceService');
+          await invoiceService.deliver(bot, result.invoice, [chatId, requestingUser]);
+        } catch (e) { logger.warn(`INV-1a delivery failed for ${requestId}: ${e.message}`); }
+      }
     } else {
       await bot.sendMessage(chatId, `⚠️ Approved but execution failed: ${result.message || 'Unknown error'}`);
       await notifyEmployee(bot, requestingUser, requestId, `⚠️ Your request (${requestId}) was approved but could not be completed. Admin has been notified. Please follow up.`);

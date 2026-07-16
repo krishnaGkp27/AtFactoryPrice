@@ -20,6 +20,16 @@ from §6a. Grounded in a 4-reader code audit — findings in §7.
 7. Backdated sales show sale date + issue date separately — OK.
 8. Domain: **invoices.atfactoryprice.live** (owner moved the brand domain
    from atfactoryprice.com to atfactoryprice.live).
+9. **No business name / registration details on the invoice** (owner,
+   14-Jul, with sample images): the document is styled as the CUSTOMER's
+   account statement — header `<CUSTOMER> — ACCOUNT`, columns
+   `Description | Cost ₦ | Payments ₦`, payment rows in RED with date and
+   the receiving account named (e.g. "15/7/2026 paid to GTBank account"),
+   bottom line **DEBIT BALANCE**. No "Pay to" box, no company footer.
+   Template reference: specs/inv1-mockups/template-final-hybrid.html
+   (band structure + serif/gold elegance kept from the earlier pick).
+   Owner will polish the website view after integration.
+10. Numbering locked: **scheme A — INV-2026-0001** (yearly, sheet-derived).
 
 ## 2a. OTP access model (replaces V1 token-only access)
 
