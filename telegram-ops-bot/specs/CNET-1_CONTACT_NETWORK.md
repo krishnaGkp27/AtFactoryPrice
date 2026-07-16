@@ -1,7 +1,8 @@
-# CNET-1 — Contact Network: product → buyers → subordinates, recursive (DRAFT)
+# CNET-1 — Contact Network: product → buyers → subordinates, recursive
 
-Status: **draft — owner to lock the decisions in §5.**
-Requested 16-Jul-2026 (owner). Grounded in a 3-reader code audit (§6).
+Status: **decisions LOCKED 16-Jul-2026 (owner: "all recommended accepted")**
+plus two owner additions the same day: §7 website dashboard, §8 as-you-type
+search. Grounded in a 3-reader code audit (§6).
 
 ## 1. Owner's vision
 
@@ -94,3 +95,49 @@ sheets; API: `nodeOf(id)`, `subordinatesOf(id)`, `superiorsOf(id)`,
   soldTo both live on the same rows). `cn:` namespace is free.
 - The unified Customer Details card (cd:) shows History/Pattern/Notes — and
   no phone at all; CNET-1's card becomes the phone surface, linked from cd:.
+
+## 7. Website dashboard (owner addition, 16-Jul)
+
+Admin-facing contact-network dashboard on the website domain
+(atfactoryprice.live), following the LOCKED ANL-1 pattern (admin page +
+bot-API + pasted BOT_API_KEY):
+- New bot API endpoints (Railway app, CORS + BOT_API_KEY gated like
+  /api/analytics): `GET /api/contacts/graph` (nodes + edges + buyer-category
+  index in one payload) and `GET /api/contacts/search?q=` (server-side
+  fallback).
+- New `contacts.html` page on Firebase Hosting: collapsible tree view
+  (category → buyers → subordinates…), click-to-expand recursion, tel:/
+  wa.me links per person, and a search box filtering AS THE USER TYPES —
+  instant, client-side, over the single fetched graph payload (the dataset
+  is small; no per-keystroke network calls needed).
+- Same key-paste v1 auth as ANL-1; Firebase-Functions proxy stays the
+  shared hardening backlog item.
+
+## 8. Telegram as-you-type search (owner addition, 16-Jul) — FEASIBLE
+
+Telegram bots CANNOT see keystrokes in normal chat (send-partial → results,
+as in TRF-7 bale search, is the in-flow fallback and stays). But Telegram
+**inline mode** delivers exactly as-you-type suggestions:
+- Owner enables inline mode once in BotFather (`/setinline` on the bot,
+  ~1 minute — the only owner action).
+- Typing `@<bot> cash…` in the bot chat fires `inline_query` updates PER
+  KEYSTROKE; the bot answers with live-filtered suggestion rows (people +
+  designs/categories, ranked prefix-first) that update as the user types.
+- Tapping a suggestion deep-links into the person's `cn:` card in the bot.
+- SECURITY: inline queries arrive from ANY Telegram user who mentions the
+  bot — the inline handler hard-gates on the staff allow-list (same
+  auth.isAllowed as messages; per locked decision 1, browse scope applies)
+  and answers strangers with an empty result set. Results are also marked
+  `cache_time: 0, is_personal: true`.
+- Plumbing: server.js webhook dispatch gains an `update.inline_query`
+  branch → `contactNetworkFlow.handleInlineQuery` (answerInlineQuery).
+
+## 9. Build order
+
+1. **CNET-1a foundation**: phone.js util (+ wire into capture points),
+   contactsRepository.update + appended columns, ContactLinks sheet + repo,
+   contactGraphService (cycle-safe), getCustomersByCategory, tests.
+2. **CNET-1b bot UX**: contactNetworkFlow (cn:) + tile + sendContact cards
+   + add-person-with-approval (`add_contact_link`), inline-mode search.
+3. **CNET-1c dashboard**: /api/contacts/* endpoints + contacts.html page +
+   `firebase deploy` handoff to owner.
