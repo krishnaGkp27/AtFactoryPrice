@@ -271,6 +271,9 @@ const server = app.listen(PORT, async () => {
     const approvalReminder = require('./src/services/approvalReminder');
     setTimeout(() => approvalReminder.sweep(bot), 60 * 1000);
     setInterval(() => approvalReminder.sweep(bot), 60 * 60 * 1000);
+    // MORN-1 — 09:15 (Lagos) admin morning digest; categories toggle via
+    // the ⏰ Morning Digest tile (Settings DIGEST_* keys, no deploy).
+    require('./src/services/morningDigest').start(bot);
     // PG-1 — mirror Inventory → Postgres for parity checks (reads stay on
     // Sheets until PG-2). No-op when DATABASE_URL unset or mirror disabled.
     try { require('./src/services/inventoryMirrorService').start(); } catch (e) {

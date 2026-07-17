@@ -6322,6 +6322,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['atd_adm:'], handle: (bot, cq) => require('../flows/attendanceAdminFlow').handleCallback(bot, cq) },
   // CNET-1b — contact network (category → buyers → people, recursive).
   { prefixes: ['cn:'], handle: (bot, cq) => require('../flows/contactNetworkFlow').handleCallback(bot, cq) },
+  // MORN-1 — morning digest settings (admin-only).
+  { prefixes: ['rmd:'], handle: (bot, cq) => require('../flows/morningDigestFlow').handleCallback(bot, cq) },
 ];
 
 async function handleCallbackQuery(bot, callbackQuery) {
@@ -8570,6 +8572,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
       // CNET-1b — 📇 Contact Network flow.
       case 'contact_network':
         await require('../flows/contactNetworkFlow').start(bot, chatId, uid, messageId);
+        break;
+      // MORN-1 — ⏰ Morning Digest settings (admin gate inside the flow).
+      case 'morning_digest':
+        await require('../flows/morningDigestFlow').start(bot, chatId, uid, messageId);
         break;
       // Legacy entry points — kept so text intents that still hit these
       // callbacks (older keyboards in a user's chat history, etc.) keep

@@ -140,6 +140,8 @@ const ACTIVITIES = [
   { code: 'customer_details',      label: 'Customer Details',          icon: '👤', callback: 'act:customer_details',   hub: 'crm' },
   // CNET-1b — recursive contact network (category → buyers → their people).
   { code: 'contact_network',       label: 'Contact Network',           icon: '📇', callback: 'act:contact_network',    hub: 'crm' },
+  // MORN-1 — daily 09:15 admin digest with category toggles (admin-only).
+  { code: 'morning_digest',        label: 'Morning Digest',            icon: '⏰', callback: 'act:morning_digest',     hub: 'daily' },
   { code: 'add_customer_note',     label: 'Add Note',                  icon: '✏️', callback: 'act:add_note',           hub: 'crm' },
   { code: 'add_customer',          label: 'Add Customer',              icon: '➕', callback: 'act:add_customer',       hub: 'crm' },
   { code: 'give_sample',           label: 'Give Sample',               icon: '🧪', callback: 'act:give_sample',        hub: 'crm' },

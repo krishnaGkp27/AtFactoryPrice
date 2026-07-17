@@ -25,6 +25,20 @@ const DEFAULTS = {
   // APR-1 — hours between pending-approval reminder cards (0 disables).
   // Covers approvals queued outside the bot process too (Drive imports).
   APPROVAL_REMINDER_HOURS: 6,
+  // MORN-1 — 09:15 admin morning digest (owner, 17-Jul-2026). Time is
+  // HH:MM Nigeria local; category toggles editable in-bot (⏰ Morning
+  // Digest tile). Launch state: customer notes ON, everything else OFF.
+  DIGEST_ENABLED: 1,
+  DIGEST_TIME: '09:15',
+  DIGEST_TIMEZONE: 'Africa/Lagos',
+  DIGEST_NOTES_DAYS: 7,
+  DIGEST_CUSTOMER_NOTES: 1,
+  DIGEST_FOLLOWUPS: 0,
+  DIGEST_APPROVALS: 0,
+  DIGEST_TASKS: 0,
+  DIGEST_SAMPLES: 0,
+  DIGEST_LOW_STOCK: 0,
+  DIGEST_ORDERS: 0,
   FLOW_CLEANUP_HEAVY_TYPES: 'supply_req_flow,grn_flow,bulk_receive_flow,photo_receive_flow,bundle_sale_flow,order_flow,receipt_flow,landed_cost_flow,po_new_flow',
   // BKP-1 — automated daily snapshot of the master sheet into the backup
   // Drive folder. Hour is UTC (1 = 02:00 Lagos); copies older than the
