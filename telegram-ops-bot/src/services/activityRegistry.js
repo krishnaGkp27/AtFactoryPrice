@@ -140,8 +140,11 @@ const ACTIVITIES = [
   { code: 'customer_details',      label: 'Customer Details',          icon: '👤', callback: 'act:customer_details',   hub: 'crm' },
   // CNET-1b — recursive contact network (category → buyers → their people).
   { code: 'contact_network',       label: 'Contact Network',           icon: '📇', callback: 'act:contact_network',    hub: 'crm' },
-  // MORN-1 — daily 09:15 admin digest with category toggles (admin-only).
-  { code: 'morning_digest',        label: 'Morning Digest',            icon: '⏰', callback: 'act:morning_digest',     hub: 'daily' },
+  // MORN-1 — daily 10:00 admin digest with category toggles. Standalone
+  // (hub: null) so it sits directly on the greeting menu (owner, 17-Jul);
+  // employees never see it — the tile is in no department CSV and the
+  // flow's start() is admin-gated anyway.
+  { code: 'morning_digest',        label: 'Morning Digest',            icon: '⏰', callback: 'act:morning_digest',     hub: null },
   { code: 'add_customer_note',     label: 'Add Note',                  icon: '✏️', callback: 'act:add_note',           hub: 'crm' },
   { code: 'add_customer',          label: 'Add Customer',              icon: '➕', callback: 'act:add_customer',       hub: 'crm' },
   { code: 'give_sample',           label: 'Give Sample',               icon: '🧪', callback: 'act:give_sample',        hub: 'crm' },
