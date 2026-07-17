@@ -123,6 +123,11 @@ const ALWAYS_APPROVAL_ACTIONS = [
   // commercial customer web, but a link is cheap to reverse (deactivate).
   'add_contact_link',
   'update_contact_info',
+  // CNET audit fix (owner instruction 17-Jul-2026, "every addition goes
+  // for approval"): the legacy NL add_contact let ADMINS write the
+  // phonebook directly with free-text data. Now every add_contact queues
+  // like the cn: paths — one non-requester admin reviews.
+  'add_contact',
 ];
 
 /**

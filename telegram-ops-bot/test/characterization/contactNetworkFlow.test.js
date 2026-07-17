@@ -155,5 +155,29 @@ test('update-details wizard: pick field, typed value, approval; executor mirrors
   assert.equal(res.ok, true);
   assert.equal(contacts[0].phone, '+2348059990000', 'Contacts row updated');
   assert.deepEqual(crmUpdates, [{ id: 'CUST-9', fields: { phone: '+2348059990000' } }], 'CRM row mirrored for the buyer');
+});
+
+test('admin-only unlink: deactivates the edge, keeps the person, audit-logged', async () => {
+  const bot = createFakeBot();
+  contactLinksRepository.deactivate = async (id) => {
+    const l = links.find((x) => x.link_id === id);
+    if (l) l.status = 'inactive';
+    return !!l;
+  };
+  // Employee cannot see or use unlink.
+  sessionStore.set('4242', { type: 'contact_network_flow', step: 'browse', flowMessageId: 91, current: contacts[0].contact_id, _stack: [], _people: [] });
+  await controller.handleCallbackQuery(bot, cb('cn:rm', '4242'));
+  assert.equal(links[0].status, 'active', 'employee rm tap is a no-op');
+  sessionStore.clear('4242');
+  // Admin unlinks Musa from CJE.
+  await controller.handleCallbackQuery(bot, cb('cn:bk', '777'));
+  await controller.handleCallbackQuery(bot, cb('cn:rm', '777'));
+  assert.match(bot.allText(), /Unlink which person/);
+  const kb = lastKb(bot);
+  const chip = kb.find((b) => /❌ Musa/.test(b.text));
+  assert.ok(chip, 'subordinate chip listed');
+  await controller.handleCallbackQuery(bot, cb(chip.callback_data, '777'));
+  assert.equal(links[0].status, 'inactive', 'edge deactivated, not deleted');
+  assert.ok(contacts.some((c) => c.name === 'Musa'), 'person row remains');
   sessionStore.clear('777');
 });

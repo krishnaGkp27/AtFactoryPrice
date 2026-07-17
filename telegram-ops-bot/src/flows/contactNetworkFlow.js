@@ -122,6 +122,9 @@ async function showCard(bot, chatId, userId, contactId) {
   rows.push(...chunk(subs.map((s, i) => ({ text: `👥 ${s.name}`, callback_data: `${NS}p:${i}` })), 2));
   const util = [{ text: `➕ Add person`, callback_data: `${NS}add` }, { text: '✏️ Update details', callback_data: `${NS}ed` }];
   if (sups.length) util.push({ text: '⬆ Works for', callback_data: `${NS}up` });
+  // Audit fix 17-Jul: links could be created but never removed. Unlink is
+  // admin-direct (locked decision 3: edits admin-only, audit-logged).
+  if (subs.length && auth.isAdmin(userId)) util.push({ text: '🗑 Unlink', callback_data: `${NS}rm` });
   rows.push(util);
   rows.push(navRow([{ text: '◀ Back', callback_data: `${NS}bk` }]));
   await render(bot, chatId, userId, text, rows);
@@ -201,6 +204,35 @@ async function handleCallback(bot, callbackQuery) {
       await Promise.resolve(bot.sendContact(chatId, phone, node.name))
         .catch((e) => logger.warn(`cn sendContact: ${e.message}`));
     }
+    return true;
+  }
+  // Audit fix 17-Jul — admin-only: deactivate a subordinate link (the
+  // person stays in Contacts; only the edge is retired, audit-logged).
+  if (rest === 'rm' || rest.startsWith('rmx:')) {
+    if (!auth.isAdmin(userId)) return true;
+    const contactLinksRepository = require('../repositories/contactLinksRepository');
+    if (rest === 'rm') {
+      const graph = await contactGraph.loadGraph();
+      const subs = contactGraph.subordinatesOf(graph, session.current);
+      session._people = subs.map((s) => s.contact_id);
+      sessionStore.set(userId, session);
+      await render(bot, chatId, userId, '🗑 *Unlink which person?* (removes only the link — the contact remains)',
+        [...chunk(subs.map((s, i) => ({ text: `❌ ${s.name}`, callback_data: `${NS}rmx:${i}` })), 2),
+          [{ text: '◀ Back', callback_data: `${NS}bk` }]]);
+      session._stack.push(session.current); sessionStore.set(userId, session);
+      return true;
+    }
+    const targetId = (session._people || [])[Number(rest.slice(4))];
+    if (!targetId) return true;
+    const link = (await contactLinksRepository.getActive())
+      .find((l) => l.from_contact_id === targetId && l.to_contact_id === session.current && l.relation === 'subordinate_of');
+    if (link) {
+      await contactLinksRepository.deactivate(link.link_id);
+      await auditLogRepository.append('contact_link_removed', { link_id: link.link_id, from: targetId, to: session.current }, userId);
+    }
+    (session._stack || []).pop(); // undo the rm screen's breadcrumb push
+    sessionStore.set(userId, session);
+    await showCard(bot, chatId, userId, session.current);
     return true;
   }
   // CNET-1b.1 — staff propose an edit on the current card; admin approves.
