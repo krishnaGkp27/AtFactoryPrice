@@ -37,7 +37,6 @@ const DEFAULTS = {
   DIGEST_APPROVALS: 0,
   DIGEST_TASKS: 0,
   DIGEST_SAMPLES: 0,
-  DIGEST_LOW_STOCK: 0,
   DIGEST_ORDERS: 0,
   FLOW_CLEANUP_HEAVY_TYPES: 'supply_req_flow,grn_flow,bulk_receive_flow,photo_receive_flow,bundle_sale_flow,order_flow,receipt_flow,landed_cost_flow,po_new_flow',
   // BKP-1 — automated daily snapshot of the master sheet into the backup

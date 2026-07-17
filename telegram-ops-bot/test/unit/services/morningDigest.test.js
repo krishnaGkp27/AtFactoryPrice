@@ -25,7 +25,7 @@ function baseSettings(extra = {}) {
     DIGEST_ENABLED: 1, DIGEST_TIME: '09:15', DIGEST_TIMEZONE: 'Africa/Lagos',
     DIGEST_NOTES_DAYS: 7, DIGEST_CUSTOMER_NOTES: 1,
     DIGEST_FOLLOWUPS: 0, DIGEST_APPROVALS: 0, DIGEST_TASKS: 0,
-    DIGEST_SAMPLES: 0, DIGEST_LOW_STOCK: 0, DIGEST_ORDERS: 0,
+    DIGEST_SAMPLES: 0, DIGEST_ORDERS: 0,
     ...extra,
   };
 }
@@ -55,19 +55,37 @@ test('fires only at/after 09:15 Lagos, once per day, with catch-up', async () =>
   assert.equal(await digest.tick(bot, NEXT_DAY), true, 'fires again next day');
 });
 
-test('launch toggles: notes summary line + drill-down detail; recent-window respected', async () => {
+test('launch toggles: notes summary counts total + new; drill-down shows ALL notes', async () => {
   digest._resetForTests();
   settings = baseSettings();
   const { text, keyboard } = await digest.buildSummary(settings, AFTER);
-  assert.match(text, /Customer notes: \*2\* new/);
+  assert.match(text, /Customer notes: \*3\* total · \*2\* new in 7 days/);
   assert.ok(!/promised payment/.test(text), 'summary stays compact — note text lives in the detail');
   assert.ok(!/Approvals pending/.test(text), 'approvals section off by default');
   const btns = keyboard.inline_keyboard.flat();
   assert.equal(btns.length, 1, 'one drill-down button (notes only)');
   assert.equal(btns[0].callback_data, 'rmd:d:DIGEST_CUSTOMER_NOTES');
-  const detail = await digest.buildDetail('DIGEST_CUSTOMER_NOTES', settings, AFTER);
+  const { text: detail, totalPages } = await digest.buildDetail('DIGEST_CUSTOMER_NOTES', settings, AFTER);
   assert.match(detail, /CJE.*promised payment Friday/);
-  assert.ok(!/Old Corp/.test(detail), 'notes older than the window excluded');
+  assert.match(detail, /Old Corp.*ancient note/, 'ALL notes shown, not just recent (owner 17-Jul)');
+  assert.equal(totalPages, 1);
+});
+
+test('notes detail paginates beyond 15 and clamps out-of-range pages', async () => {
+  const many = Array.from({ length: 22 }, (_, i) => ({
+    note_id: 'M' + i, customer: 'Cust' + i, note: 'note number ' + i,
+    created_by: '777', created_at: new Date(Date.parse('2026-07-16T10:00:00Z') - i * 3600e3).toISOString(),
+  }));
+  const saved = customerNotesRepository.getAll;
+  customerNotesRepository.getAll = async () => many;
+  const p0 = await digest.buildDetail('DIGEST_CUSTOMER_NOTES', baseSettings(), AFTER, 0);
+  assert.equal(p0.totalPages, 2);
+  assert.match(p0.text, /page 1\/2/);
+  assert.match(p0.text, /Cust0/);
+  const p1 = await digest.buildDetail('DIGEST_CUSTOMER_NOTES', baseSettings(), AFTER, 99);
+  assert.match(p1.text, /page 2\/2/, 'page clamps to last');
+  assert.match(p1.text, /Cust21/);
+  customerNotesRepository.getAll = saved;
 });
 
 test('flipping a toggle adds its section; DIGEST_ENABLED=0 silences everything', async () => {
@@ -82,9 +100,9 @@ test('flipping a toggle adds its section; DIGEST_ENABLED=0 silences everything',
   assert.equal(bot.calls.length, 0);
 });
 
-test('notes toggle on but nothing recent → digest still greets with the empty-notes line', async () => {
+test('notes toggle on but sheet empty → digest still greets with the none-yet line', async () => {
   customerNotesRepository.getAll = async () => [];
   settings = baseSettings();
   const text = await digest.buildDigest(settings, AFTER);
-  assert.match(text, /nothing new in 7 days/);
+  assert.match(text, /Customer notes: none yet/);
 });

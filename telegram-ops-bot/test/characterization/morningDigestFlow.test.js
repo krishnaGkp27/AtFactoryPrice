@@ -87,5 +87,5 @@ test('▶ test button sends the composed digest to the admin', async () => {
   await controller.handleCallbackQuery(bot, cb('act:morning_digest', '777')); // fresh session (test 3 cleared it)
   await controller.handleCallbackQuery(bot, cb('rmd:test', '777'));
   assert.match(bot.allText(), /Good morning/);
-  assert.match(bot.allText(), /Customer notes: \*1\* new/, 'summary line with count');
+  assert.match(bot.allText(), /Customer notes: \*1\* total · \*1\* new/, 'summary line with counts');
 });

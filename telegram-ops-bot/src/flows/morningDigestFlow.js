@@ -67,7 +67,9 @@ async function handleCallback(bot, callbackQuery) {
   // rmd:d:<CATEGORY_KEY> swaps the message to that category's live detail;
   // rmd:d:__sum__ swaps back to the summary. Recomputed on every tap.
   if (rest.startsWith('d:')) {
-    const key = rest.slice(2);
+    const parts = rest.slice(2).split(':');
+    const key = parts[0];
+    const page = Math.max(0, parseInt(parts[1], 10) || 0);
     const settings = await settingsRepository.getAll();
     const messageId = callbackQuery.message.message_id;
     try {
@@ -78,11 +80,14 @@ async function handleCallback(bot, callbackQuery) {
           reply_markup: keyboard || undefined,
         });
       } else {
-        const detail = await morningDigest.buildDetail(key, settings);
-        if (!detail) return true;
-        await bot.editMessageText(detail, {
+        const { text, totalPages } = await morningDigest.buildDetail(key, settings, new Date(), page);
+        if (!text) return true;
+        const nav = [{ text: '◀ Summary', callback_data: `${NS}d:__sum__` }];
+        if (page > 0) nav.push({ text: '◀ Prev', callback_data: `${NS}d:${key}:${page - 1}` });
+        if (page < totalPages - 1) nav.push({ text: 'More ▶', callback_data: `${NS}d:${key}:${page + 1}` });
+        await bot.editMessageText(text, {
           chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [[{ text: '◀ Summary', callback_data: `${NS}d:__sum__` }]] },
+          reply_markup: { inline_keyboard: [nav] },
         });
       }
     } catch (e) { logger.warn(`digest drill-down failed: ${e.message}`); }

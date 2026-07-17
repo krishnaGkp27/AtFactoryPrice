@@ -50,10 +50,10 @@ async function loadNotes(settings, todayIso) {
   const repo = require('../repositories/customerNotesRepository');
   const days = Number(settings.DIGEST_NOTES_DAYS) || 7;
   const cutoff = new Date(Date.parse(todayIso) - days * 86400000).toISOString().slice(0, 10);
-  const recent = (await repo.getAll())
-    .filter((n) => fmtDay(n.created_at) >= cutoff)
+  const all = (await repo.getAll())
     .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
-  return { days, recent };
+  const newCount = all.filter((n) => fmtDay(n.created_at) >= cutoff).length;
+  return { days, all, newCount };
 }
 
 async function loadFollowups(settings, todayIso) {
@@ -71,16 +71,22 @@ const CATEGORIES = [
     key: 'DIGEST_CUSTOMER_NOTES',
     label: '🗒 Notes',
     async summarize(settings, todayIso) {
-      const { days, recent } = await loadNotes(settings, todayIso);
-      if (!recent.length) return { line: `🗒 Customer notes: nothing new in ${days} days`, count: 0 };
-      return { line: `🗒 Customer notes: *${recent.length}* new in last ${days} days`, count: recent.length };
+      const { days, all, newCount } = await loadNotes(settings, todayIso);
+      if (!all.length) return { line: '🗒 Customer notes: none yet', count: 0 };
+      return { line: `🗒 Customer notes: *${all.length}* total · *${newCount}* new in ${days} days`, count: all.length };
     },
-    async detail(settings, todayIso) {
-      const { days, recent } = await loadNotes(settings, todayIso);
-      if (!recent.length) return `🗒 *Customer notes* — nothing new in the last ${days} days.`;
-      const lines = recent.slice(0, NOTES_CAP).map((n) => `• *${n.customer}* — ${fmtDay(n.created_at)}: ${n.note}`);
-      const more = recent.length > NOTES_CAP ? `\n_…and ${recent.length - NOTES_CAP} more (Customer Details → Notes)_` : '';
-      return `🗒 *Customer notes* (last ${days} days, newest first):\n${lines.join('\n')}${more}`;
+    // Owner 17-Jul: the tapped view shows ALL notes — paginated, newest first.
+    async detail(settings, todayIso, page = 0) {
+      const { all } = await loadNotes(settings, todayIso);
+      if (!all.length) return { text: '🗒 *Customer notes* — none recorded yet.', totalPages: 1 };
+      const totalPages = Math.max(1, Math.ceil(all.length / NOTES_CAP));
+      const p = Math.min(Math.max(page, 0), totalPages - 1);
+      const lines = all.slice(p * NOTES_CAP, (p + 1) * NOTES_CAP)
+        .map((n) => `• *${n.customer}* — ${fmtDay(n.created_at)}: ${n.note}`);
+      return {
+        text: `🗒 *Customer notes* — all ${all.length}, newest first (page ${p + 1}/${totalPages}):\n${lines.join('\n')}`,
+        totalPages,
+      };
     },
   },
   {
@@ -156,27 +162,8 @@ const CATEGORIES = [
       return `🎨 *Samples out: ${out.length}*\n${lines.join('\n')}${out.length > LIST_CAP ? `\n_…and ${out.length - LIST_CAP} more_` : ''}`;
     },
   },
-  {
-    key: 'DIGEST_LOW_STOCK',
-    label: '📉 Low stock',
-    async summarize() {
-      try {
-        const { computeLowStock, getLowStockThreshold } = require('../flows/procurementPlanView')._internals;
-        const threshold = await getLowStockThreshold();
-        const rows = await computeLowStock(threshold);
-        if (!rows.length) return { line: '', count: 0 };
-        return { line: `📉 Low stock: *${rows.length}* design/shades below ${threshold} bls`, count: rows.length };
-      } catch { return { line: '', count: 0 }; }
-    },
-    async detail() {
-      const { computeLowStock, getLowStockThreshold } = require('../flows/procurementPlanView')._internals;
-      const threshold = await getLowStockThreshold();
-      const rows = await computeLowStock(threshold);
-      if (!rows.length) return '📉 *Low stock* — nothing below threshold.';
-      const lines = rows.slice(0, LOWSTOCK_CAP).map((r) => `• ${r.design} / shade ${r.shade || '—'}: *${r.bales}* bls`);
-      return `📉 *Low stock* (<${threshold} bls, lowest first):\n${lines.join('\n')}${rows.length > LOWSTOCK_CAP ? `\n_…and ${rows.length - LOWSTOCK_CAP} more — see 🧮 Procurement Plan_` : ''}`;
-    },
-  },
+  // (Low stock deliberately absent — owner 17-Jul: availability alone does
+  //  not define low stock for this business; returns after the analysis.)
   {
     key: 'DIGEST_ORDERS',
     label: '🚚 Orders',
@@ -230,12 +217,17 @@ async function buildSummary(settings, now = new Date()) {
   return { text, keyboard: rows.length ? { inline_keyboard: rows } : null };
 }
 
-/** Full detail for one category (session-free drill-down target). */
-async function buildDetail(key, settings, now = new Date()) {
+/**
+ * Full detail for one category (session-free drill-down target).
+ * Always returns { text, totalPages } — categories without pagination
+ * report totalPages 1.
+ */
+async function buildDetail(key, settings, now = new Date(), page = 0) {
   const cat = categoryByKey(key);
-  if (!cat) return '';
+  if (!cat) return { text: '', totalPages: 1 };
   const tz = settings.DIGEST_TIMEZONE || LAGOS_TZ;
-  return cat.detail(settings, dayInTz(now, tz));
+  const out = await cat.detail(settings, dayInTz(now, tz), page);
+  return typeof out === 'string' ? { text: out, totalPages: 1 } : out;
 }
 
 /** Back-compat plain-text digest (test button fallback / previews). */
