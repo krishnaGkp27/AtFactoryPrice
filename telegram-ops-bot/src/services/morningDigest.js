@@ -75,17 +75,16 @@ const CATEGORIES = [
       if (!all.length) return { line: '🗒 Customer notes: none yet', count: 0 };
       return { line: `🗒 Customer notes: *${all.length}* total · *${newCount}* new in ${days} days`, count: all.length };
     },
-    // Owner 17-Jul: the tapped view shows ALL notes — paginated, newest first.
-    async detail(settings, todayIso, page = 0) {
+    // Owner 17-Jul (v2): tapping Notes shows CUSTOMER chips; tapping a
+    // customer shows that customer's notes. Rendering lives in the flow
+    // (needs custom keyboards) via notesIndex/notesForCustomer below.
+    async detail(settings, todayIso) {
       const { all } = await loadNotes(settings, todayIso);
       if (!all.length) return { text: '🗒 *Customer notes* — none recorded yet.', totalPages: 1 };
-      const totalPages = Math.max(1, Math.ceil(all.length / NOTES_CAP));
-      const p = Math.min(Math.max(page, 0), totalPages - 1);
-      const lines = all.slice(p * NOTES_CAP, (p + 1) * NOTES_CAP)
-        .map((n) => `• *${n.customer}* — ${fmtDay(n.created_at)}: ${n.note}`);
+      const customers = notesGroups(all);
       return {
-        text: `🗒 *Customer notes* — all ${all.length}, newest first (page ${p + 1}/${totalPages}):\n${lines.join('\n')}`,
-        totalPages,
+        text: `🗒 *Customer notes* — ${all.length} across ${customers.length} customer(s).\nTap a customer to read their notes.`,
+        totalPages: 1,
       };
     },
   },
@@ -190,6 +189,49 @@ const CATEGORIES = [
 
 function categoryByKey(key) { return CATEGORIES.find((c) => c.key === key) || null; }
 
+/** Distinct note customers, most-recent note first: [{customer, count, latest}]. */
+function notesGroups(allNotes) {
+  const map = new Map();
+  for (const n of allNotes) {
+    const key = (n.customer || '(no name)').trim();
+    if (!map.has(key)) map.set(key, { customer: key, count: 0, latest: '' });
+    const g = map.get(key);
+    g.count += 1;
+    if (String(n.created_at) > g.latest) g.latest = String(n.created_at);
+  }
+  return [...map.values()].sort((a, b) => b.latest.localeCompare(a.latest));
+}
+
+/** Customer chip index for the notes drill-down (recomputed per tap). */
+async function notesIndex(settings) {
+  const { all } = await loadNotes(settings, dayInTz(new Date(), settings.DIGEST_TIMEZONE || LAGOS_TZ));
+  return { total: all.length, customers: notesGroups(all) };
+}
+
+const NOTES_PER_CUSTOMER_PAGE = 5;
+const NOTE_TEXT_CAP = 600;
+
+/** One customer's notes, newest first, paged (5/page, long notes trimmed). */
+async function notesForCustomer(settings, customerIdx, page = 0) {
+  const { all } = await loadNotes(settings, dayInTz(new Date(), settings.DIGEST_TIMEZONE || LAGOS_TZ));
+  const groups = notesGroups(all);
+  const group = groups[customerIdx];
+  if (!group) return null;
+  const notes = all.filter((n) => (n.customer || '(no name)').trim() === group.customer);
+  const totalPages = Math.max(1, Math.ceil(notes.length / NOTES_PER_CUSTOMER_PAGE));
+  const p = Math.min(Math.max(page, 0), totalPages - 1);
+  const lines = notes.slice(p * NOTES_PER_CUSTOMER_PAGE, (p + 1) * NOTES_PER_CUSTOMER_PAGE)
+    .map((n) => {
+      const body = n.note.length > NOTE_TEXT_CAP ? `${n.note.slice(0, NOTE_TEXT_CAP)}…` : n.note;
+      return `📌 *${fmtDay(n.created_at)}*\n${body}`;
+    });
+  return {
+    customer: group.customer,
+    text: `🗒 *${group.customer}* — ${notes.length} note(s), newest first${totalPages > 1 ? ` (page ${p + 1}/${totalPages})` : ''}:\n\n${lines.join('\n\n')}`,
+    totalPages,
+  };
+}
+
 /**
  * The summary message + drill-down keyboard (MORN-1b): one line per
  * enabled category, buttons (≤MAX_BUTTONS) only for categories with data.
@@ -281,4 +323,4 @@ function start(bot) {
 
 function _resetForTests() { _lastSentDay = null; if (_timer) { clearInterval(_timer); _timer = null; } }
 
-module.exports = { start, tick, buildSummary, buildDetail, buildDigest, sendDigest, CATEGORIES, _resetForTests };
+module.exports = { start, tick, buildSummary, buildDetail, buildDigest, sendDigest, notesIndex, notesForCustomer, CATEGORIES, _resetForTests };

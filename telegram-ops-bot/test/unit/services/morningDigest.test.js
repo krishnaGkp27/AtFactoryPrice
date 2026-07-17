@@ -65,26 +65,29 @@ test('launch toggles: notes summary counts total + new; drill-down shows ALL not
   const btns = keyboard.inline_keyboard.flat();
   assert.equal(btns.length, 1, 'one drill-down button (notes only)');
   assert.equal(btns[0].callback_data, 'rmd:d:DIGEST_CUSTOMER_NOTES');
-  const { text: detail, totalPages } = await digest.buildDetail('DIGEST_CUSTOMER_NOTES', settings, AFTER);
-  assert.match(detail, /CJE.*promised payment Friday/);
-  assert.match(detail, /Old Corp.*ancient note/, 'ALL notes shown, not just recent (owner 17-Jul)');
-  assert.equal(totalPages, 1);
+  const { customers, total } = await digest.notesIndex(settings);
+  assert.equal(total, 3);
+  assert.deepEqual(customers.map((c) => c.customer), ['CJE', 'OKSON', 'Old Corp'], 'latest-note-first customer chips');
+  const cje = await digest.notesForCustomer(settings, 0, 0);
+  assert.match(cje.text, /promised payment Friday/);
+  assert.ok(!/ancient note/.test(cje.text), 'only the tapped customer\'s notes');
 });
 
-test('notes detail paginates beyond 15 and clamps out-of-range pages', async () => {
-  const many = Array.from({ length: 22 }, (_, i) => ({
-    note_id: 'M' + i, customer: 'Cust' + i, note: 'note number ' + i,
+test('per-customer notes paginate at 5/page and clamp out-of-range pages', async () => {
+  const many = Array.from({ length: 12 }, (_, i) => ({
+    note_id: 'M' + i, customer: 'OKSON', note: 'note number ' + i,
     created_by: '777', created_at: new Date(Date.parse('2026-07-16T10:00:00Z') - i * 3600e3).toISOString(),
   }));
   const saved = customerNotesRepository.getAll;
   customerNotesRepository.getAll = async () => many;
-  const p0 = await digest.buildDetail('DIGEST_CUSTOMER_NOTES', baseSettings(), AFTER, 0);
-  assert.equal(p0.totalPages, 2);
-  assert.match(p0.text, /page 1\/2/);
-  assert.match(p0.text, /Cust0/);
-  const p1 = await digest.buildDetail('DIGEST_CUSTOMER_NOTES', baseSettings(), AFTER, 99);
-  assert.match(p1.text, /page 2\/2/, 'page clamps to last');
-  assert.match(p1.text, /Cust21/);
+  const p0 = await digest.notesForCustomer(baseSettings(), 0, 0);
+  assert.equal(p0.totalPages, 3);
+  assert.match(p0.text, /page 1\/3/);
+  assert.match(p0.text, /note number 0/);
+  const pLast = await digest.notesForCustomer(baseSettings(), 0, 99);
+  assert.match(pLast.text, /page 3\/3/, 'page clamps to last');
+  assert.match(pLast.text, /note number 11/);
+  assert.equal(await digest.notesForCustomer(baseSettings(), 44, 0), null, 'unknown customer index → null');
   customerNotesRepository.getAll = saved;
 });
 

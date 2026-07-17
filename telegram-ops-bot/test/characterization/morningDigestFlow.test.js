@@ -72,11 +72,17 @@ test('session-free drill-down: tap section → detail in place → back to summa
   const sessionStore = require(path.join(SRC, 'utils/sessionStore'));
   sessionStore.clear('777'); // drill-down must work on the daily message with NO session
   await controller.handleCallbackQuery(bot, cb('rmd:d:DIGEST_CUSTOMER_NOTES', '777'));
-  const edits = bot.calls.filter((c) => c.method === 'editMessageText');
+  let edits = bot.calls.filter((c) => c.method === 'editMessageText');
   assert.ok(edits.length >= 1, 'message edited in place');
-  assert.match(edits[edits.length - 1].args.text, /promised payment Friday/, 'full note shown');
-  const kb = edits[edits.length - 1].args.opts.reply_markup.inline_keyboard.flat();
+  let kb = edits[edits.length - 1].args.opts.reply_markup.inline_keyboard.flat();
+  const chip = kb.find((b) => /👤 CJE \(1\)/.test(b.text));
+  assert.ok(chip, 'customer chip rendered (owner 17-Jul v2)');
   assert.ok(kb.some((b) => b.callback_data === 'rmd:d:__sum__'), '◀ Summary button present');
+  await controller.handleCallbackQuery(bot, cb(chip.callback_data, '777'));
+  edits = bot.calls.filter((c) => c.method === 'editMessageText');
+  assert.match(edits[edits.length - 1].args.text, /promised payment Friday/, 'tapped customer\'s note shown');
+  kb = edits[edits.length - 1].args.opts.reply_markup.inline_keyboard.flat();
+  assert.ok(kb.some((b) => b.callback_data === 'rmd:d:DIGEST_CUSTOMER_NOTES'), '◀ Customers back button');
   await controller.handleCallbackQuery(bot, cb('rmd:d:__sum__', '777'));
   const edits2 = bot.calls.filter((c) => c.method === 'editMessageText');
   assert.match(edits2[edits2.length - 1].args.text, /Good morning/, 'back to summary');

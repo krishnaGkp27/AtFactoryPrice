@@ -79,6 +79,20 @@ async function handleCallback(bot, callbackQuery) {
           chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
           reply_markup: keyboard || undefined,
         });
+      } else if (key === 'DIGEST_CUSTOMER_NOTES') {
+        // Owner 17-Jul v2: notes drill-down = CUSTOMER chips → their notes.
+        const { total, customers } = await morningDigest.notesIndex(settings);
+        const pages = Math.max(1, Math.ceil(customers.length / 12));
+        const p = Math.min(page, pages - 1);
+        const rows = chunk(customers.slice(p * 12, (p + 1) * 12)
+          .map((c, i) => ({ text: `👤 ${c.customer} (${c.count})`, callback_data: `${NS}dn:${p * 12 + i}:0` })), 2);
+        const nav = [{ text: '◀ Summary', callback_data: `${NS}d:__sum__` }];
+        if (p > 0) nav.push({ text: '◀ Prev', callback_data: `${NS}d:${key}:${p - 1}` });
+        if (p < pages - 1) nav.push({ text: 'More ▶', callback_data: `${NS}d:${key}:${p + 1}` });
+        rows.push(nav);
+        await bot.editMessageText(
+          total ? `🗒 *Customer notes* — ${total} across ${customers.length} customer(s).\nTap a customer to read their notes:` : '🗒 *Customer notes* — none recorded yet.',
+          { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
       } else {
         const { text, totalPages } = await morningDigest.buildDetail(key, settings, new Date(), page);
         if (!text) return true;
@@ -91,6 +105,30 @@ async function handleCallback(bot, callbackQuery) {
         });
       }
     } catch (e) { logger.warn(`digest drill-down failed: ${e.message}`); }
+    return true;
+  }
+
+  // MORN-1b v2 — one customer's notes: rmd:dn:<customerIdx>:<page>.
+  if (rest.startsWith('dn:')) {
+    const [idxStr, pageStr] = rest.slice(3).split(':');
+    const idx = Math.max(0, parseInt(idxStr, 10) || 0);
+    const page = Math.max(0, parseInt(pageStr, 10) || 0);
+    const settings = await settingsRepository.getAll();
+    const messageId = callbackQuery.message.message_id;
+    try {
+      const out = await morningDigest.notesForCustomer(settings, idx, page);
+      if (!out) return true;
+      const nav = [
+        { text: '◀ Customers', callback_data: `${NS}d:DIGEST_CUSTOMER_NOTES` },
+        { text: '◀ Summary', callback_data: `${NS}d:__sum__` },
+      ];
+      if (page > 0) nav.push({ text: '◀ Prev', callback_data: `${NS}dn:${idx}:${page - 1}` });
+      if (page < out.totalPages - 1) nav.push({ text: 'More ▶', callback_data: `${NS}dn:${idx}:${page + 1}` });
+      await bot.editMessageText(out.text, {
+        chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [nav] },
+      });
+    } catch (e) { logger.warn(`digest customer notes failed: ${e.message}`); }
     return true;
   }
 
