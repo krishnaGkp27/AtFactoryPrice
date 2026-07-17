@@ -29,7 +29,7 @@ const DEFAULTS = {
   // HH:MM Nigeria local; category toggles editable in-bot (⏰ Morning
   // Digest tile). Launch state: customer notes ON, everything else OFF.
   DIGEST_ENABLED: 1,
-  DIGEST_TIME: '09:15',
+  DIGEST_TIME: '10:00',
   DIGEST_TIMEZONE: 'Africa/Lagos',
   DIGEST_NOTES_DAYS: 7,
   DIGEST_CUSTOMER_NOTES: 1,

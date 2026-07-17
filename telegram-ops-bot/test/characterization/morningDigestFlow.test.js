@@ -53,8 +53,8 @@ test('employee is refused; admin sees the toggle screen', async () => {
   assert.match(bot.allText(), /Admin only/);
   await controller.handleCallbackQuery(bot, cb('act:morning_digest', '777'));
   const kb = lastKb(bot);
-  assert.ok(kb.some((b) => /✅ 🗒 Customer notes/.test(b.text)), 'notes ON at launch');
-  assert.ok(kb.some((b) => /⬜ 🛂 Pending approvals/.test(b.text)), 'approvals OFF at launch');
+  assert.ok(kb.some((b) => /✅ 🗒 Notes/.test(b.text)), 'notes ON at launch');
+  assert.ok(kb.some((b) => /⬜ 🛂 Approvals/.test(b.text)), 'approvals OFF at launch');
 });
 
 test('toggle writes the setting + audit row and re-renders', async () => {
@@ -62,14 +62,30 @@ test('toggle writes the setting + audit row and re-renders', async () => {
   await controller.handleCallbackQuery(bot, cb('rmd:t:DIGEST_APPROVALS', '777'));
   assert.equal(stored.DIGEST_APPROVALS, 1, 'setting flipped on');
   assert.ok(audits.some((a) => a.event === 'digest_config_changed' && a.payload.key === 'DIGEST_APPROVALS'));
-  assert.ok(lastKb(bot).some((b) => /✅ 🛂 Pending approvals/.test(b.text)), 're-rendered ticked');
-  await controller.handleCallbackQuery(bot, cb('rmd:tm:0900', '777'));
-  assert.equal(stored.DIGEST_TIME, '09:00', 'time chip applied');
+  assert.ok(lastKb(bot).some((b) => /✅ 🛂 Approvals/.test(b.text)), 're-rendered ticked');
+  await controller.handleCallbackQuery(bot, cb('rmd:tm:1000', '777'));
+  assert.equal(stored.DIGEST_TIME, '10:00', 'time chip applied');
+});
+
+test('session-free drill-down: tap section → detail in place → back to summary', async () => {
+  const bot = createFakeBot();
+  const sessionStore = require(path.join(SRC, 'utils/sessionStore'));
+  sessionStore.clear('777'); // drill-down must work on the daily message with NO session
+  await controller.handleCallbackQuery(bot, cb('rmd:d:DIGEST_CUSTOMER_NOTES', '777'));
+  const edits = bot.calls.filter((c) => c.method === 'editMessageText');
+  assert.ok(edits.length >= 1, 'message edited in place');
+  assert.match(edits[edits.length - 1].args.text, /promised payment Friday/, 'full note shown');
+  const kb = edits[edits.length - 1].args.opts.reply_markup.inline_keyboard.flat();
+  assert.ok(kb.some((b) => b.callback_data === 'rmd:d:__sum__'), '◀ Summary button present');
+  await controller.handleCallbackQuery(bot, cb('rmd:d:__sum__', '777'));
+  const edits2 = bot.calls.filter((c) => c.method === 'editMessageText');
+  assert.match(edits2[edits2.length - 1].args.text, /Good morning/, 'back to summary');
 });
 
 test('▶ test button sends the composed digest to the admin', async () => {
   const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('act:morning_digest', '777')); // fresh session (test 3 cleared it)
   await controller.handleCallbackQuery(bot, cb('rmd:test', '777'));
   assert.match(bot.allText(), /Good morning/);
-  assert.match(bot.allText(), /CJE.*promised payment Friday/);
+  assert.match(bot.allText(), /Customer notes: \*1\* new/, 'summary line with count');
 });

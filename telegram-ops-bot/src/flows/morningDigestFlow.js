@@ -19,7 +19,7 @@ const logger = require('../utils/logger');
 
 const SESSION_TYPE = 'morning_digest_flow';
 const NS = 'rmd:';
-const TIME_CHIPS = ['08:30', '09:00', '09:15', '09:30'];
+const TIME_CHIPS = ['08:30', '09:15', '10:00', '10:30'];
 
 const render = makeRenderer({ parseMode: 'Markdown', requireSession: SESSION_TYPE });
 
@@ -61,12 +61,39 @@ async function handleCallback(bot, callbackQuery) {
   const userId = String(callbackQuery.from.id);
   await bot.answerCallbackQuery(callbackQuery.id).catch(() => {});
   if (!auth.isAdmin(userId)) return true;
+  const rest = data.slice(NS.length);
+
+  // MORN-1b — SESSION-FREE drill-down on the daily digest message itself:
+  // rmd:d:<CATEGORY_KEY> swaps the message to that category's live detail;
+  // rmd:d:__sum__ swaps back to the summary. Recomputed on every tap.
+  if (rest.startsWith('d:')) {
+    const key = rest.slice(2);
+    const settings = await settingsRepository.getAll();
+    const messageId = callbackQuery.message.message_id;
+    try {
+      if (key === '__sum__') {
+        const { text, keyboard } = await morningDigest.buildSummary(settings);
+        await bot.editMessageText(text || '_(empty digest)_', {
+          chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+          reply_markup: keyboard || undefined,
+        });
+      } else {
+        const detail = await morningDigest.buildDetail(key, settings);
+        if (!detail) return true;
+        await bot.editMessageText(detail, {
+          chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '◀ Summary', callback_data: `${NS}d:__sum__` }]] },
+        });
+      }
+    } catch (e) { logger.warn(`digest drill-down failed: ${e.message}`); }
+    return true;
+  }
+
   const session = sessionStore.get(userId);
   if (!session || session.type !== SESSION_TYPE) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'This card expired. Open ⏰ Morning Digest again.', show_alert: true }).catch(() => {});
     return true;
   }
-  const rest = data.slice(NS.length);
 
   if (rest.startsWith('t:')) {
     const key = rest.slice(2);
@@ -90,9 +117,10 @@ async function handleCallback(bot, callbackQuery) {
   }
   if (rest === 'test') {
     const settings = await settingsRepository.getAll();
-    const text = await morningDigest.buildDigest(settings);
+    const { text, keyboard } = await morningDigest.buildSummary(settings);
     try {
-      await bot.sendMessage(chatId, text || '_(Digest is empty — every category is off or has nothing to report.)_', { parse_mode: 'Markdown' });
+      await bot.sendMessage(chatId, text || '_(Digest is empty — every category is off or has nothing to report.)_',
+        { parse_mode: 'Markdown', ...(keyboard ? { reply_markup: keyboard } : {}) });
     } catch (e) { logger.warn(`digest test send failed: ${e.message}`); }
     return true;
   }

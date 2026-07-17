@@ -55,20 +55,26 @@ test('fires only at/after 09:15 Lagos, once per day, with catch-up', async () =>
   assert.equal(await digest.tick(bot, NEXT_DAY), true, 'fires again next day');
 });
 
-test('launch toggles: notes section on, others silent even with data; recent-window respected', async () => {
+test('launch toggles: notes summary line + drill-down detail; recent-window respected', async () => {
   digest._resetForTests();
   settings = baseSettings();
-  const text = await digest.buildDigest(settings, AFTER);
-  assert.match(text, /Customer notes/);
-  assert.match(text, /CJE.*promised payment Friday/);
-  assert.ok(!/Old Corp/.test(text), 'notes older than the window excluded');
+  const { text, keyboard } = await digest.buildSummary(settings, AFTER);
+  assert.match(text, /Customer notes: \*2\* new/);
+  assert.ok(!/promised payment/.test(text), 'summary stays compact — note text lives in the detail');
   assert.ok(!/Approvals pending/.test(text), 'approvals section off by default');
+  const btns = keyboard.inline_keyboard.flat();
+  assert.equal(btns.length, 1, 'one drill-down button (notes only)');
+  assert.equal(btns[0].callback_data, 'rmd:d:DIGEST_CUSTOMER_NOTES');
+  const detail = await digest.buildDetail('DIGEST_CUSTOMER_NOTES', settings, AFTER);
+  assert.match(detail, /CJE.*promised payment Friday/);
+  assert.ok(!/Old Corp/.test(detail), 'notes older than the window excluded');
 });
 
 test('flipping a toggle adds its section; DIGEST_ENABLED=0 silences everything', async () => {
   settings = baseSettings({ DIGEST_APPROVALS: 1 });
-  const text = await digest.buildDigest(settings, AFTER);
-  assert.match(text, /Approvals pending.*1/);
+  const { text, keyboard } = await digest.buildSummary(settings, AFTER);
+  assert.match(text, /Approvals pending: \*1\*/);
+  assert.equal(keyboard.inline_keyboard.flat().length, 2, 'notes + approvals buttons');
   digest._resetForTests();
   settings = baseSettings({ DIGEST_ENABLED: 0 });
   const bot = createFakeBot();
@@ -80,5 +86,5 @@ test('notes toggle on but nothing recent → digest still greets with the empty-
   customerNotesRepository.getAll = async () => [];
   settings = baseSettings();
   const text = await digest.buildDigest(settings, AFTER);
-  assert.match(text, /nothing new in the last 7 days/);
+  assert.match(text, /nothing new in 7 days/);
 });
