@@ -1865,9 +1865,9 @@ async function runS15a() {
   delete require.cache[require.resolve('../src/services/vision')];
   const visionOA = require('../src/services/vision');
   resp = await visionOA.extractBales(fakeJpg, 'image/jpeg');
-  if (!resp.ok && /not_implemented/i.test(resp.error) && resp.provider === 'openai') {
-    pass('S15.11 vision: OpenAI provider skeleton → ok=false / not_implemented (no crash)');
-  } else fail('S15.11 openai skeleton', JSON.stringify(resp));
+  if (!resp.ok && /OPENAI_API_KEY is not configured/i.test(resp.error) && resp.provider === 'openai') {
+    pass('S15.11 vision: OpenAI provider without key → ok=false clean error (no crash)');
+  } else fail('S15.11 openai no-key', JSON.stringify(resp));
 
   // S15.12 — fixture override via env var, deterministic.
   // Reset config + vision so OCR_PROVIDER flip back to 'stub' takes effect
