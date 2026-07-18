@@ -52,6 +52,11 @@ const config = {
     model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
   },
 
+  /** Anthropic (Claude) — used by the vision OCR provider (SNAP-2). */
+  anthropic: {
+    apiKey: process.env.ANTHROPIC_API_KEY || '',
+  },
+
   sheets: {
     sheetId: process.env.GOOGLE_SHEET_ID || '',
     credentials: parseCredentials(),
@@ -131,10 +136,18 @@ const config = {
    */
   ocr: {
     enabled: (process.env.OCR_ENABLED || 'false').toLowerCase() === 'true',
-    /** stub | openai | google */
+    /**
+     * stub | openai | anthropic | auto.
+     * `auto` (SNAP-2) picks by available API keys: anthropic first
+     * (Claude reads the handwritten label values best), then openai,
+     * then stub — so adding ANTHROPIC_API_KEY upgrades OCR without a
+     * config change.
+     */
     provider: process.env.OCR_PROVIDER || 'stub',
     /** OpenAI Vision model when provider=openai */
     openaiModel: process.env.OCR_OPENAI_MODEL || 'gpt-4o',
+    /** Claude vision model when provider=anthropic */
+    anthropicModel: process.env.OCR_ANTHROPIC_MODEL || 'claude-opus-4-8',
     /** Confidence in [0..1] below which a row is shown red + forces edit */
     lowConfidenceThreshold: parseFloat(process.env.OCR_LOW_CONF) || 0.7,
     /** Max image / PDF size in bytes (5 MB) */

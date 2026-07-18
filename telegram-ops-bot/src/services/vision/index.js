@@ -19,7 +19,7 @@
  * Uniform return shape (all providers MUST return this):
  *   {
  *     ok: boolean,
- *     provider: string,           // 'stub' | 'openai' | 'google'
+ *     provider: string,           // 'stub' | 'openai' | 'anthropic'
  *     bales: Array<{
  *       packageNo:   string,
  *       thanNo:      number,
@@ -51,13 +51,31 @@
 const config = require('../../config');
 const stub = require('./stub');
 const openai = require('./openai');
+const anthropic = require('./anthropic');
 const logger = require('../../utils/logger');
 
 const PROVIDERS = {
   stub,
   openai,
+  anthropic,
   // google: require('./google'),   // wired in a future commit
 };
+
+/**
+ * SNAP-2: OCR_PROVIDER=auto picks the best available real provider by
+ * which API keys exist — Claude first (stronger at the handwritten label
+ * values), then OpenAI, then the stub. Returns the chain, not just the
+ * head: in auto mode a thrown provider error falls through to the next
+ * entry so one provider outage doesn't take Snap Sale down.
+ */
+function resolveChain(providerName) {
+  if (providerName !== 'auto') return [providerName];
+  const chain = [];
+  if ((config.anthropic && config.anthropic.apiKey) || process.env.ANTHROPIC_API_KEY) chain.push('anthropic');
+  if ((config.openai && config.openai.apiKey) || process.env.OPENAI_API_KEY) chain.push('openai');
+  if (!chain.length) chain.push('stub');
+  return chain;
+}
 
 const SUPPORTED_MIMES = [
   'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif',
@@ -94,22 +112,26 @@ async function extractBales(buffer, mimeType, opts = {}) {
       `Unsupported file type "${mime || '(unknown)'}". Use JPG, PNG, WEBP, HEIC, or PDF.`);
   }
 
-  const providerName = opts.providerOverride || config.ocr.provider || 'stub';
-  const provider = PROVIDERS[providerName];
-  if (!provider) {
-    return errorResp('unknown_provider',
-      `Unknown OCR provider "${providerName}". Configured providers: ${Object.keys(PROVIDERS).join(', ')}.`);
-  }
+  const requested = opts.providerOverride || config.ocr.provider || 'stub';
+  const chain = resolveChain(requested);
 
-  let result;
-  try {
-    result = await provider.extractBales(buffer, mime, opts);
-  } catch (e) {
-    logger.warn(`vision: provider "${providerName}" threw: ${e.message}`);
-    return errorResp('provider_error', `Provider "${providerName}" failed: ${e.message}`);
+  let last = null;
+  for (const providerName of chain) {
+    const provider = PROVIDERS[providerName];
+    if (!provider) {
+      return errorResp('unknown_provider',
+        `Unknown OCR provider "${providerName}". Configured providers: ${Object.keys(PROVIDERS).join(', ')}.`);
+    }
+    try {
+      const result = await provider.extractBales(buffer, mime, opts);
+      return normalise(result, providerName);
+    } catch (e) {
+      logger.warn(`vision: provider "${providerName}" threw: ${e.message}`);
+      last = errorResp('provider_error', `Provider "${providerName}" failed: ${e.message}`);
+      // auto mode only: fall through to the next provider in the chain
+    }
   }
-
-  return normalise(result, providerName);
+  return last || errorResp('unknown_provider', `No OCR provider available for "${requested}".`);
 }
 
 function errorResp(code, message) {

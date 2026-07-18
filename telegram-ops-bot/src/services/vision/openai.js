@@ -18,6 +18,7 @@
 const OpenAI = require('openai');
 const config = require('../../config');
 const logger = require('../../utils/logger');
+const { PROMPT, mapParsedBales } = require('./labelExtraction');
 
 let _client = null;
 function getClient() {
@@ -26,25 +27,6 @@ function getClient() {
   if (!_client) _client = new OpenAI({ apiKey: key });
   return _client;
 }
-
-const PROMPT = `You read photos from a textile trading warehouse in Nigeria.
-The photo is either (a) a woven bale sack with a printed label and
-HANDWRITTEN values — fields like SHIPPING MARK, INDENT NO., BALE NO.,
-DESIGN NO., COLOUR NO., NO. OF PCS., TOTAL MTR., NET WT., GROSS WT. — or
-(b) a packing list / table with one row per bale.
-
-Extract EVERY bale you can see and return STRICT JSON only (no prose):
-{"bales":[{"packageNo":"<BALE NO as written>","design":"<DESIGN NO>",
-"shade":"<COLOUR NO>","pcs":<NO OF PCS as number or null>,
-"meters":<TOTAL MTR as number or null>,"indent":"<INDENT NO or empty>",
-"confidence":<0..1 how sure you are of THIS row's numbers>}],
-"rawText":"<all text you can read, one line per field>"}
-
-Rules: transcribe handwriting as digits exactly as written (e.g. 77016,
-896, 5). Do not invent fields you cannot read — use "" or null. If the
-photo shows one sack label, return exactly one bale entry.`;
-
-function clamp01(n) { const x = Number(n); return Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0.5; }
 
 async function extractBales(buffer, mimeType /* , opts */) {
   const client = getClient();
@@ -77,28 +59,7 @@ async function extractBales(buffer, mimeType /* , opts */) {
     return { ok: false, provider: 'openai', bales: [], rawText: '', overallConfidence: 0, warnings: [], error: 'Model returned unparseable output — try a clearer photo.' };
   }
 
-  const warnings = [];
-  const bales = (Array.isArray(parsed.bales) ? parsed.bales : []).map((b, i) => {
-    const meters = Number(b.meters);
-    const yards = Number.isFinite(meters) && meters > 0 ? Math.round(meters * 1.09361) : 0;
-    let confidence = clamp01(b.confidence);
-    if (meters && (meters < 1 || meters > 2000)) {
-      confidence /= 2;
-      warnings.push(`Row ${i + 1}: implausible meterage (${meters}).`);
-    }
-    return {
-      packageNo: String(b.packageNo ?? '').trim(),
-      thanNo: Number(b.pcs) || 0,
-      design: String(b.design ?? '').trim(),
-      shade: String(b.shade ?? '').trim(),
-      yards,
-      netMtrs: Number.isFinite(meters) ? meters : 0,
-      supplier: String(b.indent ?? '').trim(),
-      notes: '',
-      confidence,
-    };
-  }).filter((b) => b.packageNo || b.design);
-
+  const { bales, warnings } = mapParsedBales(parsed);
   const overallConfidence = bales.length
     ? bales.reduce((s, b) => s + b.confidence, 0) / bales.length
     : 0;
