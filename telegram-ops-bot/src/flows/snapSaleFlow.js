@@ -25,6 +25,7 @@ const auditLogRepository = require('../repositories/auditLogRepository');
 const usersRepository = require('../repositories/usersRepository');
 const idGenerator = require('../utils/idGenerator');
 const { todayInLagos } = require('../utils/dates');
+const config = require('../config');
 const logger = require('../utils/logger');
 
 const SESSION_TYPE = 'snap_sale_flow';
@@ -250,6 +251,7 @@ async function handleCallback(bot, callbackQuery) {
       action: 'sell_package',
       packageNo: b.packageNo, design: b.design, shade: b.shade || '',
       yards: Math.round(b.availableYards), thans: b.availableThans,
+      warehouse: b.warehouse || '',
       customer: session.customer, salesDate: todayInLagos(),
       salesPerson: (seller && seller.name) || userId,
       // Owner decision (b): the label photo IS the attached sale document —
@@ -262,15 +264,28 @@ async function handleCallback(bot, callbackQuery) {
       riskReason: 'All sale operations require admin approval.', status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, action: 'sell_package', source: 'snap_sale', packageNo: b.packageNo }, userId);
+    // APU-1: the approving admin sees the SAME card as a classic sale —
+    // full item line + totals + the label photo forwarded before deciding.
+    let adminCards = 0;
+    const excludeId = config.access.adminIds.includes(userId) ? userId : undefined;
     try {
       const approvalEvents = require('../events/approvalEvents');
-      await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, (seller && seller.name) || userId,
-        `sale (snap) — bale ${b.packageNo} ${b.design} to ${session.customer}`,
-        'All sale operations require admin approval.', userId);
+      const approvalCards = require('../services/approvalCards');
+      const card = await approvalCards.buildSellPackageCard(actionJSON);
+      const res = await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, (seller && seller.name) || userId,
+        card, 'All sale operations require admin approval.', excludeId);
+      adminCards = (res && res.sent) || 0;
+      if (actionJSON.sale_doc_file_id) {
+        await approvalCards.forwardAttachmentsToAdmins(bot, requestId,
+          [{ fileId: actionJSON.sale_doc_file_id, kind: 'photo', caption: `📷 Sales bill for request ${requestId}` }], excludeId);
+      }
     } catch (e) { logger.warn(`snap sale cards: ${e.message}`); }
     sessionStore.clear(userId);
+    const notifyWarning = adminCards === 0
+      ? '\n\n⚠️ Admins could not be notified right now — ask an admin to check Pending Approvals.'
+      : '';
     await render(bot, chatId, userId,
-      `✅ *Submitted.*\n\n📦 Bale ${mdEscape(b.packageNo)} — ${mdEscape(b.design)} → *${mdEscape(session.customer)}*\nRequest: \`${requestId}\`\n\n⏳ Waiting for admin approval (rate + payment entered there).`,
+      `✅ *Submitted.*\n\n📦 Bale ${mdEscape(b.packageNo)} — ${mdEscape(b.design)} → *${mdEscape(session.customer)}*\nRequest: \`${requestId}\`\n\n⏳ Waiting for admin approval (rate + payment entered there).${notifyWarning}`,
       [[{ text: '📸 Snap another', callback_data: 'act:snap_sale' }, { text: '🏠 Menu', callback_data: 'act:__back__' }]]);
     return true;
   }

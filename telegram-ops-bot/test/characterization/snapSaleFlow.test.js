@@ -78,9 +78,24 @@ test('photo → match card with OCR read-back → customer tap → queued with l
   assert.equal(aj.action, 'sell_package');
   assert.equal(aj.packageNo, '896');
   assert.equal(aj.customer, 'ALABI');
+  assert.equal(aj.warehouse, 'IDUMOTA', 'warehouse persisted on the queued action');
   assert.equal(aj.sale_doc_file_id, 'label-photo-file-id', 'label photo attached as the sale document');
   assert.equal(aj.salesPerson, 'Yarima');
   assert.equal(aj.source, 'snap_sale');
+  // APU-1 Phase 1 — admins get the gold-standard sale card + the label photo.
+  // notifyAdminsApprovalRequest MarkdownV2-escapes the card — strip the
+  // escape backslashes so assertions read like the rendered text.
+  const adminMsgs = bot.calls.filter((c) => c.method === 'sendMessage' && String(c.args.chatId) === '777').map((c) => c.args.text).join('\n').replace(/\\/g, '');
+  assert.match(adminMsgs, /Sale Request \(Snap Sale\)/, 'gold-standard headline');
+  assert.match(adminMsgs, /Customer: ALABI/);
+  assert.match(adminMsgs, /Salesperson: Yarima/);
+  assert.match(adminMsgs, /Bale 896: 77016 5, 2 thans, 60 yds \(IDUMOTA\)/, 'full item line');
+  assert.match(adminMsgs, /Total: 1 Bale \(2 thans\), 60 yards/);
+  assert.match(adminMsgs, /Sales bill \(label photo\) attached/);
+  const adminPhotos = bot.calls.filter((c) => c.method === 'sendPhoto' && String(c.args.chatId) === '777');
+  assert.equal(adminPhotos.length, 1, 'label photo forwarded to the admin');
+  assert.equal(adminPhotos[0].args.photo, 'label-photo-file-id');
+  assert.match(adminPhotos[0].args.opts.caption, /Sales bill for request/);
   assert.ok(!sessionStore.get('4242'), 'session cleared after submit');
 });
 

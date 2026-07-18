@@ -828,6 +828,10 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
       [{ text: '✅ Approve', callback_data: `approve:${requestId}` }, { text: '❌ Reject', callback_data: `reject:${requestId}` }],
     ],
   };
+  // APU-1: report delivery so callers can tell the requester when a queued
+  // request reached NO admin at all (queue-without-notify was silent before).
+  let sent = 0;
+  let failed = 0;
   for (const adminId of config.access.adminIds) {
     if (excludeUserId && String(adminId) === String(excludeUserId)) continue;
     // Best-effort photo preview (e.g. for design_asset_upload). Never blocks the text notification.
@@ -843,16 +847,20 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
     }
     try {
       await bot.sendMessage(adminId, text, { parse_mode: 'MarkdownV2', reply_markup: keyboard });
+      sent += 1;
     } catch (e) {
       logger.error('Failed to notify admin', adminId, e.message);
       try {
         const plain = `🔔 Approval required\n\nRequest ID: ${requestId}\nUser: ${userLabel}\nAction: ${actionSummary}\nReason: ${riskReason}\n\nUse buttons below to approve or reject.`;
         await bot.sendMessage(adminId, plain, { reply_markup: keyboard });
+        sent += 1;
       } catch (e2) {
+        failed += 1;
         logger.error('Failed to notify admin (plain fallback)', adminId, e2.message);
       }
     }
   }
+  return { sent, failed };
 }
 
 async function handleApprovalCallback(bot, callbackQuery, action) {
