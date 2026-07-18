@@ -123,6 +123,13 @@ app.post('/webhook', (req, res) => {
     return;
   }
 
+  // SRCH-1 — inline as-you-type inventory search (@bot <query> anywhere).
+  // Requires inline mode enabled once via BotFather /setinline.
+  if (body.inline_query) {
+    if (bot) require('./src/services/searchService').handleInlineQuery(bot, body.inline_query).catch((e) => logger.error('Inline query error', e));
+    return;
+  }
+
   const msg = body.message;
   if (msg && msg.text) {
     if (bot) telegramController.handleMessage(bot, msg).catch((e) => logger.error('Message error', e));
