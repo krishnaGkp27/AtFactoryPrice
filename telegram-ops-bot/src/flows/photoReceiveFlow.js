@@ -952,13 +952,16 @@ async function submit(bot, chatId, userId) {
   const isAdm = auth.isAdmin(userId);
   const approverLabel = isAdm ? '2nd admin' : 'admin';
   const excludeId = isAdm ? userId : undefined;
+  // APU-1: dual-admin container upload — approvers now see the per-design
+  // breakdown, OCR confidence, file hash and source link, not one line.
   const summary =
     `📷 Photo Receive — ${aj.warehouse} · ${aj.totalBales} bales / ${aj.totalThans} thans · `
     + `${fmtQty(aj.totalYards, { maxFraction: 2 })} yds · ${aj.source}`
     + `${aj.po_id ? ' · PO ' + aj.po_id : ''}`
-    + `${aj.editedRows.length ? ` · ${aj.editedRows.length} edited` : ''}`;
+    + `${aj.editedRows.length ? ` · ${aj.editedRows.length} edited` : ''}`
+    + require('../services/approvalCards').buildReceiveDetail(aj);
   await approvalEvents.notifyAdminsApprovalRequest(
-    bot, requestId, String(userId), summary, risk.reason, excludeId);
+    bot, requestId, await require('../services/approvalCards').resolveUserLabel(userId), summary, risk.reason, excludeId);
 
   session.step = 'submitted';
   sessionStore.set(userId, session);

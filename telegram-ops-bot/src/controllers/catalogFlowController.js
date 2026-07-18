@@ -790,7 +790,14 @@ async function submitReturn(bot, chatId, userId, session) {
     date: new Date().toISOString().split('T')[0],
   };
   await approvalQueueRepo.append({ requestId, user: String(userId), actionJSON, riskReason: 'Catalog return requires approval', status: 'pending' });
-  const summary = `Return ${selectedItems.length} catalog(s) from ${session.returnPersonName} (${session.returnRecipientType}) to ${session.returnWarehouse}`;
+  // APU-1: itemize WHICH catalogs come back — the count-only card asked
+  // admins to approve items they couldn't see.
+  const itemLines = selectedItems.slice(0, 15)
+    .map((i) => `  • ${i.design || i.itemLabel || i.ledgerId}${i.size ? ` (${i.size})` : ''}${i.qty ? ` ×${i.qty}` : ''}`)
+    .join('\n');
+  const moreLine = selectedItems.length > 15 ? `\n  …+${selectedItems.length - 15} more` : '';
+  const summary = `Catalog Return Request\nFrom: ${session.returnPersonName} (${session.returnRecipientType})`
+    + `\nReturn to: ${session.returnWarehouse}\nItems (${selectedItems.length}):\n${itemLines}${moreLine}`;
   await notifyAdminsApprovalRequest(bot, requestId, displayName, summary, 'Catalog return requires approval', String(userId));
   await auditLogRepo.append('catalog_return_request', actionJSON, String(userId));
   await safeDelete(bot, chatId, session.flowMessageId);

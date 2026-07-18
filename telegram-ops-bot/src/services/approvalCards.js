@@ -97,6 +97,28 @@ async function buildSellPackageCard(aj) {
   });
 }
 
+/**
+ * Card for a return (sale reversal) — the approving admins were previously
+ * shown ONLY the bale number for one of the riskiest dual-admin actions.
+ * Enriched best-effort from Inventory; degrades to the bare line.
+ */
+async function buildReturnCard({ packageNo, thanNo }) {
+  let text = thanNo
+    ? `Return Request\nBale ${packageNo} — Than ${thanNo}`
+    : `Return Request\nBale ${packageNo} (whole bale)`;
+  try {
+    const inventoryService = require('./inventoryService');
+    const info = await inventoryService.getPackageSummary(packageNo);
+    if (info) {
+      text += `\nDesign: ${info.design}${info.shade ? ` Shade ${info.shade}` : ''}`;
+      if (info.warehouse) text += `\nWarehouse: ${info.warehouse}`;
+      text += `\nCurrently available there: ${info.availableThans || 0} thans, ${fmtQty(info.availableYards || 0)} yds`;
+    }
+  } catch (_) { /* lookup failure must not block the card */ }
+  text += '\n⚠️ Reverses a completed sale — verify the goods physically came back.';
+  return text;
+}
+
 /** Card for a queued classic sale_bundle actionJSON (no inventory lookups —
  *  renders exactly what the queue row carries, so reminders can rebuild it). */
 async function buildSaleBundleCard(aj) {
@@ -120,6 +142,40 @@ async function buildSaleBundleCard(aj) {
   if (aj.backdated) text += `\n⚠️ BACKDATED sale (${aj.daysBack || '?'} day(s) in the past)`;
   if (aj.sale_doc_file_id) text += '\n📎 Sales bill attached (see below)';
   return text;
+}
+
+/**
+ * Detail block for bulk/photo receive approvals (dual-admin container
+ * uploads) — per-design breakdown + provenance, rendered from actionJSON.
+ * Returns '' when there is nothing beyond the caller's headline.
+ */
+function buildReceiveDetail(aj) {
+  const lines = [];
+  const bales = Array.isArray(aj.bales) ? aj.bales : [];
+  if (bales.length) {
+    const byDesign = new Map();
+    for (const b of bales) {
+      const key = b.design || '?';
+      const d = byDesign.get(key) || { pkgs: new Set(), yards: 0 };
+      if (b.packageNo) d.pkgs.add(String(b.packageNo));
+      d.yards += Number(b.yards) || 0;
+      byDesign.set(key, d);
+    }
+    lines.push('Designs:');
+    let i = 0;
+    for (const [design, d] of byDesign) {
+      if (i++ >= 12) { lines.push(`  …+${byDesign.size - 12} more designs`); break; }
+      lines.push(`  • ${design}: ${d.pkgs.size} bale${d.pkgs.size === 1 ? '' : 's'}, ${fmtQty(d.yards)} yds`);
+    }
+  } else if (aj.stagedCount) {
+    lines.push(`⚠️ ${aj.stagedCount} rows staged locally (too large for the queue row) — review the source file before approving.`);
+  }
+  if (aj.supplier) lines.push(`Supplier: ${aj.supplier}`);
+  if (aj.arrivalBatch) lines.push(`Container: ${aj.arrivalBatch}`);
+  if (aj.ocrConfidence !== undefined && aj.ocrConfidence !== '') lines.push(`OCR confidence: ${Math.round(Number(aj.ocrConfidence) * 100)}%`);
+  if (aj.fileHash) lines.push(`File hash: ${String(aj.fileHash).slice(0, 12)}…`);
+  if (aj.sourceUrl || aj.driveLink) lines.push(`Source file: ${aj.sourceUrl || aj.driveLink}`);
+  return lines.length ? `\n${lines.join('\n')}` : '';
 }
 
 /**
@@ -185,7 +241,9 @@ module.exports = {
   resolveUserLabel,
   buildSaleCard,
   buildSellPackageCard,
+  buildReturnCard,
   buildSaleBundleCard,
+  buildReceiveDetail,
   buildCardFromActionJSON,
   forwardAttachmentsToAdmins,
 };

@@ -688,10 +688,18 @@ async function submit(bot, chatId, userId) {
     await auditLogRepository.append('approval_queued', { requestId, action: 'add_user' }, userId);
     const isAdm = auth.isAdmin(userId);
     const excludeId = isAdm ? userId : undefined;
-    const branchTag = d.branch ? `${d.branch} · ` : '';
-    const summary = `➕👤 Add user: *${d.name}* (\`${d.telegram_id}\`) · ${branchTag}${d.department} · ${d.role}`;
+    // APU-1: plain text (the notifier MarkdownV2-escapes everything, so
+    // Markdown here rendered as literal *asterisks*), and the approver now
+    // sees the ACCESS SCOPE being granted — the most consequential fields.
+    let summary = `Add User Request\nName: ${d.name}\nTelegram ID: ${d.telegram_id}`;
+    if (d.branch) summary += `\nBranch: ${d.branch}`;
+    summary += `\nDepartment: ${d.department}\nRole: ${d.role}`;
+    summary += `\nWarehouse access: ${(d.warehouses && d.warehouses.length) ? d.warehouses.join(', ') : '—'}`;
+    if (d.role === 'manager') summary += `\nManages departments: ${(d.manages && d.manages.length) ? d.manages.join(', ') : '—'}`;
+    if (d.prefillSource) summary += `\nSource: ${d.prefillSource}`;
+    const userLabel = await require('../services/approvalCards').resolveUserLabel(userId);
     await approvalEvents.notifyAdminsApprovalRequest(
-      bot, requestId, String(userId), summary, risk.reason, excludeId,
+      bot, requestId, userLabel, summary, risk.reason, excludeId,
     );
     sessionStore.clear(userId);
     await render(bot, chatId, userId,

@@ -124,14 +124,20 @@ async function submitRequest(bot, chatId, userId) {
   try {
     await approvalQueueRepository.append({
       requestId, user: String(userId),
-      actionJSON: { action: ACTION, warehouse, mode: to },
+      // APU-1: persist the from-mode so an approval executed after the
+      // mode changed underneath can be detected, and the reminder sweep
+      // can rebuild the full card from the queue row.
+      actionJSON: { action: ACTION, warehouse, mode: to, mode_before: from },
       riskReason: RISK_REASON, status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, action: ACTION, warehouse, mode: to }, String(userId));
     const isAdm = auth.isAdmin(String(userId));
     const excludeId = isAdm ? String(userId) : undefined;
-    const summary = `📐 Display units: *${warehouse}* ${from} → *${to}*`;
-    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, String(userId), summary, RISK_REASON, excludeId);
+    // Plain text — the notifier MarkdownV2-escapes summaries, so Markdown
+    // here rendered as literal asterisks on the admin card.
+    const summary = `📐 Display units: ${warehouse} ${from} → ${to}`;
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId,
+      await require('../services/approvalCards').resolveUserLabel(userId), summary, RISK_REASON, excludeId);
     sessionStore.clear(userId);
     await render(bot, chatId, userId,
       `⏳ *Submitted for admin approval*\n\n*${warehouse}*: ${from} → *${to}*\nRequest: \`${requestId}\`\n\n_You'll be notified when an admin approves or rejects._`,

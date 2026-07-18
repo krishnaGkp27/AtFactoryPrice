@@ -77,7 +77,7 @@ test('admin: list shows current modes, confirm proposes the inverse, request que
 
   await controller.handleCallbackQuery(bot, cb('udf:req', 777));
   assert.equal(captured.queued.length, 1, 'one approval queued');
-  assert.deepEqual(captured.queued[0].actionJSON, { action: 'set_unit_display', warehouse: 'Kano office', mode: 'bales' });
+  assert.deepEqual(captured.queued[0].actionJSON, { action: 'set_unit_display', warehouse: 'Kano office', mode: 'bales', mode_before: 'thans' });
   assert.equal(captured.queued[0].status, 'pending');
   assert.equal(captured.notified.length, 1, 'admins notified');
   assert.equal(captured.notified[0].excludeId, '777', 'admin requester excluded from own approval');
@@ -96,7 +96,7 @@ test('manager: may request; requester NOT excluded from admin broadcast', async 
 
   await controller.handleCallbackQuery(bot, cb('udf:wh:0', 4242)); // Lagos: bales → thans
   await controller.handleCallbackQuery(bot, cb('udf:req', 4242));
-  assert.deepEqual(captured.queued[0].actionJSON, { action: 'set_unit_display', warehouse: 'Lagos', mode: 'thans' });
+  assert.deepEqual(captured.queued[0].actionJSON, { action: 'set_unit_display', warehouse: 'Lagos', mode: 'thans', mode_before: 'bales' });
   assert.equal(captured.notified[0].excludeId, undefined, 'all admins get a manager request');
 });
 

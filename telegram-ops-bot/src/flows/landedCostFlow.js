@@ -328,9 +328,19 @@ async function submit(bot, chatId, userId) {
 
     const isAdm = auth.isAdmin(userId);
     const excludeId = isAdm ? userId : undefined;
-    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, String(userId),
-      `💵 Finalize Landed Cost: \`${session.grnId}\` · ₦${landedCostService._internals.fmt(allocation.ngnLandedPerYard)}/yd`,
-      'finalize_landed_cost dual-admin gate', excludeId);
+    // APU-1: the 2nd admin previously saw only GRN id + ₦/yd — now the full
+    // costing they are sealing: USD/yd, per-charge lines, FX, total yards.
+    const fmt = landedCostService._internals.fmt;
+    const chargeLines = (session.charges || []).map((c) => `  • ${c.label || c.name || 'charge'}: ₦${fmt(c.amount)}`).join('\n');
+    const card = `💵 Finalize Landed Cost Request\nGRN: ${session.grnId}`
+      + `\nUSD cost/yard: $${fmt(session.usdPerYard)}`
+      + `\nFX rate: ₦${fmt(session.fxRate)}/$`
+      + (chargeLines ? `\nCharges:\n${chargeLines}` : '\nCharges: none')
+      + `\nTotal yards: ${fmt(allocation.totalYards)}`
+      + `\nNGN landed/yard (sealed on approval): ₦${fmt(allocation.ngnLandedPerYard)}`;
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId,
+      await require('../services/approvalCards').resolveUserLabel(userId), card,
+      'All landed cost finalization operations require 2nd admin approval.', excludeId);
 
     await render(bot, chatId, userId,
       '⏳ *Submitted for approval*\n\n'

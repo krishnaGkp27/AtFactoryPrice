@@ -488,11 +488,13 @@ async function submit(bot, chatId, userId) {
   const isAdm = auth.isAdmin(userId);
   const approverLabel = isAdm ? '2nd admin' : 'admin';
   const excludeId = isAdm ? userId : undefined;
+  // APU-1: per-design breakdown + provenance for the approving admins.
   const summary =
     `📤 Bulk Receive — ${aj.warehouse} · ${aj.totalBales} bales / ${aj.totalThans} thans · ${fmtQty(aj.totalYards, { maxFraction: 2 })} yds`
-    + ` · ${aj.source}${aj.po_id ? ' · PO ' + aj.po_id : ''}`;
+    + ` · ${aj.source}${aj.po_id ? ' · PO ' + aj.po_id : ''}`
+    + require('../services/approvalCards').buildReceiveDetail(aj);
   await approvalEvents.notifyAdminsApprovalRequest(
-    bot, requestId, String(userId), summary, risk.reason, excludeId);
+    bot, requestId, await require('../services/approvalCards').resolveUserLabel(userId), summary, risk.reason, excludeId);
 
   session.step = 'submitted';
   sessionStore.set(userId, session);

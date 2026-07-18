@@ -3886,7 +3886,7 @@ async function handleMessage(bot, msg) {
         if (!intent.thanNo) { await bot.sendMessage(chatId, 'Which than number?'); return; }
         const rtQueued = await requireApproval(bot, chatId, msg, userId, 'return_than',
           { action: 'return_than', packageNo: intent.packageNo, thanNo: intent.thanNo },
-          `Return than ${intent.thanNo} from Bale ${intent.packageNo}`);
+          await require('../services/approvalCards').buildReturnCard({ packageNo: intent.packageNo, thanNo: intent.thanNo }));
         if (rtQueued) return;
         const retThan = await inventoryService.returnThan(intent.packageNo, intent.thanNo, userId);
         if (retThan.status === 'completed') {
@@ -3901,7 +3901,7 @@ async function handleMessage(bot, msg) {
         if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which Bale? e.g. "Return Bale 5801"'); return; }
         const rpQueued = await requireApproval(bot, chatId, msg, userId, 'return_package',
           { action: 'return_package', packageNo: intent.packageNo },
-          `Return Bale ${intent.packageNo}`);
+          await require('../services/approvalCards').buildReturnCard({ packageNo: intent.packageNo }));
         if (rpQueued) return;
         const retPkg = await inventoryService.returnPackage(intent.packageNo, userId);
         if (retPkg.status === 'completed') {

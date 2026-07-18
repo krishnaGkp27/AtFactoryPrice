@@ -229,6 +229,11 @@ async function submit(bot, chatId, userId) {
     action: label.actionField,
     telegram_id: t.telegram_id,
     name: t.name || '',
+    // APU-1: snapshot the pre-change state for the audit trail and so the
+    // reminder sweep can rebuild a meaningful card from the queue row.
+    role_before: t.role || 'employee',
+    department_before: (t.departments && t.departments.length) ? t.departments.join(', ') : (t.department || ''),
+    status_before: t.status || '',
   };
   try {
     const risk = await riskEvaluate.evaluate({ action: label.actionField, userId });
@@ -240,12 +245,19 @@ async function submit(bot, chatId, userId) {
     await auditLogRepository.append('approval_queued', { requestId, action: label.actionField }, userId);
     const isAdm = auth.isAdmin(userId);
     const excludeId = isAdm ? userId : undefined;
-    const safeName = mdEscape(t.name || t.telegram_id);
-    const summary = session.flow === 'promote'
-      ? `👑 Promote to admin: *${safeName}* (\`${t.telegram_id}\`)`
-      : `🛑 Deactivate user: *${safeName}* (\`${t.telegram_id}\`)`;
+    // APU-1: plain text (no literal-asterisk rendering), and the approver
+    // sees the target's CURRENT role/department/status — previously only
+    // shown to the requester, never to the person actually deciding.
+    const dept = (t.departments && t.departments.length) ? t.departments.join(', ') : (t.department || '—');
+    const summary = (session.flow === 'promote'
+      ? `👑 Promote to Admin Request`
+      : `🛑 Deactivate User Request`)
+      + `\nName: ${t.name || '—'}\nTelegram ID: ${t.telegram_id}`
+      + `\nRole today: ${t.role || 'employee'}\nDepartment: ${dept}`
+      + (t.status ? `\nStatus today: ${t.status}` : '');
+    const userLabel = await require('../services/approvalCards').resolveUserLabel(userId);
     await approvalEvents.notifyAdminsApprovalRequest(
-      bot, requestId, String(userId), summary, risk.reason, excludeId,
+      bot, requestId, userLabel, summary, risk.reason, excludeId,
     );
     sessionStore.clear(userId);
     await render(bot, chatId, userId,

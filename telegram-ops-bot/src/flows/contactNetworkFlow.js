@@ -281,8 +281,15 @@ async function handleCallback(bot, callbackQuery) {
     await auditLogRepository.append('approval_queued', { requestId, action: 'update_contact_info', contact: d.name, field: d.field }, userId);
     try {
       const approvalEvents = require('../events/approvalEvents');
-      await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userId,
-        `contact update — ${d.name}: ${d.field} → ${d.new_value || '(cleared)'}`, 'Contact detail change', userId);
+      const approvalCards = require('../services/approvalCards');
+      // APU-1: show the approver WHAT is being overwritten (old → new),
+      // the contact's id (two same-name contacts are distinguishable),
+      // and the requester's display name. Card reason = queue-row reason.
+      const card = `Contact Update Request\nContact: ${d.name}${d.contact_id ? ` (${d.contact_id})` : ''}`
+        + `\nField: ${d.field}\nCurrent value: ${d.old_value || '(empty)'}\nNew value: ${d.new_value || '(cleared)'}`;
+      await approvalEvents.notifyAdminsApprovalRequest(bot, requestId,
+        await approvalCards.resolveUserLabel(userId), card,
+        'Contact detail changes are reviewed by an admin.', userId);
     } catch (e) { logger.warn(`cn edit approval cards: ${e.message}`); }
     session.step = 'browse'; delete session._editDraft; sessionStore.set(userId, session);
     await render(bot, chatId, userId,
@@ -335,8 +342,15 @@ async function handleCallback(bot, callbackQuery) {
     await auditLogRepository.append('approval_queued', { requestId, action: 'add_contact_link', boss: d.boss_name, person: d.name }, userId);
     try {
       const approvalEvents = require('../events/approvalEvents');
-      await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userId,
-        `contact link — ${d.name} under ${d.boss_name}`, 'Contact-network change', userId);
+      const approvalCards = require('../services/approvalCards');
+      // APU-1: the queued phone/notes were previously approved sight-unseen.
+      const card = `Contact Link Request\nPerson: ${d.name}${d.existing_contact_id ? ` (existing contact ${d.existing_contact_id})` : ' (new contact)'}`
+        + `\nUnder: ${d.boss_name}`
+        + `\nPhone: ${d.phone || '—'}`
+        + (d.notes ? `\nNote: ${d.notes}` : '');
+      await approvalEvents.notifyAdminsApprovalRequest(bot, requestId,
+        await approvalCards.resolveUserLabel(userId), card,
+        'Contact-network changes are reviewed by an admin.', userId);
     } catch (e) { logger.warn(`cn approval cards: ${e.message}`); }
     session.step = 'browse'; delete session._addDraft; sessionStore.set(userId, session);
     await render(bot, chatId, userId,
