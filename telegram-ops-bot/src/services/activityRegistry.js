@@ -62,7 +62,10 @@ const ACTIVITIES = [
   { code: 'sell_bale',             label: 'Sell Bale',                 icon: '💰', callback: 'act:sell_bale',          hub: 'orders' },
   // SNAP-1 — photo-to-sale: photograph the bale label, OCR matches the
   // bale, tap the customer. Same approval + enrichment as any sale.
-  { code: 'snap_sale',             label: 'Snap Sale',                 icon: '📸', callback: 'act:snap_sale',          hub: 'orders' },
+  // Standalone (hub: null, owner 18-Jul): sits DIRECTLY on the greeting
+  // menu for every user whose department grants the code — field sellers
+  // like Yarima reach it in one tap, no hub drill-down.
+  { code: 'snap_sale',             label: 'Snap Sale',                 icon: '📸', callback: 'act:snap_sale',          hub: null },
 
   // ── Sales & Marketing › Marketers (catalog consignment) ──────────────
   { code: 'register_marketer',     label: 'Register Marketer',         icon: '🧑‍💼', callback: 'act:register_marketer',    hub: 'marketers' },
