@@ -8014,6 +8014,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
       status: 'pending',
     });
 
+    // APU-1 3.5: the receipts pipeline previously wrote NO audit entries.
+    await auditLogRepository.append('receipt_submitted',
+      { receiptId, customer: session.customer, amount: session.amount, bank: session.bank_account }, uid);
+
     // BR-OPS C1 — pointer for the branch daily roll-up. Receipt rows
     // start in `pending` admin-approval, but the manager still wants
     // them visible in their "today's activity" panel immediately. The
@@ -8079,6 +8083,21 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const receipt = await receiptsRepo.getById(receiptId);
     if (!receipt) { await bot.sendMessage(callbackQuery.message.chat.id, `Receipt ${receiptId} not found.`); return; }
     if (receipt.status === 'approved') { await bot.sendMessage(callbackQuery.message.chat.id, `Receipt ${receiptId} already approved.`); return; }
+    // APU-1 3.5: a rejected receipt could be approved later from any stale
+    // admin card (rejected→approved flip). Decisions are final; re-upload.
+    if (receipt.status === 'rejected') {
+      await bot.sendMessage(callbackQuery.message.chat.id,
+        `⚠️ Receipt ${receiptId} was already REJECTED — it cannot be approved from an old card. Ask ${receipt.uploaded_by_name || 'the uploader'} to submit it again.`);
+      return;
+    }
+    // APU-1 3.5 (H1-parity): an admin may not approve their OWN receipt
+    // while another admin exists to review it (mirrors the SEC-P1 guard
+    // on the standard approve: pipeline).
+    if (String(receipt.uploaded_by_id) === adminId && config.access.adminIds.filter((id) => id !== adminId).length) {
+      await bot.sendMessage(callbackQuery.message.chat.id,
+        `🚫 You uploaded receipt ${receiptId} yourself — a different admin must approve it.`);
+      return;
+    }
 
     try {
       const { buffer, filePath } = await downloadTelegramFile(bot, receipt.telegram_file_id);
@@ -8087,6 +8106,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
       const mimeType = receipt.file_type === 'document' ? 'application/pdf' : 'image/jpeg';
       const { fileId: driveFileId, webViewLink } = await driveClient.uploadFile(buffer, fileName, mimeType);
       await receiptsRepo.updateDriveInfo(receiptId, driveFileId, webViewLink, adminId);
+      await auditLogRepository.append('receipt_approved', { receiptId, customer: receipt.customer, amount: receipt.amount }, adminId);
 
       await bot.sendMessage(callbackQuery.message.chat.id,
         `✅ Receipt ${receiptId} approved.\n\n👤 ${receipt.customer}\n💰 NGN ${fmtQty(receipt.amount)}\n🏦 ${receipt.bank_account}\n📎 [View Receipt](${webViewLink})`,
@@ -8108,7 +8128,23 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Rejecting...' });
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
 
+    // APU-1 3.5: decisions are final — a decided receipt can't be
+    // re-decided from a stale card, and (H1-parity) an admin can't reject
+    // their own upload while another admin exists.
+    const rcCheck = await receiptsRepo.getById(receiptId);
+    if (!rcCheck) { await bot.sendMessage(callbackQuery.message.chat.id, `Receipt ${receiptId} not found.`); return; }
+    if (rcCheck.status && rcCheck.status !== 'pending') {
+      await bot.sendMessage(callbackQuery.message.chat.id, `Receipt ${receiptId} is already ${rcCheck.status} — no change made.`);
+      return;
+    }
+    if (String(rcCheck.uploaded_by_id) === adminId && config.access.adminIds.filter((id) => id !== adminId).length) {
+      await bot.sendMessage(callbackQuery.message.chat.id,
+        `🚫 You uploaded receipt ${receiptId} yourself — a different admin must decide it.`);
+      return;
+    }
+
     await receiptsRepo.updateStatus(receiptId, 'rejected');
+    await auditLogRepository.append('receipt_rejected', { receiptId, customer: rcCheck.customer, amount: rcCheck.amount }, adminId);
     await bot.sendMessage(callbackQuery.message.chat.id, `❌ Receipt ${receiptId} rejected.`);
 
     const receipt = await receiptsRepo.getById(receiptId);

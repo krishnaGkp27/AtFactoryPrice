@@ -89,6 +89,38 @@ test('3.2 srf_acc cannot flip a non-supply row, wrong stage, or wrong tapper', a
   assert.equal(statusUpdates.length, 0, 'no status flip happened in any invalid case');
 });
 
+test('3.5 receipts: rejected receipts cannot be approved; self-decisions blocked; audit written', async () => {
+  const receiptsRepo = require(path.join(SRC, 'repositories/receiptsRepository'));
+  const rcStatusUpdates = [];
+  const audits = [];
+  auditLogRepository.append = async (event, payload, uid) => { audits.push({ event, payload, uid }); };
+  let receipt = null;
+  receiptsRepo.getById = async () => receipt;
+  receiptsRepo.updateStatus = async (id, status) => { rcStatusUpdates.push({ id, status }); };
+  receiptsRepo.updateDriveInfo = async () => { throw new Error('should not reach drive upload in these guard tests'); };
+
+  const bot = createFakeBot();
+  // (a) rejected → approve blocked
+  receipt = { receipt_id: 'R-1', status: 'rejected', customer: 'OKESON', amount: 5000, uploaded_by_id: '4242', uploaded_by_name: 'U4242' };
+  await controller.handleCallbackQuery(bot, cb('rcapr:R-1', '777'));
+  assert.match(bot.allText(), /already REJECTED/);
+  // (b) admin's own upload → approve blocked while another admin exists
+  receipt = { receipt_id: 'R-2', status: 'pending', customer: 'CJE', amount: 100, uploaded_by_id: '777', uploaded_by_name: 'U777' };
+  await controller.handleCallbackQuery(bot, cb('rcapr:R-2', '777'));
+  assert.match(bot.allText(), /different admin must approve/);
+  // (c) already-approved receipt cannot be re-rejected
+  receipt = { receipt_id: 'R-3', status: 'approved', customer: 'CJE', amount: 100, uploaded_by_id: '4242' };
+  await controller.handleCallbackQuery(bot, cb('rcrej:R-3', '777'));
+  assert.match(bot.allText(), /already approved — no change made/);
+  assert.equal(rcStatusUpdates.length, 0, 'no status writes in any blocked case');
+  // (d) legit reject works and is audited
+  receipt = { receipt_id: 'R-4', status: 'pending', customer: 'CJE', amount: 100, uploaded_by_id: '4242' };
+  await controller.handleCallbackQuery(bot, cb('rcrej:R-4', '777'));
+  assert.deepEqual(rcStatusUpdates.at(-1), { id: 'R-4', status: 'rejected' });
+  assert.ok(audits.some((a) => a.event === 'receipt_rejected' && a.uid === '777'), 'audit trail written');
+  auditLogRepository.append = async () => {};
+});
+
 test('3.2 the assigned dispatch person CAN accept at the right stage', async () => {
   const bot = createFakeBot();
   statusUpdates.length = 0;
