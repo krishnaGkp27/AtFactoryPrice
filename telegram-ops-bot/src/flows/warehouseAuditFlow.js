@@ -34,6 +34,8 @@ const inventoryRepository = require('../repositories/inventoryRepository');
 const inventoryService    = require('../services/inventoryService');
 const shadesRepository    = require('../repositories/shadesRepository');
 const settingsRepository  = require('../repositories/settingsRepository');
+const stockTakesRepository = require('../repositories/stockTakesRepository');
+const auditLogRepository  = require('../repositories/auditLogRepository');
 const auth                = require('../middlewares/auth');
 const config              = require('../config');
 const logger              = require('../utils/logger');
@@ -59,6 +61,61 @@ const AUDIT_MODE_BALE = 'bale';
 /** Presence-mark cycle: unmarked -> present -> missing -> unmarked. */
 const MARK_PRESENT = 'present';
 const MARK_MISSING = 'missing';
+
+/**
+ * WAU-2 (owner flow, 17-Jul-2026) — warehouse → LOCATION grouping.
+ * Owner-editable Settings rows `LOCATION.<warehouse>` override; fallback
+ * heuristic: names containing "kano" → Kano, everything else → Lagos
+ * (covers IDUMOTA→Lagos, Kano office→Kano, Lagos→Lagos today).
+ */
+const LOCATION_KEY_PREFIX = 'LOCATION.';
+async function locationOf(warehouse) {
+  try {
+    const all = await settingsRepository.getAll();
+    const v = String(all[`${LOCATION_KEY_PREFIX}${warehouse}`] || '').trim();
+    if (v) return v;
+  } catch (_) { /* fall through to heuristic */ }
+  return /kano/i.test(warehouse) ? 'Kano' : 'Lagos';
+}
+
+/**
+ * WAU-2 — design checklist for a warehouse: one entry per design with
+ * FULL (sealed) bale count, loose bundle/than count from opened bales,
+ * available yards, and whether a still-valid reconciliation exists
+ * (valid = the latest reconciled StockTakes row's quantities EQUAL the
+ * current ones; any stock change flips the design back to holding).
+ */
+async function loadChecklist(session) {
+  const all = await inventoryRepository.getAll();
+  const w = (session.warehouse || '').toLowerCase();
+  const pkgs = new Map();
+  for (const r of all) {
+    if ((r.warehouse || '').toLowerCase() !== w || !r.design) continue;
+    const k = r.packageNo;
+    if (!pkgs.has(k)) pkgs.set(k, { design: r.design, total: 0, avail: 0, yards: 0 });
+    const p = pkgs.get(k);
+    p.total += 1;
+    if (r.status === 'available') { p.avail += 1; p.yards += Number(r.yards) || 0; }
+  }
+  const designs = new Map();
+  for (const p of pkgs.values()) {
+    if (!p.avail) continue;
+    const k = p.design;
+    if (!designs.has(k)) designs.set(k, { design: k, fullBales: 0, looseThans: 0, yards: 0 });
+    const d = designs.get(k);
+    if (p.avail === p.total) d.fullBales += 1;
+    else d.looseThans += p.avail;
+    d.yards += p.yards;
+  }
+  const latest = await stockTakesRepository.latestFor(session.warehouse);
+  return Array.from(designs.values())
+    .sort((a, b) => String(a.design).localeCompare(String(b.design), undefined, { numeric: true }))
+    .map((d) => {
+      const rec = latest.get(String(d.design).toUpperCase());
+      const reconciled = !!rec && rec.sheet_bales === d.fullBales && rec.sheet_bundles === d.looseThans;
+      return { ...d, reconciled, reconciledAt: reconciled ? rec.audited_at.slice(0, 10) : '' };
+    });
+}
 
 /* ───────────────────────────── render helper ───────────────────────────── */
 
@@ -149,9 +206,10 @@ async function start(bot, chatId, userId, messageId) {
   }
   sessionStore.set(userId, {
     type: SESSION_TYPE,
-    step: 'pick_warehouse',
+    step: 'pick_location',
     flowMessageId: messageId || null,
     startedAt: new Date().toISOString(),
+    location: '',
     warehouse: '',
     auditMode: AUDIT_MODE_BALE,
     design: '',
@@ -159,17 +217,20 @@ async function start(bot, chatId, userId, messageId) {
     packageNo: '',
     skippedBaleList: false,
     marks: {},
+    _locations: [],
     _warehouses: [],
+    _checklist: [],
+    _checked: {},
     _designs: [],
     _shades: [],
     _bales: [],
   });
-  await renderWarehousePicker(bot, chatId, userId);
+  await renderLocationPicker(bot, chatId, userId);
 }
 
-/* ───────────────────────────── warehouse ───────────────────────────── */
+/* ───────────────────────────── WAU-2: location ───────────────────────────── */
 
-async function renderWarehousePicker(bot, chatId, userId) {
+async function renderLocationPicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
   const warehouses = await inventoryRepository.getWarehouses();
@@ -180,12 +241,111 @@ async function renderWarehousePicker(bot, chatId, userId) {
       [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
     return;
   }
+  const byLoc = new Map();
+  for (const w of warehouses) {
+    const loc = await locationOf(w);
+    if (!byLoc.has(loc)) byLoc.set(loc, []);
+    byLoc.get(loc).push(w);
+  }
+  const locations = [...byLoc.keys()].sort();
+  session._locations = locations;
+  session._locWarehouses = Object.fromEntries(byLoc);
+  sessionStore.set(userId, session);
+  if (locations.length === 1) {
+    session.location = locations[0];
+    session.step = 'pick_warehouse';
+    sessionStore.set(userId, session);
+    await renderWarehousePicker(bot, chatId, userId);
+    return;
+  }
+  const rows = locations.map((l, i) => ([{ text: `📍 ${l} (${byLoc.get(l).length} warehouse${byLoc.get(l).length > 1 ? 's' : ''})`, callback_data: `wai:loc:${i}` }]));
+  rows.push(closeRow());
+  await render(bot, chatId, userId, '🔍 Warehouse Audit\n\nSelect the location:', rows);
+}
+
+/* ───────────────────────────── WAU-2: checklist ───────────────────────────── */
+
+async function renderChecklist(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const list = await loadChecklist(session);
+  if (!list.length) {
+    await render(bot, chatId, userId,
+      `🔍 ${session.warehouse}\n\nNo available stock in this warehouse.`,
+      [backRow('⬅ Warehouses'), closeRow()]);
+    return;
+  }
+  session._checklist = list.map((d) => ({ design: d.design, fullBales: d.fullBales, looseThans: d.looseThans, yards: d.yards, reconciled: d.reconciled }));
+  // Drop stale ticks for designs no longer on the list.
+  for (const k of Object.keys(session._checked || {})) {
+    if (!list.some((d) => d.design === k && !d.reconciled)) delete session._checked[k];
+  }
+  sessionStore.set(userId, session);
+  const done = list.filter((d) => d.reconciled).length;
+  const ticked = Object.keys(session._checked || {}).length;
+  const rows = list.map((d, i) => {
+    const qty = `${d.fullBales} bls${d.looseThans ? ` · ${d.looseThans} bnd` : ''}`;
+    if (d.reconciled) {
+      return [{ text: `✅ ${d.design} — ${qty} (done ${d.reconciledAt})`, callback_data: 'wai:noop' }];
+    }
+    const box = session._checked[d.design] ? '☑️' : '⬜';
+    return [{ text: `${box} ${d.design} — ${qty} · ${fmtQty(d.yards)}y`, callback_data: `wai:ck:${i}` }];
+  });
+  if (ticked) rows.push([{ text: `📤 Submit — mark ${ticked} design${ticked > 1 ? 's' : ''} reconciled`, callback_data: 'wai:submit' }]);
+  rows.push([{ text: '🔬 Deep inspect (bale/than level)', callback_data: 'wai:inspect' }]);
+  rows.push(backRow('⬅ Warehouses'));
+  rows.push(closeRow());
+  await render(bot, chatId, userId,
+    `🔍 ${session.warehouse} — ${session.location}\n`
+    + `Reconciled ${done}/${list.length} designs · holding ${list.length - done}\n\n`
+    + 'Tick each design once its PHYSICAL count matches, then Submit.\n'
+    + 'A count that does not match: leave it unticked (holding) and investigate.', rows);
+}
+
+async function submitChecklist(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const checkedNames = Object.keys(session._checked || {});
+  if (!checkedNames.length) { await renderChecklist(bot, chatId, userId); return; }
+  const now = new Date().toISOString();
+  const records = (session._checklist || [])
+    .filter((d) => session._checked[d.design] && !d.reconciled)
+    .map((d) => ({
+      warehouse: session.warehouse, location: session.location || '',
+      design: d.design, sheet_bales: d.fullBales, sheet_bundles: d.looseThans,
+      sheet_yards: Math.round(d.yards), result: 'reconciled',
+      auditor: userId, audited_at: now,
+    }));
+  await stockTakesRepository.appendMany(records);
+  try {
+    await auditLogRepository.append('stocktake_reconciled',
+      { warehouse: session.warehouse, location: session.location, designs: records.map((r) => r.design) }, userId);
+  } catch (_) { /* best effort */ }
+  session._checked = {};
+  sessionStore.set(userId, session);
+  await renderChecklist(bot, chatId, userId);
+}
+
+/* ───────────────────────────── warehouse ───────────────────────────── */
+
+async function renderWarehousePicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  // WAU-2: only this location's warehouses.
+  const warehouses = (session._locWarehouses && session._locWarehouses[session.location]) || [];
+  if (!warehouses.length) {
+    session.step = 'pick_location';
+    sessionStore.set(userId, session);
+    await renderLocationPicker(bot, chatId, userId);
+    return;
+  }
   if (warehouses.length === 1) {
     session.warehouse = warehouses[0];
     session.auditMode = await getAuditMode(warehouses[0]);
-    session.step = 'pick_design';
+    session.step = 'checklist';
+    session._checked = {};
     sessionStore.set(userId, session);
-    await renderDesignPicker(bot, chatId, userId);
+    await renderChecklist(bot, chatId, userId);
     return;
   }
   session._warehouses = warehouses;
@@ -193,9 +353,10 @@ async function renderWarehousePicker(bot, chatId, userId) {
   // Warehouses are usually few (2–3) and have long names; keep one per row
   // so the names don't get truncated on phone screens.
   const rows = warehouses.map((w, i) => ([{ text: `🏬 ${w}`, callback_data: `wai:wh:${i}` }]));
+  rows.push(backRow('⬅ Locations'));
   rows.push(closeRow());
   await render(bot, chatId, userId,
-    '🔍 Warehouse Audit\n\nSelect a warehouse to inspect:', rows);
+    `🔍 Warehouse Audit — 📍 ${session.location}\n\nSelect the warehouse to audit:`, rows);
 }
 
 /* ───────────────────────────── design ───────────────────────────── */
@@ -508,11 +669,25 @@ async function stepBack(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
   switch (session.step) {
-    case 'pick_design':
+    case 'pick_warehouse':
+      session.step = 'pick_location';
+      session.warehouse = '';
+      sessionStore.set(userId, session);
+      await renderLocationPicker(bot, chatId, userId);
+      break;
+    case 'checklist':
       session.step = 'pick_warehouse';
-      session.design = '';
+      session.warehouse = '';
+      session._checked = {};
       sessionStore.set(userId, session);
       await renderWarehousePicker(bot, chatId, userId);
+      break;
+    case 'pick_design':
+      // WAU-2: the deep-inspect design picker returns to the checklist.
+      session.step = 'checklist';
+      session.design = '';
+      sessionStore.set(userId, session);
+      await renderChecklist(bot, chatId, userId);
       break;
     case 'pick_shade':
       session.step = 'pick_design';
@@ -595,16 +770,55 @@ async function handleCallback(bot, query) {
 
   if (data === 'wai:recon') { await renderReconciliation(bot, chatId, userId); return true; }
 
+  if (data.startsWith('wai:loc:')) {
+    const i = parseInt(data.slice('wai:loc:'.length), 10);
+    const loc = (session._locations || [])[i];
+    if (loc) {
+      session.location = loc;
+      session.step = 'pick_warehouse';
+      sessionStore.set(userId, session);
+      await renderWarehousePicker(bot, chatId, userId);
+    }
+    return true;
+  }
+
   if (data.startsWith('wai:wh:')) {
     const i = parseInt(data.slice('wai:wh:'.length), 10);
     const wh = (session._warehouses || [])[i];
     if (wh) {
       session.warehouse = wh;
       session.auditMode = await getAuditMode(wh);
-      session.step = 'pick_design';
+      session.step = 'checklist';
+      session._checked = {};
       sessionStore.set(userId, session);
-      await renderDesignPicker(bot, chatId, userId);
+      await renderChecklist(bot, chatId, userId);
     }
+    return true;
+  }
+
+  // WAU-2 — checklist checkbox toggle / submit / deep-inspect entry.
+  if (data.startsWith('wai:ck:')) {
+    if (session.step !== 'checklist') return true;
+    const i = parseInt(data.slice('wai:ck:'.length), 10);
+    const d = (session._checklist || [])[i];
+    if (d && !d.reconciled) {
+      if (session._checked[d.design]) delete session._checked[d.design];
+      else session._checked[d.design] = true;
+      sessionStore.set(userId, session);
+      await renderChecklist(bot, chatId, userId);
+    }
+    return true;
+  }
+  if (data === 'wai:submit') {
+    if (session.step !== 'checklist') return true;
+    await submitChecklist(bot, chatId, userId);
+    return true;
+  }
+  if (data === 'wai:inspect') {
+    if (session.step !== 'checklist') return true;
+    session.step = 'pick_design';
+    sessionStore.set(userId, session);
+    await renderDesignPicker(bot, chatId, userId);
     return true;
   }
 
@@ -707,6 +921,7 @@ module.exports = {
   start,
   handleCallback,
   _internals: {
+    renderLocationPicker, renderChecklist, submitChecklist, loadChecklist, locationOf,
     renderWarehousePicker, renderDesignPicker, renderShadePicker,
     renderBaleList, renderBaleChoice, renderThanCard, renderReconciliation,
     stepBack, loadBales, markIcon, getAuditMode, baleAuditState, chunkButtons,

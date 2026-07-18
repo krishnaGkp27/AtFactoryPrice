@@ -119,6 +119,14 @@ const REQUIRED_SHEETS = {
   CustomerNotes: {
     headers: ['note_id', 'customer', 'note', 'created_by', 'created_at'],
   },
+  // WAU-2 — one row per design marked reconciled in a warehouse audit
+  // (raw physical-count records; a reconciliation stays valid only while
+  // current stock still equals the audited quantities).
+  StockTakes: {
+    headers: ['stocktake_id', 'location', 'warehouse', 'design',
+      'sheet_bales', 'sheet_bundles', 'sheet_yards',
+      'result', 'auditor', 'audited_at'],
+  },
   // INV-1a — one row per issued customer invoice (statement-style; line
   // items frozen as JSON at issue; token gates the /i/<token> web copy).
   Invoices: {
