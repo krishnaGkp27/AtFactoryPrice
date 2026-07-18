@@ -893,11 +893,14 @@ async function handleSampleFlowText(bot, chatId, userId, text) {
     await approvalQueueRepository.append({
       requestId, user: userId,
       actionJSON: {
-        action: 'new_customer_registration',
+        // APU-1 3.1: was 'new_customer_registration' — a dead action name
+        // with no executor; 'new_customer' is what the approve/reject
+        // special-cases and the flow-resume hooks actually match.
+        action: 'new_customer',
         customer_id: customerId, customer_name: name, phone,
         requesterUserId: userId, from: 'sample_flow',
       },
-      riskReason: 'New customer registration requires admin approval',
+      riskReason: 'New customer requires admin approval',
       status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: 'new_customer', from: 'sample_flow' }, userId);
@@ -914,7 +917,7 @@ async function handleSampleFlowText(bot, chatId, userId, text) {
       'New customer requires admin approval',
     );
     await bot.sendMessage(chatId,
-      `⏳ Customer "*${name}*" sent for admin approval.\n\nYour sample request is *paused* — it will resume automatically once a second admin approves the new customer.`,
+      `⏳ Customer "*${name}*" sent for admin approval.\n\nYour sample request is *paused* — it will resume automatically once an admin approves the new customer.`,
       { parse_mode: 'Markdown' });
     return true;
   }
@@ -2827,11 +2830,14 @@ async function handleOrderFlowText(bot, chatId, userId, text) {
     await approvalQueueRepository.append({
       requestId, user: userId,
       actionJSON: {
-        action: 'new_customer_registration',
+        // APU-1 3.1: was 'new_customer_registration' — a dead action name
+        // with no executor; 'new_customer' is what the approve/reject
+        // special-cases and the flow-resume hooks actually match.
+        action: 'new_customer',
         customer_id: customerId, customer_name: name, phone,
         requesterUserId: userId, from: 'order_flow',
       },
-      riskReason: 'New customer registration requires admin approval',
+      riskReason: 'New customer requires admin approval',
       status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: 'new_customer', from: 'order_flow' }, userId);
@@ -2848,7 +2854,7 @@ async function handleOrderFlowText(bot, chatId, userId, text) {
       'New customer requires admin approval',
     );
     await bot.sendMessage(chatId,
-      `⏳ Customer "*${name}*" sent for admin approval.\n\nYour order is *paused* — it will resume automatically once a second admin approves the new customer.`,
+      `⏳ Customer "*${name}*" sent for admin approval.\n\nYour order is *paused* — it will resume automatically once an admin approves the new customer.`,
       { parse_mode: 'Markdown' });
     return true;
   }
@@ -3009,11 +3015,14 @@ async function handleReceiptFlowText(bot, chatId, userId, text) {
     await approvalQueueRepository.append({
       requestId, user: userId,
       actionJSON: {
-        action: 'new_customer_registration',
+        // APU-1 3.1: was 'new_customer_registration' — a dead action name
+        // with no executor; 'new_customer' is what the approve/reject
+        // special-cases and the flow-resume hooks actually match.
+        action: 'new_customer',
         customer_id: customerId, customer_name: name, phone,
         requesterUserId: userId, from: 'receipt_flow',
       },
-      riskReason: 'New customer registration requires admin approval',
+      riskReason: 'New customer requires admin approval',
       status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: 'new_customer', from: 'receipt_flow' }, userId);
@@ -3597,7 +3606,7 @@ async function handleMessage(bot, msg) {
       srfSession.pendingCustomerId = custId;
       srfSession.pendingCustomerName = name;
       sessionStore.set(userId, srfSession);
-      const requestId = require('crypto').randomUUID();
+      const requestId = genId();
       srfSession.customerApprovalId = requestId;
       sessionStore.set(userId, srfSession);
       const approvalQueueRepository = require('../repositories/approvalQueueRepository');
@@ -3605,15 +3614,16 @@ async function handleMessage(bot, msg) {
         requestId,
         user: userId,
         actionJSON: { action: 'new_customer', customer_id: custId, customer_name: name, phone, requesterUserId: userId },
-        riskReason: 'New customer registration requires admin approval',
+        riskReason: 'New customer requires admin approval',
         status: 'pending',
       });
+      await auditLogRepository.append('approval_queued', { requestId, reason: 'new_customer', from: 'supply_req_flow' }, userId);
       const approvalEvents = require('../events/approvalEvents');
       const userLabel = await getRequesterDisplayName(userId, null);
       await approvalEvents.notifyAdminsApprovalRequest(
         bot, requestId, userLabel,
-        `New customer: "${name}" (${phone})`,
-        'New customer registration requires admin approval',
+        `New Customer Registration\nName: ${name}\nPhone: ${phone || '—'}\n(from supply request flow)`,
+        'New customer requires admin approval',
         null,
       );
       await bot.sendMessage(chatId,
@@ -6933,7 +6943,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await approvalQueueRepository.append({
       requestId, user: uid,
       actionJSON: { action: 'add_customer', ...custData },
-      riskReason: 'New customer registration requires admin approval',
+      riskReason: 'New customer requires admin approval',
       status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: 'add_customer' }, uid);

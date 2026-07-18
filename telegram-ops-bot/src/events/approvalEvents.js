@@ -1390,6 +1390,17 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
       await notifyEmployee(bot, requesterUserId, requestId, `✅ Customer "${custName}" has been approved by admin.`);
     }
   } else {
+    // APU-1 3.6: the flows append the customer row (status 'Pending')
+    // BEFORE approval — on rejection flip it to 'Rejected' so no orphaned
+    // Pending row lingers in the Customers sheet.
+    if (custId) {
+      try {
+        const customersRepo = require('../repositories/customersRepository');
+        await customersRepo.updateRow(custId, { status: 'Rejected' });
+      } catch (e) {
+        logger.warn(`new-customer reject: could not mark ${custId} Rejected: ${e.message}`);
+      }
+    }
     await bot.sendMessage(chatId, `❌ Customer "${custName}" registration rejected.`);
 
     // sessionStore now hoisted to top-of-file (TG-1).
@@ -1475,7 +1486,28 @@ async function handleSupplyAccept(bot, callbackQuery) {
   const userId = String(callbackQuery.from.id);
   const chatId = callbackQuery.message.chat.id;
 
-  await bot.answerCallbackQuery(callbackQuery.id, { text: 'Accepted!' });
+  // APU-1 3.2 (SEC): this handler used to flip ANY pending queue row to
+  // 'approved' with no auth, stage, or action validation — a forged or
+  // stale srf_acc:<id> could mark arbitrary requests approved. Accept is
+  // only valid on a pending supply_request at stage 'dispatch_acceptance',
+  // tapped by the person the admin assigned.
+  const row0 = await approvalQueueRepository.getByRequestId(requestId);
+  const aj0 = (row0 && row0.actionJSON) || {};
+  if (!row0 || aj0.action !== 'supply_request') {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'This card is not a valid supply assignment.', show_alert: true }).catch(() => {});
+    return;
+  }
+  if (String(row0.status || '').toLowerCase() !== 'pending' || aj0.stage !== 'dispatch_acceptance') {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'This assignment is no longer awaiting acceptance.', show_alert: true }).catch(() => {});
+    return;
+  }
+  const assignee = aj0.assignedDispatch && String(aj0.assignedDispatch.user_id);
+  if (!assignee || assignee !== userId) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assigned dispatch person can accept this.', show_alert: true }).catch(() => {});
+    return;
+  }
+
+  await bot.answerCallbackQuery(callbackQuery.id, { text: 'Accepted!' }).catch(() => {});
   await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
 
   const ts = new Date().toISOString();
@@ -1484,6 +1516,10 @@ async function handleSupplyAccept(bot, callbackQuery) {
     stage: 'completed',
     acceptedByDispatch: { user_id: userId, ts },
   });
+  try {
+    const auditLogRepository = require('../repositories/auditLogRepository');
+    await auditLogRepository.append('supply_dispatch_accepted', { requestId }, userId);
+  } catch (_) { /* audit is best-effort */ }
 
   const acting = await usersRepository.findByUserId(userId);
   const userName = (acting && acting.name) || userId;
