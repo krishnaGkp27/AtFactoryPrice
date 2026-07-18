@@ -97,6 +97,60 @@ async function buildSellPackageCard(aj) {
   });
 }
 
+/** Card for a queued classic sale_bundle actionJSON (no inventory lookups —
+ *  renders exactly what the queue row carries, so reminders can rebuild it). */
+async function buildSaleBundleCard(aj) {
+  let text = `Sale Request\nCustomer: ${aj.customer || '—'}`;
+  const contact = await customerContact(aj.customer);
+  if (contact.phone) text += `\nPhone: ${contact.phone}`;
+  if (contact.address) text += `\nAddress: ${contact.address}`;
+  if (aj.salesPerson) text += `\nSalesperson: ${aj.salesPerson}`;
+  if (aj.paymentMode) text += `\nPayment: ${aj.paymentMode}`;
+  if (aj.salesDate) text += `\nDate: ${fmtDate(aj.salesDate)}`;
+  const items = Array.isArray(aj.items) ? aj.items : [];
+  if (items.length) {
+    text += '\n\nItems:\n';
+    for (const it of items) {
+      text += it.type === 'than'
+        ? `  Bale ${it.packageNo} Than ${it.thanNo}\n`
+        : `  Bale ${it.packageNo}\n`;
+    }
+  }
+  if (aj.totalYards) text += `\nTotal: ${fmtQty(aj.totalYards)} yards`;
+  if (aj.backdated) text += `\n⚠️ BACKDATED sale (${aj.daysBack || '?'} day(s) in the past)`;
+  if (aj.sale_doc_file_id) text += '\n📎 Sales bill attached (see below)';
+  return text;
+}
+
+/**
+ * Best card we can rebuild for ANY queued actionJSON — used by the
+ * reminder sweep (and anywhere else that only has the sheet row). Sale
+ * actions get their full card; everything else gets a generic card that
+ * surfaces every recognisable business field instead of dropping them.
+ */
+async function buildCardFromActionJSON(aj) {
+  if (!aj || typeof aj !== 'object') return 'pending action';
+  try {
+    if (aj.action === 'sell_package') return await buildSellPackageCard(aj);
+    if (aj.action === 'sale_bundle') return await buildSaleBundleCard(aj);
+  } catch (_) { /* fall through to generic */ }
+  const parts = [String(aj.action || 'action').replace(/_/g, ' ')];
+  const fields = [
+    ['customer', 'Customer'], ['customer_name', 'Customer'], ['name', 'Name'],
+    ['design', 'Design'], ['shade', 'Shade'], ['packageNo', 'Bale'],
+    ['warehouse', 'Warehouse'], ['toWarehouse', 'To'], ['arrivalBatch', 'Container'],
+    ['price', 'Price'], ['amount', 'Amount'], ['bank_name', 'Bank'],
+    ['phone', 'Phone'], ['grnId', 'GRN'], ['supplier', 'Supplier'],
+  ];
+  const seen = new Set();
+  for (const [key, label] of fields) {
+    if (aj[key] === undefined || aj[key] === null || aj[key] === '' || seen.has(label)) continue;
+    seen.add(label);
+    parts.push(`${label}: ${aj[key]}`);
+  }
+  return parts.join('\n');
+}
+
 /**
  * Forward a request's attachments (bill photo, receipt, …) to every admin
  * except excludeId — the same loop the classic sale card runs at
@@ -131,5 +185,7 @@ module.exports = {
   resolveUserLabel,
   buildSaleCard,
   buildSellPackageCard,
+  buildSaleBundleCard,
+  buildCardFromActionJSON,
   forwardAttachmentsToAdmins,
 };

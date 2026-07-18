@@ -3924,16 +3924,10 @@ async function handleMessage(bot, msg) {
         if (intent.shade) filters.shade = intent.shade;
         if (intent.packageNo) filters.packageNo = intent.packageNo;
         if (intent.warehouse) filters.warehouse = intent.warehouse;
-        const label = `${filters.design}${filters.shade ? ' Shade ' + filters.shade : ''}${filters.warehouse ? ' at ' + filters.warehouse : ''}`;
-        const requestId = genId();
-        await approvalQueueRepository.append({
-          requestId, user: userId,
-          actionJSON: { action: 'update_price', filters, price: intent.price },
-          riskReason: '2nd admin approval required for price update', status: 'pending',
-        });
-        await auditLogRepository.append('approval_queued', { requestId, reason: 'price_update_approval' }, userId);
-        const userLabel = await getRequesterDisplayName(userId, msg);
-        const summary = `Price Update Request\n${label}\nNew price: ${fmtMoney(intent.price)}/yard\nRequested by: ${userLabel}`;
+        const label = `${filters.design}${filters.shade ? ' Shade ' + filters.shade : ''}${filters.packageNo ? ' Bale ' + filters.packageNo : ''}${filters.warehouse ? ' at ' + filters.warehouse : ''}`;
+        // APU-1 3.4: solo-admin auto-approve is decided BEFORE queueing —
+        // the old order appended the queue row first, so the auto-approve
+        // path left a forever-pending (re-approvable) orphan in the queue.
         const otherAdmins = config.access.adminIds.filter((id) => id !== userId);
         if (!otherAdmins.length) {
           const priceResult = await inventoryService.updatePrice(filters, intent.price, userId);
@@ -3944,7 +3938,16 @@ async function handleMessage(bot, msg) {
           }
           return;
         }
-        await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, '2nd admin approval required');
+        const requestId = genId();
+        await approvalQueueRepository.append({
+          requestId, user: userId,
+          actionJSON: { action: 'update_price', filters, price: intent.price },
+          riskReason: '2nd admin approval required for price update', status: 'pending',
+        });
+        await auditLogRepository.append('approval_queued', { requestId, reason: 'price_update_approval' }, userId);
+        const userLabel = await getRequesterDisplayName(userId, msg);
+        const summary = `Price Update Request\n${label}\nNew price: ${fmtMoney(intent.price)}/yard`;
+        await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, '2nd admin approval required', userId);
         await bot.sendMessage(chatId, `⏳ Price update for ${label} to ${fmtMoney(intent.price)}/yard submitted for 2nd admin approval.\nRequest: ${requestId}`);
         return;
       }

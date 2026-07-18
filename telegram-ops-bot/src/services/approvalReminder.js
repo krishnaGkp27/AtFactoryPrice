@@ -19,7 +19,9 @@
 
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const approvalEvents = require('../events/approvalEvents');
+const approvalCards = require('./approvalCards');
 const settingsRepository = require('../repositories/settingsRepository');
+const config = require('../config');
 const logger = require('../utils/logger');
 
 // Requests younger than this already produced a live card from their own
@@ -31,6 +33,22 @@ const MAX_CARDS_PER_SWEEP = 10;
 // requestId → epoch-ms of the last reminder sent by THIS process.
 const _remindedAt = new Map();
 let _lastSweepMs = 0;
+
+/**
+ * APU-1 3.3: rows whose next step is NOT a standard approve:/reject: tap
+ * must never get a standard card — Approve dead-ends ("Unknown action
+ * type") and Reject skips the flow's own cleanup (a rejected
+ * transfer_stock would strand in-transit bales at neither warehouse).
+ *  - transfer_stock: whole lifecycle rides trf:* buttons.
+ *  - supply_request: admins only act at stage 'admin_review'; every other
+ *    stage belongs to the dispatch team's own buttons (smc:/srf_*).
+ */
+function isStandardApprovable(aj) {
+  if (!aj || typeof aj !== 'object') return true;
+  if (aj.action === 'transfer_stock') return false;
+  if (aj.action === 'supply_request' && aj.stage !== 'admin_review') return false;
+  return true;
+}
 
 function summarize(aj) {
   if (!aj || typeof aj !== 'object') return 'pending action';
@@ -57,6 +75,7 @@ async function sweep(bot, { now = Date.now() } = {}) {
     const pending = await approvalQueueRepository.getAllPending();
     const due = pending
       .filter((q) => {
+        if (!isStandardApprovable(q.actionJSON)) return false;
         const created = Date.parse(q.createdAt || '') || 0;
         if (now - created < MIN_AGE_MS) return false;
         const last = _remindedAt.get(q.requestId) || 0;
@@ -72,10 +91,21 @@ async function sweep(bot, { now = Date.now() } = {}) {
     let sent = 0;
     for (const q of due) {
       try {
+        // APU-1: the reminder card carries the SAME detail as the original
+        // (rebuilt from the queue row), a resolved requester name, the
+        // admin-requester exclusion, and the attached sale doc re-forwarded.
+        const userLabel = await approvalCards.resolveUserLabel(q.user);
+        const card = await approvalCards.buildCardFromActionJSON(q.actionJSON);
+        const excludeId = config.access.adminIds.includes(String(q.user)) ? String(q.user) : undefined;
         await approvalEvents.notifyAdminsApprovalRequest(
-          bot, q.requestId, q.user, summarize(q.actionJSON), q.riskReason || 'Pending approval', null,
+          bot, q.requestId, userLabel, card, q.riskReason || 'Pending approval', excludeId,
           { prependNote: '⏰ Reminder — this approval is still waiting' },
         );
+        if (q.actionJSON && q.actionJSON.sale_doc_file_id) {
+          const kind = q.actionJSON.sale_doc_type === 'document' ? 'document' : 'photo';
+          await approvalCards.forwardAttachmentsToAdmins(bot, q.requestId,
+            [{ fileId: q.actionJSON.sale_doc_file_id, kind, caption: `📎 Sales bill for request ${q.requestId}` }], excludeId);
+        }
         _remindedAt.set(q.requestId, now);
         sent += 1;
       } catch (e) {
@@ -93,4 +123,4 @@ async function sweep(bot, { now = Date.now() } = {}) {
 /** Test hook — reset per-process reminder memory. */
 function _resetForTests() { _remindedAt.clear(); _lastSweepMs = 0; }
 
-module.exports = { sweep, summarize, MIN_AGE_MS, MAX_CARDS_PER_SWEEP, _resetForTests };
+module.exports = { sweep, summarize, isStandardApprovable, MIN_AGE_MS, MAX_CARDS_PER_SWEEP, _resetForTests };
