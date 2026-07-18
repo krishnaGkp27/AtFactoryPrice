@@ -89,6 +89,37 @@ test('3.2 srf_acc cannot flip a non-supply row, wrong stage, or wrong tapper', a
   assert.equal(statusUpdates.length, 0, 'no status flip happened in any invalid case');
 });
 
+test('review: stale reject cannot corrupt an already-decided new_customer', async () => {
+  const bot = createFakeBot();
+  customerUpdates.length = 0;
+  statusUpdates.length = 0;
+  queueRow = {
+    requestId: 'REQ-NC-3', user: '4242', status: 'approved',
+    actionJSON: { action: 'new_customer', customer_id: 'C-LIVE', customer_name: 'OKESON', requesterUserId: '4242' },
+  };
+  await controller.handleCallbackQuery(bot, cb('reject:REQ-NC-3', '888'));
+  assert.equal(customerUpdates.length, 0, 'live customer NOT flipped to Rejected');
+  assert.equal(statusUpdates.length, 0, 'queue row NOT re-decided');
+  assert.match(bot.allText(), /already approved — no change made/);
+});
+
+test('review: srf_dec is validated like srf_acc — forged declines are inert', async () => {
+  const bot = createFakeBot();
+  ajUpdates.length = 0;
+  // A pending sale_bundle must not be routable through the decline path.
+  queueRow = { requestId: 'REQ-S5', user: '4242', status: 'pending', actionJSON: { action: 'sale_bundle', customer: 'CJE' } };
+  await controller.handleCallbackQuery(bot, cb('srf_dec:REQ-S5', '5555'));
+  // Wrong tapper on a real assignment is also blocked.
+  queueRow = {
+    requestId: 'REQ-S6', user: '4242', status: 'pending',
+    actionJSON: { action: 'supply_request', stage: 'dispatch_acceptance', assignedDispatch: { user_id: '5555' } },
+  };
+  await controller.handleCallbackQuery(bot, cb('srf_dec:REQ-S6', '4242'));
+  assert.equal(ajUpdates.length, 0, 'no actionJSON mutations from invalid declines');
+  const alerts = bot.calls.filter((c) => c.method === 'answerCallbackQuery' && c.args.opts && c.args.opts.show_alert);
+  assert.ok(alerts.length >= 2, 'both invalid declines got blocking alerts');
+});
+
 test('3.5 receipts: rejected receipts cannot be approved; self-decisions blocked; audit written', async () => {
   const receiptsRepo = require(path.join(SRC, 'repositories/receiptsRepository'));
   const rcStatusUpdates = [];

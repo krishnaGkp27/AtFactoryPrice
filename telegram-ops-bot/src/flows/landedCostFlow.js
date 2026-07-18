@@ -331,7 +331,7 @@ async function submit(bot, chatId, userId) {
     // APU-1: the 2nd admin previously saw only GRN id + ₦/yd — now the full
     // costing they are sealing: USD/yd, per-charge lines, FX, total yards.
     const fmt = landedCostService._internals.fmt;
-    const chargeLines = (session.charges || []).map((c) => `  • ${c.label || c.name || 'charge'}: ₦${fmt(c.amount)}`).join('\n');
+    const chargeLines = (session.charges || []).map((c) => `  • ${c.type_name || 'charge'}: $${fmt(c.amount_usd)}`).join('\n');
     const card = `💵 Finalize Landed Cost Request\nGRN: ${session.grnId}`
       + `\nUSD cost/yard: $${fmt(session.usdPerYard)}`
       + `\nFX rate: ₦${fmt(session.fxRate)}/$`

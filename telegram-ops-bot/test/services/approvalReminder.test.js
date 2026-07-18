@@ -95,12 +95,17 @@ test('APU-1 3.3: lifecycle rows never get standard approve/reject cards', async 
     row('req-trf', OLD, { action: 'transfer_stock', fromWarehouse: 'IDUMOTA' }),
     row('req-sup-stage1', OLD, { action: 'supply_request', stage: 'dispatch_confirm' }),
     row('req-sup-assigned', OLD, { action: 'supply_request', stage: 'dispatch_acceptance' }),
-    row('req-sup-admin', OLD, { action: 'supply_request', stage: 'admin_review', customer: 'CJE' }),
+    row('req-sup-admin', OLD, {
+      action: 'supply_request', stage: 'admin_review', customer: 'CJE', warehouse: 'IDUMOTA',
+      cart: [{ design: '77016', shade: '5', quantity: 3 }],
+    }),
   ];
   const bot = createFakeBot();
   const sent = await reminder.sweep(bot, { now: NOW });
   assert.equal(sent, 1, 'only the admin_review supply request is reminded');
   assert.match(bot.allText(), /req\-sup\-admin/);
+  // Review fix: the reminder card must show the requested goods (aj.cart).
+  assert.match(bot.allText().replace(/\\/g, ''), /77016 Shade 5 × 3/, 'cart lines rendered');
   assert.ok(!/req\-trf/.test(bot.allText()), 'transfer lifecycle rows skipped');
   assert.ok(!/req\-sup\-stage1/.test(bot.allText()));
 });

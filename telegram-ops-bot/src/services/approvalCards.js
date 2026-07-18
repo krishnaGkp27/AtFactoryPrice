@@ -145,6 +145,32 @@ async function buildSaleBundleCard(aj) {
 }
 
 /**
+ * Plain-text supply-request card rebuilt from the queue row — the goods
+ * live only in aj.cart, which the generic field list can't render. Without
+ * this, a reminder's approve button asked admins to decide a multi-bale
+ * request without seeing what is being requested.
+ */
+function buildSupplyRequestCard(aj) {
+  let text = `Supply Request\nCustomer: ${aj.customer || '—'}\nWarehouse: ${aj.warehouse || '—'}`;
+  if (aj.salesperson) text += `\nSalesperson: ${aj.salesperson}`;
+  if (aj.paymentMode) text += `\nPayment: ${aj.paymentMode}`;
+  if (aj.salesDate) text += `\nDate: ${fmtDate(aj.salesDate)}`;
+  const cart = Array.isArray(aj.cart) ? aj.cart : [];
+  if (cart.length) {
+    text += '\n\nItems:';
+    let total = 0;
+    for (const c of cart.slice(0, 15)) {
+      text += `\n  • ${c.design}${c.shade ? ` Shade ${c.shade}` : ''} × ${c.quantity}`;
+      total += Number(c.quantity) || 0;
+    }
+    if (cart.length > 15) text += `\n  …+${cart.length - 15} more lines`;
+    text += `\nTotal: ${total} container(s)`;
+  }
+  if (aj.sale_doc_file_id) text += '\n📎 Bill attached (see below)';
+  return text;
+}
+
+/**
  * Detail block for bulk/photo receive approvals (dual-admin container
  * uploads) — per-design breakdown + provenance, rendered from actionJSON.
  * Returns '' when there is nothing beyond the caller's headline.
@@ -189,6 +215,7 @@ async function buildCardFromActionJSON(aj) {
   try {
     if (aj.action === 'sell_package') return await buildSellPackageCard(aj);
     if (aj.action === 'sale_bundle') return await buildSaleBundleCard(aj);
+    if (aj.action === 'supply_request') return buildSupplyRequestCard(aj);
   } catch (_) { /* fall through to generic */ }
   const parts = [String(aj.action || 'action').replace(/_/g, ' ')];
   const fields = [
@@ -243,6 +270,7 @@ module.exports = {
   buildSellPackageCard,
   buildReturnCard,
   buildSaleBundleCard,
+  buildSupplyRequestCard,
   buildReceiveDetail,
   buildCardFromActionJSON,
   forwardAttachmentsToAdmins,

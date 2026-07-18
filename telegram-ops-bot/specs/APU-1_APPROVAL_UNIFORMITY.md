@@ -77,10 +77,22 @@ sign-off per CLAUDE.md.
   approve/reject buttons.
 - Full `npm test` + `npm run smoke` + lint 0 before any push, as always.
 
-## Status
+## Status (updated 18-Jul-2026, owner green-lit "go ahead with the fix")
 
-- [ ] Owner review of this spec + decision menu (Phase 4 table)
-- [ ] Phase 1
-- [ ] Phase 2
-- [ ] Phase 3 (per-line sign-off)
-- [ ] Phase 4 (per-line sign-off)
+- [x] Phase 1 — Snap Sale gold-standard card + label-photo forward (APU-1a)
+- [x] Phase 3.1/3.6 — new_customer action rename + reject cleanup (APU-1b)
+- [x] Phase 3.2 — srf_acc validation (APU-1b)
+- [x] Phase 3.3 — reminder skip-list + full-detail reminder cards (APU-1c)
+- [x] Phase 3.4 — update_price orphan row (APU-1c)
+- [x] Phase 3.5 — receipts audit trail + H1 guard + final decisions (APU-1d).
+      **Deviation:** the ApprovalQueue shadow row is NOT added — it would
+      mint a new action code + executor (CLAUDE.md rule 3 sign-off) and
+      create dead standard buttons meanwhile. Moved to the Phase-4 menu.
+- [x] Phase 2 (first wave) — detail parity for returns, add_user,
+      promote/deactivate, contact network, catalog_return, landed cost,
+      bulk/photo receive, unit display; plain-text cards; display names
+      (APU-1e). Remaining Phase-2 items (record_payment outstanding
+      balance, remove_bank context, goods-receipt supplier/PO lines,
+      supply-request phone/address, morning-digest reuse) are open.
+- [ ] Phase 4 — owner decision menu (unchanged, plus: migrate receipts
+      fully onto ApprovalQueue with a receipt_approval executor?)

@@ -793,7 +793,7 @@ async function submitReturn(bot, chatId, userId, session) {
   // APU-1: itemize WHICH catalogs come back — the count-only card asked
   // admins to approve items they couldn't see.
   const itemLines = selectedItems.slice(0, 15)
-    .map((i) => `  • ${i.design || i.itemLabel || i.ledgerId}${i.size ? ` (${i.size})` : ''}${i.qty ? ` ×${i.qty}` : ''}`)
+    .map((i) => `  • ${i.design || i.ledgerId}${i.catalogSize ? ` (${i.catalogSize})` : ''}${i.quantity ? ` ×${i.quantity}` : ''}`)
     .join('\n');
   const moreLine = selectedItems.length > 15 ? `\n  …+${selectedItems.length - 15} more` : '';
   const summary = `Catalog Return Request\nFrom: ${session.returnPersonName} (${session.returnRecipientType})`

@@ -280,13 +280,16 @@ async function handleCallback(bot, callbackQuery) {
           [{ fileId: actionJSON.sale_doc_file_id, kind: 'photo', caption: `📷 Sales bill for request ${requestId}` }], excludeId);
       }
     } catch (e) { logger.warn(`snap sale cards: ${e.message}`); }
-    sessionStore.clear(userId);
     const notifyWarning = adminCards === 0
       ? '\n\n⚠️ Admins could not be notified right now — ask an admin to check Pending Approvals.'
       : '';
+    // Render BEFORE clearing: the anchored renderer no-ops once the session
+    // is gone, which silently ate the seller's "Submitted" confirmation
+    // (latent since SNAP-1; surfaced by the APU-1 adversarial review).
     await render(bot, chatId, userId,
       `✅ *Submitted.*\n\n📦 Bale ${mdEscape(b.packageNo)} — ${mdEscape(b.design)} → *${mdEscape(session.customer)}*\nRequest: \`${requestId}\`\n\n⏳ Waiting for admin approval (rate + payment entered there).${notifyWarning}`,
       [[{ text: '📸 Snap another', callback_data: 'act:snap_sale' }, { text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+    sessionStore.clear(userId);
     return true;
   }
   return true;

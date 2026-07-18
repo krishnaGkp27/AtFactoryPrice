@@ -96,6 +96,14 @@ test('photo → match card with OCR read-back → customer tap → queued with l
   assert.equal(adminPhotos.length, 1, 'label photo forwarded to the admin');
   assert.equal(adminPhotos[0].args.photo, 'label-photo-file-id');
   assert.match(adminPhotos[0].args.opts.caption, /Sales bill for request/);
+  // Adversarial-review fix: the seller's Submitted confirmation was dead
+  // code (session cleared before the anchored render) — pin it now.
+  const sellerMsgs = bot.calls.filter((c) => {
+    if (c.method === 'sendMessage') return String(c.args.chatId) === '4242';
+    if (c.method === 'editMessageText') return String((c.args.opts || {}).chat_id) === '4242';
+    return false;
+  }).map((c) => c.args.text).join('\n');
+  assert.match(sellerMsgs, /Submitted/, 'seller sees the Submitted confirmation');
   assert.ok(!sessionStore.get('4242'), 'session cleared after submit');
 });
 

@@ -1289,6 +1289,15 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
   const custId = aj.customer_id;
   const requesterUserId = aj.requesterUserId || requestingUser;
 
+  // APU-1 (adversarial review): decisions are final. Without this guard a
+  // stale card's reject tap flipped an already-approved (Active, possibly
+  // already-sold-to) customer to Rejected — and a stale approve un-rejected
+  // a rejected one.
+  if (String(item.status || '').toLowerCase() !== 'pending') {
+    await bot.sendMessage(chatId, `Request ${requestId} is already ${item.status || 'decided'} — no change made.`);
+    return;
+  }
+
   await approvalQueueRepository.updateStatus(requestId, approved ? 'approved' : 'rejected', new Date().toISOString());
 
   if (approved) {
@@ -1565,6 +1574,23 @@ async function handleSupplyDecline(bot, callbackQuery) {
   const requestId = data.replace(/^srf_dec:/, '');
   const userId = String(callbackQuery.from.id);
   const chatId = callbackQuery.message.chat.id;
+
+  // APU-1 3.2 (adversarial review): same validation as Accept — without
+  // it, a forged srf_dec:<id> put ANY queue row (any action, any status)
+  // through the decline path, stamping stage='admin_repick' and falsely
+  // notifying the creator + re-broadcasting warehouse-boy pickers.
+  const row0 = await approvalQueueRepository.getByRequestId(requestId);
+  const aj0 = (row0 && row0.actionJSON) || {};
+  if (!row0 || aj0.action !== 'supply_request'
+      || String(row0.status || '').toLowerCase() !== 'pending' || aj0.stage !== 'dispatch_acceptance') {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'This assignment is no longer awaiting your decision.', show_alert: true }).catch(() => {});
+    return;
+  }
+  const assignee = aj0.assignedDispatch && String(aj0.assignedDispatch.user_id);
+  if (!assignee || assignee !== userId) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assigned dispatch person can decline this.', show_alert: true }).catch(() => {});
+    return;
+  }
 
   await bot.answerCallbackQuery(callbackQuery.id);
   await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
