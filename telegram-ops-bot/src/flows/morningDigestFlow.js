@@ -122,8 +122,8 @@ async function handleCallback(bot, callbackQuery) {
         { text: '◀ Customers', callback_data: `${NS}d:DIGEST_CUSTOMER_NOTES` },
         { text: '◀ Summary', callback_data: `${NS}d:__sum__` },
       ];
-      if (page > 0) nav.push({ text: '◀ Prev', callback_data: `${NS}dn:${idx}:${page - 1}` });
-      if (page < out.totalPages - 1) nav.push({ text: 'More ▶', callback_data: `${NS}dn:${idx}:${page + 1}` });
+      if (page > 0) nav.push({ text: '◀ Previous', callback_data: `${NS}dn:${idx}:${page - 1}` });
+      if (page < out.totalPages - 1) nav.push({ text: 'Next ▶', callback_data: `${NS}dn:${idx}:${page + 1}` });
       await bot.editMessageText(out.text, {
         chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [nav] },

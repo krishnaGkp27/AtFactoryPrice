@@ -73,7 +73,7 @@ test('launch toggles: notes summary counts total + new; drill-down shows ALL not
   assert.ok(!/ancient note/.test(cje.text), 'only the tapped customer\'s notes');
 });
 
-test('per-customer notes paginate at 5/page and clamp out-of-range pages', async () => {
+test('per-customer notes paginate at 3/page with friendly dates, clamp out-of-range', async () => {
   const many = Array.from({ length: 12 }, (_, i) => ({
     note_id: 'M' + i, customer: 'OKSON', note: 'note number ' + i,
     created_by: '777', created_at: new Date(Date.parse('2026-07-16T10:00:00Z') - i * 3600e3).toISOString(),
@@ -81,11 +81,12 @@ test('per-customer notes paginate at 5/page and clamp out-of-range pages', async
   const saved = customerNotesRepository.getAll;
   customerNotesRepository.getAll = async () => many;
   const p0 = await digest.notesForCustomer(baseSettings(), 0, 0);
-  assert.equal(p0.totalPages, 3);
-  assert.match(p0.text, /page 1\/3/);
+  assert.equal(p0.totalPages, 4, '12 notes at 3/page (owner 17-Jul)');
+  assert.match(p0.text, /page 1\/4/);
   assert.match(p0.text, /note number 0/);
+  assert.match(p0.text, /📌 \*16-Jul\*/, 'friendly date format 16-Jul');
   const pLast = await digest.notesForCustomer(baseSettings(), 0, 99);
-  assert.match(pLast.text, /page 3\/3/, 'page clamps to last');
+  assert.match(pLast.text, /page 4\/4/, 'page clamps to last');
   assert.match(pLast.text, /note number 11/);
   assert.equal(await digest.notesForCustomer(baseSettings(), 44, 0), null, 'unknown customer index → null');
   customerNotesRepository.getAll = saved;

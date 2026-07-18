@@ -44,6 +44,17 @@ function timeInTz(now, tz) {
 }
 function fmtDay(iso) { return String(iso || '').slice(0, 10); }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** Owner 17-Jul: friendly note dates — "27-May", with year only when it differs. */
+function fmtNiceDay(iso, todayIso) {
+  const d = fmtDay(iso);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d);
+  if (!m) return d;
+  const nice = `${Number(m[3])}-${MONTHS[Number(m[2]) - 1]}`;
+  const thisYear = String(todayIso || '').slice(0, 4);
+  return m[1] === thisYear ? nice : `${nice}-${m[1].slice(2)}`;
+}
+
 /* ── per-category loaders: raw rows once, summary + detail derived ── */
 
 async function loadNotes(settings, todayIso) {
@@ -208,12 +219,13 @@ async function notesIndex(settings) {
   return { total: all.length, customers: notesGroups(all) };
 }
 
-const NOTES_PER_CUSTOMER_PAGE = 5;
+const NOTES_PER_CUSTOMER_PAGE = 3;
 const NOTE_TEXT_CAP = 600;
 
 /** One customer's notes, newest first, paged (5/page, long notes trimmed). */
 async function notesForCustomer(settings, customerIdx, page = 0) {
-  const { all } = await loadNotes(settings, dayInTz(new Date(), settings.DIGEST_TIMEZONE || LAGOS_TZ));
+  const todayIso = dayInTz(new Date(), settings.DIGEST_TIMEZONE || LAGOS_TZ);
+  const { all } = await loadNotes(settings, todayIso);
   const groups = notesGroups(all);
   const group = groups[customerIdx];
   if (!group) return null;
@@ -223,7 +235,7 @@ async function notesForCustomer(settings, customerIdx, page = 0) {
   const lines = notes.slice(p * NOTES_PER_CUSTOMER_PAGE, (p + 1) * NOTES_PER_CUSTOMER_PAGE)
     .map((n) => {
       const body = n.note.length > NOTE_TEXT_CAP ? `${n.note.slice(0, NOTE_TEXT_CAP)}…` : n.note;
-      return `📌 *${fmtDay(n.created_at)}*\n${body}`;
+      return `📌 *${fmtNiceDay(n.created_at, todayIso)}*\n${body}`;
     });
   return {
     customer: group.customer,
