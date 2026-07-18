@@ -3178,6 +3178,12 @@ async function handleFileMessage(bot, msg) {
     if (handled) return;
   }
 
+  // SNAP-1 — bale label photo while Snap Sale awaits it.
+  if (session && session.type === 'snap_sale_flow' && session.step === 'await_photo' && msg.photo) {
+    const handled = await require('../flows/snapSaleFlow').handleFile(bot, msg);
+    if (handled) return;
+  }
+
   if (session && session.type === 'sale_flow' && session.awaitingDocument) {
     let telegramFileId, fileType, mimeType;
     if (msg.photo && msg.photo.length) {
@@ -6324,6 +6330,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['cn:'], handle: (bot, cq) => require('../flows/contactNetworkFlow').handleCallback(bot, cq) },
   // MORN-1 — morning digest settings (admin-only).
   { prefixes: ['rmd:'], handle: (bot, cq) => require('../flows/morningDigestFlow').handleCallback(bot, cq) },
+  // SNAP-1 — photo-to-sale (bale label OCR).
+  { prefixes: ['sns:'], handle: (bot, cq) => require('../flows/snapSaleFlow').handleCallback(bot, cq) },
 ];
 
 async function handleCallbackQuery(bot, callbackQuery) {
@@ -8576,6 +8584,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
       // MORN-1 — ⏰ Morning Digest settings (admin gate inside the flow).
       case 'morning_digest':
         await require('../flows/morningDigestFlow').start(bot, chatId, uid, messageId);
+        break;
+      // SNAP-1 — 📸 photo-to-sale.
+      case 'snap_sale':
+        await require('../flows/snapSaleFlow').start(bot, chatId, uid, messageId);
         break;
       // Legacy entry points — kept so text intents that still hit these
       // callbacks (older keyboards in a user's chat history, etc.) keep

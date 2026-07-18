@@ -60,6 +60,9 @@ const ACTIVITIES = [
   // bale cart → customer/salesperson/bank/date chips. Typed sale commands
   // redirect here (owner mandate 14-Jul).
   { code: 'sell_bale',             label: 'Sell Bale',                 icon: '💰', callback: 'act:sell_bale',          hub: 'orders' },
+  // SNAP-1 — photo-to-sale: photograph the bale label, OCR matches the
+  // bale, tap the customer. Same approval + enrichment as any sale.
+  { code: 'snap_sale',             label: 'Snap Sale',                 icon: '📸', callback: 'act:snap_sale',          hub: 'orders' },
 
   // ── Sales & Marketing › Marketers (catalog consignment) ──────────────
   { code: 'register_marketer',     label: 'Register Marketer',         icon: '🧑‍💼', callback: 'act:register_marketer',    hub: 'marketers' },
