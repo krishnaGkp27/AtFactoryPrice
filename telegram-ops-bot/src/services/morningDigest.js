@@ -222,7 +222,31 @@ async function notesIndex(settings) {
 const NOTES_PER_CUSTOMER_PAGE = 3;
 const NOTE_TEXT_CAP = 600;
 
-/** One customer's notes, newest first, paged (5/page, long notes trimmed). */
+/**
+ * Resolve note authors (created_by holds the raw Telegram id) to display
+ * names via one Users read. Rows whose created_by is already a name (or an
+ * unknown id) render as stored; blank renders 'Unknown'.
+ */
+async function noteAuthorResolver() {
+  const map = new Map();
+  try {
+    const users = await require('../repositories/usersRepository').getAll();
+    for (const u of users) map.set(String(u.user_id), u.name || String(u.user_id));
+  } catch (e) { logger.warn(`digest notes: author lookup failed: ${e.message}`); }
+  return (id) => {
+    const key = String(id || '').trim();
+    if (!key) return 'Unknown';
+    return map.get(key) || key;
+  };
+}
+
+/**
+ * One customer's notes, GROUPED BY AUTHOR (owner 19-Jul: "display the
+ * person who has added the customer notes… group them with the person").
+ * Author groups are ordered by their newest note; notes inside a group stay
+ * newest first. Paged 3 notes/page; a group's 👤 header repeats when its
+ * notes continue onto the next page.
+ */
 async function notesForCustomer(settings, customerIdx, page = 0) {
   const todayIso = dayInTz(new Date(), settings.DIGEST_TIMEZONE || LAGOS_TZ);
   const { all } = await loadNotes(settings, todayIso);
@@ -230,16 +254,33 @@ async function notesForCustomer(settings, customerIdx, page = 0) {
   const group = groups[customerIdx];
   if (!group) return null;
   const notes = all.filter((n) => (n.customer || '(no name)').trim() === group.customer);
-  const totalPages = Math.max(1, Math.ceil(notes.length / NOTES_PER_CUSTOMER_PAGE));
+  const nameOf = await noteAuthorResolver();
+  // Group by author. `notes` is newest-first, so first appearance = the
+  // author with the freshest note → Map insertion order is the group order.
+  const byAuthor = new Map();
+  for (const n of notes) {
+    const author = nameOf(n.created_by);
+    if (!byAuthor.has(author)) byAuthor.set(author, []);
+    byAuthor.get(author).push(n);
+  }
+  const ordered = [];
+  for (const [author, list] of byAuthor) for (const n of list) ordered.push({ author, n });
+  const totalPages = Math.max(1, Math.ceil(ordered.length / NOTES_PER_CUSTOMER_PAGE));
   const p = Math.min(Math.max(page, 0), totalPages - 1);
-  const lines = notes.slice(p * NOTES_PER_CUSTOMER_PAGE, (p + 1) * NOTES_PER_CUSTOMER_PAGE)
-    .map((n) => {
-      const body = n.note.length > NOTE_TEXT_CAP ? `${n.note.slice(0, NOTE_TEXT_CAP)}…` : n.note;
-      return `📌 *${fmtNiceDay(n.created_at, todayIso)}*\n${body}`;
-    });
+  const slice = ordered.slice(p * NOTES_PER_CUSTOMER_PAGE, (p + 1) * NOTES_PER_CUSTOMER_PAGE);
+  const parts = [];
+  let lastAuthor = null;
+  for (const { author, n } of slice) {
+    if (author !== lastAuthor) {
+      parts.push(`👤 *${author}*`);
+      lastAuthor = author;
+    }
+    const body = n.note.length > NOTE_TEXT_CAP ? `${n.note.slice(0, NOTE_TEXT_CAP)}…` : n.note;
+    parts.push(`📌 *${fmtNiceDay(n.created_at, todayIso)}*\n${body}`);
+  }
   return {
     customer: group.customer,
-    text: `🗒 *${group.customer}* — ${notes.length} note(s), newest first${totalPages > 1 ? ` (page ${p + 1}/${totalPages})` : ''}:\n\n${lines.join('\n\n')}`,
+    text: `🗒 *${group.customer}* — ${notes.length} note(s) by ${byAuthor.size} ${byAuthor.size === 1 ? 'person' : 'people'}${totalPages > 1 ? ` (page ${p + 1}/${totalPages})` : ''}:\n\n${parts.join('\n\n')}`,
     totalPages,
   };
 }

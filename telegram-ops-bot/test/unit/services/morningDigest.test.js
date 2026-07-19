@@ -30,6 +30,12 @@ function baseSettings(extra = {}) {
   };
 }
 
+const usersRepository = require(path.join(SRC, 'repositories/usersRepository'));
+usersRepository.getAll = async () => [
+  { user_id: '777', name: 'Krishna' },
+  { user_id: '4242', name: 'Abdul' },
+];
+
 customerNotesRepository.getAll = async () => [
   { note_id: 'N1', customer: 'CJE', note: 'promised payment Friday', created_by: '777', created_at: '2026-07-16T10:00:00.000Z' },
   { note_id: 'N2', customer: 'OKSON', note: 'wants 9037 restock call', created_by: '777', created_at: '2026-07-15T09:00:00.000Z' },
@@ -89,6 +95,32 @@ test('per-customer notes paginate at 3/page with friendly dates, clamp out-of-ra
   assert.match(pLast.text, /page 4\/4/, 'page clamps to last');
   assert.match(pLast.text, /note number 11/);
   assert.equal(await digest.notesForCustomer(baseSettings(), 44, 0), null, 'unknown customer index → null');
+  customerNotesRepository.getAll = saved;
+});
+
+test('notes are grouped by author with display names (owner 19-Jul)', async () => {
+  const saved = customerNotesRepository.getAll;
+  customerNotesRepository.getAll = async () => [
+    { note_id: 'A1', customer: 'OKSON', note: 'newest by Krishna', created_by: '777', created_at: '2026-07-18T10:00:00.000Z' },
+    { note_id: 'B1', customer: 'OKSON', note: 'note by Abdul', created_by: '4242', created_at: '2026-07-17T10:00:00.000Z' },
+    { note_id: 'A2', customer: 'OKSON', note: 'older by Krishna', created_by: '777', created_at: '2026-07-16T10:00:00.000Z' },
+  ];
+  const r = await digest.notesForCustomer(baseSettings(), 0, 0);
+  assert.match(r.text, /3 note\(s\) by 2 people/);
+  // Grouped: both Krishna notes sit together under ONE header, ahead of
+  // Abdul's group (Krishna has the newest note), despite the interleaved
+  // chronology.
+  const kIdx = r.text.indexOf('👤 *Krishna*');
+  const aIdx = r.text.indexOf('👤 *Abdul*');
+  assert.ok(kIdx >= 0 && aIdx > kIdx, 'Krishna group first, Abdul group after');
+  assert.equal(r.text.match(/👤 \*Krishna\*/g).length, 1, 'one header per author group');
+  assert.ok(r.text.indexOf('older by Krishna') < aIdx, "both Krishna notes precede Abdul's group");
+  // Unknown author id degrades to the raw value, blank to 'Unknown'.
+  customerNotesRepository.getAll = async () => [
+    { note_id: 'X1', customer: 'OKSON', note: 'mystery note', created_by: '', created_at: '2026-07-18T10:00:00.000Z' },
+  ];
+  const r2 = await digest.notesForCustomer(baseSettings(), 0, 0);
+  assert.match(r2.text, /👤 \*Unknown\*/);
   customerNotesRepository.getAll = saved;
 });
 
