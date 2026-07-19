@@ -48,11 +48,9 @@ class AtFactoryPriceApp extends StatelessWidget {
         theme: AppTheme.lightTheme,
         darkTheme: AppTheme.darkTheme,
         themeMode: ThemeMode.light,
+        // AuthWrapper handles the login/home switch; no named routes are
+        // used anywhere (navigation is MaterialPageRoute + this consumer).
         home: const AuthWrapper(),
-        routes: {
-          '/login': (context) => const LoginScreen(),
-          '/home': (context) => const HomeScreen(),
-        },
       ),
     );
   }
@@ -66,8 +64,10 @@ class AuthWrapper extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<AuthService>(
       builder: (context, authService, _) {
-        // Show splash while checking auth state
-        if (authService.isLoading) {
+        // Splash ONLY during app boot (first auth event pending). Using
+        // isLoading here disposed the LoginScreen mid-submit on every
+        // sign-in attempt, wiping the form and eating error messages.
+        if (authService.booting) {
           return const SplashScreen();
         }
         

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../config/app_theme.dart';
+import '../../models/product.dart';
 import '../../services/cart_service.dart';
 import '../../widgets/cart_item_card.dart';
 
@@ -13,6 +14,11 @@ class CartScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('Shopping Cart')),
       body: Consumer<CartService>(
         builder: (context, cartService, _) {
+          // The persisted cart loads async from SharedPreferences — show a
+          // spinner, not a false "empty" flash, while it's in flight.
+          if (cartService.isLoading) {
+            return const Center(child: CircularProgressIndicator());
+          }
           if (cartService.isEmpty) {
             return const Center(
               child: Column(
@@ -50,7 +56,7 @@ class CartScreen extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text('Subtotal'),
-                        Text('NGN ${cartService.subtotal.toStringAsFixed(0)}'),
+                        Text(Product.formatPrice(cartService.subtotal)),
                       ],
                     ),
                     const SizedBox(height: 8),
@@ -58,7 +64,7 @@ class CartScreen extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text('Delivery'),
-                        Text(cartService.deliveryFee == 0 ? 'FREE' : 'NGN ${cartService.deliveryFee.toStringAsFixed(0)}'),
+                        Text(cartService.deliveryFee == 0 ? 'FREE' : Product.formatPrice(cartService.deliveryFee)),
                       ],
                     ),
                     const Divider(height: 24),
@@ -66,7 +72,7 @@ class CartScreen extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text('Total', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        Text('NGN ${cartService.total.toStringAsFixed(0)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        Text(Product.formatPrice(cartService.total), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                       ],
                     ),
                     const SizedBox(height: 16),

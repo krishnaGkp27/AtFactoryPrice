@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../config/app_theme.dart';
@@ -29,24 +31,31 @@ class _SignupScreenState extends State<SignupScreen> {
     _phoneController.dispose();
     _passwordController.dispose();
     _referralController.dispose();
+    _referralDebounce?.cancel();
     super.dispose();
   }
 
-  Future<void> _validateReferral() async {
-    final code = _referralController.text.trim();
-    if (code.isEmpty) {
-      setState(() => _referralValidation = null);
-      return;
-    }
+  Timer? _referralDebounce;
 
-    final authService = context.read<AuthService>();
-    final result = await authService.validateReferralCode(code);
-
-    if (result != null && result['valid'] == true) {
-      setState(() => _referralValidation = 'Valid! Referred by ${result['userName']}');
-    } else {
-      setState(() => _referralValidation = 'Invalid referral code');
-    }
+  /// Debounced: one Firestore read 500ms after typing stops, not one per
+  /// keystroke; post-await setState is mounted-guarded.
+  void _validateReferral() {
+    _referralDebounce?.cancel();
+    _referralDebounce = Timer(const Duration(milliseconds: 500), () async {
+      final code = _referralController.text.trim();
+      if (code.isEmpty) {
+        if (mounted) setState(() => _referralValidation = null);
+        return;
+      }
+      final authService = context.read<AuthService>();
+      final result = await authService.validateReferralCode(code);
+      if (!mounted) return;
+      if (result != null && result['valid'] == true) {
+        setState(() => _referralValidation = 'Valid! Referred by ${result['userName']}');
+      } else {
+        setState(() => _referralValidation = 'Invalid referral code');
+      }
+    });
   }
 
   Future<void> _handleSignup() async {
@@ -63,6 +72,7 @@ class _SignupScreenState extends State<SignupScreen> {
       referralCode: _referralController.text,
     );
 
+    if (!mounted) return;
     setState(() => _isSubmitting = false);
 
     if (success && mounted) {

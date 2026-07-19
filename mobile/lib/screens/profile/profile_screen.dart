@@ -26,7 +26,7 @@ class ProfileScreen extends StatelessWidget {
                   radius: 48,
                   backgroundColor: AppTheme.primaryColor,
                   child: Text(
-                    authService.displayName[0].toUpperCase(),
+                    authService.displayName.isNotEmpty ? authService.displayName[0].toUpperCase() : '?',
                     style: const TextStyle(fontSize: 32, color: Colors.white, fontWeight: FontWeight.bold),
                   ),
                 ),
@@ -71,7 +71,8 @@ class ProfileScreen extends StatelessWidget {
                             ElevatedButton.icon(
                               onPressed: () {
                                 Share.share(
-                                  'Join AtFactoryPrice using my referral code: ${authService.referralCode!}\n\nhttps://atfactoryprice.com/signup?ref=${authService.referralCode}',
+                                  // Domain moved to .live (owner, Jul-2026).
+                                  'Join AtFactoryPrice using my referral code: ${authService.referralCode!}\n\nhttps://atfactoryprice.live/signup?ref=${authService.referralCode}',
                                 );
                               },
                               icon: const Icon(Icons.share),
@@ -84,10 +85,16 @@ class ProfileScreen extends StatelessWidget {
                   ),
                 const SizedBox(height: 24),
                 // Menu Options
-                _buildMenuItem(context, Icons.shopping_bag_outlined, 'My Orders', () {}),
-                _buildMenuItem(context, Icons.location_on_outlined, 'Addresses', () {}),
-                _buildMenuItem(context, Icons.settings_outlined, 'Settings', () {}),
-                _buildMenuItem(context, Icons.help_outline, 'Help & Support', () {}),
+                // Honest stubs (match the checkout pattern) — a silent
+                // ripple that does nothing reads as "broken".
+                _buildMenuItem(context, Icons.shopping_bag_outlined, 'My Orders',
+                  () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('My Orders is coming soon!')))),
+                _buildMenuItem(context, Icons.location_on_outlined, 'Addresses',
+                  () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Addresses are coming soon!')))),
+                _buildMenuItem(context, Icons.settings_outlined, 'Settings',
+                  () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings are coming soon!')))),
+                _buildMenuItem(context, Icons.help_outline, 'Help & Support',
+                  () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Help & Support is coming soon!')))),
                 const SizedBox(height: 24),
                 SizedBox(
                   width: double.infinity,

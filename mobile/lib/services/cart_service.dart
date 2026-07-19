@@ -23,7 +23,7 @@ class CartService extends ChangeNotifier {
     (sum, item) => sum + (item.product.price * item.quantity)
   );
   
-  double get deliveryFee => subtotal > 50000 ? 0 : 2500;
+  double get deliveryFee => _items.isEmpty || subtotal > 50000 ? 0 : 2500;
   double get total => subtotal + deliveryFee;
   
   CartService() {
@@ -41,9 +41,22 @@ class CartService extends ChangeNotifier {
       
       if (cartJson != null) {
         final List<dynamic> decoded = json.decode(cartJson);
-        _items = decoded.map((item) => CartItem.fromJson(item)).toList();
+        final loaded = decoded.map((item) => CartItem.fromJson(item)).toList();
+        // Merge, don't overwrite: items added while this async load was in
+        // flight (fast first tap after app start) must survive.
+        final addedDuringLoad = _items;
+        for (final fresh in addedDuringLoad) {
+          final i = loaded.indexWhere((it) => it.product.id == fresh.product.id);
+          if (i >= 0) {
+            loaded[i].quantity += fresh.quantity;
+          } else {
+            loaded.add(fresh);
+          }
+        }
+        _items = loaded;
+        if (addedDuringLoad.isNotEmpty) await _saveCart();
       }
-      
+
       _isLoading = false;
       notifyListeners();
     } catch (e) {

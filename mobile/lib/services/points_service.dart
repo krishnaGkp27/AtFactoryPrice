@@ -1,12 +1,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 
 /// Reward Points Service
 class PointsService extends ChangeNotifier {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseFunctions _functions = FirebaseFunctions.instance;
-  
+
   Map<String, dynamic>? _wallet;
   List<Map<String, dynamic>> _transactions = [];
   bool _isLoading = false;
@@ -17,10 +15,12 @@ class PointsService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
   
-  int get totalPoints => _wallet?['totalPointsEarned'] ?? 0;
-  int get availablePoints => _wallet?['availablePoints'] ?? 0;
-  int get pendingPoints => _wallet?['pendingPoints'] ?? 0;
-  int get redeemedPoints => _wallet?['redeemedPoints'] ?? 0;
+  // num→int coercion: Cloud Functions / console edits can store doubles;
+  // a raw dynamic-to-int downcast would throw at render time.
+  int get totalPoints => (_wallet?['totalPointsEarned'] as num?)?.toInt() ?? 0;
+  int get availablePoints => (_wallet?['availablePoints'] as num?)?.toInt() ?? 0;
+  int get pendingPoints => (_wallet?['pendingPoints'] as num?)?.toInt() ?? 0;
+  int get redeemedPoints => (_wallet?['redeemedPoints'] as num?)?.toInt() ?? 0;
   
   Future<void> loadWallet(String userId) async {
     if (userId.isEmpty) return;
@@ -79,6 +79,7 @@ class PointsService extends ChangeNotifier {
       case 'available': return 'Available';
       case 'redeemed': return 'Redeemed';
       case 'expired': return 'Expired';
+      case 'cancelled': return 'Cancelled';
       default: return status;
     }
   }
@@ -89,6 +90,7 @@ class PointsService extends ChangeNotifier {
       case 'referral': return 'Referral Bonus';
       case 'admin': return 'Admin Adjustment';
       case 'bonus': return 'Bonus Points';
+      case 'expiry': return 'Points Expiry';
       default: return sourceType;
     }
   }

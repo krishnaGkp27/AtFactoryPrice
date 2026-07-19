@@ -75,12 +75,15 @@ class ProductService extends ChangeNotifier {
       _error = null;
       notifyListeners();
       
+      // No orderBy('name'): Firestore silently EXCLUDES documents missing
+      // the ordered field, which made such products vanish from the app
+      // while showing fine on the web. Sort client-side instead.
       final snapshot = await _firestore
         .collection('products')
-        .orderBy('name')
         .get();
-      
-      _products = snapshot.docs.map((doc) => Product.fromFirestore(doc)).toList();
+
+      _products = snapshot.docs.map((doc) => Product.fromFirestore(doc)).toList()
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
       
       // Extract unique categories
       final categorySet = <String>{'All'};

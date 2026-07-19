@@ -18,7 +18,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       context.read<ProductService>().loadProducts();
+    });
+    // Rebuild on every keystroke so the clear (X) button appears/vanishes
+    // with the text — onChanged alone never triggers a local rebuild.
+    _searchController.addListener(() {
+      if (mounted) setState(() {});
     });
   }
 
@@ -119,13 +125,17 @@ class _ProductsScreenState extends State<ProductsScreen> {
                   );
                 }
                 if (service.products.isEmpty) {
-                  return const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
+                  // Pull-to-refresh works on the empty state too — a
+                  // transiently empty catalog shouldn't strand the user.
+                  return RefreshIndicator(
+                    onRefresh: () => service.refresh(),
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: const [
+                        SizedBox(height: 160),
                         Icon(Icons.inventory_2_outlined, size: 48, color: AppTheme.textHint),
                         SizedBox(height: 16),
-                        Text('No products found'),
+                        Center(child: Text('No products found — pull down to refresh')),
                       ],
                     ),
                   );
@@ -133,6 +143,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 return RefreshIndicator(
                   onRefresh: () => service.refresh(),
                   child: GridView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.all(16),
                     gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 2,

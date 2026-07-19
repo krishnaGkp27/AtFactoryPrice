@@ -5,7 +5,7 @@ Flutter mobile application for AtFactoryPrice e-commerce platform with MLM featu
 ## Features
 
 - **Product Catalog**: Browse products with search, filter, and sort
-- **Shopping Cart**: Add to cart, update quantities, checkout
+- **Shopping Cart**: Add to cart, update quantities (checkout not yet implemented)
 - **User Authentication**: Login, signup with referral codes
 - **Reward Points**: View and track MLM reward points
 - **Referral System**: Share referral codes to earn points
@@ -108,7 +108,7 @@ mobile/
 
 - `users` - User profiles
 - `products` - Product catalog
-- `orders` - Order history
+- `orders` - Order history (planned; not yet used by the app)
 - `referral_codes` - Public referral codes
 - `mlm_points_wallet` - User points balance
 - `mlm_points_ledger` - Points transactions
@@ -160,4 +160,4 @@ mobile/
 
 **Offline mode issues:**
 - Products load from Firestore cache when offline
-- Checkout disabled when offline
+- Checkout is not yet implemented (button shows "coming soon")

@@ -41,22 +41,35 @@ class Product {
   /// Create from Firestore document
   factory Product.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
-    
+    // Published products store category as {level1, level2, level3}
+    // (functions publishCachedProducts); older docs store a plain string.
+    // Parse both — a raw Map assigned to String would kill the whole
+    // product-list mapping.
+    final rawCat = data['category'];
+    final String catLevel1 = rawCat is Map
+        ? (rawCat['level1'] ?? '').toString()
+        : (rawCat ?? '').toString();
+    final String? catPath = rawCat is Map
+        ? [rawCat['level1'], rawCat['level2'], rawCat['level3']]
+            .where((l) => l != null && l.toString().isNotEmpty)
+            .join(' > ')
+        : data['categoryPath'] as String?;
+
     return Product(
       id: doc.id,
       name: data['name'] ?? '',
       description: data['description'] ?? '',
       price: (data['price'] ?? 0).toDouble(),
       unit: data['unit'] ?? data['pricingUnit'],
-      category: data['category'] ?? '',
-      categoryPath: data['categoryPath'],
+      category: catLevel1,
+      categoryPath: catPath,
       imageUrl: data['imageUrl'] ?? data['image'] ?? '',
       images: List<String>.from(data['images'] ?? []),
       wholesaleAvailable: data['wholesaleAvailable'] == true,
       moqFriendly: data['moqFriendly'] == true,
       bulkDiscount: data['bulkDiscount'] == true,
       bestSeller: data['bestSeller'] == true,
-      minQuantity: data['minQuantity'],
+      minQuantity: (data['minQuantity'] as num?)?.toInt(),
       inStock: data['inStock'] != false,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
     );
@@ -69,7 +82,7 @@ class Product {
       name: json['name'] ?? '',
       description: json['description'] ?? '',
       price: (json['price'] ?? 0).toDouble(),
-      unit: json['unit'],
+      unit: json['unit'] ?? json['pricingUnit'],
       category: json['category'] ?? '',
       categoryPath: json['categoryPath'],
       imageUrl: json['imageUrl'] ?? json['image'] ?? '',
@@ -78,8 +91,9 @@ class Product {
       moqFriendly: json['moqFriendly'] == true,
       bulkDiscount: json['bulkDiscount'] == true,
       bestSeller: json['bestSeller'] == true,
-      minQuantity: json['minQuantity'],
+      minQuantity: (json['minQuantity'] as num?)?.toInt(),
       inStock: json['inStock'] != false,
+      createdAt: json['createdAt'] != null ? DateTime.tryParse(json['createdAt']) : null,
     );
   }
   
@@ -101,14 +115,19 @@ class Product {
       'bestSeller': bestSeller,
       'minQuantity': minQuantity,
       'inStock': inStock,
+      'createdAt': createdAt?.toIso8601String(),
     };
   }
-  
-  /// Get formatted price
-  String get formattedPrice => 'NGN ${price.toStringAsFixed(0).replaceAllMapped(
+
+  /// Shared NGN formatting with thousands separators — use everywhere a
+  /// price renders so 'NGN 125,000' never sits next to 'NGN 125000'.
+  static String formatPrice(num amount) => 'NGN ${amount.toStringAsFixed(0).replaceAllMapped(
     RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
     (Match m) => '${m[1]},'
   )}';
+
+  /// Get formatted price
+  String get formattedPrice => formatPrice(price);
   
   /// Get price label with unit
   String get priceLabel => unit != null ? 'per $unit' : '';

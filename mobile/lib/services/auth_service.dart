@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -11,12 +13,17 @@ class AuthService extends ChangeNotifier {
   User? _user;
   Map<String, dynamic>? _userData;
   bool _isLoading = true;
+  bool _booted = false;
   String? _error;
-  
+
   // Getters
   User? get user => _user;
   Map<String, dynamic>? get userData => _userData;
   bool get isLoading => _isLoading;
+  /// True only until the FIRST auth-state event. AuthWrapper keys off this
+  /// (not isLoading) so a failed sign-in doesn't flash the splash screen
+  /// and wipe the login form mid-submit.
+  bool get booting => !_booted;
   bool get isAuthenticated => _user != null;
   String? get error => _error;
   String get userId => _user?.uid ?? '';
@@ -39,6 +46,7 @@ class AuthService extends ChangeNotifier {
       } else {
         _userData = null;
       }
+      _booted = true;
       _isLoading = false;
       notifyListeners();
     });
@@ -104,32 +112,65 @@ class AuthService extends ChangeNotifier {
       );
       
       if (credential.user != null) {
-        // Generate referral code
-        final newReferralCode = _generateReferralCode(credential.user!.uid);
-        
-        // Create user document
-        await _firestore.collection('users').doc(credential.user!.uid).set({
+        final uid = credential.user!.uid;
+        // Generate a unique referral code (website scheme: AFP + 6 chars,
+        // collision-checked so we never overwrite another user's code).
+        final newReferralCode = await _generateReferralCode(uid);
+
+        // Resolve the sponsor BEFORE creating the user doc: the MLM engine
+        // attributes referrals via users.sponsorId (write-once in rules) —
+        // storing only the typed code would earn the referrer nothing.
+        final normalizedSponsorCode = referralCode?.trim().toUpperCase();
+        String? sponsorId;
+        if (normalizedSponsorCode != null && normalizedSponsorCode.isNotEmpty) {
+          final validation = await validateReferralCode(normalizedSponsorCode);
+          if (validation?['valid'] == true) {
+            sponsorId = validation?['userId'] as String?;
+          }
+        }
+
+        // Create user document (field set mirrors the website signup —
+        // js/auth-ui.js — so backend triggers see one schema).
+        await _firestore.collection('users').doc(uid).set({
+          'uid': uid,
           'email': email.trim(),
           'name': name.trim(),
           'phone': phone?.trim(),
           'referralCode': newReferralCode,
-          'sponsorCode': referralCode?.trim(),
+          'sponsorCode': normalizedSponsorCode,
+          if (sponsorId != null) 'sponsorId': sponsorId,
+          'isActive': true,
+          'accountType': 'customer',
           'createdAt': FieldValue.serverTimestamp(),
-          'isAdmin': false,
-          'mlmEnabled': true,
+          'updatedAt': FieldValue.serverTimestamp(),
         });
-        
-        // Save to public referral_codes collection
+
+        // Save to public referral_codes collection (shape matches the
+        // website writer, including the code field).
         await _firestore.collection('referral_codes').doc(newReferralCode).set({
-          'userId': credential.user!.uid,
+          'code': newReferralCode,
+          'userId': uid,
           'userName': name.trim(),
           'isActive': true,
           'createdAt': FieldValue.serverTimestamp(),
         });
-        
+
+        // Wallet doc, same shape as the website signup — commission
+        // credits merge into it either way, but reads expect it to exist.
+        await _firestore.collection('wallets').doc(uid).set({
+          'userId': uid,
+          'totalEarned': 0,
+          'pending': 0,
+          'available': 0,
+          'withdrawn': 0,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
         await _loadUserData();
+        _isLoading = false;
+        notifyListeners();
       }
-      
+
       return true;
     } on FirebaseAuthException catch (e) {
       _error = _getAuthErrorMessage(e.code);
@@ -144,19 +185,27 @@ class AuthService extends ChangeNotifier {
     }
   }
   
-  /// Generate unique referral code
-  String _generateReferralCode(String uid) {
-    final prefix = 'AFP';
-    final first3 = uid.substring(0, 3).toUpperCase();
-    final last3 = uid.substring(uid.length - 3).toUpperCase();
-    return '$prefix$first3$last3';
+  /// Generate a unique referral code — website scheme (js/auth-ui.js):
+  /// AFP + 6 chars from an unambiguous charset, re-rolled on collision so
+  /// an existing user's code is never silently reassigned.
+  Future<String> _generateReferralCode(String uid) async {
+    const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    final rng = Random();
+    String code = '';
+    for (var attempt = 0; attempt < 10; attempt++) {
+      code = 'AFP${List.generate(6, (_) => charset[rng.nextInt(charset.length)]).join()}';
+      final existing = await _firestore.collection('referral_codes').doc(code).get();
+      if (!existing.exists) return code;
+    }
+    return code;
   }
-  
-  /// Validate referral code
+
+  /// Validate referral code (normalization + tolerance match the website:
+  /// trim+uppercase, and a missing isActive counts as active).
   Future<Map<String, dynamic>?> validateReferralCode(String code) async {
     try {
-      final doc = await _firestore.collection('referral_codes').doc(code.toUpperCase()).get();
-      if (doc.exists && doc.data()?['isActive'] == true) {
+      final doc = await _firestore.collection('referral_codes').doc(code.trim().toUpperCase()).get();
+      if (doc.exists && doc.data()?['isActive'] != false) {
         return {
           'valid': true,
           'userId': doc.data()?['userId'],

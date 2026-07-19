@@ -57,11 +57,11 @@ class DefaultFirebaseOptions {
     storageBucket: 'atfactoryprice-6ba8f.firebasestorage.app',
   );
 
-  /// iOS configuration
-  /// TODO: Replace with actual values from GoogleService-Info.plist
+  /// iOS configuration (synced from the FlutterFire-generated file —
+  /// placeholders here crashed Firebase.initializeApp on every iPhone).
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'YOUR_IOS_API_KEY',
-    appId: '1:660895645396:ios:YOUR_IOS_APP_ID',
+    apiKey: 'AIzaSyDOycK7zDYEp5ZtoqdtaplhKQSPzcTrxBc',
+    appId: '1:660895645396:ios:1e5b186be260c1e1f74541',
     messagingSenderId: '660895645396',
     projectId: 'atfactoryprice-6ba8f',
     storageBucket: 'atfactoryprice-6ba8f.firebasestorage.app',

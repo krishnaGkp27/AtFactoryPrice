@@ -16,6 +16,7 @@ class _PointsScreenState extends State<PointsScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final userId = context.read<AuthService>().userId;
       if (userId.isNotEmpty) {
         context.read<PointsService>().loadWallet(userId);
@@ -40,6 +41,23 @@ class _PointsScreenState extends State<PointsScreen> {
         builder: (context, service, _) {
           if (service.isLoading) {
             return const Center(child: CircularProgressIndicator());
+          }
+          if (service.error != null) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.error_outline, size: 48, color: AppTheme.textHint),
+                  const SizedBox(height: 16),
+                  Text(service.error!),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () => service.refresh(authService.userId),
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            );
           }
           return RefreshIndicator(
             onRefresh: () => service.refresh(authService.userId),
@@ -97,12 +115,23 @@ class _PointsScreenState extends State<PointsScreen> {
                   if (service.transactions.isEmpty)
                     const Padding(padding: EdgeInsets.all(32), child: Text('No points activity yet'))
                   else
-                    ...service.transactions.map((tx) => ListTile(
-                      leading: const CircleAvatar(child: Icon(Icons.stars)),
-                      title: Text(service.getSourceTypeText(tx['sourceType'] ?? '')),
-                      subtitle: Text(service.getStatusText(tx['status'] ?? '')),
-                      trailing: Text('+${tx['points'] ?? 0}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    )),
+                    ...service.transactions.map((tx) {
+                      // Redemptions/adjustments store NEGATIVE points —
+                      // '+-500' was rendering before this sign handling.
+                      final num pts = (tx['points'] as num?) ?? 0;
+                      return ListTile(
+                        leading: const CircleAvatar(child: Icon(Icons.stars)),
+                        title: Text(service.getSourceTypeText(tx['sourceType'] ?? '')),
+                        subtitle: Text(service.getStatusText(tx['status'] ?? '')),
+                        trailing: Text(
+                          '${pts < 0 ? '' : '+'}$pts',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: pts < 0 ? AppTheme.errorColor : null,
+                          ),
+                        ),
+                      );
+                    }),
                 ],
               ),
             ),

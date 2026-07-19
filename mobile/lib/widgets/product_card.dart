@@ -15,9 +15,9 @@ class ProductCard extends StatelessWidget {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () {
-          // TODO: Navigate to product detail
-        },
+        // No detail screen exists yet — null suppresses the misleading tap
+        // ripple; the add-to-cart button below keeps its own handler.
+        onTap: null,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
