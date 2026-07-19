@@ -44,6 +44,30 @@ produced first (4-agent audit, 19-Jul) — summary below so tweaks have context.
    10:00 admin digest (after the deadline) shows `marked X/Y · N missing`
    with a drill-down listing ⏳ missing and ✅ reported (location · time).
 
+## ATT-C4 — verification (shipped 19-Jul, owner request)
+
+- `ATTENDANCE_VERIFY_MODE`: `none` (default) | `location` | `photo` |
+  `location+photo`, switchable in-bot: 🗓 Attendance hub → 🛡 Verification.
+- **location**: after picking a location the employee shares their device
+  position via Telegram's request-location button (reads real GPS, not a
+  map pin); checked with haversine against the location's GPS anchor
+  (default radius 200 m). Outside → rejected with the distance shown.
+  Anchors are set in-bot: 🗺 GPS Anchors → pick location → share position
+  while standing there. A location without an anchor records the position
+  without enforcing (flagged on the card).
+- **photo**: employee sends a photo taken now; its sha256 is stored and any
+  photo already used TODAY (by anyone) is rejected — blocks the
+  send-the-same-picture trick. Telegram cannot force camera-only, so a
+  gallery photo from yesterday still passes — deterrent, not proof.
+- Attendance sheet gains end-columns J-M: geo, distance_m, photo_file_id,
+  photo_sha256 (schemaMapper self-heals headers).
+- Admins can ALWAYS run 📍 Mark Attendance (testing / leading by example)
+  without joining the reminder audience.
+- Spoof-resistance honesty: GPS can be faked with mock-location apps
+  (needs deliberate effort); photos can be gallery-reused across days.
+  The strongest cheap upgrade if ever needed: a daily code printed/posted
+  at each site that employees must type — knowledge proves presence.
+
 ## Owner decision menu (not built — say the word)
 
 - **Enforce the deadline?** e.g. marks after 09:30 stamped "late" (needs a

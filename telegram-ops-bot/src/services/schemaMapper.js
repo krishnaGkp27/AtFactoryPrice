@@ -235,6 +235,10 @@ const REQUIRED_SHEETS = {
     headers: [
       'date', 'telegram_id', 'employee_name', 'status',
       'location', 'logged_at', 'logged_via', 'marked_by', 'reason',
+      // ATT-C4 verification (owner 19-Jul): shared GPS point, distance to
+      // the location's anchor, and the check-in photo (+hash for same-day
+      // duplicate detection). Appended at the end per sheet rules.
+      'geo', 'distance_m', 'photo_file_id', 'photo_sha256',
     ],
   },
   // TG-INT 1.4 — manual FX rates entered by admin/finance. The forex

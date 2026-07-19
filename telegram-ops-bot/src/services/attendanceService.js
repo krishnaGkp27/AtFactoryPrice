@@ -34,6 +34,8 @@ const KEYS = {
   WORKING_DAYS:          'ATTENDANCE_WORKING_DAYS',       // CSV of Mon..Sun
   DEADLINE_TIME:         'ATTENDANCE_DEADLINE_TIME',      // HH:MM — report-by time (ATT-C3)
   AUDIENCE:              'ATTENDANCE_AUDIENCE',           // 'departments' | 'list' (ATT-C3)
+  VERIFY_MODE:           'ATTENDANCE_VERIFY_MODE',        // none | location | photo | location+photo (ATT-C4)
+  LOCATION_COORDS:       'ATTENDANCE_LOCATION_COORDS',    // "Name=lat,lng,radiusM;..." GPS anchors (ATT-C4)
 };
 
 const DEFAULTS = {
@@ -52,7 +54,14 @@ const DEFAULTS = {
   // attendance by 09:30.
   [KEYS.DEADLINE_TIME]:        '09:30',
   [KEYS.AUDIENCE]:             'departments',
+  // ATT-C4: 'none' keeps V1 one-tap marking; flip via the 🛡 Verification
+  // screen in the 🗓 Attendance admin hub (no deploy).
+  [KEYS.VERIFY_MODE]:          'none',
+  [KEYS.LOCATION_COORDS]:      '',
 };
+
+/** Default geofence radius when an anchor is set without an explicit one. */
+const DEFAULT_GEOFENCE_M = 200;
 
 function parseCsv(v) {
   if (!v) return [];
@@ -77,7 +86,59 @@ async function getConfig() {
     workingDays:   parseCsv(get(KEYS.WORKING_DAYS)),
     deadlineTime:  get(KEYS.DEADLINE_TIME),
     audienceMode:  get(KEYS.AUDIENCE) === 'list' ? 'list' : 'departments',
+    verifyMode:    ['location', 'photo', 'location+photo'].includes(get(KEYS.VERIFY_MODE)) ? get(KEYS.VERIFY_MODE) : 'none',
+    locationCoords: parseCoords(get(KEYS.LOCATION_COORDS)),
   };
+}
+
+/**
+ * ATT-C4 — parse "Name=lat,lng[,radiusM];Name2=..." into a lowercase-keyed
+ * map. Malformed entries are skipped (never crash config reads).
+ */
+function parseCoords(raw) {
+  const map = new Map();
+  for (const part of String(raw || '').split(';')) {
+    const [name, vals] = part.split('=');
+    if (!name || !vals) continue;
+    const [lat, lng, radius] = vals.split(',').map((v) => Number(v));
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    map.set(name.trim().toLowerCase(), {
+      lat, lng,
+      radiusM: Number.isFinite(radius) && radius > 0 ? radius : DEFAULT_GEOFENCE_M,
+    });
+  }
+  return map;
+}
+
+/** GPS anchor for a location name, or null when the admin hasn't set one. */
+function coordsFor(cfg, location) {
+  return cfg.locationCoords.get(String(location || '').trim().toLowerCase()) || null;
+}
+
+/** Great-circle distance in metres (haversine). */
+function haversineM(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return Math.round(2 * R * Math.asin(Math.sqrt(a)));
+}
+
+/**
+ * ATT-C4 — save/replace one location's GPS anchor in the Settings CSV
+ * (merge-write; other anchors untouched).
+ */
+async function setLocationCoords(name, lat, lng, radiusM = DEFAULT_GEOFENCE_M) {
+  const cfg = await getConfig();
+  const map = new Map(cfg.locationCoords);
+  map.set(String(name).trim().toLowerCase(), { lat, lng, radiusM });
+  // Serialize with the location's canonical (admin-list) casing when known.
+  const canonical = (lower) => cfg.locations.find((l) => l.toLowerCase() === lower) || lower;
+  const parts = [...map.entries()].map(([k, c]) =>
+    `${canonical(k)}=${c.lat.toFixed(6)},${c.lng.toFixed(6)},${Math.round(c.radiusM)}`);
+  return settingsRepo.set(KEYS.LOCATION_COORDS, parts.join(';'));
 }
 
 /**
@@ -261,7 +322,7 @@ async function getTodayAll(timezone) {
  *
  * @returns {Promise<{ok: boolean, entry?: object, reason?: string}>}
  */
-async function markPresent({ telegramId, name, location, adminUserId = null, when = null }) {
+async function markPresent({ telegramId, name, location, adminUserId = null, when = null, verification = null }) {
   if (!telegramId) return { ok: false, reason: 'missing_telegram_id' };
   if (!location) return { ok: false, reason: 'missing_location' };
 
@@ -298,6 +359,11 @@ async function markPresent({ telegramId, name, location, adminUserId = null, whe
     logged_via: adminUserId ? 'admin' : 'self',
     marked_by: adminUserId ? String(adminUserId) : '',
     reason: '',
+    // ATT-C4 verification extras (all optional; '' pre-C4 / mode none).
+    geo: verification && verification.geo ? `${verification.geo.lat},${verification.geo.lng}` : '',
+    distance_m: verification && verification.distanceM !== undefined && verification.distanceM !== null ? verification.distanceM : '',
+    photo_file_id: (verification && verification.photoFileId) || '',
+    photo_sha256: (verification && verification.photoHash) || '',
   };
 
   await attendanceRepo.append(entry);
@@ -305,6 +371,8 @@ async function markPresent({ telegramId, name, location, adminUserId = null, whe
     await auditLogRepo.append('attendance.marked', {
       date, telegram_id: telegramId, location, via: entry.logged_via,
       marked_by: entry.marked_by,
+      ...(entry.distance_m !== '' ? { distance_m: entry.distance_m } : {}),
+      ...(entry.photo_sha256 ? { photo: true } : {}),
     }, adminUserId || telegramId);
   } catch (_) {}
 
@@ -327,5 +395,9 @@ module.exports = {
   hasLoggedToday,
   getTodayAll,
   markPresent,
-  _internals: { parseCsv },
+  coordsFor,
+  haversineM,
+  setLocationCoords,
+  DEFAULT_GEOFENCE_M,
+  _internals: { parseCsv, parseCoords },
 };

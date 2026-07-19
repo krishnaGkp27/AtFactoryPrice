@@ -37,6 +37,7 @@ const sessionStore = require('../utils/sessionStore');
 const auth = require('../middlewares/auth');
 const usersRepo = require('../repositories/usersRepository');
 const attendanceService = require('../services/attendanceService');
+const auditLogRepo = require('../repositories/auditLogRepository');
 const logger = require('../utils/logger');
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -165,12 +166,14 @@ async function renderHub(bot, chatId, userId) {
     ? `\n\n_⚠️ ${ghost.length} ghost ID(s) found in your required-users list; they auto-clean the next time you toggle._`
     : '';
 
+  const anchored = cfg.locations.filter((l) => attendanceService.coordsFor(cfg, l)).length;
   const text =
     `${todayPanel.text}\n\n`
     + '━━━━━━━━━━━━━━\n'
     + '🗓 *Attendance — Admin Hub*\n\n'
     + `*Required:* ${reqValidCount} active employees  ·  *Locations:* ${locCount}\n`
-    + `*Times:* reminder ${cfg.reminderTime} · report ${cfg.reportTime} · cutoff ${cfg.cutoffTime}\n`
+    + `*Times:* reminder ${cfg.reminderTime} · deadline ${cfg.deadlineTime} · report ${cfg.reportTime} · cutoff ${cfg.cutoffTime}\n`
+    + `*Verification:* ${cfg.verifyMode}  ·  *GPS anchors:* ${anchored}/${locCount}\n`
     + `*Timezone:* ${cfg.timezone}  ·  *Working days:* ${wd}${ghostHint}\n\n`
     + '_Tap a tile to manage._';
 
@@ -182,11 +185,110 @@ async function renderHub(bot, chatId, userId) {
     [{ text: `🕒 Cutoff ${cfg.cutoffTime}`,           callback_data: 'atd_adm:time:cutoff' },
      { text: `🌐 ${cfg.timezone}`,                    callback_data: 'atd_adm:tz' }],
     [{ text: '📅 Working Days',                       callback_data: 'atd_adm:days' }],
+    [{ text: `🛡 Verification: ${cfg.verifyMode}`,    callback_data: 'atd_adm:verify' },
+     { text: '🗺 GPS Anchors',                        callback_data: 'atd_adm:gps' }],
     [{ text: '📊 Today\'s Full View',                 callback_data: 'atd_adm:today' },
      { text: '✍️ Mark on Behalf',                    callback_data: 'atd_adm:behalf' }],
     [{ text: '🔁 Refresh',                            callback_data: 'atd_adm:home' }],
     homeRow(),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// ATT-C4 — verification mode + per-location GPS anchors
+// ---------------------------------------------------------------------------
+
+const VERIFY_MODES = ['none', 'location', 'photo', 'location+photo'];
+
+async function renderVerify(bot, chatId, userId) {
+  const cfg = await attendanceService.getConfig();
+  const rows = VERIFY_MODES.map((m) => ([{
+    text: `${cfg.verifyMode === m ? '✅' : '▫️'} ${m}`,
+    callback_data: `atd_adm:verify_set:${m}`,
+  }]));
+  rows.push([{ text: '⬅ Back', callback_data: 'atd_adm:home' }]);
+  await render(bot, chatId, userId,
+    '🛡 *Attendance Verification*\n\n'
+    + 'What must an employee provide when marking?\n\n'
+    + '▫️ *none* — one tap (V1 behavior)\n'
+    + '▫️ *location* — share device GPS; checked against the location\'s anchor\n'
+    + '▫️ *photo* — send a fresh photo (same-day duplicates rejected)\n'
+    + '▫️ *location+photo* — both\n\n'
+    + '_Location checks need a GPS anchor per location — set them under 🗺 GPS Anchors._',
+    rows);
+}
+
+async function applyVerifyMode(bot, chatId, userId, mode) {
+  if (!VERIFY_MODES.includes(mode)) return renderVerify(bot, chatId, userId);
+  await attendanceService.setConfigKey(attendanceService.KEYS.VERIFY_MODE, mode);
+  try {
+    await auditLogRepo.append('attendance.verify_mode_changed', { mode }, userId);
+  } catch (_) {}
+  await renderHub(bot, chatId, userId);
+}
+
+async function renderGpsList(bot, chatId, userId) {
+  const cfg = await attendanceService.getConfig();
+  if (!cfg.locations.length) {
+    await render(bot, chatId, userId, '🗺 *GPS Anchors*\n\n_No locations configured yet — add locations first._',
+      [[{ text: '⬅ Back', callback_data: 'atd_adm:home' }]]);
+    return;
+  }
+  const rows = cfg.locations.map((l) => {
+    const a = attendanceService.coordsFor(cfg, l);
+    return [{
+      text: `${a ? '✅' : '▫️'} ${l}${a ? ` (${a.radiusM} m)` : ' — not set'}`,
+      callback_data: `atd_adm:gps_set:${encodeURIComponent(l)}`,
+    }];
+  });
+  rows.push([{ text: '⬅ Back', callback_data: 'atd_adm:home' }]);
+  await render(bot, chatId, userId,
+    '🗺 *GPS Anchors*\n\n'
+    + 'Each location needs one GPS point + radius for the *location* verification mode.\n\n'
+    + '_Tap a location, then — standing AT that place (or with its point picked on the map) — share the location from Telegram._',
+    rows);
+}
+
+async function promptGpsShare(bot, chatId, userId, location) {
+  const session = sessionStore.get(userId) || { type: 'attendance_admin_flow' };
+  session.type = 'attendance_admin_flow';
+  session.step = 'await_gps_admin';
+  session.gpsLocation = location;
+  sessionStore.set(userId, session);
+  await render(bot, chatId, userId,
+    `🗺 *Set GPS anchor — ${location}*\n\n`
+    + `Share the position now (📎 attach → Location, or the button below). `
+    + `The default check radius is *${attendanceService.DEFAULT_GEOFENCE_M} m*.`,
+    [[{ text: '❌ Cancel', callback_data: 'atd_adm:gps' }]]);
+  await bot.sendMessage(chatId, '👇 Or use this button:', {
+    reply_markup: {
+      keyboard: [[{ text: '📡 Share this place\'s position', request_location: true }]],
+      resize_keyboard: true, one_time_keyboard: true,
+    },
+  });
+}
+
+/** Admin location share (routed from the controller on msg.location). */
+async function handleLocation(bot, msg) {
+  const userId = String(msg.from.id);
+  const chatId = msg.chat.id;
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'attendance_admin_flow' || session.step !== 'await_gps_admin') return false;
+  if (!auth.isAdmin(userId)) return false;
+  const { latitude: lat, longitude: lng } = msg.location || {};
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return true;
+  const location = session.gpsLocation;
+  await attendanceService.setLocationCoords(location, lat, lng);
+  try {
+    await auditLogRepo.append('attendance.gps_anchor_set', { location, lat, lng }, userId);
+  } catch (_) {}
+  session.step = null;
+  delete session.gpsLocation;
+  sessionStore.set(userId, session);
+  await bot.sendMessage(chatId, `✅ GPS anchor saved for *${location}* (radius ${attendanceService.DEFAULT_GEOFENCE_M} m).`,
+    { parse_mode: 'Markdown', reply_markup: { remove_keyboard: true } });
+  await renderGpsList(bot, chatId, userId);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -685,6 +787,10 @@ async function handleCallback(bot, query) {
   if (data === 'atd_adm:loc')    { await renderLocationsEditor(bot, chatId, userId); return true; }
   if (data === 'atd_adm:days')   { await renderWorkingDays(bot, chatId, userId); return true; }
   if (data === 'atd_adm:today')  { await renderToday(bot, chatId, userId); return true; }
+  if (data === 'atd_adm:verify') { await renderVerify(bot, chatId, userId); return true; }
+  if (data.startsWith('atd_adm:verify_set:')) { await applyVerifyMode(bot, chatId, userId, data.slice('atd_adm:verify_set:'.length)); return true; }
+  if (data === 'atd_adm:gps')    { await renderGpsList(bot, chatId, userId); return true; }
+  if (data.startsWith('atd_adm:gps_set:')) { await promptGpsShare(bot, chatId, userId, decodeURIComponent(data.slice('atd_adm:gps_set:'.length))); return true; }
   if (data === 'atd_adm:clean_ghosts') { await cleanGhostsNow(bot, chatId, userId); return true; }
   if (data === 'atd_adm:behalf') { const s = sessionStore.get(userId); s.behalfTarget = null; sessionStore.set(userId, s); await renderBehalfPickUser(bot, chatId, userId); return true; }
   if (data === 'atd_adm:tz')     { await promptTimezone(bot, chatId, userId); return true; }
@@ -738,5 +844,6 @@ module.exports = {
   start,
   handleText,
   handleCallback,
+  handleLocation,
   _internals: { TIME_RE, WORK_DAYS },
 };

@@ -3104,6 +3104,27 @@ function showReceiptSummary(bot, chatId, userId, session) {
 }
 
 /**
+ * ATT-C4 — handle incoming location messages (Telegram `msg.location`).
+ * Routes to the attendance flows that await a GPS share; anything else
+ * is ignored (locations were previously dropped at the webhook).
+ */
+async function handleLocationMessage(bot, msg) {
+  const userId = String(msg.from?.id || '');
+  if (!auth.isAllowed(userId)) return;
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  if (session.type === 'attendance_flow' && session.step === 'await_gps') {
+    const attendanceFlow = require('../flows/attendanceFlow');
+    await attendanceFlow.handleLocation(bot, msg);
+    return;
+  }
+  if (session.type === 'attendance_admin_flow' && session.step === 'await_gps_admin') {
+    const attendanceAdminFlow = require('../flows/attendanceAdminFlow');
+    await attendanceAdminFlow.handleLocation(bot, msg);
+  }
+}
+
+/**
  * Handle incoming photo or document messages.
  * Routes to active receipt_flow or sale_flow sessions that await a file.
  */
@@ -3188,6 +3209,13 @@ async function handleFileMessage(bot, msg) {
   }
 
   // SNAP-1 — bale label photo while Snap Sale awaits it.
+  // ATT-C4 — attendance check-in photo (owner-requested verification).
+  if (session && session.type === 'attendance_flow' && session.step === 'await_photo' && msg.photo) {
+    const attendanceFlow = require('../flows/attendanceFlow');
+    const handled = await attendanceFlow.handleFile(bot, msg);
+    if (handled) return;
+  }
+
   if (session && session.type === 'snap_sale_flow' && session.step === 'await_photo' && msg.photo) {
     const handled = await require('../flows/snapSaleFlow').handleFile(bot, msg);
     if (handled) return;
@@ -11498,6 +11526,7 @@ module.exports = {
   handleMessage,
   handleCallbackQuery,
   handleFileMessage,
+  handleLocationMessage,
   // Exposed for cross-module flow resumption (e.g. approval events).
   showSampleQuantityPicker,
   showSampleCustomerPicker,

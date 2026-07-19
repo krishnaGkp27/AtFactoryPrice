@@ -135,6 +135,9 @@ app.post('/webhook', (req, res) => {
     if (bot) telegramController.handleMessage(bot, msg).catch((e) => logger.error('Message error', e));
   } else if (msg && (msg.photo || msg.document)) {
     if (bot) telegramController.handleFileMessage(bot, msg).catch((e) => logger.error('File message error', e));
+  } else if (msg && msg.location) {
+    // ATT-C4 — GPS shares for attendance verification (previously dropped).
+    if (bot) telegramController.handleLocationMessage(bot, msg).catch((e) => logger.error('Location message error', e));
   }
 });
 

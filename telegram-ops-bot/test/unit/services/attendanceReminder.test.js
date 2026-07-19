@@ -79,6 +79,17 @@ test('Sunday (non-working) and the master toggle both silence the nudge', async 
   assert.equal(bot.calls.length, 0);
 });
 
+test('ATT-C4 geo helpers: coords parsing tolerates junk; haversine is sane', () => {
+  const { parseCoords } = attendanceService._internals;
+  const m = parseCoords('Kano Office=12.0022,8.5919,150;Bad=oops;NoRadius=6.45,3.39;=1,2');
+  assert.equal(m.size, 2, 'malformed entries skipped');
+  assert.deepEqual(m.get('kano office'), { lat: 12.0022, lng: 8.5919, radiusM: 150 });
+  assert.equal(m.get('noradius').radiusM, attendanceService.DEFAULT_GEOFENCE_M, 'default radius applied');
+  const d = attendanceService.haversineM(12.0, 8.59, 13.0, 8.59);
+  assert.ok(Math.abs(d - 111195) < 500, `1° latitude ≈ 111.2 km (got ${d})`);
+  assert.equal(attendanceService.haversineM(12, 8, 12, 8), 0);
+});
+
 test('digest 🕘 Attendance: summary counts and missing/reported drill-down', async () => {
   settings = {};
   todayRows = [{ telegram_id: '5555', status: 'present', location: 'Kano Office', logged_at: '2026-07-20T08:01:00.000Z', logged_via: 'self' }];

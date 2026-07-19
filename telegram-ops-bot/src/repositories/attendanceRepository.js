@@ -11,9 +11,14 @@
  *   G logged_via      ('self' | 'admin' | 'auto')
  *   H marked_by       (telegram_id of admin if logged_via=admin)
  *   I reason          (optional free text)
+ *   J geo             ("lat,lng" the employee shared — ATT-C4, '' pre-C4)
+ *   K distance_m      (metres from the location's GPS anchor; '' = anchor unset)
+ *   L photo_file_id   (Telegram file id of the check-in photo — ATT-C4)
+ *   M photo_sha256    (hash for same-day duplicate-photo detection)
  *
  * Primary key: (date, telegram_id). Idempotency is enforced by the
  * service layer via `findByDateUser()`; the repo itself only appends.
+ * New columns append at the END only (CLAUDE.md sheet rule).
  */
 
 'use strict';
@@ -24,6 +29,7 @@ const SHEET = 'Attendance';
 const HEADERS = [
   'date', 'telegram_id', 'employee_name', 'status',
   'location', 'logged_at', 'logged_via', 'marked_by', 'reason',
+  'geo', 'distance_m', 'photo_file_id', 'photo_sha256',
 ];
 
 function str(v) { return (v ?? '').toString().trim(); }
@@ -40,19 +46,23 @@ function parse(r, rowIndex) {
     logged_via: str(r[6]) || 'self',
     marked_by: str(r[7]),
     reason: str(r[8]),
+    geo: str(r[9]),
+    distance_m: str(r[10]),
+    photo_file_id: str(r[11]),
+    photo_sha256: str(r[12]),
   };
 }
 
 async function ensureHeader() {
-  const rows = await sheets.readRange(SHEET, 'A1:I1');
+  const rows = await sheets.readRange(SHEET, 'A1:M1');
   if (!rows.length || rows[0].length < HEADERS.length) {
-    await sheets.updateRange(SHEET, 'A1:I1', [HEADERS]);
+    await sheets.updateRange(SHEET, 'A1:M1', [HEADERS]);
   }
 }
 
 async function getAll() {
   try {
-    const rows = await sheets.readRange(SHEET, 'A2:I');
+    const rows = await sheets.readRange(SHEET, 'A2:M');
     return rows.map((r, i) => parse(r, i + 2)).filter((e) => e.date && e.telegram_id);
   } catch (_) {
     return [];
@@ -81,6 +91,10 @@ async function append(entry) {
     str(entry.logged_via) || 'self',
     str(entry.marked_by),
     str(entry.reason),
+    str(entry.geo),
+    entry.distance_m === undefined || entry.distance_m === null ? '' : String(entry.distance_m),
+    str(entry.photo_file_id),
+    str(entry.photo_sha256),
   ]]);
 }
 
