@@ -200,8 +200,11 @@ async function start(bot, chatId, userId, messageId) {
     await bot.sendMessage(chatId, '🔍 Warehouse Audit is currently disabled.');
     return;
   }
-  if (!auth.isAdmin(userId)) {
-    await bot.sendMessage(chatId, '🔍 Warehouse Audit is admin-only.');
+  // WAU-3 (owner 20-Jul): warehouse staff run blind-count audits. Any
+  // authorized user may audit — they never see book quantities; only
+  // 🔬 Deep inspect (which reveals them) stays admin-only.
+  if (!auth.isAllowed(userId)) {
+    await bot.sendMessage(chatId, '🔍 You are not authorized to use this bot.');
     return;
   }
   sessionStore.set(userId, {
@@ -265,6 +268,80 @@ async function renderLocationPicker(bot, chatId, userId) {
 
 /* ───────────────────────────── WAU-2: checklist ───────────────────────────── */
 
+/**
+ * WAU-3 — per-design same-day audit state derived from StockTakes rows:
+ * how many failed attempts today and whether the design is flag-locked
+ * (a 'flagged' row today with no later 'flag_cleared' row today).
+ */
+async function todayStateFor(warehouse) {
+  const dayIso = new Date().toISOString().slice(0, 10);
+  const rows = await stockTakesRepository.rowsForDay(warehouse, dayIso);
+  const map = new Map();
+  for (const r of rows) {
+    const k = r.design.toUpperCase();
+    if (!map.has(k)) map.set(k, { mismatches: 0, flaggedAt: '', clearedAt: '' });
+    const s = map.get(k);
+    if (r.result === 'mismatch') s.mismatches += 1;
+    if (r.result === 'flagged' && r.audited_at > s.flaggedAt) s.flaggedAt = r.audited_at;
+    if (r.result === 'flag_cleared' && r.audited_at > s.clearedAt) s.clearedAt = r.audited_at;
+  }
+  for (const s of map.values()) s.locked = !!s.flaggedAt && s.flaggedAt > s.clearedAt;
+  return map;
+}
+
+/**
+ * WAU-3 — the blind reconcile engine, shared by the tap pad and the
+ * offline AUDIT batch. Compares a physical count against the live book
+ * numbers WITHOUT ever revealing them to the auditor.
+ *
+ * @returns {{status:'match'|'recount'|'flagged'|'locked'|'already'|'unknown_design', d?:object, flagRow?:object}}
+ */
+async function reconcileDesign({ warehouse, location, design, bales, bundles, auditor }) {
+  const list = await loadChecklist({ warehouse });
+  const d = list.find((x) => String(x.design).toUpperCase() === String(design).toUpperCase());
+  if (!d) return { status: 'unknown_design' };
+  const state = (await todayStateFor(warehouse)).get(String(design).toUpperCase())
+    || { mismatches: 0, locked: false };
+  if (state.locked) return { status: 'locked', d };
+  if (d.reconciled) return { status: 'already', d };
+  const base = {
+    warehouse, location: location || '', design: d.design,
+    sheet_bales: d.fullBales, sheet_bundles: d.looseThans, sheet_yards: Math.round(d.yards),
+    counted_bales: bales, counted_bundles: bundles, auditor,
+  };
+  if (d.fullBales === bales && d.looseThans === bundles) {
+    await stockTakesRepository.appendMany([{ ...base, result: 'reconciled', note: 'blind match' }]);
+    return { status: 'match', d };
+  }
+  if (state.mismatches >= 1) {
+    const [flagRow] = await stockTakesRepository.appendMany([{ ...base, result: 'flagged', note: `attempt ${state.mismatches + 1}` }]);
+    return { status: 'flagged', d, flagRow };
+  }
+  await stockTakesRepository.appendMany([{ ...base, result: 'mismatch', note: 'attempt 1' }]);
+  return { status: 'recount', d };
+}
+
+/** 🚩 flag → one card per admin with the counted vs book figures. */
+async function notifyAdminsOfFlag(bot, { warehouse, location, design, bales, bundles, d, flagRow, auditor }) {
+  let who = String(auditor);
+  try { who = await require('../services/approvalCards').resolveUserLabel(auditor, bot); } catch (_) {}
+  const text = `🚩 Stock audit flag — ${warehouse}${location ? ` (${location})` : ''}\n\n`
+    + `Design ${design}\n`
+    + `Counted: ${bales} bale${bales === 1 ? '' : 's'} + ${bundles} bundle${bundles === 1 ? '' : 's'}\n`
+    + `Book: ${d.fullBales} bale${d.fullBales === 1 ? '' : 's'} + ${d.looseThans} bundle${d.looseThans === 1 ? '' : 's'} (${fmtQty(d.yards)} yds)\n`
+    + `Counted by: ${who} (2 attempts, both off)\n\n`
+    + `The design is LOCKED for re-audit today. Investigate physically, then clear the flag.`;
+  const keyboard = { inline_keyboard: [[{ text: '✅ Clear flag (re-open audit)', callback_data: `wai:aclr:${flagRow.stocktake_id}` }]] };
+  for (const adminId of config.access.adminIds) {
+    try { await bot.sendMessage(adminId, text, { reply_markup: keyboard }); }
+    catch (e) { logger.warn(`audit flag DM to ${adminId} failed: ${e.message}`); }
+  }
+  try {
+    await auditLogRepository.append('stocktake_flagged',
+      { warehouse, design, counted: `${bales}+${bundles}`, book: `${d.fullBales}+${d.looseThans}`, stocktake_id: flagRow.stocktake_id }, auditor);
+  } catch (_) { /* best effort */ }
+}
+
 async function renderChecklist(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
@@ -275,55 +352,254 @@ async function renderChecklist(bot, chatId, userId) {
       [backRow('⬅ Warehouses'), closeRow()]);
     return;
   }
+  // WAU-3 BLIND LIST — no quantities anywhere (the auditor must count,
+  // not confirm). Book numbers stay server-side in _checklist for the
+  // reconcile comparison only.
+  const state = await todayStateFor(session.warehouse);
   session._checklist = list.map((d) => ({ design: d.design, fullBales: d.fullBales, looseThans: d.looseThans, yards: d.yards, reconciled: d.reconciled }));
-  // Drop stale ticks for designs no longer on the list.
-  for (const k of Object.keys(session._checked || {})) {
-    if (!list.some((d) => d.design === k && !d.reconciled)) delete session._checked[k];
-  }
   sessionStore.set(userId, session);
   const done = list.filter((d) => d.reconciled).length;
-  const ticked = Object.keys(session._checked || {}).length;
   const rows = list.map((d, i) => {
-    const qty = `${d.fullBales} bls${d.looseThans ? ` · ${d.looseThans} bnd` : ''}`;
-    if (d.reconciled) {
-      return [{ text: `✅ ${d.design} — ${qty} (done ${d.reconciledAt})`, callback_data: 'wai:noop' }];
-    }
-    const box = session._checked[d.design] ? '☑️' : '⬜';
-    return [{ text: `${box} ${d.design} — ${qty} · ${fmtQty(d.yards)}y`, callback_data: `wai:ck:${i}` }];
+    const s = state.get(String(d.design).toUpperCase()) || {};
+    if (d.reconciled) return [{ text: `✅ ${d.design} (done ${d.reconciledAt})`, callback_data: 'wai:noop' }];
+    if (s.locked) return [{ text: `🚩 ${d.design} — locked (admin review)`, callback_data: 'wai:noop' }];
+    const icon = s.mismatches ? '🔁' : '⬜';
+    return [{ text: `${icon} ${d.design}`, callback_data: `wai:ck:${i}` }];
   });
-  if (ticked) rows.push([{ text: `📤 Submit — mark ${ticked} design${ticked > 1 ? 's' : ''} reconciled`, callback_data: 'wai:submit' }]);
-  rows.push([{ text: '🔬 Deep inspect (bale/than level)', callback_data: 'wai:inspect' }]);
+  rows.push([{ text: '📄 Offline count sheet', callback_data: 'wai:tmpl' }]);
+  if (auth.isAdmin(userId)) rows.push([{ text: '🔬 Deep inspect (bale/than level)', callback_data: 'wai:inspect' }]);
   rows.push(backRow('⬅ Warehouses'));
   rows.push(closeRow());
   await render(bot, chatId, userId,
     `🔍 ${session.warehouse} — ${session.location}\n`
-    + `Reconciled ${done}/${list.length} designs · holding ${list.length - done}\n\n`
-    + 'Tick each design once its PHYSICAL count matches, then Submit.\n'
-    + 'A count that does not match: leave it unticked (holding) and investigate.', rows);
+    + `Reconciled ${done}/${list.length} designs\n\n`
+    + 'Tap a design and enter what you PHYSICALLY count.\n'
+    + 'Poor network in the store? Use 📄 Offline count sheet.', rows);
 }
 
-async function submitChecklist(bot, chatId, userId) {
+/* ───────────────────────── WAU-3: tap-pad count entry ───────────────────────── */
+
+const PAD_MAX_LEN = 9;
+
+function padRows() {
+  const k = (c) => ({ text: c, callback_data: `wai:k:${c}` });
+  return [
+    [k('1'), k('2'), k('3')],
+    [k('4'), k('5'), k('6')],
+    [k('7'), k('8'), k('9')],
+    [{ text: '➕', callback_data: 'wai:k:p' }, k('0'), { text: '⌫', callback_data: 'wai:k:b' }],
+    [{ text: '✔ Done', callback_data: 'wai:padok' }],
+    [{ text: '⬅ Back to list', callback_data: 'wai:padcx' }],
+  ];
+}
+
+async function renderPad(bot, chatId, userId, note = '') {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const checkedNames = Object.keys(session._checked || {});
-  if (!checkedNames.length) { await renderChecklist(bot, chatId, userId); return; }
-  const now = new Date().toISOString();
-  const records = (session._checklist || [])
-    .filter((d) => session._checked[d.design] && !d.reconciled)
-    .map((d) => ({
-      warehouse: session.warehouse, location: session.location || '',
-      design: d.design, sheet_bales: d.fullBales, sheet_bundles: d.looseThans,
-      sheet_yards: Math.round(d.yards), result: 'reconciled',
-      auditor: userId, audited_at: now,
-    }));
-  await stockTakesRepository.appendMany(records);
-  try {
-    await auditLogRepository.append('stocktake_reconciled',
-      { warehouse: session.warehouse, location: session.location, designs: records.map((r) => r.design) }, userId);
-  } catch (_) { /* best effort */ }
-  session._checked = {};
+  await render(bot, chatId, userId,
+    `🔍 ${session.warehouse} — Design ${session.countDesign}\n\n`
+    + `Your count: ${session.padDraft || '—'}\n\n`
+    + 'Tap the number of FULL bales; use ➕ for loose bundles.\n'
+    + `Example: 12➕5 = 12 bales and 5 loose bundles.${note ? `\n\n${note}` : ''}`,
+    padRows());
+}
+
+async function openPad(bot, chatId, userId, idx, query) {
+  const session = sessionStore.get(userId);
+  if (!session || session.step !== 'checklist') return;
+  const d = (session._checklist || [])[idx];
+  if (!d) return;
+  if (d.reconciled) {
+    await bot.answerCallbackQuery(query.id, { text: 'Already reconciled today.' }).catch(() => {});
+    return;
+  }
+  const s = (await todayStateFor(session.warehouse)).get(String(d.design).toUpperCase());
+  if (s && s.locked) {
+    await bot.answerCallbackQuery(query.id, { text: '🚩 Locked until an admin clears the flag.', show_alert: true }).catch(() => {});
+    return;
+  }
+  session.step = 'count_entry';
+  session.countDesign = d.design;
+  session.padDraft = '';
   sessionStore.set(userId, session);
-  await renderChecklist(bot, chatId, userId);
+  await renderPad(bot, chatId, userId);
+}
+
+async function handlePadKey(bot, chatId, userId, key, query) {
+  const session = sessionStore.get(userId);
+  if (!session || session.step !== 'count_entry') return;
+  let draft = session.padDraft || '';
+  if (key === 'b') draft = draft.slice(0, -1);
+  else if (key === 'p') {
+    if (!draft || draft.includes('+')) { await bot.answerCallbackQuery(query.id, { text: 'Bales first, then ➕.' }).catch(() => {}); return; }
+    draft += '+';
+  } else if (/^\d$/.test(key)) {
+    if (draft.length >= PAD_MAX_LEN) { await bot.answerCallbackQuery(query.id).catch(() => {}); return; }
+    draft += key;
+  } else return;
+  session.padDraft = draft;
+  sessionStore.set(userId, session);
+  await renderPad(bot, chatId, userId);
+}
+
+async function commitPadCount(bot, chatId, userId, query) {
+  const session = sessionStore.get(userId);
+  if (!session || session.step !== 'count_entry') return;
+  const { parseCount } = require('../utils/auditCountParser');
+  const count = parseCount(session.padDraft);
+  if (!count.ok) {
+    await bot.answerCallbackQuery(query.id, { text: count.error, show_alert: true }).catch(() => {});
+    return;
+  }
+  const out = await reconcileDesign({
+    warehouse: session.warehouse, location: session.location,
+    design: session.countDesign, bales: count.bales, bundles: count.bundles, auditor: userId,
+  });
+  if (out.status === 'match' || out.status === 'already') {
+    try {
+      await auditLogRepository.append('stocktake_reconciled',
+        { warehouse: session.warehouse, design: session.countDesign, mode: 'blind_tap' }, userId);
+    } catch (_) { /* best effort */ }
+    await bot.answerCallbackQuery(query.id, { text: `✅ ${session.countDesign} matches — reconciled.` }).catch(() => {});
+    session.step = 'checklist';
+    delete session.countDesign; delete session.padDraft;
+    sessionStore.set(userId, session);
+    await renderChecklist(bot, chatId, userId);
+    return;
+  }
+  if (out.status === 'recount') {
+    session.padDraft = '';
+    sessionStore.set(userId, session);
+    await renderPad(bot, chatId, userId,
+      '⚠️ That does not match the book. Recount CAREFULLY and enter again — a second miss locks this design for admin review.');
+    return;
+  }
+  if (out.status === 'flagged') {
+    await notifyAdminsOfFlag(bot, {
+      warehouse: session.warehouse, location: session.location, design: session.countDesign,
+      bales: count.bales, bundles: count.bundles, d: out.d, flagRow: out.flagRow, auditor: userId,
+    });
+    session.step = 'checklist';
+    delete session.countDesign; delete session.padDraft;
+    sessionStore.set(userId, session);
+    await render(bot, chatId, userId,
+      `🚩 Design flagged for admin review\n\n`
+      + 'Your two counts did not match the book. The admins have been notified '
+      + 'with both figures and this design is locked for today.\n\n'
+      + 'Continue with the other designs.',
+      [[{ text: '⬅ Back to list', callback_data: 'wai:padcx' }]]);
+    return;
+  }
+  await bot.answerCallbackQuery(query.id, { text: 'Could not reconcile — try again.', show_alert: true }).catch(() => {});
+}
+
+/* ───────────────────────── WAU-3: offline batch template ───────────────────────── */
+
+async function sendOfflineTemplate(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const state = await todayStateFor(session.warehouse);
+  const open = (session._checklist || []).filter((d) => {
+    const s = state.get(String(d.design).toUpperCase());
+    return !d.reconciled && !(s && s.locked);
+  });
+  if (!open.length) {
+    await bot.sendMessage(chatId, 'Nothing left to count here — every design is reconciled or locked.');
+    return;
+  }
+  const template = `AUDIT ${session.warehouse}\n${open.map((d) => `${d.design} =`).join('\n')}`;
+  await bot.sendMessage(chatId, template);
+  await bot.sendMessage(chatId,
+    '📄 Your offline count sheet (message above).\n\n'
+    + '1. Long-press it → Copy.\n'
+    + '2. Walk the store with NO network — paste it into the message box and fill each line: 9032 = 12+5 (bales+bundles). Leave lines you did not count empty.\n'
+    + '3. Press send when you are back in coverage — Telegram delivers it automatically and I reply with the results.');
+}
+
+/**
+ * Stateless offline batch: "AUDIT <warehouse>" + one line per design.
+ * Works with NO session (the message may arrive hours later, after the
+ * outbox flushes) — the header carries everything needed.
+ */
+async function handleBatchText(bot, msg) {
+  const userId = String(msg.from.id);
+  const chatId = msg.chat.id;
+  if (!config.warehouseAudit || !config.warehouseAudit.enabled) return false;
+  const { parseAuditBatch } = require('../utils/auditCountParser');
+  const warehouses = await inventoryRepository.getWarehouses();
+  const parsed = parseAuditBatch(msg.text, warehouses);
+  if (!parsed.ok) {
+    await bot.sendMessage(chatId, `⚠️ ${parsed.error}`);
+    return true;
+  }
+  const location = await locationOf(parsed.warehouse);
+  const matched = [];
+  const recount = [];
+  const flagged = [];
+  const locked = [];
+  const unknown = [];
+  for (const e of parsed.entries) {
+    const out = await reconcileDesign({
+      warehouse: parsed.warehouse, location, design: e.design,
+      bales: e.bales, bundles: e.bundles, auditor: userId,
+    });
+    if (out.status === 'match' || out.status === 'already') matched.push(e.design);
+    else if (out.status === 'recount') recount.push(e.design);
+    else if (out.status === 'locked') locked.push(e.design);
+    else if (out.status === 'unknown_design') unknown.push(e.design);
+    else if (out.status === 'flagged') {
+      flagged.push(e.design);
+      await notifyAdminsOfFlag(bot, {
+        warehouse: parsed.warehouse, location, design: e.design,
+        bales: e.bales, bundles: e.bundles, d: out.d, flagRow: out.flagRow, auditor: userId,
+      });
+    }
+  }
+  try {
+    await auditLogRepository.append('stocktake_batch',
+      { warehouse: parsed.warehouse, matched: matched.length, recount: recount.length, flagged: flagged.length }, userId);
+  } catch (_) { /* best effort */ }
+  let reply = `🔍 Audit results — ${parsed.warehouse}\n`;
+  if (matched.length) reply += `\n✅ Reconciled (${matched.length}): ${matched.join(', ')}`;
+  if (recount.length) reply += `\n🔁 Did NOT match — recount these and send a new AUDIT message with just them:\n${recount.map((d) => `${d} =`).join('\n')}`;
+  if (flagged.length) reply += `\n🚩 Flagged for admin review (locked today): ${flagged.join(', ')}`;
+  if (locked.length) reply += `\n🔒 Already locked (admin review pending): ${locked.join(', ')}`;
+  if (unknown.length) reply += `\n❓ Not found in ${parsed.warehouse}: ${unknown.join(', ')}`;
+  if (parsed.skipped.length) reply += `\n⬜ Left blank (${parsed.skipped.length}): ${parsed.skipped.join(', ')}`;
+  if (parsed.errors.length) reply += `\n⚠️ ${parsed.errors.join('\n⚠️ ')}`;
+  if (!parsed.entries.length) reply += '\nNo counts were filled in — fill the lines like: 9032 = 12+5';
+  await bot.sendMessage(chatId, reply);
+  return true;
+}
+
+/** Admin clears a 🚩 flag from the DM card (session-free). */
+async function handleFlagClear(bot, query) {
+  const adminId = String(query.from.id);
+  if (!auth.isAdmin(adminId)) {
+    await bot.answerCallbackQuery(query.id, { text: 'Only admins can clear audit flags.' }).catch(() => {});
+    return true;
+  }
+  const takeId = query.data.slice('wai:aclr:'.length);
+  const row = await stockTakesRepository.getById(takeId);
+  if (!row || row.result !== 'flagged') {
+    await bot.answerCallbackQuery(query.id, { text: 'Flag not found (already cleared?).' }).catch(() => {});
+    return true;
+  }
+  await stockTakesRepository.appendMany([{
+    warehouse: row.warehouse, location: row.location, design: row.design,
+    sheet_bales: row.sheet_bales, sheet_bundles: row.sheet_bundles, sheet_yards: row.sheet_yards,
+    result: 'flag_cleared', auditor: adminId, note: `cleared ${takeId}`,
+  }]);
+  try {
+    await auditLogRepository.append('stocktake_flag_cleared', { warehouse: row.warehouse, design: row.design, stocktake_id: takeId }, adminId);
+  } catch (_) { /* best effort */ }
+  await bot.answerCallbackQuery(query.id, { text: '✅ Flag cleared — design re-opened for audit.' }).catch(() => {});
+  try {
+    await bot.editMessageText(
+      `✅ Flag cleared — ${row.warehouse} design ${row.design} re-opened for audit.`,
+      { chat_id: query.message.chat.id, message_id: query.message.message_id });
+  } catch (_) { /* stale card */ }
+  return true;
 }
 
 /* ───────────────────────────── warehouse ───────────────────────────── */
@@ -753,8 +1029,34 @@ async function handleCallback(bot, query) {
   if (!data.startsWith('wai:')) return false;
   const chatId = query.message && query.message.chat && query.message.chat.id;
   const userId = String(query.from.id);
+
+  // WAU-3 — flag-clear taps come from an admin's DM card, hours later,
+  // with NO audit session. Handle before the session guard.
+  if (data.startsWith('wai:aclr:')) return handleFlagClear(bot, query);
+
   const session = sessionStore.get(userId);
   if (!session || session.type !== SESSION_TYPE) return false;
+
+  // Pad taps answer their own callback (they often need toast text).
+  if (data.startsWith('wai:k:')) { await handlePadKey(bot, chatId, userId, data.slice('wai:k:'.length), query); return true; }
+  if (data === 'wai:padok') { await commitPadCount(bot, chatId, userId, query); return true; }
+  if (data === 'wai:padcx') {
+    try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
+    session.step = 'checklist';
+    delete session.countDesign; delete session.padDraft;
+    sessionStore.set(userId, session);
+    await renderChecklist(bot, chatId, userId);
+    return true;
+  }
+  if (data === 'wai:tmpl') {
+    try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
+    await sendOfflineTemplate(bot, chatId, userId);
+    return true;
+  }
+  if (data.startsWith('wai:ck:')) {
+    await openPad(bot, chatId, userId, parseInt(data.slice('wai:ck:'.length), 10), query);
+    return true;
+  }
 
   try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
 
@@ -796,26 +1098,12 @@ async function handleCallback(bot, query) {
     return true;
   }
 
-  // WAU-2 — checklist checkbox toggle / submit / deep-inspect entry.
-  if (data.startsWith('wai:ck:')) {
-    if (session.step !== 'checklist') return true;
-    const i = parseInt(data.slice('wai:ck:'.length), 10);
-    const d = (session._checklist || [])[i];
-    if (d && !d.reconciled) {
-      if (session._checked[d.design]) delete session._checked[d.design];
-      else session._checked[d.design] = true;
-      sessionStore.set(userId, session);
-      await renderChecklist(bot, chatId, userId);
-    }
-    return true;
-  }
-  if (data === 'wai:submit') {
-    if (session.step !== 'checklist') return true;
-    await submitChecklist(bot, chatId, userId);
-    return true;
-  }
+  // WAU-3 — the checkbox/submit path is retired (replaced by the blind
+  // tap-pad; wai:ck now opens the pad, handled above). Deep inspect
+  // reveals book quantities, so it is ADMIN-ONLY in the blind flow.
   if (data === 'wai:inspect') {
     if (session.step !== 'checklist') return true;
+    if (!auth.isAdmin(userId)) return true;
     session.step = 'pick_design';
     sessionStore.set(userId, session);
     await renderDesignPicker(bot, chatId, userId);
@@ -920,8 +1208,10 @@ async function handleCallback(bot, query) {
 module.exports = {
   start,
   handleCallback,
+  handleBatchText,
   _internals: {
-    renderLocationPicker, renderChecklist, submitChecklist, loadChecklist, locationOf,
+    renderLocationPicker, renderChecklist, loadChecklist, locationOf,
+    reconcileDesign, todayStateFor, sendOfflineTemplate,
     renderWarehousePicker, renderDesignPicker, renderShadePicker,
     renderBaleList, renderBaleChoice, renderThanCard, renderReconciliation,
     stepBack, loadBales, markIcon, getAuditMode, baleAuditState, chunkButtons,

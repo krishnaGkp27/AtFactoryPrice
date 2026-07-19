@@ -3666,6 +3666,15 @@ async function handleMessage(bot, msg) {
     if (handled) return;
   }
 
+  // WAU-3 — stateless offline audit batch ("AUDIT <warehouse>" + count
+  // lines). Session-free by design: the message may arrive hours after the
+  // count, when Telegram's outbox flushes and any session is long dead.
+  if (/^AUDIT\s+/i.test(text)) {
+    const warehouseAuditFlow = require('../flows/warehouseAuditFlow');
+    const handled = await warehouseAuditFlow.handleBatchText(bot, msg);
+    if (handled) return;
+  }
+
   if (/^\/revert_package[s]?\s/i.test(text)) {
     if (!config.access.adminIds.includes(userId)) {
       await bot.sendMessage(chatId, 'Only admin can revert Bales.');
@@ -8834,10 +8843,9 @@ async function handleCallbackQuery(bot, callbackQuery) {
         break;
       }
       case 'warehouse_audit': {
-        // DBP-1.5 Concept A — admin-only tappable bale->than audit picker
-        // (spec dbp-1.5-than-bale-allocation.md §9A). Read/inspect only;
-        // no inventory writes. Admin gate mirrors other admin-only tiles.
-        if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
+        // WAU-3 (owner 20-Jul): warehouse staff run BLIND-count audits —
+        // the flow never shows them book quantities, so the old admin-only
+        // gate is lifted; only 🔬 Deep inspect stays admin-gated inside.
         const warehouseAuditFlow = require('../flows/warehouseAuditFlow');
         await warehouseAuditFlow.start(bot, chatId, uid, messageId);
         break;
