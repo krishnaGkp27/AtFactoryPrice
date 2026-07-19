@@ -79,6 +79,13 @@ app.get('/api/analytics/feature/:code', apiController.getAnalyticsFeature);
 // dashboard (contacts.html). Always key-gated.
 app.get('/api/contacts/graph', apiController.getContactsGraph);
 
+// INV-1b — public invoice statement (token = capability; OTP phase comes
+// with Meta onboarding). .pdf route MUST register before the HTML route so
+// "/i/abc.pdf" doesn't resolve as token "abc.pdf".
+const invoiceWebController = require('./src/controllers/invoiceWebController');
+app.get('/i/:token.pdf', invoiceWebController.viewInvoicePdf);
+app.get('/i/:token', invoiceWebController.viewInvoice);
+
 // TG-2: when TELEGRAM_WEBHOOK_SECRET is set, Telegram includes it in the
 // `X-Telegram-Bot-Api-Secret-Token` header on every webhook POST. Reject
 // any request that arrives without the matching token — this is the

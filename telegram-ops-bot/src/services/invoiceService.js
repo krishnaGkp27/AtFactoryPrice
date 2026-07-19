@@ -20,6 +20,7 @@ const PDFDocument = require('pdfkit');
 
 const invoicesRepository = require('../repositories/invoicesRepository');
 const mutex = require('../utils/asyncMutex');
+const config = require('../config');
 const logger = require('../utils/logger');
 
 const FONT = path.join(__dirname, '../assets/fonts/DejaVuSans.ttf');
@@ -256,7 +257,11 @@ function renderPdf(invoice) {
 /** Send the invoice PDF to Telegram chat(s). Best-effort per recipient. */
 async function deliver(bot, invoice, chatIds) {
   const pdf = await renderPdf(invoice);
-  const caption = `🧾 ${invoice.invoiceNo} — ${invoice.customerName}\nTotal ${NGN}${fmtMoney(invoice.total)} · Paid ${NGN}${fmtMoney(invoice.amountPaidAtIssue)} · Balance ${NGN}${fmtMoney(Math.max(invoice.total - invoice.amountPaidAtIssue, 0))}\nForward this PDF to the customer on WhatsApp.`;
+  // INV-1b: include the live web copy when a public base URL is configured
+  // (BASE_URL env; later the invoices.atfactoryprice.live custom domain).
+  const base = config.baseUrl || '';
+  const webLine = base && invoice.token ? `\n🔗 Live copy: ${base}/i/${invoice.token}` : '';
+  const caption = `🧾 ${invoice.invoiceNo} — ${invoice.customerName}\nTotal ${NGN}${fmtMoney(invoice.total)} · Paid ${NGN}${fmtMoney(invoice.amountPaidAtIssue)} · Balance ${NGN}${fmtMoney(Math.max(invoice.total - invoice.amountPaidAtIssue, 0))}${webLine}\nForward this PDF (or the link) to the customer on WhatsApp.`;
   const seen = new Set();
   for (const chatId of chatIds.filter(Boolean)) {
     if (seen.has(String(chatId))) continue;
