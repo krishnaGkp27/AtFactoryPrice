@@ -37,6 +37,10 @@
         "destination": "/contacts.html"
       },
       {
+        "source": "/ops",
+        "destination": "/ops.html"
+      },
+      {
         "source": "/payment/redirect",
         "destination": "/payment/redirect.html"
       },

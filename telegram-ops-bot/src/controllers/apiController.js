@@ -190,4 +190,130 @@ async function getContactsGraph(req, res) {
   }
 }
 
-module.exports = { getSettings, updateSettings, getAnalyticsSummary, getAnalyticsFeature, getContactsGraph };
+/* ── WEB-2 — Ops Dashboard endpoints (read-only, key-gated) ──────────────
+ * Serve the atfactoryprice.live admin dashboard: live operational state
+ * from the bot's world (Sheets). Every section is best-effort — one broken
+ * sheet must not blank the whole dashboard, so sections carry their own
+ * error strings instead of failing the request. */
+
+function gate(req, res) {
+  if (!config.botApiKey) {
+    res.status(503).json({ ok: false, error: 'Ops API disabled: server has no BOT_API_KEY configured.' });
+    return false;
+  }
+  if (!hasValidApiKey(req)) {
+    res.status(403).json({ ok: false, error: 'Invalid or missing X-API-Key.' });
+    return false;
+  }
+  return true;
+}
+
+async function section(fn) {
+  try { return await fn(); } catch (e) { return { error: e.message }; }
+}
+
+async function getOpsOverview(req, res) {
+  if (!gate(req, res)) return;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const [approvals, attendance, notes, samples, orders, audits] = await Promise.all([
+    section(async () => {
+      const pending = await require('../repositories/approvalQueueRepository').getAllPending();
+      return { pending: pending.length };
+    }),
+    section(async () => {
+      const attendanceService = require('../services/attendanceService');
+      const audience = await attendanceService.getAudience();
+      const { rows } = await attendanceService.getTodayAll();
+      const marked = new Set(rows.map((r) => String(r.telegram_id)));
+      return { required: audience.length, marked: audience.filter((a) => marked.has(a.user_id)).length };
+    }),
+    section(async () => {
+      const all = await require('../repositories/customerNotesRepository').getAll();
+      const cutoff = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+      return { total: all.length, last7: all.filter((n) => String(n.created_at) >= cutoff).length };
+    }),
+    section(async () => {
+      const out = (await require('../repositories/samplesRepository').getAll())
+        .filter((s) => (s.status || '') === 'with_customer');
+      return { out: out.length };
+    }),
+    section(async () => {
+      const all = await require('../repositories/ordersRepository').getAll();
+      return { pending: all.filter((o) => (o.status || '') === 'pending').length };
+    }),
+    section(async () => {
+      const rows = (await require('../repositories/stockTakesRepository').getAll())
+        .filter((r) => String(r.audited_at).startsWith(todayIso));
+      const flagged = rows.filter((r) => r.result === 'flagged').length;
+      const cleared = rows.filter((r) => r.result === 'flag_cleared').length;
+      return { today: rows.length, openFlags: Math.max(flagged - cleared, 0) };
+    }),
+  ]);
+  res.json({ ok: true, generatedAt: new Date().toISOString(), approvals, attendance, notes, samples, orders, audits });
+}
+
+async function getOpsApprovals(req, res) {
+  if (!gate(req, res)) return;
+  try {
+    const pending = await require('../repositories/approvalQueueRepository').getAllPending();
+    const { formatAction } = require('../risk/evaluate');
+    const approvalCards = require('../services/approvalCards');
+    const rows = [];
+    for (const p of [...pending].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 100)) {
+      const aj = p.actionJSON || {};
+      rows.push({
+        requestId: p.requestId,
+        action: formatAction ? formatAction(aj) : (aj.action || 'action'),
+        requester: await approvalCards.resolveUserLabel(p.user),
+        createdAt: p.createdAt || '',
+        ageDays: p.createdAt ? Math.floor((Date.now() - Date.parse(p.createdAt)) / 86400000) : null,
+      });
+    }
+    res.json({ ok: true, total: pending.length, rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
+async function getOpsAttendance(req, res) {
+  if (!gate(req, res)) return;
+  try {
+    const attendanceService = require('../services/attendanceService');
+    const cfg = await attendanceService.getConfig();
+    const audience = await attendanceService.getAudience();
+    const { date, rows } = await attendanceService.getTodayAll();
+    const byId = new Map(rows.map((r) => [String(r.telegram_id), r]));
+    res.json({
+      ok: true, date, deadline: cfg.deadlineTime,
+      marked: audience.filter((a) => byId.has(a.user_id)).map((a) => {
+        const r = byId.get(a.user_id);
+        return { name: a.name, location: r.location, at: String(r.logged_at).slice(11, 16), viaAdmin: r.logged_via === 'admin' };
+      }),
+      missing: audience.filter((a) => !byId.has(a.user_id)).map((a) => ({ name: a.name })),
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
+async function getOpsStockTakes(req, res) {
+  if (!gate(req, res)) return;
+  try {
+    const all = await require('../repositories/stockTakesRepository').getAll();
+    const recent = [...all].sort((a, b) => String(b.audited_at).localeCompare(String(a.audited_at))).slice(0, 80)
+      .map((r) => ({
+        id: r.stocktake_id, warehouse: r.warehouse, design: r.design, result: r.result,
+        book: `${r.sheet_bales}+${r.sheet_bundles}`,
+        counted: r.counted_bales === null ? '' : `${r.counted_bales}+${r.counted_bundles ?? 0}`,
+        auditor: r.auditor, at: r.audited_at,
+      }));
+    res.json({ ok: true, rows: recent });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
+module.exports = {
+  getSettings, updateSettings, getAnalyticsSummary, getAnalyticsFeature, getContactsGraph,
+  getOpsOverview, getOpsApprovals, getOpsAttendance, getOpsStockTakes,
+};

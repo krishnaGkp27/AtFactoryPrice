@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Ops Dashboard — AtFactoryPrice Admin</title>
+<style>
+  :root { --navy:#0e2a47; --blue:#1d6fa5; --teal:#2e9e77; --gold:#c9a24b; --red:#a3232a; --bg:#f4f7fa; --line:#dfe6ee; --ink:#1a2332; --mut:#6b7a8c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"Segoe UI",Arial,sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:linear-gradient(135deg,var(--navy),var(--blue)); color:#fff; padding:16px 24px;
+           display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+  header h1 { margin:0; font-size:18px; }
+  header .sub { font-size:12px; opacity:.85; }
+  .wrap { max-width:1000px; margin:0 auto; padding:18px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:14px; }
+  .card h2 { margin:0 0 10px 0; font-size:15px; color:var(--navy); }
+  label { display:block; font-size:12px; color:var(--mut); margin:8px 0 3px; }
+  input { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:6px; font-size:14px; }
+  button { background:var(--blue); color:#fff; border:0; border-radius:6px; padding:9px 16px; font-size:14px; cursor:pointer; margin-top:10px; }
+  button.ghost { background:#e8eef4; color:var(--navy); }
+  .err { color:var(--red); font-size:13px; margin-top:8px; }
+  .hint { color:var(--mut); font-size:12px; }
+  #app { display:none; }
+  nav.tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }
+  nav.tabs button { margin:0; background:#e8eef4; color:var(--navy); }
+  nav.tabs button.on { background:var(--navy); color:#fff; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+  .tile { background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .tile .n { font-size:26px; font-weight:700; color:var(--navy); }
+  .tile .l { font-size:12px; color:var(--mut); margin-top:2px; }
+  .tile.warn .n { color:var(--red); }
+  table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--mut);
+       border-bottom:2px solid var(--navy); padding:7px 6px; }
+  td { padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:99px; font-size:11.5px; font-weight:600; }
+  .pill.ok { background:#e5f4ec; color:var(--teal); }
+  .pill.warn { background:#fdeeee; color:var(--red); }
+  .pill.mut { background:#eef2f6; color:var(--mut); }
+  .scroll { overflow-x:auto; }
+  .foot { color:var(--mut); font-size:12px; margin:8px 0 20px; }
+  section { display:none; }
+  section.on { display:block; }
+  @media (max-width:560px){ .wrap{padding:10px;} td,th{padding:6px 4px;} }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>🧭 Ops Dashboard</h1>
+    <div class="sub">Live from the ops bot · approvals · attendance · stock audits · admin only</div>
+  </div>
+  <div>
+    <button class="ghost" id="refreshBtn" style="display:none">↻ Refresh</button>
+    <button class="ghost" id="setupBtn" style="display:none">API setup</button>
+  </div>
+</header>
+<div class="wrap">
+
+  <div class="card" id="setup">
+    <h2>Connect to the bot</h2>
+    <label>Bot API base URL</label>
+    <input id="apiBase" placeholder="https://your-app.up.railway.app">
+    <label>API key (BOT_API_KEY)</label>
+    <input id="apiKey" type="password" placeholder="paste the key">
+    <button id="loadBtn">Open dashboard</button>
+    <div class="err" id="setupErr"></div>
+    <div class="hint">The key is stored only in this browser. Same key as the Contact Network page.</div>
+  </div>
+
+  <div id="app">
+    <nav class="tabs">
+      <button data-tab="overview" class="on">Overview</button>
+      <button data-tab="approvals">Approvals</button>
+      <button data-tab="attendance">Attendance</button>
+      <button data-tab="audits">Stock audits</button>
+      <button id="contactsLink" class="ghost">📇 Contacts ↗</button>
+    </nav>
+
+    <section id="tab-overview" class="on">
+      <div class="tiles" id="tiles"></div>
+      <div class="foot" id="genAt"></div>
+    </section>
+
+    <section id="tab-approvals">
+      <div class="card"><h2>🛂 Pending approvals</h2>
+        <div class="scroll"><table id="apprTable">
+          <thead><tr><th>When</th><th>Action</th><th>Requested by</th><th>Age</th></tr></thead><tbody></tbody>
+        </table></div>
+        <div class="hint" id="apprHint"></div>
+        <div class="hint">Approve / reject stays in Telegram (two-admin governance) — this view is for oversight.</div>
+      </div>
+    </section>
+
+    <section id="tab-attendance">
+      <div class="card"><h2>🕘 Attendance today <span class="hint" id="attMeta"></span></h2>
+        <div class="scroll"><table id="attTable">
+          <thead><tr><th>Person</th><th>Status</th><th>Location</th><th>Time</th></tr></thead><tbody></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section id="tab-audits">
+      <div class="card"><h2>🔍 Recent stock audits</h2>
+        <div class="scroll"><table id="audTable">
+          <thead><tr><th>When</th><th>Warehouse</th><th>Design</th><th>Result</th><th>Counted</th><th>Book</th></tr></thead><tbody></tbody>
+        </table></div>
+        <div class="hint">Counted/book shown as bales+bundles. Flags lock the design until cleared from the admin card in Telegram.</div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+(function(){
+  var LS_BASE='afp_api_base', LS_KEY='afp_api_key';
+  var $=function(id){return document.getElementById(id);};
+  function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function base(){return (localStorage.getItem(LS_BASE)||'').replace(/\/$/,'');}
+  function key(){return localStorage.getItem(LS_KEY)||'';}
+
+  function api(path){
+    return fetch(base()+path,{headers:{'X-API-Key':key()}}).then(function(r){
+      if(r.status===403) throw new Error('Key rejected — check BOT_API_KEY.');
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return r.json();
+    });
+  }
+
+  function showSetup(msg){
+    $('setup').style.display='block'; $('app').style.display='none';
+    $('refreshBtn').style.display='none'; $('setupBtn').style.display='none';
+    if(msg) $('setupErr').textContent=msg;
+    $('apiBase').value=localStorage.getItem(LS_BASE)||'';
+    $('apiKey').value=key();
+  }
+
+  function tile(n,l,warn){return '<div class="tile'+(warn?' warn':'')+'"><div class="n">'+esc(n)+'</div><div class="l">'+esc(l)+'</div></div>';}
+  function secVal(s,f,fb){return (s&&!s.error)?f(s):(fb!==undefined?fb:'—');}
+
+  function renderOverview(d){
+    var t='';
+    t+=tile(secVal(d.approvals,function(s){return s.pending;}),'Pending approvals',secVal(d.approvals,function(s){return s.pending>0;},false));
+    t+=tile(secVal(d.attendance,function(s){return s.marked+'/'+s.required;}),'Attendance marked',secVal(d.attendance,function(s){return s.marked<s.required;},false));
+    t+=tile(secVal(d.audits,function(s){return s.openFlags;}),'Open audit flags',secVal(d.audits,function(s){return s.openFlags>0;},false));
+    t+=tile(secVal(d.notes,function(s){return s.last7;}),'Customer notes (7d)');
+    t+=tile(secVal(d.samples,function(s){return s.out;}),'Samples with customers');
+    t+=tile(secVal(d.orders,function(s){return s.pending;}),'Unaccepted orders');
+    $('tiles').innerHTML=t;
+    $('genAt').textContent='Updated '+new Date(d.generatedAt).toLocaleTimeString();
+  }
+
+  function renderApprovals(d){
+    var tb=$('apprTable').tBodies[0]; tb.innerHTML='';
+    (d.rows||[]).forEach(function(r){
+      var tr=document.createElement('tr');
+      tr.innerHTML='<td>'+esc((r.createdAt||'').slice(0,10))+'</td><td>'+esc(r.action)+'</td><td>'+esc(r.requester)+'</td>'
+        +'<td>'+(r.ageDays==null?'—':(r.ageDays>7?'<span class="pill warn">':'<span class="pill mut">')+esc(r.ageDays)+'d</span>')+'</td>';
+      tb.appendChild(tr);
+    });
+    $('apprHint').textContent=d.total>(d.rows||[]).length?('Showing newest '+(d.rows||[]).length+' of '+d.total+'.'):'';
+  }
+
+  function renderAttendance(d){
+    $('attMeta').textContent='· report-by '+(d.deadline||'')+' · '+(d.date||'');
+    var tb=$('attTable').tBodies[0]; tb.innerHTML='';
+    (d.missing||[]).forEach(function(p){
+      var tr=document.createElement('tr');
+      tr.innerHTML='<td>'+esc(p.name)+'</td><td><span class="pill warn">missing</span></td><td>—</td><td>—</td>';
+      tb.appendChild(tr);
+    });
+    (d.marked||[]).forEach(function(p){
+      var tr=document.createElement('tr');
+      tr.innerHTML='<td>'+esc(p.name)+'</td><td><span class="pill ok">present'+(p.viaAdmin?' (via admin)':'')+'</span></td>'
+        +'<td>'+esc(p.location||'')+'</td><td>'+esc(p.at||'')+'</td>';
+      tb.appendChild(tr);
+    });
+  }
+
+  function renderAudits(d){
+    var tb=$('audTable').tBodies[0]; tb.innerHTML='';
+    var pills={reconciled:'ok',mismatch:'mut',flagged:'warn',flag_cleared:'mut'};
+    (d.rows||[]).forEach(function(r){
+      var tr=document.createElement('tr');
+      tr.innerHTML='<td>'+esc(String(r.at||'').slice(0,10))+'</td><td>'+esc(r.warehouse)+'</td><td>'+esc(r.design)+'</td>'
+        +'<td><span class="pill '+(pills[r.result]||'mut')+'">'+esc(r.result)+'</span></td>'
+        +'<td>'+esc(r.counted||'—')+'</td><td>'+esc(r.book)+'</td>';
+      tb.appendChild(tr);
+    });
+  }
+
+  function loadAll(){
+    api('/api/ops/overview').then(renderOverview).catch(function(e){$('genAt').textContent='Overview failed: '+e.message;});
+    api('/api/ops/approvals').then(renderApprovals).catch(function(){});
+    api('/api/ops/attendance').then(renderAttendance).catch(function(){});
+    api('/api/ops/stocktakes').then(renderAudits).catch(function(){});
+  }
+
+  function openApp(){
+    $('setup').style.display='none'; $('app').style.display='block';
+    $('refreshBtn').style.display=''; $('setupBtn').style.display='';
+    $('contactsLink').onclick=function(){location.href='/contacts';};
+    loadAll();
+  }
+
+  document.querySelectorAll('nav.tabs button[data-tab]').forEach(function(b){
+    b.onclick=function(){
+      document.querySelectorAll('nav.tabs button[data-tab]').forEach(function(x){x.classList.remove('on');});
+      document.querySelectorAll('section').forEach(function(s){s.classList.remove('on');});
+      b.classList.add('on'); $('tab-'+b.dataset.tab).classList.add('on');
+    };
+  });
+  $('refreshBtn').onclick=loadAll;
+  $('setupBtn').onclick=function(){showSetup('');};
+  $('loadBtn').onclick=function(){
+    var b=$('apiBase').value.trim().replace(/\/$/,''), k=$('apiKey').value.trim();
+    if(!b||!k){$('setupErr').textContent='Both fields are required.';return;}
+    localStorage.setItem(LS_BASE,b); localStorage.setItem(LS_KEY,k);
+    api('/api/ops/overview').then(function(){openApp();}).catch(function(e){$('setupErr').textContent=e.message;});
+  };
+
+  if(!base()){ // sensible default when served by the bot itself
+    localStorage.setItem(LS_BASE, location.origin);
+  }
+  if(key()){ openApp(); } else { showSetup(''); }
+})();
+</script>
+</body>
+</html>

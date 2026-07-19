@@ -79,6 +79,16 @@ app.get('/api/analytics/feature/:code', apiController.getAnalyticsFeature);
 // dashboard (contacts.html). Always key-gated.
 app.get('/api/contacts/graph', apiController.getContactsGraph);
 
+// WEB-2 — Ops Dashboard API (atfactoryprice.live admin pages; key-gated,
+// read-only) + the dashboard page itself served straight from this app so
+// it works the moment the domain points at Railway (Firebase hosting can
+// serve the same file at /ops via its rewrite).
+app.get('/api/ops/overview', apiController.getOpsOverview);
+app.get('/api/ops/approvals', apiController.getOpsApprovals);
+app.get('/api/ops/attendance', apiController.getOpsAttendance);
+app.get('/api/ops/stocktakes', apiController.getOpsStockTakes);
+app.get('/ops', (req, res) => res.sendFile(require('path').join(__dirname, '..', 'ops.html')));
+
 // INV-1b — public invoice statement (token = capability; OTP phase comes
 // with Meta onboarding). .pdf route MUST register before the HTML route so
 // "/i/abc.pdf" doesn't resolve as token "abc.pdf".
