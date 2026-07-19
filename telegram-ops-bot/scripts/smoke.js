@@ -6058,12 +6058,13 @@ async function runS34() {
 // S35 — DBP-1.5 Concept A: Admin Warehouse Audit Picker (warehouseAuditFlow)
 // ---------------------------------------------------------------------------
 async function runS35() {
-  // S35.1 — activityRegistry: warehouse_audit tile in warehouses hub
+  // S35.1 — activityRegistry: warehouse_audit is a STANDALONE greeting tile
+  // (hub:null, owner 20-Jul — one-tap access for warehouse staff, WAU-3).
   delete require.cache[require.resolve('../src/services/activityRegistry')];
   const reg = require('../src/services/activityRegistry');
   const wa = reg.getByCallback('act:warehouse_audit');
-  if (wa && wa.code === 'warehouse_audit' && wa.hub === 'warehouses') {
-    pass('S35.1 activityRegistry: warehouse_audit in warehouses hub with act:warehouse_audit');
+  if (wa && wa.code === 'warehouse_audit' && wa.hub === null) {
+    pass('S35.1 activityRegistry: warehouse_audit standalone greeting tile (hub:null)');
   } else {
     fail('S35.1 activityRegistry warehouse_audit', JSON.stringify(wa));
   }

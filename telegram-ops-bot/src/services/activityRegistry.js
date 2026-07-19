@@ -132,9 +132,10 @@ const ACTIVITIES = [
   // side by side.
   { code: 'add_warehouse',         label: 'Add Warehouse',             icon: '🏭', callback: 'act:add_warehouse',     hub: 'warehouses' },
   { code: 'manage_warehouses',     label: 'Manage Warehouses',         icon: '🏭', callback: 'act:manage_wh',          hub: 'warehouses' },
-  // DBP-1.5 Concept A — admin-only bale→than warehouse audit picker
-  // (read/inspect only). Admin-gated at launch; never in a department CSV.
-  { code: 'warehouse_audit',       label: 'Warehouse Audit',           icon: '🔍', callback: 'act:warehouse_audit',    hub: 'warehouses' },
+  // WAU-3 (owner 20-Jul) — blind-count stock audit, open to staff whose
+  // department grants the code. hub:null = standalone greeting tile so the
+  // warehouse boy reaches it in one tap (same pattern as snap_sale).
+  { code: 'warehouse_audit',       label: 'Warehouse Audit',           icon: '🔍', callback: 'act:warehouse_audit',    hub: null },
   // TV-2 — bales ⇄ thans display-unit switch (admin/manager request,
   // admin approval via set_unit_display in ALWAYS_APPROVAL_ACTIONS).
   { code: 'display_units',         label: 'Display Units',             icon: '📐', callback: 'act:display_units',      hub: 'warehouses' },
