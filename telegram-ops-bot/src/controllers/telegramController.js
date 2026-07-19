@@ -4139,7 +4139,7 @@ async function handleMessage(bot, msg) {
         const payMethod = methodMatch ? methodMatch[1] : 'cash';
         const rpQueued2 = await requireApproval(bot, chatId, msg, userId, 'record_payment',
           { action: 'record_payment', customer: intent.customer, amount: amt, method: payMethod },
-          `Record payment ${fmtMoney(amt)} from ${intent.customer} via ${payMethod}`);
+          await require('../services/approvalCards').buildPaymentCard({ customer: intent.customer, amount: amt, method: payMethod }));
         if (rpQueued2) return;
         const payRes = await crmService.recordPayment({ customer: intent.customer, amount: amt, method: payMethod, userId });
         if (payRes.status === 'completed') {
@@ -7059,8 +7059,9 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const userLabel = await getRequesterDisplayName(uid, null);
     await approvalEvents.notifyAdminsApprovalRequest(
       bot, requestId, userLabel,
-      `Remove Bank\nBank: ${bankName}`,
+      await require('../services/approvalCards').buildRemoveBankCard({ bankName }),
       'Bank removal requires admin approval',
+      config.access.adminIds.includes(uid) ? uid : undefined,
     );
 
   /* ─── UPDATE PRICE TAP FLOW ─── */
@@ -7536,15 +7537,18 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id }).catch(() => {});
     }
     const requestId = genId();
-    const summary = `Sample Request\nDesign: ${session.design}${session.shade ? ' Shade ' + session.shade : ''}\nType: ${session.sample_type}\nCustomer: ${session.customer}\nQty: ${session.quantity} pcs\nFollow-up: ${session.followup_date}`;
+    // APU-2: canonical DD-MMM-YYYY date (owner mandate 14-Jul) and the
+    // card reason matches the queued riskReason.
+    const summary = `Sample Request\nDesign: ${session.design}${session.shade ? ' Shade ' + session.shade : ''}\nType: ${session.sample_type}\nCustomer: ${session.customer}\nQty: ${session.quantity} pcs\nFollow-up: ${fmtDate(session.followup_date)}`;
     await approvalQueueRepository.append({
       requestId, user: uid,
       actionJSON: { action: 'give_sample', design: session.design, shade: session.shade, sample_type: session.sample_type, customer: session.customer, quantity: session.quantity, followup_date: session.followup_date },
-      riskReason: 'Admin approval required for sample', status: 'pending',
+      riskReason: 'Sample requires admin approval', status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: 'sample_approval' }, uid);
     const userLabel = await getRequesterDisplayName(uid, null);
-    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'Sample requires admin approval');
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'Sample requires admin approval',
+      config.access.adminIds.includes(uid) ? uid : undefined);
     await bot.sendMessage(callbackQuery.message.chat.id, `⏳ Sample request submitted for admin approval.\nRequest: ${requestId}`);
     sessionStore.clear(uid);
 

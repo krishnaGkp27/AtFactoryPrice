@@ -158,6 +158,43 @@ async function buildReturnCard({ packageNo, thanNo }) {
   return text;
 }
 
+/**
+ * Card for a payment approval (dual-admin finance action) — shows the
+ * customer's live outstanding balance and the before→after picture so the
+ * signing admins have monetary context, not just the amount.
+ */
+async function buildPaymentCard({ customer, amount, method }) {
+  let text = `Record Payment Request\nCustomer: ${customer}\nAmount: ₦${Number(amount || 0).toLocaleString('en-NG')}\nMethod: ${method || '—'}\nDate: ${fmtDate(new Date().toISOString().slice(0, 10))}`;
+  try {
+    const accountingService = require('./accountingService');
+    const { outstandingAsOfToday } = await accountingService.getCustomerLedger(customer);
+    const after = Number(outstandingAsOfToday) - Number(amount || 0);
+    text += `\nOutstanding today: ₦${Number(outstandingAsOfToday).toLocaleString('en-NG')}`
+      + `\nAfter this payment: ₦${after.toLocaleString('en-NG')}`;
+    if (after < 0) text += `\n⚠️ Payment EXCEEDS the outstanding balance.`;
+  } catch (_) { text += '\n(Outstanding balance unavailable right now.)'; }
+  return text;
+}
+
+/**
+ * Card for removing a bank — previously the thinnest card in the system
+ * for a destructive finance action. Adds how much history points at the
+ * bank so the approver can judge the blast radius.
+ */
+async function buildRemoveBankCard({ bankName }) {
+  let text = `Remove Bank Request\nBank: ${bankName}`;
+  try {
+    const receiptsRepository = require('../repositories/receiptsRepository');
+    const receipts = (await receiptsRepository.getAll()).filter(
+      (r) => String(r.bank_account || '').toLowerCase() === String(bankName).toLowerCase());
+    text += `\nReceipts recorded against it: ${receipts.length}`;
+    const latest = receipts.map((r) => String(r.created_at || r.uploaded_at || '')).sort().pop();
+    if (latest) text += `\nMost recent: ${fmtDate(latest.slice(0, 10))}`;
+  } catch (_) { /* context is best-effort */ }
+  text += '\n⚠️ Removal only hides it from pickers — recorded history keeps the name.';
+  return text;
+}
+
 /** Card for a queued classic sale_bundle actionJSON (no inventory lookups —
  *  renders exactly what the queue row carries, so reminders can rebuild it). */
 async function buildSaleBundleCard(aj) {
@@ -311,6 +348,9 @@ module.exports = {
   buildReturnCard,
   buildSaleBundleCard,
   buildSupplyRequestCard,
+  buildPaymentCard,
+  buildRemoveBankCard,
+  customerContact,
   buildReceiveDetail,
   buildCardFromActionJSON,
   forwardAttachmentsToAdmins,

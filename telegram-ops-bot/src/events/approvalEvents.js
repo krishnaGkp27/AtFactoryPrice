@@ -523,6 +523,13 @@ async function buildSupplyDispatchFullSummary(aj) {
   s += `━━━━━━━━━━━━━━━━━━━━━━\n`;
   s += `📦 Total: *${totalQty} ${containerPlural}*\n`;
   s += `👤 Customer: *${(aj && aj.customer) || '-'}*\n`;
+  // APU-2: customer phone/address so the approving admin can sanity-check
+  // WHO is being supplied (parity with the classic sale card).
+  try {
+    const contact = await require('../services/approvalCards').customerContact((aj && aj.customer) || '');
+    if (contact.phone) s += `📞 Phone: ${contact.phone}\n`;
+    if (contact.address) s += `🏠 Address: ${contact.address}\n`;
+  } catch (_) { /* best effort */ }
   s += `🧑 Salesperson: *${(aj && aj.salesperson) || '-'}*\n`;
   s += `💳 Payment: *${(aj && aj.paymentMode) || '-'}*\n`;
   s += `📅 Date: *${fmtDate(aj && aj.salesDate)}*`;

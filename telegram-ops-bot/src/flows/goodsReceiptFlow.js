@@ -450,7 +450,25 @@ async function submit(bot, chatId, userId, msgOrNull) {
     const approverLabel = isAdm ? '2nd admin' : 'admin';
     const excludeId = isAdm ? userId : undefined;
     const totalYards = (session.bales || []).reduce((s, b) => s + (b.yards || 0), 0);
-    const summary = `📥 Receive Goods — ${aj.warehouse} · ${aj.design} ${aj.shade ? '/ ' + aj.shade : ''} · ${session.bales.length} bales · ${fmtQty(totalYards, { maxFraction: 2 })} yds`;
+    // APU-2: supplier/PO context + per-bale rollup for the approving
+    // admins (previously only the requester's own review card had them).
+    let summary = `📥 Receive Goods — ${aj.warehouse} · ${aj.design} ${aj.shade ? '/ ' + aj.shade : ''} · ${session.bales.length} bales · ${fmtQty(totalYards, { maxFraction: 2 })} yds`;
+    if (aj.supplier) summary += `\nSupplier: ${aj.supplier}`;
+    if (aj.po_id) summary += `\nPO: ${aj.po_id}`;
+    const byBale = new Map();
+    for (const b of session.bales || []) {
+      const k = b.packageNo;
+      if (!byBale.has(k)) byBale.set(k, { thans: 0, yards: 0 });
+      const g = byBale.get(k);
+      g.thans += 1;
+      g.yards += Number(b.yards) || 0;
+    }
+    const baleLines = [...byBale.entries()].slice(0, 10)
+      .map(([pkg, g]) => `  • Bale ${pkg}: ${fmtQty(g.yards)} yds${g.thans > 1 ? ` · ${g.thans} thans` : ''}`);
+    if (baleLines.length) {
+      summary += `\n${baleLines.join('\n')}`;
+      if (byBale.size > 10) summary += `\n  …+${byBale.size - 10} more bales`;
+    }
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId,
       await require('../services/approvalCards').resolveUserLabel(userId, bot), summary, risk.reason, excludeId);
     await render(bot, chatId, userId, `⏳ Submitted for ${approverLabel} approval.\nRequest: \`${requestId}\``, [cancelRow()]);
