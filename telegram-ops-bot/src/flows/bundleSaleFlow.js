@@ -861,12 +861,15 @@ async function submit(bot, chatId, userId) {
   }
   try {
     const todayIso = new Date().toISOString().slice(0, 10);
+    // APU-1 sweep (owner 19-Jul): human-readable name on the queue row and
+    // in the eventual Transactions ledger row, not a raw Telegram id.
+    const sellerLabel = await require('../services/approvalCards').resolveUserLabel(userId, bot);
     const { requestId } = await bundleSaleService.submitForApproval({
       cart: session.cart,
       sale: {
         customer: session.customer,
         salesDate: todayIso,
-        salesPerson: userId, // username unavailable here; use id
+        salesPerson: sellerLabel,
         paymentMode: session.paymentMode,
         pricePerYard: session.rate,
         designSummary: session.design,
@@ -884,8 +887,8 @@ async function submit(bot, chatId, userId) {
       + `${totals.thans} than · ${fmtQty(totals.yards)} yd · ${fmtNgn(session.rate)}/yd = ${fmtNgn(amount)}\n`
       + `👤 ${session.customer}  💳 ${session.paymentMode}`;
     await approvalEvents.notifyAdminsApprovalRequest(
-      bot, requestId, String(userId), detail,
-      'Bundle sale (Kano poly-colour) — dual-admin gate', excludeId,
+      bot, requestId, sellerLabel, detail,
+      'Bundle sale (Kano poly-colour) requires admin approval.', excludeId,
     );
     await render(bot, chatId, userId,
       `⏳ *Submitted for approval*\n\n`

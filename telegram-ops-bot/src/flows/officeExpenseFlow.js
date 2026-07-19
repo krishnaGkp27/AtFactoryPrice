@@ -312,7 +312,8 @@ async function submit(bot, chatId, userId) {
       : itemLines;
     const cardSummary = `💸 Office expenses (${branch}) — ${itemLines.length} item(s), ₦${fmtNgn(total)}\n`
       + `${shown.join('\n')}`;
-    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, String(userId),
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId,
+      await require('../services/approvalCards').resolveUserLabel(userId, bot),
       cardSummary,
       'record_office_expense single-admin sign-off', excludeId);
 

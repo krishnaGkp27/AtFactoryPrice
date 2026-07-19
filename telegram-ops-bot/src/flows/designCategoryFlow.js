@@ -207,7 +207,8 @@ async function submit(bot, chatId, userId) {
     const summary = prevCategory
       ? `🏷️ Design ${design} category: ${prevCategory} → ${category}`
       : `🏷️ Design ${design} category: ${category}`;
-    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, String(userId), summary,
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId,
+      await require('../services/approvalCards').resolveUserLabel(userId, bot), summary,
       risk.reason || 'dual_admin_required', excludeId);
 
     // UX-C1: render success BEFORE clearing the session (render needs it).

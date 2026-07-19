@@ -94,7 +94,7 @@ async function sweep(bot, { now = Date.now() } = {}) {
         // APU-1: the reminder card carries the SAME detail as the original
         // (rebuilt from the queue row), a resolved requester name, the
         // admin-requester exclusion, and the attached sale doc re-forwarded.
-        const userLabel = await approvalCards.resolveUserLabel(q.user);
+        const userLabel = await approvalCards.resolveUserLabel(q.user, bot);
         const card = await approvalCards.buildCardFromActionJSON(q.actionJSON);
         const excludeId = config.access.adminIds.includes(String(q.user)) ? String(q.user) : undefined;
         await approvalEvents.notifyAdminsApprovalRequest(

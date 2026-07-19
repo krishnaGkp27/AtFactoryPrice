@@ -94,7 +94,7 @@ async function handleCallback(bot, callbackQuery) {
           total ? `🗒 *Customer notes* — ${total} across ${customers.length} customer(s).\nTap a customer to read their notes:` : '🗒 *Customer notes* — none recorded yet.',
           { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
       } else {
-        const { text, totalPages } = await morningDigest.buildDetail(key, settings, new Date(), page);
+        const { text, totalPages } = await morningDigest.buildDetail(key, settings, new Date(), page, bot);
         if (!text) return true;
         const nav = [{ text: '◀ Summary', callback_data: `${NS}d:__sum__` }];
         if (page > 0) nav.push({ text: '◀ Prev', callback_data: `${NS}d:${key}:${page - 1}` });
@@ -116,7 +116,7 @@ async function handleCallback(bot, callbackQuery) {
     const settings = await settingsRepository.getAll();
     const messageId = callbackQuery.message.message_id;
     try {
-      const out = await morningDigest.notesForCustomer(settings, idx, page);
+      const out = await morningDigest.notesForCustomer(settings, idx, page, bot);
       if (!out) return true;
       const nav = [
         { text: '◀ Customers', callback_data: `${NS}d:DIGEST_CUSTOMER_NOTES` },

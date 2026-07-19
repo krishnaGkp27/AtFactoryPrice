@@ -31,10 +31,13 @@ function baseSettings(extra = {}) {
 }
 
 const usersRepository = require(path.join(SRC, 'repositories/usersRepository'));
-usersRepository.getAll = async () => [
-  { user_id: '777', name: 'Krishna' },
-  { user_id: '4242', name: 'Abdul' },
-];
+const pendingUsersRepository = require(path.join(SRC, 'repositories/pendingUsersRepository'));
+const approvalCards = require(path.join(SRC, 'services/approvalCards'));
+// The resolver goes through the exported findByUserId (stubbable); the
+// internal getAll closure is NOT reachable from a getAll stub.
+const USERS = { 777: { user_id: '777', name: 'Krishna' }, 4242: { user_id: '4242', name: 'Abdul' } };
+usersRepository.findByUserId = async (id) => USERS[String(id)] || null;
+pendingUsersRepository.getAll = async () => [];
 
 customerNotesRepository.getAll = async () => [
   { note_id: 'N1', customer: 'CJE', note: 'promised payment Friday', created_by: '777', created_at: '2026-07-16T10:00:00.000Z' },
@@ -99,6 +102,7 @@ test('per-customer notes paginate at 3/page with friendly dates, clamp out-of-ra
 });
 
 test('notes are grouped by author with display names (owner 19-Jul)', async () => {
+  approvalCards._resetNameCacheForTests();
   const saved = customerNotesRepository.getAll;
   customerNotesRepository.getAll = async () => [
     { note_id: 'A1', customer: 'OKSON', note: 'newest by Krishna', created_by: '777', created_at: '2026-07-18T10:00:00.000Z' },
@@ -121,6 +125,24 @@ test('notes are grouped by author with display names (owner 19-Jul)', async () =
   ];
   const r2 = await digest.notesForCustomer(baseSettings(), 0, 0);
   assert.match(r2.text, /👤 \*Unknown\*/);
+  customerNotesRepository.getAll = saved;
+});
+
+test('author with NO Users row resolves via Telegram getChat (owner screenshot 19-Jul)', async () => {
+  approvalCards._resetNameCacheForTests();
+  const saved = customerNotesRepository.getAll;
+  // 7863545956 = an env-ADMIN_IDS admin who predates the Users sheet.
+  customerNotesRepository.getAll = async () => [
+    { note_id: 'O1', customer: 'OKESON', note: 'asking for stripe design price', created_by: '7863545956', created_at: '2026-07-07T10:00:00.000Z' },
+  ];
+  const botWithChat = { getChat: async (id) => (String(id) === '7863545956' ? { first_name: 'Krishna', last_name: 'Sahay' } : null) };
+  const r = await digest.notesForCustomer(baseSettings(), 0, 0, botWithChat);
+  assert.match(r.text, /👤 \*Krishna Sahay\*/, 'Telegram profile name, not the raw id');
+  assert.ok(!/7863545956/.test(r.text), 'raw id no longer shown');
+  // Without a bot the raw id remains the last-resort fallback (never blank).
+  approvalCards._resetNameCacheForTests();
+  const r2 = await digest.notesForCustomer(baseSettings(), 0, 0);
+  assert.match(r2.text, /👤 \*7863545956\*/);
   customerNotesRepository.getAll = saved;
 });
 

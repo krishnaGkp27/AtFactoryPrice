@@ -125,11 +125,18 @@ const CATEGORIES = [
       if (!pending.length) return { line: '', count: 0 };
       return { line: `🛂 Approvals pending: *${pending.length}*`, count: pending.length };
     },
-    async detail() {
+    async detail(settings, todayIso, page, bot) {
       const pending = await require('../repositories/approvalQueueRepository').getAllPending();
       if (!pending.length) return '🛂 *Approvals* — queue is clear.';
       const newest = [...pending].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-      const lines = newest.slice(0, LIST_CAP).map((p) => `• ${fmtDay(p.createdAt)} — ${((p.actionJSON || {}).action || 'action').replace(/_/g, ' ')} by ${p.user} \`${String(p.requestId).slice(0, 8)}\``);
+      // Owner 19-Jul: names, not raw Telegram ids, on every list.
+      const approvalCards = require('./approvalCards');
+      const shown = newest.slice(0, LIST_CAP);
+      const nameOf = new Map();
+      for (const id of new Set(shown.map((p) => String(p.user)))) {
+        nameOf.set(id, await approvalCards.resolveUserLabel(id, bot));
+      }
+      const lines = shown.map((p) => `• ${fmtDay(p.createdAt)} — ${((p.actionJSON || {}).action || 'action').replace(/_/g, ' ')} by ${nameOf.get(String(p.user))} \`${String(p.requestId).slice(0, 8)}\``);
       const older = pending.length - Math.min(pending.length, LIST_CAP);
       return `🛂 *Approvals pending: ${pending.length}* (newest first)\n${lines.join('\n')}${older ? `\n_…and ${older} older — reminder cards re-send via ⏰ APR-1_` : ''}`;
     },
@@ -224,20 +231,18 @@ const NOTE_TEXT_CAP = 600;
 
 /**
  * Resolve note authors (created_by holds the raw Telegram id) to display
- * names via one Users read. Rows whose created_by is already a name (or an
- * unknown id) render as stored; blank renders 'Unknown'.
+ * names via the shared multi-source resolver (Users sheet → PendingUsers →
+ * Telegram getChat) — env-ADMIN admins have no Users row, which is why a
+ * Users-only lookup still showed raw ids (owner screenshot 19-Jul).
  */
-async function noteAuthorResolver() {
+async function noteAuthorResolver(notes, bot) {
+  const approvalCards = require('./approvalCards');
+  const ids = [...new Set(notes.map((n) => String(n.created_by || '').trim()))];
   const map = new Map();
-  try {
-    const users = await require('../repositories/usersRepository').getAll();
-    for (const u of users) map.set(String(u.user_id), u.name || String(u.user_id));
-  } catch (e) { logger.warn(`digest notes: author lookup failed: ${e.message}`); }
-  return (id) => {
-    const key = String(id || '').trim();
-    if (!key) return 'Unknown';
-    return map.get(key) || key;
-  };
+  for (const id of ids) {
+    map.set(id, id ? await approvalCards.resolveUserLabel(id, bot) : 'Unknown');
+  }
+  return (id) => map.get(String(id || '').trim()) || 'Unknown';
 }
 
 /**
@@ -247,14 +252,14 @@ async function noteAuthorResolver() {
  * newest first. Paged 3 notes/page; a group's 👤 header repeats when its
  * notes continue onto the next page.
  */
-async function notesForCustomer(settings, customerIdx, page = 0) {
+async function notesForCustomer(settings, customerIdx, page = 0, bot = null) {
   const todayIso = dayInTz(new Date(), settings.DIGEST_TIMEZONE || LAGOS_TZ);
   const { all } = await loadNotes(settings, todayIso);
   const groups = notesGroups(all);
   const group = groups[customerIdx];
   if (!group) return null;
   const notes = all.filter((n) => (n.customer || '(no name)').trim() === group.customer);
-  const nameOf = await noteAuthorResolver();
+  const nameOf = await noteAuthorResolver(notes, bot);
   // Group by author. `notes` is newest-first, so first appearance = the
   // author with the freshest note → Map insertion order is the group order.
   const byAuthor = new Map();
@@ -317,11 +322,11 @@ async function buildSummary(settings, now = new Date()) {
  * Always returns { text, totalPages } — categories without pagination
  * report totalPages 1.
  */
-async function buildDetail(key, settings, now = new Date(), page = 0) {
+async function buildDetail(key, settings, now = new Date(), page = 0, bot = null) {
   const cat = categoryByKey(key);
   if (!cat) return { text: '', totalPages: 1 };
   const tz = settings.DIGEST_TIMEZONE || LAGOS_TZ;
-  const out = await cat.detail(settings, dayInTz(now, tz), page);
+  const out = await cat.detail(settings, dayInTz(now, tz), page, bot);
   return typeof out === 'string' ? { text: out, totalPages: 1 } : out;
 }
 

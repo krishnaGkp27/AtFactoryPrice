@@ -314,7 +314,8 @@ async function submit(bot, chatId, userId) {
 
   const isAdm = auth.isAdmin(userId);
   const excludeId = isAdm ? userId : undefined;
-  await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, String(userId),
+  await approvalEvents.notifyAdminsApprovalRequest(bot, requestId,
+    await require('../services/approvalCards').resolveUserLabel(userId, bot),
     `🏭 Add warehouse: ${name}`, risk.reason, excludeId);
 
   // UX-C1: render success card BEFORE clearing — same lesson as

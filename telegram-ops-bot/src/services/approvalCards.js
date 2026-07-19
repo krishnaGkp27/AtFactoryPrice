@@ -26,14 +26,53 @@ const usersRepository = require('../repositories/usersRepository');
 const { fmtQty } = require('../utils/format');
 const fmtDate = require('../utils/formatDate');
 
-/** Resolve a Telegram user id to the display name used on approval cards. */
-async function resolveUserLabel(userId) {
+/**
+ * Resolve a Telegram user id to a human-readable display name.
+ *
+ * Sources, in order (owner 19-Jul: "everything human-readable"):
+ *   1. Users sheet (user_id → name) — staff added via the bot.
+ *   2. PendingUsers sheet — people who /start-ed but were never onboarded.
+ *   3. Telegram itself via bot.getChat — works for ANYONE who has messaged
+ *      the bot, including env-ADMIN_IDS admins who predate the Users sheet
+ *      and therefore have no row in it (the exact case behind raw ids
+ *      appearing on digest cards). Pass `bot` whenever you have one.
+ *   4. The raw id, only when every source comes up empty.
+ * Results are cached ~10 min so list renders don't hammer Sheets/Telegram.
+ */
+const _nameCache = new Map(); // id → { label, at }
+const NAME_CACHE_TTL_MS = 10 * 60 * 1000;
+
+async function resolveUserLabel(userId, bot) {
+  const key = String(userId || '').trim();
+  if (!key) return 'Unknown';
+  const hit = _nameCache.get(key);
+  if (hit && Date.now() - hit.at < NAME_CACHE_TTL_MS) return hit.label;
+  let label = '';
   try {
-    const u = await usersRepository.findByUserId(String(userId));
-    if (u && u.name) return u.name;
-  } catch (_) { /* fall through */ }
-  return String(userId);
+    const u = await usersRepository.findByUserId(key);
+    if (u && u.name) label = u.name;
+  } catch (_) { /* next source */ }
+  if (!label) {
+    try {
+      const pendingUsersRepository = require('../repositories/pendingUsersRepository');
+      const rows = await pendingUsersRepository.getAll();
+      const p = rows.find((r) => String(r.telegram_id) === key);
+      if (p) label = [p.first_name, p.last_name].filter(Boolean).join(' ') || (p.username ? `@${p.username}` : '');
+    } catch (_) { /* next source */ }
+  }
+  if (!label && bot && typeof bot.getChat === 'function') {
+    try {
+      const c = await bot.getChat(key);
+      label = [c.first_name, c.last_name].filter(Boolean).join(' ') || (c.username ? `@${c.username}` : '');
+    } catch (_) { /* user never messaged the bot */ }
+  }
+  if (!label) label = key;
+  _nameCache.set(key, { label, at: Date.now() });
+  return label;
 }
+
+/** Test hook — clear the name cache. */
+function _resetNameCacheForTests() { _nameCache.clear(); }
 
 /** Best-effort CRM enrichment — returns { phone, address } or {}. */
 async function customerContact(customerName) {
@@ -266,6 +305,7 @@ async function forwardAttachmentsToAdmins(bot, requestId, attachments, excludeId
 
 module.exports = {
   resolveUserLabel,
+  _resetNameCacheForTests,
   buildSaleCard,
   buildSellPackageCard,
   buildReturnCard,

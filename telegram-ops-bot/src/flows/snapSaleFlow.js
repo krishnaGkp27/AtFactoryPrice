@@ -246,6 +246,8 @@ async function handleCallback(bot, callbackQuery) {
     if (session.step !== 'confirm' || !session.bale || !session.customer) return true;
     const b = session.bale;
     const seller = await usersRepository.findByUserId(userId).catch(() => null);
+    const sellerLabel = (seller && seller.name)
+      || await require('../services/approvalCards').resolveUserLabel(userId, bot);
     const requestId = idGenerator.requestId();
     const actionJSON = {
       action: 'sell_package',
@@ -253,7 +255,7 @@ async function handleCallback(bot, callbackQuery) {
       yards: Math.round(b.availableYards), thans: b.availableThans,
       warehouse: b.warehouse || '',
       customer: session.customer, salesDate: todayInLagos(),
-      salesPerson: (seller && seller.name) || userId,
+      salesPerson: sellerLabel,
       // Owner decision (b): the label photo IS the attached sale document —
       // rides the exact ST-1 machinery (admin preview + Drive archival).
       sale_doc_file_id: session.photoFileId || '',
@@ -272,7 +274,7 @@ async function handleCallback(bot, callbackQuery) {
       const approvalEvents = require('../events/approvalEvents');
       const approvalCards = require('../services/approvalCards');
       const card = await approvalCards.buildSellPackageCard(actionJSON);
-      const res = await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, (seller && seller.name) || userId,
+      const res = await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, sellerLabel,
         card, 'All sale operations require admin approval.', excludeId);
       adminCards = (res && res.sent) || 0;
       if (actionJSON.sale_doc_file_id) {

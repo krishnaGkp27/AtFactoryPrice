@@ -451,7 +451,8 @@ async function submit(bot, chatId, userId, msgOrNull) {
     const excludeId = isAdm ? userId : undefined;
     const totalYards = (session.bales || []).reduce((s, b) => s + (b.yards || 0), 0);
     const summary = `📥 Receive Goods — ${aj.warehouse} · ${aj.design} ${aj.shade ? '/ ' + aj.shade : ''} · ${session.bales.length} bales · ${fmtQty(totalYards, { maxFraction: 2 })} yds`;
-    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, String(userId), summary, risk.reason, excludeId);
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId,
+      await require('../services/approvalCards').resolveUserLabel(userId, bot), summary, risk.reason, excludeId);
     await render(bot, chatId, userId, `⏳ Submitted for ${approverLabel} approval.\nRequest: \`${requestId}\``, [cancelRow()]);
     sessionStore.clear(userId);
     return;
