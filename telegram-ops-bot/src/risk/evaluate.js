@@ -48,6 +48,8 @@ const WRITE_ACTIONS = [
   // CNET-1b.1 — staff propose phone/whatsapp/address/note corrections on
   // an existing contact; one non-requester admin approves.
   'update_contact_info',
+  // APR-2 — reminder on/off/cadence change (see ALWAYS list below).
+  'set_reminder_config',
 ];
 
 // Actions that ALWAYS go through the approval queue, regardless of whether
@@ -128,6 +130,10 @@ const ALWAYS_APPROVAL_ACTIONS = [
   // phonebook directly with free-text data. Now every add_contact queues
   // like the cn: paths — one non-requester admin reviews.
   'add_contact',
+  // APR-2 (owner mandate 14-Jul; spec APR-2_REMINDER_CONTROLS.md is the
+  // sign-off trail): reminder toggles always go through approval —
+  // managers may request, a different admin approves (TV-2 semantics).
+  'set_reminder_config',
 ];
 
 /**
@@ -247,6 +253,7 @@ function formatAction(action) {
     record_office_expense: 'office expense batch',
     add_contact_link: 'contact-network addition',
     update_contact_info: 'contact detail update',
+    set_reminder_config: 'reminder on/off/cadence change',
   };
   return map[action] || action.replace(/_/g, ' ');
 }

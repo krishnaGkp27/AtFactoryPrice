@@ -231,6 +231,9 @@ const ACTIVITIES = [
   //   collapses to the status panel for the rest of the day (idempotent).
   // * office_expense queues a batch of expenses for single-admin sign-off.
   // * upload_receipt captures a payment/expense receipt photo.
+  // APR-2 — one screen rules every nudge (admin + per-department toggles,
+  // changes approval-gated). Managers + admins; gating enforced in-flow.
+  { code: 'reminder_controls',     label: 'Reminder Controls',         icon: '⏰', callback: 'act:reminder_controls',  hub: 'daily' },
   { code: 'daily_branch_ops',      label: 'Open Branch (Daily)',       icon: '🌅', callback: 'act:daily_branch_ops',   hub: 'daily' },
   { code: 'office_expense',        label: 'Office Expense',            icon: '💸', callback: 'act:office_expense',     hub: 'daily' },
   { code: 'upload_receipt',        label: 'Upload Receipt',            icon: '🧾', callback: 'act:upload_receipt',     hub: 'daily' },

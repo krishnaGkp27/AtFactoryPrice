@@ -1113,6 +1113,20 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     customMessage = link.duplicate
       ? `ℹ️ ${aj.name} was already linked under ${aj.boss_name}.`
       : `✅ ${aj.name} added under ${aj.boss_name}.`;
+  } else if (aj.action === 'set_reminder_config') {
+    // APR-2 — approved reminder toggle: write the Settings key. The
+    // policy layer reads it live (30s Settings cache), no restart needed.
+    // Falls through to the shared footer (SEC-P2: the row must be marked
+    // approved or it stays re-approvable).
+    const settingsRepo = require('../repositories/settingsRepository');
+    const reminderPolicy = require('./reminderPolicy');
+    const key = aj.setting_key || reminderPolicy.keyFor(aj.scope, aj.dept);
+    await settingsRepo.set(key, String(Number(aj.hours) || 0));
+    try {
+      await auditLogRepository.append('reminder_config_changed',
+        { key, hours: Number(aj.hours) || 0, scope: aj.scope, dept: aj.dept || '' }, approvedBy);
+    } catch (_) { /* best effort */ }
+    customMessage = `Reminders ${Number(aj.hours) > 0 ? `ON (every ${aj.hours}h)` : 'OFF'} for ${aj.scope === 'admin' ? 'admin nudges' : aj.dept}.`;
   } else if (aj.action === 'update_contact_info') {
     // CNET-1b.1 — apply the approved detail change to the Contacts row;
     // phone/address also mirror to the CRM Customers row when the person

@@ -65,9 +65,13 @@ function summarize(aj) {
  */
 async function sweep(bot, { now = Date.now() } = {}) {
   try {
-    const settings = await settingsRepository.getAll();
-    const hours = Number(settings.APPROVAL_REMINDER_HOURS);
-    if (!hours || hours <= 0 || Number.isNaN(hours)) return 0;
+    // APR-2: cadence comes from the reminder policy (REMINDER_HOURS_ADMIN,
+    // falling back to the legacy APPROVAL_REMINDER_HOURS), and a max-age
+    // guard keeps the historic pending backlog from ever flooding again.
+    const reminderPolicy = require('./reminderPolicy');
+    const hours = await reminderPolicy.hoursForAdmin();
+    if (!hours || hours <= 0) return 0;
+    const maxAgeMs = (await reminderPolicy.maxAgeDays()) * 24 * 60 * 60 * 1000;
     const windowMs = hours * 60 * 60 * 1000;
     if (_lastSweepMs && now - _lastSweepMs < windowMs) return 0;
     _lastSweepMs = now;
@@ -78,6 +82,7 @@ async function sweep(bot, { now = Date.now() } = {}) {
         if (!isStandardApprovable(q.actionJSON)) return false;
         const created = Date.parse(q.createdAt || '') || 0;
         if (now - created < MIN_AGE_MS) return false;
+        if (now - created > maxAgeMs) return false; // backlog guard
         const last = _remindedAt.get(q.requestId) || 0;
         return now - last >= windowMs;
       })

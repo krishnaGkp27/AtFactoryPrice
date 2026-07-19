@@ -154,8 +154,13 @@ async function checkOrderReminders() {
   if (!bot) return;
   try {
     const ordersRepo = require('./src/repositories/ordersRepository');
+    const reminderPolicy = require('./src/services/reminderPolicy');
     const pending = await ordersRepo.getPendingReminders();
     for (const order of pending) {
+      // APR-2: member nudges are per-department opt-in. Skipping does NOT
+      // mark the reminder sent — switching the department on later still
+      // delivers it.
+      if (!(await reminderPolicy.shouldRemindUser(order.salesperson_id))) continue;
       try {
         await bot.sendMessage(order.salesperson_id,
           `⏰ *Reminder: Supply order ${order.order_id}*\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQuantity: ${order.quantity}\nScheduled: *${order.scheduled_date}* (tomorrow)\nPayment: ${order.payment_status}\n\nPlease prepare for delivery. Mark done with: "Mark order ${order.order_id} delivered"`,
@@ -173,6 +178,8 @@ async function checkOrderReminders() {
 
 async function checkSampleFollowups() {
   if (!bot) return;
+  // APR-2: admin-directed nudges are opt-in (REMINDER_HOURS_ADMIN > 0).
+  if (!(await require('./src/services/reminderPolicy').hoursForAdmin())) return;
   try {
     const samplesRepo = require('./src/repositories/samplesRepository');
     const pending = await samplesRepo.getPendingFollowups();
@@ -197,6 +204,8 @@ async function checkSampleFollowups() {
 
 async function checkCustomerFollowups() {
   if (!bot) return;
+  // APR-2: admin-directed nudges are opt-in (REMINDER_HOURS_ADMIN > 0).
+  if (!(await require('./src/services/reminderPolicy').hoursForAdmin())) return;
   try {
     const followupsRepo = require('./src/repositories/customerFollowupsRepository');
     const pending = await followupsRepo.getPendingReminders();
@@ -221,6 +230,8 @@ async function checkCustomerFollowups() {
 let lastColdAlertDay = '';
 async function checkColdCustomerAlerts() {
   if (!bot) return;
+  // APR-2: admin-directed nudges are opt-in (REMINDER_HOURS_ADMIN > 0).
+  if (!(await require('./src/services/reminderPolicy').hoursForAdmin())) return;
   const today = new Date().toISOString().split('T')[0];
   const dayOfWeek = new Date().getDay();
   if (dayOfWeek !== 1 || lastColdAlertDay === today) return;

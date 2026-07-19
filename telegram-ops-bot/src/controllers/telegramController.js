@@ -6382,6 +6382,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['rmd:'], handle: (bot, cq) => require('../flows/morningDigestFlow').handleCallback(bot, cq) },
   // SNAP-1 — photo-to-sale (bale label OCR).
   { prefixes: ['sns:'], handle: (bot, cq) => require('../flows/snapSaleFlow').handleCallback(bot, cq) },
+  // APR-2 — ⏰ reminder controls (per-dept toggles behind approval).
+  { prefixes: ['rmn:'], handle: (bot, cq) => require('../flows/reminderConfigFlow').handleCallback(bot, cq) },
 ];
 
 async function handleCallbackQuery(bot, callbackQuery) {
@@ -8844,6 +8846,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
         // queue still enforces 2nd-admin review.
         const bundleSaleFlow = require('../flows/bundleSaleFlow');
         await bundleSaleFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'reminder_controls': {
+        // APR-2 — ⏰ per-department reminder toggles behind approval.
+        const reminderConfigFlow = require('../flows/reminderConfigFlow');
+        await reminderConfigFlow.start(bot, chatId, uid, messageId);
         break;
       }
       case 'warehouse_audit': {

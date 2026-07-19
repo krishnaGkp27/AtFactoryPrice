@@ -1,6 +1,18 @@
-# APR-2 — Per-department reminder controls, in-bot toggle behind 2-admin approval (DRAFT)
+# APR-2 — Per-department reminder controls (SHIPPED 20-Jul-2026)
 
-Status: **draft — owner to lock the decisions below.**
+Status: **shipped** — owner green-lit "next feature release" 20-Jul; all five
+recommended decisions locked as recommended (fold every reminder job under one
+screen; managers may request / admins approve; default OFF; 2/6/12/24h chips;
+14-day backlog guard). Deferred: per-department DISPATCH-stage re-nudges for
+supply requests (needs its own card design — next APR increment).
+
+As-built keys: REMINDER_HOURS_ADMIN (admin nudges: approval sweep cadence +
+on/off for sample/follow-up/cold jobs; falls back to APPROVAL_REMINDER_HOURS),
+REMINDER_HOURS.<Dept> (member nudges e.g. order reminders), REMINDER_MAX_AGE_DAYS
+(default 14). Flow src/flows/reminderConfigFlow.js (rmn:), tile ⏰ Reminder
+Controls (daily hub), action set_reminder_config in WRITE+ALWAYS_APPROVAL,
+executor in inventoryService (falls through the SEC-P2 footer), policy layer
+src/services/reminderPolicy.js gating all four hourly jobs + the sweep.
 Requested 14-Jul-2026. Context: APR-1's first sweeps resurfaced a 41-row
 pending backlog and flooded admin chats; owner paused the feature
 (`APPROVAL_REMINDER_HOURS=0` set in prod Settings, 14-Jul).
