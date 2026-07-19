@@ -281,6 +281,9 @@ const server = app.listen(PORT, async () => {
     // MORN-1 — 09:15 (Lagos) admin morning digest; categories toggle via
     // the ⏰ Morning Digest tile (Settings DIGEST_* keys, no deploy).
     require('./src/services/morningDigest').start(bot);
+    // ATT-C3 — 09:00 attendance nudge to department members who haven't
+    // marked yet (report-by 09:30, owner 19-Jul). ATTENDANCE_* Settings.
+    require('./src/services/attendanceReminder').start(bot);
     // PG-1 — mirror Inventory → Postgres for parity checks (reads stay on
     // Sheets until PG-2). No-op when DATABASE_URL unset or mirror disabled.
     try { require('./src/services/inventoryMirrorService').start(); } catch (e) {

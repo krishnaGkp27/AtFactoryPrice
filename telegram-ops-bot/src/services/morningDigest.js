@@ -118,6 +118,49 @@ const CATEGORIES = [
     },
   },
   {
+    // ATT-C3 (owner 19-Jul): the 10:00 digest lands after the 09:30
+    // report-by deadline, so this is the admin's "who is missing" check.
+    key: 'DIGEST_ATTENDANCE',
+    label: '🕘 Attendance',
+    async summarize(settings, todayIso) {
+      const attendanceService = require('./attendanceService');
+      const audience = await attendanceService.getAudience();
+      if (!audience.length) return { line: '', count: 0 };
+      // Working-day check from the digest's own date (not the wall clock).
+      const cfg = await attendanceService.getConfig();
+      const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(`${todayIso}T12:00:00Z`).getUTCDay()];
+      if (!cfg.workingDays.some((d) => d.toLowerCase() === weekday.toLowerCase())) return { line: '', count: 0 };
+      const { rows } = await attendanceService.getTodayAll();
+      const marked = new Set(rows.map((r) => String(r.telegram_id)));
+      const missing = audience.filter((a) => !marked.has(a.user_id));
+      const line = missing.length
+        ? `🕘 Attendance: *${audience.length - missing.length}/${audience.length}* marked · *${missing.length}* missing`
+        : `🕘 Attendance: *${audience.length}/${audience.length}* — everyone reported ✅`;
+      return { line, count: audience.length };
+    },
+    async detail() {
+      const attendanceService = require('./attendanceService');
+      const cfg = await attendanceService.getConfig();
+      const audience = await attendanceService.getAudience();
+      if (!audience.length) return '🕘 *Attendance* — nobody is required to report (no department members).';
+      const { rows } = await attendanceService.getTodayAll();
+      const byId = new Map(rows.map((r) => [String(r.telegram_id), r]));
+      const missing = audience.filter((a) => !byId.has(a.user_id));
+      const marked = audience.filter((a) => byId.has(a.user_id));
+      let s = `🕘 *Attendance today* — report-by ${cfg.deadlineTime}\n`;
+      if (missing.length) s += `\n*Not reported (${missing.length}):*\n${missing.map((m) => `• ⏳ ${m.name}`).join('\n')}\n`;
+      if (marked.length) {
+        s += `\n*Reported (${marked.length}):*\n${marked.map((m) => {
+          const r = byId.get(m.user_id);
+          const t = String(r.logged_at || '').slice(11, 16);
+          return `• ✅ ${m.name} — ${r.location}${t ? ` · ${t}` : ''}${r.logged_via === 'admin' ? ' (via admin)' : ''}`;
+        }).join('\n')}`;
+      }
+      if (!missing.length) s += '\n_Everyone reported — nothing to chase._';
+      return s;
+    },
+  },
+  {
     key: 'DIGEST_APPROVALS',
     label: '🛂 Approvals',
     async summarize() {

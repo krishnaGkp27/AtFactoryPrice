@@ -32,6 +32,8 @@ const KEYS = {
   REPORT_TIME:           'ATTENDANCE_REPORT_TIME',        // HH:MM (24h)
   CUTOFF_TIME:           'ATTENDANCE_CUTOFF_TIME',        // HH:MM (24h)
   WORKING_DAYS:          'ATTENDANCE_WORKING_DAYS',       // CSV of Mon..Sun
+  DEADLINE_TIME:         'ATTENDANCE_DEADLINE_TIME',      // HH:MM — report-by time (ATT-C3)
+  AUDIENCE:              'ATTENDANCE_AUDIENCE',           // 'departments' | 'list' (ATT-C3)
 };
 
 const DEFAULTS = {
@@ -46,6 +48,10 @@ const DEFAULTS = {
   [KEYS.REPORT_TIME]:          '22:00',
   [KEYS.CUTOFF_TIME]:          '23:30',
   [KEYS.WORKING_DAYS]:         'Mon,Tue,Wed,Thu,Fri,Sat',
+  // Owner mandate 19-Jul-2026: everyone with an assigned department reports
+  // attendance by 09:30.
+  [KEYS.DEADLINE_TIME]:        '09:30',
+  [KEYS.AUDIENCE]:             'departments',
 };
 
 function parseCsv(v) {
@@ -69,7 +75,42 @@ async function getConfig() {
     reportTime:    get(KEYS.REPORT_TIME),
     cutoffTime:    get(KEYS.CUTOFF_TIME),
     workingDays:   parseCsv(get(KEYS.WORKING_DAYS)),
+    deadlineTime:  get(KEYS.DEADLINE_TIME),
+    audienceMode:  get(KEYS.AUDIENCE) === 'list' ? 'list' : 'departments',
   };
+}
+
+/**
+ * ATT-C3 — who must report attendance today.
+ *
+ * Mode 'departments' (default, owner mandate 19-Jul-2026): every ACTIVE
+ * user with at least one assigned department, EXCLUDING admins (role
+ * 'admin' or env ADMIN_IDS — owners don't clock in), UNION the manual
+ * ATTENDANCE_REQUIRED_USERS list so nobody previously enabled loses
+ * access. Mode 'list' keeps the original CSV-only behavior.
+ *
+ * @returns {Promise<Array<{user_id: string, name: string}>>}
+ */
+async function getAudience() {
+  const cfg = await getConfig();
+  const config = require('../config');
+  const users = await usersRepo.getAll();
+  const active = users.filter((u) => (u.status || 'active') === 'active');
+  const byId = new Map(active.map((u) => [String(u.user_id), u]));
+  const out = new Map();
+  if (cfg.audienceMode === 'departments') {
+    for (const u of active) {
+      const isAdmin = (u.role || '') === 'admin' || config.access.adminIds.includes(String(u.user_id));
+      if (!isAdmin && Array.isArray(u.departments) && u.departments.length) {
+        out.set(String(u.user_id), { user_id: String(u.user_id), name: u.name || String(u.user_id) });
+      }
+    }
+  }
+  for (const id of cfg.requiredUsers) {
+    const u = byId.get(String(id));
+    if (u) out.set(String(id), { user_id: String(id), name: u.name || String(id) });
+  }
+  return [...out.values()];
 }
 
 async function setConfigKey(key, value) {
@@ -179,8 +220,10 @@ function weekdayInTz(timezone) {
 // ---------------------------------------------------------------------------
 
 async function isRequired(telegramId) {
-  const cfg = await getConfig();
-  return cfg.requiredUsers.includes(String(telegramId));
+  // ATT-C3: audience-mode aware — department members are required by
+  // default; the manual list still adds people on top (see getAudience).
+  const audience = await getAudience();
+  return audience.some((a) => a.user_id === String(telegramId));
 }
 
 async function isWorkingDay(timezone) {
@@ -277,6 +320,7 @@ module.exports = {
   getRequiredUsersDetailed,
   todayInTz,
   weekdayInTz,
+  getAudience,
   isRequired,
   isWorkingDay,
   getTodayEntry,

@@ -38,6 +38,11 @@ const DEFAULTS = {
   DIGEST_TASKS: 0,
   DIGEST_SAMPLES: 0,
   DIGEST_ORDERS: 0,
+  // ATT-C3 (owner 19-Jul): attendance section ON from day one — the 10:00
+  // digest is the after-deadline "who is missing" check.
+  DIGEST_ATTENDANCE: 1,
+  // ATT-C3 master switch for the 09:00 employee nudge DM.
+  ATTENDANCE_REMINDER_ENABLED: 1,
   FLOW_CLEANUP_HEAVY_TYPES: 'supply_req_flow,grn_flow,bulk_receive_flow,photo_receive_flow,bundle_sale_flow,order_flow,receipt_flow,landed_cost_flow,po_new_flow',
   // BKP-1 — automated daily snapshot of the master sheet into the backup
   // Drive folder. Hour is UTC (1 = 02:00 Lagos); copies older than the
