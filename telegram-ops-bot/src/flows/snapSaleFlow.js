@@ -75,7 +75,8 @@ function matchBales(bales, ocr) {
 async function start(bot, chatId, userId, messageId) {
   sessionStore.set(userId, { type: SESSION_TYPE, step: 'await_photo', flowMessageId: messageId || null, startedAt: Date.now() });
   await render(bot, chatId, userId,
-    '📸 *Snap Sale*\n\nSend a clear photo of the *bale label* (the sack side with Bale No. / Design No. / Colour No.).\n\nI will read it and match the bale for you.',
+    '📸 *Snap Sale*\n\nSend a clear photo of the *bale label* (the sack side with Bale No. / Design No. / Colour No.) — I will read it and match the bale.\n\n'
+    + '📄 Supplying MANY bales to one customer? Send a *PDF* containing the label photos and I will read them ALL together (SNAP-3).',
     [cancelRow()]);
 }
 
@@ -143,6 +144,10 @@ async function handleFile(bot, msg) {
   const chatId = msg.chat.id;
   const session = sessionStore.get(userId);
   if (!session || session.type !== SESSION_TYPE || session.step !== 'await_photo') return false;
+  // SNAP-3 — a PDF of label photos takes the batch path.
+  if (msg.document && /pdf/i.test(msg.document.mime_type || '')) {
+    return handleBatchPdf(bot, msg, session);
+  }
   if (!msg.photo || !msg.photo.length) return false;
   const fileId = msg.photo[msg.photo.length - 1].file_id;
   session.photoFileId = fileId;
@@ -193,6 +198,192 @@ async function handleFile(bot, msg) {
   }
 }
 
+/* ── SNAP-3: PDF batch (many labels, one customer, ONE approval) ── */
+
+async function handleBatchPdf(bot, msg, session) {
+  const userId = String(msg.from.id);
+  const chatId = msg.chat.id;
+  const doc = msg.document;
+  if (doc.file_size && doc.file_size > config.ocr.maxPdfBytes) {
+    await render(bot, chatId, userId,
+      `📄 That PDF is ${(doc.file_size / 1024 / 1024).toFixed(1)} MB — the limit is ${(config.ocr.maxPdfBytes / 1024 / 1024).toFixed(0)} MB. Split it and send again.`,
+      [cancelRow()]);
+    return true;
+  }
+  session.pdfFileId = doc.file_id;
+  sessionStore.set(userId, session);
+  await render(bot, chatId, userId, '📄 Reading every label in the PDF… this can take up to a minute.', [cancelRow()]);
+  try {
+    const { downloadTelegramFile } = require('../utils/telegramFiles');
+    const vision = require('../services/vision');
+    const { buffer } = await downloadTelegramFile(bot, doc.file_id);
+    const ocr = await vision.extractBales(buffer, 'application/pdf');
+    if (!ocr.ok || !ocr.bales || !ocr.bales.length) {
+      const err = ocr.error || 'no labels recognised';
+      const hint = /ANTHROPIC_API_KEY|not supported by the openai provider/i.test(err)
+        ? '\n\n_PDF reading runs on the Claude provider — add ANTHROPIC_API_KEY in Railway to enable it._'
+        : '';
+      await render(bot, chatId, userId, `📄 Could not read the PDF (${mdEscape(err)}).${hint}`,
+        [[{ text: '💰 Open Sell Bale', callback_data: 'act:sell_bale' }], cancelRow()]);
+      return true;
+    }
+
+    const grouped = groupBales(await inventoryRepository.getAll());
+    const matched = [];
+    const skipped = [];
+    const seenLabels = new Set();
+    const seenBales = new Set();
+    for (const b of ocr.bales) {
+      const labelKey = `${String(b.packageNo || '').replace(/\D/g, '')}|${String(b.design || '').toUpperCase()}`;
+      if (!b.packageNo || seenLabels.has(labelKey)) continue; // duplicate page/photo
+      seenLabels.add(labelKey);
+      const matches = matchBales(grouped, b);
+      if (matches.length === 1) {
+        const m = matches[0];
+        const baleKey = `${m.warehouse}|${m.packageNo}`;
+        if (seenBales.has(baleKey)) continue;
+        seenBales.add(baleKey);
+        matched.push(m);
+      } else if (matches.length > 1) {
+        skipped.push({ label: `${b.packageNo} ${b.design || ''}`.trim(), reason: `ambiguous — ${matches.length} locations` });
+      } else {
+        skipped.push({ label: `${b.packageNo} ${b.design || ''}`.trim(), reason: 'not available in the sheet' });
+      }
+    }
+    if (!matched.length) {
+      await render(bot, chatId, userId,
+        `📄 Read ${ocr.bales.length} label(s) but NONE matched an available bale:\n`
+        + skipped.slice(0, 10).map((s) => `  ⚠️ ${mdEscape(s.label)} — ${mdEscape(s.reason)}`).join('\n')
+        + '\n\nSell the normal way instead:',
+        [[{ text: '💰 Open Sell Bale', callback_data: 'act:sell_bale' }], cancelRow()]);
+      return true;
+    }
+    session.batch = { items: matched, skipped };
+    session.bale = null;
+    session.step = 'pick_customer';
+    sessionStore.set(userId, session);
+    await showBatchReview(bot, chatId, userId);
+    return true;
+  } catch (e) {
+    logger.warn(`snap PDF batch failed: ${e.message}`);
+    await render(bot, chatId, userId, '⚠️ Could not process the PDF. Try again, or use 💰 Sell Bale.',
+      [[{ text: '💰 Open Sell Bale', callback_data: 'act:sell_bale' }], cancelRow()]);
+    return true;
+  }
+}
+
+function batchSummaryLines(batch, cap = 12) {
+  const lines = batch.items.slice(0, cap).map((m) =>
+    `  ✅ *${mdEscape(m.packageNo)}* — ${mdEscape(m.design)} · ${mdEscape(m.warehouse)} · ${m.availableThans} thans · ${Math.round(m.availableYards)} yds`);
+  if (batch.items.length > cap) lines.push(`  …+${batch.items.length - cap} more matched`);
+  for (const s of batch.skipped.slice(0, 6)) lines.push(`  ⚠️ ${mdEscape(s.label)} — ${mdEscape(s.reason)} (skipped)`);
+  if (batch.skipped.length > 6) lines.push(`  …+${batch.skipped.length - 6} more skipped`);
+  return lines.join('\n');
+}
+
+async function showBatchReview(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  const batch = session.batch;
+  const firstDesign = batch.items[0].design;
+  const recent = (await transactionsRepository.getCustomersByDesign(firstDesign).catch(() => [])).slice(0, 6);
+  session._recent = recent;
+  sessionStore.set(userId, session);
+  const rows = chunk(recent.map((c, i) => ({ text: `👤 ${c}`, callback_data: `${NS}cu:${i}` })), 2);
+  rows.push([{ text: '📋 All customers', callback_data: `${NS}all:0` }]);
+  rows.push(cancelRow());
+  const totalYards = batch.items.reduce((s, m) => s + m.availableYards, 0);
+  await render(bot, chatId, userId,
+    `📄 *PDF batch — ${batch.items.length} bale(s) matched* (${Math.round(totalYards)} yds)\n\n`
+    + `${batchSummaryLines(batch)}\n\n`
+    + '*Who is buying the whole batch?*',
+    rows);
+}
+
+async function showBatchConfirm(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  const batch = session.batch;
+  const totalYards = batch.items.reduce((s, m) => s + m.availableYards, 0);
+  const totalThans = batch.items.reduce((s, m) => s + m.availableThans, 0);
+  await render(bot, chatId, userId,
+    `📄 *Confirm batch sale*\n\n${batchSummaryLines(batch)}\n\n`
+    + `Total: *${batch.items.length} bales* (${totalThans} thans), *${Math.round(totalYards)} yds*\n`
+    + `👤 Customer: *${mdEscape(session.customer)}*\n📅 ${todayInLagos()}\n\n`
+    + '_The PDF is attached as the sale document. Rate and payment are entered by the approving admin._',
+    [[{ text: '✅ Submit for approval', callback_data: `${NS}ok` }], cancelRow()]);
+}
+
+async function submitBatch(bot, chatId, userId, session) {
+  const batch = session.batch;
+  const seller = await usersRepository.findByUserId(userId).catch(() => null);
+  const sellerLabel = (seller && seller.name)
+    || await require('../services/approvalCards').resolveUserLabel(userId, bot);
+  const requestId = idGenerator.requestId();
+  const totalYards = Math.round(batch.items.reduce((s, m) => s + m.availableYards, 0));
+  const yardsByDesign = {};
+  for (const m of batch.items) {
+    yardsByDesign[m.design] = (yardsByDesign[m.design] || 0) + m.availableYards;
+  }
+  const actionJSON = {
+    action: 'sale_bundle',
+    items: batch.items.map((m) => ({ type: 'package', packageNo: m.packageNo })),
+    customer: session.customer,
+    salesDate: todayInLagos(),
+    salesPerson: sellerLabel,
+    paymentMode: '',
+    totalYards,
+    yardsByDesign,
+    // The PDF IS the attached sale document (ST-1 preview + Drive archival).
+    sale_doc_file_id: session.pdfFileId || '',
+    sale_doc_type: 'document',
+    source: 'snap_pdf',
+  };
+  await approvalQueueRepository.append({
+    requestId, user: userId, actionJSON,
+    riskReason: 'All sale operations require admin approval.', status: 'pending',
+  });
+  await auditLogRepository.append('approval_queued',
+    { requestId, action: 'sale_bundle', source: 'snap_pdf', bales: batch.items.length, skipped: batch.skipped.length }, userId);
+
+  let adminCards = 0;
+  const excludeId = config.access.adminIds.includes(userId) ? userId : undefined;
+  try {
+    const approvalEvents = require('../events/approvalEvents');
+    const approvalCards = require('../services/approvalCards');
+    let card = await approvalCards.buildSaleCard({
+      headline: 'Sale Request (Snap PDF batch)',
+      customer: session.customer,
+      salesPerson: sellerLabel,
+      salesDate: actionJSON.salesDate,
+      items: batch.items.map((m) => ({
+        packageNo: m.packageNo, design: m.design, shade: m.shade,
+        thans: m.availableThans, yards: Math.round(m.availableYards), warehouse: m.warehouse,
+      })),
+      docAttached: !!actionJSON.sale_doc_file_id,
+      docLabel: 'Supply PDF',
+    });
+    if (batch.skipped.length) {
+      card += `\n⚠️ Skipped from the PDF (${batch.skipped.length}): `
+        + batch.skipped.map((s) => `${s.label} (${s.reason})`).join('; ');
+    }
+    const res = await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, sellerLabel,
+      card, 'All sale operations require admin approval.', excludeId);
+    adminCards = (res && res.sent) || 0;
+    if (actionJSON.sale_doc_file_id) {
+      await approvalCards.forwardAttachmentsToAdmins(bot, requestId,
+        [{ fileId: actionJSON.sale_doc_file_id, kind: 'document', caption: `📄 Supply PDF for request ${requestId}` }], excludeId);
+    }
+  } catch (e) { logger.warn(`snap pdf cards: ${e.message}`); }
+
+  const notifyWarning = adminCards === 0
+    ? '\n\n⚠️ Admins could not be notified right now — ask an admin to check Pending Approvals.'
+    : '';
+  await render(bot, chatId, userId,
+    `✅ *Submitted.*\n\n📄 ${batch.items.length} bale(s) → *${mdEscape(session.customer)}*\nRequest: \`${requestId}\`\n\n⏳ Waiting for admin approval (rate + payment entered there).${notifyWarning}`,
+    [[{ text: '📸 Snap another', callback_data: 'act:snap_sale' }, { text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+  sessionStore.clear(userId);
+  return true;
+}
+
 /* ── callbacks ── */
 
 async function handleCallback(bot, callbackQuery) {
@@ -224,25 +415,32 @@ async function handleCallback(bot, callbackQuery) {
   }
   if (rest === 'bk') {
     if (session.step === 'confirm') { session.step = 'pick_customer'; sessionStore.set(userId, session); }
-    await showMatch(bot, chatId, userId);
+    if (session.batch) await showBatchReview(bot, chatId, userId);
+    else await showMatch(bot, chatId, userId);
     return true;
   }
   if (rest.startsWith('all:')) {
-    if (!session.bale) return true;
+    if (!session.bale && !session.batch) return true;
     await showAllCustomers(bot, chatId, userId, Number(rest.slice(4)));
     return true;
   }
   if (rest.startsWith('cu:') || rest.startsWith('ca:')) {
     const list = rest.startsWith('cu:') ? session._recent : session._all;
     const name = (list || [])[Number(rest.slice(3))];
-    if (!name || !session.bale) return true;
+    if (!name || (!session.bale && !session.batch)) return true;
     session.customer = name;
     session.step = 'confirm';
     sessionStore.set(userId, session);
-    await showConfirm(bot, chatId, userId);
+    if (session.batch) await showBatchConfirm(bot, chatId, userId);
+    else await showConfirm(bot, chatId, userId);
     return true;
   }
   if (rest === 'ok') {
+    // SNAP-3 batch submit: one sale_bundle for the whole PDF.
+    if (session.batch) {
+      if (session.step !== 'confirm' || !session.customer || !session.batch.items.length) return true;
+      return submitBatch(bot, chatId, userId, session);
+    }
     if (session.step !== 'confirm' || !session.bale || !session.customer) return true;
     const b = session.bale;
     const seller = await usersRepository.findByUserId(userId).catch(() => null);

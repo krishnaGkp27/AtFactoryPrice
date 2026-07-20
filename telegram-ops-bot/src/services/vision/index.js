@@ -100,10 +100,24 @@ async function extractBales(buffer, mimeType, opts = {}) {
     return errorResp('empty_buffer', 'Empty or invalid file buffer.');
   }
 
-  if (buffer.length > config.ocr.maxFileBytes) {
-    const mb = (config.ocr.maxFileBytes / 1024 / 1024).toFixed(1);
+  const sizeCap = (mimeType || '').toLowerCase() === 'application/pdf'
+    ? (config.ocr.maxPdfBytes || config.ocr.maxFileBytes)
+    : config.ocr.maxFileBytes;
+  if (buffer.length > sizeCap) {
+    const mb = (sizeCap / 1024 / 1024).toFixed(1);
     return errorResp('file_too_large',
       `File too large (${(buffer.length / 1024 / 1024).toFixed(2)} MB). Limit is ${mb} MB.`);
+  }
+
+  // SNAP-3 spend guard (owner 20-Jul): a hard daily cap on metered vision
+  // calls so cost can never creep silently. Settings OCR_DAILY_CAP
+  // (default 100/day ≈ 2x the owner's stated 50-60 image threshold).
+  // In-memory counter — resets on redeploy, which only ever UNDER-counts;
+  // acceptable for a guard rail. The stub provider is never counted.
+  const capCheck = await checkDailyCap(opts.providerOverride || config.ocr.provider);
+  if (!capCheck.ok) {
+    return errorResp('ocr_daily_cap',
+      `Daily OCR limit reached (${capCheck.cap} reads). It resets at midnight — or raise OCR_DAILY_CAP in Settings.`);
   }
 
   const mime = (mimeType || '').toLowerCase();
@@ -132,6 +146,30 @@ async function extractBales(buffer, mimeType, opts = {}) {
     }
   }
   return last || errorResp('unknown_provider', `No OCR provider available for "${requested}".`);
+}
+
+/* ── SNAP-3: daily spend guard ── */
+const _usage = { day: '', count: 0 };
+
+async function checkDailyCap(providerName) {
+  if (providerName === 'stub') return { ok: true, cap: Infinity };
+  const day = new Date().toISOString().slice(0, 10);
+  if (_usage.day !== day) { _usage.day = day; _usage.count = 0; }
+  let cap = 100;
+  try {
+    const settings = await require('../../repositories/settingsRepository').getAll();
+    const v = Number(settings.OCR_DAILY_CAP);
+    if (Number.isFinite(v) && v > 0) cap = v;
+  } catch (_) { /* fail-open to the default cap */ }
+  if (_usage.count >= cap) return { ok: false, cap };
+  _usage.count += 1;
+  return { ok: true, cap };
+}
+
+/** Today's metered OCR call count (since last restart) + the active cap. */
+function getOcrUsage() {
+  const day = new Date().toISOString().slice(0, 10);
+  return { day, today: _usage.day === day ? _usage.count : 0 };
 }
 
 function errorResp(code, message) {
@@ -200,6 +238,7 @@ function avg(arr) {
 
 module.exports = {
   extractBales,
+  getOcrUsage,
   PROVIDERS,
   SUPPORTED_MIMES,
 };

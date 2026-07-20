@@ -74,9 +74,11 @@ test('unparseable output, unsupported mime, and missing key fail cleanly', async
   const bad = await callWithMock([{ type: 'text', text: 'sorry, no JSON here' }]);
   assert.equal(bad.ok, false);
   assert.match(bad.error, /unparseable/);
-  const pdf = await provider.extractBales(Buffer.from('x'), 'application/pdf');
-  assert.equal(pdf.ok, false);
-  assert.match(pdf.error, /not supported by the anthropic provider|ANTHROPIC_API_KEY/);
+  // PDFs are SUPPORTED since SNAP-3 — an actually-unsupported mime still
+  // fails cleanly without touching the network.
+  const heic = await provider.extractBales(Buffer.from('x'), 'image/heic');
+  assert.equal(heic.ok, false);
+  assert.match(heic.error, /not supported by the anthropic provider|ANTHROPIC_API_KEY/);
 });
 
 test('OCR_PROVIDER=auto routes to anthropic when its key exists', async () => {
@@ -85,6 +87,56 @@ test('OCR_PROVIDER=auto routes to anthropic when its key exists', async () => {
     vision.extractBales(Buffer.from('fake-image-bytes'), 'image/jpeg', { providerOverride: 'auto' }));
   assert.equal(r.ok, true);
   assert.equal(r.provider, 'anthropic', 'auto chain preferred Claude');
+});
+
+test('SNAP-3: PDFs go up as a document block on the Sonnet model with no thinking', async () => {
+  const json = JSON.stringify({
+    bales: [
+      { packageNo: '896', design: '77016', shade: '5', pcs: 2, meters: 120, confidence: 0.9 },
+      { packageNo: '897', design: '77016', shade: '2', pcs: 1, meters: 55, confidence: 0.85 },
+      { packageNo: '901', design: '9032', shade: '1', pcs: 2, meters: 110, confidence: 0.8 },
+    ],
+    rawText: 'three labels',
+  });
+  let captured = null;
+  const origCreate = Messages.prototype.create;
+  Messages.prototype.create = async (req) => { captured = req; return { content: [{ type: 'text', text: json }] }; };
+  try {
+    const r = await provider.extractBales(Buffer.from('%PDF-1.4 fake'), 'application/pdf');
+    assert.equal(r.ok, true);
+    assert.equal(r.bales.length, 3, 'every label in the PDF extracted');
+    assert.equal(captured.model, 'claude-sonnet-4-6', 'owner cost decision: Sonnet for PDFs');
+    assert.equal(captured.thinking, undefined, 'no extended thinking on the PDF path');
+    const docBlock = captured.messages[0].content.find((b) => b.type === 'document');
+    assert.ok(docBlock, 'PDF sent as a native document block');
+    assert.equal(docBlock.source.media_type, 'application/pdf');
+  } finally {
+    Messages.prototype.create = origCreate;
+  }
+});
+
+test('SNAP-3: OCR_DAILY_CAP blocks metered calls beyond the limit', async () => {
+  const settingsRepository = require(path.join(SRC, 'repositories/settingsRepository'));
+  const savedGetAll = settingsRepository.getAll;
+  settingsRepository.getAll = async () => ({ OCR_DAILY_CAP: 1 });
+  const origCreate = Messages.prototype.create;
+  Messages.prototype.create = async () => ({ content: [{ type: 'text', text: JSON.stringify({ bales: [{ packageNo: '1', design: '2', confidence: 0.9 }], rawText: '' }) }] });
+  try {
+    // Fresh dispatcher state: the cap counter is module-level, so consume
+    // relative to whatever earlier tests used by setting cap = used + 1.
+    const used = vision.getOcrUsage().today;
+    settingsRepository.getAll = async () => ({ OCR_DAILY_CAP: used + 1 });
+    const first = await vision.extractBales(Buffer.from('img'), 'image/jpeg', { providerOverride: 'anthropic' });
+    assert.equal(first.ok, true, 'call under the cap succeeds');
+    const second = await vision.extractBales(Buffer.from('img'), 'image/jpeg', { providerOverride: 'anthropic' });
+    assert.equal(second.ok, false);
+    assert.match(second.error, /ocr_daily_cap/, 'call over the cap is refused');
+    const stub = await vision.extractBales(Buffer.from('img'), 'image/jpeg', { providerOverride: 'stub' });
+    assert.equal(stub.ok, true, 'the free stub provider is never capped');
+  } finally {
+    Messages.prototype.create = origCreate;
+    settingsRepository.getAll = savedGetAll;
+  }
 });
 
 test('auto chain falls through to openai when the anthropic call throws', async () => {

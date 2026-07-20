@@ -276,7 +276,10 @@ async function getOpsOverview(req, res) {
       return { today: rows.length, openFlags: Math.max(flagged - cleared, 0) };
     }),
   ]);
-  res.json({ ok: true, generatedAt: new Date().toISOString(), approvals, attendance, notes, samples, orders, audits });
+  // SNAP-3 spend visibility: today's metered OCR reads (since restart).
+  let ocr = { error: 'unavailable' };
+  try { ocr = require('../services/vision').getOcrUsage(); } catch (_) { /* section-isolated */ }
+  res.json({ ok: true, generatedAt: new Date().toISOString(), approvals, attendance, notes, samples, orders, audits, ocr });
 }
 
 async function getOpsApprovals(req, res) {

@@ -3216,6 +3216,14 @@ async function handleFileMessage(bot, msg) {
     if (handled) return;
   }
 
+  // SNAP-3 — a PDF document in Snap Sale takes the batch path.
+  if (session && session.type === 'snap_sale_flow' && session.step === 'await_photo'
+      && msg.document && /pdf/i.test(msg.document.mime_type || '')) {
+    const snapSaleFlow = require('../flows/snapSaleFlow');
+    const handled = await snapSaleFlow.handleFile(bot, msg);
+    if (handled) return;
+  }
+
   if (session && session.type === 'snap_sale_flow' && session.step === 'await_photo' && msg.photo) {
     const handled = await require('../flows/snapSaleFlow').handleFile(bot, msg);
     if (handled) return;

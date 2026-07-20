@@ -148,6 +148,14 @@ const config = {
     openaiModel: process.env.OCR_OPENAI_MODEL || 'gpt-4o',
     /** Claude vision model when provider=anthropic */
     anthropicModel: process.env.OCR_ANTHROPIC_MODEL || 'claude-opus-4-8',
+    /**
+     * SNAP-3 — model for PDF batch reads. Owner cost decision 20-Jul:
+     * Sonnet, not Opus ("caviar prices for rice") — ~60 labels/day stays
+     * ~$20-25/mo worst case. Swap via env if accuracy ever needs more.
+     */
+    anthropicPdfModel: process.env.OCR_ANTHROPIC_PDF_MODEL || 'claude-sonnet-4-6',
+    /** PDFs may bundle many label photos — separate, larger cap (10 MB). */
+    maxPdfBytes: parseInt(process.env.OCR_MAX_PDF_BYTES, 10) || 10 * 1024 * 1024,
     /** Confidence in [0..1] below which a row is shown red + forces edit */
     lowConfidenceThreshold: parseFloat(process.env.OCR_LOW_CONF) || 0.7,
     /** Max image / PDF size in bytes (5 MB) */

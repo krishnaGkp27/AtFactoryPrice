@@ -40,19 +40,25 @@ async function extractBales(buffer, mimeType /* , opts */) {
   if (!client) {
     return { ok: false, provider: 'anthropic', bales: [], rawText: '', overallConfidence: 0, warnings: [], error: 'ANTHROPIC_API_KEY is not configured.' };
   }
-  if (!IMAGE_MIMES.includes(mimeType)) {
-    return { ok: false, provider: 'anthropic', bales: [], rawText: '', overallConfidence: 0, warnings: [], error: `File type ${mimeType} not supported by the anthropic provider — send a JPG/PNG photo.` };
+  const isPdf = mimeType === 'application/pdf';
+  if (!isPdf && !IMAGE_MIMES.includes(mimeType)) {
+    return { ok: false, provider: 'anthropic', bales: [], rawText: '', overallConfidence: 0, warnings: [], error: `File type ${mimeType} not supported by the anthropic provider — send a JPG/PNG photo or a PDF.` };
   }
 
+  // SNAP-3: PDFs go up as a native document block (Claude reads every page
+  // in ONE call — the whole supply run's labels together). Cost decision
+  // (owner 20-Jul): Sonnet model, no extended thinking on the PDF path.
   const resp = await client.messages.create({
-    model: config.ocr.anthropicModel,
-    max_tokens: 3000,
-    thinking: { type: 'adaptive' },
+    model: isPdf ? config.ocr.anthropicPdfModel : config.ocr.anthropicModel,
+    max_tokens: isPdf ? 4000 : 3000,
+    ...(isPdf ? {} : { thinking: { type: 'adaptive' } }),
     messages: [{
       role: 'user',
       content: [
         { type: 'text', text: PROMPT },
-        { type: 'image', source: { type: 'base64', media_type: mimeType, data: buffer.toString('base64') } },
+        isPdf
+          ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } }
+          : { type: 'image', source: { type: 'base64', media_type: mimeType, data: buffer.toString('base64') } },
       ],
     }],
   });

@@ -43,6 +43,8 @@ const DEFAULTS = {
   DIGEST_ATTENDANCE: 1,
   // ATT-C3 master switch for the 09:00 employee nudge DM.
   ATTENDANCE_REMINDER_ENABLED: 1,
+  // SNAP-3 spend guard: max metered vision (OCR) calls per day.
+  OCR_DAILY_CAP: 100,
   FLOW_CLEANUP_HEAVY_TYPES: 'supply_req_flow,grn_flow,bulk_receive_flow,photo_receive_flow,bundle_sale_flow,order_flow,receipt_flow,landed_cost_flow,po_new_flow',
   // BKP-1 — automated daily snapshot of the master sheet into the backup
   // Drive folder. Hour is UTC (1 = 02:00 Lagos); copies older than the
