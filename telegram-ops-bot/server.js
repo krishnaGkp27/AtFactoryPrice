@@ -89,6 +89,32 @@ app.get('/api/ops/attendance', apiController.getOpsAttendance);
 app.get('/api/ops/stocktakes', apiController.getOpsStockTakes);
 app.get('/ops', (req, res) => res.sendFile(require('path').join(__dirname, '..', 'ops.html')));
 
+// ANA-1a — magic-link login: the bot mints a single-use token; redeeming
+// it here sets a role-scoped session cookie. Telegram IS the identity
+// provider — no passwords. Invalid/expired links get a friendly page.
+app.get('/auth', (req, res) => {
+  const webSessionService = require('./src/services/webSessionService');
+  const out = webSessionService.redeemLoginToken(req.query.t);
+  if (!out) {
+    return res.status(403).type('html').send(
+      '<meta name="viewport" content="width=device-width, initial-scale=1">'
+      + '<body style="font-family:sans-serif;padding:40px;text-align:center">'
+      + '<h2>Link expired</h2><p>Login links work once and expire after 5 minutes.<br>'
+      + 'Open the bot and tap <b>📊 Dashboard</b> again for a fresh one.</p></body>');
+  }
+  res.setHeader('Set-Cookie',
+    `afp_session=${out.sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(require('./src/services/webSessionService').SESSION_TTL_MS / 1000)}${config.baseUrl.startsWith('https') ? '; Secure' : ''}`);
+  const to = String(req.query.to || '/ops');
+  res.redirect(['/ops', '/analytics'].includes(to) ? to : '/ops');
+});
+app.get('/auth/logout', (req, res) => {
+  const raw = String(req.headers.cookie || '');
+  const m = raw.match(/afp_session=([^;]+)/);
+  if (m) require('./src/services/webSessionService').destroySession(m[1]);
+  res.setHeader('Set-Cookie', 'afp_session=; Path=/; HttpOnly; Max-Age=0');
+  res.redirect('/ops');
+});
+
 // INV-1b — public invoice statement (token = capability; OTP phase comes
 // with Meta onboarding). .pdf route MUST register before the HTML route so
 // "/i/abc.pdf" doesn't resolve as token "abc.pdf".

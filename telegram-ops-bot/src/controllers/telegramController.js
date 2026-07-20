@@ -8848,6 +8848,38 @@ async function handleCallbackQuery(bot, callbackQuery) {
         await bundleSaleFlow.start(bot, chatId, uid, messageId);
         break;
       }
+      case 'web_dashboard': {
+        // ANA-1a — mint a single-use magic link (Telegram is the identity
+        // provider). Admins see everything; managers get their departments'
+        // numbers + their warehouses' audits, enforced server-side.
+        const usersRepository = require('../repositories/usersRepository');
+        const u = await usersRepository.findByUserId(uid).catch(() => null);
+        const isAdm = config.access.adminIds.includes(uid) || auth.isAdmin(uid);
+        const isMgr = !!u && String(u.role || '').toLowerCase() === 'manager';
+        if (!isAdm && !isMgr) {
+          await bot.sendMessage(chatId, '📊 The web dashboard is for admins and managers.');
+          break;
+        }
+        if (!config.baseUrl) {
+          await bot.sendMessage(chatId, '📊 BASE_URL is not configured on the server — set it in Railway variables first.');
+          break;
+        }
+        const webSessionService = require('../services/webSessionService');
+        const token = webSessionService.mintLoginToken({
+          userId: uid,
+          name: (u && u.name) || uid,
+          role: isAdm ? 'admin' : 'manager',
+          departments: (u && u.departments) || [],
+          warehouses: (u && u.warehouses) || [],
+        });
+        await bot.sendMessage(chatId,
+          `📊 *Your dashboard login*\n\nOne tap, no password — this link works ONCE and expires in 5 minutes. Don't forward it.`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '📊 Open Dashboard', url: `${config.baseUrl}/auth?t=${token}` }]] },
+          });
+        break;
+      }
       case 'reminder_controls': {
         // APR-2 — ⏰ per-department reminder toggles behind approval.
         const reminderConfigFlow = require('../flows/reminderConfigFlow');

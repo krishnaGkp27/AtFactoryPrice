@@ -71,7 +71,24 @@ changes the iframe, not the architecture.
   links (url_launcher is already a dependency) so "view analytics" works
   from mobile identically.
 
-## Decisions the owner should confirm (any time)
+## Owner decisions — LOCKED 20-Jul-2026
+
+1. BI tool: **Looker Studio** to start (Metabase/Power BI revisit later).
+2. Audience: **admins + managers**; managers see their own departments'
+   numbers only, with region scoping via their warehouses (e.g. the Kano
+   person sees Kano numbers).
+3. PG-1: ready; exact configuration lands 21-Jul morning — proceed with
+   Sheets-first, sessions move to Postgres when it exists.
+
+Status: **ANA-1a SHIPPED** (magic-link login: 📊 Dashboard tile mints a
+single-use 5-min link; /auth redeems into a 12h role-scoped session
+cookie; ops API accepts session or API key; manager sessions are
+dept-scoped on attendance/overview, warehouse-scoped on stock audits,
+403 on approvals oversight; sessions in-memory until PG-1 — a redeploy
+logs web users out, they just tap the tile again). Next: ANA-1b Looker
+Studio embed at /analytics.
+
+## Original decision menu (superseded)
 
 1. **BI tool**: start free with Looker Studio and graduate to Metabase,
    or is Power BI licensing already available/preferred?

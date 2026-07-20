@@ -204,6 +204,9 @@ const ACTIVITIES = [
   // Read-only; sale price/value gated by pricingService.canSeeSalePrice.
   { code: 'sold_bales_lookup',     label: 'Sold Bales Lookup',         icon: '🔎', callback: 'act:sold_bales_lookup',  hub: 'reporting' },
   // ATT-RPT-1 — read-only attendance report (today + window stats). Admin-only for now.
+  // ANA-1a — magic-link web login (admins + managers; role-gated in the
+  // act: case). Mints a single-use link into the ops dashboard.
+  { code: 'web_dashboard',         label: 'Dashboard (web)',           icon: '📊', callback: 'act:web_dashboard',      hub: 'reporting' },
   { code: 'attendance_report',     label: 'Attendance Report',         icon: '🗓', callback: 'act:attendance_report',  hub: 'reporting' },
   // T3 — admin read-only lens on the supply-order pipeline (Orders +
   // Customers + LedgerBalanceCache joined into one view).

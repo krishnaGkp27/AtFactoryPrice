@@ -121,9 +121,11 @@
   function base(){return (localStorage.getItem(LS_BASE)||'').replace(/\/$/,'');}
   function key(){return localStorage.getItem(LS_KEY)||'';}
 
+  var sessionMode=false; // ANA-1a: magic-link cookie session (via the bot's 📊 Dashboard tile)
   function api(path){
-    return fetch(base()+path,{headers:{'X-API-Key':key()}}).then(function(r){
-      if(r.status===403) throw new Error('Key rejected — check BOT_API_KEY.');
+    var opts=sessionMode?{credentials:'same-origin'}:{headers:{'X-API-Key':key()}};
+    return fetch(base()+path,opts).then(function(r){
+      if(r.status===403) throw new Error(sessionMode?'Session expired — tap 📊 Dashboard in the bot for a fresh link.':'Key rejected — check BOT_API_KEY.');
       if(!r.ok) throw new Error('HTTP '+r.status);
       return r.json();
     });
@@ -224,7 +226,15 @@
   if(!base()){ // sensible default when served by the bot itself
     localStorage.setItem(LS_BASE, location.origin);
   }
-  if(key()){ openApp(); } else { showSetup(''); }
+  // ANA-1a: try the magic-link session first (cookie set by /auth). Falls
+  // back to the key-paste setup only when there is no live session.
+  sessionMode=true;
+  fetch(location.origin+'/api/ops/overview',{credentials:'same-origin'})
+    .then(function(r){
+      if(r.ok){ localStorage.setItem(LS_BASE, location.origin); openApp(); }
+      else { sessionMode=false; if(key()){ openApp(); } else { showSetup(''); } }
+    })
+    .catch(function(){ sessionMode=false; if(key()){ openApp(); } else { showSetup(''); } });
 })();
 </script>
 </body>

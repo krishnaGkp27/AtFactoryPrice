@@ -196,16 +196,37 @@ async function getContactsGraph(req, res) {
  * sheet must not blank the whole dashboard, so sections carry their own
  * error strings instead of failing the request. */
 
+/**
+ * ANA-1a: humans authenticate with a magic-link SESSION (cookie, minted by
+ * the bot — Telegram is the identity provider); servers keep using the
+ * X-API-Key. Returns the acting identity: a session identity for humans,
+ * or {role:'admin', via:'api_key'} for the key. False (response already
+ * sent) when neither is valid.
+ */
 function gate(req, res) {
+  const webSessionService = require('../services/webSessionService');
+  const identity = webSessionService.identityFromRequest(req);
+  if (identity) return identity;
   if (!config.botApiKey) {
     res.status(503).json({ ok: false, error: 'Ops API disabled: server has no BOT_API_KEY configured.' });
     return false;
   }
   if (!hasValidApiKey(req)) {
-    res.status(403).json({ ok: false, error: 'Invalid or missing X-API-Key.' });
+    res.status(403).json({ ok: false, error: 'Sign in via the bot (📊 Dashboard) or provide X-API-Key.' });
     return false;
   }
-  return true;
+  return { role: 'admin', via: 'api_key', departments: [], warehouses: [] };
+}
+
+/**
+ * ANA-1 owner decision (20-Jul): managers see THEIR departments' numbers
+ * only; region scoping via their warehouses list. Admins see everything.
+ */
+function scopeUsers(identity, users) {
+  if (!identity || identity.role === 'admin') return users;
+  const depts = new Set((identity.departments || []).map((d) => d.toLowerCase()));
+  return users.filter((u) => (u.departments || [u.department]).filter(Boolean)
+    .some((d) => depts.has(String(d).toLowerCase())));
 }
 
 async function section(fn) {
@@ -213,7 +234,8 @@ async function section(fn) {
 }
 
 async function getOpsOverview(req, res) {
-  if (!gate(req, res)) return;
+  const identity = gate(req, res);
+  if (!identity) return;
   const todayIso = new Date().toISOString().slice(0, 10);
   const [approvals, attendance, notes, samples, orders, audits] = await Promise.all([
     section(async () => {
@@ -222,7 +244,12 @@ async function getOpsOverview(req, res) {
     }),
     section(async () => {
       const attendanceService = require('../services/attendanceService');
-      const audience = await attendanceService.getAudience();
+      let audience = await attendanceService.getAudience();
+      if (identity.role !== 'admin') {
+        const users = await require('../repositories/usersRepository').getAll();
+        const inScope = new Set(scopeUsers(identity, users).map((u) => String(u.user_id)));
+        audience = audience.filter((a) => inScope.has(a.user_id));
+      }
       const { rows } = await attendanceService.getTodayAll();
       const marked = new Set(rows.map((r) => String(r.telegram_id)));
       return { required: audience.length, marked: audience.filter((a) => marked.has(a.user_id)).length };
@@ -253,7 +280,11 @@ async function getOpsOverview(req, res) {
 }
 
 async function getOpsApprovals(req, res) {
-  if (!gate(req, res)) return;
+  const identity = gate(req, res);
+  if (!identity) return;
+  if (identity.role !== 'admin') {
+    return res.status(403).json({ ok: false, error: 'Approvals oversight is admin-only.' });
+  }
   try {
     const pending = await require('../repositories/approvalQueueRepository').getAllPending();
     const { formatAction } = require('../risk/evaluate');
@@ -276,11 +307,17 @@ async function getOpsApprovals(req, res) {
 }
 
 async function getOpsAttendance(req, res) {
-  if (!gate(req, res)) return;
+  const identity = gate(req, res);
+  if (!identity) return;
   try {
     const attendanceService = require('../services/attendanceService');
     const cfg = await attendanceService.getConfig();
-    const audience = await attendanceService.getAudience();
+    let audience = await attendanceService.getAudience();
+    if (identity.role !== 'admin') {
+      const users = await require('../repositories/usersRepository').getAll();
+      const inScope = new Set(scopeUsers(identity, users).map((u) => String(u.user_id)));
+      audience = audience.filter((a) => inScope.has(a.user_id));
+    }
     const { date, rows } = await attendanceService.getTodayAll();
     const byId = new Map(rows.map((r) => [String(r.telegram_id), r]));
     res.json({
@@ -297,9 +334,16 @@ async function getOpsAttendance(req, res) {
 }
 
 async function getOpsStockTakes(req, res) {
-  if (!gate(req, res)) return;
+  const identity = gate(req, res);
+  if (!identity) return;
   try {
-    const all = await require('../repositories/stockTakesRepository').getAll();
+    let all = await require('../repositories/stockTakesRepository').getAll();
+    if (identity.role !== 'admin') {
+      // Region scoping (owner 20-Jul): a manager attached to e.g. the Kano
+      // region sees their own warehouses' audits only.
+      const mine = new Set((identity.warehouses || []).map((w) => String(w).toLowerCase()));
+      all = all.filter((r) => mine.has(String(r.warehouse).toLowerCase()));
+    }
     const recent = [...all].sort((a, b) => String(b.audited_at).localeCompare(String(a.audited_at))).slice(0, 80)
       .map((r) => ({
         id: r.stocktake_id, warehouse: r.warehouse, design: r.design, result: r.result,
