@@ -199,6 +199,9 @@ const ACTIVITIES = [
 
   // ── Reporting ────────────────────────────────────────────────────────
   { code: 'sales_report',          label: 'Sales Report',              icon: '📊', callback: 'act:sales_report',       hub: 'reporting' },
+  // RPT-2 — date-wise tappable browser of sales/supplies (admin-only,
+  // gated in the flow's start()).
+  { code: 'sales_browser',         label: 'Sales Browser',             icon: '📈', callback: 'act:sales_browser',      hub: 'reporting' },
   { code: 'supply_details',        label: 'Supply Details',            icon: '📦', callback: 'act:supply_details',     hub: 'reporting' },
   // SBL-1 — sold-bale drill-down: customer → date → bale/than detail.
   // Read-only; sale price/value gated by pricingService.canSeeSalePrice.

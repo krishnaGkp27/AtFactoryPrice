@@ -153,4 +153,11 @@ async function getCustomersByDesign(design) {
   return Array.from(customers);
 }
 
-module.exports = { append, ensureHeader, HEADERS, getLast, parseRow, setStatusReverted, getCustomersByDesign };
+/** RPT-2 — all rows whose SalesDate falls in [fromIso, toIso] (inclusive). */
+async function getBySalesDateRange(fromIso, toIso) {
+  await ensureHeader();
+  const rows = await sheets.readRange(SHEET, 'A2:R');
+  return rows.map(parseRow).filter((t) => t.salesDate && t.salesDate >= fromIso && t.salesDate <= toIso);
+}
+
+module.exports = { append, ensureHeader, HEADERS, getLast, parseRow, setStatusReverted, getCustomersByDesign, getBySalesDateRange };

@@ -6427,6 +6427,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['sns:'], handle: (bot, cq) => require('../flows/snapSaleFlow').handleCallback(bot, cq) },
   // APR-2 — ⏰ reminder controls (per-dept toggles behind approval).
   { prefixes: ['rmn:'], handle: (bot, cq) => require('../flows/reminderConfigFlow').handleCallback(bot, cq) },
+  // RPT-2 — 📈 sales/supplies browser (read-only drill-down).
+  { prefixes: ['sbr:'], handle: (bot, cq) => require('../flows/salesBrowserFlow').handleCallback(bot, cq) },
 ];
 
 async function handleCallbackQuery(bot, callbackQuery) {
@@ -8927,6 +8929,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
         // APR-2 — ⏰ per-department reminder toggles behind approval.
         const reminderConfigFlow = require('../flows/reminderConfigFlow');
         await reminderConfigFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'sales_browser': {
+        // RPT-2 — 📈 date-wise tappable sales/supplies browser (admin-only).
+        const salesBrowserFlow = require('../flows/salesBrowserFlow');
+        await salesBrowserFlow.start(bot, chatId, uid, messageId);
         break;
       }
       case 'warehouse_audit': {

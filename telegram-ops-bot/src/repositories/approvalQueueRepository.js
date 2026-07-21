@@ -55,6 +55,17 @@ async function updateStatus(requestId, status, resolvedAt) {
   return true;
 }
 
+/** RPT-2 — resolved (non-pending) rows, for the Supplies browser. */
+async function getResolved() {
+  const rows = await sheets.readRange(SHEET, 'A2:G');
+  return rows
+    .filter((r) => (r[4] || '').toString().toLowerCase() !== 'pending')
+    .map((r) => ({
+      requestId: r[0], user: r[1], actionJSON: safeParse(r[2]),
+      riskReason: r[3], status: r[4], createdAt: r[5], resolvedAt: r[6],
+    }));
+}
+
 /** Get one approval queue row by requestId (any status). */
 async function getByRequestId(requestId) {
   const rows = await sheets.readRange(SHEET, 'A2:G');
@@ -100,4 +111,4 @@ async function updateActionJSON(requestId, patch) {
   return true;
 }
 
-module.exports = { append, getAllPending, updateStatus, updateActionJSON, getByRequestId, ensureHeader };
+module.exports = { append, getAllPending, getResolved, updateStatus, updateActionJSON, getByRequestId, ensureHeader };
