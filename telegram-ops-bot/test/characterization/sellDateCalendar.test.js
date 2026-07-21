@@ -80,14 +80,35 @@ test('date step: chips + calendar button; calendar bounds; old day pick → BACK
   sessionStore.clear('4242');
 });
 
-test('typed date at the date step is accepted; yesterday is NOT backdated', async () => {
+test('a TYPED date never executes — it opens the calendar with the day marked; only the tap commits', async () => {
   const bot = createFakeBot();
   await reachDateStep(bot);
-  const yesterday = lagosISO(1);
-  await controller.handleMessage(bot, { from: { id: '4242' }, chat: { id: '4242' }, text: yesterday });
+  const target = lagosISO(10);
+  await controller.handleMessage(bot, { from: { id: '4242' }, chat: { id: '4242' }, text: target });
+  let s = sessionStore.get('4242');
+  assert.ok(!s.salesDate, 'typing alone sets NOTHING');
+  assert.match(bot.allText().replace(/\\/g, ''), /You typed .* — confirm it with a TAP/);
+  const kb = lastKb(bot);
+  const marked = kb.find((b) => b.callback_data === `sb:cd:${target}`);
+  assert.ok(marked, 'the typed day is on the calendar page shown');
+  assert.equal(marked.text, `[${Number(target.slice(8))}]`, 'typed day is visually marked');
+  // Any OTHER pickable day still works normally.
+  assert.ok(kb.some((b) => b.callback_data.startsWith('sb:cd:') && b.callback_data !== `sb:cd:${target}` && !b.text.startsWith('[')));
+  // The tap is the commit.
+  await controller.handleCallbackQuery(bot, cb(marked.callback_data));
+  s = sessionStore.get('4242');
+  assert.equal(s.salesDate, target);
+  assert.equal(s.backdatedDays, 10);
+  sessionStore.clear('4242');
+});
+
+test('chip tap: yesterday is NOT backdated (owner rule)', async () => {
+  const bot = createFakeBot();
+  await reachDateStep(bot);
+  await controller.handleCallbackQuery(bot, cb('sb:dt:1')); // Yesterday chip
   const s = sessionStore.get('4242');
-  assert.equal(s.salesDate, yesterday, 'typed ISO date applied');
-  assert.equal(s.backdatedDays, 0, 'yesterday is a NORMAL sale (owner rule)');
+  assert.equal(s.salesDate, lagosISO(1));
+  assert.equal(s.backdatedDays, 0, 'yesterday is a NORMAL sale');
   assert.ok(!/BACKDATED —/.test(bot.allText()), 'no banner for yesterday');
   sessionStore.clear('4242');
 });
@@ -101,7 +122,8 @@ test('future and >90d dates are refused; junk text gets the calendar hint', asyn
   await sellBaleFlow._internals.applyDate(bot, '4242', '4242', lagosISO(120));
   assert.match(bot.allText().replace(/\\/g, ''), /more than 90 days back/);
   await controller.handleMessage(bot, { from: { id: '4242' }, chat: { id: '4242' }, text: 'someday soon' });
-  assert.match(bot.allText().replace(/\\/g, ''), /Could not read "someday soon" as a date/);
+  assert.match(bot.allText().replace(/\\/g, ''), /Could not read "someday soon" as a date — tap it instead/);
+  assert.ok(lastKb(bot).some((b) => b.callback_data.startsWith('sb:cd:')), 'calendar shown for the junk text');
   assert.ok(!sessionStore.get('4242').salesDate, 'nothing applied');
   sessionStore.clear('4242');
 });

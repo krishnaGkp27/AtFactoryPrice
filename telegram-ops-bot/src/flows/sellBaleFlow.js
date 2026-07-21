@@ -422,8 +422,11 @@ async function showDates(bot, chatId, userId) {
 /**
  * SELL-T2 — month-grid calendar. Bounds: no future days, no further back
  * than CALENDAR_MAX_DAYS_BACK. ym = 'YYYY-MM'.
+ * opts.highlight — an ISO day rendered as [D]: a TYPED date only marks the
+ * day; the TAP is the sole commit (owner refinement 21-Jul).
+ * opts.note — one-line message above the grid.
  */
-async function showCalendar(bot, chatId, userId, ym) {
+async function showCalendar(bot, chatId, userId, ym, opts = {}) {
   const s = getSession(userId);
   const todayIso = lagosISO(0);
   const oldestIso = lagosISO(CALENDAR_MAX_DAYS_BACK);
@@ -449,7 +452,7 @@ async function showCalendar(bot, chatId, userId, ym) {
     const iso = `${ym}-${String(d).padStart(2, '0')}`;
     const pickable = iso <= todayIso && iso >= oldestIso;
     week.push(pickable
-      ? { text: String(d), callback_data: `sb:cd:${iso}` }
+      ? { text: opts.highlight === iso ? `[${d}]` : String(d), callback_data: `sb:cd:${iso}` }
       : { text: '·', callback_data: 'sb:noop' });
     if (week.length === 7) { rows.push(week); week = []; }
   }
@@ -458,7 +461,7 @@ async function showCalendar(bot, chatId, userId, ym) {
   rows.push(cancelRow());
   s.step = 'date'; save(userId, s);
   await render(bot, chatId, userId,
-    `${header(s)}\n\n📆 Pick the sale date (up to ${CALENDAR_MAX_DAYS_BACK} days back). Dots are out of range.`, rows);
+    `${header(s)}\n\n${opts.note ? `${opts.note}\n\n` : ''}📆 *Tap* the sale date (up to ${CALENDAR_MAX_DAYS_BACK} days back). Dots are out of range.`, rows);
 }
 
 /**
@@ -688,15 +691,26 @@ async function handleText(bot, msg) {
   }
   if (s.step === 'date') {
     if (!q || q.length > 30) return false;
+    // Owner refinement 21-Jul: a TYPED date NEVER executes — it only
+    // navigates the calendar to that month with the day marked [D]; the
+    // tap is the sole commit. A typo'd year just opens the wrong page,
+    // visibly, instead of silently becoming the sale date.
     const { normalizeSalesDate } = require('../utils/dates');
     const iso = normalizeSalesDate(q);
-    if (!iso) {
-      await render(bot, msg.chat.id, userId,
-        `${header(s)}\n\n⚠️ Could not read "${esc(q)}" as a date. Try 11-Jul-2026 — or use the calendar:`,
-        [[{ text: '📆 Open calendar', callback_data: `sb:cal:${lagosISO(0).slice(0, 7)}` }], [{ text: '⬅ Quick dates', callback_data: 'sb:dts' }], cancelRow()]);
+    const todayIso = lagosISO(0);
+    const oldestIso = lagosISO(CALENDAR_MAX_DAYS_BACK);
+    if (iso && iso <= todayIso && iso >= oldestIso) {
+      await showCalendar(bot, msg.chat.id, userId, iso.slice(0, 7), {
+        highlight: iso,
+        note: `You typed *${fmtDate(iso)}* — confirm it with a TAP:`,
+      });
       return true;
     }
-    await applyDate(bot, msg.chat.id, userId, iso);
+    await showCalendar(bot, msg.chat.id, userId, todayIso.slice(0, 7), {
+      note: iso
+        ? `⚠️ ${fmtDate(iso)} is out of range (no future, max ${CALENDAR_MAX_DAYS_BACK} days back) — tap a valid date:`
+        : `⚠️ Could not read "${esc(q)}" as a date — tap it instead:`,
+    });
     return true;
   }
   return false;
