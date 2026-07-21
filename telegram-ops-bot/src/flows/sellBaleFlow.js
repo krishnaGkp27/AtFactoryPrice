@@ -398,6 +398,8 @@ async function showPayment(bot, chatId, userId) {
   await render(bot, chatId, userId, `${header(s)}\n\nSelect payment mode:`, rows);
 }
 
+const CALENDAR_MAX_DAYS_BACK = 90;
+
 async function showDates(bot, chatId, userId) {
   const s = getSession(userId);
   const dates = [0, 1, 2, 3, 4, 5, 6].map((d) => lagosISO(d));
@@ -411,8 +413,79 @@ async function showDates(bot, chatId, userId) {
     if (dates[i + 1]) row.push({ text: fmtDate(dates[i + 1]), callback_data: `sb:dt:${i + 1}` });
     rows.push(row);
   }
+  rows.push([{ text: '📆 Older date — calendar', callback_data: `sb:cal:${lagosISO(0).slice(0, 7)}` }]);
   rows.push(cancelRow());
-  await render(bot, chatId, userId, `${header(s)}\n\nSale date (older sales are flagged BACKDATED for approval):`, rows);
+  await render(bot, chatId, userId,
+    `${header(s)}\n\nSale date — tap a chip, open the calendar, or just type it (e.g. 11-Jul-2026).\n_Sales beyond yesterday are flagged BACKDATED to both admins._`, rows);
+}
+
+/**
+ * SELL-T2 — month-grid calendar. Bounds: no future days, no further back
+ * than CALENDAR_MAX_DAYS_BACK. ym = 'YYYY-MM'.
+ */
+async function showCalendar(bot, chatId, userId, ym) {
+  const s = getSession(userId);
+  const todayIso = lagosISO(0);
+  const oldestIso = lagosISO(CALENDAR_MAX_DAYS_BACK);
+  const [y, m] = ym.split('-').map(Number);
+  const monthName = new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-GB', { month: 'long', timeZone: 'UTC' });
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const firstDow = new Date(Date.UTC(y, m - 1, 1)).getUTCDay(); // 0=Sun
+
+  const rows = [];
+  const prevYm = `${m === 1 ? y - 1 : y}-${String(m === 1 ? 12 : m - 1).padStart(2, '0')}`;
+  const nextYm = `${m === 12 ? y + 1 : y}-${String(m === 12 ? 1 : m + 1).padStart(2, '0')}`;
+  const nav = [];
+  nav.push(prevYm >= oldestIso.slice(0, 7)
+    ? { text: '◀', callback_data: `sb:cal:${prevYm}` } : { text: ' ', callback_data: 'sb:noop' });
+  nav.push({ text: `${monthName} ${y}`, callback_data: 'sb:noop' });
+  nav.push(nextYm <= todayIso.slice(0, 7)
+    ? { text: '▶', callback_data: `sb:cal:${nextYm}` } : { text: ' ', callback_data: 'sb:noop' });
+  rows.push(nav);
+  rows.push(['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d) => ({ text: d, callback_data: 'sb:noop' })));
+
+  let week = new Array(firstDow).fill({ text: ' ', callback_data: 'sb:noop' });
+  for (let d = 1; d <= daysInMonth; d++) {
+    const iso = `${ym}-${String(d).padStart(2, '0')}`;
+    const pickable = iso <= todayIso && iso >= oldestIso;
+    week.push(pickable
+      ? { text: String(d), callback_data: `sb:cd:${iso}` }
+      : { text: '·', callback_data: 'sb:noop' });
+    if (week.length === 7) { rows.push(week); week = []; }
+  }
+  if (week.length) { while (week.length < 7) week.push({ text: ' ', callback_data: 'sb:noop' }); rows.push(week); }
+  rows.push([{ text: '⬅ Quick dates', callback_data: 'sb:dts' }]);
+  rows.push(cancelRow());
+  s.step = 'date'; save(userId, s);
+  await render(bot, chatId, userId,
+    `${header(s)}\n\n📆 Pick the sale date (up to ${CALENDAR_MAX_DAYS_BACK} days back). Dots are out of range.`, rows);
+}
+
+/**
+ * SELL-T2 — single gate every date pick (chip, calendar day, typed text)
+ * goes through: blocks future + too-old, computes the backdated flag
+ * (owner rule 21-Jul: BEYOND yesterday = backdated), then reviews.
+ */
+async function applyDate(bot, chatId, userId, iso) {
+  const s = getSession(userId);
+  const todayIso = lagosISO(0);
+  if (iso > todayIso) {
+    await render(bot, chatId, userId,
+      `${header(s)}\n\n⚠️ ${fmtDate(iso)} is in the FUTURE — future sales aren't allowed. Pick again:`,
+      [[{ text: '📆 Open calendar', callback_data: `sb:cal:${todayIso.slice(0, 7)}` }], [{ text: '⬅ Quick dates', callback_data: 'sb:dts' }], cancelRow()]);
+    return;
+  }
+  if (iso < lagosISO(CALENDAR_MAX_DAYS_BACK)) {
+    await render(bot, chatId, userId,
+      `${header(s)}\n\n⚠️ ${fmtDate(iso)} is more than ${CALENDAR_MAX_DAYS_BACK} days back — ask an admin if this is a genuine old sale. Pick again:`,
+      [[{ text: '📆 Open calendar', callback_data: `sb:cal:${todayIso.slice(0, 7)}` }], [{ text: '⬅ Quick dates', callback_data: 'sb:dts' }], cancelRow()]);
+    return;
+  }
+  s.salesDate = iso;
+  const daysBack = Math.round((Date.parse(todayIso) - Date.parse(iso)) / 86400000);
+  s.backdatedDays = daysBack >= 2 ? daysBack : 0;
+  save(userId, s);
+  await showReview(bot, chatId, userId);
 }
 
 async function showReview(bot, chatId, userId) {
@@ -431,6 +504,9 @@ async function showReview(bot, chatId, userId) {
     `🧑 Salesperson: *${esc(s.salesperson)}*`,
     `💳 Payment: *${esc(s.paymentMode)}*`,
     `📅 Date: *${fmtDate(s.salesDate)}*`,
+    ...(s.backdatedDays
+      ? ['', `⚠️ *BACKDATED — ${s.backdatedDays} days in the past.* Both admins will see this flag and it is stamped in the sales record.`]
+      : []),
     '',
     '_Next: attach the sales bill photo, then the sale goes for admin approval._',
   ].join('\n');
@@ -573,11 +649,19 @@ async function handleCallback(bot, callbackQuery) {
     if (data.startsWith('sb:dt:')) {
       const d = (s._dates || [])[parseInt(data.slice(6), 10)];
       if (!d) { await ack('Expired — pick again.'); return true; }
-      s.salesDate = d; save(userId, s);
       await ack(fmtDate(d));
-      await showReview(bot, chatId, userId);
+      await applyDate(bot, chatId, userId, d);
       return true;
     }
+    // SELL-T2 — calendar navigation / day pick / back to quick chips.
+    if (data.startsWith('sb:cal:')) { await ack(); await showCalendar(bot, chatId, userId, data.slice(7)); return true; }
+    if (data.startsWith('sb:cd:')) {
+      const iso = data.slice(6);
+      await ack(fmtDate(iso));
+      await applyDate(bot, chatId, userId, iso);
+      return true;
+    }
+    if (data === 'sb:dts') { await ack(); await showDates(bot, chatId, userId); return true; }
     if (data === 'sb:fin') { await ack('Attach the bill'); await finalize(bot, chatId, userId); return true; }
   } catch (err) {
     logger.error(`[sellBaleFlow] ${data} failed: ${err.message}`);
@@ -587,15 +671,38 @@ async function handleCallback(bot, callbackQuery) {
   return false;
 }
 
-/** Typed text during the customer step = search filter over EXISTING customers. */
+/**
+ * Typed text: customer step = search filter; date step (SELL-T2) = a typed
+ * date like "11-Jul-2026" / "11 July" is accepted as a pick (Abdul's
+ * instinct in the field — it used to dead-end into the intent parser).
+ */
 async function handleText(bot, msg) {
   const userId = String(msg.from.id);
   const s = getSession(userId);
-  if (!s || s.step !== 'customer') return false;
+  if (!s) return false;
   const q = String(msg.text || '').trim();
-  if (!q || q.length > 60) return false;
-  await showCustomers(bot, msg.chat.id, userId, q);
-  return true;
+  if (s.step === 'customer') {
+    if (!q || q.length > 60) return false;
+    await showCustomers(bot, msg.chat.id, userId, q);
+    return true;
+  }
+  if (s.step === 'date') {
+    if (!q || q.length > 30) return false;
+    const { normalizeSalesDate } = require('../utils/dates');
+    const iso = normalizeSalesDate(q);
+    if (!iso) {
+      await render(bot, msg.chat.id, userId,
+        `${header(s)}\n\n⚠️ Could not read "${esc(q)}" as a date. Try 11-Jul-2026 — or use the calendar:`,
+        [[{ text: '📆 Open calendar', callback_data: `sb:cal:${lagosISO(0).slice(0, 7)}` }], [{ text: '⬅ Quick dates', callback_data: 'sb:dts' }], cancelRow()]);
+      return true;
+    }
+    await applyDate(bot, msg.chat.id, userId, iso);
+    return true;
+  }
+  return false;
 }
 
-module.exports = { start, startWithBales, handleCallback, handleText, SESSION_TYPE };
+module.exports = {
+  start, startWithBales, handleCallback, handleText, SESSION_TYPE,
+  _internals: { showDates, showCalendar, applyDate, CALENDAR_MAX_DAYS_BACK },
+};

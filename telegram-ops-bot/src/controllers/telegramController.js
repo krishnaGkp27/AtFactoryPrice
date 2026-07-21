@@ -6165,8 +6165,10 @@ async function executeSale(bot, chatId, userId) {
     );
     return;
   }
-  const isBackdated = cmp < 0;
-  const daysBack = isBackdated ? daysBeforeToday(sDate) : 0;
+  // SELL-T2 (owner rule 21-Jul): today AND yesterday are normal sales;
+  // BEYOND yesterday is backdated (was: any past date, incl. yesterday).
+  const daysBack = cmp < 0 ? daysBeforeToday(sDate) : 0;
+  const isBackdated = daysBack >= 2;
 
   // Fix C — Validate cart at submit-time. Reject if ANY item can't be
   // resolved or has no available thans, so phantoms never enter the queue.
