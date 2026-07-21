@@ -96,6 +96,101 @@ async function scopedRows(s, { design } = {}) {
   });
 }
 
+// ── SELL-T1: typed head, tappable tail ──────────────────────────────────────
+//
+// "Sell package 507,503,492" typed by the office manager preloads those
+// bales into THIS flow (validated against the sheet, per-number reasons,
+// warehouse tap for ambiguous numbers) and continues with the normal
+// tappable customer → salesperson → bank → date steps. Numbers are the
+// only thing worth typing — names/banks/dates stay taps (owner 20-Jul).
+
+/** All available bales grouped per (warehouse, packageNo). */
+async function availableBaleMap() {
+  const all = await inventoryRepository.getAll();
+  const map = new Map();
+  for (const r of all) {
+    if (!r.packageNo) continue;
+    const k = `${r.warehouse}|${r.packageNo}`;
+    if (!map.has(k)) map.set(k, { packageNo: String(r.packageNo), warehouse: r.warehouse, design: String(r.design || ''), thans: 0, yards: 0, soldTo: '' });
+    const b = map.get(k);
+    if (r.status === 'available') { b.thans += 1; b.yards += Number(r.yards) || 0; }
+    else if (r.soldTo && !b.soldTo) b.soldTo = r.soldTo;
+  }
+  return [...map.values()];
+}
+
+async function startWithBales(bot, chatId, userId, packageNos) {
+  sessionStore.clear(userId);
+  save(userId, { type: SESSION_TYPE, step: 'preload', cart: [], flowMessageId: null });
+  const s = getSession(userId);
+  const bales = await availableBaleMap();
+  const seen = new Set();
+  const skipped = [];
+  const ambiguous = [];
+  for (const raw of packageNos || []) {
+    const digits = String(raw).replace(/\D/g, '');
+    if (!digits || seen.has(digits)) continue;
+    seen.add(digits);
+    const hits = bales.filter((b) => {
+      const bd = String(b.packageNo).replace(/\D/g, '');
+      return (bd === digits || String(b.packageNo).toUpperCase().endsWith(digits)) && b.thans > 0;
+    });
+    if (hits.length === 1) {
+      const b = hits[0];
+      s.cart.push({ packageNo: b.packageNo, design: b.design, thans: b.thans, yards: b.yards });
+    } else if (hits.length > 1) {
+      ambiguous.push({ digits, options: hits });
+    } else {
+      const anywhere = bales.find((b) => String(b.packageNo).replace(/\D/g, '') === digits);
+      skipped.push({ no: digits, reason: anywhere && anywhere.soldTo ? `already sold to ${anywhere.soldTo}` : (anywhere ? 'no available thans' : 'not found in the sheet') });
+    }
+  }
+  s._ambigQueue = ambiguous;
+  s._skipped = skipped;
+  save(userId, s);
+  if (!s.cart.length && !ambiguous.length) {
+    await render(bot, chatId, userId,
+      '💰 *Sell Bale*\n\n⚠️ None of the typed bale numbers matched available stock:\n'
+      + skipped.map((x) => `  • ${x.no} — ${x.reason}`).join('\n')
+      + '\n\nPick bales the tappable way instead:',
+      [[{ text: '💰 Open Sell Bale', callback_data: 'act:sell_bale' }], cancelRow()]);
+    sessionStore.clear(userId);
+    return;
+  }
+  await nextPreloadStep(bot, chatId, userId);
+}
+
+/** Resolve ambiguities one by one, then show the preload summary. */
+async function nextPreloadStep(bot, chatId, userId) {
+  const s = getSession(userId);
+  const q = s._ambigQueue || [];
+  if (q.length) {
+    const cur = q[0];
+    const rows = cur.options.map((o, i) => ([{
+      text: `🏭 ${o.warehouse} — ${o.design} · ${o.thans} thans · ${fmtQty(o.yards)} yds`,
+      callback_data: `sb:amb:${i}`,
+    }]));
+    rows.push([{ text: '⏭ Skip this bale', callback_data: 'sb:ambskip' }]);
+    rows.push(cancelRow());
+    s.step = 'preload_ambig'; save(userId, s);
+    await render(bot, chatId, userId,
+      `💰 *Sell Bale*\n\nBale *${esc(cur.digits)}* exists in ${cur.options.length} places — which one is being sold?`, rows);
+    return;
+  }
+  const yds = s.cart.reduce((t, c) => t + c.yards, 0);
+  const lines = s.cart.map((c) => `  ✅ Bale ${c.packageNo}: ${esc(c.design)}, ${c.thans} thans, ${fmtQty(c.yards)} yds`);
+  for (const x of (s._skipped || [])) lines.push(`  ⚠️ ${esc(x.no)} — ${esc(x.reason)} (skipped)`);
+  s.step = 'preload_review'; save(userId, s);
+  await render(bot, chatId, userId,
+    `💰 *Sell Bale — ${s.cart.length} bale(s) loaded from your message* (${fmtQty(yds)} yds)\n\n${lines.join('\n')}\n\n`
+    + 'Continue with taps — customer, salesperson, bank, date:',
+    [
+      [{ text: `👤 Pick customer (${s.cart.length} bales)`, callback_data: 'sb:rev' }],
+      [{ text: '➕ Add more bales', callback_data: 'sb:more' }],
+      cancelRow(),
+    ]);
+}
+
 // ── Steps ───────────────────────────────────────────────────────────────────
 
 async function start(bot, chatId, userId) {
@@ -424,6 +519,25 @@ async function handleCallback(bot, callbackQuery) {
       await showBales(bot, chatId, userId);
       return true;
     }
+    // SELL-T1 — warehouse pick / skip for an ambiguous typed bale number.
+    if (data.startsWith('sb:amb:')) {
+      const cur = (s._ambigQueue || [])[0];
+      const o = cur && cur.options[parseInt(data.slice(7), 10)];
+      if (!o) { await ack('Expired — type the command again.'); return true; }
+      s.cart.push({ packageNo: o.packageNo, design: o.design, thans: o.thans, yards: o.yards });
+      s._ambigQueue.shift(); save(userId, s);
+      await ack(`🛒 Bale ${o.packageNo} (${o.warehouse}) added`);
+      await nextPreloadStep(bot, chatId, userId);
+      return true;
+    }
+    if (data === 'sb:ambskip') {
+      const cur = (s._ambigQueue || []).shift();
+      if (cur) (s._skipped = s._skipped || []).push({ no: cur.digits, reason: 'skipped by you (ambiguous)' });
+      save(userId, s);
+      await ack('Skipped');
+      await nextPreloadStep(bot, chatId, userId);
+      return true;
+    }
     if (data === 'sb:more') { await ack(); await showDesigns(bot, chatId, userId); return true; }
     if (data === 'sb:rev') {
       if (!s.cart.length) { await ack('Cart is empty.'); return true; }
@@ -484,4 +598,4 @@ async function handleText(bot, msg) {
   return true;
 }
 
-module.exports = { start, handleCallback, handleText, SESSION_TYPE };
+module.exports = { start, startWithBales, handleCallback, handleText, SESSION_TYPE };

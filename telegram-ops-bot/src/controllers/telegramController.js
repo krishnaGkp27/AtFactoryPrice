@@ -6005,9 +6005,19 @@ async function showUserManagement(bot, chatId) {
  * Start a sale flow: collect all required fields, then show summary for confirmation.
  */
 async function startSaleFlow(bot, chatId, msg, userId, saleType, items, intent) {
-  // ST-1 migration (owner mandate 14-Jul): typed sale commands now route
-  // into the tappable 💰 Sell Bale flow — chips for customer, salesperson,
-  // bank and date eliminate the typo class entirely (TRF-5 pattern).
+  // SELL-T1 (owner 20-Jul): typed bale NUMBERS are welcome — they preload
+  // the tappable Sell Bale flow (validated against the sheet, warehouse
+  // tap on ambiguity) and the flow's chips handle customer, salesperson,
+  // bank and date. Typed names/banks/dates are deliberately ignored —
+  // that's where the typo class lived (ST-1 migration, 14-Jul).
+  const typedPkgs = (saleType === 'sell_package' || saleType === 'sell_batch')
+    ? (items || []).map((it) => it.packageNo).filter(Boolean)
+    : [];
+  if (typedPkgs.length) {
+    const sellBaleFlow = require('../flows/sellBaleFlow');
+    await sellBaleFlow.startWithBales(bot, chatId, userId, typedPkgs);
+    return;
+  }
   await bot.sendMessage(chatId,
     '🛒 Sales now run through *💰 Sell Bale* — tap your way through container, bales, customer, bank and date. No more typos.',
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '💰 Open Sell Bale', callback_data: 'act:sell_bale' }]] } });

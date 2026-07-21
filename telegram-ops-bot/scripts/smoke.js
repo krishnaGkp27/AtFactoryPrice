@@ -7666,9 +7666,11 @@ function runS51() {
     pass('S51.2 controller: sb: route + act:sell_bale case + customer-search text hook');
   } else fail('S51.2', 'controller wiring missing');
 
-  if (ctl51.includes('Sales now run through')) {
-    pass('S51.3 migration: typed sale commands redirect to 💰 Sell Bale (TRF-5 pattern)');
-  } else fail('S51.3', 'typed-sale redirect missing');
+  // SELL-T1: typed bale NUMBERS preload the tap flow; the redirect card
+  // remains only for messages with no readable numbers.
+  if (ctl51.includes('Sales now run through') && ctl51.includes('startWithBales')) {
+    pass('S51.3 SELL-T1: typed numbers preload Sell Bale; redirect only when none readable');
+  } else fail('S51.3', 'typed-sale preload/redirect wiring missing');
 
   delete require.cache[require.resolve('../src/services/activityRegistry')];
   const reg51 = require('../src/services/activityRegistry');
