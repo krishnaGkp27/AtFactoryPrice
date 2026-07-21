@@ -700,37 +700,60 @@ async function handleAddBankFlowText(bot, chatId, userId, text) {
     }
     return true;
   }
-  if (session.step === 'name') {
+  // BANK-2 (owner 21-Jul): two accounts at one bank need distinct entries.
+  // Step 1 = bank name; step 2 = account name (or 'skip' for a bare bank).
+  // The combined "BANK — ACCOUNT" string is one BANK_LIST entry, so every
+  // surface that reads the list (sale-approval chips, receipts, invoices,
+  // ledger) shows the exact receiving account with zero migration.
+  // ('name' kept as an alias so an in-flight pre-deploy session survives.)
+  if (session.step === 'bank' || session.step === 'name') {
     if (trimmed.length < 2) {
       await bot.sendMessage(chatId, 'Bank name too short, please re-enter:');
       return true;
     }
+    session.bankName = trimmed;
+    session.step = 'account';
+    sessionStore.set(userId, session);
+    await bot.sendMessage(chatId,
+      `🏦 *Step 2 of 2* — enter the ACCOUNT name at *${trimmed}* (e.g. \`MAMA KAFAYA ENT\`),\nor type \`skip\` to register the bank without an account label.`,
+      { parse_mode: 'Markdown' });
+    return true;
+  }
+  if (session.step === 'account') {
+    const isSkip = trimmed.toLowerCase() === 'skip';
+    if (!isSkip && trimmed.length < 2) {
+      await bot.sendMessage(chatId, 'Account name too short — re-enter, or type "skip":');
+      return true;
+    }
+    const entry = isSkip ? session.bankName : `${session.bankName} — ${trimmed}`;
     // Dedupe check against current list before queuing approval.
     const all = await settingsRepo.getAll();
     const existing = (all.BANK_LIST || '').split(',').map((b) => b.trim().toLowerCase()).filter(Boolean);
-    if (existing.includes(trimmed.toLowerCase())) {
-      await bot.sendMessage(chatId, `⚠️ "${trimmed}" already exists. Enter a different name or type "cancel".`);
+    if (existing.includes(entry.toLowerCase())) {
+      await bot.sendMessage(chatId, `⚠️ "${entry}" already exists. Enter a different account name or type "cancel".`);
       return true;
     }
 
     const requestId = genId();
     await approvalQueueRepository.append({
       requestId, user: userId,
-      actionJSON: { action: 'add_bank', bank_name: trimmed },
+      actionJSON: { action: 'add_bank', bank_name: entry },
       riskReason: 'New bank addition requires admin approval', status: 'pending',
     });
-    await auditLogRepository.append('approval_queued', { requestId, reason: 'add_bank', bank: trimmed }, userId);
+    await auditLogRepository.append('approval_queued', { requestId, reason: 'add_bank', bank: entry }, userId);
 
     if (session.flowMessageId) {
       await bot.editMessageText(
-        `🏦 *Add Bank — submitted*\n\nBank: *${trimmed}*\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
+        `🏦 *Add Bank Account — submitted*\n\nEntry: *${entry}*\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
         { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
       ).catch(() => {});
     }
     const userLabel = await getRequesterDisplayName(userId, null);
     await approvalEvents.notifyAdminsApprovalRequest(
-      bot, requestId, userLabel, `Add Bank\nBank: ${trimmed}`,
+      bot, requestId, userLabel,
+      `Add Bank Account\nEntry: ${entry}${isSkip ? '' : `\nBank: ${session.bankName}\nAccount: ${trimmed}`}`,
       'New bank addition requires admin approval',
+      config.access.adminIds.includes(userId) ? userId : undefined,
     );
     sessionStore.clear(userId);
     return true;
@@ -7033,11 +7056,11 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (!config.access.adminIds.includes(uid)) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' }); return; }
     await bot.answerCallbackQuery(callbackQuery.id);
     sessionStore.set(uid, {
-      type: 'add_bank_flow', step: 'name',
+      type: 'add_bank_flow', step: 'bank',
       flowMessageId: callbackQuery.message.message_id,
     });
     await editOrSend(bot, chatId, callbackQuery.message.message_id,
-      '🏦 *Add New Bank*\n\nEnter the bank name (reply in chat), or tap Cancel.', {
+      '🏦 *Add Bank Account*\n\n*Step 1 of 2* — enter the BANK name (reply in chat), e.g. `ZENITH`.\n\n_Next you\'ll add the account name — so two accounts at the same bank stay distinguishable at sale approval._', {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'bkback:0' }]] },
     });

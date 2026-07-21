@@ -175,6 +175,9 @@ async function sendPaymentStep(bot, chatId, state) {
     rows.push(row);
   }
   rows.push([{ text: '✏️ Type payment mode', callback_data: 'enr:pay:custom' }]);
+  // BANK-2 — no dead-end mid-approval: if the receiving account isn't
+  // registered yet, one tap opens 🏦 Manage Banks (admin-only anyway).
+  rows.push([{ text: '🏦 Manage accounts', callback_data: 'act:manage_banks' }]);
   try {
     await bot.sendMessage(chatId, '*Step 2 — Payment mode:* tap below, or reply with one of:\n• Cash\n• Credit\n• Paid to [Bank]\n• Not yet paid',
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
@@ -1619,5 +1622,5 @@ module.exports = {
   handleDispatchManagerCallback,
   handleReasonReply,
   notifyDispatchManagers,
-  _internals: { pendingEnrichment, getLastPaidRate },
+  _internals: { pendingEnrichment, getLastPaidRate, sendPaymentStep },
 };
