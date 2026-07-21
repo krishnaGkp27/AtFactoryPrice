@@ -154,8 +154,12 @@ const config = {
      * ~$20-25/mo worst case. Swap via env if accuracy ever needs more.
      */
     anthropicPdfModel: process.env.OCR_ANTHROPIC_PDF_MODEL || 'claude-sonnet-4-6',
-    /** PDFs may bundle many label photos — separate, larger cap (10 MB). */
-    maxPdfBytes: parseInt(process.env.OCR_MAX_PDF_BYTES, 10) || 10 * 1024 * 1024,
+    /**
+     * PDFs may bundle many label photos — separate, larger cap. 19 MB:
+     * Telegram refuses bot downloads over 20 MB, so anything higher can
+     * never arrive anyway (SNAP-4; ~100 compressed pages fit).
+     */
+    maxPdfBytes: parseInt(process.env.OCR_MAX_PDF_BYTES, 10) || 19 * 1024 * 1024,
     /** Confidence in [0..1] below which a row is shown red + forces edit */
     lowConfidenceThreshold: parseFloat(process.env.OCR_LOW_CONF) || 0.7,
     /** Max image / PDF size in bytes (5 MB) */

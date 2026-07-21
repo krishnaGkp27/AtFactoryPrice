@@ -14,6 +14,14 @@
  * and the existing Drive archival applies.
  *
  * No match / OCR down → graceful fallback into the normal 💰 Sell Bale.
+ *
+ * SNAP-4 (owner 21-Jul): the SAME PDF batch can be a WAREHOUSE TRANSFER
+ * instead of a sale (dispatch PDFs, e.g. Lagos → Kano). Admin-only button
+ * on the batch review → destination + receiver taps → bales are grouped
+ * by their SOURCE warehouse automatically (one staged transfer per source,
+ * exact packageNos dispatched immediately — the PDF IS the load document,
+ * satisfying the TRF-6 doc requirement). Receiver confirms arrival through
+ * the existing trf: pipeline; bales already at the destination are skipped.
  */
 
 const sessionStore = require('../utils/sessionStore');
@@ -24,6 +32,7 @@ const approvalQueueRepository = require('../repositories/approvalQueueRepository
 const auditLogRepository = require('../repositories/auditLogRepository');
 const usersRepository = require('../repositories/usersRepository');
 const idGenerator = require('../utils/idGenerator');
+const auth = require('../middlewares/auth');
 const { todayInLagos } = require('../utils/dates');
 const config = require('../config');
 const logger = require('../utils/logger');
@@ -76,7 +85,7 @@ async function start(bot, chatId, userId, messageId) {
   sessionStore.set(userId, { type: SESSION_TYPE, step: 'await_photo', flowMessageId: messageId || null, startedAt: Date.now() });
   await render(bot, chatId, userId,
     '📸 *Snap Sale*\n\nSend a clear photo of the *bale label* (the sack side with Bale No. / Design No. / Colour No.) — I will read it and match the bale.\n\n'
-    + '📄 Supplying MANY bales to one customer? Send a *PDF* containing the label photos and I will read them ALL together (SNAP-3).',
+    + '📄 Supplying MANY bales to one customer — or *dispatching to another warehouse*? Send a *PDF* containing the label photos and I will read them ALL together.',
     [cancelRow()]);
 }
 
@@ -290,6 +299,11 @@ async function showBatchReview(bot, chatId, userId) {
   sessionStore.set(userId, session);
   const rows = chunk(recent.map((c, i) => ({ text: `👤 ${c}`, callback_data: `${NS}cu:${i}` })), 2);
   rows.push([{ text: '📋 All customers', callback_data: `${NS}all:0` }]);
+  // SNAP-4 — the same PDF can be a warehouse dispatch instead of a sale.
+  // Transfers are admin-created (same rule as the trf: wizard).
+  if (auth.isAdmin(userId)) {
+    rows.push([{ text: '🚚 This is a TRANSFER, not a sale', callback_data: `${NS}tmode` }]);
+  }
   rows.push(cancelRow());
   const totalYards = batch.items.reduce((s, m) => s + m.availableYards, 0);
   await render(bot, chatId, userId,
@@ -310,6 +324,196 @@ async function showBatchConfirm(bot, chatId, userId) {
     + `👤 Customer: *${mdEscape(session.customer)}*\n📅 ${todayInLagos()}\n\n`
     + '_The PDF is attached as the sale document. Rate and payment are entered by the approving admin._',
     [[{ text: '✅ Submit for approval', callback_data: `${NS}ok` }], cancelRow()]);
+}
+
+/* ── SNAP-4: PDF batch as a WAREHOUSE TRANSFER ── */
+
+function normWh(v) { return String(v == null ? '' : v).trim().toLowerCase(); }
+
+/**
+ * Split matched bales into per-SOURCE-warehouse transfer groups for a given
+ * destination. Bales already sitting at the destination go to `stay`.
+ * Each group carries service-shaped `lines` ({design, shade, qty}) plus a
+ * parallel `picks` array (exact packageNos per line — the PDF documents the
+ * physical dispatch, so nothing is left to a picker).
+ */
+function buildTransferGroups(items, dest) {
+  const stay = [];
+  const bySource = new Map();
+  for (const m of items) {
+    if (normWh(m.warehouse) === normWh(dest)) { stay.push(m); continue; }
+    if (!bySource.has(m.warehouse)) bySource.set(m.warehouse, []);
+    bySource.get(m.warehouse).push(m);
+  }
+  const groups = [...bySource.entries()].map(([from, bales]) => {
+    const lineMap = new Map();
+    for (const b of bales) {
+      const k = `${b.design}|${b.shade || ''}`;
+      if (!lineMap.has(k)) lineMap.set(k, { design: b.design, shade: b.shade || '', qty: 0, picks: [] });
+      const l = lineMap.get(k);
+      l.qty += 1;
+      l.picks.push(b.packageNo);
+    }
+    const ls = [...lineMap.values()];
+    return {
+      from, bales,
+      lines: ls.map(({ design, shade, qty }) => ({ design, shade, qty })),
+      picks: ls.map((l) => l.picks),
+    };
+  });
+  return { groups, stay };
+}
+
+async function showTransferDest(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  // Same destination universe as the trf: wizard: warehouses with stock ∪
+  // warehouses users are assigned to (an empty warehouse can still receive).
+  const inv = await inventoryRepository.getAll();
+  const users = await usersRepository.getAll().catch(() => []);
+  const set = new Set(inv.map((r) => r.warehouse).filter(Boolean));
+  for (const u of users) for (const w of (u.warehouses || [])) if (w) set.add(w);
+  const dests = [...set].sort();
+  session._dests = dests;
+  session.step = 'transfer_dest';
+  sessionStore.set(userId, session);
+  const sources = [...new Set(session.batch.items.map((m) => m.warehouse))];
+  const rows = chunk(dests.map((w, i) => ({ text: `🏭 ${w}`, callback_data: `${NS}tdst:${i}` })), 2);
+  rows.push([{ text: '⬅ Back', callback_data: `${NS}bk` }]);
+  rows.push(cancelRow());
+  await render(bot, chatId, userId,
+    `🚚 *Transfer the PDF batch* — ${session.batch.items.length} bale(s) from *${sources.map(mdEscape).join('* + *')}*\n\nTo which warehouse?`,
+    rows);
+}
+
+async function showTransferReceiver(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  const { candidatesFor } = require('./transferFlow')._internals;
+  const cands = await candidatesFor(session.transferTo);
+  if (!cands.length) {
+    await render(bot, chatId, userId,
+      `⚠️ No active users found for *${mdEscape(session.transferTo)}* — assign one first (Manage Users).`,
+      [[{ text: '⬅ Back', callback_data: `${NS}tmode` }], cancelRow()]);
+    return;
+  }
+  if (cands.length === 1) {
+    session.transferReceiver = { user_id: cands[0].user_id, name: cands[0].name };
+    sessionStore.set(userId, session);
+    await showTransferConfirm(bot, chatId, userId);
+    return;
+  }
+  session._people = cands.slice(0, 12).map((u) => ({ user_id: u.user_id, name: u.name }));
+  session.step = 'transfer_receiver';
+  sessionStore.set(userId, session);
+  const rows = chunk(session._people.map((u, i) => ({ text: `👤 ${u.name}`, callback_data: `${NS}trc:${i}` })), 2);
+  rows.push([{ text: '⬅ Back', callback_data: `${NS}tmode` }]);
+  rows.push(cancelRow());
+  await render(bot, chatId, userId, `🚚 Who receives at *${mdEscape(session.transferTo)}*?`, rows);
+}
+
+async function showTransferConfirm(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  const { groups, stay } = buildTransferGroups(session.batch.items, session.transferTo);
+  if (!groups.length) {
+    await render(bot, chatId, userId,
+      `⚠️ Every matched bale is ALREADY at *${mdEscape(session.transferTo)}* — nothing to transfer.`,
+      [[{ text: '⬅ Back', callback_data: `${NS}tmode` }], cancelRow()]);
+    return;
+  }
+  session.step = 'transfer_confirm';
+  sessionStore.set(userId, session);
+  const lines = groups.map((g) => {
+    const pkgs = g.bales.map((b) => b.packageNo);
+    const preview = pkgs.length > 8 ? `${pkgs.slice(0, 8).join(', ')} … (+${pkgs.length - 8})` : pkgs.join(', ');
+    return `📦 *${mdEscape(g.from)}* → *${mdEscape(session.transferTo)}* — ${g.bales.length} bale(s)\n   ${mdEscape(preview)}`;
+  });
+  const stayNote = stay.length
+    ? `\n⚠️ ${stay.length} bale(s) already at ${mdEscape(session.transferTo)} — skipped: ${stay.map((b) => mdEscape(b.packageNo)).join(', ')}`
+    : '';
+  await render(bot, chatId, userId,
+    `🚚 *Confirm dispatch*\n\n${lines.join('\n')}${stayNote}\n\n`
+    + `Receiver: *${mdEscape(session.transferReceiver.name)}*\n\n`
+    + `_Submitting dispatches IMMEDIATELY — the PDF is the load document. Stock shows *in transit* at ${mdEscape(session.transferTo)} until ${mdEscape(session.transferReceiver.name)} confirms receipt._`,
+    [[{ text: '🚚 Dispatch now', callback_data: `${NS}tok` }],
+      [{ text: '⬅ Back', callback_data: `${NS}tmode` }], cancelRow()]);
+}
+
+async function submitTransferBatch(bot, chatId, userId, session) {
+  const transferService = require('../services/transferService');
+  const tf = require('./transferFlow')._internals;
+  const to = session.transferTo;
+  const receiver = session.transferReceiver;
+  const { groups, stay } = buildTransferGroups(session.batch.items, to);
+  if (!groups.length) return true;
+
+  // Best-effort Drive archive of the PDF (shared by every group's record).
+  let url = '';
+  try {
+    const { downloadTelegramFile } = require('../utils/telegramFiles');
+    const driveBackup = require('../services/vision/driveBackup');
+    const dl = await downloadTelegramFile(bot, session.pdfFileId);
+    let uploader = userId;
+    try { const u = await usersRepository.findByUserId(userId); if (u && u.name) uploader = u.name; } catch (_) { /* raw id */ }
+    const up = await driveBackup.archiveFile(dl.buffer, dl.mimeType || 'application/pdf',
+      { uploader, originalName: 'snap-transfer.pdf', kind: 'photo' });
+    url = (up && up.drive && up.drive.webViewLink) || '';
+  } catch (e) { logger.warn(`snap transfer: PDF archive failed: ${e.message}`); }
+
+  const created = [];
+  const failed = [];
+  for (const g of groups) {
+    let requestId = null;
+    try {
+      ({ requestId } = await transferService.createTransferRequest({
+        from: g.from, to, lines: g.lines, requestedBy: userId,
+        dispatcher: userId, receiver: receiver.user_id,
+      }));
+      const res = await transferService.dispatch(requestId, userId, g.picks);
+      if (!res.ok) {
+        failed.push({ from: g.from, message: res.message });
+        await transferService.abort(requestId, userId).catch(() => {});
+        continue;
+      }
+      const aj = res.aj;
+      await transferService.attachDoc(requestId, 'dispatch',
+        { url, name: 'Dispatch PDF (snap batch)', fileId: session.pdfFileId || '', by: userId });
+      // Receiver card rides the EXISTING trf: pipeline (Received / Reject),
+      // with the PDF forwarded for eyes-on.
+      try {
+        const card = tf.receiverCard(requestId, aj);
+        await bot.sendMessage(receiver.user_id, card.text, { parse_mode: 'Markdown', reply_markup: card.kb });
+        if (session.pdfFileId) {
+          await bot.sendDocument(receiver.user_id, session.pdfFileId, { caption: `📄 Dispatch PDF — ${requestId}` });
+        }
+      } catch (e) { logger.warn(`snap transfer: receiver DM failed: ${e.message}`); }
+      for (const adminId of config.access.adminIds) {
+        if (String(adminId) === String(userId)) continue;
+        try {
+          await bot.sendMessage(adminId, tf.shortCard(requestId, aj, 'dispatched 🚚 (PDF batch)'), {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '🔍 View details', callback_data: `trf:info:${requestId}` }]] },
+          });
+        } catch (_) { /* best-effort */ }
+      }
+      await auditLogRepository.append('transfer.pdf_batch',
+        { requestId, from: g.from, to, bales: (aj.bales || []).length, source: 'snap_pdf' }, userId);
+      created.push({ requestId, from: g.from, n: (aj.bales || []).length, short: res.short });
+    } catch (e) {
+      logger.warn(`snap transfer group ${g.from}: ${e.message}`);
+      failed.push({ from: g.from, message: e.message });
+    }
+  }
+
+  const okLines = created.map((c) =>
+    `  ✅ \`${c.requestId}\` ${mdEscape(c.from)} → ${mdEscape(to)} — ${c.n} bale(s)${c.short ? ' ⚠️ short' : ''}`);
+  const failLines = failed.map((f) => `  ⚠️ ${mdEscape(f.from)} — ${mdEscape(f.message)}`);
+  const stayLine = stay.length ? `\n⚠️ ${stay.length} bale(s) already at ${mdEscape(to)} — untouched.` : '';
+  // Render BEFORE clearing — the anchored renderer no-ops without a session.
+  await render(bot, chatId, userId,
+    `🚚 *Dispatched from the PDF*\n\n${[...okLines, ...failLines].join('\n')}${stayLine}\n\n`
+    + `⏳ *${mdEscape(receiver.name)}* confirms each transfer on arrival (stock then goes live at ${mdEscape(to)}).`,
+    [[{ text: '📸 Snap another', callback_data: 'act:snap_sale' }, { text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+  sessionStore.clear(userId);
+  return true;
 }
 
 async function submitBatch(bot, chatId, userId, session) {
@@ -435,6 +639,38 @@ async function handleCallback(bot, callbackQuery) {
     else await showConfirm(bot, chatId, userId);
     return true;
   }
+  // SNAP-4 — the PDF batch as a warehouse transfer (admin-only).
+  if (rest === 'tmode') {
+    if (!session.batch) return true;
+    if (!auth.isAdmin(userId)) {
+      await bot.answerCallbackQuery(callbackQuery.id,
+        { text: '🚚 Transfers can be created by admins only.', show_alert: true }).catch(() => {});
+      return true;
+    }
+    await showTransferDest(bot, chatId, userId);
+    return true;
+  }
+  if (rest.startsWith('tdst:')) {
+    const w = (session._dests || [])[Number(rest.slice(5))];
+    if (!w || !session.batch) return true;
+    session.transferTo = w;
+    sessionStore.set(userId, session);
+    await showTransferReceiver(bot, chatId, userId);
+    return true;
+  }
+  if (rest.startsWith('trc:')) {
+    const p = (session._people || [])[Number(rest.slice(4))];
+    if (!p || !session.batch) return true;
+    session.transferReceiver = p;
+    sessionStore.set(userId, session);
+    await showTransferConfirm(bot, chatId, userId);
+    return true;
+  }
+  if (rest === 'tok') {
+    if (session.step !== 'transfer_confirm' || !session.batch || !session.transferTo || !session.transferReceiver) return true;
+    if (!auth.isAdmin(userId)) return true;
+    return submitTransferBatch(bot, chatId, userId, session);
+  }
   if (rest === 'ok') {
     // SNAP-3 batch submit: one sale_bundle for the whole PDF.
     if (session.batch) {
@@ -495,4 +731,4 @@ async function handleCallback(bot, callbackQuery) {
   return true;
 }
 
-module.exports = { SESSION_TYPE, start, handleCallback, handleFile };
+module.exports = { SESSION_TYPE, start, handleCallback, handleFile, _internals: { buildTransferGroups } };
