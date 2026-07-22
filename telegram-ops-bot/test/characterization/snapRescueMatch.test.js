@@ -53,13 +53,13 @@ test('prompt: the INDENT vs BALE NO. distinction is spelled out for the model', 
 
 test('indent-as-bale label is rescued via design+shade across stores, flagged 🔎', () => {
   // Claude read the indent (2522) as the number; design 9060A (hyphen lost).
-  const { items, skipped, ambigQ } = matchBatch(grouped(), [
+  const { items, skipped } = matchBatch(grouped(), [
     { packageNo: '2522', design: '9060A', shade: '2', thanNo: 7, yards: 210, confidence: 0.8 },
   ]);
   assert.equal(items.length, 1);
   assert.equal(items[0].packageNo, '1006', 'the only available 9060-A anywhere');
   assert.match(items[0]._rescued, /label read "2522 9060A"/);
-  assert.equal(skipped.length + ambigQ.length, 0);
+  assert.equal(skipped.length, 0);
 });
 
 test('unreadable bale number (packageNo empty) still rescues by details', () => {
@@ -71,20 +71,20 @@ test('unreadable bale number (packageNo empty) still rescues by details', () => 
   assert.match(items[0]._rescued, /\(no number\) 7160-A/);
 });
 
-test('several plausible candidates → tap-to-pick queue, corroboration breaks ties when it can', () => {
+test('6b: corroboration breaks ties; a true tie is KEPT ASIDE with candidates named — never a question', () => {
   // Two 9032 bales; label meterage 138 corroborates 6261 uniquely.
   const byYards = matchBatch(grouped(), [
     { packageNo: '999', design: '9032', shade: '4', thanNo: 0, yards: 138, confidence: 0.7 },
   ]);
   assert.equal(byYards.items.length, 1);
   assert.equal(byYards.items[0].packageNo, '6261', 'meterage picked the right one');
-  // No corroborating details at all → ask, never guess.
+  // No corroborating details at all → kept aside with the analysis, no guess.
   const noHint = matchBatch(grouped(), [
     { packageNo: '999', design: '9032', shade: '4', thanNo: 0, yards: 0, confidence: 0.7 },
   ]);
   assert.equal(noHint.items.length, 0);
-  assert.equal(noHint.ambigQ.length, 1);
-  assert.equal(noHint.ambigQ[0].cands.length, 2);
+  assert.equal(noHint.skipped.length, 1);
+  assert.match(noHint.skipped[0].reason, /could be 6261 \(Lagos\) or 6262 \(Lagos\) — kept aside/);
   // Unknown design → honest skip.
   const unknown = matchBatch(grouped(), [
     { packageNo: '4444', design: '5555', shade: '9', thanNo: 1, yards: 30, confidence: 0.7 },
@@ -109,7 +109,7 @@ test('a rescued bale is never double-assigned to a second label', () => {
   assert.equal(r2.cand, null, 'already-taken bale is off the table');
 });
 
-test('end-to-end: PDF with a rescue + an ambiguity → picker tap → review and card show 🔎', async () => {
+test('end-to-end 6b: PDF with a rescue + a tie → NO questions — straight to review, tie kept aside', async () => {
   inventoryRepository.getAll = async () => [
     { packageNo: '1006', design: '9060-A', shade: '2', warehouse: 'IDUMOTA', status: 'available', yards: 30 },
     { packageNo: '6261', design: '9032', shade: '4', warehouse: 'Lagos', status: 'available', yards: 35 },
@@ -136,28 +136,22 @@ test('end-to-end: PDF with a rescue + an ambiguity → picker tap → review and
     from: { id: '4242' }, chat: { id: '4242' },
     document: { file_id: 'pdf-1', mime_type: 'application/pdf', file_size: 1024 },
   });
-  // The ambiguity question comes first.
-  const askText = bot.allText().replace(/\\/g, '');
-  assert.match(askText, /Which bale is this\?/);
-  assert.match(askText, /999 9032/);
-  const kb = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method) && c.args.opts && c.args.opts.reply_markup)
-    .pop().args.opts.reply_markup.inline_keyboard.flat();
-  const pick = kb.find((b) => b.text.includes('6262'));
-  await controller.handleCallbackQuery(bot, cb(pick.callback_data));
-  // Review: both the auto-rescue and the picked bale flagged 🔎.
+  // 6b: NO question screen — the review comes straight back.
   const review = bot.allText().replace(/\\/g, '');
-  assert.match(review, /2 bale\(s\) matched/);
+  assert.ok(!review.includes('Which bale is this?'), 'never asks after processing');
+  assert.match(review, /1 bale\(s\) matched/);
   assert.match(review, /🔎 \*1006\*.*by details \(label read "2522 9060-A"\)/);
-  assert.match(review, /🔎 \*6262\*.*picked by you/);
-  // Submit → the admin card carries the rescue note.
+  assert.match(review, /999 9032 — could be 6261 \(Lagos\) or 6262 \(Lagos\) — kept aside \(skipped\)/);
+  // Submit → the admin card carries the rescue note + the kept-aside analysis.
   const buyer = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method) && c.args.opts && c.args.opts.reply_markup)
     .pop().args.opts.reply_markup.inline_keyboard.flat().find((b) => b.text === '👤 ALABI');
   await controller.handleCallbackQuery(bot, cb(buyer.callback_data));
   await controller.handleCallbackQuery(bot, cb('sns:ok'));
   assert.equal(queued.length, 1);
-  assert.deepEqual(queued[0].actionJSON.items.map((i) => i.packageNo), ['1006', '6262']);
+  assert.deepEqual(queued[0].actionJSON.items.map((i) => i.packageNo), ['1006'], 'only the certain bale rides');
   const adminMsgs = bot.calls.filter((c) => c.method === 'sendMessage' && String(c.args.chatId) === '777')
     .map((c) => c.args.text).join('\n').replace(/\\/g, '');
-  assert.match(adminMsgs, /Identified by label DETAILS, not by number \(2\)/);
+  assert.match(adminMsgs, /Identified by label DETAILS, not by number \(1\)/);
+  assert.match(adminMsgs, /could be 6261 \(Lagos\) or 6262 \(Lagos\)/);
   assert.ok(!sessionStore.get('4242'), 'session cleared after submit');
 });

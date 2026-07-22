@@ -93,7 +93,8 @@ function matchBales(bales, ocr) {
  * identify the bale anyway, searched across EVERY store.
  *
  * Never invents: exactly one corroborated candidate → rescued (flagged for
- * human eyes); several plausible ones → a tap-to-pick question; none → skip.
+ * human eyes); several plausible ones → kept aside with the candidates
+ * named in the skip reason (owner 6b: no questions); none → skip.
  *
  * @returns {{cand: object|null, cands: object[]}}
  *   cand set = unique confident rescue; cands = shortlist for the picker.
@@ -126,23 +127,27 @@ function rescueMatch(bales, ocr, takenKeys) {
   return { cand: null, cands: cands.slice(0, 6) };
 }
 
-// A long PDF can produce many unmatched labels — cap the tap-to-pick queue
-// so the operator is never trapped in dozens of questions.
-const AMBIG_QUEUE_MAX = 10;
+/** Short "could be 1002 (IDUMOTA) or 1005 (IDUMOTA)" candidate list. */
+function candList(cands) {
+  const names = cands.slice(0, 3).map((c) => `${c.packageNo} (${c.warehouse})`);
+  return names.join(' or ') + (cands.length > 3 ? ` or ${cands.length - 3} more` : '');
+}
 
 /**
- * SNAP-6 — one pass over every OCR'd label: exact match → rescue → picker
- * queue → skip. Pure (no session/IO) so it is directly testable and shared
- * by the sale and transfer paths.
+ * SNAP-6 (revised 6b, owner 22-Jul): one pass over every OCR'd label —
+ * exact match → attribute rescue → KEEP ASIDE. No questions: when the
+ * details cannot pin ONE bale, the label is set aside with the candidate
+ * analysis in its skip reason ("could be 1002 or 1005") instead of an
+ * interactive picker ("what is the whole purpose of making it faster?").
+ * Pure (no session/IO); shared by the sale and transfer paths.
  *
  * @param {object[]} grouped   groupBales() output (all stores)
  * @param {object[]} ocrBales  mapParsedBales() rows
- * @returns {{items: object[], skipped: Array<{label, reason}>, ambigQ: Array<{label, ocr, cands}>}}
+ * @returns {{items: object[], skipped: Array<{label, reason}>}}
  */
 function matchBatch(grouped, ocrBales) {
   const items = [];
   const skipped = [];
-  const ambigQ = [];
   const seenLabels = new Set();
   const taken = new Set();
   for (const b of ocrBales) {
@@ -163,9 +168,8 @@ function matchBatch(grouped, ocrBales) {
         continue;
       }
       if (exact.length > 1) {
-        // Same bale number lives in more than one store — a tap decides.
-        if (ambigQ.length < AMBIG_QUEUE_MAX) ambigQ.push({ label, ocr: b, cands: exact.slice(0, 6) });
-        else skipped.push({ label, reason: `in ${exact.length} stores — send separately` });
+        // Same bale number lives in more than one store — kept aside.
+        skipped.push({ label, reason: `could be ${candList(exact)} — kept aside` });
         continue;
       }
     }
@@ -176,13 +180,12 @@ function matchBatch(grouped, ocrBales) {
       continue;
     }
     if (rescue.cands.length > 1) {
-      if (ambigQ.length < AMBIG_QUEUE_MAX) ambigQ.push({ label, ocr: b, cands: rescue.cands });
-      else skipped.push({ label, reason: `${rescue.cands.length} possible bales — send separately` });
+      skipped.push({ label, reason: `could be ${candList(rescue.cands)} — kept aside` });
       continue;
     }
     skipped.push({ label, reason: 'not available in the sheet' });
   }
-  return { items, skipped, ambigQ };
+  return { items, skipped };
 }
 
 /* ── screens ── */
@@ -344,9 +347,9 @@ async function handleBatchPdf(bot, msg, session) {
     }
 
     const grouped = groupBales(await inventoryRepository.getAll());
-    // SNAP-6: exact match → attribute rescue → tap-to-pick queue → skip.
-    const { items, skipped, ambigQ } = matchBatch(grouped, ocr.bales);
-    if (!items.length && !ambigQ.length) {
+    // SNAP-6b: exact match → attribute rescue → keep aside. No questions.
+    const { items, skipped } = matchBatch(grouped, ocr.bales);
+    if (!items.length) {
       await render(bot, chatId, userId,
         `📄 Read ${ocr.bales.length} label(s) but NONE matched an available bale:\n`
         + skipped.slice(0, 10).map((s) => `  ⚠️ ${mdEscape(s.label)} — ${mdEscape(s.reason)}`).join('\n')
@@ -355,12 +358,10 @@ async function handleBatchPdf(bot, msg, session) {
       return true;
     }
     session.batch = { items, skipped };
-    session._ambigQ = ambigQ;
     session.bale = null;
     session.step = 'pick_customer';
     sessionStore.set(userId, session);
-    if (ambigQ.length) await showBatchAmbig(bot, chatId, userId);
-    else await showBatchReview(bot, chatId, userId);
+    await showBatchReview(bot, chatId, userId);
     return true;
   } catch (e) {
     logger.warn(`snap PDF batch failed: ${e.message}`);
@@ -380,43 +381,6 @@ function batchSummaryLines(batch, cap = 12) {
   return lines.join('\n');
 }
 
-/**
- * SNAP-6 — sequential tap-to-pick for labels whose bale could be more than
- * one sheet bale (number in several stores, or attribute-rescue shortlist).
- * One question per label, anchored on the flow message; candidates already
- * taken by earlier answers drop out automatically.
- */
-async function showBatchAmbig(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  const q = session._ambigQ || [];
-  while (q.length) {
-    const head = q[0];
-    const takenNow = new Set(session.batch.items.map((m) => `${m.warehouse}|${m.packageNo}`));
-    head.cands = head.cands.filter((c) => !takenNow.has(`${c.warehouse}|${c.packageNo}`));
-    if (head.cands.length) break;
-    session.batch.skipped.push({ label: head.label, reason: 'candidates already used by other labels' });
-    q.shift();
-  }
-  if (!q.length) {
-    sessionStore.set(userId, session);
-    await showBatchReview(bot, chatId, userId);
-    return;
-  }
-  const head = q[0];
-  session.step = 'batch_ambig';
-  sessionStore.set(userId, session);
-  const rows = chunk(head.cands.map((c, i) => ({
-    text: `📦 ${c.packageNo} · ${c.design} · ${c.warehouse} (${c.availableThans} thans)`,
-    callback_data: `${NS}ab:${i}`,
-  })), 1);
-  rows.push([{ text: '⏭ Skip this label', callback_data: `${NS}abskip` }]);
-  rows.push(cancelRow());
-  await render(bot, chatId, userId,
-    `🔎 *Which bale is this?* (${(session._ambigQ || []).length} to resolve)\n\n`
-    + `The label read *${mdEscape(head.label)}* — it did not match one bale by number, `
-    + 'but these sheet bales fit its details:',
-    rows);
-}
 
 async function showBatchReview(bot, chatId, userId) {
   const session = sessionStore.get(userId);
@@ -775,23 +739,6 @@ async function handleCallback(bot, callbackQuery) {
     sessionStore.set(userId, session);
     if (session.batch) await showBatchConfirm(bot, chatId, userId);
     else await showConfirm(bot, chatId, userId);
-    return true;
-  }
-  // SNAP-6 — tap-to-pick answers for unmatched-by-number labels.
-  if (rest.startsWith('ab:') || rest === 'abskip') {
-    if (session.step !== 'batch_ambig' || !session.batch || !(session._ambigQ || []).length) return true;
-    const head = session._ambigQ[0];
-    if (rest === 'abskip') {
-      session.batch.skipped.push({ label: head.label, reason: 'skipped by you' });
-    } else {
-      const c = head.cands[Number(rest.slice(3))];
-      if (!c) return true;
-      session.batch.items.push({ ...c, _rescued: `label read "${head.label}", picked by you` });
-    }
-    session._ambigQ.shift();
-    session.step = 'pick_customer';
-    sessionStore.set(userId, session);
-    await showBatchAmbig(bot, chatId, userId);
     return true;
   }
   // SNAP-4 — the PDF batch as a warehouse transfer (admin-only).
