@@ -3410,6 +3410,11 @@ async function handleMessage(bot, msg) {
       const handled = await require('../flows/sellBaleFlow').handleText(bot, msg);
       if (handled) return;
     }
+    // CUST-2 — ➕ New customer name typed inside the snap/PDF sale flow.
+    if (brSession && brSession.type === 'snap_sale_flow') {
+      const handled = await require('../flows/snapSaleFlow').handleText(bot, msg);
+      if (handled) return;
+    }
   }
 
   // WH-C1 — standalone Add Warehouse flow accepts the new warehouse
