@@ -315,6 +315,17 @@ const PORT = config.port;
 const server = app.listen(PORT, async () => {
   _bootedAt = Date.now();
   logger.info(`Server listening on port ${PORT}. Webhook: ${config.baseUrl ? `${config.baseUrl}/webhook` : 'Set BASE_URL and run npm run set-webhook'}`);
+  // PG-1b/EXT-1 — durable-store bootstrap + the expired-row sweep run in
+  // their OWN block BEFORE the main init, so a schemaMapper failure (live
+  // Sheets API can 429/500) can never skip the sweep and let ext_otp /
+  // ext_sessions / web_sessions / ext_throttle grow unbounded.
+  try { require('./src/db/extSchema').ensure(); } catch (e) { logger.warn(`extSchema boot: ${e.message}`); }
+  try {
+    const extLedgerService = require('./src/services/extLedgerService');
+    extLedgerService.sweepExpired().catch(() => {});
+    const sweepTimer = setInterval(() => extLedgerService.sweepExpired().catch(() => {}), 60 * 60 * 1000);
+    if (sweepTimer.unref) sweepTimer.unref();
+  } catch (e) { logger.warn(`extLedger sweep schedule: ${e.message}`); }
   try {
     await schemaMapper.initialize();
     erpEventBus.registerListeners();
@@ -355,17 +366,6 @@ const server = app.listen(PORT, async () => {
     }
     // ANL-1 — usage analytics capture. No-op until ANALYTICS_ENABLED=1
     // (plus DATABASE_URL). Fire-and-forget: can never block a flow.
-    // PG-1b/EXT-1 — durable sessions + OTP + channel-usage tables.
-    try { require('./src/db/extSchema').ensure(); } catch (e) { logger.warn(`extSchema boot: ${e.message}`); }
-    // The expired-row sweep is scheduled UNCONDITIONALLY (its own block), so
-    // a schema/boot hiccup can never leave ext_otp/ext_sessions growing
-    // unbounded for the life of the process.
-    try {
-      const extLedgerService = require('./src/services/extLedgerService');
-      extLedgerService.sweepExpired().catch(() => {});
-      const sweepTimer = setInterval(() => extLedgerService.sweepExpired().catch(() => {}), 60 * 60 * 1000);
-      if (sweepTimer.unref) sweepTimer.unref();
-    } catch (e) { logger.warn(`extLedger sweep schedule: ${e.message}`); }
     try { require('./src/services/usageTracker').init(); } catch (e) {
       logger.warn(`usageTracker init skipped: ${e.message}`);
     }
