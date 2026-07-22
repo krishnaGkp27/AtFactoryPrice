@@ -355,17 +355,17 @@ const server = app.listen(PORT, async () => {
     }
     // ANL-1 — usage analytics capture. No-op until ANALYTICS_ENABLED=1
     // (plus DATABASE_URL). Fire-and-forget: can never block a flow.
-    // PG-1b/EXT-1 — durable sessions + OTP + channel-usage tables, plus an
-    // hourly sweep of expired OTP/session rows (no unbounded growth).
+    // PG-1b/EXT-1 — durable sessions + OTP + channel-usage tables.
+    try { require('./src/db/extSchema').ensure(); } catch (e) { logger.warn(`extSchema boot: ${e.message}`); }
+    // The expired-row sweep is scheduled UNCONDITIONALLY (its own block), so
+    // a schema/boot hiccup can never leave ext_otp/ext_sessions growing
+    // unbounded for the life of the process.
     try {
-      require('./src/db/extSchema').ensure();
       const extLedgerService = require('./src/services/extLedgerService');
       extLedgerService.sweepExpired().catch(() => {});
       const sweepTimer = setInterval(() => extLedgerService.sweepExpired().catch(() => {}), 60 * 60 * 1000);
       if (sweepTimer.unref) sweepTimer.unref();
-    } catch (e) {
-      logger.warn(`extSchema boot: ${e.message}`);
-    }
+    } catch (e) { logger.warn(`extLedger sweep schedule: ${e.message}`); }
     try { require('./src/services/usageTracker').init(); } catch (e) {
       logger.warn(`usageTracker init skipped: ${e.message}`);
     }

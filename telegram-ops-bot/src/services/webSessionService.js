@@ -26,6 +26,9 @@ const logger = require('../utils/logger');
 
 const TOKEN_TTL_MS = 5 * 60 * 1000;        // magic link: 5 minutes, single use
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // web session: 12 hours
+// PG-sourced/minted sessions re-validate against Postgres this often, so a
+// logout on another instance propagates within the window.
+const PG_CACHE_MS = 60 * 1000;
 
 const _tokens = new Map();   // token → { identity, expiresAt }
 const _sessions = new Map(); // sessionId → { identity, expiresAt }
@@ -69,7 +72,13 @@ async function redeemLoginToken(token) {
   if (!entry) return null;
   _tokens.delete(String(token)); // single use — burn before anything else
   const sessionId = crypto.randomBytes(24).toString('base64url');
-  _sessions.set(sessionId, { identity: entry.identity, expiresAt: now + SESSION_TTL_MS, local: true });
+  // checkAt drives PG re-validation: when PG-backed, even this freshly
+  // minted session must re-check PG within the coherence window so a
+  // logout on ANOTHER instance revokes it here too.
+  _sessions.set(sessionId, {
+    identity: entry.identity, expiresAt: now + SESSION_TTL_MS,
+    checkAt: pool.isEnabled() ? now + PG_CACHE_MS : now + SESSION_TTL_MS,
+  });
   if (pool.isEnabled()) {
     try {
       await pool.query(
@@ -83,32 +92,31 @@ async function redeemLoginToken(token) {
   return { sessionId, identity: entry.identity };
 }
 
-// PG-sourced sessions are cached only briefly so a logout on another
-// instance propagates within the window (a full-TTL cache would keep a
-// logged-out session alive for hours on other instances).
-const PG_CACHE_MS = 60 * 1000;
-
-/** Resolve a session id to its identity, or null. Memory first, then PG. */
+/** Resolve a session id to its identity, or null. */
 async function getSession(sessionId) {
+  const id = String(sessionId || '');
   const now = Date.now();
   _sweep(_sessions, now);
-  const s = _sessions.get(String(sessionId || ''));
-  // A locally-minted session (has a full-TTL entry) is authoritative; a
-  // short-lived PG cache entry is re-checked against PG once it lapses.
-  if (s && (s.local || s.expiresAt > now)) return s.identity;
+  const s = _sessions.get(id);
+  // Serve from cache only while it is fresh (now < checkAt) AND unexpired.
+  // Past checkAt, when PG-backed, we MUST re-validate so an elsewhere
+  // logout is honoured.
+  if (s && s.expiresAt > now && now < (s.checkAt || 0)) return s.identity;
   if (pool.isEnabled()) {
     try {
       const r = await pool.query(
-        'SELECT identity FROM web_sessions WHERE token = $1 AND expires_at > now()', [String(sessionId || '')]);
+        'SELECT identity FROM web_sessions WHERE token = $1 AND expires_at > now()', [id]);
       if (r.rows.length) {
         const identity = r.rows[0].identity;
-        _sessions.set(String(sessionId), { identity, expiresAt: now + PG_CACHE_MS });
+        _sessions.set(id, { identity, expiresAt: now + SESSION_TTL_MS, checkAt: now + PG_CACHE_MS });
         return identity;
       }
-      _sessions.delete(String(sessionId)); // gone in PG (logged out elsewhere)
+      _sessions.delete(id); // gone in PG (logged out elsewhere / expired)
+      return null;
     } catch (e) { logger.warn(`webSession pg read: ${e.message}`); }
   }
-  return null;
+  // No PG: the in-memory entry is authoritative until it expires.
+  return s && s.expiresAt > now ? s.identity : null;
 }
 
 /** Read the session identity off an Express request's cookie, or null. */

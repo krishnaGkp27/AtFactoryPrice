@@ -23,9 +23,13 @@
  *     mirror.
  *   - Canonical phone bucket (last-10 digits): per-phone rate limit and
  *     OTP storage collapse +234…/+1…/0… variants into one bucket.
+ *   - Paid sends go ONLY to the customer's own verified stored number,
+ *     never the caller-supplied one (blocks send-redirect / SMS-pumping
+ *     and OTP theft via a same-last-10-digits number).
  *   - 6-digit codes, sha256-HASHED, single-use, 5-min TTL, 5 attempts.
- *   - Atomic daily cap (usageMeter.reserve) + per-phone 5/hour + per-IP
- *     throttle (apiController) + EXT_LEDGER_ENABLED kill-switch.
+ *   - HARD money ceiling: the atomic daily cap (usageMeter.reserve).
+ *     Per-phone 5/hour and per-IP throttle (apiController) are
+ *     best-effort defence-in-depth on top; EXT_LEDGER_ENABLED kills it.
  */
 
 const crypto = require('crypto');
@@ -105,37 +109,44 @@ async function requestOtp(phoneRaw, channel = 'whatsapp') {
   const norm = phoneUtil.normalizePhone(phoneRaw);
   const key = phoneUtil.phoneKey(norm.e164 || norm.value);
   if (!norm.ok || !key) return GENERIC_OK; // junk input learns nothing
-  await usageMeter.record(channel, 'otp_requested');
+  // Metering is fire-and-forget (never awaited) so no code path carries an
+  // extra awaited DB round-trip that would leak membership via latency.
+  usageMeter.record(channel, 'otp_requested').catch(() => {});
 
   // GLOBAL server states — identical for EVERY caller, so honest errors
   // here reveal nothing about who is a customer.
   if (!channelGateway.isConfigured(channel)) {
-    await usageMeter.record(channel, 'otp_undeliverable');
+    usageMeter.record(channel, 'otp_undeliverable').catch(() => {});
     return { ok: false, error: `${channel} is not configured yet — add its API keys on Railway.` };
   }
   const cap = await _cap();
   if ((await usageMeter.slotsUsed(CAP_KIND)) >= cap) {
-    await usageMeter.record(channel, 'otp_capped');
+    usageMeter.record(channel, 'otp_capped').catch(() => {});
     return { ok: false, error: 'Daily message limit reached — try again tomorrow.' };
   }
 
-  // Same work for EVERY caller so latency doesn't leak membership: always
-  // run the throttle check AND the customer lookup.
+  // Identical awaited work for EVERY caller (throttle read + customer
+  // lookup), so foreground latency doesn't reveal membership.
   const throttled = (await _recentOtpCount(key)) >= PER_PHONE_HOURLY;
   const customer = await _customerByPhone(norm.e164 || norm.value);
-  if (throttled) await usageMeter.record(channel, 'otp_rate_limited');
-  else if (!customer) await usageMeter.record(channel, 'otp_unknown_phone');
+  if (throttled) usageMeter.record(channel, 'otp_rate_limited').catch(() => {});
+  else if (!customer) usageMeter.record(channel, 'otp_unknown_phone').catch(() => {});
 
-  // Reply generically & immediately; the customer-only work (reserve →
-  // store → paid send) runs in the BACKGROUND so the reply's latency is
-  // identical whether or not the number belongs to a customer.
+  // Reply generically & immediately; the customer-only work runs in the
+  // BACKGROUND. CRITICAL (review): the code is delivered to the customer's
+  // OWN VERIFIED stored number — NEVER the caller-supplied one — so an
+  // attacker who submits a same-last-10-digits number they control can
+  // neither redirect the paid send nor receive the victim's code.
   if (customer && !throttled) {
     const code = String(crypto.randomInt(100000, 1000000));
+    const dest = phoneUtil.normalizePhone(customer.phone);
+    const to = dest.e164 || dest.value || String(customer.phone || '');
     const p = (async () => {
+      if (!to) return;
       const reserved = await usageMeter.reserve(CAP_KIND, cap); // ATOMIC ceiling
       if (!reserved) return;
       await _storeOtp(key, code, channel, new Date(Date.now() + OTP_TTL_MS));
-      const sent = await channelGateway.sendOtp(channel, norm.e164 || norm.value, code);
+      const sent = await channelGateway.sendOtp(channel, to, code);
       auditLogRepository.append('ext_otp_sent', { channel, delivered: sent.ok }, key).catch(() => {});
     })().catch((e) => logger.warn(`extLedger bg send: ${e.message}`)).finally(() => _pending.delete(p));
     _pending.add(p);

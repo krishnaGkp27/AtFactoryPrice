@@ -48,7 +48,7 @@ accountingService.getCustomerLedger = async () => ({
 
 let sentCodes = [];
 channelGateway._internals.adapters.whatsapp.configured = () => true;
-channelGateway._internals.adapters.whatsapp.send = async (phone, code) => { sentCodes.push({ phone, code }); };
+channelGateway._internals.adapters.whatsapp.send = async (phone, code) => { sentCodes.push({ to: phone, code }); };
 
 test.beforeEach(() => {
   settings = {};
@@ -147,6 +147,31 @@ test('unconfigured channel: honest GLOBAL error (same for everyone), nothing sen
     await extLedger._settle();
     assert.equal(sentCodes.length, 0);
   } finally { channelGateway._internals.adapters.sms.configured = saved; }
+});
+
+test('CRITICAL: the code is delivered to the customer STORED number, never the caller-supplied one', async () => {
+  // Attacker supplies a foreign-prefix number sharing the victim's last-10
+  // digits (samePhone matches). The paid send must still go to the victim's
+  // real stored +234 number — not the attacker's — so no SMS-pump / no code theft.
+  await extLedger.requestOtp('+18012345678'); // victim last-10 = 8012345678
+  await extLedger._settle();
+  assert.equal(sentCodes.length, 1, 'it matched the customer by last-10…');
+  assert.equal(sentCodes[0].to, '+2348012345678', '…but delivered to the STORED number, not +18012345678');
+});
+
+test('daily cap FAILS CLOSED on a Postgres error — never authorises a fresh cap', async () => {
+  const savedIsEnabled = require(path.join(SRC, 'db/postgresPool')).isEnabled;
+  const savedQuery = require(path.join(SRC, 'db/postgresPool')).query;
+  const pgPool = require(path.join(SRC, 'db/postgresPool'));
+  pgPool.isEnabled = () => true;
+  pgPool.query = async () => { throw new Error('connection terminated'); };
+  try {
+    const reserved = await usageMeter.reserve('otp_slot', 200);
+    assert.equal(reserved, false, 'a PG blip refuses the slot rather than starting a new cap');
+  } finally {
+    pgPool.isEnabled = savedIsEnabled;
+    pgPool.query = savedQuery;
+  }
 });
 
 test('a forged/garbage token never reads a ledger', async () => {
