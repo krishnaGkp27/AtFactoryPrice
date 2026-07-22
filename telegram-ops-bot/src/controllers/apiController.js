@@ -203,9 +203,9 @@ async function getContactsGraph(req, res) {
  * or {role:'admin', via:'api_key'} for the key. False (response already
  * sent) when neither is valid.
  */
-function gate(req, res) {
+async function gate(req, res) {
   const webSessionService = require('../services/webSessionService');
-  const identity = webSessionService.identityFromRequest(req);
+  const identity = await webSessionService.identityFromRequest(req);
   if (identity) return identity;
   if (!config.botApiKey) {
     res.status(503).json({ ok: false, error: 'Ops API disabled: server has no BOT_API_KEY configured.' });
@@ -234,7 +234,7 @@ async function section(fn) {
 }
 
 async function getOpsOverview(req, res) {
-  const identity = gate(req, res);
+  const identity = await gate(req, res);
   if (!identity) return;
   const todayIso = new Date().toISOString().slice(0, 10);
   const [approvals, attendance, notes, samples, orders, audits] = await Promise.all([
@@ -283,7 +283,7 @@ async function getOpsOverview(req, res) {
 }
 
 async function getOpsApprovals(req, res) {
-  const identity = gate(req, res);
+  const identity = await gate(req, res);
   if (!identity) return;
   if (identity.role !== 'admin') {
     return res.status(403).json({ ok: false, error: 'Approvals oversight is admin-only.' });
@@ -310,7 +310,7 @@ async function getOpsApprovals(req, res) {
 }
 
 async function getOpsAttendance(req, res) {
-  const identity = gate(req, res);
+  const identity = await gate(req, res);
   if (!identity) return;
   try {
     const attendanceService = require('../services/attendanceService');
@@ -337,7 +337,7 @@ async function getOpsAttendance(req, res) {
 }
 
 async function getOpsStockTakes(req, res) {
-  const identity = gate(req, res);
+  const identity = await gate(req, res);
   if (!identity) return;
   try {
     let all = await require('../repositories/stockTakesRepository').getAll();
@@ -360,7 +360,76 @@ async function getOpsStockTakes(req, res) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// EXT-1 — customer-facing ledger API (owner 22-Jul): OTP over WhatsApp/SMS →
+// customer-scoped bearer token → the customer's OWN ledger. Public-facing,
+// so it carries its own per-IP throttle on top of extLedgerService's
+// per-phone limits and daily caps ("no money leakages").
+// ---------------------------------------------------------------------------
+
+const _ipHits = new Map(); // ip → [timestamps]
+function ipThrottle(req, res, max = 30) {
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  const now = Date.now();
+  const hits = (_ipHits.get(ip) || []).filter((t) => now - t < 60 * 60 * 1000);
+  hits.push(now);
+  _ipHits.set(ip, hits);
+  if (_ipHits.size > 5000) _ipHits.clear(); // memory guard
+  if (hits.length > max) {
+    res.status(429).json({ ok: false, error: 'Too many requests — slow down.' });
+    return false;
+  }
+  return true;
+}
+
+/** POST /api/ext/otp/request {phone, channel} */
+async function postExtOtpRequest(req, res) {
+  if (!ipThrottle(req, res, 30)) return;
+  try {
+    const { phone, channel } = req.body || {};
+    const out = await require('../services/extLedgerService')
+      .requestOtp(String(phone || ''), ['whatsapp', 'sms'].includes(channel) ? channel : 'whatsapp');
+    res.status(out.ok ? 200 : 400).json(out);
+  } catch (e) { res.status(500).json({ ok: false, error: 'Something went wrong.' }); }
+}
+
+/** POST /api/ext/otp/verify {phone, code} → {token, customer} */
+async function postExtOtpVerify(req, res) {
+  if (!ipThrottle(req, res, 60)) return;
+  try {
+    const { phone, code } = req.body || {};
+    const out = await require('../services/extLedgerService').verifyOtp(String(phone || ''), String(code || ''));
+    res.status(out.ok ? 200 : 401).json(out);
+  } catch (e) { res.status(500).json({ ok: false, error: 'Something went wrong.' }); }
+}
+
+/** GET /api/ext/ledger — Authorization: Bearer <token>. */
+async function getExtLedger(req, res) {
+  if (!ipThrottle(req, res, 120)) return;
+  try {
+    const auth = String(req.headers.authorization || '');
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    const out = await require('../services/extLedgerService').getLedger(token);
+    res.status(out.ok ? 200 : (out.status || 401)).json(out);
+  } catch (e) { res.status(500).json({ ok: false, error: 'Something went wrong.' }); }
+}
+
+/**
+ * GET /api/ops/usage — the owner's cumulative channel-usage metric for the
+ * WEBSITE (admin/session gated like every ops endpoint).
+ */
+async function getOpsUsage(req, res) {
+  const identity = await gate(req, res);
+  if (!identity) return;
+  if (identity.role !== 'admin') return res.status(403).json({ ok: false, error: 'Admins only.' });
+  try {
+    const usage = await require('../services/usageMeterService').totals();
+    res.json({ ok: true, ...usage });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+}
+
 module.exports = {
   getSettings, updateSettings, getAnalyticsSummary, getAnalyticsFeature, getContactsGraph,
   getOpsOverview, getOpsApprovals, getOpsAttendance, getOpsStockTakes,
+  postExtOtpRequest, postExtOtpVerify, getExtLedger, getOpsUsage,
 };
