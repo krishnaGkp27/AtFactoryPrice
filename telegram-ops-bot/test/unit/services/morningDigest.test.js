@@ -64,6 +64,23 @@ test('fires only at/after 09:15 Lagos, once per day, with catch-up', async () =>
   assert.equal(await digest.tick(bot, NEXT_DAY), true, 'fires again next day');
 });
 
+test('MORN-2: an afternoon redeploy never re-greets — catch-up only inside the grace window', async () => {
+  digest._resetForTests(); // a redeploy wipes the in-memory sent marker
+  settings = baseSettings();
+  const bot = createFakeBot();
+  const AFTERNOON = new Date('2026-07-17T13:40:00Z'); // 14:40 Lagos — 5h25m past 09:15
+  assert.equal(await digest.tick(bot, AFTERNOON), false, 'boot tick outside the window stays silent');
+  assert.equal(bot.calls.filter((c) => c.method === 'sendMessage').length, 0, 'nothing sent');
+  assert.equal(await digest.tick(bot, new Date('2026-07-17T14:00:00Z')), false, 'day marked done — stays quiet');
+  assert.equal(await digest.tick(bot, NEXT_DAY), true, 'next morning fires normally');
+
+  // The window is a Settings knob: widen it and the same afternoon boot fires.
+  digest._resetForTests();
+  settings = { ...baseSettings(), DIGEST_CATCHUP_MINUTES: 600 };
+  const bot2 = createFakeBot();
+  assert.equal(await digest.tick(bot2, AFTERNOON), true, 'DIGEST_CATCHUP_MINUTES=600 allows the late catch-up');
+});
+
 test('launch toggles: notes summary counts total + new; drill-down shows ALL notes', async () => {
   digest._resetForTests();
   settings = baseSettings();

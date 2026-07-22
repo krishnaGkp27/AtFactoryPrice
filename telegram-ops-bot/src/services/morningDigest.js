@@ -393,6 +393,12 @@ async function sendDigest(bot, settings, now = new Date()) {
   return sent;
 }
 
+/** "HH:MM" → minutes since midnight. */
+function hmToMin(hm) {
+  const [h, m] = String(hm).split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
 /** One scheduler pass. Injected `now` keeps it testable. Never throws. */
 async function tick(bot, now = new Date()) {
   try {
@@ -403,7 +409,15 @@ async function tick(bot, now = new Date()) {
     const day = dayInTz(now, tz);
     if (_lastSentDay === day) return false;
     const at = String(settings.DIGEST_TIME || '10:00').padStart(5, '0');
-    if (timeInTz(now, tz) < at) return false;
+    const nowHm = timeInTz(now, tz);
+    if (nowHm < at) return false;
+    // MORN-2 (owner bug 22-Jul): _lastSentDay is in-memory, so every
+    // redeploy forgets it and the boot tick re-sent the "good morning"
+    // digest all day long. Catch-up is only allowed within a grace window
+    // after DIGEST_TIME; any later (re)start marks the day done silently.
+    const winMin = Number(settings.DIGEST_CATCHUP_MINUTES ?? 120);
+    const minutesLate = (hmToMin(nowHm) - hmToMin(at));
+    if (minutesLate > winMin) { _lastSentDay = day; return false; }
     _lastSentDay = day; // set BEFORE sending so a hung send can't double-fire
     const sent = await sendDigest(bot, settings, now);
     if (sent) logger.info(`morningDigest: sent to ${sent} admin(s) for ${day}`);
