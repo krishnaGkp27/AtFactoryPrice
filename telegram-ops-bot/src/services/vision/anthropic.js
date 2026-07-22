@@ -50,11 +50,16 @@ function getClient() {
 const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
 /** One model round-trip; returns {parsed, truncated} or null on unparseable. */
-async function callModel(client, contentBlock, isPdf) {
+async function callModel(client, contentBlock, isPdf, smart = false) {
+  // SNAP-7: small PDFs (verification bills, short supply runs) go to the
+  // STRONG photo model WITH thinking — rotated low-light handwriting broke
+  // the fast model (owner's OKESON bill: 1057 read as 1657, a corner
+  // scribble returned as a bale). Long dispatch PDFs keep the fast model.
+  const usePhotoModel = !isPdf || smart;
   const resp = await client.messages.create({
-    model: isPdf ? config.ocr.anthropicPdfModel : config.ocr.anthropicModel,
+    model: usePhotoModel ? config.ocr.anthropicModel : config.ocr.anthropicPdfModel,
     max_tokens: isPdf ? PDF_MAX_TOKENS : 3000,
-    ...(isPdf ? {} : { thinking: { type: 'adaptive' } }),
+    ...(usePhotoModel ? { thinking: { type: 'adaptive' } } : {}),
     messages: [{
       role: 'user',
       content: [
@@ -105,6 +110,10 @@ async function extractBales(buffer, mimeType /* , opts */) {
     chunks = [{ buffer, fromPage: 0, toPage: 0 }];
   }
 
+  // SNAP-7 — small PDFs earn the strong model + thinking (see callModel).
+  const totalPages = (chunks.length && chunks[chunks.length - 1].toPage) || 0;
+  const smart = isPdf && totalPages > 0 && totalPages <= (config.ocr.smartPdfMaxPages || 6);
+
   const allBales = [];
   const warnings = [];
   let rawText = '';
@@ -117,7 +126,7 @@ async function extractBales(buffer, mimeType /* , opts */) {
     try {
       out = await callModel(client,
         isPdf ? docBlock(c.buffer) : { type: 'image', source: { type: 'base64', media_type: mimeType, data: c.buffer.toString('base64') } },
-        isPdf);
+        isPdf, smart);
     } catch (e) {
       // API-level failure on this chunk: remember it, keep reading the rest.
       logger.warn(`vision/anthropic: ${range} failed: ${e.message}`);

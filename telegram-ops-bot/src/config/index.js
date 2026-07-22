@@ -155,6 +155,13 @@ const config = {
      */
     anthropicPdfModel: process.env.OCR_ANTHROPIC_PDF_MODEL || 'claude-sonnet-4-6',
     /**
+     * SNAP-7 — PDFs with at most this many pages use the STRONG photo
+     * model + thinking instead (rotated/low-light handwriting needs it;
+     * a 3-page verification bill costs cents). Bigger PDFs keep the
+     * cost-efficient model above.
+     */
+    smartPdfMaxPages: parseInt(process.env.OCR_PDF_SMART_MAX_PAGES, 10) || 6,
+    /**
      * PDFs may bundle many label photos — separate, larger cap. 19 MB:
      * Telegram refuses bot downloads over 20 MB, so anything higher can
      * never arrive anyway (SNAP-4; ~100 compressed pages fit).

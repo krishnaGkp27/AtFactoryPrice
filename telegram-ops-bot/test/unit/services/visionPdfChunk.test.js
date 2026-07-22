@@ -83,6 +83,21 @@ test('big PDF → one Claude call per chunk at the raised token budget, results 
   }
 });
 
+test('SNAP-7: a small PDF (≤6 pages) uses the STRONG photo model WITH thinking', async () => {
+  const buf = await makePdf(3); // a verification bill
+  let captured = null;
+  const orig = Messages.prototype.create;
+  Messages.prototype.create = async (req) => { captured = req; return { content: [{ type: 'text', text: baleJson(1) }] }; };
+  try {
+    const r = await provider.extractBales(buf, 'application/pdf');
+    assert.equal(r.ok, true);
+    assert.equal(captured.model, 'claude-opus-4-8', 'rotated low-light handwriting needs the photo model');
+    assert.deepEqual(captured.thinking, { type: 'adaptive' }, 'thinking ON for small PDFs');
+  } finally {
+    Messages.prototype.create = orig;
+  }
+});
+
 test('one failing chunk does not kill the batch — its pages are reported missing', async () => {
   const buf = await makePdf(35);
   let call = 0;

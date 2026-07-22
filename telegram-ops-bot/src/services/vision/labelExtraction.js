@@ -27,6 +27,15 @@ Extract EVERY bale you can see and return STRICT JSON only (no prose):
 Rules: transcribe handwriting as digits exactly as written (e.g. 77016,
 896, 5). Do not invent fields you cannot read — use "" or null. If the
 photo shows one sack label, return exactly one bale entry.
+The photos are often ROTATED 90° (the label text runs vertically) and
+taken in poor light on wrinkled sacks — mentally rotate the image and
+read carefully. Use the PRINTED field names (SHIPPING MARK, INDENT NO.,
+BALE NO., DESIGN NO., COLOUR NO., NO. OF PCS., TOTAL YDS. or TOTAL
+MTR., NET WT., GROSS WT.) as anchors: each handwritten value sits right
+beside its printed field name, in that order along the label.
+Loose pen/chalk scribbles NOT beside a printed field name (e.g.
+"77008/24" written on a sack corner) are stock notes, NOT bale rows —
+never return them as bales; mention them only in rawText.
 IMPORTANT — BALE NO. and INDENT NO. are DIFFERENT fields: the INDENT NO.
 is the order number and is usually the SAME on every sack of a batch;
 the BALE NO. is unique per sack. packageNo must be the BALE NO. — never
