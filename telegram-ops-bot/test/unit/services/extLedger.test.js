@@ -1,19 +1,18 @@
 'use strict';
 
 /**
- * EXT-1 — customer-facing OTP ledger (owner 22-Jul). Pins the money-leak
- * guards: anti-enumeration, per-phone rate limit, attempt cap, single-use
- * codes, customer-scoped tokens, the EXT_OTP_DAILY_CAP hard ceiling, the
- * kill-switch, and the usage meters that feed the website metric.
- * Runs entirely on the in-memory fallback (no DATABASE_URL in tests).
+ * EXT-1 — customer-facing OTP ledger, hardened after adversarial review.
+ * Pins: strict exact-customer ledger scope (no substring bleed), uniform
+ * anti-enumeration (identical body for known/unknown/config states),
+ * single-use codes + attempt cap, canonical per-phone bucket (variant
+ * bypass closed), atomic daily cap, kill-switch, and the usage meters.
+ * Runs on the in-memory fallback (harness scrubs DATABASE_URL).
  */
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 
-// Real sheetsClient keeps auth handles alive and hangs the runner — stub it
-// before anything pulls repositories in (same pattern as the other suites).
 const { createFakeSheets } = require('../../helpers/fakeSheets');
 const { installFakeSheets } = require('../../helpers/controllerHarness');
 installFakeSheets(createFakeSheets({}));
@@ -24,24 +23,32 @@ const customersRepository = require(path.join(SRC, 'repositories/customersReposi
 const auditLogRepository = require(path.join(SRC, 'repositories/auditLogRepository'));
 const usageMeter = require(path.join(SRC, 'services/usageMeterService'));
 const channelGateway = require(path.join(SRC, 'services/channelGateway'));
+const accountingService = require(path.join(SRC, 'services/accountingService'));
 const extLedger = require(path.join(SRC, 'services/extLedgerService'));
 
 let settings = {};
 settingsRepository.getAll = async () => ({ ...settings });
 customersRepository.getAll = async () => [
-  { name: 'OKESON STORES', phone: '+2348012345678', status: 'active' },
+  { name: 'Bello', phone: '+2348012345678', status: 'active' },
+  { name: 'Bello Traders', phone: '+2348099998888', status: 'active' },
 ];
 auditLogRepository.append = async () => {};
 
-// Capture what the gateway would send without any real HTTP.
+// Loose (substring) ledger — exactly what the shared accountingService
+// returns: three entries naming THREE different customers all containing
+// "bello". The external service must strictly keep only the exact ones.
+accountingService.getCustomerLedger = async () => ({
+  entries: [
+    { date: '2026-07-20', debit: 100000, credit: 0, narration: 'Sale: 50 yds 9060 3 pkg 1001 to Bello | Zenith' },
+    { date: '2026-07-21', debit: 40000, credit: 0, narration: 'Sale: 20 yds 9060 5 pkg 1002 to Bello Traders | Cash' },
+    { date: '2026-07-22', debit: 0, credit: 60000, narration: 'Payment received from Bello: NGN 60000 via Bank' },
+  ],
+  outstandingAsOfToday: 80000,
+});
+
 let sentCodes = [];
 channelGateway._internals.adapters.whatsapp.configured = () => true;
 channelGateway._internals.adapters.whatsapp.send = async (phone, code) => { sentCodes.push({ phone, code }); };
-
-const accountingService = require(path.join(SRC, 'services/accountingService'));
-accountingService.getCustomerLedger = async (name) => ({
-  customer: name, entries: [{ date: '2026-07-20', type: 'sale', amount: 100000 }], outstandingAsOfToday: 40000,
-});
 
 test.beforeEach(() => {
   settings = {};
@@ -50,20 +57,29 @@ test.beforeEach(() => {
   usageMeter._resetForTests();
 });
 
-test('happy path: request → code delivered → verify → scoped ledger; meters count it all', async () => {
-  const req = await extLedger.requestOtp('0801 234 5678', 'whatsapp'); // local format normalizes
-  assert.equal(req.ok, true);
-  assert.equal(sentCodes.length, 1);
-  assert.match(sentCodes[0].code, /^\d{6}$/);
-  const bad = await extLedger.verifyOtp('08012345678', '000000');
-  assert.equal(bad.ok, false, 'wrong code rejected');
-  const ok = await extLedger.verifyOtp('08012345678', sentCodes[0].code);
-  assert.equal(ok.ok, true);
-  assert.equal(ok.customer, 'OKESON STORES');
-  const ledger = await extLedger.getLedger(ok.token);
-  assert.equal(ledger.ok, true);
-  assert.equal(ledger.customer, 'OKESON STORES', 'scope comes from the token');
-  assert.equal(ledger.ledger.outstandingAsOfToday, 40000);
+async function loginAs(phone) {
+  await extLedger.requestOtp(phone, 'whatsapp');
+  await extLedger._settle();
+  const v = await extLedger.verifyOtp(phone, sentCodes[sentCodes.length - 1].code);
+  return v;
+}
+
+test('CRITICAL: ledger is scoped to the EXACT customer — no substring bleed', async () => {
+  const v = await loginAs('08012345678');
+  assert.equal(v.ok, true);
+  assert.equal(v.customer, 'Bello');
+  const out = await extLedger.getLedger(v.token);
+  assert.equal(out.ok, true);
+  const narrations = out.ledger.entries.map((e) => e.narration);
+  assert.equal(out.ledger.entries.length, 2, 'only the two exact-Bello entries');
+  assert.ok(narrations.every((n) => !/Bello Traders/.test(n)), "'Bello Traders' entry is NOT leaked to 'Bello'");
+  assert.equal(out.ledger.outstanding, 40000, '100000 sale − 60000 payment (Traders sale excluded)');
+});
+
+test('happy path meters every step for the website usage metric', async () => {
+  const v = await loginAs('0801 234 5678'); // local format normalises to the same number
+  assert.equal(v.ok, true);
+  await extLedger.getLedger(v.token);
   const { cumulative } = await usageMeter.totals();
   const kinds = Object.fromEntries(cumulative.map((c) => [`${c.channel}|${c.kind}`, c.count]));
   assert.equal(kinds['whatsapp|otp_sent'], 1);
@@ -71,62 +87,69 @@ test('happy path: request → code delivered → verify → scoped ledger; meter
   assert.equal(kinds['api|ledger_view'], 1);
 });
 
-test('anti-enumeration: unknown number gets the SAME generic answer, nothing sent', async () => {
+test('anti-enumeration: known, unknown, and junk numbers get the IDENTICAL response; no send for unknown', async () => {
   const known = await extLedger.requestOtp('08012345678');
-  const unknown = await extLedger.requestOtp('08099999999');
-  assert.deepEqual(unknown, { ok: true, message: known.message }, 'indistinguishable outward');
-  assert.equal(sentCodes.length, 1, 'no paid send for the unknown number');
+  const unknown = await extLedger.requestOtp('08055554444');
   const junk = await extLedger.requestOtp('not-a-phone');
-  assert.equal(junk.ok, true, 'junk input also learns nothing');
+  assert.deepEqual(known, unknown, 'known vs unknown indistinguishable');
+  assert.deepEqual(unknown, junk, 'junk indistinguishable too');
+  await extLedger._settle();
+  assert.equal(sentCodes.length, 1, 'only the real customer triggers a paid send');
 });
 
 test('single-use + attempt cap: a used code dies; 5 wrong tries burn the OTP', async () => {
-  await extLedger.requestOtp('08012345678');
+  await extLedger.requestOtp('08012345678'); await extLedger._settle();
   const code = sentCodes[0].code;
   assert.equal((await extLedger.verifyOtp('08012345678', code)).ok, true);
   assert.equal((await extLedger.verifyOtp('08012345678', code)).ok, false, 'single use');
-  extLedger._resetForTests();
-  await extLedger.requestOtp('08012345678');
-  const real = sentCodes[1].code;
+  extLedger._resetForTests(); sentCodes = [];
+  await extLedger.requestOtp('08012345678'); await extLedger._settle();
+  const real = sentCodes[0].code;
   for (let i = 0; i < 5; i++) await extLedger.verifyOtp('08012345678', '111111');
   assert.equal((await extLedger.verifyOtp('08012345678', real)).ok, false, 'burned after 5 attempts');
 });
 
-test('per-phone hourly limit: the 6th request in an hour is silently dropped', async () => {
-  for (let i = 0; i < 5; i++) await extLedger.requestOtp('08012345678');
+test('per-phone limit keys on the CANONICAL number — prefix variants share one bucket', async () => {
+  // Five requests spread across format variants of the SAME line.
+  for (const p of ['+2348012345678', '08012345678', '2348012345678', '+2348012345678', '8012345678']) {
+    await extLedger.requestOtp(p);
+  }
+  await extLedger._settle();
   assert.equal(sentCodes.length, 5);
-  const sixth = await extLedger.requestOtp('08012345678');
+  const sixth = await extLedger.requestOtp('+18012345678'); // yet another variant
+  await extLedger._settle();
   assert.equal(sixth.ok, true, 'still generic outward');
-  assert.equal(sentCodes.length, 5, 'nothing sent — cap held');
+  assert.equal(sentCodes.length, 5, 'variant did NOT get a fresh bucket — no extra paid send');
 });
 
-test('EXT_OTP_DAILY_CAP is a hard ceiling on paid sends; kill-switch closes the surface', async () => {
-  settings = { EXT_OTP_DAILY_CAP: 1 };
-  await extLedger.requestOtp('08012345678');
-  assert.equal(sentCodes.length, 1);
-  const over = await extLedger.requestOtp('08012345678');
-  assert.equal(over.ok, false);
-  assert.match(over.error, /Daily message limit/);
-  assert.equal(sentCodes.length, 1, 'no send past the cap — no money leakage');
+test('EXT_OTP_DAILY_CAP is an ATOMIC ceiling even under concurrency', async () => {
+  settings = { EXT_OTP_DAILY_CAP: 3 };
+  // Fire 10 requests for the real customer at once; only 3 may actually send.
+  await Promise.all(Array.from({ length: 10 }, () => extLedger.requestOtp('08012345678')));
+  await extLedger._settle();
+  assert.equal(sentCodes.length, 3, 'never overshoots the cap, no matter the burst');
+});
 
+test('kill-switch closes the whole surface', async () => {
   settings = { EXT_LEDGER_ENABLED: 0 };
   assert.equal((await extLedger.requestOtp('08012345678')).ok, false);
   assert.equal((await extLedger.getLedger('whatever')).ok, false);
 });
 
-test('unconfigured channel: honest error, metered as undeliverable, nothing exposed', async () => {
+test('unconfigured channel: honest GLOBAL error (same for everyone), nothing sent', async () => {
   const saved = channelGateway._internals.adapters.sms.configured;
   channelGateway._internals.adapters.sms.configured = () => false;
   try {
-    const out = await extLedger.requestOtp('08012345678', 'sms');
-    assert.equal(out.ok, false);
-    assert.match(out.error, /not configured/);
-    const { cumulative } = await usageMeter.totals();
-    assert.ok(cumulative.some((c) => c.channel === 'sms' && c.kind === 'otp_undeliverable'));
+    const known = await extLedger.requestOtp('08012345678', 'sms');
+    const unknown = await extLedger.requestOtp('08055554444', 'sms');
+    assert.deepEqual(known, unknown, 'config error identical for known & unknown — no membership leak');
+    assert.match(known.error, /not configured/);
+    await extLedger._settle();
+    assert.equal(sentCodes.length, 0);
   } finally { channelGateway._internals.adapters.sms.configured = saved; }
 });
 
-test('a random/garbage token never reads a ledger', async () => {
+test('a forged/garbage token never reads a ledger', async () => {
   const out = await extLedger.getLedger('forged-token');
   assert.equal(out.ok, false);
   assert.equal(out.status, 401);

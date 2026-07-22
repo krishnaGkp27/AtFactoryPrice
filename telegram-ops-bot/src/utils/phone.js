@@ -61,4 +61,15 @@ function toStored(raw) {
   return r.ok ? r.value : String(raw ?? '').trim();
 }
 
-module.exports = { normalizePhone, samePhone, toStored, NG_CC };
+/**
+ * Canonical bucket key for rate-limiting / OTP storage — the SAME last-10
+ * digits `samePhone` matches on, so +234803…, +1803…, 0803… all collapse
+ * to one bucket (EXT-1: a per-phone limit that keys on the raw e164 is
+ * bypassable via prefix variants). '' when there aren't enough digits.
+ */
+function phoneKey(raw) {
+  const d = String(raw || '').replace(/\D/g, '');
+  return d.length >= 7 ? d.slice(-10) : '';
+}
+
+module.exports = { normalizePhone, samePhone, toStored, phoneKey, NG_CC };

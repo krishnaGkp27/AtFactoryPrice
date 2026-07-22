@@ -69,7 +69,7 @@ async function redeemLoginToken(token) {
   if (!entry) return null;
   _tokens.delete(String(token)); // single use — burn before anything else
   const sessionId = crypto.randomBytes(24).toString('base64url');
-  _sessions.set(sessionId, { identity: entry.identity, expiresAt: now + SESSION_TTL_MS });
+  _sessions.set(sessionId, { identity: entry.identity, expiresAt: now + SESSION_TTL_MS, local: true });
   if (pool.isEnabled()) {
     try {
       await pool.query(
@@ -83,21 +83,29 @@ async function redeemLoginToken(token) {
   return { sessionId, identity: entry.identity };
 }
 
+// PG-sourced sessions are cached only briefly so a logout on another
+// instance propagates within the window (a full-TTL cache would keep a
+// logged-out session alive for hours on other instances).
+const PG_CACHE_MS = 60 * 1000;
+
 /** Resolve a session id to its identity, or null. Memory first, then PG. */
 async function getSession(sessionId) {
   const now = Date.now();
   _sweep(_sessions, now);
   const s = _sessions.get(String(sessionId || ''));
-  if (s) return s.identity;
+  // A locally-minted session (has a full-TTL entry) is authoritative; a
+  // short-lived PG cache entry is re-checked against PG once it lapses.
+  if (s && (s.local || s.expiresAt > now)) return s.identity;
   if (pool.isEnabled()) {
     try {
       const r = await pool.query(
         'SELECT identity FROM web_sessions WHERE token = $1 AND expires_at > now()', [String(sessionId || '')]);
       if (r.rows.length) {
         const identity = r.rows[0].identity;
-        _sessions.set(String(sessionId), { identity, expiresAt: now + SESSION_TTL_MS });
+        _sessions.set(String(sessionId), { identity, expiresAt: now + PG_CACHE_MS });
         return identity;
       }
+      _sessions.delete(String(sessionId)); // gone in PG (logged out elsewhere)
     } catch (e) { logger.warn(`webSession pg read: ${e.message}`); }
   }
   return null;
