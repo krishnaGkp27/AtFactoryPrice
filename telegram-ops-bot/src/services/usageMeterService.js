@@ -51,11 +51,12 @@ async function reserve(kind, cap) {
     }
     return true;
   } catch (e) {
-    logger.warn(`usageMeter reserve ${kind}: ${e.message}`);
-    const cur = _mem.get(key) || 0;
-    if (cur >= cap) return false;
-    _mem.set(key, cur + 1);
-    return true;
+    // FAIL CLOSED on a Postgres error: the memory counter is NOT a mirror
+    // of the PG count, so falling back to it would start a fresh cap and
+    // authorize up to `cap` extra PAID sends beyond the ceiling. Refusing
+    // the send is the money-safe choice (the customer simply retries).
+    logger.warn(`usageMeter reserve ${kind} (fail-closed): ${e.message}`);
+    return false;
   }
 }
 
