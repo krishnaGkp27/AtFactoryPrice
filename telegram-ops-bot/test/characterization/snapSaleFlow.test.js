@@ -135,9 +135,11 @@ test('SNAP-3: PDF batch → review card → one customer → ONE sale_bundle wit
   assert.equal(queued.length, before + 1, 'exactly ONE approval for the whole PDF');
   const aj = queued.at(-1).actionJSON;
   assert.equal(aj.action, 'sale_bundle');
+  // CARD-2: items ride in canonical order — design, then shade (897 is
+  // shade 2, 896 is shade 5), then bale number.
   assert.deepEqual(aj.items, [
-    { type: 'package', packageNo: '896' },
     { type: 'package', packageNo: '897' },
+    { type: 'package', packageNo: '896' },
   ]);
   assert.equal(aj.customer, 'ALABI');
   assert.equal(aj.sale_doc_file_id, 'supply-pdf-1');

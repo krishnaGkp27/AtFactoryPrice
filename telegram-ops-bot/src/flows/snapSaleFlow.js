@@ -372,6 +372,8 @@ async function handleBatchPdf(bot, msg, session) {
 }
 
 function batchSummaryLines(batch, cap = 12) {
+  // CARD-2 — same canonical order as the approval card: design → shade → bale.
+  try { batch.items = require('../services/approvalCards').sortSaleItems(batch.items); } catch (_) { /* unsorted */ }
   const lines = batch.items.slice(0, cap).map((m) =>
     `  ${m._rescued ? '🔎' : '✅'} *${mdEscape(m.packageNo)}* — ${mdEscape(m.design)} · ${mdEscape(m.warehouse)} · ${m.availableThans} thans · ${Math.round(m.availableYards)} yds`
     + (m._rescued ? ` — _by details (${mdEscape(m._rescued)})_` : ''));

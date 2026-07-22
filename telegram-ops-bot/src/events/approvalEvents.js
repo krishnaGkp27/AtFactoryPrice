@@ -870,6 +870,16 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
       }
     }
   }
+  // VRF-1 (owner 22-Jul) — fire-and-forget bill-vs-request check for
+  // documented sales: the card above is never delayed by OCR; the 🔬
+  // verdict follows as its own message. The service itself filters to
+  // sale actions with an attached doc and skips snap-sourced requests.
+  try {
+    const notified = config.access.adminIds.filter((a) => !(excludeUserId && String(a) === String(excludeUserId)));
+    const verifyP = require('../services/saleDocVerifyService')
+      .maybeVerify(bot, requestId, { adminIds: notified });
+    if (opts && opts.awaitVerify) await verifyP;
+  } catch (e) { logger.warn(`saleDocVerify launch ${requestId}: ${e.message}`); }
   return { sent, failed };
 }
 

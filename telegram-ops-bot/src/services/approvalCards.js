@@ -98,6 +98,17 @@ async function customerContact(customerName) {
  * @param {boolean} [p.docAttached]
  * @param {string}  [p.docLabel]    default 'Sales bill'
  */
+/**
+ * CARD-2 (owner 22-Jul): canonical item order for every sale card —
+ * design first, then shade, then bale number (all numeric-aware), so
+ * mixed batches read grouped instead of pick order.
+ */
+function sortSaleItems(items) {
+  const cmp = (a, b) => String(a ?? '').localeCompare(String(b ?? ''), 'en', { numeric: true });
+  return [...(items || [])].sort((a, b) =>
+    cmp(a.design, b.design) || cmp(a.shade, b.shade) || cmp(a.packageNo, b.packageNo));
+}
+
 async function buildSaleCard(p) {
   let text = `${p.headline || 'Sale Request'}\nCustomer: ${p.customer}`;
   const contact = await customerContact(p.customer);
@@ -109,7 +120,24 @@ async function buildSaleCard(p) {
   text += '\n\nItems:\n';
   let totalYards = 0;
   let totalThans = 0;
-  for (const it of p.items || []) {
+  // CARD-2 — sorted by design → shade → bale; multi-design batches get a
+  // per-design subtotal header + a blank separator line, so the approver
+  // sees at a glance how many of each design ride in the request.
+  const items = sortSaleItems(p.items);
+  const designs = [...new Set(items.map((it) => String(it.design ?? '')))];
+  const grouped = designs.length > 1;
+  let lastDesign = null;
+  for (const it of items) {
+    const dKey = String(it.design ?? '');
+    if (grouped && dKey !== lastDesign) {
+      const group = items.filter((x) => String(x.design ?? '') === dKey);
+      const gThans = group.reduce((s, x) => s + (Number(x.thans) || 0), 0);
+      const gYards = group.reduce((s, x) => s + (Number(x.yards) || 0), 0);
+      let cat = '';
+      try { cat = require('../repositories/designCategoriesRepository').categoryOfSync(it.design) || ''; } catch (_) { /* bare */ }
+      text += `${lastDesign === null ? '' : '\n'}🧵 ${it.design}${cat ? ` · ${cat}` : ''} — ${group.length} bale${group.length === 1 ? '' : 's'} (${gThans} thans), ${fmtQty(gYards)} yds\n`;
+      lastDesign = dKey;
+    }
     const qty = [];
     if (Number(it.thans)) qty.push(`${it.thans} thans`);
     if (Number(it.yards)) qty.push(`${fmtQty(it.yards)} yds`);
@@ -117,7 +145,7 @@ async function buildSaleCard(p) {
     totalThans += Number(it.thans) || 0;
     totalYards += Number(it.yards) || 0;
   }
-  const n = (p.items || []).length;
+  const n = items.length;
   text += `\nTotal: ${n} Bale${n === 1 ? '' : 's'} (${totalThans} thans), ${fmtQty(totalYards)} yards`;
   if (p.docAttached) text += `\n📎 ${p.docLabel || 'Sales bill'} attached (see below)`;
   return text;
@@ -343,6 +371,7 @@ async function forwardAttachmentsToAdmins(bot, requestId, attachments, excludeId
 module.exports = {
   resolveUserLabel,
   _resetNameCacheForTests,
+  sortSaleItems,
   buildSaleCard,
   buildSellPackageCard,
   buildReturnCard,

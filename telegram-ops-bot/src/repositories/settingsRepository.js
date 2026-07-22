@@ -12,6 +12,9 @@ const HEADERS = ['Key', 'Value', 'UpdatedAt'];
 const DEFAULTS = {
   RISK_THRESHOLD: 300,
   LOW_STOCK_THRESHOLD: 100,
+  // VRF-1 — OCR bill-vs-request check on documented sale approvals
+  // (skips snap-sourced requests). 0 switches it off, no deploy.
+  PDF_VERIFY_ENABLED: 1,
   // TV-1 — CSV of warehouse names whose stock listings show than counts
   // instead of bale counts. Override via a Settings sheet row of the same
   // key; an empty value disables the behavior everywhere.
