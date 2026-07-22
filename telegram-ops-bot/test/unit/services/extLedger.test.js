@@ -13,6 +13,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 
+// Tests run without DATABASE_URL (the harness scrubs it), so the paid-send
+// durable-cap guard would refuse every send; the env escape re-enables the
+// in-memory cap for the test process only (default OFF = production-safe).
+process.env.EXT_ALLOW_MEMORY_CAP = '1';
+
 const { createFakeSheets } = require('../../helpers/fakeSheets');
 const { installFakeSheets } = require('../../helpers/controllerHarness');
 installFakeSheets(createFakeSheets({}));
@@ -182,6 +187,35 @@ test('daily cap FAILS CLOSED on a Postgres error — never authorises a fresh ca
     pgPool.isEnabled = savedIsEnabled;
     pgPool.query = savedQuery;
   }
+});
+
+test('R4: a name shared by two customers is REFUSED, not merged (no cross-customer leak)', async () => {
+  const saved = customersRepository.getAll;
+  // Two distinct people both named "Bello" with different phones.
+  customersRepository.getAll = async () => [
+    { name: 'Bello', phone: '+2348012345678', status: 'active' },
+    { name: 'Bello', phone: '+2348033334444', status: 'active' },
+  ];
+  try {
+    const v = await loginAs('08012345678');
+    assert.equal(v.ok, true, 'they can still authenticate…');
+    const out = await extLedger.getLedger(v.token);
+    assert.equal(out.ok, false, '…but the name-scoped ledger is refused');
+    assert.equal(out.status, 409);
+    assert.match(out.error, /confirmed at the office/);
+  } finally { customersRepository.getAll = saved; }
+});
+
+test('R4: a paid channel without a durable cap store refuses to send', async () => {
+  const savedEnv = process.env.EXT_ALLOW_MEMORY_CAP;
+  delete process.env.EXT_ALLOW_MEMORY_CAP; // simulate prod-without-DATABASE_URL
+  try {
+    const out = await extLedger.requestOtp('08012345678');
+    assert.equal(out.ok, false, 'refuses rather than risk a restart-multiplied cap');
+    assert.match(out.error, /temporarily unavailable/);
+    await extLedger._settle();
+    assert.equal(sentCodes.length, 0, 'nothing paid went out');
+  } finally { process.env.EXT_ALLOW_MEMORY_CAP = savedEnv; }
 });
 
 test('a forged/garbage token never reads a ledger', async () => {

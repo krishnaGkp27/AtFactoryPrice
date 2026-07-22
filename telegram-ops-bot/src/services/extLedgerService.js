@@ -104,6 +104,21 @@ async function _customerByPhone(e164) {
   } catch { return null; }
 }
 
+/**
+ * Is a customer display-name shared by MORE THAN ONE customer record?
+ * The ledger is name-keyed (narrations embed the name, no customer_id
+ * linkage), so a shared name would MERGE two people's financials. When
+ * that happens we refuse to serve rather than risk cross-customer
+ * disclosure (review R4) — the office resolves the duplicate.
+ */
+async function _nameIsAmbiguous(name) {
+  try {
+    const want = String(name || '').trim().toLowerCase();
+    const all = await customersRepository.getAll();
+    return all.filter((c) => String(c.name || '').trim().toLowerCase() === want).length > 1;
+  } catch { return true; } // can't verify uniqueness → fail safe (refuse)
+}
+
 /** Persist a fresh OTP (single store). Best-effort. */
 async function _storeOtp(key, code, channel, expiresAt) {
   if (pool.isEnabled()) {
@@ -137,6 +152,14 @@ async function requestOtp(phoneRaw, channel = 'whatsapp') {
   if (!channelGateway.isConfigured(channel)) {
     usageMeter.record(channel, 'otp_undeliverable').catch(() => {});
     return { ok: false, error: `${channel} is not configured yet — add its API keys on Railway.` };
+  }
+  // Money-safety (review R4): a PAID channel needs a DURABLE cap store, or
+  // the daily ceiling lives only in memory and resets to 0 on every
+  // redeploy — multiplying the cap. Without Postgres, refuse paid sends
+  // (the owner's deploy HAS DATABASE_URL; the env escape is for tests).
+  if (!pool.isEnabled() && !['1', 'true'].includes(String(process.env.EXT_ALLOW_MEMORY_CAP || '').toLowerCase())) {
+    usageMeter.record(channel, 'otp_no_durable_cap').catch(() => {});
+    return { ok: false, error: 'Login is temporarily unavailable. Please try again later.' };
   }
   const cap = await _cap();
   if ((await usageMeter.slotsUsed(CAP_KIND)) >= cap) {
@@ -306,6 +329,12 @@ async function getLedger(token) {
   if (!(await _enabled())) return { ok: false, status: 503, error: 'Service unavailable.' };
   const customer = await sessionCustomer(token);
   if (!customer) return { ok: false, status: 401, error: 'Login again.' };
+  // Refuse a name-scoped ledger when the name is not unique — a shared
+  // name would leak another customer's financials (review R4).
+  if (await _nameIsAmbiguous(customer)) {
+    auditLogRepository.append('ext_ledger_ambiguous_name', { customer }, customer).catch(() => {});
+    return { ok: false, status: 409, error: 'Your account needs to be confirmed at the office before online access — please contact us.' };
+  }
   const accountingService = require('./accountingService');
   const loose = await accountingService.getCustomerLedger(customer);
   const ledger = _scopeLedger(loose, customer);

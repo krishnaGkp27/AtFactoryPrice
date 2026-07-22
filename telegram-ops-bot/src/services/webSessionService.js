@@ -136,13 +136,25 @@ async function identityFromRequest(req) {
   return null;
 }
 
-/** Destroy one session (logout). */
+/**
+ * Destroy one session (logout). Returns true only when server-side
+ * revocation is durable (the local entry is gone AND, when PG-backed, the
+ * row was deleted). A failed PG delete is RETRIED once and then surfaced
+ * (error-logged + false return) rather than silently reporting success —
+ * otherwise the token stays valid and re-cacheable until its natural
+ * expiry on other instances.
+ */
 async function destroySession(sessionId) {
-  _sessions.delete(String(sessionId || ''));
-  if (pool.isEnabled()) {
-    try { await pool.query('DELETE FROM web_sessions WHERE token = $1', [String(sessionId || '')]); }
-    catch (e) { logger.warn(`webSession pg delete: ${e.message}`); }
+  const id = String(sessionId || '');
+  _sessions.delete(id);
+  if (!pool.isEnabled()) return true;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try { await pool.query('DELETE FROM web_sessions WHERE token = $1', [id]); return true; }
+    catch (e) {
+      if (attempt === 1) { logger.error(`webSession pg delete FAILED (token still valid until expiry): ${e.message}`); return false; }
+    }
   }
+  return false;
 }
 
 /** Test hook. */
