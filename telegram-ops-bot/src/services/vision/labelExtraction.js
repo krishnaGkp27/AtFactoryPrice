@@ -82,4 +82,25 @@ function parseModelJson(text) {
   return null;
 }
 
-module.exports = { PROMPT, clamp01, mapParsedBales, parseModelJson };
+/**
+ * SNAP-5 — salvage a response that was cut off by max_tokens mid-JSON:
+ * recover every COMPLETE `{...}` row inside the "bales" array and drop
+ * the broken tail. Bale rows are flat objects (see PROMPT), so a simple
+ * balanced-at-one-level scan is exact. Returns null when nothing usable
+ * survives; otherwise a parseModelJson-shaped object flagged _truncated
+ * so the caller can warn that rows may be missing.
+ */
+function salvageTruncatedBales(text) {
+  const s = String(text || '');
+  const at = s.indexOf('"bales"');
+  if (at === -1) return null;
+  const rows = [];
+  const matches = s.slice(at).match(/\{[^{}]*\}/g) || [];
+  for (const m of matches) {
+    try { rows.push(JSON.parse(m)); } catch { /* partial row — skip */ }
+  }
+  if (!rows.length) return null;
+  return { bales: rows, rawText: '', _truncated: true };
+}
+
+module.exports = { PROMPT, clamp01, mapParsedBales, parseModelJson, salvageTruncatedBales };

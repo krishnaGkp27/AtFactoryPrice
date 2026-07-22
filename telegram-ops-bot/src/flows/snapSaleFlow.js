@@ -221,7 +221,7 @@ async function handleBatchPdf(bot, msg, session) {
   }
   session.pdfFileId = doc.file_id;
   sessionStore.set(userId, session);
-  await render(bot, chatId, userId, '📄 Reading every label in the PDF… this can take up to a minute.', [cancelRow()]);
+  await render(bot, chatId, userId, '📄 Reading every label in the PDF… big PDFs are read in parts and can take a few minutes.', [cancelRow()]);
   try {
     const { downloadTelegramFile } = require('../utils/telegramFiles');
     const vision = require('../services/vision');

@@ -22,7 +22,21 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const config = require('../../config');
 const logger = require('../../utils/logger');
-const { PROMPT, mapParsedBales, parseModelJson } = require('./labelExtraction');
+const { PROMPT, mapParsedBales, parseModelJson, salvageTruncatedBales } = require('./labelExtraction');
+
+/**
+ * SNAP-5 (owner bug 22-Jul): real dispatch PDFs run 40–115 pages. One
+ * request that size fails twice over — Claude caps PDF input at 100
+ * pages, and a 46-label answer overflows a 4k max_tokens so the JSON
+ * arrives truncated. Big PDFs are therefore split into page chunks
+ * (pdf-lib, no re-encoding) and read sequentially; results merge into
+ * one batch. A chunk that still truncates is salvaged row-by-row.
+ */
+const PDF_CHUNK_PAGES = 15;
+const PDF_MAX_TOKENS = 8000;
+const PDF_PROMPT_SUFFIX = '\nThis PDF contains one bale-label photo per page — '
+  + 'return one bale entry per page, in page order. Keep rawText very brief '
+  + '(just the bale numbers you read).';
 
 let _client = null;
 function getClient() {
@@ -35,6 +49,35 @@ function getClient() {
 /** MIME types Claude's vision input accepts. */
 const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
+/** One model round-trip; returns {parsed, truncated} or null on unparseable. */
+async function callModel(client, contentBlock, isPdf) {
+  const resp = await client.messages.create({
+    model: isPdf ? config.ocr.anthropicPdfModel : config.ocr.anthropicModel,
+    max_tokens: isPdf ? PDF_MAX_TOKENS : 3000,
+    ...(isPdf ? {} : { thinking: { type: 'adaptive' } }),
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: isPdf ? PROMPT + PDF_PROMPT_SUFFIX : PROMPT },
+        contentBlock,
+      ],
+    }],
+  });
+  const text = (Array.isArray(resp.content) ? resp.content : [])
+    .filter((blk) => blk.type === 'text')
+    .map((blk) => blk.text)
+    .join('\n');
+  const parsed = parseModelJson(text);
+  if (parsed) return { parsed, truncated: false };
+  const salvaged = salvageTruncatedBales(text);
+  if (salvaged) return { parsed: salvaged, truncated: true };
+  return null;
+}
+
+function docBlock(buffer) {
+  return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } };
+}
+
 async function extractBales(buffer, mimeType /* , opts */) {
   const client = getClient();
   if (!client) {
@@ -45,49 +88,85 @@ async function extractBales(buffer, mimeType /* , opts */) {
     return { ok: false, provider: 'anthropic', bales: [], rawText: '', overallConfidence: 0, warnings: [], error: `File type ${mimeType} not supported by the anthropic provider — send a JPG/PNG photo or a PDF.` };
   }
 
-  // SNAP-3: PDFs go up as a native document block (Claude reads every page
-  // in ONE call — the whole supply run's labels together). Cost decision
-  // (owner 20-Jul): Sonnet model, no extended thinking on the PDF path.
-  const resp = await client.messages.create({
-    model: isPdf ? config.ocr.anthropicPdfModel : config.ocr.anthropicModel,
-    max_tokens: isPdf ? 4000 : 3000,
-    ...(isPdf ? {} : { thinking: { type: 'adaptive' } }),
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'text', text: PROMPT },
-        isPdf
-          ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } }
-          : { type: 'image', source: { type: 'base64', media_type: mimeType, data: buffer.toString('base64') } },
-      ],
-    }],
-  });
-
-  const text = (Array.isArray(resp.content) ? resp.content : [])
-    .filter((blk) => blk.type === 'text')
-    .map((blk) => blk.text)
-    .join('\n');
-  const parsed = parseModelJson(text);
-  if (!parsed) {
-    logger.warn('vision/anthropic: JSON parse failed');
-    return { ok: false, provider: 'anthropic', bales: [], rawText: '', overallConfidence: 0, warnings: [], error: 'Model returned unparseable output — try a clearer photo.' };
+  // SNAP-3/SNAP-5: PDFs go up as native document blocks on the Sonnet
+  // model (owner cost decision, no extended thinking) — big PDFs split
+  // into page chunks first so no single answer overflows max_tokens and
+  // Claude's 100-page input cap is never hit.
+  let chunks;
+  if (isPdf) {
+    try {
+      chunks = await require('./pdfChunk').splitPdf(buffer, PDF_CHUNK_PAGES);
+    } catch (e) {
+      // Unreadable by pdf-lib (odd generator/encryption) — one-shot as before.
+      logger.warn(`vision/anthropic: pdf split failed (${e.message}) — sending whole file`);
+      chunks = [{ buffer, fromPage: 0, toPage: 0 }];
+    }
+  } else {
+    chunks = [{ buffer, fromPage: 0, toPage: 0 }];
   }
 
-  const { bales, warnings } = mapParsedBales(parsed);
-  const overallConfidence = bales.length
-    ? bales.reduce((s, b) => s + b.confidence, 0) / bales.length
-    : 0;
-  if (!bales.length) warnings.push('No bale rows recognised in the photo.');
+  const allBales = [];
+  const warnings = [];
+  let rawText = '';
+  let readFailures = 0;
+  let parsedChunks = 0;
+  let lastError = null;
+  for (const c of chunks) {
+    const range = c.fromPage ? `pages ${c.fromPage}–${c.toPage}` : 'the file';
+    let out = null;
+    try {
+      out = await callModel(client,
+        isPdf ? docBlock(c.buffer) : { type: 'image', source: { type: 'base64', media_type: mimeType, data: c.buffer.toString('base64') } },
+        isPdf);
+    } catch (e) {
+      // API-level failure on this chunk: remember it, keep reading the rest.
+      logger.warn(`vision/anthropic: ${range} failed: ${e.message}`);
+      lastError = e;
+      readFailures += 1;
+      warnings.push(`Could not read ${range} (${e.message}) — those labels are missing.`);
+      continue;
+    }
+    if (!out) {
+      logger.warn(`vision/anthropic: JSON parse failed for ${range}`);
+      readFailures += 1;
+      warnings.push(`Could not read ${range} — those labels are missing.`);
+      continue;
+    }
+    if (out.truncated) {
+      warnings.push(`The answer for ${range} was cut short — some of those labels may be missing.`);
+    }
+    parsedChunks += 1;
+    const mapped = mapParsedBales(out.parsed);
+    allBales.push(...mapped.bales);
+    warnings.push(...mapped.warnings);
+    if (out.parsed.rawText) rawText += (rawText ? '\n' : '') + String(out.parsed.rawText);
+  }
 
+  // Every chunk died on an API error → surface it so the auto chain can
+  // fall through to the next provider (same contract as one-shot throws).
+  if (!allBales.length && readFailures === chunks.length && lastError) throw lastError;
+
+  if (!allBales.length) {
+    if (parsedChunks > 0) warnings.push('No bale rows recognised in the photo.');
+    return {
+      ok: false, provider: 'anthropic', bales: [], rawText: '', overallConfidence: 0, warnings,
+      error: parsedChunks > 0
+        ? 'No bale rows recognised.'
+        : (chunks.length > 1
+          ? 'Could not read the labels in the PDF — try re-exporting it.'
+          : 'Model returned unparseable output — try a clearer photo.'),
+    };
+  }
+
+  const overallConfidence = allBales.reduce((s, b) => s + b.confidence, 0) / allBales.length;
   return {
-    ok: bales.length > 0,
+    ok: true,
     provider: 'anthropic',
-    bales,
-    rawText: String(parsed.rawText || ''),
+    bales: allBales,
+    rawText,
     overallConfidence,
     warnings,
-    ...(bales.length ? {} : { error: 'No bale rows recognised.' }),
   };
 }
 
-module.exports = { extractBales };
+module.exports = { extractBales, _internals: { PDF_CHUNK_PAGES, PDF_MAX_TOKENS } };
