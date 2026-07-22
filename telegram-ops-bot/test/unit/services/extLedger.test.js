@@ -44,7 +44,7 @@ auditLogRepository.append = async () => {};
 // "bello". The external service must strictly keep only the exact ones.
 accountingService.getCustomerLedger = async () => ({
   entries: [
-    { date: '2026-07-20', debit: 100000, credit: 0, narration: 'Sale: 50 yds 9060 3 pkg 1001 to Bello | Zenith' },
+    { entry_id: 'E1', txn_id: 'T1', account_code: '1100', ledger_name: 'Customer Receivable', created_by: '5551234567', created_at: '2026-07-20T10:00:00Z', date: '2026-07-20', debit: 100000, credit: 0, narration: 'Sale: 50 yds 9060 3 pkg 1001 to Bello | Zenith' },
     { date: '2026-07-21', debit: 40000, credit: 0, narration: 'Sale: 20 yds 9060 5 pkg 1002 to Bello Traders | Cash' },
     { date: '2026-07-22', debit: 0, credit: 60000, narration: 'Payment received from Bello: NGN 60000 via Bank' },
   ],
@@ -79,6 +79,19 @@ test('CRITICAL: ledger is scoped to the EXACT customer — no substring bleed', 
   assert.equal(out.ledger.entries.length, 2, 'only the two exact-Bello entries');
   assert.ok(narrations.every((n) => !/Bello Traders/.test(n)), "'Bello Traders' entry is NOT leaked to 'Bello'");
   assert.equal(out.ledger.outstanding, 40000, '100000 sale − 60000 payment (Traders sale excluded)');
+});
+
+test('R5: entries are a whitelisted projection — no internal IDs or staff Telegram IDs cross the customer boundary', async () => {
+  const v = await loginAs('08012345678');
+  const out = await extLedger.getLedger(v.token);
+  assert.equal(out.ok, true);
+  for (const e of out.ledger.entries) {
+    assert.deepEqual(
+      Object.keys(e).sort(),
+      ['credit', 'date', 'debit', 'narration', 'running'],
+      'only the display-safe fields are returned',
+    );
+  }
 });
 
 test('happy path meters every step for the website usage metric', async () => {

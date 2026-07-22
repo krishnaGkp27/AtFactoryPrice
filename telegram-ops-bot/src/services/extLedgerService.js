@@ -308,9 +308,12 @@ function _scopeLedger(ledger, customerName) {
     return who && who.toLowerCase() === want;
   });
   let running = 0;
+  // Whitelisted projection (review R5): raw rows carry internal identifiers
+  // and the booking staff member's Telegram user ID (created_by) — none of
+  // that may cross the customer trust boundary.
   const withRunning = entries.map((e) => {
     running += (e.debit || 0) - (e.credit || 0);
-    return { ...e, running };
+    return { date: e.date, narration: e.narration, debit: e.debit, credit: e.credit, running };
   });
   return {
     entries: withRunning,
