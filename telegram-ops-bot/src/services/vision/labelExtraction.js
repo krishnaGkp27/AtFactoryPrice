@@ -26,7 +26,12 @@ Extract EVERY bale you can see and return STRICT JSON only (no prose):
 
 Rules: transcribe handwriting as digits exactly as written (e.g. 77016,
 896, 5). Do not invent fields you cannot read — use "" or null. If the
-photo shows one sack label, return exactly one bale entry.`;
+photo shows one sack label, return exactly one bale entry.
+IMPORTANT — BALE NO. and INDENT NO. are DIFFERENT fields: the INDENT NO.
+is the order number and is usually the SAME on every sack of a batch;
+the BALE NO. is unique per sack. packageNo must be the BALE NO. — never
+put the indent value there. If you can only read the indent, leave
+packageNo "" and record the indent in "indent".`;
 
 function clamp01(n) {
   const x = Number(n);
