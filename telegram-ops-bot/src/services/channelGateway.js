@@ -12,15 +12,16 @@
  *   sms       TERMII_API_KEY [+ TERMII_SENDER_ID]  (Termii — NG standard)
  *
  * Money-leak guards (owner rule):
- *   1. EXT_OTP_DAILY_CAP (Settings, default 200) — hard daily ceiling on
- *      paid sends; at the cap the API refuses, it never queues.
+ *   1. The hard daily ceiling (EXT_OTP_DAILY_CAP) is enforced by the
+ *      caller via usageMeter.reserve() — an ATOMIC slot reservation taken
+ *      BEFORE this gateway is called, so concurrent requests can't
+ *      overshoot. This gateway only sends what it was handed.
  *   2. Every attempt is metered per channel (sent/failed/undeliverable)
  *      via usageMeterService → the website's cumulative usage metric.
  *   3. Adapters send ONLY the fixed OTP template — no free-form content
  *      can be pushed through this gateway.
  */
 
-const settingsRepository = require('../repositories/settingsRepository');
 const usageMeter = require('./usageMeterService');
 const logger = require('../utils/logger');
 
@@ -65,25 +66,22 @@ function configuredChannels() {
   return Object.keys(adapters).filter((k) => adapters[k].configured());
 }
 
+/** Is this channel ready to send? */
+function isConfigured(channel) {
+  return Boolean(adapters[channel] && adapters[channel].configured());
+}
+
 /**
- * Deliver an OTP over one channel. Cap-checked, metered, never throws.
+ * Deliver an OTP over one channel. Metered, never throws. The daily-cap
+ * slot MUST already be reserved by the caller (usageMeter.reserve) — this
+ * gateway does not re-check the cap.
  * @returns {Promise<{ok:boolean, error?:string}>}
  */
 async function sendOtp(channel, phoneE164, code) {
   const ch = adapters[channel];
-  if (!ch) return { ok: false, error: `unknown channel "${channel}"` };
-  if (!ch.configured()) {
-    await usageMeter.record(channel, 'otp_undeliverable');
-    return { ok: false, error: `${channel} is not configured yet — add its API keys on Railway.` };
-  }
-  // Money-leak guard: hard daily ceiling on PAID sends.
-  let cap = 200;
-  try { cap = Number((await settingsRepository.getAll()).EXT_OTP_DAILY_CAP ?? 200); } catch { /* default */ }
-  const sentToday = await usageMeter.todayCount('otp_sent');
-  if (sentToday >= cap) {
-    await usageMeter.record(channel, 'otp_capped');
-    logger.warn(`channelGateway: EXT_OTP_DAILY_CAP (${cap}) reached — refusing send`);
-    return { ok: false, error: 'Daily message limit reached — try again tomorrow.' };
+  if (!ch || !ch.configured()) {
+    await usageMeter.record(channel || 'unknown', 'otp_undeliverable');
+    return { ok: false, error: 'channel_unconfigured' };
   }
   try {
     await ch.send(phoneE164, code);
@@ -92,8 +90,8 @@ async function sendOtp(channel, phoneE164, code) {
   } catch (e) {
     await usageMeter.record(channel, 'otp_failed');
     logger.warn(`channelGateway ${channel}: ${e.message}`);
-    return { ok: false, error: 'Delivery failed — try again shortly.' };
+    return { ok: false, error: 'delivery_failed' };
   }
 }
 
-module.exports = { sendOtp, configuredChannels, _internals: { adapters, OTP_TEXT } };
+module.exports = { sendOtp, configuredChannels, isConfigured, _internals: { adapters, OTP_TEXT } };

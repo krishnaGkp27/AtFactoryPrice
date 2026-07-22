@@ -21,6 +21,56 @@ function _todayIso() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Lagos' }).format(new Date());
 }
 
+/**
+ * EXT-1 — ATOMIC daily-cap reservation (fixes the read-then-send TOCTOU
+ * that let concurrent requests overshoot EXT_OTP_DAILY_CAP). Increments a
+ * single global counter and returns false if that pushes it past `cap`,
+ * so exactly `cap` slots are ever handed out no matter the concurrency.
+ * @returns {Promise<boolean>} true = a slot is yours; send. false = cap hit.
+ */
+async function reserve(kind, cap) {
+  const day = _todayIso();
+  const key = `${day}|_all|${kind}`;
+  // Memory path is atomic: single-threaded, no await between read & write.
+  if (!pool.isEnabled()) {
+    const cur = _mem.get(key) || 0;
+    if (cur >= cap) return false;
+    _mem.set(key, cur + 1);
+    return true;
+  }
+  try {
+    const r = await pool.query(
+      `INSERT INTO channel_usage (day, channel, kind, count) VALUES ($1, '_all', $2, 1)
+       ON CONFLICT (day, channel, kind) DO UPDATE SET count = channel_usage.count + 1
+       RETURNING count`, [day, kind]);
+    const c = Number(r.rows[0].count);
+    if (c > cap) {
+      // Lost the race at the boundary — hand the slot back.
+      await pool.query("UPDATE channel_usage SET count = count - 1 WHERE day = $1 AND channel = '_all' AND kind = $2", [day, kind]);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    logger.warn(`usageMeter reserve ${kind}: ${e.message}`);
+    const cur = _mem.get(key) || 0;
+    if (cur >= cap) return false;
+    _mem.set(key, cur + 1);
+    return true;
+  }
+}
+
+/** Today's reserved-slot count for a global kind (uniform pre-check). */
+async function slotsUsed(kind) {
+  const day = _todayIso();
+  const key = `${day}|_all|${kind}`;
+  if (!pool.isEnabled()) return _mem.get(key) || 0;
+  try {
+    const r = await pool.query(
+      "SELECT COALESCE(count,0) AS c FROM channel_usage WHERE day = $1 AND channel = '_all' AND kind = $2", [day, kind]);
+    return r.rows.length ? Number(r.rows[0].c) : 0;
+  } catch { return _mem.get(key) || 0; }
+}
+
 /** Count one (or n) events for a channel. Never throws. */
 async function record(channel, kind, n = 1) {
   const day = _todayIso();
@@ -88,4 +138,4 @@ async function totals() {
 
 function _resetForTests() { _mem.clear(); }
 
-module.exports = { record, todayCount, totals, _resetForTests };
+module.exports = { record, reserve, slotsUsed, todayCount, totals, _resetForTests };

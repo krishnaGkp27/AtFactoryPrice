@@ -368,13 +368,24 @@ async function getOpsStockTakes(req, res) {
 // ---------------------------------------------------------------------------
 
 const _ipHits = new Map(); // ip → [timestamps]
+const _IP_CAP = 20000;
+function clientIp(req) {
+  // Behind Railway's proxy the RIGHTMOST X-Forwarded-For entry is the one
+  // the trusted edge appended; the leftmost is client-controlled and
+  // trivially spoofable. Prefer the rightmost, fall back to the socket.
+  const xff = String(req.headers['x-forwarded-for'] || '');
+  if (xff) { const parts = xff.split(',').map((s) => s.trim()).filter(Boolean); if (parts.length) return parts[parts.length - 1]; }
+  return String((req.socket && req.socket.remoteAddress) || 'unknown');
+}
 function ipThrottle(req, res, max = 30) {
-  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  const ip = clientIp(req);
   const now = Date.now();
   const hits = (_ipHits.get(ip) || []).filter((t) => now - t < 60 * 60 * 1000);
   hits.push(now);
-  _ipHits.set(ip, hits);
-  if (_ipHits.size > 5000) _ipHits.clear(); // memory guard
+  _ipHits.delete(ip); _ipHits.set(ip, hits); // re-insert = mark most-recent (LRU order)
+  // Memory guard: evict the OLDEST entries only — never clear all (a full
+  // clear would let an attacker flush every real client's counters).
+  while (_ipHits.size > _IP_CAP) { const oldest = _ipHits.keys().next().value; _ipHits.delete(oldest); }
   if (hits.length > max) {
     res.status(429).json({ ok: false, error: 'Too many requests — slow down.' });
     return false;
