@@ -159,6 +159,16 @@ test('CRITICAL: the code is delivered to the customer STORED number, never the c
   assert.equal(sentCodes[0].to, '+2348012345678', '…but delivered to the STORED number, not +18012345678');
 });
 
+test('a non-numeric EXT_OTP_DAILY_CAP fails SAFE (no unbounded sends)', async () => {
+  settings = { EXT_OTP_DAILY_CAP: '1,000' }; // comma — Number() → NaN
+  // reserve() with a NaN cap must refuse, and _cap() must coerce to the
+  // default rather than letting NaN disable the ceiling.
+  assert.equal(await usageMeter.reserve('otp_slot', Number('1,000')), false, 'NaN cap → reserve refuses');
+  // End-to-end: requests still send (cap coerced to default 200), not unbounded.
+  await extLedger.requestOtp('08012345678'); await extLedger._settle();
+  assert.equal(sentCodes.length, 1, 'still bounded by the default cap, not NaN-unbounded');
+});
+
 test('daily cap FAILS CLOSED on a Postgres error — never authorises a fresh cap', async () => {
   const savedIsEnabled = require(path.join(SRC, 'db/postgresPool')).isEnabled;
   const savedQuery = require(path.join(SRC, 'db/postgresPool')).query;

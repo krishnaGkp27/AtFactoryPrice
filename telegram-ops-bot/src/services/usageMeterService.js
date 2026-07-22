@@ -29,6 +29,9 @@ function _todayIso() {
  * @returns {Promise<boolean>} true = a slot is yours; send. false = cap hit.
  */
 async function reserve(kind, cap) {
+  // Defensive: a non-finite cap must fail CLOSED (never authorise a send),
+  // so a bad Settings value can't silently disable the money ceiling.
+  if (!Number.isFinite(cap) || cap < 0) return false;
   const day = _todayIso();
   const key = `${day}|_all|${kind}`;
   // Memory path is atomic: single-threaded, no await between read & write.

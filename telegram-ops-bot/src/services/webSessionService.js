@@ -72,20 +72,26 @@ async function redeemLoginToken(token) {
   if (!entry) return null;
   _tokens.delete(String(token)); // single use — burn before anything else
   const sessionId = crypto.randomBytes(24).toString('base64url');
-  // checkAt drives PG re-validation: when PG-backed, even this freshly
-  // minted session must re-check PG within the coherence window so a
-  // logout on ANOTHER instance revokes it here too.
-  _sessions.set(sessionId, {
-    identity: entry.identity, expiresAt: now + SESSION_TTL_MS,
-    checkAt: pool.isEnabled() ? now + PG_CACHE_MS : now + SESSION_TTL_MS,
-  });
+  // Persist FIRST, then choose the cache policy from whether the durable
+  // row actually landed. If the INSERT failed, the in-memory entry is the
+  // ONLY record, so it must stay authoritative for its full TTL — else a
+  // swallowed PG error would silently downgrade a 12h login to 60s.
+  let durable = false;
   if (pool.isEnabled()) {
     try {
       await pool.query(
         'INSERT INTO web_sessions (token, identity, expires_at) VALUES ($1, $2, $3)',
         [sessionId, JSON.stringify(entry.identity), new Date(now + SESSION_TTL_MS).toISOString()]);
+      durable = true;
     } catch (e) { logger.warn(`webSession pg store: ${e.message}`); }
   }
+  // checkAt drives PG re-validation. Only sessions with a durable PG row
+  // use the short coherence window (so an elsewhere-logout revokes them);
+  // memory-only sessions keep their full TTL.
+  _sessions.set(sessionId, {
+    identity: entry.identity, expiresAt: now + SESSION_TTL_MS,
+    checkAt: durable ? now + PG_CACHE_MS : now + SESSION_TTL_MS,
+  });
   auditLogRepository.append('web_login_redeemed', { userId: entry.identity.userId, role: entry.identity.role }, entry.identity.userId)
     .catch(() => {});
   logger.info(`webSession: ${entry.identity.role} ${entry.identity.userId} logged in via magic link`);
