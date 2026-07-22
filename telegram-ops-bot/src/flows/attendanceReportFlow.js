@@ -130,7 +130,7 @@ function buildKeyboard(kind) {
   return [
     [tab('7d', '📅 7d'), tab('week', '📅 Week'), tab('month', '📅 Month')],
     [{ text: '🔁 Refresh', callback_data: `${CALLBACK_PREFIX}tab:${kind}` }],
-    [{ text: '⬅ Back to menu', callback_data: 'menu:home' }],
+    [{ text: '⬅ Back to menu', callback_data: 'act:__back__' }],
   ];
 }
 

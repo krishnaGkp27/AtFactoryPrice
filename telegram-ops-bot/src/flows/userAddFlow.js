@@ -704,7 +704,7 @@ async function submit(bot, chatId, userId) {
     sessionStore.clear(userId);
     await render(bot, chatId, userId,
       `⏳ *Submitted for 2nd-admin approval*\n\n*${mdEscape(d.name)}* (\`${mdEscape(d.telegram_id)}\`)\nRequest: \`${mdEscape(requestId)}\`\n\n_You'll be notified when another admin approves or rejects._`,
-      [[{ text: '🏠 Back to menu', callback_data: 'menu:home' }]],
+      [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]],
     );
   } catch (e) {
     logger.error(`userAddFlow.submit failed: ${e.message}`);
@@ -761,7 +761,7 @@ async function handleCallback(bot, query) {
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: [[
               { text: '🔁 Restart Add Employee', callback_data: 'act:add_user' },
-              { text: '🏠 Back to menu', callback_data: 'menu:home' },
+              { text: '🏠 Back to menu', callback_data: 'act:__back__' },
             ]] },
           },
         );
@@ -781,7 +781,7 @@ async function handleCallback(bot, query) {
         `⚠️ Something failed in Add Employee: ${err && err.message ? err.message : 'unknown error'}.\n\nPlease tap Restart and try again.`,
         { reply_markup: { inline_keyboard: [[
           { text: '🔁 Restart Add Employee', callback_data: 'act:add_user' },
-          { text: '🏠 Back to menu', callback_data: 'menu:home' },
+          { text: '🏠 Back to menu', callback_data: 'act:__back__' },
         ]] } },
       );
     } catch (_) { /* best effort */ }
@@ -799,7 +799,7 @@ async function _dispatchCallback(bot, query, session, chatId, userId, data) {
     sessionStore.clear(userId);
     await render(bot, chatId, userId,
       '_Add Employee cancelled._',
-      [[{ text: '🏠 Back to menu', callback_data: 'menu:home' }]]);
+      [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]);
     return true;
   }
 

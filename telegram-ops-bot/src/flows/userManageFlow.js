@@ -159,7 +159,7 @@ async function renderPickStep(bot, chatId, userId) {
   if (!users.length) {
     await render(bot, chatId, userId,
       `${label.title}\n\n_No eligible users to ${label.verb}._\n\nMake sure there are active employees/managers in the Users sheet.`,
-      [[{ text: '🏠 Back to menu', callback_data: 'menu:home' }]],
+      [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]],
     );
     return;
   }
@@ -262,7 +262,7 @@ async function submit(bot, chatId, userId) {
     sessionStore.clear(userId);
     await render(bot, chatId, userId,
       `⏳ *Submitted for ${label.successHint} approval*\n\n${summary.replace(/^👑 |^🛑 /, '')}\nRequest: \`${requestId}\``,
-      [[{ text: '🏠 Back to menu', callback_data: 'menu:home' }]],
+      [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]],
     );
   } catch (e) {
     logger.error(`userManageFlow.submit failed: ${e.message}`);
@@ -293,7 +293,7 @@ async function handleCallback(bot, query) {
   if (data === 'umg:cancel') {
     sessionStore.clear(userId);
     await render(bot, chatId, userId, '_Cancelled._',
-      [[{ text: '🏠 Back to menu', callback_data: 'menu:home' }]]);
+      [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]);
     return true;
   }
   if (data === 'umg:noop') return true;

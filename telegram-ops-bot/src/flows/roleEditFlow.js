@@ -119,7 +119,7 @@ async function renderPickStep(bot, chatId, userId) {
   if (!users.length) {
     await render(bot, chatId, userId,
       '🎚 *Change Role*\n\n_No eligible users._\n\nOnly active, non-admin users appear here. Use Add Employee to onboard new people, or Promote Admin for admin power.',
-      [[{ text: '🏠 Back to menu', callback_data: 'menu:home' }]],
+      [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]],
     );
     return;
   }
@@ -211,8 +211,8 @@ async function applyRole(bot, chatId, userId, tgId, role) {
     ? '\n\n⚠️ This user has *no warehouse assigned* — as a marketer/salesman they will see no products until you assign one.'
     : '';
   const rows = needsWarehouse
-    ? [[{ text: '🏭 Assign Warehouses', callback_data: 'adm:assign_wh' }], [{ text: '🏠 Back to menu', callback_data: 'menu:home' }]]
-    : [[{ text: '🏠 Back to menu', callback_data: 'menu:home' }]];
+    ? [[{ text: '🏭 Assign Warehouses', callback_data: 'adm:assign_wh' }], [{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]
+    : [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]];
 
   sessionStore.clear(userId);
   await render(bot, chatId, userId,
@@ -245,7 +245,7 @@ async function handleCallback(bot, query) {
   if (data === 'rol:cancel') {
     sessionStore.clear(userId);
     await render(bot, chatId, userId, '_Change Role cancelled._',
-      [[{ text: '🏠 Back to menu', callback_data: 'menu:home' }]]);
+      [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]);
     return true;
   }
   if (data === 'rol:noop') return true;

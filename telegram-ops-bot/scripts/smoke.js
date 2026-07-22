@@ -7652,6 +7652,21 @@ function runS50() {
   } else fail('S50.3', 'chip steps missing');
 }
 
+function runS52() {
+  // ---- S52 NAV-1: no dead "back to menu" callbacks in flows ----
+  // menu:home was never routed by the controller (14 buttons across 6 flows
+  // silently showed "Unknown action."). The routed footer callbacks are
+  // act:__back__ / act:__hub__:<id> (src/utils/menuNav.js) — lint that no
+  // flow re-introduces an unrouted menu:* callback.
+  const flowsDir = path.join(__dirname, '../src/flows');
+  const offenders = fs.readdirSync(flowsDir)
+    .filter((f) => f.endsWith('.js'))
+    .filter((f) => /callback_data:\s*'menu:/.test(fs.readFileSync(path.join(flowsDir, f), 'utf8')));
+  if (offenders.length === 0) {
+    pass("S52.1 NAV-1: no flow emits an unrouted 'menu:*' callback (use menuNav act:__back__)");
+  } else fail('S52.1', `dead menu:* callback in: ${offenders.join(', ')}`);
+}
+
 function runS51() {
   // ---- S51 ST-1 Part A: tappable Sell Bale flow (specs/ST-1_TAPPABLE_SALE.md) ----
   const sbSrc = fs.readFileSync(path.join(__dirname, '../src/flows/sellBaleFlow.js'), 'utf8');
@@ -7742,6 +7757,7 @@ function runS51() {
   try { runS49(); } catch (e) { fail('S49 unexpected error', e.message); }
   try { runS50(); } catch (e) { fail('S50 unexpected error', e.message); }
   try { runS51(); } catch (e) { fail('S51 unexpected error', e.message); }
+  try { runS52(); } catch (e) { fail('S52 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

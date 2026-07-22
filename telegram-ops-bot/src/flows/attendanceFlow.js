@@ -350,9 +350,9 @@ async function handleCallback(bot, query) {
     // the anchored card to a polite "go home" prompt so the user isn't
     // stuck on a stale screen.
     try {
-      await bot.editMessageText('_Returning to menu — send /menu if it doesn\'t open automatically._',
+      await bot.editMessageText('_Cancelled — tap 🏠 Menu below (or send *menu*)._',
         { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [[{ text: '🏠 /menu', callback_data: 'menu:home' }]] } });
+          reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] } });
     } catch (_) {}
     return true;
   }

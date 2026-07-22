@@ -1,7 +1,7 @@
 /**
  * ATT-C2 — Attendance Admin hub.
  *
- * Sub-screens reachable from `/menu` → 🔧 Admin → 🗓 Attendance:
+ * Sub-screens reachable from menu → 🗓 Human Resources → 🗓 Attendance:
  *   • 👥 Required Users — toggleable multi-select from active users.
  *   • 📍 Locations      — add/remove items in ATTENDANCE_LOCATIONS.
  *   • ⏰ Reminder Time  — HH:MM
@@ -77,7 +77,7 @@ async function render(bot, chatId, userId, text, keyboardRows) {
   return sent.message_id;
 }
 
-function homeRow() { return [{ text: '🏠 Back to menu', callback_data: 'menu:home' }]; }
+function homeRow() { return [{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]; }
 function backRow() { return [{ text: '⬅ Back to Attendance', callback_data: 'atd_adm:home' }]; }
 function rowOf(cells) { return cells; }
 
