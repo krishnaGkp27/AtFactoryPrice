@@ -52,6 +52,7 @@ const CAP_KIND = 'otp_slot';
 const _otps = [];            // { key, codeHash, channel, attempts, used, createdAt, expiresAt }
 const _sessions = new Map(); // token → { customerName, phone, expiresAt }
 const _pending = new Set();  // background send promises (test settling hook)
+const _throttle = new Map(); // per-phone-hour bucket → { count, exp }
 
 function _hash(code) { return crypto.createHash('sha256').update(String(code)).digest('hex'); }
 const GENERIC_OK = { ok: true, message: 'If this number is registered, a login code is on its way.' };
@@ -61,8 +62,38 @@ async function _enabled() {
   catch { return true; }
 }
 async function _cap() {
-  try { return Number((await settingsRepository.getAll()).EXT_OTP_DAILY_CAP ?? 200); }
-  catch { return 200; }
+  // FAIL SAFE (review): a non-numeric Settings value ("1,000", "200/day")
+  // must NOT become NaN — every comparison with NaN is false, which would
+  // silently disable the hard money ceiling. Fall back to the default.
+  try {
+    const n = Number((await settingsRepository.getAll()).EXT_OTP_DAILY_CAP);
+    return Number.isFinite(n) && n >= 0 ? n : 200;
+  } catch { return 200; }
+}
+
+/**
+ * ATOMIC per-phone-hour throttle (row-locked counter) — the 5/hour limit
+ * now holds under concurrency (was a read-then-background-store race).
+ * Runs in the FOREGROUND for EVERY caller so it also keeps request latency
+ * uniform. Fails OPEN on a PG error: it is harassment/DoS protection, not
+ * the money ceiling (that is the atomic daily cap, which fails closed).
+ * @returns {Promise<boolean>} true = within limit, proceed.
+ */
+async function _reservePhone(key) {
+  const now = Date.now();
+  const bucket = `otp:${key}:${Math.floor(now / 3600000)}`;
+  if (pool.isEnabled()) {
+    try {
+      const r = await pool.query(
+        `INSERT INTO ext_throttle (bucket, count, expires_at) VALUES ($1, 1, $2)
+         ON CONFLICT (bucket) DO UPDATE SET count = ext_throttle.count + 1
+         RETURNING count`, [bucket, new Date(now + 3600000).toISOString()]);
+      return Number(r.rows[0].count) <= PER_PHONE_HOURLY;
+    } catch (e) { logger.warn(`extLedger phone throttle: ${e.message}`); return true; }
+  }
+  const cur = (_throttle.get(bucket) || { count: 0 }).count + 1;
+  _throttle.set(bucket, { count: cur, exp: now + 3600000 });
+  return cur <= PER_PHONE_HOURLY;
 }
 
 /** Registered customer for a phone, or null. Never distinguishes outward. */
@@ -71,18 +102,6 @@ async function _customerByPhone(e164) {
     const all = await customersRepository.getAll();
     return all.find((c) => phoneUtil.samePhone(c.phone, e164)) || null;
   } catch { return null; }
-}
-
-async function _recentOtpCount(key) {
-  const cutoff = Date.now() - 60 * 60 * 1000;
-  if (pool.isEnabled()) {
-    try {
-      const r = await pool.query(
-        "SELECT COUNT(*) AS c FROM ext_otp WHERE phone = $1 AND created_at > now() - INTERVAL '1 hour'", [key]);
-      return Number(r.rows[0].c) || 0;
-    } catch { return 0; }
-  }
-  return _otps.filter((o) => o.key === key && o.createdAt > cutoff).length;
 }
 
 /** Persist a fresh OTP (single store). Best-effort. */
@@ -125,9 +144,10 @@ async function requestOtp(phoneRaw, channel = 'whatsapp') {
     return { ok: false, error: 'Daily message limit reached — try again tomorrow.' };
   }
 
-  // Identical awaited work for EVERY caller (throttle read + customer
-  // lookup), so foreground latency doesn't reveal membership.
-  const throttled = (await _recentOtpCount(key)) >= PER_PHONE_HOURLY;
+  // Identical awaited work for EVERY caller (atomic per-phone reserve +
+  // customer lookup), so foreground latency doesn't reveal membership.
+  const withinLimit = await _reservePhone(key);
+  const throttled = !withinLimit;
   const customer = await _customerByPhone(norm.e164 || norm.value);
   if (throttled) usageMeter.record(channel, 'otp_rate_limited').catch(() => {});
   else if (!customer) usageMeter.record(channel, 'otp_unknown_phone').catch(() => {});
@@ -170,14 +190,18 @@ async function verifyOtp(phoneRaw, code) {
   let matched = false;
   if (pool.isEnabled()) {
     try {
-      // Atomically consume the newest live OTP: bump attempts, mark used
-      // ONLY on the matching hash — in one statement, so no window exists
-      // to replay it or exceed the attempt cap.
+      // Atomically consume the newest live OTP. The guards are repeated on
+      // the OUTER WHERE (not only the subquery) so that under concurrency,
+      // when a second UPDATE re-evaluates against the row the first one
+      // already locked+modified, it re-checks the CURRENT attempts/used —
+      // otherwise N concurrent verifies could all target one row and blow
+      // past the 5-attempt cap.
       const r = await pool.query(
         `UPDATE ext_otp SET attempts = attempts + 1, used = (code_hash = $2)
          WHERE id = (SELECT id FROM ext_otp WHERE phone = $1 AND used = false
                      AND expires_at > now() AND attempts < $3
                      ORDER BY created_at DESC LIMIT 1)
+           AND used = false AND attempts < $3 AND expires_at > now()
          RETURNING (code_hash = $2) AS ok`, [key, hash, MAX_VERIFY_ATTEMPTS]);
       matched = r.rows.length > 0 && r.rows[0].ok === true;
     } catch (e) { logger.warn(`extLedger verify pg: ${e.message}`); }
@@ -238,12 +262,19 @@ async function sessionCustomer(token) {
  */
 function _entryCustomer(narration) {
   const s = String(narration || '');
-  let m = s.match(/\bto\s+(.+?)\s*\|/i);           // Sale, before the " | payMode"
-  if (m) return m[1].trim();
-  m = s.match(/\bto\s+(.+)$/i);                     // Sale with no payment suffix
-  if (m && /^Sale:/i.test(s)) return m[1].trim();
-  m = s.match(/received from\s+(.+?):/i);           // Payment
-  if (m) return m[1].trim();
+  // Anchor extraction to the entry TYPE so an inner " to <name> |" fragment
+  // in some other memo can never be mis-attributed as a sale customer.
+  if (/^Sale:/i.test(s)) {
+    let m = s.match(/\sto\s+(.+?)\s*\|/i);          // before the " | payMode"
+    if (m) return m[1].trim();
+    m = s.match(/\sto\s+(.+)$/i);                    // no payment suffix
+    if (m) return m[1].trim();
+    return null;
+  }
+  if (/^Payment received from/i.test(s)) {
+    const m = s.match(/^Payment received from\s+(.+?):/i);
+    if (m) return m[1].trim();
+  }
   return null;
 }
 
@@ -288,16 +319,18 @@ async function sweepExpired() {
   const now = Date.now();
   for (let i = _otps.length - 1; i >= 0; i--) if (_otps[i].expiresAt <= now) _otps.splice(i, 1);
   for (const [t, s] of _sessions) if (s.expiresAt <= now) _sessions.delete(t);
+  for (const [b, v] of _throttle) if (v.exp <= now) _throttle.delete(b);
   if (pool.isEnabled()) {
     try {
       await pool.query('DELETE FROM ext_otp WHERE expires_at < now()');
       await pool.query('DELETE FROM ext_sessions WHERE expires_at < now()');
       await pool.query('DELETE FROM web_sessions WHERE expires_at < now()');
+      await pool.query('DELETE FROM ext_throttle WHERE expires_at < now()');
     } catch (e) { logger.warn(`extLedger sweep: ${e.message}`); }
   }
 }
 
-function _resetForTests() { _otps.length = 0; _sessions.clear(); _pending.clear(); }
+function _resetForTests() { _otps.length = 0; _sessions.clear(); _pending.clear(); _throttle.clear(); }
 /** Await any in-flight background sends (tests). */
 async function _settle() { await Promise.all([..._pending]); }
 

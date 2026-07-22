@@ -50,6 +50,14 @@ const DDL_STATEMENTS = [
     count BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (day, channel, kind)
   )`,
+  // Atomic per-phone-hour OTP throttle counter (row-locked increment), so
+  // the 5/hour limit holds under concurrency instead of racing.
+  `CREATE TABLE IF NOT EXISTS ext_throttle (
+    bucket TEXT PRIMARY KEY,
+    count INT NOT NULL DEFAULT 0,
+    expires_at TIMESTAMPTZ NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS et_exp ON ext_throttle (expires_at)',
 ];
 
 const pool = require('./postgresPool');
