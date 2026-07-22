@@ -23,6 +23,13 @@
 
 const path = require('path');
 
+// Tests must NEVER touch a real Postgres: the host environment may carry a
+// DATABASE_URL that is unreachable from here, and every pool query would
+// stall on a 10s connection timeout. Scrub it before src/config is loaded
+// (config caches the value at require time). PG-backed services all have
+// in-memory fallbacks, which is exactly what the tests exercise.
+delete process.env.DATABASE_URL;
+
 const SRC = path.join(__dirname, '..', '..', 'src');
 const src = (rel) => require(path.join(SRC, rel));
 

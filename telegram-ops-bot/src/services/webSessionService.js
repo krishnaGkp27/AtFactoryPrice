@@ -11,15 +11,16 @@
  *   warehouses[]    → region scoping (e.g. the Kano-region person sees
  *                     their own warehouses' numbers)
  *
- * Storage is in-memory by design FOR NOW: PG-1 is being configured
- * (owner: exact config lands 21-Jul); once it exists, sessions move to
- * Postgres per storage rule 5b (state ≠ Sheets). A redeploy therefore
- * logs web users out — they tap the bot tile again; acceptable v1.
+ * PG-1b (22-Jul): SESSIONS are Postgres-backed when DATABASE_URL exists,
+ * so dashboard logins survive redeploys; in-memory remains the fallback
+ * (and the cache). Login TOKENS stay in-memory on purpose — 5-minute
+ * single-use links don't need durability.
  */
 
 'use strict';
 
 const crypto = require('crypto');
+const pool = require('../db/postgresPool');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const logger = require('../utils/logger');
 
@@ -59,9 +60,9 @@ function mintLoginToken(identity) {
 
 /**
  * Redeem a login token (single use) into a session.
- * @returns {{sessionId:string, identity:object}|null} null when invalid/expired/used
+ * @returns {Promise<{sessionId:string, identity:object}|null>} null when invalid/expired/used
  */
-function redeemLoginToken(token) {
+async function redeemLoginToken(token) {
   const now = Date.now();
   _sweep(_tokens, now);
   const entry = _tokens.get(String(token || ''));
@@ -69,22 +70,41 @@ function redeemLoginToken(token) {
   _tokens.delete(String(token)); // single use — burn before anything else
   const sessionId = crypto.randomBytes(24).toString('base64url');
   _sessions.set(sessionId, { identity: entry.identity, expiresAt: now + SESSION_TTL_MS });
+  if (pool.isEnabled()) {
+    try {
+      await pool.query(
+        'INSERT INTO web_sessions (token, identity, expires_at) VALUES ($1, $2, $3)',
+        [sessionId, JSON.stringify(entry.identity), new Date(now + SESSION_TTL_MS).toISOString()]);
+    } catch (e) { logger.warn(`webSession pg store: ${e.message}`); }
+  }
   auditLogRepository.append('web_login_redeemed', { userId: entry.identity.userId, role: entry.identity.role }, entry.identity.userId)
     .catch(() => {});
   logger.info(`webSession: ${entry.identity.role} ${entry.identity.userId} logged in via magic link`);
   return { sessionId, identity: entry.identity };
 }
 
-/** Resolve a session id to its identity, or null. */
-function getSession(sessionId) {
+/** Resolve a session id to its identity, or null. Memory first, then PG. */
+async function getSession(sessionId) {
   const now = Date.now();
   _sweep(_sessions, now);
   const s = _sessions.get(String(sessionId || ''));
-  return s ? s.identity : null;
+  if (s) return s.identity;
+  if (pool.isEnabled()) {
+    try {
+      const r = await pool.query(
+        'SELECT identity FROM web_sessions WHERE token = $1 AND expires_at > now()', [String(sessionId || '')]);
+      if (r.rows.length) {
+        const identity = r.rows[0].identity;
+        _sessions.set(String(sessionId), { identity, expiresAt: now + SESSION_TTL_MS });
+        return identity;
+      }
+    } catch (e) { logger.warn(`webSession pg read: ${e.message}`); }
+  }
+  return null;
 }
 
 /** Read the session identity off an Express request's cookie, or null. */
-function identityFromRequest(req) {
+async function identityFromRequest(req) {
   const raw = req.headers && req.headers.cookie;
   if (!raw) return null;
   for (const part of String(raw).split(';')) {
@@ -95,8 +115,12 @@ function identityFromRequest(req) {
 }
 
 /** Destroy one session (logout). */
-function destroySession(sessionId) {
+async function destroySession(sessionId) {
   _sessions.delete(String(sessionId || ''));
+  if (pool.isEnabled()) {
+    try { await pool.query('DELETE FROM web_sessions WHERE token = $1', [String(sessionId || '')]); }
+    catch (e) { logger.warn(`webSession pg delete: ${e.message}`); }
+  }
 }
 
 /** Test hook. */

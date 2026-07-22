@@ -64,16 +64,18 @@ function call(handler, headers = {}) {
   });
 }
 
-test('tokens are single-use and sessions carry the identity', () => {
+test('tokens are single-use and sessions carry the identity', async () => {
+  // PG-1b — the session API went async (Postgres-backed with in-memory
+  // fallback); same single-use semantics.
   webSessionService._resetForTests();
   const t = webSessionService.mintLoginToken({ userId: '4242', name: 'Abdul', role: 'manager', departments: ['Sales'], warehouses: ['Kano office'] });
-  const out = webSessionService.redeemLoginToken(t);
+  const out = await webSessionService.redeemLoginToken(t);
   assert.ok(out && out.sessionId, 'redeems once');
   assert.equal(out.identity.role, 'manager');
-  assert.equal(webSessionService.redeemLoginToken(t), null, 'second redeem fails (single use)');
-  assert.equal(webSessionService.getSession(out.sessionId).userId, '4242');
-  assert.equal(webSessionService.getSession('bogus'), null);
-  assert.equal(webSessionService.redeemLoginToken('made-up'), null);
+  assert.equal(await webSessionService.redeemLoginToken(t), null, 'second redeem fails (single use)');
+  assert.equal((await webSessionService.getSession(out.sessionId)).userId, '4242');
+  assert.equal(await webSessionService.getSession('bogus'), null);
+  assert.equal(await webSessionService.redeemLoginToken('made-up'), null);
 });
 
 test('bot tile: manager gets a one-time /auth link; employee is refused', async () => {
@@ -94,7 +96,7 @@ test('bot tile: manager gets a one-time /auth link; employee is refused', async 
 test('manager session is dept/region scoped on the ops API; approvals stay admin-only', async () => {
   webSessionService._resetForTests();
   const t = webSessionService.mintLoginToken({ userId: '4242', name: 'Abdul', role: 'manager', departments: ['Sales'], warehouses: ['Kano office'] });
-  const { sessionId } = webSessionService.redeemLoginToken(t);
+  const { sessionId } = await webSessionService.redeemLoginToken(t);
   const cookie = { cookie: `afp_session=${sessionId}` };
 
   const att = await call(apiController.getOpsAttendance, cookie);
@@ -110,7 +112,7 @@ test('manager session is dept/region scoped on the ops API; approvals stay admin
 
   // Admin session sees everything.
   const ta = webSessionService.mintLoginToken({ userId: '777', name: 'Boss', role: 'admin', departments: [], warehouses: [] });
-  const admin = webSessionService.redeemLoginToken(ta);
+  const admin = await webSessionService.redeemLoginToken(ta);
   const audAll = await call(apiController.getOpsStockTakes, { cookie: `afp_session=${admin.sessionId}` });
   assert.equal(audAll.body.rows.length, 2);
 });

@@ -83,6 +83,13 @@ app.get('/api/contacts/graph', apiController.getContactsGraph);
 // read-only) + the dashboard page itself served straight from this app so
 // it works the moment the domain points at Railway (Firebase hosting can
 // serve the same file at /ops via its rewrite).
+// EXT-1 — customer-facing OTP ledger (public, self-throttled) + the
+// admin-only cumulative channel-usage metric for the website.
+app.post('/api/ext/otp/request', apiController.postExtOtpRequest);
+app.post('/api/ext/otp/verify', apiController.postExtOtpVerify);
+app.get('/api/ext/ledger', apiController.getExtLedger);
+app.get('/api/ops/usage', apiController.getOpsUsage);
+
 app.get('/api/ops/overview', apiController.getOpsOverview);
 app.get('/api/ops/approvals', apiController.getOpsApprovals);
 app.get('/api/ops/attendance', apiController.getOpsAttendance);
@@ -92,9 +99,9 @@ app.get('/ops', (req, res) => res.sendFile(require('path').join(__dirname, '..',
 // ANA-1a — magic-link login: the bot mints a single-use token; redeeming
 // it here sets a role-scoped session cookie. Telegram IS the identity
 // provider — no passwords. Invalid/expired links get a friendly page.
-app.get('/auth', (req, res) => {
+app.get('/auth', async (req, res) => {
   const webSessionService = require('./src/services/webSessionService');
-  const out = webSessionService.redeemLoginToken(req.query.t);
+  const out = await webSessionService.redeemLoginToken(req.query.t);
   if (!out) {
     return res.status(403).type('html').send(
       '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -107,10 +114,10 @@ app.get('/auth', (req, res) => {
   const to = String(req.query.to || '/ops');
   res.redirect(['/ops', '/analytics'].includes(to) ? to : '/ops');
 });
-app.get('/auth/logout', (req, res) => {
+app.get('/auth/logout', async (req, res) => {
   const raw = String(req.headers.cookie || '');
   const m = raw.match(/afp_session=([^;]+)/);
-  if (m) require('./src/services/webSessionService').destroySession(m[1]);
+  if (m) await require('./src/services/webSessionService').destroySession(m[1]);
   res.setHeader('Set-Cookie', 'afp_session=; Path=/; HttpOnly; Max-Age=0');
   res.redirect('/ops');
 });
@@ -348,6 +355,10 @@ const server = app.listen(PORT, async () => {
     }
     // ANL-1 — usage analytics capture. No-op until ANALYTICS_ENABLED=1
     // (plus DATABASE_URL). Fire-and-forget: can never block a flow.
+    // PG-1b/EXT-1 — durable sessions + OTP + channel-usage tables.
+    try { require('./src/db/extSchema').ensure(); } catch (e) {
+      logger.warn(`extSchema boot: ${e.message}`);
+    }
     try { require('./src/services/usageTracker').init(); } catch (e) {
       logger.warn(`usageTracker init skipped: ${e.message}`);
     }
