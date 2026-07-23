@@ -48,7 +48,7 @@
  */
 
 const sessionStore = require('../utils/sessionStore');
-const { makeRenderer } = require('../utils/flowKit');
+const { makeRenderer, rowsFor } = require('../utils/flowKit');
 const branchOpsService = require('../services/branchOpsService');
 const branchOpsLogRepository = require('../repositories/branchOpsLogRepository');
 const logger = require('../utils/logger');
@@ -61,8 +61,7 @@ const { fmtQty } = require('../utils/format');
 // Anchored edit-else-send renderer — shared flowKit implementation.
 const render = makeRenderer({ requireSession: true });
 
-function backRow()   { return [{ text: '⬅ Back',   callback_data: 'bops:back'   }]; }
-function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'bops:cancel' }]; }
+const { backRow, cancelRow } = rowsFor('bops');
 function menuRow()   { return [{ text: '🏠 Menu',   callback_data: 'act:__back__' }]; }
 
 async function renderError(bot, chatId, userId, msg) {

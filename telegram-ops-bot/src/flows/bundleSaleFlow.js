@@ -70,7 +70,7 @@ const rateSuggestionService = require('../services/rateSuggestionService');
 const approvalEvents      = require('../events/approvalEvents');
 const auth                = require('../middlewares/auth');
 const logger              = require('../utils/logger');
-const { chunk }           = require('../utils/flowKit');
+const { chunk, rowsFor }  = require('../utils/flowKit');
 const {
   buildShadeNameMap, buildShadeLabel, layoutShadeRows, formatShadeRef,
 } = require('../utils/shadeButtons');
@@ -135,8 +135,7 @@ async function render(bot, chatId, userId, text, rows) {
   sessionStore.set(userId, session);
 }
 
-function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'bs:cancel' }]; }
-function backRow()   { return [{ text: '⬅ Back',   callback_data: 'bs:back'   }]; }
+const { cancelRow, backRow } = rowsFor('bs');
 function cartRow(yards, thans) {
   if (!thans) return null;
   return [{

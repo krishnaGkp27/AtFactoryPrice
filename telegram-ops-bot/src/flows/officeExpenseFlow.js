@@ -46,7 +46,7 @@
  */
 
 const sessionStore = require('../utils/sessionStore');
-const { makeRenderer, mdEscape: escapeMd } = require('../utils/flowKit');
+const { makeRenderer, mdEscape: escapeMd, rowsFor } = require('../utils/flowKit');
 const branchOpsService = require('../services/branchOpsService');
 const approvalEvents = require('../events/approvalEvents');
 const auth = require('../middlewares/auth');
@@ -63,8 +63,7 @@ const MAX_CARD_ITEMS = 15;  // cap item lines shown on the admin approval card
 // Anchored edit-else-send renderer — shared flowKit implementation.
 const render = makeRenderer({ requireSession: true });
 
-function backRow()   { return [{ text: '⬅ Back',   callback_data: 'ofex:back'   }]; }
-function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'ofex:cancel' }]; }
+const { backRow, cancelRow } = rowsFor('ofex');
 function menuRow()   { return [{ text: '🏠 Menu',   callback_data: 'act:__back__' }]; }
 
 async function renderError(bot, chatId, userId, msg) {

@@ -41,7 +41,7 @@
 'use strict';
 
 const sessionStore = require('../utils/sessionStore');
-const { mdEscape } = require('../utils/flowKit');
+const { mdEscape, rowsFor } = require('../utils/flowKit');
 const auth = require('../middlewares/auth');
 const departmentsRepo = require('../repositories/departmentsRepository');
 const usersRepo = require('../repositories/usersRepository');
@@ -161,9 +161,7 @@ async function render(bot, chatId, userId, text, keyboardRows) {
   return sent.message_id;
 }
 
-function cancelRow() {
-  return [{ text: '❌ Cancel', callback_data: 'usr:cancel' }];
-}
+const { cancelRow } = rowsFor('usr');
 
 function backCancelRow(backCb) {
   return [

@@ -29,7 +29,7 @@
  */
 
 const sessionStore        = require('../utils/sessionStore');
-const { makeRenderer } = require('../utils/flowKit');
+const { makeRenderer, rowsFor } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const inventoryService    = require('../services/inventoryService');
 const shadesRepository    = require('../repositories/shadesRepository');
@@ -132,8 +132,7 @@ async function loadChecklist(session) {
 const render = makeRenderer({ parseMode: null });
 
 function fmtQty(n) { return (Math.round((n || 0) * 100) / 100).toLocaleString('en-NG'); }
-function closeRow() { return [{ text: '❌ Close', callback_data: 'wai:close' }]; }
-function backRow(label) { return [{ text: label || '⬅ Back', callback_data: 'wai:back' }]; }
+const { closeRow, backRow } = rowsFor('wai');
 
 /**
  * Chunk a flat list of inline-keyboard buttons into rows of `perRow` tiles.

@@ -64,7 +64,7 @@ async function render(bot, chatId, userId, text, keyboardRows) {
   return sent.message_id;
 }
 
-function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'rol:cancel' }]; }
+const { cancelRow } = require('../utils/flowKit').rowsFor('rol');
 
 async function renderError(bot, chatId, userId, msg) {
   await render(bot, chatId, userId,

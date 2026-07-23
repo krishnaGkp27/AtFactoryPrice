@@ -30,7 +30,7 @@
  */
 
 const sessionStore        = require('../utils/sessionStore');
-const { makeRenderer } = require('../utils/flowKit');
+const { makeRenderer, rowsFor } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const designAssetsRepository = require('../repositories/designAssetsRepository');
 const designCategoriesRepository = require('../repositories/designCategoriesRepository');
@@ -48,8 +48,7 @@ const MAX_DETAIL_BALES = 40; // safety cap on a single detail card
 
 function fmtQty(n) { return (Math.round((n || 0) * 100) / 100).toLocaleString('en-NG'); }
 function fmtNgn(n) { return `₦${Math.round(n || 0).toLocaleString('en-NG')}`; }
-function closeRow() { return [{ text: '❌ Close', callback_data: 'sbl:close' }]; }
-function backRow(label) { return [{ text: label || '⬅ Back', callback_data: 'sbl:back' }]; }
+const { closeRow, backRow } = rowsFor('sbl');
 
 function chunkButtons(buttons, perRow) {
   const out = [];

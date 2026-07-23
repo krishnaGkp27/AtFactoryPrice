@@ -104,9 +104,7 @@ async function render(bot, chatId, userId, prompt, rows) {
   sessionStore.set(userId, session);
 }
 
-function cancelRow() {
-  return [{ text: '❌ Cancel', callback_data: 'gr:cancel' }];
-}
+const { cancelRow } = require('../utils/flowKit').rowsFor('gr');
 
 // ---------------------------------------------------------------------------
 // Step 1 — Warehouse

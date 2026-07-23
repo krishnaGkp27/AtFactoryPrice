@@ -143,7 +143,7 @@ async function render(bot, chatId, userId, prompt, rows) {
   sessionStore.set(userId, session);
 }
 
-function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'wh:cancel' }]; }
+const { cancelRow } = require('../utils/flowKit').rowsFor('wh');
 
 /**
  * UX-C1 policy: every error re-renders the anchored card with the

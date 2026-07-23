@@ -104,7 +104,7 @@ async function render(bot, chatId, userId, prompt, rows) {
   sessionStore.set(userId, session);
 }
 
-function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'br:cancel' }]; }
+const { cancelRow } = require('../utils/flowKit').rowsFor('br');
 
 /**
  * UX-C1: re-render the anchored flow card with an error message embedded

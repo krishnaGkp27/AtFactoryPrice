@@ -32,7 +32,7 @@
 'use strict';
 
 const sessionStore = require('../utils/sessionStore');
-const { mdEscape } = require('../utils/flowKit');
+const { mdEscape, rowsFor } = require('../utils/flowKit');
 const auth = require('../middlewares/auth');
 const usersRepo = require('../repositories/usersRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
@@ -97,7 +97,7 @@ async function render(bot, chatId, userId, text, keyboardRows) {
   return sent.message_id;
 }
 
-function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'umg:cancel' }]; }
+const { cancelRow } = rowsFor('umg');
 function backCancelRow(backStep) {
   return [
     { text: '⬅ Back', callback_data: `umg:back:${backStep}` },

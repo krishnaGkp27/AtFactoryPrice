@@ -44,7 +44,7 @@
 'use strict';
 
 const sessionStore = require('../utils/sessionStore');
-const { makeRenderer, chunk } = require('../utils/flowKit');
+const { makeRenderer, chunk, rowsFor } = require('../utils/flowKit');
 const auth = require('../middlewares/auth');
 const idGenerator = require('../utils/idGenerator');
 const riskEvaluate = require('../risk/evaluate');
@@ -62,10 +62,7 @@ const CHIPS_PER_ROW = 3;
 
 /** Split an array of buttons into keyboard rows. */
 
-function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'dcat:cancel' }]; }
-function navRow() {
-  return [{ text: '⬅ Back', callback_data: 'dcat:back' }, { text: '❌ Cancel', callback_data: 'dcat:cancel' }];
-}
+const { cancelRow, backAndCancelRow: navRow } = rowsFor('dcat');
 
 /**
  * Render-in-place primitive — anchored card via editMessageText, falling

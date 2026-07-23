@@ -33,7 +33,7 @@
  */
 
 const sessionStore = require('../utils/sessionStore');
-const { makeRenderer, chunk } = require('../utils/flowKit');
+const { makeRenderer, chunk, rowsFor } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const usersRepository = require('../repositories/usersRepository');
 const designCategoriesRepository = require('../repositories/designCategoriesRepository');
@@ -54,8 +54,7 @@ const QTY_CHIPS = [1, 2, 5, 10];
 
 const render = makeRenderer({ requireSession: true });
 
-function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'trf:cancel' }]; }
-function navRow() { return [{ text: '⬅ Back', callback_data: 'trf:back' }, { text: '❌ Cancel', callback_data: 'trf:cancel' }]; }
+const { cancelRow, backAndCancelRow: navRow } = rowsFor('trf');
 
 /* ── data helpers ──────────────────────────────────────────────────────── */
 

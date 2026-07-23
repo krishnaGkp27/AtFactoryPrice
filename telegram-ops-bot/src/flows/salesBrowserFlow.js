@@ -25,7 +25,7 @@ const auth = require('../middlewares/auth');
 const transactionsRepository = require('../repositories/transactionsRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const config = require('../config');
-const { makeRenderer } = require('../utils/flowKit');
+const { makeRenderer, rowsFor } = require('../utils/flowKit');
 const fmtDate = require('../utils/formatDate');
 const logger = require('../utils/logger');
 const { LAGOS_TZ } = require('../utils/dates');
@@ -43,7 +43,7 @@ function lagosISO(daysBack = 0) {
 }
 function esc(s) { return String(s == null ? '' : s).replace(/[*_`[\]]/g, ''); }
 function ngn(n) { return `₦${Number(n || 0).toLocaleString('en-NG', { maximumFractionDigits: 0 })}`; }
-function closeRow() { return [{ text: '❌ Close', callback_data: `${NS}close` }]; }
+const { closeRow } = rowsFor('sbr');
 
 /* ── data assembly (read-time, raw sheets) ── */
 

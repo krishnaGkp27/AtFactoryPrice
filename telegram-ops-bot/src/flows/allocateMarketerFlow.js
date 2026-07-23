@@ -25,7 +25,7 @@
 'use strict';
 
 const sessionStore = require('../utils/sessionStore');
-const { makeRenderer, chunk } = require('../utils/flowKit');
+const { makeRenderer, chunk, rowsFor } = require('../utils/flowKit');
 const auth = require('../middlewares/auth');
 const usersRepository = require('../repositories/usersRepository');
 const inventoryRepository = require('../repositories/inventoryRepository');
@@ -40,10 +40,7 @@ const PAGE_SIZE = 24;
 const QTY_CHIPS = [1, 2, 3, 5, 10, 20];
 
 
-function cancelRow() { return [{ text: '❌ Cancel', callback_data: 'mal:cancel' }]; }
-function navRow() {
-  return [{ text: '⬅ Back', callback_data: 'mal:back' }, { text: '❌ Cancel', callback_data: 'mal:cancel' }];
-}
+const { cancelRow, backAndCancelRow: navRow } = rowsFor('mal');
 
 /** Anchored-card renderer (edit in place, fall back to fresh message). */
 // Shared flowKit renderer with this flow's fixed header.

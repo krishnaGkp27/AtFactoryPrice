@@ -51,7 +51,7 @@
  */
 
 const sessionStore               = require('../utils/sessionStore');
-const { makeRenderer } = require('../utils/flowKit');
+const { makeRenderer, rowsFor } = require('../utils/flowKit');
 const goodsReceiptsRepository    = require('../repositories/goodsReceiptsRepository');
 const landedCostTypesRepository  = require('../repositories/landedCostTypesRepository');
 const landedCostService          = require('../services/landedCostService');
@@ -68,8 +68,7 @@ const MAX_CHARGE_AMOUNT = 10_000_000; // $10M sanity ceiling per single charge
 // Anchored edit-else-send renderer — shared flowKit implementation.
 const render = makeRenderer({ requireSession: true });
 
-function cancelRow()  { return [{ text: '❌ Cancel', callback_data: 'lcost:cancel' }]; }
-function backRow()    { return [{ text: '⬅ Back',   callback_data: 'lcost:back'   }]; }
+const { cancelRow, backRow } = rowsFor('lcost');
 
 async function renderError(bot, chatId, userId, errorText) {
   const session = sessionStore.get(userId);
