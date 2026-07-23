@@ -5,7 +5,7 @@
  */
 
 const sheets = require('./sheetsClient');
-const { normalizeSalesDate } = require('../utils/dates');
+const { normalizeSalesDate, todayInLagos } = require('../utils/dates');
 
 const SHEET = 'Transactions';
 const HEADERS = ['Timestamp', 'User', 'Action', 'Design', 'Color', 'Qty', 'Before', 'After', 'Status',
@@ -73,7 +73,7 @@ function backdatedStamp(record) {
   if (!/^(sell|sale)/i.test(String(record.action || ''))) return '';
   const iso = normalizeSalesDate(record.salesDate);
   if (!iso) return '';
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Lagos' }).format(new Date());
+  const today = todayInLagos();
   const days = Math.round((Date.parse(today) - Date.parse(iso)) / 86400000);
   return days >= 2 ? `BACKDATED-${days}d` : '';
 }

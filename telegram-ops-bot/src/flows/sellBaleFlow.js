@@ -31,6 +31,7 @@ const designAssetsService = require('../services/designAssetsService');
 const { fmtQty } = require('../utils/format');
 const fmtDate = require('../utils/formatDate');
 const logger = require('../utils/logger');
+const { LAGOS_TZ } = require('../utils/dates');
 
 const SESSION_TYPE = 'sell_bale_flow';
 const TTL_MS = 20 * 60 * 1000;
@@ -40,7 +41,7 @@ function esc(s) { return String(s == null ? '' : s).replace(/[*_`[\]]/g, ''); }
 
 function lagosISO(daysBack = 0) {
   return new Date(Date.now() - daysBack * 86400000)
-    .toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' });
+    .toLocaleDateString('en-CA', { timeZone: LAGOS_TZ });
 }
 
 function getSession(userId) {

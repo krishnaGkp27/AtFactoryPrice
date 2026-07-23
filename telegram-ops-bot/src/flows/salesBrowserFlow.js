@@ -28,6 +28,7 @@ const config = require('../config');
 const { makeRenderer } = require('../utils/flowKit');
 const fmtDate = require('../utils/formatDate');
 const logger = require('../utils/logger');
+const { LAGOS_TZ } = require('../utils/dates');
 
 const SESSION_TYPE = 'sales_browser_flow';
 const NS = 'sbr:';
@@ -38,7 +39,7 @@ const ITEMS_PER_PAGE = 8;
 const render = makeRenderer({ parseMode: 'Markdown', requireSession: SESSION_TYPE });
 
 function lagosISO(daysBack = 0) {
-  return new Date(Date.now() - daysBack * 86400000).toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' });
+  return new Date(Date.now() - daysBack * 86400000).toLocaleDateString('en-CA', { timeZone: LAGOS_TZ });
 }
 function esc(s) { return String(s == null ? '' : s).replace(/[*_`[\]]/g, ''); }
 function ngn(n) { return `₦${Number(n || 0).toLocaleString('en-NG', { maximumFractionDigits: 0 })}`; }

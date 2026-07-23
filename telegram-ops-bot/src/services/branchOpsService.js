@@ -39,6 +39,7 @@ const usersRepository = require('../repositories/usersRepository');
 const idGenerator = require('../utils/idGenerator');
 const riskEvaluate = require('../risk/evaluate');
 const logger = require('../utils/logger');
+const { LAGOS_TZ } = require('../utils/dates');
 
 const MAX_EXPENSE_AMOUNT = 5_000_000;       // ₦5M sanity ceiling per single line
 const MAX_EXPENSE_TITLE_LEN = 80;
@@ -64,7 +65,7 @@ const MAX_QUICK_PICK_TITLES = 10;       // chips shown in the picker grid
 const SEED_BASE_SCORE = 0.25;           // floor score so seeds always rank above nothing
 const DAY_MS = 24 * 3600 * 1000;
 
-function todayInTz(tz = 'Africa/Lagos') {
+function todayInTz(tz = LAGOS_TZ) {
   // Mirrors attendanceService.todayInTz to keep "today" definition
   // consistent across morning routines.
   const fmt = new Intl.DateTimeFormat('en-CA', {

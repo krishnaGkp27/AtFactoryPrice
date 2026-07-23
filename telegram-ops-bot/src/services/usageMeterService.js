@@ -12,14 +12,11 @@
 
 const pool = require('../db/postgresPool');
 const logger = require('../utils/logger');
+const { todayInLagos: _todayIso } = require('../utils/dates');
 
 // Fallback store: 'day|channel|kind' → count. Also used as a same-process
 // cache for cap checks so a PG blip can never disable the cost caps.
 const _mem = new Map();
-
-function _todayIso() {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Lagos' }).format(new Date());
-}
 
 /**
  * EXT-1 — ATOMIC daily-cap reservation (fixes the read-then-send TOCTOU
