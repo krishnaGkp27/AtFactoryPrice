@@ -84,6 +84,9 @@ async function start(bot, chatId, userId, messageId = null) {
     step: 'pick_location',
     flowMessageId: messageId || null,
     startedAt: new Date().toISOString(),
+    // ATT-C4b: GPS + selfie legitimately take longer than the default 5-min
+    // session TTL (finding light, walking to the shop front). 15 minutes.
+    ttlMs: 15 * 60 * 1000,
   });
 
   let cfg;
@@ -263,21 +266,35 @@ async function handleFile(bot, msg) {
 
   // Same-day duplicate check — the cheap gallery-reuse deterrent: the same
   // image file cannot check in two people (or one person twice) in a day.
-  if (hash) {
-    const { rows } = await attendanceService.getTodayAll();
-    if (rows.some((r) => r.photo_sha256 && r.photo_sha256 === hash)) {
+  try {
+    if (hash) {
+      const { rows } = await attendanceService.getTodayAll();
+      if (rows.some((r) => r.photo_sha256 && r.photo_sha256 === hash)) {
+        sessionStore.set(userId, session); // refresh the TTL clock for the retake
+        await render(bot, chatId, userId,
+          `📍 *Mark Attendance — ${session.location}*\n\n`
+          + `🚫 That exact photo was already used for attendance today. Take a *fresh* photo now and send it.`,
+          [[{ text: '❌ Cancel', callback_data: 'atd:cancel' }]]);
+        return true;
+      }
+    }
+    session.verification = session.verification || {};
+    session.verification.photoFileId = fileId;
+    session.verification.photoHash = hash;
+    sessionStore.set(userId, session);
+    await finalizeMark(bot, chatId, userId);
+  } catch (e) {
+    // A sheet hiccup here previously died silently in the webhook catch —
+    // the user's selfie got no reply at all. Tell them and offer a retry.
+    logger.error(`attendance photo mark failed: ${e.message}`);
+    try {
       await render(bot, chatId, userId,
         `📍 *Mark Attendance — ${session.location}*\n\n`
-        + `🚫 That exact photo was already used for attendance today. Take a *fresh* photo now and send it.`,
-        [[{ text: '❌ Cancel', callback_data: 'atd:cancel' }]]);
-      return true;
-    }
+        + '⚠️ Could not save your attendance just now — please try again.',
+        [[{ text: '🔁 Try again', callback_data: 'atd:retry' },
+          { text: '❌ Cancel', callback_data: 'atd:cancel' }]]);
+    } catch (_) {}
   }
-  session.verification = session.verification || {};
-  session.verification.photoFileId = fileId;
-  session.verification.photoHash = hash;
-  sessionStore.set(userId, session);
-  await finalizeMark(bot, chatId, userId);
   return true;
 }
 

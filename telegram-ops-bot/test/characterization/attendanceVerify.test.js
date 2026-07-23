@@ -124,3 +124,50 @@ test('admin (not in the audience) can run the flow to test it; none-mode stays o
   assert.equal(appended[0].geo, '', 'no verification data in none mode');
   sessionStore.clear('777');
 });
+
+// ── ATT-C4b hardening (pre-live-test fixes) ────────────────────────────────
+
+test('ATT-C4b: attendance session gets the 15-minute TTL (selfie takes longer than 5)', async () => {
+  settings = { ATTENDANCE_VERIFY_MODE: 'photo', ATTENDANCE_LOCATIONS: 'Kano Office' };
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('act:mark_attendance'));
+  const s = sessionStore.get('4242');
+  assert.equal(s.ttlMs, 15 * 60 * 1000, 'extended TTL set on the session');
+  sessionStore.clear('4242');
+});
+
+test('ATT-C4b: two concurrent album photos write ONE row (markPresent is serialized)', async () => {
+  settings = { ATTENDANCE_VERIFY_MODE: 'photo', ATTENDANCE_LOCATIONS: 'Kano Office' };
+  appended.length = 0;
+  rowsToday = [];
+  attendanceRepository.findByDateUser = async (date, id) =>
+    appended.find((r) => r.telegram_id === String(id)) || null;
+  telegramFiles.downloadTelegramFile = async (b, fid) =>
+    ({ buffer: Buffer.from(`bytes-${fid}`), ext: 'jpg', mimeType: 'image/jpeg' });
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('act:mark_attendance'));
+  await controller.handleCallbackQuery(bot, cb(`atd:pick:${encodeURIComponent('Kano Office')}`));
+  const album = (fid) => ({ from: { id: '4242' }, chat: { id: '4242' }, photo: [{ file_id: fid }] });
+  await Promise.all([
+    controller.handleFileMessage(bot, album('alb-1')),
+    controller.handleFileMessage(bot, album('alb-2')),
+  ]);
+  assert.equal(appended.length, 1, 'exactly one row despite concurrent photos');
+  sessionStore.clear('4242');
+});
+
+test('ATT-C4b: sheet failure after the photo shows an error card with Try again (not silence)', async () => {
+  settings = { ATTENDANCE_VERIFY_MODE: 'photo', ATTENDANCE_LOCATIONS: 'Kano Office' };
+  appended.length = 0;
+  attendanceRepository.findByDateUser = async () => null;
+  const origAppend = attendanceRepository.append;
+  attendanceRepository.append = async () => { throw new Error('sheet down'); };
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('act:mark_attendance'));
+  await controller.handleCallbackQuery(bot, cb(`atd:pick:${encodeURIComponent('Kano Office')}`));
+  await controller.handleFileMessage(bot, photoMsg());
+  assert.match(bot.allText(), /Could not save your attendance/i, 'user is told, not ghosted');
+  assert.match(JSON.stringify(bot.calls), /atd:retry/, 'Try again button offered');
+  attendanceRepository.append = origAppend;
+  sessionStore.clear('4242');
+});

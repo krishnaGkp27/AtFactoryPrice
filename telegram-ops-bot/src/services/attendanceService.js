@@ -18,6 +18,7 @@ const attendanceRepo = require('../repositories/attendanceRepository');
 const usersRepo = require('../repositories/usersRepository');
 const auditLogRepo = require('../repositories/auditLogRepository');
 const logger = require('../utils/logger');
+const { runExclusive } = require('../utils/asyncMutex');
 
 // ---------------------------------------------------------------------------
 // Settings keys + defaults
@@ -325,7 +326,13 @@ async function getTodayAll(timezone) {
 async function markPresent({ telegramId, name, location, adminUserId = null, when = null, verification = null }) {
   if (!telegramId) return { ok: false, reason: 'missing_telegram_id' };
   if (!location) return { ok: false, reason: 'missing_location' };
+  // ATT-C4b: serialize per user — the find-then-append idempotency check is
+  // otherwise a race (a 2-photo album arrives as two concurrent updates and
+  // both used to append, duplicating the day's row).
+  return runExclusive(`att:mark:${telegramId}`, () => markPresentInner({ telegramId, name, location, adminUserId, when, verification }));
+}
 
+async function markPresentInner({ telegramId, name, location, adminUserId, when, verification }) {
   const cfg = await getConfig();
   if (!cfg.locations.includes(location)) {
     return { ok: false, reason: 'location_not_in_admin_list', allowed: cfg.locations };
