@@ -37,6 +37,36 @@ test('render falls back to a fresh send and re-anchors when the edit fails', asy
   sessionStore.clear('r2');
 });
 
+test('render treats "message is not modified" as success — no duplicate card', async () => {
+  sessionStore.set('r2b', { type: 'x_flow', flowMessageId: 42 });
+  const bot = createFakeBot();
+  bot.editMessageText = async () => {
+    throw new Error('ETELEGRAM: 400 Bad Request: message is not modified');
+  };
+  const render = makeRenderer();
+  const mid = await render(bot, 'c', 'r2b', 'hello', []);
+  assert.equal(mid, 42, 'resolves with the existing anchor id');
+  assert.equal(bot.callsTo('sendMessage').length, 0, 'no fresh send — screen already correct');
+  assert.equal(sessionStore.get('r2b').flowMessageId, 42, 'anchor unchanged');
+  sessionStore.clear('r2b');
+});
+
+test('editOrSendAnchored treats "message is not modified" as success — no duplicate card', async () => {
+  const { editOrSendAnchored, isNotModified } = require('../../../src/utils/telegramUI');
+  assert.equal(isNotModified(new Error('ETELEGRAM: 400 Bad Request: message is not modified')), true);
+  assert.equal(isNotModified(new Error('message not found')), false);
+  sessionStore.set('r2c', { type: 'x_flow', flowMessageId: 77 });
+  const bot = createFakeBot();
+  bot.editMessageText = async () => {
+    throw new Error('ETELEGRAM: 400 Bad Request: message is not modified');
+  };
+  const res = await editOrSendAnchored(bot, 'c', 'r2c', 'hello', {});
+  assert.equal(res && res.message_id, 77, 'resolves with the anchored message id');
+  assert.equal(bot.callsTo('sendMessage').length, 0, 'no fresh send — screen already correct');
+  assert.equal(sessionStore.get('r2c').flowMessageId, 77, 'anchor unchanged');
+  sessionStore.clear('r2c');
+});
+
 test('render without a session still sends (no crash, no anchor)', async () => {
   sessionStore.clear('r3');
   const bot = createFakeBot();

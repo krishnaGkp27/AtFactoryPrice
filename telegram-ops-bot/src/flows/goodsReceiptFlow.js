@@ -63,7 +63,7 @@ const inventoryService = require('../services/inventoryService');
 const adminFeed = require('../services/adminFeed');
 const idGenerator = require('../utils/idGenerator');
 const logger = require('../utils/logger');
-const { editOrSend } = require('../utils/telegramUI');
+const { editOrSend, isNotModified } = require('../utils/telegramUI');
 const { fmtQty } = require('../utils/format');
 
 const DEFAULT_YARDS_PER_BALE = 50;
@@ -97,7 +97,10 @@ async function render(bot, chatId, userId, prompt, rows) {
     try {
       await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
       return;
-    } catch (_) { /* fall through to send */ }
+    } catch (e) {
+      if (isNotModified(e)) return; // screen already correct — not a failure
+      /* fall through to send */
+    }
   }
   const sent = await bot.sendMessage(chatId, text, opts);
   session.flowMessageId = sent.message_id;

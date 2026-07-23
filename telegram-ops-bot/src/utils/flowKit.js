@@ -17,6 +17,7 @@
  */
 
 const sessionStore = require('./sessionStore');
+const { isNotModified } = require('./telegramUI');
 
 /**
  * Build a flow's anchored renderer.
@@ -48,7 +49,12 @@ function makeRenderer(opts = {}) {
       try {
         await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...sendOpts });
         return mid;
-      } catch (_) { /* deleted / photo anchor / identical — fall through */ }
+      } catch (e) {
+        // "message is not modified" = screen already correct — success, do
+        // NOT fall through to sendMessage (that spawns a duplicate card).
+        if (isNotModified(e)) return mid;
+        /* deleted / photo anchor — fall through to fresh send */
+      }
     }
     const sent = await bot.sendMessage(chatId, text, sendOpts);
     if (session && sent && sent.message_id) {

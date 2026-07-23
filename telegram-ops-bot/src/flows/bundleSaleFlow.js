@@ -71,6 +71,7 @@ const approvalEvents      = require('../events/approvalEvents');
 const auth                = require('../middlewares/auth');
 const logger              = require('../utils/logger');
 const { chunk, rowsFor }  = require('../utils/flowKit');
+const { isNotModified }   = require('../utils/telegramUI');
 const {
   buildShadeNameMap, buildShadeLabel, layoutShadeRows, formatShadeRef,
 } = require('../utils/shadeButtons');
@@ -128,7 +129,10 @@ async function render(bot, chatId, userId, text, rows) {
     try {
       await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
       return;
-    } catch (_) { /* fall through */ }
+    } catch (e) {
+      if (isNotModified(e)) return; // screen already correct — not a failure
+      /* fall through */
+    }
   }
   const sent = await bot.sendMessage(chatId, text, opts);
   session.flowMessageId = sent.message_id;

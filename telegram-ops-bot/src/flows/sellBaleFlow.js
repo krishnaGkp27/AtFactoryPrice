@@ -32,6 +32,7 @@ const { fmtQty } = require('../utils/format');
 const fmtDate = require('../utils/formatDate');
 const logger = require('../utils/logger');
 const { LAGOS_TZ } = require('../utils/dates');
+const { isNotModified } = require('../utils/telegramUI');
 
 const SESSION_TYPE = 'sell_bale_flow';
 const TTL_MS = 20 * 60 * 1000;
@@ -58,7 +59,10 @@ async function render(bot, chatId, userId, text, rows) {
     try {
       await bot.editMessageText(text, { chat_id: chatId, message_id: s.flowMessageId, ...opts });
       return;
-    } catch (_) { /* fall through to fresh send */ }
+    } catch (e) {
+      if (isNotModified(e)) return; // screen already correct — not a failure
+      /* fall through to fresh send */
+    }
   }
   try {
     const sent = await bot.sendMessage(chatId, text, opts);

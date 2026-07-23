@@ -60,6 +60,7 @@ const auditLogRepository = require('../repositories/auditLogRepository');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const settingsRepository = require('../repositories/settingsRepository');
 const logger = require('../utils/logger');
+const { isNotModified } = require('../utils/telegramUI');
 
 const MAX_NAME_LEN = 50;
 const MIN_NAME_LEN = 1;
@@ -136,7 +137,10 @@ async function render(bot, chatId, userId, prompt, rows) {
     try {
       await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
       return;
-    } catch (_) { /* message gone or identical — fall through */ }
+    } catch (e) {
+      if (isNotModified(e)) return; // screen already correct — not a failure
+      /* message gone — fall through */
+    }
   }
   const sent = await bot.sendMessage(chatId, text, opts);
   session.flowMessageId = sent.message_id;

@@ -15,6 +15,16 @@
 const sessionStore = require('./sessionStore');
 
 /**
+ * True when a Telegram edit rejection is the "message is not modified" 400 —
+ * i.e. the screen ALREADY shows exactly what we tried to render. That is a
+ * success for every anchored renderer: falling through to sendMessage there
+ * spawns a duplicate card per tap (the attendance admin picker bug).
+ */
+function isNotModified(e) {
+  return /message is not modified/i.test(String((e && e.message) || e || ''));
+}
+
+/**
  * Edit `messageId` in place when supplied; otherwise send a fresh message.
  * `opts` accepts any Telegram options (parse_mode, reply_markup, etc.).
  * Returns the resulting Message object — or `true` in the rare case
@@ -28,8 +38,11 @@ async function editOrSend(bot, chatId, messageId, text, opts = {}) {
         message_id: messageId,
         ...opts,
       });
-    } catch (_) {
-      // fall through to fresh send (message gone, identical content, etc.)
+    } catch (e) {
+      // "message is not modified" = the screen is already correct — treat as
+      // success (mimic the edited-Message shape so callers can read the id).
+      if (isNotModified(e)) return { message_id: messageId };
+      // fall through to fresh send (message gone, photo anchor, etc.)
     }
   }
   return bot.sendMessage(chatId, text, opts);
@@ -116,4 +129,5 @@ module.exports = {
   sendLong,
   cbSafe,
   safeDelete,
+  isNotModified,
 };

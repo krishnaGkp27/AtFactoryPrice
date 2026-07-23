@@ -37,7 +37,7 @@ const settingsRepository = require('../repositories/settingsRepository');
 const auth = require('../middlewares/auth');
 const config = require('../config');
 const logger = require('../utils/logger');
-const { editOrSend } = require('../utils/telegramUI');
+const { editOrSend, isNotModified } = require('../utils/telegramUI');
 const { fmtQty } = require('../utils/format');
 
 const DEFAULT_LOW_STOCK_THRESHOLD = 5; // bales
@@ -215,7 +215,10 @@ async function renderNewPO(bot, chatId, userId, prompt, rows) {
     try {
       await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
       return;
-    } catch (_) { /* fall through */ }
+    } catch (e) {
+      if (isNotModified(e)) return; // screen already correct — not a failure
+      /* fall through */
+    }
   }
   const sent = await bot.sendMessage(chatId, text, opts);
   session.flowMessageId = sent.message_id;

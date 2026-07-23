@@ -41,6 +41,7 @@ const approvalEvents = require('../events/approvalEvents');
 const riskEvaluate = require('../risk/evaluate');
 const idGenerator = require('../utils/idGenerator');
 const logger = require('../utils/logger');
+const { isNotModified } = require('../utils/telegramUI');
 
 const PAGE_SIZE = 8;
 
@@ -71,13 +72,18 @@ async function render(bot, chatId, userId, text, keyboardRows) {
       });
       return session.flowMessageId;
     } catch (e1) {
+      // screen already correct — success, not a reason to send a new card
+      if (isNotModified(e1)) return session.flowMessageId;
       try {
         await bot.editMessageText(text, {
           chat_id: chatId, message_id: session.flowMessageId,
           reply_markup, disable_web_page_preview: true,
         });
         return session.flowMessageId;
-      } catch (_) { /* fall through to a fresh send */ }
+      } catch (e2) {
+        if (isNotModified(e2)) return session.flowMessageId;
+        /* fall through to a fresh send */
+      }
     }
   }
   let sent;

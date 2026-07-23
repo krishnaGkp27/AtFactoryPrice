@@ -39,6 +39,7 @@ const usersRepo = require('../repositories/usersRepository');
 const attendanceService = require('../services/attendanceService');
 const auditLogRepo = require('../repositories/auditLogRepository');
 const logger = require('../utils/logger');
+const { isNotModified } = require('../utils/telegramUI');
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const TZ_RE = /^[A-Za-z_/+\-0-9]{2,64}$/;
@@ -58,7 +59,10 @@ async function render(bot, chatId, userId, text, keyboardRows) {
         parse_mode: 'Markdown', reply_markup, disable_web_page_preview: true,
       });
       return session.flowMessageId;
-    } catch (_) {}
+    } catch (e) {
+      // screen already correct — success, not a reason to send a new card
+      if (isNotModified(e)) return session.flowMessageId;
+    }
   }
   const sent = await bot.sendMessage(chatId, text, {
     parse_mode: 'Markdown', reply_markup, disable_web_page_preview: true,

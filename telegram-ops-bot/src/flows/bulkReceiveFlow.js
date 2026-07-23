@@ -58,7 +58,7 @@ const { downloadTelegramFile } = require('../utils/telegramFiles');
 const { parseCsv } = require('../utils/csvParser');
 const { parseXlsx, isAvailable: xlsxAvailable } = require('../utils/xlsxParser');
 const bulkValidator = require('../utils/bulkRowValidator');
-const { editOrSend } = require('../utils/telegramUI');
+const { editOrSend, isNotModified } = require('../utils/telegramUI');
 const { fmtQty } = require('../utils/format');
 const logger = require('../utils/logger');
 // FILE-C1: shared archive (local + best-effort Drive) so CSV/XLSX uploads
@@ -97,7 +97,10 @@ async function render(bot, chatId, userId, prompt, rows) {
     try {
       await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
       return;
-    } catch (_) { /* fall through to send */ }
+    } catch (e) {
+      if (isNotModified(e)) return; // screen already correct — not a failure
+      /* fall through to send */
+    }
   }
   const sent = await bot.sendMessage(chatId, text, opts);
   session.flowMessageId = sent.message_id;

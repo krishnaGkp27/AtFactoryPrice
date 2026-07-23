@@ -43,6 +43,7 @@ const telegramFiles = require('../utils/telegramFiles');
 const auth = require('../middlewares/auth');
 const config = require('../config');
 const logger = require('../utils/logger');
+const { isNotModified } = require('../utils/telegramUI');
 
 // Accepted upload types for the dispatch / receive load photo (image or PDF).
 const DOC_MIMES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
@@ -1026,7 +1027,12 @@ async function showList(bot, chatId, userId, messageId) {
   }
   const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]] } };
   if (messageId) {
-    await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...opts }).catch(async () => { await bot.sendMessage(chatId, text, opts); });
+    // "message is not modified" = screen already correct — success, don't
+    // fall through to a duplicate send.
+    await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...opts }).catch(async (e) => {
+      if (isNotModified(e)) return;
+      await bot.sendMessage(chatId, text, opts);
+    });
   } else {
     await bot.sendMessage(chatId, text, opts);
   }

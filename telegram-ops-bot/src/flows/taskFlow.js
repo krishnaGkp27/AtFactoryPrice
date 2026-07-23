@@ -41,7 +41,7 @@ const adminFeed = require('../services/adminFeed');
 // ("₦5,000") reads better than the long form. Centralized helpers live in
 // utils/format and utils/telegramUI.
 const { fmtMoneyShort: fmtMoney } = require('../utils/format');
-const { editOrSend } = require('../utils/telegramUI');
+const { editOrSend, isNotModified } = require('../utils/telegramUI');
 
 const PAGE_SIZE = 8;
 const TITLE_MIN_LEN = 3;
@@ -800,6 +800,8 @@ async function renderProposalCardForAssigner(bot, taskId, opts = {}) {
       });
       return opts.editMessageId;
     } catch (e) {
+      // screen already correct — success, not a reason to send a new card
+      if (isNotModified(e)) return opts.editMessageId;
       logger.warn(`renderProposalCardForAssigner: edit failed, falling back to send: ${e.message}`);
     }
   }

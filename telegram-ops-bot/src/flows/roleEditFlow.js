@@ -30,6 +30,7 @@ const usersRepo = require('../repositories/usersRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const fieldRoles = require('../services/fieldRoles');
 const logger = require('../utils/logger');
+const { isNotModified } = require('../utils/telegramUI');
 
 const PAGE_SIZE = 8;
 
@@ -52,7 +53,11 @@ async function render(bot, chatId, userId, text, keyboardRows) {
         parse_mode: 'Markdown', reply_markup, disable_web_page_preview: true,
       });
       return session.flowMessageId;
-    } catch (_) { /* fall through to a fresh send */ }
+    } catch (e) {
+      // screen already correct — success, not a reason to send a new card
+      if (isNotModified(e)) return session.flowMessageId;
+      /* fall through to a fresh send */
+    }
   }
   const sent = await bot.sendMessage(chatId, text, {
     parse_mode: 'Markdown', reply_markup, disable_web_page_preview: true,

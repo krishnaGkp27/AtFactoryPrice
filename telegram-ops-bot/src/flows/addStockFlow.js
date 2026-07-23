@@ -42,6 +42,7 @@ const bulkValidator = require('../utils/bulkRowValidator');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
 const { fmtQty } = require('../utils/format');
 const logger = require('../utils/logger');
+const { isNotModified } = require('../utils/telegramUI');
 
 const SESSION_TTL_MS = 15 * 60 * 1000;
 const MAX_WAREHOUSE_NAME_LEN = 40;
@@ -546,7 +547,8 @@ async function _editToPlainText(bot, message, text, opts = {}) {
       reply_markup: { inline_keyboard: [] },
       ...opts,
     });
-  } catch (_) {
+  } catch (e) {
+    if (isNotModified(e)) return; // screen already correct — not a failure
     await bot.sendMessage(message.chat.id, text, opts);
   }
 }

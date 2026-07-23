@@ -55,6 +55,7 @@ const riskEvaluate = require('../risk/evaluate');
 const idGenerator = require('../utils/idGenerator');
 const fieldRoles = require('../services/fieldRoles');
 const logger = require('../utils/logger');
+const { isNotModified } = require('../utils/telegramUI');
 
 const MIN_TG_DIGITS = 6;
 const MAX_TG_DIGITS = 12;
@@ -133,6 +134,8 @@ async function render(bot, chatId, userId, text, keyboardRows) {
       });
       return session.flowMessageId;
     } catch (e1) {
+      // screen already correct — success, not a reason to send a new card
+      if (isNotModified(e1)) return session.flowMessageId;
       logger.warn(`userAddFlow.render: edit-md failed: ${e1.message}`);
       try {
         await bot.editMessageText(text, {
@@ -140,7 +143,10 @@ async function render(bot, chatId, userId, text, keyboardRows) {
           reply_markup, disable_web_page_preview: true,
         });
         return session.flowMessageId;
-      } catch (_) { /* fall through to send fresh */ }
+      } catch (e2) {
+        if (isNotModified(e2)) return session.flowMessageId;
+        /* fall through to send fresh */
+      }
     }
   }
   let sent;

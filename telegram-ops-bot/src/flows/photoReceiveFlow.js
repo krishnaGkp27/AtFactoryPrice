@@ -102,6 +102,7 @@ const usersRepository = require('../repositories/usersRepository');
 const bulkValidator = require('../utils/bulkRowValidator');
 const { fmtQty } = require('../utils/format');
 const logger = require('../utils/logger');
+const { isNotModified } = require('../utils/telegramUI');
 
 const ACCEPTED_MIMES = vision.SUPPORTED_MIMES;
 const MAX_VISIBLE_ROWS = 10; // pagination kicks in beyond this — v1 caps OCR to single delivery slips
@@ -139,7 +140,10 @@ async function render(bot, chatId, userId, prompt, rows) {
     try {
       await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
       return;
-    } catch (_) { /* fall through */ }
+    } catch (e) {
+      if (isNotModified(e)) return; // screen already correct — not a failure
+      /* fall through */
+    }
   }
   const sent = await bot.sendMessage(chatId, text, opts);
   session.flowMessageId = sent.message_id;
