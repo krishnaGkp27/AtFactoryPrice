@@ -98,6 +98,44 @@ test('SNAP-7: a small PDF (≤6 pages) uses the STRONG photo model WITH thinking
   }
 });
 
+test('VRF-1: forceStrongModel puts an 11-page verification bill on the strong model + thinking, every chunk', async () => {
+  const reqs = [];
+  const orig = Messages.prototype.create;
+  Messages.prototype.create = async (req) => {
+    reqs.push(req);
+    return { content: [{ type: 'text', text: baleJson(reqs.length) }] };
+  };
+  try {
+    // 11 pages > smartPdfMaxPages (6): without the flag this would be the
+    // fast PDF model — the routing that misread the owner's clean bill.
+    const bill = await makePdf(11);
+    const r = await provider.extractBales(bill, 'application/pdf', { forceStrongModel: true });
+    assert.equal(r.ok, true);
+    assert.equal(reqs.length, 1);
+    assert.equal(reqs[0].model, 'claude-opus-4-8',
+      'verification bills always earn the strong model (owner: precision over cost)');
+    assert.deepEqual(reqs[0].thinking, { type: 'adaptive' }, 'thinking ON regardless of page count');
+
+    // A forced PDF big enough to chunk keeps the strong model on EVERY chunk.
+    reqs.length = 0;
+    await provider.extractBales(await makePdf(20), 'application/pdf', { forceStrongModel: true });
+    assert.equal(reqs.length, 2, 'two 15-page chunks');
+    for (const req of reqs) {
+      assert.equal(req.model, 'claude-opus-4-8', 'each verification chunk carries the strong model');
+      assert.deepEqual(req.thinking, { type: 'adaptive' });
+    }
+
+    // Without the flag the SNAP-7 page-count routing is untouched —
+    // dispatch intake PDFs keep the cost-efficient model.
+    reqs.length = 0;
+    await provider.extractBales(bill, 'application/pdf');
+    assert.equal(reqs[0].model, 'claude-sonnet-4-6', '11 unforced pages stay on the fast PDF model');
+    assert.equal(reqs[0].thinking, undefined);
+  } finally {
+    Messages.prototype.create = orig;
+  }
+});
+
 test('one failing chunk does not kill the batch — its pages are reported missing', async () => {
   const buf = await makePdf(35);
   let call = 0;

@@ -83,7 +83,7 @@ function docBlock(buffer) {
   return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } };
 }
 
-async function extractBales(buffer, mimeType /* , opts */) {
+async function extractBales(buffer, mimeType, opts = {}) {
   const client = getClient();
   if (!client) {
     return { ok: false, provider: 'anthropic', bales: [], rawText: '', overallConfidence: 0, warnings: [], error: 'ANTHROPIC_API_KEY is not configured.' };
@@ -111,8 +111,17 @@ async function extractBales(buffer, mimeType /* , opts */) {
   }
 
   // SNAP-7 — small PDFs earn the strong model + thinking (see callModel).
+  // VRF-1 (owner 23-Jul: precision over cost for verification): callers
+  // checking a bill against a request pass opts.forceStrongModel, which
+  // applies the strong model + thinking REGARDLESS of page count — an
+  // 11-page per-bale verification bill on the fast model misread digits
+  // wholesale (604→634, 44200→4444, a corner scribble promoted to a
+  // phantom bale). Every chunk of a big forced PDF carries the flag;
+  // dispatch intake PDFs (snap batch, 40+ pages) never pass it and keep
+  // the cost-efficient page-count routing untouched.
   const totalPages = (chunks.length && chunks[chunks.length - 1].toPage) || 0;
-  const smart = isPdf && totalPages > 0 && totalPages <= (config.ocr.smartPdfMaxPages || 6);
+  const smart = isPdf && (opts.forceStrongModel === true
+    || (totalPages > 0 && totalPages <= (config.ocr.smartPdfMaxPages || 6)));
 
   const allBales = [];
   const warnings = [];

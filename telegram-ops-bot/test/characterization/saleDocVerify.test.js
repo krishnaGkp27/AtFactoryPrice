@@ -5,6 +5,12 @@
  * sale cards. Pins: compare logic (number match, details rescue, qty
  * tolerance, missing/extra), snap-source skip (owner cost rule), the
  * Settings kill-switch, the notify wiring, and the design-grouped card.
+ *
+ * VRF-1 accuracy (owner 23-Jul, precision over cost — the real 11-page
+ * bill scored 0/8/3/3, all false): shade aliases (BK→BLACK), DesignAssets
+ * numeric-shade translation, unverifiable-notation softening, design
+ * prefix misreads (4420 vs 44200), missing↔extra misread pairing, and
+ * the strong-model force on the verification OCR read.
  */
 
 process.env.ADMIN_IDS = '777,888';
@@ -25,6 +31,7 @@ loadController();
 const settingsRepository = require(path.join(SRC, 'repositories/settingsRepository'));
 const approvalQueueRepository = require(path.join(SRC, 'repositories/approvalQueueRepository'));
 const inventoryRepository = require(path.join(SRC, 'repositories/inventoryRepository'));
+const designAssetsRepository = require(path.join(SRC, 'repositories/designAssetsRepository'));
 const telegramFiles = require(path.join(SRC, 'utils/telegramFiles'));
 const vision = require(path.join(SRC, 'services/vision'));
 const approvalEvents = require(path.join(SRC, 'events/approvalEvents'));
@@ -65,6 +72,78 @@ test('compare: number match, indent-misread details rescue, qty tolerance, missi
   assert.match(msg, /Open the attached bill and compare before approving/);
 });
 
+test('VRF-1 accuracy: shade aliases, catalog shade numbers, design-prefix misreads', () => {
+  const shadeCatalog = new Map([
+    ['44200', [{ number: 1, name: 'BLACK' }, { number: 2, name: 'WHITE' }]],
+  ]);
+  const items = [
+    { packageNo: '601', design: '44200', shade: 'BLACK', thans: 5, yards: 150 },
+    { packageNo: '602', design: '44200', shade: 'BLACK', thans: 5, yards: 150 },
+    { packageNo: '603', design: '44200', shade: 'WHITE', thans: 5, yards: 150 },
+    { packageNo: '605', design: '44200', shade: 'BLACK', thans: 5, yards: 150 },
+  ];
+  const labels = [
+    { packageNo: '601', design: '44200', shade: 'BK', thanNo: 5, yards: 150 },   // (i) alias
+    { packageNo: '602', design: '44200', shade: '1', thanNo: 5, yards: 150 },    // (ii) catalog: 1 → BLACK
+    { packageNo: '603', design: '4420', shade: 'WHITE', thanNo: 5, yards: 150 }, // (iv) design prefix misread
+    { packageNo: '605', design: '44200', shade: '2', thanNo: 5, yards: 150 },    // catalog: 2 → WHITE ≠ BLACK
+  ];
+  const { results, extras } = compareItemsToLabels(items, labels, { shadeCatalog });
+  assert.equal(results[0].status, 'ok', 'BK aliases BLACK — confirmed');
+  assert.equal(results[1].status, 'ok', 'COLOUR NO. 1 maps to BLACK via DesignAssets — confirmed');
+  assert.equal(results[2].status, 'ok', '4420 is a ≥4-digit prefix of 44200 with the bale number matching');
+  assert.match(results[2].notes.join(' '), /bill reads "4420" — leading digits match 44200/);
+  assert.equal(results[3].status, 'differs', 'catalog maps 2→WHITE, request says BLACK — a REAL differ');
+  assert.match(results[3].diffs.join(' '), /shade: bill says 2, request says BLACK/);
+  assert.equal(extras.length, 0);
+  const msg = buildVerdictMessage('REQA', results, extras);
+  assert.match(msg, /✅ Bale 603 — on the bill \(⚠️ design: bill reads "4420" — leading digits match 44200\)/);
+  assert.match(msg, /Verdict: 3 confirmed · 1 differ · 0 missing · 0 extra/);
+});
+
+test('VRF-1 accuracy: numeric shade with NO catalog entry softens to a note, not a differ', () => {
+  const items = [{ packageNo: '881', design: '9060', shade: 'BLACK', thans: 5, yards: 150 }];
+  const labels = [{ packageNo: '881', design: '9060', shade: '1', thanNo: 5, yards: 150 }];
+  const { results } = compareItemsToLabels(items, labels);
+  assert.equal(results[0].status, 'ok', 'no catalog to translate — not a hard differ');
+  assert.match(results[0].notes.join(' '), /could not verify shade notation \(bill says 1, request says BLACK\)/);
+  const msg = buildVerdictMessage('REQB', results, []);
+  assert.match(msg, /✅ Bale 881 — on the bill \(⚠️ shade: could not verify shade notation/);
+  assert.match(msg, /Verdict: 1 confirmed · 0 differ · 0 missing · 0 extra/);
+
+  // Name-vs-name that genuinely disagrees still differs hard.
+  const hard = compareItemsToLabels(
+    [{ packageNo: '882', design: '9060', shade: 'BLACK', thans: 5, yards: 150 }],
+    [{ packageNo: '882', design: '9060', shade: 'RED', thanNo: 5, yards: 150 }],
+  );
+  assert.equal(hard.results[0].status, 'differs');
+});
+
+test('VRF-1 accuracy: misread bale number pairs missing+extra into ONE differ-with-note', () => {
+  // Real bill: request bale 604 (44200 BLACK) was read as bale 634 with
+  // COLOUR NO. "1" — the old compare double-counted it as 1 missing + 1
+  // extra. Details agree + edit distance 1 → one misread bale.
+  const items = [
+    { packageNo: '604', design: '44200', shade: 'BLACK', thans: 5, yards: 150 },
+    { packageNo: '700', design: '55100', shade: 'BLUE', thans: 5, yards: 150 },
+  ];
+  const labels = [
+    { packageNo: '634', design: '44200', shade: '1', thanNo: 5, yards: 150 }, // 604 misread
+    { packageNo: '223', design: '44200', shade: 'RED', thanNo: 2, yards: 60 }, // phantom corner scribble
+  ];
+  const { results, extras } = compareItemsToLabels(items, labels);
+  assert.equal(results[0].status, 'differs', '604↔634 paired as one physical bale');
+  assert.match(results[0].diffs.join(' '), /bale no: bill reads "634" — matched by details/);
+  assert.equal(results[1].status, 'missing', '700 has no plausible pair (edit distance too far, wrong design)');
+  assert.equal(extras.length, 1, 'the phantom 223 stays extra — details disagree');
+  assert.equal(extras[0].packageNo, '223');
+  const msg = buildVerdictMessage('REQC', results, extras);
+  assert.match(msg, /⚠️ Bale 604 — bale no: bill reads "634" — matched by details/);
+  assert.match(msg, /❌ Bale 700 — NOT found on the bill/);
+  assert.match(msg, /Verdict: 0 confirmed · 1 differ · 1 missing · 1 extra/,
+    'paired misread counts as differ — NOT as missing + extra');
+});
+
 test('maybeVerify: documented hand-entered sale → OCR runs, verdict reaches admins, row patched', async () => {
   settings = {};
   const rows = new Map();
@@ -72,10 +151,13 @@ test('maybeVerify: documented hand-entered sale → OCR runs, verdict reaches ad
   const patches = [];
   approvalQueueRepository.updateActionJSON = async (id, p) => { patches.push({ id, p }); return true; };
   inventoryRepository.getAll = async () => [];
+  designAssetsRepository.getAll = async () => [];
   telegramFiles.downloadTelegramFile = async () => ({ buffer: Buffer.from('pdf'), mimeType: 'application/pdf' });
   let ocrCalls = 0;
-  vision.extractBales = async () => {
+  let ocrOpts = null;
+  vision.extractBales = async (buf, mime, opts) => {
     ocrCalls += 1;
+    ocrOpts = opts;
     return { ok: true, provider: 'anthropic', rawText: '', overallConfidence: 0.9, warnings: [],
       bales: [{ packageNo: '879', design: '77016', shade: '1', thanNo: 5, yards: 150, confidence: 0.9 }] };
   };
@@ -87,6 +169,8 @@ test('maybeVerify: documented hand-entered sale → OCR runs, verdict reaches ad
   const done = await svc.maybeVerify(bot, 'R1', { adminIds: ['777', '888'] });
   assert.equal(done, true);
   assert.equal(ocrCalls, 1);
+  assert.equal(ocrOpts && ocrOpts.forceStrongModel, true,
+    'VRF-1: the verification read ALWAYS requests the strong model (owner: precision over cost)');
   const msgs = bot.calls.filter((c) => c.method === 'sendMessage').map((c) => `${c.args.chatId}:${c.args.text}`).join('\n');
   assert.match(msgs, /777:🔬 Bill check — request R1/);
   assert.match(msgs, /888:🔬 Bill check — request R1/);
