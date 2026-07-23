@@ -5,6 +5,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { runExclusive } = require('../utils/asyncMutex');
 
 const SHEET = 'Settings';
 const HEADERS = ['Key', 'Value', 'UpdatedAt'];
@@ -94,7 +95,13 @@ async function getAll() {
     const map = { ...DEFAULTS };
     rows.forEach((r) => {
       const k = (r[0] || '').toString().trim();
-      const v = (r[1] || '').toString().trim();
+      let v = (r[1] || '').toString().trim();
+      // set() writes values with a leading apostrophe (text-quote) so Sheets
+      // never number-formats them. FORMATTED_VALUE reads don't return the
+      // apostrophe in production, but strip ONE defensively: it self-heals any
+      // historical cell where a literal apostrophe landed, and test fakes echo
+      // writes verbatim. Number() coercion happens AFTER the strip.
+      if (v.startsWith("'")) v = v.slice(1);
       if (k) map[k] = isNaN(Number(v)) ? v : Number(v);
     });
     _cache = map;
@@ -107,19 +114,34 @@ async function getAll() {
 }
 
 async function set(key, value) {
-  await ensureHeader();
-  const rows = await sheets.readRange(SHEET, 'A2:C');
-  const idx = rows.findIndex((r) => (r[0] || '').toString().trim() === key);
-  const updatedAt = new Date().toISOString();
-  const valueStr = String(value);
-  if (idx >= 0) {
-    const rowIndex = idx + 2;
-    await sheets.updateRange(SHEET, `B${rowIndex}:C${rowIndex}`, [[valueStr, updatedAt]]);
-  } else {
-    await sheets.appendRows(SHEET, [[key, valueStr, updatedAt]]);
-  }
-  invalidateCache();
-  return { key, value: isNaN(Number(value)) ? value : Number(value), updatedAt };
+  // Serialized: two concurrent first-writes of the same key would otherwise
+  // both miss the row search and both append, leaving duplicate key rows.
+  return runExclusive('settings:set', async () => {
+    await ensureHeader();
+    const rows = await sheets.readRange(SHEET, 'A2:C');
+    // Write the LAST matching row, mirroring getAll's last-row-wins forEach.
+    // Previously findIndex targeted the FIRST match, so with duplicate key
+    // rows the write and the read hit different rows and reads froze on the
+    // stale duplicate.
+    let idx = -1;
+    rows.forEach((r, i) => {
+      if ((r[0] || '').toString().trim() === key) idx = i;
+    });
+    const updatedAt = new Date().toISOString();
+    // Leading apostrophe: USER_ENTERED strips it and stores literal text, so
+    // Sheets can never number-format the value (a 10-digit telegram id was
+    // being stored as 6,172,817,425 and read back CSV-fragmented).
+    const valueStr = "'" + String(value);
+    if (idx >= 0) {
+      const rowIndex = idx + 2;
+      await sheets.updateRange(SHEET, `B${rowIndex}:C${rowIndex}`, [[valueStr, updatedAt]]);
+    } else {
+      await sheets.appendRows(SHEET, [[key, valueStr, updatedAt]]);
+    }
+    invalidateCache();
+    // Return the UNQUOTED value — the apostrophe is a storage detail only.
+    return { key, value: isNaN(Number(value)) ? value : Number(value), updatedAt };
+  });
 }
 
 module.exports = { getAll, set, invalidateCache, ensureHeader, DEFAULTS };

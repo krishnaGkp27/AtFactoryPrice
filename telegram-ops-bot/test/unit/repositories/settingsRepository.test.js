@@ -56,6 +56,72 @@ test('set() invalidates so the next read is fresh', async () => {
   }
 });
 
+test('duplicate key rows: set() updates the LAST row (matching getAll last-row-wins)', async () => {
+  const orig = { readRange: sheets.readRange, updateRange: sheets.updateRange, appendRows: sheets.appendRows };
+  settingsRepo.invalidateCache();
+  // Two rows for the same key (a historical double-append). getAll's forEach
+  // makes the LAST row win, so set() must write that row too.
+  let data = [
+    ['ATTENDANCE_REQUIRED_USERS', 'old-a', ''],
+    ['OTHER_KEY', 'x', ''],
+    ['ATTENDANCE_REQUIRED_USERS', 'old-b', ''],
+  ];
+  const updates = [];
+  let appended = 0;
+  sheets.readRange = async (sheet, range) => {
+    if (range === 'A1:C1') return [['Key', 'Value', 'UpdatedAt']];
+    return data.map((r) => [...r]);
+  };
+  sheets.updateRange = async (sheet, range, values) => {
+    updates.push({ range, values });
+    const m = /^B(\d+):C\1$/.exec(range);
+    if (m) {
+      const i = Number(m[1]) - 2;
+      data[i][1] = values[0][0];
+      data[i][2] = values[0][1];
+    }
+  };
+  sheets.appendRows = async () => { appended += 1; };
+  try {
+    await settingsRepo.set('ATTENDANCE_REQUIRED_USERS', 'new-value');
+    assert.equal(appended, 0, 'existing key must not append a fourth row');
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].range, 'B4:C4', 'writes the LAST duplicate row, not the first');
+    const all = await settingsRepo.getAll();
+    assert.equal(all.ATTENDANCE_REQUIRED_USERS, 'new-value', 'read sees the write (last-row-wins)');
+  } finally {
+    Object.assign(sheets, orig);
+    settingsRepo.invalidateCache();
+  }
+});
+
+test('set() text-quotes the stored value but returns/reads back the clean value', async () => {
+  const orig = { readRange: sheets.readRange, updateRange: sheets.updateRange, appendRows: sheets.appendRows };
+  settingsRepo.invalidateCache();
+  let data = [];
+  sheets.readRange = async (sheet, range) => {
+    if (range === 'A1:C1') return [['Key', 'Value', 'UpdatedAt']];
+    return data.map((r) => [...r]);
+  };
+  sheets.updateRange = async () => {};
+  sheets.appendRows = async (sheet, rows) => { data = data.concat(rows.map((r) => [...r])); };
+  try {
+    // A 10-digit telegram id: without the apostrophe Sheets number-formats it
+    // to 6,172,817,425 and FORMATTED_VALUE reads come back CSV-fragmented.
+    const res = await settingsRepo.set('ATTENDANCE_REQUIRED_USERS', '6172817425');
+    assert.equal(data.length, 1);
+    assert.equal(data[0][1], "'6172817425", 'stored payload carries the leading apostrophe');
+    assert.equal(res.value, 6172817425, 'set() return value is the clean (unquoted) value');
+    // The fake echoes the apostrophe back verbatim (unlike production
+    // FORMATTED_VALUE) — getAll must strip it and still Number-coerce.
+    const all = await settingsRepo.getAll();
+    assert.equal(all.ATTENDANCE_REQUIRED_USERS, 6172817425, 'read back clean and numeric');
+  } finally {
+    Object.assign(sheets, orig);
+    settingsRepo.invalidateCache();
+  }
+});
+
 test('read errors fall back to DEFAULTS and are NOT cached', async () => {
   const orig = sheets.readRange;
   settingsRepo.invalidateCache();
