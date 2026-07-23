@@ -31,6 +31,7 @@
  *   trf:wh:<i> · trf:dg:<i> · trf:sh:<i> · trf:qty:<n> · trf:dest:<i>
  *   trf:dp:<i> · trf:rc:<i>      dispatcher / receiver pickers
  *   trf:send · trf:back · trf:cancel · trf:list
+ *   trf:pl:go                    typed-preload review → continue (TRF-8b)
  *   trf:acc:<id> · trf:dec:<id> · trf:rcv:<id> · trf:rej:<id>
  *   trf:nn:<id>                  receiver "not now" on the photo gate
  */
@@ -1140,6 +1141,167 @@ async function startPrefilled(bot, chatId, userId, prefill) {
   await showDest(bot, chatId, userId);
 }
 
+/* ── TRF-8b: typed bale-list entry (mirror of SELL-T1) ─────────────────── */
+//
+// "Transfer package 997, 999, 1000 to kano" typed by any active user
+// preloads THIS flow: the numbers are validated against available stock
+// (per-number skip reasons, SELL-T1 matching rules), grouped into the
+// design/shade order lines the flow expects, and a trailing "to <word>"
+// that matches a warehouse pre-selects the destination. Everything after
+// the preload card is the normal tap wizard — the dispatcher still logs
+// the actual bales at dispatch time (order model unchanged).
+
+// Cap the parse so a pasted spreadsheet column can't build a monster cart.
+const TYPED_BALES_MAX = 50;
+const SKIP_LIST_MAX = 12;
+
+/**
+ * Tolerant parse of a typed transfer command: every comma/space-separated
+ * number before a trailing "to <words>" is a bale number; the non-numeric
+ * tail after the final "to" is the destination hint.
+ * @param {string} text raw message text
+ * @returns {{numbers: string[], destHint: string|null, truncated: number}}
+ *   `numbers` deduped in typed order (capped); `truncated` = how many
+ *   typed numbers fell over the cap.
+ */
+function parseTypedTransfer(text) {
+  const t = String(text || '');
+  let numbersPart = t;
+  let destHint = null;
+  const m = t.match(/\bto\s+([^\d]+?)\s*$/i);
+  if (m) { destHint = m[1].trim(); numbersPart = t.slice(0, m.index); }
+  const seen = new Set();
+  const numbers = [];
+  for (const raw of numbersPart.match(/\d+/g) || []) {
+    if (seen.has(raw)) continue;
+    seen.add(raw);
+    numbers.push(raw);
+  }
+  const truncated = Math.max(0, numbers.length - TYPED_BALES_MAX);
+  return { numbers: numbers.slice(0, TYPED_BALES_MAX), destHint, truncated };
+}
+
+/** All bales grouped per (warehouse, packageNo) with availability + buyer. */
+async function typedBaleMap() {
+  const all = await inventoryRepository.getAll();
+  const map = new Map();
+  for (const r of all) {
+    if (!r.packageNo) continue;
+    const k = `${r.warehouse}|${r.packageNo}`;
+    if (!map.has(k)) {
+      map.set(k, { packageNo: String(r.packageNo), warehouse: r.warehouse, design: String(r.design || ''), shade: r.shade, avail: 0, soldTo: '' });
+    }
+    const b = map.get(k);
+    if (r.status === 'available') b.avail += 1;
+    else if (r.soldTo && !b.soldTo) b.soldTo = r.soldTo;
+  }
+  return [...map.values()];
+}
+
+/**
+ * Preload the Transfer Stock wizard from a typed message (TRF-8b).
+ * Returns true when a card was shown (preload review or the "nothing
+ * matched" fallback); false when the text carries no readable numbers —
+ * the caller then falls back to the plain redirect card.
+ *
+ * @param {object} bot @param {number|string} chatId
+ * @param {string} userId @param {string} rawText the typed message
+ * @returns {Promise<boolean>}
+ */
+async function startFromText(bot, chatId, userId, rawText) {
+  if (!auth.isAllowed(String(userId))) return false;
+  const { numbers, destHint, truncated } = parseTypedTransfer(rawText);
+  if (!numbers.length) return false;
+
+  const bales = await typedBaleMap();
+  // First pass — available hits per typed number (SELL-T1 matching:
+  // exact digits or a packageNo ending with the typed digits).
+  const hitsByNo = numbers.map((digits) => ({
+    digits,
+    hits: bales.filter((b) => {
+      const bd = String(b.packageNo).replace(/\D/g, '');
+      return (bd === digits || String(b.packageNo).toUpperCase().endsWith(digits)) && b.avail > 0;
+    }),
+  }));
+  // Source = the warehouse holding the most of the typed bales (a transfer
+  // has ONE source; bales elsewhere are skipped with a pointer).
+  const tally = new Map();
+  for (const { hits } of hitsByNo) {
+    for (const w of new Set(hits.map((h) => h.warehouse))) tally.set(w, (tally.get(w) || 0) + 1);
+  }
+  const top = [...tally.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))[0];
+  const source = top ? top[0] : null;
+
+  const loaded = [];
+  const skipped = [];
+  for (const { digits, hits } of hitsByNo) {
+    const inSource = hits.find((h) => h.warehouse === source);
+    if (inSource) { loaded.push(inSource); continue; }
+    if (hits.length) { skipped.push({ no: digits, reason: `in ${hits[0].warehouse}, not ${source} — start a separate transfer` }); continue; }
+    const anywhere = bales.find((b) => String(b.packageNo).replace(/\D/g, '') === digits);
+    skipped.push({
+      no: digits,
+      reason: anywhere && anywhere.soldTo
+        ? `already sold to ${anywhere.soldTo}`
+        : (anywhere ? 'not available (in transit or sold out)' : 'not found in the sheet'),
+    });
+  }
+  if (truncated) skipped.push({ no: `+${truncated} more`, reason: `over the ${TYPED_BALES_MAX}-bale cap` });
+
+  if (!loaded.length) {
+    await bot.sendMessage(chatId,
+      '🚚 *Transfer Stock*\n\n⚠️ None of the typed bale numbers matched available stock:\n'
+      + skipped.map((x) => `  • ${x.no} — ${x.reason}`).join('\n')
+      + '\n\nPick bales the tappable way instead:',
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
+        [{ text: '🚚 Open Transfer Stock', callback_data: 'act:transfer_stock' }],
+      ] } });
+    return true;
+  }
+
+  // Group the matched bales into the order lines the flow expects.
+  const lineMap = new Map();
+  for (const b of loaded) {
+    const k = `${b.design}|${b.shade}`;
+    if (!lineMap.has(k)) lineMap.set(k, { design: b.design, shade: b.shade, qty: 0 });
+    lineMap.get(k).qty += 1;
+  }
+  const lines = [...lineMap.values()];
+
+  // Trailing "to <word>" → pre-selected destination when it matches exactly
+  // one warehouse (case-insensitive substring, e.g. "kano" → "Kano office").
+  let dest = null;
+  if (destHint) {
+    const set = new Set(bales.filter((b) => b.avail > 0).map((b) => b.warehouse).filter(Boolean));
+    try {
+      const users = await usersRepository.getAll();
+      for (const u of users) for (const w of (u.warehouses || [])) if (w) set.add(w);
+    } catch (_) { /* stock-derived warehouses only */ }
+    const q = destHint.toLowerCase();
+    const cands = [...set].filter((w) => w !== source && String(w).toLowerCase().includes(q));
+    if (cands.length === 1) dest = cands[0];
+  }
+
+  sessionStore.set(userId, {
+    type: SESSION_TYPE, step: 'preload_review', flowMessageId: null,
+    from: source, to: dest || undefined, lines, cartOrigin: true,
+    ttlMs: 30 * 60 * 1000, // same physically-long budget as the tap wizard
+  });
+
+  const typedTotal = numbers.length + truncated;
+  const skipLines = skipped.slice(0, SKIP_LIST_MAX).map((x) => `  ⚠️ ${x.no} — ${x.reason} (skipped)`);
+  if (skipped.length > SKIP_LIST_MAX) skipLines.push(`  ⚠️ …and ${skipped.length - SKIP_LIST_MAX} more skipped`);
+  const destNote = dest ? `\n📍 Destination: *${dest}* (from your message)` : '';
+  await render(bot, chatId, userId,
+    `🚚 *Transfer Stock — preloaded ${loaded.length} of ${typedTotal} typed bale(s)*\nFrom *${source}*\n\n`
+    + `${linesBlock(lines)}\n📦 Bales: ${baleListPreview(loaded.map((b) => b.packageNo))}\n`
+    + (skipLines.length ? `\n${skipLines.join('\n')}\n` : '')
+    + destNote
+    + '\n\n_This sends an ORDER — the dispatcher logs the actual bales when dispatching._\n\nContinue with taps:',
+    [[{ text: dest ? '➡ Continue' : '➡ Pick destination', callback_data: 'trf:pl:go' }], cancelRow()]);
+  return true;
+}
+
 /** Step back one wizard screen. */
 async function stepBack(bot, chatId, userId) {
   const session = sessionStore.get(userId);
@@ -1195,6 +1357,14 @@ async function handleCallback(bot, query) {
     return true;
   }
   if (data === 'trf:back') { await stepBack(bot, chatId, userId); return true; }
+  // TRF-8b — typed-preload review: continue to the destination step, or
+  // straight to people when the typed "to <warehouse>" already resolved it.
+  if (data === 'trf:pl:go') {
+    if (session.step !== 'preload_review') return true;
+    if (session.to) await resolvePeople(bot, chatId, userId);
+    else await showDest(bot, chatId, userId);
+    return true;
+  }
 
   const pick = (list, i) => (Array.isArray(list) ? list[i] : undefined);
   if (data.startsWith('trf:wh:')) {
@@ -1303,6 +1473,7 @@ async function handleCallback(bot, query) {
 
 module.exports = {
   start,
+  startFromText,
   showList,
   handleCallback,
   handleFile,
@@ -1310,6 +1481,7 @@ module.exports = {
   myQueueSection,
   _internals: {
     candidatesFor, resolvePeople, submit, handleAction, startPrefilled,
+    parseTypedTransfer, typedBaleMap,
     startDispatchPicker, askDispatchDoc, completeDispatch, completeReceipt,
     armDocGate, gateNotNow, showInfo, promptForDoc, handleFile,
     linesBlock, dispatchedBlock, headOf, compactOf, designHead,

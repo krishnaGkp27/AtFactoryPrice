@@ -4031,6 +4031,11 @@ async function handleMessage(bot, msg) {
         // TRF-5 — legacy instant transfers retired: no dispatcher/receiver
         // chain, no in-transit stage, no photos. Typed requests are still
         // recognised but redirect into the staged Transfer Stock flow.
+        // TRF-8b — typed bale NUMBERS preload the Transfer Stock cart
+        // (mirror of SELL-T1); the redirect card below remains only for
+        // messages with no readable numbers.
+        const transferFlow = require('../flows/transferFlow');
+        if (await transferFlow.startFromText(bot, chatId, userId, msg.text || '')) return;
         await bot.sendMessage(chatId,
           '🚚 Warehouse transfers now go through *Transfer Stock* — the staged flow where the dispatcher logs the actual bales and the receiver confirms arrival.', {
             parse_mode: 'Markdown',
