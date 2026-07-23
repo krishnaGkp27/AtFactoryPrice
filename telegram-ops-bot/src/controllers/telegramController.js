@@ -8959,8 +8959,8 @@ async function handleCallbackQuery(bot, callbackQuery) {
         break;
       }
       case 'transfer_stock': {
-        // TRF-2 — staged warehouse transfer wizard (admin-only gate lives
-        // inside the flow; dispatcher/receiver chain is the control).
+        // TRF-2 — staged warehouse transfer wizard (TRF-8: any-active-user
+        // gate lives inside the flow; dispatcher/receiver chain is the control).
         const transferFlow = require('../flows/transferFlow');
         await transferFlow.start(bot, chatId, uid, messageId);
         break;

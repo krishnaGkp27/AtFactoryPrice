@@ -3,11 +3,14 @@
 /**
  * src/flows/transferFlow.js — WAREHOUSE TRANSFER (TRF-2..TRF-6).
  *
- * 5-tap admin wizard + one-tap counterparty cards. The request rides an
+ * 5-tap creator wizard + one-tap counterparty cards. The request rides an
  * ApprovalQueue row (see transferService); bales sit `in_transit` at the
  * destination (visible, not sellable) until the receiver confirms.
  *
- *   Wizard (admin): source → design → shade → qty → destination →
+ * TRF-8: any ACTIVE user may CREATE a request (owner, 23-Jul-2026) — the
+ * dispatcher/receiver chain plus the admin creation brief stay the control.
+ *
+ *   Wizard (any active user): source → design → shade → qty → destination →
  *                   confirm (auto-picked dispatcher/receiver) → Send.
  *                   Person pickers appear only when a warehouse has >1
  *                   assigned active user.
@@ -242,6 +245,15 @@ async function submit(bot, chatId, userId) {
       await bot.sendMessage(session.dispatcher.user_id, card.text,
         { parse_mode: 'Markdown', reply_markup: card.kb });
     } catch (e) { logger.warn(`transferFlow: dispatcher DM failed: ${e.message}`); }
+    // TRF-8 — brief the admins at creation (creator excluded): now that any
+    // active user can raise a transfer, admins see the pending request the
+    // moment it enters the ApprovalQueue. Deliberately the flow's own short
+    // card (View details expander) and NOT approvalEvents' generic
+    // approve:/reject: card — transfer_stock has no executeApprovedAction
+    // branch and its lifecycle rides the trf:* dispatcher/receiver chain
+    // (a generic reject after dispatch would strand in-transit bales; see
+    // services/approvalReminder.js). The creator gets no approve buttons.
+    await notifyAdmins(bot, requestId, aj, 'requested ⏳ — awaiting dispatch', userId);
     // Render the receipt BEFORE clearing — the renderer is session-guarded.
     await render(bot, chatId, userId,
       `✅ *Transfer ${requestId} sent*\n${headOf(aj)}\n${linesBlock(aj.lines)}\n\n⏳ Waiting for *${session.dispatcher.name}* to dispatch.`,
@@ -1044,7 +1056,17 @@ async function showList(bot, chatId, userId, messageId) {
 /* ── entry + dispatcher ────────────────────────────────────────────────── */
 
 /**
- * Start the transfer wizard (admin only).
+ * Start the transfer wizard.
+ *
+ * TRF-8 (owner request, 23-Jul-2026): creation is open to any ACTIVE user
+ * (env allow-list ∪ Users sheet, same eligibility style as warehouse
+ * audit / other request flows) — no longer admin-only. Governance is
+ * deliberately unchanged: the request still rides an ApprovalQueue row,
+ * the assigned dispatcher must Accept (photo-gated) before anything
+ * moves, the receiver confirms arrival, and admins are briefed at
+ * creation (see submit) — the creator gets no approve/accept buttons of
+ * their own.
+ *
  * @param {object} bot @param {number|string} chatId
  * @param {string} userId @param {number|null} messageId
  * @param {{from: string, design?: string, shade?: string, qty?: number}} [prefill]
@@ -1053,8 +1075,8 @@ async function showList(bot, chatId, userId, messageId) {
  *   parts degrade gracefully to the nearest earlier step.
  */
 async function start(bot, chatId, userId, messageId, prefill) {
-  if (!auth.isAdmin(String(userId))) {
-    await bot.sendMessage(chatId, '🚚 Transfers can be created by admins only.');
+  if (!auth.isAllowed(String(userId))) {
+    await bot.sendMessage(chatId, '🚚 You are not authorized to create transfers.');
     return;
   }
   // 30-min TTL: bale picking + dispatch photo make transfers physically long.
@@ -1163,7 +1185,7 @@ async function handleCallback(bot, query) {
   const session = sessionStore.get(userId);
   try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
   if (!session || session.type !== SESSION_TYPE) {
-    await bot.sendMessage(chatId, '🚚 This transfer session has expired — open 📋 My Tasks to pick it up again (admins: Transfer Stock for a new one).');
+    await bot.sendMessage(chatId, '🚚 This transfer session has expired — open 📋 My Tasks to pick it up again (or Transfer Stock for a new one).');
     return true;
   }
 

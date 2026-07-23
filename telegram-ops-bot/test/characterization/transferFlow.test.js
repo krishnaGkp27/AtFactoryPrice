@@ -8,8 +8,8 @@
  *     nothing moves and the receiver hears nothing until the photo lands)
  *   → receiver Received → MANDATORY receipt photo → bales unlocked at the
  *     destination, row closed
- * plus: decline reverts, stranger taps blocked, non-admin can't start,
- * and Check Stock shows the 🚚 in-transit line.
+ * plus: decline reverts, stranger taps blocked, TRF-8 any-active-user
+ * creation gate, and Check Stock shows the 🚚 in-transit line.
  */
 
 process.env.ADMIN_IDS = '777';
@@ -176,12 +176,19 @@ test('a stranger cannot act on someone else\'s transfer card', async () => {
   assert.match(ack.args.opts.text, /assigned person only/i);
 });
 
-test('non-admin cannot start the wizard', async () => {
+test('TRF-8: an active employee CAN start the wizard; a stranger cannot', async () => {
   seedInventory(); armQueue();
   sessionStore.clear('4242');
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('act:transfer_stock', 4242));
-  assert.match(bot.allText(), /admins only/i);
+  assert.match(bot.allText(), /From which warehouse\?/, 'employee reaches the source screen');
+  sessionStore.clear('4242');
+  // A stranger is stopped at the controller's allow-list fence.
+  const bot2 = createFakeBot();
+  await controller.handleCallbackQuery(bot2, cb('act:transfer_stock', '999111'));
+  assert.equal(bot2.allText(), '', 'no wizard for a stranger');
+  const ack = bot2.callsTo('answerCallbackQuery')[0];
+  assert.match(ack.args.opts.text, /not authorized/i);
 });
 
 test('Check Stock shows the 🚚 in-transit line at the destination', async () => {
