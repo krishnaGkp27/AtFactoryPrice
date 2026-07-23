@@ -466,35 +466,6 @@ async function updateDesignCategory(design, category) {
   return matches.length;
 }
 
-async function transferThan(packageNo, thanNo, toWarehouse) {
-  const than = await findThan(packageNo, thanNo);
-  if (!than) return null;
-  if (than.status !== 'available') return null;
-  const now = new Date().toISOString();
-  const fromWarehouse = than.warehouse;
-  await sheets.batchUpdateRanges(SHEET, [
-    { range: `I${than.rowIndex}`, values: [[toWarehouse]] },
-    { range: `P${than.rowIndex}`, values: [[now]] },
-  ]);
-  invalidateCache();
-  return { ...than, warehouse: toWarehouse, fromWarehouse, updatedAt: now };
-}
-
-async function transferPackage(packageNo, toWarehouse) {
-  const thans = await findByPackage(packageNo);
-  const available = thans.filter((t) => t.status === 'available');
-  if (!available.length) return [];
-  const now = new Date().toISOString();
-  const updates = [];
-  for (const than of available) {
-    updates.push({ range: `I${than.rowIndex}`, values: [[toWarehouse]] });
-    updates.push({ range: `P${than.rowIndex}`, values: [[now]] });
-  }
-  await sheets.batchUpdateRanges(SHEET, updates);
-  invalidateCache();
-  return available.map((than) => ({ ...than, warehouse: toWarehouse, fromWarehouse: than.warehouse, updatedAt: now }));
-}
-
 async function getDistinctDesigns() {
   const all = await getAll();
   const map = new Map();
@@ -633,8 +604,6 @@ module.exports = {
   markPackageAvailable,
   updatePrice,
   updateDesignCategory,
-  transferThan,
-  transferPackage,
   transitionBales,
   appendThans,
   appendBale,
