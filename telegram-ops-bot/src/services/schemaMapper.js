@@ -565,15 +565,7 @@ async function initialize() {
   return schemaCache;
 }
 
-function colLetter(n) {
-  let s = '';
-  while (n > 0) {
-    n--;
-    s = String.fromCharCode(65 + (n % 26)) + s;
-    n = Math.floor(n / 26);
-  }
-  return s;
-}
+const { columnLetter: colLetter } = require('../repositories/sheetsClient');
 
 function getCache() { return schemaCache; }
 

@@ -161,12 +161,7 @@ async function ensureHeader() {
   }
 }
 
-function columnLetter(n) {
-  // 1 -> A, 26 -> Z, 27 -> AA. n is 1-indexed.
-  let s = '';
-  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
-  return s;
-}
+const { columnLetter } = require('./sheetsClient');
 
 function invalidateCache() { _cache = null; _cacheTs = 0; }
 

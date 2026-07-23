@@ -129,6 +129,17 @@ async function addSheet(title) {
   }, `addSheet(${title})`);
 }
 
+/**
+ * 1-indexed column number → A1-notation column letter (1→A, 26→Z, 27→AA).
+ * Canonical home for the helper previously copy-pasted in per-sheet repos
+ * and schemaMapper.
+ */
+function columnLetter(n) {
+  let s = '';
+  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
+
 module.exports = {
   getSheets,
   spreadsheetId,
@@ -139,4 +150,5 @@ module.exports = {
   batchUpdateRanges,
   getSheetNames,
   addSheet,
+  columnLetter,
 };
