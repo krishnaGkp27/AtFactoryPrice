@@ -551,6 +551,7 @@ async function startDispatchPicker(bot, chatId, userId, row, messageId) {
     type: SESSION_TYPE, step: 'dispatch_pick',
     requestId: row.requestId, from: aj.from, to: aj.to,
     pl, idx: 0, flowMessageId: messageId || null,
+    ttlMs: 30 * 60 * 1000, // physical bale picking — outlasts the default TTL
   });
   const first = pl.findIndex((p) => p.choice);
   if (first === -1) { await showDispatchConfirm(bot, chatId, userId); return; }
@@ -709,6 +710,7 @@ async function armDocGate(bot, chatId, userId, requestId, docKind, p) {
   sessionStore.set(userId, {
     type: SESSION_TYPE, step: 'await_doc', gate: true, requestId, docKind,
     flowMessageId: (sent && sent.message_id) || null,
+    ttlMs: 30 * 60 * 1000, // taking the dispatch/receive photo — outlasts the default TTL
     ...(p.keep || {}),
   });
 }
@@ -780,6 +782,7 @@ async function completeReceipt(bot, session, userId) {
 async function promptForDoc(bot, chatId, userId, requestId, docKind, base, messageId) {
   sessionStore.set(userId, {
     type: SESSION_TYPE, step: 'await_doc', requestId, docKind, flowMessageId: messageId || null,
+    ttlMs: 30 * 60 * 1000, // taking the attachment photo — outlasts the default TTL
   });
   const verb = docKind === 'receive' ? 'received goods' : 'load';
   await render(bot, chatId, userId,
@@ -1054,7 +1057,8 @@ async function start(bot, chatId, userId, messageId, prefill) {
     await bot.sendMessage(chatId, '🚚 Transfers can be created by admins only.');
     return;
   }
-  sessionStore.set(userId, { type: SESSION_TYPE, step: 'source', flowMessageId: messageId || null });
+  // 30-min TTL: bale picking + dispatch photo make transfers physically long.
+  sessionStore.set(userId, { type: SESSION_TYPE, step: 'source', flowMessageId: messageId || null, ttlMs: 30 * 60 * 1000 });
   if (prefill && prefill.from) {
     await startPrefilled(bot, chatId, userId, prefill);
     return;

@@ -117,6 +117,7 @@ async function start(bot, chatId, userId, messageId = null) {
   sessionStore.set(userId, {
     type: 'grn_flow', step: 'warehouse',
     flowMessageId: messageId || null,
+    ttlMs: 30 * 60 * 1000, // physical goods receipt — unloading/counting outlasts the default TTL
     bales: [],
     startedAt: new Date().toISOString(),
   });

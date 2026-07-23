@@ -196,6 +196,7 @@ async function start(bot, chatId, userId, messageId = null) {
     type: 'photo_receive_flow',
     step: 'await_po',
     flowMessageId: messageId || null,
+    ttlMs: 30 * 60 * 1000, // user leaves to photograph the delivery note — default TTL expires mid-flow
     po_id: '',
     rows: [],
     editingRowIdx: null,

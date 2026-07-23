@@ -137,6 +137,7 @@ async function start(bot, chatId, userId, messageId = null) {
   sessionStore.set(userId, {
     type: 'bulk_receive_flow', step: 'await_po',
     flowMessageId: messageId || null,
+    ttlMs: 30 * 60 * 1000, // user leaves the chat to prepare the xlsx — default TTL expires mid-flow
     po_id: '',
     startedAt: new Date().toISOString(),
   });

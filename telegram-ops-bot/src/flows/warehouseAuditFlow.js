@@ -210,6 +210,7 @@ async function start(bot, chatId, userId, messageId) {
     type: SESSION_TYPE,
     step: 'pick_location',
     flowMessageId: messageId || null,
+    ttlMs: 60 * 60 * 1000, // physical stocktake — counting a warehouse takes far longer than the default TTL
     startedAt: new Date().toISOString(),
     location: '',
     warehouse: '',
