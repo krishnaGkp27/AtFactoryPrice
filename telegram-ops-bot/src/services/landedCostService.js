@@ -132,9 +132,7 @@ function fmt(n) {
   if (Math.abs(x) >= 100) return x.toLocaleString('en-US', { maximumFractionDigits: 2 });
   return x.toLocaleString('en-US', { maximumFractionDigits: 4 });
 }
-function escapeMd(s) {
-  return String(s || '').replace(/([*_`\[\]])/g, '\\$1');
-}
+const { mdEscape: escapeMd } = require('../utils/flowKit');
 
 /**
  * Look up the cost-per-yard for a single bale via its grn_id back-pointer.

@@ -228,9 +228,7 @@ async function visibleTaskActivityCodes(userId) {
   return codes;
 }
 
-function escapeMd(s) {
-  return String(s == null ? '' : s).replace(/([_*`\[\]])/g, '\\$1');
-}
+const { mdEscape: escapeMd } = require('../utils/flowKit');
 
 function truncate(s, n) {
   const t = String(s || '');

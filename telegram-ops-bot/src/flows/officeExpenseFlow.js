@@ -46,7 +46,7 @@
  */
 
 const sessionStore = require('../utils/sessionStore');
-const { makeRenderer } = require('../utils/flowKit');
+const { makeRenderer, mdEscape: escapeMd } = require('../utils/flowKit');
 const branchOpsService = require('../services/branchOpsService');
 const approvalEvents = require('../events/approvalEvents');
 const auth = require('../middlewares/auth');
@@ -77,10 +77,6 @@ async function renderError(bot, chatId, userId, msg) {
 }
 
 function fmtNgn(n) { return fmtQty(n, { maxFraction: 2 }); }
-
-function escapeMd(s) {
-  return String(s || '').replace(/([*_`\[\]])/g, '\\$1');
-}
 
 // ---------------------------------------------------------------------------
 // Entry

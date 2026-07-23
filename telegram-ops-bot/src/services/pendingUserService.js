@@ -74,9 +74,7 @@ function _politeReply() {
  * which would make bot.sendMessage throw and silently drop the notification
  * (e.g. a user literally named "Office_BPanther").
  */
-function _mdEscape(s) {
-  return String(s == null ? '' : s).replace(/([_*`\[\]])/g, '\\$1');
-}
+const { mdEscape: _mdEscape } = require('../utils/flowKit');
 
 function _adminCard(entry) {
   const username = entry.username ? `@${_mdEscape(entry.username)}` : '(no username)';
