@@ -98,6 +98,9 @@ async function start(bot, chatId, userId, messageId = null) {
     type: 'attendance_admin_flow', step: null,
     flowMessageId: messageId || null,
     behalfTarget: null,
+    // Admin config sessions are long-lived; default 5-min TTL expired
+    // mid-configuration.
+    ttlMs: 30 * 60 * 1000,
   });
   await renderHub(bot, chatId, userId);
 }
@@ -335,7 +338,7 @@ async function renderRequiredPicker(bot, chatId, userId) {
   );
 }
 
-async function toggleRequired(bot, chatId, userId, targetId) {
+async function toggleRequired(bot, chatId, userId, targetId, queryId) {
   // DEPLOY-C1 diagnostic: log every step of the toggle so future
   // "tap does nothing" reports can be triaged from Railway logs alone.
   // Use service-level setRequiredUsers so ghosts get dropped silently on
@@ -362,9 +365,11 @@ async function toggleRequired(bot, chatId, userId, targetId) {
   } catch (e) {
     const tErr = Date.now() - t0;
     logger.error(`${tag} FAILED after ${tErr}ms: ${e && e.message ? e.message : e}\n${e && e.stack ? e.stack : ''}`);
-    // Make the failure visible to the user instead of dying silently:
+    // Make the failure visible to the user instead of dying silently.
+    // Needs the REAL callback query id — answerCallbackQuery(undefined, …)
+    // never displays anything.
     try {
-      await bot.answerCallbackQuery(undefined, { text: `Toggle failed: ${e.message || 'unknown error'}`, show_alert: true });
+      if (queryId) await bot.answerCallbackQuery(queryId, { text: `Toggle failed: ${e.message || 'unknown error'}`, show_alert: true });
     } catch (_) {}
     try {
       await bot.sendMessage(chatId,
@@ -423,13 +428,15 @@ async function applyNewLocation(bot, chatId, userId, raw) {
   const cfg = await attendanceService.getConfig();
   if (cfg.locations.some((l) => l.toLowerCase() === name.toLowerCase())) {
     // Idempotent: show editor again with no change.
-    const s = sessionStore.get(userId); s.step = null; sessionStore.set(userId, s);
+    // Session may have lazily expired during the awaits above — guard.
+    const s = sessionStore.get(userId); if (!s) return; s.step = null; sessionStore.set(userId, s);
     await renderLocationsEditor(bot, chatId, userId);
     return;
   }
   cfg.locations.push(name);
   await attendanceService.setConfigKey(attendanceService.KEYS.LOCATIONS, cfg.locations.join(','));
-  const s = sessionStore.get(userId); s.step = null; sessionStore.set(userId, s);
+  // Session may have lazily expired during the awaits above — guard.
+  const s = sessionStore.get(userId); if (!s) return; s.step = null; sessionStore.set(userId, s);
   await renderLocationsEditor(bot, chatId, userId);
 }
 
@@ -461,6 +468,7 @@ async function promptTime(bot, chatId, userId, which) {
     : which === 'report' ? cfg.reportTime
       : cfg.cutoffTime;
   const s = sessionStore.get(userId);
+  if (!s) return; // session lazily expired during the config await — bail
   s.step = `await_time:${which}`;
   sessionStore.set(userId, s);
   await render(bot, chatId, userId,
@@ -483,13 +491,15 @@ async function applyTime(bot, chatId, userId, which, raw) {
     return;
   }
   await attendanceService.setConfigKey(meta.key, cleaned);
-  const s = sessionStore.get(userId); s.step = null; sessionStore.set(userId, s);
+  // Session may have lazily expired during the awaits above — guard.
+  const s = sessionStore.get(userId); if (!s) return; s.step = null; sessionStore.set(userId, s);
   await renderHub(bot, chatId, userId);
 }
 
 async function promptTimezone(bot, chatId, userId) {
   const cfg = await attendanceService.getConfig();
   const s = sessionStore.get(userId);
+  if (!s) return; // session lazily expired during the config await — bail
   s.step = 'await_tz';
   sessionStore.set(userId, s);
   await render(bot, chatId, userId,
@@ -519,7 +529,8 @@ async function applyTimezone(bot, chatId, userId, raw) {
     return;
   }
   await attendanceService.setConfigKey(attendanceService.KEYS.TIMEZONE, tz);
-  const s = sessionStore.get(userId); s.step = null; sessionStore.set(userId, s);
+  // Session may have lazily expired during the awaits above — guard.
+  const s = sessionStore.get(userId); if (!s) return; s.step = null; sessionStore.set(userId, s);
   await renderHub(bot, chatId, userId);
 }
 
@@ -775,13 +786,20 @@ async function handleCallback(bot, query) {
   }
   const chatId = query.message.chat.id;
   await bot.answerCallbackQuery(query.id).catch(() => {});
-  // Make sure we always have a session — if the user came in via menu
-  // selection without a fresh start() call, seed one from the anchor.
-  if (!sessionStore.get(userId)) {
+  // Make sure we always have OUR session — seed one when none exists (menu
+  // entry without a fresh start() call), and ALSO take over when a FOREIGN
+  // session type is live (verified repro: an employee attendance_flow session
+  // left behind made the admin render edit the EMPLOYEE card via its anchor).
+  // Anchor on the tapped message so renders edit the admin card.
+  const existing = sessionStore.get(userId);
+  if (!existing || existing.type !== 'attendance_admin_flow') {
     sessionStore.set(userId, {
       type: 'attendance_admin_flow', step: null,
       flowMessageId: query.message.message_id,
       behalfTarget: null,
+      // Admin config sessions are long-lived; default 5-min TTL expired
+      // mid-configuration.
+      ttlMs: 30 * 60 * 1000,
     });
   }
 
@@ -808,7 +826,7 @@ async function handleCallback(bot, query) {
   }
   if (data.startsWith('atd_adm:req_toggle:')) {
     const id = data.slice('atd_adm:req_toggle:'.length);
-    await toggleRequired(bot, chatId, userId, id);
+    await toggleRequired(bot, chatId, userId, id, query.id);
     return true;
   }
   if (data.startsWith('atd_adm:loc_del:')) {
@@ -830,6 +848,7 @@ async function handleCallback(bot, query) {
     } catch (_) {}
     if (!target) target = { telegram_id: String(id), name: String(id) };
     const s = sessionStore.get(userId);
+    if (!s) return true; // session lazily expired during the lookup await
     s.behalfTarget = target;
     sessionStore.set(userId, s);
     await renderBehalfPickLocation(bot, chatId, userId);

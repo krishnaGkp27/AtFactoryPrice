@@ -156,6 +156,45 @@ test('ATT-C4b: two concurrent album photos write ONE row (markPresent is seriali
   sessionStore.clear('4242');
 });
 
+// ── atd_adm foreign-session takeover (Required Users picker freeze) ────────
+
+test('atd_adm: a leftover employee session is taken over — toggle persists, edits the TAPPED card, session is attendance_admin_flow', async () => {
+  settings = { ATTENDANCE_LOCATIONS: 'Kano Office' };
+  const origSet = settingsRepository.set;
+  const setCalls = [];
+  settingsRepository.set = async (key, value) => {
+    setCalls.push({ key, value: String(value) });
+    settings[key] = String(value);
+    return { key, value, updatedAt: '' };
+  };
+  // The admin previously ran the EMPLOYEE mark-attendance flow; its session
+  // (anchored on msg 900) is still live. Pre-fix, the admin dispatch kept it
+  // and every admin render edited the EMPLOYEE card via that anchor.
+  sessionStore.set('777', { type: 'attendance_flow', step: 'pick_location', flowMessageId: 900 });
+  const bot = createFakeBot();
+  try {
+    await controller.handleCallbackQuery(bot, cb('atd_adm:req_toggle:4242', '777', 5));
+    // (1) the toggle persisted
+    assert.equal(setCalls.length, 1, 'one settings write');
+    assert.equal(setCalls[0].key, 'ATTENDANCE_REQUIRED_USERS');
+    assert.equal(setCalls[0].value, '4242');
+    // (2) the render edited the TAPPED message, not the employee anchor
+    const edits = bot.callsTo('editMessageText');
+    assert.ok(edits.length >= 1, 'picker re-rendered via edit');
+    for (const e of edits) {
+      assert.equal(e.args.opts.message_id, 5, 'edits target the tapped admin card, never msg 900');
+    }
+    assert.equal(bot.callsTo('sendMessage').length, 0, 'no duplicate card sent');
+    // (3) the session now belongs to the admin flow
+    const s = sessionStore.get('777');
+    assert.equal(s.type, 'attendance_admin_flow');
+    assert.equal(s.flowMessageId, 5, 'anchored on the tapped message');
+  } finally {
+    settingsRepository.set = origSet;
+    sessionStore.clear('777');
+  }
+});
+
 test('ATT-C4b: sheet failure after the photo shows an error card with Try again (not silence)', async () => {
   settings = { ATTENDANCE_VERIFY_MODE: 'photo', ATTENDANCE_LOCATIONS: 'Kano Office' };
   appended.length = 0;

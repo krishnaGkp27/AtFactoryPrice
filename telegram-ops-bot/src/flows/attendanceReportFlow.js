@@ -153,8 +153,13 @@ async function editOrSend(bot, chatId, userId, text, keyboardRows) {
   const sent = await bot.sendMessage(chatId, text, {
     parse_mode: 'Markdown', reply_markup, disable_web_page_preview: true,
   });
-  session.flowMessageId = sent.message_id;
-  sessionStore.set(userId, session);
+  // Persisting the `|| {}` fallback here used to store a typeless zombie
+  // session ({flowMessageId} only). Anything persisted must carry a type:
+  // re-anchor the live session if one exists, else seed a typed one.
+  const live = sessionStore.get(userId) || { type: 'attendance_report_flow' };
+  live.type = live.type || 'attendance_report_flow';
+  live.flowMessageId = sent.message_id;
+  sessionStore.set(userId, live);
   return sent.message_id;
 }
 
