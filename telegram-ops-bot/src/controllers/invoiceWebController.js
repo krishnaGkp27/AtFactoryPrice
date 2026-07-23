@@ -25,6 +25,7 @@
 const invoicesRepository = require('../repositories/invoicesRepository');
 const invoiceService = require('../services/invoiceService');
 const logger = require('../utils/logger');
+const { fmtQty } = require('../utils/format');
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{16,128}$/;
 
@@ -35,7 +36,7 @@ function esc(s) {
 }
 
 function fmtMoney(n) {
-  return `₦${Number(n || 0).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`;
+  return `₦${fmtQty(n, { maxFraction: 2 })}`;
 }
 
 function fmtDate(iso) {

@@ -52,6 +52,7 @@ const { makeRenderer } = require('../utils/flowKit');
 const branchOpsService = require('../services/branchOpsService');
 const branchOpsLogRepository = require('../repositories/branchOpsLogRepository');
 const logger = require('../utils/logger');
+const { fmtQty } = require('../utils/format');
 
 // ---------------------------------------------------------------------------
 // Rendering helpers
@@ -76,10 +77,7 @@ async function renderError(bot, chatId, userId, msg) {
   ]);
 }
 
-function fmtNgn(n) {
-  const x = Number(n) || 0;
-  return x.toLocaleString('en-US', { maximumFractionDigits: 2 });
-}
+function fmtNgn(n) { return fmtQty(n, { maxFraction: 2 }); }
 
 // ---------------------------------------------------------------------------
 // Entry — resolves branch, checks if already open, then either renders

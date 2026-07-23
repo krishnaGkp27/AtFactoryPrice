@@ -22,6 +22,8 @@ const invoicesRepository = require('../repositories/invoicesRepository');
 const mutex = require('../utils/asyncMutex');
 const config = require('../config');
 const logger = require('../utils/logger');
+// Invoice cells render bare locale numbers (currency prefix added at call sites).
+const { fmtQty: fmtMoney } = require('../utils/format');
 
 const FONT = path.join(__dirname, '../assets/fonts/DejaVuSans.ttf');
 const FONT_BOLD = path.join(__dirname, '../assets/fonts/DejaVuSans-Bold.ttf');
@@ -31,11 +33,6 @@ const INK = '#20242a';
 const GOLD = '#c9a24b';
 const RED = '#c0392b';
 const MUTED = '#8a8578';
-
-function fmtMoney(n) {
-  const v = Number(n) || 0;
-  return v.toLocaleString('en-NG', { maximumFractionDigits: 0 });
-}
 
 function todayIso() { return new Date().toISOString().slice(0, 10); }
 

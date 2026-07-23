@@ -51,6 +51,7 @@ const branchOpsService = require('../services/branchOpsService');
 const approvalEvents = require('../events/approvalEvents');
 const auth = require('../middlewares/auth');
 const logger = require('../utils/logger');
+const { fmtQty } = require('../utils/format');
 
 const MAX_ITEMS = 20;
 const MAX_CARD_ITEMS = 15;  // cap item lines shown on the admin approval card
@@ -75,10 +76,7 @@ async function renderError(bot, chatId, userId, msg) {
   ]);
 }
 
-function fmtNgn(n) {
-  const x = Number(n) || 0;
-  return x.toLocaleString('en-US', { maximumFractionDigits: 2 });
-}
+function fmtNgn(n) { return fmtQty(n, { maxFraction: 2 }); }
 
 function escapeMd(s) {
   return String(s || '').replace(/([*_`\[\]])/g, '\\$1');
