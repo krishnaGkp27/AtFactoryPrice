@@ -16,6 +16,7 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb, lastKb } = require('../helpers/charFixture');
 
 installFakeSheets(createFakeSheets({}));
 // The intent parser recognises the typed command and extracts the numbers.
@@ -45,14 +46,6 @@ customersRepository.getAll = async () => [
 ];
 auditLogRepository.append = async () => {};
 
-function cb(data, uid = '4242') {
-  return { id: 'cb', data, from: { id: uid }, message: { chat: { id: uid }, message_id: 7 } };
-}
-function lastKb(bot) {
-  const withKb = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method) && c.args.opts && c.args.opts.reply_markup);
-  const last = withKb[withKb.length - 1];
-  return last ? last.args.opts.reply_markup.inline_keyboard.flat() : [];
-}
 
 test('typed numbers preload the flow: dedupe, reasons, warehouse tap, then customer chips', async () => {
   const bot = createFakeBot();

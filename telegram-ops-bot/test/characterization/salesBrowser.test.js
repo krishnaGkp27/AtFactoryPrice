@@ -18,6 +18,8 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb: fxCb } = require('../helpers/charFixture');
+const cb = (data, uid = '777') => fxCb(data, uid);
 
 installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
@@ -66,9 +68,6 @@ approvalQueueRepository.getByRequestId = async (id) =>
 invoicesRepository.getByRequestId = async (id) =>
   id === 'refA' ? { invoiceNo: 'INV-0042', token: 'tok123', requestId: 'refA' } : null;
 
-function cb(data, uid = '777') {
-  return { id: 'cb', data, from: { id: uid }, message: { chat: { id: uid }, message_id: 9 } };
-}
 function plain(bot) { return bot.allText().replace(/\\/g, ''); }
 
 test('non-admin tapping the tile is refused', async () => {

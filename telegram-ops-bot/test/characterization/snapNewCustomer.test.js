@@ -17,6 +17,7 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb, lastKb } = require('../helpers/charFixture');
 
 installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
@@ -47,14 +48,7 @@ vision.extractBales = async () => ({
   bales: [{ packageNo: '896', design: '77016', shade: '5', confidence: 0.9 }],
 });
 
-function cb(data, uid = '4242') {
-  return { id: 'cb', data, from: { id: uid }, message: { chat: { id: uid }, message_id: 5 } };
-}
 function txt(text, uid = '4242') { return { from: { id: uid }, chat: { id: uid }, text }; }
-function lastKb(bot) {
-  const withKb = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method) && c.args.opts && c.args.opts.reply_markup);
-  return withKb.length ? withKb[withKb.length - 1].args.opts.reply_markup.inline_keyboard.flat() : [];
-}
 
 test('truly new name: add_customer queued + admins notified, sale continues with the name', async () => {
   const bot = createFakeBot();

@@ -20,6 +20,7 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb, kbTexts: lastKb } = require('../helpers/charFixture');
 
 /** 23-column Inventory row (A..W); design at [3], status [7], category at [22]. */
 function invRow(pkg, design, category = '') {
@@ -66,14 +67,6 @@ function armQueue() {
   return calls;
 }
 
-function cb(data, uid, messageId = 90) {
-  return { id: 'cb', data, from: { id: uid }, message: { chat: { id: uid }, message_id: messageId } };
-}
-function lastKb(bot) {
-  const withKb = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method) && c.args.opts && c.args.opts.reply_markup);
-  const last = withKb[withKb.length - 1];
-  return last ? last.args.opts.reply_markup.inline_keyboard.flat().map((b) => `${b.text}|${b.callback_data}`) : [];
-}
 
 /** Drive the wizard to a queued request: 80045 → Senator. */
 async function submitRequest() {

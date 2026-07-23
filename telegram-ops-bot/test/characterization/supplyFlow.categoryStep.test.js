@@ -20,6 +20,7 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb } = require('../helpers/charFixture');
 
 installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
@@ -69,9 +70,6 @@ function seedContainerStep(uid) {
   });
 }
 
-function cb(data, uid) {
-  return { id: 'cb', data, from: { id: uid }, message: { chat: { id: uid }, message_id: 50 } };
-}
 
 /** Flattened button labels of the LAST rendered keyboard. */
 function lastKeyboard(bot) {

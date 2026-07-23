@@ -17,6 +17,7 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb } = require('../helpers/charFixture');
 
 installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
@@ -50,9 +51,6 @@ stockTakesRepository.getAll = async () => [
   { stocktake_id: 'L1', warehouse: 'IDUMOTA', design: '77016', result: 'flagged', sheet_bales: 2, sheet_bundles: 0, counted_bales: 5, counted_bundles: 0, auditor: 'y', audited_at: '2026-07-20T09:05:00Z' },
 ];
 
-function cb(data, uid) {
-  return { id: 'cb', data, from: { id: uid }, message: { chat: { id: uid }, message_id: 2 } };
-}
 function call(handler, headers = {}) {
   return new Promise((resolve) => {
     const res = {

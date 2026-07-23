@@ -16,6 +16,7 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb } = require('../helpers/charFixture');
 
 installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
@@ -48,9 +49,6 @@ auditLogRepository.append = async () => {};
 const queued = [];
 approvalQueueRepository.append = async (r) => { queued.push(r); };
 
-function cb(data, uid) {
-  return { id: 'cb', data, from: { id: uid }, message: { chat: { id: uid }, message_id: 3 } };
-}
 
 test('policy: set_reminder_config is approval-gated for everyone (incl. admins)', async () => {
   const r = await riskEvaluate.evaluate({ action: 'set_reminder_config', userId: '777' });

@@ -16,6 +16,7 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb } = require('../helpers/charFixture');
 
 installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
@@ -49,9 +50,6 @@ telegramFiles.downloadTelegramFile = async () => ({ buffer: Buffer.from(photoByt
 // ~0.05° (≈5.5 km) is far outside.
 const KANO = { lat: 12.0022, lng: 8.5919 };
 
-function cb(data, uid = '4242') {
-  return { id: 'cb', data, from: { id: uid }, message: { chat: { id: uid }, message_id: 9 } };
-}
 function locMsg(lat, lng, uid = '4242') {
   return { from: { id: uid }, chat: { id: uid }, location: { latitude: lat, longitude: lng } };
 }

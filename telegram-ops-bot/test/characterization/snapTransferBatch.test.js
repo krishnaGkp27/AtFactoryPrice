@@ -17,6 +17,8 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb: fxCb, lastKb } = require('../helpers/charFixture');
+const cb = (data, uid = '777') => fxCb(data, uid);
 
 installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
@@ -80,16 +82,8 @@ vision.extractBales = async () => ({
   ],
 });
 
-function cb(data, uid = '777') {
-  return { id: 'cb', data, from: { id: uid }, message: { chat: { id: uid }, message_id: 44 } };
-}
 function pdfMsg(uid = '777') {
   return { from: { id: uid }, chat: { id: uid }, document: { file_id: 'dispatch-pdf', mime_type: 'application/pdf', file_size: 15 * 1024 * 1024 } };
-}
-function lastKb(bot) {
-  const withKb = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method) && c.args.opts && c.args.opts.reply_markup);
-  const last = withKb[withKb.length - 1];
-  return last ? last.args.opts.reply_markup.inline_keyboard.flat() : [];
 }
 function plain(bot) { return bot.allText().replace(/\\/g, ''); }
 

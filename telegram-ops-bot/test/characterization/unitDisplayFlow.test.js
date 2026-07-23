@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb, lastKb } = require('../helpers/charFixture');
 
 installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
@@ -39,14 +40,6 @@ inventoryRepository.getWarehouses = async () => ['Lagos', 'Kano office'];
 settingsRepository.getAll = async () => ({ THAN_VISIBILITY_WAREHOUSES: 'Kano office' });
 auditLogRepository.append = async () => {};
 
-function cb(data, uid) {
-  return { id: 'cb', data, from: { id: uid }, message: { chat: { id: uid }, message_id: 50 } };
-}
-function lastKb(bot) {
-  const withKb = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method) && c.args.opts && c.args.opts.reply_markup);
-  const last = withKb[withKb.length - 1];
-  return last ? last.args.opts.reply_markup.inline_keyboard.flat() : [];
-}
 
 /** Reset stubs + capture queue/notify per test. */
 function arm({ pending = [] } = {}) {

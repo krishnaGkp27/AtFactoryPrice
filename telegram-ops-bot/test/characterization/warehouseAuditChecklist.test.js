@@ -17,6 +17,7 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb, lastKb: kbTexts } = require('../helpers/charFixture');
 
 installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
@@ -72,14 +73,6 @@ stockTakesRepository.rowsForDay = async (warehouse, day) =>
   takes.filter((r) => r.warehouse.toLowerCase() === warehouse.toLowerCase() && String(r.audited_at).startsWith(day));
 stockTakesRepository.getById = async (id) => takes.find((r) => r.stocktake_id === id) || null;
 
-function cb(data, uid = '4242') {
-  return { id: 'cb', data, from: { id: uid }, message: { chat: { id: uid }, message_id: 5 } };
-}
-function kbTexts(bot) {
-  const withKb = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method) && c.args.opts && c.args.opts.reply_markup);
-  const last = withKb[withKb.length - 1];
-  return last ? last.args.opts.reply_markup.inline_keyboard.flat() : [];
-}
 async function openChecklist(bot, uid = '4242') {
   await controller.handleCallbackQuery(bot, cb('act:warehouse_audit', uid));
   // Lagos (locations sorted Kano,Lagos) — holds only IDUMOTA, so the

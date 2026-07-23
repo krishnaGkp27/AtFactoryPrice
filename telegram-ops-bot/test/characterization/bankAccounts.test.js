@@ -17,6 +17,8 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb: fxCb } = require('../helpers/charFixture');
+const cb = (data, uid = '777') => fxCb(data, uid);
 
 installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
@@ -33,9 +35,6 @@ auditLogRepository.append = async () => {};
 const queued = [];
 approvalQueueRepository.append = async (r) => { queued.push(r); };
 
-function cb(data, uid = '777') {
-  return { id: 'cb', data, from: { id: uid }, message: { chat: { id: uid }, message_id: 6 } };
-}
 function txt(text, uid = '777') {
   return { from: { id: uid }, chat: { id: uid }, text };
 }

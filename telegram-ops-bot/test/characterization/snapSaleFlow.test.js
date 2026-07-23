@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb, lastKb } = require('../helpers/charFixture');
 
 installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
@@ -47,16 +48,8 @@ let ocrResult = {
 };
 vision.extractBales = async () => ocrResult;
 
-function cb(data, uid = '4242') {
-  return { id: 'cb', data, from: { id: uid }, message: { chat: { id: uid }, message_id: 71 } };
-}
 function photoMsg(uid = '4242') {
   return { from: { id: uid }, chat: { id: uid }, photo: [{ file_id: 'small' }, { file_id: 'label-photo-file-id' }] };
-}
-function lastKb(bot) {
-  const withKb = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method) && c.args.opts && c.args.opts.reply_markup);
-  const last = withKb[withKb.length - 1];
-  return last ? last.args.opts.reply_markup.inline_keyboard.flat() : [];
 }
 
 test('photo → match card with OCR read-back → customer tap → queued with label as document', async () => {

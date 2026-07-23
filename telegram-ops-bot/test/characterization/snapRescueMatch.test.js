@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb } = require('../helpers/charFixture');
 
 installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
@@ -130,7 +131,6 @@ test('end-to-end 6b: PDF with a rescue + a tie → NO questions — straight to 
   });
 
   const bot = createFakeBot();
-  const cb = (data) => ({ id: 'cb', data, from: { id: '4242' }, message: { chat: { id: '4242' }, message_id: 9 } });
   await controller.handleCallbackQuery(bot, cb('act:snap_sale'));
   await controller.handleFileMessage(bot, {
     from: { id: '4242' }, chat: { id: '4242' },

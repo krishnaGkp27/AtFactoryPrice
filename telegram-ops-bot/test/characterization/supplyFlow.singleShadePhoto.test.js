@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb } = require('../helpers/charFixture');
 
 installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
@@ -47,7 +48,6 @@ function rowsFor(design, shades) {
 function seed() {
   sessionStore.set(UID, { type: 'supply_req_flow', warehouse: 'Lagos', cart: [], step: 'design', productType: 'fabric', flowMessageId: 50 });
 }
-function cb(data) { return { id: 'cb', data, from: { id: UID }, message: { chat: { id: UID }, message_id: 50 } }; }
 function lastKeyboardCallbacks(bot) {
   const withKb = bot.calls.filter((c) => ['sendPhoto', 'sendMessage', 'editMessageText'].includes(c.method) && c.args.opts && c.args.opts.reply_markup);
   const last = withKb[withKb.length - 1];

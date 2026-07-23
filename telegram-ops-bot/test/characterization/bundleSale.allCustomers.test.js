@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const { createFakeBot } = require('../helpers/fakeBot');
 const { createFakeSheets } = require('../helpers/fakeSheets');
 const { installFakeSheets, installFakeIntent, loadController, SRC } = require('../helpers/controllerHarness');
+const { cb, lastKb } = require('../helpers/charFixture');
 
 installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
@@ -42,12 +43,6 @@ function seed() {
     type: 'bundle_sale_flow', step: 'pick_customer', design: '9006', warehouse: 'Kano office',
     flowMessageId: 70,
   });
-}
-function cb(data) { return { id: 'cb', data, from: { id: '4242' }, message: { chat: { id: '4242' }, message_id: 70 } }; }
-function lastKb(bot) {
-  const withKb = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method) && c.args.opts && c.args.opts.reply_markup);
-  const last = withKb[withKb.length - 1];
-  return last ? last.args.opts.reply_markup.inline_keyboard.flat() : [];
 }
 
 test('page 1: ten alphabetical customers, More→page 2, inactive hidden', async () => {
