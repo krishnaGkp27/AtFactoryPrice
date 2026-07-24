@@ -474,7 +474,10 @@ async function submit(bot, chatId, userId, msgOrNull) {
     }
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId,
       await require('../services/approvalCards').resolveUserLabel(userId, bot), summary, risk.reason, excludeId);
-    await render(bot, chatId, userId, `⏳ Submitted for ${approverLabel} approval.\nRequest: \`${requestId}\``, [cancelRow()]);
+    // Menu button, NOT Cancel: the request is already queued — a Cancel here
+    // would not withdraw it and the session is being cleared anyway.
+    await render(bot, chatId, userId, `⏳ Submitted for ${approverLabel} approval.\nRequest: \`${requestId}\``,
+      [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
     sessionStore.clear(userId);
     return;
   }
@@ -490,11 +493,13 @@ async function submit(bot, chatId, userId, msgOrNull) {
     result = await inventoryService.executeApprovedAction(requestId, userId);
   } catch (e) {
     logger.error(`goodsReceiptFlow.submit: ${e.message}`);
-    await render(bot, chatId, userId, `❌ Receive failed: ${e.message}`, [cancelRow()]);
+    await render(bot, chatId, userId, `❌ Receive failed: ${e.message}`,
+      [cancelRow(), [{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
     return;
   }
   if (!result || !result.ok) {
-    await render(bot, chatId, userId, `❌ ${result && result.message ? result.message : 'Receive failed.'}`, [cancelRow()]);
+    await render(bot, chatId, userId, `❌ ${result && result.message ? result.message : 'Receive failed.'}`,
+      [cancelRow(), [{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
     return;
   }
   const report = result.bundleReport || {};

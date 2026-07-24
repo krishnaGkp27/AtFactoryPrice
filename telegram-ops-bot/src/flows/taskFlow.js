@@ -517,7 +517,7 @@ async function startProposeFlow(bot, callbackQuery, taskId) {
 
   const task = await tasksRepository.getById(taskId);
   if (!task) {
-    await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {});
+    await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, { reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
   if (task.assigned_to !== userId) {
@@ -527,7 +527,7 @@ async function startProposeFlow(bot, callbackQuery, taskId) {
   if (task.status !== 'assigned') {
     await editOrSend(bot, chatId, messageId,
       `ℹ️ Task ${taskId} is *${task.status}* — proposing a timeline is no longer possible.`,
-      { parse_mode: 'Markdown' });
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
 
@@ -827,7 +827,7 @@ async function handleDecline(bot, callbackQuery, taskId) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const task = await tasksRepository.getById(taskId);
-  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, { reply_markup: { inline_keyboard: [navFooterRow()] } }); return; }
   if (task.assigned_to !== userId) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assignee can decline.', show_alert: true }).catch(() => {});
     return;
@@ -835,7 +835,7 @@ async function handleDecline(bot, callbackQuery, taskId) {
   try {
     await taskStateMachine.transition(taskId, 'decline', userId);
   } catch (e) {
-    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t decline: ${e.message}`, { parse_mode: 'Markdown' });
+    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t decline: ${e.message}`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
   await editOrSend(bot, chatId, messageId,
@@ -866,7 +866,7 @@ async function handleAcceptTimeline(bot, callbackQuery, taskId) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const task = await tasksRepository.getById(taskId);
-  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, { reply_markup: { inline_keyboard: [navFooterRow()] } }); return; }
   if (task.assigned_by !== userId && !isAdmin(userId)) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assigner or an admin can accept.', show_alert: true }).catch(() => {});
     return;
@@ -887,7 +887,7 @@ async function handleAcceptTimeline(bot, callbackQuery, taskId) {
   try {
     await taskStateMachine.transition(taskId, 'accept_timeline', userId);
   } catch (e) {
-    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t accept: ${e.message}`, { parse_mode: 'Markdown' });
+    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t accept: ${e.message}`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
   await editOrSend(bot, chatId, messageId,
@@ -906,7 +906,7 @@ async function startSetIncentiveFromCard(bot, callbackQuery, taskId) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const task = await tasksRepository.getById(taskId);
-  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, { reply_markup: { inline_keyboard: [navFooterRow()] } }); return; }
   if (task.assigned_by !== userId && !isAdmin(userId)) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assigner or an admin can set the incentive.', show_alert: true }).catch(() => {});
     return;
@@ -918,7 +918,7 @@ async function startSetIncentiveFromCard(bot, callbackQuery, taskId) {
   if (task.status !== 'awaiting_timeline_ack') {
     await editOrSend(bot, chatId, messageId,
       `ℹ️ Task ${taskId} is *${task.status}* — incentive can only be set during timeline negotiation.`,
-      { parse_mode: 'Markdown' });
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
   sessionStore.set(userId, {
@@ -934,7 +934,7 @@ async function startCounterFlow(bot, callbackQuery, taskId) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const task = await tasksRepository.getById(taskId);
-  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, { reply_markup: { inline_keyboard: [navFooterRow()] } }); return; }
   if (task.assigned_by !== userId && !isAdmin(userId)) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assigner or an admin can counter.', show_alert: true }).catch(() => {});
     return;
@@ -942,7 +942,7 @@ async function startCounterFlow(bot, callbackQuery, taskId) {
   if ((task.negotiation_rounds || 0) >= taskStateMachine.MAX_NEGOTIATION_ROUNDS) {
     await editOrSend(bot, chatId, messageId,
       `⚠️ Negotiation cap reached (${task.negotiation_rounds}/${taskStateMachine.MAX_NEGOTIATION_ROUNDS}). Accept the proposal or cancel the task.`,
-      { parse_mode: 'Markdown' });
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
   sessionStore.set(userId, {
@@ -971,7 +971,7 @@ async function submitCounter(bot, chatId, userId, reason) {
     await taskStateMachine.transition(t.taskId, 'counter_timeline', userId, reason ? { reason } : {});
   } catch (e) {
     sessionStore.clear(userId);
-    await editOrSend(bot, chatId, session.flowMessageId, `❌ Couldn\'t counter: ${e.message}`, { parse_mode: 'Markdown' });
+    await editOrSend(bot, chatId, session.flowMessageId, `❌ Couldn\'t counter: ${e.message}`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
   sessionStore.clear(userId);
@@ -1007,11 +1007,11 @@ async function handleCancelTask(bot, callbackQuery, taskId) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const task = await tasksRepository.getById(taskId);
-  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, { reply_markup: { inline_keyboard: [navFooterRow()] } }); return; }
   try {
     await taskStateMachine.transition(taskId, 'cancel', userId);
   } catch (e) {
-    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t cancel: ${e.message}`, { parse_mode: 'Markdown' });
+    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t cancel: ${e.message}`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
   await editOrSend(bot, chatId, messageId,
@@ -1123,7 +1123,7 @@ async function startPriorityPicker(bot, callbackQuery, taskId) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const task = await tasksRepository.getById(taskId);
-  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, { reply_markup: { inline_keyboard: [navFooterRow()] } }); return; }
   if (!(await _guardAssignerOrAdmin(bot, callbackQuery, task))) return;
   if (!OPEN_STATUSES.has(task.status)) {
     await editOrSend(bot, chatId, messageId,
@@ -1153,11 +1153,11 @@ async function applyPriority(bot, callbackQuery, taskId, newPriority) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   if (!PRIORITY_META[newPriority]) {
-    await editOrSend(bot, chatId, messageId, '❌ Invalid priority.', {});
+    await editOrSend(bot, chatId, messageId, '❌ Invalid priority.', { reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
   const task = await tasksRepository.getById(taskId);
-  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, { reply_markup: { inline_keyboard: [navFooterRow()] } }); return; }
   if (!(await _guardAssignerOrAdmin(bot, callbackQuery, task))) return;
 
   const oldPriority = getPriority(task);
@@ -1217,7 +1217,7 @@ async function startDropAsk(bot, callbackQuery, taskId) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const task = await tasksRepository.getById(taskId);
-  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, { reply_markup: { inline_keyboard: [navFooterRow()] } }); return; }
   if (!(await _guardAssignerOrAdmin(bot, callbackQuery, task))) return;
   if (task.status === 'submitted') {
     await editOrSend(bot, chatId, messageId,
@@ -1334,7 +1334,7 @@ async function handleFinalAck(bot, callbackQuery, taskId) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const task = await tasksRepository.getById(taskId);
-  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, { reply_markup: { inline_keyboard: [navFooterRow()] } }); return; }
   if (task.assigned_to !== userId) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assignee can confirm the deal.', show_alert: true }).catch(() => {});
     return;
@@ -1342,7 +1342,7 @@ async function handleFinalAck(bot, callbackQuery, taskId) {
   try {
     await taskStateMachine.transition(taskId, 'final_ack', userId);
   } catch (e) {
-    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t accept: ${e.message}`, { parse_mode: 'Markdown' });
+    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t accept: ${e.message}`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
   // Stamp doer_confirmed_at on the Incentives row so finance has a
@@ -1373,7 +1373,7 @@ async function handleRenegotiate(bot, callbackQuery, taskId) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const task = await tasksRepository.getById(taskId);
-  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, { reply_markup: { inline_keyboard: [navFooterRow()] } }); return; }
   if (task.assigned_to !== userId) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assignee can renegotiate.', show_alert: true }).catch(() => {});
     return;
@@ -1381,13 +1381,13 @@ async function handleRenegotiate(bot, callbackQuery, taskId) {
   if ((task.negotiation_rounds || 0) >= taskStateMachine.MAX_NEGOTIATION_ROUNDS) {
     await editOrSend(bot, chatId, messageId,
       `⚠️ Negotiation cap reached. Accept the deal or it will need to be cancelled.`,
-      { parse_mode: 'Markdown' });
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
   try {
     await taskStateMachine.transition(taskId, 'renegotiate', userId);
   } catch (e) {
-    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t renegotiate: ${e.message}`, { parse_mode: 'Markdown' });
+    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t renegotiate: ${e.message}`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
   await editOrSend(bot, chatId, messageId,
@@ -1788,7 +1788,7 @@ async function handleMarkDone(bot, callbackQuery, taskId) {
   const messageId = callbackQuery.message.message_id;
 
   const task = await tasksRepository.getById(taskId);
-  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, { reply_markup: { inline_keyboard: [navFooterRow()] } }); return; }
   if (task.assigned_to !== userId) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assignee can mark this done.', show_alert: true }).catch(() => {});
     return;
@@ -1821,7 +1821,7 @@ async function handleMarkDone(bot, callbackQuery, taskId) {
   if (task.status !== 'active') {
     await editOrSend(bot, chatId, messageId,
       `ℹ️ Task ${taskId} is *${task.status}* — Mark-done isn\'t available yet.`,
-      { parse_mode: 'Markdown' });
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
 
@@ -1829,7 +1829,7 @@ async function handleMarkDone(bot, callbackQuery, taskId) {
     await taskStateMachine.transition(taskId, 'mark_done', userId);
   } catch (e) {
     logger.error(`taskFlow.handleMarkDone: ${e.message}`);
-    await editOrSend(bot, chatId, messageId, `❌ Could not submit: ${e.message}`, { parse_mode: 'Markdown' });
+    await editOrSend(bot, chatId, messageId, `❌ Could not submit: ${e.message}`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
 
@@ -1863,19 +1863,19 @@ async function handleSignOff(bot, callbackQuery, taskId, approve) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const task = await tasksRepository.getById(taskId);
-  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, {}); return; }
+  if (!task) { await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`, { reply_markup: { inline_keyboard: [navFooterRow()] } }); return; }
   if (task.assigned_by !== userId && !isAdmin(userId)) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only the assigner or an admin can sign off.', show_alert: true }).catch(() => {});
     return;
   }
   if (task.status !== 'submitted') {
-    await editOrSend(bot, chatId, messageId, `ℹ️ Task ${taskId} is *${task.status}*, not submitted.`, { parse_mode: 'Markdown' });
+    await editOrSend(bot, chatId, messageId, `ℹ️ Task ${taskId} is *${task.status}*, not submitted.`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
   try {
     await taskStateMachine.transition(taskId, approve ? 'approve' : 'reject', userId);
   } catch (e) {
-    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t ${approve ? 'approve' : 'reject'}: ${e.message}`, { parse_mode: 'Markdown' });
+    await editOrSend(bot, chatId, messageId, `❌ Couldn\'t ${approve ? 'approve' : 'reject'}: ${e.message}`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
   if (approve) {

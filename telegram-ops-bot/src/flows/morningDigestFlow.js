@@ -77,7 +77,9 @@ async function handleCallback(bot, callbackQuery) {
         const { text, keyboard } = await morningDigest.buildSummary(settings);
         await bot.editMessageText(text || '_(empty digest)_', {
           chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
-          reply_markup: keyboard || undefined,
+          // Empty digest → keyboard is null; keep a Menu row so the edited
+          // card is never button-less.
+          reply_markup: keyboard || { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] },
         });
       } else if (key === 'DIGEST_CUSTOMER_NOTES') {
         // Owner 17-Jul v2: notes drill-down = CUSTOMER chips → their notes.

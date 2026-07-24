@@ -465,6 +465,7 @@ async function showInfo(bot, query, requestId, expand) {
   if (!row) {
     await bot.editMessageText('🚚 Transfer not found or already purged.', {
       chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] },
     }).catch(() => {});
     return true;
   }
@@ -535,6 +536,7 @@ async function handleAction(bot, query, requestId, action) {
     : `❌ *${requestId} rejected* — bales reverted to *${aj.from}*.\n${headOf(aj)}\n${dispatchedBlock(aj)}`;
   await bot.editMessageText(card, {
     chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] },
   }).catch(() => {});
   await notifyAdmins(bot, requestId, aj, label, userId);
   await notifyRequester(bot, row, requestId, aj, label, userId);
@@ -908,6 +910,7 @@ async function handleFile(bot, msg) {
       sessionStore.clear(userId);
       await bot.editMessageText(`⚠️ *${requestId}* — ${done.message}`, {
         chat_id: chatId, message_id: flowMessageId, parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] },
       }).catch(() => {});
       return true;
     }
@@ -955,7 +958,8 @@ async function handleFile(bot, msg) {
   const head = sealText || `🚚 *${requestId}*`;
   await bot.editMessageText(
     `${head}\n📸 *${kind === 'receive' ? 'Receipt' : 'Dispatch'} photo attached*${linkNote}`,
-    { chat_id: chatId, message_id: flowMessageId, parse_mode: 'Markdown', disable_web_page_preview: true },
+    { chat_id: chatId, message_id: flowMessageId, parse_mode: 'Markdown', disable_web_page_preview: true,
+      reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] } },
   ).catch(() => {});
   return true;
 }
