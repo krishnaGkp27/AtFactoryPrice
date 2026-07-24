@@ -135,6 +135,22 @@ function fmtQty(n) { return (Math.round((n || 0) * 100) / 100).toLocaleString('e
 const { closeRow, backRow } = rowsFor('wai');
 
 /**
+ * WAU nav: the location and warehouse pickers auto-forward when there is
+ * only ONE option, so a naive '⬅ Warehouses' from the checklist bounces
+ * straight back to the checklist (a self-loop). Offer the highest level
+ * that actually has a choice — and no back row at all when this warehouse
+ * is the only thing there is to audit.
+ * @returns {Array|null} a back row, or null when back is meaningless
+ */
+function upFromChecklistRow(session) {
+  const locations = (session._locations || []).length;
+  const warehouses = ((session._locWarehouses || {})[session.location] || []).length;
+  if (warehouses > 1) return backRow('⬅ Warehouses');
+  if (locations > 1) return backRow('⬅ Locations');
+  return null;
+}
+
+/**
  * Chunk a flat list of inline-keyboard buttons into rows of `perRow` tiles.
  * Used by the shade and bale pickers to render a graceful 2-column grid.
  */
@@ -350,7 +366,7 @@ async function renderChecklist(bot, chatId, userId) {
   if (!list.length) {
     await render(bot, chatId, userId,
       `🔍 ${session.warehouse}\n\nNo available stock in this warehouse.`,
-      [backRow('⬅ Warehouses'), closeRow()]);
+      [upFromChecklistRow(session), closeRow()].filter(Boolean));
     return;
   }
   // WAU-3 BLIND LIST — no quantities anywhere (the auditor must count,
@@ -369,7 +385,8 @@ async function renderChecklist(bot, chatId, userId) {
   });
   rows.push([{ text: '📄 Offline count sheet', callback_data: 'wai:tmpl' }]);
   if (auth.isAdmin(userId)) rows.push([{ text: '🔬 Deep inspect (bale/than level)', callback_data: 'wai:inspect' }]);
-  rows.push(backRow('⬅ Warehouses'));
+  const up = upFromChecklistRow(session);
+  if (up) rows.push(up);
   rows.push(closeRow());
   await render(bot, chatId, userId,
     `🔍 ${session.warehouse} — ${session.location}\n`
@@ -630,7 +647,9 @@ async function renderWarehousePicker(bot, chatId, userId) {
   // Warehouses are usually few (2–3) and have long names; keep one per row
   // so the names don't get truncated on phone screens.
   const rows = warehouses.map((w, i) => ([{ text: `🏬 ${w}`, callback_data: `wai:wh:${i}` }]));
-  rows.push(backRow('⬅ Locations'));
+  // Only offer '⬅ Locations' when there is more than one location — with a
+  // single location the picker auto-forwards and Back would self-loop.
+  if ((session._locations || []).length > 1) rows.push(backRow('⬅ Locations'));
   rows.push(closeRow());
   await render(bot, chatId, userId,
     `🔍 Warehouse Audit — 📍 ${session.location}\n\nSelect the warehouse to audit:`, rows);
@@ -660,7 +679,7 @@ async function renderDesignPicker(bot, chatId, userId) {
   if (!list.length) {
     await render(bot, chatId, userId,
       `🔍 ${session.warehouse}\n\nNo available stock in this warehouse.`,
-      [backRow('⬅ Warehouses'), closeRow()]);
+      [backRow('⬅ Checklist'), closeRow()]);
     return;
   }
   session._designs = list.map((d) => ({ design: d.design }));
@@ -673,7 +692,8 @@ async function renderDesignPicker(bot, chatId, userId) {
   }));
   const rows = chunkButtons(tiles, TILES_PER_ROW);
   const more = list.length > MAX_DESIGNS ? `\n\n(+${list.length - MAX_DESIGNS} more — narrow by warehouse)` : '';
-  rows.push(backRow('⬅ Warehouses'));
+  // stepBack('pick_design') returns to the CHECKLIST — label it truthfully.
+  rows.push(backRow('⬅ Checklist'));
   rows.push(closeRow());
   const modeChip = session.auditMode === AUDIT_MODE_THAN ? 'than-mode' : 'bale-mode';
   await render(bot, chatId, userId,
@@ -912,6 +932,14 @@ function thanCardBackLabel(session) {
 async function renderReconciliation(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
+  // This screen does NOT own a step, so remember where it was opened from —
+  // otherwise Back steps back from the UNDERLYING screen and lands somewhere
+  // the user never was.
+  if (session.step !== 'reconciliation') {
+    session._reconFrom = session.step;
+    session.step = 'reconciliation';
+    sessionStore.set(userId, session);
+  }
   const entries = Object.entries(session.marks);
   let present = 0; let missing = 0;
   const byBale = new Map();
@@ -935,7 +963,7 @@ async function renderReconciliation(bot, chatId, userId) {
   }
   body += '\n\n(Audit only — no inventory changes were made.)';
   const rows = [];
-  if (session.packageNo) rows.push([{ text: '⬅ Back to bale', callback_data: 'wai:back' }]);
+  rows.push(backRow(session._reconFrom === 'view_than' ? '⬅ Back to than' : '⬅ Back to bales'));
   rows.push(closeRow());
   await render(bot, chatId, userId, body, rows);
 }
@@ -952,13 +980,25 @@ async function stepBack(bot, chatId, userId) {
       sessionStore.set(userId, session);
       await renderLocationPicker(bot, chatId, userId);
       break;
-    case 'checklist':
-      session.step = 'pick_warehouse';
-      session.warehouse = '';
+    case 'checklist': {
+      // Skip past levels that auto-forward (single warehouse / single
+      // location) — stepping into them would bounce straight back here.
+      const oneWarehouse = ((session._locWarehouses || {})[session.location] || []).length <= 1;
       session._checked = {};
+      session.warehouse = '';
+      if (oneWarehouse) {
+        if ((session._locations || []).length <= 1) return; // nothing above
+        session.step = 'pick_location';
+        session.location = '';
+        sessionStore.set(userId, session);
+        await renderLocationPicker(bot, chatId, userId);
+        break;
+      }
+      session.step = 'pick_warehouse';
       sessionStore.set(userId, session);
       await renderWarehousePicker(bot, chatId, userId);
       break;
+    }
     case 'pick_design':
       // WAU-2: the deep-inspect design picker returns to the checklist.
       session.step = 'checklist';
@@ -1011,6 +1051,18 @@ async function stepBack(bot, chatId, userId) {
         await renderBaleList(bot, chatId, userId);
       }
       break;
+    case 'reconciliation': {
+      // Return to the exact screen the summary was opened from.
+      const from = session._reconFrom || 'view_bale';
+      session.step = from;
+      session._reconFrom = null;
+      sessionStore.set(userId, session);
+      if (from === 'view_than') await renderThanCard(bot, chatId, userId);
+      else if (from === 'bale_choice') await renderBaleChoice(bot, chatId, userId);
+      else if (from === 'checklist') await renderChecklist(bot, chatId, userId);
+      else await renderBaleList(bot, chatId, userId);
+      break;
+    }
     default:
       await render(bot, chatId, userId, '🔍 Closed.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
       sessionStore.clear(userId);

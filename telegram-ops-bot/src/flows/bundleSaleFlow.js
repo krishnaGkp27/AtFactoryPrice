@@ -641,6 +641,10 @@ async function renderCustomerPicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
   session.step = 'pick_customer';
+  // _custView distinguishes the three screens that all sit on the
+  // 'pick_customer' step, so ⬅ Back steps up ONE level instead of jumping
+  // straight to the cart from the all-list / search results.
+  session._custView = 'picker';
   sessionStore.set(userId, session);
 
   // Suggest recent customers on this design first.
@@ -674,6 +678,7 @@ async function renderAllCustomersPage(bot, chatId, userId, page = 0) {
   const session = sessionStore.get(userId);
   if (!session) return;
   session.step = 'pick_customer';
+  session._custView = 'all';
   let all = [];
   try { all = await customersRepository.getAll(); } catch (_) { /* empty list path below */ }
   const names = [...new Set(all
@@ -709,6 +714,7 @@ async function renderCustomerSearchPrompt(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
   session.step = 'await_customer_search';
+  session._custView = 'search';
   sessionStore.set(userId, session);
   await render(bot, chatId, userId,
     '🔎 *Search customer*\n\nType a few letters of the customer name. I\'ll show matches.',
@@ -1295,14 +1301,29 @@ async function stepBack(bot, chatId, userId) {
       sessionStore.set(userId, session);
       await renderShadePicker(bot, chatId, userId);
       break;
-    case 'pick_customer':
     case 'await_customer_search':
+      // Search prompt / results sit one level BELOW the customer picker.
+      await renderCustomerPicker(bot, chatId, userId);
+      break;
+    case 'pick_customer':
+      if (session._custView === 'all') {
+        // All-customers page → back to the picker, not out to the cart.
+        await renderCustomerPicker(bot, chatId, userId);
+        break;
+      }
       session.step = 'cart_review';
+      session._custView = null;
       sessionStore.set(userId, session);
       await renderCart(bot, chatId, userId);
       break;
-    case 'enter_rate':
     case 'confirm_below_floor':
+      // "✏️ Enter a different rate" must land on the RATE screen its label
+      // promises — not back on the customer picker.
+      session.step = 'enter_rate';
+      sessionStore.set(userId, session);
+      await renderRatePicker(bot, chatId, userId);
+      break;
+    case 'enter_rate':
       session.step = 'pick_customer';
       sessionStore.set(userId, session);
       await renderCustomerPicker(bot, chatId, userId);
