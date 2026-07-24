@@ -16,7 +16,7 @@ const accountingService = require('../services/accountingService');
 const salesFlow = require('../services/salesFlowService');
 const sessionStore = require('../utils/sessionStore');
 const { buildShadeNameMap, buildShadeLabel, layoutShadeRows, buildSelectAllLines, formatShadeRef } = require('../utils/shadeButtons');
-const { cmpNumericAware, aggregateOpeningStock } = require('../utils/inventoryPickers');
+const { cmpNumericAware, aggregateStockModel } = require('../utils/inventoryPickers');
 const cartFormat = require('../utils/cartFormat');
 const settingsRepo = require('../repositories/settingsRepository');
 const usersRepository = require('../repositories/usersRepository');
@@ -5455,6 +5455,22 @@ async function proceedAfterContainer(bot, chatId, userId) {
   });
 }
 
+/**
+ * TV-6 — grnId → receiving-warehouse map for opening attribution
+ * (bale → grnId → GoodsReceipts.warehouse). Best-effort: an unreachable
+ * GoodsReceipts sheet degrades to null — every row then falls back to its
+ * CURRENT warehouse (the legacy attribution) instead of blocking the
+ * display-only browse.
+ */
+async function loadGrnWarehouseMap() {
+  try {
+    const grns = await goodsReceiptsRepository.getAll();
+    return new Map(grns.map((g) => [g.grn_id, g.warehouse]));
+  } catch (_) {
+    return null;
+  }
+}
+
 async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId = null) {
   const session = sessionStore.get(userId);
   const cart = session ? session.cart || [] : [];
@@ -5489,20 +5505,22 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   // TV-1 — warehouses flagged in Settings list stock by than (subunit),
   // not bale. Display-only: selection + cart semantics stay in bales.
   const useThans = await unitDisplayService.isThanVisibilityWarehouse(warehouse);
-  // TV-3/TV-4/TV-5 — ALL warehouses show "remaining / opening" (TV-4b
-  // compact) in their own display unit: than-visible warehouses pair both
-  // counts ("9043-B (20B=88t / 30B=132t)"), bales-only warehouses pair the
-  // bale figures ("9043-B (20B / 30B)"). Opening = every Inventory row ever
-  // for the design in this warehouse/container/category slice, ANY status
-  // (available + sold + in_transit). Designs with 0 remaining but
-  // historical stock stay TAPPABLE, appended after the in-stock designs
-  // (numeric-aware order).
-  const opening = aggregateOpeningStock(await inventoryRepository.getAll(), {
+  // TV-6 — GRN-anchored stock model (replaces the TV-4/5 opening-everywhere
+  // semantics): opening@W = bales GRN-received at W (bale→grnId→
+  // GoodsReceipts.warehouse; legacy rows with no grnId count at their
+  // CURRENT warehouse), so a transferred-away bale stays in its source's
+  // opening. in_transit rows are excluded from remaining AND opening
+  // everywhere but surface as the DESTINATION's 🚚 incoming bucket. Designs
+  // with 0 remaining but opening history stay TAPPABLE, appended after the
+  // in-stock designs (numeric-aware order — TV-4/5 behavior).
+  const model = aggregateStockModel(await inventoryRepository.getAll(), {
     warehouse,
     arrivalBatch: session && session.arrivalBatch,
     unlabelledBatch: inventoryRepository.UNLABELLED_BATCH,
     designMatch: (d) => matchesSupplyCategory(d, session && session.category),
+    grnWarehouseById: await loadGrnWarehouseMap(),
   });
+  const opening = model.opening;
   {
     const inStock = new Set(designs.map((d) => String(d.design)));
     const soldOut = Array.from(opening.designs.keys())
@@ -5511,9 +5529,14 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
       .map((d) => ({ design: d, totalPkgs: 0, totalThans: 0 }));
     designs.push(...soldOut);
   }
+  // TV-6 — the "remaining / opening" pair renders ONLY where intake exists
+  // (GRN-attributed or legacy). A design with no opening here (transferred-
+  // in stock) lists remaining-only in the warehouse's display unit: spaced
+  // TV-3 "NB = Mt" (than-visible) / "NB" (bales-only).
   const designTag = (d) => {
     const rem = { bales: d.totalPkgs, thans: d.totalThans };
-    const open = opening.designs.get(String(d.design)) || rem;
+    const open = opening.designs.get(String(d.design));
+    if (!open) return useThans ? unitDisplayService.formatBalesThans(rem) : `${rem.bales}B`;
     return useThans
       ? unitDisplayService.formatRemainingOpening(rem, open)
       : unitDisplayService.formatRemainingOpeningBales(rem, open);
@@ -5523,6 +5546,15 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   const start = page * MAX_VISIBLE;
   const visible = designs.slice(start, start + MAX_VISIBLE);
   const rows = [];
+  // TV-6 — incoming transit bucket: bales dispatched TO this warehouse
+  // (status in_transit) get a tappable card button at the TOP of the design
+  // list. Display-only; receiving still happens via the transfer flow.
+  if (model.incoming.totals.thans > 0) {
+    const transitLabel = useThans
+      ? unitDisplayService.formatBalesThans(model.incoming.totals)
+      : `${model.incoming.totals.bales}B`;
+    rows.push([{ text: `🚚 In transit (${transitLabel})`, callback_data: 'srf_tl:show' }]);
+  }
   // TV-4b/TV-5 — EVERY warehouse lists ONE design per row (full width) so
   // the "remaining / opening" pair never clips mid-figure. If a composed
   // label would still overflow (>34 chars), the button carries the bare
@@ -5566,16 +5598,25 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   rows.push(backRow);
   const cartNote = cart.length ? `\n🛒 Cart: ${cart.length} item(s)` : '';
   const pageNote = designs.length > MAX_VISIBLE ? ` (${start + 1}–${Math.min(start + MAX_VISIBLE, designs.length)} of ${designs.length})` : '';
-  // WH-SUM — warehouse totals under the header: unit total for everyone as
-  // the "remaining / opening" pair (TV-4/TV-4b "59B=255t / 80B=340t" on
-  // TV-1 warehouses, TV-5 bales-only "59B / 80B" elsewhere); stock value
+  // WH-SUM — warehouse totals under the header: unit total for everyone.
+  // TV-6: intake warehouses (any GRN-attributed or legacy opening) keep the
+  // "remaining / opening" pair (TV-4/TV-4b "59B=255t / 80B=340t" on TV-1
+  // warehouses, TV-5 bales-only "59B / 80B" elsewhere); purely transfer-fed
+  // warehouses show remaining-only ("59B = 255t" / "59B"). Stock value
   // admin-only (unchanged: computed from AVAILABLE rows only).
   const totalBalesAll = avail.reduce((s, a) => s + a.availPkgs, 0);
   const totalThansAll = avail.reduce((s, a) => s + (a.availThans || 0), 0);
   const remTotals = { bales: totalBalesAll, thans: totalThansAll };
-  let summaryNote = useThans
-    ? `\n📊 Total: ${unitDisplayService.formatRemainingOpening(remTotals, opening.totals)}`
-    : `\n📊 Total: ${unitDisplayService.formatRemainingOpeningBales(remTotals, opening.totals)}`;
+  let summaryNote;
+  if (model.hasOpening) {
+    summaryNote = useThans
+      ? `\n📊 Total: ${unitDisplayService.formatRemainingOpening(remTotals, opening.totals)}`
+      : `\n📊 Total: ${unitDisplayService.formatRemainingOpeningBales(remTotals, opening.totals)}`;
+  } else {
+    summaryNote = useThans
+      ? `\n📊 Total: ${unitDisplayService.formatBalesThans(remTotals)}`
+      : `\n📊 Total: ${remTotals.bales}B`;
+  }
   if (config.access.adminIds.includes(String(userId))) {
     const totalValue = avail.reduce((s, a) => s + (a.availValue || 0), 0);
     summaryNote += ` · 💰 ${fmtMoneyShort(totalValue)}`;
@@ -5588,9 +5629,10 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
     ? ` · ${session.category === SUPPLY_OTHERS_CATEGORY ? '📦' : designCategoriesRepo.iconFor(catLabel)} ${catLabel.replace(/[*_`[\]]/g, '\\$&')}`
     : '';
   // TV-4/TV-5 — legend under "Select design:" explaining the paired counts;
-  // shown for ALL warehouses. TV-4b: overflowing labels park their
-  // pair here in the body (wraps, never truncates), one line per design.
-  const legendNote = '\n_(remaining / opening)_';
+  // TV-6: only where a pair shows (intake warehouses). TV-4b: overflowing
+  // labels park their pair here in the body (wraps, never truncates), one
+  // line per design.
+  const legendNote = model.hasOpening ? '\n_(remaining / opening)_' : '';
   const overflowNote = overflowLines.length ? `\n${overflowLines.join('\n')}` : '';
   const sent = await editOrSend(bot, chatId, resolvedMsgId,
     `📦 *Warehouse: ${warehouse}*${catNote}${summaryNote}${cartNote}\n\nSelect design:${pageNote}${legendNote}${overflowNote}`, {
@@ -5604,6 +5646,34 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   }
 }
 
+/**
+ * TV-6 — incoming in-transit card for a warehouse: bales dispatched TO it
+ * (status in_transit; transfer dispatch stamps the destination on the row)
+ * listed by design, scoped to the session's container/category slice.
+ * Display-only — receiving is still confirmed via the transfer flow.
+ */
+async function showTransitList(bot, chatId, userId, warehouse) {
+  const session = sessionStore.get(userId);
+  const useThans = await unitDisplayService.isThanVisibilityWarehouse(warehouse);
+  const model = aggregateStockModel(await inventoryRepository.getAll(), {
+    warehouse,
+    arrivalBatch: session && session.arrivalBatch,
+    unlabelledBatch: inventoryRepository.UNLABELLED_BATCH,
+    designMatch: (d) => matchesSupplyCategory(d, session && session.category),
+  });
+  const entries = Array.from(model.incoming.designs, ([design, counts]) => ({ design, ...counts }))
+    .sort((a, b) => cmpNumericAware(a.design, b.design));
+  const fmtIn = (c) => (useThans ? unitDisplayService.formatBalesThans(c) : `${c.bales}B`);
+  const body = entries.length
+    ? entries.map((e) => `🧵 ${String(e.design).replace(/[*_`[\]]/g, '\\$&')} — ${fmtIn(e)} (dispatched, awaiting receipt)`).join('\n')
+    : '_Nothing in transit right now._';
+  await editOrSendAnchored(bot, chatId, userId,
+    `🚚 *In transit → ${warehouse}*\n\n${body}\n\n_Receiving is confirmed via the transfer flow._`, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [[{ text: '⬅️ Back to designs', callback_data: 'srf_back:design' }]] },
+  });
+}
+
 async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   const session = sessionStore.get(userId);
   const cart = session ? session.cart || [] : [];
@@ -5615,25 +5685,28 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   // stale once we render a new shade picker.
   await clearDesignPreview(bot, chatId, userId);
 
-  // TV-1/TV-3/TV-4/TV-5 — EVERY warehouse shows shade availability as
-  // "remaining / opening" (TV-4b compact) in its own display unit:
-  // than-visible "1 - cream (2B=5t / 4B=10t)", bales-only "1 - cream (2B / 4B)".
-  // Opening = every Inventory row ever for this design in the same
-  // warehouse/container/category slice, ANY status. Fully-sold shades stay
-  // on screen as "(0B=0t / NB=Mt)" / "(0B / NB)" info buttons (their taps
-  // land on the sold-out guard in showQuantityPicker, never an addable
-  // line), which also keeps fully-sold DESIGNS renderable instead of
-  // dead-ending. Display-only: callback payloads, quantity picking and the
-  // cart stay in bales.
+  // TV-1/TV-3/TV-4/TV-5 — shade availability renders in the warehouse's own
+  // display unit. TV-6 (GRN-anchored): the "remaining / opening" pair
+  // (TV-4b compact — than-visible "1 - cream (2B=5t / 4B=10t)", bales-only
+  // "1 - cream (2B / 4B)") shows only for shades with opening HERE, i.e.
+  // GRN-received at this warehouse (bale→grnId→GRN.warehouse) or legacy
+  // rows (no grnId) currently here; in_transit rows are excluded. Shades
+  // with no opening (transferred-in stock) list remaining-only. Fully-sold
+  // shades stay on screen as "(0B=0t / NB=Mt)" / "(0B / NB)" info buttons
+  // (their taps land on the sold-out guard in showQuantityPicker, never an
+  // addable line), which also keeps fully-sold DESIGNS renderable instead
+  // of dead-ending. Display-only: callback payloads, quantity picking and
+  // the cart stay in bales.
   const useThans = await unitDisplayService.isThanVisibilityWarehouse(warehouse);
-  const openingAll = aggregateOpeningStock(await inventoryRepository.getAll(), {
+  const model = aggregateStockModel(await inventoryRepository.getAll(), {
     warehouse,
     arrivalBatch: session && session.arrivalBatch,
     unlabelledBatch: inventoryRepository.UNLABELLED_BATCH,
     designMatch: (d) => matchesSupplyCategory(d, session && session.category),
+    grnWarehouseById: await loadGrnWarehouseMap(),
   });
   // Map<shadeKey, {bales, thans}> for this design
-  const openShades = openingAll.shades.get(String(design)) || new Map();
+  const openShades = model.opening.shades.get(String(design)) || new Map();
   const inStock = new Set(shades.map((s) => String(s.shade)));
   const soldOutShades = Array.from(openShades.keys())
     .filter((sh) => !inStock.has(sh))
@@ -5693,7 +5766,9 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   const listedShades = [...shades, ...soldOutShades];
   const shadeTag = (s) => {
     const rem = { bales: s.availPkgs, thans: s.availThans || 0 };
-    const open = openShades.get(String(s.shade)) || rem;
+    const open = openShades.get(String(s.shade));
+    // TV-6 — no opening attribution here → remaining-only (no pair).
+    if (!open) return useThans ? unitDisplayService.formatBalesThans(rem) : `${rem.bales}B`;
     return useThans
       ? unitDisplayService.formatRemainingOpening(rem, open)
       : unitDisplayService.formatRemainingOpeningBales(rem, open);
@@ -9331,6 +9406,18 @@ async function handleCallbackQuery(bot, callbackQuery) {
       sessionStore.set(uid, session);
       await showDesignsForWarehouse(bot, chatId, uid, session.warehouse);
     }
+
+  /* ─── SUPPLY REQUEST FLOW: IN-TRANSIT CARD (TV-6) ─── */
+  } else if (data.startsWith('srf_tl:')) {
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'supply_req_flow') {
+      await bot.sendMessage(chatId, '⚠️ Session expired. Open 📦 Supply Request again.');
+      return;
+    }
+    await showTransitList(bot, chatId, uid, session.warehouse);
 
   /* ─── SUPPLY REQUEST FLOW: BACK NAVIGATION ─── */
   // One callback prefix `srf_back:<target>` covers every step. Each

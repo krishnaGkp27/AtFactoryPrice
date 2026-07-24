@@ -9,10 +9,15 @@
  * - unit total for everyone as the "remaining / opening" pair (TV-4/TV-5):
  *   TV-1 warehouses pair both counts ("3B=9t / 4B=12t", TV-4b compact),
  *   every other warehouse pairs the bale figures only ("3B / 4B", TV-5)
+ * - TV-6 (GRN-anchored): opening@W = rows GRN-received at W (grnId →
+ *   GRN.warehouse) plus legacy rows (no grnId) currently at W; in_transit
+ *   rows never count. A warehouse with NO opening at all (purely
+ *   transfer-fed) shows a remaining-only Total — no pair, no legend.
  * - stock value (yards × price of the listed AVAILABLE bales) only for admins
  *
  * Fixture: 3 bales / 9 thans available, every than 50 yd @ 100 → value
  * 45,000; plus one SOLD bale (3 thans) → opening 4B = 12t, value unchanged.
+ * All rows legacy (no grnId) unless a test says otherwise.
  */
 
 process.env.ADMIN_IDS = '777';
@@ -36,6 +41,7 @@ const inventoryRepository = require(path.join(SRC, 'repositories/inventoryReposi
 const productTypesRepo = require(path.join(SRC, 'repositories/productTypesRepository'));
 const designAssetsRepo = require(path.join(SRC, 'repositories/designAssetsRepository'));
 const settingsRepository = require(path.join(SRC, 'repositories/settingsRepository'));
+const goodsReceiptsRepository = require(path.join(SRC, 'repositories/goodsReceiptsRepository'));
 const unitDisplayService = require(path.join(SRC, 'services/unitDisplayService'));
 
 productTypesRepo.getLabels = async () => ({
@@ -43,6 +49,9 @@ productTypesRepo.getLabels = async () => ({
 });
 designAssetsRepo.findActive = async () => null;
 settingsRepository.getAll = async () => ({ THAN_VISIBILITY_WAREHOUSES: 'Kano office' });
+// TV-6 — no GRN headers by default: fixture rows attribute via the legacy
+// (current-warehouse) fallback. GRN-anchored tests override this.
+goodsReceiptsRepository.getAll = async () => [];
 unitDisplayService.invalidateCache();
 
 function fixtureRows(warehouse) {
@@ -108,4 +117,46 @@ test('Lagos (bales-only): sold bale counts in OPENING only; legend + value stay 
   assert.ok(!/=\d+t/.test(text), `no than figures on a bales-only warehouse, got: ${text}`);
   assert.match(text, /_\(remaining \/ opening\)_/, `legend shown on bales-only warehouse too, got: ${text}`);
   assert.match(text, /45,000/, `admin value still computed from AVAILABLE rows only, got: ${text}`);
+});
+
+test('TV-6: in_transit rows stay out of the header opening; the 🚚 button appears instead', async () => {
+  inventoryRepository.getAll = async () => [
+    ...fixtureRows('Lagos'),
+    // A bale dispatched TO Lagos, not yet received: 1 bale / 2 thans.
+    ...Array.from({ length: 2 }, () => ({
+      design: '9100', shade: 'gold', warehouse: 'Lagos', status: 'in_transit', packageNo: 'P9',
+      productType: 'fabric', yards: 50, pricePerYard: 100,
+    })),
+  ];
+  seed('777', 'Lagos');
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_back:design', 777));
+  const text = headerText(bot);
+  assert.match(text, /Total: 3B \/ 4B/, `in_transit bale in neither remaining nor opening, got: ${text}`);
+  assert.match(text, /45,000/, `value unchanged (AVAILABLE rows only), got: ${text}`);
+  const kb = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method)
+    && c.args.opts && c.args.opts.reply_markup && /Warehouse:/.test(c.args.text || ''));
+  const rows = kb[kb.length - 1].args.opts.reply_markup.inline_keyboard;
+  assert.equal(rows[0][0].callback_data, 'srf_tl:show', `🚚 button at the top, got: ${rows[0][0].callback_data}`);
+  assert.equal(rows[0][0].text, '🚚 In transit (1B)', `bales-only transit label, got: ${rows[0][0].text}`);
+});
+
+test('TV-6: purely transfer-fed warehouse header is remaining-only — no pair, no legend, value intact', async () => {
+  // All Lagos stock was GRN-received at Kano office, then transferred here.
+  inventoryRepository.getAll = async () => fixtureRows('Lagos')
+    .filter((r) => r.status === 'available')
+    .map((r) => ({ ...r, grnId: 'GRN-K' }));
+  goodsReceiptsRepository.getAll = async () => [{ grn_id: 'GRN-K', warehouse: 'Kano office' }];
+  try {
+    seed('777', 'Lagos');
+    const bot = createFakeBot();
+    await controller.handleCallbackQuery(bot, cb('srf_back:design', 777));
+    const text = headerText(bot);
+    assert.match(text, /Total: 3B(?![=\d])/, `remaining-only total, got: ${text}`);
+    assert.ok(!/Total: 3B \//.test(text), `no opening pair on a transfer-fed warehouse, got: ${text}`);
+    assert.ok(!/remaining \/ opening/.test(text), `no legend without a pair, got: ${text}`);
+    assert.match(text, /45,000/, `admin value unchanged, got: ${text}`);
+  } finally {
+    goodsReceiptsRepository.getAll = async () => [];
+  }
 });
