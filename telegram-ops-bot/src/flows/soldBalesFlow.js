@@ -43,6 +43,7 @@ const SESSION_TYPE   = 'sold_bales_flow';
 const TILES_PER_ROW  = 2;
 const CUSTOMERS_TOP  = 16;   // first page of the customer list
 const MAX_DETAIL_BALES = 40; // safety cap on a single detail card
+const DATES_PER_PAGE = 8;    // CSUP-1 approved layout: 8 day-tiles per page
 
 /* ───────────────────────────── helpers ───────────────────────────── */
 
@@ -91,7 +92,7 @@ const render = makeRenderer();
  */
 async function start(bot, chatId, userId, messageId) {
   if (!auth.isAdmin(userId) && !auth.isEmployee(userId)) {
-    await bot.sendMessage(chatId, '🔎 Sold Bales Lookup is available to employees and admins.');
+    await bot.sendMessage(chatId, '📒 Customer Supplies is available to employees and admins.');
     return;
   }
   sessionStore.set(userId, {
@@ -140,7 +141,7 @@ async function renderCustomerPicker(bot, chatId, userId) {
   if (!customers.length) {
     sessionStore.clear(userId);
     await render(bot, chatId, userId,
-      '🔎 *Sold Bales Lookup*\n\n_No sold bales recorded yet._',
+      '📒 *Customer Supplies*\n\n_No supplies recorded yet._',
       [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
     return;
   }
@@ -159,7 +160,7 @@ async function renderCustomerPicker(bot, chatId, userId) {
   }
   rows.push(closeRow());
   await render(bot, chatId, userId,
-    `🔎 *Sold Bales Lookup*\n\nPick a customer to see their purchase dates`
+    `📒 *Customer Supplies*\n\nPick a customer to see their supply history`
     + (showAll ? ` (all ${customers.length}):` : ` (top ${shown.length}):`),
     rows);
 }
@@ -197,16 +198,32 @@ async function renderDatePicker(bot, chatId, userId) {
     return;
   }
   session._dates = dates.map((d) => d.date);
+  const page = Math.max(0, Math.min(session._datePage || 0, Math.ceil(dates.length / DATES_PER_PAGE) - 1));
+  session._datePage = page;
   sessionStore.set(userId, session);
-  // One date per row — the summary makes each tile wide.
-  const rows = dates.map((d, i) => ([{
-    text: `📅 ${prettyDate(d.date)} · ${d.bales}b · ${d.thans}t · ${fmtQty(d.yards)}y`,
-    callback_data: `sbl:d:${i}`,
+  // CSUP-1 (owner-approved layout): summary header + one wide tile per day,
+  // newest first, "DD-MMM-YYYY — N bales (Y yds)", 8 per page.
+  const totBales = dates.reduce((s, d) => s + d.bales, 0);
+  const totYards = dates.reduce((s, d) => s + d.yards, 0);
+  const first = dates[dates.length - 1];
+  const slice = dates.slice(page * DATES_PER_PAGE, (page + 1) * DATES_PER_PAGE);
+  const rows = slice.map((d, i) => ([{
+    text: `${prettyDate(d.date)} — ${d.bales} ${d.bales === 1 ? 'bale' : 'bales'} (${d.yards ? `${fmtQty(d.yards)} yds` : '— yds'})`,
+    callback_data: `sbl:d:${page * DATES_PER_PAGE + i}`,
   }]));
-  rows.push(backRow('⬅ Customers'));
+  const nav = [];
+  if ((page + 1) * DATES_PER_PAGE < dates.length) {
+    nav.push({ text: `⬇ Older (${dates.length - (page + 1) * DATES_PER_PAGE} more)`, callback_data: `sbl:pg:${page + 1}` });
+  }
+  if (page > 0) nav.push({ text: '⬆ Newer', callback_data: `sbl:pg:${page - 1}` });
+  if (nav.length) rows.push(nav);
+  rows.push(backRow('👤 Change customer'));
   rows.push(closeRow());
   await render(bot, chatId, userId,
-    `🔎 *${session.customer}*\n\nPick a date to see the bales sold:`, rows);
+    `📒 *Supplies — ${session.customer}*\n\n`
+    + `Total: *${totBales}* bales · *${fmtQty(totYards)}* yds\n`
+    + `across *${dates.length}* supply day${dates.length === 1 ? '' : 's'} · first: ${prettyDate(first.date)}\n\n`
+    + `_Tap a date for the day's detail._`, rows);
 }
 
 /* ───────────────────────────── detail card ───────────────────────────── */
@@ -340,6 +357,15 @@ async function handleCallback(bot, query) {
   }
 
   if (data === 'sbl:back') { await stepBack(bot, chatId, userId); return true; }
+
+  if (data.startsWith('sbl:pg:')) {
+    const session = sessionStore.get(userId);
+    if (!session || session.type !== SESSION_TYPE) return true;
+    session._datePage = Math.max(0, parseInt(data.slice('sbl:pg:'.length), 10) || 0);
+    sessionStore.set(userId, session);
+    await renderDatePicker(bot, chatId, userId);
+    return true;
+  }
 
   if (data === 'sbl:all') {
     session.showAllCustomers = true;

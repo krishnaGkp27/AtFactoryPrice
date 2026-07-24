@@ -205,7 +205,7 @@ const ACTIVITIES = [
   { code: 'supply_details',        label: 'Supply Details',            icon: '📦', callback: 'act:supply_details',     hub: 'reporting' },
   // SBL-1 — sold-bale drill-down: customer → date → bale/than detail.
   // Read-only; sale price/value gated by pricingService.canSeeSalePrice.
-  { code: 'sold_bales_lookup',     label: 'Sold Bales Lookup',         icon: '🔎', callback: 'act:sold_bales_lookup',  hub: 'reporting' },
+  { code: 'sold_bales_lookup',     label: 'Customer Supplies',         icon: '📒', callback: 'act:sold_bales_lookup',  hub: 'reporting' },
   // ATT-RPT-1 — read-only attendance report (today + window stats). Admin-only for now.
   // ANA-1a — magic-link web login (admins + managers; role-gated in the
   // act: case). Mints a single-use link into the ops dashboard.

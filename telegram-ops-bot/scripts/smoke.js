@@ -7078,9 +7078,9 @@ async function runS41() {
   const dateBtns = flatten(captured.rows);
   const d0 = dateBtns.find((b) => b.callback_data === 'sbl:d:0');
   const d1 = dateBtns.find((b) => b.callback_data === 'sbl:d:1');
-  if (d0 && /25 Jun 2026/.test(d0.text) && /2b · 3t/.test(d0.text)
-      && d1 && /20 Jun 2026/.test(d1.text)) {
-    pass('S41.2 date list: newest-first dates with bale/than summary');
+  if (d0 && /25 Jun 2026 — 2 bales \(75 yds\)/.test(d0.text)
+      && d1 && /20 Jun 2026 — 1 bale \(30 yds\)/.test(d1.text)) {
+    pass('S41.2 date list: newest-first days, CSUP-1 "N bales (Y yds)" tiles');
   } else fail('S41.2', JSON.stringify(dateBtns));
 
   // ---- S41.3 — detail card (price-visible role): bales, thans, ₦ totals ----
