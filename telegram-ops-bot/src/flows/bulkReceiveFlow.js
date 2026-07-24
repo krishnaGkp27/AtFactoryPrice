@@ -153,6 +153,7 @@ async function showPoStep(bot, chatId, userId) {
   }
   rows.push([{ text: '⏭ Skip (no PO)', callback_data: 'br:po_skip' }]);
   rows.push(cancelRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   const prompt = openPOs.length
     ? 'Link this upload to an open *Procurement Order* (optional):'
     : '_No open Procurement Orders._ This upload will be a standalone receipt.';

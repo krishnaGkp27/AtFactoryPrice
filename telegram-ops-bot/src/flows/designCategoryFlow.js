@@ -92,7 +92,8 @@ async function showDesignPicker(bot, chatId, userId) {
   const raw = await inventoryRepository.getDistinctDesigns();
   const designs = [...new Set(raw.map((d) => (d.design || '').trim()).filter(Boolean))].sort();
   if (!designs.length) {
-    await render(bot, chatId, userId, '⚠️ No designs found in inventory.', [cancelRow()]);
+    await render(bot, chatId, userId, '⚠️ No designs found in inventory.',
+      [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]);
     return;
   }
   let catMap = new Map();
@@ -120,6 +121,7 @@ async function showDesignPicker(bot, chatId, userId) {
     rows.push(pager);
   }
   rows.push(cancelRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   await render(bot, chatId, userId,
     'Pick the *design* to categorize.\n_Chips already showing a category can be re-mapped._',
     rows);

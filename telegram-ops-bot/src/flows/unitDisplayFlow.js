@@ -85,6 +85,7 @@ async function renderWarehousePicker(bot, chatId, userId) {
     return [{ text: `${isThans ? '🧵' : '📦'} ${w} — ${isThans ? 'thans' : 'bales'}`, callback_data: `udf:wh:${i}` }];
   });
   rows.push(closeRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   await render(bot, chatId, userId,
     '📐 *Warehouse Display Units*\n\nHow stock counts appear on supply screens.\nTap a warehouse to switch its display unit:',
     rows);

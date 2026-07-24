@@ -174,6 +174,7 @@ async function renderCustomerPicker(bot, chatId, userId) {
     rows.push([{ text: `⬇ Show all (${customers.length})`, callback_data: 'sbl:all' }]);
   }
   rows.push(closeRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   await render(bot, chatId, userId,
     `📒 *Customer Supplies*\n\nPick a customer to see their supply history`
     + (showAll ? ` (all ${customers.length}):` : ` (top ${shown.length}):`),

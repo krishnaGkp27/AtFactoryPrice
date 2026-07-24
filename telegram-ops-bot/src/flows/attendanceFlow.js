@@ -158,6 +158,7 @@ async function start(bot, chatId, userId, messageId = null) {
     rows.push(row);
   }
   rows.push([{ text: '❌ Cancel', callback_data: 'atd:cancel' }]);
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
 
   await render(bot, chatId, userId,
     '📍 *Mark Attendance*\n\nWhere are you marking from today?\n\n_Tap one of the locations below._',

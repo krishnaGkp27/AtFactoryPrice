@@ -143,6 +143,7 @@ async function showWarehouseStep(bot, chatId, userId) {
   }
   rows.push([{ text: '➕ New warehouse', callback_data: 'gr:wh_new' }]);
   rows.push(cancelRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   const prompt = warehouses.length
     ? 'Select the *receiving warehouse*:'
     : '_No warehouses registered yet._ Tap ➕ to register one (dual-admin approval).';

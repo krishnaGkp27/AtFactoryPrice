@@ -244,6 +244,7 @@ async function renderContainerPicker(bot, chatId, userId) {
     rows.push(row);
   }
   rows.push(cancelRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   await render(bot, chatId, userId,
     '🧵 *Bundle Sale — pick container*\n\n🚢 Select container (arrival batch):',
     rows,

@@ -207,6 +207,7 @@ async function showDays(bot, chatId, userId) {
   }
   rows.push([{ text: '📆 Older date — calendar', callback_data: `${NS}cal:${lagosISO(0).slice(0, 7)}` }]);
   rows.push(closeRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   await render(bot, chatId, userId,
     `📈 *${tab === 'sales' ? 'Sales' : 'Supplies'} Browser*\n\nTap a day to open its list:`, rows);
 }
@@ -351,6 +352,7 @@ async function showCustomers(bot, chatId, userId) {
   const shown = customers.slice(0, CUSTOMERS_CAP);
   rows.push(...chunk(shown.map((name, i) => ({ text: `👤 ${esc(name)}`, callback_data: `${NS}cu:${i}` })), 2));
   rows.push(closeRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   let text = '📈 *Customer Browser*\n\nTap a customer (most recent buyer first):';
   if (!customers.length) text = '📈 *Customer Browser*\n\n_No sale transactions recorded yet._';
   else if (customers.length > CUSTOMERS_CAP) text += `\n_Showing top ${CUSTOMERS_CAP} of ${customers.length}._`;

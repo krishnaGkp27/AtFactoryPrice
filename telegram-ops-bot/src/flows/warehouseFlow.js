@@ -198,7 +198,7 @@ async function start(bot, chatId, userId, messageId) {
     + '• Letters, digits, spaces, hyphens only\n'
     + '• Spaces are collapsed, names Title-Cased\n\n'
     + '_Will be queued for 2nd-admin approval — your submit cannot self-approve._',
-    [cancelRow()],
+    [cancelRow(), [{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]],
   );
 }
 

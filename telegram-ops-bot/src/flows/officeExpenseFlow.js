@@ -121,6 +121,7 @@ async function renderTitlePicker(bot, chatId, userId) {
   rows.push([{ text: '✏️ Other (type title)', callback_data: 'ofex:other' }]);
   if (session.items.length) rows.push([{ text: '✅ Submit batch', callback_data: 'ofex:submit' }]);
   rows.push(cancelRow());
+  rows.push(menuRow());
 
   const lines = [];
   lines.push('💸 *Office Expenses*');

@@ -71,7 +71,7 @@ async function showMarketers(bot, chatId, userId) {
   if (!marketers.length) {
     await render(bot, chatId, userId,
       '⚠️ No active users with role *marketer* yet.\n\n_Onboard one first (Add Employee with role marketer, or set role=marketer on their Users row), then come back._',
-      [cancelRow()]);
+      [cancelRow(), [{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]);
     return;
   }
 
@@ -88,6 +88,7 @@ async function showMarketers(bot, chatId, userId) {
   });
   const rows = chunk(chips, 2);
   rows.push(cancelRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   await render(bot, chatId, userId,
     'Pick the *marketer*.\n_(n) = designs already allocated._',
     rows);

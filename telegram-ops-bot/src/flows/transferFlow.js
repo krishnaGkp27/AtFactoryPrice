@@ -95,6 +95,7 @@ async function showSource(bot, chatId, userId) {
   session._whs = whs; session.step = 'source'; sessionStore.set(userId, session);
   const rows = chunk(whs.map((w, i) => ({ text: `📦 ${w}`, callback_data: `trf:wh:${i}` })), 2);
   rows.push(cancelRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   await render(bot, chatId, userId, '🚚 *Transfer Stock*\n\nFrom which warehouse?', rows);
 }
 
@@ -1298,7 +1299,8 @@ async function startFromText(bot, chatId, userId, rawText) {
     + (skipLines.length ? `\n${skipLines.join('\n')}\n` : '')
     + destNote
     + '\n\n_This sends an ORDER — the dispatcher logs the actual bales when dispatching._\n\nContinue with taps:',
-    [[{ text: dest ? '➡ Continue' : '➡ Pick destination', callback_data: 'trf:pl:go' }], cancelRow()]);
+    [[{ text: dest ? '➡ Continue' : '➡ Pick destination', callback_data: 'trf:pl:go' }], cancelRow(),
+      [{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]);
   return true;
 }
 

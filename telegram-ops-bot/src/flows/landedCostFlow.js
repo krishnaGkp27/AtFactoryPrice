@@ -123,6 +123,7 @@ async function renderGrnPicker(bot, chatId, userId) {
     rows.push([{ text: `… ${provisional.length - 10} more (refine via Receive Goods view)`, callback_data: 'lcost:noop' }]);
   }
   rows.push(cancelRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   await render(bot, chatId, userId,
     `💵 *Finalize Landed Cost*\n\n*${provisional.length}* GRN(s) awaiting cost finalisation. Pick one:`,
     rows,

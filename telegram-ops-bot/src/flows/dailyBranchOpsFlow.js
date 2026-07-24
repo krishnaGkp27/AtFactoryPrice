@@ -123,6 +123,7 @@ async function renderCameraStep(bot, chatId, userId) {
         { text: '⚠️ Issue',   callback_data: 'bops:cam:issue' },
       ],
       cancelRow(),
+      menuRow(),
     ],
   );
 }

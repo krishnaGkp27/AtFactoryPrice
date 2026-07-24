@@ -280,6 +280,7 @@ async function renderPendingPickStep(bot, chatId, userId) {
   if (nav.length) rows.push(nav);
   rows.push([{ text: '⌨️ Enter Telegram ID manually', callback_data: 'usr:manual' }]);
   rows.push(cancelRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   sessionStore.set(userId, session);
 
   const total = candidates.length;
@@ -303,7 +304,7 @@ async function renderTelegramIdStep(bot, chatId, userId) {
   // otherwise this is the genuine first step and Cancel is the only escape.
   const footer = (session && session.data && session.data.pickAvailable)
     ? [backCancelRow('usr:back:pick')]
-    : [cancelRow()];
+    : [cancelRow(), [{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]];
   await render(bot, chatId, userId,
     '➕ *Add Employee*\n\n_Step 1 of 7 — Telegram ID_\n\n'
     + 'Type the new user\'s *numeric Telegram ID* (reply in chat).\n\n'

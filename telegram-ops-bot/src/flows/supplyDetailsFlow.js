@@ -118,6 +118,7 @@ async function renderWarehouses(bot, chatId, userId) {
   sessionStore.set(userId, session);
   const rows = whs.map((w, i) => ([{ text: `🏭 ${w}`, callback_data: `sdd:w:${i}` }]));
   rows.push(closeRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   await render(bot, chatId, userId,
     '📦 *Supply Details*\n\n_Pick a warehouse to see its supply dates._', rows);
 }

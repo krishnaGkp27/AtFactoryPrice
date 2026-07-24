@@ -1411,11 +1411,13 @@ async function sendSampleStatusReport(bot, chatId, options = {}) {
   }
   if (!samples.length) {
     const hint = daysBack ? ` in the last ${daysBack} days` : '';
-    await bot.sendMessage(chatId, `No active samples found${hint}.`);
+    await bot.sendMessage(chatId, `No active samples found${hint}.`,
+      { reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] } });
     return;
   }
   const report = buildSampleStatusReport(samples, title);
-  await sendLong(bot, chatId, report, { parse_mode: 'Markdown' });
+  await sendLong(bot, chatId, report,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] } });
 }
 
 /* ─── Give Sample Button Flow ─────────────────────────────────────────────
@@ -2317,10 +2319,11 @@ async function showCustomerPickerForReport(bot, chatId, reportType, showAll = fa
     .sort((a, b) => a.name.localeCompare(b.name));
 
   if (!active.length) {
+    const emptyOpts = { reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] } };
     if (messageId) {
-      await bot.editMessageText('No active customers found.', { chat_id: chatId, message_id: messageId }).catch(() => {});
+      await bot.editMessageText('No active customers found.', { chat_id: chatId, message_id: messageId, ...emptyOpts }).catch(() => {});
     } else {
-      await bot.sendMessage(chatId, 'No active customers found.');
+      await bot.sendMessage(chatId, 'No active customers found.', emptyOpts);
     }
     return;
   }
@@ -2338,6 +2341,7 @@ async function showCustomerPickerForReport(bot, chatId, reportType, showAll = fa
   if (!showAll && active.length > MAX_VISIBLE) {
     rows.push([{ text: `📋 See All (${active.length})`, callback_data: `rpt:${reportType}:__more__` }]);
   }
+  rows.push(menuNav.backToMenuRow());
 
   const text = `${meta.icon} *${meta.label}*\n\n${meta.prompt}`;
   const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
@@ -2396,10 +2400,11 @@ async function showCustomerDetailsPicker(bot, chatId, userId, messageId = null, 
 
   if (!active.length) {
     const msg = 'No active customers found.';
+    const emptyOpts = { reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] } };
     if (messageId) {
-      await editOrSend(bot, chatId, messageId, msg, {});
+      await editOrSend(bot, chatId, messageId, msg, emptyOpts);
     } else {
-      await bot.sendMessage(chatId, msg);
+      await bot.sendMessage(chatId, msg, emptyOpts);
     }
     return;
   }
@@ -2473,9 +2478,12 @@ async function showDesignPickerForReport(bot, chatId, prefix, showAll = false, m
   if (!designs.length) {
     const msg = 'No designs found in inventory.';
     if (messageId) {
-      await bot.editMessageText(msg, { chat_id: chatId, message_id: messageId }).catch(() => {});
+      await bot.editMessageText(msg, {
+        chat_id: chatId, message_id: messageId,
+        reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] },
+      }).catch(() => {});
     } else {
-      await bot.sendMessage(chatId, msg);
+      await bot.sendMessage(chatId, msg, { reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] } });
     }
     return;
   }
@@ -2682,6 +2690,7 @@ async function renderStockValueList(bot, chatId, userId, page) {
   if (nav.length) rows.push(nav);
   rows.push([{ text: '🔄 Refresh', callback_data: `svr:pg:${safePage}` }]);
   rows.push([{ text: '❌ Close', callback_data: 'svr:cancel' }]);
+  rows.push(menuNav.backToMenuRow());
 
   session.page = safePage;
   sessionStore.set(userId, session);
@@ -2780,6 +2789,7 @@ async function showMarkDeliveredPicker(bot, chatId, userId) {
     rows.push([{ text: `✅ ${o.order_id} — ${o.customer}`, callback_data: `mdo:${o.order_id}` }]);
   }
   if (mine.length > MAX) header += `\n_Showing first ${MAX} of ${mine.length}_`;
+  rows.push(menuNav.backToMenuRow());
   await bot.sendMessage(chatId, header, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
@@ -2991,6 +3001,7 @@ async function showReceiptCustomerPicker(bot, chatId, userId, showAll = false, m
   }
   rows.push([{ text: '➕ Register New Customer', callback_data: 'rcc:__new__' }]);
   rows.push([{ text: '❌ Cancel', callback_data: 'rccanc:0' }]);
+  rows.push(menuNav.backToMenuRow());
 
   const label = showAll ? 'All customers' : 'Top customers (by volume)';
   const text = `🧾 *Upload Payment Receipt*\n\nSelect customer — ${label}:`;
@@ -4670,6 +4681,7 @@ async function handleMessage(bot, msg) {
             [{ text: '📦 Design / Product wise', callback_data: 'sd:design' }],
             [{ text: '👤 Customer wise', callback_data: 'sd:customer' }],
             [{ text: '🏭 Warehouse wise', callback_data: 'sd:warehouse' }],
+            menuNav.backToMenuRow(),
           ] },
         });
         return;
@@ -6547,7 +6559,8 @@ async function startOrderFlow(bot, chatId, userId) {
   const designs = await inventoryRepository.getDistinctDesigns();
   const designNums = [...new Set(designs.map((d) => d.design.trim()).filter(Boolean))].sort();
   if (!designNums.length) {
-    await bot.sendMessage(chatId, 'No designs available in inventory.');
+    await bot.sendMessage(chatId, 'No designs available in inventory.',
+      { reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] } });
     return;
   }
   sessionStore.set(userId, { type: 'order_flow', step: 'design', createdBy: userId });
@@ -6561,6 +6574,7 @@ async function startOrderFlow(bot, chatId, userId) {
   }
   if (rows.length > 30) rows.splice(30);
   rows.push([{ text: '❌ Cancel', callback_data: 'ocanc:1' }]);
+  rows.push(menuNav.backToMenuRow());
   await bot.sendMessage(chatId, '📦 *Create Supply Order*\n\nSelect a design:', { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
@@ -6863,6 +6877,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
       reply_markup: { inline_keyboard: [
         [{ text: '📦 Design wise', callback_data: 'srg:design' }],
         [{ text: '👤 Customer wise', callback_data: 'srg:customer' }],
+        menuNav.backToMenuRow(),
       ] },
     });
 
@@ -7818,6 +7833,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [
           [{ text: '📦 Summary', callback_data: 'sdv:design_summary' }, { text: '📅 Date-wise', callback_data: 'sdv:design_datewise' }],
+          menuNav.backToMenuRow(),
         ] },
       });
       return;

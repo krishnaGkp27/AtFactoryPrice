@@ -205,7 +205,8 @@ async function start(bot, chatId, userId) {
   let containers = [];
   try { containers = await inventoryRepository.getArrivalBatches(); } catch (_) {}
   if (!containers.length) {
-    await render(bot, chatId, userId, '⚠️ No available stock to sell.', [cancelRow()]);
+    await render(bot, chatId, userId, '⚠️ No available stock to sell.',
+      [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
     return;
   }
   s._containers = containers.map((c) => c.batch);
@@ -217,6 +218,7 @@ async function start(bot, chatId, userId) {
     rows.push(row);
   }
   rows.push(cancelRow());
+  rows.push([{ text: '🏠 Menu', callback_data: 'act:__back__' }]);
   await render(bot, chatId, userId, `${header(s)}\n\nSelect container (arrival batch):`, rows);
 }
 

@@ -146,6 +146,7 @@ async function renderPickStep(bot, chatId, userId) {
     rows.push(nav);
   }
   rows.push(cancelRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   await render(bot, chatId, userId,
     '🎚 *Change Role*\n\n_Step 1 of 2 — pick the user whose role you want to change._',
     rows,

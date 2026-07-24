@@ -78,6 +78,7 @@ async function renderMenu(bot, chatId, userId) {
     rows.push([{ text: `${s.label} — ${fmtState(hours)}`, callback_data: `${NS}s:${i}` }]);
   }
   rows.push([{ text: '❌ Close', callback_data: `${NS}close` }]);
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   await render(bot, chatId, userId,
     '⏰ *Reminder Controls*\n\n'
     + '*Admin nudges* cover pending-approval sweeps, sample follow-ups, customer follow-ups and the weekly cold-customer alert.\n'

@@ -263,6 +263,7 @@ async function renderLocationPicker(bot, chatId, userId) {
   }
   const rows = locations.map((l, i) => ([{ text: `📍 ${l} (${byLoc.get(l).length} warehouse${byLoc.get(l).length > 1 ? 's' : ''})`, callback_data: `wai:loc:${i}` }]));
   rows.push(closeRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   await render(bot, chatId, userId, '🔍 Warehouse Audit\n\nSelect the location:', rows);
 }
 

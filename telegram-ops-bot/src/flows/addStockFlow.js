@@ -506,6 +506,7 @@ async function _renderWarehousePicker(bot, chatId, userId) {
   }
   rows.push([{ text: '➕ New warehouse', callback_data: 'addstock:wh:NEW' }]);
   rows.push([{ text: '❌ Cancel',        callback_data: 'addstock:cancel' }]);
+  rows.push([{ text: '🏠 Back to menu',  callback_data: 'act:__back__' }]);
 
   _setSession(userId, { type: SESSION_AWAIT_WAREHOUSE, warehouses });
   const text = '🏭 *Add stock — which warehouse?*\n\n' +
