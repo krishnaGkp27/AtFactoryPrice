@@ -19,9 +19,15 @@
  *
  * RPT-3 — third tab 👤 Customer (owner sketch, hosted here by owner
  * decision): customer → design → dates → bale numbers with yards.
- * Same read-time data path (sale rows from Transactions); callbacks
- * cu:<i>, dg:<i>, cd:<i> index into session slices (_custs, _cdesigns,
- * _cdays). The 💰 Sales / 📦 Supplies tabs are untouched.
+ * Callbacks cu:<i>, dg:<i>, cd:<i> index into session slices (_custs,
+ * _cdesigns, _cdays). The 💰 Sales / 📦 Supplies tabs are untouched.
+ *
+ * RPT-3b — the Customer tab reads SOLD Inventory rows
+ * (inventoryRepository.getSoldRows: one row per THAN with design,
+ * packageNo, baleUid, yards, soldTo, soldDate retained) — the same
+ * source of truth as the Sold Bales Lookup. Transactions rows are
+ * one-per-SALE with no per-bale design breakdown, which produced blank
+ * design chips ("🧵 —") and sales counted as bales on the live bot.
  */
 
 'use strict';
@@ -30,9 +36,10 @@ const sessionStore = require('../utils/sessionStore');
 const auth = require('../middlewares/auth');
 const transactionsRepository = require('../repositories/transactionsRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+const inventoryRepository = require('../repositories/inventoryRepository');
 const config = require('../config');
 const { makeRenderer, rowsFor, chunk } = require('../utils/flowKit');
-const { aggregateDesigns } = require('../utils/inventoryPickers');
+const { aggregateDesigns, baleGroupKey } = require('../utils/inventoryPickers');
 const fmtDate = require('../utils/formatDate');
 const logger = require('../utils/logger');
 const { LAGOS_TZ } = require('../utils/dates');
@@ -110,10 +117,10 @@ async function suppliesForDay(dayIso) {
     });
 }
 
-/* ── RPT-3 Customer tab data (read-time, same Transactions path) ── */
+/* ── RPT-3 Customer tab data (read-time, sold Inventory rows — RPT-3b) ── */
 
 /**
- * Normalize a salesDate to ISO YYYY-MM-DD for grouping/sorting — mirrored
+ * Normalize a soldDate to ISO YYYY-MM-DD for grouping/sorting — mirrored
  * from soldBalesFlow.normDay. The sheet holds mixed formats (ISO,
  * DD-MM-YYYY, DD/MM/YYYY); raw string grouping would split the same real
  * day in two and scramble newest-first order.
@@ -129,25 +136,15 @@ function normDay(sRaw) {
   return raw;
 }
 
-/**
- * Every sale row regardless of date. The repo range-filter compares raw
- * salesDate strings (mixed formats), so the sentinel bounds keep every
- * non-empty date; normDay() does the real day normalization here.
- */
-async function allSaleRows() {
-  const rows = await transactionsRepository.getBySalesDateRange('0000-01-01', '9999-12-31');
-  return rows.filter(isSaleRow);
-}
-
-/** Distinct customers from sale transactions, most-recent buyer first. */
+/** Distinct customers from sold Inventory rows, most-recent buyer first. */
 async function loadCustomers() {
   const byCust = new Map();
-  for (const t of await allSaleRows()) {
-    const name = (t.customerName || '').trim();
+  for (const r of await inventoryRepository.getSoldRows()) {
+    const name = (r.soldTo || '').trim();
     if (!name) continue;
     if (!byCust.has(name)) byCust.set(name, { name, lastDay: '' });
     const e = byCust.get(name);
-    const day = normDay(t.salesDate);
+    const day = normDay(r.soldDate);
     if (day > e.lastDay) e.lastDay = day;
   }
   return [...byCust.values()]
@@ -155,9 +152,10 @@ async function loadCustomers() {
     .map((e) => e.name);
 }
 
-/** Sale rows for one customer (each Transactions row = one physical bale/than as sold). */
-async function custSaleRows(customer) {
-  return (await allSaleRows()).filter((t) => (t.customerName || '').trim() === customer);
+/** Sold Inventory rows (one per THAN) for one customer. */
+async function custSoldRows(customer) {
+  return (await inventoryRepository.getSoldRows())
+    .filter((r) => (r.soldTo || '').trim() === customer);
 }
 
 /* ── screens ── */
@@ -367,10 +365,9 @@ async function showCustDesigns(bot, chatId, userId, idx) {
   session.step = 'cust_designs';
   session.custIdx = idx;
   session.customer = customer;
-  const txns = await custSaleRows(customer);
-  // Adapt the shared aggregator: each Transactions sale row is one physical
-  // bale/than as the sale data represents them → synthetic per-row baleUid.
-  const designs = aggregateDesigns(txns.map((t, i) => ({ design: t.design || '—', baleUid: `r${i}`, yards: t.qty })));
+  // Sold Inventory rows carry real design/packageNo/baleUid per than —
+  // the shared aggregator counts distinct PHYSICAL bales (baleGroupKey).
+  const designs = aggregateDesigns(await custSoldRows(customer));
   session._cdesigns = designs.map((d) => d.design);
   sessionStore.set(userId, session);
   const totBales = designs.reduce((s, d) => s + d.bales, 0);
@@ -383,7 +380,7 @@ async function showCustDesigns(bot, chatId, userId, idx) {
   rows.push(closeRow());
   await render(bot, chatId, userId,
     `📈 *${esc(customer)}* — designs supplied\n`
-    + `${totBales} bale${totBales === 1 ? '' : 's'} · ${Math.round(totYds)} yds total\n\nTap a design:`, rows);
+    + `Total: ${totBales} bale${totBales === 1 ? '' : 's'} · ${Math.round(totYds)} yds · ${designs.length} design(s)\n\nTap a design:`, rows);
 }
 
 async function showCustDates(bot, chatId, userId, idx) {
@@ -393,16 +390,18 @@ async function showCustDates(bot, chatId, userId, idx) {
   if (!design) return;
   session.step = 'cust_dates';
   session.designIdx = idx;
-  const txns = (await custSaleRows(session.customer)).filter((t) => (t.design || '—') === design);
+  const sold = (await custSoldRows(session.customer)).filter((r) => String(r.design ?? '') === design);
   const byDay = new Map();
-  for (const t of txns) {
-    const day = normDay(t.salesDate);
-    if (!byDay.has(day)) byDay.set(day, { day, bales: 0, yards: 0 });
+  for (const r of sold) {
+    const day = normDay(r.soldDate);
+    if (!byDay.has(day)) byDay.set(day, { day, baleKeys: new Set(), yards: 0 });
     const e = byDay.get(day);
-    e.bales += 1;
-    e.yards += t.qty;
+    e.baleKeys.add(baleGroupKey(r));
+    e.yards += r.yards || 0;
   }
-  const days = [...byDay.values()].sort((a, b) => String(b.day).localeCompare(String(a.day)));
+  const days = [...byDay.values()]
+    .map((e) => ({ day: e.day, bales: e.baleKeys.size, yards: e.yards }))
+    .sort((a, b) => String(b.day).localeCompare(String(a.day)));
   session._cdays = days.map((d) => d.day);
   sessionStore.set(userId, session);
   const rows = days.slice(0, CUST_DATES_CAP).map((d, i) => ([{
@@ -424,18 +423,31 @@ async function showCustCard(bot, chatId, userId, idx) {
   if (!day || !design) return;
   session.step = 'cust_card';
   sessionStore.set(userId, session);
-  const txns = (await custSaleRows(session.customer))
-    .filter((t) => (t.design || '—') === design && normDay(t.salesDate) === day);
-  const entries = txns.map((t) =>
-    `${esc(t.design)}${t.color ? ` sh ${esc(t.color)}` : ''} (${Math.round(t.qty)})`);
+  const sold = (await custSoldRows(session.customer))
+    .filter((r) => String(r.design ?? '') === design && normDay(r.soldDate) === day);
+  // One entry per PHYSICAL bale (baleGroupKey): label = printed bale number
+  // (short baleUid tail when unprinted), yards = the bale's thans summed.
+  const byBale = new Map();
+  for (const r of sold) {
+    const k = baleGroupKey(r);
+    if (!byBale.has(k)) {
+      byBale.set(k, { label: r.packageNo || String(r.baleUid || '').split('-').pop() || '—', yards: 0, amount: 0 });
+    }
+    const b = byBale.get(k);
+    b.yards += r.yards || 0;
+    b.amount += (r.yards || 0) * (r.pricePerYard || 0);
+  }
+  const bales = [...byBale.values()]
+    .sort((a, b) => String(a.label).localeCompare(String(b.label), 'en', { numeric: true }));
+  const entries = bales.map((b) => `${esc(b.label)} (${Math.round(b.yards)})`);
   const shown = entries.slice(0, CARD_BALES_CAP);
   let list = shown.join(', ');
   if (entries.length > CARD_BALES_CAP) list += `, +${entries.length - CARD_BALES_CAP} more`;
-  const yds = txns.reduce((s, t) => s + t.qty, 0);
-  const amount = txns.reduce((s, t) => s + t.qty * (t.pricePerYard || 0), 0);
+  const yds = bales.reduce((s, b) => s + b.yards, 0);
+  const amount = bales.reduce((s, b) => s + b.amount, 0);
   const text = `📈 *${esc(session.customer)}* — 🧵 *${esc(design)}* — *${fmtDate(day)}*\n\n`
     + `Bales (yards):\n${list}\n\n`
-    + `Day total: ${txns.length} bale${txns.length === 1 ? '' : 's'} · ${Math.round(yds)} yds`
+    + `Day total: ${bales.length} bale${bales.length === 1 ? '' : 's'} · ${Math.round(yds)} yds`
     + (amount ? ` · ${ngn(amount)}` : '');
   await render(bot, chatId, userId, text, [
     [{ text: '⬅ Dates', callback_data: `${NS}dg:${session.designIdx}` }],

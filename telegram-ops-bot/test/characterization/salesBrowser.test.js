@@ -6,8 +6,10 @@
  * with the ⚠️BD backdated marker, full detail with per-bale lines +
  * approval status + invoice link, the Supplies tab, and the calendar.
  *
- * RPT-3 — 👤 Customer tab: customer → design → dates → bale entries with
- * yards, mixed-format salesDate normalization, back-chain.
+ * RPT-3/3b — 👤 Customer tab: customer → design → dates → bale entries
+ * with yards, fed from SOLD Inventory rows (one per THAN) — real design
+ * chips, distinct-physical-bale counts, real bale numbers on the day
+ * card, mixed-format soldDate normalization, back-chain.
  */
 
 process.env.ADMIN_IDS = '777,888';
@@ -32,6 +34,7 @@ const sessionStore = require(path.join(SRC, 'utils/sessionStore'));
 const transactionsRepository = require(path.join(SRC, 'repositories/transactionsRepository'));
 const approvalQueueRepository = require(path.join(SRC, 'repositories/approvalQueueRepository'));
 const invoicesRepository = require(path.join(SRC, 'repositories/invoicesRepository'));
+const inventoryRepository = require(path.join(SRC, 'repositories/inventoryRepository'));
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' });
 // Same real day written the legacy way (DD-MM-YYYY) — must group with TODAY.
@@ -55,16 +58,35 @@ const saleRows = [
   { timestamp: 't3', user: '4242', action: 'sell_than', design: '999', color: '', qty: 50,
     status: 'reverted', salesDate: TODAY, warehouse: 'Lagos', customerName: 'GHOST',
     salesPerson: '', paymentMode: '', saleRefId: 'refC', pricePerYard: 0, amountPaid: 0, backdated: '' },
-  // RPT-3 — legacy DD-MM-YYYY salesDate: invisible to the ISO day-range
-  // queries above (string compare), but the Customer tab must normalize it
-  // onto the same day chip as t2.
-  { timestamp: 't4', user: '4242', action: 'sell_than', design: '700', color: '', qty: 40,
-    status: 'completed', salesDate: TODAY_DMY, warehouse: 'Lagos', customerName: 'MAMA K',
-    salesPerson: '', paymentMode: '', saleRefId: 'refD', pricePerYard: 0, amountPaid: 0, backdated: '' },
 ];
 
 transactionsRepository.getBySalesDateRange = async (fromIso, toIso) =>
   saleRows.filter((t) => t.salesDate >= fromIso && t.salesDate <= toIso);
+
+// RPT-3b — the Customer tab reads SOLD Inventory rows (one per THAN).
+// ALHAJI MUSA: design 512 = 3 physical bales — 824 (2 thans, ISO today),
+// 831 (1 than, same real day written DD-MM-YYYY) and 840 (older day);
+// design 618 = bale 900. MAMA K: design 700 = printed bale 77 + a legacy
+// unprinted row (packageNo empty → short baleUid-tail label), no rates.
+const OLDER = new Date(Date.now() - 30 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' });
+const OLDER_PRETTY = require(path.join(SRC, 'utils/formatDate'))(OLDER);
+const soldRows = [
+  { design: '512', packageNo: '824', baleUid: 'BAL-20260601-824-a1b2', thanNo: 1, yards: 100,
+    pricePerYard: 1000, soldTo: 'ALHAJI MUSA', soldDate: TODAY, status: 'sold' },
+  { design: '512', packageNo: '824', baleUid: 'BAL-20260601-824-c3d4', thanNo: 2, yards: 50,
+    pricePerYard: 1000, soldTo: 'ALHAJI MUSA', soldDate: TODAY, status: 'sold' },
+  { design: '512', packageNo: '831', baleUid: 'BAL-20260601-831-e5f6', thanNo: 1, yards: 300,
+    pricePerYard: 1000, soldTo: 'ALHAJI MUSA', soldDate: TODAY_DMY, status: 'sold' },
+  { design: '512', packageNo: '840', baleUid: 'BAL-20260501-840-g7h8', thanNo: 1, yards: 200,
+    pricePerYard: 1000, soldTo: 'ALHAJI MUSA', soldDate: OLDER, status: 'sold' },
+  { design: '618', packageNo: '900', baleUid: 'BAL-20260501-900-i9j0', thanNo: 1, yards: 30,
+    pricePerYard: 0, soldTo: 'ALHAJI MUSA', soldDate: OLDER, status: 'sold' },
+  { design: '700', packageNo: '77', baleUid: 'BAL-20260601-77-k1l2', thanNo: 1, yards: 40,
+    pricePerYard: 0, soldTo: 'MAMA K', soldDate: TODAY_DMY, status: 'sold' },
+  { design: '700', packageNo: '', baleUid: 'BAL-LEGACY-7', thanNo: 1, yards: 20,
+    pricePerYard: 0, soldTo: 'MAMA K', soldDate: TODAY, status: 'sold' },
+];
+inventoryRepository.getSoldRows = async () => soldRows;
 
 approvalQueueRepository.getResolved = async () => [
   { requestId: 'SUP1', user: '4242', status: 'approved', createdAt: `${TODAY}T10:00:00Z`, resolvedAt: '',
@@ -176,37 +198,38 @@ test('customer tab: chips most-recent buyer first, tab row marked', async () => 
   const kb = lastKb(bot);
   assert.ok(kb.some((b) => b.callback_data === 'sbr:tab:customer' && b.text.startsWith('●')), 'active tab marked');
   const chips = kb.filter((b) => b.callback_data.startsWith('sbr:cu:'));
-  assert.equal(chips.length, 2, 'distinct customers only (GHOST reverted row excluded)');
+  assert.equal(chips.length, 2, 'distinct soldTo customers from sold Inventory rows');
   assert.match(chips[0].text, /ALHAJI MUSA/);
   assert.match(chips[1].text, /MAMA K/);
 });
 
-test('customer → designs: one chip per design, biggest first, header totals', async () => {
+test('customer → designs: real design chips, distinct physical bales, biggest first', async () => {
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('sbr:cu:0'));
   const text = plain(bot);
   assert.match(text, /ALHAJI MUSA\* — designs supplied/);
-  assert.match(text, /2 bales · 55 yds total/);
+  assert.match(text, /Total: 4 bales · 680 yds · 2 design\(s\)/);
   const chips = lastKb(bot).filter((b) => b.callback_data.startsWith('sbr:dg:'));
   assert.equal(chips.length, 2);
-  assert.match(chips[0].text, /🧵 512 — 1 bale \(25 yds\)/);
+  assert.match(chips[0].text, /🧵 512 — 3 bales \(650 yds\)/, '4 thans of 512 = 3 physical bales');
   assert.match(chips[1].text, /🧵 618 — 1 bale \(30 yds\)/);
 });
 
-test('design → dates → compact card with per-bale yards and ₦ day total', async () => {
+test('design → dates (mixed formats merge, newest first) → card with bale numbers + ₦', async () => {
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('sbr:dg:0'));
   const dateChips = lastKb(bot).filter((b) => b.callback_data.startsWith('sbr:cd:'));
-  assert.equal(dateChips.length, 1);
-  assert.equal(dateChips[0].text, `${TODAY_PRETTY} — 1 bale (25 yds)`);
+  assert.equal(dateChips.length, 2, 'ISO + DD-MM-YYYY same-day rows = ONE chip');
+  assert.equal(dateChips[0].text, `${TODAY_PRETTY} — 2 bales (450 yds)`);
+  assert.equal(dateChips[1].text, `${OLDER_PRETTY} — 1 bale (200 yds)`);
   await controller.handleCallbackQuery(bot, cb('sbr:cd:0'));
   const text = plain(bot);
   assert.match(text, new RegExp(`ALHAJI MUSA\\* — 🧵 \\*512\\* — \\*${TODAY_PRETTY}`));
-  assert.match(text, /Bales \(yards\):\n512 sh 3 \(25\)/);
-  assert.match(text, /Day total: 1 bale · 25 yds · ₦25,000/);
+  assert.match(text, /Bales \(yards\):\n824 \(150\), 831 \(300\)/, 'real bale numbers, per-bale than sums');
+  assert.match(text, /Day total: 2 bales · 450 yds · ₦450,000/);
 });
 
-test('mixed-format salesDate rows group onto one date chip; ₦ omitted without rates', async () => {
+test('unprinted bale falls back to baleUid tail; ₦ omitted without rates', async () => {
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('sbr:tab:customer'));
   await controller.handleCallbackQuery(bot, cb('sbr:cu:1')); // MAMA K
@@ -219,7 +242,7 @@ test('mixed-format salesDate rows group onto one date chip; ₦ omitted without 
   assert.equal(dateChips[0].text, `${TODAY_PRETTY} — 2 bales (60 yds)`);
   await controller.handleCallbackQuery(bot, cb('sbr:cd:0'));
   const text = plain(bot);
-  assert.match(text, /700 sh 1 \(20\), 700 \(40\)/);
+  assert.match(text, /Bales \(yards\):\n7 \(20\), 77 \(40\)/, 'BAL-LEGACY-7 → tail label 7');
   assert.match(text, /Day total: 2 bales · 60 yds/);
   assert.ok(!text.includes('₦'), 'no ₦ line when the day has no rates');
 });
