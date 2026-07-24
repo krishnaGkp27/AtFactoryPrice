@@ -5,6 +5,9 @@
  * with mini summaries, one tappable row per sale (grouped by SaleRefId)
  * with the ⚠️BD backdated marker, full detail with per-bale lines +
  * approval status + invoice link, the Supplies tab, and the calendar.
+ *
+ * RPT-3 — 👤 Customer tab: customer → design → dates → bale entries with
+ * yards, mixed-format salesDate normalization, back-chain.
  */
 
 process.env.ADMIN_IDS = '777,888';
@@ -31,6 +34,9 @@ const approvalQueueRepository = require(path.join(SRC, 'repositories/approvalQue
 const invoicesRepository = require(path.join(SRC, 'repositories/invoicesRepository'));
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' });
+// Same real day written the legacy way (DD-MM-YYYY) — must group with TODAY.
+const TODAY_DMY = TODAY.split('-').reverse().join('-');
+const TODAY_PRETTY = require(path.join(SRC, 'utils/formatDate'))(TODAY);
 
 // Two sales today: refA (2 bales, backdated stamp) + refB (1 bale, no rate).
 const saleRows = [
@@ -49,6 +55,12 @@ const saleRows = [
   { timestamp: 't3', user: '4242', action: 'sell_than', design: '999', color: '', qty: 50,
     status: 'reverted', salesDate: TODAY, warehouse: 'Lagos', customerName: 'GHOST',
     salesPerson: '', paymentMode: '', saleRefId: 'refC', pricePerYard: 0, amountPaid: 0, backdated: '' },
+  // RPT-3 — legacy DD-MM-YYYY salesDate: invisible to the ISO day-range
+  // queries above (string compare), but the Customer tab must normalize it
+  // onto the same day chip as t2.
+  { timestamp: 't4', user: '4242', action: 'sell_than', design: '700', color: '', qty: 40,
+    status: 'completed', salesDate: TODAY_DMY, warehouse: 'Lagos', customerName: 'MAMA K',
+    salesPerson: '', paymentMode: '', saleRefId: 'refD', pricePerYard: 0, amountPaid: 0, backdated: '' },
 ];
 
 transactionsRepository.getBySalesDateRange = async (fromIso, toIso) =>
@@ -85,6 +97,7 @@ test('admin start: tabs + day chips with per-day mini summaries', async () => {
     .pop().args.opts.reply_markup.inline_keyboard.flat();
   assert.ok(kb.some((b) => b.callback_data === 'sbr:tab:sales'), 'Sales tab');
   assert.ok(kb.some((b) => b.callback_data === 'sbr:tab:supplies'), 'Supplies tab');
+  assert.ok(kb.some((b) => b.callback_data === 'sbr:tab:customer' && b.text === '👤 Customer'), 'Customer tab (RPT-3)');
   const todayChip = kb.find((b) => b.callback_data === `sbr:day:${TODAY}`);
   assert.match(todayChip.text, /Today — 2 sales · 75 yds/, 'today chip summarises grouped sales (reverted excluded)');
   assert.ok(kb.some((b) => b.callback_data.startsWith('sbr:cal:')), 'calendar entry');
@@ -146,4 +159,81 @@ test('calendar renders a month grid; expired session gets the re-open alert', as
   await controller.handleCallbackQuery(bot2, cb('sbr:back'));
   const alert = bot2.calls.find((c) => c.method === 'answerCallbackQuery' && c.args.opts && c.args.opts.show_alert);
   assert.match(alert.args.opts.text, /Expired — open 📈 Sales Browser again/);
+});
+
+/* ── RPT-3 — 👤 Customer tab ── */
+
+function lastKb(bot) {
+  return bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method) && c.args.opts && c.args.opts.reply_markup)
+    .pop().args.opts.reply_markup.inline_keyboard.flat();
+}
+
+test('customer tab: chips most-recent buyer first, tab row marked', async () => {
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('act:sales_browser'));
+  await controller.handleCallbackQuery(bot, cb('sbr:tab:customer'));
+  assert.match(plain(bot), /Customer Browser/);
+  const kb = lastKb(bot);
+  assert.ok(kb.some((b) => b.callback_data === 'sbr:tab:customer' && b.text.startsWith('●')), 'active tab marked');
+  const chips = kb.filter((b) => b.callback_data.startsWith('sbr:cu:'));
+  assert.equal(chips.length, 2, 'distinct customers only (GHOST reverted row excluded)');
+  assert.match(chips[0].text, /ALHAJI MUSA/);
+  assert.match(chips[1].text, /MAMA K/);
+});
+
+test('customer → designs: one chip per design, biggest first, header totals', async () => {
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('sbr:cu:0'));
+  const text = plain(bot);
+  assert.match(text, /ALHAJI MUSA\* — designs supplied/);
+  assert.match(text, /2 bales · 55 yds total/);
+  const chips = lastKb(bot).filter((b) => b.callback_data.startsWith('sbr:dg:'));
+  assert.equal(chips.length, 2);
+  assert.match(chips[0].text, /🧵 512 — 1 bale \(25 yds\)/);
+  assert.match(chips[1].text, /🧵 618 — 1 bale \(30 yds\)/);
+});
+
+test('design → dates → compact card with per-bale yards and ₦ day total', async () => {
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('sbr:dg:0'));
+  const dateChips = lastKb(bot).filter((b) => b.callback_data.startsWith('sbr:cd:'));
+  assert.equal(dateChips.length, 1);
+  assert.equal(dateChips[0].text, `${TODAY_PRETTY} — 1 bale (25 yds)`);
+  await controller.handleCallbackQuery(bot, cb('sbr:cd:0'));
+  const text = plain(bot);
+  assert.match(text, new RegExp(`ALHAJI MUSA\\* — 🧵 \\*512\\* — \\*${TODAY_PRETTY}`));
+  assert.match(text, /Bales \(yards\):\n512 sh 3 \(25\)/);
+  assert.match(text, /Day total: 1 bale · 25 yds · ₦25,000/);
+});
+
+test('mixed-format salesDate rows group onto one date chip; ₦ omitted without rates', async () => {
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('sbr:tab:customer'));
+  await controller.handleCallbackQuery(bot, cb('sbr:cu:1')); // MAMA K
+  const dChips = lastKb(bot).filter((b) => b.callback_data.startsWith('sbr:dg:'));
+  assert.equal(dChips.length, 1);
+  assert.match(dChips[0].text, /🧵 700 — 2 bales \(60 yds\)/, 'ISO + DD-MM-YYYY rows both counted');
+  await controller.handleCallbackQuery(bot, cb('sbr:dg:0'));
+  const dateChips = lastKb(bot).filter((b) => b.callback_data.startsWith('sbr:cd:'));
+  assert.equal(dateChips.length, 1, 'same real day = ONE chip despite mixed formats');
+  assert.equal(dateChips[0].text, `${TODAY_PRETTY} — 2 bales (60 yds)`);
+  await controller.handleCallbackQuery(bot, cb('sbr:cd:0'));
+  const text = plain(bot);
+  assert.match(text, /700 sh 1 \(20\), 700 \(40\)/);
+  assert.match(text, /Day total: 2 bales · 60 yds/);
+  assert.ok(!text.includes('₦'), 'no ₦ line when the day has no rates');
+});
+
+test('back-chain: card → dates → designs → customers → tab screen', async () => {
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('sbr:dg:0')); // card back → dates
+  assert.match(plain(bot), /Tap a supply date/);
+  assert.ok(lastKb(bot).some((b) => b.text === '⬅ Designs' && b.callback_data === 'sbr:cu:1'));
+  await controller.handleCallbackQuery(bot, cb('sbr:cu:1')); // dates back → designs
+  assert.match(plain(bot), /MAMA K\* — designs supplied/);
+  assert.ok(lastKb(bot).some((b) => b.text === '⬅ Customers' && b.callback_data === 'sbr:tab:customer'));
+  await controller.handleCallbackQuery(bot, cb('sbr:tab:customer')); // designs back → customers
+  assert.match(plain(bot), /Customer Browser/);
+  await controller.handleCallbackQuery(bot, cb('sbr:tab:sales')); // tab row leaves the customer tab
+  assert.match(plain(bot), /Sales Browser/, 'Sales tab byte-identical entry still reachable');
 });

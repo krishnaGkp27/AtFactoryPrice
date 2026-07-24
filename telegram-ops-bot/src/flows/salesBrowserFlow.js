@@ -16,6 +16,12 @@
  * Callback namespace `sbr:` — tab:<t>, day:<iso>, cal:<YYYY-MM>,
  * itm:<idx>, back, close. Item taps index into session._items (64-byte
  * safe).
+ *
+ * RPT-3 — third tab 👤 Customer (owner sketch, hosted here by owner
+ * decision): customer → design → dates → bale numbers with yards.
+ * Same read-time data path (sale rows from Transactions); callbacks
+ * cu:<i>, dg:<i>, cd:<i> index into session slices (_custs, _cdesigns,
+ * _cdays). The 💰 Sales / 📦 Supplies tabs are untouched.
  */
 
 'use strict';
@@ -25,7 +31,8 @@ const auth = require('../middlewares/auth');
 const transactionsRepository = require('../repositories/transactionsRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const config = require('../config');
-const { makeRenderer, rowsFor } = require('../utils/flowKit');
+const { makeRenderer, rowsFor, chunk } = require('../utils/flowKit');
+const { aggregateDesigns } = require('../utils/inventoryPickers');
 const fmtDate = require('../utils/formatDate');
 const logger = require('../utils/logger');
 const { LAGOS_TZ } = require('../utils/dates');
@@ -35,6 +42,9 @@ const NS = 'sbr:';
 const DAYS_ON_SCREEN = 7;
 const MAX_DAYS_BACK = 90;
 const ITEMS_PER_PAGE = 8;
+const CUSTOMERS_CAP = 16;   // RPT-3 customer chips shown (most recent buyers)
+const CUST_DATES_CAP = 24;  // RPT-3 date chips per design (newest first)
+const CARD_BALES_CAP = 40;  // RPT-3 bale entries listed on the compact card
 
 const render = makeRenderer({ parseMode: 'Markdown', requireSession: SESSION_TYPE });
 
@@ -100,6 +110,56 @@ async function suppliesForDay(dayIso) {
     });
 }
 
+/* ── RPT-3 Customer tab data (read-time, same Transactions path) ── */
+
+/**
+ * Normalize a salesDate to ISO YYYY-MM-DD for grouping/sorting — mirrored
+ * from soldBalesFlow.normDay. The sheet holds mixed formats (ISO,
+ * DD-MM-YYYY, DD/MM/YYYY); raw string grouping would split the same real
+ * day in two and scramble newest-first order.
+ */
+function normDay(sRaw) {
+  const raw = String(sRaw || '').trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  const dmy = raw.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  const ms = Date.parse(raw);
+  if (isFinite(ms)) return new Date(ms).toISOString().slice(0, 10);
+  return raw;
+}
+
+/**
+ * Every sale row regardless of date. The repo range-filter compares raw
+ * salesDate strings (mixed formats), so the sentinel bounds keep every
+ * non-empty date; normDay() does the real day normalization here.
+ */
+async function allSaleRows() {
+  const rows = await transactionsRepository.getBySalesDateRange('0000-01-01', '9999-12-31');
+  return rows.filter(isSaleRow);
+}
+
+/** Distinct customers from sale transactions, most-recent buyer first. */
+async function loadCustomers() {
+  const byCust = new Map();
+  for (const t of await allSaleRows()) {
+    const name = (t.customerName || '').trim();
+    if (!name) continue;
+    if (!byCust.has(name)) byCust.set(name, { name, lastDay: '' });
+    const e = byCust.get(name);
+    const day = normDay(t.salesDate);
+    if (day > e.lastDay) e.lastDay = day;
+  }
+  return [...byCust.values()]
+    .sort((a, b) => b.lastDay.localeCompare(a.lastDay) || a.name.localeCompare(b.name))
+    .map((e) => e.name);
+}
+
+/** Sale rows for one customer (each Transactions row = one physical bale/than as sold). */
+async function custSaleRows(customer) {
+  return (await allSaleRows()).filter((t) => (t.customerName || '').trim() === customer);
+}
+
 /* ── screens ── */
 
 async function start(bot, chatId, userId, messageId = null) {
@@ -123,6 +183,7 @@ async function showDays(bot, chatId, userId) {
   const rows = [[
     { text: `${tab === 'sales' ? '● ' : ''}💰 Sales`, callback_data: `${NS}tab:sales` },
     { text: `${tab === 'supplies' ? '● ' : ''}📦 Supplies`, callback_data: `${NS}tab:supplies` },
+    { text: '👤 Customer', callback_data: `${NS}tab:customer` },
   ]];
   const lines = [];
   for (let d = 0; d < DAYS_ON_SCREEN; d++) {
@@ -270,6 +331,119 @@ async function showDetail(bot, chatId, userId, idx) {
   ]);
 }
 
+/* ── RPT-3 Customer tab screens ── */
+
+async function showCustomers(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'cust_pick';
+  let customers = [];
+  try {
+    customers = await loadCustomers();
+  } catch (e) {
+    logger.warn(`salesBrowser customers: ${e.message}`);
+  }
+  session._custs = customers;
+  sessionStore.set(userId, session);
+  const rows = [[
+    { text: '💰 Sales', callback_data: `${NS}tab:sales` },
+    { text: '📦 Supplies', callback_data: `${NS}tab:supplies` },
+    { text: '● 👤 Customer', callback_data: `${NS}tab:customer` },
+  ]];
+  const shown = customers.slice(0, CUSTOMERS_CAP);
+  rows.push(...chunk(shown.map((name, i) => ({ text: `👤 ${esc(name)}`, callback_data: `${NS}cu:${i}` })), 2));
+  rows.push(closeRow());
+  let text = '📈 *Customer Browser*\n\nTap a customer (most recent buyer first):';
+  if (!customers.length) text = '📈 *Customer Browser*\n\n_No sale transactions recorded yet._';
+  else if (customers.length > CUSTOMERS_CAP) text += `\n_Showing top ${CUSTOMERS_CAP} of ${customers.length}._`;
+  await render(bot, chatId, userId, text, rows);
+}
+
+async function showCustDesigns(bot, chatId, userId, idx) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const customer = (session._custs || [])[idx];
+  if (!customer) return;
+  session.step = 'cust_designs';
+  session.custIdx = idx;
+  session.customer = customer;
+  const txns = await custSaleRows(customer);
+  // Adapt the shared aggregator: each Transactions sale row is one physical
+  // bale/than as the sale data represents them → synthetic per-row baleUid.
+  const designs = aggregateDesigns(txns.map((t, i) => ({ design: t.design || '—', baleUid: `r${i}`, yards: t.qty })));
+  session._cdesigns = designs.map((d) => d.design);
+  sessionStore.set(userId, session);
+  const totBales = designs.reduce((s, d) => s + d.bales, 0);
+  const totYds = designs.reduce((s, d) => s + d.yards, 0);
+  const rows = designs.map((d, i) => ([{
+    text: `🧵 ${esc(d.design)} — ${d.bales} bale${d.bales === 1 ? '' : 's'} (${Math.round(d.yards)} yds)`,
+    callback_data: `${NS}dg:${i}`,
+  }]));
+  rows.push([{ text: '⬅ Customers', callback_data: `${NS}tab:customer` }]);
+  rows.push(closeRow());
+  await render(bot, chatId, userId,
+    `📈 *${esc(customer)}* — designs supplied\n`
+    + `${totBales} bale${totBales === 1 ? '' : 's'} · ${Math.round(totYds)} yds total\n\nTap a design:`, rows);
+}
+
+async function showCustDates(bot, chatId, userId, idx) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const design = (session._cdesigns || [])[idx];
+  if (!design) return;
+  session.step = 'cust_dates';
+  session.designIdx = idx;
+  const txns = (await custSaleRows(session.customer)).filter((t) => (t.design || '—') === design);
+  const byDay = new Map();
+  for (const t of txns) {
+    const day = normDay(t.salesDate);
+    if (!byDay.has(day)) byDay.set(day, { day, bales: 0, yards: 0 });
+    const e = byDay.get(day);
+    e.bales += 1;
+    e.yards += t.qty;
+  }
+  const days = [...byDay.values()].sort((a, b) => String(b.day).localeCompare(String(a.day)));
+  session._cdays = days.map((d) => d.day);
+  sessionStore.set(userId, session);
+  const rows = days.slice(0, CUST_DATES_CAP).map((d, i) => ([{
+    text: `${fmtDate(d.day)} — ${d.bales} bale${d.bales === 1 ? '' : 's'} (${Math.round(d.yards)} yds)`,
+    callback_data: `${NS}cd:${i}`,
+  }]));
+  rows.push([{ text: '⬅ Designs', callback_data: `${NS}cu:${session.custIdx}` }]);
+  rows.push(closeRow());
+  let text = `📈 *${esc(session.customer)}* — 🧵 *${esc(design)}*\n\nTap a supply date:`;
+  if (days.length > CUST_DATES_CAP) text += `\n_Showing newest ${CUST_DATES_CAP} of ${days.length}._`;
+  await render(bot, chatId, userId, text, rows);
+}
+
+async function showCustCard(bot, chatId, userId, idx) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const day = (session._cdays || [])[idx];
+  const design = (session._cdesigns || [])[session.designIdx];
+  if (!day || !design) return;
+  session.step = 'cust_card';
+  sessionStore.set(userId, session);
+  const txns = (await custSaleRows(session.customer))
+    .filter((t) => (t.design || '—') === design && normDay(t.salesDate) === day);
+  const entries = txns.map((t) =>
+    `${esc(t.design)}${t.color ? ` sh ${esc(t.color)}` : ''} (${Math.round(t.qty)})`);
+  const shown = entries.slice(0, CARD_BALES_CAP);
+  let list = shown.join(', ');
+  if (entries.length > CARD_BALES_CAP) list += `, +${entries.length - CARD_BALES_CAP} more`;
+  const yds = txns.reduce((s, t) => s + t.qty, 0);
+  const amount = txns.reduce((s, t) => s + t.qty * (t.pricePerYard || 0), 0);
+  const text = `📈 *${esc(session.customer)}* — 🧵 *${esc(design)}* — *${fmtDate(day)}*\n\n`
+    + `Bales (yards):\n${list}\n\n`
+    + `Day total: ${txns.length} bale${txns.length === 1 ? '' : 's'} · ${Math.round(yds)} yds`
+    + (amount ? ` · ${ngn(amount)}` : '');
+  await render(bot, chatId, userId, text, [
+    [{ text: '⬅ Dates', callback_data: `${NS}dg:${session.designIdx}` }],
+    [{ text: '⬅ Customers', callback_data: `${NS}tab:customer` }],
+    closeRow(),
+  ]);
+}
+
 /* ── dispatch ── */
 
 async function handleCallback(bot, query) {
@@ -292,13 +466,27 @@ async function handleCallback(bot, query) {
         reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] } }).catch(() => {});
     return true;
   }
-  if (rest === 'back') { await showDays(bot, chatId, userId); return true; }
+  if (rest === 'back') {
+    if (session.tab === 'customer') await showCustomers(bot, chatId, userId);
+    else await showDays(bot, chatId, userId);
+    return true;
+  }
   if (rest.startsWith('tab:')) {
-    session.tab = rest.slice(4) === 'supplies' ? 'supplies' : 'sales';
+    const t = rest.slice(4);
+    if (t === 'customer') {
+      session.tab = 'customer';
+      sessionStore.set(userId, session);
+      await showCustomers(bot, chatId, userId);
+      return true;
+    }
+    session.tab = t === 'supplies' ? 'supplies' : 'sales';
     sessionStore.set(userId, session);
     await showDays(bot, chatId, userId);
     return true;
   }
+  if (rest.startsWith('cu:')) { await showCustDesigns(bot, chatId, userId, parseInt(rest.slice(3), 10)); return true; }
+  if (rest.startsWith('dg:')) { await showCustDates(bot, chatId, userId, parseInt(rest.slice(3), 10)); return true; }
+  if (rest.startsWith('cd:')) { await showCustCard(bot, chatId, userId, parseInt(rest.slice(3), 10)); return true; }
   if (rest.startsWith('cal:')) { await showCalendar(bot, chatId, userId, rest.slice(4)); return true; }
   if (rest.startsWith('day:')) {
     const [iso, pageStr] = rest.slice(4).split(':');
@@ -309,4 +497,4 @@ async function handleCallback(bot, query) {
   return true;
 }
 
-module.exports = { SESSION_TYPE, start, handleCallback, _internals: { groupSales, salesForDay, suppliesForDay } };
+module.exports = { SESSION_TYPE, start, handleCallback, _internals: { groupSales, salesForDay, suppliesForDay, normDay, loadCustomers } };
