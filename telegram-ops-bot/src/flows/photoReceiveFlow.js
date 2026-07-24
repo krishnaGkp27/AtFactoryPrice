@@ -611,7 +611,9 @@ async function handleCallback(bot, query) {
     return true;
   }
 
-  const fieldMatch = data.match(/^pr:edit_field:(\d+):([a-z]+)$/);
+  // [a-zA-Z]: EDITABLE_FIELDS has camelCase names (packageNo, thanNo,
+  // netMtrs, netWeight) — a lowercase-only class left their buttons dead.
+  const fieldMatch = data.match(/^pr:edit_field:(\d+):([a-zA-Z]+)$/);
   if (fieldMatch) {
     const idx = parseInt(fieldMatch[1], 10);
     const field = fieldMatch[2];

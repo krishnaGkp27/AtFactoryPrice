@@ -7665,6 +7665,26 @@ function runS52() {
   if (offenders.length === 0) {
     pass("S52.1 NAV-1: no flow emits an unrouted 'menu:*' callback (use menuNav act:__back__)");
   } else fail('S52.1', `dead menu:* callback in: ${offenders.join(', ')}`);
+
+  // ---- S52.2 NAV-3: every keyboard-emitting flow has a menu escape ----
+  // The 24-Jul nav audit found 20+ flows whose only exit was Close/Cancel
+  // (often onto a button-less dead card). Rule: any flow module that builds
+  // Cancel/Close rows must also emit at least one session-free menu escape
+  // (act:__back__ or act:__hub__:) somewhere.
+  const noEscape = fs.readdirSync(flowsDir)
+    .filter((f) => f.endsWith('.js'))
+    .filter((f) => {
+      const src = fs.readFileSync(path.join(flowsDir, f), 'utf8');
+      const buildsCancel = /cancelRow\(|closeRow\(|❌ Cancel|❌ Close/.test(src);
+      // menuRow covers flowKit's rowsFor(ns).menuRow — including renamed
+      // destructures like `{ menuRow: homeRow }` — which emits act:__back__
+      // at runtime without the literal appearing in-file.
+      const hasEscape = /act:__back__|act:__hub__:|menuRow/.test(src);
+      return buildsCancel && !hasEscape;
+    });
+  if (noEscape.length === 0) {
+    pass('S52.2 NAV-3: every flow with Cancel/Close rows also offers act:__back__ / act:__hub__');
+  } else fail('S52.2', `flow(s) with no menu escape: ${noEscape.join(', ')}`);
 }
 
 function runS51() {

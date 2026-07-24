@@ -253,7 +253,8 @@ async function showConfirm(bot, chatId, userId) {
     + `🏭 ${mdEscape(b.warehouse)} · ${b.availableThans} thans · ${Math.round(b.availableYards)} yds\n`
     + `👤 Customer: *${mdEscape(session.customer)}*${session.newCustomer ? ' _(NEW — profile sent for approval)_' : ''}\n📅 ${todayInLagos()}\n\n`
     + '_The label photo is attached as the sale document. Rate and payment are entered by the approving admin._',
-    [[{ text: '✅ Submit for approval', callback_data: `${NS}ok` }], cancelRow()]);
+    [[{ text: '✅ Submit for approval', callback_data: `${NS}ok` }],
+      [{ text: '⬅ Back', callback_data: `${NS}bk` }], cancelRow()]);
 }
 
 /* ── photo entry (routed from the controller file router) ── */
@@ -419,7 +420,8 @@ async function showBatchConfirm(bot, chatId, userId) {
     + `Total: *${batch.items.length} bales* (${totalThans} thans), *${Math.round(totalYards)} yds*\n`
     + `👤 Customer: *${mdEscape(session.customer)}*${session.newCustomer ? ' _(NEW — profile sent for approval)_' : ''}\n📅 ${todayInLagos()}\n\n`
     + '_The PDF is attached as the sale document. Rate and payment are entered by the approving admin._',
-    [[{ text: '✅ Submit for approval', callback_data: `${NS}ok` }], cancelRow()]);
+    [[{ text: '✅ Submit for approval', callback_data: `${NS}ok` }],
+      [{ text: '⬅ Back', callback_data: `${NS}bk` }], cancelRow()]);
 }
 
 /* ── SNAP-4: PDF batch as a WAREHOUSE TRANSFER ── */

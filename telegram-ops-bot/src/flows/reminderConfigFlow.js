@@ -146,12 +146,14 @@ async function handleCallback(bot, query) {
   if (!data.startsWith(NS)) return false;
   const chatId = query.message.chat.id;
   const userId = String(query.from.id);
-  await bot.answerCallbackQuery(query.id).catch(() => {});
+  // Answer the query exactly ONCE — Telegram drops a second answer for the
+  // same query.id, so the expired-card alert never showed with answer-first.
   const session = sessionStore.get(userId);
   if (!session || session.type !== SESSION_TYPE) {
     await bot.answerCallbackQuery(query.id, { text: 'This card expired — open ⏰ Reminder Controls again.', show_alert: true }).catch(() => {});
     return true;
   }
+  await bot.answerCallbackQuery(query.id).catch(() => {});
   const rest = data.slice(NS.length);
   if (rest === 'close') {
     sessionStore.clear(userId);

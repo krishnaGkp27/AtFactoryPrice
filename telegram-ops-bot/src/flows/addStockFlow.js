@@ -346,6 +346,9 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
     type: 'bulk_receive_flow',
     step: 'await_submit',
     flowMessageId: null,
+    // Kept for the 'addstock:retry' button on the preview card — without it
+    // the retry handler sees no warehouse and dead-ends on "Session expired".
+    warehouse: session.warehouse,
     po_id: '__skip__',
     fileName,
     fileExt: ext,
