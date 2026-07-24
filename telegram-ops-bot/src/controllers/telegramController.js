@@ -5492,7 +5492,7 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   // not bale. Display-only: selection + cart semantics stay in bales.
   const useThans = await unitDisplayService.isThanVisibilityWarehouse(warehouse);
   // TV-3/TV-4 — than-visible warehouses show BOTH counts, physical bales
-  // first, as "remaining / opening": "9043-B (20B = 88t / 30B = 132t)".
+  // first, as "remaining / opening" (TV-4b compact): "9043-B (20B=88t / 30B=132t)".
   // Opening = every Inventory row ever for the design in this
   // warehouse/container/category slice, ANY status (available + sold +
   // in_transit). Designs with 0 remaining but historical stock stay
@@ -5524,10 +5524,30 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   const start = page * MAX_VISIBLE;
   const visible = designs.slice(start, start + MAX_VISIBLE);
   const rows = [];
-  for (let i = 0; i < visible.length; i += 2) {
-    const row = [{ text: `${visible[i].design} (${designTag(visible[i])})`, callback_data: `srf_dg:${visible[i].design}` }];
-    if (visible[i + 1]) row.push({ text: `${visible[i + 1].design} (${designTag(visible[i + 1])})`, callback_data: `srf_dg:${visible[i + 1].design}` });
-    rows.push(row);
+  // TV-4b — than-visible warehouses list ONE design per row (full width) so
+  // the "remaining / opening" pair never clips mid-figure. If a composed
+  // label would still overflow (>34 chars), the button carries the bare
+  // design name and the pair moves into a body line above the keyboard.
+  // Other warehouses keep the original 2-per-row bale-only grid.
+  const OVERFLOW_LABEL_MAX = 34;
+  const overflowLines = [];
+  if (useThans) {
+    for (const d of visible) {
+      const tag = designTag(d);
+      const label = `${d.design} (${tag})`;
+      if (label.length > OVERFLOW_LABEL_MAX) {
+        overflowLines.push(`${String(d.design).replace(/[*_`[\]]/g, '\\$&')}: ${tag}`);
+        rows.push([{ text: `${d.design}`, callback_data: `srf_dg:${d.design}` }]);
+      } else {
+        rows.push([{ text: label, callback_data: `srf_dg:${d.design}` }]);
+      }
+    }
+  } else {
+    for (let i = 0; i < visible.length; i += 2) {
+      const row = [{ text: `${visible[i].design} (${designTag(visible[i])})`, callback_data: `srf_dg:${visible[i].design}` }];
+      if (visible[i + 1]) row.push({ text: `${visible[i + 1].design} (${designTag(visible[i + 1])})`, callback_data: `srf_dg:${visible[i + 1].design}` });
+      rows.push(row);
+    }
   }
   const nav = [];
   if (page > 0) nav.push({ text: '⬅️ Prev', callback_data: 'srf_dgpg:prev' });
@@ -5557,7 +5577,7 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   const cartNote = cart.length ? `\n🛒 Cart: ${cart.length} item(s)` : '';
   const pageNote = designs.length > MAX_VISIBLE ? ` (${start + 1}–${Math.min(start + MAX_VISIBLE, designs.length)} of ${designs.length})` : '';
   // WH-SUM — warehouse totals under the header: unit total for everyone
-  // (TV-4 "remaining / opening" — "59B = 255t / 80B = 340t" — on TV-1
+  // (TV-4 "remaining / opening" — "59B=255t / 80B=340t" (TV-4b compact) — on TV-1
   // warehouses, bales elsewhere); stock value admin-only (unchanged:
   // computed from AVAILABLE rows only).
   const totalBalesAll = avail.reduce((s, a) => s + a.availPkgs, 0);
@@ -5578,10 +5598,12 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
     ? ` · ${session.category === SUPPLY_OTHERS_CATEGORY ? '📦' : designCategoriesRepo.iconFor(catLabel)} ${catLabel.replace(/[*_`[\]]/g, '\\$&')}`
     : '';
   // TV-4 — legend under "Select design:" explaining the paired counts;
-  // than-visible warehouses only.
+  // than-visible warehouses only. TV-4b: overflowing labels park their
+  // pair here in the body (wraps, never truncates), one line per design.
   const legendNote = useThans ? '\n_(remaining / opening)_' : '';
+  const overflowNote = overflowLines.length ? `\n${overflowLines.join('\n')}` : '';
   const sent = await editOrSend(bot, chatId, resolvedMsgId,
-    `📦 *Warehouse: ${warehouse}*${catNote}${summaryNote}${cartNote}\n\nSelect design:${pageNote}${legendNote}`, {
+    `📦 *Warehouse: ${warehouse}*${catNote}${summaryNote}${cartNote}\n\nSelect design:${pageNote}${legendNote}${overflowNote}`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
@@ -5604,10 +5626,10 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   await clearDesignPreview(bot, chatId, userId);
 
   // TV-1/TV-3/TV-4 — flagged warehouses show shade availability with BOTH
-  // counts as "remaining / opening": "1 - cream (2B = 5t / 4B = 10t)".
+  // counts as "remaining / opening" (TV-4b compact): "1 - cream (2B=5t / 4B=10t)".
   // Opening = every Inventory row ever for this design in the same
   // warehouse/container/category slice, ANY status. Fully-sold shades stay
-  // on screen as "(0B = 0t / NB = Mt)" info buttons (their taps land on the
+  // on screen as "(0B=0t / NB=Mt)" info buttons (their taps land on the
   // sold-out guard in showQuantityPicker, never an addable line), which also
   // keeps fully-sold DESIGNS renderable instead of dead-ending. Display-only:
   // callback payloads, quantity picking and the cart stay in bales.
@@ -5686,13 +5708,29 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
     const open = (openShades && openShades.get(String(s.shade))) || rem;
     return unitDisplayService.formatRemainingOpening(rem, open);
   };
-  const buttons = listedShades.map((s) => ({
-    text: useThans
-      ? buildShadeLabel(s.shade, nameMap, shadeTag(s))
-      : buildShadeLabel(s.shade, nameMap, s.availPkgs, unit),
-    callback_data: `srf_sh:${design}|${s.shade}|${s.availPkgs}`,
-  }));
-  const rows = layoutShadeRows(buttons);
+  // TV-4b — pair-carrying shade buttons render ONE per row (full width) so
+  // the "remaining / opening" pair never clips. A composed label still over
+  // 34 chars drops the pair from the button (bare shade only) and parks it
+  // as a body line above the keyboard. Non-than-visible warehouses keep the
+  // original layoutShadeRows grid and bale-only labels — zero change.
+  const OVERFLOW_LABEL_MAX = 34;
+  const overflowLines = [];
+  let rows;
+  if (useThans) {
+    rows = listedShades.map((s) => {
+      const head = buildShadeLabel(s.shade, nameMap);
+      const tag = shadeTag(s);
+      const full = buildShadeLabel(s.shade, nameMap, tag);
+      const overflowed = full.length > OVERFLOW_LABEL_MAX;
+      if (overflowed) overflowLines.push(`${head.replace(/[*_`[\]]/g, '\\$&')}: ${tag}`);
+      return [{ text: overflowed ? head : full, callback_data: `srf_sh:${design}|${s.shade}|${s.availPkgs}` }];
+    });
+  } else {
+    rows = layoutShadeRows(listedShades.map((s) => ({
+      text: buildShadeLabel(s.shade, nameMap, s.availPkgs, unit),
+      callback_data: `srf_sh:${design}|${s.shade}|${s.availPkgs}`,
+    })));
+  }
   // Bulk shortcut: take every shade of this design at its full remaining
   // quantity in one tap (cart-adjusted), instead of picking shade-by-shade.
   const totalBales = shades.reduce((sum, s) => sum + (s.availPkgs > 0 ? s.availPkgs : 0), 0);
@@ -5709,9 +5747,12 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   rows.push([{ text: '⬅️ Back to designs', callback_data: 'srf_back:design' }]);
 
   // TV-4 — a fully-sold design (no remaining shades) renders as an info
-  // screen: shade buttons show "(0B = 0t / NB = Mt)" and the header says so.
+  // screen: shade buttons show "(0B=0t / NB=Mt)" and the header says so.
   const soldOutDesign = useThans && !shades.length;
   const soldOutNote = soldOutDesign ? '\n\n_Sold out — nothing available to add._' : '';
+  // TV-4b — pairs evicted from overlong buttons, one body line per shade
+  // (body text wraps, never truncates). Empty on non-than-visible warehouses.
+  const overflowNote = overflowLines.length ? `\n${overflowLines.join('\n')}` : '';
 
   // ── Path A: catalog photo exists → send a single photo+caption+buttons
   // message so the shade buttons sit directly under the image with no
@@ -5726,7 +5767,7 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
       const photoAsset = await designAssetsService.getPhotoForSend(design);
       if (photoAsset && photoAsset.photo) {
         comboSent = await bot.sendPhoto(chatId, photoAsset.photo, {
-          caption: `📷 *${design}* — *${warehouse}*${soldOutNote}`,
+          caption: `📷 *${design}* — *${warehouse}*${soldOutNote}${overflowNote}`,
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: rows },
         });
@@ -5754,8 +5795,8 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   // edited in place, exactly as before (TV-4: sold-out designs swap the
   // "Select shade:" prompt for the sold-out note — the buttons are info).
   const bodyText = soldOutDesign
-    ? `📦 *${design}* in *${warehouse}*${soldOutNote}\n_(remaining / opening)_`
-    : `📦 *${design}* in *${warehouse}*\n\nSelect shade:`;
+    ? `📦 *${design}* in *${warehouse}*${soldOutNote}\n_(remaining / opening)_${overflowNote}`
+    : `📦 *${design}* in *${warehouse}*\n\nSelect shade:${overflowNote}`;
   await editOrSendAnchored(bot, chatId, userId, bodyText, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },

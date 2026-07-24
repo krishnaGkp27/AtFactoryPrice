@@ -91,7 +91,7 @@ test('Kano office (TV-1 warehouse): header total is remaining / opening B = t', 
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_back:design', 777));
   const text = headerText(bot);
-  assert.match(text, /Total: 3B = 9t \/ 4B = 12t/, `remaining / opening pair, got: ${text}`);
+  assert.match(text, /Total: 3B=9t \/ 4B=12t/, `remaining / opening pair (TV-4b compact), got: ${text}`);
   assert.match(text, /45,000/, `admin value still shown (available rows only), got: ${text}`);
   assert.match(text, /_\(remaining \/ opening\)_/, `legend shown, got: ${text}`);
 });

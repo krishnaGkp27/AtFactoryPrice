@@ -82,17 +82,32 @@ function formatBalesThans({ bales, thans } = {}) {
 }
 
 /**
- * TV-4 — "remaining / opening" display for than-visibility warehouses:
- * "<remB>B = <remT>t / <openB>B = <openT>t", e.g. "20B = 88t / 30B = 132t".
+ * TV-4b — compact single-figure form used inside the paired display:
+ * "<N>B=<M>t" (no spaces around "="), so the combined pair fits a
+ * full-width Telegram button without truncating. The spaced TV-3 format
+ * (formatBalesThans) is unchanged for single-figure uses (e.g. Take ALL).
+ * @param {{bales:number|*, thans:number|*}} counts
+ * @returns {string} e.g. "22B=88t"
+ */
+function formatBalesThansCompact({ bales, thans } = {}) {
+  const b = Number.isFinite(Number(bales)) ? Number(bales) : 0;
+  const t = Number.isFinite(Number(thans)) ? Number(thans) : 0;
+  return `${b}B=${t}t`;
+}
+
+/**
+ * TV-4 — "remaining / opening" display for than-visibility warehouses,
+ * compact per TV-4b: "<remB>B=<remT>t / <openB>B=<openT>t", e.g.
+ * "20B=88t / 30B=132t" (no spaces around "=", keep spaces around "/").
  * remaining = rows still available today (cart-adjusted, what TV-3 showed);
  * opening = every Inventory row ever recorded for the slice, any status
  * (available + sold + in_transit). Display-only like all of TV-1/2/3.
  * @param {{bales:number|*, thans:number|*}} remaining
  * @param {{bales:number|*, thans:number|*}} opening
- * @returns {string} e.g. "20B = 88t / 30B = 132t"
+ * @returns {string} e.g. "20B=88t / 30B=132t"
  */
 function formatRemainingOpening(remaining, opening) {
-  return `${formatBalesThans(remaining)} / ${formatBalesThans(opening)}`;
+  return `${formatBalesThansCompact(remaining)} / ${formatBalesThansCompact(opening)}`;
 }
 
 /**
