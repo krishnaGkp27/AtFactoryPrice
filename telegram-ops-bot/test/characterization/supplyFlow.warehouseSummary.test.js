@@ -6,7 +6,8 @@
  *   📦 Warehouse: Lagos
  *   📊 Total: 3 bales · 💰 ₦45,000     ← value part ADMIN-ONLY
  *
- * - unit total for everyone (thans on TV-1 warehouses, bales elsewhere)
+ * - unit total for everyone (TV-3 combined "NB = Mt" on TV-1 warehouses,
+ *   bales elsewhere)
  * - stock value (yards × price of the listed bales) only for admins
  *
  * Fixture: 3 bales / 9 thans, every than 50 yd @ 100 → total value 45,000.
@@ -78,12 +79,12 @@ test('employee on Lagos: header shows total bales, NO value', async () => {
   assert.ok(!/45,000|💰/.test(text), `value hidden from employee, got: ${text}`);
 });
 
-test('Kano office (TV-1 warehouse): header total is in THANS', async () => {
+test('Kano office (TV-1 warehouse): header total is combined B = t', async () => {
   inventoryRepository.getAll = async () => fixtureRows('Kano office');
   seed('777', 'Kano office');
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_back:design', 777));
   const text = headerText(bot);
-  assert.match(text, /Total: 9 thans/, `got: ${text}`);
+  assert.match(text, /Total: 3B = 9t/, `got: ${text}`);
   assert.match(text, /45,000/, `admin value still shown, got: ${text}`);
 });

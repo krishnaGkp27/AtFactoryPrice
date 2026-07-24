@@ -1,11 +1,12 @@
 'use strict';
 
 /**
- * TV-1 — than-count visibility for configured warehouses (Supply Request).
+ * TV-1/TV-3 — than-count visibility for configured warehouses (Supply Request).
  *
  * Warehouses listed in Settings THAN_VISIBILITY_WAREHOUSES (default
- * "Kano office") show THAN counts in the design list, the shade buttons
- * and the "Take ALL" shortcut; every other warehouse keeps bale counts.
+ * "Kano office") show the COMBINED "<N>B = <M>t" count (TV-3: physical
+ * bales first, thans after) in the design list, the shade buttons and the
+ * "Take ALL" shortcut; every other warehouse keeps bale counts.
  * Display-only: srf_sh callback payloads stay in bales.
  *
  * Fixture: design 9043B in two shades —
@@ -70,28 +71,28 @@ function lastKeyboardCallbacks(bot) {
   return kb.flat().map((b) => b.callback_data);
 }
 
-test('Kano office: shade buttons + Take ALL show THAN counts', async () => {
+test('Kano office: shade buttons + Take ALL show combined B = t counts', async () => {
   inventoryRepository.getAll = async () => fixtureRows('Kano office');
   seed('Kano office');
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_dg:9043B'));
   const texts = lastKeyboardTexts(bot);
-  assert.ok(texts.some((t) => t.includes('cream (5 thans)')), `cream shows 5 thans, got: ${texts}`);
-  assert.ok(texts.some((t) => t.includes('ash (4 thans)')), `ash shows 4 thans, got: ${texts}`);
-  assert.ok(texts.some((t) => t.includes('Take ALL 2 shades (9 thans)')), `Take ALL shows 9 thans, got: ${texts}`);
+  assert.ok(texts.some((t) => t.includes('cream (2B = 5t)')), `cream shows 2B = 5t, got: ${texts}`);
+  assert.ok(texts.some((t) => t.includes('ash (1B = 4t)')), `ash shows 1B = 4t, got: ${texts}`);
+  assert.ok(texts.some((t) => t.includes('Take ALL 2 shades (3B = 9t)')), `Take ALL shows 3B = 9t, got: ${texts}`);
   // Display-only: the shade callback payload still carries the BALE count.
   const cbs = lastKeyboardCallbacks(bot);
   assert.ok(cbs.includes('srf_sh:9043B|cream|2'), 'cream callback still carries 2 bales');
   assert.ok(cbs.includes('srf_sh:9043B|ash|1'), 'ash callback still carries 1 bale');
 });
 
-test('Kano office: design list shows THAN totals', async () => {
+test('Kano office: design list shows combined B = t totals', async () => {
   inventoryRepository.getAll = async () => fixtureRows('Kano office');
   seed('Kano office');
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_back:design'));
   const texts = lastKeyboardTexts(bot);
-  assert.ok(texts.some((t) => t.includes('9043B (9 thans)')), `design tile shows 9 thans, got: ${texts}`);
+  assert.ok(texts.some((t) => t.includes('9043B (3B = 9t)')), `design tile shows 3B = 9t, got: ${texts}`);
 });
 
 test('Lagos (unflagged): everything stays in BALES', async () => {

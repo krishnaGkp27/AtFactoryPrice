@@ -5490,8 +5490,10 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   // TV-1 — warehouses flagged in Settings list stock by than (subunit),
   // not bale. Display-only: selection + cart semantics stay in bales.
   const useThans = await unitDisplayService.isThanVisibilityWarehouse(warehouse);
+  // TV-3 — than-visible warehouses show BOTH counts, physical bales first:
+  // "9043-B (22B = 88t)". Other warehouses keep bale-only labels unchanged.
   const designTag = (d) => (useThans
-    ? `${d.totalThans} ${productTypesRepo.pluralize(labels.subunit_label, d.totalThans).toLowerCase()}`
+    ? unitDisplayService.formatBalesThans({ bales: d.totalPkgs, thans: d.totalThans })
     : `${d.totalPkgs} ${cShort}`);
   const MAX_VISIBLE = 8;
   const page = (session && session.designPage) || 0;
@@ -5531,10 +5533,13 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   const cartNote = cart.length ? `\n🛒 Cart: ${cart.length} item(s)` : '';
   const pageNote = designs.length > MAX_VISIBLE ? ` (${start + 1}–${Math.min(start + MAX_VISIBLE, designs.length)} of ${designs.length})` : '';
   // WH-SUM — warehouse totals under the header: unit total for everyone
-  // (thans on TV-1 warehouses, bales elsewhere); stock value admin-only.
-  const totalUnits = avail.reduce((s, a) => s + (useThans ? (a.availThans || 0) : a.availPkgs), 0);
-  const unitWord = productTypesRepo.pluralize(useThans ? labels.subunit_label : labels.container_label, totalUnits).toLowerCase();
-  let summaryNote = `\n📊 Total: ${fmtQty(totalUnits)} ${unitWord}`;
+  // (TV-3 combined "64B = 255t" on TV-1 warehouses, bales elsewhere);
+  // stock value admin-only.
+  const totalBalesAll = avail.reduce((s, a) => s + a.availPkgs, 0);
+  const totalThansAll = avail.reduce((s, a) => s + (a.availThans || 0), 0);
+  let summaryNote = useThans
+    ? `\n📊 Total: ${unitDisplayService.formatBalesThans({ bales: totalBalesAll, thans: totalThansAll })}`
+    : `\n📊 Total: ${fmtQty(totalBalesAll)} ${productTypesRepo.pluralize(labels.container_label, totalBalesAll).toLowerCase()}`;
   if (config.access.adminIds.includes(String(userId))) {
     const totalValue = avail.reduce((s, a) => s + (a.availValue || 0), 0);
     summaryNote += ` · 💰 ${fmtMoneyShort(totalValue)}`;
@@ -5617,20 +5622,15 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
     singular: labels.container_label.toLowerCase(),
     plural: productTypesRepo.pluralize(labels.container_label, 2).toLowerCase(),
   };
-  // TV-1 — flagged warehouses show shade availability in thans (subunit).
-  // Display-only: callback payloads, quantity picking and the cart stay
-  // in bales exactly as before.
+  // TV-1/TV-3 — flagged warehouses show shade availability with BOTH counts,
+  // physical bales first: "1 - cream (2B = 5t)". Display-only: callback
+  // payloads, quantity picking and the cart stay in bales exactly as before.
   const useThans = await unitDisplayService.isThanVisibilityWarehouse(warehouse);
-  const dispUnit = useThans
-    ? {
-      singular: labels.subunit_label.toLowerCase(),
-      plural: productTypesRepo.pluralize(labels.subunit_label, 2).toLowerCase(),
-    }
-    : unit;
-  const dispQty = (s) => (useThans ? (s.availThans || 0) : s.availPkgs);
 
   const buttons = shades.map((s) => ({
-    text: buildShadeLabel(s.shade, nameMap, dispQty(s), dispUnit),
+    text: useThans
+      ? buildShadeLabel(s.shade, nameMap, unitDisplayService.formatBalesThans({ bales: s.availPkgs, thans: s.availThans || 0 }))
+      : buildShadeLabel(s.shade, nameMap, s.availPkgs, unit),
     callback_data: `srf_sh:${design}|${s.shade}|${s.availPkgs}`,
   }));
   const rows = layoutShadeRows(buttons);
@@ -5638,12 +5638,12 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   // quantity in one tap (cart-adjusted), instead of picking shade-by-shade.
   const totalBales = shades.reduce((sum, s) => sum + (s.availPkgs > 0 ? s.availPkgs : 0), 0);
   if (totalBales > 0) {
-    const totalDisplay = useThans
-      ? shades.reduce((sum, s) => sum + (s.availPkgs > 0 ? (s.availThans || 0) : 0), 0)
-      : totalBales;
-    const balesWord = totalDisplay === 1 ? dispUnit.singular : dispUnit.plural;
+    const totalThans = shades.reduce((sum, s) => sum + (s.availPkgs > 0 ? (s.availThans || 0) : 0), 0);
+    const qtyLabel = useThans
+      ? unitDisplayService.formatBalesThans({ bales: totalBales, thans: totalThans })
+      : `${totalBales} ${totalBales === 1 ? unit.singular : unit.plural}`;
     rows.push([{
-      text: `✅ Take ALL ${shades.length} shades (${totalDisplay} ${balesWord})`,
+      text: `✅ Take ALL ${shades.length} shades (${qtyLabel})`,
       callback_data: `srf_all:${design}`,
     }]);
   }

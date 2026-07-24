@@ -66,6 +66,22 @@ function invalidateCache() {
 }
 
 /**
+ * TV-3 — canonical combined bales+thans display string for than-visibility
+ * warehouses: "<N>B = <M>t" (owner-locked format: capital B, lowercase t,
+ * spaces around "="). E.g. { bales: 22, thans: 88 } → "22B = 88t", rendered
+ * on stock screens as "9043-B (22B = 88t)". Physical bale count = distinct
+ * design+packageNo per the existing convention (inventoryPickers.baleGroupKey).
+ * Display-only, like all of TV-1/2: selection, carts and approvals stay in bales.
+ * @param {{bales:number|*, thans:number|*}} counts
+ * @returns {string} combined display, e.g. "22B = 88t"
+ */
+function formatBalesThans({ bales, thans } = {}) {
+  const b = Number.isFinite(Number(bales)) ? Number(bales) : 0;
+  const t = Number.isFinite(Number(thans)) ? Number(thans) : 0;
+  return `${b}B = ${t}t`;
+}
+
+/**
  * TV-2 — pure CSV rewrite: set `warehouse` to `mode` inside a CSV of
  * than-visibility warehouse names. Case-insensitive and idempotent;
  * preserves the original casing/order of other entries.
@@ -109,6 +125,7 @@ async function setWarehouseMode(warehouse, mode) {
 
 module.exports = {
   SETTINGS_KEY,
+  formatBalesThans,
   parseWarehouseCsv,
   computeWarehouseCsv,
   getThanVisibilityWarehouses,

@@ -68,3 +68,33 @@ test('cache: fresh value visible after invalidateCache', async () => {
 test('DEFAULTS ship with Kano office enabled', () => {
   assert.equal(settingsRepository.DEFAULTS.THAN_VISIBILITY_WAREHOUSES, 'Kano office');
 });
+
+/* ── TV-3 — formatBalesThans: canonical combined "NB = Mt" display ── */
+
+test('formatBalesThans: owner-locked format "<N>B = <M>t"', () => {
+  assert.equal(unitDisplayService.formatBalesThans({ bales: 22, thans: 88 }), '22B = 88t');
+  assert.equal(unitDisplayService.formatBalesThans({ bales: 1, thans: 1 }), '1B = 1t');
+  assert.equal(unitDisplayService.formatBalesThans({ bales: 64, thans: 255 }), '64B = 255t');
+});
+
+test('formatBalesThans: missing/garbage counts coerce to 0', () => {
+  assert.equal(unitDisplayService.formatBalesThans({}), '0B = 0t');
+  assert.equal(unitDisplayService.formatBalesThans(), '0B = 0t');
+  assert.equal(unitDisplayService.formatBalesThans({ bales: 'x', thans: null }), '0B = 0t');
+  assert.equal(unitDisplayService.formatBalesThans({ bales: '2', thans: '4' }), '2B = 4t');
+});
+
+test('formatBalesThans: than-mode path from rows — 4 thans across 2 bales → "2B = 4t"', () => {
+  const { aggregateDesigns } = require('../../../src/utils/inventoryPickers');
+  // Kano office rows: one row per than; thans of the same bale share packageNo.
+  const rows = [
+    { design: '9043B', packageNo: 'P1', warehouse: 'Kano office', yards: 25 },
+    { design: '9043B', packageNo: 'P1', warehouse: 'Kano office', yards: 25 },
+    { design: '9043B', packageNo: 'P1', warehouse: 'Kano office', yards: 25 },
+    { design: '9043B', packageNo: 'P2', warehouse: 'Kano office', yards: 25 },
+  ];
+  const [agg] = aggregateDesigns(rows);
+  assert.equal(agg.bales, 2);
+  assert.equal(agg.thans, 4);
+  assert.equal(unitDisplayService.formatBalesThans(agg), '2B = 4t');
+});

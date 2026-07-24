@@ -55,11 +55,14 @@ function buildShadeNameMap(asset) {
  *                                  `nameMap`; non-numeric strings are
  *                                  passed through as-is.
  * @param {Map<string,string>} [nameMap]  optional name lookup
- * @param {number} [qty]                  optional container count
+ * @param {number|string} [qty]           optional container count, OR a
+ *        preformatted quantity string (TV-3 combined "2B = 5t") inserted
+ *        verbatim inside the parentheses — no unit word appended.
  * @param {{singular?:string, plural?:string}} [unit]
  *        Container unit override. Defaults to {singular:'bale', plural:'bales'}.
  *        Pass the product-type-aware container label here when it
  *        might not be "bale" (e.g. "box" for garments).
+ *        Ignored when `qty` is a preformatted string.
  * @returns {string}
  */
 function buildShadeLabel(shadeKey, nameMap, qty, unit) {
@@ -76,6 +79,10 @@ function buildShadeLabel(shadeKey, nameMap, qty, unit) {
     head = key || '—';
   }
 
+  // TV-3 — a preformatted quantity string (e.g. "2B = 5t") is used as-is.
+  if (typeof qty === 'string' && qty.trim()) {
+    return `${head} (${qty.trim()})`;
+  }
   if (Number.isFinite(qty) && qty > 0) {
     const singular = (unit && unit.singular) || 'bale';
     const plural = (unit && unit.plural) || 'bales';
