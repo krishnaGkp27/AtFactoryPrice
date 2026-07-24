@@ -111,7 +111,8 @@ async function showDesigns(bot, chatId, userId) {
   const designs = [...agg.entries()].map(([design, pkgs]) => ({ design, bales: pkgs.size }))
     .sort((a, b) => b.bales - a.bales).slice(0, 30);
   if (!designs.length) {
-    await render(bot, chatId, userId, `⚠️ No available stock in *${session.from}*.`, [cancelRow()]);
+    // Back matters here — the user should be able to pick a different source.
+    await render(bot, chatId, userId, `⚠️ No available stock in *${session.from}*.`, [navRow()]);
     return;
   }
   session._designs = designs.map((d) => d.design); session.step = 'design'; sessionStore.set(userId, session);
@@ -149,6 +150,14 @@ async function showQty(bot, chatId, userId) {
   const inv = await availableInventory();
   const avail = transferService.availableBales(inv, session.from, session.design, session.shade).length;
   session.availBales = avail; session.step = 'qty'; sessionStore.set(userId, session);
+  if (avail <= 0) {
+    // Stock raced to zero between the shade tap and this screen — an
+    // "All 0" chip would look tappable but the handler ignores it.
+    await render(bot, chatId, userId,
+      `⚠️ *${session.design} · ${session.shade}* is no longer available in ${session.from}.\n\n_Pick another shade or design._`,
+      [navRow()]);
+    return;
+  }
   const chips = QTY_CHIPS.filter((n) => n < avail).map((n) => ({ text: String(n), callback_data: `trf:qty:${n}` }));
   chips.push({ text: `All ${avail}`, callback_data: `trf:qty:${avail}` });
   const rows = chunk(chips, 4);
@@ -167,7 +176,8 @@ async function showDest(bot, chatId, userId) {
   for (const u of users) for (const w of (u.warehouses || [])) if (w) set.add(w);
   const dests = [...set].sort().filter((w) => w !== session.from);
   if (!dests.length) {
-    await render(bot, chatId, userId, '⚠️ No destination warehouse found. Assign users to the target warehouse first.', [cancelRow()]);
+    await render(bot, chatId, userId, '⚠️ No destination warehouse found. Assign users to the target warehouse first.',
+      [session.cartOrigin ? cancelRow() : navRow()]);
     return;
   }
   // Wizard mode carries design/shade/qty — normalize to the lines shape the
@@ -195,13 +205,13 @@ async function resolvePeople(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session.dispatcher) {
     const cands = await candidatesFor(session.from);
-    if (!cands.length) { await render(bot, chatId, userId, `⚠️ No active users found for *${session.from}*. Add one first.`, [cancelRow()]); return; }
+    if (!cands.length) { await render(bot, chatId, userId, `⚠️ No active users found for *${session.from}*. Add one first.`, [navRow()]); return; }
     if (cands.length === 1) { session.dispatcher = cands[0]; sessionStore.set(userId, session); }
     else { await showPersonPicker(bot, chatId, userId, 'dispatcher', cands); return; }
   }
   if (!session.receiver) {
     const cands = await candidatesFor(session.to);
-    if (!cands.length) { await render(bot, chatId, userId, `⚠️ No active users found for *${session.to}*. Add one first.`, [cancelRow()]); return; }
+    if (!cands.length) { await render(bot, chatId, userId, `⚠️ No active users found for *${session.to}*. Add one first.`, [navRow()]); return; }
     if (cands.length === 1) { session.receiver = cands[0]; sessionStore.set(userId, session); }
     else { await showPersonPicker(bot, chatId, userId, 'receiver', cands); return; }
   }
@@ -606,7 +616,14 @@ async function showBalePicker(bot, chatId, userId) {
     rows.push([{ text: '🔎 Search bale #', callback_data: 'trf:bl:sr' }]);
   }
   rows.push([{ text: nextChoiceIdx(session, session.idx) === -1 ? '✅ Review' : '➡ Next', callback_data: 'trf:bl:nx' }]);
+  if (prevChoiceIdx(session, session.idx) !== -1) {
+    rows.push([{ text: '◀ Prev line', callback_data: 'trf:bl:pv' }]);
+  }
   rows.push([{ text: '⏭ Auto-pick remaining', callback_data: 'trf:bl:auto' }]);
+  // Non-destructive exit: Decline aborts the whole transfer and pings the
+  // admins, so an accidental tap used to be unrecoverable. "Not now" just
+  // parks the request back on the dispatcher's card (My Tasks re-entry).
+  rows.push([{ text: '↩ Not now', callback_data: `trf:bl:nn:${session.requestId}` }]);
   rows.push([{ text: '❌ Decline', callback_data: `trf:dec:${session.requestId}` }]);
   const moreNote = line.cands.length > visible.length
     ? `\n_Showing first ${visible.length} of ${line.cands.length} — 🔎 search finds any bale number._`
@@ -745,7 +762,8 @@ async function askDispatchDoc(bot, chatId, userId) {
     promptText: `📸 *Photo required — ${requestId}*\n`
       + `Send a photo or PDF of the load now to complete the dispatch.\n`
       + `_Nothing moves until it arrives._`,
-    kb: [[{ text: '◀ Back to bales', callback_data: 'trf:bl:bk' },
+    // Label matches where trf:bl:bk actually goes at the gate: the review.
+    kb: [[{ text: '◀ Back to review', callback_data: 'trf:bl:bk' },
       { text: '❌ Decline', callback_data: `trf:dec:${requestId}` }]],
     keep: { pl: session.pl, from: session.from, to: session.to, idx: session.idx || 0 },
   });
@@ -801,8 +819,11 @@ async function promptForDoc(bot, chatId, userId, requestId, docKind, base, messa
     ttlMs: 30 * 60 * 1000, // taking the attachment photo — outlasts the default TTL
   });
   const verb = docKind === 'receive' ? 'received goods' : 'load';
+  // Give the same escape the gate prompts have — an empty keyboard left the
+  // user stuck on this card until the 30-min TTL expired.
   await render(bot, chatId, userId,
-    `${base}\n\n📸 Send a photo or PDF of the ${verb} now to attach it.`, []);
+    `${base}\n\n📸 Send a photo or PDF of the ${verb} now to attach it.`,
+    [[{ text: '↩ Not now', callback_data: `trf:nn:${requestId}` }]]);
 }
 
 /**
@@ -1342,6 +1363,12 @@ async function handleCallback(bot, query) {
   if (mAtt) return rearmDoc(bot, query, mAtt[1], mAtt[2]);
   const mNn = data.match(/^trf:nn:(.+)$/);
   if (mNn) return gateNotNow(bot, query, mNn[1]);
+  // Bale-picker "Not now": park the pick, restore the dispatcher's card.
+  const mPickNn = data.match(/^trf:bl:nn:(.+)$/);
+  if (mPickNn) {
+    sessionStore.clear(String(query.from.id));
+    return showActionCard(bot, query, mPickNn[1]);
+  }
   const mCard = data.match(/^trf:card:(.+)$/);
   if (mCard) return showActionCard(bot, query, mCard[1]);
   if (data === 'trf:list') {
@@ -1459,6 +1486,11 @@ async function handleCallback(bot, query) {
       const next = nextChoiceIdx(session, session.idx);
       if (next === -1) { await showDispatchConfirm(bot, chatId, userId); }
       else { session.idx = next; sessionStore.set(userId, session); await showBalePicker(bot, chatId, userId); }
+      return true;
+    }
+    if (rest === 'pv') {
+      const prev = prevChoiceIdx(session, session.idx);
+      if (prev !== -1) { session.idx = prev; sessionStore.set(userId, session); await showBalePicker(bot, chatId, userId); }
       return true;
     }
     if (rest === 'auto') { await showDispatchConfirm(bot, chatId, userId); return true; }
