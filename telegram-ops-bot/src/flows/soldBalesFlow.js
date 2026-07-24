@@ -72,8 +72,32 @@ function prettyDate(s) {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-/** Stable per-bale group key (prefer baleUid, fall back to packageNo). */
-function baleGroupKey(r) { return r.baleUid || `pkg:${r.packageNo}`; }
+/**
+ * Stable per-PHYSICAL-bale group key. The bale/package number is the
+ * business identity of a bale; legacy rows carry synthetic per-ROW
+ * baleUids (BAL-LEGACY-<rowIndex>), which made every than count as its
+ * own bale (CSUP-1b owner report: "223 bales" on one day). Prefer
+ * design+packageNo; fall back to baleUid only when no package number.
+ */
+function baleGroupKey(r) {
+  return r.packageNo ? `pkg:${r.design}|${r.packageNo}` : (r.baleUid || 'row');
+}
+
+/**
+ * Normalize a soldDate to ISO YYYY-MM-DD for grouping/sorting. The sheet
+ * holds mixed formats (ISO, DD-MM-YYYY, DD/MM/YYYY) — raw string grouping
+ * split the same real day in two and scrambled newest-first order.
+ */
+function normDay(sRaw) {
+  const raw = String(sRaw || '').trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  const dmy = raw.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  const ms = Date.parse(raw);
+  if (isFinite(ms)) return new Date(ms).toISOString().slice(0, 10);
+  return raw;
+}
 
 /* ───────────────────────────── render helper ───────────────────────────── */
 
@@ -127,7 +151,8 @@ async function loadCustomers() {
     e.thans += 1;
     e.yards += r.yards;
     e.bales.add(baleGroupKey(r));
-    if (String(r.soldDate) > String(e.lastDate)) e.lastDate = r.soldDate;
+    const day = normDay(r.soldDate);
+    if (day > String(e.lastDate)) e.lastDate = day;
   }
   return Array.from(byCust.values())
     .map((e) => ({ name: e.name, lastDate: e.lastDate, thans: e.thans, yards: e.yards, bales: e.bales.size }))
@@ -176,8 +201,9 @@ async function loadDatesForCustomer(customer) {
   const byDate = new Map();
   for (const r of sold) {
     if (r.soldTo !== customer) continue;
-    if (!byDate.has(r.soldDate)) byDate.set(r.soldDate, { date: r.soldDate, thans: 0, yards: 0, bales: new Set() });
-    const e = byDate.get(r.soldDate);
+    const day = normDay(r.soldDate);
+    if (!byDate.has(day)) byDate.set(day, { date: day, thans: 0, yards: 0, bales: new Set() });
+    const e = byDate.get(day);
     e.thans += 1;
     e.yards += r.yards;
     e.bales.add(baleGroupKey(r));
@@ -245,7 +271,7 @@ async function renderDetail(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
   const sold = await inventoryRepository.getSoldRows();
-  const rows = sold.filter((r) => r.soldTo === session.customer && r.soldDate === session.soldDate);
+  const rows = sold.filter((r) => r.soldTo === session.customer && normDay(r.soldDate) === session.soldDate);
   if (!rows.length) {
     await render(bot, chatId, userId,
       `🔎 *${session.customer}* · ${prettyDate(session.soldDate)}\n\n_Nothing found — it may have been returned._`,
