@@ -250,7 +250,7 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
       headers: ['packageno', 'thanno', 'design', 'shade', 'yards', 'indent', 'csno', 'supplier'],
       rows: pl.thans.map((t, i) => ({
         packageno: t.packageNo, thanno: String(t.thanNo), design: t.design,
-        shade: t.shade, yards: String(t.yards), indent: t.indent, csno: t.csNo,
+        shade: t.shade, yards: String(t.yards), indent: t.indent, csNo: t.csNo,
         supplier: pl.supplier || '', _rowNum: i + 2,
       })),
     };
