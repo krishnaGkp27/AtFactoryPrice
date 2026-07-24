@@ -6599,6 +6599,7 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['udf:'], handle: (bot, cq) => require('../flows/unitDisplayFlow').handleCallback(bot, cq) },
   { prefixes: ['trf:'], handle: (bot, cq) => require('../flows/transferFlow').handleCallback(bot, cq) },
   { prefixes: ['sbl:'], handle: (bot, cq) => require('../flows/soldBalesFlow').handleCallback(bot, cq) },
+  { prefixes: ['sdd:'], handle: (bot, cq) => require('../flows/supplyDetailsFlow').handleCallback(bot, cq) },
   // DCAT-1 — design → product-category mapping (dual-admin approval).
   { prefixes: ['dcat:'], handle: (bot, cq) => require('../flows/designCategoryFlow').handleCallback(bot, cq) },
   // MKT-2 — marketer allocations: admin flow + marketer category catalog.
@@ -7803,6 +7804,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const uid = String(callbackQuery.from.id);
     const isAdminUser = config.access.adminIds.includes(uid);
     await bot.answerCallbackQuery(callbackQuery.id, { text: view === 'design' ? 'Select sub-view...' : 'Generating report...' });
+
+    // SDD-1 — the flat Warehouse-wise dump is replaced by the tappable
+    // warehouse → date → customer → design drill (owner sketch 24-Jul).
+    if (view === 'warehouse') {
+      await require('../flows/supplyDetailsFlow').start(bot, callbackQuery.message.chat.id, uid, callbackQuery.message.message_id);
+      return;
+    }
 
     if (view === 'design') {
       await editOrSend(bot, callbackQuery.message.chat.id, callbackQuery.message.message_id,
