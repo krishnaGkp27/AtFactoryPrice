@@ -71,6 +71,25 @@ test('DEFAULTS ship with Kano office enabled', () => {
 
 /* ── TV-3 — formatBalesThans: canonical combined "NB = Mt" display ── */
 
+/* ── TV-4 — formatRemainingOpening: "rem / opening" pair display ── */
+
+test('formatRemainingOpening: "<remB>B = <remT>t / <openB>B = <openT>t"', () => {
+  assert.equal(
+    unitDisplayService.formatRemainingOpening({ bales: 20, thans: 88 }, { bales: 30, thans: 132 }),
+    '20B = 88t / 30B = 132t',
+  );
+  assert.equal(
+    unitDisplayService.formatRemainingOpening({ bales: 0, thans: 0 }, { bales: 5, thans: 17 }),
+    '0B = 0t / 5B = 17t',
+    'sold-out design display',
+  );
+  assert.equal(
+    unitDisplayService.formatRemainingOpening(undefined, {}),
+    '0B = 0t / 0B = 0t',
+    'defensive on missing counts',
+  );
+});
+
 test('formatBalesThans: owner-locked format "<N>B = <M>t"', () => {
   assert.equal(unitDisplayService.formatBalesThans({ bales: 22, thans: 88 }), '22B = 88t');
   assert.equal(unitDisplayService.formatBalesThans({ bales: 1, thans: 1 }), '1B = 1t');

@@ -8,7 +8,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { baleGroupKey, aggregateDesigns } = require('../../../src/utils/inventoryPickers');
+const { baleGroupKey, aggregateDesigns, aggregateOpeningStock } = require('../../../src/utils/inventoryPickers');
 
 test('baleGroupKey()', async (t) => {
   await t.test('prefers design+packageNo over baleUid', () => {
@@ -71,5 +71,59 @@ test('aggregateDesigns()', async (t) => {
     assert.deepEqual(aggregateDesigns(null), []);
     const out = aggregateDesigns([{ design: '1', packageNo: 'P', yards: undefined }]);
     assert.deepEqual(out, [{ design: '1', bales: 1, thans: 1, yards: 0 }]);
+  });
+});
+
+/* ── TV-4 — aggregateOpeningStock: opening = all rows, ANY status ── */
+
+test('aggregateOpeningStock()', async (t) => {
+  const row = (design, pkg, shade, status, extra = {}) => ({
+    design, packageNo: pkg, shade, status, warehouse: 'Kano office', ...extra,
+  });
+  /** Mixed statuses: 9043B cream 2 avail bales (5 thans) + 1 sold bale
+   *  (3 thans); ash 1 avail bale (4 thans). 9006 fully out (sold+in_transit). */
+  const rows = [
+    row('9043B', 'P1', 'cream', 'available'), row('9043B', 'P1', 'cream', 'available'), row('9043B', 'P1', 'cream', 'available'),
+    row('9043B', 'P2', 'cream', 'available'), row('9043B', 'P2', 'cream', 'available'),
+    row('9043B', 'P4', 'cream', 'sold'), row('9043B', 'P4', 'cream', 'sold'), row('9043B', 'P4', 'cream', 'sold'),
+    row('9043B', 'P3', 'ash', 'available'), row('9043B', 'P3', 'ash', 'available'), row('9043B', 'P3', 'ash', 'available'), row('9043B', 'P3', 'ash', 'available'),
+    row('9006', 'P9', 'black', 'sold'), row('9006', 'P9', 'black', 'sold'), row('9006', 'P9', 'black', 'sold'),
+    row('9006', 'P10', 'gold', 'in_transit'), row('9006', 'P10', 'gold', 'in_transit'),
+    row('OTHER', 'P99', 'x', 'available', { warehouse: 'Lagos' }), // other warehouse — excluded
+  ];
+
+  await t.test('mixed statuses → correct opening splits per design and shade', () => {
+    const out = aggregateOpeningStock(rows, { warehouse: 'Kano office' });
+    assert.deepEqual(out.totals, { bales: 6, thans: 17 });
+    assert.deepEqual(out.designs.get('9043B'), { bales: 4, thans: 12 });
+    assert.deepEqual(out.designs.get('9006'), { bales: 2, thans: 5 });
+    assert.equal(out.designs.has('OTHER'), false, 'other warehouse excluded');
+    assert.deepEqual(out.shades.get('9043B').get('cream'), { bales: 3, thans: 8 });
+    assert.deepEqual(out.shades.get('9043B').get('ash'), { bales: 1, thans: 4 });
+    assert.deepEqual(out.shades.get('9006').get('black'), { bales: 1, thans: 3 });
+    assert.deepEqual(out.shades.get('9006').get('gold'), { bales: 1, thans: 2 });
+  });
+
+  await t.test('arrival-batch filter mirrors getAdjustedAvailability (incl. unlabelled sentinel)', () => {
+    const batched = [
+      row('9043B', 'P1', 'cream', 'sold', { arrivalBatch: 'Mar26' }),
+      row('9043B', 'P2', 'cream', 'available', { arrivalBatch: 'JUN26' }),
+      row('9043B', 'P5', 'cream', 'sold'), // no batch label
+    ];
+    const mar = aggregateOpeningStock(batched, { warehouse: 'Kano office', arrivalBatch: 'mar26', unlabelledBatch: '(unlabelled)' });
+    assert.deepEqual(mar.totals, { bales: 1, thans: 1 }, 'case-insensitive batch match');
+    const unl = aggregateOpeningStock(batched, { warehouse: 'Kano office', arrivalBatch: '(unlabelled)', unlabelledBatch: '(unlabelled)' });
+    assert.deepEqual(unl.totals, { bales: 1, thans: 1 }, 'unlabelled sentinel matches empty batch');
+    const all = aggregateOpeningStock(batched, { warehouse: 'Kano office', unlabelledBatch: '(unlabelled)' });
+    assert.deepEqual(all.totals, { bales: 3, thans: 3 }, 'no batch → all containers');
+  });
+
+  await t.test('designMatch predicate scopes the slice; DEFAULT shade key; empty input safe', () => {
+    const out = aggregateOpeningStock(rows, { warehouse: 'Kano office', designMatch: (d) => d === '9006' });
+    assert.deepEqual(out.totals, { bales: 2, thans: 5 });
+    assert.equal(out.designs.has('9043B'), false);
+    const noShade = aggregateOpeningStock([row('9', 'P1', '', 'sold')], { warehouse: 'Kano office' });
+    assert.deepEqual(noShade.shades.get('9').get('DEFAULT'), { bales: 1, thans: 1 });
+    assert.deepEqual(aggregateOpeningStock(null, { warehouse: 'Kano office' }).totals, { bales: 0, thans: 0 });
   });
 });

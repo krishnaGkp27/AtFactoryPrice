@@ -16,6 +16,7 @@ const accountingService = require('../services/accountingService');
 const salesFlow = require('../services/salesFlowService');
 const sessionStore = require('../utils/sessionStore');
 const { buildShadeNameMap, buildShadeLabel, layoutShadeRows, buildSelectAllLines, formatShadeRef } = require('../utils/shadeButtons');
+const { cmpNumericAware, aggregateOpeningStock } = require('../utils/inventoryPickers');
 const cartFormat = require('../utils/cartFormat');
 const settingsRepo = require('../repositories/settingsRepository');
 const usersRepository = require('../repositories/usersRepository');
@@ -5490,11 +5491,34 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   // TV-1 — warehouses flagged in Settings list stock by than (subunit),
   // not bale. Display-only: selection + cart semantics stay in bales.
   const useThans = await unitDisplayService.isThanVisibilityWarehouse(warehouse);
-  // TV-3 — than-visible warehouses show BOTH counts, physical bales first:
-  // "9043-B (22B = 88t)". Other warehouses keep bale-only labels unchanged.
-  const designTag = (d) => (useThans
-    ? unitDisplayService.formatBalesThans({ bales: d.totalPkgs, thans: d.totalThans })
-    : `${d.totalPkgs} ${cShort}`);
+  // TV-3/TV-4 — than-visible warehouses show BOTH counts, physical bales
+  // first, as "remaining / opening": "9043-B (20B = 88t / 30B = 132t)".
+  // Opening = every Inventory row ever for the design in this
+  // warehouse/container/category slice, ANY status (available + sold +
+  // in_transit). Designs with 0 remaining but historical stock stay
+  // TAPPABLE, appended after the in-stock designs (numeric-aware order).
+  // Other warehouses keep bale-only labels and lists unchanged.
+  let opening = null;
+  if (useThans) {
+    opening = aggregateOpeningStock(await inventoryRepository.getAll(), {
+      warehouse,
+      arrivalBatch: session && session.arrivalBatch,
+      unlabelledBatch: inventoryRepository.UNLABELLED_BATCH,
+      designMatch: (d) => matchesSupplyCategory(d, session && session.category),
+    });
+    const inStock = new Set(designs.map((d) => String(d.design)));
+    const soldOut = Array.from(opening.designs.keys())
+      .filter((d) => !inStock.has(d))
+      .sort(cmpNumericAware)
+      .map((d) => ({ design: d, totalPkgs: 0, totalThans: 0 }));
+    designs.push(...soldOut);
+  }
+  const designTag = (d) => {
+    if (!useThans) return `${d.totalPkgs} ${cShort}`;
+    const rem = { bales: d.totalPkgs, thans: d.totalThans };
+    const open = (opening && opening.designs.get(String(d.design))) || rem;
+    return unitDisplayService.formatRemainingOpening(rem, open);
+  };
   const MAX_VISIBLE = 8;
   const page = (session && session.designPage) || 0;
   const start = page * MAX_VISIBLE;
@@ -5533,12 +5557,14 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   const cartNote = cart.length ? `\n🛒 Cart: ${cart.length} item(s)` : '';
   const pageNote = designs.length > MAX_VISIBLE ? ` (${start + 1}–${Math.min(start + MAX_VISIBLE, designs.length)} of ${designs.length})` : '';
   // WH-SUM — warehouse totals under the header: unit total for everyone
-  // (TV-3 combined "64B = 255t" on TV-1 warehouses, bales elsewhere);
-  // stock value admin-only.
+  // (TV-4 "remaining / opening" — "59B = 255t / 80B = 340t" — on TV-1
+  // warehouses, bales elsewhere); stock value admin-only (unchanged:
+  // computed from AVAILABLE rows only).
   const totalBalesAll = avail.reduce((s, a) => s + a.availPkgs, 0);
   const totalThansAll = avail.reduce((s, a) => s + (a.availThans || 0), 0);
+  const remTotals = { bales: totalBalesAll, thans: totalThansAll };
   let summaryNote = useThans
-    ? `\n📊 Total: ${unitDisplayService.formatBalesThans({ bales: totalBalesAll, thans: totalThansAll })}`
+    ? `\n📊 Total: ${unitDisplayService.formatRemainingOpening(remTotals, opening ? opening.totals : remTotals)}`
     : `\n📊 Total: ${fmtQty(totalBalesAll)} ${productTypesRepo.pluralize(labels.container_label, totalBalesAll).toLowerCase()}`;
   if (config.access.adminIds.includes(String(userId))) {
     const totalValue = avail.reduce((s, a) => s + (a.availValue || 0), 0);
@@ -5551,8 +5577,11 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   const catNote = catLabel
     ? ` · ${session.category === SUPPLY_OTHERS_CATEGORY ? '📦' : designCategoriesRepo.iconFor(catLabel)} ${catLabel.replace(/[*_`[\]]/g, '\\$&')}`
     : '';
+  // TV-4 — legend under "Select design:" explaining the paired counts;
+  // than-visible warehouses only.
+  const legendNote = useThans ? '\n_(remaining / opening)_' : '';
   const sent = await editOrSend(bot, chatId, resolvedMsgId,
-    `📦 *Warehouse: ${warehouse}*${catNote}${summaryNote}${cartNote}\n\nSelect design:${pageNote}`, {
+    `📦 *Warehouse: ${warehouse}*${catNote}${summaryNote}${cartNote}\n\nSelect design:${pageNote}${legendNote}`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
@@ -5574,7 +5603,33 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   // stale once we render a new shade picker.
   await clearDesignPreview(bot, chatId, userId);
 
-  if (!shades.length) {
+  // TV-1/TV-3/TV-4 — flagged warehouses show shade availability with BOTH
+  // counts as "remaining / opening": "1 - cream (2B = 5t / 4B = 10t)".
+  // Opening = every Inventory row ever for this design in the same
+  // warehouse/container/category slice, ANY status. Fully-sold shades stay
+  // on screen as "(0B = 0t / NB = Mt)" info buttons (their taps land on the
+  // sold-out guard in showQuantityPicker, never an addable line), which also
+  // keeps fully-sold DESIGNS renderable instead of dead-ending. Display-only:
+  // callback payloads, quantity picking and the cart stay in bales.
+  const useThans = await unitDisplayService.isThanVisibilityWarehouse(warehouse);
+  let openShades = null; // Map<shadeKey, {bales, thans}> for this design
+  let soldOutShades = [];
+  if (useThans) {
+    const openingAll = aggregateOpeningStock(await inventoryRepository.getAll(), {
+      warehouse,
+      arrivalBatch: session && session.arrivalBatch,
+      unlabelledBatch: inventoryRepository.UNLABELLED_BATCH,
+      designMatch: (d) => matchesSupplyCategory(d, session && session.category),
+    });
+    openShades = openingAll.shades.get(String(design)) || new Map();
+    const inStock = new Set(shades.map((s) => String(s.shade)));
+    soldOutShades = Array.from(openShades.keys())
+      .filter((sh) => !inStock.has(sh))
+      .sort(cmpNumericAware)
+      .map((sh) => ({ design, shade: sh, availPkgs: 0, availThans: 0 }));
+  }
+
+  if (!shades.length && !soldOutShades.length) {
     await editOrSendAnchored(bot, chatId, userId, `⚠️ No remaining stock for ${design} in ${warehouse}.`, {});
     if (cart.length) await showCartSummary(bot, chatId, userId);
     return;
@@ -5622,14 +5677,18 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
     singular: labels.container_label.toLowerCase(),
     plural: productTypesRepo.pluralize(labels.container_label, 2).toLowerCase(),
   };
-  // TV-1/TV-3 — flagged warehouses show shade availability with BOTH counts,
-  // physical bales first: "1 - cream (2B = 5t)". Display-only: callback
-  // payloads, quantity picking and the cart stay in bales exactly as before.
-  const useThans = await unitDisplayService.isThanVisibilityWarehouse(warehouse);
-
-  const buttons = shades.map((s) => ({
+  // TV-4 — in-stock shades first (availPkgs desc, as before), fully-sold
+  // shades appended after as info buttons. Non-than-visible warehouses get
+  // the exact same list/labels as before (soldOutShades is always empty).
+  const listedShades = useThans ? [...shades, ...soldOutShades] : shades;
+  const shadeTag = (s) => {
+    const rem = { bales: s.availPkgs, thans: s.availThans || 0 };
+    const open = (openShades && openShades.get(String(s.shade))) || rem;
+    return unitDisplayService.formatRemainingOpening(rem, open);
+  };
+  const buttons = listedShades.map((s) => ({
     text: useThans
-      ? buildShadeLabel(s.shade, nameMap, unitDisplayService.formatBalesThans({ bales: s.availPkgs, thans: s.availThans || 0 }))
+      ? buildShadeLabel(s.shade, nameMap, shadeTag(s))
       : buildShadeLabel(s.shade, nameMap, s.availPkgs, unit),
     callback_data: `srf_sh:${design}|${s.shade}|${s.availPkgs}`,
   }));
@@ -5649,6 +5708,11 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   }
   rows.push([{ text: '⬅️ Back to designs', callback_data: 'srf_back:design' }]);
 
+  // TV-4 — a fully-sold design (no remaining shades) renders as an info
+  // screen: shade buttons show "(0B = 0t / NB = Mt)" and the header says so.
+  const soldOutDesign = useThans && !shades.length;
+  const soldOutNote = soldOutDesign ? '\n\n_Sold out — nothing available to add._' : '';
+
   // ── Path A: catalog photo exists → send a single photo+caption+buttons
   // message so the shade buttons sit directly under the image with no
   // separator text in between. We track its message_id on the session
@@ -5662,7 +5726,7 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
       const photoAsset = await designAssetsService.getPhotoForSend(design);
       if (photoAsset && photoAsset.photo) {
         comboSent = await bot.sendPhoto(chatId, photoAsset.photo, {
-          caption: `📷 *${design}* — *${warehouse}*`,
+          caption: `📷 *${design}* — *${warehouse}*${soldOutNote}`,
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: rows },
         });
@@ -5687,8 +5751,12 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   }
 
   // ── Path B: no catalog photo (or send failed) → text-only shade picker
-  // edited in place, exactly as before.
-  await editOrSendAnchored(bot, chatId, userId, `📦 *${design}* in *${warehouse}*\n\nSelect shade:`, {
+  // edited in place, exactly as before (TV-4: sold-out designs swap the
+  // "Select shade:" prompt for the sold-out note — the buttons are info).
+  const bodyText = soldOutDesign
+    ? `📦 *${design}* in *${warehouse}*${soldOutNote}\n_(remaining / opening)_`
+    : `📦 *${design}* in *${warehouse}*\n\nSelect shade:`;
+  await editOrSendAnchored(bot, chatId, userId, bodyText, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
@@ -5703,6 +5771,22 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
   // in showShadesForDesign). If the design has no catalog asset, this
   // is empty and the header degrades to plain "Shade: 3".
   const shadeRef = formatShadeRef(shade, session && session.currentShadeName);
+
+  // TV-4 — a fully-sold shade tapped from the info list (than-visible
+  // warehouses) has nothing addable: show a note + back instead of qty
+  // chips. Also blocks the Custom Quantity dead-end at 0 available, so a
+  // 0-available selection can never produce an addable cart line.
+  if (!(Number(availPkgs) > 0)) {
+    const backBtn = (session && session.singleShadeDesign)
+      ? { text: '⬅️ Back to designs', callback_data: 'srf_back:design' }
+      : { text: '⬅️ Back to shades', callback_data: 'srf_back:shade' };
+    await editOrSendAnchored(bot, chatId, userId,
+      `📦 *${design}* │ Shade: *${shadeRef}* │ 🏭 *${warehouse}*\n\n_Sold out — nothing available to add._`, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [[backBtn]] },
+    });
+    return;
+  }
 
   const quickNums = [];
   for (let n = 1; n <= Math.min(availPkgs, 10); n++) quickNums.push(n);

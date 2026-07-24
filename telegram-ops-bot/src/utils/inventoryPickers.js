@@ -54,4 +54,62 @@ function aggregateDesigns(rows) {
     .sort((a, b) => (b.bales - a.bales) || cmpNumericAware(a.design, b.design));
 }
 
-module.exports = { baleGroupKey, aggregateDesigns };
+/**
+ * TV-4 — opening-stock aggregation for the supply-request browse screens.
+ *
+ * "Opening" = EVERY Inventory row ever recorded for a warehouse slice,
+ * regardless of status (available + sold + in_transit), so than-visible
+ * warehouses can show "remaining / opening" and keep fully-sold designs
+ * on screen. Filters mirror getAdjustedAvailability exactly (strict
+ * warehouse equality, arrival-batch incl. the unlabelled sentinel,
+ * optional design predicate) MINUS the status filter. Bale counts are
+ * distinct physical bales via baleGroupKey; thans = row count (one row
+ * per than). Pure + side-effect free.
+ *
+ * @param {Array<Object>} rows all inventory rows (any status)
+ * @param {{warehouse:string, arrivalBatch?:string|null, unlabelledBatch?:string,
+ *          designMatch?:(design:string)=>boolean}} opts
+ * @returns {{totals:{bales:number,thans:number},
+ *            designs:Map<string,{bales:number,thans:number}>,
+ *            shades:Map<string,Map<string,{bales:number,thans:number}>>}}
+ *   designs keyed by String(design); shades keyed design → String(shade||'DEFAULT').
+ */
+function aggregateOpeningStock(rows, { warehouse, arrivalBatch = null, unlabelledBatch = '', designMatch = null } = {}) {
+  const ab = arrivalBatch ? String(arrivalBatch).toUpperCase() : null;
+  const isUnlabelled = ab !== null && ab === String(unlabelledBatch).toUpperCase();
+  const totalKeys = new Set();
+  let totalThans = 0;
+  const designs = new Map(); // design → {keys:Set, thans}
+  const shades = new Map(); // design → Map<shadeKey, {keys:Set, thans}>
+  for (const r of rows || []) {
+    if (!r || r.warehouse !== warehouse) continue;
+    if (ab) {
+      const rab = (r.arrivalBatch || '').toUpperCase();
+      if (isUnlabelled ? rab !== '' : rab !== ab) continue;
+    }
+    const design = String(r.design ?? '');
+    if (designMatch && !designMatch(design)) continue;
+    const key = baleGroupKey(r);
+    totalKeys.add(key);
+    totalThans += 1;
+    if (!designs.has(design)) designs.set(design, { keys: new Set(), thans: 0 });
+    const d = designs.get(design);
+    d.keys.add(key);
+    d.thans += 1;
+    if (!shades.has(design)) shades.set(design, new Map());
+    const byShade = shades.get(design);
+    const shadeKey = String(r.shade || 'DEFAULT');
+    if (!byShade.has(shadeKey)) byShade.set(shadeKey, { keys: new Set(), thans: 0 });
+    const s = byShade.get(shadeKey);
+    s.keys.add(key);
+    s.thans += 1;
+  }
+  const fin = (e) => ({ bales: e.keys.size, thans: e.thans });
+  return {
+    totals: { bales: totalKeys.size, thans: totalThans },
+    designs: new Map(Array.from(designs, ([k, e]) => [k, fin(e)])),
+    shades: new Map(Array.from(shades, ([k, m]) => [k, new Map(Array.from(m, ([sk, e]) => [sk, fin(e)]))])),
+  };
+}
+
+module.exports = { baleGroupKey, cmpNumericAware, aggregateDesigns, aggregateOpeningStock };

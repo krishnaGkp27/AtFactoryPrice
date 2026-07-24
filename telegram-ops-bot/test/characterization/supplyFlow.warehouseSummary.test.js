@@ -6,11 +6,12 @@
  *   📦 Warehouse: Lagos
  *   📊 Total: 3 bales · 💰 ₦45,000     ← value part ADMIN-ONLY
  *
- * - unit total for everyone (TV-3 combined "NB = Mt" on TV-1 warehouses,
- *   bales elsewhere)
- * - stock value (yards × price of the listed bales) only for admins
+ * - unit total for everyone (TV-4 "remaining / opening" pair — each side in
+ *   the TV-3 combined "NB = Mt" format — on TV-1 warehouses, bales elsewhere)
+ * - stock value (yards × price of the listed AVAILABLE bales) only for admins
  *
- * Fixture: 3 bales / 9 thans, every than 50 yd @ 100 → total value 45,000.
+ * Fixture: 3 bales / 9 thans available, every than 50 yd @ 100 → value
+ * 45,000; plus one SOLD bale (3 thans) → opening 4B = 12t, value unchanged.
  */
 
 process.env.ADMIN_IDS = '777';
@@ -44,11 +45,16 @@ settingsRepository.getAll = async () => ({ THAN_VISIBILITY_WAREHOUSES: 'Kano off
 unitDisplayService.invalidateCache();
 
 function fixtureRows(warehouse) {
-  const mk = (pkg, shade, n) => Array.from({ length: n }, () => ({
-    design: '9043B', shade, warehouse, status: 'available', packageNo: pkg,
+  const mk = (pkg, shade, n, status = 'available') => Array.from({ length: n }, () => ({
+    design: '9043B', shade, warehouse, status, packageNo: pkg,
     productType: 'fabric', yards: 50, pricePerYard: 100,
   }));
-  return [...mk('P1', 'cream', 3), ...mk('P2', 'cream', 2), ...mk('P3', 'ash', 4)];
+  return [
+    ...mk('P1', 'cream', 3), ...mk('P2', 'cream', 2), ...mk('P3', 'ash', 4),
+    // Sold bale: counts toward OPENING only — never bales, value, or the
+    // unflagged-warehouse totals.
+    ...mk('P4', 'cream', 3, 'sold'),
+  ];
 }
 function seed(uid, warehouse) {
   sessionStore.set(uid, { type: 'supply_req_flow', warehouse, cart: [], step: 'design', productType: 'fabric', flowMessageId: 50 });
@@ -79,12 +85,23 @@ test('employee on Lagos: header shows total bales, NO value', async () => {
   assert.ok(!/45,000|💰/.test(text), `value hidden from employee, got: ${text}`);
 });
 
-test('Kano office (TV-1 warehouse): header total is combined B = t', async () => {
+test('Kano office (TV-1 warehouse): header total is remaining / opening B = t', async () => {
   inventoryRepository.getAll = async () => fixtureRows('Kano office');
   seed('777', 'Kano office');
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_back:design', 777));
   const text = headerText(bot);
-  assert.match(text, /Total: 3B = 9t/, `got: ${text}`);
-  assert.match(text, /45,000/, `admin value still shown, got: ${text}`);
+  assert.match(text, /Total: 3B = 9t \/ 4B = 12t/, `remaining / opening pair, got: ${text}`);
+  assert.match(text, /45,000/, `admin value still shown (available rows only), got: ${text}`);
+  assert.match(text, /_\(remaining \/ opening\)_/, `legend shown, got: ${text}`);
+});
+
+test('Lagos (unflagged): sold bale changes NOTHING in the header', async () => {
+  inventoryRepository.getAll = async () => fixtureRows('Lagos');
+  seed('777', 'Lagos');
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_back:design', 777));
+  const text = headerText(bot);
+  assert.match(text, /Total: 3 bales/, `still plain bales, got: ${text}`);
+  assert.ok(!/remaining \/ opening/.test(text), `no legend on unflagged warehouse, got: ${text}`);
 });

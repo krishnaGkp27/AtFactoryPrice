@@ -82,6 +82,20 @@ function formatBalesThans({ bales, thans } = {}) {
 }
 
 /**
+ * TV-4 — "remaining / opening" display for than-visibility warehouses:
+ * "<remB>B = <remT>t / <openB>B = <openT>t", e.g. "20B = 88t / 30B = 132t".
+ * remaining = rows still available today (cart-adjusted, what TV-3 showed);
+ * opening = every Inventory row ever recorded for the slice, any status
+ * (available + sold + in_transit). Display-only like all of TV-1/2/3.
+ * @param {{bales:number|*, thans:number|*}} remaining
+ * @param {{bales:number|*, thans:number|*}} opening
+ * @returns {string} e.g. "20B = 88t / 30B = 132t"
+ */
+function formatRemainingOpening(remaining, opening) {
+  return `${formatBalesThans(remaining)} / ${formatBalesThans(opening)}`;
+}
+
+/**
  * TV-2 — pure CSV rewrite: set `warehouse` to `mode` inside a CSV of
  * than-visibility warehouse names. Case-insensitive and idempotent;
  * preserves the original casing/order of other entries.
@@ -126,6 +140,7 @@ async function setWarehouseMode(warehouse, mode) {
 module.exports = {
   SETTINGS_KEY,
   formatBalesThans,
+  formatRemainingOpening,
   parseWarehouseCsv,
   computeWarehouseCsv,
   getThanVisibilityWarehouses,
