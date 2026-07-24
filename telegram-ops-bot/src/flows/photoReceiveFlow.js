@@ -498,7 +498,16 @@ async function handleCallback(bot, query) {
 
   if (data === 'pr:cancel') {
     sessionStore.clear(userId);
-    await bot.sendMessage(chatId, '❌ Photo Receive cancelled.');
+    // Edit the tapped card in place (a fresh sendMessage would leave the old
+    // card behind with dead pr:* buttons) and keep a Menu button on it.
+    const cancelKb = { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] };
+    try {
+      await bot.editMessageText('❌ Photo Receive cancelled.', {
+        chat_id: chatId, message_id: query.message.message_id, reply_markup: cancelKb,
+      });
+    } catch (_) {
+      await bot.sendMessage(chatId, '❌ Photo Receive cancelled.', { reply_markup: cancelKb });
+    }
     return true;
   }
 

@@ -107,10 +107,12 @@ async function start(bot, chatId, userId, messageId) {
 async function renderGrnPicker(bot, chatId, userId) {
   const provisional = await landedCostService.listProvisional();
   if (!provisional.length) {
-    sessionStore.clear(userId);
+    // Render BEFORE clearing — this renderer is requireSession and no-ops
+    // once the session is gone (the card would never appear).
     await render(bot, chatId, userId,
       '💵 *Finalize Landed Cost*\n\n_No provisional GRNs found — every receipt is already finalized._',
       [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+    sessionStore.clear(userId);
     return;
   }
   const rows = provisional.slice(0, 10).map((g) => ([{
@@ -372,8 +374,9 @@ async function handleCallback(bot, query) {
   try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
 
   if (data === 'lcost:cancel') {
-    sessionStore.clear(userId);
+    // Render BEFORE clearing — requireSession renderer no-ops without a session.
     await render(bot, chatId, userId, '❌ Cancelled.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+    sessionStore.clear(userId);
     return true;
   }
   if (data === 'lcost:noop') return true;
@@ -449,8 +452,8 @@ async function stepBack(bot, chatId, userId) {
       await renderChargeTypePicker(bot, chatId, userId);
       break;
     default:
-      sessionStore.clear(userId);
       await render(bot, chatId, userId, '❌ Cancelled.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+      sessionStore.clear(userId);
   }
 }
 

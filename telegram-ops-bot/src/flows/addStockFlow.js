@@ -98,7 +98,8 @@ async function handleCallback(bot, callbackQuery) {
     if (data === 'addstock:cancel') {
       sessionStore.clear(userId);
       await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
-      await _editToPlainText(bot, callbackQuery.message, '❌ Add-stock cancelled. No stock was added.');
+      await _editToPlainText(bot, callbackQuery.message, '❌ Add-stock cancelled. No stock was added.',
+        { reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] } });
       return true;
     }
 

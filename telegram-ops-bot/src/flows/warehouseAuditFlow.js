@@ -1011,8 +1011,8 @@ async function stepBack(bot, chatId, userId) {
       }
       break;
     default:
-      sessionStore.clear(userId);
       await render(bot, chatId, userId, '🔍 Closed.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+      sessionStore.clear(userId);
   }
 }
 
@@ -1063,8 +1063,9 @@ async function handleCallback(bot, query) {
   if (data === 'wai:noop') return true;
 
   if (data === 'wai:close') {
-    sessionStore.clear(userId);
+    // Render BEFORE clearing so the closed card edits the anchored message.
     await render(bot, chatId, userId, '🔍 Audit closed.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+    sessionStore.clear(userId);
     return true;
   }
 

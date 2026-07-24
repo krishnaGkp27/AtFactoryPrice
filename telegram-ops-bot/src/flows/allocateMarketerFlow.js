@@ -283,8 +283,11 @@ async function handleCallback(bot, query) {
   try { await bot.answerCallbackQuery(query.id); } catch { /* ignore */ }
 
   if (data === 'mal:cancel') {
+    // Render BEFORE clearing so the anchored card is edited in place (the
+    // renderer loses flowMessageId once the session is gone).
+    await render(bot, chatId, userId, '❌ Cancelled — nothing was changed.',
+      [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
     sessionStore.clear(userId);
-    await render(bot, chatId, userId, '❌ Cancelled — nothing was changed.', []);
     return true;
   }
 

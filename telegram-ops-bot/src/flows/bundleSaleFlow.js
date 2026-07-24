@@ -228,10 +228,11 @@ async function renderContainerPicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
   if (!containers.length) {
-    sessionStore.clear(userId);
+    // Render BEFORE clearing — render() early-returns once the session is gone.
     await render(bot, chatId, userId,
       '🧵 *Bundle Sale*\n\n_No containers with available stock._',
       [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+    sessionStore.clear(userId);
     return;
   }
   const rows = [];
@@ -968,8 +969,9 @@ async function handleCallback(bot, query) {
   if (data === 'bs:noop') return true;
 
   if (data === 'bs:cancel') {
-    sessionStore.clear(userId);
+    // Render BEFORE clearing — render() early-returns once the session is gone.
     await render(bot, chatId, userId, '❌ Cancelled.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+    sessionStore.clear(userId);
     return true;
   }
 
@@ -1315,8 +1317,8 @@ async function stepBack(bot, chatId, userId) {
       await renderPaymentPicker(bot, chatId, userId);
       break;
     default:
-      sessionStore.clear(userId);
       await render(bot, chatId, userId, '❌ Cancelled.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+      sessionStore.clear(userId);
   }
 }
 

@@ -556,10 +556,12 @@ async function handleCallback(bot, callbackQuery) {
 
   try {
     if (data === 'sb:x') {
-      sessionStore.clear(userId);
       await ack('Cancelled');
-      await render(bot, chatId, userId, '❌ Sale cancelled. Nothing was submitted.', []);
-      try { await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }); } catch (_) {}
+      // Render BEFORE clearing so the anchored card is edited in place, and
+      // leave a Menu button instead of a dead empty keyboard.
+      await render(bot, chatId, userId, '❌ Sale cancelled. Nothing was submitted.',
+        [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+      sessionStore.clear(userId);
       return true;
     }
     if (data === 'sb:noop') { await ack(); return true; }

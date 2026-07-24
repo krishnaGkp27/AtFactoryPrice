@@ -271,8 +271,11 @@ async function handleCallback(bot, query) {
   try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
 
   if (data === 'wh:cancel') {
+    // Render BEFORE clearing — this flow's render() early-returns once the
+    // session is gone, so the old order left the card un-edited and dead.
+    await render(bot, chatId, userId, '❌ Cancelled.',
+      [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
     sessionStore.clear(userId);
-    await render(bot, chatId, userId, '❌ Cancelled.', []);
     return true;
   }
 

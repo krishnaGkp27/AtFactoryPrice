@@ -598,7 +598,8 @@ async function handleCallback(bot, callbackQuery) {
   }
   if (data === 'gr:cancel') {
     sessionStore.clear(userId);
-    await editOrSend(bot, chatId, messageId, '❌ Cancelled.', {});
+    await editOrSend(bot, chatId, messageId, '❌ Cancelled.',
+      { reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] } });
     return true;
   }
   if (!session || session.type !== 'grn_flow') {

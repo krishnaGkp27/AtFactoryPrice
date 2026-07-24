@@ -219,11 +219,13 @@ async function applyRole(bot, chatId, userId, tgId, role) {
     ? [[{ text: '🏭 Assign Warehouses', callback_data: 'adm:assign_wh' }], [{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]
     : [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]];
 
-  sessionStore.clear(userId);
+  // Render BEFORE clearing so the anchored card is edited in place (the
+  // renderer loses flowMessageId once the session is gone).
   await render(bot, chatId, userId,
     `✅ *Role updated*\n\n*${target.name || tgId}* (\`${tgId}\`)\n${from} → *${role}*${warn}`,
     rows,
   );
+  sessionStore.clear(userId);
 }
 
 // ---------------------------------------------------------------------------
@@ -248,9 +250,10 @@ async function handleCallback(bot, query) {
   await bot.answerCallbackQuery(query.id).catch(() => {});
 
   if (data === 'rol:cancel') {
-    sessionStore.clear(userId);
+    // Render BEFORE clearing so the cancelled card edits the anchored message.
     await render(bot, chatId, userId, '_Change Role cancelled._',
       [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]);
+    sessionStore.clear(userId);
     return true;
   }
   if (data === 'rol:noop') return true;

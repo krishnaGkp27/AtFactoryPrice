@@ -8109,7 +8109,9 @@ async function handleCallbackQuery(bot, callbackQuery) {
     sessionStore.clear(uid);
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
-    await bot.sendMessage(callbackQuery.message.chat.id, 'Order creation cancelled.');
+    await bot.sendMessage(callbackQuery.message.chat.id, 'Order creation cancelled.', {
+      reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] },
+    });
 
   } else if (data.startsWith('obb:')) {
     // Step-by-step Back inside the Order-creation flow.
@@ -8265,6 +8267,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.editMessageText('❌ Receipt upload cancelled.', {
       chat_id: callbackQuery.message.chat.id,
       message_id: callbackQuery.message.message_id,
+      reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] },
     }).catch(() => {});
 
   } else if (data.startsWith('rcb:')) {

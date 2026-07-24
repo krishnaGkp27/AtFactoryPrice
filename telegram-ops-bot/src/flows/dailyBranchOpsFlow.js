@@ -347,8 +347,10 @@ async function handleCallback(bot, query) {
   try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
 
   if (data === 'bops:cancel') {
-    sessionStore.clear(userId);
+    // Render BEFORE clearing — this renderer is requireSession and no-ops
+    // once the session is gone (the Cancelled card would never appear).
     await render(bot, chatId, userId, '❌ Cancelled.', [menuRow()]);
+    sessionStore.clear(userId);
     return true;
   }
   if (data === 'bops:noop') return true;
@@ -407,8 +409,8 @@ async function stepBack(bot, chatId, userId) {
       await renderCashStep(bot, chatId, userId);
       break;
     default:
-      sessionStore.clear(userId);
       await render(bot, chatId, userId, '❌ Cancelled.', [menuRow()]);
+      sessionStore.clear(userId);
   }
 }
 

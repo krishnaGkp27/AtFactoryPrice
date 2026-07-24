@@ -413,7 +413,8 @@ async function handleCallback(bot, callbackQuery) {
   if (data === 'pp:new')              { await startNewPO(bot, chatId, userId, messageId); return true; }
   if (data === 'pp:new_cancel') {
     sessionStore.clear(userId);
-    await editOrSend(bot, chatId, messageId, '❌ Cancelled.', {});
+    await editOrSend(bot, chatId, messageId, '❌ Cancelled.',
+      { reply_markup: { inline_keyboard: [backRow()] } });
     return true;
   }
   if (data.startsWith('pp:receive:')) {

@@ -280,8 +280,11 @@ async function handleCallback(bot, query) {
   try { await bot.answerCallbackQuery(query.id); } catch { /* ignore */ }
 
   if (data === 'dcat:cancel') {
+    // Render BEFORE clearing so the anchored card is edited in place, and
+    // leave a Menu button on the closed card.
+    await render(bot, chatId, userId, '❌ Cancelled — nothing was changed.',
+      [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
     sessionStore.clear(userId);
-    await render(bot, chatId, userId, '❌ Cancelled — nothing was changed.', []);
     return true;
   }
 
