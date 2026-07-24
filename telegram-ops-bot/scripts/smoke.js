@@ -7019,8 +7019,10 @@ async function runS40() {
 }
 
 // ---------------------------------------------------------------------------
-// S41 — SOLD-BALES LOOKUP (SBL-1) — customer -> date -> bale/than detail
-//   drill-down over Inventory sold rows. Price/value gated by canSeeSalePrice.
+// S41 — SOLD-BALES LOOKUP (SBL-1 + CSUP-2) — customer -> design -> date ->
+//   bale/than detail drill-down over Inventory sold rows (owner sketch:
+//   customer → design → dates → bale numbers with yards). Price/value gated
+//   by canSeeSalePrice.
 // ---------------------------------------------------------------------------
 async function runS41() {
   // Fake sold inventory: CJE (two dates) + Ibrahim (one date).
@@ -7073,15 +7075,23 @@ async function runS41() {
     pass('S41.1 customer list: most-recent buyer first (CJE 4t before Ibrahim)');
   } else fail('S41.1', JSON.stringify(custBtns));
 
-  // ---- S41.2 — date list for the chosen customer, newest first ----
+  // ---- S41.2 — CSUP-2 design level, then combined date list ----
   await flow.handleCallback(bot, cbq('admin', 'sbl:c:0'));
-  const dateBtns = flatten(captured.rows);
-  const d0 = dateBtns.find((b) => b.callback_data === 'sbl:d:0');
-  const d1 = dateBtns.find((b) => b.callback_data === 'sbl:d:1');
-  if (d0 && /25 Jun 2026 — 2 bales \(75 yds\)/.test(d0.text)
-      && d1 && /20 Jun 2026 — 1 bale \(30 yds\)/.test(d1.text)) {
-    pass('S41.2 date list: newest-first days, CSUP-1 "N bales (Y yds)" tiles');
-  } else fail('S41.2', JSON.stringify(dateBtns));
+  const desBtns = flatten(captured.rows);
+  const g0 = desBtns.find((b) => b.callback_data === 'sbl:g:0');
+  const gAll = desBtns.find((b) => b.callback_data === 'sbl:g:all');
+  if (!(g0 && /🧵 .+ — \d+ bales? \(\d+ yds\)/.test(g0.text) && gAll)) {
+    fail('S41.2', JSON.stringify(desBtns));
+  } else {
+    await flow.handleCallback(bot, cbq('admin', 'sbl:g:all'));
+    const dateBtns = flatten(captured.rows);
+    const d0 = dateBtns.find((b) => b.callback_data === 'sbl:d:0');
+    const d1 = dateBtns.find((b) => b.callback_data === 'sbl:d:1');
+    if (d0 && /25 Jun 2026 — 2 bales \(75 yds\)/.test(d0.text)
+        && d1 && /20 Jun 2026 — 1 bale \(30 yds\)/.test(d1.text)) {
+      pass('S41.2 CSUP-2 design tiles + combined date list newest-first');
+    } else fail('S41.2', JSON.stringify(dateBtns));
+  }
 
   // ---- S41.3 — detail card (price-visible role): bales, thans, ₦ totals ----
   await flow.handleCallback(bot, cbq('admin', 'sbl:d:0'));
@@ -7092,18 +7102,32 @@ async function runS41() {
     pass('S41.3 detail (price role): bale/than breakdown + ₦ per-bale + ₦ total');
   } else fail('S41.3', JSON.stringify(t));
 
-  // ---- S41.4 — back navigation detail -> dates -> customers ----
+  // ---- S41.4 — back navigation detail -> dates -> designs -> customers ----
   await flow.handleCallback(bot, cbq('admin', 'sbl:back'));
   const backToDates = flatten(captured.rows).some((b) => b.callback_data === 'sbl:d:0');
   await flow.handleCallback(bot, cbq('admin', 'sbl:back'));
+  const backToDesigns = flatten(captured.rows).some((b) => b.callback_data === 'sbl:g:0');
+  await flow.handleCallback(bot, cbq('admin', 'sbl:back'));
   const backToCusts = flatten(captured.rows).some((b) => b.callback_data === 'sbl:c:0');
-  if (backToDates && backToCusts) {
-    pass('S41.4 back navigation: detail → dates → customers');
-  } else fail('S41.4', JSON.stringify({ backToDates, backToCusts }));
+  if (backToDates && backToDesigns && backToCusts) {
+    pass('S41.4 back navigation: detail → dates → designs → customers');
+  } else fail('S41.4', JSON.stringify({ backToDates, backToDesigns, backToCusts }));
+
+  // ---- S41.4b — single-design path: compact "Bales (yards)" card ----
+  await flow.handleCallback(bot, cbq('admin', 'sbl:c:0'));
+  await flow.handleCallback(bot, cbq('admin', 'sbl:g:0'));
+  await flow.handleCallback(bot, cbq('admin', 'sbl:d:0'));
+  const tc = captured.text;
+  if (/Bales \(yards\):/.test(tc) && /\d+ \(\d+\)/.test(tc) && /Day total/.test(tc)) {
+    pass('S41.4b single-design detail: compact bale-number (yards) card');
+  } else fail('S41.4b', JSON.stringify(tc));
+  await flow.handleCallback(bot, cbq('admin', 'sbl:back'));
+  await flow.handleCallback(bot, cbq('admin', 'sbl:back'));
 
   // ---- S41.5 — non-price role sees quantities but NO ₦ figures ----
   await flow.start(bot, 1, 'emp', null);
   await flow.handleCallback(bot, cbq('emp', 'sbl:c:0'));
+  await flow.handleCallback(bot, cbq('emp', 'sbl:g:all'));
   await flow.handleCallback(bot, cbq('emp', 'sbl:d:0'));
   const te = captured.text;
   if (/Bale 6534/.test(te) && /75 yd/.test(te) && !/₦/.test(te)) {
