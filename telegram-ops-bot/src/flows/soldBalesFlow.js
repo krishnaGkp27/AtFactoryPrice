@@ -38,6 +38,7 @@ const pricingService      = require('../services/pricingService');
 const auth                = require('../middlewares/auth');
 const logger              = require('../utils/logger');
 const { buildShadeNameMap, formatShadeRef } = require('../utils/shadeButtons');
+const { baleGroupKey } = require('../utils/inventoryPickers');
 
 const SESSION_TYPE   = 'sold_bales_flow';
 const TILES_PER_ROW  = 2;
@@ -70,17 +71,6 @@ function prettyDate(s) {
   if (!isFinite(ms)) return raw;
   const d = new Date(ms);
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-}
-
-/**
- * Stable per-PHYSICAL-bale group key. The bale/package number is the
- * business identity of a bale; legacy rows carry synthetic per-ROW
- * baleUids (BAL-LEGACY-<rowIndex>), which made every than count as its
- * own bale (CSUP-1b owner report: "223 bales" on one day). Prefer
- * design+packageNo; fall back to baleUid only when no package number.
- */
-function baleGroupKey(r) {
-  return r.packageNo ? `pkg:${r.design}|${r.packageNo}` : (r.baleUid || 'row');
 }
 
 /**
