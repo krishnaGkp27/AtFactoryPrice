@@ -4,10 +4,11 @@
  * WH-SUM — warehouse totals under the Supply Request design-picker header.
  *
  *   📦 Warehouse: Lagos
- *   📊 Total: 3 bales · 💰 ₦45,000     ← value part ADMIN-ONLY
+ *   📊 Total: 3B / 4B · 💰 ₦45,000     ← value part ADMIN-ONLY
  *
- * - unit total for everyone (TV-4 "remaining / opening" pair — each side in
- *   the TV-3 combined "NB = Mt" format — on TV-1 warehouses, bales elsewhere)
+ * - unit total for everyone as the "remaining / opening" pair (TV-4/TV-5):
+ *   TV-1 warehouses pair both counts ("3B=9t / 4B=12t", TV-4b compact),
+ *   every other warehouse pairs the bale figures only ("3B / 4B", TV-5)
  * - stock value (yards × price of the listed AVAILABLE bales) only for admins
  *
  * Fixture: 3 bales / 9 thans available, every than 50 yd @ 100 → value
@@ -65,23 +66,23 @@ function headerText(bot) {
   return edits.length ? edits[edits.length - 1].args.text : '';
 }
 
-test('admin on Lagos: header shows total bales AND stock value', async () => {
+test('admin on Lagos: header shows bales remaining / opening AND stock value (TV-5)', async () => {
   inventoryRepository.getAll = async () => fixtureRows('Lagos');
   seed('777', 'Lagos');
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_back:design', 777));
   const text = headerText(bot);
-  assert.match(text, /Total: 3 bales/, `got: ${text}`);
+  assert.match(text, /Total: 3B \/ 4B/, `bales-only pair (sold bale counted in opening), got: ${text}`);
   assert.match(text, /45,000/, `value shown for admin, got: ${text}`);
 });
 
-test('employee on Lagos: header shows total bales, NO value', async () => {
+test('employee on Lagos: header shows bales remaining / opening, NO value', async () => {
   inventoryRepository.getAll = async () => fixtureRows('Lagos');
   seed('4242', 'Lagos');
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_back:design', 4242));
   const text = headerText(bot);
-  assert.match(text, /Total: 3 bales/, `got: ${text}`);
+  assert.match(text, /Total: 3B \/ 4B/, `got: ${text}`);
   assert.ok(!/45,000|💰/.test(text), `value hidden from employee, got: ${text}`);
 });
 
@@ -96,12 +97,15 @@ test('Kano office (TV-1 warehouse): header total is remaining / opening B = t', 
   assert.match(text, /_\(remaining \/ opening\)_/, `legend shown, got: ${text}`);
 });
 
-test('Lagos (unflagged): sold bale changes NOTHING in the header', async () => {
+test('Lagos (bales-only): sold bale counts in OPENING only; legend + value stay correct (TV-5)', async () => {
   inventoryRepository.getAll = async () => fixtureRows('Lagos');
   seed('777', 'Lagos');
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_back:design', 777));
   const text = headerText(bot);
-  assert.match(text, /Total: 3 bales/, `still plain bales, got: ${text}`);
-  assert.ok(!/remaining \/ opening/.test(text), `no legend on unflagged warehouse, got: ${text}`);
+  // remaining excludes the sold bale; opening includes it; no than figures.
+  assert.match(text, /Total: 3B \/ 4B/, `remaining excludes sold, opening includes it, got: ${text}`);
+  assert.ok(!/=\d+t/.test(text), `no than figures on a bales-only warehouse, got: ${text}`);
+  assert.match(text, /_\(remaining \/ opening\)_/, `legend shown on bales-only warehouse too, got: ${text}`);
+  assert.match(text, /45,000/, `admin value still computed from AVAILABLE rows only, got: ${text}`);
 });

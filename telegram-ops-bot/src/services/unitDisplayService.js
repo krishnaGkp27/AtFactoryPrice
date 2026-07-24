@@ -111,6 +111,23 @@ function formatRemainingOpening(remaining, opening) {
 }
 
 /**
+ * TV-5 — bales-only compact "remaining / opening" pair for warehouses NOT
+ * flagged for than visibility (they market stock by bale, no than figures):
+ * "<remB>B / <openB>B", e.g. "20B / 30B". Same pair semantics as
+ * formatRemainingOpening (remaining = cart-adjusted available today;
+ * opening = every Inventory row ever for the slice, any status), minus the
+ * than counts. Display-only, like all of TV-1..4: selection, carts and
+ * approvals stay in bales.
+ * @param {{bales:number|*}} remaining
+ * @param {{bales:number|*}} opening
+ * @returns {string} e.g. "20B / 30B"
+ */
+function formatRemainingOpeningBales(remaining, opening) {
+  const fmt = ({ bales } = {}) => `${Number.isFinite(Number(bales)) ? Number(bales) : 0}B`;
+  return `${fmt(remaining)} / ${fmt(opening)}`;
+}
+
+/**
  * TV-2 — pure CSV rewrite: set `warehouse` to `mode` inside a CSV of
  * than-visibility warehouse names. Case-insensitive and idempotent;
  * preserves the original casing/order of other entries.
@@ -156,6 +173,7 @@ module.exports = {
   SETTINGS_KEY,
   formatBalesThans,
   formatRemainingOpening,
+  formatRemainingOpeningBales,
   parseWarehouseCsv,
   computeWarehouseCsv,
   getThanVisibilityWarehouses,

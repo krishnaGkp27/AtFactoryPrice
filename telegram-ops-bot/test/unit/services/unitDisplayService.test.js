@@ -90,6 +90,35 @@ test('formatRemainingOpening: TV-4b compact "<remB>B=<remT>t / <openB>B=<openT>t
   );
 });
 
+/* ── TV-5 — formatRemainingOpeningBales: bales-only "remB / openB" pair ── */
+
+test('formatRemainingOpeningBales: bales-only pair "<remB>B / <openB>B"', () => {
+  assert.equal(
+    unitDisplayService.formatRemainingOpeningBales({ bales: 20 }, { bales: 30 }),
+    '20B / 30B',
+  );
+  assert.equal(
+    unitDisplayService.formatRemainingOpeningBales({ bales: 0, thans: 0 }, { bales: 6, thans: 17 }),
+    '0B / 6B',
+    'sold-out design display — than counts ignored',
+  );
+  assert.equal(
+    unitDisplayService.formatRemainingOpeningBales({ bales: '2' }, { bales: '4' }),
+    '2B / 4B',
+    'numeric strings coerce',
+  );
+  assert.equal(
+    unitDisplayService.formatRemainingOpeningBales(undefined, {}),
+    '0B / 0B',
+    'defensive on missing counts',
+  );
+  assert.equal(
+    unitDisplayService.formatRemainingOpeningBales({ bales: 'x' }, { bales: null }),
+    '0B / 0B',
+    'garbage coerces to 0',
+  );
+});
+
 test('formatBalesThans: owner-locked format "<N>B = <M>t"', () => {
   assert.equal(unitDisplayService.formatBalesThans({ bales: 22, thans: 88 }), '22B = 88t');
   assert.equal(unitDisplayService.formatBalesThans({ bales: 1, thans: 1 }), '1B = 1t');

@@ -1,20 +1,22 @@
 'use strict';
 
 /**
- * TV-1/TV-3/TV-4 — than-count visibility for configured warehouses (Supply Request).
+ * TV-1/TV-3/TV-4/TV-5 — "remaining / opening" browse display (Supply Request).
  *
  * Warehouses listed in Settings THAN_VISIBILITY_WAREHOUSES (default
  * "Kano office") show the "remaining / opening" pair (TV-4) — each side in
  * the TV-4b COMPACT "<N>B=<M>t" format (no spaces around "=") — in the
- * design list, the header Total and the shade buttons. TV-4b: pair-carrying
- * design/shade buttons render ONE per row; a composed label over 34 chars
- * drops the pair from the button and parks it as a body line instead.
+ * design list, the header Total and the shade buttons. TV-5: every OTHER
+ * warehouse shows the same pair in its own unit, bales only — "<N>B / <M>B"
+ * — with identical behavior. One design/shade per keyboard row everywhere;
+ * a composed label over 34 chars drops the pair from the button and parks
+ * it as a body line instead (TV-4b safety net, all warehouses).
  * Opening counts EVERY inventory row for the slice regardless of status,
  * so fully-sold designs/shades stay on screen as tappable "(0B=0t / NB=Mt)"
- * info buttons that can never add to the cart. The "Take ALL" shortcut
- * keeps the remaining-only SPACED TV-3 format ("NB = Mt").
- * Every other warehouse keeps plain bale counts and NEVER lists sold-out
- * designs. Display-only: srf_sh callback payloads stay in bales.
+ * (than-visible) / "(0B / NB)" (bales-only) info buttons that can never add
+ * to the cart. The "Take ALL" shortcut keeps the remaining-only formats:
+ * SPACED TV-3 "NB = Mt" (than-visible), "N bales" (bales-only).
+ * Display-only: srf_sh callback payloads stay in bales.
  *
  * Fixture (per warehouse):
  *   9043B available: cream P1 (3 thans) + P2 (2 thans) → 2B = 5t
@@ -193,22 +195,88 @@ test('Kano office: tapping a sold-out shade lands on the sold-out guard — no q
   assert.ok(cbs.includes('srf_back:shade'), 'back to shades offered');
 });
 
-test('Lagos (unflagged): everything stays in BALES; sold-out design hidden', async () => {
+test('Lagos (bales-only, TV-5): shade buttons show "remaining / opening" in BALES, one per row', async () => {
   inventoryRepository.getAll = async () => fixtureRows('Lagos');
   seed('Lagos');
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_dg:9043B'));
   const texts = lastKeyboardTexts(bot);
-  assert.ok(texts.some((t) => t.includes('cream (2 bales)')), `cream shows 2 bales, got: ${texts}`);
-  assert.ok(texts.some((t) => t.includes('ash (1 bale)')), `ash shows 1 bale, got: ${texts}`);
-  assert.ok(texts.some((t) => t.includes('Take ALL 2 shades (3 bales)')), `Take ALL shows 3 bales, got: ${texts}`);
+  assert.ok(texts.some((t) => t.includes('cream (2B / 3B)')), `cream shows 2B / 3B, got: ${texts}`);
+  assert.ok(texts.some((t) => t.includes('ash (1B / 1B)')), `ash shows 1B / 1B, got: ${texts}`);
+  assert.ok(texts.some((t) => t.includes('Take ALL 2 shades (3 bales)')), `Take ALL keeps remaining-only bales, got: ${texts}`);
+  // Display-only: the shade callback payload still carries the BALE count.
+  const cbs = lastKeyboardCallbacks(bot);
+  assert.ok(cbs.includes('srf_sh:9043B|cream|2'), 'cream callback still carries 2 bales');
+  assert.ok(cbs.includes('srf_sh:9043B|ash|1'), 'ash callback still carries 1 bale');
+  // TV-5 — pair-carrying shade buttons are ONE per row here too.
+  const shadeRows = lastKeyboardRows(bot).filter((r) => r.some((b) => b.callback_data.startsWith('srf_sh:')));
+  assert.ok(shadeRows.length >= 2, `expected at least 2 shade rows, got: ${shadeRows.length}`);
+  assert.ok(shadeRows.every((r) => r.length === 1), `each shade row has exactly 1 button, got: ${shadeRows.map((r) => r.length)}`);
+});
 
-  const bot2 = createFakeBot();
+test('Lagos (bales-only, TV-5): design list shows bales pair, legend, and a tappable sold-out design', async () => {
+  inventoryRepository.getAll = async () => fixtureRows('Lagos');
   seed('Lagos');
-  await controller.handleCallbackQuery(bot2, cb('srf_back:design'));
-  const designTexts = lastKeyboardTexts(bot2);
-  assert.ok(designTexts.some((t) => t.includes('9043B (3 bls)')), `design tile shows 3 bls, got: ${designTexts}`);
-  assert.ok(!designTexts.some((t) => t.includes('9006')), `sold-out design NOT listed on unflagged warehouse, got: ${designTexts}`);
-  const text = lastText(bot2);
-  assert.ok(!/remaining \/ opening/.test(text), `no legend on unflagged warehouse, got: ${text}`);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_back:design'));
+  const texts = lastKeyboardTexts(bot);
+  assert.ok(texts.some((t) => t.includes('9043B (3B / 4B)')), `design tile shows 3B / 4B, got: ${texts}`);
+  assert.ok(texts.some((t) => t.includes('9006 (0B / 2B)')), `sold-out design stays listed as 0B / 2B, got: ${texts}`);
+  const cbs = lastKeyboardCallbacks(bot);
+  assert.ok(cbs.includes('srf_dg:9006'), 'sold-out design button is TAPPABLE (srf_dg:9006)');
+  assert.ok(cbs.indexOf('srf_dg:9006') > cbs.indexOf('srf_dg:9043B'), `9006 listed after 9043B, got: ${cbs}`);
+  // TV-5 — ONE design per row on bales-only warehouses too.
+  const dgRows = lastKeyboardRows(bot).filter((r) => r.some((b) => b.callback_data.startsWith('srf_dg:')));
+  assert.equal(dgRows.length, 2, `two design rows (9043B + 9006), got: ${dgRows.length}`);
+  assert.ok(dgRows.every((r) => r.length === 1), `each design row has exactly 1 button, got: ${dgRows.map((r) => r.length)}`);
+  // Header + legend, bales-only pair.
+  const text = lastText(bot);
+  assert.match(text, /Total: 3B \/ 6B/, `header Total is remaining / opening in bales, got: ${text}`);
+  assert.match(text, /_\(remaining \/ opening\)_/, `legend shown on bales-only warehouse, got: ${text}`);
+});
+
+test('Lagos (bales-only, TV-5): >34-char design label — bare button, pair moves to the body', async () => {
+  const LONG = '9043-VERY-LONG-DESIGN-NAME';
+  inventoryRepository.getAll = async () => [
+    ...fixtureRows('Lagos'),
+    // 1 bale available → pair "1B / 1B"; composed label is 36 chars (> 34)
+    // so the button carries the bare design name only.
+    ...Array.from({ length: 3 }, () => ({
+      design: LONG, shade: 'cream', warehouse: 'Lagos', status: 'available', packageNo: 'PL1', productType: 'fabric',
+    })),
+  ];
+  seed('Lagos');
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_back:design'));
+  const buttons = lastKeyboardButtons(bot);
+  const longBtn = buttons.find((b) => b.callback_data === `srf_dg:${LONG}`);
+  assert.ok(longBtn, `long design still tappable, got: ${buttons.map((b) => b.callback_data)}`);
+  assert.equal(longBtn.text, LONG, `overflowing button shows the bare design name, got: ${longBtn.text}`);
+  const text = lastText(bot);
+  assert.ok(text.includes(`${LONG}: 1B / 1B`), `body carries the bales pair line, got: ${text}`);
+  // Short labels keep the pair ON the button.
+  assert.ok(buttons.some((b) => b.text === '9043B (3B / 4B)'), 'short design label keeps its inline pair');
+});
+
+test('Lagos (bales-only, TV-5): sold-out design → info shade screen, sold-out shade → quantity guard', async () => {
+  inventoryRepository.getAll = async () => fixtureRows('Lagos');
+  seed('Lagos');
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:9006'));
+  const texts = lastKeyboardTexts(bot);
+  assert.ok(texts.some((t) => t.includes('black (0B / 1B)')), `black shows 0B / 1B, got: ${texts}`);
+  assert.ok(texts.some((t) => t.includes('gold (0B / 1B)')), `gold shows 0B / 1B, got: ${texts}`);
+  assert.match(lastText(bot), /Sold out — nothing available to add/, `sold-out note shown, got: ${lastText(bot)}`);
+  const cbs = lastKeyboardCallbacks(bot);
+  assert.ok(!cbs.some((c) => c && c.startsWith('srf_all:')), `no Take ALL on a sold-out design, got: ${cbs}`);
+  assert.ok(cbs.includes('srf_back:design'), 'back button present');
+
+  // Tapping a sold-out shade lands on the same guard as than-visible warehouses.
+  seed('Lagos');
+  const bot2 = createFakeBot();
+  await controller.handleCallbackQuery(bot2, cb('srf_sh:9006|black|0'));
+  assert.match(lastText(bot2), /Sold out — nothing available to add/, `guard note shown, got: ${lastText(bot2)}`);
+  const cbs2 = lastKeyboardCallbacks(bot2);
+  assert.ok(!cbs2.some((c) => c && c.startsWith('srf_qty:')), `no qty chips (incl. Custom) at 0 available, got: ${cbs2}`);
+  assert.ok(cbs2.includes('srf_back:shade'), 'back to shades offered');
 });
