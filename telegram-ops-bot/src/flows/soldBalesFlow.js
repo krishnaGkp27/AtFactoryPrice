@@ -7,16 +7,10 @@
  *
  *   1. pick_customer  — tappable list of customers who have bought (most
  *                       recent buyer first); "Show all" expands the list.
- *   2. pick_design    — CSUP-2 (owner sketch: customer → design → dates →
- *                       bale numbers with yards): one tile per design the
- *                       customer bought, biggest first, plus an
- *                       "All designs by date" combined view.
- *   3. pick_date      — tappable list of the dates that customer bought on
- *                       (newest first), scoped to the chosen design unless
- *                       'ALL', each with a one-line summary.
- *   4. view_detail    — for a single design: compact "Bales (yards)" card
- *                       (one entry per physical bale). For 'ALL': the
- *                       bale-by-bale breakdown (than numbers, yards, and —
+ *   2. pick_date      — tappable list of the dates that customer bought on
+ *                       (newest first), each with a one-line summary.
+ *   3. view_detail    — bale-by-bale breakdown of everything sold to that
+ *                       customer on that date (than numbers, yards, and —
  *                       for price-visible roles — rate + value).
  *
  * Source of truth is the Inventory sheet (one row per than, kept as
@@ -28,14 +22,10 @@
  *
  * Callback namespace `sbl:*`:
  *   sbl:close            end the flow → menu
- *   sbl:back             step back one level (detail→dates→designs→customers)
- *   sbl:cust             jump straight back to the customer list
+ *   sbl:back             step back one level
  *   sbl:all              re-render the customer list expanded (show all)
  *   sbl:c:<idx>          pick customer (index into session._customers)
- *   sbl:g:<idx>          pick design   (index into session._designs)
- *   sbl:g:all            combined "all designs" date view
  *   sbl:d:<idx>          pick date     (index into session._dates)
- *   sbl:pg:<n>           date-list page
  *   sbl:noop             no-op
  */
 
@@ -48,7 +38,7 @@ const pricingService      = require('../services/pricingService');
 const auth                = require('../middlewares/auth');
 const logger              = require('../utils/logger');
 const { buildShadeNameMap, formatShadeRef } = require('../utils/shadeButtons');
-const { baleGroupKey, aggregateDesigns } = require('../utils/inventoryPickers');
+const { baleGroupKey } = require('../utils/inventoryPickers');
 
 const SESSION_TYPE   = 'sold_bales_flow';
 const TILES_PER_ROW  = 2;
@@ -126,11 +116,9 @@ async function start(bot, chatId, userId, messageId) {
     startedAt: new Date().toISOString(),
     showMoney: pricingService.canSeeSalePrice(String(userId)),
     customer: '',
-    design: '',      // CSUP-2: '' = not chosen yet, 'ALL' = combined view
     soldDate: '',
     showAllCustomers: false,
     _customers: [],
-    _designs: [],
     _dates: [],
   });
   await renderCustomerPicker(bot, chatId, userId);
@@ -192,64 +180,17 @@ async function renderCustomerPicker(bot, chatId, userId) {
     rows);
 }
 
-/* ───────────────────────────── design list (CSUP-2) ───────────────────────────── */
-
-/**
- * Designs the current customer bought, biggest first (bales desc, then
- * design asc numeric-aware) — same soldTo filtering as loadDatesForCustomer.
- * @param {string} customer
- * @returns {Promise<Array<{design:string,bales:number,thans:number,yards:number}>>}
- */
-async function loadDesignsForCustomer(customer) {
-  const sold = await inventoryRepository.getSoldRows();
-  return aggregateDesigns(sold.filter((r) => r.soldTo === customer));
-}
-
-async function renderDesignPicker(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  if (!session) return;
-  const designs = await loadDesignsForCustomer(session.customer);
-  if (!designs.length) {
-    await render(bot, chatId, userId,
-      `🔎 *${session.customer}*\n\n_No sold bales found for this customer._`,
-      [backRow('⬅ Customers'), closeRow()]);
-    return;
-  }
-  session._designs = designs.map((d) => d.design);
-  sessionStore.set(userId, session);
-  const totBales = designs.reduce((s, d) => s + d.bales, 0);
-  const totYards = designs.reduce((s, d) => s + d.yards, 0);
-  // Owner sketch: ONE tile per design — "🧵 <design> — N bales (Y yds)".
-  const rows = designs.map((d, i) => ([{
-    text: `🧵 ${d.design} — ${d.bales} ${d.bales === 1 ? 'bale' : 'bales'} (${fmtQty(d.yards)} yds)`,
-    callback_data: `sbl:g:${i}`,
-  }]));
-  rows.push([{ text: '📅 All designs by date', callback_data: 'sbl:g:all' }]);
-  rows.push(backRow('👤 Change customer'));
-  rows.push(closeRow());
-  await render(bot, chatId, userId,
-    `📒 *Supplies — ${session.customer}*\n\n`
-    + `Total: *${totBales}* bales · *${fmtQty(totYards)}* yds · *${designs.length}* design${designs.length === 1 ? '' : 's'}\n\n`
-    + `_Tap a design to see its supply dates._`, rows);
-}
-
 /* ───────────────────────────── date list ───────────────────────────── */
 
 /**
  * Dates the current customer bought on, newest first, each with a summary.
- * CSUP-2: when `design` is truthy and not 'ALL', only rows of that design
- * are included.
- * @param {string} customer
- * @param {string} [design]
  * @returns {Promise<Array<{date:string,thans:number,bales:number,yards:number}>>}
  */
-async function loadDatesForCustomer(customer, design) {
+async function loadDatesForCustomer(customer) {
   const sold = await inventoryRepository.getSoldRows();
-  const scoped = design && design !== 'ALL';
   const byDate = new Map();
   for (const r of sold) {
     if (r.soldTo !== customer) continue;
-    if (scoped && String(r.design ?? '') !== design) continue;
     const day = normDay(r.soldDate);
     if (!byDate.has(day)) byDate.set(day, { date: day, thans: 0, yards: 0, bales: new Set() });
     const e = byDate.get(day);
@@ -265,12 +206,11 @@ async function loadDatesForCustomer(customer, design) {
 async function renderDatePicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const scoped = session.design && session.design !== 'ALL';
-  const dates = await loadDatesForCustomer(session.customer, session.design);
+  const dates = await loadDatesForCustomer(session.customer);
   if (!dates.length) {
     await render(bot, chatId, userId,
       `🔎 *${session.customer}*\n\n_No sold bales found for this customer._`,
-      [backRow('⬅ Back'), closeRow()]);
+      [backRow('⬅ Customers'), closeRow()]);
     return;
   }
   session._dates = dates.map((d) => d.date);
@@ -293,19 +233,13 @@ async function renderDatePicker(bot, chatId, userId) {
   }
   if (page > 0) nav.push({ text: '⬆ Newer', callback_data: `sbl:pg:${page - 1}` });
   if (nav.length) rows.push(nav);
-  rows.push(backRow('🧵 Change design'));
+  rows.push(backRow('👤 Change customer'));
   rows.push(closeRow());
-  // CSUP-2: design-scoped header names the design; 'ALL' keeps the
-  // original combined summary header unchanged.
-  const header = scoped
-    ? `📒 *${session.customer}* — 🧵 *${session.design}*\n\n`
-      + `*${totBales}* bales · *${fmtQty(totYards)}* yds across *${dates.length}* supply day${dates.length === 1 ? '' : 's'}\n\n`
-      + `_Tap a date for the day's detail._`
-    : `📒 *Supplies — ${session.customer}*\n\n`
-      + `Total: *${totBales}* bales · *${fmtQty(totYards)}* yds\n`
-      + `across *${dates.length}* supply day${dates.length === 1 ? '' : 's'} · first: ${prettyDate(first.date)}\n\n`
-      + `_Tap a date for the day's detail._`;
-  await render(bot, chatId, userId, header, rows);
+  await render(bot, chatId, userId,
+    `📒 *Supplies — ${session.customer}*\n\n`
+    + `Total: *${totBales}* bales · *${fmtQty(totYards)}* yds\n`
+    + `across *${dates.length}* supply day${dates.length === 1 ? '' : 's'} · first: ${prettyDate(first.date)}\n\n`
+    + `_Tap a date for the day's detail._`, rows);
 }
 
 /* ───────────────────────────── detail card ───────────────────────────── */
@@ -326,44 +260,12 @@ async function shadeNameMapFor(design) {
 async function renderDetail(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const scoped = session.design && session.design !== 'ALL';
   const sold = await inventoryRepository.getSoldRows();
-  const rows = sold.filter((r) => r.soldTo === session.customer
-    && normDay(r.soldDate) === session.soldDate
-    && (!scoped || String(r.design ?? '') === session.design));
+  const rows = sold.filter((r) => r.soldTo === session.customer && normDay(r.soldDate) === session.soldDate);
   if (!rows.length) {
     await render(bot, chatId, userId,
       `🔎 *${session.customer}* · ${prettyDate(session.soldDate)}\n\n_Nothing found — it may have been returned._`,
       [backRow('⬅ Dates'), closeRow()]);
-    return;
-  }
-
-  // CSUP-2 single-design view: compact owner-sketch notation — one entry
-  // per PHYSICAL bale, "<baleNo> (<yards>)".
-  if (scoped) {
-    const groups = new Map();
-    for (const r of rows) {
-      const k = baleGroupKey(r);
-      if (!groups.has(k)) groups.set(k, { label: String(r.packageNo || r.baleUid || '?'), yards: 0, amount: 0 });
-      const g = groups.get(k);
-      g.yards += r.yards || 0;
-      g.amount += (r.yards || 0) * (r.pricePerYard || 0);
-    }
-    const list = Array.from(groups.values());
-    const totYards = list.reduce((s, g) => s + g.yards, 0);
-    const totAmount = list.reduce((s, g) => s + g.amount, 0);
-    let entries = list.slice(0, MAX_DETAIL_BALES)
-      .map((g) => `${g.label} (${fmtQty(g.yards)})`).join(', ');
-    if (list.length > MAX_DETAIL_BALES) entries += `, +${list.length - MAX_DETAIL_BALES} more`;
-    let body = `📒 *${session.customer}* — 🧵 *${session.design}* — ${prettyDate(session.soldDate)}\n\n`
-      + `Bales (yards):\n${entries}\n\n`
-      + `Day total: ${list.length} bale${list.length === 1 ? '' : 's'} · ${fmtQty(totYards)} yds`;
-    if (session.showMoney) body += ` · *${fmtNgn(totAmount)}*`;
-    await render(bot, chatId, userId, body, [
-      backRow('⬅ Back to dates'),
-      [{ text: '👤 Change customer', callback_data: 'sbl:cust' }],
-      closeRow(),
-    ]);
     return;
   }
 
@@ -426,19 +328,11 @@ async function stepBack(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
   switch (session.step) {
-    case 'pick_design':
+    case 'pick_date':
       session.step = 'pick_customer';
       session.customer = '';
-      session.design = '';
       sessionStore.set(userId, session);
       await renderCustomerPicker(bot, chatId, userId);
-      break;
-    case 'pick_date':
-      session.step = 'pick_design';
-      session.design = '';
-      session._datePage = 0;
-      sessionStore.set(userId, session);
-      await renderDesignPicker(bot, chatId, userId);
       break;
     case 'view_detail':
       session.step = 'pick_date';
@@ -496,43 +390,15 @@ async function handleCallback(bot, query) {
     return true;
   }
 
-  if (data === 'sbl:cust') {
-    session.step = 'pick_customer';
-    session.customer = '';
-    session.design = '';
-    session.soldDate = '';
-    session._datePage = 0;
-    sessionStore.set(userId, session);
-    await renderCustomerPicker(bot, chatId, userId);
-    return true;
-  }
-
   if (data.startsWith('sbl:c:')) {
     const i = parseInt(data.slice('sbl:c:'.length), 10);
     const name = (session._customers || [])[i];
     if (name) {
       session.customer = name;
-      session.design = '';
-      session.step = 'pick_design';
+      session.step = 'pick_date';
       sessionStore.set(userId, session);
-      await renderDesignPicker(bot, chatId, userId);
+      await renderDatePicker(bot, chatId, userId);
     }
-    return true;
-  }
-
-  if (data.startsWith('sbl:g:')) {
-    const arg = data.slice('sbl:g:'.length);
-    if (arg === 'all') {
-      session.design = 'ALL';
-    } else {
-      const design = (session._designs || [])[parseInt(arg, 10)];
-      if (!design) return true;
-      session.design = design;
-    }
-    session.step = 'pick_date';
-    session._datePage = 0; // reset paging whenever the design changes
-    sessionStore.set(userId, session);
-    await renderDatePicker(bot, chatId, userId);
     return true;
   }
 
@@ -555,9 +421,8 @@ module.exports = {
   start,
   handleCallback,
   _internals: {
-    renderCustomerPicker, renderDesignPicker, renderDatePicker, renderDetail, stepBack,
-    loadCustomers, loadDesignsForCustomer, loadDatesForCustomer,
-    prettyDate, baleGroupKey, chunkButtons,
+    renderCustomerPicker, renderDatePicker, renderDetail, stepBack,
+    loadCustomers, loadDatesForCustomer, prettyDate, baleGroupKey, chunkButtons,
     SESSION_TYPE,
   },
 };
