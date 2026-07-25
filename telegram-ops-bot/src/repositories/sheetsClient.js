@@ -53,6 +53,51 @@ async function getSheets() {
 
 const spreadsheetId = () => config.sheets.sheetId;
 
+/* ── SEC-FI1: formula-injection guard ──────────────────────────────────────
+ * Every write below uses valueInputOption 'USER_ENTERED', which is what makes
+ * Sheets type dates and numbers correctly — but it also means a value that
+ * STARTS with = + - @ is evaluated as a FORMULA. Free text typed into the bot
+ * (customer names, notes, task titles, expense titles, warehouse names) lands
+ * in cells verbatim, so "=IMPORTXML(...)" from any allow-listed user would be
+ * live in the owner's spreadsheet — corrupting the cell at best, fetching an
+ * attacker URL with sheet data at worst (CWE-1236).
+ *
+ * Nothing in this codebase writes a deliberate formula (verified repo-wide),
+ * so neutralising the leading character cannot break a feature. The escape is
+ * the leading apostrophe already proven in settingsRepository: Sheets strips
+ * it on storage and marks the cell text, so reads come back unchanged.
+ */
+
+/** Leading characters Sheets treats as the start of a formula. */
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
+
+/**
+ * Neutralise a single cell value if — and only if — it is a string that
+ * Sheets would evaluate as a formula.
+ *
+ * Deliberately NOT touched, so existing data keeps its exact typing:
+ *  - non-strings (numbers/booleans/null) — never formulas;
+ *  - anything numeric, including "-5" and "+2348012345678" (a phone number
+ *    parses as a finite number, so its storage is unchanged);
+ *  - values already apostrophe-escaped by a caller (settingsRepository).
+ *
+ * @param {*} v raw cell value
+ * @returns {*} the value, apostrophe-escaped when it would evaluate
+ */
+function sanitizeCell(v) {
+  if (typeof v !== 'string' || !v) return v;
+  if (v[0] === "'") return v;
+  if (!FORMULA_LEAD.test(v)) return v;
+  if (Number.isFinite(Number(v))) return v; // "-5", "+234…" stay numeric
+  return `'${v}`;
+}
+
+/** Apply {@link sanitizeCell} across a rows-of-cells payload. */
+function sanitizeRows(rows) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((row) => (Array.isArray(row) ? row.map(sanitizeCell) : row));
+}
+
 async function readRange(sheetName, range) {
   const s = await getSheets();
   return withRetry(async () => {
@@ -72,7 +117,7 @@ async function appendRows(sheetName, rows) {
       range: `${sheetName}!A:Z`,
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
-      requestBody: { values: rows },
+      requestBody: { values: sanitizeRows(rows) },
     });
   }, `appendRows(${sheetName})`);
 }
@@ -84,7 +129,7 @@ async function updateRange(sheetName, range, values) {
       spreadsheetId: spreadsheetId(),
       range: `${sheetName}!${range}`,
       valueInputOption: 'USER_ENTERED',
-      requestBody: { values },
+      requestBody: { values: sanitizeRows(values) },
     });
   }, `updateRange(${sheetName})`);
 }
@@ -109,7 +154,7 @@ async function batchUpdateRanges(sheetName, updates) {
   const s = await getSheets();
   const data = updates.map((u) => ({
     range: `${sheetName}!${u.range}`,
-    values: u.values,
+    values: sanitizeRows(u.values),
   }));
   return withRetry(async () => {
     await s.spreadsheets.values.batchUpdate({
@@ -151,4 +196,6 @@ module.exports = {
   getSheetNames,
   addSheet,
   columnLetter,
+  // Exported for the SEC-FI1 unit tests only — writes are already guarded.
+  _internals: { sanitizeCell, sanitizeRows },
 };
