@@ -434,7 +434,14 @@ async function handleCallback(bot, callbackQuery) {
 
   // From here on we assume an active po_new_flow session.
   const session = sessionStore.get(userId);
-  if (!session || session.type !== 'po_new_flow') return true;
+  if (!session || session.type !== 'po_new_flow') {
+    // Expired draft: every button on the stale card used to do nothing at
+    // all. Say so and offer the way back.
+    await editOrSend(bot, chatId, messageId,
+      '⏳ This draft PO card expired — open 📋 Procurement Plan and start a new PO.',
+      { reply_markup: { inline_keyboard: [backRow()] } });
+    return true;
+  }
 
   if (data.startsWith('pp:new_sup:')) {
     const sid = data.slice('pp:new_sup:'.length);

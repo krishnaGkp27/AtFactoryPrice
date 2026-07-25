@@ -1143,7 +1143,7 @@ async function startPriorityPicker(bot, callbackQuery, taskId) {
       reply_markup: { inline_keyboard: [
         row.slice(0, 2),
         row.slice(2, 4),
-        [{ text: '⬅ Back to Team Tasks', callback_data: 'act:__hub__:planning' }],
+        [{ text: '⬅ Back to Tasks', callback_data: 'act:__hub__:planning' }],
       ] },
     });
 }
@@ -1599,7 +1599,13 @@ async function handleCallback(bot, callbackQuery) {
         return true;
       }
       await submitCounter(bot, chatId, userId, '');
+      return true;
     }
+    // Expired: say so instead of silently doing nothing forever.
+    await editOrSend(bot, chatId, messageId,
+      '⏳ This counter-offer card has expired. Open the task DM and tap Counter again.', {
+        reply_markup: { inline_keyboard: [navFooterRow()] },
+      });
     return true;
   }
 
@@ -1608,7 +1614,12 @@ async function handleCallback(bot, callbackQuery) {
     const session = sessionStore.get(userId);
     if (session && session.type === 'task_incentive_flow') {
       await finalizeIncentive(bot, chatId, userId, 0);
+      return true;
     }
+    await editOrSend(bot, chatId, messageId,
+      '⏳ This incentive card has expired. Open the task DM and set the incentive again.', {
+        reply_markup: { inline_keyboard: [navFooterRow()] },
+      });
     return true;
   }
   if (data.startsWith('tsk:sib:')) {
@@ -1618,7 +1629,16 @@ async function handleCallback(bot, callbackQuery) {
       const taskId = session.data.taskId;
       sessionStore.clear(userId);
       await renderProposalCardForAssigner(bot, taskId, { editChatId: chatId, editMessageId: cardMsgId });
+      return true;
     }
+    // No live session — rebuild the proposal card from the task id instead
+    // of leaving the button inert.
+    await renderProposalCardForAssigner(bot, data.slice('tsk:sib:'.length),
+      { editChatId: chatId, editMessageId: messageId }).catch(async () => {
+      await editOrSend(bot, chatId, messageId, '⏳ This card has expired.', {
+        reply_markup: { inline_keyboard: [navFooterRow()] },
+      });
+    });
     return true;
   }
 

@@ -405,9 +405,17 @@ async function stepBack(bot, chatId, userId) {
       sessionStore.set(userId, session);
       await renderTitlePicker(bot, chatId, userId);
       break;
+    case 'pick_title':
+      // The error card's ⬅ Back used to fall into the default branch and
+      // silently destroy the batch. Re-render the screen instead.
+      await renderTitlePicker(bot, chatId, userId);
+      break;
+    case 'review':
+      await renderReview(bot, chatId, userId);
+      break;
     default:
-      sessionStore.clear(userId);
       await render(bot, chatId, userId, '❌ Cancelled.', [menuRow()]);
+      sessionStore.clear(userId);
   }
 }
 

@@ -293,7 +293,20 @@ async function handleCallback(bot, query) {
     await start(bot, query.message.chat.id, userId, query.message.message_id, which);
     return true;
   }
-  if (!session || session.type !== 'user_manage_flow') return false;
+  if (!session || session.type !== 'user_manage_flow') {
+    // Stale card: returning false let the tap fall through to the generic
+    // "Unknown action." toast. Offer a restart + menu instead.
+    await bot.answerCallbackQuery(query.id, { text: 'This card expired.' }).catch(() => {});
+    const which = (session && session.which) || 'promote';
+    await bot.editMessageText('⏳ This user picker expired.', {
+      chat_id: query.message.chat.id, message_id: query.message.message_id,
+      reply_markup: { inline_keyboard: [
+        [{ text: '🔁 Restart', callback_data: `umg:start:${which}` }],
+        [{ text: '🏠 Back to menu', callback_data: 'act:__back__' }],
+      ] },
+    }).catch(() => {});
+    return true;
+  }
   const chatId = query.message.chat.id;
   await bot.answerCallbackQuery(query.id).catch(() => {});
 

@@ -401,7 +401,8 @@ async function handleText(bot, msg) {
       sessionStore.set(userId, session);
       await render(bot, chatId, userId,
         `⚠️ This number already belongs to *${mdEscape(dupe.name)}*.\n\nLink the existing person instead of creating a duplicate?`,
-        [[{ text: `🔗 Link ${dupe.name}`, callback_data: `${NS}dupe` }, { text: '✏️ Re-enter number', callback_data: `${NS}rephone` }]]);
+        [[{ text: `🔗 Link ${dupe.name}`, callback_data: `${NS}dupe` }, { text: '✏️ Re-enter number', callback_data: `${NS}rephone` }],
+          [{ text: '❌ Cancel', callback_data: `${NS}cancel` }]]);
       return true;
     }
     session.step = 'add_note';

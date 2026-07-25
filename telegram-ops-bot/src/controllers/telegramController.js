@@ -2293,10 +2293,31 @@ async function showSampleStatusDatePicker(bot, chatId, messageId = null) {
  *
  * We send customer names directly in callback_data (same pattern as
  * showSupplyCustomerPicker). Telegram's 64-byte limit on callback_data
- * means customer names longer than ~50 bytes would fail; in practice this
- * codebase's customers are short (CJE, Christ, BLESSING, etc.). If long
- * names ever appear, switch to an index-based scheme.
+ * means a long name would make the WHOLE keyboard send fail, so names are
+ * truncated to CB_NAME_MAX on the way out and resolved back to the full
+ * sheet name on the way in (cbCustomerName).
  */
+/** Safe payload budget for a customer name inside callback_data. */
+const CB_NAME_MAX = 40;
+
+/**
+ * Resolve a (possibly truncated) customer name from callback_data back to
+ * the full name as stored in the Customers sheet, so downstream report
+ * lookups still match. Falls back to the payload when nothing matches.
+ * @param {string} payload name as it came off the callback
+ * @returns {Promise<string>}
+ */
+async function cbCustomerName(payload) {
+  const raw = String(payload || '');
+  if (raw.length < CB_NAME_MAX) return raw; // never truncated
+  try {
+    const all = await customersRepo.getAll();
+    const exact = all.find((c) => c.name === raw);
+    if (exact) return exact.name;
+    const pref = all.find((c) => String(c.name || '').startsWith(raw));
+    return pref ? pref.name : raw;
+  } catch (_) { return raw; }
+}
 const REPORT_PICKER_PROMPTS = {
   history:   { icon: '📋', label: 'Customer History', prompt: 'Pick a customer to see their timeline:' },
   pattern:   { icon: '🔍', label: 'Customer Pattern', prompt: 'Pick a customer to see their buying pattern:' },
@@ -2332,9 +2353,9 @@ async function showCustomerPickerForReport(bot, chatId, reportType, showAll = fa
   const visible = showAll ? active : active.slice(0, MAX_VISIBLE);
   const rows = [];
   for (let i = 0; i < visible.length; i += 2) {
-    const row = [{ text: `👤 ${visible[i].name}`, callback_data: `rpt:${reportType}:${visible[i].name}` }];
+    const row = [{ text: `👤 ${visible[i].name}`, callback_data: `rpt:${reportType}:${visible[i].name.slice(0, CB_NAME_MAX)}` }];
     if (visible[i + 1]) {
-      row.push({ text: `👤 ${visible[i + 1].name}`, callback_data: `rpt:${reportType}:${visible[i + 1].name}` });
+      row.push({ text: `👤 ${visible[i + 1].name}`, callback_data: `rpt:${reportType}:${visible[i + 1].name.slice(0, CB_NAME_MAX)}` });
     }
     rows.push(row);
   }
@@ -2375,7 +2396,7 @@ async function showCustomerPickerForReport(bot, chatId, reportType, showAll = fa
 
 /** Inline-keyboard row(s) shown under every section of the customer card. */
 function _cdTabFooter(customerName) {
-  const safe = customerName.slice(0, 50);
+  const safe = customerName.slice(0, CB_NAME_MAX);
   return [
     [
       { text: '📋 History',  callback_data: `cd:t:h:${safe}` },
@@ -2420,9 +2441,9 @@ async function showCustomerDetailsPicker(bot, chatId, userId, messageId = null, 
   }
 
   for (let i = 0; i < visible.length; i += 2) {
-    const row = [{ text: `👤 ${visible[i].name}`, callback_data: `cd:c:${visible[i].name.slice(0, 60)}` }];
+    const row = [{ text: `👤 ${visible[i].name}`, callback_data: `cd:c:${visible[i].name.slice(0, CB_NAME_MAX)}` }];
     if (visible[i + 1]) {
-      row.push({ text: `👤 ${visible[i + 1].name}`, callback_data: `cd:c:${visible[i + 1].name.slice(0, 60)}` });
+      row.push({ text: `👤 ${visible[i + 1].name}`, callback_data: `cd:c:${visible[i + 1].name.slice(0, CB_NAME_MAX)}` });
     }
     rows.push(row);
   }
@@ -8637,7 +8658,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
 
     // Note: activity counts were already incremented when the user tapped
     // the hub sub-button (handled in the act: branch below). No double-count here.
-    const customerName = payload;
+    const customerName = await cbCustomerName(payload);
     if (reportType === 'history') {
       await sendCustomerHistoryReport(bot, chatId, customerName);
     } else if (reportType === 'pattern') {
@@ -8685,7 +8706,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
 
     if (rest.startsWith('c:')) {
-      const customerName = rest.slice(2);
+      const customerName = await cbCustomerName(rest.slice(2));
       await renderCustomerCard(bot, chatId, messageId, customerName, 'h');
       return;
     }
@@ -8696,14 +8717,14 @@ async function handleCallbackQuery(bot, callbackQuery) {
       const sepIdx = after.indexOf(':');
       if (sepIdx < 0) return;
       const tab = after.slice(0, sepIdx);
-      const customerName = after.slice(sepIdx + 1);
+      const customerName = await cbCustomerName(after.slice(sepIdx + 1));
       if (tab === 'a') {
         // Reuse the existing add-note flow; it owns its own prompt + session.
         sessionStore.set(uid, { type: 'add_note_flow', step: 'note_text', customer: customerName });
         await editOrSend(bot, chatId, messageId,
           `✏️ *Add Note for ${customerName}*\n\nType the note (e.g. "prefers Shade 3", "wants bulk discount"):`,
           { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
-            [{ text: '⬅ Back to customer', callback_data: `cd:c:${customerName.slice(0, 60)}` }],
+            [{ text: '⬅ Back to customer', callback_data: `cd:c:${customerName.slice(0, CB_NAME_MAX)}` }],
           ] } });
         return;
       }

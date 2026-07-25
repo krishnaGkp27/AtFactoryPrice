@@ -415,14 +415,16 @@ async function promptNewLocation(bot, chatId, userId) {
     `🗓 *Attendance — New Location*\n\n`
     + `Type the new location name (e.g. \`Kano Office\`, \`Idumota Store\`).\n\n`
     + `_Names should be 1–40 characters. Duplicates are silently ignored._`,
-    [backRow()],
+    // Back to the Locations editor this prompt was opened from, not the hub.
+    [[{ text: '⬅ Back to Locations', callback_data: 'atd_adm:loc' }]],
   );
 }
 
 async function applyNewLocation(bot, chatId, userId, raw) {
   const name = String(raw || '').trim().slice(0, 40);
   if (!name) {
-    await render(bot, chatId, userId, '⚠️ Empty name — try again.', [backRow()]);
+    await render(bot, chatId, userId, '⚠️ Empty name — try again.',
+      [[{ text: '⬅ Back to Locations', callback_data: 'atd_adm:loc' }]]);
     return;
   }
   const cfg = await attendanceService.getConfig();
@@ -811,7 +813,17 @@ async function handleCallback(bot, query) {
   if (data === 'atd_adm:today')  { await renderToday(bot, chatId, userId); return true; }
   if (data === 'atd_adm:verify') { await renderVerify(bot, chatId, userId); return true; }
   if (data.startsWith('atd_adm:verify_set:')) { await applyVerifyMode(bot, chatId, userId, data.slice('atd_adm:verify_set:'.length)); return true; }
-  if (data === 'atd_adm:gps')    { await renderGpsList(bot, chatId, userId); return true; }
+  if (data === 'atd_adm:gps')    {
+    // Also the Cancel target of the GPS share prompt — clear that pending
+    // step (and its reply keyboard) so a later location message isn't
+    // swallowed as a GPS anchor.
+    const s = sessionStore.get(userId);
+    if (s && s.step === 'await_gps_admin') {
+      s.step = null; s.gpsLocation = null; sessionStore.set(userId, s);
+      try { await bot.sendMessage(chatId, 'Cancelled.', { reply_markup: { remove_keyboard: true } }); } catch (_) { /* ignore */ }
+    }
+    await renderGpsList(bot, chatId, userId); return true;
+  }
   if (data.startsWith('atd_adm:gps_set:')) { await promptGpsShare(bot, chatId, userId, decodeURIComponent(data.slice('atd_adm:gps_set:'.length))); return true; }
   if (data === 'atd_adm:clean_ghosts') { await cleanGhostsNow(bot, chatId, userId); return true; }
   if (data === 'atd_adm:behalf') { const s = sessionStore.get(userId); s.behalfTarget = null; sessionStore.set(userId, s); await renderBehalfPickUser(bot, chatId, userId); return true; }

@@ -70,7 +70,10 @@ async function render(bot, chatId, userId, text, keyboardRows) {
   return sent.message_id;
 }
 
-function homeRow() { return [{ text: '🏠 Back to menu', callback_data: 'atd:home' }]; }
+// Terminal cards go straight home: 'act:__back__' restores the greeting menu
+// in place (one tap). 'atd:cancel' stays for mid-flow aborts, which also need
+// the GPS reply-keyboard cleanup.
+function homeRow() { return [{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]; }
 
 // ---------------------------------------------------------------------------
 // Entry
