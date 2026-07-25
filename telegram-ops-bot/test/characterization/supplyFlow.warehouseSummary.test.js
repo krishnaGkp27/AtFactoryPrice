@@ -7,7 +7,7 @@
  *   📊 Total: 3B / 4B · 💰 ₦45,000     ← value part ADMIN-ONLY
  *
  * - unit total for everyone as the "remaining / opening" pair (TV-4/TV-5):
- *   TV-1 warehouses pair both counts ("3B=9t / 4B=12t", TV-4b compact),
+ *   TV-1 warehouses show THANS ONLY ("9t / 12t", TV-7),
  *   every other warehouse pairs the bale figures only ("3B / 4B", TV-5)
  * - TV-6 (GRN-anchored): opening@W = rows GRN-received at W (grnId →
  *   GRN.warehouse) plus legacy rows (no grnId) currently at W; in_transit
@@ -16,7 +16,7 @@
  * - stock value (yards × price of the listed AVAILABLE bales) only for admins
  *
  * Fixture: 3 bales / 9 thans available, every than 50 yd @ 100 → value
- * 45,000; plus one SOLD bale (3 thans) → opening 4B = 12t, value unchanged.
+ * 45,000; plus one SOLD bale (3 thans) → opening 12t (4 bales), value unchanged.
  * All rows legacy (no grnId) unless a test says otherwise.
  */
 
@@ -95,13 +95,13 @@ test('employee on Lagos: header shows bales remaining / opening, NO value', asyn
   assert.ok(!/45,000|💰/.test(text), `value hidden from employee, got: ${text}`);
 });
 
-test('Kano office (TV-1 warehouse): header total is remaining / opening B = t', async () => {
+test('Kano office (TV-1 warehouse): header total is remaining / opening in thans', async () => {
   inventoryRepository.getAll = async () => fixtureRows('Kano office');
   seed('777', 'Kano office');
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_back:design', 777));
   const text = headerText(bot);
-  assert.match(text, /Total: 3B=9t \/ 4B=12t/, `remaining / opening pair (TV-4b compact), got: ${text}`);
+  assert.match(text, /Total: 9t \/ 12t/, `remaining / opening pair, thans only (TV-7), got: ${text}`);
   assert.match(text, /45,000/, `admin value still shown (available rows only), got: ${text}`);
   assert.match(text, /_\(remaining \/ opening\)_/, `legend shown, got: ${text}`);
 });

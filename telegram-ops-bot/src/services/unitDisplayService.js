@@ -66,45 +66,49 @@ function invalidateCache() {
 }
 
 /**
- * TV-3 — canonical combined bales+thans display string for than-visibility
- * warehouses: "<N>B = <M>t" (owner-locked format: capital B, lowercase t,
- * spaces around "="). E.g. { bales: 22, thans: 88 } → "22B = 88t", rendered
- * on stock screens as "9043-B (22B = 88t)". Physical bale count = distinct
- * design+packageNo per the existing convention (inventoryPickers.baleGroupKey).
- * Display-only, like all of TV-1/2: selection, carts and approvals stay in bales.
+ * TV-7 (owner, 25-Jul-2026) — single-figure stock display for than-visibility
+ * warehouses: THANS ONLY, e.g. { bales: 22, thans: 88 } → "88t", rendered as
+ * "9043-B (88t)".
+ *
+ * Supersedes the TV-3 "<N>B = <M>t" pair. The owner's reason: the "=" read as
+ * a conversion ("1 bale = 4 thans") and made it ambiguous which number was the
+ * quantity — thans are not measured in bales. Kano sells in thans, so the than
+ * count IS the figure; every other warehouse sells whole bales and shows bales
+ * only (formatRemainingOpeningBales). Same rule the Supply Details drill uses.
+ *
+ * `bales` is still accepted so callers stay unchanged, and because the physical
+ * bale count (inventoryPickers.baleGroupKey) still drives selection.
+ * Display-only, like all of TV-1..6: carts and approvals stay in bales.
  * @param {{bales:number|*, thans:number|*}} counts
- * @returns {string} combined display, e.g. "22B = 88t"
+ * @returns {string} e.g. "88t"
  */
-function formatBalesThans({ bales, thans } = {}) {
-  const b = Number.isFinite(Number(bales)) ? Number(bales) : 0;
+function formatBalesThans({ thans } = {}) {
   const t = Number.isFinite(Number(thans)) ? Number(thans) : 0;
-  return `${b}B = ${t}t`;
+  return `${t}t`;
 }
 
 /**
- * TV-4b — compact single-figure form used inside the paired display:
- * "<N>B=<M>t" (no spaces around "="), so the combined pair fits a
- * full-width Telegram button without truncating. The spaced TV-3 format
- * (formatBalesThans) is unchanged for single-figure uses (e.g. Take ALL).
+ * TV-7 — compact form used inside the "remaining / opening" pair. Now
+ * identical to {@link formatBalesThans}: with the bale figure dropped there is
+ * no longer a wide/narrow variant to choose between (TV-4b existed only to
+ * stop "<N>B=<M>t / <N>B=<M>t" truncating on a phone).
  * @param {{bales:number|*, thans:number|*}} counts
- * @returns {string} e.g. "22B=88t"
+ * @returns {string} e.g. "88t"
  */
-function formatBalesThansCompact({ bales, thans } = {}) {
-  const b = Number.isFinite(Number(bales)) ? Number(bales) : 0;
+function formatBalesThansCompact({ thans } = {}) {
   const t = Number.isFinite(Number(thans)) ? Number(thans) : 0;
-  return `${b}B=${t}t`;
+  return `${t}t`;
 }
 
 /**
- * TV-4 — "remaining / opening" display for than-visibility warehouses,
- * compact per TV-4b: "<remB>B=<remT>t / <openB>B=<openT>t", e.g.
- * "20B=88t / 30B=132t" (no spaces around "=", keep spaces around "/").
- * remaining = rows still available today (cart-adjusted, what TV-3 showed);
- * opening = every Inventory row ever recorded for the slice, any status
- * (available + sold + in_transit). Display-only like all of TV-1/2/3.
+ * TV-4 + TV-7 — "remaining / opening" display for than-visibility warehouses,
+ * thans only: "<remT>t / <openT>t", e.g. "88t / 132t" (spaces around "/").
+ * remaining = rows still available today (cart-adjusted); opening = every
+ * Inventory row ever recorded for the slice, any status (available + sold +
+ * in_transit). Display-only like all of TV-1..6.
  * @param {{bales:number|*, thans:number|*}} remaining
  * @param {{bales:number|*, thans:number|*}} opening
- * @returns {string} e.g. "20B=88t / 30B=132t"
+ * @returns {string} e.g. "88t / 132t"
  */
 function formatRemainingOpening(remaining, opening) {
   return `${formatBalesThansCompact(remaining)} / ${formatBalesThansCompact(opening)}`;

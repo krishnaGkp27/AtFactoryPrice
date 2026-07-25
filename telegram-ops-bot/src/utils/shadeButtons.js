@@ -56,7 +56,7 @@ function buildShadeNameMap(asset) {
  *                                  passed through as-is.
  * @param {Map<string,string>} [nameMap]  optional name lookup
  * @param {number|string} [qty]           optional container count, OR a
- *        preformatted quantity string (TV-3 combined "2B = 5t") inserted
+ *        preformatted quantity string (TV-7 than-only "5t") inserted
  *        verbatim inside the parentheses — no unit word appended.
  * @param {{singular?:string, plural?:string}} [unit]
  *        Container unit override. Defaults to {singular:'bale', plural:'bales'}.
@@ -79,7 +79,7 @@ function buildShadeLabel(shadeKey, nameMap, qty, unit) {
     head = key || '—';
   }
 
-  // TV-3 — a preformatted quantity string (e.g. "2B = 5t") is used as-is.
+  // TV-3 — a preformatted quantity string (e.g. "5t") is used as-is.
   if (typeof qty === 'string' && qty.trim()) {
     return `${head} (${qty.trim()})`;
   }
