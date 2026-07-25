@@ -104,7 +104,11 @@ function validate(parsed, opts = {}) {
     const notes = String(row.notes || '').trim();
     const color = String(row.color || '').trim();
     const indent = String(row.indent || '').trim();
-    const csNo = String(row.csno || '').trim();
+    // Accept either spelling defensively: the CSV path arrives lowercased,
+    // but a caller building rows by hand can easily reach for the camelCase
+    // name used everywhere downstream. Tolerating both means a slip cannot
+    // silently blank the CS number again (SHD-1a).
+    const csNo = String(row.csno ?? row.csNo ?? '').trim();
     const netMtrsRaw = row.netmtrs;
     const netWeightRaw = row.netweight;
     const netMtrs = netMtrsRaw === '' || netMtrsRaw == null ? 0 : parseFloat(netMtrsRaw);

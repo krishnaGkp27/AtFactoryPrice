@@ -250,8 +250,13 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
       ok: true,
       headers: ['packageno', 'thanno', 'design', 'shade', 'yards', 'indent', 'csno', 'supplier'],
       rows: pl.thans.map((t, i) => ({
+        // Keys here are the LOWERCASE validator input contract (see the
+        // `headers` list above and bulkRowValidator.OPTIONAL) — the CSV path
+        // reaches the validator with lowercased headers, and this
+        // packing-list path must match it. Writing 'csNo' here silently
+        // dropped every CS number (SHD-1a).
         packageno: t.packageNo, thanno: String(t.thanNo), design: t.design,
-        shade: t.shade, yards: String(t.yards), indent: t.indent, csNo: t.csNo,
+        shade: t.shade, yards: String(t.yards), indent: t.indent, csno: t.csNo,
         supplier: pl.supplier || '', _rowNum: i + 2,
       })),
     };
