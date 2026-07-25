@@ -68,11 +68,19 @@ const DEFAULTS = {
   SHEET_BACKUP_RETENTION_DAYS: 14,
 };
 
+let _headerReady = false;
+
 async function ensureHeader() {
+  // Bootstrapping the header only matters once per process — schemaMapper
+  // already creates every sheet + header at startup. Without this guard each
+  // append/write paid an extra read (and, where ensureHeader also calls
+  // getSheetNames, a whole-spreadsheet metadata call) first.
+  if (_headerReady) return;
   const rows = await sheets.readRange(SHEET, 'A1:C1');
   if (!rows.length || rows[0].length < 3) {
     await sheets.updateRange(SHEET, 'A1:C1', [HEADERS]);
   }
+  _headerReady = true;
 }
 
 // P6 — Settings is consulted on nearly every action (risk thresholds,

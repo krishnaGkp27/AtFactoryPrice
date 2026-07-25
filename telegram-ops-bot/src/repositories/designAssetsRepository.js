@@ -146,7 +146,14 @@ let _cache = null;
 let _cacheTs = 0;
 const CACHE_TTL_MS = 10000;
 
+let _headerReady = false;
+
 async function ensureHeader() {
+  // Bootstrapping the header only matters once per process — schemaMapper
+  // already creates every sheet + header at startup. Without this guard each
+  // append/write paid an extra read (and, where ensureHeader also calls
+  // getSheetNames, a whole-spreadsheet metadata call) first.
+  if (_headerReady) return;
   // Ensure the sheet itself exists (silent no-op if it does).
   try {
     const names = await sheets.getSheetNames();
@@ -159,6 +166,7 @@ async function ensureHeader() {
   if (!rows.length || rows[0].length < COL_COUNT) {
     await sheets.updateRange(SHEET, `A1:${columnLetter(COL_COUNT)}1`, [HEADERS]);
   }
+  _headerReady = true;
 }
 
 const { columnLetter } = require('./sheetsClient');

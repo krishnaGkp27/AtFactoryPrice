@@ -21,11 +21,19 @@ function parseRow(row, rowIndex) {
   };
 }
 
+let _headerReady = false;
+
 async function ensureHeader() {
+  // Bootstrapping the header only matters once per process — schemaMapper
+  // already creates every sheet + header at startup. Without this guard each
+  // append/write paid an extra read (and, where ensureHeader also calls
+  // getSheetNames, a whole-spreadsheet metadata call) first.
+  if (_headerReady) return;
   const rows = await googleSheetsRepository.readSheet(SHEET_NAME, 'A1:C1');
   if (!rows.length || rows[0].length < HEADERS.length) {
     await googleSheetsRepository.updateRow(SHEET_NAME, 'A1:C1', [HEADERS]);
   }
+  _headerReady = true;
 }
 
 async function get(customerId) {

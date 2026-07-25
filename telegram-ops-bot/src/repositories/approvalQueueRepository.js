@@ -8,11 +8,19 @@ const sheets = require('./sheetsClient');
 const SHEET = 'ApprovalQueue';
 const HEADERS = ['RequestID', 'User', 'ActionJSON', 'RiskReason', 'Status', 'CreatedAt', 'ResolvedAt'];
 
+let _headerReady = false;
+
 async function ensureHeader() {
+  // Bootstrapping the header only matters once per process — schemaMapper
+  // already creates every sheet + header at startup. Without this guard each
+  // append/write paid an extra read (and, where ensureHeader also calls
+  // getSheetNames, a whole-spreadsheet metadata call) first.
+  if (_headerReady) return;
   const rows = await sheets.readRange(SHEET, 'A1:G1');
   if (!rows.length || rows[0].length < 7) {
     await sheets.updateRange(SHEET, 'A1:G1', [HEADERS]);
   }
+  _headerReady = true;
 }
 
 async function append(record) {

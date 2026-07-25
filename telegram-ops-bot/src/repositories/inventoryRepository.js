@@ -101,11 +101,19 @@ function toRow(o) {
   ];
 }
 
+let _headerReady = false;
+
 async function ensureHeader() {
+  // Bootstrapping the header only matters once per process — schemaMapper
+  // already creates every sheet + header at startup. Without this guard each
+  // append/write paid an extra read (and, where ensureHeader also calls
+  // getSheetNames, a whole-spreadsheet metadata call) first.
+  if (_headerReady) return;
   const rows = await sheets.readRange(SHEET, 'A1:W1');
   if (!rows.length || rows[0].length < COL_COUNT) {
     await sheets.updateRange(SHEET, 'A1:W1', [HEADERS]);
   }
+  _headerReady = true;
 }
 
 async function getAll() {
