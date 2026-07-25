@@ -21,15 +21,19 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # Test BOTH the runtime we deploy and the one ahead of it. The Dockerfile
-    # (and therefore Railway) runs node:20-alpine, so 20 is what production
-    # actually executes; 22 stays in the matrix so an upgrade never lands as a
-    # surprise. Previously CI ran 22 only, i.e. it never tested the shipped
-    # runtime.
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: ['20', '22']
+    # KNOWN GAP (25-Jul-2026): the Dockerfile — and therefore Railway — runs
+    # node:20-alpine, but the suite CANNOT run on Node 20: the `test` script
+    # passes a glob ("test/**/*.test.js") and the built-in runner only expands
+    # globs from Node 21. The obvious workaround (`node --test test`) is not a
+    # drop-in either — the runner then treats every helper under test/ as a
+    # test file and fails. A Node 20 matrix leg was tried and went red for
+    # exactly this reason.
+    #
+    # So CI deliberately runs 22 only, and this comment is the honest record
+    # that the SHIPPED runtime is not the tested one. Closing the gap is a
+    # deliberate change, not a CI tweak: either bump the Dockerfile to node:22
+    # (aligns everything up; needs a deploy + smoke on Railway) or make the
+    # test script glob-free with an explicit file list.
     defaults:
       run:
         working-directory: telegram-ops-bot
@@ -37,12 +41,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # The built-in test runner's glob handling is version-sensitive, so the
-      # matrix pins exact majors rather than relying on engines (>=20).
-      - name: Set up Node.js ${{ matrix.node-version }}
+      # Pinned major: the built-in runner's glob handling is version-sensitive
+      # (see the note above), so this must stay >= 21.
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: '22'
           cache: npm
           cache-dependency-path: telegram-ops-bot/package-lock.json
 
