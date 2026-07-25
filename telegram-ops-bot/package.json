@@ -25,7 +25,7 @@
     "kpi:usage": "node scripts/update-kpi-matrix.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",
