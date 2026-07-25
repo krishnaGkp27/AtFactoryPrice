@@ -47,6 +47,23 @@ function median(values) {
 }
 
 /**
+ * Transactions `action` values that represent a SALE.
+ *
+ * inventoryService writes 'sell_than' / 'sell_package' (see its
+ * transactionsRepository.append calls) and the bundle flow writes
+ * 'sale_bundle'. The filter here previously looked for 'sale_than' and
+ * 'sale_package' — names nothing ever writes — so every single-than and
+ * single-bale sale was silently excluded and rate suggestions were computed
+ * from bundle sales only. The legacy 'sale_*' spellings are kept so any
+ * historical row that does use them still counts.
+ */
+const SALE_ACTIONS = new Set([
+  'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell',
+  'sale_bundle',
+  'sale_than', 'sale_package',
+]);
+
+/**
  * Pull recent approved sales for a design from Transactions sheet.
  * Returns array of { ts, customer, pricePerYard, qty } sorted newest-first.
  * Empty array on any read error (graceful degradation).
@@ -59,7 +76,7 @@ async function recentSalesForDesign(design, { limit = 200 } = {}) {
     const matches = [];
     for (const r of rows) {
       const action = str(r[2]).toLowerCase();
-      if (action !== 'sale_bundle' && action !== 'sale_than' && action !== 'sale_package') continue;
+      if (!SALE_ACTIONS.has(action)) continue;
       const rowDesign = upper(r[3]);
       if (rowDesign && rowDesign !== d) continue;
       const status = str(r[8]).toLowerCase();
