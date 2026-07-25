@@ -187,7 +187,6 @@ telegram-ops-bot/
 │   │
 │   ├── middlewares/
 │   │   ├── auth.js                # Env-based allow-list (admin/employee/finance/super-admin) + Users-sheet cache
-│   │   ├── roleCheck.js           # Sheet-first getRole()/requireRole() wrapper
 │   │   └── validate.js            # Input validation helpers
 │   │
 │   ├── repositories/              # ONE module per Google Sheet (parse/serialize + CRUD)
@@ -519,11 +518,10 @@ This tracks **physical printed catalog booklets** (Big/Small per design per ware
 
 Two cooperating layers.
 
-### 10.1 Authentication / roles — `middlewares/auth.js` (+ `roleCheck.js`)
+### 10.1 Authentication / roles — `middlewares/auth.js`
 
 - Allow-list = env IDs (`ADMIN_IDS`, `EMPLOYEE_IDS`) **∪** active rows in the `Users` sheet (cached ~10s, refreshed at boot).
 - Predicates: `isAdmin`, `isEmployee`, `isSuperAdmin` (env `SUPER_ADMIN_IDS`), `isAllowed`. Finance = `FINANCE_IDS` (defaults to admins).
-- `roleCheck.getRole()` checks the `Users` sheet first (role + `status==='active'`), then falls back to env.
 - Unknown senders who say hi / `/start` are captured into `PendingUsers` and an admin is notified (`pendingUserService`); other strangers get a polite rejection.
 - **Per-feature visibility** is data-driven: a department's `allowed_activities` CSV decides which menu activities appear (`activityRegistry.filterByCodes`). Tasks/Attendance/Finance items are injected per-user by the controller instead.
 

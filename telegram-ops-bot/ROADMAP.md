@@ -50,7 +50,6 @@ When in doubt about *where* something belongs, ask: is this a status (§2), a re
 | `server.js` | Express webhook entry + scheduler boot |
 | `src/config/index.js` | Env-var parsing (telegram, openai, sheets, access, drive, currency, financeIds) |
 | `src/middlewares/auth.js` | Env-var allow-list (admin/employee/finance) |
-| `src/middlewares/roleCheck.js` | Sheet-backed role lookup, env-var fallback |
 | `src/repositories/sheetsClient.js` | **Only** file that talks to googleapis |
 | `src/repositories/*Repository.js` | One module per sheet — parse rows, expose CRUD |
 | `src/repositories/driveClient.js` | Google Drive uploads |

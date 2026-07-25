@@ -7,7 +7,7 @@ npm-debug.log
 .cache
 
 # tests, scripts, docs — not needed at runtime
-tests/
+test/
 scripts/smoke.js
 docs/
 *.md
