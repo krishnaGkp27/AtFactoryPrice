@@ -642,7 +642,7 @@ async function renderConfirmStep(bot, chatId, userId) {
   // Field roles (marketer/salesman) are useless without a warehouse — their
   // "My Products" view is scoped to Users.warehouses. Warn before submit.
   const fieldRoleNote = (fieldRoles.isFieldRole(d.role) && !(d.warehouses && d.warehouses.length))
-    ? '\n\n⚠️ *No warehouse selected.* A marketer/salesman with no warehouse will see no products — go ⬅ Back to Step 4 to assign one.'
+    ? '\n\n⚠️ *No warehouse selected.* A marketer/salesman with no warehouse will see no products — go ⬅ Back to Step 5 (Warehouses) to assign one.'
     : '';
   const prefillNote = d.prefillSource === 'pending_user'
     ? '\n\n_Pre-filled from a /start by this user; they will be DMed a welcome message after approval._'

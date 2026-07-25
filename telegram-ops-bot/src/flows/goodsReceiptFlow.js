@@ -287,8 +287,13 @@ async function showMultiYardsStep(bot, chatId, userId) {
 // ---------------------------------------------------------------------------
 
 async function showBalesStep(bot, chatId, userId) {
+  // The multi-colour path never visits the mono shade picker (design →
+  // bale_type → multi_shades → multi_yards → bales), so a hardcoded
+  // 'shade' back target dropped those users onto a step they skipped.
+  const session = sessionStore.get(userId);
+  const backTo = (session && session.baleType === 'multi') ? 'multi_yards' : 'shade';
   const rows = [
-    [{ text: '⬅ Back', callback_data: 'gr:back:shade' }, ...cancelRow()],
+    [{ text: '⬅ Back', callback_data: `gr:back:${backTo}` }, ...cancelRow()],
   ];
   const prompt = [
     'Enter the *bale numbers* (reply in chat).',

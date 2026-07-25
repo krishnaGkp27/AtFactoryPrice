@@ -201,10 +201,16 @@ async function showSalesWorkflow(bot, chatId, userId, messageId) {
 
   rows.push(listNavRow());
 
-  await sendLong(bot, chatId, lines.join('\n'), {
-    parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: rows },
-  });
+  // Edit the anchored card in place when the text fits — sendLong ALWAYS
+  // sends a new message, so 🔄 Refresh and '⬅ Back to list' used to stack a
+  // fresh copy each tap and leave dead keyboards above.
+  const body = lines.join('\n');
+  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
+  if (messageId && body.length <= 4000) {
+    await editOrSend(bot, chatId, messageId, body, opts);
+    return;
+  }
+  await sendLong(bot, chatId, body, opts);
 }
 
 /**
