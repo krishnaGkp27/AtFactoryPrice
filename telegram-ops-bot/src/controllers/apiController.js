@@ -4,6 +4,23 @@
 
 const settingsRepository = require('../repositories/settingsRepository');
 const config = require('../config');
+const logger = require('../utils/logger');
+
+/**
+ * Log an API failure server-side with route context.
+ *
+ * Every handler in this file previously caught and returned WITHOUT logging,
+ * so a failing endpoint left no diagnostic trail at all — the three EXT-1
+ * customer endpoints swallowed the error completely. This only adds a log
+ * line: response status and body are deliberately left untouched so the
+ * admin page and the customer ledger app keep their exact contract.
+ *
+ * @param {string} route e.g. 'GET /api/ext/ledger'
+ * @param {Error|unknown} e the caught error
+ */
+function logApiError(route, e) {
+  logger.error(`api ${route}: ${(e && e.message) || e}`);
+}
 
 /**
  * SEC-P1 (H5): the ONLY accepted credential for the settings API is
@@ -40,6 +57,7 @@ async function getSettings(req, res) {
       currency: config.currency,
     });
   } catch (e) {
+    logApiError('GET /api/settings', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 }
@@ -62,6 +80,7 @@ async function updateSettings(req, res) {
       lowStockThreshold: Number(settings.LOW_STOCK_THRESHOLD) || config.risk.defaultLowStockThreshold,
     });
   } catch (e) {
+    logApiError('POST /api/settings', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 }
@@ -124,6 +143,7 @@ async function getAnalyticsSummary(req, res) {
     );
     res.json({ ok: true, days, features: features.rows, series: series.rows });
   } catch (e) {
+    logApiError('GET /api/analytics/summary', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 }
@@ -144,6 +164,7 @@ async function getAnalyticsFeature(req, res) {
     );
     res.json({ ok: true, feature: code, days, rows: rows.rows });
   } catch (e) {
+    logApiError('GET /api/analytics/feature', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 }
@@ -186,6 +207,7 @@ async function getContactsGraph(req, res) {
     }
     res.json({ ok: true, generatedAt: new Date().toISOString(), nodes, edges, categories });
   } catch (e) {
+    logApiError('GET /api/contacts/graph', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 }
@@ -229,8 +251,19 @@ function scopeUsers(identity, users) {
     .some((d) => depts.has(String(d).toLowerCase())));
 }
 
+/**
+ * Run one dashboard section, degrading to `{ error }` so a single failing
+ * section can't take down the whole overview payload. The soft-fail is
+ * deliberate; the log line is not optional — without it a permanently
+ * broken section shows an error in the UI and nothing on the server.
+ */
 async function section(fn) {
-  try { return await fn(); } catch (e) { return { error: e.message }; }
+  try {
+    return await fn();
+  } catch (e) {
+    logApiError('GET /api/ops/overview (section)', e);
+    return { error: e.message };
+  }
 }
 
 async function getOpsOverview(req, res) {
@@ -305,6 +338,7 @@ async function getOpsApprovals(req, res) {
     }
     res.json({ ok: true, total: pending.length, rows });
   } catch (e) {
+    logApiError('GET /api/ops/approvals', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 }
@@ -332,6 +366,7 @@ async function getOpsAttendance(req, res) {
       missing: audience.filter((a) => !byId.has(a.user_id)).map((a) => ({ name: a.name })),
     });
   } catch (e) {
+    logApiError('GET /api/ops/attendance', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 }
@@ -356,6 +391,7 @@ async function getOpsStockTakes(req, res) {
       }));
     res.json({ ok: true, rows: recent });
   } catch (e) {
+    logApiError('GET /api/ops/stock-takes', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 }
@@ -401,7 +437,7 @@ async function postExtOtpRequest(req, res) {
     const out = await require('../services/extLedgerService')
       .requestOtp(String(phone || ''), ['whatsapp', 'sms'].includes(channel) ? channel : 'whatsapp');
     res.status(out.ok ? 200 : 400).json(out);
-  } catch (e) { res.status(500).json({ ok: false, error: 'Something went wrong.' }); }
+  } catch (e) { logApiError('POST /api/ext/otp/request', e); res.status(500).json({ ok: false, error: 'Something went wrong.' }); }
 }
 
 /** POST /api/ext/otp/verify {phone, code} → {token, customer} */
@@ -411,7 +447,7 @@ async function postExtOtpVerify(req, res) {
     const { phone, code } = req.body || {};
     const out = await require('../services/extLedgerService').verifyOtp(String(phone || ''), String(code || ''));
     res.status(out.ok ? 200 : 401).json(out);
-  } catch (e) { res.status(500).json({ ok: false, error: 'Something went wrong.' }); }
+  } catch (e) { logApiError('POST /api/ext/otp/verify', e); res.status(500).json({ ok: false, error: 'Something went wrong.' }); }
 }
 
 /** GET /api/ext/ledger — Authorization: Bearer <token>. */
@@ -422,7 +458,7 @@ async function getExtLedger(req, res) {
     const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
     const out = await require('../services/extLedgerService').getLedger(token);
     res.status(out.ok ? 200 : (out.status || 401)).json(out);
-  } catch (e) { res.status(500).json({ ok: false, error: 'Something went wrong.' }); }
+  } catch (e) { logApiError('GET /api/ext/ledger', e); res.status(500).json({ ok: false, error: 'Something went wrong.' }); }
 }
 
 /**
@@ -436,7 +472,7 @@ async function getOpsUsage(req, res) {
   try {
     const usage = await require('../services/usageMeterService').totals();
     res.json({ ok: true, ...usage });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  } catch (e) { logApiError('GET /api/ops/usage', e); res.status(500).json({ ok: false, error: e.message }); }
 }
 
 module.exports = {
