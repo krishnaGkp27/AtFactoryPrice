@@ -903,21 +903,33 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
   // allowed (otherwise nothing they raise could ever clear). Never blocks
   // on its own failure.
   if (item && String(item.user) === adminId) {
+    // SEC: decide FIRST, then act. The refusal toast used to sit inside this
+    // try, so a transient Telegram failure while showing "you cannot approve
+    // your own request" was swallowed by the catch and execution fell through
+    // — approving the request anyway. The refusal now returns from OUTSIDE the
+    // guard's try, so a failed toast can never unlock a self-approval.
+    let anotherAdminExists = false;
     try {
       const authMod = require('../middlewares/auth');
       const envAdmins = config.access.adminIds.map(String);
       let sheetAdmins = [];
       try { sheetAdmins = (authMod._internals.snapshotAdmins() || []).map(String); } catch { /* cache not ready */ }
       const allAdmins = new Set([...envAdmins, ...sheetAdmins]);
-      const anotherAdminExists = [...allAdmins].some((id) => id !== adminId);
-      if (anotherAdminExists) {
+      anotherAdminExists = [...allAdmins].some((id) => id !== adminId);
+    } catch (e) {
+      // Deliberately non-blocking (sole-admin deployments must still work),
+      // but never silent — this is a security guard degrading.
+      logger.warn(`self-approval guard could not enumerate admins: ${e.message}`);
+    }
+    if (anotherAdminExists) {
+      try {
         await bot.answerCallbackQuery(callbackQuery.id, {
           text: '🔒 You cannot approve your own request — a second admin must review it.',
           show_alert: true,
         });
-        return;
-      }
-    } catch { /* fall through; never block on this guard's own failure */ }
+      } catch (e) { logger.warn(`self-approval refusal toast failed: ${e.message}`); }
+      return;
+    }
   }
 
   // USR-C3b — restricted approvals: actions in SUPER_ADMIN_APPROVAL_ACTIONS
@@ -925,20 +937,29 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
   // We surface the gate as an alert so the admin understands why their
   // tap was refused — they aren't powerless, the right person just needs
   // to act. The card remains live (we did NOT clear its buttons yet).
+  // Same shape as the self-approval guard above: decide inside the try,
+  // refuse from outside it, so a failed alert cannot let a restricted action
+  // (e.g. promote_admin) through on a non-super-admin's tap.
+  let needsSuperAdmin = false;
   try {
     const riskMod = require('../risk/evaluate');
     const auth = require('../middlewares/auth');
     const restricted = Array.isArray(riskMod.SUPER_ADMIN_APPROVAL_ACTIONS)
       ? riskMod.SUPER_ADMIN_APPROVAL_ACTIONS : [];
     const actName = item && item.actionJSON && item.actionJSON.action;
-    if (actName && restricted.includes(actName) && !auth.isSuperAdmin(adminId)) {
+    needsSuperAdmin = !!actName && restricted.includes(actName) && !auth.isSuperAdmin(adminId);
+  } catch (e) {
+    logger.warn(`super-admin guard could not evaluate the action: ${e.message}`);
+  }
+  if (needsSuperAdmin) {
+    try {
       await bot.answerCallbackQuery(callbackQuery.id, {
         text: '🔒 Super-admin only — this action requires SUPER_ADMIN approval.',
         show_alert: true,
       });
-      return;
-    }
-  } catch (_) { /* fall through; never block on this guard's own failure */ }
+    } catch (e) { logger.warn(`super-admin refusal alert failed: ${e.message}`); }
+    return;
+  }
 
   // DUAL-1 (specs/DUAL-1_TWO_ADMIN_APPROVAL.md) — inventory + finance
   // actions must involve TWO admins before execution. An admin requester
