@@ -6651,6 +6651,7 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['trf:'], handle: (bot, cq) => require('../flows/transferFlow').handleCallback(bot, cq) },
   { prefixes: ['sbl:'], handle: (bot, cq) => require('../flows/soldBalesFlow').handleCallback(bot, cq) },
   { prefixes: ['sdd:'], handle: (bot, cq) => require('../flows/supplyDetailsFlow').handleCallback(bot, cq) },
+  { prefixes: ['sdg:'], handle: (bot, cq) => require('../flows/supplyDetailsDesignFlow').handleCallback(bot, cq) },
   // DCAT-1 — design → product-category mapping (dual-admin approval).
   { prefixes: ['dcat:'], handle: (bot, cq) => require('../flows/designCategoryFlow').handleCallback(bot, cq) },
   // MKT-2 — marketer allocations: admin flow + marketer category catalog.
@@ -7904,6 +7905,15 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const subView = data.slice(4);
     const uid = String(callbackQuery.from.id);
     const isAdminUser = config.access.adminIds.includes(uid);
+    // SDG-1 — the flat Date-wise dump is replaced by the tappable
+    // design → date → customer → bale-numbers drill (owner, 25-Jul).
+    // The Summary sub-view keeps its existing report.
+    if (subView === 'design_datewise') {
+      await bot.answerCallbackQuery(callbackQuery.id).catch(() => {});
+      await require('../flows/supplyDetailsDesignFlow')
+        .start(bot, callbackQuery.message.chat.id, uid, callbackQuery.message.message_id);
+      return;
+    }
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Generating report...' });
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
     try {
