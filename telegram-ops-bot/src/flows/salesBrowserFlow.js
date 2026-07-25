@@ -34,6 +34,7 @@
 
 const sessionStore = require('../utils/sessionStore');
 const auth = require('../middlewares/auth');
+const pricingService = require('../services/pricingService');
 const transactionsRepository = require('../repositories/transactionsRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const inventoryRepository = require('../repositories/inventoryRepository');
@@ -168,6 +169,10 @@ async function start(bot, chatId, userId, messageId = null) {
   sessionStore.set(userId, {
     type: SESSION_TYPE, step: 'days', tab: 'sales',
     flowMessageId: messageId || null, startedAt: Date.now(), _items: [],
+    // Money is gated per-session by capability (mirrors soldBalesFlow), so
+    // ₦ figures stay behind see_sale_price even if this flow's admin-only
+    // entry gate is ever widened to departments.
+    showMoney: pricingService.canSeeSalePrice(String(userId)),
   });
   await showDays(bot, chatId, userId);
 }
@@ -262,7 +267,7 @@ async function showDay(bot, chatId, userId, dayIso, page = 0) {
   const rows = items.slice(p * ITEMS_PER_PAGE, (p + 1) * ITEMS_PER_PAGE).map((g, i) => {
     const idx = p * ITEMS_PER_PAGE + i;
     const label = g.kind === 'sale'
-      ? `${esc(g.customer || '—')} — ${g.lines.length} item${g.lines.length > 1 ? 's' : ''} · ${Math.round(g.yards)} yds${g.amount ? ` · ${ngn(g.amount)}` : ''}${g.backdated ? ' ⚠️BD' : ''}`
+      ? `${esc(g.customer || '—')} — ${g.lines.length} item${g.lines.length > 1 ? 's' : ''} · ${Math.round(g.yards)} yds${g.amount && session.showMoney ? ` · ${ngn(g.amount)}` : ''}${g.backdated ? ' ⚠️BD' : ''}`
       : `${esc(g.customer)} — ${g.totalQty} bale(s) · ${esc(g.warehouse)} · ${esc(g.status)}`;
     return [{ text: label, callback_data: `${NS}itm:${idx}` }];
   });
@@ -274,7 +279,7 @@ async function showDay(bot, chatId, userId, dayIso, page = 0) {
   const totalYds = tab === 'sales' ? items.reduce((s, g) => s + g.yards, 0) : 0;
   const totalAmt = tab === 'sales' ? items.reduce((s, g) => s + g.amount, 0) : 0;
   const head = tab === 'sales'
-    ? `💰 *${fmtDate(dayIso)}* — ${items.length} sale${items.length > 1 ? 's' : ''} · ${Math.round(totalYds)} yds${totalAmt ? ` · ${ngn(totalAmt)}` : ''}`
+    ? `💰 *${fmtDate(dayIso)}* — ${items.length} sale${items.length > 1 ? 's' : ''} · ${Math.round(totalYds)} yds${totalAmt && session.showMoney ? ` · ${ngn(totalAmt)}` : ''}`
     : `📦 *${fmtDate(dayIso)}* — ${items.length} suppl${items.length > 1 ? 'ies' : 'y'}`;
   await render(bot, chatId, userId, `${head}\n\nTap an entry for full details:`, rows);
 }
@@ -295,7 +300,7 @@ async function showDetail(bot, chatId, userId, idx) {
       + `📅 Sale date: ${fmtDate(g.salesDate)}${g.backdated ? `  ⚠️ *${esc(g.backdated)}*` : ''}\n`
       + (g.salesPerson ? `🧑 Salesperson: ${esc(g.salesPerson)}\n` : '')
       + `\n${lines.join('\n')}\n\n`
-      + `Total: *${Math.round(g.yards)} yds*${g.amount ? ` · *${ngn(g.amount)}*` : ''}\n`
+      + `Total: *${Math.round(g.yards)} yds*${g.amount && session.showMoney ? ` · *${ngn(g.amount)}*` : ''}\n`
       + (g.paymentMode ? `💳 Payment: ${esc(g.paymentMode)}\n` : '');
     // Approval + invoice enrichment (best-effort lookups).
     if (g.saleRefId) {
@@ -450,7 +455,7 @@ async function showCustCard(bot, chatId, userId, idx) {
   const text = `📈 *${esc(session.customer)}* — 🧵 *${esc(design)}* — *${fmtDate(day)}*\n\n`
     + `Bales (yards):\n${list}\n\n`
     + `Day total: ${bales.length} bale${bales.length === 1 ? '' : 's'} · ${Math.round(yds)} yds`
-    + (amount ? ` · ${ngn(amount)}` : '');
+    + (amount && session.showMoney ? ` · ${ngn(amount)}` : '');
   await render(bot, chatId, userId, text, [
     [{ text: '⬅ Dates', callback_data: `${NS}dg:${session.designIdx}` }],
     [{ text: '⬅ Customers', callback_data: `${NS}tab:customer` }],

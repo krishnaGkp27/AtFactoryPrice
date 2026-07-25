@@ -5200,6 +5200,22 @@ async function getAdjustedAvailability(warehouse, cart, arrivalBatch = null, cat
   return result;
 }
 
+/**
+ * SEC — the warehouses a user may supply from: their marketing-group pin
+ * when set, else their assigned warehouses. Admins return [] (= unscoped,
+ * the existing "no filter" convention). Used both when the flow starts and
+ * when a callback REBUILDS an expired session, so a replayed srf_wh:/srf_ct:
+ * can't hand someone another warehouse's stock view.
+ * @param {string} userId
+ * @returns {Promise<string[]>}
+ */
+async function supplyScopeWarehouses(userId) {
+  if (config.access.adminIds.includes(String(userId))) return [];
+  const user = await usersRepository.findByUserId(userId);
+  const groupWhs = await marketerOverlay.getGroupWarehouses(user, false);
+  return groupWhs.length ? groupWhs : ((user && user.warehouses) || []);
+}
+
 async function startSupplyRequestFlow(bot, chatId, userId) {
   const user = await usersRepository.findByUserId(userId);
   // MG-1: marketers are pinned to their marketing group's warehouse(s)
@@ -9392,7 +9408,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
     let session = sessionStore.get(uid);
     if (!session || session.type !== 'supply_req_flow') {
       // Session expired mid-flow — rebuild a minimal one so the pick still works.
-      session = { type: 'supply_req_flow', cart: [], _scopeWarehouses: [], flowMessageId: callbackQuery.message.message_id };
+      // Rebuild with the user's REAL scope — an empty array means "no
+      // filter" downstream, which handed a rebuilt session every warehouse.
+      session = {
+        type: 'supply_req_flow', cart: [],
+        _scopeWarehouses: await supplyScopeWarehouses(uid),
+        flowMessageId: callbackQuery.message.message_id,
+      };
     }
     session.arrivalBatch = batch;
     // SRF-CAT — a new container invalidates any earlier category pick.
@@ -9432,6 +9454,20 @@ async function handleCallbackQuery(bot, callbackQuery) {
     // to warehouses").
     const session = sessionStore.get(uid) || { type: 'supply_req_flow', cart: [], arrivalBatch: '' };
     session.type = 'supply_req_flow';
+    // SEC — this callback can arrive with ANY warehouse name (Telegram
+    // clients send arbitrary callback_data) and used to rebuild a session
+    // from nothing, so a replay exposed other warehouses' stock, opening
+    // balances and in-transit pipeline. Validate against the user's scope.
+    if (!session._scopeWarehouses || !session._scopeWarehouses.length) {
+      session._scopeWarehouses = await supplyScopeWarehouses(uid);
+    }
+    const scope = session._scopeWarehouses || [];
+    const inScope = !scope.length
+      || scope.some((w) => String(w).trim().toLowerCase() === String(warehouse).trim().toLowerCase());
+    if (!inScope) {
+      await bot.sendMessage(chatId, '⚠️ That warehouse is not in your supply scope.');
+      return;
+    }
     session.warehouse = warehouse;
     session.cart = session.cart || [];
     session.step = 'design';
