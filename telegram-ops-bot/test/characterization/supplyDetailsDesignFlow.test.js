@@ -83,6 +83,7 @@ test('SDG-1: level 1 shows supplied/total bales, no yards, most supplied first',
   assert.match(kb[0].text, /44200 — 3B \/ 4B$/, `44200 first with 3B/4B, got: ${kb[0].text}`);
   assert.match(kb[1].text, /9006 — 1B \/ 1B ✅$/, `fully-supplied design carries ✅, got: ${kb[1].text}`);
   assert.ok(!kb.some((b) => /yds/.test(b.text)), 'no yards at level 1 (owner, 25-Jul)');
+  assert.ok(!/yds/.test(lastText(bot)), 'and none in the level-1 body');
   // 824 sold as 3 thans must count once, not three times.
   assert.ok(!/3B \/ 6B|5B/.test(kb[0].text), 'loose thans of one bale count as a single bale');
   sessionStore.clear(EMPLOYEE);
@@ -95,13 +96,17 @@ test('SDG-1: drills design → date → customer → bale numbers, and back agai
   await flow.handleCallback(bot, cb(design.callback_data, EMPLOYEE));
 
   const days = lastKb(bot).filter((b) => b.callback_data.startsWith('sdg:t:'));
-  assert.match(days[0].text, /12 Feb 2026 — 2B/, `newest date first with bale count, got: ${days[0].text}`);
-  assert.match(days[1].text, /11 Feb 2026 — 1B/, 'DD-MM-YYYY row merged onto its own day');
+  assert.match(days[0].text, /12 Feb 2026 — 2B$/, `newest date first with bale count, got: ${days[0].text}`);
+  assert.match(days[1].text, /11 Feb 2026 — 1B$/, 'DD-MM-YYYY row merged onto its own day');
+  // Yards are a DETAIL figure — a date is an aggregate over customers.
+  assert.ok(!days.some((b) => /yds/.test(b.text)), 'no yards on the date level');
 
   await flow.handleCallback(bot, cb('sdg:t:0', EMPLOYEE));
   const custs = lastKb(bot).filter((b) => b.callback_data.startsWith('sdg:c:'));
-  assert.ok(custs.some((b) => /madam oshodi — 1B/.test(b.text)), `customer with bale count, got: ${custs.map((c) => c.text)}`);
+  assert.ok(custs.some((b) => /madam oshodi — 1B$/.test(b.text)), `customer with bale count, got: ${custs.map((c) => c.text)}`);
+  assert.ok(!custs.some((b) => /yds/.test(b.text)), 'no yards on the customer level');
   assert.match(lastText(bot), /Day total: 2B · 4 thans/, 'day total counts bales and thans');
+  assert.ok(!/yds/.test(lastText(bot)), 'no yards on the day total either — still an aggregate');
 
   await flow.handleCallback(bot, cb(custs.find((b) => /madam oshodi/.test(b.text)).callback_data, EMPLOYEE));
   const detail = lastText(bot);

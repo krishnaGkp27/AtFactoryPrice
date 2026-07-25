@@ -14,6 +14,12 @@
  *   4. view_detail   — that customer's shade breakdown, quantities, value
  *                      and the actual BALE NUMBERS (the reconciliation list).
  *
+ * YARDS GRANULARITY (owner, 25-Jul-2026): yards are a DETAIL figure and
+ * appear ONLY on level 4 — one customer, one date, one design. Levels 1-3
+ * are aggregates (a design, a whole date, a list of customers), where a
+ * yard total answers no question and only crowds the button. Those levels
+ * carry bales (and thans on the day total) instead.
+ *
  * The pair at level 1 reads like the stock browse's "remaining / opening":
  *   supplied = distinct physical bales of the design actually SOLD
  *   total    = every bale of that design ever recorded, any status
@@ -221,8 +227,11 @@ async function renderDates(bot, chatId, userId) {
   session.step = 'pick_date';
   sessionStore.set(userId, session);
 
+  // Yards are a DETAIL figure (owner, 25-Jul): they appear only on the
+  // level that shows one customer, on one date, for one design. A date is
+  // an aggregate over customers, so bales only here.
   const rows = days.map((d, i) => ([{
-    text: `📅 ${prettyDate(d)} — ${baleCount(byDay.get(d))}B · ${fmtQty(byDay.get(d).reduce((s, r) => s + (Number(r.yards) || 0), 0))} yds`,
+    text: `📅 ${prettyDate(d)} — ${baleCount(byDay.get(d))}B`,
     callback_data: `sdg:t:${i}`,
   }]));
   rows.push(backRow('⬅ Designs'));
@@ -261,16 +270,15 @@ async function renderCustomers(bot, chatId, userId) {
   sessionStore.set(userId, session);
 
   const rows = custs.map((c, i) => ([{
-    text: `👤 ${c} — ${baleCount(byCust.get(c))}B · ${fmtQty(byCust.get(c).reduce((s, r) => s + (Number(r.yards) || 0), 0))} yds`,
+    text: `👤 ${c} — ${baleCount(byCust.get(c))}B`,
     callback_data: `sdg:c:${i}`,
   }]));
   rows.push(backRow('⬅ Dates'));
   rows.push(closeRow());
 
-  const yards = mine.reduce((s, r) => s + (Number(r.yards) || 0), 0);
   await render(bot, chatId, userId,
     `📦 *${session.design}* · 📅 *${prettyDate(session.day)}*\n\n_Who was supplied:_\n\n`
-    + `Day total: ${baleCount(mine)}B · ${mine.length} thans · ${fmtQty(yards)} yds${money(mine, session.showMoney)}`,
+    + `Day total: ${baleCount(mine)}B · ${mine.length} thans${money(mine, session.showMoney)}`,
     rows);
 }
 
