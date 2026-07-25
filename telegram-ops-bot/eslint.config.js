@@ -3,10 +3,14 @@
 /**
  * ESLint flat config — correctness-focused.
  *
- * Philosophy: ESLint catches BUGS here; Prettier owns formatting (so
- * eslint-config-prettier switches off any stylistic rules that would fight
- * the formatter). We start from @eslint/js "recommended" and tune a few
- * rules to match this codebase's deliberate idioms (e.g. `catch (_) {}`).
+ * Philosophy: ESLint catches BUGS here; formatting is hand-maintained in the
+ * house style. Prettier was configured but never run against this codebase —
+ * it would have rewritten 381 files and expanded the 162 one-line
+ * `try { … } catch (_) {}` idioms to five lines each — so it was removed
+ * (25-Jul-2026) rather than left as a trap for `npm run format`. Verified at
+ * removal that dropping eslint-config-prettier changed nothing: 135 warnings,
+ * 0 errors, before and after. We start from @eslint/js "recommended" and tune
+ * a few rules to match this codebase's deliberate idioms (e.g. `catch (_) {}`).
  *
  * Introduced incrementally (TG-26): the high-signal, bug-indicating rules are
  * errors; noisier hygiene rules (unused vars, console) are warnings so the
@@ -15,7 +19,6 @@
 
 const js = require('@eslint/js');
 const globals = require('globals');
-const prettier = require('eslint-config-prettier');
 
 module.exports = [
   {
@@ -79,7 +82,4 @@ module.exports = [
       globals: { ...globals.node },
     },
   },
-
-  // Turn off rules that would conflict with Prettier's formatting.
-  prettier,
 ];
