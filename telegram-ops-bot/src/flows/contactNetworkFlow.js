@@ -29,7 +29,7 @@ const SESSION_TYPE = 'contact_network_flow';
 const NS = 'cn:';
 const PAGE = 8;
 
-const render = makeRenderer({ parseMode: 'Markdown', requireSession: SESSION_TYPE });
+const render = makeRenderer({ parseMode: 'Markdown', requireSession: true });
 
 function navRow(extra = []) {
   return [...extra, { text: '🏠 Menu', callback_data: 'act:__back__' }];

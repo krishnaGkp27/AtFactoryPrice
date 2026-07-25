@@ -894,7 +894,12 @@ async function runS10() {
   // S10.4 — findByPackage(p, { latestOnly: true }) returns just the newest
   invRepo.invalidateCache();
   const latest = await invRepo.findByPackage('5801', { latestOnly: true });
-  if (latest.length === 1 && /^BAL-2026/.test(latest[0].baleUid)) {
+  // Compare against the id S10.2 just minted rather than a hardcoded calendar
+  // year: bale uids are BAL-<YYYYMMDD>-… from the CURRENT date, so /^BAL-2026/
+  // would take the mandatory gate red on 2027-01-01. Identity is also a
+  // strictly stronger assertion — it pins that the newest instance is the row
+  // we appended, which is what latestOnly means.
+  if (latest.length === 1 && latest[0].baleUid === created[0].baleUid) {
     pass('S10.4 findByPackage latestOnly: returns the most recently added instance');
   } else {
     fail('S10.4 findByPackage latestOnly', JSON.stringify(latest));

@@ -41,7 +41,7 @@ const SESSION_TYPE = 'snap_sale_flow';
 const NS = 'sns:';
 const CUSTOMERS_PAGE = 8;
 
-const render = makeRenderer({ parseMode: 'Markdown', requireSession: SESSION_TYPE });
+const render = makeRenderer({ parseMode: 'Markdown', requireSession: true });
 
 function cancelRow() { return [{ text: '❌ Cancel', callback_data: `${NS}cancel` }, { text: '🏠 Menu', callback_data: 'act:__back__' }]; }
 

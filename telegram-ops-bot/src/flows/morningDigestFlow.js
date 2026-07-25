@@ -21,7 +21,7 @@ const SESSION_TYPE = 'morning_digest_flow';
 const NS = 'rmd:';
 const TIME_CHIPS = ['08:30', '09:15', '10:00', '10:30'];
 
-const render = makeRenderer({ parseMode: 'Markdown', requireSession: SESSION_TYPE });
+const render = makeRenderer({ parseMode: 'Markdown', requireSession: true });
 
 async function showScreen(bot, chatId, userId) {
   const settings = await settingsRepository.getAll();

@@ -68,7 +68,13 @@ async function ensureHeader() {
 
 async function getAll() {
   const rows = await sheets.readRange(SHEET, 'A2:V');
-  return rows.filter((r) => str(r[0])).map((r, i) => fromRow(r, i + 2));
+  // Map BEFORE filtering so `i` indexes the SHEET, not the filtered array —
+  // otherwise every rowIndex is short by the number of blank rows above it,
+  // and a write aimed at that rowIndex would land on the wrong invoice. This
+  // is the order every other rowIndex-tracking repo uses (customers,
+  // receipts, attendance, stockTakes). fromRow normalises invoiceNo with
+  // str(), so filtering on the parsed field matches the old predicate.
+  return rows.map((r, i) => fromRow(r, i + 2)).filter((x) => x.invoiceNo);
 }
 
 async function append(record) {

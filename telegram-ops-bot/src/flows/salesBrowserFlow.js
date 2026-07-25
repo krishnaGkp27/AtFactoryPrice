@@ -54,7 +54,7 @@ const CUSTOMERS_CAP = 16;   // RPT-3 customer chips shown (most recent buyers)
 const CUST_DATES_CAP = 24;  // RPT-3 date chips per design (newest first)
 const CARD_BALES_CAP = 40;  // RPT-3 bale entries listed on the compact card
 
-const render = makeRenderer({ parseMode: 'Markdown', requireSession: SESSION_TYPE });
+const render = makeRenderer({ parseMode: 'Markdown', requireSession: true });
 
 function lagosISO(daysBack = 0) {
   return new Date(Date.now() - daysBack * 86400000).toLocaleDateString('en-CA', { timeZone: LAGOS_TZ });

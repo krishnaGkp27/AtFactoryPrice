@@ -31,7 +31,7 @@ const SESSION_TYPE = 'reminder_config_flow';
 const NS = 'rmn:';
 const CADENCE_CHOICES = [0, 2, 6, 12, 24];
 
-const render = makeRenderer({ parseMode: 'Markdown', requireSession: SESSION_TYPE });
+const render = makeRenderer({ parseMode: 'Markdown', requireSession: true });
 
 async function isManagerOrAdmin(userId) {
   if (auth.isAdmin(userId)) return true;
