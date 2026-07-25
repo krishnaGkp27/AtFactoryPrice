@@ -55,7 +55,15 @@ module.exports = [
       // ── Hygiene (warnings — surfaced, not blocking) ─────────────────────
       // These flag style/cleanup, not behavior bugs, so they don't fail the
       // build on the existing codebase — they're cleaned up lint-on-touch.
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      // `caughtErrors` defaults to 'all' in ESLint 9, so the deliberate
+      // `catch (_)` idiom above produced 326 of the 387 unused-var warnings
+      // and buried the ~61 genuinely unused names. Ignore the same `_`
+      // prefix for caught errors that args/vars already use.
+      'no-unused-vars': ['warn', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
       'no-constant-condition': ['warn', { checkLoops: false }],
       'no-useless-escape': 'warn', // redundant regex escapes — harmless
       'no-useless-assignment': 'warn', // dead assignment — worth a look, not a crash
