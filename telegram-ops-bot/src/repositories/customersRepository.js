@@ -3,6 +3,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { ttlCache } = require('../utils/ttlCache');
 
 const SHEET = 'Customers';
 
@@ -27,9 +28,25 @@ function parse(r, rowIndex) {
   };
 }
 
-async function getAll() {
+// P6 — Customers is read constantly (every picker, every findByName during
+// an approval — one sale approval hit findByName 21 times, i.e. 21 full-sheet
+// reads) yet only changes when someone adds or edits a customer. 30s TTL,
+// mirroring the Users/Settings caches; every write below invalidates so an
+// in-bot change is visible immediately, and a manual sheet edit within 30s.
+const CACHE_TTL_MS = 30 * 1000;
+const _cache = ttlCache(CACHE_TTL_MS, async () => {
   const rows = await sheets.readRange(SHEET, 'A2:L');
   return rows.map((r, i) => parse(r, i + 2)).filter((c) => c.customer_id || c.name);
+});
+
+/** Drop the cached Customers snapshot (called by every write here). */
+function invalidateCache() {
+  _cache.invalidate();
+}
+
+async function getAll() {
+  // Copy the array so a caller's sort/splice can't mutate the cached value.
+  return (await _cache.get()).slice();
 }
 
 async function findById(customerId) {
@@ -59,6 +76,7 @@ async function append(customer) {
     customer.payment_terms || 'COD', customer.notes || '', customer.status || 'Active',
     now, now,
   ]]);
+  invalidateCache();
 }
 
 async function updateOutstanding(customerId, newBalance) {
@@ -67,6 +85,7 @@ async function updateOutstanding(customerId, newBalance) {
   const now = new Date().toISOString();
   await sheets.updateRange(SHEET, `G${c.rowIndex}`, [[newBalance]]);
   await sheets.updateRange(SHEET, `L${c.rowIndex}`, [[now]]);
+  invalidateCache();
   return true;
 }
 
@@ -80,7 +99,11 @@ async function updateRow(customerId, fields) {
     updated.category, updated.credit_limit, updated.outstanding_balance,
     updated.payment_terms, updated.notes, updated.status, updated.created_at, now,
   ]]);
+  invalidateCache();
   return true;
 }
 
-module.exports = { getAll, findById, findByName, searchByName, append, updateOutstanding, updateRow, SHEET };
+module.exports = {
+  getAll, findById, findByName, searchByName,
+  append, updateOutstanding, updateRow, invalidateCache, SHEET,
+};

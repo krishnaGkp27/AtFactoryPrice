@@ -4,6 +4,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { ttlCache } = require('../utils/ttlCache');
 
 const SHEET = 'Departments';
 const HEADERS = [
@@ -40,9 +41,24 @@ function parse(r, rowIndex) {
   };
 }
 
-async function getAll() {
+// P6 — Departments drives menu visibility, so it is read on EVERY greeting
+// menu and hub render (once per user, per tap) yet changes only when an admin
+// edits a department. 30s TTL, same trade-off as the Users/Settings/Customers
+// caches; every write below invalidates so an in-bot change applies at once.
+const CACHE_TTL_MS = 30 * 1000;
+const _cache = ttlCache(CACHE_TTL_MS, async () => {
   const rows = await sheets.readRange(SHEET, 'A2:G');
   return rows.map((r, i) => parse(r, i + 2)).filter((d) => d.dept_id);
+});
+
+/** Drop the cached Departments snapshot (called by every write here). */
+function invalidateCache() {
+  _cache.invalidate();
+}
+
+async function getAll() {
+  // Copy so a caller's sort/splice cannot mutate the cached value.
+  return (await _cache.get()).slice();
 }
 
 async function findById(deptId) {
@@ -63,6 +79,7 @@ async function append(dept) {
     Array.isArray(dept.allowed_activities) ? dept.allowed_activities.join(',') : (dept.allowed_activities || ''),
     dept.status || 'active', now,
   ]]);
+  invalidateCache();
 }
 
 async function updateActivities(deptId, activities) {
@@ -70,6 +87,7 @@ async function updateActivities(deptId, activities) {
   if (!d) return false;
   const csv = Array.isArray(activities) ? activities.join(',') : activities;
   await sheets.updateRange(SHEET, `C${d.rowIndex}`, [[csv]]);
+  invalidateCache();
   return true;
 }
 
@@ -80,6 +98,7 @@ async function updateParentDepartment(deptId, parentDepartmentName) {
   const d = await findById(deptId);
   if (!d) return false;
   await sheets.updateRange(SHEET, `F${d.rowIndex}`, [[str(parentDepartmentName)]]);
+  invalidateCache();
   return true;
 }
 
@@ -100,6 +119,7 @@ async function updateWarehouses(deptId, warehouses) {
     ? warehouses.map((w) => String(w).trim()).filter(Boolean).join(',')
     : String(warehouses || '').trim();
   await sheets.updateRange(SHEET, `G${d.rowIndex}`, [[csv]]);
+  invalidateCache();
   return true;
 }
 
@@ -129,6 +149,7 @@ async function ensureDept(cfg) {
 
 module.exports = {
   getAll,
+  invalidateCache,
   findById,
   findByName,
   append,
