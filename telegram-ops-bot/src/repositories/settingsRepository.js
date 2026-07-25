@@ -6,6 +6,7 @@
 
 const sheets = require('./sheetsClient');
 const { runExclusive } = require('../utils/asyncMutex');
+const logger = require('../utils/logger');
 
 const SHEET = 'Settings';
 const HEADERS = ['Key', 'Value', 'UpdatedAt'];
@@ -109,6 +110,10 @@ async function getAll() {
     return { ...map };
   } catch (e) {
     // Errors are NOT cached — next caller retries the sheet.
+    // Log it: silently reverting to in-code DEFAULTS means every owner-set
+    // toggle (thresholds, THAN_VISIBILITY_WAREHOUSES, backup + cleanup
+    // switches) quietly changes behaviour with nothing to notice.
+    logger.warn(`settingsRepository.getAll failed — using in-code DEFAULTS: ${e.message}`);
     return { ...DEFAULTS };
   }
 }

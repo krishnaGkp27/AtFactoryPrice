@@ -208,7 +208,13 @@ async function applyRole(bot, chatId, userId, tgId, role) {
   // Role drives the menu & permissions — refresh the auth cache so it takes
   // effect on the user's next message without waiting for the TTL.
   try { auth.invalidate(); } catch (_) {}
-  try { await auditLogRepository.append('role_changed', { target: tgId, from, to: role }, userId); } catch (_) {}
+  try {
+    await auditLogRepository.append('role_changed', { target: tgId, from, to: role }, userId);
+  } catch (e) {
+    // A privilege change that leaves no audit row is exactly what an
+    // operator would later need; keep it non-blocking but never silent.
+    logger.warn(`audit append 'role_changed' failed (${tgId}: ${from} -> ${role}): ${e.message}`);
+  }
 
   // A field role with no warehouse sees nothing — nudge the admin to assign.
   const needsWarehouse = fieldRoles.isFieldRole(role)

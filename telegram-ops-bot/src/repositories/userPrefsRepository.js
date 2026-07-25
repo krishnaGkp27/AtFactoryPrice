@@ -26,6 +26,11 @@ async function getCountsForUser(userId) {
   } catch {
     return {};
   }
+  // Cache the NEGATIVE result too. The loop above only inserts uids that
+  // exist in the sheet, so a user who has never tapped an activity could
+  // never enter the map — `has()` stayed false and every menu render
+  // re-read the entire UserPrefs sheet for them, forever.
+  if (!memCache.has(userId)) memCache.set(userId, {});
   return memCache.get(userId) || {};
 }
 

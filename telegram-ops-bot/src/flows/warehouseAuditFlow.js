@@ -356,7 +356,7 @@ async function notifyAdminsOfFlag(bot, { warehouse, location, design, bales, bun
   try {
     await auditLogRepository.append('stocktake_flagged',
       { warehouse, design, counted: `${bales}+${bundles}`, book: `${d.fullBales}+${d.looseThans}`, stocktake_id: flagRow.stocktake_id }, auditor);
-  } catch (_) { /* best effort */ }
+  } catch (e) { logger.warn(`audit append 'stocktake_flagged' failed (${warehouse}/${design}, ${flagRow.stocktake_id}): ${e.message}`); }
 }
 
 async function renderChecklist(bot, chatId, userId) {
@@ -477,7 +477,7 @@ async function commitPadCount(bot, chatId, userId, query) {
     try {
       await auditLogRepository.append('stocktake_reconciled',
         { warehouse: session.warehouse, design: session.countDesign, mode: 'blind_tap' }, userId);
-    } catch (_) { /* best effort */ }
+    } catch (e) { logger.warn(`audit append 'stocktake_reconciled' failed (${session.warehouse}/${session.countDesign}): ${e.message}`); }
     await bot.answerCallbackQuery(query.id, { text: `✅ ${session.countDesign} matches — reconciled.` }).catch(() => {});
     session.step = 'checklist';
     delete session.countDesign; delete session.padDraft;
@@ -576,7 +576,7 @@ async function handleBatchText(bot, msg) {
   try {
     await auditLogRepository.append('stocktake_batch',
       { warehouse: parsed.warehouse, matched: matched.length, recount: recount.length, flagged: flagged.length }, userId);
-  } catch (_) { /* best effort */ }
+  } catch (e) { logger.warn(`audit append 'stocktake_batch' failed (${parsed.warehouse}): ${e.message}`); }
   let reply = `🔍 Audit results — ${parsed.warehouse}\n`;
   if (matched.length) reply += `\n✅ Reconciled (${matched.length}): ${matched.join(', ')}`;
   if (recount.length) reply += `\n🔁 Did NOT match — recount these and send a new AUDIT message with just them:\n${recount.map((d) => `${d} =`).join('\n')}`;
@@ -610,7 +610,7 @@ async function handleFlagClear(bot, query) {
   }]);
   try {
     await auditLogRepository.append('stocktake_flag_cleared', { warehouse: row.warehouse, design: row.design, stocktake_id: takeId }, adminId);
-  } catch (_) { /* best effort */ }
+  } catch (e) { logger.warn(`audit append 'stocktake_flag_cleared' failed (${row.warehouse}/${row.design}, ${takeId}): ${e.message}`); }
   await bot.answerCallbackQuery(query.id, { text: '✅ Flag cleared — design re-opened for audit.' }).catch(() => {});
   try {
     await bot.editMessageText(
