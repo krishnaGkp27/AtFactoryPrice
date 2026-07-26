@@ -51,6 +51,8 @@ const sessionStore = require('../utils/sessionStore');
 const { makeRenderer, rowsFor } = require('../utils/flowKit');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const approvalCards = require('../services/approvalCards');
+const settingsRepository = require('../repositories/settingsRepository');
+const { duplicateIndex } = require('../utils/duplicateApprovals');
 const config = require('../config');
 const logger = require('../utils/logger');
 
@@ -129,6 +131,35 @@ function shortDate(createdAt) {
   return new Date(ms).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
 
+/**
+ * Duplicate-clustering window in minutes — a business knob, so it lives in
+ * the Settings sheet (owner-editable, no deploy) with an in-code default.
+ * @returns {Promise<number>}
+ */
+async function duplicateWindowMinutes() {
+  const fallback = settingsRepository.DEFAULTS.DUPLICATE_WINDOW_MINUTES;
+  try {
+    const v = Number((await settingsRepository.getAll()).DUPLICATE_WINDOW_MINUTES);
+    return isFinite(v) && v > 0 ? v : fallback;
+  } catch (_) {
+    return fallback; // getAll already falls back to DEFAULTS; belt and braces
+  }
+}
+
+/**
+ * One queue read plus the duplicate index derived from it.
+ *
+ * Both come from the SAME snapshot on purpose: computing the ⧉ badges from a
+ * second read could decorate a list against a queue that changed in between,
+ * showing a badge on a row whose twin had just been rejected.
+ *
+ * @returns {Promise<{pending: Array<object>, dupIdx: Map<string, Array<object>>}>}
+ */
+async function loadQueue() {
+  const pending = await approvalQueueRepository.getAllPending();
+  return { pending, dupIdx: duplicateIndex(pending, await duplicateWindowMinutes()) };
+}
+
 /* ───────────────────────────── entry ───────────────────────────── */
 
 /**
@@ -160,8 +191,9 @@ async function renderCategories(bot, chatId, userId) {
   if (!session) return;
 
   let pending;
+  let dupIdx;
   try {
-    pending = await approvalQueueRepository.getAllPending();
+    ({ pending, dupIdx } = await loadQueue());
   } catch (e) {
     logger.warn(`approvalsInbox: queue read failed: ${e.message}`);
     await render(bot, chatId, userId,
@@ -209,6 +241,15 @@ async function renderCategories(bot, chatId, userId) {
   if (transfers && transfers.length) {
     rows.push([{ text: `🚚 Transfers — ${transfers.length} → Transfer Stock`, callback_data: 'abx:cat:transfers' }]);
   }
+  // APX-2 — same request queued more than once (a double-tapped Submit).
+  // Flagged, never auto-actioned: approving four copies of one sale would
+  // sell the stock four times.
+  // Count GROUPS, not flagged rows — "3 duplicates" must mean three things
+  // queued twice, not one thing queued three times.
+  const dupGroups = new Set(dupIdx.values()).size;
+  if (dupGroups) {
+    rows.push([{ text: `⧉ Possible duplicates — ${dupGroups}`, callback_data: 'abx:cat:dupes' }]);
+  }
   const stale = pending.filter((p) => ageDays(p.createdAt) >= STALE_DAYS);
   if (stale.length) {
     rows.push([{ text: `🧹 Stale (>${STALE_DAYS}d) — ${stale.length}`, callback_data: 'abx:cat:stale' }]);
@@ -223,12 +264,24 @@ async function renderCategories(bot, chatId, userId) {
 
 /* ───────────────────────── level 2: items ───────────────────────── */
 
-/** Pending rows for the session's current category, oldest first. */
-async function itemsForCategory(session) {
-  const pending = await approvalQueueRepository.getAllPending();
-  const list = session.category === 'stale'
-    ? pending.filter((p) => ageDays(p.createdAt) >= STALE_DAYS)
-    : pending.filter((p) => categoryOf(p) === session.category);
+/**
+ * Pending rows for the session's current category, oldest first.
+ * Pure — the caller supplies the snapshot so one read serves the whole render.
+ *
+ * @param {object} session
+ * @param {Array<object>} pending
+ * @param {Map<string, Array<object>>} dupIdx
+ * @returns {Array<object>}
+ */
+function itemsForCategory(session, pending, dupIdx) {
+  let list;
+  if (session.category === 'stale') {
+    list = pending.filter((p) => ageDays(p.createdAt) >= STALE_DAYS);
+  } else if (session.category === 'dupes') {
+    list = pending.filter((p) => dupIdx.has(String(p.requestId)));
+  } else {
+    list = pending.filter((p) => categoryOf(p) === session.category);
+  }
   // Oldest first — this is a backlog-clearing screen.
   return list.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
 }
@@ -236,16 +289,29 @@ async function itemsForCategory(session) {
 async function renderItems(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const items = await itemsForCategory(session);
+  let pending;
+  let dupIdx;
+  try {
+    ({ pending, dupIdx } = await loadQueue());
+  } catch (e) {
+    logger.warn(`approvalsInbox: queue read failed: ${e.message}`);
+    await render(bot, chatId, userId,
+      '🛂 *Approvals*\n\n⚠️ Could not read the approval queue just now — try again in a moment.',
+      [[{ text: '🔁 Try again', callback_data: 'abx:back' }], closeRow()]);
+    return;
+  }
+
+  const items = itemsForCategory(session, pending, dupIdx);
   session._items = items;
   session.step = 'pick_item';
   sessionStore.set(userId, session);
 
   const meta = CATEGORIES.find((c) => c.key === session.category);
   const title = session.category === 'stale' ? `🧹 Stale (>${STALE_DAYS}d)`
-    : session.category === 'transfers' ? '🚚 Transfers'
-      : session.category === 'other' ? '❓ Other'
-        : (meta ? meta.label : session.category);
+    : session.category === 'dupes' ? '⧉ Possible duplicates'
+      : session.category === 'transfers' ? '🚚 Transfers'
+        : session.category === 'other' ? '❓ Other'
+          : (meta ? meta.label : session.category);
 
   if (!items.length) {
     await render(bot, chatId, userId,
@@ -277,9 +343,10 @@ async function renderItems(bot, chatId, userId) {
     const i = items.indexOf(it);
     const days = ageDays(it.createdAt);
     const who = nameOf.get(String(it.user || '')) || it.user || '—';
+    const dup = dupIdx.has(String(it.requestId)) ? '⧉ ' : '';
     const label = isTransfers
       ? `🚚 ${it.requestId} · ${actionLabel(it)}`
-      : `${ageDot(days)} ${shortDate(it.createdAt)} · ${actionLabel(it)} · ${who}`;
+      : `${dup}${ageDot(days)} ${shortDate(it.createdAt)} · ${actionLabel(it)} · ${who}`;
     return [{ text: label.slice(0, 60), callback_data: `${isTransfers ? 'abx:trf' : 'abx:i'}:${i}` }];
   });
   if (pages > 1) {
@@ -330,9 +397,30 @@ async function renderItem(bot, chatId, userId, idx) {
     ? `\n\n⚠️ _1 of 2 approvals already given — a different admin must give the second._`
     : '';
 
+  // APX-2 — the warning that matters most sits HERE, on the card being
+  // approved: approving several copies of one sale would apply it several
+  // times. Siblings are listed so the admin can go and reject the extras.
+  // Read fresh rather than reusing the list's snapshot: by the time the admin
+  // opens this card a sibling may already have been approved or rejected, and
+  // a stale warning about a request that is no longer pending is worse than
+  // none. Only rows still PENDING can be double-applied.
+  let dupNote = '';
+  try {
+    const { dupIdx } = await loadQueue();
+    const group = dupIdx.get(String(item.requestId));
+    if (group && group.length > 1) {
+      const others = group.filter((g) => String(g.requestId) !== String(item.requestId));
+      dupNote = `\n\n⧉ *${group.length} identical requests* were queued within minutes of each other.\n`
+        + `_Approve ONE — approving more applies this ${actionLabel(item)} ${group.length} times._\n`
+        + `_Others: ${others.map((o) => o.requestId).join(', ')}_`;
+    }
+  } catch (e) {
+    logger.warn(`approvalsInbox: duplicate check failed for ${item.requestId}: ${e.message}`);
+  }
+
   await render(bot, chatId, userId,
     `${card}\n\n_Requested by ${who} · ${days > 0 ? `${days} day${days === 1 ? '' : 's'} ago` : 'today'}_\n`
-    + `_Request: ${item.requestId}_${dualNote}`,
+    + `_Request: ${item.requestId}_${dualNote}${dupNote}`,
     [
       [{ text: '✅ Approve', callback_data: `abx:ok:${idx}` },
         { text: '❌ Reject', callback_data: `abx:no:${idx}` }],
@@ -372,7 +460,16 @@ async function delegateDecision(bot, query, userId, idx, decision) {
   // The decided card is now a record. Re-anchor the inbox onto a FRESH
   // message so the admin can carry straight on — and so this never competes
   // with the sale-enrichment prompts an approval may kick off.
-  const remaining = Math.max(0, (await itemsForCategory(session)).length);
+  // Re-count from a fresh read: the row just decided is no longer pending.
+  // A failed read must not lose the admin's place, so fall back to a count
+  // that simply excludes the row we just acted on.
+  let remaining = Math.max(0, (session._items || []).length - 1);
+  try {
+    const { pending, dupIdx } = await loadQueue();
+    remaining = itemsForCategory(session, pending, dupIdx).length;
+  } catch (e) {
+    logger.warn(`approvalsInbox: recount after ${decision} failed: ${e.message}`);
+  }
   session.flowMessageId = null;
   session.page = 0;
   sessionStore.set(userId, session);

@@ -31,6 +31,11 @@ const DEFAULTS = {
   // Settings sheet rows of the same keys, no deploy needed.
   FLOW_CLEANUP_MINUTES: 30,
   FLOW_CLEANUP_MINUTES_HEAVY: 60,
+  // APX-2 — minutes within which two IDENTICAL requests from the same person
+  // are treated as one double-tapped Submit rather than two real requests.
+  // Only ever flags a card, never rejects. Widen it if submissions are slow
+  // to arrive; an identical repeat order outside the window is never flagged.
+  DUPLICATE_WINDOW_MINUTES: 10,
   // APR-1 — hours between pending-approval reminder cards (0 disables).
   // Covers approvals queued outside the bot process too (Drive imports).
   APPROVAL_REMINDER_HOURS: 6,

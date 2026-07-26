@@ -164,3 +164,97 @@ test('APX-1b: the list shows NAMES, never raw Telegram ids', async () => {
   assert.ok(items.every((b) => !/7430648262/.test(b.text)), 'a raw Telegram id must never reach the screen');
   sessionStore.clear(ADMIN);
 });
+
+/* ── APX-2: duplicate detection on the live screens ───────────────────── */
+
+const DUP_BASE = Date.now() - 3 * 86400000;
+const dupAt = (secs) => new Date(DUP_BASE + secs * 1000).toISOString();
+const SALE = { action: 'sale_bundle', customer: 'CJE', items: [{ design: '9006', thans: 3 }] };
+
+// One sale, Submit tapped three times, plus an unrelated sale minutes later.
+const WITH_DUPES = [
+  { requestId: 'D-1', user: '7430648262', status: 'pending', createdAt: dupAt(0), actionJSON: { ...SALE } },
+  { requestId: 'D-2', user: '7430648262', status: 'pending', createdAt: dupAt(4), actionJSON: { ...SALE } },
+  { requestId: 'D-3', user: '7430648262', status: 'pending', createdAt: dupAt(9), actionJSON: { ...SALE } },
+  { requestId: 'SOLO', user: '7430648262', status: 'pending', createdAt: dupAt(120), actionJSON: { action: 'sale_bundle', customer: 'Ketu madam', items: [] } },
+];
+
+async function withDupes(fn) {
+  const orig = approvalQueueRepository.getAllPending;
+  approvalQueueRepository.getAllPending = async () => WITH_DUPES;
+  try { await fn(); } finally {
+    approvalQueueRepository.getAllPending = orig;
+    sessionStore.clear(ADMIN);
+  }
+}
+
+test('APX-2: the category counts duplicate GROUPS, not flagged rows', async () => {
+  await withDupes(async () => {
+    const bot = createFakeBot();
+    await flow.start(bot, ADMIN, ADMIN, null);
+    const dupes = lastKb(bot).find((b) => b.callback_data === 'abx:cat:dupes');
+    assert.ok(dupes, 'a duplicates group appears');
+    assert.match(dupes.text, /⧉ Possible duplicates — 1$/,
+      `one thing was queued three times = 1 duplicate, got: ${dupes.text}`);
+  });
+});
+
+test('APX-2: the duplicates group lists every copy, badged, and nothing else', async () => {
+  await withDupes(async () => {
+    const bot = createFakeBot();
+    await flow.start(bot, ADMIN, ADMIN, null);
+    await flow.handleCallback(bot, cb('abx:cat:dupes', ADMIN));
+    const items = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
+    assert.equal(items.length, 3, 'all three copies, so any of them can be rejected');
+    assert.ok(items.every((b) => b.text.startsWith('⧉ ')), `every row badged, got: ${items.map((i) => i.text)}`);
+  });
+});
+
+test('APX-2: an unrelated sale minutes later is NOT badged', async () => {
+  await withDupes(async () => {
+    const bot = createFakeBot();
+    await flow.start(bot, ADMIN, ADMIN, null);
+    await flow.handleCallback(bot, cb('abx:cat:sales', ADMIN));
+    const items = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
+    assert.equal(items.length, 4, 'the sales group still holds every sale');
+    const badged = items.filter((b) => b.text.startsWith('⧉ '));
+    assert.equal(badged.length, 3, `only the three copies carry the badge, got: ${items.map((i) => i.text)}`);
+  });
+});
+
+test('APX-2: the card warns before the tap that would double-apply the sale', async () => {
+  await withDupes(async () => {
+    const bot = createFakeBot();
+    await flow.start(bot, ADMIN, ADMIN, null);
+    await flow.handleCallback(bot, cb('abx:cat:dupes', ADMIN));
+    await flow.handleCallback(bot, cb('abx:i:0', ADMIN));
+    const text = lastText(bot);
+    assert.match(text, /Request: D-1/, 'oldest copy first');
+    assert.match(text, /3 identical requests/, `the card states the count, got: ${text}`);
+    assert.match(text, /Approve ONE/, 'and says what to do about it');
+    assert.match(text, /D-2/, 'siblings are named so the extras can be rejected');
+    assert.match(text, /D-3/);
+    // The warning must not disarm the card — approving is still one tap.
+    assert.ok(lastKb(bot).some((b) => /Approve/.test(b.text)), 'Approve is still offered');
+  });
+});
+
+test('APX-2: a lone request gets no duplicate warning', async () => {
+  await withDupes(async () => {
+    const bot = createFakeBot();
+    await flow.start(bot, ADMIN, ADMIN, null);
+    await flow.handleCallback(bot, cb('abx:cat:sales', ADMIN));
+    await flow.handleCallback(bot, cb('abx:i:3', ADMIN)); // SOLO, newest
+    const text = lastText(bot);
+    assert.match(text, /Request: SOLO/);
+    assert.ok(!/identical requests/.test(text), `no false alarm, got: ${text}`);
+  });
+});
+
+test('APX-2: a queue with no duplicates shows no duplicates group at all', async () => {
+  const bot = createFakeBot();
+  await flow.start(bot, ADMIN, ADMIN, null);
+  assert.ok(!lastKb(bot).some((b) => b.callback_data === 'abx:cat:dupes'),
+    'the group is hidden when there is nothing to warn about');
+  sessionStore.clear(ADMIN);
+});
