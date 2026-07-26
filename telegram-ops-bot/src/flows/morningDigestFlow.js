@@ -95,23 +95,20 @@ async function handleCallback(bot, callbackQuery) {
         await bot.editMessageText(
           total ? `🗒 *Customer notes* — ${total} across ${customers.length} customer(s).\nTap a customer to read their notes:` : '🗒 *Customer notes* — none recorded yet.',
           { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+      } else if (key === 'DIGEST_APPROVALS') {
+        // APX-1b (owner, 26-Jul): approvals skip the read-only text page
+        // entirely — tapping the section opens the tappable inbox on this
+        // same card. A flat list you cannot act on was a wasted tap.
+        await require('./approvalsInboxFlow').start(bot, chatId, userId, messageId);
       } else {
         const { text, totalPages } = await morningDigest.buildDetail(key, settings, new Date(), page, bot);
         if (!text) return true;
         const nav = [{ text: '◀ Summary', callback_data: `${NS}d:__sum__` }];
         if (page > 0) nav.push({ text: '◀ Prev', callback_data: `${NS}d:${key}:${page - 1}` });
         if (page < totalPages - 1) nav.push({ text: 'More ▶', callback_data: `${NS}d:${key}:${page + 1}` });
-        const rows = [];
-        // APX-1 — the approvals section is the one the owner acts on first
-        // thing; give it a one-tap route into the tappable inbox instead of
-        // leaving a read-only list.
-        if (key === 'DIGEST_APPROVALS') {
-          rows.push([{ text: '🛂 Open Approvals — approve / reject', callback_data: 'act:approvals_inbox' }]);
-        }
-        rows.push(nav);
         await bot.editMessageText(text, {
           chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: rows },
+          reply_markup: { inline_keyboard: [nav] },
         });
       }
     } catch (e) { logger.warn(`digest drill-down failed: ${e.message}`); }

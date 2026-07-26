@@ -259,10 +259,24 @@ async function renderItems(bot, chatId, userId) {
   const slice = items.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
 
   const isTransfers = session.category === 'transfers';
+
+  // Names, never raw Telegram ids (owner rule, 19-Jul — the digest and the
+  // reminder sweep already do this). Resolved once per DISTINCT requester on
+  // this page; resolveUserLabel keeps its own cache, so paging is cheap.
+  const nameOf = new Map();
+  for (const id of new Set(slice.map((it) => String(it.user || '')))) {
+    if (!id) continue;
+    try {
+      nameOf.set(id, await approvalCards.resolveUserLabel(id, bot));
+    } catch (_) {
+      nameOf.set(id, id); // fall back to the id rather than losing the row
+    }
+  }
+
   const rows = slice.map((it) => {
     const i = items.indexOf(it);
     const days = ageDays(it.createdAt);
-    const who = it.user || '—';
+    const who = nameOf.get(String(it.user || '')) || it.user || '—';
     const label = isTransfers
       ? `🚚 ${it.requestId} · ${actionLabel(it)}`
       : `${ageDot(days)} ${shortDate(it.createdAt)} · ${actionLabel(it)} · ${who}`;

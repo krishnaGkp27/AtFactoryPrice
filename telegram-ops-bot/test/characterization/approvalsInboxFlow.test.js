@@ -34,7 +34,12 @@ loadController();
 const sessionStore = require(path.join(SRC, 'utils/sessionStore'));
 const approvalQueueRepository = require(path.join(SRC, 'repositories/approvalQueueRepository'));
 const approvalEvents = require(path.join(SRC, 'events/approvalEvents'));
+const approvalCards = require(path.join(SRC, 'services/approvalCards'));
 const flow = require(path.join(SRC, 'flows/approvalsInboxFlow'));
+
+// Requesters are Telegram ids on the queue row; screens must show NAMES.
+const NAMES = { 7430648262: 'Abdul', 8700676816: 'John' };
+approvalCards.resolveUserLabel = async (id) => NAMES[String(id)] || String(id);
 
 const ADMIN = '777';
 const EMPLOYEE = '4242';
@@ -44,11 +49,11 @@ function daysAgo(n) {
 }
 
 const PENDING = [
-  { requestId: 'S-OLD', user: 'Abdul', status: 'pending', createdAt: daysAgo(11), actionJSON: { action: 'sale_bundle', customer: 'CJE', items: [] } },
-  { requestId: 'S-NEW', user: 'Abdul', status: 'pending', createdAt: daysAgo(1), actionJSON: { action: 'sale_bundle', customer: 'Ketu madam', items: [] } },
-  { requestId: 'U-1', user: 'John', status: 'pending', createdAt: daysAgo(9), actionJSON: { action: 'add_user', name: 'Musa' } },
-  { requestId: 'C-1', user: 'John', status: 'pending', createdAt: daysAgo(2), actionJSON: { action: 'add_contact', name: 'ACME' } },
-  { requestId: 'TR-20260724-001', user: 'Abdul', status: 'pending', createdAt: daysAgo(2), actionJSON: { action: 'transfer_stock', from: 'Lagos', to: 'Kano office', stage: 'requested', lines: [] } },
+  { requestId: 'S-OLD', user: '7430648262', status: 'pending', createdAt: daysAgo(11), actionJSON: { action: 'sale_bundle', customer: 'CJE', items: [] } },
+  { requestId: 'S-NEW', user: '7430648262', status: 'pending', createdAt: daysAgo(1), actionJSON: { action: 'sale_bundle', customer: 'Ketu madam', items: [] } },
+  { requestId: 'U-1', user: '8700676816', status: 'pending', createdAt: daysAgo(9), actionJSON: { action: 'add_user', name: 'Musa' } },
+  { requestId: 'C-1', user: '8700676816', status: 'pending', createdAt: daysAgo(2), actionJSON: { action: 'add_contact', name: 'ACME' } },
+  { requestId: 'TR-20260724-001', user: '7430648262', status: 'pending', createdAt: daysAgo(2), actionJSON: { action: 'transfer_stock', from: 'Lagos', to: 'Kano office', stage: 'requested', lines: [] } },
 ];
 approvalQueueRepository.getAllPending = async () => PENDING;
 
@@ -148,4 +153,14 @@ test('APX-1: the inbox is admin-only', async () => {
   await flow.start(bot, EMPLOYEE, EMPLOYEE, null);
   assert.match(lastText(bot), /admin-only/i, 'an employee is refused');
   assert.equal(sessionStore.get(EMPLOYEE), null, 'and gets no session');
+});
+
+test('APX-1b: the list shows NAMES, never raw Telegram ids', async () => {
+  const bot = createFakeBot();
+  await flow.start(bot, ADMIN, ADMIN, null);
+  await flow.handleCallback(bot, cb('abx:cat:sales', ADMIN));
+  const items = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
+  assert.ok(items.every((b) => /Abdul/.test(b.text)), `expected names, got: ${items.map((i) => i.text)}`);
+  assert.ok(items.every((b) => !/7430648262/.test(b.text)), 'a raw Telegram id must never reach the screen');
+  sessionStore.clear(ADMIN);
 });
