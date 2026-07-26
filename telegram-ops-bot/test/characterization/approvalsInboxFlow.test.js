@@ -251,6 +251,25 @@ test('APX-2: a lone request gets no duplicate warning', async () => {
   });
 });
 
+test('APX-2: the post-decision screen names the group, not the raw key', async () => {
+  await withDupes(async () => {
+    const bot = createFakeBot();
+    const orig = approvalEvents.handleApprovalCallback;
+    approvalEvents.handleApprovalCallback = async () => {};
+    try {
+      await flow.start(bot, ADMIN, ADMIN, null);
+      await flow.handleCallback(bot, cb('abx:cat:dupes', ADMIN));
+      await flow.handleCallback(bot, cb('abx:i:0', ADMIN));
+      await flow.handleCallback(bot, cb('abx:ok:0', ADMIN));
+      const text = lastText(bot);
+      assert.match(text, /⧉ Possible duplicates/, `pseudo-categories need a real title, got: ${text}`);
+      assert.ok(!/🛂 dupes/.test(text), 'never the bare lowercase key');
+    } finally {
+      approvalEvents.handleApprovalCallback = orig;
+    }
+  });
+});
+
 test('APX-2: a queue with no duplicates shows no duplicates group at all', async () => {
   const bot = createFakeBot();
   await flow.start(bot, ADMIN, ADMIN, null);

@@ -262,6 +262,24 @@ async function renderCategories(bot, chatId, userId) {
     rows);
 }
 
+/**
+ * Human title for a category key. The pseudo-categories (stale, dupes,
+ * transfers, other) are not in CATEGORIES, so every screen that shows a
+ * heading has to go through here — otherwise one of them renders as the bare
+ * lowercase key.
+ *
+ * @param {string} key
+ * @returns {string}
+ */
+function titleFor(key) {
+  if (key === 'stale') return `🧹 Stale (>${STALE_DAYS}d)`;
+  if (key === 'dupes') return '⧉ Possible duplicates';
+  if (key === 'transfers') return '🚚 Transfers';
+  if (key === 'other') return '❓ Other';
+  const meta = CATEGORIES.find((c) => c.key === key);
+  return meta ? meta.label : key;
+}
+
 /* ───────────────────────── level 2: items ───────────────────────── */
 
 /**
@@ -306,12 +324,7 @@ async function renderItems(bot, chatId, userId) {
   session.step = 'pick_item';
   sessionStore.set(userId, session);
 
-  const meta = CATEGORIES.find((c) => c.key === session.category);
-  const title = session.category === 'stale' ? `🧹 Stale (>${STALE_DAYS}d)`
-    : session.category === 'dupes' ? '⧉ Possible duplicates'
-      : session.category === 'transfers' ? '🚚 Transfers'
-        : session.category === 'other' ? '❓ Other'
-          : (meta ? meta.label : session.category);
+  const title = titleFor(session.category);
 
   if (!items.length) {
     await render(bot, chatId, userId,
@@ -473,10 +486,8 @@ async function delegateDecision(bot, query, userId, idx, decision) {
   session.flowMessageId = null;
   session.page = 0;
   sessionStore.set(userId, session);
-  const meta = CATEGORIES.find((c) => c.key === session.category);
-  const title = meta ? meta.label : session.category;
   await render(bot, chatId(query), userId,
-    `🛂 ${title} — *${remaining}* still pending.`,
+    `🛂 ${titleFor(session.category)} — *${remaining}* still pending.`,
     [
       [{ text: `⬅ Back to ${remaining ? 'list' : 'categories'}`, callback_data: 'abx:back' }],
       [{ text: '🏠 Menu', callback_data: 'act:__back__' }],
