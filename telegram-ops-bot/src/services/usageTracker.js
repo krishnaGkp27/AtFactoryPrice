@@ -54,6 +54,18 @@ const PREFIX_FEATURES = {
   'dab:': 'design_assets', 'das:': 'design_assets', 'dat:': 'design_assets',
   'dap:': 'design_assets', 'dam:': 'design_assets', 'dav:': 'design_assets',
   'dcat:': 'set_design_category',
+  // ANL-1b (26-Jul) — namespaces shipped after the map was first written.
+  // Feature-level counts were never affected (act: tiles are classified
+  // generically), but without these the in-flow STEP taps all landed under
+  // 'other', which is exactly the blur that hides how a flow is really used.
+  'abx:': 'approvals_inbox',
+  'sdd:': 'supply_details',
+  'sdg:': 'supply_details_design',
+  'sns:': 'snap_sale',
+  'sb:': 'sell_bale',
+  'trf:': 'transfers',
+  'smc:': 'supply_dispatch_confirm',
+  'enr:': 'approval_enrichment',
   'approve:': 'approvals', 'reject:': 'approvals',
   'confirm_sale:': 'sale', 'cancel_sale:': 'sale',
   'cks:': 'check_stock', 'lpk:': 'list_packages', 'svr:': 'stock_value',

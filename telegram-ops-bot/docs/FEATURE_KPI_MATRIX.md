@@ -7,7 +7,7 @@
 | KPI | Definition | Scale |
 |---|---|---|
 | **Testing** | ✅ = automated tests (unit and/or characterization) AND verified live on Telegram · 🟡 = automated tests exist but live verification pending, or only partial coverage · ❌ = no automated coverage | evidence cited per row |
-| **Growth %** | How much of the feature's owner-approved scope has shipped and is usable in production today. 100% = fully built, wired, tested, live. NOT usage analytics (we don't collect per-feature usage yet — see "Next KPI upgrades"). | 0–100% |
+| **Growth %** | How much of the feature's owner-approved scope has shipped and is usable in production today. 100% = fully built, wired, tested, live. NOT usage analytics — measured usage is a separate auto-generated section below (ANL-1), refreshed by `scripts/update-kpi-matrix.js`. | 0–100% |
 | **UI/UX tap score** | How tap-first the feature is: ⭐⭐⭐⭐⭐ = fully guided taps, minimal steps, no typing · ⭐ = typing-heavy or many steps. Step counts are from code reading, not user timing. | 1–5 ⭐ |
 
 **Update discipline:** when a feature ships or changes, update its row in the same commit. Rows are grouped by hub the way the bot's menu is.
@@ -19,7 +19,7 @@
 | Feature (codes) | Testing | Growth % | Tap score | Notes |
 |---|---|---|---|---|
 | NLP sales — typed sale/return commands (TG-1..7) | 🟡 char. tests via controllerHarness; live-proven daily | 95% | ⭐⭐ | Typing + confirm tap; power-user path. Enrichment (rate/payment) is tap-guided. |
-| Bundle Sale — poly-colour design-first picker (BS-C1, TAP-1) | ✅ `bundleSale.allCustomers.test.js`; live in Kano | 90% | ⭐⭐⭐⭐⭐ | Fully tappable incl. all-customers browse (TAP-1, Jul-2026). Residual: pagination polish. |
+| Bundle Sale — poly-colour design-first picker (BS-C1, TAP-1) | 🟡 `bundleSaleFlow` unit + smoke; live in Kano | 90% | ⭐⭐⭐⭐⭐ | DSP-1 (26-Jul): customer / rate / payment steps removed — the admin sets all three at approval. The TAP-1 all-customers browse moved with them. |
 | Record payment + customer ledger (ledger sheets, balance cache) | 🟡 `slashCommands.ledger.test.js`; live-proven | 90% | ⭐⭐⭐ | Amount still typed (inherent); rest is taps. |
 | Price update + layered price visibility (PRICE-VIS-C1) | 🟡 unit-level only | 80% | ⭐⭐⭐ | Phase 1 foundation shipped; later visibility layers pending. |
 | Landed cost — USD cost + charges + FX (LANDED-COST C1) | 🟡 smoke checks; live use | 85% | ⭐⭐⭐ | Numbers typed by nature; finalize is dual-admin gated. |
