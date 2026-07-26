@@ -101,9 +101,17 @@ async function handleCallback(bot, callbackQuery) {
         const nav = [{ text: '◀ Summary', callback_data: `${NS}d:__sum__` }];
         if (page > 0) nav.push({ text: '◀ Prev', callback_data: `${NS}d:${key}:${page - 1}` });
         if (page < totalPages - 1) nav.push({ text: 'More ▶', callback_data: `${NS}d:${key}:${page + 1}` });
+        const rows = [];
+        // APX-1 — the approvals section is the one the owner acts on first
+        // thing; give it a one-tap route into the tappable inbox instead of
+        // leaving a read-only list.
+        if (key === 'DIGEST_APPROVALS') {
+          rows.push([{ text: '🛂 Open Approvals — approve / reject', callback_data: 'act:approvals_inbox' }]);
+        }
+        rows.push(nav);
         await bot.editMessageText(text, {
           chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [nav] },
+          reply_markup: { inline_keyboard: rows },
         });
       }
     } catch (e) { logger.warn(`digest drill-down failed: ${e.message}`); }

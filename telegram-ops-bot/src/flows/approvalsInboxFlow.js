@@ -1,0 +1,488 @@
+'use strict';
+
+/**
+ * src/flows/approvalsInboxFlow.js — APX-1 🛂 Approvals Inbox.
+ *
+ * Owner request (26-Jul-2026): before this, a pending approval could only be
+ * reached from the DM card pushed when it was queued, the APR-1 reminder
+ * re-send, or a flat text block in the morning digest that showed the newest
+ * 10 of 50 and carried no buttons. Miss the card and the request was
+ * effectively unreachable — hence a 50-deep backlog with 40 items invisible.
+ *
+ * This is a triage surface: pending requests grouped BY CONCERN, oldest
+ * first, each opening the same approval card the admin would have received
+ * by DM, with ✅ Approve / ❌ Reject on it.
+ *
+ *   1. pick_category  — categories with counts + the age of the oldest item
+ *   2. pick_item      — that category's requests, OLDEST first (clearing a
+ *                       backlog is age-driven; the digest's newest-first
+ *                       order is the wrong way round for action)
+ *   3. view_item      — the full card + Approve / Reject
+ *
+ * DELEGATION, NOT REIMPLEMENTATION. Approve/Reject do NOT contain approval
+ * logic: they rebuild the standard `approve:<id>` / `reject:<id>` callback
+ * and hand it to approvalEvents.handleApprovalCallback, so the self-approval
+ * block (SEC-P1 H1), the super-admin gate (USR-C3b), dual-admin counting
+ * (DUAL-1) and every executor branch behave exactly as they do from a DM
+ * card. Nothing in risk/evaluate.js, approvalEvents.js or inventoryService
+ * is modified by this feature.
+ *
+ * TRANSFERS ARE NOT APPROVALS. Staged Transfer Stock requests sit in the
+ * same ApprovalQueue sheet with action `transfer_stock`, but
+ * executeApprovedAction has no branch for them — tapping Approve returns
+ * "Unknown action type." They are shown in their own group and routed to
+ * the transfer card (dispatch / receive) instead of getting Approve buttons.
+ *
+ * Admin-only: managers cannot approve anything, so a read-only queue would
+ * be noise.
+ *
+ * Callback namespace `abx:*`:
+ *   abx:close            end the flow → menu
+ *   abx:back             step back one level
+ *   abx:cat:<key>        open a category
+ *   abx:pg:<n>           page within a category
+ *   abx:i:<idx>          open one request (index into session._items)
+ *   abx:ok:<idx>         → delegates to approve:<requestId>
+ *   abx:no:<idx>         → delegates to reject:<requestId>
+ *   abx:trf:<idx>        open a transfer's own card
+ */
+
+const sessionStore = require('../utils/sessionStore');
+const { makeRenderer, rowsFor } = require('../utils/flowKit');
+const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+const approvalCards = require('../services/approvalCards');
+const config = require('../config');
+const logger = require('../utils/logger');
+
+const SESSION_TYPE = 'approvals_inbox_flow';
+const { closeRow, backRow } = rowsFor('abx');
+const render = makeRenderer();
+
+const ITEMS_PER_PAGE = 8;
+/** Items older than this land in the 🧹 Stale group as well as their own. */
+const STALE_DAYS = 14;
+
+/**
+ * Approval actions grouped by business concern. Order here is the order the
+ * categories render in. `dual` marks groups whose actions need two admins
+ * (DUAL_ADMIN_ACTIONS in src/risk/evaluate.js) — surfaced so an admin knows
+ * their tap may not be the last one.
+ */
+const CATEGORIES = [
+  { key: 'sales', label: '💰 Sales', actions: ['sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell', 'sale_bundle', 'supply_request'] },
+  { key: 'crm', label: '👤 Customers & contacts', actions: ['add_customer', 'add_contact', 'add_contact_link', 'update_contact_info'] },
+  { key: 'intake', label: '📦 Stock intake', actions: ['receive_goods', 'bulk_receive_goods', 'add', 'add_stock'], dual: true },
+  { key: 'finance', label: '💵 Finance', actions: ['record_payment', 'update_price', 'finalize_landed_cost', 'record_office_expense', 'add_bank', 'remove_bank', 'confirm_bank_reconciliation', 'set_forex_rate'], dual: true },
+  { key: 'returns', label: '↩️ Returns & reversals', actions: ['return_than', 'return_package', 'revert_sale_bundle'], dual: true },
+  { key: 'people', label: '👥 People & access', actions: ['add_user', 'deactivate_user', 'promote_admin'], dual: true },
+  { key: 'warehouse', label: '🏭 Warehouse & labels', actions: ['add_warehouse', 'rename_warehouse', 'set_unit_display', 'set_design_category'], dual: true },
+  { key: 'samples', label: '🧪 Samples & marketing', actions: ['give_sample', 'catalog_loan', 'catalog_return', 'register_marketer', 'design_asset_upload'] },
+  { key: 'config', label: '⚙️ Config & messaging', actions: ['set_reminder_config', 'notify_wholesaler', 'broadcast_wholesalers'] },
+];
+
+/**
+ * Rows that live in the queue but are NOT approve/reject decisions — the
+ * staged Transfer Stock flow parks its requests here while waiting on a
+ * dispatcher or receiver. Legacy transfer_* rows are retired and refuse at
+ * execution, so they belong in the same group rather than looking approvable.
+ */
+const TRANSFER_ACTIONS = ['transfer_stock', 'transfer_than', 'transfer_package', 'transfer_batch'];
+
+const ACTION_CATEGORY = new Map();
+for (const c of CATEGORIES) for (const a of c.actions) ACTION_CATEGORY.set(a, c.key);
+
+/** Category key for a queue row; unmapped actions fall into 'other'. */
+function categoryOf(item) {
+  const action = (item && item.actionJSON && item.actionJSON.action) || '';
+  if (TRANSFER_ACTIONS.includes(action)) return 'transfers';
+  return ACTION_CATEGORY.get(action) || 'other';
+}
+
+/** Whole days since an ISO timestamp; 0 when unparseable. */
+function ageDays(createdAt) {
+  const ms = Date.parse(createdAt || '');
+  if (!isFinite(ms)) return 0;
+  return Math.max(0, Math.floor((Date.now() - ms) / 86400000));
+}
+
+/** 🟢 fresh · 🟠 getting old · 🔴 needs clearing. */
+function ageDot(days) {
+  if (days >= 7) return '🔴';
+  if (days >= 3) return '🟠';
+  return '🟢';
+}
+
+function ageLabel(days) {
+  if (days <= 0) return 'today';
+  return `${days}d`;
+}
+
+/** "sale_bundle" → "sale bundle". */
+function actionLabel(item) {
+  const a = (item && item.actionJSON && item.actionJSON.action) || 'unknown';
+  return a.replace(/_/g, ' ');
+}
+
+function shortDate(createdAt) {
+  const ms = Date.parse(createdAt || '');
+  if (!isFinite(ms)) return '—';
+  return new Date(ms).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+}
+
+/* ───────────────────────────── entry ───────────────────────────── */
+
+/**
+ * Open the inbox on its category list.
+ * @param {object} bot @param {number|string} chatId
+ * @param {string} userId @param {number|null} messageId anchor to edit
+ */
+async function start(bot, chatId, userId, messageId = null) {
+  if (!config.access.adminIds.includes(String(userId))) {
+    try { await bot.sendMessage(chatId, '🛂 Approvals are admin-only.'); } catch (_) { /* ignore */ }
+    return;
+  }
+  sessionStore.set(userId, {
+    type: SESSION_TYPE,
+    step: 'pick_category',
+    flowMessageId: messageId || null,
+    startedAt: new Date().toISOString(),
+    ttlMs: 20 * 60 * 1000, // triage takes a while — generous clock
+    category: '', page: 0,
+    _items: [],
+  });
+  await renderCategories(bot, chatId, userId);
+}
+
+/* ─────────────────────── level 1: categories ─────────────────────── */
+
+async function renderCategories(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+
+  let pending;
+  try {
+    pending = await approvalQueueRepository.getAllPending();
+  } catch (e) {
+    logger.warn(`approvalsInbox: queue read failed: ${e.message}`);
+    await render(bot, chatId, userId,
+      '🛂 *Approvals*\n\n⚠️ Could not read the approval queue just now — try again in a moment.',
+      [[{ text: '🔁 Try again', callback_data: 'abx:back' }], closeRow()]);
+    return;
+  }
+
+  if (!pending.length) {
+    await render(bot, chatId, userId,
+      '🛂 *Approvals*\n\n✅ _Queue is clear — nothing waiting._',
+      [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+    return;
+  }
+
+  const byCat = new Map();
+  for (const p of pending) {
+    const k = categoryOf(p);
+    if (!byCat.has(k)) byCat.set(k, []);
+    byCat.get(k).push(p);
+  }
+
+  session.step = 'pick_category';
+  session.page = 0;
+  sessionStore.set(userId, session);
+
+  const rows = [];
+  for (const c of CATEGORIES) {
+    const items = byCat.get(c.key);
+    if (!items || !items.length) continue;
+    const oldest = Math.max(...items.map((i) => ageDays(i.createdAt)));
+    const dual = c.dual ? ' ⚠️' : '';
+    rows.push([{
+      text: `${c.label} — ${items.length}${dual} ${ageDot(oldest)}${ageLabel(oldest)}`,
+      callback_data: `abx:cat:${c.key}`,
+    }]);
+  }
+  // Anything unmapped still has to be reachable, or it would be invisible.
+  const other = byCat.get('other');
+  if (other && other.length) {
+    const oldest = Math.max(...other.map((i) => ageDays(i.createdAt)));
+    rows.push([{ text: `❓ Other — ${other.length} ${ageDot(oldest)}${ageLabel(oldest)}`, callback_data: 'abx:cat:other' }]);
+  }
+  const transfers = byCat.get('transfers');
+  if (transfers && transfers.length) {
+    rows.push([{ text: `🚚 Transfers — ${transfers.length} → Transfer Stock`, callback_data: 'abx:cat:transfers' }]);
+  }
+  const stale = pending.filter((p) => ageDays(p.createdAt) >= STALE_DAYS);
+  if (stale.length) {
+    rows.push([{ text: `🧹 Stale (>${STALE_DAYS}d) — ${stale.length}`, callback_data: 'abx:cat:stale' }]);
+  }
+  rows.push(closeRow());
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
+
+  await render(bot, chatId, userId,
+    `🛂 *Approvals — ${pending.length} pending*\n_Oldest first inside each group._`,
+    rows);
+}
+
+/* ───────────────────────── level 2: items ───────────────────────── */
+
+/** Pending rows for the session's current category, oldest first. */
+async function itemsForCategory(session) {
+  const pending = await approvalQueueRepository.getAllPending();
+  const list = session.category === 'stale'
+    ? pending.filter((p) => ageDays(p.createdAt) >= STALE_DAYS)
+    : pending.filter((p) => categoryOf(p) === session.category);
+  // Oldest first — this is a backlog-clearing screen.
+  return list.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+}
+
+async function renderItems(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const items = await itemsForCategory(session);
+  session._items = items;
+  session.step = 'pick_item';
+  sessionStore.set(userId, session);
+
+  const meta = CATEGORIES.find((c) => c.key === session.category);
+  const title = session.category === 'stale' ? `🧹 Stale (>${STALE_DAYS}d)`
+    : session.category === 'transfers' ? '🚚 Transfers'
+      : session.category === 'other' ? '❓ Other'
+        : (meta ? meta.label : session.category);
+
+  if (!items.length) {
+    await render(bot, chatId, userId,
+      `${title}\n\n✅ _Nothing left here._`,
+      [backRow('⬅ Categories'), closeRow()]);
+    return;
+  }
+
+  const pages = Math.max(1, Math.ceil(items.length / ITEMS_PER_PAGE));
+  const page = Math.min(Math.max(0, session.page || 0), pages - 1);
+  const slice = items.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
+
+  const isTransfers = session.category === 'transfers';
+  const rows = slice.map((it) => {
+    const i = items.indexOf(it);
+    const days = ageDays(it.createdAt);
+    const who = it.user || '—';
+    const label = isTransfers
+      ? `🚚 ${it.requestId} · ${actionLabel(it)}`
+      : `${ageDot(days)} ${shortDate(it.createdAt)} · ${actionLabel(it)} · ${who}`;
+    return [{ text: label.slice(0, 60), callback_data: `${isTransfers ? 'abx:trf' : 'abx:i'}:${i}` }];
+  });
+  if (pages > 1) {
+    const nav = [];
+    if (page > 0) nav.push({ text: '◀ Prev', callback_data: `abx:pg:${page - 1}` });
+    nav.push({ text: `${page + 1}/${pages}`, callback_data: 'abx:noop' });
+    if (page < pages - 1) nav.push({ text: 'Next ▶', callback_data: `abx:pg:${page + 1}` });
+    rows.push(nav);
+  }
+  rows.push(backRow('⬅ Categories'));
+  rows.push(closeRow());
+
+  const note = isTransfers
+    ? '\n\n_These are not approvals — a transfer needs bales dispatched or receipt confirmed. Tap one to open its transfer card._'
+    : '';
+  await render(bot, chatId, userId, `${title} — *${items.length}* pending${note}`, rows);
+}
+
+/* ───────────────────────── level 3: one item ───────────────────────── */
+
+async function renderItem(bot, chatId, userId, idx) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const item = (session._items || [])[idx];
+  if (!item) { await renderItems(bot, chatId, userId); return; }
+
+  session.step = 'view_item';
+  session.itemIdx = idx;
+  sessionStore.set(userId, session);
+
+  let card = '';
+  try {
+    card = await approvalCards.buildCardFromActionJSON(item.actionJSON) || '';
+  } catch (e) {
+    logger.warn(`approvalsInbox: card build failed for ${item.requestId}: ${e.message}`);
+  }
+  if (!card) card = `${actionLabel(item)} request`;
+
+  let who = String(item.user || '—');
+  try { who = await approvalCards.resolveUserLabel(item.user, bot); } catch (_) { /* id fallback */ }
+
+  const days = ageDays(item.createdAt);
+  // DUAL-1: a first approval is recorded on actionJSON.approvals and the
+  // request stays pending until a DIFFERENT admin gives the second.
+  const prior = Array.isArray(item.actionJSON && item.actionJSON.approvals)
+    ? item.actionJSON.approvals : [];
+  const dualNote = prior.length
+    ? `\n\n⚠️ _1 of 2 approvals already given — a different admin must give the second._`
+    : '';
+
+  await render(bot, chatId, userId,
+    `${card}\n\n_Requested by ${who} · ${days > 0 ? `${days} day${days === 1 ? '' : 's'} ago` : 'today'}_\n`
+    + `_Request: ${item.requestId}_${dualNote}`,
+    [
+      [{ text: '✅ Approve', callback_data: `abx:ok:${idx}` },
+        { text: '❌ Reject', callback_data: `abx:no:${idx}` }],
+      backRow('⬅ Back to list'),
+      closeRow(),
+    ]);
+}
+
+/**
+ * Hand a decision to the STANDARD approval handler.
+ *
+ * The inbox deliberately owns no approval logic: it rebuilds the canonical
+ * `approve:<id>` / `reject:<id>` callback and calls the same entry point a
+ * DM card would, so every guard and executor runs unchanged. The handler
+ * wipes this card's keyboard and reports the outcome on it, so afterwards we
+ * send a fresh one-line footer with the way back into the list.
+ */
+async function delegateDecision(bot, query, userId, idx, decision) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const item = (session._items || [])[idx];
+  if (!item) { await renderItems(bot, chatId(query), userId); return; }
+
+  const approvalEvents = require('../events/approvalEvents');
+  const delegated = Object.assign(Object.create(Object.getPrototypeOf(query)), query, {
+    data: `${decision}:${item.requestId}`,
+  });
+  try {
+    await approvalEvents.handleApprovalCallback(bot, delegated, decision);
+  } catch (e) {
+    logger.error(`approvalsInbox: ${decision} of ${item.requestId} failed: ${e.message}`);
+    try {
+      await bot.sendMessage(chatId(query), `⚠️ Could not ${decision} ${item.requestId}: ${e.message}`);
+    } catch (_) { /* ignore */ }
+  }
+
+  // The decided card is now a record. Re-anchor the inbox onto a FRESH
+  // message so the admin can carry straight on — and so this never competes
+  // with the sale-enrichment prompts an approval may kick off.
+  const remaining = Math.max(0, (await itemsForCategory(session)).length);
+  session.flowMessageId = null;
+  session.page = 0;
+  sessionStore.set(userId, session);
+  const meta = CATEGORIES.find((c) => c.key === session.category);
+  const title = meta ? meta.label : session.category;
+  await render(bot, chatId(query), userId,
+    `🛂 ${title} — *${remaining}* still pending.`,
+    [
+      [{ text: `⬅ Back to ${remaining ? 'list' : 'categories'}`, callback_data: 'abx:back' }],
+      [{ text: '🏠 Menu', callback_data: 'act:__back__' }],
+    ]);
+}
+
+function chatId(query) {
+  return query && query.message && query.message.chat && query.message.chat.id;
+}
+
+/* ──────────────────────────── callbacks ─────────────────────────── */
+
+/**
+ * Route an `abx:*` callback.
+ * @param {object} bot @param {object} query
+ * @returns {Promise<boolean>} true when handled
+ */
+async function handleCallback(bot, query) {
+  const data = query.data || '';
+  if (!data.startsWith('abx:')) return false;
+  const userId = String(query.from.id);
+  const cid = chatId(query);
+
+  // Approve/Reject must NOT be pre-answered here — the delegated handler
+  // answers the query itself (and a second answer is dropped by Telegram).
+  const delegating = data.startsWith('abx:ok:') || data.startsWith('abx:no:');
+  if (!delegating) {
+    try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
+  }
+
+  if (data === 'abx:noop') return true;
+
+  if (!config.access.adminIds.includes(userId)) {
+    try { await bot.answerCallbackQuery(query.id, { text: 'Approvals are admin-only.', show_alert: true }); } catch (_) { /* ignore */ }
+    return true;
+  }
+
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== SESSION_TYPE) {
+    sessionStore.set(userId, {
+      type: SESSION_TYPE, step: 'pick_category',
+      flowMessageId: query.message.message_id,
+      ttlMs: 20 * 60 * 1000,
+      category: '', page: 0, _items: [],
+    });
+    await renderCategories(bot, cid, userId);
+    return true;
+  }
+
+  if (data === 'abx:close') {
+    sessionStore.clear(userId);
+    try {
+      await bot.editMessageText('🛂 Closed.', {
+        chat_id: cid, message_id: query.message.message_id,
+        reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] },
+      });
+    } catch (_) { /* ignore */ }
+    return true;
+  }
+
+  if (data === 'abx:back') {
+    if (session.step === 'view_item') { await renderItems(bot, cid, userId); return true; }
+    if (session.step === 'pick_item' && session.category) { await renderCategories(bot, cid, userId); return true; }
+    await renderCategories(bot, cid, userId);
+    return true;
+  }
+
+  if (data.startsWith('abx:cat:')) {
+    session.category = data.slice('abx:cat:'.length);
+    session.page = 0;
+    sessionStore.set(userId, session);
+    await renderItems(bot, cid, userId);
+    return true;
+  }
+
+  if (data.startsWith('abx:pg:')) {
+    session.page = parseInt(data.slice('abx:pg:'.length), 10) || 0;
+    sessionStore.set(userId, session);
+    await renderItems(bot, cid, userId);
+    return true;
+  }
+
+  if (data.startsWith('abx:i:')) {
+    await renderItem(bot, cid, userId, parseInt(data.slice('abx:i:'.length), 10));
+    return true;
+  }
+
+  if (data.startsWith('abx:trf:')) {
+    // Transfers are actioned in their own flow, never approved here.
+    const item = (session._items || [])[parseInt(data.slice('abx:trf:'.length), 10)];
+    if (!item) { await renderItems(bot, cid, userId); return true; }
+    try {
+      await require('../flows/transferFlow').handleCallback(bot,
+        Object.assign(Object.create(Object.getPrototypeOf(query)), query, { data: `trf:card:${item.requestId}` }));
+    } catch (e) {
+      logger.warn(`approvalsInbox: transfer card ${item.requestId} failed: ${e.message}`);
+      try { await bot.sendMessage(cid, `🚚 Open 📋 Transfers to action ${item.requestId}.`); } catch (_) { /* ignore */ }
+    }
+    return true;
+  }
+
+  if (data.startsWith('abx:ok:')) {
+    await delegateDecision(bot, query, userId, parseInt(data.slice('abx:ok:'.length), 10), 'approve');
+    return true;
+  }
+  if (data.startsWith('abx:no:')) {
+    await delegateDecision(bot, query, userId, parseInt(data.slice('abx:no:'.length), 10), 'reject');
+    return true;
+  }
+
+  logger.warn(`approvalsInboxFlow: unhandled callback ${data}`);
+  return true;
+}
+
+module.exports = {
+  start,
+  handleCallback,
+  SESSION_TYPE,
+  _internals: { categoryOf, ageDays, ageDot, CATEGORIES, TRANSFER_ACTIONS, STALE_DAYS },
+};

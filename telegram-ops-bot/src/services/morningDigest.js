@@ -181,7 +181,7 @@ const CATEGORIES = [
       }
       const lines = shown.map((p) => `• ${fmtDay(p.createdAt)} — ${((p.actionJSON || {}).action || 'action').replace(/_/g, ' ')} by ${nameOf.get(String(p.user))} \`${String(p.requestId).slice(0, 8)}\``);
       const older = pending.length - Math.min(pending.length, LIST_CAP);
-      return `🛂 *Approvals pending: ${pending.length}* (newest first)\n${lines.join('\n')}${older ? `\n_…and ${older} older — reminder cards re-send via ⏰ APR-1_` : ''}`;
+      return `🛂 *Approvals pending: ${pending.length}* (newest first)\n${lines.join('\n')}${older ? `\n_…and ${older} older — open 🛂 Approvals below to work through all ${pending.length}._` : ''}`;
     },
   },
   {

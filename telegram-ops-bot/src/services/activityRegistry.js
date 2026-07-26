@@ -152,6 +152,13 @@ const ACTIVITIES = [
   // employees never see it — the tile is in no department CSV and the
   // flow's start() is admin-gated anyway.
   { code: 'morning_digest',        label: 'Morning Digest',            icon: '⏰', callback: 'act:morning_digest',     hub: null },
+  // APX-1 — the approvals queue had NO menu entry: a pending request could
+  // only be reached from the DM card sent when it was queued, the APR-1
+  // reminder re-send, or a button-less block in the morning digest. Top
+  // level (no hub) because this is a morning-triage screen; the flow's
+  // start() is admin-gated, and it is in no department CSV so employees
+  // never see the tile.
+  { code: 'approvals_inbox',       label: 'Approvals',                 icon: '🛂', callback: 'act:approvals_inbox',    hub: null },
   { code: 'add_customer_note',     label: 'Add Note',                  icon: '✏️', callback: 'act:add_note',           hub: 'crm' },
   { code: 'add_customer',          label: 'Add Customer',              icon: '➕', callback: 'act:add_customer',       hub: 'crm' },
   { code: 'give_sample',           label: 'Give Sample',               icon: '🧪', callback: 'act:give_sample',        hub: 'crm' },

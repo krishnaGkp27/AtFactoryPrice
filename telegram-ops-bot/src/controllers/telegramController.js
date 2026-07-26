@@ -6652,6 +6652,7 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['sbl:'], handle: (bot, cq) => require('../flows/soldBalesFlow').handleCallback(bot, cq) },
   { prefixes: ['sdd:'], handle: (bot, cq) => require('../flows/supplyDetailsFlow').handleCallback(bot, cq) },
   { prefixes: ['sdg:'], handle: (bot, cq) => require('../flows/supplyDetailsDesignFlow').handleCallback(bot, cq) },
+  { prefixes: ['abx:'], handle: (bot, cq) => require('../flows/approvalsInboxFlow').handleCallback(bot, cq) },
   // DCAT-1 — design → product-category mapping (dual-admin approval).
   { prefixes: ['dcat:'], handle: (bot, cq) => require('../flows/designCategoryFlow').handleCallback(bot, cq) },
   // MKT-2 — marketer allocations: admin flow + marketer category catalog.
@@ -8987,6 +8988,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
       // MORN-1 — ⏰ Morning Digest settings (admin gate inside the flow).
       case 'morning_digest':
         await require('../flows/morningDigestFlow').start(bot, chatId, uid, messageId);
+        break;
+      // APX-1 — 🛂 pending approvals, grouped by concern (admin-gated in-flow).
+      case 'approvals_inbox':
+        await require('../flows/approvalsInboxFlow').start(bot, chatId, uid, messageId);
         break;
       // SNAP-1 — 📸 photo-to-sale.
       case 'snap_sale':
