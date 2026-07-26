@@ -6,12 +6,15 @@
  * Staff photograph the BALE LABEL (indent/bale/design/colour handwriting),
  * the vision OCR reads it, the bale is matched in Inventory, and a confirm
  * card shows BOTH what was read and what matched (handwriting OCR is good,
- * not infallible — the human verifies before tapping). Tap a customer →
- * a standard sell_package approval is queued: the usual single-admin
- * approval + ST-1 enrichment (rate/payment entered by the ADMIN — owner
- * decision c), and the label photo rides as sale_doc_file_id so it IS the
+ * not infallible — the human verifies before tapping). One tap queues a
+ * standard sell_package approval: the usual single-admin approval + ST-1
+ * enrichment, and the label photo rides as sale_doc_file_id so it IS the
  * attached sale document (owner decision b): admins get the photo preview
  * and the existing Drive archival applies.
+ *
+ * DSP-1 (owner 26-Jul): the dispatcher is NOT asked who is buying. The
+ * admin assigns customer, rate and payment at approval, and the result is
+ * written back into the dispatcher's own submitted card.
  *
  * No match / OCR down → graceful fallback into the normal 💰 Sell Bale.
  *
@@ -27,7 +30,6 @@
 const sessionStore = require('../utils/sessionStore');
 const { makeRenderer, chunk, mdEscape } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
-const transactionsRepository = require('../repositories/transactionsRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const usersRepository = require('../repositories/usersRepository');
@@ -36,10 +38,10 @@ const auth = require('../middlewares/auth');
 const { todayInLagos } = require('../utils/dates');
 const config = require('../config');
 const logger = require('../utils/logger');
+const { rememberRequesterCard } = require('../utils/requesterCard');
 
 const SESSION_TYPE = 'snap_sale_flow';
 const NS = 'sns:';
-const CUSTOMERS_PAGE = 8;
 
 const render = makeRenderer({ parseMode: 'Markdown', requireSession: true });
 
@@ -207,52 +209,27 @@ function readBackLine(ocr) {
   return bits.join(' · ') || '_could not read the label_';
 }
 
+/**
+ * DSP-1 — the matched bale IS the confirm screen now. The dispatcher used
+ * to be asked "who is buying?" here; that decision moved to the admin at
+ * approval (owner, 26-Jul-2026), so the match goes straight to Submit.
+ */
 async function showMatch(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  const b = session.bale;
-  const recent = (await transactionsRepository.getCustomersByDesign(b.design).catch(() => [])).slice(0, 6);
-  session._recent = recent;
-  sessionStore.set(userId, session);
-  const rows = chunk(recent.map((c, i) => ({ text: `👤 ${c}`, callback_data: `${NS}cu:${i}` })), 2);
-  rows.push([{ text: '📋 All customers', callback_data: `${NS}all:0` },
-    { text: '➕ New customer', callback_data: `${NS}newc` }]);
-  rows.push(cancelRow());
-  await render(bot, chatId, userId,
-    `📸 Read from label: ${readBackLine(session.ocr)}\n\n`
-    + `✅ *Matched bale:*\n📦 *${mdEscape(b.packageNo)}* — ${mdEscape(b.design)} · shade ${mdEscape(b.shade || '—')}\n`
-    + `🏭 ${mdEscape(b.warehouse)} · ${b.availableThans} thans · ${Math.round(b.availableYards)} yds available\n\n`
-    + '*Who is buying?* (recent buyers of this design first)',
-    rows);
-}
-
-async function showAllCustomers(bot, chatId, userId, page) {
-  const session = sessionStore.get(userId);
-  const customersRepository = require('../repositories/customersRepository');
-  const all = (await customersRepository.getAll())
-    .filter((c) => (c.status || '').toLowerCase() !== 'inactive')
-    .sort((a, b2) => a.name.localeCompare(b2.name));
-  const pages = Math.max(1, Math.ceil(all.length / CUSTOMERS_PAGE));
-  const p = Math.min(Math.max(page, 0), pages - 1);
-  session._all = all.slice(p * CUSTOMERS_PAGE, (p + 1) * CUSTOMERS_PAGE).map((c) => c.name);
-  sessionStore.set(userId, session);
-  const rows = chunk(session._all.map((n, i) => ({ text: `👤 ${n}`, callback_data: `${NS}ca:${i}` })), 2);
-  const pager = [];
-  if (p > 0) pager.push({ text: '◀ Prev', callback_data: `${NS}all:${p - 1}` });
-  if (p < pages - 1) pager.push({ text: 'More ▶', callback_data: `${NS}all:${p + 1}` });
-  if (pager.length) rows.push(pager);
-  rows.push([{ text: '⬅ Back', callback_data: `${NS}bk` }, { text: '➕ New customer', callback_data: `${NS}newc` }]);
-  rows.push(cancelRow());
-  await render(bot, chatId, userId, `📋 All customers (page ${p + 1}/${pages}):`, rows);
+  await showConfirm(bot, chatId, userId);
 }
 
 async function showConfirm(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   const b = session.bale;
+  // The OCR read-back stays: handwriting recognition is good, not
+  // infallible, and this line is how the dispatcher catches a misread
+  // BEFORE the bale is committed.
+  const readBack = session.ocr ? `📸 Read from label: ${readBackLine(session.ocr)}\n\n` : '';
   await render(bot, chatId, userId,
-    `📸 *Confirm sale*\n\n📦 Bale *${mdEscape(b.packageNo)}* — ${mdEscape(b.design)} · shade ${mdEscape(b.shade || '—')}\n`
-    + `🏭 ${mdEscape(b.warehouse)} · ${b.availableThans} thans · ${Math.round(b.availableYards)} yds\n`
-    + `👤 Customer: *${mdEscape(session.customer)}*${session.newCustomer ? ' _(NEW — profile sent for approval)_' : ''}\n📅 ${todayInLagos()}\n\n`
-    + '_The label photo is attached as the sale document. Rate and payment are entered by the approving admin._',
+    `${readBack}✅ *Matched bale — confirm dispatch*\n\n📦 Bale *${mdEscape(b.packageNo)}* — ${mdEscape(b.design)} · shade ${mdEscape(b.shade || '—')}\n`
+    + `🏭 ${mdEscape(b.warehouse)} · ${b.availableThans} thans · ${Math.round(b.availableYards)} yds available\n📅 ${todayInLagos()}\n\n`
+    + '_The label photo is attached as the sale document._\n'
+    + '_The admin assigns the customer, rate and payment when approving — you will get the customer name and number back here once it is approved._',
     [[{ text: '✅ Submit for approval', callback_data: `${NS}ok` }],
       [{ text: '⬅ Back', callback_data: `${NS}bk` }], cancelRow()]);
 }
@@ -306,7 +283,7 @@ async function handleFile(bot, msg) {
       return true;
     }
     session.bale = matches[0];
-    session.step = 'pick_customer';
+    session.step = 'confirm';
     sessionStore.set(userId, session);
     await showMatch(bot, chatId, userId);
     return true;
@@ -361,7 +338,7 @@ async function handleBatchPdf(bot, msg, session) {
     }
     session.batch = { items, skipped };
     session.bale = null;
-    session.step = 'pick_customer';
+    session.step = 'confirm';
     sessionStore.set(userId, session);
     await showBatchReview(bot, chatId, userId);
     return true;
@@ -386,28 +363,9 @@ function batchSummaryLines(batch, cap = 12) {
 }
 
 
+/** DSP-1 — batch review no longer asks who is buying; it goes to confirm. */
 async function showBatchReview(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  const batch = session.batch;
-  const firstDesign = batch.items[0].design;
-  const recent = (await transactionsRepository.getCustomersByDesign(firstDesign).catch(() => [])).slice(0, 6);
-  session._recent = recent;
-  sessionStore.set(userId, session);
-  const rows = chunk(recent.map((c, i) => ({ text: `👤 ${c}`, callback_data: `${NS}cu:${i}` })), 2);
-  rows.push([{ text: '📋 All customers', callback_data: `${NS}all:0` },
-    { text: '➕ New customer', callback_data: `${NS}newc` }]);
-  // SNAP-4 — the same PDF can be a warehouse dispatch instead of a sale.
-  // Transfers are admin-created (same rule as the trf: wizard).
-  if (auth.isAdmin(userId)) {
-    rows.push([{ text: '🚚 This is a TRANSFER, not a sale', callback_data: `${NS}tmode` }]);
-  }
-  rows.push(cancelRow());
-  const totalYards = batch.items.reduce((s, m) => s + m.availableYards, 0);
-  await render(bot, chatId, userId,
-    `📄 *PDF batch — ${batch.items.length} bale(s) matched* (${Math.round(totalYards)} yds)\n\n`
-    + `${batchSummaryLines(batch)}\n\n`
-    + '*Who is buying the whole batch?*',
-    rows);
+  await showBatchConfirm(bot, chatId, userId);
 }
 
 async function showBatchConfirm(bot, chatId, userId) {
@@ -415,13 +373,21 @@ async function showBatchConfirm(bot, chatId, userId) {
   const batch = session.batch;
   const totalYards = batch.items.reduce((s, m) => s + m.availableYards, 0);
   const totalThans = batch.items.reduce((s, m) => s + m.availableThans, 0);
+  const rows = [[{ text: '✅ Submit for approval', callback_data: `${NS}ok` }]];
+  // SNAP-4 — the same PDF can be a warehouse dispatch instead of a sale.
+  // Transfers are admin-created (same rule as the trf: wizard).
+  if (auth.isAdmin(userId)) {
+    rows.push([{ text: '🚚 This is a TRANSFER, not a sale', callback_data: `${NS}tmode` }]);
+  }
+  rows.push([{ text: '⬅ Back', callback_data: `${NS}bk` }]);
+  rows.push(cancelRow());
   await render(bot, chatId, userId,
-    `📄 *Confirm batch sale*\n\n${batchSummaryLines(batch)}\n\n`
-    + `Total: *${batch.items.length} bales* (${totalThans} thans), *${Math.round(totalYards)} yds*\n`
-    + `👤 Customer: *${mdEscape(session.customer)}*${session.newCustomer ? ' _(NEW — profile sent for approval)_' : ''}\n📅 ${todayInLagos()}\n\n`
-    + '_The PDF is attached as the sale document. Rate and payment are entered by the approving admin._',
-    [[{ text: '✅ Submit for approval', callback_data: `${NS}ok` }],
-      [{ text: '⬅ Back', callback_data: `${NS}bk` }], cancelRow()]);
+    `📄 *PDF batch — ${batch.items.length} bale(s) matched* (${Math.round(totalYards)} yds)\n\n`
+    + `${batchSummaryLines(batch)}\n\n`
+    + `Total: *${batch.items.length} bales* (${totalThans} thans), *${Math.round(totalYards)} yds*\n📅 ${todayInLagos()}\n\n`
+    + '_The PDF is attached as the sale document._\n'
+    + '_The admin assigns the customer, rate and payment when approving — you will get the customer name and number back here once it is approved._',
+    rows);
 }
 
 /* ── SNAP-4: PDF batch as a WAREHOUSE TRANSFER ── */
@@ -632,7 +598,8 @@ async function submitBatch(bot, chatId, userId, session) {
   const actionJSON = {
     action: 'sale_bundle',
     items: batch.items.map((m) => ({ type: 'package', packageNo: m.packageNo })),
-    customer: session.customer,
+    // DSP-1 — assigned by the admin at approval, not by the dispatcher.
+    customer: '',
     salesDate: todayInLagos(),
     salesPerson: sellerLabel,
     paymentMode: '',
@@ -657,7 +624,7 @@ async function submitBatch(bot, chatId, userId, session) {
     const approvalCards = require('../services/approvalCards');
     let card = await approvalCards.buildSaleCard({
       headline: 'Sale Request (Snap PDF batch)',
-      customer: session.customer,
+      customer: '',
       salesPerson: sellerLabel,
       salesDate: actionJSON.salesDate,
       items: batch.items.map((m) => ({
@@ -690,8 +657,9 @@ async function submitBatch(bot, chatId, userId, session) {
     ? '\n\n⚠️ Admins could not be notified right now — ask an admin to check Pending Approvals.'
     : '';
   await render(bot, chatId, userId,
-    `✅ *Submitted.*\n\n📄 ${batch.items.length} bale(s) → *${mdEscape(session.customer)}*\nRequest: \`${requestId}\`\n\n⏳ Waiting for admin approval (rate + payment entered there).${notifyWarning}`,
+    `✅ *Submitted.*\n\n📄 ${batch.items.length} bale(s)\nRequest: \`${requestId}\`\n\n⏳ Waiting for admin approval — the admin assigns the customer, rate and payment. You will get the customer name and number back here once approved.${notifyWarning}`,
     [[{ text: '📸 Snap another', callback_data: 'act:snap_sale' }, { text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+  await rememberRequesterCard(requestId, chatId, userId);
   sessionStore.clear(userId);
   return true;
 }
@@ -722,45 +690,14 @@ async function handleCallback(bot, callbackQuery) {
     const m = (session._matches || [])[Number(rest.slice(2))];
     if (!m) return true;
     session.bale = m;
-    session.step = 'pick_customer';
+    session.step = 'confirm';
     sessionStore.set(userId, session);
     await showMatch(bot, chatId, userId);
     return true;
   }
   if (rest === 'bk') {
-    if (session.step === 'confirm' || session.step === 'new_customer') {
-      session.step = 'pick_customer';
-      sessionStore.set(userId, session);
-    }
-    if (session.batch) await showBatchReview(bot, chatId, userId);
-    else await showMatch(bot, chatId, userId);
-    return true;
-  }
-  if (rest.startsWith('all:')) {
-    if (!session.bale && !session.batch) return true;
-    await showAllCustomers(bot, chatId, userId, Number(rest.slice(4)));
-    return true;
-  }
-  if (rest.startsWith('cu:') || rest.startsWith('ca:')) {
-    const list = rest.startsWith('cu:') ? session._recent : session._all;
-    const name = (list || [])[Number(rest.slice(3))];
-    if (!name || (!session.bale && !session.batch)) return true;
-    session.customer = name;
-    session.step = 'confirm';
-    sessionStore.set(userId, session);
     if (session.batch) await showBatchConfirm(bot, chatId, userId);
     else await showConfirm(bot, chatId, userId);
-    return true;
-  }
-  // CUST-2 — ➕ New customer without leaving the sale (owner queue #1).
-  if (rest === 'newc') {
-    if (!session.bale && !session.batch) return true;
-    session.step = 'new_customer';
-    sessionStore.set(userId, session);
-    await render(bot, chatId, userId,
-      '➕ *New customer*\n\nType the customer\'s NAME (one line, e.g. `OKESON STORES`).\n\n'
-      + '_The profile request goes to the admins for approval; the sale continues with the name right away. Phone/address can be added later._',
-      [[{ text: '⬅ Back', callback_data: `${NS}bk` }], cancelRow()]);
     return true;
   }
   // SNAP-4 — the PDF batch as a warehouse transfer (admin-only).
@@ -798,10 +735,10 @@ async function handleCallback(bot, callbackQuery) {
   if (rest === 'ok') {
     // SNAP-3 batch submit: one sale_bundle for the whole PDF.
     if (session.batch) {
-      if (session.step !== 'confirm' || !session.customer || !session.batch.items.length) return true;
+      if (session.step !== 'confirm' || !session.batch.items.length) return true;
       return submitBatch(bot, chatId, userId, session);
     }
-    if (session.step !== 'confirm' || !session.bale || !session.customer) return true;
+    if (session.step !== 'confirm' || !session.bale) return true;
     const b = session.bale;
     const seller = await usersRepository.findByUserId(userId).catch(() => null);
     const sellerLabel = (seller && seller.name)
@@ -812,7 +749,7 @@ async function handleCallback(bot, callbackQuery) {
       packageNo: b.packageNo, design: b.design, shade: b.shade || '',
       yards: Math.round(b.availableYards), thans: b.availableThans,
       warehouse: b.warehouse || '',
-      customer: session.customer, salesDate: todayInLagos(),
+      customer: '', salesDate: todayInLagos(),
       salesPerson: sellerLabel,
       // Owner decision (b): the label photo IS the attached sale document —
       // rides the exact ST-1 machinery (admin preview + Drive archival).
@@ -847,71 +784,17 @@ async function handleCallback(bot, callbackQuery) {
     // is gone, which silently ate the seller's "Submitted" confirmation
     // (latent since SNAP-1; surfaced by the APU-1 adversarial review).
     await render(bot, chatId, userId,
-      `✅ *Submitted.*\n\n📦 Bale ${mdEscape(b.packageNo)} — ${mdEscape(b.design)} → *${mdEscape(session.customer)}*\nRequest: \`${requestId}\`\n\n⏳ Waiting for admin approval (rate + payment entered there).${notifyWarning}`,
+      `✅ *Submitted.*\n\n📦 Bale ${mdEscape(b.packageNo)} — ${mdEscape(b.design)}\nRequest: \`${requestId}\`\n\n⏳ Waiting for admin approval — the admin assigns the customer, rate and payment. You will get the customer name and number back here once approved.${notifyWarning}`,
       [[{ text: '📸 Snap another', callback_data: 'act:snap_sale' }, { text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+    await rememberRequesterCard(requestId, chatId, userId);
     sessionStore.clear(userId);
     return true;
   }
   return true;
 }
 
-/**
- * CUST-2 — free-typed name for the ➕ New customer step (routed by the
- * controller's text dispatcher when the snap session is at that step).
- * A name that already exists just selects the existing profile; a truly
- * new one queues the standard add_customer approval AND carries the sale
- * forward immediately — the sale never waits on the profile.
- * @returns {Promise<boolean>} true when consumed.
- */
-async function handleText(bot, msg) {
-  const userId = String(msg.from.id);
-  const chatId = msg.chat.id;
-  const session = sessionStore.get(userId);
-  if (!session || session.type !== SESSION_TYPE || session.step !== 'new_customer') return false;
-  const name = String(msg.text || '').trim().replace(/\s+/g, ' ');
-  if (!name || name.length < 2 || name.length > 60 || name.startsWith('/')) {
-    await bot.sendMessage(chatId, '⚠️ Send a plain customer name (2–60 characters).');
-    return true;
-  }
-  // Existing profile (case-insensitive) → just use it, nothing queued.
-  let existing = null;
-  try {
-    const customersRepository = require('../repositories/customersRepository');
-    existing = (await customersRepository.getAll())
-      .find((c) => String(c.name || '').trim().toLowerCase() === name.toLowerCase()) || null;
-  } catch (_) { /* lookup is best-effort */ }
-  if (existing) {
-    session.customer = existing.name;
-    session.newCustomer = false;
-  } else {
-    session.customer = name;
-    session.newCustomer = true;
-    try {
-      const requestId = idGenerator.requestId();
-      const requester = await usersRepository.findByUserId(userId).catch(() => null);
-      const requesterLabel = (requester && requester.name)
-        || await require('../services/approvalCards').resolveUserLabel(userId, bot);
-      await approvalQueueRepository.append({
-        requestId, user: userId,
-        actionJSON: { action: 'add_customer', name, source: 'snap_flow' },
-        riskReason: 'Customer creation requires admin approval.', status: 'pending',
-      });
-      await auditLogRepository.append('approval_queued',
-        { requestId, action: 'add_customer', source: 'snap_flow', name }, userId);
-      const excludeId = config.access.adminIds.includes(userId) ? userId : undefined;
-      await require('../events/approvalEvents').notifyAdminsApprovalRequest(bot, requestId,
-        requesterLabel, `New Customer Request\nName: ${name}\n(typed during a PDF/snap sale — details can be added later)`,
-        'Customer creation requires admin approval.', excludeId);
-    } catch (e) { logger.warn(`snap new customer queue failed: ${e.message}`); }
-  }
-  session.step = 'confirm';
-  sessionStore.set(userId, session);
-  if (session.batch) await showBatchConfirm(bot, chatId, userId);
-  else await showConfirm(bot, chatId, userId);
-  return true;
-}
 
 module.exports = {
-  SESSION_TYPE, start, handleCallback, handleFile, handleText,
+  SESSION_TYPE, start, handleCallback, handleFile,
   _internals: { buildTransferGroups, matchBatch, rescueMatch, matchBales, normCode },
 };

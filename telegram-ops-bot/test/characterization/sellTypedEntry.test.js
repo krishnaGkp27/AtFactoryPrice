@@ -47,7 +47,7 @@ customersRepository.getAll = async () => [
 auditLogRepository.append = async () => {};
 
 
-test('typed numbers preload the flow: dedupe, reasons, warehouse tap, then customer chips', async () => {
+test('typed numbers preload the flow: dedupe, reasons, warehouse tap, then salesperson', async () => {
   const bot = createFakeBot();
   await controller.handleMessage(bot, {
     from: { id: '4242' }, chat: { id: '4242' },
@@ -70,12 +70,16 @@ test('typed numbers preload the flow: dedupe, reasons, warehouse tap, then custo
   assert.equal(session.cart.length, 3);
   assert.deepEqual(session.cart.map((c) => c.packageNo).sort(), ['503', '507', '512']);
 
-  // Continue → the flow's normal tappable customer step (typed name ignored).
+  // DSP-1 — continue goes to the SALESPERSON step. The typed customer name
+  // ("mama kafaya") is dropped entirely: no chip, no session field. This is
+  // the guard that stops a typed sale from bypassing the admin's assignment.
   const cont = lastKb(bot).find((b) => b.callback_data === 'sb:rev');
-  assert.ok(cont, 'Pick customer button present');
+  assert.ok(cont, 'continue button present');
   await controller.handleCallbackQuery(bot, cb(cont.callback_data));
   const kb = lastKb(bot);
-  assert.ok(kb.some((b) => /MAMA KAFAYA/.test(b.text)), 'customer chips shown — no typed-name trust');
+  assert.ok(!kb.some((b) => /MAMA KAFAYA/i.test(b.text)), `no customer chips, got: ${kb.map((b) => b.text)}`);
+  assert.equal(sessionStore.get('4242').step, 'salesperson');
+  assert.ok(!sessionStore.get('4242').customer, 'typed customer name never lands on the session');
   sessionStore.clear('4242');
 });
 

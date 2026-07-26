@@ -3443,11 +3443,9 @@ async function handleMessage(bot, msg) {
       const handled = await require('../flows/sellBaleFlow').handleText(bot, msg);
       if (handled) return;
     }
-    // CUST-2 — ➕ New customer name typed inside the snap/PDF sale flow.
-    if (brSession && brSession.type === 'snap_sale_flow') {
-      const handled = await require('../flows/snapSaleFlow').handleText(bot, msg);
-      if (handled) return;
-    }
+    // DSP-1 — the snap flow no longer takes typed input: the dispatcher
+    // picks no customer, so there is nothing to type. Customer entry (and
+    // ➕ New customer) live on the admin's approval chain now.
   }
 
   // WH-C1 — standalone Add Warehouse flow accepts the new warehouse
@@ -6271,9 +6269,11 @@ async function showUserManagement(bot, chatId) {
 async function startSaleFlow(bot, chatId, msg, userId, saleType, items, intent) {
   // SELL-T1 (owner 20-Jul): typed bale NUMBERS are welcome — they preload
   // the tappable Sell Bale flow (validated against the sheet, warehouse
-  // tap on ambiguity) and the flow's chips handle customer, salesperson,
-  // bank and date. Typed names/banks/dates are deliberately ignored —
-  // that's where the typo class lived (ST-1 migration, 14-Jul).
+  // tap on ambiguity) and the flow's chips handle salesperson and date.
+  // Typed names/banks/dates are deliberately ignored — that's where the
+  // typo class lived (ST-1 migration, 14-Jul). DSP-1: a typed customer is
+  // dropped here too, which is what keeps "Sell Bale 5801 to Adamu" from
+  // bypassing the admin's customer assignment at approval.
   const typedPkgs = (saleType === 'sell_package' || saleType === 'sell_batch')
     ? (items || []).map((it) => it.packageNo).filter(Boolean)
     : [];
@@ -6283,7 +6283,7 @@ async function startSaleFlow(bot, chatId, msg, userId, saleType, items, intent) 
     return;
   }
   await bot.sendMessage(chatId,
-    '🛒 Sales now run through *💰 Sell Bale* — tap your way through container, bales, customer, bank and date. No more typos.',
+    '🛒 Sales now run through *💰 Sell Bale* — tap your way through container, bales, salesperson and date. The admin assigns the customer, rate and payment when approving.',
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '💰 Open Sell Bale', callback_data: 'act:sell_bale' }]] } });
   return;
   // Typed path retained below for a fast rollback (delete the redirect
@@ -6788,7 +6788,8 @@ async function handleCallbackQuery(bot, callbackQuery) {
   }
 
   if (data.startsWith('enr:')) {
-    // ST-1 Part B — tappable sale-enrichment chips (rate / payment / amount).
+    // ST-1 Part B + DSP-1 — tappable sale-enrichment chips
+    // (customer / rate / payment / amount).
     await approvalEvents.handleEnrichmentCallback(bot, callbackQuery);
   } else if (data.startsWith('approve:')) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'approve');

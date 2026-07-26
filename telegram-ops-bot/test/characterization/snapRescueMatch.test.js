@@ -143,9 +143,7 @@ test('end-to-end 6b: PDF with a rescue + a tie → NO questions — straight to 
   assert.match(review, /🔎 \*1006\*.*by details \(label read "2522 9060-A"\)/);
   assert.match(review, /999 9032 — could be 6261 \(Lagos\) or 6262 \(Lagos\) — kept aside \(skipped\)/);
   // Submit → the admin card carries the rescue note + the kept-aside analysis.
-  const buyer = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method) && c.args.opts && c.args.opts.reply_markup)
-    .pop().args.opts.reply_markup.inline_keyboard.flat().find((b) => b.text === '👤 ALABI');
-  await controller.handleCallbackQuery(bot, cb(buyer.callback_data));
+  // DSP-1: no buyer tap on the way — the admin assigns the customer.
   await controller.handleCallbackQuery(bot, cb('sns:ok'));
   assert.equal(queued.length, 1);
   assert.deepEqual(queued[0].actionJSON.items.map((i) => i.packageNo), ['1006'], 'only the certain bale rides');

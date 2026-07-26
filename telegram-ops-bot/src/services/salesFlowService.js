@@ -10,7 +10,17 @@ const settingsRepo = require('../repositories/settingsRepository');
 const inventoryService = require('./inventoryService');
 const { fmtMoney, fmtQty: fmtQtyBase } = require('../utils/format');
 
-const SALE_FIELDS = ['customer', 'salesperson', 'paymentMode', 'salesDate'];
+/**
+ * Fields the REQUESTER is asked for.
+ *
+ * DSP-1 (owner, 26-Jul-2026): `customer` and `paymentMode` are deliberately
+ * NOT here. The dispatcher raises what physically leaves the warehouse; the
+ * admin attaches the buyer and the payment terms when approving. Adding
+ * either one back re-opens the bypass this change exists to close — the
+ * pipeline prompts for every missing field, so a listed field IS a question
+ * put to the requester.
+ */
+const SALE_FIELDS = ['salesperson', 'salesDate'];
 
 // Sales flow shows fractional yards (e.g. 12.5 yds), so we keep two decimals.
 function fmtQty(n) { return fmtQtyBase(n, { maxFraction: 2 }); }

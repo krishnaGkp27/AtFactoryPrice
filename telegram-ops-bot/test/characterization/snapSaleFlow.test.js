@@ -52,7 +52,7 @@ function photoMsg(uid = '4242') {
   return { from: { id: uid }, chat: { id: uid }, photo: [{ file_id: 'small' }, { file_id: 'label-photo-file-id' }] };
 }
 
-test('photo → match card with OCR read-back → customer tap → queued with label as document', async () => {
+test('DSP-1: photo → match card with OCR read-back → straight to Submit, NO customer asked', async () => {
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('act:snap_sale'));
   assert.match(bot.allText(), /Send a clear photo of the \*bale label\*/);
@@ -60,17 +60,18 @@ test('photo → match card with OCR read-back → customer tap → queued with l
   assert.match(bot.allText(), /Read from label: Bale \*896\* · Design \*77016\* · Colour \*5\*/);
   assert.match(bot.allText(), /Matched bale/);
   assert.match(bot.allText(), /IDUMOTA · 2 thans · 60 yds available/, 'inventory values shown, not OCR values');
+  // DSP-1 — the dispatcher is never asked who is buying; the admin
+  // assigns the customer at approval.
   let kb = lastKb(bot);
-  const alabi = kb.find((b) => b.text === '👤 ALABI');
-  assert.ok(alabi, 'recent-buyer chip');
-  await controller.handleCallbackQuery(bot, cb(alabi.callback_data));
-  assert.match(bot.allText(), /Confirm sale/);
+  assert.ok(!kb.some((b) => /👤/.test(b.text)), `no customer chips, got: ${kb.map((b) => b.text)}`);
+  assert.match(bot.allText(), /confirm dispatch/i);
+  assert.match(bot.allText(), /admin assigns the customer/i);
   await controller.handleCallbackQuery(bot, cb('sns:ok'));
   assert.equal(queued.length, 1, 'approval queued');
   const aj = queued[0].actionJSON;
   assert.equal(aj.action, 'sell_package');
   assert.equal(aj.packageNo, '896');
-  assert.equal(aj.customer, 'ALABI');
+  assert.equal(aj.customer, '', 'DSP-1 — queued with NO customer; the admin assigns it');
   assert.equal(aj.warehouse, 'IDUMOTA', 'warehouse persisted on the queued action');
   assert.equal(aj.sale_doc_file_id, 'label-photo-file-id', 'label photo attached as the sale document');
   assert.equal(aj.salesPerson, 'Yarima');
@@ -80,7 +81,6 @@ test('photo → match card with OCR read-back → customer tap → queued with l
   // escape backslashes so assertions read like the rendered text.
   const adminMsgs = bot.calls.filter((c) => c.method === 'sendMessage' && String(c.args.chatId) === '777').map((c) => c.args.text).join('\n').replace(/\\/g, '');
   assert.match(adminMsgs, /Sale Request \(Snap Sale\)/, 'gold-standard headline');
-  assert.match(adminMsgs, /Customer: ALABI/);
   assert.match(adminMsgs, /Salesperson: Yarima/);
   assert.match(adminMsgs, /Bale 896: 77016 5, 2 thans, 60 yds \(IDUMOTA\)/, 'full item line');
   assert.match(adminMsgs, /Total: 1 Bale \(2 thans\), 60 yards/);
@@ -100,7 +100,7 @@ test('photo → match card with OCR read-back → customer tap → queued with l
   assert.ok(!sessionStore.get('4242'), 'session cleared after submit');
 });
 
-test('SNAP-3: PDF batch → review card → one customer → ONE sale_bundle with the PDF attached', async () => {
+test('SNAP-3 + DSP-1: PDF batch → review card → ONE sale_bundle, no customer asked', async () => {
   const bot = createFakeBot();
   ocrResult = {
     ok: true, provider: 'anthropic', rawText: '', overallConfidence: 0.9, warnings: [],
@@ -121,9 +121,8 @@ test('SNAP-3: PDF batch → review card → one customer → ONE sale_bundle wit
   assert.match(review, /PDF batch — 2 bale\(s\) matched/, 'duplicate deduped, unknown skipped');
   assert.match(review, /999 11111 — not available in the sheet \(skipped\)/);
   const kb = lastKb(bot);
-  const buyer = kb.find((b) => b.text === '👤 ALABI');
-  await controller.handleCallbackQuery(bot, cb(buyer.callback_data));
-  assert.match(bot.allText(), /Confirm batch sale/);
+  assert.ok(!kb.some((b) => /👤/.test(b.text)), 'DSP-1 — no buyer chips on the batch card');
+  assert.match(bot.allText(), /PDF batch — 2 bale\(s\) matched/);
   await controller.handleCallbackQuery(bot, cb('sns:ok'));
   assert.equal(queued.length, before + 1, 'exactly ONE approval for the whole PDF');
   const aj = queued.at(-1).actionJSON;
@@ -134,7 +133,7 @@ test('SNAP-3: PDF batch → review card → one customer → ONE sale_bundle wit
     { type: 'package', packageNo: '897' },
     { type: 'package', packageNo: '896' },
   ]);
-  assert.equal(aj.customer, 'ALABI');
+  assert.equal(aj.customer, '', 'DSP-1 — batch queues with NO customer either');
   assert.equal(aj.sale_doc_file_id, 'supply-pdf-1');
   assert.equal(aj.sale_doc_type, 'document');
   assert.equal(aj.source, 'snap_pdf');

@@ -68,14 +68,11 @@ test('full chip path lands a complete salesFlow session with no typing', async (
   assert.equal(s.cart.length, 2);
   assert.equal(s.cart[1].packageNo, '553');
 
-  await sellBaleFlow.handleCallback(bot, cbq('sb:rev'));    // → customer step
-  assert.equal(sessionStore.get('555').step, 'customer');
-  await sellBaleFlow.handleCallback(bot, cbq('sb:cu:0'));   // Chima (recent buyer)
-  assert.equal(sessionStore.get('555').customer, 'Chima');
+  // DSP-1 — cart goes straight to salesperson: no customer step, no
+  // payment step. Both are the admin's to set at approval.
+  await sellBaleFlow.handleCallback(bot, cbq('sb:rev'));    // → salesperson
+  assert.equal(sessionStore.get('555').step, 'salesperson');
   await sellBaleFlow.handleCallback(bot, cbq('sb:sp:0'));   // Abdulazeez
-  assert.equal(sessionStore.get('555').step, 'payment');
-  const pays = sessionStore.get('555');
-  await sellBaleFlow.handleCallback(bot, cbq(`sb:py:${pays._payOpts.indexOf('ZENITH BANK')}`));
   assert.equal(sessionStore.get('555').step, 'date');
   await sellBaleFlow.handleCallback(bot, cbq('sb:dt:0'));   // Today
   assert.equal(sessionStore.get('555').step, 'review');
@@ -88,20 +85,18 @@ test('full chip path lands a complete salesFlow session with no typing', async (
     { type: 'package', packageNo: '552' },
     { type: 'package', packageNo: '553' },
   ]);
-  assert.equal(sale.collected.customer, 'Chima');
+  assert.ok(!sale.collected.customer, 'DSP-1 — no customer from the dispatcher');
   assert.equal(sale.collected.salesperson, 'Abdulazeez');
-  assert.equal(sale.collected.paymentMode, 'ZENITH BANK');
+  assert.ok(!sale.collected.paymentMode, 'DSP-1 — payment set by the admin');
   assert.match(sale.collected.salesDate, /^\d{4}-\d{2}-\d{2}$/);
   assert.equal(sale.awaitingDocument, true, 'bill-photo step must be armed');
   sessionStore.clear('555');
 });
 
-test('typing during the customer step filters existing customers only', async () => {
+test('DSP-1: there is no customer step to type into any more', async () => {
   const bot = createFakeBot();
-  sessionStore.set('555', { type: 'sell_bale_flow', step: 'customer', cart: [{ packageNo: '552', design: '44200', thans: 2, yards: 60 }] });
+  sessionStore.set('555', { type: 'sell_bale_flow', step: 'salesperson', cart: [{ packageNo: '552', design: '44200', thans: 2, yards: 60 }] });
   const handled = await sellBaleFlow.handleText(bot, { from: { id: 555 }, chat: { id: 1 }, text: 'sold' });
-  assert.equal(handled, true);
-  const s = sessionStore.get('555');
-  assert.deepEqual(s._customers, ['Soldier Madam'], 'filter matches existing customers only');
+  assert.equal(handled, false, 'free text no longer selects a customer');
   sessionStore.clear('555');
 });

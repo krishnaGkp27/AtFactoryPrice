@@ -26,11 +26,12 @@
  *                         • cart bar at the bottom (sticky counter)
  *   5. cart_review     — collapsible cart: summary lines by default,
  *                         expand → per-bale breakdown; per-line remove
- *   6. pick_customer   — recent customers on this design + manual entry
- *   7. enter_rate      — typed rate, with last/30d-median/floor chips
- *   8. pick_payment    — Cash / Bank Transfer / Pending
- *   9. confirm         — conflict re-check + Submit
- *  10. submitted       — sealed; admin notified
+ *   6. confirm         — conflict re-check + Submit
+ *   7. submitted       — sealed; admin notified
+ *
+ * DSP-1 (owner 26-Jul): steps 6-8 (customer / rate / payment) were removed
+ * — the admin sets all three at approval. The dispatcher supplies only what
+ * physically ships.
  *
  * Reuses the existing `sale_bundle` action so inventoryService applies
  * the cart (sold-mark + ledger DR + transactions row) exactly the same
@@ -52,10 +53,7 @@
  *   bs:expand:<shadeKey>           (collapse/expand a cart line)
  *   bs:rm_line:<key>
  *   bs:rm_bale:<baleUid>
- *   bs:proceed                     (advance from cart → customer)
- *   bs:cust:<id|new|none>
- *   bs:rate:<num>                  (one-tap apply suggested rate)
- *   bs:pay:<mode>
+ *   bs:proceed                     (advance from cart → confirm)
  *   bs:submit
  */
 
@@ -66,18 +64,16 @@ const shadesRepository    = require('../repositories/shadesRepository');
 const designAssetsRepository = require('../repositories/designAssetsRepository');
 const transactionsRepository = require('../repositories/transactionsRepository');
 const bundleSaleService   = require('../services/bundleSaleService');
-const rateSuggestionService = require('../services/rateSuggestionService');
 const approvalEvents      = require('../events/approvalEvents');
 const auth                = require('../middlewares/auth');
 const logger              = require('../utils/logger');
-const { chunk, rowsFor }  = require('../utils/flowKit');
+const { rememberRequesterCard } = require('../utils/requesterCard');
+const { rowsFor }         = require('../utils/flowKit');
 const { isNotModified }   = require('../utils/telegramUI');
 const {
   buildShadeNameMap, buildShadeLabel, layoutShadeRows, formatShadeRef,
 } = require('../utils/shadeButtons');
 
-const MAX_RATE_NGN = 5_000_000;
-const PAYMENT_MODES = ['Cash', 'Bank Transfer', 'Pending'];
 // This flow sells in individual than(s), so the shade/bale buttons count
 // thans rather than the "bale" unit the Supply picker uses.
 const THAN_UNIT = { singular: 'than', plural: 'thans' };
@@ -627,7 +623,7 @@ async function renderCart(bot, chatId, userId) {
   }
 
   rows.push([{ text: '➕ Add more thans', callback_data: 'bs:back_to_shades' }]);
-  rows.push([{ text: '✅ Proceed to customer', callback_data: 'bs:proceed' }]);
+  rows.push([{ text: '✅ Proceed to review', callback_data: 'bs:proceed' }]);
   rows.push(cancelRow());
 
   await render(bot, chatId, userId, text, rows);
@@ -637,90 +633,9 @@ async function renderCart(bot, chatId, userId) {
 /*  Customer / rate / payment / confirm                                 */
 /* ───────────────────────────────────────────────────────────────────── */
 
-async function renderCustomerPicker(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  if (!session) return;
-  session.step = 'pick_customer';
-  // _custView distinguishes the three screens that all sit on the
-  // 'pick_customer' step, so ⬅ Back steps up ONE level instead of jumping
-  // straight to the cart from the all-list / search results.
-  session._custView = 'picker';
-  sessionStore.set(userId, session);
 
-  // Suggest recent customers on this design first.
-  let recent = [];
-  try { recent = await transactionsRepository.getCustomersByDesign(session.design); } catch (_) {}
-  const rows = recent.slice(0, 6).map((name, i) => ([{ text: `👤 ${name}`, callback_data: `bs:cust:r:${i}` }]));
-  session._recentCustomers = recent.slice(0, 6);
-  sessionStore.set(userId, session);
-  // TAP-1 — browse-all comes before search so field staff never HAVE to
-  // type: recent buyers → 📋 all customers (paginated) → search fallback.
-  rows.push([{ text: '📋 All customers', callback_data: 'bs:cust:all:0' }]);
-  rows.push([{ text: '🔎 Search by name', callback_data: 'bs:cust:search' }]);
-  rows.push([{ text: '➕ Walk-in (no record)', callback_data: 'bs:cust:walkin' }]);
-  rows.push(backRow());
-  rows.push(cancelRow());
 
-  let head = '👤 *Pick customer*\n\n';
-  if (recent.length) head += `_Recent buyers of_ *${escapeMd(session.design)}*:`;
-  else head += `_No recorded sales of_ *${escapeMd(session.design)}* _yet. Browse all, search, or walk-in._`;
-  await render(bot, chatId, userId, head, rows);
-}
 
-const CUST_PAGE_SIZE = 10;
-
-/**
- * TAP-1 — tappable, paginated list of ALL (non-inactive) customers so a
- * seller can always pick without typing. Mirrors the supply flow's
- * "See All" customer picker.
- */
-async function renderAllCustomersPage(bot, chatId, userId, page = 0) {
-  const session = sessionStore.get(userId);
-  if (!session) return;
-  session.step = 'pick_customer';
-  session._custView = 'all';
-  let all = [];
-  try { all = await customersRepository.getAll(); } catch (_) { /* empty list path below */ }
-  const names = [...new Set(all
-    .filter((c) => String(c.status || 'Active').toLowerCase() !== 'inactive')
-    .map((c) => c.name)
-    .filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  if (!names.length) {
-    session._allCustSlice = [];
-    sessionStore.set(userId, session);
-    await render(bot, chatId, userId,
-      '👤 *All customers*\n\n_No customers recorded yet — use search or walk-in._',
-      [[{ text: '🔎 Search by name', callback_data: 'bs:cust:search' }], backRow(), cancelRow()]);
-    return;
-  }
-  const pages = Math.max(1, Math.ceil(names.length / CUST_PAGE_SIZE));
-  const p = Math.min(Math.max(0, page), pages - 1);
-  const slice = names.slice(p * CUST_PAGE_SIZE, (p + 1) * CUST_PAGE_SIZE);
-  session._allCustSlice = slice;
-  sessionStore.set(userId, session);
-  const rows = chunk(slice.map((n, i) => ({ text: `👤 ${n}`, callback_data: `bs:cust:a:${i}` })), 2);
-  const nav = [];
-  if (p > 0) nav.push({ text: '⬅️ Prev', callback_data: `bs:cust:all:${p - 1}` });
-  if (p < pages - 1) nav.push({ text: `More (${names.length - (p + 1) * CUST_PAGE_SIZE}) ➡️`, callback_data: `bs:cust:all:${p + 1}` });
-  if (nav.length) rows.push(nav);
-  rows.push([{ text: '🔎 Search by name', callback_data: 'bs:cust:search' }]);
-  rows.push(backRow());
-  rows.push(cancelRow());
-  await render(bot, chatId, userId,
-    `👤 *All customers* — page ${p + 1}/${pages} (${names.length})\n\nPick one:`, rows);
-}
-
-async function renderCustomerSearchPrompt(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  if (!session) return;
-  session.step = 'await_customer_search';
-  session._custView = 'search';
-  sessionStore.set(userId, session);
-  await render(bot, chatId, userId,
-    '🔎 *Search customer*\n\nType a few letters of the customer name. I\'ll show matches.',
-    [backRow(), cancelRow()],
-  );
-}
 
 async function handleCustomerSearch(bot, chatId, userId, query) {
   const session = sessionStore.get(userId);
@@ -744,76 +659,9 @@ async function handleCustomerSearch(bot, chatId, userId, query) {
   );
 }
 
-async function pickCustomer(bot, chatId, userId, name) {
-  const session = sessionStore.get(userId);
-  if (!session) return;
-  session.customer = name;
-  session.step = 'enter_rate';
-  sessionStore.set(userId, session);
-  await renderRatePicker(bot, chatId, userId);
-}
 
-async function renderRatePicker(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  if (!session) return;
-  const sug = await rateSuggestionService.suggestFor({
-    design: session.design,
-    customer: session.customer,
-    warehouse: session.warehouse,
-  });
-  session._suggestion = sug;
-  sessionStore.set(userId, session);
 
-  let text = `💰 *Per-yard rate*  ·  ${escapeMd(session.design)} → ${escapeMd(session.customer)}\n\n`;
-  text += rateSuggestionService.formatSuggestionLines(sug);
-  text += `\n\nType the rate per yard (₦), or tap one of the suggestions:`;
-  const rows = [];
-  if (sug.lastCustomerRate) rows.push([{ text: `🎯 ${fmtNgn(sug.lastCustomerRate)} (last to ${session.customer})`, callback_data: `bs:rate:${sug.lastCustomerRate}` }]);
-  if (sug.lastAnyRate && sug.lastAnyRate !== sug.lastCustomerRate) rows.push([{ text: `📊 ${fmtNgn(sug.lastAnyRate)} (last sale)`, callback_data: `bs:rate:${sug.lastAnyRate}` }]);
-  if (sug.median30dRate) rows.push([{ text: `📅 ${fmtNgn(sug.median30dRate)} (30d median)`, callback_data: `bs:rate:${sug.median30dRate}` }]);
-  rows.push(backRow());
-  rows.push(cancelRow());
-  await render(bot, chatId, userId, text, rows);
-}
 
-async function applyRate(bot, chatId, userId, rate) {
-  const session = sessionStore.get(userId);
-  if (!session) return;
-  if (!isFinite(rate) || rate <= 0 || rate > MAX_RATE_NGN) {
-    await renderError(bot, chatId, userId, `Rate must be a positive number ≤ ${MAX_RATE_NGN.toLocaleString()} NGN.`);
-    return;
-  }
-  session.rate = +rate;
-  if (session._suggestion && session._suggestion.floorRate && session.rate < session._suggestion.floorRate) {
-    session.step = 'confirm_below_floor';
-    sessionStore.set(userId, session);
-    await render(bot, chatId, userId,
-      `⚠️ *Below cost-recovery floor*\n\n`
-      + `You entered *${fmtNgn(session.rate)}/yd*. The landed-cost floor is *${fmtNgn(session._suggestion.floorRate)}/yd*.\n\n`
-      + `Selling below the floor books a loss on this batch. Continue anyway?`,
-      [
-        [{ text: '✅ Yes, accept loss', callback_data: 'bs:rate_accept' }],
-        [{ text: '✏️ Enter a different rate', callback_data: 'bs:back' }],
-        cancelRow(),
-      ]);
-    return;
-  }
-  session.step = 'pick_payment';
-  sessionStore.set(userId, session);
-  await renderPaymentPicker(bot, chatId, userId);
-}
-
-async function renderPaymentPicker(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  if (!session) return;
-  const rows = PAYMENT_MODES.map((m) => ([{ text: `💳 ${m}`, callback_data: `bs:pay:${m}` }]));
-  rows.push(backRow());
-  rows.push(cancelRow());
-  await render(bot, chatId, userId,
-    `💳 *Payment mode*\n\n• Rate: *${fmtNgn(session.rate)}/yd*\n• Pick how the customer is paying:`,
-    rows,
-  );
-}
 
 async function renderConfirm(bot, chatId, userId) {
   const session = sessionStore.get(userId);
@@ -837,7 +685,6 @@ async function renderConfirm(bot, chatId, userId) {
   }
 
   const totals = bundleSaleService.totals(session.cart);
-  const amount = totals.yards * session.rate;
   const summary = bundleSaleService.summarise(session.cart);
   const shadesList = await shadesRepository.getAll();
   const lines = summary.map((s) => {
@@ -847,10 +694,9 @@ async function renderConfirm(bot, chatId, userId) {
   let text = `🧾 *Confirm Bundle Sale*\n\n`
     + `*${escapeMd(session.design)}* @ *${escapeMd(session.warehouse || '—')}*\n`
     + `${lines.join('\n')}\n\n`
-    + `👤 *${escapeMd(session.customer)}*\n`
-    + `💰 ${fmtNgn(session.rate)}/yd × ${fmtQty(totals.yards)} yd = *${fmtNgn(amount)}*\n`
-    + `💳 ${escapeMd(session.paymentMode)}\n\n`
-    + `_Sale will be queued for admin approval; cart is locked at submission._`;
+    + `*Total: ${fmtQty(totals.yards)} yd*\n\n`
+    + `_Queued for admin approval; cart is locked at submission._\n`
+    + `_The admin assigns the customer, rate and payment — you will get the customer name and number back here once approved._`;
   await render(bot, chatId, userId, text, [
     [{ text: '✅ Submit for approval', callback_data: 'bs:submit' }],
     backRow(),
@@ -878,25 +724,25 @@ async function submit(bot, chatId, userId) {
     const { requestId } = await bundleSaleService.submitForApproval({
       cart: session.cart,
       sale: {
-        customer: session.customer,
+        // DSP-1 — customer, rate and payment are the admin's to set at
+        // approval; the dispatcher supplies only what physically ships.
+        customer: '',
         salesDate: todayIso,
         salesPerson: sellerLabel,
-        paymentMode: session.paymentMode,
-        pricePerYard: session.rate,
+        paymentMode: '',
+        pricePerYard: 0,
         designSummary: session.design,
         warehouse: session.warehouse,
-        amountPaid: session.paymentMode === 'Cash' ? totals.yards * session.rate : 0,
+        amountPaid: 0,
       },
       user: { id: userId, userId, username: '' },
       riskReason: 'Bundle sale (Kano poly-colour) requires admin approval.',
     });
     const isAdm = auth.isAdmin(userId);
     const excludeId = isAdm ? userId : undefined;
-    const amount = totals.yards * session.rate;
     const detail =
       `🧵 Bundle sale — ${session.design} @ ${session.warehouse || '—'}\n`
-      + `${totals.thans} than · ${fmtQty(totals.yards)} yd · ${fmtNgn(session.rate)}/yd = ${fmtNgn(amount)}\n`
-      + `👤 ${session.customer}  💳 ${session.paymentMode}`;
+      + `${totals.thans} than · ${fmtQty(totals.yards)} yd`;
     await approvalEvents.notifyAdminsApprovalRequest(
       bot, requestId, sellerLabel, detail,
       'Bundle sale (Kano poly-colour) requires admin approval.', excludeId,
@@ -905,13 +751,13 @@ async function submit(bot, chatId, userId) {
       `⏳ *Submitted for approval*\n\n`
       + `• Request: \`${requestId}\`\n`
       + `• Items: *${totals.thans} than · ${fmtQty(totals.yards)} yd*\n`
-      + `• Total: *${fmtNgn(amount)}*\n`
       + `• Approver: 2nd admin (you cannot self-approve)\n\n`
-      + `_When approved, stock flips to sold, ledger updates, and a Transactions row is appended._`,
+      + `_The admin assigns the customer, rate and payment when approving — you will get the customer name and number back here once approved._`,
       [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]],
     );
+    await rememberRequesterCard(requestId, chatId, userId);
     sessionStore.clear(userId);
-    logger.info(`bundleSaleFlow.submit: req=${requestId} thans=${totals.thans} yards=${totals.yards} rate=${session.rate} by=${userId}`);
+    logger.info(`bundleSaleFlow.submit: req=${requestId} thans=${totals.thans} yards=${totals.yards} by=${userId}`);
   } catch (e) {
     logger.error('bundleSaleFlow.submit error', e.message);
     await renderError(bot, chatId, userId, e.message || 'Failed to submit.');
@@ -943,16 +789,6 @@ async function handleText(bot, msg) {
   if (session.step === 'await_customer_search') {
     if (raw.length < 2) { await renderError(bot, chatId, userId, 'Type at least 2 characters to search.'); return true; }
     await handleCustomerSearch(bot, chatId, userId, raw);
-    return true;
-  }
-
-  if (session.step === 'enter_rate' || session.step === 'confirm_below_floor') {
-    const v = parseFloat(raw.replace(/[,₦\s]/g, ''));
-    if (!isFinite(v) || v <= 0 || v > MAX_RATE_NGN) {
-      await renderError(bot, chatId, userId, `Rate must be a positive number ≤ ${MAX_RATE_NGN.toLocaleString()}.`);
-      return true;
-    }
-    await applyRate(bot, chatId, userId, v);
     return true;
   }
 
@@ -1181,60 +1017,9 @@ async function handleCallback(bot, query) {
   if (data === 'bs:smartpack') { await renderSmartPackPrompt(bot, chatId, userId); return true; }
   if (data === 'bs:smartpack_apply') { await commitSmartPack(bot, chatId, userId); return true; }
 
-  if (data === 'bs:proceed') { await renderCustomerPicker(bot, chatId, userId); return true; }
-
-  if (data.startsWith('bs:cust:r:')) {
-    const i = parseInt(data.slice('bs:cust:r:'.length), 10);
-    const name = (session._recentCustomers || [])[i];
-    if (name) await pickCustomer(bot, chatId, userId, name);
-    return true;
-  }
-  if (data.startsWith('bs:cust:s:')) {
-    const i = parseInt(data.slice('bs:cust:s:'.length), 10);
-    const hit = (session._searchHits || [])[i];
-    if (hit) await pickCustomer(bot, chatId, userId, hit.name);
-    return true;
-  }
-  // TAP-1 — paginated all-customers browse ('bs:cust:all:<page>' pages,
-  // 'bs:cust:a:<i>' picks from the current page slice).
-  if (data.startsWith('bs:cust:all:')) {
-    const page = parseInt(data.slice('bs:cust:all:'.length), 10) || 0;
-    await renderAllCustomersPage(bot, chatId, userId, page);
-    return true;
-  }
-  if (data.startsWith('bs:cust:a:')) {
-    const i = parseInt(data.slice('bs:cust:a:'.length), 10);
-    const name = (session._allCustSlice || [])[i];
-    if (name) await pickCustomer(bot, chatId, userId, name);
-    return true;
-  }
-  if (data === 'bs:cust:search')       { await renderCustomerSearchPrompt(bot, chatId, userId); return true; }
-  if (data === 'bs:cust:walkin')       { await pickCustomer(bot, chatId, userId, 'Walk-in'); return true; }
-  if (data === 'bs:cust:walkin_named') {
-    const nm = session._walkinName || 'Walk-in';
-    await pickCustomer(bot, chatId, userId, nm);
-    return true;
-  }
-
-  if (data.startsWith('bs:rate:')) {
-    const v = parseFloat(data.slice('bs:rate:'.length));
-    await applyRate(bot, chatId, userId, v);
-    return true;
-  }
-
-  if (data === 'bs:rate_accept') {
-    session.step = 'pick_payment';
-    sessionStore.set(userId, session);
-    await renderPaymentPicker(bot, chatId, userId);
-    return true;
-  }
-
-  if (data.startsWith('bs:pay:')) {
-    session.paymentMode = data.slice('bs:pay:'.length);
-    sessionStore.set(userId, session);
-    await renderConfirm(bot, chatId, userId);
-    return true;
-  }
+  // DSP-1 — cart goes straight to confirm; customer, rate and payment
+  // are assigned by the admin at approval.
+  if (data === 'bs:proceed') { await renderConfirm(bot, chatId, userId); return true; }
 
   if (data === 'bs:submit') { await submit(bot, chatId, userId); return true; }
 
@@ -1301,42 +1086,12 @@ async function stepBack(bot, chatId, userId) {
       sessionStore.set(userId, session);
       await renderShadePicker(bot, chatId, userId);
       break;
-    case 'await_customer_search':
-      // Search prompt / results sit one level BELOW the customer picker.
-      await renderCustomerPicker(bot, chatId, userId);
-      break;
-    case 'pick_customer':
-      if (session._custView === 'all') {
-        // All-customers page → back to the picker, not out to the cart.
-        await renderCustomerPicker(bot, chatId, userId);
-        break;
-      }
+    // DSP-1 — confirm now sits directly above the cart: the customer, rate
+    // and payment levels moved to the admin's approval chain.
+    case 'confirm':
       session.step = 'cart_review';
-      session._custView = null;
       sessionStore.set(userId, session);
       await renderCart(bot, chatId, userId);
-      break;
-    case 'confirm_below_floor':
-      // "✏️ Enter a different rate" must land on the RATE screen its label
-      // promises — not back on the customer picker.
-      session.step = 'enter_rate';
-      sessionStore.set(userId, session);
-      await renderRatePicker(bot, chatId, userId);
-      break;
-    case 'enter_rate':
-      session.step = 'pick_customer';
-      sessionStore.set(userId, session);
-      await renderCustomerPicker(bot, chatId, userId);
-      break;
-    case 'pick_payment':
-      session.step = 'enter_rate';
-      sessionStore.set(userId, session);
-      await renderRatePicker(bot, chatId, userId);
-      break;
-    case 'confirm':
-      session.step = 'pick_payment';
-      sessionStore.set(userId, session);
-      await renderPaymentPicker(bot, chatId, userId);
       break;
     default:
       await render(bot, chatId, userId, '❌ Cancelled.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
@@ -1350,8 +1105,7 @@ module.exports = {
   handleText,
   _internals: {
     renderContainerPicker, renderWarehousePicker, renderDesignPicker, renderShadePicker,
-    renderBalePicker, renderBaleDetail, renderCart, renderCustomerPicker,
-    renderRatePicker, renderPaymentPicker, renderConfirm, submit,
+    renderBalePicker, renderBaleDetail, renderCart, renderConfirm, submit,
     applySmartPack, commitSmartPack, stepBack, thanKey, baleKeyOf,
     rowInBatch, listWarehousesInBatch,
   },

@@ -4,11 +4,14 @@
  * ST-1 Part A — 💰 Sell Bale: the fully tappable sale flow
  * (specs/ST-1_TAPPABLE_SALE.md, owner-locked 14-Jul-2026).
  *
- * Kills the typo sources of typed sales: customer, salesperson, bank and
- * date are all chips backed by real data. Steps:
+ * Kills the typo sources of typed sales: salesperson and date are chips
+ * backed by real data. Steps:
  *   container → warehouse → design (+ catalogue photo) → bale multi-select
- *   cart → customer (recent + browse + search-by-typing over EXISTING
- *   customers only) → salesperson → payment → date → review.
+ *   cart → salesperson → date → review.
+ *
+ * DSP-1 (owner 26-Jul): the customer and payment steps were removed — the
+ * admin assigns customer, rate and payment at approval, and the result is
+ * written back into the dispatcher's submitted card.
  *
  * On review-confirm the flow hands off to the PROVEN typed-sale pipeline:
  * salesFlowService.startSession(...) + awaitingDocument → the existing
@@ -23,8 +26,6 @@
 
 const sessionStore = require('../utils/sessionStore');
 const inventoryRepository = require('../repositories/inventoryRepository');
-const transactionsRepository = require('../repositories/transactionsRepository');
-const customersRepository = require('../repositories/customersRepository');
 const usersRepository = require('../repositories/usersRepository');
 const salesFlow = require('../services/salesFlowService');
 const designAssetsService = require('../services/designAssetsService');
@@ -190,7 +191,7 @@ async function nextPreloadStep(bot, chatId, userId) {
     `💰 *Sell Bale — ${s.cart.length} bale(s) loaded from your message* (${fmtQty(yds)} yds)\n\n${lines.join('\n')}\n\n`
     + 'Continue with taps — customer, salesperson, bank, date:',
     [
-      [{ text: `👤 Pick customer (${s.cart.length} bales)`, callback_data: 'sb:rev' }],
+      [{ text: `🧑 Pick salesperson (${s.cart.length} bales)`, callback_data: 'sb:rev' }],
       [{ text: '➕ Add more bales', callback_data: 'sb:more' }],
       cancelRow(),
     ]);
@@ -303,71 +304,7 @@ async function showBales(bot, chatId, userId) {
   await render(bot, chatId, userId, `${header(s)}\n\n*${esc(s.design)}* — tap a bale to add it to the sale:`, rows);
 }
 
-async function showCustomers(bot, chatId, userId, filter) {
-  const s = getSession(userId);
-  s.step = 'customer'; save(userId, s);
-  let names = [];
-  try {
-    const all = await customersRepository.getAll();
-    names = all.map((c) => c.name).filter(Boolean);
-  } catch (_) {}
-  let list;
-  let title;
-  if (filter) {
-    const f = filter.toLowerCase();
-    list = names.filter((n) => n.toLowerCase().includes(f)).slice(0, MAX_CHIPS);
-    title = list.length ? `Customers matching “${esc(filter)}”:` : `No customer matches “${esc(filter)}” — type again, or browse:`;
-  } else {
-    // Recent buyers first (newest sale rows), then browse covers the rest.
-    let recent = [];
-    try {
-      const txns = await transactionsRepository.getLast(200);
-      const seen = new Set();
-      for (let i = txns.length - 1; i >= 0 && recent.length < 6; i--) {
-        const n = String(txns[i].customerName || '').trim();
-        if (n && /^(sell|sale)/i.test(String(txns[i].action || '')) && !seen.has(n.toLowerCase())) {
-          seen.add(n.toLowerCase()); recent.push(n);
-        }
-      }
-    } catch (_) {}
-    list = recent.length ? recent : names.slice(0, MAX_CHIPS);
-    title = recent.length ? 'Recent customers — tap, type a name to search, or browse:' : 'Customers — tap, or type a name to search:';
-  }
-  s._customers = list; save(userId, s);
-  const rows = [];
-  for (let i = 0; i < list.length; i += 2) {
-    const row = [{ text: `👤 ${list[i]}`, callback_data: `sb:cu:${i}` }];
-    if (list[i + 1]) row.push({ text: `👤 ${list[i + 1]}`, callback_data: `sb:cu:${i + 1}` });
-    rows.push(row);
-  }
-  rows.push([{ text: '📖 Browse all customers', callback_data: 'sb:cub:0' }]);
-  rows.push(cancelRow());
-  await render(bot, chatId, userId, `${header(s)}\n\n${title}\n_New customers are added via 👥 CRM → Add Customer first._`, rows);
-}
 
-async function showCustomerBrowse(bot, chatId, userId, page) {
-  const s = getSession(userId);
-  let names = [];
-  try { names = (await customersRepository.getAll()).map((c) => c.name).filter(Boolean).sort(); } catch (_) {}
-  const per = MAX_CHIPS;
-  const pages = Math.max(1, Math.ceil(names.length / per));
-  const p = Math.min(Math.max(0, page), pages - 1);
-  const slice = names.slice(p * per, p * per + per);
-  s._customers = slice; s.step = 'customer'; save(userId, s);
-  const rows = [];
-  for (let i = 0; i < slice.length; i += 2) {
-    const row = [{ text: `👤 ${slice[i]}`, callback_data: `sb:cu:${i}` }];
-    if (slice[i + 1]) row.push({ text: `👤 ${slice[i + 1]}`, callback_data: `sb:cu:${i + 1}` });
-    rows.push(row);
-  }
-  const nav = [];
-  if (p > 0) nav.push({ text: '⬅️', callback_data: `sb:cub:${p - 1}` });
-  nav.push({ text: `${p + 1}/${pages}`, callback_data: 'sb:noop' });
-  if (p < pages - 1) nav.push({ text: '➡️', callback_data: `sb:cub:${p + 1}` });
-  rows.push(nav);
-  rows.push(cancelRow());
-  await render(bot, chatId, userId, `${header(s)}\n\nAll customers (A–Z) — tap or type to search:`, rows);
-}
 
 async function showSalespersons(bot, chatId, userId) {
   const s = getSession(userId);
@@ -385,25 +322,9 @@ async function showSalespersons(bot, chatId, userId) {
     rows.push(row);
   }
   rows.push(cancelRow());
-  await render(bot, chatId, userId, `${header(s)}\n\n👤 Customer: *${esc(s.customer)}*\n\nSelect salesperson:`, rows);
+  await render(bot, chatId, userId, `${header(s)}\n\nSelect salesperson:`, rows);
 }
 
-async function showPayment(bot, chatId, userId) {
-  const s = getSession(userId);
-  let opts = ['Cash', 'Credit'];
-  try { opts = await salesFlow.getPaymentOptions(); } catch (_) {}
-  opts = [...opts, 'Not yet paid'];
-  s._payOpts = opts; s.step = 'payment'; save(userId, s);
-  const rows = [];
-  for (let i = 0; i < opts.length; i += 2) {
-    const icon = (o) => (/cash/i.test(o) ? '💵' : /credit|not yet/i.test(o) ? '🕐' : '🏦');
-    const row = [{ text: `${icon(opts[i])} ${opts[i]}`, callback_data: `sb:py:${i}` }];
-    if (opts[i + 1]) row.push({ text: `${icon(opts[i + 1])} ${opts[i + 1]}`, callback_data: `sb:py:${i + 1}` });
-    rows.push(row);
-  }
-  rows.push(cancelRow());
-  await render(bot, chatId, userId, `${header(s)}\n\nSelect payment mode:`, rows);
-}
 
 const CALENDAR_MAX_DAYS_BACK = 90;
 
@@ -510,15 +431,14 @@ async function showReview(bot, chatId, userId) {
     ...lines,
     `  *Total: ${s.cart.length} bale${s.cart.length === 1 ? '' : 's'} (${thans} thans), ${fmtQty(yds)} yds*`,
     '',
-    `👤 Customer: *${esc(s.customer)}*`,
     `🧑 Salesperson: *${esc(s.salesperson)}*`,
-    `💳 Payment: *${esc(s.paymentMode)}*`,
     `📅 Date: *${fmtDate(s.salesDate)}*`,
     ...(s.backdatedDays
       ? ['', `⚠️ *BACKDATED — ${s.backdatedDays} days in the past.* Both admins will see this flag and it is stamped in the sales record.`]
       : []),
     '',
-    '_Next: attach the sales bill photo, then the sale goes for admin approval._',
+    '_Next: attach the sales bill photo, then it goes for admin approval._',
+    '_The admin assigns the customer, rate and payment — you will get the customer name and number back here once approved._',
   ].join('\n');
   await render(bot, chatId, userId, text, [
     [{ text: '📎 Attach bill & submit', callback_data: 'sb:fin' }],
@@ -534,9 +454,11 @@ async function finalize(bot, chatId, userId) {
   const items = s.cart.map((c) => ({ type: 'package', packageNo: c.packageNo }));
   const saleType = items.length > 1 ? 'sell_batch' : 'sell_package';
   salesFlow.startSession(userId, saleType, items, {
-    customer: s.customer,
+    // DSP-1 — customer and payment mode are assigned by the admin at
+    // approval; the dispatcher supplies only what physically ships.
+    customer: '',
     salesperson: s.salesperson,
-    paymentMode: s.paymentMode,
+    paymentMode: '',
     salesDate: s.salesDate,
   });
   const saleSession = salesFlow.getSession(userId);
@@ -627,18 +549,11 @@ async function handleCallback(bot, callbackQuery) {
       return true;
     }
     if (data === 'sb:more') { await ack(); await showDesigns(bot, chatId, userId); return true; }
+    // DSP-1 — cart goes straight to salesperson: the customer and the
+    // payment terms are the admin's to set at approval.
     if (data === 'sb:rev') {
       if (!s.cart.length) { await ack('Cart is empty.'); return true; }
       await ack();
-      await showCustomers(bot, chatId, userId);
-      return true;
-    }
-    if (data.startsWith('sb:cub:')) { await ack(); await showCustomerBrowse(bot, chatId, userId, parseInt(data.slice(7), 10) || 0); return true; }
-    if (data.startsWith('sb:cu:')) {
-      const c = (s._customers || [])[parseInt(data.slice(6), 10)];
-      if (!c) { await ack('Expired — pick again.'); return true; }
-      s.customer = c; save(userId, s);
-      await ack(c);
       await showSalespersons(bot, chatId, userId);
       return true;
     }
@@ -647,14 +562,6 @@ async function handleCallback(bot, callbackQuery) {
       if (!sp) { await ack('Expired — pick again.'); return true; }
       s.salesperson = sp; save(userId, s);
       await ack(sp);
-      await showPayment(bot, chatId, userId);
-      return true;
-    }
-    if (data.startsWith('sb:py:')) {
-      const p = (s._payOpts || [])[parseInt(data.slice(6), 10)];
-      if (!p) { await ack('Expired — pick again.'); return true; }
-      s.paymentMode = p; save(userId, s);
-      await ack(p);
       await showDates(bot, chatId, userId);
       return true;
     }
@@ -693,11 +600,6 @@ async function handleText(bot, msg) {
   const s = getSession(userId);
   if (!s) return false;
   const q = String(msg.text || '').trim();
-  if (s.step === 'customer') {
-    if (!q || q.length > 60) return false;
-    await showCustomers(bot, msg.chat.id, userId, q);
-    return true;
-  }
   if (s.step === 'date') {
     if (!q || q.length > 30) return false;
     // Owner refinement 21-Jul: a TYPED date NEVER executes — it only

@@ -40,6 +40,53 @@ const pendingReason = new Map();
  * Uses direct ID lookup (getByRequestId) as primary, falls back to provided userId.
  * Logs failures instead of silently swallowing them.
  */
+/**
+ * DSP-1 — close the loop on the dispatcher's own card.
+ *
+ * The dispatcher raised the request without knowing the buyer, so the
+ * approval result has to come back to THEM: the card they submitted is
+ * edited in place to show the approval plus the customer's name and phone,
+ * which is what they need to actually dispatch.
+ *
+ * Editing can fail for ordinary reasons — the card is old, the chat was
+ * cleared, Telegram refuses the edit — and none of them should cost the
+ * dispatcher the information, so every failure falls back to a fresh
+ * message. Returns nothing; delivery is best-effort by design.
+ */
+async function updateRequesterCard(bot, item, requestId, requestingUser, headline) {
+  const aj = (item && item.actionJSON) || {};
+  const customer = String(aj.customer || '').trim();
+  let contact = '';
+  if (customer) {
+    try {
+      const crmService = require('../services/crmService');
+      const cust = await crmService.getCustomer(customer);
+      const phone = cust && (cust.phone || cust.phone_number);
+      if (phone) contact = `\n📞 ${phone}`;
+    } catch (e) {
+      logger.warn(`DSP-1: customer contact lookup failed for ${requestId}: ${e.message}`);
+    }
+  }
+  const text = `${headline}\n\n👤 Customer: *${customer || '—'}*${contact}\nRequest: \`${requestId}\``;
+
+  const chatId = aj.requesterChatId || requestingUser;
+  const messageId = aj.requesterMessageId;
+  if (chatId && messageId) {
+    try {
+      await bot.editMessageText(text, {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] },
+      });
+      return;
+    } catch (e) {
+      logger.warn(`DSP-1: could not edit requester card for ${requestId}: ${e.message}`);
+    }
+  }
+  await notifyEmployee(bot, requestingUser, requestId, text.replace(/[*`]/g, ''));
+}
+
 async function notifyEmployee(bot, requestingUser, requestId, message) {
   let userId = requestingUser;
   if (!userId) {
@@ -137,30 +184,210 @@ async function getRegisteredBanks() {
   } catch (_) { return []; }
 }
 
+/**
+ * DSP-1 — Step 1 of the approval chain: WHO is this going to?
+ *
+ * The dispatcher no longer picks a customer (owner decision, 26-Jul-2026):
+ * they raise what physically leaves the warehouse, and the admin attaches
+ * the buyer here, at approval. That is a control point — nothing ships
+ * before management has named the customer.
+ *
+ * Offers recent buyers as one-tap chips, the full list paginated, a
+ * ➕ New customer path (moved here from the sale flows), and free-text
+ * search. Typing works at every step, as everywhere else in this chain.
+ */
+async function sendCustomerStep(bot, chatId, state, note) {
+  state.step = 'customer';
+  const recent = await getRecentBuyers();
+  state._custRecent = recent.slice(0, 8);
+  const rows = [];
+  for (let i = 0; i < state._custRecent.length; i += 2) {
+    const row = [{ text: `👤 ${state._custRecent[i].slice(0, 26)}`, callback_data: `enr:cust:r:${i}` }];
+    if (state._custRecent[i + 1]) row.push({ text: `👤 ${state._custRecent[i + 1].slice(0, 26)}`, callback_data: `enr:cust:r:${i + 1}` });
+    rows.push(row);
+  }
+  rows.push([{ text: '📋 All customers', callback_data: 'enr:cust:all:0' },
+    { text: '➕ New customer', callback_data: 'enr:cust:new' }]);
+  const what = describeSaleForCustomerStep(state);
+  try {
+    await bot.sendMessage(chatId,
+      `${note ? `${note}\n\n` : ''}📋 *Confirm sale details*\n${what}\n\n`
+      + '*Step 1 — Customer:* tap a buyer below, or reply with a name to search.',
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+  } catch (_) { /* best-effort */ }
+}
+
+/** One line describing what is being dispatched, so the admin names the buyer with context. */
+function describeSaleForCustomerStep(state) {
+  const aj = (state.item && state.item.actionJSON) || {};
+  const bits = [];
+  if (state.designs && state.designs.length) bits.push(`Design(s): ${state.designs.join(', ')}`);
+  if (aj.packageNo) bits.push(`Bale: ${aj.packageNo}`);
+  else if (Array.isArray(aj.items) && aj.items.length) bits.push(`${aj.items.length} item(s)`);
+  if (aj.warehouse) bits.push(`From: ${aj.warehouse}`);
+  return bits.length ? `\n${bits.join(' · ')}` : '';
+}
+
+/** Buyers seen most recently in Transactions, newest first, de-duplicated. */
+async function getRecentBuyers() {
+  try {
+    const transactionsRepository = require('../repositories/transactionsRepository');
+    const rows = await transactionsRepository.getLast(300);
+    const seen = [];
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i];
+      if (!/^(sell|sale)/i.test(String(r.action || ''))) continue;
+      const n = String(r.customerName || '').trim();
+      if (n && !seen.includes(n)) seen.push(n);
+      if (seen.length >= 8) break;
+    }
+    return seen;
+  } catch (e) {
+    logger.warn(`getRecentBuyers failed: ${e.message}`);
+    return [];
+  }
+}
+
+/** DSP-1 — one page of the full customer list (active first, 10 per page). */
+async function sendCustomerPage(bot, chatId, state, page) {
+  const PER = 10;
+  let all = [];
+  try {
+    const customersRepository = require('../repositories/customersRepository');
+    all = (await customersRepository.getAll())
+      .filter((c) => String(c.status || 'Active').toLowerCase() !== 'inactive')
+      .map((c) => c.name)
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+  } catch (e) {
+    logger.warn(`DSP-1 customer list failed: ${e.message}`);
+  }
+  if (!all.length) {
+    try {
+      await bot.sendMessage(chatId, 'No customers on file yet — tap ➕ New customer, or reply with a name.',
+        { reply_markup: { inline_keyboard: [[{ text: '➕ New customer', callback_data: 'enr:cust:new' }]] } });
+    } catch (_) { /* best-effort */ }
+    return;
+  }
+  const pages = Math.max(1, Math.ceil(all.length / PER));
+  const p = Math.min(Math.max(0, page), pages - 1);
+  state._custPage = all.slice(p * PER, (p + 1) * PER);
+  const rows = state._custPage.map((n, i) => [{ text: `👤 ${n.slice(0, 40)}`, callback_data: `enr:cust:a:${i}` }]);
+  const nav = [];
+  if (p > 0) nav.push({ text: '⬅ Prev', callback_data: `enr:cust:all:${p - 1}` });
+  if (p < pages - 1) nav.push({ text: 'Next ➡', callback_data: `enr:cust:all:${p + 1}` });
+  if (nav.length) rows.push(nav);
+  rows.push([{ text: '⬅ Back', callback_data: 'enr:cust:back' }, { text: '➕ New customer', callback_data: 'enr:cust:new' }]);
+  try {
+    await bot.sendMessage(chatId, `📋 *All customers* (page ${p + 1}/${pages}) — or reply with a name to search.`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+  } catch (_) { /* best-effort */ }
+}
+
+/**
+ * Record the admin's customer choice on the QUEUE ROW, not just in memory.
+ *
+ * Writing it to actionJSON is what makes every downstream consumer work
+ * unchanged — inventoryService, the ledger, the invoice, reports and the
+ * duplicate detector all read aj.customer and none of them need to know
+ * the value arrived at approval time rather than at request time.
+ */
+async function assignCustomer(bot, chatId, state, name) {
+  const clean = String(name || '').trim();
+  if (!clean) return false;
+  try {
+    await approvalQueueRepository.updateActionJSON(state.requestId, { customer: clean });
+  } catch (e) {
+    // The in-memory copy still carries it into execution, so the sale is
+    // not lost — but the row on the sheet would not show who it went to.
+    logger.error(`DSP-1: could not persist customer on ${state.requestId}: ${e.message}`);
+    try { await bot.sendMessage(chatId, `⚠️ Customer recorded for this approval, but the queue row could not be updated (${e.message}).`); } catch (_) {}
+  }
+  if (state.item && state.item.actionJSON) state.item.actionJSON.customer = clean;
+  state.customer = clean;
+  await sendRateStep(bot, chatId, state);
+  return true;
+}
+
+/**
+ * DSP-1 — create a customer mid-approval and assign it.
+ *
+ * Created directly rather than queued: `add_customer` normally needs a
+ * second admin, but this admin is already exercising approval authority on
+ * this very request, and queueing here would deadlock the sale behind a
+ * second approval. If the write fails we still assign the typed name —
+ * losing an approved sale over a CRM row would be the worse outcome, and
+ * the ledger keys on the name either way.
+ */
+async function createAndAssignCustomer(bot, chatId, state, name, phone) {
+  const clean = String(name || '').trim();
+  if (!clean) { await sendCustomerStep(bot, chatId, state, '⚠️ No name given.'); return; }
+  const rawPhone = String(phone || '').trim();
+  try {
+    const customersRepository = require('../repositories/customersRepository');
+    const existing = await customersRepository.findByName(clean);
+    if (!existing) {
+      await customersRepository.append({
+        customer_id: `C-${Date.now()}`,
+        name: clean,
+        phone: rawPhone,
+        status: 'Active',
+      });
+      try {
+        const auditLogRepository = require('../repositories/auditLogRepository');
+        await auditLogRepository.append('customer_created_at_approval',
+          { requestId: state.requestId, name: clean }, String(state.adminId || ''));
+      } catch (_) { /* audit is best-effort */ }
+    }
+  } catch (e) {
+    logger.error(`DSP-1: could not create customer "${clean}": ${e.message}`);
+    try { await bot.sendMessage(chatId, `⚠️ Could not save the customer profile (${e.message}) — the sale will still record the name "${clean}".`); } catch (_) {}
+  }
+  state._newCustomerName = '';
+  await assignCustomer(bot, chatId, state, clean);
+}
+
 async function startApprovalEnrichment(bot, adminId, chatId, requestId, item, requestingUser) {
   const designs = await getDesignsForSale(item);
   const unit = DEFAULT_SALE_UNIT;
-  pendingEnrichment.set(adminId, {
-    requestId, step: 'rate', item, requestingUser, designs, unit,
-  });
+  const aj = (item && item.actionJSON) || {};
+  const state = {
+    requestId, step: 'rate', item, requestingUser, designs, unit, adminId, customer: aj.customer || '',
+  };
+  pendingEnrichment.set(adminId, state);
+
+  // DSP-1 — a request that already names a customer (anything queued before
+  // this change, and any path that still supplies one) keeps its buyer and
+  // goes straight to the rate step. Only customer-less requests are asked.
+  if (!String(aj.customer || '').trim()) {
+    await sendCustomerStep(bot, chatId, state);
+    return;
+  }
+  await sendRateStep(bot, chatId, state);
+}
+
+/** ST-1 Part B — Step 2: rate chips (the customer's last paid rate first). */
+async function sendRateStep(bot, chatId, state) {
+  state.step = 'rate';
+  const { designs, unit } = state;
   const designList = designs.length ? designs.join(', ') : 'this item';
+  const customer = state.customer || (state.item && state.item.actionJSON && state.item.actionJSON.customer) || '';
 
   // ST-1 Part B — tappable rate step: single-design sales offer the
   // customer's last-paid rate as a one-tap chip (owner decision); typing
-  // a rate still works exactly as before at every step.
-  const aj = (item && item.actionJSON) || {};
+  // a rate still works exactly as before at every step. This is why the
+  // customer step runs FIRST — without a buyer there is no last-paid rate.
   const rows = [];
   if (designs.length === 1) {
-    const last = await getLastPaidRate(aj.customer, designs[0]);
+    const last = await getLastPaidRate(customer, designs[0]);
     if (last) {
-      const st = pendingEnrichment.get(adminId);
-      st.lastPaidRate = last;
-      rows.push([{ text: `₦${Number(last).toLocaleString('en-NG')}/yd — last paid by ${String(aj.customer || '').slice(0, 24)}`, callback_data: `enr:rate:v` }]);
+      state.lastPaidRate = last;
+      rows.push([{ text: `₦${Number(last).toLocaleString('en-NG')}/yd — last paid by ${String(customer).slice(0, 24)}`, callback_data: `enr:rate:v` }]);
     }
   }
   rows.push([{ text: '✏️ Type a custom rate', callback_data: 'enr:rate:custom' }]);
   await bot.sendMessage(chatId,
-    `📋 *Confirm sale details*\n\nDesign(s): ${designList}\nUnit: ${unit} (Naira per ${unit})\n\n*Step 1 — Rate:* tap below, or reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\``,
+    `📋 *Confirm sale details*\n\nCustomer: *${customer || '—'}*\nDesign(s): ${designList}\nUnit: ${unit} (Naira per ${unit})\n\n*Step 2 — Rate:* tap below, or reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\``,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
@@ -179,7 +406,7 @@ async function sendPaymentStep(bot, chatId, state) {
   // registered yet, one tap opens 🏦 Manage Banks (admin-only anyway).
   rows.push([{ text: '🏦 Manage accounts', callback_data: 'act:manage_banks' }]);
   try {
-    await bot.sendMessage(chatId, '*Step 2 — Payment mode:* tap below, or reply with one of:\n• Cash\n• Credit\n• Paid to [Bank]\n• Not yet paid',
+    await bot.sendMessage(chatId, '*Step 3 — Payment mode:* tap below, or reply with one of:\n• Cash\n• Credit\n• Paid to [Bank]\n• Not yet paid',
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
   } catch (_) { /* best-effort */ }
 }
@@ -206,7 +433,7 @@ async function sendAmountStep(bot, chatId, state) {
   }
   rows.push([{ text: '✏️ Type the amount', callback_data: 'enr:amt:custom' }]);
   try {
-    await bot.sendMessage(chatId, '*Step 3 — Amount paid:* tap below, or reply with the amount received (Naira), e.g. 50000',
+    await bot.sendMessage(chatId, '*Step 4 — Amount paid:* tap below, or reply with the amount received (Naira), e.g. 50000',
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
   } catch (_) { /* best-effort */ }
 }
@@ -239,6 +466,65 @@ async function handleEnrichmentCallback(bot, callbackQuery) {
     };
     await runApprovedSaleWithEnrichment(bot, chatId, adminId, state.requestId, state.item, state.requestingUser, enrichment, fmt);
   };
+
+  // DSP-1 — Step 1 customer taps. Every branch ends either by assigning a
+  // buyer (which advances to the rate step) or by re-rendering a picker;
+  // none of them can fall through to execution without a customer.
+  if (data.startsWith('enr:cust:')) {
+    const rest = data.slice('enr:cust:'.length);
+    if (rest.startsWith('r:')) {
+      const name = (state._custRecent || [])[Number(rest.slice(2))];
+      if (!name) { await ack('That option expired — pick again.'); return true; }
+      await ack(name);
+      await assignCustomer(bot, chatId, state, name);
+      return true;
+    }
+    if (rest.startsWith('all:')) {
+      await ack();
+      await sendCustomerPage(bot, chatId, state, Number(rest.slice(4)) || 0);
+      return true;
+    }
+    if (rest.startsWith('a:')) {
+      const name = (state._custPage || [])[Number(rest.slice(2))];
+      if (!name) { await ack('That option expired — pick again.'); return true; }
+      await ack(name);
+      await assignCustomer(bot, chatId, state, name);
+      return true;
+    }
+    if (rest === 'new') {
+      await ack();
+      // The admin may have just typed a name that matched nothing — don't
+      // make them type it twice, go straight to the phone.
+      if (String(state._newCustomerName || '').trim()) {
+        state.step = 'customer_new_phone';
+        try {
+          await bot.sendMessage(chatId,
+            `➕ *${state._newCustomerName}*\n\nReply with the phone number, or tap Skip.`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '⏭ Skip phone', callback_data: 'enr:cust:nophone' }]] } });
+        } catch (_) { /* best-effort */ }
+        return true;
+      }
+      state.step = 'customer_new_name';
+      try {
+        await bot.sendMessage(chatId,
+          '➕ *New customer*\n\nReply with the customer\'s NAME (one line, e.g. `OKESON STORES`).',
+          { parse_mode: 'Markdown' });
+      } catch (_) { /* best-effort */ }
+      return true;
+    }
+    if (rest === 'nophone') {
+      await ack();
+      await createAndAssignCustomer(bot, chatId, state, state._newCustomerName, '');
+      return true;
+    }
+    if (rest === 'back') {
+      await ack();
+      await sendCustomerStep(bot, chatId, state);
+      return true;
+    }
+    await ack();
+    return true;
+  }
 
   if (data === 'enr:rate:v' && state.step === 'rate' && state.lastPaidRate) {
     const rateByDesign = {};
@@ -299,6 +585,59 @@ async function handleEnrichmentMessage(bot, chatId, adminId, text) {
   const t = text.trim();
   const CURRENCY = config.currency || 'NGN';
   const fmt = (n) => `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
+
+  // DSP-1 — Step 1 typed: search the customer base, or name a new one.
+  if (state.step === 'customer') {
+    let matches = [];
+    try {
+      const customersRepository = require('../repositories/customersRepository');
+      matches = (await customersRepository.searchByName(t))
+        .filter((c) => String(c.status || 'Active').toLowerCase() !== 'inactive')
+        .map((c) => c.name);
+    } catch (e) {
+      logger.warn(`DSP-1 customer search failed: ${e.message}`);
+    }
+    const exact = matches.find((n) => n.toLowerCase() === t.toLowerCase());
+    if (exact) { await assignCustomer(bot, chatId, state, exact); return true; }
+    if (matches.length === 1) { await assignCustomer(bot, chatId, state, matches[0]); return true; }
+    if (matches.length > 1) {
+      state._custPage = matches.slice(0, 10);
+      const rows = state._custPage.map((n, i) => [{ text: `👤 ${n.slice(0, 40)}`, callback_data: `enr:cust:a:${i}` }]);
+      rows.push([{ text: '⬅ Back', callback_data: 'enr:cust:back' }, { text: '➕ New customer', callback_data: 'enr:cust:new' }]);
+      try {
+        await bot.sendMessage(chatId, `Customers matching “${t}” — tap one:`,
+          { reply_markup: { inline_keyboard: rows } });
+      } catch (_) { /* best-effort */ }
+      return true;
+    }
+    // No match. Never silently invent a customer from a typo — the name is
+    // the ledger key, so creating one is an explicit tap.
+    try {
+      await bot.sendMessage(chatId, `No customer matches “${t}”. Type again, or add them:`,
+        { reply_markup: { inline_keyboard: [
+          [{ text: `➕ Add “${t.slice(0, 30)}” as a new customer`, callback_data: 'enr:cust:new' }],
+          [{ text: '📋 All customers', callback_data: 'enr:cust:all:0' }],
+        ] } });
+    } catch (_) { /* best-effort */ }
+    state._newCustomerName = t;
+    return true;
+  }
+
+  if (state.step === 'customer_new_name') {
+    state._newCustomerName = t;
+    state.step = 'customer_new_phone';
+    try {
+      await bot.sendMessage(chatId,
+        `➕ *${t}*\n\nReply with the phone number, or tap Skip.`,
+        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '⏭ Skip phone', callback_data: 'enr:cust:nophone' }]] } });
+    } catch (_) { /* best-effort */ }
+    return true;
+  }
+
+  if (state.step === 'customer_new_phone') {
+    await createAndAssignCustomer(bot, chatId, state, state._newCustomerName, t);
+    return true;
+  }
 
   if (state.step === 'rate') {
     const rateByDesign = {};
@@ -398,6 +737,19 @@ async function uploadSaleDocToDrive(bot, item, requestId) {
 }
 
 async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, item, requestingUser, enrichment, fmt) {
+  // DSP-1 fail-closed. The customer name is the ledger key: it stamps the
+  // Inventory row, the Transactions row, the customer ledger and the
+  // invoice. A sale applied without one is an untraceable stock movement
+  // that no downstream report can reconstruct — so refuse rather than
+  // write a blank buyer.
+  if (!String((item && item.actionJSON && item.actionJSON.customer) || '').trim()) {
+    logger.error(`DSP-1: refusing to execute ${requestId} — no customer assigned`);
+    try {
+      await bot.sendMessage(chatId,
+        `⚠️ ${requestId} was NOT applied — no customer is assigned.\nTap ✅ Approve again and pick the buyer at Step 1.`);
+    } catch (_) { /* best-effort */ }
+    return;
+  }
   try {
     const result = await inventoryService.executeApprovedAction(requestId, adminId, enrichment);
     if (result.ok) {
@@ -436,10 +788,16 @@ async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, it
       msg += erpTail;
       if (driveInfo) msg += `\n📎 [View Sales Bill](${driveInfo.webViewLink})`;
       await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', disable_web_page_preview: true });
-      const employeeMsg = partial
-        ? `⚠️ Your request (${requestId}) was approved, but only ${rep.appliedPkgCount} of ${rep.requestedItems} ${balesWordMsg} could be applied. ${rep.failedItems.length} item(s) were stale/invalid and skipped. Please check with admin.${partialTail}`
-        : `✅ Your request (${requestId}) has been approved by admin. Sale and ledger updated.`;
-      await notifyEmployee(bot, requestingUser, requestId, employeeMsg);
+      // DSP-1 — the dispatcher's card is updated in place with the customer
+      // the admin assigned. A partial apply still needs the full detail, so
+      // that path keeps the plain message.
+      if (partial) {
+        await notifyEmployee(bot, requestingUser, requestId,
+          `⚠️ Your request (${requestId}) was approved, but only ${rep.appliedPkgCount} of ${rep.requestedItems} ${balesWordMsg} could be applied. ${rep.failedItems.length} item(s) were stale/invalid and skipped. Please check with admin.${partialTail}`);
+      } else {
+        await updateRequesterCard(bot, item, requestId, requestingUser,
+          '✅ *Approved — ready to dispatch*');
+      }
       const customer = item?.actionJSON?.customer || item?.actionJSON?.customerName;
       if (customer) {
         try {
@@ -1653,5 +2011,11 @@ module.exports = {
   handleDispatchManagerCallback,
   handleReasonReply,
   notifyDispatchManagers,
-  _internals: { pendingEnrichment, getLastPaidRate, sendPaymentStep },
+  startApprovalEnrichment,
+  _internals: {
+    pendingEnrichment, getLastPaidRate, sendPaymentStep,
+    // DSP-1 — exposed for the fail-closed test: a sale with no customer
+    // must never reach executeApprovedAction.
+    runApprovedSaleWithEnrichment, updateRequesterCard, sendCustomerStep,
+  },
 };
