@@ -24,6 +24,7 @@
 'use strict';
 
 const sheets = require('./sheetsClient');
+const { normDay } = require('../utils/dates');
 
 const SHEET = 'Attendance';
 const HEADERS = [
@@ -37,7 +38,12 @@ function str(v) { return (v ?? '').toString().trim(); }
 function parse(r, rowIndex) {
   return {
     rowIndex,
-    date: str(r[0]),
+    // ATT-DATE1 — Sheets writes go out as USER_ENTERED, so "2026-07-27"
+    // becomes a real date cell and comes back formatted as "27/07/2026".
+    // Normalising HERE fixes every reader at once; comparing the raw cell
+    // to an ISO string silently found nothing while the row sat in plain
+    // sight (Yarima's attendance, 27-Jul).
+    date: normDay(r[0]),
     telegram_id: str(r[1]),
     employee_name: str(r[2]),
     status: str(r[3]) || 'present',
@@ -79,12 +85,14 @@ async function getAll() {
 
 async function getByDate(date) {
   const all = await getAll();
-  return all.filter((e) => e.date === String(date));
+  const want = normDay(date);
+  return all.filter((e) => e.date === want);
 }
 
 async function findByDateUser(date, telegramId) {
   const all = await getAll();
-  return all.find((e) => e.date === String(date) && e.telegram_id === String(telegramId)) || null;
+  const want = normDay(date);
+  return all.find((e) => e.date === want && e.telegram_id === String(telegramId)) || null;
 }
 
 async function append(entry) {
@@ -108,7 +116,9 @@ async function append(entry) {
 
 async function getRange(startDate, endDate) {
   const all = await getAll();
-  return all.filter((e) => e.date >= startDate && e.date <= endDate);
+  const from = normDay(startDate);
+  const to = normDay(endDate);
+  return all.filter((e) => e.date >= from && e.date <= to);
 }
 
 module.exports = {

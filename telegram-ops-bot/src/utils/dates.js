@@ -142,4 +142,29 @@ function normalizeSalesDate(input) {
   return null;
 }
 
-module.exports = { todayInLagos, compareWithToday, daysBeforeToday, normalizeSalesDate, LAGOS_TZ };
+/**
+ * Normalise a date cell read back from Google Sheets to ISO YYYY-MM-DD.
+ *
+ * Writes use valueInputOption USER_ENTERED, so Sheets PARSES "2026-07-27"
+ * into a real date cell and hands it back FORMATTED in the spreadsheet's
+ * locale — typically "27/07/2026". Any reader that compares the raw cell to
+ * an ISO string therefore finds nothing, even though the row is right there.
+ *
+ * Several flows had already grown private copies of this helper after
+ * hitting the same wall; this is the shared one.
+ *
+ * @param {*} raw cell value as returned by the Sheets API
+ * @returns {string} ISO YYYY-MM-DD, or the trimmed input when unparseable
+ */
+function normDay(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const dmy = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  const ms = Date.parse(s);
+  if (Number.isFinite(ms)) return new Date(ms).toISOString().slice(0, 10);
+  return s;
+}
+
+module.exports = { todayInLagos, compareWithToday, daysBeforeToday, normalizeSalesDate, normDay, LAGOS_TZ };
