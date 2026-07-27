@@ -89,3 +89,34 @@ test('longest-prefix-first matching means sb: cannot shadow sbl:', () => {
     'PREFIX_KEYS must stay sorted longest-first');
   assert.ok(usageTracker, 'module loads');
 });
+
+test('session-step names are not mistaken for callback namespaces', () => {
+  const r = runCensus();
+  // cnStep.startsWith('add_') is a SESSION STEP test, not a callback
+  // dispatch. Counting it produced phantom blind spots.
+  for (const phantom of ['add_', 'edit_']) {
+    assert.ok(!r.analyticsBlindSpots.includes(phantom),
+      `${phantom} is a session step, not a callback namespace`);
+  }
+});
+
+test('every dispatched callback namespace is named — no feature reads as "other"', () => {
+  const r = runCensus();
+  assert.deepEqual(r.analyticsBlindSpots, [],
+    `unnamed namespaces read as "other" and look unused while being used daily: ${r.analyticsBlindSpots}`);
+});
+
+test('near-collision prefixes resolve to themselves, not a shorter neighbour', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'src/services/usageTracker.js'), 'utf8');
+  const block = src.match(/const PREFIX_FEATURES = \{[\s\S]*?\n\};/)[0];
+  const keys = [...block.matchAll(/'([^']+)':/g)].map((m) => m[1]).sort((a, b) => b.length - a.length);
+  const resolve = (d) => keys.find((k) => d.startsWith(k));
+  // sd: vs sdd:/sdg:/sdv: and sb: vs sbl: are the dangerous pairs — a
+  // shadow here would silently merge two unrelated features' counts.
+  for (const [probe, expected] of [
+    ['sdv:x', 'sdv:'], ['sdd:x', 'sdd:'], ['sdg:x', 'sdg:'], ['sd:x', 'sd:'],
+    ['sbl:x', 'sbl:'], ['sb:x', 'sb:'], ['adm_ws:x', 'adm_ws:'], ['adm:x', 'adm:'],
+  ]) {
+    assert.equal(resolve(probe), expected, `${probe} must resolve to ${expected}`);
+  }
+});

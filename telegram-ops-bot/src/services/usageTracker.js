@@ -58,6 +58,21 @@ const PREFIX_FEATURES = {
   // Feature-level counts were never affected (act: tiles are classified
   // generically), but without these the in-flow STEP taps all landed under
   // 'other', which is exactly the blur that hides how a flow is really used.
+  // ANL-1c (27-Jul) — the remaining namespaces the CEN-1 census surfaced.
+  // Each was dispatched daily and recorded as 'other', which is the worst
+  // state for an elimination exercise: busy features reading as unused.
+  'adm_ds:': 'manage_users', 'adm_dt:': 'manage_users', 'adm_du:': 'manage_users',
+  'adm_ws:': 'assign_warehouse', 'adm_wt:': 'assign_warehouse', 'adm_wu:': 'assign_warehouse',
+  'adm:': 'admin_actions',
+  'add_stock:': 'add_stock',
+  'approve_task:': 'tasks',
+  'bkadd:': 'manage_banks', 'bkback:': 'manage_banks',
+  'bkrm:': 'manage_banks', 'bkrmc:': 'manage_banks',
+  'cd:': 'customer_details',
+  'rk:': 'customer_ranking',
+  'oacc:': 'orders', 'obb:': 'orders', 'op:': 'orders', 'os:': 'orders',
+  'rpt:': 'reports', 'rxw:': 'reports',
+  'sd:': 'report_supply_by_design', 'sdv:': 'report_supply_by_design',
   'abx:': 'approvals_inbox',
   'sdd:': 'supply_details',
   'sdg:': 'supply_details_design',

@@ -160,8 +160,11 @@ function analyticsBlindSpots() {
   const tracker = read(path.join(SRC, 'services/usageTracker.js'));
   const mapBlock = (tracker.match(/const PREFIX_FEATURES = \{[\s\S]*?\n\};/) || [''])[0];
 
+  // Must be a CALLBACK dispatch specifically. A bare startsWith() also
+  // matches session-step tests like cnStep.startsWith('add_'), which are not
+  // callback namespaces at all — that produced two phantom blind spots.
   const dispatched = new Set();
-  for (const m of controller.matchAll(/startsWith\(\s*['"`]([a-zA-Z_]{2,12}[:_])['"`]\s*\)/g)) {
+  for (const m of controller.matchAll(/\bdata\.startsWith\(\s*['"`]([a-zA-Z_]{2,12}[:_])['"`]\s*\)/g)) {
     dispatched.add(m[1]);
   }
   // usageTracker matches with startsWith(), so a dispatched namespace is
