@@ -34,6 +34,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { normDay } = require('../utils/dates');
 
 const SHEET = 'BranchOpsLog';
 
@@ -51,7 +52,8 @@ function parse(r, rowIndex) {
   return {
     rowIndex,
     op_id:                str(r[0]),
-    date:                 str(r[1]),
+    // DATE-N1 — normalise the coerced sheet date to ISO (see ATT-DATE1).
+    date:                 normDay(str(r[1])),
     branch:               str(r[2]),
     manager_id:           str(r[3]),
     manager_name:         str(r[4]),
@@ -74,14 +76,14 @@ async function getAll() {
 }
 
 async function findByDate(date) {
-  const target = str(date);
+  const target = normDay(str(date));
   if (!target) return [];
   return (await getAll()).filter((r) => r.date === target);
 }
 
 async function findByBranchDate(branch, date) {
   const b = str(branch).toLowerCase();
-  const d = str(date);
+  const d = normDay(str(date));
   if (!d) return [];
   return (await getAll()).filter(
     (r) => r.date === d && r.branch.toLowerCase() === b

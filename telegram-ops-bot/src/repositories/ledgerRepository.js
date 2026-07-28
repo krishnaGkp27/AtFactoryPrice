@@ -4,6 +4,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { normDay } = require('../utils/dates');
 
 const SHEET = 'Ledger_Entries';
 
@@ -11,7 +12,8 @@ function parse(r) {
   return {
     entry_id: (r[0] || '').toString().trim(),
     txn_id: (r[1] || '').toString().trim(),
-    date: (r[2] || '').toString().trim(),
+    // DATE-N1 — normalise the coerced sheet date to ISO (see ATT-DATE1).
+    date: normDay((r[2] || '').toString()),
     account_code: (r[3] || '').toString().trim(),
     ledger_name: (r[4] || '').toString().trim(),
     debit: parseFloat(r[5]) || 0,
@@ -56,7 +58,9 @@ async function findByAccount(accountCode) {
 
 async function findByDateRange(from, to) {
   const all = await getAll();
-  return all.filter((e) => e.date >= from && e.date <= to);
+  const f = normDay(from);
+  const t = normDay(to);
+  return all.filter((e) => e.date >= f && e.date <= t);
 }
 
 async function findByNarrationContaining(customerName) {

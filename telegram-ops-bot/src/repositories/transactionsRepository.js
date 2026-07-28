@@ -5,7 +5,7 @@
  */
 
 const sheets = require('./sheetsClient');
-const { normalizeSalesDate, todayInLagos } = require('../utils/dates');
+const { normalizeSalesDate, todayInLagos, normDay } = require('../utils/dates');
 
 const SHEET = 'Transactions';
 const HEADERS = ['Timestamp', 'User', 'Action', 'Design', 'Color', 'Qty', 'Before', 'After', 'Status',
@@ -98,7 +98,9 @@ function parseRow(r) {
     before: (r[6] || '').toString(),
     after: (r[7] || '').toString(),
     status: (r[8] || '').toString(),
-    salesDate: (r[9] || '').toString(),
+    // DATE-N1 — Sheets coerces USER_ENTERED dates and returns them in the
+    // locale format, so the raw cell may be '28/07/2026' (see ATT-DATE1).
+    salesDate: normDay((r[9] || '').toString()),
     warehouse: (r[10] || '').toString(),
     customerName: (r[11] || '').toString(),
     salesPerson: (r[12] || '').toString(),
@@ -165,7 +167,9 @@ async function getCustomersByDesign(design) {
 async function getBySalesDateRange(fromIso, toIso) {
   await ensureHeader();
   const rows = await sheets.readRange(SHEET, 'A2:R');
-  return rows.map(parseRow).filter((t) => t.salesDate && t.salesDate >= fromIso && t.salesDate <= toIso);
+  const from = normDay(fromIso);
+  const to = normDay(toIso);
+  return rows.map(parseRow).filter((t) => t.salesDate && t.salesDate >= from && t.salesDate <= to);
 }
 
 module.exports = { append, ensureHeader, HEADERS, getLast, parseRow, setStatusReverted, getCustomersByDesign, getBySalesDateRange };
