@@ -717,15 +717,46 @@ async function applyBehalf(bot, chatId, userId, location) {
   const s = sessionStore.get(userId);
   const target = s && s.behalfTarget;
   if (!target) { await renderBehalfPickUser(bot, chatId, userId); return; }
-  const result = await attendanceService.markPresent({
-    telegramId: target.telegram_id,
-    name: target.name,
-    location,
-    adminUserId: userId,
-  });
+  // ATT-V1 — same guard as the employee flow: a sheet error must become a
+  // card, not an exception that dies in the webhook.
+  let result;
+  try {
+    result = await attendanceService.markPresent({
+      telegramId: target.telegram_id,
+      name: target.name,
+      location,
+      adminUserId: userId,
+    });
+  } catch (e) {
+    logger.error(`attendance mark-on-behalf crashed for ${target.telegram_id}: ${e.message}`);
+    result = { ok: false, reason: 'write_failed', error: e.message };
+  }
+
+  // ATT-V2 — alert the OTHER admins; this one is looking at the error.
+  if (!result.ok || result.verified === false) {
+    const { alertAdmins } = require('../services/attendanceAlerts');
+    await alertAdmins(bot, {
+      reason: result.ok ? 'unverified' : 'write_failed',
+      employee: target.name,
+      date: (result.entry && result.entry.date) || '',
+      location,
+      error: result.error || '',
+      excludeUserId: userId,
+    });
+  }
+
   if (!result.ok) {
     await render(bot, chatId, userId,
-      `⚠️ Could not mark ${target.name}: ${result.reason || 'unknown'}.`,
+      `⚠️ Could not mark ${target.name}: ${result.reason === 'write_failed' ? 'the record could not be saved' : (result.reason || 'unknown')}.\n\n`
+      + `🔴 *They are NOT marked.*`,
+      [backRow()],
+    );
+    return;
+  }
+  if (result.verified === false) {
+    await render(bot, chatId, userId,
+      `⚠️ *Marked ${target.name} — needs checking*\n\n`
+      + `Saved, but I could not read it back to confirm. Reports may miss it.`,
       [backRow()],
     );
     return;

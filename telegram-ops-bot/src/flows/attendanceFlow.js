@@ -348,6 +348,19 @@ async function finalizeMark(bot, chatId, userId) {
     logger.error(`attendance finalizeMark crashed for ${userId}: ${e.message}`);
     result = { ok: false, reason: 'write_failed', error: e.message };
   }
+
+  // ATT-V2 — the employee sees one card and moves on; the person who has to
+  // fix a broken sheet is the admin, so they get told too (throttled).
+  if (!result.ok || result.verified === false) {
+    const { alertAdmins } = require('../services/attendanceAlerts');
+    await alertAdmins(bot, {
+      reason: result.ok ? 'unverified' : 'write_failed',
+      employee: name || userId,
+      date: (result.entry && result.entry.date) || '',
+      location,
+      error: result.error || '',
+    });
+  }
   if (!result.ok) {
     let msg = '⚠️ Could not mark — ';
     if (result.reason === 'location_not_in_admin_list') {

@@ -150,3 +150,61 @@ test('if the status lookup fails the picker is NOT shown — a duplicate is wors
     'marking blind could create the duplicate row the guard exists to prevent');
   sessionStore.clear(EMP);
 });
+
+/* ── ATT-V2: admins hear about it too ─────────────────────────────────── */
+
+test('a failed write DMs the admins, not just the employee', async () => {
+  const alerts = require(path.join(ROOT, 'src/services/attendanceAlerts'));
+  const settingsRepository = require(path.join(ROOT, 'src/repositories/settingsRepository'));
+  alerts._reset();
+  settingsRepository.getAll = async () => ({ ATTENDANCE_ALERT_COOLDOWN_MIN: 15 });
+
+  const bot = fakeBot();
+  const dms = [];
+  const origSend = bot.sendMessage;
+  bot.sendMessage = async (chatId, text) => {
+    if (String(chatId) === '777') dms.push(text);
+    return origSend(chatId, text);
+  };
+  stubService({ mark: async () => ({ ok: false, reason: 'write_failed', error: 'Sheets 503' }) });
+  await tapLocation(bot);
+
+  assert.equal(dms.length, 1, 'the admin is told in real time');
+  assert.match(dms[0], /Attendance NOT saving/);
+  assert.match(dms[0], /Yarima/, 'and who it happened to');
+  sessionStore.clear(EMP);
+});
+
+test('an unverified write also reaches the admins', async () => {
+  const alerts = require(path.join(ROOT, 'src/services/attendanceAlerts'));
+  alerts._reset();
+  const bot = fakeBot();
+  const dms = [];
+  const origSend = bot.sendMessage;
+  bot.sendMessage = async (chatId, text) => {
+    if (String(chatId) === '777') dms.push(text);
+    return origSend(chatId, text);
+  };
+  stubService({ mark: async () => ({ ok: true, entry: ENTRY, alreadyLogged: false, verified: false }) });
+  await tapLocation(bot);
+
+  assert.equal(dms.length, 1);
+  assert.match(dms[0], /saved but unreadable/i);
+  sessionStore.clear(EMP);
+});
+
+test('a healthy mark alerts nobody', async () => {
+  const alerts = require(path.join(ROOT, 'src/services/attendanceAlerts'));
+  alerts._reset();
+  const bot = fakeBot();
+  const dms = [];
+  const origSend = bot.sendMessage;
+  bot.sendMessage = async (chatId, text) => {
+    if (String(chatId) === '777') dms.push(text);
+    return origSend(chatId, text);
+  };
+  stubService({ mark: async () => ({ ok: true, entry: ENTRY, alreadyLogged: false, verified: true }) });
+  await tapLocation(bot);
+  assert.equal(dms.length, 0, 'no noise on the happy path');
+  sessionStore.clear(EMP);
+});

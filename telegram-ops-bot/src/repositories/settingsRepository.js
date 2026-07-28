@@ -31,6 +31,12 @@ const DEFAULTS = {
   // Settings sheet rows of the same keys, no deploy needed.
   FLOW_CLEANUP_MINUTES: 30,
   FLOW_CLEANUP_MINUTES_HEAVY: 60,
+  // ATT-V2 — minutes between admin DMs about attendance failing to save.
+  // These failures are systemic (Sheets down, quota spent), so every
+  // employee marking that morning fails at once; without a cooldown the
+  // owner gets twenty identical DMs and learns to ignore them. Suppressed
+  // failures are counted and reported on the next alert. 0 = alert every time.
+  ATTENDANCE_ALERT_COOLDOWN_MIN: 15,
   // APX-2 — minutes within which two IDENTICAL requests from the same person
   // are treated as one double-tapped Submit rather than two real requests.
   // Only ever flags a card, never rejects. Widen it if submissions are slow
