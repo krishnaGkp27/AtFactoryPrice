@@ -386,6 +386,11 @@ async function sendRateStep(bot, chatId, state) {
     }
   }
   rows.push([{ text: '✏️ Type a custom rate', callback_data: 'enr:rate:custom' }]);
+  // DSP-1b — a mistapped buyer must be recoverable HERE. Without this chip
+  // the wrong customer was locked in: the choice persists on the queue row
+  // the moment it is tapped, so abandoning and re-approving skipped Step 1
+  // entirely and the only exit was editing the sheet by hand.
+  rows.push([{ text: `✎ Change customer (${String(customer || '—').slice(0, 24)})`, callback_data: 'enr:cust:back' }]);
   await bot.sendMessage(chatId,
     `📋 *Confirm sale details*\n\nCustomer: *${customer || '—'}*\nDesign(s): ${designList}\nUnit: ${unit} (Naira per ${unit})\n\n*Step 2 — Rate:* tap below, or reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\``,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });

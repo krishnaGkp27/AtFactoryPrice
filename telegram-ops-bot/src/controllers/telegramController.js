@@ -6472,15 +6472,20 @@ async function executeSale(bot, chatId, userId) {
   if (needsApproval) {
     // Create ONE approval request for the entire sale
     const requestId = genId();
-    let detailText = `Sale Request\nCustomer: ${session.collected.customer}`;
+    // DSP-1 — the dispatcher no longer supplies a customer; the admin assigns
+    // it at approval, so the card must say that instead of "undefined".
+    const collectedCustomer = String(session.collected.customer || '').trim();
+    let detailText = `Sale Request\nCustomer: ${collectedCustomer || '— (assigned at approval)'}`;
     if (isBackdated) {
       detailText = `⚠️ BACKDATED — sale date is ${daysBack} day${daysBack === 1 ? '' : 's'} in the past. Verify the date and inventory are correct before approving.\n\n` + detailText;
     }
     try {
-      const cust = await crmService.getCustomer(session.collected.customer);
-      if (cust && (cust.phone || cust.address)) {
-        if (cust.phone) detailText += `\nPhone: ${cust.phone}`;
-        if (cust.address) detailText += `\nAddress: ${cust.address}`;
+      if (collectedCustomer) {
+        const cust = await crmService.getCustomer(collectedCustomer);
+        if (cust && (cust.phone || cust.address)) {
+          if (cust.phone) detailText += `\nPhone: ${cust.phone}`;
+          if (cust.address) detailText += `\nAddress: ${cust.address}`;
+        }
       }
     } catch (_) {}
     // Owner mandate 14-Jul: the approval card ALWAYS shows the canonical
@@ -6549,7 +6554,7 @@ async function executeSale(bot, chatId, userId) {
       }
     }
     const approverLabel = isSubmitterAdmin ? '2nd admin' : 'admin';
-    await bot.sendMessage(chatId, `⏳ Supply request submitted for ${approverLabel} approval. Request: ${requestId}\n${totalPkgs} Bale${totalPkgs === 1 ? '' : 's'} (${totalThans} thans), ${fmtQty(totalYards)} yards to ${session.collected.customer}`);
+    await bot.sendMessage(chatId, `⏳ Sale submitted for ${approverLabel} approval. Request: ${requestId}\n${totalPkgs} Bale${totalPkgs === 1 ? '' : 's'} (${totalThans} thans), ${fmtQty(totalYards)} yards${collectedCustomer ? ` to ${collectedCustomer}` : ' — the admin assigns the customer, rate and payment; you will get the customer name and number back here once approved'}`);
     sessionStore.clear(userId);
     return;
   }

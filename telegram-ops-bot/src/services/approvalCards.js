@@ -110,7 +110,7 @@ function sortSaleItems(items) {
 }
 
 async function buildSaleCard(p) {
-  let text = `${p.headline || 'Sale Request'}\nCustomer: ${p.customer}`;
+  let text = `${p.headline || 'Sale Request'}\nCustomer: ${p.customer || '— (assigned at approval)'}`;
   const contact = await customerContact(p.customer);
   if (contact.phone) text += `\nPhone: ${contact.phone}`;
   if (contact.address) text += `\nAddress: ${contact.address}`;

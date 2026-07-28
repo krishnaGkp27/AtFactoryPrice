@@ -178,3 +178,44 @@ test('DSP-1: with no card recorded the dispatcher still gets a message', async (
   assert.equal(sent.length, 1);
   assert.match(sent[0].args.text, /CJE/);
 });
+
+test('DSP-1b: a mistapped customer is recoverable — ✎ Change customer re-opens Step 1', async () => {
+  const bot = createFakeBot();
+  transactionsRepository.getLast = async () => ([
+    { action: 'sell_package', customerName: 'CJE', design: '77016', pricePerYard: 1500 },
+  ]);
+  const patches = [];
+  approvalQueueRepository.updateActionJSON = async (id, patch) => { patches.push(patch); return true; };
+
+  const item = saleItem('');
+  await approvalEvents.startApprovalEnrichment(bot, ADMIN, ADMIN, 'R-1', item, '4242');
+  await approvalEvents.handleEnrichmentCallback(bot, {
+    id: 'q1', data: 'enr:cust:r:0', from: { id: ADMIN }, message: { chat: { id: ADMIN } },
+  });
+  // Wrong tap. The rate card must offer the way back…
+  const change = kbOf(bot).find((b) => b.callback_data === 'enr:cust:back');
+  assert.ok(change, 'the rate step must carry ✎ Change customer — without it a wrong tap is locked in');
+  assert.match(change.text, /CJE/, 'showing what is currently assigned');
+
+  await approvalEvents.handleEnrichmentCallback(bot, {
+    id: 'q2', data: change.callback_data, from: { id: ADMIN }, message: { chat: { id: ADMIN } },
+  });
+  assert.match(texts(bot), /Step 1 — Customer/, 'back on the customer step');
+
+  // …and re-picking must OVERWRITE the queue row, not append to it.
+  customersRepository.searchByName = async () => [{ name: 'Ketu madam', status: 'Active' }];
+  await approvalEvents.handleEnrichmentMessage(bot, ADMIN, ADMIN, 'Ketu madam');
+  assert.equal(patches.length, 2, 'two assignments — the second replaces the first');
+  assert.deepEqual(patches[1], { customer: 'Ketu madam' });
+  assert.equal(item.actionJSON.customer, 'Ketu madam', 'the copy that executes carries the correction');
+});
+
+test('DSP-1b: a pre-assigned request ALSO gets the change chip — the re-approval trap is closed', async () => {
+  const bot = createFakeBot();
+  transactionsRepository.getLast = async () => [];
+  await approvalEvents.startApprovalEnrichment(bot, ADMIN, ADMIN, 'R-1', saleItem('CJE'), '4242');
+  // Straight to Step 2 (skip is correct) — but the wrong buyer must still be fixable.
+  assert.match(texts(bot), /Step 2 — Rate/);
+  assert.ok(kbOf(bot).some((b) => b.callback_data === 'enr:cust:back'),
+    'without this, abandoning and re-approving skipped Step 1 and locked the wrong buyer in');
+});
