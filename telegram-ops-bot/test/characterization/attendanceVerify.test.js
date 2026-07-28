@@ -40,7 +40,10 @@ auditLogRepository.append = async () => {};
 let rowsToday = [];
 const appended = [];
 attendanceRepository.getByDate = async () => rowsToday;
-attendanceRepository.findByDateUser = async () => null;
+// ATT-V1 — markPresent now reads the row back before confirming, so the fake
+// must behave like a sheet: nothing before the append, the row after it.
+attendanceRepository.findByDateUser = async (date, tid) => appended.find(
+  (e) => e.date === date && String(e.telegram_id) === String(tid)) || null;
 attendanceRepository.append = async (e) => { appended.push(e); };
 
 let photoBytes = 'photo-A';
@@ -205,7 +208,8 @@ test('ATT-C4b: sheet failure after the photo shows an error card with Try again 
   await controller.handleCallbackQuery(bot, cb('act:mark_attendance'));
   await controller.handleCallbackQuery(bot, cb(`atd:pick:${encodeURIComponent('Kano Office')}`));
   await controller.handleFileMessage(bot, photoMsg());
-  assert.match(bot.allText(), /Could not save your attendance/i, 'user is told, not ghosted');
+  assert.match(bot.allText(), /Could not mark|Could not save your attendance/i, 'user is told, not ghosted');
+  assert.match(bot.allText(), /NOT marked yet/i, 'ATT-V1 — and told plainly they are not covered');
   assert.match(JSON.stringify(bot.calls), /atd:retry/, 'Try again button offered');
   attendanceRepository.append = origAppend;
   sessionStore.clear('4242');

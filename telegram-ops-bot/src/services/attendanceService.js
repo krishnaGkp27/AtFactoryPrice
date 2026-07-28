@@ -373,7 +373,43 @@ async function markPresentInner({ telegramId, name, location, adminUserId, when,
     photo_sha256: (verification && verification.photoHash) || '',
   };
 
-  await attendanceRepo.append(entry);
+  // ATT-V1 — a write failure must become a RESULT, never an exception.
+  // Two of the three marking paths called this without a try/catch, so a
+  // Sheets hiccup escaped to the webhook and the employee got no reply at
+  // all: they tapped their location and nothing happened.
+  try {
+    await attendanceRepo.append(entry);
+  } catch (e) {
+    logger.error(`attendance write FAILED for ${telegramId} on ${date}: ${e.message}`);
+    try {
+      await auditLogRepo.append('attendance.write_failed',
+        { date, telegram_id: telegramId, location, error: e.message }, adminUserId || telegramId);
+    } catch (_) { /* audit is best-effort; never mask the original failure */ }
+    return { ok: false, reason: 'write_failed', error: e.message };
+  }
+
+  // ATT-V1 — read the row back before claiming success.
+  //
+  // On 27-Jul a mark was written and confirmed to the employee while being
+  // invisible to every report, because Sheets had reformatted the date and
+  // the lookups no longer matched (ATT-DATE1). The confirmation card was
+  // the ONLY signal anyone had, and it was wrong. Verifying through the
+  // SAME lookup the reports use means a mark can never again be confirmed
+  // to a human unless it is genuinely findable.
+  let verified = false;
+  try {
+    verified = !!(await attendanceRepo.findByDateUser(date, telegramId));
+  } catch (e) {
+    logger.warn(`attendance read-back failed for ${telegramId} on ${date}: ${e.message}`);
+  }
+  if (!verified) {
+    logger.error(`attendance UNVERIFIED for ${telegramId} on ${date} — appended but not readable back`);
+    try {
+      await auditLogRepo.append('attendance.unverified',
+        { date, telegram_id: telegramId, location }, adminUserId || telegramId);
+    } catch (_) { /* best-effort */ }
+  }
+
   try {
     await auditLogRepo.append('attendance.marked', {
       date, telegram_id: telegramId, location, via: entry.logged_via,
@@ -383,7 +419,7 @@ async function markPresentInner({ telegramId, name, location, adminUserId, when,
     }, adminUserId || telegramId);
   } catch (_) {}
 
-  return { ok: true, entry, alreadyLogged: false };
+  return { ok: true, entry, alreadyLogged: false, verified };
 }
 
 module.exports = {

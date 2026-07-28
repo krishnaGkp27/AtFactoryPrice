@@ -122,8 +122,22 @@ async function start(bot, chatId, userId, messageId = null) {
     return;
   }
 
-  // Already logged today? Short-circuit to a read-only "today's status" card.
-  const existing = await attendanceService.getTodayEntry(userId, cfg.timezone);
+  // ATT-V1 — "have I marked today?" is the question this screen answers, so
+  // a failed lookup must say so rather than throw (which rendered nothing
+  // at all) or fall through to the picker (which would invite a duplicate).
+  let existing = null;
+  try {
+    existing = await attendanceService.getTodayEntry(userId, cfg.timezone);
+  } catch (e) {
+    logger.error(`attendanceFlow.start: today lookup failed for ${userId}: ${e.message}`);
+    await render(bot, chatId, userId,
+      '📍 *Mark Attendance*\n\n'
+      + '⚠️ I could not check today\'s attendance just now.\n\n'
+      + '_Marking again could create a duplicate, so please try in a moment._',
+      [[{ text: '🔁 Try again', callback_data: 'atd:retry' }], homeRow()]);
+    sessionStore.clear(userId);
+    return;
+  }
   if (existing) {
     const t = fmtTime(existing.logged_at, cfg.timezone);
     const via = existing.logged_via === 'admin'
@@ -131,6 +145,7 @@ async function start(bot, chatId, userId, messageId = null) {
     await render(bot, chatId, userId,
       `📍 *Today's Attendance*\n\n`
       + `✅ Already marked *Present*\n`
+      + `Date: *${existing.date}*\n`
       + `Location: *${existing.location}*\n`
       + `At: ${t}\n${via}\n\n`
       + `_If this is wrong, ask an admin to override (audited)._`,
@@ -139,6 +154,10 @@ async function start(bot, chatId, userId, messageId = null) {
     sessionStore.clear(userId);
     return;
   }
+
+  // Not marked yet — say so explicitly. Silence about the current state is
+  // what let people assume they were covered when they were not.
+  const notYet = '🔴 *You have not marked attendance today.*\n\n';
 
   // No locations configured yet (admin hasn't seeded ATTENDANCE_LOCATIONS).
   if (!cfg.locations.length) {
@@ -164,7 +183,7 @@ async function start(bot, chatId, userId, messageId = null) {
   rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
 
   await render(bot, chatId, userId,
-    '📍 *Mark Attendance*\n\nWhere are you marking from today?\n\n_Tap one of the locations below._',
+    `📍 *Mark Attendance*\n\n${notYet}Where are you marking from today?\n\n_Tap one of the locations below._`,
     rows,
   );
 }
@@ -315,10 +334,20 @@ async function finalizeMark(bot, chatId, userId) {
     const u = await usersRepo.findByUserId(userId);
     if (u && u.name) name = u.name;
   } catch (_) {}
-  const result = await attendanceService.markPresent({
-    telegramId: userId, name, location,
-    verification: session.verification || null,
-  });
+
+  // ATT-V1 — the employee ALWAYS gets an answer. Two of the three paths
+  // into here had no error handling at all, so a failed write left them
+  // staring at a dead screen with no idea whether they were marked.
+  let result;
+  try {
+    result = await attendanceService.markPresent({
+      telegramId: userId, name, location,
+      verification: session.verification || null,
+    });
+  } catch (e) {
+    logger.error(`attendance finalizeMark crashed for ${userId}: ${e.message}`);
+    result = { ok: false, reason: 'write_failed', error: e.message };
+  }
   if (!result.ok) {
     let msg = '⚠️ Could not mark — ';
     if (result.reason === 'location_not_in_admin_list') {
@@ -327,28 +356,53 @@ async function finalizeMark(bot, chatId, userId) {
       msg += 'no location selected.';
     } else if (result.reason === 'missing_telegram_id') {
       msg += 'could not identify your Telegram account.';
+    } else if (result.reason === 'write_failed') {
+      // Say plainly that they are NOT marked — the dangerous outcome here
+      // is someone walking away believing they are.
+      msg += 'the record could not be saved.';
     } else {
       msg += `${result.reason || 'unknown'}.`;
     }
-    await render(bot, chatId, userId, `📍 *Mark Attendance*\n\n${msg}`, [
+    const notMarked = result.reason === 'write_failed'
+      ? '\n\n🔴 *You are NOT marked yet.* Tap Try again — if it keeps failing, tell an admin.'
+      : '';
+    await render(bot, chatId, userId, `📍 *Mark Attendance*\n\n${msg}${notMarked}`, [
       [{ text: '🔁 Try again', callback_data: 'atd:retry' }],
       homeRow(),
     ]);
     return;
   }
-  const cfg = await attendanceService.getConfig();
+  let cfg;
+  try { cfg = await attendanceService.getConfig(); }
+  catch (_) { cfg = { timezone: 'Africa/Lagos' }; }
   const t = fmtTime(result.entry.logged_at, cfg.timezone);
-  const verb = result.alreadyLogged ? 'You had already marked' : '✅ Marked';
+  const verb = result.alreadyLogged ? 'You had already marked' : 'Marked';
   const v = session.verification || {};
   let verifyLines = '';
   if (v.distanceM !== undefined && v.distanceM !== null) verifyLines += `📡 Position verified: ${v.distanceM} m from site\n`;
   else if (v.geo) verifyLines += `📡 Position recorded\n`;
   if (v.photoFileId) verifyLines += `📷 Photo attached\n`;
+
+  // ATT-V1 — the receipt states what was actually CONFIRMED. `verified` is
+  // false when the row went in but could not be read back; saying "✅
+  // Recorded" there is how a whole day of attendance went missing without
+  // anyone noticing (27-Jul). An already-logged short-circuit is verified
+  // by definition — it was found by reading.
+  const confirmed = result.alreadyLogged || result.verified !== false;
+  const header = confirmed
+    ? '📍 *Attendance Recorded*'
+    : '📍 *Attendance — needs checking*';
+  const tail = confirmed
+    ? `_Saved and confirmed. Have a good day._`
+    : '⚠️ _Saved, but I could not read it back to confirm._\n'
+      + '_Please show this screen to an admin so they can check._';
+
   await render(bot, chatId, userId,
-    `📍 *Attendance Recorded*\n\n${verb} *Present*\n`
+    `${header}\n\n${confirmed ? '✅' : '⚠️'} ${verb} *Present*\n`
+    + `Date: *${result.entry.date}*\n`
     + `Location: *${result.entry.location}*\n`
     + `At: ${t}\n${verifyLines}\n`
-    + `_Have a good day._`,
+    + tail,
     [homeRow()],
   );
   sessionStore.clear(userId);
