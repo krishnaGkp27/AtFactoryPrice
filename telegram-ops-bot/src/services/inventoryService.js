@@ -345,9 +345,10 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       qty: aj.yards, before: 'available', after: 'sold', status: 'approved',
       salesDate: aj.salesDate || '', customerName: aj.customer || '', paymentMode: enrichment?.paymentMode || '',
       saleRefId: requestId, pricePerYard: pricePerYard || '', amountPaid: enrichment?.amountPaid ?? '',
+      customerId: aj.customerId || '',
     });
     try {
-      await erpEmitAsync('sale', { type: 'sell_than', packageNo: aj.packageNo, thanNo: aj.thanNo, customer: aj.customer, yards: aj.yards, pricePerYard, design: aj.design, shade: aj.shade, userId: item.user, txnId: `ST-${aj.packageNo}-${aj.thanNo}`, paymentMode: enrichment?.paymentMode ?? '', amountPaid: enrichment?.amountPaid ?? 0 });
+      await erpEmitAsync('sale', { type: 'sell_than', packageNo: aj.packageNo, thanNo: aj.thanNo, customer: aj.customer, customerId: aj.customerId || '', yards: aj.yards, pricePerYard, design: aj.design, shade: aj.shade, userId: item.user, txnId: `ST-${aj.packageNo}-${aj.thanNo}`, paymentMode: enrichment?.paymentMode ?? '', amountPaid: enrichment?.amountPaid ?? 0 });
     } catch (e) { await recordErpFailure('sale ledger (sell_than)', e); }
     if (enrichment?.amountPaid > 0) {
       try {
@@ -365,9 +366,10 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       qty: aj.yards, before: `${aj.thans} thans`, after: 'sold', status: 'approved',
       salesDate: aj.salesDate || '', customerName: aj.customer || '', paymentMode: enrichment?.paymentMode || '',
       saleRefId: requestId, pricePerYard: pricePerYard || '', amountPaid: enrichment?.amountPaid ?? '',
+      customerId: aj.customerId || '',
     });
     try {
-      await erpEmitAsync('sale', { type: 'sell_package', packageNo: aj.packageNo, customer: aj.customer, yards: aj.yards, pricePerYard, design: aj.design, shade: aj.shade, userId: item.user, txnId: `SP-${aj.packageNo}`, paymentMode: enrichment?.paymentMode ?? '', amountPaid: enrichment?.amountPaid ?? 0 });
+      await erpEmitAsync('sale', { type: 'sell_package', packageNo: aj.packageNo, customer: aj.customer, customerId: aj.customerId || '', yards: aj.yards, pricePerYard, design: aj.design, shade: aj.shade, userId: item.user, txnId: `SP-${aj.packageNo}`, paymentMode: enrichment?.paymentMode ?? '', amountPaid: enrichment?.amountPaid ?? 0 });
     } catch (e) { await recordErpFailure('sale ledger (sell_package)', e); }
     if (enrichment?.amountPaid > 0) {
       try {
@@ -424,7 +426,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     await unitDisplayService.setWarehouseMode(aj.warehouse, aj.mode);
   } else if (aj.action === 'record_payment') {
     const crmService = require('./crmService');
-    const payRes = await crmService.recordPayment({ customer: aj.customer, amount: aj.amount, method: aj.method, userId: item.user });
+    const payRes = await crmService.recordPayment({ customer: aj.customerId || aj.customer, amount: aj.amount, method: aj.method, userId: item.user });
     if (payRes.status !== 'completed') return { ok: false, message: payRes.message || 'Payment failed.' };
   } else if (aj.action === 'add_customer') {
     const crmService = require('./crmService');
@@ -1047,13 +1049,14 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       salesDate: aj.salesDate || '', customerName: aj.customer || '',
       salesPerson: aj.salesPerson || '', paymentMode: enrichment?.paymentMode || aj.paymentMode || '',
       saleRefId: requestId, pricePerYard: firstPrice || '', amountPaid: enrichment?.amountPaid ?? '',
+      customerId: aj.customerId || '',
     });
     // Post sale to ledger so customer has DR (receivable) = yards * rate; outstanding = previous + this sale - payments
     const designsToEmit = Object.keys(byDesign).length ? Object.entries(byDesign) : [['', totalYards]];
     for (const [design, yards] of designsToEmit) {
       if (!yards || yards <= 0) continue;
       const pricePerYard = getPricePerYard(enrichment, design);
-      const payload = { type: 'sale_bundle', customer: aj.customer, yards, pricePerYard, design: design || undefined, shade: '', userId: item.user, txnId: `${requestId}-${design || 'sale'}`, paymentMode: enrichment?.paymentMode ?? '', amountPaid: enrichment?.amountPaid ?? 0 };
+      const payload = { type: 'sale_bundle', customer: aj.customer, customerId: aj.customerId || '', yards, pricePerYard, design: design || undefined, shade: '', userId: item.user, txnId: `${requestId}-${design || 'sale'}`, paymentMode: enrichment?.paymentMode ?? '', amountPaid: enrichment?.amountPaid ?? 0 };
       try {
         await erpEmitAsync('sale', payload);
       } catch (e) { await recordErpFailure(`sale ledger (bundle${design ? ` ${design}` : ''})`, e); }

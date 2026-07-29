@@ -36,9 +36,11 @@ async function addCustomer({ name, phone, address, category, credit_limit, payme
 }
 
 async function getCustomer(nameOrId) {
-  let c = await customersRepo.findById(nameOrId);
-  if (!c) c = await customersRepo.findByName(nameOrId);
-  return c;
+  // CUS-1 — resolve through the entity: id first, then canonical name, then
+  // ALIAS, so a payment or ledger read for an old spelling still lands on
+  // the real customer after a merge.
+  const customerEntity = require('./customerEntity');
+  return customerEntity.resolve({ id: nameOrId, name: nameOrId });
 }
 
 async function searchCustomers(query) {

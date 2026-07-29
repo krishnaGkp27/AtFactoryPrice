@@ -21,6 +21,7 @@ function parse(r) {
     narration: (r[7] || '').toString().trim(),
     created_by: (r[8] || '').toString().trim(),
     created_at: (r[9] || '').toString().trim(),
+    customer_id: (r[10] || '').toString().trim(),
   };
 }
 
@@ -34,15 +35,18 @@ async function append(entry) {
     entry.entry_id, entry.txn_id, entry.date, entry.account_code, entry.ledger_name,
     entry.debit || 0, entry.credit || 0, entry.narration || '',
     entry.created_by || '', entry.created_at || new Date().toISOString(),
+    entry.customer_id || '',
   ]]);
 }
 
 async function appendPair(debitEntry, creditEntry) {
   await sheets.appendRows(SHEET, [
     [debitEntry.entry_id, debitEntry.txn_id, debitEntry.date, debitEntry.account_code, debitEntry.ledger_name,
-     debitEntry.debit || 0, 0, debitEntry.narration || '', debitEntry.created_by || '', debitEntry.created_at || new Date().toISOString()],
+     debitEntry.debit || 0, 0, debitEntry.narration || '', debitEntry.created_by || '', debitEntry.created_at || new Date().toISOString(),
+     debitEntry.customer_id || ''],
     [creditEntry.entry_id, creditEntry.txn_id, creditEntry.date, creditEntry.account_code, creditEntry.ledger_name,
-     0, creditEntry.credit || 0, creditEntry.narration || '', creditEntry.created_by || '', creditEntry.created_at || new Date().toISOString()],
+     0, creditEntry.credit || 0, creditEntry.narration || '', creditEntry.created_by || '', creditEntry.created_at || new Date().toISOString(),
+     creditEntry.customer_id || ''],
   ]);
 }
 

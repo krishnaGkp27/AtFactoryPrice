@@ -18,7 +18,7 @@ async function getAccountCode(name) {
 }
 
 /** Single entry: one row to Customer Receivable (debit). Narration includes payment status at time of sale. */
-async function recordSale({ customer, yards, pricePerYard, packageNo, design, shade, userId, txnId, paymentMode, amountPaid }) {
+async function recordSale({ customer, customerId, yards, pricePerYard, packageNo, design, shade, userId, txnId, paymentMode, amountPaid }) {
   const amount = (yards || 0) * (pricePerYard || 0);
   if (amount <= 0) return;
   const date = new Date().toISOString().split('T')[0];
@@ -30,6 +30,7 @@ async function recordSale({ customer, yards, pricePerYard, packageNo, design, sh
   await ledgerRepo.append({
     entry_id: idGen.ledgerEntry(), txn_id: txnId || '', date, account_code: debitCode, ledger_name: 'Customer Receivable',
     debit: amount, credit: 0, narration, created_by: userId || '',
+    customer_id: customerId || '',
   });
   return { amount, narration };
 }

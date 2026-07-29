@@ -10,9 +10,12 @@ const { normalizeSalesDate, todayInLagos, normDay } = require('../utils/dates');
 const SHEET = 'Transactions';
 const HEADERS = ['Timestamp', 'User', 'Action', 'Design', 'Color', 'Qty', 'Before', 'After', 'Status',
   'SalesDate', 'Warehouse', 'CustomerName', 'SalesPerson', 'PaymentMode', 'SaleRefId', 'PricePerYard', 'AmountPaid',
-  // SELL-T2 (owner 21-Jul): backdated stamp, e.g. 'BACKDATED-10d' — end
-  // column per sheet rules. '' for normal sales.
-  'Backdated'];
+  // SELL-T2 (owner 21-Jul): backdated stamp, e.g. 'BACKDATED-10d'.
+  'Backdated',
+  // CUS-1 Phase C (owner sign-off 29-Jul): the customer ENTITY key. Names
+  // remain for human-readable sheets; the id is what reads key on. End
+  // column per sheet rules.
+  'CustomerId'];
 
 let _headerReady = false;
 
@@ -22,9 +25,9 @@ async function ensureHeader() {
   // append/write paid an extra read (and, where ensureHeader also calls
   // getSheetNames, a whole-spreadsheet metadata call) first.
   if (_headerReady) return;
-  const rows = await sheets.readRange(SHEET, 'A1:R1');
+  const rows = await sheets.readRange(SHEET, 'A1:S1');
   if (!rows.length || rows[0].length < 18) {
-    await sheets.updateRange(SHEET, 'A1:R1', [HEADERS]);
+    await sheets.updateRange(SHEET, 'A1:S1', [HEADERS]);
   }
   _headerReady = true;
 }
@@ -53,6 +56,7 @@ async function append(record) {
     record.pricePerYard ?? '',
     record.amountPaid ?? '',
     backdatedStamp(record),
+    record.customerId || '',
   ];
   await sheets.appendRows(SHEET, [row]);
   // SELL-T2 — a stamped backdated sale also leaves an AuditLog trail
@@ -109,13 +113,14 @@ function parseRow(r) {
     pricePerYard: parseFloat(r[15]) || 0,
     amountPaid: parseFloat(r[16]) || 0,
     backdated: (r[17] || '').toString(),
+    customerId: (r[18] || '').toString(),
   };
 }
 
 /** Get last N transaction rows (oldest to newest of the last N). */
 async function getLast(n) {
   await ensureHeader();
-  const rows = await sheets.readRange(SHEET, 'A2:R');
+  const rows = await sheets.readRange(SHEET, 'A2:S');
   if (!rows.length) return [];
   const lastRows = rows.slice(-Math.max(1, parseInt(n, 10) || 1));
   return lastRows.map((r) => parseRow(r));
@@ -123,7 +128,7 @@ async function getLast(n) {
 
 /** Update status of a transaction row by matching timestamp + user + action (last matching row). */
 async function setStatusReverted(timestamp, user, action) {
-  const rows = await sheets.readRange(SHEET, 'A2:R');
+  const rows = await sheets.readRange(SHEET, 'A2:S');
   for (let i = rows.length - 1; i >= 0; i--) {
     if (String(rows[i][0]) === String(timestamp) && String(rows[i][1]) === String(user) && String(rows[i][2]) === String(action)) {
       const rowIndex = i + 2;
@@ -152,7 +157,7 @@ async function getCustomersByDesign(design) {
   // Source 2: Transactions sheet — CustomerName column for matching design
   try {
     await ensureHeader();
-    const txnRows = await sheets.readRange(SHEET, 'A2:R');
+    const txnRows = await sheets.readRange(SHEET, 'A2:S');
     for (const r of txnRows) {
       const rowDesign = (r[3] || '').toString().toUpperCase().trim();
       const customer = (r[11] || '').toString().trim();
@@ -166,7 +171,7 @@ async function getCustomersByDesign(design) {
 /** RPT-2 — all rows whose SalesDate falls in [fromIso, toIso] (inclusive). */
 async function getBySalesDateRange(fromIso, toIso) {
   await ensureHeader();
-  const rows = await sheets.readRange(SHEET, 'A2:R');
+  const rows = await sheets.readRange(SHEET, 'A2:S');
   const from = normDay(fromIso);
   const to = normDay(toIso);
   return rows.map(parseRow).filter((t) => t.salesDate && t.salesDate >= from && t.salesDate <= to);

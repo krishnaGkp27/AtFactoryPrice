@@ -21,7 +21,9 @@ const REQUIRED_SHEETS = {
     ],
   },
   Ledger_Entries: {
-    headers: ['entry_id', 'txn_id', 'date', 'account_code', 'ledger_name', 'debit', 'credit', 'narration', 'created_by', 'created_at'],
+    // CUS-1 Phase C — customer_id keys the entry to the customer ENTITY;
+    // the narration keeps the human-readable name. End column per rules.
+    headers: ['entry_id', 'txn_id', 'date', 'account_code', 'ledger_name', 'debit', 'credit', 'narration', 'created_by', 'created_at', 'customer_id'],
   },
   Stock_Ledger: {
     headers: ['entry_id', 'date', 'item_id', 'package_no', 'branch', 'type', 'qty_in', 'qty_out', 'reference_id', 'created_at'],
