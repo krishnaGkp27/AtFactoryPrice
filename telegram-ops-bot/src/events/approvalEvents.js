@@ -198,12 +198,55 @@ async function getRegisteredBanks() {
  */
 async function sendCustomerStep(bot, chatId, state, note) {
   state.step = 'customer';
+
+  // CUS-1 Phase D (owner, 28-Jul: "suggested customers as per their sales,
+  // and the previous rate for that design"). For a single-design sale the
+  // top chips are buyers of THIS design, newest first, each carrying the
+  // rate they LAST paid for it — the reminder and an identity check in one:
+  // if the admin expects CJE around ₦1,500 and the chip says ₦900, either
+  // memory or the books are wrong, and that is worth noticing BEFORE the
+  // tap. Multi-design bundles have no single "the rate", so their chips
+  // stay unannotated (general recency) — Step 2 handles per-design rates.
+  const designBuyers = [];
+  if ((state.designs || []).length === 1) {
+    try {
+      const rateSuggestionService = require('../services/rateSuggestionService');
+      const customerEntity = require('../services/customerEntity');
+      const sales = await rateSuggestionService.recentSalesForDesign(state.designs[0]);
+      const seenIds = new Set();
+      for (const sale of sales) {
+        if (designBuyers.length >= 5) break;
+        const cust = await customerEntity.resolve({ name: sale.customer });
+        if (!cust || seenIds.has(cust.customer_id)) continue;
+        if (String(cust.status || 'Active').toLowerCase() !== 'active') continue;
+        seenIds.add(cust.customer_id);
+        // Newest-first input → the first sale seen per customer IS their
+        // latest rate for this design.
+        designBuyers.push({ name: cust.name, rate: sale.pricePerYard });
+      }
+    } catch (e) {
+      logger.warn(`design-buyer suggestions failed (falling back to recents): ${e.message}`);
+    }
+  }
+
   const recent = await getRecentBuyers();
-  state._custRecent = recent.slice(0, 8);
+  const names = designBuyers.map((b) => b.name);
+  for (const n of recent) {
+    if (names.length >= 8) break;
+    if (!names.includes(n)) names.push(n);
+  }
+  state._custRecent = names;
+
   const rows = [];
-  for (let i = 0; i < state._custRecent.length; i += 2) {
-    const row = [{ text: `👤 ${state._custRecent[i].slice(0, 26)}`, callback_data: `enr:cust:r:${i}` }];
-    if (state._custRecent[i + 1]) row.push({ text: `👤 ${state._custRecent[i + 1].slice(0, 26)}`, callback_data: `enr:cust:r:${i + 1}` });
+  // Design buyers first, one per row — the rate needs the width.
+  designBuyers.forEach((b, i) => {
+    const rate = Number.isFinite(b.rate) && b.rate > 0
+      ? ` — ₦${Number(b.rate).toLocaleString('en-NG')}/yd` : '';
+    rows.push([{ text: `👤 ${b.name.slice(0, 24)}${rate}`, callback_data: `enr:cust:r:${i}` }]);
+  });
+  for (let i = designBuyers.length; i < names.length; i += 2) {
+    const row = [{ text: `👤 ${names[i].slice(0, 26)}`, callback_data: `enr:cust:r:${i}` }];
+    if (names[i + 1]) row.push({ text: `👤 ${names[i + 1].slice(0, 26)}`, callback_data: `enr:cust:r:${i + 1}` });
     rows.push(row);
   }
   // CUS-1 — no creation here: the admin picks from the official list. A
@@ -213,7 +256,8 @@ async function sendCustomerStep(bot, chatId, state, note) {
   try {
     await bot.sendMessage(chatId,
       `${note ? `${note}\n\n` : ''}📋 *Confirm sale details*\n${what}\n\n`
-      + '*Step 1 — Customer:* tap a buyer below, or reply with a name to search.',
+      + `*Step 1 — Who is buying${(state.designs || []).length === 1 ? ` ${state.designs[0]}` : ''}?* Tap below, or reply with a name to search.\n`
+      + `${designBuyers.length ? '_Buyers of this design first, with the rate they last paid for it._' : ''}`,
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
   } catch (_) { /* best-effort */ }
 }
@@ -372,8 +416,25 @@ async function sendRateStep(bot, chatId, state) {
   // the moment it is tapped, so abandoning and re-approving skipped Step 1
   // entirely and the only exit was editing the sheet by hand.
   rows.push([{ text: `✎ Change customer (${String(customer || '—').slice(0, 24)})`, callback_data: 'enr:cust:back' }]);
+  // CUS-1 Phase D (owner: "I would go with the outstanding balance on
+  // step 2") — credit exposure belongs where more stock is being assigned,
+  // not only AFTER the sale executes. Best-effort: a ledger hiccup never
+  // blocks the chain.
+  let outstandingLine = '';
+  try {
+    if (customer) {
+      const accountingService = require('../services/accountingService');
+      const { outstandingAsOfToday } = await accountingService.getCustomerLedger(customer);
+      if (Number.isFinite(outstandingAsOfToday)) {
+        outstandingLine = `\n📒 Outstanding: ₦${Number(outstandingAsOfToday).toLocaleString('en-NG')}`;
+      }
+    }
+  } catch (e) {
+    logger.warn(`outstanding lookup failed for "${customer}": ${e.message}`);
+  }
+
   await bot.sendMessage(chatId,
-    `📋 *Confirm sale details*\n\nCustomer: *${customer || '—'}*\nDesign(s): ${designList}\nUnit: ${unit} (Naira per ${unit})\n\n*Step 2 — Rate:* tap below, or reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\``,
+    `📋 *Confirm sale details*\n\nCustomer: *${customer || '—'}*${outstandingLine}\nDesign(s): ${designList}\nUnit: ${unit} (Naira per ${unit})\n\n*Step 2 — Rate:* tap below, or reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\``,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 

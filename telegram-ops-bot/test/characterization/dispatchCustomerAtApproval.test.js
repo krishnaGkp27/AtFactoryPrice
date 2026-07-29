@@ -71,7 +71,7 @@ test('DSP-1: a customer-less sale opens the CUSTOMER step first, not the rate st
   ]);
   await approvalEvents.startApprovalEnrichment(bot, ADMIN, ADMIN, 'R-1', saleItem(''), '4242');
   const t = texts(bot);
-  assert.match(t, /Step 1 — Customer/, `customer is asked first, got: ${t}`);
+  assert.match(t, /Step 1 — Who is buying/, `customer is asked first, got: ${t}`);
   assert.ok(!/Step 2 — Rate/.test(t), 'the rate step must wait for a buyer');
   assert.ok(kbOf(bot).some((b) => b.callback_data === 'enr:cust:all:0'), 'full list reachable');
   // CUS-1 — creation left the approval chain entirely: single door (CRM).
@@ -128,7 +128,7 @@ test('DSP-1: an already-assigned customer skips the customer step entirely', asy
   await approvalEvents.startApprovalEnrichment(bot, ADMIN, ADMIN, 'R-1', saleItem('CJE'), '4242');
   const t = texts(bot);
   assert.match(t, /Step 2 — Rate/, 'straight to rate');
-  assert.ok(!/Step 1 — Customer/.test(t),
+  assert.ok(!/Step 1 — Who is buying/.test(t),
     'requests queued before this change already name a buyer — do not re-ask');
 });
 
@@ -224,7 +224,7 @@ test('DSP-1b: a mistapped customer is recoverable — ✎ Change customer re-ope
   await approvalEvents.handleEnrichmentCallback(bot, {
     id: 'q2', data: change.callback_data, from: { id: ADMIN }, message: { chat: { id: ADMIN } },
   });
-  assert.match(texts(bot), /Step 1 — Customer/, 'back on the customer step');
+  assert.match(texts(bot), /Step 1 — Who is buying/, 'back on the customer step');
 
   // …and re-picking must OVERWRITE the queue row, not append to it.
   await approvalEvents.handleEnrichmentMessage(bot, ADMIN, ADMIN, 'Ketu madam');
@@ -241,4 +241,60 @@ test('DSP-1b: a pre-assigned request ALSO gets the change chip — the re-approv
   assert.match(texts(bot), /Step 2 — Rate/);
   assert.ok(kbOf(bot).some((b) => b.callback_data === 'enr:cust:back'),
     'without this, abandoning and re-approving skipped Step 1 and locked the wrong buyer in');
+});
+
+/* ── CUS-1 Phase D: decision support at the moment of choice ──────────── */
+
+test('CUS-1 D: design buyers rank first, each chip carrying their LAST rate for this design', async () => {
+  const rateSuggestionService = require(path.join(SRC, 'services/rateSuggestionService'));
+  const origRecent = rateSuggestionService.recentSalesForDesign;
+  rateSuggestionService.recentSalesForDesign = async () => ([
+    { ts: '2026-07-28', customer: 'CJE', pricePerYard: 1500, qty: 60 },
+    { ts: '2026-07-20', customer: 'C.J.E', pricePerYard: 1400, qty: 30 },   // alias → same entity, deduped
+    { ts: '2026-07-15', customer: 'Ketu madam', pricePerYard: 1450, qty: 20 },
+    { ts: '2026-07-10', customer: 'GHOST TYPO', pricePerYard: 900, qty: 10 }, // not canonical → never suggested
+  ]);
+  transactionsRepository.getLast = async () => [];
+  try {
+    const bot = createFakeBot();
+    await approvalEvents.startApprovalEnrichment(bot, ADMIN, ADMIN, 'R-1', saleItem(''), '4242');
+    const chips = kbOf(bot).filter((b) => b.callback_data.startsWith('enr:cust:r:'));
+    assert.match(chips[0].text, /CJE — ₦1,500\/yd/, `newest buyer of the design first, with the rate: ${chips[0].text}`);
+    assert.match(chips[1].text, /Ketu madam — ₦1,450\/yd/);
+    assert.equal(chips.filter((c) => /CJE/.test(c.text)).length, 1, 'the alias sale deduped onto the canonical entity');
+    assert.ok(!chips.some((c) => /GHOST TYPO/.test(c.text)), 'history typos are never suggested (decision 8)');
+    assert.match(texts(bot), /Who is buying 77016/, 'the header names the design');
+  } finally {
+    rateSuggestionService.recentSalesForDesign = origRecent;
+  }
+});
+
+test('CUS-1 D: Step 2 shows the outstanding balance for the assigned customer', async () => {
+  const accountingService = require(path.join(SRC, 'services/accountingService'));
+  const origLedger = accountingService.getCustomerLedger;
+  accountingService.getCustomerLedger = async () => ({ outstandingAsOfToday: 240000 });
+  transactionsRepository.getLast = async () => [];
+  try {
+    const bot = createFakeBot();
+    await approvalEvents.startApprovalEnrichment(bot, ADMIN, ADMIN, 'R-1', saleItem('CJE'), '4242');
+    assert.match(texts(bot), /📒 Outstanding: ₦240,000/, 'credit exposure at the moment more stock is assigned');
+  } finally {
+    accountingService.getCustomerLedger = origLedger;
+  }
+});
+
+test('CUS-1 D: a ledger hiccup never blocks the chain — the line is simply absent', async () => {
+  const accountingService = require(path.join(SRC, 'services/accountingService'));
+  const origLedger = accountingService.getCustomerLedger;
+  accountingService.getCustomerLedger = async () => { throw new Error('Sheets 503'); };
+  transactionsRepository.getLast = async () => [];
+  try {
+    const bot = createFakeBot();
+    await approvalEvents.startApprovalEnrichment(bot, ADMIN, ADMIN, 'R-1', saleItem('CJE'), '4242');
+    const t = texts(bot);
+    assert.match(t, /Step 2 — Rate/, 'the chain proceeds');
+    assert.ok(!/Outstanding/.test(t), 'no invented number');
+  } finally {
+    accountingService.getCustomerLedger = origLedger;
+  }
 });
