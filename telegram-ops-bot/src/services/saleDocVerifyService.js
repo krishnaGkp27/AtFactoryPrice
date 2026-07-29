@@ -223,13 +223,31 @@ function compareItemsToLabels(items, labels, opts = {}) {
         notes.push(`shade: could not verify shade notation (bill says ${l.shade}, request says ${it.shade})`);
       }
     }
+    // VRF-1b (owner complaint 29-Jul: verdicts "still don't match") — the
+    // PARTIAL-SALE false-mismatch class. The bill photo shows the bale
+    // LABEL, which always carries the bale's FULL piece count and yardage;
+    // the request sells what is being sold — which is less whenever thans
+    // were sold before, or only part of the bale goes out. "pcs: bill says
+    // 4, request says 2" flagged every partial sale as a mismatch when the
+    // paper and the request agreed perfectly. Selling LESS than the label
+    // is consistent (noted, not flagged); only a bill showing FEWER pieces
+    // or fewer yards than the request claims is a real discrepancy.
+    let partialPcs = false;
     if (Number(l.thanNo) && Number(it.thans) && Number(l.thanNo) !== Number(it.thans)) {
-      diffs.push(`pcs: bill says ${l.thanNo}, request says ${it.thans}`);
+      if (Number(l.thanNo) > Number(it.thans)) {
+        partialPcs = true;
+        notes.push(`partial: selling ${it.thans} of the ${l.thanNo} pcs on the label`);
+      } else {
+        diffs.push(`pcs: bill says ${l.thanNo}, request says ${it.thans}`);
+      }
     }
     const lYds = Number(l.yards) || 0; // mapParsedBales already converts meters
     if (lYds && Number(it.yards)
         && Math.abs(lYds - it.yards) / Number(it.yards) > QTY_TOLERANCE) {
-      diffs.push(`qty: bill ~${Math.round(lYds)} yds, request ${Math.round(it.yards)} yds`);
+      const sellingLess = it.yards < lYds && (partialPcs || !Number(l.thanNo) || !Number(it.thans));
+      if (!sellingLess) {
+        diffs.push(`qty: bill ~${Math.round(lYds)} yds, request ${Math.round(it.yards)} yds`);
+      }
     }
     if (via === 'details') diffs.push(`bale no: bill reads "${l.packageNo || '?'}" — matched by details`);
     results.push({ item: it, status: diffs.length ? 'differs' : 'ok', diffs, notes, label: l });

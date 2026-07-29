@@ -242,3 +242,28 @@ test('CARD-2: multi-design card is sorted + grouped with per-design subtotals; s
   assert.ok(!single.includes('🧵'), 'single-design card keeps the flat layout');
   assert.ok(single.indexOf('Bale 897') < single.indexOf('Bale 896'), 'still sorted by shade');
 });
+
+/* ── VRF-1b: the partial-sale false-mismatch class (owner, 29-Jul) ────── */
+
+const cmp = require(require('path').join(SRC, 'services/saleDocVerifyService'))._internals.compareItemsToLabels;
+
+test('VRF-1b: selling PART of a bale is confirmed-with-note, never a mismatch', () => {
+  // The label always shows the FULL bale (4 pcs, 120 yds); the request
+  // sells what remains (2 pcs, 60 yds). Paper and request agree.
+  const { results } = cmp(
+    [{ packageNo: '896', design: '77016', shade: 'BLACK', thans: 2, yards: 60 }],
+    [{ packageNo: '896', design: '77016', shade: 'BLACK', thanNo: 4, yards: 120 }],
+  );
+  assert.equal(results[0].status, 'ok',
+    `a partial sale flagged every time was the standing "does not match" complaint — got ${results[0].status}: ${JSON.stringify(results[0].diffs)}`);
+  assert.match((results[0].notes || []).join(';'), /selling 2 of the 4 pcs/);
+});
+
+test('VRF-1b: a bill showing FEWER pieces than the request claims still flags', () => {
+  const { results } = cmp(
+    [{ packageNo: '896', design: '77016', shade: 'BLACK', thans: 4, yards: 120 }],
+    [{ packageNo: '896', design: '77016', shade: 'BLACK', thanNo: 2, yards: 60 }],
+  );
+  assert.equal(results[0].status, 'differs',
+    'claiming MORE than the paper shows is the real discrepancy the check exists for');
+});
