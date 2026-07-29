@@ -159,6 +159,9 @@ const ACTIVITIES = [
   // start() is admin-gated, and it is in no department CSV so employees
   // never see the tile.
   { code: 'approvals_inbox',       label: 'Approvals',                 icon: '🛂', callback: 'act:approvals_inbox',    hub: null },
+  // GLA-1 — one-card "what is going on" pulse for admins (owner 29-Jul).
+  // Top level: it is the morning first-open screen, like Approvals.
+  { code: 'business_glance',       label: 'Business Glance',           icon: '📈', callback: 'act:business_glance',    hub: null },
   { code: 'add_customer_note',     label: 'Add Note',                  icon: '✏️', callback: 'act:add_note',           hub: 'crm' },
   { code: 'add_customer',          label: 'Add Customer',              icon: '➕', callback: 'act:add_customer',       hub: 'crm' },
   // CUS-1 Phase E — the typo-cleanup tool: fold a duplicate into the real

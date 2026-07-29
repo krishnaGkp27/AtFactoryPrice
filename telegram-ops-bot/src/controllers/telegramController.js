@@ -6693,6 +6693,7 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['rol:'], handle: (bot, cq) => require('../flows/roleEditFlow').handleCallback(bot, cq) },
   { prefixes: ['atd:'], handle: (bot, cq) => require('../flows/attendanceFlow').handleCallback(bot, cq) },
   { prefixes: ['cmg:'], handle: (bot, cq) => require('../flows/customerMergeFlow').handleCallback(bot, cq) },
+  { prefixes: ['bgl:'], handle: (bot, cq) => require('../flows/businessGlanceFlow').handleCallback(bot, cq) },
   { prefixes: ['atd_rpt:'], handle: (bot, cq) => require('../flows/attendanceReportFlow').handleCallback(bot, cq) },
   { prefixes: ['atd_adm:'], handle: (bot, cq) => require('../flows/attendanceAdminFlow').handleCallback(bot, cq) },
   // CNET-1b — contact network (category → buyers → people, recursive).
@@ -9353,6 +9354,11 @@ async function handleCallbackQuery(bot, callbackQuery) {
           break;
         }
         await startAddCustomerFlow(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'business_glance': {
+        // GLA-1 — admin pulse card (flow gates admin itself).
+        await require('../flows/businessGlanceFlow').start(bot, chatId, uid, messageId);
         break;
       }
       case 'merge_customers': {

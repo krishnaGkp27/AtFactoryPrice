@@ -75,6 +75,7 @@ const PREFIX_FEATURES = {
   'sd:': 'report_supply_by_design', 'sdv:': 'report_supply_by_design',
   'cpk:': 'customers',
   'cmg:': 'merge_customers',
+  'bgl:': 'business_glance',
   'rpk:': 'record_payment',
   'abx:': 'approvals_inbox',
   'sdd:': 'supply_details',
