@@ -250,6 +250,10 @@ async function handleLocation(bot, msg) {
     const dist = attendanceService.haversineM(lat, lng, anchor.lat, anchor.lng);
     session.verification.distanceM = dist;
     if (dist > anchor.radiusM) {
+      // ATT-V3 — the user's own map message pushes the anchored card above
+      // the fold; an edit up there is invisible. Re-anchor so the verdict
+      // lands at the BOTTOM, where they are looking.
+      session.flowMessageId = null;
       sessionStore.set(userId, session);
       await bot.sendMessage(chatId, '📡 Position received.', { reply_markup: { remove_keyboard: true } });
       const km = dist >= 1000 ? `${(dist / 1000).toFixed(1)} km` : `${dist} m`;
@@ -262,10 +266,22 @@ async function handleLocation(bot, msg) {
     }
   }
   sessionStore.set(userId, session);
-  await bot.sendMessage(chatId, '📡 Position received ✅', { reply_markup: { remove_keyboard: true } });
+  // ATT-V3 (live confusion 29-Jul): "Position received ✅" alone reads like
+  // a FINAL confirmation, and the photo instruction sat on the anchored
+  // card ABOVE the user's own map message — invisible. The owner shared his
+  // position, saw the tick, and walked away believing he was marked. The
+  // ack itself now names the remaining step, and the photo prompt is
+  // re-anchored so it lands at the bottom of the chat.
+  const morePhoto = cfg.verifyMode === 'location+photo';
+  await bot.sendMessage(chatId,
+    morePhoto
+      ? '📡 Position received ✅ — one more step: the photo. You are NOT marked yet.'
+      : '📡 Position received ✅',
+    { reply_markup: { remove_keyboard: true } });
 
-  if (cfg.verifyMode === 'location+photo') {
+  if (morePhoto) {
     session.step = 'await_photo';
+    session.flowMessageId = null; // next render = fresh message at the bottom
     sessionStore.set(userId, session);
     await promptPhoto(bot, chatId, userId, session.location);
     return true;

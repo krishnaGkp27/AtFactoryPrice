@@ -214,3 +214,27 @@ test('ATT-C4b: sheet failure after the photo shows an error card with Try again 
   attendanceRepository.append = origAppend;
   sessionStore.clear('4242');
 });
+
+test('ATT-V3: after GPS the photo prompt lands BELOW the map, and the ack says NOT marked yet', async () => {
+  settings = { ATTENDANCE_VERIFY_MODE: 'location+photo', ATTENDANCE_LOCATIONS: 'Kano Office', ATTENDANCE_GEO_ANCHORS: '' };
+  appended.length = 0;
+  attendanceRepository.findByDateUser = async () => null;
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('act:mark_attendance'));
+  await controller.handleCallbackQuery(bot, cb(`atd:pick:${encodeURIComponent('Kano Office')}`));
+  const before = bot.calls.length;
+  await controller.handleLocationMessage(bot, {
+    from: { id: '4242' }, chat: { id: '4242' },
+    location: { latitude: 12.0, longitude: 8.5 },
+  });
+  const after = bot.calls.slice(before);
+  const ack = after.find((c) => c.method === 'sendMessage' && /Position received/.test(c.args.text));
+  assert.ok(ack, 'the ack still arrives');
+  assert.match(ack.args.text, /NOT marked yet/i,
+    'the tick alone read as a final confirmation — the owner walked away unmarked (29-Jul)');
+  // The instruction for the remaining step must be a NEW message at the
+  // bottom (sendMessage), never only an edit to the card above the map.
+  const prompt = after.find((c) => c.method === 'sendMessage' && /photo taken right now/i.test(c.args.text));
+  assert.ok(prompt, 'the photo prompt is re-anchored below the user\'s map message');
+  sessionStore.clear('4242');
+});
