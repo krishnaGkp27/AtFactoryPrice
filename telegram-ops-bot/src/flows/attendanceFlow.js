@@ -32,6 +32,7 @@ const usersRepo = require('../repositories/usersRepository');
 const attendanceService = require('../services/attendanceService');
 const auth = require('../middlewares/auth');
 const logger = require('../utils/logger');
+const fmtDate = require('../utils/formatDate');
 const { isNotModified } = require('../utils/telegramUI');
 
 function fmtTime(iso, timezone) {
@@ -145,7 +146,7 @@ async function start(bot, chatId, userId, messageId = null) {
     await render(bot, chatId, userId,
       `📍 *Today's Attendance*\n\n`
       + `✅ Already marked *Present*\n`
-      + `Date: *${existing.date}*\n`
+      + `Date: *${fmtDate(existing.date)}*\n`
       + `Location: *${existing.location}*\n`
       + `At: ${t}\n${via}\n\n`
       + `_If this is wrong, ask an admin to override (audited)._`,
@@ -428,7 +429,7 @@ async function finalizeMark(bot, chatId, userId) {
 
   await render(bot, chatId, userId,
     `${header}\n\n${confirmed ? '✅' : '⚠️'} ${verb} *Present*\n`
-    + `Date: *${result.entry.date}*\n`
+    + `Date: *${fmtDate(result.entry.date)}*\n`
     + `Location: *${result.entry.location}*\n`
     + `At: ${t}\n${verifyLines}\n`
     + tail,

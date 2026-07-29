@@ -114,7 +114,7 @@ test('a verified row is confirmed, with the date on the receipt', async () => {
   const txt = bot.all();
   assert.match(txt, /Attendance Recorded/);
   assert.match(txt, /Saved and confirmed/);
-  assert.match(txt, /2026-07-28/, 'the date is the thing that went wrong before — show it');
+  assert.match(txt, /28-Jul-2026/, 'the date is shown in the human format (fmtDate), never raw ISO');
   assert.match(txt, /Kano Office/);
   sessionStore.clear(EMP);
 });
@@ -125,7 +125,7 @@ test('opening the tile when already marked shows the confirmation, not the picke
   await attendanceFlow.start(bot, EMP, EMP, 1);
   const txt = bot.all();
   assert.match(txt, /Already marked/i);
-  assert.match(txt, /2026-07-28/);
+  assert.match(txt, /28-Jul-2026/, 'human date format on the already-marked card too');
   assert.ok(!/Where are you marking from/.test(txt), 'no second mark offered');
   sessionStore.clear(EMP);
 });

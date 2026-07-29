@@ -39,6 +39,7 @@ const usersRepo = require('../repositories/usersRepository');
 const attendanceService = require('../services/attendanceService');
 const auditLogRepo = require('../repositories/auditLogRepository');
 const logger = require('../utils/logger');
+const fmtDate = require('../utils/formatDate');
 const { isNotModified } = require('../utils/telegramUI');
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -154,7 +155,7 @@ async function buildTodayPanel(cfg) {
     : '  _(everyone has logged)_';
   return {
     text:
-      `📊 *Today — ${todayDate || '—'}*  ·  *${marked.length}/${reqValid.length}* marked\n\n`
+      `📊 *Today — ${todayDate ? fmtDate(todayDate) : '—'}*  ·  *${marked.length}/${reqValid.length}* marked\n\n`
       + `${presentLines}\n\n`
       + `*Not yet logged (${missing.length}):*\n${missingLines}`,
     counts: { marked: marked.length, required: reqValid.length, missing: missing.length },
@@ -643,7 +644,7 @@ async function renderToday(bot, chatId, userId) {
   kb.push(backRow());
 
   await render(bot, chatId, userId,
-    `📊 *Attendance — ${date}*\n\n`
+    `📊 *Attendance — ${fmtDate(date)}*\n\n`
     + `*Present (${present.length}/${required.length}):*\n${presentLines}\n\n`
     + `*Not yet logged (${missing.length}):*\n${missingLines}`
     + `${extrasSection}`

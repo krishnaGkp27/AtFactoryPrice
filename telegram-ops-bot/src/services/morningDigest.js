@@ -21,6 +21,7 @@
  */
 
 const settingsRepository = require('../repositories/settingsRepository');
+const fmtDate = require('../utils/formatDate');
 const config = require('../config');
 const logger = require('../utils/logger');
 const { LAGOS_TZ } = require('../utils/dates');
@@ -356,7 +357,7 @@ async function buildSummary(settings, now = new Date()) {
   if (!lines.length && !buttons.length) return { text: '', keyboard: null };
   const rows = [];
   for (let i = 0; i < buttons.length; i += 2) rows.push(buttons.slice(i, i + 2));
-  const text = `☀️ *Good morning — ${todayIso}*\n\n${lines.join('\n')}${buttons.length ? '\n\n_Tap a section for details._' : ''}`;
+  const text = `☀️ *Good morning — ${fmtDate(todayIso)}*\n\n${lines.join('\n')}${buttons.length ? '\n\n_Tap a section for details._' : ''}`;
   return { text, keyboard: rows.length ? { inline_keyboard: rows } : null };
 }
 

@@ -38,6 +38,7 @@ const auth = require('../middlewares/auth');
 const { todayInLagos } = require('../utils/dates');
 const config = require('../config');
 const logger = require('../utils/logger');
+const fmtDate = require('../utils/formatDate');
 const { rememberRequesterCard } = require('../utils/requesterCard');
 
 const SESSION_TYPE = 'snap_sale_flow';
@@ -227,7 +228,7 @@ async function showConfirm(bot, chatId, userId) {
   const readBack = session.ocr ? `📸 Read from label: ${readBackLine(session.ocr)}\n\n` : '';
   await render(bot, chatId, userId,
     `${readBack}✅ *Matched bale — confirm dispatch*\n\n📦 Bale *${mdEscape(b.packageNo)}* — ${mdEscape(b.design)} · shade ${mdEscape(b.shade || '—')}\n`
-    + `🏭 ${mdEscape(b.warehouse)} · ${b.availableThans} thans · ${Math.round(b.availableYards)} yds available\n📅 ${todayInLagos()}\n\n`
+    + `🏭 ${mdEscape(b.warehouse)} · ${b.availableThans} thans · ${Math.round(b.availableYards)} yds available\n📅 ${fmtDate(todayInLagos())}\n\n`
     + '_The label photo is attached as the sale document._\n'
     + '_The admin assigns the customer, rate and payment when approving — you will get the customer name and number back here once it is approved._',
     [[{ text: '✅ Submit for approval', callback_data: `${NS}ok` }],
@@ -384,7 +385,7 @@ async function showBatchConfirm(bot, chatId, userId) {
   await render(bot, chatId, userId,
     `📄 *PDF batch — ${batch.items.length} bale(s) matched* (${Math.round(totalYards)} yds)\n\n`
     + `${batchSummaryLines(batch)}\n\n`
-    + `Total: *${batch.items.length} bales* (${totalThans} thans), *${Math.round(totalYards)} yds*\n📅 ${todayInLagos()}\n\n`
+    + `Total: *${batch.items.length} bales* (${totalThans} thans), *${Math.round(totalYards)} yds*\n📅 ${fmtDate(todayInLagos())}\n\n`
     + '_The PDF is attached as the sale document._\n'
     + '_The admin assigns the customer, rate and payment when approving — you will get the customer name and number back here once it is approved._',
     rows);
