@@ -73,6 +73,8 @@ const PREFIX_FEATURES = {
   'oacc:': 'orders', 'obb:': 'orders', 'op:': 'orders', 'os:': 'orders',
   'rpt:': 'reports', 'rxw:': 'reports',
   'sd:': 'report_supply_by_design', 'sdv:': 'report_supply_by_design',
+  'cpk:': 'customers',
+  'rpk:': 'record_payment',
   'abx:': 'approvals_inbox',
   'sdd:': 'supply_details',
   'sdg:': 'supply_details_design',

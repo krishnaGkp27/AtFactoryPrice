@@ -283,7 +283,9 @@ const CATALOG_FLOWS = {
     recipientType: 'customer', recipientLabel: 'Customer', recipientIcon: '👤',
     action: 'catalog_supply', title: '📦 Supply Catalog',
     getRecipients: async () => { const all = await customersRepo.getAll(); return all.filter(c => (c.status || 'Active').toLowerCase() === 'active'); },
-    recipientCbKey: 'cu', newCb: 'csf:newcust', newLabel: '➕ Add New Customer',
+    // CUS-1 — the ➕ New Customer button is gone: creation is single-door
+    // (CRM), catalog picks from existing customers only.
+    recipientCbKey: 'cu',
   },
   clf: {
     prefix: 'clf', sessionType: 'catalog_loan_flow',
@@ -560,10 +562,9 @@ async function handleCatFlowCb(bot, callbackQuery, prefix) {
   }
 
   if (data === 'csf:newcust') {
-    session.step = 'new_cust_name';
-    const header = buildBreadcrumb(session, fc.recipientLabel);
-    const kb = { inline_keyboard: [[{ text: '◀️ Back', callback_data: `${prefix}:back:customer` }, { text: '❌ Cancel', callback_data: `${prefix}:cancel` }]] };
-    const msg = await editOrSend(bot, chatId, session.flowMessageId, header + '➕ *New Customer*\n\nEnter customer name:', { parse_mode: 'Markdown', reply_markup: kb });
+    // CUS-1 — stale button on an old card.
+    const msg = await editOrSend(bot, chatId, session.flowMessageId,
+      '➕ New customers are added by an admin via 👥 CRM → ➕ Add Customer.\nSearch here finds every existing customer.', {});
     trackMsg(session, msg); saveSession(userId, session);
     return true;
   }
@@ -641,30 +642,13 @@ async function handleCatFlowText(bot, chatId, userId, text) {
     await renderRecipientPicker(bot, chatId, userId, session, fc);
     return true;
   }
-  if (session.step === 'new_cust_name') {
-    session.newCustName = trimmed; session.step = 'new_cust_phone';
-    const header = buildBreadcrumb(session, fc.recipientLabel);
-    const kb = { inline_keyboard: [[{ text: '◀️ Back', callback_data: `${fc.prefix}:back:customer` }, { text: '❌ Cancel', callback_data: `${fc.prefix}:cancel` }]] };
-    const msg = await editOrSend(bot, chatId, session.flowMessageId, header + `➕ *New Customer: ${trimmed}*\n\nEnter phone number (or type "skip"):`, { parse_mode: 'Markdown', reply_markup: kb });
-    trackMsg(session, msg); saveSession(userId, session);
-    return true;
-  }
-  if (session.step === 'new_cust_phone') {
-    const phone = trimmed.toLowerCase() === 'skip' ? '' : trimmed;
-    const custId = idGenerator.customer();
-    await customersRepo.append({ customer_id: custId, name: session.newCustName, phone, status: 'Pending' });
-    const requestId = crypto.randomUUID();
-    const displayName = await getDisplayName(userId);
-    await approvalQueueRepo.append({
-      requestId, user: String(userId),
-      actionJSON: { action: 'new_customer', customer_id: custId, customer_name: session.newCustName, customer_phone: phone, requesterUserId: String(userId), parentFlowType: session.type },
-      riskReason: 'New customer registration requires approval', status: 'pending',
-    });
-    await notifyAdminsApprovalRequest(bot, requestId, displayName, `New customer: ${session.newCustName} (Phone: ${phone || '—'})`, 'New customer registration requires approval', String(userId));
-    session.step = 'awaiting_cust_approval'; session.customerApprovalId = requestId; session.pendingCustomerName = session.newCustName;
-    const header = buildBreadcrumb(session, fc.recipientLabel);
-    const msg = await editOrSend(bot, chatId, session.flowMessageId, header + `⏳ *Customer "${session.newCustName}" submitted for approval.*\n\nYou'll be notified when approved. Please restart the flow after approval.`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [] } });
-    trackMsg(session, msg); saveSession(userId, session);
+  if (session.step === 'new_cust_name' || session.step === 'new_cust_phone') {
+    // CUS-1 — creation left this flow; a stale session lands here at most once.
+    session.step = 'customer';
+    saveSession(userId, session);
+    const msg = await editOrSend(bot, chatId, session.flowMessageId,
+      '➕ New customers are added via 👥 CRM → ➕ Add Customer. Pick an existing customer:', {});
+    trackMsg(session, msg);
     return true;
   }
   return false;

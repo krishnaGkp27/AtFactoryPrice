@@ -206,8 +206,9 @@ async function sendCustomerStep(bot, chatId, state, note) {
     if (state._custRecent[i + 1]) row.push({ text: `👤 ${state._custRecent[i + 1].slice(0, 26)}`, callback_data: `enr:cust:r:${i + 1}` });
     rows.push(row);
   }
-  rows.push([{ text: '📋 All customers', callback_data: 'enr:cust:all:0' },
-    { text: '➕ New customer', callback_data: 'enr:cust:new' }]);
+  // CUS-1 — no creation here: the admin picks from the official list. A
+  // genuinely new buyer is added via CRM first (single door).
+  rows.push([{ text: '📋 All customers', callback_data: 'enr:cust:all:0' }]);
   const what = describeSaleForCustomerStep(state);
   try {
     await bot.sendMessage(chatId,
@@ -228,18 +229,27 @@ function describeSaleForCustomerStep(state) {
   return bits.length ? `\n${bits.join(' · ')}` : '';
 }
 
-/** Buyers seen most recently in Transactions, newest first, de-duplicated. */
+/** Buyers seen most recently in Transactions, newest first — resolved to
+ *  CANONICAL ACTIVE customers only (CUS-1): a history typo or a merged/
+ *  pending name is never suggested, because suggesting it perpetuates it. */
 async function getRecentBuyers() {
   try {
     const transactionsRepository = require('../repositories/transactionsRepository');
+    const customerEntity = require('../services/customerEntity');
     const rows = await transactionsRepository.getLast(300);
     const seen = [];
-    for (let i = rows.length - 1; i >= 0; i--) {
+    const seenIds = new Set();
+    for (let i = rows.length - 1; i >= 0 && seen.length < 8; i--) {
       const r = rows[i];
       if (!/^(sell|sale)/i.test(String(r.action || ''))) continue;
       const n = String(r.customerName || '').trim();
-      if (n && !seen.includes(n)) seen.push(n);
-      if (seen.length >= 8) break;
+      if (!n) continue;
+      const cust = await customerEntity.resolve({ name: n });
+      if (!cust || seenIds.has(cust.customer_id)) continue;
+      const status = String(cust.status || 'Active').toLowerCase();
+      if (status !== 'active') continue;
+      seenIds.add(cust.customer_id);
+      seen.push(cust.name);
     }
     return seen;
   } catch (e) {
@@ -253,9 +263,8 @@ async function sendCustomerPage(bot, chatId, state, page) {
   const PER = 10;
   let all = [];
   try {
-    const customersRepository = require('../repositories/customersRepository');
-    all = (await customersRepository.getAll())
-      .filter((c) => String(c.status || 'Active').toLowerCase() !== 'inactive')
+    // CUS-1 — active canonical customers only (Pending used to leak here).
+    all = (await require('../services/customerEntity').activeList())
       .map((c) => c.name)
       .filter(Boolean)
       .sort((a, b) => a.localeCompare(b));
@@ -264,8 +273,7 @@ async function sendCustomerPage(bot, chatId, state, page) {
   }
   if (!all.length) {
     try {
-      await bot.sendMessage(chatId, 'No customers on file yet — tap ➕ New customer, or reply with a name.',
-        { reply_markup: { inline_keyboard: [[{ text: '➕ New customer', callback_data: 'enr:cust:new' }]] } });
+      await bot.sendMessage(chatId, 'No customers on file yet — an admin can add them via 👥 CRM → ➕ Add Customer.');
     } catch (_) { /* best-effort */ }
     return;
   }
@@ -277,7 +285,7 @@ async function sendCustomerPage(bot, chatId, state, page) {
   if (p > 0) nav.push({ text: '⬅ Prev', callback_data: `enr:cust:all:${p - 1}` });
   if (p < pages - 1) nav.push({ text: 'Next ➡', callback_data: `enr:cust:all:${p + 1}` });
   if (nav.length) rows.push(nav);
-  rows.push([{ text: '⬅ Back', callback_data: 'enr:cust:back' }, { text: '➕ New customer', callback_data: 'enr:cust:new' }]);
+  rows.push([{ text: '⬅ Back', callback_data: 'enr:cust:back' }]);
   try {
     await bot.sendMessage(chatId, `📋 *All customers* (page ${p + 1}/${pages}) — or reply with a name to search.`,
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
@@ -295,57 +303,30 @@ async function sendCustomerPage(bot, chatId, state, page) {
 async function assignCustomer(bot, chatId, state, name) {
   const clean = String(name || '').trim();
   if (!clean) return false;
+  // CUS-1 — the entity id rides with the name on the queue row, so every
+  // downstream consumer can key on the id once Phase C lands.
+  let custId = '';
   try {
-    await approvalQueueRepository.updateActionJSON(state.requestId, { customer: clean });
+    const cust = await require('../services/customerEntity').resolve({ name: clean });
+    if (cust) custId = cust.customer_id;
+  } catch (_) { /* id is additive; the name still works */ }
+  try {
+    await approvalQueueRepository.updateActionJSON(state.requestId, { customer: clean, customerId: custId });
   } catch (e) {
     // The in-memory copy still carries it into execution, so the sale is
     // not lost — but the row on the sheet would not show who it went to.
     logger.error(`DSP-1: could not persist customer on ${state.requestId}: ${e.message}`);
     try { await bot.sendMessage(chatId, `⚠️ Customer recorded for this approval, but the queue row could not be updated (${e.message}).`); } catch (_) {}
   }
-  if (state.item && state.item.actionJSON) state.item.actionJSON.customer = clean;
+  if (state.item && state.item.actionJSON) {
+    state.item.actionJSON.customer = clean;
+    state.item.actionJSON.customerId = custId;
+  }
   state.customer = clean;
   await sendRateStep(bot, chatId, state);
   return true;
 }
 
-/**
- * DSP-1 — create a customer mid-approval and assign it.
- *
- * Created directly rather than queued: `add_customer` normally needs a
- * second admin, but this admin is already exercising approval authority on
- * this very request, and queueing here would deadlock the sale behind a
- * second approval. If the write fails we still assign the typed name —
- * losing an approved sale over a CRM row would be the worse outcome, and
- * the ledger keys on the name either way.
- */
-async function createAndAssignCustomer(bot, chatId, state, name, phone) {
-  const clean = String(name || '').trim();
-  if (!clean) { await sendCustomerStep(bot, chatId, state, '⚠️ No name given.'); return; }
-  const rawPhone = String(phone || '').trim();
-  try {
-    const customersRepository = require('../repositories/customersRepository');
-    const existing = await customersRepository.findByName(clean);
-    if (!existing) {
-      await customersRepository.append({
-        customer_id: `C-${Date.now()}`,
-        name: clean,
-        phone: rawPhone,
-        status: 'Active',
-      });
-      try {
-        const auditLogRepository = require('../repositories/auditLogRepository');
-        await auditLogRepository.append('customer_created_at_approval',
-          { requestId: state.requestId, name: clean }, String(state.adminId || ''));
-      } catch (_) { /* audit is best-effort */ }
-    }
-  } catch (e) {
-    logger.error(`DSP-1: could not create customer "${clean}": ${e.message}`);
-    try { await bot.sendMessage(chatId, `⚠️ Could not save the customer profile (${e.message}) — the sale will still record the name "${clean}".`); } catch (_) {}
-  }
-  state._newCustomerName = '';
-  await assignCustomer(bot, chatId, state, clean);
-}
 
 async function startApprovalEnrichment(bot, adminId, chatId, requestId, item, requestingUser) {
   const designs = await getDesignsForSale(item);
@@ -496,32 +477,6 @@ async function handleEnrichmentCallback(bot, callbackQuery) {
       await assignCustomer(bot, chatId, state, name);
       return true;
     }
-    if (rest === 'new') {
-      await ack();
-      // The admin may have just typed a name that matched nothing — don't
-      // make them type it twice, go straight to the phone.
-      if (String(state._newCustomerName || '').trim()) {
-        state.step = 'customer_new_phone';
-        try {
-          await bot.sendMessage(chatId,
-            `➕ *${state._newCustomerName}*\n\nReply with the phone number, or tap Skip.`,
-            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '⏭ Skip phone', callback_data: 'enr:cust:nophone' }]] } });
-        } catch (_) { /* best-effort */ }
-        return true;
-      }
-      state.step = 'customer_new_name';
-      try {
-        await bot.sendMessage(chatId,
-          '➕ *New customer*\n\nReply with the customer\'s NAME (one line, e.g. `OKESON STORES`).',
-          { parse_mode: 'Markdown' });
-      } catch (_) { /* best-effort */ }
-      return true;
-    }
-    if (rest === 'nophone') {
-      await ack();
-      await createAndAssignCustomer(bot, chatId, state, state._newCustomerName, '');
-      return true;
-    }
     if (rest === 'back') {
       await ack();
       await sendCustomerStep(bot, chatId, state);
@@ -591,14 +546,14 @@ async function handleEnrichmentMessage(bot, chatId, adminId, text) {
   const CURRENCY = config.currency || 'NGN';
   const fmt = (n) => `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
 
-  // DSP-1 — Step 1 typed: search the customer base, or name a new one.
+  // CUS-1 — Step 1 typed: SEARCH ONLY over the official list, alias-aware.
+  // The "add as new" escape is gone (owner, 29-Jul): a typed string can
+  // never become a customer. New buyers are added via CRM first.
   if (state.step === 'customer') {
     let matches = [];
     try {
-      const customersRepository = require('../repositories/customersRepository');
-      matches = (await customersRepository.searchByName(t))
-        .filter((c) => String(c.status || 'Active').toLowerCase() !== 'inactive')
-        .map((c) => c.name);
+      const customerEntity = require('../services/customerEntity');
+      matches = (await customerEntity.search(t)).map((c) => c.name);
     } catch (e) {
       logger.warn(`DSP-1 customer search failed: ${e.message}`);
     }
@@ -608,39 +563,18 @@ async function handleEnrichmentMessage(bot, chatId, adminId, text) {
     if (matches.length > 1) {
       state._custPage = matches.slice(0, 10);
       const rows = state._custPage.map((n, i) => [{ text: `👤 ${n.slice(0, 40)}`, callback_data: `enr:cust:a:${i}` }]);
-      rows.push([{ text: '⬅ Back', callback_data: 'enr:cust:back' }, { text: '➕ New customer', callback_data: 'enr:cust:new' }]);
+      rows.push([{ text: '⬅ Back', callback_data: 'enr:cust:back' }]);
       try {
         await bot.sendMessage(chatId, `Customers matching “${t}” — tap one:`,
           { reply_markup: { inline_keyboard: rows } });
       } catch (_) { /* best-effort */ }
       return true;
     }
-    // No match. Never silently invent a customer from a typo — the name is
-    // the ledger key, so creating one is an explicit tap.
-    try {
-      await bot.sendMessage(chatId, `No customer matches “${t}”. Type again, or add them:`,
-        { reply_markup: { inline_keyboard: [
-          [{ text: `➕ Add “${t.slice(0, 30)}” as a new customer`, callback_data: 'enr:cust:new' }],
-          [{ text: '📋 All customers', callback_data: 'enr:cust:all:0' }],
-        ] } });
-    } catch (_) { /* best-effort */ }
-    state._newCustomerName = t;
-    return true;
-  }
-
-  if (state.step === 'customer_new_name') {
-    state._newCustomerName = t;
-    state.step = 'customer_new_phone';
     try {
       await bot.sendMessage(chatId,
-        `➕ *${t}*\n\nReply with the phone number, or tap Skip.`,
-        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '⏭ Skip phone', callback_data: 'enr:cust:nophone' }]] } });
+        `No customer matches “${t}”. Type again to search, or ask an admin to add them via 👥 CRM → ➕ Add Customer first.`,
+        { reply_markup: { inline_keyboard: [[{ text: '📋 All customers', callback_data: 'enr:cust:all:0' }]] } });
     } catch (_) { /* best-effort */ }
-    return true;
-  }
-
-  if (state.step === 'customer_new_phone') {
-    await createAndAssignCustomer(bot, chatId, state, state._newCustomerName, t);
     return true;
   }
 

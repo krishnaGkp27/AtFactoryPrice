@@ -35,6 +35,13 @@ const inventoryService = require(path.join(SRC, 'services/inventoryService'));
 
 const ADMIN = '777';
 
+// CUS-1 — suggestions and search resolve through the customer ENTITY, which
+// reads the Customers list. Give it a canonical world.
+customersRepository.getAll = async () => ([
+  { rowIndex: 2, customer_id: 'CUST-1', name: 'CJE', phone: '0801', status: 'Active', aliases: ['C.J.E'] },
+  { rowIndex: 3, customer_id: 'CUST-2', name: 'Ketu madam', phone: '0802', status: 'Active', aliases: [] },
+]);
+
 function saleItem(customer) {
   return {
     requestId: 'R-1', user: '4242', status: 'pending',
@@ -67,7 +74,9 @@ test('DSP-1: a customer-less sale opens the CUSTOMER step first, not the rate st
   assert.match(t, /Step 1 — Customer/, `customer is asked first, got: ${t}`);
   assert.ok(!/Step 2 — Rate/.test(t), 'the rate step must wait for a buyer');
   assert.ok(kbOf(bot).some((b) => b.callback_data === 'enr:cust:all:0'), 'full list reachable');
-  assert.ok(kbOf(bot).some((b) => b.callback_data === 'enr:cust:new'), '➕ New customer moved to the admin');
+  // CUS-1 — creation left the approval chain entirely: single door (CRM).
+  assert.ok(!kbOf(bot).some((b) => b.callback_data === 'enr:cust:new'),
+    'no creation door here — a typed string can never become a customer');
 });
 
 test('DSP-1: picking the customer advances to the rate step and persists it on the queue row', async () => {
@@ -86,8 +95,8 @@ test('DSP-1: picking the customer advances to the rate step and persists it on t
     id: 'q1', data: chip.callback_data, from: { id: ADMIN }, message: { chat: { id: ADMIN } },
   });
 
-  assert.deepEqual(patches, [{ id: 'R-1', patch: { customer: 'CJE' } }],
-    'the choice is written to the queue row so every downstream consumer sees it');
+  assert.deepEqual(patches, [{ id: 'R-1', patch: { customer: 'CJE', customerId: 'CUST-1' } }],
+    'CUS-1 — the entity id rides with the name on the queue row');
   assert.equal(item.actionJSON.customer, 'CJE', 'and to the in-memory copy that executes');
   assert.match(texts(bot), /Step 2 — Rate/, 'advances to rate');
   // The suggestion chip is customer-specific — this is precisely why the
@@ -123,18 +132,33 @@ test('DSP-1: an already-assigned customer skips the customer step entirely', asy
     'requests queued before this change already name a buyer — do not re-ask');
 });
 
-test('DSP-1: a typed name that matches nothing offers to create, never silently invents', async () => {
+test('CUS-1: an unmatched typed name is REFUSED — search-only, no creation', async () => {
   const bot = createFakeBot();
   transactionsRepository.getLast = async () => [];
-  customersRepository.searchByName = async () => [];
   const patches = [];
   approvalQueueRepository.updateActionJSON = async (id, patch) => { patches.push(patch); return true; };
 
   await approvalEvents.startApprovalEnrichment(bot, ADMIN, ADMIN, 'R-1', saleItem(''), '4242');
   await approvalEvents.handleEnrichmentMessage(bot, ADMIN, ADMIN, 'NOBODY LTD');
   assert.deepEqual(patches, [], 'nothing assigned from an unmatched typo');
-  assert.match(texts(bot), /No customer matches/, 'the admin is asked to confirm');
-  assert.ok(kbOf(bot).some((b) => b.callback_data === 'enr:cust:new'), 'creating them is an explicit tap');
+  assert.match(texts(bot), /No customer matches/, 'told plainly');
+  assert.match(texts(bot), /CRM/, 'pointed at the single door');
+  assert.ok(!kbOf(bot).some((b) => b.callback_data === 'enr:cust:new'),
+    'no add-as-new escape — that was door #1 in the 28-Jul audit');
+});
+
+test('CUS-1: an ALIAS typed at Step 1 assigns the CANONICAL customer', async () => {
+  const bot = createFakeBot();
+  transactionsRepository.getLast = async () => [];
+  const patches = [];
+  approvalQueueRepository.updateActionJSON = async (id, patch) => { patches.push(patch); return true; };
+
+  await approvalEvents.startApprovalEnrichment(bot, ADMIN, ADMIN, 'R-1', saleItem(''), '4242');
+  await approvalEvents.handleEnrichmentMessage(bot, ADMIN, ADMIN, 'C.J.E');
+  assert.equal(patches.length, 1);
+  assert.equal(patches[0].customer, 'CJE',
+    'the old spelling finds the customer but the CANONICAL name is written');
+  assert.equal(patches[0].customerId, 'CUST-1');
 });
 
 /* ── the loop back to the dispatcher ──────────────────────────────────── */
@@ -203,10 +227,9 @@ test('DSP-1b: a mistapped customer is recoverable — ✎ Change customer re-ope
   assert.match(texts(bot), /Step 1 — Customer/, 'back on the customer step');
 
   // …and re-picking must OVERWRITE the queue row, not append to it.
-  customersRepository.searchByName = async () => [{ name: 'Ketu madam', status: 'Active' }];
   await approvalEvents.handleEnrichmentMessage(bot, ADMIN, ADMIN, 'Ketu madam');
   assert.equal(patches.length, 2, 'two assignments — the second replaces the first');
-  assert.deepEqual(patches[1], { customer: 'Ketu madam' });
+  assert.deepEqual(patches[1], { customer: 'Ketu madam', customerId: 'CUST-2' });
   assert.equal(item.actionJSON.customer, 'Ketu madam', 'the copy that executes carries the correction');
 });
 

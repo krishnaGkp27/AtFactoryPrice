@@ -77,6 +77,112 @@ const { editOrSend, editOrSendAnchored, sendLong } = require('../utils/telegramU
 // ANL-1 — usage analytics capture (fire-and-forget; no-op until enabled).
 const usageTracker = require('../services/usageTracker');
 
+/**
+ * CUS-1 — the ONLY way a typed string reaches a customer field anywhere:
+ * it is a SEARCH over the official list, never a value. Exactly one match
+ * (or an exact hit) selects the canonical customer; several matches become
+ * tappable chips (cpk:<i>); none refuses with the single-door hint. No path
+ * through here can create a customer.
+ *
+ * Returns {ok:true, customer} when selection completed inline, {ok:false}
+ * when chips were offered or the search came up empty (caller just returns —
+ * the chip tap resumes the flow via handleCustomerPickCallback).
+ */
+async function resolveCustomerTyped(bot, chatId, userId, session, typed) {
+  const customerEntity = require('../services/customerEntity');
+  const q = String(typed || '').trim();
+  if (!q) {
+    await bot.sendMessage(chatId, 'Type part of the customer name to search.');
+    return { ok: false };
+  }
+  const hits = await customerEntity.search(q);
+  const exact = hits.find((c) => c.name.toLowerCase() === q.toLowerCase());
+  if (exact) return { ok: true, customer: exact };
+  if (hits.length === 1) return { ok: true, customer: hits[0] };
+  if (hits.length > 1) {
+    const active = hits.slice(0, 8);
+    session._custPick = active.map((c) => ({ id: c.customer_id, name: c.name }));
+    sessionStore.set(userId, session);
+    const rows = active.map((c, i) => ([{ text: `👤 ${customerEntity.labelFor(c, active)}`, callback_data: `cpk:${i}` }]));
+    await bot.sendMessage(chatId, `Customers matching “${q}” — tap one:`, { reply_markup: { inline_keyboard: rows } });
+    return { ok: false };
+  }
+  await bot.sendMessage(chatId,
+    `No customer matches “${q}”. Type again to search, or ask an admin to add them via 👥 CRM → ➕ Add Customer first.`);
+  return { ok: false };
+}
+
+/**
+ * CUS-1 — what each flow does the moment a customer is picked from cpk:
+ * chips. Mirrors the flow's own typed-step continuation exactly.
+ */
+const CUSTOMER_PICK_CONTINUATIONS = {
+  sample_flow: { nextStep: 'quantity', prompt: 'How many sample pieces?' },
+  order_flow: { nextStep: 'quantity', prompt: 'Enter quantity:' },
+  receipt_flow: { nextStep: 'amount', prompt: 'Enter the payment amount received (NGN):' },
+  supply_req_flow: { nextStep: null, prompt: null }, // resumes via its own picker
+};
+
+/** CUS-1 — rpk: the record-payment candidate tap. Re-runs the same
+ *  approval-queue path the typed command used, with the canonical name. */
+async function handleRecordPaymentPickCallback(bot, callbackQuery) {
+  const data = callbackQuery.data || '';
+  if (!data.startsWith('rpk:')) return false;
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  try { await bot.answerCallbackQuery(callbackQuery.id); } catch (_) { /* stale */ }
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'rp_pick_flow') {
+    try { await bot.sendMessage(chatId, 'That list expired — type the payment again.'); } catch (_) {}
+    return true;
+  }
+  const pick = (session._custPick || [])[parseInt(data.slice(4), 10)];
+  if (!pick) { try { await bot.sendMessage(chatId, 'Expired — type the payment again.'); } catch (_) {} return true; }
+  const { rpAmount, rpMethod } = session;
+  sessionStore.clear(userId);
+  const queued = await requireApproval(bot, chatId, { from: { id: userId }, chat: { id: chatId } }, userId, 'record_payment',
+    { action: 'record_payment', customer: pick.name, customerId: pick.id, amount: rpAmount, method: rpMethod },
+    await require('../services/approvalCards').buildPaymentCard({ customer: pick.name, amount: rpAmount, method: rpMethod }));
+  if (queued) return true;
+  const payRes = await crmService.recordPayment({ customer: pick.name, amount: rpAmount, method: rpMethod, userId });
+  if (payRes.status === 'completed') {
+    await bot.sendMessage(chatId, `✅ Payment recorded: ${fmtMoney(payRes.paid)} from ${payRes.customer}.\nBalance: ${fmtMoney(payRes.previousBalance)} → ${fmtMoney(payRes.newBalance)}`);
+  } else {
+    await bot.sendMessage(chatId, `⚠️ ${payRes.message || 'Payment failed.'}`);
+  }
+  return true;
+}
+
+async function handleCustomerPickCallback(bot, callbackQuery) {
+  const data = callbackQuery.data || '';
+  if (!data.startsWith('cpk:')) return false;
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  try { await bot.answerCallbackQuery(callbackQuery.id); } catch (_) { /* stale */ }
+  const session = sessionStore.get(userId);
+  const pick = session && (session._custPick || [])[parseInt(data.slice(4), 10)];
+  if (!session || !pick) {
+    try { await bot.sendMessage(chatId, 'That list expired — type the customer name again.'); } catch (_) {}
+    return true;
+  }
+  session.customer = pick.name;          // canonical display name
+  session.customerId = pick.id;          // CUS-1 — the entity key rides along
+  session._custPick = null;
+  const cont = CUSTOMER_PICK_CONTINUATIONS[session.type];
+  if (cont && cont.nextStep) {
+    session.step = cont.nextStep;
+    sessionStore.set(userId, session);
+    await bot.sendMessage(chatId, `Customer: *${pick.name}*\n\n${cont.prompt}`, { parse_mode: 'Markdown' });
+  } else if (session.type === 'supply_req_flow') {
+    session.step = 'salesperson';
+    sessionStore.set(userId, session);
+    await showSupplySalespersonPicker(bot, chatId, userId, false);
+  } else {
+    sessionStore.set(userId, session);
+  }
+  return true;
+}
+
 async function requireApproval(bot, chatId, msg, userId, action, actionJSON, summary) {
   const risk = await riskEvaluate.evaluate({ action, userId });
   if (risk.risk !== 'approval_required') return false;
@@ -960,8 +1066,12 @@ async function handleSampleFlowText(bot, chatId, userId, text) {
   }
 
   /* ─── Legacy text-flow steps (text intent starts the flow) ─── */
+  // CUS-1 — typing SEARCHES the official list; it can never invent a name.
   if (session.step === 'customer_new') {
-    session.customer = text.trim();
+    const picked = await resolveCustomerTyped(bot, chatId, userId, session, text);
+    if (!picked.ok) return true;
+    session.customer = picked.customer.name;
+    session.customerId = picked.customer.customer_id;
     session.step = 'quantity';
     sessionStore.set(userId, session);
     await bot.sendMessage(chatId, `Customer: *${session.customer}*\n\nHow many sample pieces?`, { parse_mode: 'Markdown' });
@@ -2930,7 +3040,10 @@ async function handleOrderFlowText(bot, chatId, userId, text) {
 
   /* ─── Legacy text step kept for back-compat with any stale sessions ─── */
   if (session.step === 'customer_new') {
-    session.customer = text.trim();
+    const picked = await resolveCustomerTyped(bot, chatId, userId, session, text);
+    if (!picked.ok) return true;
+    session.customer = picked.customer.name;
+    session.customerId = picked.customer.customer_id;
     session.step = 'quantity';
     sessionStore.set(userId, session);
     await bot.sendMessage(chatId, `Customer: *${session.customer}*\n\nEnter quantity:`, { parse_mode: 'Markdown' });
@@ -3100,7 +3213,10 @@ async function handleReceiptFlowText(bot, chatId, userId, text) {
 
   /* ─── Legacy step kept for back-compat ─── */
   if (session.step === 'customer_new') {
-    session.customer = text.trim();
+    const picked = await resolveCustomerTyped(bot, chatId, userId, session, text);
+    if (!picked.ok) return true;
+    session.customer = picked.customer.name;
+    session.customerId = picked.customer.customer_id;
     session.step = 'amount';
     sessionStore.set(userId, session);
     await bot.sendMessage(chatId, `Customer: *${session.customer}*\n\nEnter the payment amount received (NGN):`, { parse_mode: 'Markdown' });
@@ -3666,65 +3782,16 @@ async function handleMessage(bot, msg) {
       return;
     }
     if (srfSession.step === 'new_srf_customer_name') {
-      const name = text.trim();
-      if (!name) { await bot.sendMessage(chatId, 'Please enter a valid customer name.'); return; }
-      const existing = await customersRepo.findByName(name);
-      if (existing) {
-        srfSession.customer = existing.name;
-        srfSession.step = 'salesperson';
-        sessionStore.set(userId, srfSession);
-        await bot.sendMessage(chatId, `👤 Customer "${existing.name}" already exists. Continuing...`);
-        await showSupplySalespersonPicker(bot, chatId, userId, false);
-        return;
-      }
-      srfSession.newCustomerName = name;
-      srfSession.step = 'new_srf_customer_phone';
+      // CUS-1 — this step used to CREATE a customer from typed text; it is
+      // now search-only (a stale session may still sit here — degrade
+      // gracefully). Alias-aware: an old spelling finds the real customer.
+      const picked = await resolveCustomerTyped(bot, chatId, userId, srfSession, text);
+      if (!picked.ok) return;
+      srfSession.customer = picked.customer.name;
+      srfSession.customerId = picked.customer.customer_id;
+      srfSession.step = 'salesperson';
       sessionStore.set(userId, srfSession);
-      await bot.sendMessage(chatId, '📱 Enter customer phone number:', {
-        reply_markup: { inline_keyboard: [[
-          { text: '⬅️ Back to customers', callback_data: 'srf_back:customer' },
-          { text: '❌ Cancel', callback_data: 'srf_cart:cancel' },
-        ]] },
-      });
-      return;
-    }
-    if (srfSession.step === 'new_srf_customer_phone') {
-      const phone = text.trim();
-      if (!phone) { await bot.sendMessage(chatId, 'Please enter a phone number.'); return; }
-      const name = srfSession.newCustomerName;
-      const custId = idGenerator.customer();
-      await customersRepo.append({
-        customer_id: custId, name, phone, status: 'Pending',
-        category: 'Retail', notes: `Registered during supply request by ${userId}`,
-      });
-      srfSession.step = 'awaiting_customer_approval';
-      srfSession.pendingCustomerId = custId;
-      srfSession.pendingCustomerName = name;
-      sessionStore.set(userId, srfSession);
-      const requestId = genId();
-      srfSession.customerApprovalId = requestId;
-      sessionStore.set(userId, srfSession);
-      const approvalQueueRepository = require('../repositories/approvalQueueRepository');
-      await approvalQueueRepository.append({
-        requestId,
-        user: userId,
-        actionJSON: { action: 'new_customer', customer_id: custId, customer_name: name, phone, requesterUserId: userId },
-        riskReason: 'New customer requires admin approval',
-        status: 'pending',
-      });
-      await auditLogRepository.append('approval_queued', { requestId, reason: 'new_customer', from: 'supply_req_flow' }, userId);
-      const approvalEvents = require('../events/approvalEvents');
-      const userLabel = await getRequesterDisplayName(userId, null);
-      await approvalEvents.notifyAdminsApprovalRequest(
-        bot, requestId, userLabel,
-        `New Customer Registration\nName: ${name}\nPhone: ${phone || '—'}\n(from supply request flow)`,
-        'New customer requires admin approval',
-        null,
-      );
-      await bot.sendMessage(chatId,
-        `⏳ Customer "*${name}*" registered as *Pending*.\n\nWaiting for admin approval before proceeding. You'll be notified once approved.`,
-        { parse_mode: 'Markdown' },
-      );
+      await showSupplySalespersonPicker(bot, chatId, userId, false);
       return;
     }
   }
@@ -4152,31 +4219,11 @@ async function handleMessage(bot, msg) {
       }
 
       case 'add_customer': {
-        if (!intent.customer) { await bot.sendMessage(chatId, 'Customer name is required. e.g. "Add customer Ibrahim, phone +234..."'); return; }
-        const rawText = text;
-        const phoneMatch = rawText.match(/phone\s+([+\d\s-]+)/i);
-        const addressMatch = rawText.match(/address\s+([^,]+)/i);
-        const catMatch = rawText.match(/\b(wholesale|retail)\b/i);
-        const limitMatch = rawText.match(/credit\s*limit\s+(\d+)/i);
-        const termsMatch = rawText.match(/\b(net\s*\d+|cod|credit)\b/i);
-        const custData = {
-          name: intent.customer,
-          phone: phoneMatch ? phoneMatch[1].trim() : '',
-          address: addressMatch ? addressMatch[1].trim() : '',
-          category: catMatch ? catMatch[1] : 'Retail',
-          credit_limit: limitMatch ? parseInt(limitMatch[1]) : 0,
-          payment_terms: termsMatch ? termsMatch[1] : 'COD',
-        };
-        const acQueued = await requireApproval(bot, chatId, msg, userId, 'add_customer',
-          { action: 'add_customer', ...custData },
-          `Add customer ${intent.customer}`);
-        if (acQueued) return;
-        const res = await crmService.addCustomer(custData);
-        if (res.status === 'exists') {
-          await bot.sendMessage(chatId, `Customer "${res.customer.name}" already exists (${res.customer.customer_id}).`);
-        } else {
-          await bot.sendMessage(chatId, `✅ Customer "${res.customer.name}" created (${res.customer.customer_id}).`);
-        }
+        // CUS-1 — typed customer creation is closed (owner, 29-Jul). One
+        // door: the CRM flow, where the entry is deliberate and gated.
+        await bot.sendMessage(chatId,
+          '➕ Customer creation is tap-only now — open 👥 CRM → ➕ Add Customer.',
+          { reply_markup: { inline_keyboard: [[{ text: '➕ Add Customer', callback_data: 'act:add_customer' }]] } });
         return;
       }
 
@@ -4209,6 +4256,33 @@ async function handleMessage(bot, msg) {
         if (!amt || amt <= 0) { await bot.sendMessage(chatId, 'How much was paid? e.g. "Record payment 50000 from Ibrahim via bank"'); return; }
         const methodMatch = text.match(/\b(bank|cash|transfer)\b/i);
         const payMethod = methodMatch ? methodMatch[1] : 'cash';
+        // CUS-1 — a payment keys the LEDGER: the name must be canonical. A
+        // typo here splits one customer's balance across two names, so an
+        // unknown name becomes tappable candidates instead of a ledger row.
+        {
+          const customerEntity = require('../services/customerEntity');
+          const resolved = await customerEntity.resolve({ name: intent.customer });
+          const active = resolved && !customerEntity._internals.HIDDEN_STATUSES.has(customerEntity._internals.norm(resolved.status || 'Active'));
+          if (active) {
+            intent.customer = resolved.name; // canonical spelling into the ledger
+          } else {
+            const hits = (await customerEntity.search(intent.customer)).slice(0, 8);
+            if (!hits.length) {
+              await bot.sendMessage(chatId,
+                `No customer matches "${intent.customer}". Payments can only be recorded for customers on the official list — check the spelling, or ask an admin to add them via 👥 CRM.`);
+              return;
+            }
+            sessionStore.set(userId, {
+              type: 'rp_pick_flow', step: 'pick', ttlMs: 10 * 60 * 1000,
+              _custPick: hits.map((c) => ({ id: c.customer_id, name: c.name })),
+              rpAmount: amt, rpMethod: payMethod,
+            });
+            await bot.sendMessage(chatId, `Which customer paid ${fmtMoney(amt)}? Tap one:`, {
+              reply_markup: { inline_keyboard: hits.map((c, i2) => ([{ text: `👤 ${customerEntity.labelFor(c, hits)}`, callback_data: `rpk:${i2}` }])) },
+            });
+            return;
+          }
+        }
         const rpQueued2 = await requireApproval(bot, chatId, msg, userId, 'record_payment',
           { action: 'record_payment', customer: intent.customer, amount: amt, method: payMethod },
           await require('../services/approvalCards').buildPaymentCard({ customer: intent.customer, amount: amt, method: payMethod }));
@@ -6324,67 +6398,12 @@ async function handleSaleSession(bot, chatId, msg, userId, text, session) {
 
   if (!session.pendingField) return false;
 
-  if (session.pendingNewCustomer) {
-    if (session.pendingField === 'new_customer_name') {
-      session.collected.newCustomerName = text.trim();
-      session.pendingField = 'new_customer_phone';
-      sessionStore.set(userId, session);
-      await bot.sendMessage(chatId, 'Phone number?');
-      return true;
-    }
-    if (session.pendingField === 'new_customer_phone') {
-      session.collected.newCustomerPhone = text.trim();
-      session.pendingField = 'new_customer_address';
-      sessionStore.set(userId, session);
-      await bot.sendMessage(chatId, 'Address? (or type Skip)');
-      return true;
-    }
-    if (session.pendingField === 'new_customer_address') {
-      session.collected.newCustomerAddress = text.trim().toLowerCase() === 'skip' ? '' : text.trim();
-      const name = session.collected.newCustomerName;
-      try {
-        await crmService.addCustomer({
-          name,
-          phone: session.collected.newCustomerPhone || '',
-          address: session.collected.newCustomerAddress || '',
-          category: 'Retail',
-          credit_limit: 0,
-          payment_terms: 'COD',
-        });
-      } catch (e) {
-        await bot.sendMessage(chatId, `Could not add customer: ${e.message}. Try again or use existing customer.`);
-        return true;
-      }
-      session.collected.customer = name;
-      delete session.collected.newCustomerName;
-      delete session.collected.newCustomerPhone;
-      delete session.collected.newCustomerAddress;
-      session.pendingNewCustomer = false;
-      session.pendingField = null;
-      const missing = salesFlow.getMissingFields(session.collected);
-      if (missing.length) {
-        const payOpts = await salesFlow.getPaymentOptions();
-        session.pendingField = missing[0];
-        sessionStore.set(userId, session);
-        await bot.sendMessage(chatId, `✅ Customer "${name}" added.\n\n${salesFlow.getNextQuestion(missing[0], payOpts)}`);
-        return true;
-      }
-      session.awaitingDocument = true;
-      sessionStore.set(userId, session);
-      await bot.sendMessage(chatId, `✅ Customer "${name}" added.\n\n📎 Please send the *sales bill photo or PDF* to attach with this sale.`, { parse_mode: 'Markdown' });
-      return true;
-    }
-  }
+  // CUS-1 — the pendingNewCustomer collection (name/phone/address typed
+  // mid-sale) is gone: customer entry left the sale pipeline with DSP-1 and
+  // creation is single-door now. Stale sessions fall through harmlessly.
 
   const validation = await salesFlow.validateField(session.pendingField, text);
   if (!validation.valid) {
-    if (validation.message === '__NEW_CUSTOMER__') {
-      session.pendingNewCustomer = true;
-      session.pendingField = 'new_customer_name';
-      sessionStore.set(userId, session);
-      await bot.sendMessage(chatId, 'Enter new customer full name.');
-      return true;
-    }
     await bot.sendMessage(chatId, validation.message);
     return true;
   }
@@ -6792,6 +6811,15 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
   }
 
+  // CUS-1 — shared customer-pick chips (search results) + payment candidates.
+  if (data.startsWith('cpk:')) {
+    await handleCustomerPickCallback(bot, callbackQuery);
+    return;
+  }
+  if (data.startsWith('rpk:')) {
+    await handleRecordPaymentPickCallback(bot, callbackQuery);
+    return;
+  }
   if (data.startsWith('enr:')) {
     // ST-1 Part B + DSP-1 — tappable sale-enrichment chips
     // (customer / rate / payment / amount).
@@ -9309,9 +9337,18 @@ async function handleCallbackQuery(bot, callbackQuery) {
       case 'return_than':
         await startReturnThanFlow(bot, chatId, uid, messageId);
         break;
-      case 'add_customer':
+      case 'add_customer': {
+        // CUS-1 — the SINGLE creation door, freezable from Settings during
+        // the owner's typo cleanup (CUSTOMER_CREATION_ENABLED=0, no deploy).
+        const cusSettings = await settingsRepo.getAll().catch(() => ({}));
+        if (Number(cusSettings.CUSTOMER_CREATION_ENABLED ?? 1) !== 1) {
+          await bot.sendMessage(chatId,
+            '🔒 Customer creation is temporarily frozen (list cleanup in progress). Existing customers are all searchable.');
+          break;
+        }
         await startAddCustomerFlow(bot, chatId, uid, messageId);
         break;
+      }
       case 'upload_design_photo':
         await startDesignAssetUploadFlow(bot, chatId, uid);
         break;
@@ -9887,7 +9924,6 @@ async function handleCallbackQuery(bot, callbackQuery) {
         if (remaining[i + 1]) row.push({ text: `👤 ${remaining[i + 1].name}`, callback_data: `srf_cu:${remaining[i + 1].name}` });
         rows.push(row);
       }
-      rows.push([{ text: '➕ Add New Customer', callback_data: 'srf_cu:__new__' }]);
       rows.push([{ text: '⬅️ Back to top buyers', callback_data: 'srf_back:customer' }]);
       await editOrSendAnchored(bot, chatId, uid, '👤 All other customers:', {
         reply_markup: { inline_keyboard: rows },
@@ -9896,15 +9932,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
 
     if (val === '__new__') {
-      session.step = 'new_srf_customer_name';
-      sessionStore.set(uid, session);
-      await editOrSendAnchored(bot, chatId, uid, '📝 Enter new customer *full name*:', {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[
-          { text: '⬅️ Back to customers', callback_data: 'srf_back:customer' },
-          { text: '❌ Cancel', callback_data: 'srf_cart:cancel' },
-        ]] },
-      });
+      // CUS-1 — stale button on an old card: creation moved to CRM.
+      await editOrSendAnchored(bot, chatId, uid,
+        '➕ New customers are added by an admin via 👥 CRM → ➕ Add Customer.\nSearch here finds every existing customer — type part of the name.', {
+          reply_markup: { inline_keyboard: [[
+            { text: '⬅️ Back to customers', callback_data: 'srf_back:customer' },
+          ]] },
+        });
       return;
     }
     session.customer = val;

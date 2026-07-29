@@ -52,8 +52,9 @@ function sellThanItem(requestId) {
 
 test('H6: ledger hook failure is returned, audited, and does NOT block the approval', async () => {
   const calls = harness(sellThanItem('H6A'));
-  // crmService is the first call inside the ERP 'sale' handler — make it blow up.
-  crmService.findOrCreateCustomer = async () => { throw new Error('Sheets quota exceeded'); };
+  // CUS-1 — the sale handler no longer creates customers; accounting is now
+  // the first call that can blow up.
+  accountingService.recordSale = async () => { throw new Error('Sheets quota exceeded'); };
 
   const res = await inventoryService.executeApprovedAction('H6A', 'admin1');
   assert.equal(res.ok, true, 'inventory apply still succeeds');
@@ -67,7 +68,6 @@ test('H6: ledger hook failure is returned, audited, and does NOT block the appro
 
 test('H6: healthy hooks return an empty erpFailures array', async () => {
   const calls = harness(sellThanItem('H6B'));
-  crmService.findOrCreateCustomer = async () => ({ name: 'ACME' });
   accountingService.recordSale = async () => true;
   stockLedgerService.recordSaleOut = async () => true;
   auditService.log = async () => true;

@@ -31,6 +31,10 @@ const DEFAULTS = {
   // Settings sheet rows of the same keys, no deploy needed.
   FLOW_CLEANUP_MINUTES: 30,
   FLOW_CLEANUP_MINUTES_HEAVY: 60,
+  // CUS-1 — master switch on the SINGLE customer-creation door (CRM ➕ Add
+  // Customer). Set 0 during the typo cleanup to freeze creation entirely,
+  // no deploy. Every other path is search-and-tap only, permanently.
+  CUSTOMER_CREATION_ENABLED: 1,
   // ATT-V2 — minutes between admin DMs about attendance failing to save.
   // These failures are systemic (Sheets down, quota spent), so every
   // employee marking that morning fails at once; without a cooldown the

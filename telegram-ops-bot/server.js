@@ -328,7 +328,7 @@ const server = app.listen(PORT, async () => {
   } catch (e) { logger.warn(`extLedger sweep schedule: ${e.message}`); }
   try {
     await schemaMapper.initialize();
-    erpEventBus.registerListeners();
+    erpEventBus.registerListeners(bot);
     // USR-C1: warm the in-process allow-list cache from the Users sheet so
     // the very first message after boot sees sheet-managed employees, not
     // only env-driven IDs. Failure is non-fatal — the env IDs still work.
