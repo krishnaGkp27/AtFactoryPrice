@@ -161,6 +161,9 @@ const ACTIVITIES = [
   { code: 'approvals_inbox',       label: 'Approvals',                 icon: '🛂', callback: 'act:approvals_inbox',    hub: null },
   { code: 'add_customer_note',     label: 'Add Note',                  icon: '✏️', callback: 'act:add_note',           hub: 'crm' },
   { code: 'add_customer',          label: 'Add Customer',              icon: '➕', callback: 'act:add_customer',       hub: 'crm' },
+  // CUS-1 Phase E — the typo-cleanup tool: fold a duplicate into the real
+  // customer (merge, not delete — owner 29-Jul). Admin-gated in the flow.
+  { code: 'merge_customers',       label: 'Merge Customers',           icon: '🔀', callback: 'act:merge_customers',    hub: 'crm' },
   { code: 'give_sample',           label: 'Give Sample',               icon: '🧪', callback: 'act:give_sample',        hub: 'crm' },
   { code: 'sample_status',         label: 'Sample Status',             icon: '📊', callback: 'act:sample_status',      hub: 'crm' },
 

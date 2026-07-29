@@ -3559,6 +3559,11 @@ async function handleMessage(bot, msg) {
       const handled = await require('../flows/sellBaleFlow').handleText(bot, msg);
       if (handled) return;
     }
+    // CUS-1 Phase E — merge flow search typing.
+    if (brSession && brSession.type === 'customer_merge_flow') {
+      const handled = await require('../flows/customerMergeFlow').handleText(bot, msg);
+      if (handled) return;
+    }
     // DSP-1 — the snap flow no longer takes typed input: the dispatcher
     // picks no customer, so there is nothing to type. Customer entry (and
     // ➕ New customer) live on the admin's approval chain now.
@@ -6687,6 +6692,7 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['umg:'], handle: (bot, cq) => require('../flows/userManageFlow').handleCallback(bot, cq) },
   { prefixes: ['rol:'], handle: (bot, cq) => require('../flows/roleEditFlow').handleCallback(bot, cq) },
   { prefixes: ['atd:'], handle: (bot, cq) => require('../flows/attendanceFlow').handleCallback(bot, cq) },
+  { prefixes: ['cmg:'], handle: (bot, cq) => require('../flows/customerMergeFlow').handleCallback(bot, cq) },
   { prefixes: ['atd_rpt:'], handle: (bot, cq) => require('../flows/attendanceReportFlow').handleCallback(bot, cq) },
   { prefixes: ['atd_adm:'], handle: (bot, cq) => require('../flows/attendanceAdminFlow').handleCallback(bot, cq) },
   // CNET-1b — contact network (category → buyers → people, recursive).
@@ -9347,6 +9353,11 @@ async function handleCallbackQuery(bot, callbackQuery) {
           break;
         }
         await startAddCustomerFlow(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'merge_customers': {
+        // CUS-1 Phase E — admin typo-cleanup tool (flow gates admin itself).
+        await require('../flows/customerMergeFlow').start(bot, chatId, uid, messageId);
         break;
       }
       case 'upload_design_photo':

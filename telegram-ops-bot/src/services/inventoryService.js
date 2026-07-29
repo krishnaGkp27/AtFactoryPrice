@@ -424,6 +424,18 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // never double-flip; cache is invalidated so it takes effect at once.
     const unitDisplayService = require('./unitDisplayService');
     await unitDisplayService.setWarehouseMode(aj.warehouse, aj.mode);
+  } else if (aj.action === 'merge_customers') {
+    // CUS-1 Phase E — fold the typo into the canonical customer. All the
+    // heavy lifting (aliases, Merged status, audit note) lives in the
+    // entity; this branch only translates the result for the admin.
+    const customerEntity = require('./customerEntity');
+    const merged = await customerEntity.mergeInto(aj.canonicalId, aj.typoId);
+    if (!merged.ok) {
+      return { ok: false, message: `Merge failed: ${merged.reason || 'unknown'}.` };
+    }
+    await auditLogRepository.append('customers_merged',
+      { typo: aj.typoName, typoId: aj.typoId, canonical: aj.canonicalName, canonicalId: aj.canonicalId },
+      approvedBy);
   } else if (aj.action === 'record_payment') {
     const crmService = require('./crmService');
     const payRes = await crmService.recordPayment({ customer: aj.customerId || aj.customer, amount: aj.amount, method: aj.method, userId: item.user });

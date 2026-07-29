@@ -12,6 +12,8 @@ const auth = require('../middlewares/auth');
 const logger = require('../utils/logger');
 
 const WRITE_ACTIONS = [
+  // CUS-1 Phase E — merging moves ledger identity (owner sign-off 29-Jul).
+  'merge_customers',
   'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell',
   'return_than', 'return_package', 'revert_sale_bundle',
   'update_price',
@@ -65,6 +67,7 @@ const WRITE_ACTIONS = [
 // automatically (requireApproval excludes admin requesters from the
 // notification list — see telegramController.js requireApproval).
 const ALWAYS_APPROVAL_ACTIONS = [
+  'merge_customers',
   'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell',
   'return_than', 'return_package', 'revert_sale_bundle',
   'record_payment', 'update_price', 'supply_request',
@@ -146,6 +149,8 @@ const ALWAYS_APPROVAL_ACTIONS = [
  * ALWAYS_APPROVAL_ACTIONS (unit test pins the invariant).
  */
 const DUAL_ADMIN_ACTIONS = [
+  // CUS-1 Phase E — two admins must see a merge before ledger identity moves.
+  'merge_customers',
   // Inventory writes.
   // DUAL-1a (owner amendment 14-Jul-2026): the SALE family dropped back to
   // single-admin approval — two-admin latency was blocking live sales
