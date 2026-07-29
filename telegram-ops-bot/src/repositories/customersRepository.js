@@ -25,7 +25,23 @@ function parse(r, rowIndex) {
     status: str(r[9]) || 'Active',
     created_at: str(r[10]),
     updated_at: str(r[11]),
+    // CUS-1 — alternate spellings that resolve to this customer (merge
+    // targets write here). Stored as a JSON array string; parsed defensively
+    // because the column is hand-editable like every sheet cell.
+    aliases: parseAliases(r[12]),
   };
+}
+
+function parseAliases(raw) {
+  const s2 = str(raw);
+  if (!s2) return [];
+  try {
+    const arr = JSON.parse(s2);
+    return Array.isArray(arr) ? arr.map((a) => String(a).trim()).filter(Boolean) : [];
+  } catch (_) {
+    // Tolerate a hand-typed single name or pipe list.
+    return s2.split('|').map((a) => a.trim()).filter(Boolean);
+  }
 }
 
 // P6 — Customers is read constantly (every picker, every findByName during
@@ -35,7 +51,7 @@ function parse(r, rowIndex) {
 // in-bot change is visible immediately, and a manual sheet edit within 30s.
 const CACHE_TTL_MS = 30 * 1000;
 const _cache = ttlCache(CACHE_TTL_MS, async () => {
-  const rows = await sheets.readRange(SHEET, 'A2:L');
+  const rows = await sheets.readRange(SHEET, 'A2:M');
   return rows.map((r, i) => parse(r, i + 2)).filter((c) => c.customer_id || c.name);
 });
 
@@ -74,7 +90,7 @@ async function append(customer) {
     customer.customer_id, customer.name, phone.toStored(customer.phone), customer.address || '',
     customer.category || 'Retail', customer.credit_limit || 0, customer.outstanding_balance || 0,
     customer.payment_terms || 'COD', customer.notes || '', customer.status || 'Active',
-    now, now,
+    now, now, JSON.stringify(customer.aliases || []),
   ]]);
   invalidateCache();
 }
@@ -94,10 +110,11 @@ async function updateRow(customerId, fields) {
   if (!c) return false;
   const now = new Date().toISOString();
   const updated = { ...c, ...fields, updated_at: now };
-  await sheets.updateRange(SHEET, `A${c.rowIndex}:L${c.rowIndex}`, [[
+  await sheets.updateRange(SHEET, `A${c.rowIndex}:M${c.rowIndex}`, [[
     updated.customer_id, updated.name, updated.phone, updated.address,
     updated.category, updated.credit_limit, updated.outstanding_balance,
     updated.payment_terms, updated.notes, updated.status, updated.created_at, now,
+    JSON.stringify(updated.aliases || []),
   ]]);
   invalidateCache();
   return true;

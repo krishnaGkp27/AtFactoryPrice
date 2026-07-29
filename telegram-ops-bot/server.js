@@ -336,6 +336,10 @@ const server = app.listen(PORT, async () => {
     // DCAT-1: warm the design→category snapshot so the very first card
     // after boot shows category labels (categoryOfSync reads this cache).
     try { await require('./src/repositories/designCategoriesRepository').getMap(); } catch (_) {}
+    // CUS-1 — every Customers row must carry a customer_id (the entity key).
+    // Hand-added sheet rows arrive without one; backfill is a no-op when
+    // clean and non-fatal when Sheets is unreachable.
+    try { await require('./src/services/customerEntity').ensureIds(); } catch (_) {}
     logger.info('ERP modules initialized');
     setInterval(() => { checkOrderReminders(); checkSampleFollowups(); checkCustomerFollowups(); checkColdCustomerAlerts(); }, REMINDER_INTERVAL_MS);
     logger.info('Scheduler started (hourly): orders, samples, follow-ups, cold alerts');

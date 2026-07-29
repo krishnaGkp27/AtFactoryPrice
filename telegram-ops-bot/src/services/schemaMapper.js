@@ -27,7 +27,9 @@ const REQUIRED_SHEETS = {
     headers: ['entry_id', 'date', 'item_id', 'package_no', 'branch', 'type', 'qty_in', 'qty_out', 'reference_id', 'created_at'],
   },
   Customers: {
-    headers: ['customer_id', 'name', 'phone', 'address', 'category', 'credit_limit', 'outstanding_balance', 'payment_terms', 'notes', 'status', 'created_at', 'updated_at'],
+    // CUS-1 — `aliases` (JSON array string) holds former/typo spellings that
+    // resolve to this customer after a merge. New column at END per rule 4.
+    headers: ['customer_id', 'name', 'phone', 'address', 'category', 'credit_limit', 'outstanding_balance', 'payment_terms', 'notes', 'status', 'created_at', 'updated_at', 'aliases'],
   },
   Users: {
     // Column K = notification_prefs (JSON object string). Stores per-user
