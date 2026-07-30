@@ -3564,6 +3564,11 @@ async function handleMessage(bot, msg) {
       const handled = await require('../flows/customerMergeFlow').handleText(bot, msg);
       if (handled) return;
     }
+    // AUD-X1 — extra design numbers typed for the audit count sheet.
+    if (brSession && brSession.type === 'wh_audit_flow') {
+      const handled = await require('../flows/warehouseAuditFlow').handleText(bot, msg);
+      if (handled) return;
+    }
     // DSP-1 — the snap flow no longer takes typed input: the dispatcher
     // picks no customer, so there is nothing to type. Customer entry (and
     // ➕ New customer) live on the admin's approval chain now.

@@ -38,6 +38,9 @@ let rows = [
   { packageNo: 'P2', design: '9032', shade: '2', warehouse: 'IDUMOTA', status: 'available', yards: 55 },
   { packageNo: 'P2', design: '9032', shade: '2', warehouse: 'IDUMOTA', status: 'sold', yards: 55, soldTo: 'CJE' },
   { packageNo: 'P3', design: '9037', shade: '8', warehouse: 'IDUMOTA', status: 'available', yards: 58 },
+  // 9040 is never counted by any test — it stays OPEN so the AUD-X1 test
+  // can prove system designs and hand-added extras share one sheet.
+  { packageNo: 'P4', design: '9040', shade: '1', warehouse: 'IDUMOTA', status: 'available', yards: 62 },
   { packageNo: 'P9', design: '44200', shade: '1', warehouse: 'Kano office', status: 'available', yards: 50 },
 ];
 inventoryRepository.getAll = async () => [...rows];
@@ -156,9 +159,33 @@ test('offline template lists open designs without quantities; batch message reco
   await controller.handleMessage(bot2, { from: { id: '4242' }, chat: { id: '4242' }, text: 'AUDIT idumota\n9037 = 1\nMYSTERY = 2\n9032 =' });
   const reply = bot2.calls.filter((c) => c.method === 'sendMessage').map((c) => c.args.text).join('\n');
   assert.match(reply, /✅ Reconciled \(1\): 9037/);
-  assert.match(reply, /❓ Not found in IDUMOTA: MYSTERY/);
+  // AUD-X1 — an unknown design's count is the onboarding audit's whole
+  // point: RECORDED, never dismissed as "not found".
+  assert.match(reply, /🆕 New designs recorded for onboarding \(1\): MYSTERY = 2/);
   assert.match(reply, /⬜ Left blank \(1\): 9032/);
   assert.ok(takes.some((t) => t.design === '9037' && t.result === 'reconciled' && t.counted_bales === 1));
+  assert.ok(takes.some((t) => t.design === 'MYSTERY' && t.result === 'new_design' && t.counted_bales === 2),
+    'the physical count for the not-yet-onboarded design lands in StockTakes');
+});
+
+test('AUD-X1: owner adds EXTRA designs; the copy-paste sheet carries them', async () => {
+  const bot = createFakeBot();
+  await openChecklist(bot);
+  await controller.handleCallbackQuery(bot, cb('wai:xd'));
+  await controller.handleMessage(bot, {
+    from: { id: '4242' }, chat: { id: '4242' },
+    text: '9037-E, 402/9059 (08)\n77008',
+  });
+  const msgs = bot.calls.filter((c) => c.method === 'sendMessage').map((c) => c.args.text);
+  assert.ok(msgs.some((t) => /Added 3 design\(s\)/.test(t)), `confirmation with the count: ${msgs.slice(-3)}`);
+  const tmpl = msgs.find((t) => /^AUDIT IDUMOTA/.test(t));
+  assert.ok(tmpl, 'the updated sheet is re-sent immediately');
+  assert.match(tmpl, /9037-E =/, 'extra design on the sheet');
+  assert.match(tmpl, /402\/9059 \(08\) =/, 'codes with slashes and brackets survive');
+  assert.match(tmpl, /77008 =/);
+  assert.match(tmpl, /9040 =/, 'open system designs still listed first');
+  assert.ok(!/^9037 =/m.test(tmpl), 'reconciled system designs stay off the sheet');
+  sessionStore.clear('4242');
 });
 
 test('deep inspect is admin-only in the blind flow', async () => {

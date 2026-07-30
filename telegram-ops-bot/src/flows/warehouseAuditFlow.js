@@ -316,7 +316,19 @@ async function todayStateFor(warehouse) {
 async function reconcileDesign({ warehouse, location, design, bales, bundles, auditor }) {
   const list = await loadChecklist({ warehouse });
   const d = list.find((x) => String(x.design).toUpperCase() === String(design).toUpperCase());
-  if (!d) return { status: 'unknown_design' };
+  if (!d) {
+    // AUD-X1 (owner 30-Jul): old-container stock is being onboarded and its
+    // designs are NOT in Inventory yet. A physical count for an unknown
+    // design used to be dismissed as "not found" and THROWN AWAY — the
+    // exact number the onboarding audit exists to capture. Record it.
+    await stockTakesRepository.appendMany([{
+      warehouse, location: location || '', design: String(design).trim(),
+      sheet_bales: 0, sheet_bundles: 0, sheet_yards: 0,
+      counted_bales: bales, counted_bundles: bundles, auditor,
+      result: 'new_design', note: 'not in Inventory — onboarding audit',
+    }]);
+    return { status: 'new_design' };
+  }
   const state = (await todayStateFor(warehouse)).get(String(design).toUpperCase())
     || { mismatches: 0, locked: false };
   if (state.locked) return { status: 'locked', d };
@@ -383,7 +395,8 @@ async function renderChecklist(bot, chatId, userId) {
     const icon = s.mismatches ? '🔁' : '⬜';
     return [{ text: `${icon} ${d.design}`, callback_data: `wai:ck:${i}` }];
   });
-  rows.push([{ text: '📄 Offline count sheet', callback_data: 'wai:tmpl' }]);
+  rows.push([{ text: '📄 Offline count sheet', callback_data: 'wai:tmpl' },
+    { text: '➕ Add designs', callback_data: 'wai:xd' }]);
   if (auth.isAdmin(userId)) rows.push([{ text: '🔬 Deep inspect (bale/than level)', callback_data: 'wai:inspect' }]);
   const up = upFromChecklistRow(session);
   if (up) rows.push(up);
@@ -521,11 +534,19 @@ async function sendOfflineTemplate(bot, chatId, userId) {
     const s = state.get(String(d.design).toUpperCase());
     return !d.reconciled && !(s && s.locked);
   });
-  if (!open.length) {
+  // AUD-X1 — extra designs the owner added by hand (old-container stock
+  // not in Inventory). Same "DESIGN =" line format, so the reply parser
+  // handles them identically; reconcileDesign records them as new_design.
+  // They count as open work: a fully-reconciled warehouse can still have
+  // old stock waiting to be counted.
+  const extras = (session._extraDesigns || [])
+    .filter((x) => !open.some((d) => String(d.design).toUpperCase() === x.toUpperCase()));
+  if (!open.length && !extras.length) {
     await bot.sendMessage(chatId, 'Nothing left to count here — every design is reconciled or locked.');
     return;
   }
-  const template = `AUDIT ${session.warehouse}\n${open.map((d) => `${d.design} =`).join('\n')}`;
+  const lines = open.map((d) => `${d.design} =`).concat(extras.map((x) => `${x} =`));
+  const template = `AUDIT ${session.warehouse}\n${lines.join('\n')}`;
   await bot.sendMessage(chatId, template);
   await bot.sendMessage(chatId,
     '📄 Your offline count sheet (message above).\n\n'
@@ -564,7 +585,7 @@ async function handleBatchText(bot, msg) {
     if (out.status === 'match' || out.status === 'already') matched.push(e.design);
     else if (out.status === 'recount') recount.push(e.design);
     else if (out.status === 'locked') locked.push(e.design);
-    else if (out.status === 'unknown_design') unknown.push(e.design);
+    else if (out.status === 'new_design') unknown.push(`${e.design} = ${e.bales}${e.bundles ? `+${e.bundles}` : ''}`);
     else if (out.status === 'flagged') {
       flagged.push(e.design);
       await notifyAdminsOfFlag(bot, {
@@ -582,7 +603,7 @@ async function handleBatchText(bot, msg) {
   if (recount.length) reply += `\n🔁 Did NOT match — recount these and send a new AUDIT message with just them:\n${recount.map((d) => `${d} =`).join('\n')}`;
   if (flagged.length) reply += `\n🚩 Flagged for admin review (locked today): ${flagged.join(', ')}`;
   if (locked.length) reply += `\n🔒 Already locked (admin review pending): ${locked.join(', ')}`;
-  if (unknown.length) reply += `\n❓ Not found in ${parsed.warehouse}: ${unknown.join(', ')}`;
+  if (unknown.length) reply += `\n🆕 New designs recorded for onboarding (${unknown.length}): ${unknown.join(', ')}`;
   if (parsed.skipped.length) reply += `\n⬜ Left blank (${parsed.skipped.length}): ${parsed.skipped.join(', ')}`;
   if (parsed.errors.length) reply += `\n⚠️ ${parsed.errors.join('\n⚠️ ')}`;
   if (!parsed.entries.length) reply += '\nNo counts were filled in — fill the lines like: 9032 = 12+5';
@@ -1101,6 +1122,14 @@ async function handleCallback(bot, query) {
     await renderChecklist(bot, chatId, userId);
     return true;
   }
+  if (data === 'wai:xd') {
+    // AUD-X1 — collect design numbers that are not in the system yet.
+    session.step = 'await_extra_designs';
+    sessionStore.set(userId, session);
+    await bot.sendMessage(chatId,
+      '➕ Send the design numbers to ADD to the count sheet (comma or new-line separated), e.g.\n\n9037-E, 402/9059 (08)\n77008\n\nThese are for old stock not in the system yet — counts sent for them are recorded for your onboarding audit.');
+    return true;
+  }
   if (data === 'wai:tmpl') {
     try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
     await sendOfflineTemplate(bot, chatId, userId);
@@ -1259,10 +1288,35 @@ async function handleCallback(bot, query) {
   return false;
 }
 
+/** AUD-X1 — typed extra design numbers for the offline count sheet. */
+async function handleText(bot, msg) {
+  const userId = String(msg.from.id);
+  const chatId = msg.chat.id;
+  const session = sessionStore.get(userId);
+  if (!session || session.step !== 'await_extra_designs') return false;
+  const tokens = String(msg.text || '')
+    .split(/[,\n]/)
+    .map((t) => t.trim())
+    .filter((t) => t && t.length <= 24 && /^[A-Za-z0-9][A-Za-z0-9\/()\- ]*$/.test(t));
+  if (!tokens.length) {
+    await bot.sendMessage(chatId, '⚠️ No valid design numbers found — send codes like 9037-E, 402/9059 (08).');
+    return true;
+  }
+  const set = new Set([...(session._extraDesigns || []), ...tokens]);
+  session._extraDesigns = [...set].slice(0, 60);
+  session.step = 'checklist';
+  sessionStore.set(userId, session);
+  await bot.sendMessage(chatId,
+    `➕ Added ${tokens.length} design(s). The count sheet now carries ${session._extraDesigns.length} extra design(s) for old stock.\nTap 📄 Offline count sheet to get the updated copy-paste sheet.`);
+  await sendOfflineTemplate(bot, chatId, userId);
+  return true;
+}
+
 module.exports = {
   start,
   handleCallback,
   handleBatchText,
+  handleText,
   _internals: {
     renderLocationPicker, renderChecklist, loadChecklist, locationOf,
     reconcileDesign, todayStateFor, sendOfflineTemplate,
