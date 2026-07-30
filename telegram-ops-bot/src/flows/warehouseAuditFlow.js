@@ -1164,6 +1164,40 @@ async function stepBack(bot, chatId, userId) {
   }
 }
 
+/**
+ * AUD-X2 - put a store's old-container designs on the session count sheet.
+ * Session state ONLY: loading a list writes nothing to any sheet.
+ * @param {object} bot Telegram bot instance.
+ * @param {number|string} chatId Chat id.
+ * @param {string} userId Telegram user id.
+ * @param {string} packaging '' for every packaging type.
+ * @returns {Promise<boolean>}
+ */
+async function loadOnboarding(bot, chatId, userId, packaging) {
+  const session = sessionStore.get(userId);
+  if (!session) return true;
+  const have = new Set((session._extraDesigns || []).map((d) => String(d).toUpperCase()));
+  const fresh = onboardingStock
+    .forStore(session.warehouse, packaging ? { packaging } : {})
+    .map((e) => e.label)
+    .filter((l) => !have.has(l.toUpperCase()));
+  if (!fresh.length) {
+    await bot.sendMessage(chatId, 'Those old-stock designs are already on the count sheet.');
+    return true;
+  }
+  session._extraDesigns = [...(session._extraDesigns || []), ...fresh].slice(0, MAX_EXTRA_DESIGNS);
+  session.step = 'checklist';
+  delete session._onbPacks;
+  sessionStore.set(userId, session);
+  await bot.sendMessage(chatId,
+    `\u{1F4E5} Added ${fresh.length} old-stock design(s)${packaging ? ` (${packaging.toLowerCase()})` : ''} `
+    + `for ${session.warehouse}.\n\n`
+    + 'These are not in the system yet, so there is nothing to compare them against - '
+    + 'whatever is counted for them is recorded for your reconciliation.');
+  await sendOfflineTemplate(bot, chatId, userId);
+  return true;
+}
+
 /* ───────────────────────────── callback dispatcher ───────────────────────────── */
 
 /**
@@ -1208,23 +1242,31 @@ async function handleCallback(bot, query) {
     // AUD-X2 — pull this store's old-container designs onto the count sheet.
     // Session state only: nothing is written to any sheet by loading them.
     try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
-    const have = new Set((session._extraDesigns || []).map((d) => String(d).toUpperCase()));
-    const fresh = onboardingStock.forStore(session.warehouse)
-      .map((e) => e.label)
-      .filter((l) => !have.has(l.toUpperCase()));
-    if (!fresh.length) {
-      await bot.sendMessage(chatId, 'The old-stock list for this store is already on the count sheet.');
+    // A count sheet speaks ONE unit. MAIN OFFICE holds bales, rolls and 54
+    // lines of piece-goods; "Socks = 12+5" in bales+bundles is nonsense, so
+    // a mixed store picks its packaging first.
+    const packs = onboardingStock.packagingFor(session.warehouse);
+    if (packs.length > 1) {
+      session._onbPacks = packs;
+      sessionStore.set(userId, session);
+      const rows = packs.map((pk, i) => ([{
+        text: `${pk} (${onboardingStock.forStore(session.warehouse, { packaging: pk }).length})`,
+        callback_data: `wai:onbp:${i}`,
+      }]));
+      rows.push([{ text: '⬅ Back to list', callback_data: 'wai:padcx' }]);
+      await render(bot, chatId, userId,
+        `📥 Old stock on file for ${session.warehouse}\n\n`
+        + 'Which packaging are you counting? One count sheet should cover one '
+        + 'unit — bales and rolls are not counted the same way.', rows);
       return true;
     }
-    session._extraDesigns = [...(session._extraDesigns || []), ...fresh].slice(0, MAX_EXTRA_DESIGNS);
-    session.step = 'checklist';
-    sessionStore.set(userId, session);
-    await bot.sendMessage(chatId,
-      `📥 Added ${fresh.length} old-stock design(s) for ${session.warehouse}.\n\n`
-      + 'These are not in the system yet, so there is nothing to compare them against — '
-      + 'whatever your manager counts is recorded for your reconciliation.');
-    await sendOfflineTemplate(bot, chatId, userId);
-    return true;
+    return loadOnboarding(bot, chatId, userId, '');
+  }
+  if (data.startsWith('wai:onbp:')) {
+    try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
+    const pk = (session._onbPacks || [])[parseInt(data.slice('wai:onbp:'.length), 10)];
+    if (!pk) return true;
+    return loadOnboarding(bot, chatId, userId, pk);
   }
   if (data === 'wai:tmpl') {
     try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }

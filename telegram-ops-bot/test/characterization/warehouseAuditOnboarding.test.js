@@ -86,14 +86,6 @@ const flow = require(path.join(SRC, 'flows/warehouseAuditFlow'));
 const texts = (bot) => bot.calls.filter((c) => c.method === 'sendMessage').map((c) => c.args.text);
 const sheetOf = (name) => JSON.stringify(sheets._store.get(name));
 
-async function openStore(bot, store, uid = '777') {
-  await controller.handleCallbackQuery(bot, cb('act:warehouse_audit', uid));
-  const btn = kbTexts(bot).find((b) => (b.text || '').includes(store));
-  if (btn) { await controller.handleCallbackQuery(bot, cb(btn.callback_data, uid)); return; }
-  // single location auto-forwards to a warehouse picker
-  const wh = kbTexts(bot).find((b) => (b.text || '').includes(store));
-  if (wh) await controller.handleCallbackQuery(bot, cb(wh.callback_data, uid));
-}
 
 test('AUD-X2: a full audit — including recorded new designs — writes ZERO Inventory cells', async () => {
   const before = sheetOf('Inventory');
@@ -199,6 +191,9 @@ test('AUD-X2: a store with no Inventory rows can still be audited from the old-s
   assert.match(load.text, new RegExp(`\\(${expected.length}\\)`), 'the button counts the waiting designs');
 
   await controller.handleCallbackQuery(bot, cb('wai:onb', '777'));
+  // CHINOS STR is bales-only, so there is no packaging question to answer.
+  assert.ok(!kbTexts(bot).some((b) => /^wai:onbp:/.test(b.callback_data || '')),
+    'a single-unit store loads straight away');
   const sheet = texts(bot).find((t) => t.startsWith(`AUDIT ${store}`));
   assert.ok(sheet, `a copy-paste sheet is produced for a store with no stock on file: ${texts(bot).slice(-2)}`);
   for (const e of expected) {
@@ -216,4 +211,32 @@ test('AUD-X2: design codes containing commas are not shattered', async () => {
     ['3001,YC-01', '55170-A,YC-03', '47014,2084/01'],
     'a comma inside a code stays; a comma followed by a space separates',
   );
+});
+
+test('AUD-X2: a store holding several units asks which one is being counted', async () => {
+  const store = 'MAIN OFFICE';
+  const packs = onboardingStock.packagingFor(store);
+  assert.ok(packs.length > 1, 'fixture guard: this store mixes packaging types');
+
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('act:warehouse_audit', '777'));
+  for (let i = 0; i < 4; i += 1) {
+    const btn = kbTexts(bot).find((b) => (b.text || '').includes(store));
+    if (btn) { await controller.handleCallbackQuery(bot, cb(btn.callback_data, '777')); break; }
+    const next = kbTexts(bot).find((b) => /^wai:loc:/.test(b.callback_data || ''));
+    if (!next) break;
+    await controller.handleCallbackQuery(bot, cb(next.callback_data, '777'));
+  }
+  await controller.handleCallbackQuery(bot, cb('wai:onb', '777'));
+  const choices = kbTexts(bot).filter((b) => /^wai:onbp:/.test(b.callback_data || ''));
+  assert.equal(choices.length, packs.length, 'one choice per packaging type');
+
+  const bales = choices.find((b) => /^Bales/.test(b.text));
+  await controller.handleCallbackQuery(bot, cb(bales.callback_data, '777'));
+  const sheet = texts(bot).find((t) => t.startsWith(`AUDIT ${store}`));
+  const lines = sheet.split('\n').slice(1);
+  assert.equal(lines.length, onboardingStock.forStore(store, { packaging: 'Bales' }).length,
+    'only the bale designs are on a bale count sheet');
+  assert.ok(!/Socks|Singlet|Cap /.test(sheet), 'piece-goods stay off a bales+bundles sheet');
+  sessionStore.clear('777');
 });
