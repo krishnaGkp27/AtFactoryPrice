@@ -74,11 +74,23 @@ node scripts/build-onboarding-stock.js <Stock_Summary_by_Store.xlsx>
    and `note` have been written since WAU-3 but were never declared, so the physical
    count landed in an unnamed column.
 
+## Store identity — settled 30-Jul-2026
+
+| Store | Location | Note |
+|---|---|---|
+| CHINOS STR | Lagos | new store |
+| CASHMERE STR | Lagos | new store |
+| MAIN OFFICE | Lagos | the Lagos main office, named the way `Kano office` is. **A separate store from the existing `Lagos` warehouse** — do not merge the two, and keep the workbook's spelling. |
+| IDUMOTA | Lagos | already in Inventory |
+
+No `LOCATION.<store>` rows are needed: the fallback (`/kano/i` → Kano, else Lagos)
+already returns Lagos for all four. Add rows only if a future store sits elsewhere.
+
+Because MAIN OFFICE is distinct from `Lagos`, its 6 bale designs are expected to record
+as `new_design` — they are genuinely not on file. That is correct, not a mismatch.
+
 ## Owner actions
 
-- [ ] **Locations.** CHINOS STR / CASHMERE STR / MAIN OFFICE currently fall to Lagos by
-      the name heuristic. Set `LOCATION.<store>` rows in Settings if any belong
-      elsewhere.
 - [ ] **Partial bales.** The workbook carries fractions (256.6, 2.4). The count format
       is whole bales `+` loose bundles — `256+6`, not `256.6`. Tell the manager.
 - [ ] **`1,2…..9`** appears as a design for Ladies Gown (pieces) — free text in the
