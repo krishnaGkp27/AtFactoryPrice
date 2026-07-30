@@ -53,10 +53,22 @@ function parseAuditBatch(text, knownWarehouses) {
   const skipped = [];
   const errors = [];
   for (const line of lines.slice(1)) {
-    const m = line.match(/^(\S+)\s*=?\s*(.*)$/);
-    if (!m) { errors.push(`Unreadable line: "${line}"`); continue; }
-    const design = m[1];
-    const value = m[2].trim();
+    // AUD-X2 — split on the LAST '=' when the line has one, so design codes
+    // containing spaces survive ("402/9059 (08) = 12"). Falling back to the
+    // first-token rule keeps the older "9032 12+5" shape working.
+    let design;
+    let value;
+    const eq = line.lastIndexOf('=');
+    if (eq >= 0) {
+      design = line.slice(0, eq).trim();
+      value = line.slice(eq + 1).trim();
+      if (!design) { errors.push(`Unreadable line: "${line}"`); continue; }
+    } else {
+      const m = line.match(/^(\S+)\s*(.*)$/);
+      if (!m) { errors.push(`Unreadable line: "${line}"`); continue; }
+      design = m[1];
+      value = m[2].trim();
+    }
     if (!value) { skipped.push(design); continue; }
     const count = parseCount(value);
     if (!count.ok) { errors.push(`${design}: ${count.error}`); continue; }

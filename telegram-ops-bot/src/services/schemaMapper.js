@@ -127,9 +127,16 @@ const REQUIRED_SHEETS = {
   // (raw physical-count records; a reconciliation stays valid only while
   // current stock still equals the audited quantities).
   StockTakes: {
+    // AUD-X2 — these MUST stay in step with stockTakesRepository.HEADERS.
+    // The declaration stopped at 'audited_at' while the repository has
+    // written 13 columns since WAU-3, so on a freshly bootstrapped sheet the
+    // blind count itself (counted_bales/counted_bundles) landed under blank
+    // header cells — the one number a stock audit exists to record, in an
+    // unlabelled column. Appended at the end; no existing column moves.
     headers: ['stocktake_id', 'location', 'warehouse', 'design',
       'sheet_bales', 'sheet_bundles', 'sheet_yards',
-      'result', 'auditor', 'audited_at'],
+      'result', 'auditor', 'audited_at',
+      'counted_bales', 'counted_bundles', 'note'],
   },
   // INV-1a — one row per issued customer invoice (statement-style; line
   // items frozen as JSON at issue; token gates the /i/<token> web copy).
@@ -466,6 +473,33 @@ async function initialize() {
       }
     } catch (e) {
       logger.warn('SchemaMapper: could not extend Tasks —', e.message);
+    }
+  }
+
+  // AUD-X2 — label the blind-count columns on an already-created StockTakes
+  // sheet. WAU-3 grew the repository to 13 columns but left this bootstrap
+  // at 10, and an existing sheet is only ever "reused" (headers are written
+  // at creation time), so counted_bales/counted_bundles/note have been
+  // landing under BLANK headers — the physical count a stock audit exists to
+  // record, in an unnamed column.
+  //
+  // Deliberately narrow: it extends ONLY the pristine 10-column shape this
+  // bug produces, and only past the existing header length. Row 1 only; no
+  // data row is touched, and nothing here can reach any other sheet.
+  if (existing.includes('StockTakes')) {
+    try {
+      const ST_COUNT_COLS = ['counted_bales', 'counted_bundles', 'note'];
+      const stHeader = await sheets.readRange('StockTakes', 'A1:M1');
+      const h = stHeader[0] || [];
+      const missing = ST_COUNT_COLS.filter((c) => !h.includes(c));
+      if (h.length === 10 && missing.length === ST_COUNT_COLS.length) {
+        await sheets.updateRange('StockTakes', 'K1:M1', [ST_COUNT_COLS]);
+        logger.info('SchemaMapper: labelled StockTakes blind-count columns (counted_bales, counted_bundles, note)');
+      } else if (missing.length) {
+        logger.warn(`SchemaMapper: StockTakes header is ${h.length} cols and missing ${missing.join(', ')} — left alone, needs a human look`);
+      }
+    } catch (e) {
+      logger.warn('SchemaMapper: could not label StockTakes count columns —', e.message);
     }
   }
 

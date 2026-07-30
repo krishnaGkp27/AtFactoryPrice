@@ -36,6 +36,7 @@ const shadesRepository    = require('../repositories/shadesRepository');
 const settingsRepository  = require('../repositories/settingsRepository');
 const stockTakesRepository = require('../repositories/stockTakesRepository');
 const auditLogRepository  = require('../repositories/auditLogRepository');
+const onboardingStock     = require('../data/onboardingStock');
 const auth                = require('../middlewares/auth');
 const config              = require('../config');
 const logger              = require('../utils/logger');
@@ -44,6 +45,8 @@ const SESSION_TYPE   = 'wh_audit_flow';
 const MAX_DESIGNS    = 30;
 const MAX_SHADES     = 40;
 const THANS_PER_ROW  = 3;
+/** AUD-X2 — cap on hand-added + onboarding designs carried on one count sheet. */
+const MAX_EXTRA_DESIGNS = 200;
 const TILES_PER_ROW  = 2;
 
 /**
@@ -68,6 +71,56 @@ const MARK_MISSING = 'missing';
  * heuristic: names containing "kano" → Kano, everything else → Lagos
  * (covers IDUMOTA→Lagos, Kano office→Kano, Lagos→Lagos today).
  */
+/**
+ * AUD-X2 — which stores this flow may audit.
+ *
+ * `inventoryRepository.getWarehouses()` derives the list purely from
+ * existing Inventory rows, which closed the audit to exactly the stores that
+ * most need one: the owner's old-container stores hold ~870 bales the
+ * Inventory sheet has never heard of, so they could neither be picked in the
+ * warehouse list nor named in an "AUDIT <store>" header.
+ *
+ * The list is therefore the union of three READ-ONLY sources: Inventory
+ * rows, the Settings `WAREHOUSE_LIST` CSV (the existing home for warehouses
+ * with no stock yet, written by the dual-admin Add Warehouse flow), and the
+ * onboarding dataset. Deduped case-insensitively, first spelling wins, so
+ * Inventory's spelling of a store beats the dataset's.
+ *
+ * @returns {Promise<string[]>} sorted display names
+ */
+async function auditWarehouses() {
+  const seen = new Map();
+  const add = (name) => {
+    const s = String(name || '').trim();
+    if (s && !seen.has(s.toLowerCase())) seen.set(s.toLowerCase(), s);
+  };
+  try { (await inventoryRepository.getWarehouses()).forEach(add); }
+  catch (e) { logger.warn(`auditWarehouses: Inventory unavailable — ${e.message}`); }
+  try {
+    const all = await settingsRepository.getAll();
+    String((all && all.WAREHOUSE_LIST) || '').split(',').forEach(add);
+  } catch (_) { /* Settings optional */ }
+  try { onboardingStock.stores().forEach(add); }
+  catch (_) { /* dataset optional */ }
+  return [...seen.values()].sort();
+}
+
+/**
+ * AUD-X2 — old-stock designs on file for this store that are NOT yet on the
+ * session's count sheet. Drives the "Add old-stock list (N)" button, which
+ * disappears once everything is loaded.
+ * @returns {number}
+ */
+function onboardingCount(session) {
+  try {
+    const have = new Set((session._extraDesigns || []).map((d) => String(d).toUpperCase()));
+    return onboardingStock.forStore(session.warehouse)
+      .filter((e) => !have.has(e.label.toUpperCase())).length;
+  } catch (_) {
+    return 0;
+  }
+}
+
 const LOCATION_KEY_PREFIX = 'LOCATION.';
 async function locationOf(warehouse) {
   try {
@@ -252,7 +305,7 @@ async function start(bot, chatId, userId, messageId) {
 async function renderLocationPicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const warehouses = await inventoryRepository.getWarehouses();
+  const warehouses = await auditWarehouses();
   if (!warehouses.length) {
     sessionStore.clear(userId);
     await render(bot, chatId, userId,
@@ -375,10 +428,28 @@ async function renderChecklist(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
   const list = await loadChecklist(session);
+  // AUD-X2 — an onboarding store has NOTHING in Inventory, so an empty
+  // checklist is the normal state there, not a dead end. Offer the count
+  // sheet whenever old-stock designs are waiting for this store.
+  const onboardingPending = onboardingCount(session);
   if (!list.length) {
+    const rows = [];
+    if (onboardingPending) {
+      rows.push([{ text: `\u{1F4E5} Add old-stock list (${onboardingPending})`, callback_data: 'wai:onb' }]);
+    }
+    rows.push([{ text: '\u{1F4C4} Offline count sheet', callback_data: 'wai:tmpl' },
+      { text: '\u2795 Add designs', callback_data: 'wai:xd' }]);
+    const upRow = upFromChecklistRow(session);
+    if (upRow) rows.push(upRow);
+    rows.push(closeRow());
+    const extras = (session._extraDesigns || []).length;
     await render(bot, chatId, userId,
-      `🔍 ${session.warehouse}\n\nNo available stock in this warehouse.`,
-      [upFromChecklistRow(session), closeRow()].filter(Boolean));
+      `\u{1F50D} ${session.warehouse}\n\n`
+      + 'Nothing here is in the system yet.\n'
+      + (onboardingPending
+        ? `${onboardingPending} old-stock design(s) are on file for this store — tap \u{1F4E5} to put them on a count sheet.`
+        : `${extras} design(s) on the count sheet.`),
+      rows);
     return;
   }
   // WAU-3 BLIND LIST — no quantities anywhere (the auditor must count,
@@ -395,6 +466,9 @@ async function renderChecklist(bot, chatId, userId) {
     const icon = s.mismatches ? '🔁' : '⬜';
     return [{ text: `${icon} ${d.design}`, callback_data: `wai:ck:${i}` }];
   });
+  if (onboardingPending) {
+    rows.push([{ text: `\u{1F4E5} Add old-stock list (${onboardingPending})`, callback_data: 'wai:onb' }]);
+  }
   rows.push([{ text: '📄 Offline count sheet', callback_data: 'wai:tmpl' },
     { text: '➕ Add designs', callback_data: 'wai:xd' }]);
   if (auth.isAdmin(userId)) rows.push([{ text: '🔬 Deep inspect (bale/than level)', callback_data: 'wai:inspect' }]);
@@ -565,7 +639,7 @@ async function handleBatchText(bot, msg) {
   const chatId = msg.chat.id;
   if (!config.warehouseAudit || !config.warehouseAudit.enabled) return false;
   const { parseAuditBatch } = require('../utils/auditCountParser');
-  const warehouses = await inventoryRepository.getWarehouses();
+  const warehouses = await auditWarehouses();
   const parsed = parseAuditBatch(msg.text, warehouses);
   if (!parsed.ok) {
     await bot.sendMessage(chatId, `⚠️ ${parsed.error}`);
@@ -1127,7 +1201,29 @@ async function handleCallback(bot, query) {
     session.step = 'await_extra_designs';
     sessionStore.set(userId, session);
     await bot.sendMessage(chatId,
-      '➕ Send the design numbers to ADD to the count sheet (comma or new-line separated), e.g.\n\n9037-E, 402/9059 (08)\n77008\n\nThese are for old stock not in the system yet — counts sent for them are recorded for your onboarding audit.');
+      '➕ Send the design numbers to ADD to the count sheet — one per line:\n\n9037-E\n402/9059 (08)\n3001,YC-01\n\nThese are for old stock not in the system yet; whatever is counted for them is recorded for your onboarding audit.');
+    return true;
+  }
+  if (data === 'wai:onb') {
+    // AUD-X2 — pull this store's old-container designs onto the count sheet.
+    // Session state only: nothing is written to any sheet by loading them.
+    try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
+    const have = new Set((session._extraDesigns || []).map((d) => String(d).toUpperCase()));
+    const fresh = onboardingStock.forStore(session.warehouse)
+      .map((e) => e.label)
+      .filter((l) => !have.has(l.toUpperCase()));
+    if (!fresh.length) {
+      await bot.sendMessage(chatId, 'The old-stock list for this store is already on the count sheet.');
+      return true;
+    }
+    session._extraDesigns = [...(session._extraDesigns || []), ...fresh].slice(0, MAX_EXTRA_DESIGNS);
+    session.step = 'checklist';
+    sessionStore.set(userId, session);
+    await bot.sendMessage(chatId,
+      `📥 Added ${fresh.length} old-stock design(s) for ${session.warehouse}.\n\n`
+      + 'These are not in the system yet, so there is nothing to compare them against — '
+      + 'whatever your manager counts is recorded for your reconciliation.');
+    await sendOfflineTemplate(bot, chatId, userId);
     return true;
   }
   if (data === 'wai:tmpl') {
@@ -1288,27 +1384,79 @@ async function handleCallback(bot, query) {
   return false;
 }
 
-/** AUD-X1 — typed extra design numbers for the offline count sheet. */
+/**
+ * AUD-X2 — design codes are NOT comma-separated tokens.
+ *
+ * Real codes in the owner's onboarding list contain commas
+ * ("3001,YC-01", "55170-A,YC-03", "47014,2084/01"), so splitting on every
+ * comma shattered them into halves. A human listing several designs types a
+ * space after the comma; a code never does. Split on newlines and semicolons
+ * always, on a comma only when whitespace follows.
+ */
+function splitDesignTokens(raw) {
+  return String(raw || '')
+    .split(/[\n;]+|,\s+/)
+    .map((t) => t.trim().replace(/[.,;]+$/, ''))
+    .filter(Boolean);
+}
+
+const DESIGN_CODE = /^[A-Za-z0-9][A-Za-z0-9/(),\-. ]*$/;
+
+/**
+ * Text typed while an audit session is live.
+ *
+ * AUD-X2 — this consumes anything it sees (bar slash-commands), and that
+ * containment is the point. It used to return false for every step except
+ * `await_extra_designs`, so a count TYPED instead of tapped fell through the
+ * controller's remaining handlers: a bare number could be swallowed as a
+ * pending sale's rate or amount_paid (approvalEvents keeps that state in its
+ * OWN map, which starting an audit does not clear) and execute the sale —
+ * writing the Inventory sheet from inside a stock count. An audit must never
+ * be able to move stock.
+ */
 async function handleText(bot, msg) {
   const userId = String(msg.from.id);
   const chatId = msg.chat.id;
   const session = sessionStore.get(userId);
-  if (!session || session.step !== 'await_extra_designs') return false;
-  const tokens = String(msg.text || '')
-    .split(/[,\n]/)
-    .map((t) => t.trim())
-    .filter((t) => t && t.length <= 24 && /^[A-Za-z0-9][A-Za-z0-9\/()\- ]*$/.test(t));
-  if (!tokens.length) {
-    await bot.sendMessage(chatId, '⚠️ No valid design numbers found — send codes like 9037-E, 402/9059 (08).');
+  if (!session || session.type !== SESSION_TYPE) return false;
+  const text = String(msg.text || '').trim();
+  if (!text) return false;
+  if (text.startsWith('/')) return false; // slash-commands stay global
+
+  // A filled count sheet ALWAYS wins. Without this, pasting the manager's
+  // reply while the ➕ prompt was open stored the "AUDIT <wh>" header as a
+  // design, dropped every "9032 = 12+5" line, and still reported success —
+  // the physical counts vanished silently.
+  if (/^AUDIT\s+/i.test(text)) return handleBatchText(bot, msg);
+
+  if (session.step === 'await_extra_designs') {
+    // A token carrying '=' is a count, never a design name.
+    const tokens = splitDesignTokens(text)
+      .filter((t) => !t.includes('=') && t.length <= 32 && DESIGN_CODE.test(t));
+    if (!tokens.length) {
+      await bot.sendMessage(chatId,
+        '⚠️ No design numbers found there.\n\nSend them one per line (or separated by ", "), e.g.\n9037-E\n402/9059 (08)\n3001,YC-01');
+      return true;
+    }
+    const existing = session._extraDesigns || [];
+    const seen = new Set(existing.map((d) => d.toUpperCase()));
+    const added = tokens.filter((t) => !seen.has(t.toUpperCase()) && seen.add(t.toUpperCase()));
+    session._extraDesigns = [...existing, ...added].slice(0, MAX_EXTRA_DESIGNS);
+    session.step = 'checklist';
+    sessionStore.set(userId, session);
+    const dupes = tokens.length - added.length;
+    await bot.sendMessage(chatId,
+      `➕ Added ${added.length} design(s)${dupes ? ` (${dupes} already on the sheet)` : ''}. `
+      + `The count sheet now carries ${session._extraDesigns.length} extra design(s) for old stock.`);
+    await sendOfflineTemplate(bot, chatId, userId);
     return true;
   }
-  const set = new Set([...(session._extraDesigns || []), ...tokens]);
-  session._extraDesigns = [...set].slice(0, 60);
-  session.step = 'checklist';
-  sessionStore.set(userId, session);
+
   await bot.sendMessage(chatId,
-    `➕ Added ${tokens.length} design(s). The count sheet now carries ${session._extraDesigns.length} extra design(s) for old stock.\nTap 📄 Offline count sheet to get the updated copy-paste sheet.`);
-  await sendOfflineTemplate(bot, chatId, userId);
+    '🔍 You are in a stock audit, so I am not reading this as a command.\n\n'
+    + 'Enter counts by tapping a design on the audit card, or send the filled '
+    + 'count sheet starting with its "AUDIT …" first line.\n'
+    + 'Tap ✖ Close on the card when you are done auditing.');
   return true;
 }
 
@@ -1323,6 +1471,7 @@ module.exports = {
     renderWarehousePicker, renderDesignPicker, renderShadePicker,
     renderBaleList, renderBaleChoice, renderThanCard, renderReconciliation,
     stepBack, loadBales, markIcon, getAuditMode, baleAuditState, chunkButtons,
+    auditWarehouses, onboardingCount, splitDesignTokens,
     SESSION_TYPE, AUDIT_MODE_THAN, AUDIT_MODE_BALE, AUDIT_MODE_KEY_PREFIX,
   },
 };

@@ -78,9 +78,14 @@ stockTakesRepository.getById = async (id) => takes.find((r) => r.stocktake_id ==
 
 async function openChecklist(bot, uid = '4242') {
   await controller.handleCallbackQuery(bot, cb('act:warehouse_audit', uid));
-  // Lagos (locations sorted Kano,Lagos) — holds only IDUMOTA, so the
-  // warehouse picker auto-skips straight to the checklist.
+  // Lagos (locations sorted Kano,Lagos). AUD-X2 widened the warehouse source
+  // to Inventory ∪ Settings.WAREHOUSE_LIST ∪ the onboarding dataset, so Lagos
+  // now offers several stores instead of auto-forwarding to the only one —
+  // pick IDUMOTA explicitly.
   await controller.handleCallbackQuery(bot, cb('wai:loc:1', uid));
+  const idumota = kbTexts(bot).find((b) => (b.text || '').includes('IDUMOTA')
+    && /^wai:wh:/.test(b.callback_data || ''));
+  if (idumota) await controller.handleCallbackQuery(bot, cb(idumota.callback_data, uid));
 }
 async function pad(bot, keys, uid = '4242') {
   for (const k of keys) await controller.handleCallbackQuery(bot, cb(`wai:k:${k}`, uid));
