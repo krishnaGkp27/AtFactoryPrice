@@ -1256,7 +1256,19 @@ async function handleCallback(bot, query) {
   if (data.startsWith('wai:aclr:')) return handleFlagClear(bot, query);
 
   const session = sessionStore.get(userId);
-  if (!session || session.type !== SESSION_TYPE) return false;
+  if (!session || session.type !== SESSION_TYPE) {
+    // AUD-X2d — sessions live in an in-memory Map, so a deploy or a crash
+    // wipes every open audit while its card stays on screen. Returning false
+    // sent the tap to the controller's generic "Unknown action." toast, which
+    // reads like the button is broken rather than the session being gone —
+    // and a warehouse audit is exactly the long-running task most likely to
+    // straddle a restart. Reopen it on the same card instead.
+    try {
+      await bot.answerCallbackQuery(query.id, { text: 'Audit reopened — the bot restarted.' });
+    } catch (_) { /* stale query id */ }
+    await start(bot, chatId, userId, query.message && query.message.message_id);
+    return true;
+  }
 
   // Pad taps answer their own callback (they often need toast text).
   if (data.startsWith('wai:k:')) { await handlePadKey(bot, chatId, userId, data.slice('wai:k:'.length), query); return true; }

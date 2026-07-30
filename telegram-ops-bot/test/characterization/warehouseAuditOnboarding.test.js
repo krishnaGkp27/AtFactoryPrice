@@ -273,3 +273,31 @@ test('AUD-X2c: 📄 on an onboarding store produces a sheet, never "everything i
     onboardingStock.forStore(store, { packaging: 'Bales' }).length);
   sessionStore.clear('777');
 });
+
+test('AUD-X2d: a card tapped after a restart reopens the audit, never "Unknown action."', async () => {
+  // Reported from the field. Sessions are an in-memory Map, so every deploy
+  // wipes open audits while their cards stay on screen; the tap then fell
+  // through to the controller's generic "Unknown action." toast.
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('act:warehouse_audit', '777'));
+  // One location in this fixture, so the picker auto-forwards to warehouses;
+  // either screen's buttons exercise the same stale-session guard.
+  const loc = kbTexts(bot).find((b) => /^wai:(loc|wh):/.test(b.callback_data || ''));
+  assert.ok(loc, `a picker rendered: ${kbTexts(bot).map((b) => b.callback_data).join(', ')}`);
+
+  sessionStore.clear('777');            // <- what a redeploy does
+  const before = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb(loc.callback_data, '777'));
+
+  const after = bot.calls.slice(before);
+  const toasts = after.filter((c) => c.method === 'answerCallbackQuery')
+    .map((c) => (c.args.opts && c.args.opts.text) || '').join(' ');
+  assert.ok(!/Unknown action/i.test(toasts + JSON.stringify(after)),
+    `no dead-end toast: ${toasts}`);
+  assert.match(toasts, /restarted/i, 'the user is told why, not left guessing');
+  const shown = after.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method))
+    .map((c) => c.args.text).join('\n');
+  assert.match(shown, /Select the location|Warehouse Audit/,
+    `the audit is reopened rather than abandoned: ${shown.slice(0, 160)}`);
+  sessionStore.clear('777');
+});
