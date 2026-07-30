@@ -240,3 +240,36 @@ test('AUD-X2: a store holding several units asks which one is being counted', as
   assert.ok(!/Socks|Singlet|Cap /.test(sheet), 'piece-goods stay off a bales+bundles sheet');
   sessionStore.clear('777');
 });
+
+test('AUD-X2c: 📄 on an onboarding store produces a sheet, never "everything is reconciled"', async () => {
+  // Reported from the field: CASHMERE STR showed "Add old-stock list (7)" and
+  // yet 📄 Offline count sheet replied "Nothing left to count here — every
+  // design is reconciled or locked." Nothing was reconciled; nothing was even
+  // on file. 📄 must reach the same place 📥 does.
+  const store = 'CASHMERE STR';
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('act:warehouse_audit', '777'));
+  for (let i = 0; i < 4; i += 1) {
+    const btn = kbTexts(bot).find((b) => (b.text || '').includes(store));
+    if (btn) { await controller.handleCallbackQuery(bot, cb(btn.callback_data, '777')); break; }
+    const next = kbTexts(bot).find((b) => /^wai:loc:/.test(b.callback_data || ''));
+    if (!next) break;
+    await controller.handleCallbackQuery(bot, cb(next.callback_data, '777'));
+  }
+  await controller.handleCallbackQuery(bot, cb('wai:tmpl', '777'));
+  const said = texts(bot).join('\n') + '\n' + bot.calls
+    .filter((c) => c.method === 'editMessageText').map((c) => c.args.text).join('\n');
+  assert.ok(!/every design is reconciled or locked/.test(said),
+    `must not claim reconciliation for a store with nothing on file: ${said.slice(-200)}`);
+  // CASHMERE STR mixes bales and rolls, so 📄 lands on the unit question.
+  const choices = kbTexts(bot).filter((b) => /^wai:onbp:/.test(b.callback_data || ''));
+  assert.ok(choices.length > 1, `📄 offers the old-stock list: ${kbTexts(bot).map((b) => b.text).join(' | ')}`);
+
+  const bales = choices.find((b) => /^Bales/.test(b.text));
+  await controller.handleCallbackQuery(bot, cb(bales.callback_data, '777'));
+  const sheet = texts(bot).find((t) => t.startsWith(`AUDIT ${store}`));
+  assert.ok(sheet, 'a copy-paste sheet actually arrives');
+  assert.equal(sheet.split('\n').length - 1,
+    onboardingStock.forStore(store, { packaging: 'Bales' }).length);
+  sessionStore.clear('777');
+});

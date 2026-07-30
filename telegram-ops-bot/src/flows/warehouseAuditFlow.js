@@ -600,9 +600,9 @@ async function commitPadCount(bot, chatId, userId, query) {
 
 /* ───────────────────────── WAU-3: offline batch template ───────────────────────── */
 
-async function sendOfflineTemplate(bot, chatId, userId) {
+async function sendOfflineTemplate(bot, chatId, userId, opts = {}) {
   const session = sessionStore.get(userId);
-  if (!session) return;
+  if (!session) return false;
   const state = await todayStateFor(session.warehouse);
   const open = (session._checklist || []).filter((d) => {
     const s = state.get(String(d.design).toUpperCase());
@@ -616,8 +616,15 @@ async function sendOfflineTemplate(bot, chatId, userId) {
   const extras = (session._extraDesigns || [])
     .filter((x) => !open.some((d) => String(d.design).toUpperCase() === x.toUpperCase()));
   if (!open.length && !extras.length) {
-    await bot.sendMessage(chatId, 'Nothing left to count here — every design is reconciled or locked.');
-    return;
+    // Do NOT claim everything is reconciled — for an onboarding store there
+    // was never anything to reconcile, and saying so sent the owner looking
+    // for a bug. Callers that can offer the old-stock list handle it.
+    if (!opts.quietWhenEmpty) {
+      await bot.sendMessage(chatId, onboardingCount(session)
+        ? 'The count sheet is empty — tap 📥 Add old-stock list to put this store\'s designs on it.'
+        : 'Nothing left to count here — every design is reconciled or locked.');
+    }
+    return false;
   }
   const lines = open.map((d) => `${d.design} =`).concat(extras.map((x) => `${x} =`));
   const template = `AUDIT ${session.warehouse}\n${lines.join('\n')}`;
@@ -627,6 +634,7 @@ async function sendOfflineTemplate(bot, chatId, userId) {
     + '1. Long-press it → Copy.\n'
     + '2. Walk the store with NO network — paste it into the message box and fill each line: 9032 = 12+5 (bales+bundles). Leave lines you did not count empty.\n'
     + '3. Press send when you are back in coverage — Telegram delivers it automatically and I reply with the results.');
+  return true;
 }
 
 /**
@@ -1198,6 +1206,37 @@ async function loadOnboarding(bot, chatId, userId, packaging) {
   return true;
 }
 
+/**
+ * AUD-X2c — entry point for putting a store's old stock on the count sheet,
+ * shared by 📥 Add old-stock list and by 📄 Offline count sheet when there is
+ * nothing else to print.
+ *
+ * A count sheet speaks ONE unit. MAIN OFFICE holds bales, rolls and 54 lines
+ * of piece-goods; "Socks = 12+5" in bales+bundles is nonsense, so a store
+ * carrying more than one packaging type picks which one first.
+ * @returns {Promise<boolean>}
+ */
+async function beginOnboarding(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return true;
+  const packs = onboardingStock.packagingFor(session.warehouse);
+  if (packs.length > 1) {
+    session._onbPacks = packs;
+    sessionStore.set(userId, session);
+    const rows = packs.map((pk, i) => ([{
+      text: `${pk} (${onboardingStock.forStore(session.warehouse, { packaging: pk }).length})`,
+      callback_data: `wai:onbp:${i}`,
+    }]));
+    rows.push([{ text: '\u2B05 Back to list', callback_data: 'wai:padcx' }]);
+    await render(bot, chatId, userId,
+      `\u{1F4E5} Old stock on file for ${session.warehouse}\n\n`
+      + 'Which packaging are you counting? One count sheet should cover one '
+      + 'unit \u2014 bales and rolls are not counted the same way.', rows);
+    return true;
+  }
+  return loadOnboarding(bot, chatId, userId, '');
+}
+
 /* ───────────────────────────── callback dispatcher ───────────────────────────── */
 
 /**
@@ -1239,28 +1278,8 @@ async function handleCallback(bot, query) {
     return true;
   }
   if (data === 'wai:onb') {
-    // AUD-X2 — pull this store's old-container designs onto the count sheet.
-    // Session state only: nothing is written to any sheet by loading them.
     try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
-    // A count sheet speaks ONE unit. MAIN OFFICE holds bales, rolls and 54
-    // lines of piece-goods; "Socks = 12+5" in bales+bundles is nonsense, so
-    // a mixed store picks its packaging first.
-    const packs = onboardingStock.packagingFor(session.warehouse);
-    if (packs.length > 1) {
-      session._onbPacks = packs;
-      sessionStore.set(userId, session);
-      const rows = packs.map((pk, i) => ([{
-        text: `${pk} (${onboardingStock.forStore(session.warehouse, { packaging: pk }).length})`,
-        callback_data: `wai:onbp:${i}`,
-      }]));
-      rows.push([{ text: '⬅ Back to list', callback_data: 'wai:padcx' }]);
-      await render(bot, chatId, userId,
-        `📥 Old stock on file for ${session.warehouse}\n\n`
-        + 'Which packaging are you counting? One count sheet should cover one '
-        + 'unit — bales and rolls are not counted the same way.', rows);
-      return true;
-    }
-    return loadOnboarding(bot, chatId, userId, '');
+    return beginOnboarding(bot, chatId, userId);
   }
   if (data.startsWith('wai:onbp:')) {
     try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
@@ -1270,7 +1289,14 @@ async function handleCallback(bot, query) {
   }
   if (data === 'wai:tmpl') {
     try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
-    await sendOfflineTemplate(bot, chatId, userId);
+    // 📄 is the button people reach for when they want a count sheet, so it
+    // must produce one. If there is nothing loaded yet but this store has old
+    // stock on file, go straight there instead of reporting an empty sheet.
+    const printed = await sendOfflineTemplate(bot, chatId, userId, { quietWhenEmpty: true });
+    if (!printed) {
+      if (onboardingCount(session)) return beginOnboarding(bot, chatId, userId);
+      await sendOfflineTemplate(bot, chatId, userId);
+    }
     return true;
   }
   if (data.startsWith('wai:ck:')) {
