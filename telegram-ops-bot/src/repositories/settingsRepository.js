@@ -69,6 +69,12 @@ const DEFAULTS = {
   ATTENDANCE_REMINDER_ENABLED: 1,
   // SNAP-3 spend guard: max metered vision (OCR) calls per day.
   OCR_DAILY_CAP: 100,
+  // SHR-1 — tracked catalogue share links. Master switch hides the 📤 Share
+  // button on catalog cards when 0. SHARE_PAGE_BASE_URL is where minted
+  // links point (the website's /d page, e.g. https://atfactoryprice.com);
+  // empty = the bot's own BASE_URL, which serves the same page at /d/<token>.
+  SHARE_LINKS_ENABLED: 1,
+  SHARE_PAGE_BASE_URL: '',
   FLOW_CLEANUP_HEAVY_TYPES: 'supply_req_flow,grn_flow,bulk_receive_flow,photo_receive_flow,bundle_sale_flow,order_flow,receipt_flow,landed_cost_flow,po_new_flow',
   // BKP-1 — automated daily snapshot of the master sheet into the backup
   // Drive folder. Hour is UTC (1 = 02:00 Lagos); copies older than the

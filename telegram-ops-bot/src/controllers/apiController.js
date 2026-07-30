@@ -170,6 +170,32 @@ async function getAnalyticsFeature(req, res) {
 }
 
 /**
+ * SHR-1 — share-link numbers for the admin page. Key-gated like the ANL-1
+ * endpoints, but gated on DATABASE_URL only (share events are product data;
+ * ANALYTICS_ENABLED does not apply — see specs/SHR-1_SHARE_TRACKING.md).
+ * GET /api/analytics/shares?days=30
+ */
+async function getShareAnalytics(req, res) {
+  if (!config.botApiKey) {
+    return res.status(503).json({ ok: false, error: 'Analytics API is disabled: server has no BOT_API_KEY configured.' });
+  }
+  if (!hasValidApiKey(req)) {
+    return res.status(403).json({ ok: false, error: 'Invalid or missing X-API-Key.' });
+  }
+  const shareTrackService = require('../services/shareTrackService');
+  if (!shareTrackService.isEnabled()) {
+    return res.status(503).json({ ok: false, error: 'Share tracking needs DATABASE_URL (Railway Postgres) on the server.' });
+  }
+  try {
+    const out = await shareTrackService.summary(clampDays(req.query.days, 30, 365));
+    res.json({ ok: true, ...out });
+  } catch (e) {
+    logApiError('GET /api/analytics/shares', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
+/**
  * CNET-1c — the whole contact network in ONE payload for the website
  * dashboard (spec §7): nodes, subordinate edges, and buyers grouped by
  * DCAT-1 category. Always key-gated (commercially sensitive data), same
@@ -476,7 +502,7 @@ async function getOpsUsage(req, res) {
 }
 
 module.exports = {
-  getSettings, updateSettings, getAnalyticsSummary, getAnalyticsFeature, getContactsGraph,
+  getSettings, updateSettings, getAnalyticsSummary, getAnalyticsFeature, getShareAnalytics, getContactsGraph,
   getOpsOverview, getOpsApprovals, getOpsAttendance, getOpsStockTakes,
   postExtOtpRequest, postExtOtpVerify, getExtLedger, getOpsUsage,
 };

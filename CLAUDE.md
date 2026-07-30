@@ -91,7 +91,7 @@ Major namespaces already taken:
 
 - Menus: `act:` (tiles; `act:__hub__:<id>`, `act:__back__` are session-free navigation)
 - Supply request: `srf_*` · legacy inline flows: `up*` (price), `tp*`/`tt*` (transfers), `rt*` (return), `sm*` (sample), `ac*` (add customer)
-- Flow modules: `gr:` `br:` `addstock:` `pr:` `wh:` `wai:` `bs:` `udf:` `sbl:` `lcost:` `bops:` `ofex:` `usr:` `umg:` `rol:` `atd:` `atd_rpt:` `atd_adm:` `tsk:` `nf:` `swv:` `pp:` `pu:` `cms:` `oq/oc/od*` (orders) `rc*` (receipts)
+- Flow modules: `gr:` `br:` `addstock:` `pr:` `wh:` `wai:` `bs:` `udf:` `sbl:` `lcost:` `bops:` `ofex:` `usr:` `umg:` `rol:` `atd:` `atd_rpt:` `atd_adm:` `tsk:` `nf:` `swv:` `pp:` `pu:` `cms:` `shr:` (share links) `oq/oc/od*` (orders) `rc*` (receipts)
 - Catalog: `csf:` `clf:` `crf:` `mkr:` `ctr:` `dab:` `das:` `dat:` `dap:` `dam:` `dav:`
 - Approvals: `approve:` `reject:` `srf_acc/ack/dec/assign:` `smc:` `confirm_sale:` `cancel_sale:`
 - Reports: `cks:` `lpk:` `svr:` `inv:` `sr:`/`srg:` `mdo:`

@@ -129,6 +129,21 @@ const invoiceWebController = require('./src/controllers/invoiceWebController');
 app.get('/i/:token.pdf', invoiceWebController.viewInvoicePdf);
 app.get('/i/:token', invoiceWebController.viewInvoice);
 
+// SHR-1 — tracked catalogue share links (signed token = capability; see
+// specs/SHR-1_SHARE_TRACKING.md). GET-only so the website page never needs
+// a CORS preflight; ACAO * because these are public capability endpoints —
+// the ADMIN_ALLOWED_ORIGINS allow-list must not lock the customer page out.
+const shareWebController = require('./src/controllers/shareWebController');
+app.use('/api/share', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  next();
+});
+app.get('/d/:token', shareWebController.viewPage);
+app.get('/api/share/resolve/:token', shareWebController.resolve);
+app.get('/api/share/e/:token', shareWebController.event);
+app.get('/api/share/img/:token', shareWebController.image);
+app.get('/api/analytics/shares', apiController.getShareAnalytics);
+
 // TG-2: when TELEGRAM_WEBHOOK_SECRET is set, Telegram includes it in the
 // `X-Telegram-Bot-Api-Secret-Token` header on every webhook POST. Reject
 // any request that arrives without the matching token — this is the
@@ -320,6 +335,8 @@ const server = app.listen(PORT, async () => {
   // Sheets API can 429/500) can never skip the sweep and let ext_otp /
   // ext_sessions / web_sessions / ext_throttle grow unbounded.
   try { require('./src/db/extSchema').ensure(); } catch (e) { logger.warn(`extSchema boot: ${e.message}`); }
+  // SHR-1 — share_events bootstrap (no-op without DATABASE_URL).
+  try { require('./src/services/shareTrackService').ensureSchema(); } catch (e) { logger.warn(`shareSchema boot: ${e.message}`); }
   try {
     const extLedgerService = require('./src/services/extLedgerService');
     extLedgerService.sweepExpired().catch(() => {});

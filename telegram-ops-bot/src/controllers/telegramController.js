@@ -6692,6 +6692,8 @@ const FLOW_CALLBACK_ROUTES = [
   // MKT-2 — marketer allocations: admin flow + marketer category catalog.
   { prefixes: ['mal:'], handle: (bot, cq) => require('../flows/allocateMarketerFlow').handleCallback(bot, cq) },
   { prefixes: ['mkp:'], handle: (bot, cq) => require('../flows/marketerCatalogFlow').handleCallback(bot, cq) },
+  // SHR-1 — tracked share links from the Browse Catalog card.
+  { prefixes: ['shr:'], handle: (bot, cq) => require('../flows/shareFlow').handleCallback(bot, cq) },
   // People / HR flows.
   { prefixes: ['usr:'], handle: (bot, cq) => require('../flows/userAddFlow').handleCallback(bot, cq) },
   { prefixes: ['umg:'], handle: (bot, cq) => require('../flows/userManageFlow').handleCallback(bot, cq) },
@@ -11603,7 +11605,9 @@ async function showCatalogBrowseDetail(bot, chatId, userId, design, callerMessag
   const caption = `📖 *${row.design}* — ${row.productType || 'fabric'}\n` +
     `Shades (${row.shadeCount}): ${shadesText}`;
 
+  // SHR-1 — tracked share link (same 30-char design cap as dab:view).
   const kb = { inline_keyboard: [
+    [{ text: '📤 Share', callback_data: `shr:d:${row.design.slice(0, 30)}` }],
     [{ text: '◀️ Back to catalog', callback_data: 'dab:back' }],
   ] };
 

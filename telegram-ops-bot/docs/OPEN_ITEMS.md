@@ -45,7 +45,8 @@ side already got this treatment — `src/db/extSchema.js` notes the in-memory v1
 | 4 | **Run the onboarding stock audit.** Start with CHINOS STR (24 bale designs, bales only, loads in one tap). | Owner · `specs/AUD-X2_ONBOARDING_AUDIT.md` |
 | 5 | **Approval single-card wizard.** Full proposal delivered; blocked on two decisions: (a) does the final receipt keep the full card or collapse to a one-liner, (b) how far back should Back reach — as far as reject? | Owner |
 | 6 | **TRF-5 live test** — transfer queue + single-flow retirement (commit `28d9121f`). | Owner · `specs/TRF-5_TEST_STEPS.md` |
-| 7 | **Analytics is dark.** `ANALYTICS_ENABLED=1` + `DATABASE_URL` on Railway. Until then the usage / dead-code tracking the owner commissioned records nothing, and `npm run census --usage` has no data to join. | Owner · `specs/ANL-1_USAGE_ANALYTICS.md` |
+| 7 | **Analytics is dark.** `ANALYTICS_ENABLED=1` + `DATABASE_URL` on Railway. Until then the usage / dead-code tracking the owner commissioned records nothing, and `npm run census --usage` has no data to join. `DATABASE_URL` alone also unlocks SHR-1 share counting (item 7b). | Owner · `specs/ANL-1_USAGE_ANALYTICS.md` |
+| 7b | **SHR-1 share links — 3 owner steps to go fully live.** Shipped 30-Jul: 📤 Share on the catalog card mints tracked `/d/<token>` links (bot-served page works from day one). To land them on the domain + start counting: (a) set `botApiBase` in `js/site-config.js` and deploy Firebase hosting, (b) add Settings row `SHARE_PAGE_BASE_URL = https://atfactoryprice.com`, (c) `DATABASE_URL` on Railway (same env work as item 7 — events don't record without it). | Owner · `specs/SHR-1_SHARE_TRACKING.md` |
 
 ---
 

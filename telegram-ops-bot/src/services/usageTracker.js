@@ -82,6 +82,7 @@ const PREFIX_FEATURES = {
   'sdg:': 'supply_details_design',
   'sns:': 'snap_sale',
   'sb:': 'sell_bale',
+  'shr:': 'share_design',
   'trf:': 'transfers',
   'smc:': 'supply_dispatch_confirm',
   'enr:': 'approval_enrichment',

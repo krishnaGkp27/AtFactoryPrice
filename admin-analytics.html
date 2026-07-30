@@ -95,6 +95,21 @@
       <div class="hint">Friction = abandons ÷ starts. High friction + high volume = fix first.</div>
     </div>
 
+    <!-- SHR-1 — tracked catalogue share links (share_events, live counts). -->
+    <div class="card">
+      <h2>Design shares — link reach <span class="hint">(created = links minted · opens = every viewer, every hop)</span></h2>
+      <table id="shareTable">
+        <thead><tr><th>Design</th><th>Links created</th><th>Customers</th><th>Opens</th><th>Re-shares</th><th>Downloads</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <table id="shareCustTable" style="margin-top:14px">
+        <thead><tr><th>Customer</th><th>Design</th><th>Links</th><th>Opens</th><th>Downloads</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="err" id="shareErr"></div>
+      <div class="hint">Live from share_events (needs DATABASE_URL on the bot; independent of ANALYTICS_ENABLED).</div>
+    </div>
+
     <div class="card" id="drill">
       <h2 id="drillTitle">Feature detail</h2>
       <table id="drillTable">
@@ -156,6 +171,22 @@
       const data = await api('/api/analytics/summary?days=' + days);
       render(data);
     } catch (e) { $('loadErr').textContent = e.message; }
+    loadShares(); // SHR-1 — independent gate (DATABASE_URL only), never blocks ANL-1
+  }
+
+  async function loadShares() {
+    $('shareErr').textContent = '';
+    try {
+      const data = await api('/api/analytics/shares?days=' + $('days').value);
+      $('shareTable').querySelector('tbody').innerHTML = (data.designs || []).map((r) => `
+        <tr><td>${r.design}</td><td>${r.created}</td><td>${r.customers}</td>
+        <td>${r.opens}</td><td>${r.shares}</td><td>${r.downloads}</td></tr>`).join('')
+        || '<tr><td colspan="6">No share activity in this range yet.</td></tr>';
+      $('shareCustTable').querySelector('tbody').innerHTML = (data.customers || []).map((r) => `
+        <tr><td>${r.customer_id}</td><td>${r.design}</td><td>${r.created}</td>
+        <td>${r.opens}</td><td>${r.downloads}</td></tr>`).join('')
+        || '<tr><td colspan="5">No per-customer rows yet.</td></tr>';
+    } catch (e) { $('shareErr').textContent = e.message; }
   }
   $('loadBtn').onclick = load;
 

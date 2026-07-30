@@ -33,6 +33,10 @@
     ],
     "rewrites": [
       {
+        "source": "/d/**",
+        "destination": "/design.html"
+      },
+      {
         "source": "/contacts",
         "destination": "/contacts.html"
       },
