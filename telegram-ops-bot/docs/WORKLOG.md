@@ -5,6 +5,91 @@ Newest first. One entry per working session; each entry lists what shipped
 
 ---
 
+## 2026-07-30 — AUD-X1/X2: onboarding audit for old-container stock
+
+Owner supplied `Stock_Summary_by_Store.xlsx` (~870 bales across 4 stores whose
+designs predate the Inventory sheet) with one hard rule: **do not touch
+Inventory until reconciliation is proofed, design by design.** Getting that list
+onto a copy-paste count sheet exposed four defects and two systemic ones.
+
+- **AUD-X1 (`26e068d`)** — ➕ Add designs on the audit checklist; counts for
+  unknown designs are RECORDED to StockTakes as `result=new_design` instead of
+  being dismissed as "not found".
+- **AUD-X2 (`8d270cd`)** — `scripts/build-onboarding-stock.js` generates
+  `src/data/onboardingStock.js` (125 designs, 4 stores) from the workbook.
+  Quantities, rates and values deliberately do NOT travel into the bot: the
+  audit is blind, and ₦ valuations stay out of git.
+- **AUD-X2b (`ba71d94`)** — a store carrying several packaging types picks one
+  before loading; "Socks = 12+5" on a bales+bundles sheet is nonsense.
+- **AUD-X2c (`b297ed1`)** — 📄 Offline count sheet no longer dead-ends. It was
+  answering "every design is reconciled or locked" on a store where nothing was
+  reconciled and nothing was on file.
+- **AUD-X2d (`a116d5e`)** — a card tapped after a restart reopens the audit
+  instead of hitting the generic "Unknown action." toast.
+- **Specs** — `specs/AUD-X2_ONBOARDING_AUDIT.md` (`beb8081`, `b528a6b`).
+
+**Defects closed** (all found by building against the owner's real data, not by
+review): a pasted filled sheet was swallowed at the ➕ prompt — header stored as
+a design, every `9032 = 12+5` line dropped, "Added 1 design(s)" reported while
+the counts were lost; text typed mid-audit fell through to the enrichment
+handler where a bare number could become a pending sale's rate or amount paid
+and execute it (an audit writing Inventory); design codes containing commas
+(`3001,YC-01`, `55170-A,YC-03`) were shattered in half; `402/9059 (08) = 12`
+errored — the exact format the ➕ prompt taught.
+
+**Reach + schema** — the audit's warehouse source is now Inventory ∪
+`Settings.WAREHOUSE_LIST` ∪ the onboarding dataset (all reads), because stores
+holding only old stock were absent from the picker and rejected in an AUDIT
+header. `schemaMapper` declared 10 StockTakes headers while the repository has
+written 13 since WAU-3, so `counted_bales`/`counted_bundles`/`note` — the
+physical count itself — landed under blank headers; declaration aligned and a
+narrow extension block labels the three cells.
+
+**Decisions locked**: a design number is not a key (CHINOS STR carries `45008`
+as both Chinos and DMS bales) → product-suffixed labels; labels asserted
+whitespace-free; one count sheet = one packaging unit; MAIN OFFICE is the Lagos
+main office and a **separate** store from the existing `Lagos` warehouse — do
+not merge; all four stores are Lagos, needing no `LOCATION.*` rows.
+
+**Guarantee pinned, not promised**: `test/characterization/warehouseAuditOnboarding.test.js`
+drives a full audit through the REAL repositories over a write-recording sheets
+client and asserts the Inventory sheet is byte-identical afterwards, with no
+write of any kind reaching Inventory, Transactions, LedgerTransactions or
+ApprovalQueue. It fails the moment this flow learns to write stock.
+
+Tests: 831 pass · smoke 583 ok · 0 lint errors · check-org OK · census 0 findings.
+CI green on every commit.
+
+**Systemic finding, NOT fixed — needs owner sign-off:** nine flows dead-end when
+a card is tapped after the 5-minute session TTL or a restart, Receive Goods
+*silently*. See `docs/OPEN_ITEMS.md` item 2.
+
+**Pending** — the full prioritised register now lives in `docs/OPEN_ITEMS.md`;
+this log no longer repeats it.
+
+---
+
+## 2026-07-29 — CUS-1 customer entity · attendance validation · glance · date format
+
+- **CUS-1 A–E (`2eeb8ee`, `27e0cb0`, `8d105b8`, `82860ef`, `e9c9fa4`)** — the
+  customer becomes one entity with a permanent `customer_id`; names are display
+  labels and aliases resolve reads. Every manual-entry door closed (typing
+  searches, taps select); the id rides on every new money write;
+  rate-annotated buyer suggestions + outstanding balance at approval;
+  🔀 Merge Customers as the dual-admin typo cleanup (merge, never delete).
+  Spec: `specs/CUS-1_CUSTOMER_ENTITY.md`.
+- **ATT-V3 (`7a8cb13`)** — the next step lands where the user is looking
+  (re-anchor before the photo prompt), after the owner marked attendance and
+  saw no acknowledgement.
+- **DATE-H1 (`162da50`)** — human date format (DD-MMM-YYYY) on every screen a
+  human reads; ISO dates were owner-flagged as a design flaw.
+- **GLA-1 (`b110cc1`)** — 📈 Business Glance, one admin card with five live
+  numbers; every section degrades in place rather than blanking the card.
+- **VRF-1b (`97e9fb2`)** — partial sales no longer read as bill/request
+  mismatches (the bill label shows the FULL bale; the request sells less).
+
+---
+
 ## 2026-07-08 (late) — PG-1 Postgres inventory mirror (Sheets still read path)
 
 Owner said **go PG-1**. Shipped mirror-only — no read-path change yet (PG-2).
