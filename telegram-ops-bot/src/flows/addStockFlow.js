@@ -188,7 +188,17 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
     return true;
   }
 
-  await bot.sendMessage(chatId, '⏳ Parsing file…');
+  // APX-5 — ONE anchored status card per upload: every outcome below
+  // EDITS this message instead of stacking new ones (each stacked card
+  // parked bale lists and conflicts permanently in the chat).
+  const statusMsg = await bot.sendMessage(chatId, '⏳ Parsing file…');
+  const statusEdit = async (text, opts = {}) => {
+    try {
+      await bot.editMessageText(text, { chat_id: chatId, message_id: statusMsg.message_id, ...opts });
+    } catch (_) {
+      await bot.sendMessage(chatId, text, opts).catch(() => {});
+    }
+  };
 
   let buffer;
   try {
@@ -196,7 +206,7 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
     buffer = fetched.buffer;
   } catch (err) {
     logger?.error?.(`[addStockFlow] download failed: ${err.message}`);
-    await bot.sendMessage(chatId, `🚫 Could not download the file: ${err.message}`,
+    await statusEdit(`🚫 Could not download the file: ${err.message}`,
       { reply_markup: _retryKeyboard() });
     return true;
   }
@@ -207,7 +217,7 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
   try {
     const dup = await goodsReceiptsRepo.getByFileHash(hash);
     if (dup) {
-      await bot.sendMessage(chatId,
+      await statusEdit(
         `🚫 This file was already imported as \`${dup.grn_id}\` on ${(dup.received_at || '').split('T')[0]}.\n` +
         `_Hash:_ \`${hash}\``,
         { parse_mode: 'Markdown', reply_markup: _retryKeyboard() });
@@ -234,14 +244,14 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
       logger?.error?.(`[addStockFlow] packing-list parse failed: ${err.message}`);
     }
     if (!pl) {
-      await bot.sendMessage(chatId,
+      await statusEdit(
         '🚫 This .xlsx is not a recognizable supplier packing list.\n' +
         'For plain tables use *📤 Bulk Receive (CSV/XLSX)* or the CSV template.',
         { parse_mode: 'Markdown', reply_markup: _retryKeyboard() });
       return true;
     }
     if (!pl.thans.length) {
-      await bot.sendMessage(chatId, '🚫 Packing list recognized but contains no sellable bales.',
+      await statusEdit('🚫 Packing list recognized but contains no sellable bales.',
         { parse_mode: 'Markdown', reply_markup: _retryKeyboard() });
       return true;
     }
@@ -264,7 +274,7 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
     // Parse with upstream parser (handles BOM, quoted fields, etc.).
     parsed = parseCsv(buffer.toString('utf8'));
     if (!parsed.ok) {
-      await bot.sendMessage(chatId, `🚫 Could not parse: ${parsed.error}\nFix and re-upload.`,
+      await statusEdit(`🚫 Could not parse: ${parsed.error}\nFix and re-upload.`,
         { reply_markup: _retryKeyboard() });
       return true;
     }
@@ -276,7 +286,7 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
     const sample = injected.mismatches.slice(0, 10)
       .map((m) => `  • Row ${m.row}: \`${m.found}\``).join('\n');
     const moreNote = injected.mismatches.length > 10 ? `\n  _…and ${injected.mismatches.length - 10} more_` : '';
-    await bot.sendMessage(chatId,
+    await statusEdit(
       `🚫 *Warehouse mismatch* — you picked *${session.warehouse}* but the CSV has different warehouse(s):\n\n${sample}${moreNote}\n\n` +
       'Either fix the CSV to use only the picked warehouse, or restart with the right warehouse.',
       { parse_mode: 'Markdown', reply_markup: _retryKeyboard() });
@@ -296,7 +306,7 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
   });
 
   if (!verdict.ok) {
-    await bot.sendMessage(chatId, _formatValidatorErrors(verdict.errors),
+    await statusEdit(_formatValidatorErrors(verdict.errors),
       { parse_mode: 'Markdown', reply_markup: _retryKeyboard() });
     return true;
   }
@@ -305,13 +315,13 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
   // case of any drift the validator's summary tells the truth).
   if (verdict.summary.warehouses.length !== 1
       || !_eqCi(verdict.summary.warehouses[0], session.warehouse)) {
-    await bot.sendMessage(chatId,
+    await statusEdit(
       `🚫 Internal warehouse mismatch — expected only *${session.warehouse}*, found: ${verdict.summary.warehouses.join(', ')}.`,
       { parse_mode: 'Markdown', reply_markup: _retryKeyboard() });
     return true;
   }
   if (verdict.summary.suppliers.length > 1) {
-    await bot.sendMessage(chatId,
+    await statusEdit(
       `🚫 File mixes ${verdict.summary.suppliers.length} suppliers: ${verdict.summary.suppliers.join(', ')}.\nUse one supplier per upload.`,
       { parse_mode: 'Markdown', reply_markup: _retryKeyboard() });
     return true;
@@ -323,7 +333,7 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
     existing = await stockImportService.getInventorySnapshot();
   } catch (err) {
     logger?.error?.(`[addStockFlow] inventory snapshot failed: ${err.message}`);
-    await bot.sendMessage(chatId, `🚫 Could not read existing inventory: ${err.message}`,
+    await statusEdit(`🚫 Could not read existing inventory: ${err.message}`,
       { reply_markup: _retryKeyboard() });
     return true;
   }
@@ -338,7 +348,7 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
       rowCount: verdict.summary.totalThans,
       r1: scan.r1.length, r2: scan.r2.length,
     });
-    await bot.sendMessage(chatId, _formatConflictReport(session.warehouse, scan, verdict.summary),
+    await statusEdit(_formatConflictReport(session.warehouse, scan, verdict.summary),
       { parse_mode: 'Markdown', reply_markup: _retryKeyboard() });
     return true;
   }
@@ -381,7 +391,7 @@ async function handleDocument({ bot, chatId, userId, msg, session }) {
 
   const previewText = (plSummary ? _formatPlBlock(plSummary) + '\n\n' : '')
     + _formatPreview(session.warehouse, verdict.summary, scan.crossWarehouseBaleNotes, hash);
-  await bot.sendMessage(chatId, previewText,
+  await statusEdit(previewText,
     {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: [

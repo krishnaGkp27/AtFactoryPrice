@@ -330,9 +330,9 @@ async function handleFile(bot, msg) {
     return true;
   }
 
-  // Run OCR. Brief progress note — small enough that scrolling past it is
-  // cheap, and the result render replaces the anchored card.
-  await bot.sendMessage(chatId, '🔍 _Reading your slip…_', { parse_mode: 'Markdown' });
+  // Run OCR. APX-5 — the progress note rides the ANCHORED card (the result
+  // render replaces it there too), so no stray message is left in the chat.
+  await render(bot, chatId, userId, '🔍 _Reading your slip…_', []);
   const ocr = await vision.extractBales(buffer, mimeType);
   if (!ocr.ok) {
     await renderError(bot, chatId, userId,

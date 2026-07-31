@@ -565,7 +565,9 @@ async function handleCallback(bot, callbackQuery) {
   } catch (err) {
     logger.error(`[bulkReceiveFlow] ${data} failed: ${err.message}`);
     try {
-      await bot.sendMessage(chatId, `🚫 That action failed (${err.message}). If this repeats, re-upload the file.`);
+      // APX-5 — the error takes over the tapped card instead of stacking.
+      await editOrSend(bot, chatId, messageId, `🚫 That action failed (${err.message}). If this repeats, re-upload the file.`,
+        { reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] } });
     } catch (_) { /* chat unreachable */ }
     return true;
   }
@@ -588,9 +590,11 @@ async function _dispatch(bot, callbackQuery, data, userId, chatId, messageId) {
     // In-memory session lost (TTL, or the bot restarted/redeployed between
     // the preview and this tap). Silence here cost the owner three upload
     // attempts on 13-Jul — say it out loud instead.
-    await bot.sendMessage(chatId,
+    // APX-5 — expiry takes over the stale card instead of replying below it.
+    await editOrSend(bot, chatId, messageId,
       '⌛ This upload session has expired (or the bot restarted since the preview). ' +
-      'Nothing was submitted. Please re-upload the file and submit again.');
+      'Nothing was submitted. Please re-upload the file and submit again.',
+      { reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] } });
     return true;
   }
 
