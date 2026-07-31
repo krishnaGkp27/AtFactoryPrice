@@ -95,7 +95,7 @@ async function scopedRows(s, { design } = {}) {
   return all.filter((r) => {
     if (r.status !== 'available') return false;
     if (s.arrivalBatch && String(r.arrivalBatch || '').toUpperCase() !== ab) return false;
-    if (s.warehouse && r.warehouse !== s.warehouse) return false;
+    if (s.warehouse && String(r.warehouse || '').trim().toLowerCase() !== String(s.warehouse).trim().toLowerCase()) return false;
     if (design && String(r.design).toUpperCase() !== String(design).toUpperCase()) return false;
     if (inCart.has(r.packageNo)) return false;
     return true;
@@ -211,13 +211,38 @@ async function start(bot, chatId, userId) {
     return;
   }
   s._containers = containers.map((c) => c.batch);
+  s._containerMeta = containers.map((c) => ({ label: c.label, bales: c.bales }));
+  s.ctPage = 0;
   save(userId, s);
+  await showContainers(bot, chatId, userId);
+}
+
+/** WH-VIS1 — paged container chips. The old screen silently cut the list
+ *  at MAX_CHIPS: stock in the 13th+ container (small or old batches) was
+ *  unreachable through this flow with no hint it existed. */
+async function showContainers(bot, chatId, userId) {
+  const s = getSession(userId);
+  if (!s) return;
+  const meta = s._containerMeta || [];
+  const pages = Math.max(1, Math.ceil(meta.length / MAX_CHIPS));
+  const page = Math.min(Math.max(s.ctPage || 0, 0), pages - 1);
+  s.ctPage = page;
+  save(userId, s);
+  const startIdx = page * MAX_CHIPS;
+  const slice = meta.slice(startIdx, startIdx + MAX_CHIPS);
   const rows = [];
-  for (let i = 0; i < containers.length && i < MAX_CHIPS; i += 2) {
-    const row = [{ text: `🚢 ${containers[i].label} (${containers[i].bales} bls)`, callback_data: `sb:ct:${i}` }];
-    if (containers[i + 1]) row.push({ text: `🚢 ${containers[i + 1].label} (${containers[i + 1].bales} bls)`, callback_data: `sb:ct:${i + 1}` });
+  for (let i = 0; i < slice.length; i += 2) {
+    // Chip indexes stay ABSOLUTE into s._containers so paging never
+    // changes what a tap means.
+    const a = startIdx + i;
+    const row = [{ text: `🚢 ${slice[i].label} (${slice[i].bales} bls)`, callback_data: `sb:ct:${a}` }];
+    if (slice[i + 1]) row.push({ text: `🚢 ${slice[i + 1].label} (${slice[i + 1].bales} bls)`, callback_data: `sb:ct:${a + 1}` });
     rows.push(row);
   }
+  const nav = [];
+  if (page > 0) nav.push({ text: '⬅️ Prev', callback_data: `sb:ctpg:${page - 1}` });
+  if (page < pages - 1) nav.push({ text: `More containers (${meta.length - startIdx - slice.length}) ➡️`, callback_data: `sb:ctpg:${page + 1}` });
+  if (nav.length) rows.push(nav);
   rows.push(cancelRow());
   rows.push([{ text: '🏠 Menu', callback_data: 'act:__back__' }]);
   await render(bot, chatId, userId, `${header(s)}\n\nSelect container (arrival batch):`, rows);
@@ -226,7 +251,14 @@ async function start(bot, chatId, userId) {
 async function showWarehouses(bot, chatId, userId) {
   const s = getSession(userId);
   const rows0 = await scopedRows(s);
-  const warehouses = [...new Set(rows0.map((r) => r.warehouse).filter(Boolean))].sort();
+  // WH-VIS1 — dedupe case-insensitively ('Kano office' / 'Kano Office' are
+  // one warehouse); first-seen spelling is the display label.
+  const whSeen = new Map();
+  for (const r of rows0) {
+    const w = String(r.warehouse || '').trim();
+    if (w && !whSeen.has(w.toLowerCase())) whSeen.set(w.toLowerCase(), w);
+  }
+  const warehouses = [...whSeen.values()].sort();
   if (!warehouses.length) {
     await render(bot, chatId, userId, `${header(s)}\n\n⚠️ No available stock in this container.`, [cancelRow()]);
     return;
@@ -496,6 +528,13 @@ async function handleCallback(bot, callbackQuery) {
       return true;
     }
 
+    if (data.startsWith('sb:ctpg:')) {
+      // WH-VIS1 — container paging.
+      s.ctPage = parseInt(data.slice(8), 10) || 0; save(userId, s);
+      await ack();
+      await showContainers(bot, chatId, userId);
+      return true;
+    }
     if (data.startsWith('sb:ct:')) {
       const batch = (s._containers || [])[parseInt(data.slice(6), 10)];
       if (batch === undefined) { await ack('Expired — start again.'); return true; }

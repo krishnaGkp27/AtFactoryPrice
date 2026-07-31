@@ -382,8 +382,12 @@ async function getArrivalBatches(opts = {}) {
     if (r.status !== 'available') continue;
     if (scope.size && !scope.has(upper(r.warehouse))) continue;
     const label = str(r.arrivalBatch);
-    const key = label || UNLABELLED_BATCH;
-    if (!byBatch.has(key)) byBatch.set(key, { batch: key, label: label || UNLABELLED_BATCH, bales: new Set(), thans: 0, yards: 0, value: 0 });
+    // WH-VIS1 — bucket case-insensitively: 'Jul26' and 'JUL26' are ONE
+    // physical container. They used to become two chips that split the
+    // stats and burned picker slots (the picked chip already matched both
+    // spellings — scopedRows compares uppercased).
+    const key = (label || UNLABELLED_BATCH).toUpperCase();
+    if (!byBatch.has(key)) byBatch.set(key, { batch: label || UNLABELLED_BATCH, label: label || UNLABELLED_BATCH, bales: new Set(), thans: 0, yards: 0, value: 0 });
     const e = byBatch.get(key);
     e.thans += 1;
     // CV-1 — per-container totals for the owner's value display: yards is
