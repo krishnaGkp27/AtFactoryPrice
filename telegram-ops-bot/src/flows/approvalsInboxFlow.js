@@ -9,14 +9,15 @@
  * 10 of 50 and carried no buttons. Miss the card and the request was
  * effectively unreachable — hence a 50-deep backlog with 40 items invisible.
  *
- * This is a triage surface: pending requests grouped BY CONCERN, oldest
+ * This is a triage surface: pending requests grouped BY CONCERN, newest
  * first, each opening the same approval card the admin would have received
  * by DM, with ✅ Approve / ❌ Reject on it.
  *
  *   1. pick_category  — categories with counts + the age of the oldest item
- *   2. pick_item      — that category's requests, OLDEST first (clearing a
- *                       backlog is age-driven; the digest's newest-first
- *                       order is the wrong way round for action)
+ *                       (the age badge stays OLDEST so staleness is visible)
+ *   2. pick_item      — that category's requests, NEWEST first (owner
+ *                       31-Jul-2026, reversing the APX-1 oldest-first
+ *                       choice: fresh requests are the ones being waited on)
  *   3. view_item      — the full card + Approve / Reject
  *
  * DELEGATION, NOT REIMPLEMENTATION. Approve/Reject do NOT contain approval
@@ -258,7 +259,7 @@ async function renderCategories(bot, chatId, userId) {
   rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
 
   await render(bot, chatId, userId,
-    `🛂 *Approvals — ${pending.length} pending*\n_Oldest first inside each group._`,
+    `🛂 *Approvals — ${pending.length} pending*\n_Newest first inside each group._`,
     rows);
 }
 
@@ -283,7 +284,7 @@ function titleFor(key) {
 /* ───────────────────────── level 2: items ───────────────────────── */
 
 /**
- * Pending rows for the session's current category, oldest first.
+ * Pending rows for the session's current category, newest first.
  * Pure — the caller supplies the snapshot so one read serves the whole render.
  *
  * @param {object} session
@@ -300,8 +301,10 @@ function itemsForCategory(session, pending, dupIdx) {
   } else {
     list = pending.filter((p) => categoryOf(p) === session.category);
   }
-  // Oldest first — this is a backlog-clearing screen.
-  return list.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  // Newest first (owner 31-Jul-2026) — recent requests are the ones a
+  // requester is actively waiting on; the 🔴 age badges keep stale items
+  // findable further down (and the Stale group still collects 3d+).
+  return list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
 async function renderItems(bot, chatId, userId) {

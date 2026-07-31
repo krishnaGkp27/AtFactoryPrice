@@ -1,13 +1,15 @@
 'use strict';
 
 /**
- * APX-1 — 🛂 Approvals Inbox: pending requests grouped by concern, oldest
+ * APX-1 — 🛂 Approvals Inbox: pending requests grouped by concern, newest
  * first, each opening the standard approval card with ✅ / ❌.
  *
  * The properties that matter, pinned here:
- *  - categories carry counts and the age of their OLDEST item;
- *  - items are listed OLDEST first (this is a backlog-clearing screen —
- *    the morning digest's newest-first order is the wrong way round);
+ *  - categories carry counts and the age of their OLDEST item (staleness
+ *    stays visible even though the list leads with the newest);
+ *  - items are listed NEWEST first (owner 31-Jul-2026 — fresh requests are
+ *    the ones a requester is actively waiting on; reverses APX-1's
+ *    oldest-first choice);
  *  - Approve/Reject DELEGATE to approvalEvents.handleApprovalCallback with
  *    the canonical `approve:<id>` / `reject:<id>` data, so the inbox owns no
  *    approval logic and every existing guard still runs;
@@ -82,14 +84,14 @@ test('APX-1: categories carry counts and the oldest item\'s age', async () => {
   sessionStore.clear(ADMIN);
 });
 
-test('APX-1: items are listed OLDEST first', async () => {
+test('APX-1: items are listed NEWEST first', async () => {
   const bot = createFakeBot();
   await flow.start(bot, ADMIN, ADMIN, null);
   await flow.handleCallback(bot, cb('abx:cat:sales', ADMIN));
   const items = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
   assert.equal(items.length, 2);
-  assert.match(items[0].text, /🔴/, `oldest first — got: ${items.map((i) => i.text)}`);
-  assert.match(items[1].text, /🟢/, 'newest last');
+  assert.match(items[0].text, /🟢/, `newest first — got: ${items.map((i) => i.text)}`);
+  assert.match(items[1].text, /🔴/, 'oldest last, still age-badged');
   sessionStore.clear(ADMIN);
 });
 
@@ -104,13 +106,13 @@ test('APX-1: Approve delegates to the standard handler with approve:<id>', async
     await flow.start(bot, ADMIN, ADMIN, null);
     await flow.handleCallback(bot, cb('abx:cat:sales', ADMIN));
     await flow.handleCallback(bot, cb('abx:i:0', ADMIN));
-    assert.match(lastText(bot), /Request: S-OLD/, 'the card names the request');
+    assert.match(lastText(bot), /Request: S-NEW/, 'the card names the request (newest leads)');
     const approve = lastKb(bot).find((b) => /Approve/.test(b.text));
     assert.ok(approve, 'the card carries an Approve button');
 
     await flow.handleCallback(bot, cb(approve.callback_data, ADMIN));
     assert.equal(seen.length, 1, 'exactly one delegation');
-    assert.equal(seen[0].data, 'approve:S-OLD', 'canonical callback data is rebuilt');
+    assert.equal(seen[0].data, 'approve:S-NEW', 'canonical callback data is rebuilt');
     assert.equal(seen[0].action, 'approve');
     assert.equal(seen[0].from, ADMIN, 'the real admin identity is preserved for the guards');
   } finally {
@@ -130,7 +132,7 @@ test('APX-1: Reject delegates too, with reject:<id>', async () => {
     await flow.handleCallback(bot, cb('abx:i:0', ADMIN));
     const reject = lastKb(bot).find((b) => /Reject/.test(b.text));
     await flow.handleCallback(bot, cb(reject.callback_data, ADMIN));
-    assert.deepEqual(seen, [{ data: 'reject:S-OLD', action: 'reject' }]);
+    assert.deepEqual(seen, [{ data: 'reject:S-NEW', action: 'reject' }]);
   } finally {
     approvalEvents.handleApprovalCallback = orig;
     sessionStore.clear(ADMIN);
@@ -229,11 +231,11 @@ test('APX-2: the card warns before the tap that would double-apply the sale', as
     await flow.handleCallback(bot, cb('abx:cat:dupes', ADMIN));
     await flow.handleCallback(bot, cb('abx:i:0', ADMIN));
     const text = lastText(bot);
-    assert.match(text, /Request: D-1/, 'oldest copy first');
+    assert.match(text, /Request: D-3/, 'newest copy first');
     assert.match(text, /3 identical requests/, `the card states the count, got: ${text}`);
     assert.match(text, /Approve ONE/, 'and says what to do about it');
-    assert.match(text, /D-2/, 'siblings are named so the extras can be rejected');
-    assert.match(text, /D-3/);
+    assert.match(text, /D-1/, 'siblings are named so the extras can be rejected');
+    assert.match(text, /D-2/);
     // The warning must not disarm the card — approving is still one tap.
     assert.ok(lastKb(bot).some((b) => /Approve/.test(b.text)), 'Approve is still offered');
   });
@@ -244,7 +246,7 @@ test('APX-2: a lone request gets no duplicate warning', async () => {
     const bot = createFakeBot();
     await flow.start(bot, ADMIN, ADMIN, null);
     await flow.handleCallback(bot, cb('abx:cat:sales', ADMIN));
-    await flow.handleCallback(bot, cb('abx:i:3', ADMIN)); // SOLO, newest
+    await flow.handleCallback(bot, cb('abx:i:0', ADMIN)); // SOLO, newest — leads the list
     const text = lastText(bot);
     assert.match(text, /Request: SOLO/);
     assert.ok(!/identical requests/.test(text), `no false alarm, got: ${text}`);
