@@ -156,8 +156,8 @@ test('APX-1: transfers are NOT approvable — no Approve button, routed instead'
 test('APX-3b: transfer chips are shaded by stage, category chip shows the mix', async () => {
   const orig = approvalQueueRepository.getAllPending;
   approvalQueueRepository.getAllPending = async () => [
-    { requestId: 'TR-1', user: '7430648262', status: 'pending', createdAt: daysAgo(1), actionJSON: { action: 'transfer_stock', from: 'Lagos', to: 'Kano office', stage: 'requested', lines: [] } },
-    { requestId: 'TR-2', user: '7430648262', status: 'pending', createdAt: daysAgo(2), actionJSON: { action: 'transfer_stock', from: 'IDUMOTA', to: 'Kano office', stage: 'in_transit', lines: [] } },
+    { requestId: 'TR-20260724-001', user: '7430648262', status: 'pending', createdAt: daysAgo(1), actionJSON: { action: 'transfer_stock', from: 'Lagos', to: 'Kano office', stage: 'requested', lines: [] } },
+    { requestId: 'TR-20260724-003', user: '7430648262', status: 'pending', createdAt: daysAgo(2), actionJSON: { action: 'transfer_stock', from: 'IDUMOTA', to: 'Kano office', stage: 'in_transit', lines: [] } },
   ];
   try {
     const bot = createFakeBot();
@@ -167,9 +167,9 @@ test('APX-3b: transfer chips are shaded by stage, category chip shows the mix', 
 
     await flow.handleCallback(bot, cb('abx:cat:transfers', ADMIN));
     const chips = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:trf:')).map((b) => b.text);
-    assert.ok(chips.some((t) => t.includes('🟠 awaiting dispatch') && t.includes('TR-1')), `requested stage shaded, got: ${chips}`);
-    assert.ok(chips.some((t) => t.includes('📦 receipt pending') && t.includes('TR-2')), `in-transit stage shaded, got: ${chips}`);
-    assert.ok(chips.some((t) => t.includes('Lagos→Kano office')), 'route rides the chip');
+    assert.ok(chips.some((t) => t.includes('🟠DSP') && t.includes('LAG▸KAN') && t.includes('24Jul·01')), `requested stage mnemonic, got: ${chips}`);
+    assert.ok(chips.some((t) => t.includes('📦RCV') && t.includes('IDU▸KAN') && t.includes('24Jul·03')), `in-transit stage mnemonic, got: ${chips}`);
+    assert.match(lastText(bot), /🟠DSP = dispatch pending/, 'legend teaches the codes');
   } finally {
     approvalQueueRepository.getAllPending = orig;
     sessionStore.clear(ADMIN);

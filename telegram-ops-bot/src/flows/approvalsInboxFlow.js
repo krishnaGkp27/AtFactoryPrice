@@ -314,20 +314,31 @@ function itemsForCategory(session, pending, dupIdx) {
 }
 
 /**
- * APX-3b — stage-shaded transfer chips (owner 31-Jul-2026). Telegram
- * buttons cannot be tinted, so the "shade" is the icon + wording:
- *   🟠 awaiting dispatch  (action sits with the SOURCE warehouse)
- *   📦 receipt pending    (goods on the road; action sits with the receiver)
- * Received transfers leave the pending list on the next render
- * (confirmReceipt resolves the queue row), so no green state is needed.
+ * APX-3c — mnemonic transfer chips (owner-confirmed Option A, 31-Jul):
+ *   🟠DSP  LAG▸KAN  24Jul·01   dispatch pending (ball with the source)
+ *   📦RCV  IDU▸KAN  24Jul·03   on the road, receive pending
+ * Warehouse code = first 3 letters; short id = date·sequence from the
+ * TR number. The screen hint carries the legend so the codes teach
+ * themselves. Telegram buttons cannot be tinted — icon IS the shade.
  */
+function whCode(w) {
+  const letters = String(w || '').replace(/[^A-Za-z]/g, '').toUpperCase();
+  return letters.slice(0, 3) || '???';
+}
+
+function shortTransferId(requestId) {
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const m = String(requestId || '').match(/^TR-(\d{4})(\d{2})(\d{2})-(\d+)$/);
+  if (!m) return String(requestId || '');
+  const seq = m[4].replace(/^0+/, '') || '0';
+  return `${m[3]}${MON[Number(m[2]) - 1]}·${seq.padStart(2, '0')}`;
+}
+
 function transferChipLabel(it) {
   const aj = it.actionJSON || {};
-  const route = aj.from && aj.to ? ` · ${aj.from}→${aj.to}` : '';
-  const stage = aj.stage === 'in_transit'
-    ? '📦 receipt pending'
-    : '🟠 awaiting dispatch';
-  return `${stage} · ${it.requestId}${route}`;
+  const stage = aj.stage === 'in_transit' ? '📦RCV' : '🟠DSP';
+  const route = aj.from || aj.to ? `  ${whCode(aj.from)}▸${whCode(aj.to)}` : '';
+  return `${stage}${route}  ${shortTransferId(it.requestId)}`;
 }
 
 async function renderItems(bot, chatId, userId) {
@@ -399,7 +410,7 @@ async function renderItems(bot, chatId, userId) {
   rows.push(closeRow());
 
   const note = isTransfers
-    ? '\n\n_These are not approvals — a transfer needs bales dispatched or receipt confirmed. Tap one to open its transfer card._'
+    ? '\n🟠DSP = dispatch pending · 📦RCV = receive pending · from▸to\n_Not approvals — tap one to open its transfer card._'
     : '';
   await render(bot, chatId, userId, `${title} — *${items.length}* pending${note}`, rows);
 }
