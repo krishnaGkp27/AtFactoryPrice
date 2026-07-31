@@ -31,6 +31,10 @@ const DEFAULTS = {
   // Settings sheet rows of the same keys, no deploy needed.
   FLOW_CLEANUP_MINUTES: 30,
   FLOW_CLEANUP_MINUTES_HEAVY: 60,
+  // SJ-3 (owner 31-Jul) — stale flow cards are DELETED from the chat after
+  // the grace period (business data must not linger); 0 reverts to the
+  // tombstone edit. Approval cards + attachments are never touched.
+  FLOW_CLEANUP_DELETE: 1,
   // CUS-1 — master switch on the SINGLE customer-creation door (CRM ➕ Add
   // Customer). Set 0 during the typo cleanup to freeze creation entirely,
   // no deploy. Every other path is search-and-tap only, permanently.

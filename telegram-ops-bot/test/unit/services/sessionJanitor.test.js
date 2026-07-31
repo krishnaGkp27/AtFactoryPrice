@@ -17,11 +17,16 @@ const auditLogRepository = require('../../../src/repositories/auditLogRepository
 const MIN = 60 * 1000;
 const audits = [];
 auditLogRepository.append = async (event, meta, userId) => { audits.push({ event, meta, userId }); };
-settingsRepository.getAll = async () => ({
+// SJ-3: DELETE is the default; these legacy tests pin the tombstone
+// fallback mode explicitly (FLOW_CLEANUP_DELETE=0). Delete-mode tests
+// swap the stub at the bottom of the file.
+let settingsStub = {
   FLOW_CLEANUP_MINUTES: 30,
   FLOW_CLEANUP_MINUTES_HEAVY: 60,
   FLOW_CLEANUP_HEAVY_TYPES: 'supply_req_flow',
-});
+  FLOW_CLEANUP_DELETE: 0,
+};
+settingsRepository.getAll = async () => settingsStub;
 
 function drainAll() {
   sessionStore.sweepExpired();
@@ -65,7 +70,7 @@ test('tick: young entries wait, aged entries get tombstoned with menu button', a
   assert.equal(edit.args.opts.message_id, 55);
   const kb = edit.args.opts.reply_markup.inline_keyboard.flat();
   assert.ok(kb.some((b) => b.callback_data === 'act:__back__'), 'menu button present');
-  assert.deepEqual(audits, [{ event: 'flow_expired', meta: { type: 'sample_flow', step: 'shade' }, userId: 'u5' }]);
+  assert.deepEqual(audits, [{ event: 'flow_expired', meta: { type: 'sample_flow', step: 'shade', disposed: false }, userId: 'u5' }]);
 });
 
 test('heavy flow honors the longer FLOW_CLEANUP_MINUTES_HEAVY grace', async () => {
@@ -136,4 +141,46 @@ test('SJ-2: stop() detaches the hook — expiry falls back to the grace queue', 
   assert.equal(bot.callsTo('editMessageText').length, 0, 'no instant edit after stop()');
   const q = sessionStore.drainExpiredForCleanup();
   assert.deepEqual(q.map((e) => e.userId), ['u9'], 'queued for the sweep instead');
+});
+
+/* ── SJ-3 — stale cards are DELETED by default (owner 31-Jul) ─────────── */
+
+test('SJ-3: delete mode (default) removes the stale card outright', async () => {
+  drainAll();
+  settingsStub = { FLOW_CLEANUP_MINUTES: 30, FLOW_CLEANUP_HEAVY_TYPES: '' }; // no FLOW_CLEANUP_DELETE → defaults ON
+  sessionJanitor.invalidateConfigCache();
+  sessionStore.set('u10', { type: 'sample_flow', step: 'shade', flowMessageId: 101, ttlMs: 1 });
+  await sleep(5);
+  const bot = createFakeBot();
+  await sessionJanitor.tick(bot);
+  sessionJanitor._internals.pending.forEach((e) => { e.lastActiveAt = Date.now() - 31 * MIN; });
+  await sessionJanitor.tick(bot);
+
+  const dels = bot.callsTo('deleteMessage').map((c) => c.args.messageId);
+  assert.ok(dels.includes(101), `card deleted, got deletions: ${dels}`);
+  assert.equal(bot.callsTo('editMessageText').length, 0, 'no tombstone edit in delete mode');
+  assert.equal(audits[audits.length - 1].meta.disposed, true, 'audit records the disposal');
+  settingsStub = { FLOW_CLEANUP_MINUTES: 30, FLOW_CLEANUP_MINUTES_HEAVY: 60, FLOW_CLEANUP_HEAVY_TYPES: 'supply_req_flow', FLOW_CLEANUP_DELETE: 0 };
+  sessionJanitor.invalidateConfigCache();
+});
+
+test('SJ-3: when Telegram refuses the delete (>48h), the tombstone edit takes over', async () => {
+  drainAll();
+  settingsStub = { FLOW_CLEANUP_MINUTES: 30, FLOW_CLEANUP_HEAVY_TYPES: '', FLOW_CLEANUP_DELETE: 1 };
+  sessionJanitor.invalidateConfigCache();
+  sessionStore.set('u11', { type: 'order_flow', step: 'qty', flowMessageId: 111, ttlMs: 1 });
+  await sleep(5);
+  const bot = createFakeBot();
+  bot.deleteMessage = async () => { throw new Error('ETELEGRAM: 400 Bad Request: message can\'t be deleted'); };
+  await sessionJanitor.tick(bot);
+  sessionJanitor._internals.pending.forEach((e) => { e.lastActiveAt = Date.now() - 31 * MIN; });
+  await sessionJanitor.tick(bot);
+
+  const edit = bot.callsTo('editMessageText')[0];
+  assert.ok(edit, 'tombstone fallback fired');
+  assert.match(edit.args.text, /timed out — nothing was saved/);
+  assert.equal(edit.args.opts.message_id, 111);
+  assert.equal(audits[audits.length - 1].meta.disposed, false, 'audit shows the fallback');
+  settingsStub = { FLOW_CLEANUP_MINUTES: 30, FLOW_CLEANUP_MINUTES_HEAVY: 60, FLOW_CLEANUP_HEAVY_TYPES: 'supply_req_flow', FLOW_CLEANUP_DELETE: 0 };
+  sessionJanitor.invalidateConfigCache();
 });

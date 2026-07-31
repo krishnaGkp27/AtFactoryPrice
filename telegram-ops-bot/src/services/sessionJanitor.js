@@ -82,6 +82,12 @@ const _configCache = ttlCache(SETTINGS_CACHE_MS, async () => {
     defaultMs: num(s.FLOW_CLEANUP_MINUTES, 30) * 60 * 1000,
     heavyMs: num(s.FLOW_CLEANUP_MINUTES_HEAVY, 60) * 60 * 1000,
     heavyTypes: new Set(heavyCsv.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean)),
+    // SJ-3 (owner 31-Jul): stale flow cards are DELETED, not tombstoned —
+    // an abandoned card full of stock/customer data must not linger in the
+    // chat window. 0 reverts to tombstone-only, no deploy. Approval cards
+    // and attachments are DM broadcasts the janitor never tracks, so they
+    // are structurally exempt from disposal.
+    deleteStale: Number(s.FLOW_CLEANUP_DELETE ?? 1) === 1,
   };
 });
 
@@ -98,12 +104,23 @@ function graceMsFor(type, cfg) {
   return cfg.heavyTypes.has(String(type || '').toLowerCase()) ? cfg.heavyMs : cfg.defaultMs;
 }
 
-/** Best-effort tombstone of one abandoned flow's chat messages. */
-async function tombstone(bot, entry) {
+/** Best-effort disposal of one abandoned flow's chat messages.
+ *  SJ-3: DELETE first (a stale card must not park business data in the
+ *  chat); tombstone-edit is the fallback for cards Telegram refuses to
+ *  delete (older than 48h) and the behavior when FLOW_CLEANUP_DELETE=0. */
+async function tombstone(bot, entry, cfg) {
   const chatId = entry.userId; // private chats: chat id === user id
-  const text = `⌛ ${humanize(entry.type)} timed out — nothing was saved.\nStart again from the menu whenever you're ready.`;
-  const keyboard = { inline_keyboard: [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]] };
-  if (entry.flowMessageId) {
+  const wantDelete = cfg ? cfg.deleteStale : (await getConfig()).deleteStale;
+  let disposed = false;
+  if (entry.flowMessageId && wantDelete) {
+    try {
+      await bot.deleteMessage(chatId, entry.flowMessageId);
+      disposed = true;
+    } catch (_) { /* >48h or already gone — tombstone below */ }
+  }
+  if (entry.flowMessageId && !disposed) {
+    const text = `⌛ ${humanize(entry.type)} timed out — nothing was saved.\nStart again from the menu whenever you're ready.`;
+    const keyboard = { inline_keyboard: [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]] };
     try {
       await bot.editMessageText(text, {
         chat_id: chatId, message_id: entry.flowMessageId, reply_markup: keyboard,
@@ -121,7 +138,7 @@ async function tombstone(bot, entry) {
     try { await bot.deleteMessage(chatId, mid); } catch (_) { /* already gone */ }
   }
   try {
-    await auditLogRepository.append('flow_expired', { type: entry.type, step: entry.step }, entry.userId);
+    await auditLogRepository.append('flow_expired', { type: entry.type, step: entry.step, disposed }, entry.userId);
   } catch (_) { /* audit is best-effort */ }
 }
 
@@ -147,7 +164,7 @@ async function tick(bot) {
     if (now - entry.lastActiveAt < graceMsFor(entry.type, cfg)) continue;
     pending.splice(i, 1);
     try {
-      await tombstone(bot, entry);
+      await tombstone(bot, entry, cfg);
       cleaned += 1;
     } catch (e) {
       logger.warn(`sessionJanitor: cleanup failed for ${entry.userId}/${entry.type}: ${e.message}`);
