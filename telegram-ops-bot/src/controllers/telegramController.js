@@ -6859,6 +6859,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['mkp:'], handle: (bot, cq) => require('../flows/marketerCatalogFlow').handleCallback(bot, cq) },
   // SHR-1 — tracked share links from the Browse Catalog card.
   { prefixes: ['shr:'], handle: (bot, cq) => require('../flows/shareFlow').handleCallback(bot, cq) },
+  // SLED-1 — customer supply statement PDF (quantities only).
+  { prefixes: ['sst:'], handle: (bot, cq) => require('../flows/supplyStatementFlow').handleCallback(bot, cq) },
   // People / HR flows.
   { prefixes: ['usr:'], handle: (bot, cq) => require('../flows/userAddFlow').handleCallback(bot, cq) },
   { prefixes: ['umg:'], handle: (bot, cq) => require('../flows/userManageFlow').handleCallback(bot, cq) },
@@ -9560,6 +9562,11 @@ async function handleCallbackQuery(bot, callbackQuery) {
       case 'return_than':
         await startReturnThanFlow(bot, chatId, uid, messageId);
         break;
+      case 'supply_statement': {
+        // SLED-1 — quantities-only supply statement PDF (admin gate in flow).
+        await require('../flows/supplyStatementFlow').start(bot, chatId, uid, messageId);
+        break;
+      }
       case 'add_customer': {
         // CUS-1 — the SINGLE creation door, freezable from Settings during
         // the owner's typo cleanup (CUSTOMER_CREATION_ENABLED=0, no deploy).

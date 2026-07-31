@@ -145,6 +145,9 @@ const ACTIVITIES = [
   // Add Note] tabs (and Ranking for admins). Replaced four separate hub
   // entries that each required a pick-customer round trip.
   { code: 'customer_details',      label: 'Customer Details',          icon: '👤', callback: 'act:customer_details',   hub: 'crm' },
+  // SLED-1 — quantities-only supply statement PDF; Rate/Amount printed as
+  // blank ruled lines (owner 31-Jul-2026). Admin-only (flow gate).
+  { code: 'supply_statement',      label: 'Supply Statement',          icon: '📄', callback: 'act:supply_statement',   hub: 'crm' },
   // CNET-1b — recursive contact network (category → buyers → their people).
   { code: 'contact_network',       label: 'Contact Network',           icon: '📇', callback: 'act:contact_network',    hub: 'crm' },
   // MORN-1 — daily 10:00 admin digest with category toggles. Standalone
