@@ -110,7 +110,8 @@ test("dispatcher's My Tasks lists the pending transfer with a Dispatch button", 
   await taskFlow.showMyTasks(bot, 'abdul', 'abdul', null);
   const text = bot.allText();
   assert.match(text, /Transfers waiting on you/);
-  assert.ok(text.includes(requestId), 'request id shown');
+  // APX-4b — the visible card carries the short ref; the full id stays in callbacks.
+  assert.ok(text.includes(require(path.join(SRC, 'services/approvalCards')).shortTransferRef(requestId)), 'short ref shown');
   assert.match(text, /waiting for you to dispatch/);
   const kb = lastKb(bot);
   assert.ok(kb.some((b) => b === `🚚 Dispatch — ${requestId}|trf:card:${requestId}`), 'Dispatch button routes to trf:card');

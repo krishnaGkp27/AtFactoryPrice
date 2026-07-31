@@ -348,6 +348,20 @@ function shortRequestRef(requestId) {
 }
 
 /**
+ * APX-4b — human-readable transfer reference: TR-20260724-003 → "24Jul·03".
+ * Anything that doesn't match the TR date format (legacy UUID transfers)
+ * falls back to the stable R-XXXX ref — a raw UUID must never reach a
+ * screen. Display-only; callbacks and sheet rows keep the full id.
+ */
+function shortTransferRef(requestId) {
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const m = String(requestId || '').match(/^TR-(\d{4})(\d{2})(\d{2})-(\d+)$/);
+  if (!m) return shortRequestRef(requestId);
+  const seq = m[4].replace(/^0+/, '') || '0';
+  return `${m[3]}${MON[Number(m[2]) - 1]}·${seq.padStart(2, '0')}`;
+}
+
+/**
  * APX-4 — Add Warehouse card with CONTEXT: the existing warehouses ride
  * on the card, so a duplicate or a mix-up (a design category typed as a
  * warehouse) is caught at a glance instead of after approval.
@@ -433,6 +447,7 @@ module.exports = {
   _resetNameCacheForTests,
   sortSaleItems,
   shortRequestRef,
+  shortTransferRef,
   buildAddWarehouseCard,
   buildSaleCard,
   buildSellPackageCard,

@@ -143,7 +143,7 @@ test('admin PDF → transfer mode → dest + auto receiver → 2 transfers dispa
   assert.ok(transitions.some((t) => t.to === 'in_transit' && t.wh === 'Kano office'), 'bales flipped in_transit at dest');
   // Receiver got both trf: cards + the PDF.
   const rcvMsgs = bot.calls.filter((c) => c.method === 'sendMessage' && String(c.args.chatId) === '5151').map((c) => c.args.text).join('\n');
-  assert.match(rcvMsgs, /Transfer TR-.* incoming/);
+  assert.match(rcvMsgs, /Transfer \d{2}[A-Z][a-z]{2}\u00b7\d{2,} incoming/); // short ref
   const rcvKb = bot.calls.filter((c) => c.method === 'sendMessage' && String(c.args.chatId) === '5151' && c.args.opts && c.args.opts.reply_markup)
     .flatMap((c) => c.args.opts.reply_markup.inline_keyboard.flat());
   assert.ok(rcvKb.some((b) => b.callback_data.startsWith('trf:rcv:')), 'existing Received button — rides the trf: pipeline');

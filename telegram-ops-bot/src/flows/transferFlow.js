@@ -48,6 +48,9 @@ const auth = require('../middlewares/auth');
 const config = require('../config');
 const logger = require('../utils/logger');
 const { isNotModified } = require('../utils/telegramUI');
+// APX-4b — human-readable transfer refs (TR-20260724-003 → "24Jul·03");
+// display-only, callbacks and sheet rows keep the full id.
+const { shortTransferRef } = require('../services/approvalCards');
 
 // Accepted upload types for the dispatch / receive load photo (image or PDF).
 const DOC_MIMES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
@@ -268,7 +271,7 @@ async function submit(bot, chatId, userId) {
     await notifyAdmins(bot, requestId, aj, 'requested ⏳ — awaiting dispatch', userId);
     // Render the receipt BEFORE clearing — the renderer is session-guarded.
     await render(bot, chatId, userId,
-      `✅ *Transfer ${requestId} sent*\n${headOf(aj)}\n${linesBlock(aj.lines)}\n\n⏳ Waiting for *${session.dispatcher.name}* to dispatch.`,
+      `✅ *Transfer ${shortTransferRef(requestId)} sent*\n${headOf(aj)}\n${linesBlock(aj.lines)}\n\n⏳ Waiting for *${session.dispatcher.name}* to dispatch.`,
       [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]);
     sessionStore.clear(userId);
   } catch (e) {
@@ -370,7 +373,7 @@ function totalBales(aj) {
  */
 function dispatcherCard(requestId, aj, receiverName) {
   return {
-    text: `🚚 *Transfer ${requestId} — please dispatch*\n${headOf(aj)}\n${linesBlock(aj.lines)}\nReceiver: ${receiverName}\n\n_Accepting logs the actual bales you send. A load photo/PDF is required to complete the dispatch._`,
+    text: `🚚 *Transfer ${shortTransferRef(requestId)} — please dispatch*\n${headOf(aj)}\n${linesBlock(aj.lines)}\nReceiver: ${receiverName}\n\n_Accepting logs the actual bales you send. A load photo/PDF is required to complete the dispatch._`,
     kb: { inline_keyboard: [[
       { text: '✅ Accept & dispatch', callback_data: `trf:acc:${requestId}` },
       { text: '❌ Decline', callback_data: `trf:dec:${requestId}` },
@@ -386,7 +389,7 @@ function dispatcherCard(requestId, aj, receiverName) {
 function receiverCard(requestId, aj) {
   const shortNote = aj.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
   return {
-    text: `📦 *Transfer ${requestId} incoming*\n${headOf(aj)}\n${dispatchedBlock(aj)}${shortNote}\n📦 Bales: ${baleListPreview(aj.bales)}\n\nConfirm when the goods arrive and match — a photo/PDF of the received goods is required:`,
+    text: `📦 *Transfer ${shortTransferRef(requestId)} incoming*\n${headOf(aj)}\n${dispatchedBlock(aj)}${shortNote}\n📦 Bales: ${baleListPreview(aj.bales)}\n\nConfirm when the goods arrive and match — a photo/PDF of the received goods is required:`,
     kb: { inline_keyboard: [[
       { text: '✅ Received', callback_data: `trf:rcv:${requestId}` },
       { text: '⚠️ Reject', callback_data: `trf:rej:${requestId}` },
@@ -408,7 +411,7 @@ function stateLabel(row) {
 /** One-line admin card (the default the admin sees). */
 function shortCard(requestId, aj, label) {
   const n = (aj.dispatched || []).reduce((s, d) => s + d.sent, 0) || totalBales(aj);
-  return `🚚 *${requestId}* ${label} — ${n} bale(s) · ${aj.from} → ${aj.to}`;
+  return `🚚 *${shortTransferRef(requestId)}* ${label} — ${n} bale(s) · ${aj.from} → ${aj.to}`;
 }
 function viewMoreKb(requestId) {
   return { inline_keyboard: [[{ text: '🔍 View details', callback_data: `trf:info:${requestId}` }]] };
@@ -528,8 +531,8 @@ async function handleAction(bot, query, requestId, action) {
   if (action === 'rcv') {
     await armDocGate(bot, chatId, userId, requestId, 'receive', {
       sealMessageId: query.message.message_id,
-      sealText: `📦 *${requestId}* — receipt pending 📸`,
-      promptText: `📸 *Photo required — ${requestId}*\n`
+      sealText: `📦 *${shortTransferRef(requestId)}* — receipt pending 📸`,
+      promptText: `📸 *Photo required — ${shortTransferRef(requestId)}*\n`
         + `Send a photo or PDF of the received goods now to confirm receipt.\n`
         + `_Stock goes live at *${aj.to}* when it arrives._`,
       kb: [[{ text: '↩ Not now', callback_data: `trf:nn:${requestId}` }]],
@@ -542,8 +545,8 @@ async function handleAction(bot, query, requestId, action) {
   if (!res.ok) { await bot.sendMessage(chatId, `⚠️ ${res.message}`); return true; }
   const label = res.kind === 'declined' ? 'declined ❌' : 'rejected ❌';
   const card = res.kind === 'declined'
-    ? `❌ *${requestId} declined* — nothing was moved.\n${headOf(aj)}\n${linesBlock(aj.lines)}`
-    : `❌ *${requestId} rejected* — bales reverted to *${aj.from}*.\n${headOf(aj)}\n${dispatchedBlock(aj)}`;
+    ? `❌ *${shortTransferRef(requestId)} declined* — nothing was moved.\n${headOf(aj)}\n${linesBlock(aj.lines)}`
+    : `❌ *${shortTransferRef(requestId)} rejected* — bales reverted to *${aj.from}*.\n${headOf(aj)}\n${dispatchedBlock(aj)}`;
   await bot.editMessageText(card, {
     chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] },
@@ -758,8 +761,8 @@ async function askDispatchDoc(bot, chatId, userId) {
   const picked = session.pl.flatMap((p) => p.sel);
   await armDocGate(bot, chatId, userId, requestId, 'dispatch', {
     sealMessageId: session.flowMessageId,
-    sealText: `🚚 *${requestId}* — ${picked.length} bale(s) picked ✔`,
-    promptText: `📸 *Photo required — ${requestId}*\n`
+    sealText: `🚚 *${shortTransferRef(requestId)}* — ${picked.length} bale(s) picked ✔`,
+    promptText: `📸 *Photo required — ${shortTransferRef(requestId)}*\n`
       + `Send a photo or PDF of the load now to complete the dispatch.\n`
       + `_Nothing moves until it arrives._`,
     // Label matches where trf:bl:bk actually goes at the gate: the review.
@@ -786,7 +789,7 @@ async function completeDispatch(bot, session, userId) {
   const shortNote = res.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
   return {
     ok: true,
-    sealText: `🚚 *${requestId} dispatched* — bales logged\n${headOf(aj)}\n${dispatchedBlock(aj)}${shortNote}\n📦 ${baleListPreview(aj.bales)}`,
+    sealText: `🚚 *${shortTransferRef(requestId)} dispatched* — bales logged\n${headOf(aj)}\n${dispatchedBlock(aj)}${shortNote}\n📦 ${baleListPreview(aj.bales)}`,
   };
 }
 
@@ -801,7 +804,7 @@ async function completeReceipt(bot, session, userId) {
   if (row) await notifyRequester(bot, row, requestId, aj, 'received ✅', userId);
   return {
     ok: true,
-    sealText: `✅ *${requestId} received* — bales are now live at *${aj.to}*.\n${headOf(aj)}\n${dispatchedBlock(aj)}`,
+    sealText: `✅ *${shortTransferRef(requestId)} received* — bales are now live at *${aj.to}*.\n${headOf(aj)}\n${dispatchedBlock(aj)}`,
   };
 }
 
@@ -840,10 +843,14 @@ async function skipDoc(bot, query, code, requestId) {
 
 /** Re-arm the attach prompt (legacy Attach buttons / after session expiry). */
 async function rearmDoc(bot, query, code, requestId, opts = {}) {
-  if (!opts.answered) await bot.answerCallbackQuery(query.id).catch(() => {});
   const userId = String(query.from.id);
   const row = await transferService.findTransfer(requestId);
-  if (!row) { await bot.sendMessage(query.message.chat.id, '🚚 Transfer not found or already closed.'); return true; }
+  if (!row) {
+    // APX-5 — dead end = toast, not another message in the chat.
+    if (!opts.answered) await bot.answerCallbackQuery(query.id, { text: '🚚 Transfer not found or already closed.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  if (!opts.answered) await bot.answerCallbackQuery(query.id).catch(() => {});
   const aj = row.actionJSON;
   const kind = code === 'r' ? 'receive' : 'dispatch';
   const allowed = kind === 'receive' ? aj.receiver : aj.dispatcher;
@@ -851,7 +858,7 @@ async function rearmDoc(bot, query, code, requestId, opts = {}) {
     await bot.answerCallbackQuery(query.id, { text: 'Only the assigned person can attach this.', show_alert: true }).catch(() => {});
     return true;
   }
-  const base = `🚚 *${requestId}* — ${stateLabel(row)}`;
+  const base = `🚚 *${shortTransferRef(requestId)}* — ${stateLabel(row)}`;
   await promptForDoc(bot, query.message.chat.id, userId, requestId, kind, base, query.message.message_id);
   return true;
 }
@@ -1009,7 +1016,7 @@ async function myQueueSection(userId) {
     const aj = t.actionJSON;
     const toDispatch = aj.stage !== 'in_transit';
     const n = (aj.dispatched || []).reduce((s, d) => s + d.sent, 0) || totalBales(aj);
-    lines.push(`   \`${t.requestId}\` ${n} bale(s) · ${aj.from} → ${aj.to}`);
+    lines.push(`   \`${shortTransferRef(t.requestId)}\` ${n} bale(s) · ${aj.from} → ${aj.to}`);
     lines.push(`     ${toDispatch ? '⏳ waiting for you to dispatch' : '🚚 in transit — confirm receipt'}`);
     rows.push([{
       text: toDispatch ? `🚚 Dispatch — ${t.requestId}` : `📦 Receive — ${t.requestId}`,
@@ -1027,17 +1034,40 @@ async function myQueueSection(userId) {
  * @returns {Promise<boolean>} true (callback consumed)
  */
 async function showActionCard(bot, query, requestId) {
-  await bot.answerCallbackQuery(query.id).catch(() => {});
+  // APX-5 (owner 31-Jul) — IN-PLACE by contract: tapping a transfer edits
+  // the tapped card instead of replying below it. Every reply-below left
+  // bale numbers, designs and routes permanently in the chat window
+  // (Telegram bots cannot delete messages older than 48h), and stacked
+  // cards buried the live list. Toast for dead ends, edit for content;
+  // the TRF-6 photo prompt stays a fresh bottom message (owner-locked).
   const chatId = query.message.chat.id;
+  const msgId = query.message.message_id;
   const userId = String(query.from.id);
+  const navRow = [
+    { text: '📋 Transfers', callback_data: 'trf:list' },
+    { text: '🏠 Menu', callback_data: 'act:__back__' },
+  ];
+  const editInPlace = async (text, kb) => {
+    const opts = { parse_mode: 'Markdown', reply_markup: kb };
+    try {
+      await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, ...opts });
+    } catch (e) {
+      if (isNotModified(e)) return;
+      // Photo-anchored or deleted message — a fresh send is the fallback,
+      // never the default.
+      await bot.sendMessage(chatId, text, opts).catch(() => {});
+    }
+  };
   const row = await transferService.findTransfer(requestId);
   if (!row) {
-    await bot.sendMessage(chatId, '🚚 Transfer not found or already closed.');
+    await bot.answerCallbackQuery(query.id, { text: '🚚 Transfer not found or already closed.', show_alert: true }).catch(() => {});
     return true;
   }
   const aj = row.actionJSON;
   if (row.status !== 'pending') {
-    await bot.sendMessage(chatId, `🚚 *${requestId}* — ${stateLabel(row)}\n${compactOf(aj)}`, { parse_mode: 'Markdown' });
+    await bot.answerCallbackQuery(query.id).catch(() => {});
+    await editInPlace(`🚚 *${shortTransferRef(requestId)}* — ${stateLabel(row)}\n${compactOf(aj)}`,
+      { inline_keyboard: [navRow] });
     return true;
   }
   const toDispatch = aj.stage !== 'in_transit';
@@ -1046,6 +1076,7 @@ async function showActionCard(bot, query, requestId) {
     await bot.answerCallbackQuery(query.id, { text: 'This card is for the assigned person only.', show_alert: true }).catch(() => {});
     return true;
   }
+  await bot.answerCallbackQuery(query.id).catch(() => {});
   let card;
   if (toDispatch) {
     const names = await nameMap([aj.receiver]);
@@ -1053,7 +1084,7 @@ async function showActionCard(bot, query, requestId) {
   } else {
     card = receiverCard(requestId, aj);
   }
-  await bot.sendMessage(chatId, card.text, { parse_mode: 'Markdown', reply_markup: card.kb });
+  await editInPlace(card.text, { inline_keyboard: [...card.kb.inline_keyboard, navRow] });
   return true;
 }
 
@@ -1065,7 +1096,7 @@ async function showList(bot, chatId, userId, messageId) {
   if (!open.length) text += '\n_None — everything is settled._';
   for (const t of open.slice(0, 15)) {
     const badge = t.actionJSON.stage === 'in_transit' ? '🚚 in transit' : '⏳ awaiting dispatch';
-    text += `\n\`${t.requestId}\` ${compactOf(t.actionJSON)} — ${badge}`;
+    text += `\n\`${shortTransferRef(t.requestId)}\` ${compactOf(t.actionJSON)} — ${badge}`;
   }
   const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]] } };
   if (messageId) {

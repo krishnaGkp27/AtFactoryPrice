@@ -116,7 +116,8 @@ test('TRF-8: employee wizard → ApprovalQueue row, dispatcher card, admin brief
   const creatorBtns = buttonsSentTo(bot, '4242');
   const forbidden = creatorBtns.filter((d) => /^(approve:|reject:|trf:acc:|trf:dec:|trf:rcv:|trf:rej:)/.test(String(d)));
   assert.deepEqual(forbidden, [], 'creator cannot approve/dispatch their own transfer');
-  assert.match(bot.allText(), new RegExp(`Transfer ${requestId} sent`), 'creator got the waiting receipt');
+  // APX-4b — cards show the human-readable ref, never the raw TR id.
+  assert.ok(bot.allText().includes(`Transfer ${require(path.join(SRC, 'services/approvalCards')).shortTransferRef(requestId)} sent`), 'creator got the waiting receipt');
   assert.match(bot.allText(), /Waiting for \*Abdul\* to dispatch/);
 
   // And the generic approval pipeline was NOT engaged anywhere.

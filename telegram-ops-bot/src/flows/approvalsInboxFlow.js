@@ -353,13 +353,9 @@ function whCode(w) {
   return letters.slice(0, 3) || '???';
 }
 
-function shortTransferId(requestId) {
-  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const m = String(requestId || '').match(/^TR-(\d{4})(\d{2})(\d{2})-(\d+)$/);
-  if (!m) return String(requestId || '');
-  const seq = m[4].replace(/^0+/, '') || '0';
-  return `${m[3]}${MON[Number(m[2]) - 1]}·${seq.padStart(2, '0')}`;
-}
+// APX-4b — shared ref logic; legacy UUID transfers fall back to R-XXXX
+// instead of splattering the raw UUID across a chip.
+const shortTransferId = approvalCards.shortTransferRef;
 
 function transferChipLabel(it) {
   const aj = it.actionJSON || {};
