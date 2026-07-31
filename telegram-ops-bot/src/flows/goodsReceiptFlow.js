@@ -108,6 +108,7 @@ async function render(bot, chatId, userId, prompt, rows) {
 }
 
 const { cancelRow } = require('../utils/flowKit').rowsFor('gr');
+const { trackAux, disposeAux } = require('../utils/flowKit');
 
 // ---------------------------------------------------------------------------
 // Step 1 — Warehouse
@@ -481,6 +482,7 @@ async function submit(bot, chatId, userId, msgOrNull) {
       await require('../services/approvalCards').resolveUserLabel(userId, bot), summary, risk.reason, excludeId);
     // Menu button, NOT Cancel: the request is already queued — a Cancel here
     // would not withdraw it and the session is being cleared anyway.
+    await disposeAux(bot, chatId, userId); // SJ-4 — sweep warning trail
     await render(bot, chatId, userId, `⏳ Submitted for ${approverLabel} approval.\nRequest: \`${requestId}\``,
       [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
     sessionStore.clear(userId);
@@ -510,6 +512,7 @@ async function submit(bot, chatId, userId, msgOrNull) {
   const report = result.bundleReport || {};
   const grnId = report.grnId || '?';
   const totalYards = report.totalYards || 0;
+  await disposeAux(bot, chatId, userId); // SJ-4 — sweep warning trail
   await render(bot, chatId, userId,
     `✅ *Goods received.*\nGRN: \`${grnId}\`\n${report.baleCount || 0} bales · ${fmtQty(totalYards, { maxFraction: 2 })} yards`,
     [[{ text: '📥 Receive more', callback_data: 'gr:more' }], [{ text: '🏠 Menu', callback_data: 'act:__back__' }]],
@@ -536,6 +539,7 @@ async function startNewWarehouse(bot, chatId, userId) {
   // Receive Goods after approval and the new warehouse will be in the picker.
   const session = sessionStore.get(userId);
   const anchor = session && session.flowMessageId ? session.flowMessageId : null;
+  await disposeAux(bot, chatId, userId); // SJ-4 — before the warehouse flow takes over
   sessionStore.clear(userId);
   const warehouseFlow = require('./warehouseFlow');
   await warehouseFlow.start(bot, chatId, userId, anchor);
@@ -608,6 +612,7 @@ async function handleCallback(bot, callbackQuery) {
     return true;
   }
   if (data === 'gr:cancel') {
+    await disposeAux(bot, chatId, userId); // SJ-4 — sweep warning trail first
     sessionStore.clear(userId);
     await editOrSend(bot, chatId, messageId, '❌ Cancelled.',
       { reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] } });
@@ -810,7 +815,8 @@ async function handleTextStep(bot, msg) {
   // now delegates to warehouseFlow (single canonical Add-Warehouse path).
   if (session.step === 'new_supplier') {
     if (raw.length > 80) {
-      await bot.sendMessage(chatId, '⚠️ Supplier name too long (max 80 chars).');
+      const warn = await bot.sendMessage(chatId, '⚠️ Supplier name too long (max 80 chars).');
+      if (warn && warn.message_id) trackAux(userId, warn.message_id); // SJ-4
       return true;
     }
     await saveNewSupplier(bot, chatId, userId, raw);
@@ -842,7 +848,8 @@ async function handleTextStep(bot, msg) {
   if (session.step === 'multi_yards_custom') {
     const v = parseFloat(raw);
     if (!isFinite(v) || v <= 0) {
-      await bot.sendMessage(chatId, '⚠️ Enter a positive number, e.g. 25');
+      const warn = await bot.sendMessage(chatId, '⚠️ Enter a positive number, e.g. 25');
+      if (warn && warn.message_id) trackAux(userId, warn.message_id); // SJ-4
       return true;
     }
     session.multiYardsPerThan = v;
@@ -854,7 +861,8 @@ async function handleTextStep(bot, msg) {
   if (session.step === 'bales') {
     const parsed = parseBaleList(raw);
     if (!parsed.ok) {
-      await bot.sendMessage(chatId, `⚠️ ${parsed.error} Try again or tap Cancel.`);
+      const warn = await bot.sendMessage(chatId, `⚠️ ${parsed.error} Try again or tap Cancel.`);
+      if (warn && warn.message_id) trackAux(userId, warn.message_id); // SJ-4
       return true;
     }
     if (session.baleType === 'multi') {
@@ -883,7 +891,8 @@ async function handleTextStep(bot, msg) {
   if (session.step === 'yards_custom') {
     const v = parseFloat(raw);
     if (!isFinite(v) || v <= 0) {
-      await bot.sendMessage(chatId, '⚠️ Enter a positive number, e.g. 47.5');
+      const warn = await bot.sendMessage(chatId, '⚠️ Enter a positive number, e.g. 47.5');
+      if (warn && warn.message_id) trackAux(userId, warn.message_id); // SJ-4
       return true;
     }
     session.yardsPerBale = v;

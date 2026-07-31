@@ -82,6 +82,9 @@ async function sendStatement(bot, chatId, userId, periodKey) {
   if (!session || session.type !== SESSION_TYPE || !session.customer) return;
   const period = PERIODS[periodKey] || PERIODS.all;
   const customer = session.customer;
+  // SJ-4 — capture the anchor before the session goes so the period card
+  // can be sealed instead of dangling with live-looking buttons.
+  const anchorId = session.flowMessageId || null;
   sessionStore.clear(userId);
   try {
     const customerEntity = require('../services/customerEntity');
@@ -101,9 +104,32 @@ async function sendStatement(bot, chatId, userId, periodKey) {
     await bot.sendDocument(chatId, pdf, {
       caption: `📄 Supply statement — ${customer.name} · ${period.label}\n${totals.bales} bales · ${totals.thans} thans · ${totals.yards} yds (net as of today). Rate & amount columns left blank.`,
     }, { filename: fname, contentType: 'application/pdf' });
+    // SJ-4 — seal the period card; the PDF below is the deliverable.
+    if (anchorId) {
+      try {
+        await bot.editMessageText(`📄 Statement sent — ${customer.name} · ${period.label}`, {
+          chat_id: chatId, message_id: anchorId,
+          reply_markup: { inline_keyboard: [menuRow()] },
+        });
+      } catch (_) { /* card gone — nothing to seal */ }
+    }
   } catch (e) {
     logger.error(`supplyStatementFlow: render/send failed: ${e.message}`);
-    try { await bot.sendMessage(chatId, '⚠️ Could not build the statement just now — try again in a moment.'); } catch (_) { /* ignore */ }
+    // SJ-4 — put the error on the anchor instead of a stray extra message.
+    const errText = '⚠️ Could not build the statement just now — try again in a moment.';
+    let onAnchor = false;
+    if (anchorId) {
+      try {
+        await bot.editMessageText(errText, {
+          chat_id: chatId, message_id: anchorId,
+          reply_markup: { inline_keyboard: [menuRow()] },
+        });
+        onAnchor = true;
+      } catch (_) { /* fall through */ }
+    }
+    if (!onAnchor) {
+      try { await bot.sendMessage(chatId, errText); } catch (_) { /* ignore */ }
+    }
   }
 }
 

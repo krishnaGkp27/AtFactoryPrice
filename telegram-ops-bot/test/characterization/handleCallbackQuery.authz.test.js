@@ -83,5 +83,10 @@ test('C3: an allowed user cannot cancel someone else\'s pending sale', async () 
 
   const acks = bot.callsTo('answerCallbackQuery');
   assert.equal(acks[acks.length - 1].args.opts.text, 'This action is not yours to make.');
+  // SJ-4 — the owner path now edits the card and sweeps aux messages, so
+  // pin the bail on the signals it actually produces: no fold-edit, no
+  // disposal deletes, no fallback keyboard strip.
+  assert.equal(bot.callsTo('editMessageText').length, 0);
+  assert.equal(bot.callsTo('deleteMessage').length, 0);
   assert.equal(bot.callsTo('editMessageReplyMarkup').length, 0);
 });

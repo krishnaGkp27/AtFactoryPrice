@@ -34,6 +34,10 @@ const fmtDate = require('../utils/formatDate');
 const logger = require('../utils/logger');
 const { LAGOS_TZ } = require('../utils/dates');
 const { isNotModified } = require('../utils/telegramUI');
+// SJ-4 — catalogue photo cards are tracked and disposed of at
+// finalize/cancel (and by the janitor on abandonment), leaving only the
+// sealed receipt in the chat.
+const { trackAux, disposeAux } = require('../utils/flowKit');
 
 const SESSION_TYPE = 'sell_bale_flow';
 const TTL_MS = 20 * 60 * 1000;
@@ -126,6 +130,9 @@ async function availableBaleMap() {
 }
 
 async function startWithBales(bot, chatId, userId, packageNos) {
+  // SJ-4 — a restart abandons any previous run; its tracked photo cards
+  // would otherwise strand forever (deliberate clear() skips the janitor).
+  await disposeAux(bot, chatId, userId);
   sessionStore.clear(userId);
   save(userId, { type: SESSION_TYPE, step: 'preload', cart: [], flowMessageId: null });
   const s = getSession(userId);
@@ -200,6 +207,8 @@ async function nextPreloadStep(bot, chatId, userId) {
 // ── Steps ───────────────────────────────────────────────────────────────────
 
 async function start(bot, chatId, userId) {
+  // SJ-4 — see startWithBales: sweep the previous run's tracked messages.
+  await disposeAux(bot, chatId, userId);
   sessionStore.clear(userId);
   save(userId, { type: SESSION_TYPE, step: 'container', cart: [], flowMessageId: null });
   const s = getSession(userId);
@@ -316,12 +325,19 @@ async function showBales(bot, chatId, userId) {
   if (!s._photoShownFor || s._photoShownFor !== s.design) {
     s._photoShownFor = s.design; save(userId, s);
     try {
-      await designAssetsService.sendDesignPhoto({
+      const sentPhoto = await designAssetsService.sendDesignPhoto({
         bot, chatId, design: s.design,
         arrivalBatch: s.arrivalBatch === inventoryRepository.UNLABELLED_BATCH ? undefined : s.arrivalBatch,
         caption: `📷 *${esc(s.design)}*${s.arrivalBatch ? ` · 🚢 ${esc(s.arrivalBatch)}` : ''}`,
+        returnSentMessage: true,
       });
+      const supersededCardId = s.flowMessageId;
       s.flowMessageId = null; save(userId, s); // next render below the photo
+      // SJ-4 — disposed of at finalize/cancel/abandon. trackAux mutates the
+      // STORED session, so it must run after the final save() above — the
+      // superseded anchor card would otherwise strand with a live keyboard.
+      if (supersededCardId) trackAux(userId, supersededCardId);
+      if (sentPhoto && sentPhoto.message_id) trackAux(userId, sentPhoto.message_id);
     } catch (_) { /* photo is optional */ }
   }
 
@@ -483,6 +499,10 @@ async function showReview(bot, chatId, userId) {
 async function finalize(bot, chatId, userId) {
   const s = getSession(userId);
   if (!s || !s.cart.length) return;
+  // SJ-4 — the catalogue photo cards served their purpose; only the sale
+  // receipt should remain. Must run BEFORE startSession replaces the session.
+  await disposeAux(bot, chatId, userId);
+  const reviewCardId = s.flowMessageId || null;
   const items = s.cart.map((c) => ({ type: 'package', packageNo: c.packageNo }));
   const saleType = items.length > 1 ? 'sell_batch' : 'sell_package';
   salesFlow.startSession(userId, saleType, items, {
@@ -493,12 +513,29 @@ async function finalize(bot, chatId, userId) {
     paymentMode: '',
     salesDate: s.salesDate,
   });
+  // SJ-4 — the review card becomes the bill prompt (edited in place, dead
+  // sb: buttons gone) and rides the sale session's aux list so the sale's
+  // submit/cancel — or the janitor on abandonment — can dispose of it.
+  const promptText = '📎 Please send the *sales bill photo or PDF* to attach with this sale.';
+  let promptMsgId = null;
+  if (reviewCardId) {
+    try {
+      await bot.editMessageText(promptText, { chat_id: chatId, message_id: reviewCardId, parse_mode: 'Markdown' });
+      promptMsgId = reviewCardId;
+    } catch (_) { /* deleted / un-editable — fresh send below */ }
+  }
+  if (!promptMsgId) {
+    try {
+      const sent = await bot.sendMessage(chatId, promptText, { parse_mode: 'Markdown' });
+      promptMsgId = (sent && sent.message_id) || null;
+    } catch (_) { /* prompt failed — the typed-sale nag will re-ask */ }
+  }
   const saleSession = salesFlow.getSession(userId);
   if (saleSession) {
     saleSession.awaitingDocument = true;
+    if (promptMsgId) saleSession._auxMsgIds = [promptMsgId];
     sessionStore.set(userId, saleSession);
   }
-  await bot.sendMessage(chatId, '📎 Please send the *sales bill photo or PDF* to attach with this sale.', { parse_mode: 'Markdown' });
 }
 
 // ── Callback + text dispatch ────────────────────────────────────────────────
@@ -513,6 +550,8 @@ async function handleCallback(bot, callbackQuery) {
   try {
     if (data === 'sb:x') {
       await ack('Cancelled');
+      // SJ-4 — cancelled: the photo cards go with the flow.
+      await disposeAux(bot, chatId, userId);
       // Render BEFORE clearing so the anchored card is edited in place, and
       // leave a Menu button instead of a dead empty keyboard.
       await render(bot, chatId, userId, '❌ Sale cancelled. Nothing was submitted.',

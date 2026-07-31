@@ -115,6 +115,45 @@ async function guardSession(bot, query, sessionType, opts = {}) {
  * @param {Array} items @param {number} perRow
  * @returns {Array<Array>}
  */
+/**
+ * SJ-4 — track an auxiliary flow message (catalogue photo card, interim
+ * prompt) for disposal when the flow completes, cancels, or goes stale.
+ * Bounded at 20 ids per session; the janitor deletes them on abandonment
+ * via the session snapshot.
+ * @param {string} userId
+ * @param {number} messageId
+ */
+function trackAux(userId, messageId) {
+  if (!messageId) return;
+  const s = sessionStore.get(userId);
+  if (!s) return;
+  if (!Array.isArray(s._auxMsgIds)) s._auxMsgIds = [];
+  if (s._auxMsgIds.length < 20 && !s._auxMsgIds.includes(messageId)) {
+    s._auxMsgIds.push(messageId);
+    sessionStore.set(userId, s);
+  }
+}
+
+/**
+ * SJ-4 — delete every tracked auxiliary message (best-effort), leaving
+ * only the sealed receipt in the chat. Call BEFORE sessionStore.clear /
+ * before handing the session off to another flow type.
+ * @param {object} bot @param {number|string} chatId @param {string} userId
+ * @param {{except?:number|number[]}} [opts] ids to spare — pass the tapped
+ *        message id when the caller is about to EDIT it into the terminal
+ *        notice (a tracked prompt can carry the Cancel button itself).
+ */
+async function disposeAux(bot, chatId, userId, opts = {}) {
+  const s = sessionStore.get(userId);
+  const ids = (s && Array.isArray(s._auxMsgIds)) ? s._auxMsgIds.splice(0) : [];
+  if (s && ids.length) sessionStore.set(userId, s);
+  const keep = new Set([].concat(opts.except || []));
+  for (const mid of ids) {
+    if (keep.has(mid)) continue;
+    try { await bot.deleteMessage(chatId, mid); } catch (_) { /* already gone */ }
+  }
+}
+
 function chunk(items, perRow) {
   const rows = [];
   const n = Math.max(1, perRow | 0);
@@ -131,4 +170,4 @@ function mdEscape(s) {
   return String(s == null ? '' : s).replace(/([_*`[\]])/g, '\\$1');
 }
 
-module.exports = { makeRenderer, rowsFor, guardSession, chunk, mdEscape };
+module.exports = { makeRenderer, rowsFor, guardSession, chunk, mdEscape, trackAux, disposeAux };

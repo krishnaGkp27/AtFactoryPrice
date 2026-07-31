@@ -151,6 +151,7 @@ async function render(bot, chatId, userId, prompt, rows) {
 }
 
 const { cancelRow } = require('../utils/flowKit').rowsFor('pr');
+const { trackAux, disposeAux } = require('../utils/flowKit');
 
 /**
  * UX-C1: re-render the anchored flow card with an error notice embedded
@@ -498,6 +499,7 @@ async function handleCallback(bot, query) {
   try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
 
   if (data === 'pr:cancel') {
+    await disposeAux(bot, chatId, userId); // SJ-4 — sweep edit prompts/acks first
     sessionStore.clear(userId);
     // Edit the tapped card in place (a fresh sendMessage would leave the old
     // card behind with dead pr:* buttons) and keep a Menu button on it.
@@ -559,7 +561,8 @@ async function handleCallback(bot, query) {
     const n = acceptAllOk(session);
     sessionStore.set(userId, session);
     await showReviewStep(bot, chatId, userId);
-    await bot.sendMessage(chatId, `✅ Accepted ${n} non-low-confidence row${n === 1 ? '' : 's'}.`);
+    const ackMsg = await bot.sendMessage(chatId, `✅ Accepted ${n} non-low-confidence row${n === 1 ? '' : 's'}.`);
+    if (ackMsg && ackMsg.message_id) trackAux(userId, ackMsg.message_id); // SJ-4
     return true;
   }
 
@@ -624,12 +627,13 @@ async function handleCallback(bot, query) {
     sessionStore.set(userId, session);
     const cur = session.rows[idx][field];
     const meta = FIELD_META[field];
-    await bot.sendMessage(chatId,
+    const promptMsg = await bot.sendMessage(chatId,
       `*Set new value for ${meta.label}* (row ${idx + 1})\n`
       + `Current: ${cur === '' || cur == null ? '_(none)_' : `\`${cur}\``}\n`
       + (meta.hint ? `_${meta.hint}_\n` : '')
       + `Send /cancel to abort.`,
       { parse_mode: 'Markdown' });
+    if (promptMsg && promptMsg.message_id) trackAux(userId, promptMsg.message_id); // SJ-4
     return true;
   }
 
@@ -809,7 +813,8 @@ async function handleText(bot, msg) {
   if (/^\/cancel\b/i.test(text)) {
     session.editingField = null;
     sessionStore.set(userId, session);
-    await bot.sendMessage(chatId, 'Edit cancelled.');
+    const note = await bot.sendMessage(chatId, 'Edit cancelled.');
+    if (note && note.message_id) trackAux(userId, note.message_id); // SJ-4
     await showEditStep(bot, chatId, userId);
     return true;
   }
@@ -818,7 +823,8 @@ async function handleText(bot, msg) {
   const field = session.editingField;
   const verdict = coerceFieldValue(field, text);
   if (!verdict.ok) {
-    await bot.sendMessage(chatId, `⚠️ ${verdict.error}\nTry again, or send /cancel.`);
+    const warn = await bot.sendMessage(chatId, `⚠️ ${verdict.error}\nTry again, or send /cancel.`);
+    if (warn && warn.message_id) trackAux(userId, warn.message_id); // SJ-4
     return true;
   }
   const r = session.rows[idx];
@@ -830,9 +836,10 @@ async function handleText(bot, msg) {
   if (r.lowConfidence) r.lowConfidence = false;
   session.editingField = null;
   sessionStore.set(userId, session);
-  await bot.sendMessage(chatId,
+  const ackMsg = await bot.sendMessage(chatId,
     `✅ ${FIELD_META[field].label} updated. Tap another field or *Save*.`,
     { parse_mode: 'Markdown' });
+  if (ackMsg && ackMsg.message_id) trackAux(userId, ackMsg.message_id); // SJ-4
   await showEditStep(bot, chatId, userId);
   return true;
 }
@@ -982,6 +989,8 @@ async function submit(bot, chatId, userId) {
 
   session.step = 'submitted';
   sessionStore.set(userId, session);
+  // SJ-4 — sweep the edit-prompt trail; only the sealed receipt remains.
+  await disposeAux(bot, chatId, userId);
   await render(bot, chatId, userId,
     `⏳ Submitted for ${approverLabel} approval.\nRequest: \`${requestId}\`\nHash: \`${aj.fileHash}\``,
     [[{ text: '📷 Upload another', callback_data: 'act:photo_receive_goods' }],

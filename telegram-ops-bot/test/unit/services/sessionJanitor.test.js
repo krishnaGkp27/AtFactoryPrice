@@ -86,9 +86,9 @@ test('heavy flow honors the longer FLOW_CLEANUP_MINUTES_HEAVY grace', async () =
   assert.equal(await sessionJanitor.tick(bot), 1, 'cleaned after heavy grace');
 });
 
-test('un-editable message falls back to stripping the keyboard; previews deleted', async () => {
+test('un-editable message falls back to stripping the keyboard; previews + SJ-4 aux deleted', async () => {
   drainAll();
-  sessionStore.set('u7', { type: 'supply_req_flow', flowMessageId: 77, previewMessageId: 78, comboMessageId: 79, ttlMs: 1 });
+  sessionStore.set('u7', { type: 'supply_req_flow', flowMessageId: 77, previewMessageId: 78, comboMessageId: 79, _auxMsgIds: [80, 81], ttlMs: 1 });
   await sleep(5);
   const bot = createFakeBot();
   bot.editMessageText = async () => { throw new Error('message is a photo'); };
@@ -99,7 +99,7 @@ test('un-editable message falls back to stripping the keyboard; previews deleted
   assert.equal(strips.length, 1, 'keyboard stripped as fallback');
   assert.deepEqual(strips[0].args.replyMarkup, { inline_keyboard: [] });
   const deleted = bot.callsTo('deleteMessage').map((c) => c.args.messageId).sort();
-  assert.deepEqual(deleted, [78, 79], 'transient previews deleted');
+  assert.deepEqual(deleted, [78, 79, 80, 81], 'transient previews + tracked aux messages deleted');
 });
 
 test('humanize: known labels + generic fallback', () => {

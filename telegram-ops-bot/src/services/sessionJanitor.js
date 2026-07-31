@@ -132,8 +132,11 @@ async function tombstone(bot, entry, cfg) {
       } catch (_) { /* message gone — nothing to clean */ }
     }
   }
-  // Transient photo previews are ephemeral by design — delete outright.
-  for (const mid of [entry.previewMessageId, entry.comboMessageId]) {
+  // Transient photo previews + SJ-4 tracked auxiliary messages (catalogue
+  // photo cards, interim prompts) are ephemeral by design — delete outright.
+  // The sale confirm card joins them: its ✅ Confirm button must not stay
+  // tappable after the session it would act on has expired.
+  for (const mid of [entry.previewMessageId, entry.comboMessageId, entry.confirmMsgId, ...(entry.auxMsgIds || [])]) {
     if (!mid) continue;
     try { await bot.deleteMessage(chatId, mid); } catch (_) { /* already gone */ }
   }

@@ -81,6 +81,11 @@ function _snapshotOf(userId, s) {
     flowMessageId: s.flowMessageId || null,
     previewMessageId: s.previewMessageId || null,
     comboMessageId: s.comboMessageId || null,
+    // SJ-4 — tracked auxiliary messages (photo cards, interim prompts)
+    // ride the snapshot so the janitor can dispose of them too, as does the
+    // sale confirm card (its live ✅/❌ buttons must not outlive the session).
+    auxMsgIds: Array.isArray(s._auxMsgIds) ? s._auxMsgIds.slice(0, 20) : null,
+    confirmMsgId: s.confirmMsgId || null,
     lastActiveAt: s._setAt || (s.expiresAt - _ttlFor(s)),
   };
 }
@@ -177,7 +182,7 @@ function sweepExpired() {
 /**
  * SJ-1 — hand the accumulated timeout snapshots to the janitor (drains
  * the queue; the caller owns them afterwards).
- * @returns {Array<{userId:string,type:string,step:string|null,flowMessageId:number|null,previewMessageId:number|null,comboMessageId:number|null,lastActiveAt:number}>}
+ * @returns {Array<{userId:string,type:string,step:string|null,flowMessageId:number|null,previewMessageId:number|null,comboMessageId:number|null,auxMsgIds:number[]|null,confirmMsgId:number|null,lastActiveAt:number}>}
  */
 function drainExpiredForCleanup() {
   return expiredQueue.splice(0, expiredQueue.length);

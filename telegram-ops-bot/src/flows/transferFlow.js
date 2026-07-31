@@ -37,7 +37,7 @@
  */
 
 const sessionStore = require('../utils/sessionStore');
-const { makeRenderer, chunk, rowsFor } = require('../utils/flowKit');
+const { makeRenderer, chunk, rowsFor, trackAux, disposeAux } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const usersRepository = require('../repositories/usersRepository');
 const designCategoriesRepository = require('../repositories/designCategoriesRepository');
@@ -817,6 +817,9 @@ async function completeReceipt(bot, session, userId) {
  * it does not move stock.
  */
 async function promptForDoc(bot, chatId, userId, requestId, docKind, base, messageId) {
+  // SJ-4 — a fresh await_doc session would drop any warnings tracked on the
+  // one it replaces; sweep them first.
+  await disposeAux(bot, chatId, userId);
   sessionStore.set(userId, {
     type: SESSION_TYPE, step: 'await_doc', requestId, docKind, flowMessageId: messageId || null,
     ttlMs: 30 * 60 * 1000, // taking the attachment photo — outlasts the default TTL
@@ -873,6 +876,7 @@ async function gateNotNow(bot, query, requestId) {
   const userId = String(query.from.id);
   const session = sessionStore.get(userId);
   if (session && session.type === SESSION_TYPE && session.step === 'await_doc' && session.gate) {
+    await disposeAux(bot, query.message.chat.id, userId); // SJ-4 — sweep file-type warnings
     sessionStore.clear(userId);
   }
   const row = await transferService.findTransfer(requestId);
@@ -921,7 +925,8 @@ async function handleFile(bot, msg) {
     return false;
   }
   if (!DOC_MIMES.includes(mimeType)) {
-    await bot.sendMessage(chatId, '⚠️ Send a photo (JPG/PNG) or a PDF to continue.');
+    const warn = await bot.sendMessage(chatId, '⚠️ Send a photo (JPG/PNG) or a PDF to continue.');
+    if (warn && warn.message_id) trackAux(userId, warn.message_id); // SJ-4
     return true;
   }
 
@@ -935,6 +940,7 @@ async function handleFile(bot, msg) {
       : await completeDispatch(bot, session, userId);
     if (!done.ok) {
       const flowMessageId = session.flowMessageId;
+      await disposeAux(bot, chatId, userId); // SJ-4 — sweep file-type warnings
       sessionStore.clear(userId);
       await bot.editMessageText(`⚠️ *${requestId}* — ${done.message}`, {
         chat_id: chatId, message_id: flowMessageId, parse_mode: 'Markdown',
@@ -981,6 +987,7 @@ async function handleFile(bot, msg) {
   }
 
   const flowMessageId = session.flowMessageId;
+  await disposeAux(bot, chatId, userId); // SJ-4 — sweep file-type warnings
   sessionStore.clear(userId);
   const linkNote = url ? `\n🔗 ${url}` : '';
   const head = sealText || `🚚 *${requestId}*`;

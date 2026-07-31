@@ -15,6 +15,7 @@ const crmService = require('../services/crmService');
 const accountingService = require('../services/accountingService');
 const salesFlow = require('../services/salesFlowService');
 const sessionStore = require('../utils/sessionStore');
+const { trackAux, disposeAux } = require('../utils/flowKit');
 const { buildShadeNameMap, buildShadeLabel, layoutShadeRows, buildSelectAllLines, formatShadeRef } = require('../utils/shadeButtons');
 const { cmpNumericAware, aggregateStockModel } = require('../utils/inventoryPickers');
 const cartFormat = require('../utils/cartFormat');
@@ -3585,7 +3586,8 @@ async function handleFileMessage(bot, msg) {
       fileType = 'document';
       mimeType = msg.document.mime_type || 'application/pdf';
     } else {
-      await bot.sendMessage(chatId, 'Please send a photo or PDF file of the sales bill.');
+      const nag = await bot.sendMessage(chatId, 'Please send a photo or PDF file of the sales bill.');
+      if (nag && nag.message_id) trackAux(userId, nag.message_id); // SJ-4 — swept at submit/cancel
       return;
     }
     session.sale_doc_file_id = telegramFileId;
@@ -3593,14 +3595,25 @@ async function handleFileMessage(bot, msg) {
     session.sale_doc_mime = mimeType;
     session.awaitingDocument = false;
     session.awaitingConfirmation = true;
-    sessionStore.set(userId, session);
     const summary = await salesFlow.buildSummary(session);
     const docLabel = fileType === 'document' ? '📄 PDF attached' : '📷 Photo attached';
     const keyboard = { inline_keyboard: [[
       { text: '✅ Confirm', callback_data: `confirm_sale:${userId}` },
       { text: '❌ Cancel', callback_data: `cancel_sale:${userId}` },
     ]] };
-    await bot.sendMessage(chatId, `${summary}\n\n📎 Sales bill: ${docLabel}`, { reply_markup: keyboard });
+    const confirmCard = await bot.sendMessage(chatId, `${summary}\n\n📎 Sales bill: ${docLabel}`, { reply_markup: keyboard });
+    // SJ-4 — remember the confirm card so submit/cancel can seal it in
+    // place. Re-fetch before saving: the user may have typed 'cancel' while
+    // the summary was building — re-setting the stale local would resurrect
+    // the cleared session with a live Confirm button.
+    const liveSale = salesFlow.getSession(userId);
+    if (liveSale && liveSale.awaitingConfirmation) {
+      if (confirmCard && confirmCard.message_id) liveSale.confirmMsgId = confirmCard.message_id;
+      sessionStore.set(userId, liveSale);
+    } else if (confirmCard && confirmCard.message_id) {
+      // Cancelled mid-build — the freshly sent confirm card is orphaned.
+      try { await bot.deleteMessage(chatId, confirmCard.message_id); } catch (_) { /* ignore */ }
+    }
     return;
   }
 
@@ -3616,7 +3629,8 @@ async function handleFileMessage(bot, msg) {
       fileType = 'document';
       mimeType = msg.document.mime_type || 'application/pdf';
     } else {
-      await bot.sendMessage(chatId, 'Please send a photo or PDF file of the sales bill.');
+      const nag = await bot.sendMessage(chatId, 'Please send a photo or PDF file of the sales bill.');
+      if (nag && nag.message_id) trackAux(userId, nag.message_id); // SJ-4 — swept at submit/cancel
       return;
     }
     session.docFileId = telegramFileId;
@@ -3934,6 +3948,7 @@ async function handleMessage(bot, msg) {
       if (s.type === 'supply_req_flow') {
         await clearDesignPreview(bot, chatId, userId);
       }
+      await disposeAux(bot, chatId, userId); // SJ-4 — before the session goes
       sessionStore.clear(userId);
       await bot.sendMessage(chatId, '❌ Cancelled.');
       return;
@@ -3943,19 +3958,22 @@ async function handleMessage(bot, msg) {
   const srfSession = sessionStore.get(userId);
   if (srfSession && srfSession.type === 'supply_req_flow') {
     if (srfSession.awaitingDocument) {
-      await bot.sendMessage(chatId, '📎 Please send a *photo* or *PDF* of the sales bill, or tap *Skip*.', { parse_mode: 'Markdown' });
+      const nag = await bot.sendMessage(chatId, '📎 Please send a *photo* or *PDF* of the sales bill, or tap *Skip*.', { parse_mode: 'Markdown' });
+      if (nag && nag.message_id) trackAux(userId, nag.message_id); // SJ-4
       return;
     }
     if (srfSession.step === 'custom_quantity') {
       const qty = parseInt(text.trim());
       if (isNaN(qty) || qty < 1) {
-        await bot.sendMessage(chatId, '⚠️ Enter a valid number (minimum 1).');
+        const warn = await bot.sendMessage(chatId, '⚠️ Enter a valid number (minimum 1).');
+        if (warn && warn.message_id) trackAux(userId, warn.message_id); // SJ-4
         return;
       }
       if (qty > srfSession.currentAvailPkgs) {
         const lbl = await productTypesRepo.getLabels(srfSession.productType || 'fabric');
         const cPlural = productTypesRepo.pluralize(lbl.container_label, srfSession.currentAvailPkgs).toLowerCase();
-        await bot.sendMessage(chatId, `⚠️ Only ${srfSession.currentAvailPkgs} ${cPlural} available. Enter a lower number.`);
+        const warn = await bot.sendMessage(chatId, `⚠️ Only ${srfSession.currentAvailPkgs} ${cPlural} available. Enter a lower number.`);
+        if (warn && warn.message_id) trackAux(userId, warn.message_id); // SJ-4
         return;
       }
       addToCart(srfSession, srfSession.currentDesign, srfSession.currentShade, qty);
@@ -6565,13 +6583,20 @@ async function startSaleFlow(bot, chatId, msg, userId, saleType, items, intent) 
  */
 async function handleSaleSession(bot, chatId, msg, userId, text, session) {
   if (text.toLowerCase() === 'cancel') {
+    // SJ-4 — sweep the flow's tracked prompts (and any live confirm card)
+    // before the session goes; only the cancel notice should remain.
+    await disposeAux(bot, chatId, userId);
+    if (session.confirmMsgId) {
+      try { await bot.deleteMessage(chatId, session.confirmMsgId); } catch (_) { /* already gone */ }
+    }
     sessionStore.clear(userId);
     await bot.sendMessage(chatId, 'Sale cancelled.');
     return true;
   }
 
   if (session.awaitingDocument) {
-    await bot.sendMessage(chatId, '📎 Please send a *photo* or *PDF document* of the sales bill. Type "cancel" to abort.', { parse_mode: 'Markdown' });
+    const nag = await bot.sendMessage(chatId, '📎 Please send a *photo* or *PDF document* of the sales bill. Type "cancel" to abort.', { parse_mode: 'Markdown' });
+    if (nag && nag.message_id) trackAux(userId, nag.message_id); // SJ-4 — swept at submit/cancel
     return true;
   }
 
@@ -6609,6 +6634,18 @@ async function handleSaleSession(bot, chatId, msg, userId, text, session) {
  * Execute a confirmed sale: if admin, execute directly in batch.
  * If employee, create ONE consolidated approval request for the entire sale.
  */
+/** SJ-4 — seal the sale confirm card into the terminal receipt (edit in
+ *  place; fresh send only when the card is missing or un-editable). */
+async function sealSaleCard(bot, chatId, confirmMsgId, text, opts = {}) {
+  if (confirmMsgId) {
+    try {
+      await bot.editMessageText(text, { chat_id: chatId, message_id: confirmMsgId, ...opts });
+      return;
+    } catch (_) { /* deleted / >48h — fall through to fresh send */ }
+  }
+  await bot.sendMessage(chatId, text, opts);
+}
+
 async function executeSale(bot, chatId, userId) {
   const session = salesFlow.getSession(userId);
   if (!session) return;
@@ -6752,7 +6789,16 @@ async function executeSale(bot, chatId, userId) {
       }
     }
     const approverLabel = isSubmitterAdmin ? '2nd admin' : 'admin';
-    await bot.sendMessage(chatId, `⏳ Sale submitted for ${approverLabel} approval. Ref: ${shortRequestRef(requestId)}\n${totalPkgs} Bale${totalPkgs === 1 ? '' : 's'} (${totalThans} thans), ${fmtQty(totalYards)} yards${collectedCustomer ? ` to ${collectedCustomer}` : ' — the admin assigns the customer, rate and payment; you will get the customer name and number back here once approved'}`);
+    // SJ-4 — sweep bill prompts/nags, then seal the confirm card into the
+    // submitted receipt: one message remains (plus the user's own bill).
+    // The seal KEEPS the itemized summary the card held — the dispatcher
+    // must still see which bales they submitted while approval is pending.
+    let sealedText = `⏳ Sale submitted for ${approverLabel} approval. Ref: ${shortRequestRef(requestId)}\n${totalPkgs} Bale${totalPkgs === 1 ? '' : 's'} (${totalThans} thans), ${fmtQty(totalYards)} yards${collectedCustomer ? ` to ${collectedCustomer}` : ' — the admin assigns the customer, rate and payment; you will get the customer name and number back here once approved'}`;
+    try {
+      sealedText = `${await salesFlow.buildSummary(session)}\n\n${sealedText}`;
+    } catch (_) { /* aggregate-only receipt */ }
+    await disposeAux(bot, chatId, userId);
+    await sealSaleCard(bot, chatId, session.confirmMsgId, sealedText);
     sessionStore.clear(userId);
     return;
   }
@@ -6790,7 +6836,15 @@ async function executeSale(bot, chatId, userId) {
       saleMsg += `\n📎 [View Sales Bill](${driveRes.webViewLink})`;
     } catch (e) { logger.error('Failed to upload sale doc to Drive (admin direct)', e.message); }
   }
-  await bot.sendMessage(chatId, saleMsg, { parse_mode: 'Markdown', disable_web_page_preview: true });
+  // SJ-4 — same sweep + seal for the admin-direct completion, keeping the
+  // itemized summary the confirm card held (escaped: this send parses
+  // Markdown for the bill link, the summary is raw data).
+  await disposeAux(bot, chatId, userId);
+  try {
+    const { mdEscape } = require('../utils/flowKit');
+    saleMsg = `${mdEscape(await salesFlow.buildSummary(session))}\n\n${saleMsg}`;
+  } catch (_) { /* aggregate-only receipt */ }
+  await sealSaleCard(bot, chatId, session.confirmMsgId, saleMsg, { parse_mode: 'Markdown', disable_web_page_preview: true });
   sessionStore.clear(userId);
 }
 
@@ -7051,13 +7105,24 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await bot.answerCallbackQuery(callbackQuery.id, { text: 'This action is not yours to make.', show_alert: true });
       return;
     }
+    // SJ-4 — sweep tracked prompts BEFORE the session clears, then fold the
+    // cancel notice into the confirm card instead of stacking a new message.
+    await disposeAux(bot, callbackQuery.message.chat.id, cancelUserId);
     sessionStore.clear(cancelUserId);
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled.' });
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
-      chat_id: callbackQuery.message.chat.id,
-      message_id: callbackQuery.message.message_id,
-    });
-    await bot.sendMessage(callbackQuery.message.chat.id, 'Sale cancelled.');
+    try {
+      await bot.editMessageText('❌ Sale cancelled. Nothing was submitted.', {
+        chat_id: callbackQuery.message.chat.id,
+        message_id: callbackQuery.message.message_id,
+        reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] },
+      });
+    } catch (_) {
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+        chat_id: callbackQuery.message.chat.id,
+        message_id: callbackQuery.message.message_id,
+      }).catch(() => {});
+      await bot.sendMessage(callbackQuery.message.chat.id, 'Sale cancelled.');
+    }
   } else if (data.startsWith('approve_task:')) {
     const taskId = data.replace('approve_task:', '');
     const adminId = String(callbackQuery.from.id);
@@ -10043,12 +10108,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
       sessionStore.set(uid, session);
       const lbl = await productTypesRepo.getLabels(session.productType || 'fabric');
       const cPlural = productTypesRepo.pluralize(lbl.container_label, 2).toLowerCase();
-      await bot.sendMessage(chatId, `Type the number of ${cPlural} (max ${session.currentAvailPkgs}):`, {
+      const prompt = await bot.sendMessage(chatId, `Type the number of ${cPlural} (max ${session.currentAvailPkgs}):`, {
         reply_markup: { inline_keyboard: [[
           { text: '⬅️ Back', callback_data: 'srf_back:quantity' },
           { text: '❌ Cancel', callback_data: 'srf_cart:cancel' },
         ]] },
       });
+      if (prompt && prompt.message_id) trackAux(uid, prompt.message_id); // SJ-4
       return;
     }
 
@@ -10077,7 +10143,8 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await showDesignsForWarehouse(bot, chatId, uid, session.warehouse);
     } else if (action === 'remove') {
       if (!session.cart || !session.cart.length) {
-        await bot.sendMessage(chatId, '🛒 Cart is empty.');
+        const nag = await bot.sendMessage(chatId, '🛒 Cart is empty.');
+        if (nag && nag.message_id) trackAux(uid, nag.message_id); // SJ-4
         return;
       }
       const rows = session.cart.map((c, i) => [{
@@ -10085,10 +10152,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
         callback_data: `srf_rm:${i}`,
       }]);
       rows.push([{ text: '⬅️ Back', callback_data: 'srf_cart:back' }]);
-      await bot.sendMessage(chatId, 'Tap an item to remove:', { reply_markup: { inline_keyboard: rows } });
+      const picker = await bot.sendMessage(chatId, 'Tap an item to remove:', { reply_markup: { inline_keyboard: rows } });
+      if (picker && picker.message_id) trackAux(uid, picker.message_id); // SJ-4
     } else if (action === 'proceed') {
       if (!session.cart || !session.cart.length) {
-        await bot.sendMessage(chatId, '⚠️ Add at least one item to proceed.');
+        const nag = await bot.sendMessage(chatId, '⚠️ Add at least one item to proceed.');
+        if (nag && nag.message_id) trackAux(uid, nag.message_id); // SJ-4
         await showCartSummary(bot, chatId, uid);
         return;
       }
@@ -10097,7 +10166,8 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await showSupplyCustomerPicker(bot, chatId, uid);
     } else if (action === 'transfer') {
       if (!auth.isAdmin(uid)) {
-        await bot.sendMessage(chatId, '🚚 Transfers can be created by admins only.');
+        const nag = await bot.sendMessage(chatId, '🚚 Transfers can be created by admins only.');
+        if (nag && nag.message_id) trackAux(uid, nag.message_id); // SJ-4
         await showCartSummary(bot, chatId, uid);
         return;
       }
@@ -10112,6 +10182,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
       }).catch(() => {});
       const transferLines = (session.cart || []).map((c) => ({ design: c.design, shade: c.shade, qty: c.quantity }));
       await clearDesignPreview(bot, chatId, uid);
+      await disposeAux(bot, chatId, uid); // SJ-4 — before the transfer flow takes over
       sessionStore.clear(uid);
       await require('../flows/transferFlow').start(bot, chatId, uid, null, {
         from: session.warehouse,
@@ -10119,8 +10190,20 @@ async function handleCallbackQuery(bot, callbackQuery) {
       });
     } else if (action === 'cancel') {
       await clearDesignPreview(bot, chatId, uid);
+      // SJ-4 — sweep prompts before the session goes; spare the tapped card
+      // (the tracked qty prompt carries this Cancel button) so the fold-edit
+      // below lands on it instead of a deleted message.
+      await disposeAux(bot, chatId, uid, { except: callbackQuery.message.message_id });
       sessionStore.clear(uid);
-      await bot.sendMessage(chatId, '❌ Supply request cancelled.');
+      // SJ-4 — fold the cancel notice into the tapped cart card.
+      try {
+        await bot.editMessageText('❌ Supply request cancelled.', {
+          chat_id: chatId, message_id: callbackQuery.message.message_id,
+          reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] },
+        });
+      } catch (_) {
+        await bot.sendMessage(chatId, '❌ Supply request cancelled.');
+      }
     } else if (action === 'back') {
       await showCartSummary(bot, chatId, uid);
     }
@@ -10268,8 +10351,17 @@ async function handleCallbackQuery(bot, callbackQuery) {
 
     if (val === 'cancel') {
       await clearDesignPreview(bot, chatId, uid);
+      await disposeAux(bot, chatId, uid, { except: callbackQuery.message.message_id }); // SJ-4
       sessionStore.clear(uid);
-      await bot.sendMessage(chatId, '❌ Supply request cancelled.');
+      // SJ-4 — fold the cancel notice into the tapped card.
+      try {
+        await bot.editMessageText('❌ Supply request cancelled.', {
+          chat_id: chatId, message_id: callbackQuery.message.message_id,
+          reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] },
+        });
+      } catch (_) {
+        await bot.sendMessage(chatId, '❌ Supply request cancelled.');
+      }
       return;
     }
     await finalizeSupplyRequest(bot, chatId, uid);
@@ -10284,13 +10376,28 @@ async function handleCallbackQuery(bot, callbackQuery) {
 
     if (val === 'cancel') {
       await clearDesignPreview(bot, chatId, uid);
+      await disposeAux(bot, chatId, uid, { except: callbackQuery.message.message_id }); // SJ-4
       sessionStore.clear(uid);
-      await bot.sendMessage(chatId, '❌ Supply request cancelled.');
+      // SJ-4 — fold the cancel notice into the tapped confirm card.
+      try {
+        await bot.editMessageText('❌ Supply request cancelled.', {
+          chat_id: chatId, message_id: callbackQuery.message.message_id,
+          reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] },
+        });
+      } catch (_) {
+        await bot.sendMessage(chatId, '❌ Supply request cancelled.');
+      }
       return;
     }
 
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'supply_req_flow') return;
+    // Double-tap guard: the sweep awaits below widen the window between the
+    // session check and clear() — a second Confirm tap must not queue a
+    // duplicate approvable request.
+    if (session._submitting) return;
+    session._submitting = true;
+    sessionStore.set(uid, session);
 
     const docInfo = { fileId: session.docFileId, type: session.docType, mime: session.docMime };
     const cart = session.cart || [];
@@ -10312,6 +10419,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
       sale_doc_mime: docInfo.mime || null,
     };
     await clearDesignPreview(bot, chatId, uid);
+    await disposeAux(bot, chatId, uid); // SJ-4 — prompts go; the receipt below remains
     sessionStore.clear(uid);
 
     const requestId = genId();
@@ -10391,10 +10499,16 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const waitingFor = stage1Skipped
       ? (isAdmin ? '2nd admin approval' : 'admin approval')
       : 'Dispatch confirmation';
-    await bot.sendMessage(chatId,
-      `✅ Supply request submitted.\n\n🏭 ${actionJSON.warehouse}\n━━━━━━━━━━━━━━━━━━━━━━\n${cartLines}\n━━━━━━━━━━━━━━━━━━━━━━\n📦 Total: ${totalPkgs} ${containerPlural}\n👤 ${actionJSON.customer}\n📅 ${fmtDate(actionJSON.salesDate)}\n\n⏳ Waiting for ${waitingFor}.\nRef: ${shortRequestRef(requestId)}`, {
-        parse_mode: 'Markdown',
+    // SJ-4 — seal the tapped confirm card into the submitted receipt instead
+    // of stranding it above a fresh message with stale "Confirm?" text.
+    const submittedText = `✅ Supply request submitted.\n\n🏭 ${actionJSON.warehouse}\n━━━━━━━━━━━━━━━━━━━━━━\n${cartLines}\n━━━━━━━━━━━━━━━━━━━━━━\n📦 Total: ${totalPkgs} ${containerPlural}\n👤 ${actionJSON.customer}\n🧑 ${actionJSON.salesperson}\n💳 ${actionJSON.paymentMode}\n📅 ${fmtDate(actionJSON.salesDate)}\n\n⏳ Waiting for ${waitingFor}.\nRef: ${shortRequestRef(requestId)}`;
+    try {
+      await bot.editMessageText(submittedText, {
+        chat_id: chatId, message_id: callbackQuery.message.message_id, parse_mode: 'Markdown',
       });
+    } catch (_) {
+      await bot.sendMessage(chatId, submittedText, { parse_mode: 'Markdown' });
+    }
 
   /* ─── ADMIN: ASSIGN DEPT / WAREHOUSE ─── */
   } else if (data.startsWith('adm:')) {
