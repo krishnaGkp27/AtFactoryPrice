@@ -161,6 +161,27 @@ async function loadQueue() {
   return { pending, dupIdx: duplicateIndex(pending, await duplicateWindowMinutes()) };
 }
 
+/**
+ * APX-3d (owner pick G2, 31-Jul): transfers whose receipt landed in
+ * Inventory stay visible for 48 hours, marked ✅ — completion is seen
+ * without drilling down. confirmReceipt is what flips the bales'
+ * warehouse AND resolves the queue row to approved, so status=approved
+ * within the window IS the "inventory really changed" signal.
+ */
+const RECEIVED_WINDOW_MS = 48 * 3600 * 1000;
+
+async function recentReceivedTransfers() {
+  try {
+    const resolved = await approvalQueueRepository.getResolved();
+    const cutoff = Date.now() - RECEIVED_WINDOW_MS;
+    return resolved
+      .filter((r) => TRANSFER_ACTIONS.includes(String((r.actionJSON || {}).action || ''))
+        && String(r.status || '').toLowerCase() === 'approved'
+        && r.resolvedAt && new Date(r.resolvedAt).getTime() >= cutoff)
+      .sort((a, b) => String(b.resolvedAt).localeCompare(String(a.resolvedAt)));
+  } catch (_) { return []; } // best-effort: greens are informational
+}
+
 /* ───────────────────────────── entry ───────────────────────────── */
 
 /**
@@ -238,15 +259,17 @@ async function renderCategories(bot, chatId, userId) {
     const oldest = Math.max(...other.map((i) => ageDays(i.createdAt)));
     rows.push([{ text: `❓ Other — ${other.length} ${ageDot(oldest)}${ageLabel(oldest)}`, callback_data: 'abx:cat:other' }]);
   }
-  const transfers = byCat.get('transfers');
-  if (transfers && transfers.length) {
-    // APX-3b (owner 31-Jul): the chip tells the STAGE mix at a glance —
-    // five identical trucks hid which transfers actually needed a hand.
+  const transfers = byCat.get('transfers') || [];
+  // APX-3b/3d: the chip tells the STAGE mix at a glance — five identical
+  // trucks hid which transfers actually needed a hand; ✅ received (48h)
+  // rides along so completion shows without drilling.
+  const received = await recentReceivedTransfers();
+  if (transfers.length || received.length) {
     const inTransit = transfers.filter((t) => (t.actionJSON || {}).stage === 'in_transit').length;
     const waiting = transfers.length - inTransit;
-    const mix = [waiting ? `${waiting} to dispatch` : '', inTransit ? `${inTransit} in transit` : '']
-      .filter(Boolean).join(' · ');
-    rows.push([{ text: `🚚 Transfers — ${transfers.length}${mix ? ` (${mix})` : ''}`, callback_data: 'abx:cat:transfers' }]);
+    const mix = [waiting ? `${waiting} to dispatch` : '', inTransit ? `${inTransit} in transit` : '',
+      received.length ? `${received.length} ✅` : ''].filter(Boolean).join(' · ');
+    rows.push([{ text: `🚚 Transfers — ${transfers.length + received.length}${mix ? ` (${mix})` : ''}`, callback_data: 'abx:cat:transfers' }]);
   }
   // APX-2 — same request queued more than once (a double-tapped Submit).
   // Flagged, never auto-actioned: approving four copies of one sale would
@@ -336,8 +359,12 @@ function shortTransferId(requestId) {
 
 function transferChipLabel(it) {
   const aj = it.actionJSON || {};
-  const stage = aj.stage === 'in_transit' ? '📦RCV' : '🟠DSP';
   const route = aj.from || aj.to ? `  ${whCode(aj.from)}▸${whCode(aj.to)}` : '';
+  // APX-3d — approved = receipt confirmed = inventory really moved.
+  if (String(it.status || '').toLowerCase() === 'approved') {
+    return `✅${route}  ${shortTransferId(it.requestId)}`;
+  }
+  const stage = aj.stage === 'in_transit' ? '📦RCV' : '🟠DSP';
   return `${stage}${route}  ${shortTransferId(it.requestId)}`;
 }
 
@@ -356,7 +383,12 @@ async function renderItems(bot, chatId, userId) {
     return;
   }
 
-  const items = itemsForCategory(session, pending, dupIdx);
+  let items = itemsForCategory(session, pending, dupIdx);
+  // APX-3d — greens ride at the bottom of the transfers list: actionable
+  // rows first, the last 48h of confirmed receipts after.
+  if (session.category === 'transfers') {
+    items = items.concat(await recentReceivedTransfers());
+  }
   session._items = items;
   session.step = 'pick_item';
   sessionStore.set(userId, session);
@@ -410,9 +442,15 @@ async function renderItems(bot, chatId, userId) {
   rows.push(closeRow());
 
   const note = isTransfers
-    ? '\n🟠DSP = dispatch pending · 📦RCV = receive pending · from▸to\n_Not approvals — tap one to open its transfer card._'
+    ? '\n🟠DSP = dispatch pending · 📦RCV = receive pending · ✅ = received (48h) · from▸to\n_Not approvals — tap one to open its transfer card._'
     : '';
-  await render(bot, chatId, userId, `${title} — *${items.length}* pending${note}`, rows);
+  const headCount = isTransfers
+    ? (() => {
+      const done = items.filter((it) => String(it.status || '').toLowerCase() === 'approved').length;
+      return `*${items.length - done}* open${done ? ` · ${done} ✅` : ''}`;
+    })()
+    : `*${items.length}* pending`;
+  await render(bot, chatId, userId, `${title} — ${headCount}${note}`, rows);
 }
 
 /* ───────────────────────── level 3: one item ───────────────────────── */

@@ -153,25 +153,39 @@ test('APX-1: transfers are NOT approvable — no Approve button, routed instead'
 /* APX-3b — stage-shaded transfer chips: identical trucks hid which
  * transfers needed a hand. requested → 🟠 awaiting dispatch,
  * in_transit → 📦 receipt pending; category chip carries the mix. */
-test('APX-3b: transfer chips are shaded by stage, category chip shows the mix', async () => {
+test('APX-3b/3d: transfer chips carry stage mnemonics + 48h received greens', async () => {
   const orig = approvalQueueRepository.getAllPending;
+  const origResolved = approvalQueueRepository.getResolved;
   approvalQueueRepository.getAllPending = async () => [
     { requestId: 'TR-20260724-001', user: '7430648262', status: 'pending', createdAt: daysAgo(1), actionJSON: { action: 'transfer_stock', from: 'Lagos', to: 'Kano office', stage: 'requested', lines: [] } },
     { requestId: 'TR-20260724-003', user: '7430648262', status: 'pending', createdAt: daysAgo(2), actionJSON: { action: 'transfer_stock', from: 'IDUMOTA', to: 'Kano office', stage: 'in_transit', lines: [] } },
+  ];
+  approvalQueueRepository.getResolved = async () => [
+    // Received an hour ago → green for 48h.
+    { requestId: 'TR-20260731-001', user: '7430648262', status: 'approved', createdAt: daysAgo(1), resolvedAt: new Date(Date.now() - 3600000).toISOString(), actionJSON: { action: 'transfer_stock', from: 'IDUMOTA', to: 'Kano office', stage: 'in_transit', lines: [] } },
+    // Received four days ago → outside the window, never shown.
+    { requestId: 'TR-20260720-001', user: '7430648262', status: 'approved', createdAt: daysAgo(9), resolvedAt: daysAgo(4), actionJSON: { action: 'transfer_stock', from: 'Lagos', to: 'IDUMOTA', stage: 'in_transit', lines: [] } },
+    // Rejected transfers are not greens.
+    { requestId: 'TR-20260730-002', user: '7430648262', status: 'rejected', createdAt: daysAgo(2), resolvedAt: new Date().toISOString(), actionJSON: { action: 'transfer_stock', from: 'Lagos', to: 'IDUMOTA', stage: 'requested', lines: [] } },
   ];
   try {
     const bot = createFakeBot();
     await flow.start(bot, ADMIN, ADMIN, null);
     const catChip = lastKb(bot).find((b) => b.callback_data === 'abx:cat:transfers');
-    assert.match(catChip.text, /1 to dispatch · 1 in transit/, `category mix shown, got: ${catChip.text}`);
+    assert.match(catChip.text, /1 to dispatch · 1 in transit · 1 ✅/, `category mix shown, got: ${catChip.text}`);
 
     await flow.handleCallback(bot, cb('abx:cat:transfers', ADMIN));
     const chips = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:trf:')).map((b) => b.text);
     assert.ok(chips.some((t) => t.includes('🟠DSP') && t.includes('LAG▸KAN') && t.includes('24Jul·01')), `requested stage mnemonic, got: ${chips}`);
     assert.ok(chips.some((t) => t.includes('📦RCV') && t.includes('IDU▸KAN') && t.includes('24Jul·03')), `in-transit stage mnemonic, got: ${chips}`);
-    assert.match(lastText(bot), /🟠DSP = dispatch pending/, 'legend teaches the codes');
+    assert.ok(chips.some((t) => t.includes('✅') && t.includes('31Jul·01')), `received green shown, got: ${chips}`);
+    assert.equal(chips.length, 3, 'old + rejected resolved rows never appear');
+    assert.equal(chips[chips.length - 1].includes('✅'), true, 'greens ride at the bottom');
+    assert.match(lastText(bot), /2\* open · 1 ✅/, `header splits open vs received, got: ${lastText(bot)}`);
+    assert.match(lastText(bot), /✅ = received \(48h\)/, 'legend teaches the codes');
   } finally {
     approvalQueueRepository.getAllPending = orig;
+    approvalQueueRepository.getResolved = origResolved;
     sessionStore.clear(ADMIN);
   }
 });
