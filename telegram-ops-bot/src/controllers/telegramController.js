@@ -2393,7 +2393,15 @@ async function showReturnThanThanPicker(bot, chatId, userId) {
 async function showReturnThanConfirm(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const text = `↩️ *Confirm Return Than*\n\nBale: *${session.packageNo}*\nThan: *#${session.thanNo}*\nDesign: ${session.design}${session.shade ? ' ' + session.shade : ''}\n\n_Will mark the than available again. Queues 2-admin approval._`;
+  // RET-1 — the confirm card names the buyer whose account the return
+  // will credit, so a wrong pick is caught here, not at admin approval.
+  let rtSoldTo = '';
+  try {
+    const t = await inventoryRepository.findThan(session.packageNo, session.thanNo);
+    rtSoldTo = (t && t.soldTo) || '';
+  } catch (_) { /* card still renders without the buyer line */ }
+  const { mdEscape: rtEsc } = require('../utils/flowKit');
+  const text = `↩️ *Confirm Return Than*\n\nBale: *${session.packageNo}*\nThan: *#${session.thanNo}*\nDesign: ${session.design}${session.shade ? ' ' + session.shade : ''}\n👤 Sold to: *${rtEsc(rtSoldTo || '(no customer recorded)')}* — the return credits this account\n\n_Will mark the than available again. Queues 2-admin approval._`;
   await editOrSend(bot, chatId, session.flowMessageId, text, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [
@@ -2404,6 +2412,124 @@ async function showReturnThanConfirm(bot, chatId, userId) {
       [{ text: '⬅️ Back', callback_data: 'rtb:than' }],
     ] },
   });
+}
+
+/* ─── RET-1 — typed-return confirm preview ──────────────────────────────
+ * Typed "Return Bale X" used to queue the approval sight-unseen: a
+ * mistyped bale number returned the WRONG bale and credited the wrong
+ * customer's ledger. The preview shows exactly what will be reversed —
+ * and WHO it was sold to — before anything queues. Naming a customer in
+ * the command ("return Bale X from Benduku") is cross-checked against
+ * the bale's actual buyer(s) and blocked on mismatch.
+ */
+async function startTypedReturnPreview(bot, chatId, userId, action, packageNo, thanNo, claimedCustomer, msgFrom) {
+  const { mdEscape } = require('../utils/flowKit');
+  const pkg = String(packageNo || '').trim();
+  const pkgMd = mdEscape(pkg);
+  const rows = await inventoryRepository.findByPackage(pkg);
+  if (!rows.length) {
+    await bot.sendMessage(chatId, `⚠️ Bale *${pkgMd}* was not found in Inventory — check the bale number.`, { parse_mode: 'Markdown' });
+    return;
+  }
+  const sold = rows.filter((r) => r.status === 'sold'
+    && (action === 'return_package' || String(r.thanNo) === String(thanNo)));
+  if (!sold.length) {
+    await bot.sendMessage(chatId,
+      action === 'return_package'
+        ? `⚠️ Bale *${pkgMd}* has no sold thans — nothing to return.`
+        : `⚠️ Than *#${thanNo}* of Bale *${pkgMd}* is not marked sold — nothing to return.`,
+      { parse_mode: 'Markdown' });
+    return;
+  }
+  const yards = sold.reduce((s, r) => s + (r.yards || 0), 0);
+  const soldToNames = [...new Set(sold.map((r) => String(r.soldTo || '').trim()).filter(Boolean))];
+
+  // A whole-bale return whose thans belong to DIFFERENT buyers cannot be
+  // credited to one account — the executor credits a single ledger. Force
+  // per-than returns instead of promising an impossible credit.
+  if (action === 'return_package' && soldToNames.length > 1) {
+    await bot.sendMessage(chatId,
+      `🚫 Bale *${pkgMd}* was sold to *${mdEscape(soldToNames.join(', '))}* — more than one buyer.\nA whole-bale return cannot credit one account. Return it than by than instead (↩️ Return Than, or "Return than N from Bale ${pkgMd}"). Nothing was queued.`,
+      { parse_mode: 'Markdown' });
+    return;
+  }
+
+  // Resolve buyers to canonical entities. Keys carry BOTH the entity id
+  // (when the row has one) and the normalized name, so an id-less
+  // hand-added row can never collapse to '' and false-match, and an
+  // unregistered spelling still compares by name.
+  const customerEntity = require('../services/customerEntity');
+  const buyerKeys = new Set();
+  let singleBuyer = null;
+  for (const n of soldToNames) {
+    buyerKeys.add(n.toLowerCase());
+    try {
+      const b = await customerEntity.resolve({ name: n });
+      if (b) {
+        if (b.customer_id) buyerKeys.add(b.customer_id);
+        buyerKeys.add(String(b.name || '').toLowerCase());
+        if (soldToNames.length === 1) singleBuyer = b;
+      }
+    } catch (_) { /* name key already added */ }
+  }
+  const buyerLabel = soldToNames.length
+    ? (singleBuyer ? singleBuyer.name : soldToNames.join(', '))
+    : '(no customer recorded on this bale)';
+
+  // Belongs-to check: a customer named in the command must be a buyer.
+  let unverifiedClaim = '';
+  if (claimedCustomer && soldToNames.length) {
+    const claimedKeys = new Set([String(claimedCustomer).trim().toLowerCase()]);
+    try {
+      const c = await customerEntity.resolve({ name: claimedCustomer });
+      if (c) {
+        if (c.customer_id) claimedKeys.add(c.customer_id);
+        claimedKeys.add(String(c.name || '').toLowerCase());
+      }
+    } catch (_) { /* raw name key already added */ }
+    const overlap = [...claimedKeys].some((k) => k && buyerKeys.has(k));
+    if (!overlap) {
+      await bot.sendMessage(chatId,
+        `🚫 *Bale ${pkgMd} was NOT sold to ${mdEscape(claimedCustomer)}.*\nIt was sold to *${mdEscape(buyerLabel)}*.\nCheck the bale number — a wrong return credits the wrong customer's account. Nothing was queued.`,
+        { parse_mode: 'Markdown' });
+      return;
+    }
+  } else if (claimedCustomer && !soldToNames.length) {
+    unverifiedClaim = `\n⚠️ You named *${mdEscape(claimedCustomer)}* but this bale records NO buyer — the claim could not be checked. Verify the bale number.`;
+  }
+
+  // A newer preview supersedes any older one: disarm the old card's
+  // buttons so a stale ✅ cannot queue a different bale than it shows.
+  const prev = sessionStore.get(userId);
+  if (prev && prev.type === 'return_confirm_flow' && prev.flowMessageId) {
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+      { chat_id: chatId, message_id: prev.flowMessageId }).catch(() => {});
+  }
+
+  sessionStore.set(userId, {
+    type: 'return_confirm_flow', step: 'confirm', flowMessageId: null,
+    ret: {
+      action, packageNo: pkg, thanNo: thanNo || null,
+      soldTo: soldToNames.join(', '),
+      customerId: singleBuyer ? singleBuyer.customer_id : '',
+      design: sold[0].design || '', thans: sold.length, yards,
+      fromName: (msgFrom && msgFrom.from && msgFrom.from.first_name) || '',
+    },
+  });
+  const what = action === 'return_package' ? `Bale *${pkgMd}* (whole bale)` : `Bale *${pkgMd}* — Than *#${thanNo}*`;
+  const sent = await bot.sendMessage(chatId,
+    `↩️ *Confirm Return*\n\n${what}\nDesign: ${mdEscape(sold[0].design || '—')}\n${sold.length} sold than${sold.length === 1 ? '' : 's'} · ${fmtQty(yards)} yds\n👤 Sold to: *${mdEscape(buyerLabel)}*${unverifiedClaim}\n\nApproving puts the stock back and credits this customer's account.\nQueues dual-admin approval.`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
+      [
+        { text: '✅ Submit for approval', callback_data: 'rtx:ok' },
+        { text: '❌ Cancel', callback_data: 'rtx:no' },
+      ],
+      [{ text: '🏠 Menu', callback_data: 'act:__back__' }],
+    ] } });
+  if (sent && sent.message_id) {
+    const s = sessionStore.get(userId);
+    if (s && s.type === 'return_confirm_flow') { s.flowMessageId = sent.message_id; sessionStore.set(userId, s); }
+  }
 }
 
 /** Date-range picker shown when user taps the Sample Status button. */
@@ -4107,31 +4233,15 @@ async function handleMessage(bot, msg) {
       case 'return_than': {
         if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Return than 2 from Bale 5801"'); return; }
         if (!intent.thanNo) { await bot.sendMessage(chatId, 'Which than number?'); return; }
-        const rtQueued = await requireApproval(bot, chatId, msg, userId, 'return_than',
-          { action: 'return_than', packageNo: intent.packageNo, thanNo: intent.thanNo },
-          await require('../services/approvalCards').buildReturnCard({ packageNo: intent.packageNo, thanNo: intent.thanNo }));
-        if (rtQueued) return;
-        const retThan = await inventoryService.returnThan(intent.packageNo, intent.thanNo, userId);
-        if (retThan.status === 'completed') {
-          await bot.sendMessage(chatId, `✅ Returned than ${intent.thanNo} from Bale ${intent.packageNo} (${fmtQty(retThan.than.yards)} yds) — now available.`);
-        } else {
-          await bot.sendMessage(chatId, retThan.message || 'Could not return.');
-        }
+        // RET-1 — preview + buyer check first; queuing happens on rtx:ok.
+        await startTypedReturnPreview(bot, chatId, userId, 'return_than', intent.packageNo, intent.thanNo, intent.customer, msg);
         return;
       }
 
       case 'return_package': {
         if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which Bale? e.g. "Return Bale 5801"'); return; }
-        const rpQueued = await requireApproval(bot, chatId, msg, userId, 'return_package',
-          { action: 'return_package', packageNo: intent.packageNo },
-          await require('../services/approvalCards').buildReturnCard({ packageNo: intent.packageNo }));
-        if (rpQueued) return;
-        const retPkg = await inventoryService.returnPackage(intent.packageNo, userId);
-        if (retPkg.status === 'completed') {
-          await bot.sendMessage(chatId, `✅ Returned Bale ${intent.packageNo}: 1 Bale (${retPkg.returnedThans} thans), ${fmtQty(retPkg.returnedYards)} yards — now available.`);
-        } else {
-          await bot.sendMessage(chatId, retPkg.message || 'Could not return.');
-        }
+        // RET-1 — preview + buyer check first; queuing happens on rtx:ok.
+        await startTypedReturnPreview(bot, chatId, userId, 'return_package', intent.packageNo, null, intent.customer, msg);
         return;
       }
 
@@ -7775,6 +7885,50 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const summary = `Transfer Than\nBale: ${session.packageNo}\nThan: ${session.thanNo}\nDesign: ${session.design || '?'} ${session.shade || ''}\nFrom: ${session.fromWh}\nTo: ${session.toWh}`;
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'Than transfer requires admin approval');
     sessionStore.clear(uid);
+
+  /* ─── RET-1 — typed-return preview confirm/cancel ─── */
+  } else if (data === 'rtx:ok' || data === 'rtx:no') {
+    const uid = String(callbackQuery.from.id);
+    const rtxChat = callbackQuery.message.chat.id;
+    const rtxMenuRow = { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] };
+    const session = sessionStore.get(uid);
+    // The tap must come from THIS session's card: a newer preview
+    // supersedes older ones (their buttons are disarmed best-effort, but
+    // Telegram edits can fail) — without this check a stale ✅ would queue
+    // a DIFFERENT bale than the card shows.
+    const boundToCard = session && session.type === 'return_confirm_flow' && session.ret
+      && (!session.flowMessageId || session.flowMessageId === callbackQuery.message.message_id);
+    if (!boundToCard) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Card expired.' });
+      await bot.editMessageText('This return card has expired or was replaced by a newer one — type the return command again.',
+        { chat_id: rtxChat, message_id: callbackQuery.message.message_id, reply_markup: rtxMenuRow }).catch(() => {});
+      return;
+    }
+    // Detach the session BEFORE the first await so a double-tap's second
+    // callback finds nothing and cannot double-queue the approval.
+    const ret = session.ret;
+    const rtxMsgId = session.flowMessageId || callbackQuery.message.message_id;
+    sessionStore.clear(uid);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    if (data === 'rtx:no') {
+      await bot.editMessageText('❌ Return cancelled — nothing was queued.',
+        { chat_id: rtxChat, message_id: rtxMsgId, reply_markup: rtxMenuRow }).catch(() => {});
+      return;
+    }
+    const aj = { action: ret.action, packageNo: ret.packageNo, soldTo: ret.soldTo, customerId: ret.customerId };
+    if (ret.action === 'return_than') aj.thanNo = ret.thanNo;
+    // Pseudo-msg keeps the requester's display name on the admin card for
+    // users without a Users-sheet row (requireApproval falls back to it).
+    const rtxMsg = ret.fromName ? { from: { first_name: ret.fromName } } : null;
+    const queued = await requireApproval(bot, rtxChat, rtxMsg, uid, ret.action, aj,
+      await require('../services/approvalCards').buildReturnCard({ packageNo: ret.packageNo, thanNo: ret.thanNo }));
+    if (queued) {
+      await bot.editMessageText(
+        `⏳ Return of Bale ${ret.packageNo}${ret.thanNo ? ` Than #${ret.thanNo}` : ''} submitted for dual-admin approval.${ret.soldTo ? `\n👤 Credits: ${ret.soldTo}` : ''}`,
+        { chat_id: rtxChat, message_id: rtxMsgId, reply_markup: rtxMenuRow }).catch(() => {});
+    } else {
+      await bot.sendMessage(rtxChat, '⚠️ Could not queue the return — type the command again.');
+    }
 
   /* ─── RETURN THAN TAP FLOW ─── */
   } else if (data.startsWith('rtcanc:')) {

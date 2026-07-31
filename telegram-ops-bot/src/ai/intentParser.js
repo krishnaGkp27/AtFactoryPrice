@@ -62,8 +62,8 @@ ACTION RULES:
 - sell_batch: selling multiple whole packages at once. Needs packageNos (array), customer.
 - sell_mixed: selling individual thans from DIFFERENT packages in one transaction. Needs thanItems (array of {packageNo, thanNo}), customer. Use this when user says things like "sell than 1 from 5801, than 2 from 5804, than 1 from 5805 to Customer".
 - update_price: update selling price per yard. Needs design+shade OR packageNo, and price. For different price per warehouse (admin only): use design and warehouse, e.g. "Set price for design 44200 at Kano to 1500". Optional shade.
-- return_than: undo sale of a than (mark available again). Needs packageNo, thanNo.
-- return_package: undo sale of entire package. Needs packageNo.
+- return_than: undo sale of a than (mark available again). Needs packageNo, thanNo. If the user names who returned the goods ("... from Benduku"), set customer — the bot cross-checks it against the bale's real buyer.
+- return_package: undo sale of entire package. Needs packageNo. Set customer when named, same as return_than.
 - add: adding new stock/package.
 - check: stock inquiry. Can filter by design, shade, warehouse, or packageNo.
 - analyze: analytics (totals, trends, who bought what, revenue).
@@ -153,6 +153,7 @@ User: "Sell packages 5801, 5802, 5803 to Ibrahim" → {"action":"sell_batch","de
 User: "Update price of 44200 BLACK to 1500" → {"action":"update_price","design":"44200","shade":"BLACK","packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":1500,"confidence":0.9,"clarification":null}
 User: "Return than 2 from package 5801" → {"action":"return_than","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":2,"customer":null,"warehouse":null,"confidence":0.9,"clarification":null}
 User: "Return package 5803" → {"action":"return_package","design":null,"shade":null,"packageNo":"5803","packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"confidence":0.9,"clarification":null}
+User: "Return Bale 5803 from Benduku" → {"action":"return_package","design":null,"shade":null,"packageNo":"5803","packageNos":null,"thanNo":null,"customer":"Benduku","warehouse":null,"confidence":0.9,"clarification":null}
 User: "Set price of package 5801 to 1200 per yard" → {"action":"update_price","design":null,"shade":null,"packageNo":"5801","packageNos":null,"thanNo":null,"customer":null,"warehouse":null,"price":1200,"confidence":0.9,"clarification":null}
 User: "Set price for design 44200 at Kano to 1500" → {"action":"update_price","design":"44200","shade":null,"packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":"Kano","price":1500,"confidence":0.9,"clarification":null}
 User: "Set price for design 44200 BLACK at Lagos to 1200" → {"action":"update_price","design":"44200","shade":"BLACK","packageNo":null,"packageNos":null,"thanNo":null,"customer":null,"warehouse":"Lagos","price":1200,"confidence":0.9,"clarification":null}

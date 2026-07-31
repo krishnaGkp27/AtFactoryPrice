@@ -182,6 +182,27 @@ async function buildReturnCard({ packageNo, thanNo }) {
       text += `\nCurrently available there: ${info.availableThans || 0} thans, ${fmtQty(info.availableYards || 0)} yds`;
     }
   } catch (_) { /* lookup failure must not block the card */ }
+  // RET-1 — the signing admins are the safety net against a wrong bale
+  // number: show exactly what is being reversed and WHOSE account gets
+  // the credit, straight from the Inventory rows.
+  try {
+    const inventoryRepository = require('../repositories/inventoryRepository');
+    const rows = await inventoryRepository.findByPackage(packageNo);
+    const sold = rows.filter((r) => r.status === 'sold'
+      && (!thanNo || String(r.thanNo) === String(thanNo)));
+    if (sold.length) {
+      const names = [...new Set(sold.map((r) => String(r.soldTo || '').trim()).filter(Boolean))];
+      const yds = sold.reduce((s, r) => s + (r.yards || 0), 0);
+      text += `\nReturning: ${sold.length} sold than${sold.length === 1 ? '' : 's'}, ${fmtQty(yds)} yds`;
+      if (names.length > 1) {
+        text += `\n⚠️ Sold to MULTIPLE buyers (${names.join(', ')}) — the ledger credits only ONE account. Reject and have it returned than by than.`;
+      } else {
+        text += `\nSold to: ${names.length ? names[0] : '(no customer recorded)'} — the return credits this account`;
+      }
+    } else {
+      text += '\n⚠️ No sold thans found on this bale — the executor will refuse.';
+    }
+  } catch (_) { /* lookup failure must not block the card */ }
   text += '\n⚠️ Reverses a completed sale — verify the goods physically came back.';
   return text;
 }
