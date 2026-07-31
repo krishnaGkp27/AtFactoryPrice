@@ -335,12 +335,51 @@ function buildReceiveDetail(aj) {
  * actions get their full card; everything else gets a generic card that
  * surfaces every recognisable business field instead of dropping them.
  */
+/**
+ * APX-4 (owner 31-Jul) — human-readable request reference. Approval ids
+ * are UUIDs (idempotency keys); nobody should have to read one. The ref
+ * is STABLE (first 4 id characters, not a list position — "R-9DDC" means
+ * the same request on every admin's screen forever) and display-only:
+ * buttons and sheet rows keep the full id underneath.
+ */
+function shortRequestRef(requestId) {
+  const clean = String(requestId || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  return clean ? `R-${clean.slice(0, 4)}` : 'R-????';
+}
+
+/**
+ * APX-4 — Add Warehouse card with CONTEXT: the existing warehouses ride
+ * on the card, so a duplicate or a mix-up (a design category typed as a
+ * warehouse) is caught at a glance instead of after approval.
+ */
+async function buildAddWarehouseCard(aj) {
+  const name = String(aj.name || aj.warehouse || '').trim();
+  let text = `🏭 Add Warehouse — "${name || '?'}"`;
+  try {
+    const inventoryRepository = require('../repositories/inventoryRepository');
+    const existing = (await inventoryRepository.getWarehouses()).filter(Boolean);
+    text += `\nExisting (${existing.length}): ${existing.join(' · ') || '—'}`;
+    if (name && existing.some((w) => String(w).trim().toLowerCase() === name.toLowerCase())) {
+      text += `\n⚠️ "${name}" ALREADY EXISTS — approving would duplicate it.`;
+    }
+  } catch (_) { /* context is best-effort; the card still renders */ }
+  try {
+    const designCategoriesRepository = require('../repositories/designCategoriesRepository');
+    const cats = new Set((designCategoriesRepository.DEFAULT_CATEGORIES || []).map((c) => String(c).toLowerCase()));
+    if (name && cats.has(name.toLowerCase())) {
+      text += `\n⚠️ "${name}" is also a design category — check this isn't a mix-up.`;
+    }
+  } catch (_) { /* best-effort */ }
+  return text;
+}
+
 async function buildCardFromActionJSON(aj) {
   if (!aj || typeof aj !== 'object') return 'pending action';
   try {
     if (aj.action === 'sell_package') return await buildSellPackageCard(aj);
     if (aj.action === 'sale_bundle') return await buildSaleBundleCard(aj);
     if (aj.action === 'supply_request') return buildSupplyRequestCard(aj);
+    if (aj.action === 'add_warehouse') return await buildAddWarehouseCard(aj);
   } catch (_) { /* fall through to generic */ }
   const parts = [String(aj.action || 'action').replace(/_/g, ' ')];
   const fields = [
@@ -393,6 +432,8 @@ module.exports = {
   resolveUserLabel,
   _resetNameCacheForTests,
   sortSaleItems,
+  shortRequestRef,
+  buildAddWarehouseCard,
   buildSaleCard,
   buildSellPackageCard,
   buildReturnCard,

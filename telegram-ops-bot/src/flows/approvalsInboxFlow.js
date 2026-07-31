@@ -504,15 +504,15 @@ async function renderItem(bot, chatId, userId, idx) {
       const others = group.filter((g) => String(g.requestId) !== String(item.requestId));
       dupNote = `\n\n⧉ *${group.length} identical requests* were queued within minutes of each other.\n`
         + `_Approve ONE — approving more applies this ${actionLabel(item)} ${group.length} times._\n`
-        + `_Others: ${others.map((o) => o.requestId).join(', ')}_`;
+        + `_Others: ${others.map((o) => approvalCards.shortRequestRef(o.requestId)).join(', ')}_`;
     }
   } catch (e) {
     logger.warn(`approvalsInbox: duplicate check failed for ${item.requestId}: ${e.message}`);
   }
 
+  // APX-4 — one compact footer line; the raw UUID never reaches the screen.
   await render(bot, chatId, userId,
-    `${card}\n\n_Requested by ${who} · ${days > 0 ? `${days} day${days === 1 ? '' : 's'} ago` : 'today'}_\n`
-    + `_Request: ${item.requestId}_${dualNote}${dupNote}`,
+    `${card}\n\n_Requested by ${who} · ${ageDot(days)}${days > 0 ? `${days}d` : 'today'} · ${approvalCards.shortRequestRef(item.requestId)}_${dualNote}${dupNote}`,
     [
       [{ text: '✅ Approve', callback_data: `abx:ok:${idx}` },
         { text: '❌ Reject', callback_data: `abx:no:${idx}` }],

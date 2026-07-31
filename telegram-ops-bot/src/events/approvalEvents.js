@@ -20,6 +20,8 @@ const fmtDate = require('../utils/formatDate');
 // require deeper in the file.
 const sessionStore = require('../utils/sessionStore');
 const cartFormat = require('../utils/cartFormat');
+// APX-4 — human-readable request refs on every user-facing message.
+const { shortRequestRef } = require('../services/approvalCards');
 // ANL-1 — usage analytics capture (fire-and-forget; no-op until enabled).
 const usageTracker = require('../services/usageTracker');
 
@@ -67,7 +69,7 @@ async function updateRequesterCard(bot, item, requestId, requestingUser, headlin
       logger.warn(`DSP-1: customer contact lookup failed for ${requestId}: ${e.message}`);
     }
   }
-  const text = `${headline}\n\n👤 Customer: *${customer || '—'}*${contact}\nRequest: \`${requestId}\``;
+  const text = `${headline}\n\n👤 Customer: *${customer || '—'}*${contact}\nRef: ${shortRequestRef(requestId)}`;
 
   const chatId = aj.requesterChatId || requestingUser;
   const messageId = aj.requesterMessageId;
@@ -789,10 +791,10 @@ async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, it
       }
       const balesWordMsg = rep && rep.appliedPkgCount === 1 ? 'Bale' : 'Bales';
       let msg = partial
-        ? `⚠️ Request ${requestId} approved, but applied only ${rep.appliedPkgCount} of ${rep.requestedItems} ${balesWordMsg}. Ledger updated for what was applied.`
+        ? `⚠️ Request ${shortRequestRef(requestId)} approved, but applied only ${rep.appliedPkgCount} of ${rep.requestedItems} ${balesWordMsg}. Ledger updated for what was applied.`
         : (erpFails.length
-          ? `⚠️ Request ${requestId} approved — stock updated, but the LEDGER write failed (see below).`
-          : `✅ Request ${requestId} approved. Sale and ledger updated.`);
+          ? `⚠️ Request ${shortRequestRef(requestId)} approved — stock updated, but the LEDGER write failed (see below).`
+          : `✅ Request ${shortRequestRef(requestId)} approved. Sale and ledger updated.`);
       msg += partialTail;
       msg += erpTail;
       if (driveInfo) msg += `\n📎 [View Sales Bill](${driveInfo.webViewLink})`;
@@ -802,7 +804,7 @@ async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, it
       // that path keeps the plain message.
       if (partial) {
         await notifyEmployee(bot, requestingUser, requestId,
-          `⚠️ Your request (${requestId}) was approved, but only ${rep.appliedPkgCount} of ${rep.requestedItems} ${balesWordMsg} could be applied. ${rep.failedItems.length} item(s) were stale/invalid and skipped. Please check with admin.${partialTail}`);
+          `⚠️ Your request ${shortRequestRef(requestId)} was approved, but only ${rep.appliedPkgCount} of ${rep.requestedItems} ${balesWordMsg} could be applied. ${rep.failedItems.length} item(s) were stale/invalid and skipped. Please check with admin.${partialTail}`);
       } else {
         await updateRequesterCard(bot, item, requestId, requestingUser,
           '✅ *Approved — ready to dispatch*');
@@ -1469,7 +1471,7 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
           approvedMsg = `⚠️ Request ${requestId} approved — changes applied, but these ledger/book entries FAILED:\n${failLines}\nCheck AuditLog (erp_hook_failed) and re-post manually.`;
         }
         await bot.sendMessage(chatIdCb, approvedMsg);
-        await notifyEmployee(bot, requestingUser, requestId, `✅ Your request (${requestId}) has been approved by admin. Changes applied.`);
+        await notifyEmployee(bot, requestingUser, requestId, `✅ Your request ${shortRequestRef(requestId)} has been approved by admin. Changes applied.`);
 
         // CAT-C1 — a container landed with designs lacking fresh catalogue
         // photos (shades differ per shipment): ONE checklist card to every
@@ -1551,7 +1553,7 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
       const result = await inventoryService.rejectApproval(requestId, adminId);
       if (result.ok) {
         await bot.sendMessage(chatIdCb, `❌ Request ${requestId} rejected.`);
-        await notifyEmployee(bot, requestingUser, requestId, `❌ Your request (${requestId}) has been rejected by admin.`);
+        await notifyEmployee(bot, requestingUser, requestId, `❌ Your request ${shortRequestRef(requestId)} has been rejected by admin.`);
       } else {
         await bot.sendMessage(chatIdCb, `⚠️ Rejection failed: ${result.message || 'Unknown error'}`);
       }

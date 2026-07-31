@@ -72,6 +72,9 @@ async function getRequesterDisplayName(userId, msgOrNull) {
 
 // Approval request IDs flow through idGenerator (single source of truth).
 const genId = require('../utils/idGenerator').requestId;
+// APX-4 — display-only short refs for those ids (R-XXXX); buttons and
+// sheet rows keep the full UUID underneath.
+const { shortRequestRef } = require('../services/approvalCards');
 
 /**
  * CUS-2 — shared gate for EVERY new-customer door (CRM tile + the embedded
@@ -217,7 +220,8 @@ async function requireApproval(bot, chatId, msg, userId, action, actionJSON, sum
   usageTracker.track({ userId, surface: 'approval', feature: action, event: 'approval_queued', requestId });
   const isAdm = config.access.adminIds.includes(userId);
   const approverLabel = isAdm ? '2nd admin' : 'admin';
-  await bot.sendMessage(chatId, `⏳ Needs ${approverLabel} approval (${risk.reason}). Request: ${requestId}`);
+  // APX-4 — human-readable ref; the raw UUID stays internal.
+  await bot.sendMessage(chatId, `⏳ Needs ${approverLabel} approval (${risk.reason}). Ref: ${shortRequestRef(requestId)}`);
   const userLabel = await getRequesterDisplayName(userId, msg);
   const excludeId = isAdm ? userId : undefined;
   await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, risk.reason, excludeId);
@@ -4281,7 +4285,7 @@ async function handleMessage(bot, msg) {
         const userLabel = await getRequesterDisplayName(userId, msg);
         const summary = `Price Update Request\n${label}\nNew price: ${fmtMoney(intent.price)}/yard`;
         await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, '2nd admin approval required', userId);
-        await bot.sendMessage(chatId, `⏳ Price update for ${label} to ${fmtMoney(intent.price)}/yard submitted for 2nd admin approval.\nRequest: ${requestId}`);
+        await bot.sendMessage(chatId, `⏳ Price update for ${label} to ${fmtMoney(intent.price)}/yard submitted for 2nd admin approval.\nRef: ${shortRequestRef(requestId)}`);
         return;
       }
 
@@ -6748,7 +6752,7 @@ async function executeSale(bot, chatId, userId) {
       }
     }
     const approverLabel = isSubmitterAdmin ? '2nd admin' : 'admin';
-    await bot.sendMessage(chatId, `⏳ Sale submitted for ${approverLabel} approval. Request: ${requestId}\n${totalPkgs} Bale${totalPkgs === 1 ? '' : 's'} (${totalThans} thans), ${fmtQty(totalYards)} yards${collectedCustomer ? ` to ${collectedCustomer}` : ' — the admin assigns the customer, rate and payment; you will get the customer name and number back here once approved'}`);
+    await bot.sendMessage(chatId, `⏳ Sale submitted for ${approverLabel} approval. Ref: ${shortRequestRef(requestId)}\n${totalPkgs} Bale${totalPkgs === 1 ? '' : 's'} (${totalThans} thans), ${fmtQty(totalYards)} yards${collectedCustomer ? ` to ${collectedCustomer}` : ' — the admin assigns the customer, rate and payment; you will get the customer name and number back here once approved'}`);
     sessionStore.clear(userId);
     return;
   }
@@ -8102,7 +8106,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const userLabel = await getRequesterDisplayName(uid, null);
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'Sample requires admin approval',
       config.access.adminIds.includes(uid) ? uid : undefined);
-    await bot.sendMessage(callbackQuery.message.chat.id, `⏳ Sample request submitted for admin approval.\nRequest: ${requestId}`);
+    await bot.sendMessage(callbackQuery.message.chat.id, `⏳ Sample request submitted for admin approval.\nRef: ${shortRequestRef(requestId)}`);
     sessionStore.clear(uid);
 
   } else if (data.startsWith('smpcanc:')) {
@@ -10388,7 +10392,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
       ? (isAdmin ? '2nd admin approval' : 'admin approval')
       : 'Dispatch confirmation';
     await bot.sendMessage(chatId,
-      `✅ Supply request submitted.\n\n🏭 ${actionJSON.warehouse}\n━━━━━━━━━━━━━━━━━━━━━━\n${cartLines}\n━━━━━━━━━━━━━━━━━━━━━━\n📦 Total: ${totalPkgs} ${containerPlural}\n👤 ${actionJSON.customer}\n📅 ${fmtDate(actionJSON.salesDate)}\n\n⏳ Waiting for ${waitingFor}.\nRequest: ${requestId}`, {
+      `✅ Supply request submitted.\n\n🏭 ${actionJSON.warehouse}\n━━━━━━━━━━━━━━━━━━━━━━\n${cartLines}\n━━━━━━━━━━━━━━━━━━━━━━\n📦 Total: ${totalPkgs} ${containerPlural}\n👤 ${actionJSON.customer}\n📅 ${fmtDate(actionJSON.salesDate)}\n\n⏳ Waiting for ${waitingFor}.\nRef: ${shortRequestRef(requestId)}`, {
         parse_mode: 'Markdown',
       });
 

@@ -107,7 +107,7 @@ test('APX-1: Approve delegates to the standard handler with approve:<id>', async
     await flow.start(bot, ADMIN, ADMIN, null);
     await flow.handleCallback(bot, cb('abx:cat:sales', ADMIN));
     await flow.handleCallback(bot, cb('abx:i:0', ADMIN));
-    assert.match(lastText(bot), /Request: S-NEW/, 'the card names the request (newest leads)');
+    assert.match(lastText(bot), /R-SNEW/, 'the card carries the short ref (newest leads), never the raw id line');
     const approve = lastKb(bot).find((b) => /Approve/.test(b.text));
     assert.ok(approve, 'the card carries an Approve button');
 
@@ -207,6 +207,26 @@ test('APX-3b/3d: transfer chips carry stage mnemonics + 48h received greens', as
   }
 });
 
+/* APX-4 — context + short refs on approval cards. */
+test('APX-4: add-warehouse card shows existing warehouses and mix-up warnings', async () => {
+  const inventoryRepository = require(path.join(SRC, 'repositories/inventoryRepository'));
+  const orig = inventoryRepository.getWarehouses;
+  inventoryRepository.getWarehouses = async () => ['Lagos', 'Kano office', 'IDUMOTA'];
+  try {
+    const card = await approvalCards.buildAddWarehouseCard({ action: 'add_warehouse', name: 'Cashmere' });
+    assert.match(card, /Add Warehouse — "Cashmere"/);
+    assert.match(card, /Existing \(3\): Lagos · Kano office · IDUMOTA/, `context line present, got: ${card}`);
+    assert.match(card, /design category/, 'category mix-up warning fires for Cashmere');
+
+    const dup = await approvalCards.buildAddWarehouseCard({ action: 'add_warehouse', name: 'lagos' });
+    assert.match(dup, /ALREADY EXISTS/, 'case-insensitive duplicate warning');
+
+    assert.equal(approvalCards.shortRequestRef('9ddcb92e-50f6-43f5-9d42-1a0200f4a896'), 'R-9DDC', 'stable display ref from the UUID');
+  } finally {
+    inventoryRepository.getWarehouses = orig;
+  }
+});
+
 test('APX-1: the inbox is admin-only', async () => {
   const bot = createFakeBot();
   await flow.start(bot, EMPLOYEE, EMPLOYEE, null);
@@ -288,11 +308,11 @@ test('APX-2: the card warns before the tap that would double-apply the sale', as
     await flow.handleCallback(bot, cb('abx:cat:dupes', ADMIN));
     await flow.handleCallback(bot, cb('abx:i:0', ADMIN));
     const text = lastText(bot);
-    assert.match(text, /Request: D-3/, 'newest copy first');
+    assert.match(text, /R-D3/, 'newest copy first (short ref)');
     assert.match(text, /3 identical requests/, `the card states the count, got: ${text}`);
     assert.match(text, /Approve ONE/, 'and says what to do about it');
-    assert.match(text, /D-1/, 'siblings are named so the extras can be rejected');
-    assert.match(text, /D-2/);
+    assert.match(text, /R-D1/, 'siblings are named (short refs) so the extras can be rejected');
+    assert.match(text, /R-D2/);
     // The warning must not disarm the card — approving is still one tap.
     assert.ok(lastKb(bot).some((b) => /Approve/.test(b.text)), 'Approve is still offered');
   });
@@ -305,7 +325,7 @@ test('APX-2: a lone request gets no duplicate warning', async () => {
     await flow.handleCallback(bot, cb('abx:cat:sales', ADMIN));
     await flow.handleCallback(bot, cb('abx:i:0', ADMIN)); // SOLO, newest — leads the list
     const text = lastText(bot);
-    assert.match(text, /Request: SOLO/);
+    assert.match(text, /R-SOLO/);
     assert.ok(!/identical requests/.test(text), `no false alarm, got: ${text}`);
   });
 });
