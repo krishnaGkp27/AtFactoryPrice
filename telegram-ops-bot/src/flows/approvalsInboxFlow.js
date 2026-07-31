@@ -240,7 +240,13 @@ async function renderCategories(bot, chatId, userId) {
   }
   const transfers = byCat.get('transfers');
   if (transfers && transfers.length) {
-    rows.push([{ text: `🚚 Transfers — ${transfers.length} → Transfer Stock`, callback_data: 'abx:cat:transfers' }]);
+    // APX-3b (owner 31-Jul): the chip tells the STAGE mix at a glance —
+    // five identical trucks hid which transfers actually needed a hand.
+    const inTransit = transfers.filter((t) => (t.actionJSON || {}).stage === 'in_transit').length;
+    const waiting = transfers.length - inTransit;
+    const mix = [waiting ? `${waiting} to dispatch` : '', inTransit ? `${inTransit} in transit` : '']
+      .filter(Boolean).join(' · ');
+    rows.push([{ text: `🚚 Transfers — ${transfers.length}${mix ? ` (${mix})` : ''}`, callback_data: 'abx:cat:transfers' }]);
   }
   // APX-2 — same request queued more than once (a double-tapped Submit).
   // Flagged, never auto-actioned: approving four copies of one sale would
@@ -307,6 +313,23 @@ function itemsForCategory(session, pending, dupIdx) {
   return list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
+/**
+ * APX-3b — stage-shaded transfer chips (owner 31-Jul-2026). Telegram
+ * buttons cannot be tinted, so the "shade" is the icon + wording:
+ *   🟠 awaiting dispatch  (action sits with the SOURCE warehouse)
+ *   📦 receipt pending    (goods on the road; action sits with the receiver)
+ * Received transfers leave the pending list on the next render
+ * (confirmReceipt resolves the queue row), so no green state is needed.
+ */
+function transferChipLabel(it) {
+  const aj = it.actionJSON || {};
+  const route = aj.from && aj.to ? ` · ${aj.from}→${aj.to}` : '';
+  const stage = aj.stage === 'in_transit'
+    ? '📦 receipt pending'
+    : '🟠 awaiting dispatch';
+  return `${stage} · ${it.requestId}${route}`;
+}
+
 async function renderItems(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
@@ -361,7 +384,7 @@ async function renderItems(bot, chatId, userId) {
     const who = nameOf.get(String(it.user || '')) || it.user || '—';
     const dup = dupIdx.has(String(it.requestId)) ? '⧉ ' : '';
     const label = isTransfers
-      ? `🚚 ${it.requestId} · ${actionLabel(it)}`
+      ? transferChipLabel(it)
       : `${dup}${ageDot(days)} ${shortDate(it.createdAt)} · ${actionLabel(it)} · ${who}`;
     return [{ text: label.slice(0, 60), callback_data: `${isTransfers ? 'abx:trf' : 'abx:i'}:${i}` }];
   });
