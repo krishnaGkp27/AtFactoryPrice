@@ -162,22 +162,26 @@ async function loadQueue() {
 }
 
 /**
- * APX-3d (owner pick G2, 31-Jul): transfers whose receipt landed in
- * Inventory stay visible for 48 hours, marked ✅ — completion is seen
- * without drilling down. confirmReceipt is what flips the bales'
- * warehouse AND resolves the queue row to approved, so status=approved
- * within the window IS the "inventory really changed" signal.
+ * APX-3d/3e: transfers whose receipt landed in Inventory stay visible,
+ * marked ✅ — completion is seen without drilling down. confirmReceipt is
+ * what flips the bales' warehouse AND resolves the queue row to approved,
+ * so status=approved IS the "inventory really changed" signal.
+ *
+ * Retention (owner 31-Jul): greens NEVER leave the list by default
+ * (TRANSFER_RECEIVED_HOURS = 0) — nothing visible may vanish until a
+ * complete backup regime exists. A Settings row restores a window
+ * (e.g. 48) once backups are live. Queue-sheet rows are permanent
+ * either way — this only governs the inbox display.
  */
-const RECEIVED_WINDOW_MS = 48 * 3600 * 1000;
-
 async function recentReceivedTransfers() {
   try {
-    const resolved = await approvalQueueRepository.getResolved();
-    const cutoff = Date.now() - RECEIVED_WINDOW_MS;
-    return resolved
+    const settings = await settingsRepository.getAll().catch(() => ({}));
+    const hours = Number(settings.TRANSFER_RECEIVED_HOURS ?? 0);
+    const cutoff = hours > 0 ? Date.now() - hours * 3600 * 1000 : null;
+    return (await approvalQueueRepository.getResolved())
       .filter((r) => TRANSFER_ACTIONS.includes(String((r.actionJSON || {}).action || ''))
         && String(r.status || '').toLowerCase() === 'approved'
-        && r.resolvedAt && new Date(r.resolvedAt).getTime() >= cutoff)
+        && (cutoff === null || (r.resolvedAt && new Date(r.resolvedAt).getTime() >= cutoff)))
       .sort((a, b) => String(b.resolvedAt).localeCompare(String(a.resolvedAt)));
   } catch (_) { return []; } // best-effort: greens are informational
 }
@@ -442,7 +446,7 @@ async function renderItems(bot, chatId, userId) {
   rows.push(closeRow());
 
   const note = isTransfers
-    ? '\n🟠DSP = dispatch pending · 📦RCV = receive pending · ✅ = received (48h) · from▸to\n_Not approvals — tap one to open its transfer card._'
+    ? '\n🟠DSP = dispatch pending · 📦RCV = receive pending · ✅ = received · from▸to\n_Not approvals — tap one to open its transfer card._'
     : '';
   const headCount = isTransfers
     ? (() => {

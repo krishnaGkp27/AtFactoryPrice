@@ -35,6 +35,7 @@ installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
 loadController();
 const sessionStore = require(path.join(SRC, 'utils/sessionStore'));
 const approvalQueueRepository = require(path.join(SRC, 'repositories/approvalQueueRepository'));
+const settingsRepo = require(path.join(SRC, 'repositories/settingsRepository'));
 const approvalEvents = require(path.join(SRC, 'events/approvalEvents'));
 const approvalCards = require(path.join(SRC, 'services/approvalCards'));
 const flow = require(path.join(SRC, 'flows/approvalsInboxFlow'));
@@ -163,7 +164,8 @@ test('APX-3b/3d: transfer chips carry stage mnemonics + 48h received greens', as
   approvalQueueRepository.getResolved = async () => [
     // Received an hour ago → green for 48h.
     { requestId: 'TR-20260731-001', user: '7430648262', status: 'approved', createdAt: daysAgo(1), resolvedAt: new Date(Date.now() - 3600000).toISOString(), actionJSON: { action: 'transfer_stock', from: 'IDUMOTA', to: 'Kano office', stage: 'in_transit', lines: [] } },
-    // Received four days ago → outside the window, never shown.
+    // Received four days ago → kept too (APX-3e: greens never vanish by
+    // default until the owner's backup regime exists).
     { requestId: 'TR-20260720-001', user: '7430648262', status: 'approved', createdAt: daysAgo(9), resolvedAt: daysAgo(4), actionJSON: { action: 'transfer_stock', from: 'Lagos', to: 'IDUMOTA', stage: 'in_transit', lines: [] } },
     // Rejected transfers are not greens.
     { requestId: 'TR-20260730-002', user: '7430648262', status: 'rejected', createdAt: daysAgo(2), resolvedAt: new Date().toISOString(), actionJSON: { action: 'transfer_stock', from: 'Lagos', to: 'IDUMOTA', stage: 'requested', lines: [] } },
@@ -172,17 +174,32 @@ test('APX-3b/3d: transfer chips carry stage mnemonics + 48h received greens', as
     const bot = createFakeBot();
     await flow.start(bot, ADMIN, ADMIN, null);
     const catChip = lastKb(bot).find((b) => b.callback_data === 'abx:cat:transfers');
-    assert.match(catChip.text, /1 to dispatch · 1 in transit · 1 ✅/, `category mix shown, got: ${catChip.text}`);
+    assert.match(catChip.text, /1 to dispatch · 1 in transit · 2 ✅/, `category mix shown, got: ${catChip.text}`);
 
     await flow.handleCallback(bot, cb('abx:cat:transfers', ADMIN));
     const chips = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:trf:')).map((b) => b.text);
     assert.ok(chips.some((t) => t.includes('🟠DSP') && t.includes('LAG▸KAN') && t.includes('24Jul·01')), `requested stage mnemonic, got: ${chips}`);
     assert.ok(chips.some((t) => t.includes('📦RCV') && t.includes('IDU▸KAN') && t.includes('24Jul·03')), `in-transit stage mnemonic, got: ${chips}`);
-    assert.ok(chips.some((t) => t.includes('✅') && t.includes('31Jul·01')), `received green shown, got: ${chips}`);
-    assert.equal(chips.length, 3, 'old + rejected resolved rows never appear');
-    assert.equal(chips[chips.length - 1].includes('✅'), true, 'greens ride at the bottom');
-    assert.match(lastText(bot), /2\* open · 1 ✅/, `header splits open vs received, got: ${lastText(bot)}`);
-    assert.match(lastText(bot), /✅ = received \(48h\)/, 'legend teaches the codes');
+    assert.ok(chips.some((t) => t.includes('✅') && t.includes('31Jul·01')), `fresh green shown, got: ${chips}`);
+    assert.ok(chips.some((t) => t.includes('✅') && t.includes('20Jul·01')), `old green KEPT (default: never vanish), got: ${chips}`);
+    assert.equal(chips.length, 4, 'rejected resolved rows never appear');
+    assert.equal(chips[2].includes('✅') && chips[3].includes('✅'), true, 'greens ride at the bottom');
+    assert.match(lastText(bot), /2\* open · 2 ✅/, `header splits open vs received, got: ${lastText(bot)}`);
+    assert.match(lastText(bot), /✅ = received/, 'legend teaches the codes');
+
+    // APX-3e — a Settings row restores the display window once backups exist.
+    const origSettings = settingsRepo.getAll;
+    settingsRepo.getAll = async () => ({ ...(await origSettings()), TRANSFER_RECEIVED_HOURS: 48 });
+    try {
+      const bot2 = createFakeBot();
+      sessionStore.clear(ADMIN);
+      await flow.start(bot2, ADMIN, ADMIN, null);
+      await flow.handleCallback(bot2, cb('abx:cat:transfers', ADMIN));
+      const chips2 = lastKb(bot2).filter((b) => b.callback_data.startsWith('abx:trf:')).map((b) => b.text);
+      assert.equal(chips2.filter((t) => t.includes('✅')).length, 1, `48h window hides the old green, got: ${chips2}`);
+    } finally {
+      settingsRepo.getAll = origSettings;
+    }
   } finally {
     approvalQueueRepository.getAllPending = orig;
     approvalQueueRepository.getResolved = origResolved;

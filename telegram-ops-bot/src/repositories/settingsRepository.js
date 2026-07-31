@@ -75,6 +75,12 @@ const DEFAULTS = {
   // empty = the bot's own BASE_URL, which serves the same page at /d/<token>.
   SHARE_LINKS_ENABLED: 1,
   SHARE_PAGE_BASE_URL: '',
+  // APX-3d/3e — hours a RECEIVED (✅) transfer stays in the inbox list.
+  // 0 = keep forever (owner 31-Jul: nothing visible may vanish until a
+  // complete backup regime exists — see BKP-1). Set e.g. 48 via a
+  // Settings row once backups are live; the queue-sheet rows themselves
+  // are permanent either way.
+  TRANSFER_RECEIVED_HOURS: 0,
   FLOW_CLEANUP_HEAVY_TYPES: 'supply_req_flow,grn_flow,bulk_receive_flow,photo_receive_flow,bundle_sale_flow,order_flow,receipt_flow,landed_cost_flow,po_new_flow',
   // BKP-1 — automated daily snapshot of the master sheet into the backup
   // Drive folder. Hour is UTC (1 = 02:00 Lagos); copies older than the
