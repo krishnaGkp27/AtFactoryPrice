@@ -58,6 +58,7 @@ side already got this treatment — `src/db/extSchema.js` notes the in-memory v1
 | 9 | **CUS-1 follow-up (Phase C2)** — stamp `customer_id` on Samples / Orders / Receipts. Columns already signed off; the sessions already carry `customerId`. | `specs/CUS-1_CUSTOMER_ENTITY.md` |
 | 10 | **VRF-1 tuning.** Waiting on one concrete bill + request pair that still mismatches after VRF-1b. | — |
 | 11 | **Catalogue integration.** Interest Log + Sample Showings tap flows, one-tap catalogue share via Telegram `file_id`, receiving-flow tie-in. Ideas presented, not commissioned. | — |
+| 12 | **CUS-2 leftovers (display-layer alias blindness).** The 31-Jul integrity audit fixed all 14 confirmed money-path leaks; still open, low-risk: report family groups by raw `soldTo` spelling (customer report/timeline/ranking/pattern, top-buyer chips, cold-customer alert), notes/followups READS are exact-name, and the parallel `Ledger_Customers` registry (`/addledgercustomer`, balanceService) is un-reconciled with the CUS-1 entity. All display-only or admin-command surfaces — no writes leak. | agent, next cleanup pass |
 
 ---
 

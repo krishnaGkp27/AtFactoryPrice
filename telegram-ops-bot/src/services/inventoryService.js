@@ -15,6 +15,21 @@ const { bus: erpBus, emitAsync: erpEmitAsync } = require('../events/erpEventBus'
 
 const CURRENCY = config.currency || 'NGN';
 
+/**
+ * CUS-2 — canonicalize an Inventory soldTo spelling into {name, id} for
+ * ledger reversal stamping. Falls back to the raw spelling (walk-ins,
+ * pre-CUS-1 rows) with an empty id — never throws.
+ */
+async function resolveReturnCustomer(soldTo) {
+  const raw = String(soldTo || '').trim();
+  if (!raw) return { name: '', id: '' };
+  try {
+    const cust = await require('./customerEntity').resolve({ name: raw });
+    if (cust) return { name: cust.name, id: cust.customer_id };
+  } catch (_) { /* raw spelling still lands in the narration */ }
+  return { name: raw, id: '' };
+}
+
 function generateId() {
   try { return require('crypto').randomUUID(); }
   catch { return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`; }
@@ -378,14 +393,22 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       } catch (e) { await recordErpFailure('payment record (sell_package)', e); }
     }
   } else if (aj.action === 'return_than') {
+    // CUS-2 — capture who it was sold to BEFORE the flip blanks soldTo, so
+    // the ledger reversal lands on that customer's statement.
+    const soldRow = await inventoryRepository.findThan(aj.packageNo, aj.thanNo).catch(() => null);
+    const returnCust = await resolveReturnCustomer(soldRow ? soldRow.soldTo : '');
     const result = await inventoryRepository.markThanAvailable(aj.packageNo, aj.thanNo);
     if (!result) return { ok: false, message: 'Than not found or already available.' };
     await transactionsRepository.append({
       user: item.user, action: 'return_than', design: result.design, color: result.shade,
       qty: result.yards, before: 'sold', after: 'available', status: 'approved',
     });
-    try { erpBus.emit('return', { type: 'return_than', packageNo: aj.packageNo, thanNo: aj.thanNo, yards: result.yards, design: result.design, shade: result.shade, userId: item.user, txnId: `RT-${aj.packageNo}-${aj.thanNo}` }); } catch (_) {}
+    try { erpBus.emit('return', { type: 'return_than', packageNo: aj.packageNo, thanNo: aj.thanNo, yards: result.yards, design: result.design, shade: result.shade, userId: item.user, txnId: `RT-${aj.packageNo}-${aj.thanNo}`, customer: returnCust.name, customerId: returnCust.id }); } catch (_) {}
   } else if (aj.action === 'return_package') {
+    // CUS-2 — capture the buyer before the flip clears soldTo.
+    const soldRows = await inventoryRepository.findByPackage(aj.packageNo).catch(() => []);
+    const soldToPrior = (soldRows.find((t) => t.status === 'sold' && t.soldTo) || {}).soldTo || '';
+    const returnCust = await resolveReturnCustomer(soldToPrior);
     const results = await inventoryRepository.markPackageAvailable(aj.packageNo);
     if (!results.length) return { ok: false, message: 'No sold thans to return.' };
     const totalYards = results.reduce((s, t) => s + t.yards, 0);
@@ -393,7 +416,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       user: item.user, action: 'return_package', design: results[0]?.design, color: results[0]?.shade,
       qty: totalYards, before: 'sold', after: 'available', status: 'approved',
     });
-    try { erpBus.emit('return', { type: 'return_package', packageNo: aj.packageNo, yards: totalYards, design: results[0]?.design, shade: results[0]?.shade, userId: item.user, txnId: `RP-${aj.packageNo}` }); } catch (_) {}
+    try { erpBus.emit('return', { type: 'return_package', packageNo: aj.packageNo, yards: totalYards, design: results[0]?.design, shade: results[0]?.shade, userId: item.user, txnId: `RP-${aj.packageNo}`, customer: returnCust.name, customerId: returnCust.id }); } catch (_) {}
   } else if (aj.action === 'revert_sale_bundle') {
     // Two-admin-approved revert of a previously-approved sale_bundle.
     // Marks every Bale/than in the original sale available again and
@@ -442,11 +465,17 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     if (payRes.status !== 'completed') return { ok: false, message: payRes.message || 'Payment failed.' };
   } else if (aj.action === 'add_customer') {
     const crmService = require('./crmService');
-    await crmService.addCustomer({
+    const addRes = await crmService.addCustomer({
       name: aj.name, phone: aj.phone, address: aj.address,
       category: aj.category, credit_limit: aj.credit_limit,
       payment_terms: aj.payment_terms, notes: aj.notes,
     });
+    // CUS-2 — a name/alias collision used to be swallowed here and the
+    // approval reported success for a no-op. Fail loud instead.
+    if (!addRes || addRes.status !== 'created') {
+      const ex = (addRes && addRes.customer) || {};
+      return { ok: false, message: `Customer "${aj.name}" already exists as ${ex.name || 'an existing customer'}${ex.customer_id ? ` (${ex.customer_id})` : ''} — nothing was created. Pick them from the customer list instead.` };
+    }
     // BR-OPS C1 — pointer for the branch daily roll-up. Fire-and-forget;
     // swallows its own errors so a roll-up blip never fails a customer add.
     try {
@@ -1334,10 +1363,13 @@ async function revertSaleBundle(requestId, userId) {
     byDesign[key].yards += t.yards || 0;
   }
   const accountingService = require('./accountingService');
+  // CUS-2 — the original sale's customer (admin-assigned at approval) rides
+  // on the reversal so the credit lands on their statement, not anonymously.
+  const revCust = await resolveReturnCustomer(customer);
   for (const [design, g] of Object.entries(byDesign)) {
     if (g.yards > 0) {
       try {
-        await accountingService.recordReturn({ yards: g.yards, pricePerYard: g.pricePerYard, packageNo: g.packageNo, design, shade: g.shade, userId, txnId: `REVERT-${requestId}-${design}` });
+        await accountingService.recordReturn({ yards: g.yards, pricePerYard: g.pricePerYard, packageNo: g.packageNo, design, shade: g.shade, userId, txnId: `REVERT-${requestId}-${design}`, customer: revCust.name, customerId: aj.customerId || revCust.id });
       } catch (e) {
         // continue with other designs
       }

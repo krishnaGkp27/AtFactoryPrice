@@ -70,16 +70,35 @@ async function findById(customerId) {
   return all.find((c) => c.customer_id === customerId) || null;
 }
 
+// CUS-2 — statuses that are dead husks for lookup purposes: a Merged row's
+// history belongs to its canonical customer (via the alias it left there),
+// and a Rejected registration must never match as an existing customer.
+const HUSK_STATUSES = new Set(['merged', 'rejected']);
+const isHusk = (c) => HUSK_STATUSES.has(String(c.status || '').trim().toLowerCase());
+
+/**
+ * CUS-2 — entity-semantic name lookup (mirrors customerEntity.resolve):
+ * husk rows never match; the canonical name wins over an alias hit, so a
+ * post-merge spelling still lands on the REAL customer. Every caller that
+ * used to be alias-blind (invoices, outstanding, sale validation) inherits
+ * the fix from here.
+ */
 async function findByName(name) {
   const all = await getAll();
-  const n = (name || '').toLowerCase();
-  return all.find((c) => c.name.toLowerCase() === n) || null;
+  const n = (name || '').toString().trim().toLowerCase();
+  if (!n) return null;
+  const live = all.filter((c) => !isHusk(c));
+  const byName = live.find((c) => c.name.toLowerCase() === n);
+  if (byName) return byName;
+  return live.find((c) => (c.aliases || []).some((a) => String(a).toLowerCase() === n)) || null;
 }
 
 async function searchByName(query) {
   const all = await getAll();
   const q = (query || '').toLowerCase();
-  return all.filter((c) => c.name.toLowerCase().includes(q));
+  // CUS-2 — alias hits included, husks excluded (this feeds pickers).
+  return all.filter((c) => !isHusk(c) && (c.name.toLowerCase().includes(q)
+    || (c.aliases || []).some((a) => String(a).toLowerCase().includes(q))));
 }
 
 async function append(customer) {

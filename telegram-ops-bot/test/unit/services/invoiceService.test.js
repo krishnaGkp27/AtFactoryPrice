@@ -22,7 +22,11 @@ invoicesRepository.maxSeqForYear = async (year) => {
   return stored.reduce((m, r) => { const x = re.exec(r.invoiceNo); return x ? Math.max(m, +x[1]) : m; }, 0);
 };
 invoicesRepository.append = async (rec) => { stored.push(rec); return rec; };
-customersRepository.findByName = async (name) => (name === 'Alabi Johnson' ? { customer_id: 'CUST-20260601-001', name } : null);
+// CUS-2 — createForSale resolves through customerEntity, which reads getAll.
+customersRepository.getAll = async () => [
+  { customer_id: 'CUST-20260601-001', name: 'Alabi Johnson', status: 'Active', aliases: ['Alabi J.'] },
+  { customer_id: 'CUST-20260601-002', name: 'Alabi J.', status: 'Merged', aliases: [] },
+];
 accountingService.getCustomerLedger = async () => ({ outstandingAsOfToday: 209000 });
 
 const YEAR = new Date().getFullYear();
@@ -58,6 +62,17 @@ test('buildLines: ST-1 yardsByDesign path and single-design fallback', () => {
 test('bankFromPaymentMode extracts the receiving account', () => {
   assert.equal(invoiceService.bankFromPaymentMode('Paid to GTBank'), 'GTBank');
   assert.equal(invoiceService.bankFromPaymentMode('Cash'), '');
+});
+
+test('CUS-2: an alias spelling resolves to the canonical customer on the invoice', async () => {
+  stored = [];
+  const item = { requestId: 'req-inv-2', actionJSON: {
+    action: 'sale_bundle', customer: 'Alabi J.', salesDate: '2026-07-15',
+    items: [{ type: 'than', design: '77019', shade: 1, yards: 60 }],
+  } };
+  const inv = await invoiceService.createForSale({ item, enrichment: { ratePerUnitByDesign: { 77019: 1450 } }, approvedBy: '777' });
+  assert.equal(inv.customerId, 'CUST-20260601-001', 'alias lands on the canonical id, not the merged husk');
+  assert.equal(inv.customerName, 'Alabi Johnson', 'invoice paper carries the canonical name');
 });
 
 test('createForSale persists a complete row and renderPdf produces a PDF', async () => {

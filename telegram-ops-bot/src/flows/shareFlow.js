@@ -23,7 +23,6 @@
 
 const sessionStore = require('../utils/sessionStore');
 const { makeRenderer, chunk, mdEscape } = require('../utils/flowKit');
-const customersRepository = require('../repositories/customersRepository');
 const settingsRepository = require('../repositories/settingsRepository');
 const shareLinkService = require('../services/shareLinkService');
 const shareTrackService = require('../services/shareTrackService');
@@ -36,11 +35,14 @@ const render = makeRenderer({ disablePreview: true });
 
 function menuRow() { return [{ text: '🏠 Menu', callback_data: 'act:__back__' }]; }
 
-/** Active customers, lightest possible shape for the session. */
+/** Active customers, lightest possible shape for the session.
+ *  CUS-2: via customerEntity.activeList — the raw getAll filter let
+ *  Merged/Pending/Rejected rows into the picker, baking dead ids into
+ *  tokens and share_events. */
 async function loadCustomers() {
-  const all = await customersRepository.getAll();
+  const all = await require('../services/customerEntity').activeList();
   return all
-    .filter((c) => c.name && String(c.status).toLowerCase() !== 'inactive')
+    .filter((c) => c.name)
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((c) => ({ id: c.customer_id || '', name: c.name }));
 }

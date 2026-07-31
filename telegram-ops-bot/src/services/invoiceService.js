@@ -102,16 +102,23 @@ async function mintInvoiceNo(now = new Date()) {
  */
 async function createForSale({ item, enrichment, approvedBy }) {
   const aj = item.actionJSON || {};
-  const customerName = aj.customer || aj.customerName || '';
+  let customerName = aj.customer || aj.customerName || '';
   const lines = buildLines(aj, enrichment);
   const subtotal = lines.reduce((s, l) => s + l.amount, 0);
   const amountPaid = Number(enrichment?.amountPaid ?? aj.amountPaid) || 0;
 
+  // CUS-2 — the approval assignment step stamps aj.customerId; prefer it,
+  // then fall back to entity resolution (alias-aware, husk-excluding).
+  // The invoice carries the CANONICAL name so merged spellings never
+  // propagate onto customer-facing paper.
   let customerId = '';
   try {
-    const customersRepository = require('../repositories/customersRepository');
-    const row = await customersRepository.findByName(customerName);
-    if (row) customerId = row.customer_id || '';
+    const customerEntity = require('./customerEntity');
+    const row = await customerEntity.resolve({ id: aj.customerId, name: customerName });
+    if (row) {
+      customerId = row.customer_id || '';
+      if (row.name) customerName = row.name;
+    }
   } catch (e) { logger.warn(`invoice: customer_id lookup failed: ${e.message}`); }
 
   // Issue-time balance snapshot (customer-level, ledger-derived). Best

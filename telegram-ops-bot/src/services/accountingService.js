@@ -35,29 +35,35 @@ async function recordSale({ customer, customerId, yards, pricePerYard, packageNo
   return { amount, narration };
 }
 
-/** Single entry: one row to Customer Receivable (credit). */
-async function recordReturn({ yards, pricePerYard, packageNo, design, shade, userId, txnId }) {
+/** Single entry: one row to Customer Receivable (credit).
+ *  CUS-2: returns now carry the customer (name in narration, id in column K)
+ *  so the credit shows up on the right customer's statement instead of
+ *  floating anonymously in the receivable account. */
+async function recordReturn({ yards, pricePerYard, packageNo, design, shade, userId, txnId, customer, customerId }) {
   const amount = (yards || 0) * (pricePerYard || 0);
   if (amount <= 0) return;
   const date = new Date().toISOString().split('T')[0];
   const creditCode = await getAccountCode('Customer Receivable') || RECEIVABLE_CODE;
-  const narration = `Return: ${yards} yds ${design || ''} ${shade || ''} pkg ${packageNo || ''}`;
+  const narration = `Return: ${yards} yds ${design || ''} ${shade || ''} pkg ${packageNo || ''}${customer ? ` from ${customer}` : ''}`;
   await ledgerRepo.append({
     entry_id: idGen.ledgerEntry(), txn_id: txnId || '', date, account_code: creditCode, ledger_name: 'Customer Receivable',
     debit: 0, credit: amount, narration, created_by: userId || '',
+    customer_id: customerId || '',
   });
 }
 
-async function recordPaymentReceived({ customer, amount, method, userId, txnId }) {
+async function recordPaymentReceived({ customer, customerId, amount, method, userId, txnId }) {
   if (!amount || amount <= 0) return;
   const date = new Date().toISOString().split('T')[0];
   const cashOrBank = (method || '').toLowerCase().includes('bank') ? 'Bank' : 'Cash';
   const debitCode = await getAccountCode(cashOrBank) || '1001';
   const creditCode = await getAccountCode('Customer Receivable') || '1100';
   const narration = `Payment received from ${customer || 'unknown'}: ${CURRENCY} ${amount} via ${cashOrBank}`;
+  // CUS-2 — payments stamp customer_id like sales do, so the customer
+  // ledger scopes by id instead of grepping narrations.
   await ledgerRepo.appendPair(
-    { entry_id: idGen.ledgerEntry(), txn_id: txnId || '', date, account_code: debitCode, ledger_name: cashOrBank, debit: amount, narration, created_by: userId || '' },
-    { entry_id: idGen.ledgerEntry(), txn_id: txnId || '', date, account_code: creditCode, ledger_name: 'Customer Receivable', credit: amount, narration, created_by: userId || '' },
+    { entry_id: idGen.ledgerEntry(), txn_id: txnId || '', date, account_code: debitCode, ledger_name: cashOrBank, debit: amount, narration, created_by: userId || '', customer_id: customerId || '' },
+    { entry_id: idGen.ledgerEntry(), txn_id: txnId || '', date, account_code: creditCode, ledger_name: 'Customer Receivable', credit: amount, narration, created_by: userId || '', customer_id: customerId || '' },
   );
 }
 
@@ -101,11 +107,57 @@ async function getDaybook(date) {
  * Get customer ledger (Customer Receivable only). Optional fromDate, toDate (YYYY-MM-DD) filter entries to that range.
  * Always returns outstandingAsOfToday (full ledger balance). For range view, outstanding = balance at end of range.
  */
+/**
+ * CUS-2 — does this narration name exactly this customer? Boundary-anchored
+ * against the exact templates recordSale / recordPaymentReceived /
+ * recordReturn write, replacing the old raw substring test that let
+ * "Musa" pull "Alhaji Musa"'s rows into a statement (cross-customer
+ * leak) and dropped alias-spelled history after merges.
+ */
+function narrationNames(narration, name) {
+  const s = String(narration || '').toLowerCase();
+  const n = String(name || '').trim().toLowerCase();
+  if (!s || !n) return false;
+  return s.includes(` to ${n} | `) || s.endsWith(` to ${n}`)
+    || s.includes(`payment received from ${n}: `)
+    || s.endsWith(` from ${n}`);
+}
+
 async function getCustomerLedger(customerName, fromDate, toDate) {
   const receivableCode = await getAccountCode('Customer Receivable') || RECEIVABLE_CODE;
   const receivableEntries = await ledgerRepo.findByAccount(receivableCode);
-  const q = (customerName || '').toLowerCase();
-  const allEntries = q ? receivableEntries.filter((e) => (e.narration || '').toLowerCase().includes(q)) : [];
+  const q = (customerName || '').toString().trim();
+  // CUS-2 — resolve to the entity (accepts an id or any live spelling);
+  // entries match by stamped customer_id first, then by precise narration
+  // match across every spelling the customer has ever been filed under.
+  let cust = null;
+  try {
+    cust = await require('./customerEntity').resolve({ id: q, name: q });
+  } catch (_) { /* fall through to name-only matching */ }
+  const names = cust
+    ? require('./customerEntity').namesFor(cust)
+    : (q ? [q] : []);
+  // History stamped under a merged-away row's id still belongs to this
+  // customer: collect the ids of husk rows whose name lives on as one of
+  // this customer's spellings.
+  const acceptIds = new Set();
+  if (cust) {
+    acceptIds.add(cust.customer_id);
+    try {
+      const lowerNames = new Set(names.map((n) => String(n).trim().toLowerCase()));
+      const allCust = await require('../repositories/customersRepository').getAll();
+      for (const c of allCust) {
+        if (String(c.status || '').trim().toLowerCase() === 'merged'
+          && lowerNames.has(String(c.name || '').trim().toLowerCase())) {
+          acceptIds.add(c.customer_id);
+        }
+      }
+    } catch (_) { /* canonical id alone still matches */ }
+  }
+  const allEntries = names.length ? receivableEntries.filter((e) => (
+    (e.customer_id && acceptIds.has(e.customer_id))
+    || (!e.customer_id && names.some((n) => narrationNames(e.narration, n)))
+  )) : [];
   allEntries.sort((a, b) => (a.date + (a.created_at || '')).localeCompare(b.date + (b.created_at || '')));
   let runningFull = 0;
   const withRunning = allEntries.map((e) => {

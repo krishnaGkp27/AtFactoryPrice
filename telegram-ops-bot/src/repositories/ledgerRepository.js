@@ -26,7 +26,10 @@ function parse(r) {
 }
 
 async function getAll() {
-  const rows = await sheets.readRange(SHEET, 'A2:J');
+  // CUS-2 — K holds customer_id (written by append/appendPair since Phase C);
+  // the old 'A2:J' read truncated it to '' on every row, so the stamp was
+  // written but unreadable.
+  const rows = await sheets.readRange(SHEET, 'A2:K');
   return rows.map(parse).filter((r) => r.entry_id);
 }
 

@@ -73,6 +73,29 @@ async function getRequesterDisplayName(userId, msgOrNull) {
 // Approval request IDs flow through idGenerator (single source of truth).
 const genId = require('../utils/idGenerator').requestId;
 
+/**
+ * CUS-2 — shared gate for EVERY new-customer door (CRM tile + the embedded
+ * sample/order/receipt doors): honors the Settings freeze and refuses names
+ * that collide with an existing customer's name or alias. The embedded
+ * doors used to bypass both rules.
+ */
+async function checkCustomerCreationGate(name) {
+  const settings = await settingsRepo.getAll().catch(() => ({}));
+  if (Number(settings.CUSTOMER_CREATION_ENABLED ?? 1) !== 1) {
+    return { ok: false, message: '🔒 Customer creation is temporarily frozen (list cleanup in progress). Pick an existing customer instead.' };
+  }
+  try {
+    const free = await require('../services/customerEntity').assertNameFree(name);
+    if (!free.ok) {
+      const ex = free.existing || {};
+      return { ok: false, message: `⚠️ *${name}* already exists${ex.name && ex.name !== name ? ` (as *${ex.name}*)` : ''}${ex.customer_id ? ` — ${ex.customer_id}` : ''}. Go back and pick them from the customer list.` };
+    }
+  } catch (e) {
+    logger.warn(`checkCustomerCreationGate: lookup failed (allowing): ${e.message}`);
+  }
+  return { ok: true };
+}
+
 const { editOrSend, editOrSendAnchored, sendLong } = require('../utils/telegramUI');
 // ANL-1 — usage analytics capture (fire-and-forget; no-op until enabled).
 const usageTracker = require('../services/usageTracker');
@@ -903,7 +926,16 @@ async function handleAddCustomerFlowText(bot, chatId, userId, text) {
       category: 'Standard', credit_limit: 0, payment_terms: 'COD', notes: '',
     };
     try {
-      await crmService.addCustomer(cust);
+      // CUS-2 — a name/alias collision used to be silently discarded while
+      // this handler still announced "Customer added". Surface it instead.
+      const addRes = await crmService.addCustomer(cust);
+      if (!addRes || addRes.status !== 'created') {
+        const ex = (addRes && addRes.customer) || {};
+        await bot.sendMessage(chatId,
+          `⚠️ *${cust.name}* already exists${ex.name && ex.name !== cust.name ? ` (as *${ex.name}*)` : ''}${ex.customer_id ? ` — ${ex.customer_id}` : ''}. Nothing was created.\nRe-type a different name or tap Cancel.`,
+          { parse_mode: 'Markdown' });
+        return true;
+      }
     } catch (e) {
       logger.error(`Quick add customer failed: ${e.message}`);
       await bot.sendMessage(chatId, `❌ Failed to save: ${e.message}`);
@@ -998,6 +1030,10 @@ async function handleSampleFlowText(bot, chatId, userId, text) {
       await bot.sendMessage(chatId, 'Name too short, please re-enter:');
       return true;
     }
+    // CUS-2 — this embedded door honors the same freeze + collision rules
+    // as the CRM door (it used to bypass both).
+    const gate = await checkCustomerCreationGate(name);
+    if (!gate.ok) { await bot.sendMessage(chatId, gate.message, { parse_mode: 'Markdown' }); return true; }
     session.pendingCustomerName = name;
     session.step = 'sample_new_cust_phone';
     sessionStore.set(userId, session);
@@ -1011,7 +1047,7 @@ async function handleSampleFlowText(bot, chatId, userId, text) {
     const name = session.pendingCustomerName;
 
     // Queue new-customer approval and pause the sample flow.
-    const customerId = `C-${Date.now().toString(36).toUpperCase()}`;
+    const customerId = idGenerator.customer(); // CUS-2 — one id scheme everywhere
     const customersRepo2 = require('../repositories/customersRepository');
     await customersRepo2.append({
       customer_id: customerId, name, phone, address: '', category: '',
@@ -2971,6 +3007,9 @@ async function handleOrderFlowText(bot, chatId, userId, text) {
       await bot.sendMessage(chatId, 'Name too short, please re-enter:');
       return true;
     }
+    // CUS-2 — same freeze + collision rules as the CRM door.
+    const gate = await checkCustomerCreationGate(name);
+    if (!gate.ok) { await bot.sendMessage(chatId, gate.message, { parse_mode: 'Markdown' }); return true; }
     session.pendingCustomerName = name;
     session.step = 'new_order_customer_phone';
     sessionStore.set(userId, session);
@@ -2983,7 +3022,7 @@ async function handleOrderFlowText(bot, chatId, userId, text) {
     const phone = raw.toLowerCase() === 'skip' ? '' : raw;
     const name = session.pendingCustomerName;
 
-    const customerId = `C-${Date.now().toString(36).toUpperCase()}`;
+    const customerId = idGenerator.customer(); // CUS-2 — one id scheme everywhere
     const customersRepo2 = require('../repositories/customersRepository');
     await customersRepo2.append({
       customer_id: customerId, name, phone, address: '', category: '',
@@ -3162,6 +3201,9 @@ async function handleReceiptFlowText(bot, chatId, userId, text) {
       await bot.sendMessage(chatId, 'Name too short, please re-enter:');
       return true;
     }
+    // CUS-2 — same freeze + collision rules as the CRM door.
+    const gate = await checkCustomerCreationGate(name);
+    if (!gate.ok) { await bot.sendMessage(chatId, gate.message, { parse_mode: 'Markdown' }); return true; }
     session.pendingCustomerName = name;
     session.step = 'receipt_new_cust_phone';
     sessionStore.set(userId, session);
@@ -3173,7 +3215,7 @@ async function handleReceiptFlowText(bot, chatId, userId, text) {
     const raw = text.trim();
     const phone = raw.toLowerCase() === 'skip' ? '' : raw;
     const name = session.pendingCustomerName;
-    const customerId = `C-${Date.now().toString(36).toUpperCase()}`;
+    const customerId = idGenerator.customer(); // CUS-2 — one id scheme everywhere
     const customersRepo2 = require('../repositories/customersRepository');
     await customersRepo2.append({
       customer_id: customerId, name, phone, address: '', category: '',
@@ -4692,8 +4734,15 @@ async function handleMessage(bot, msg) {
         if (!fDate) { await bot.sendMessage(chatId, 'Please include a date. e.g. "Follow up with CJE on 28-02-2026 about pending payment"'); return; }
         const reasonMatch = text.match(/\b(?:about|for|regarding|re)\s+(.+)/i);
         const reason = reasonMatch ? reasonMatch[1].trim() : text.replace(/follow\s*up\s*(with)?\s*/i, '').replace(intent.customer, '').replace(intent.salesDate || '', '').replace(/on\s*/i, '').trim() || 'General follow-up';
-        const saved = await customerFollowupsRepo.append({ customer: intent.customer, reason, followup_date: fDate, created_by: userId });
-        await bot.sendMessage(chatId, `✅ Follow-up scheduled: *${saved.followup_id}*\n\nCustomer: ${intent.customer}\nDate: ${fmtDate(fDate)}\nReason: ${reason}\n\nYou'll be reminded on ${fmtDate(fDate)}.`, { parse_mode: 'Markdown' });
+        // CUS-2 — canonicalize the typed spelling so the follow-up files
+        // under the real customer, not a typo orphan.
+        let followCust = intent.customer;
+        try {
+          const c0 = await require('../services/customerEntity').resolve({ name: followCust });
+          if (c0) followCust = c0.name;
+        } catch (_) { /* raw spelling still records */ }
+        const saved = await customerFollowupsRepo.append({ customer: followCust, reason, followup_date: fDate, created_by: userId });
+        await bot.sendMessage(chatId, `✅ Follow-up scheduled: *${saved.followup_id}*\n\nCustomer: ${followCust}\nDate: ${fmtDate(fDate)}\nReason: ${reason}\n\nYou'll be reminded on ${fmtDate(fDate)}.`, { parse_mode: 'Markdown' });
         return;
       }
 
@@ -4701,8 +4750,14 @@ async function handleMessage(bot, msg) {
         if (!intent.customer) { await bot.sendMessage(chatId, 'Which customer? e.g. "Note for CJE: wants bulk discount"'); return; }
         const noteText = text.replace(/^note\s*(for)?\s*/i, '').replace(new RegExp(intent.customer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), '').replace(/^[\s:]+/, '').trim();
         if (!noteText) { await bot.sendMessage(chatId, 'What is the note? e.g. "Note for CJE: prefers Shade 3"'); return; }
-        const saved = await customerNotesRepo.append({ customer: intent.customer, note: noteText, created_by: userId });
-        await bot.sendMessage(chatId, `✅ Note saved for *${intent.customer}*: ${noteText}`, { parse_mode: 'Markdown' });
+        // CUS-2 — canonicalize the typed spelling (typo notes were orphans).
+        let noteCust = intent.customer;
+        try {
+          const c0 = await require('../services/customerEntity').resolve({ name: noteCust });
+          if (c0) noteCust = c0.name;
+        } catch (_) { /* raw spelling still records */ }
+        const saved = await customerNotesRepo.append({ customer: noteCust, note: noteText, created_by: userId });
+        await bot.sendMessage(chatId, `✅ Note saved for *${noteCust}*: ${noteText}`, { parse_mode: 'Markdown' });
         return;
       }
 
@@ -10081,6 +10136,9 @@ async function handleCallbackQuery(bot, callbackQuery) {
       productType: session.productType || 'fabric',
       cart,
       customer: session.customer,
+      // CUS-2 — the typed/tapped picker resolves the entity id into the
+      // session; ride it onto the queue row like the enrichment path does.
+      customerId: session.customerId || '',
       salesperson: session.salesperson,
       paymentMode: session.paymentMode,
       salesDate: session.supplyDate,

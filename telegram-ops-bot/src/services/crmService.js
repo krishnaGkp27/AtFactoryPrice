@@ -7,23 +7,17 @@ const accountingService = require('../services/accountingService');
 const idGen = require('../utils/idGenerator');
 const { fmtMoney } = require('../utils/format');
 
-async function findOrCreateCustomer(name) {
-  if (!name) return null;
-  let customer = await customersRepo.findByName(name);
-  if (customer) return customer;
-  const newCust = {
-    customer_id: idGen.customer(),
-    name,
-    category: 'Retail',
-    status: 'Active',
-  };
-  await customersRepo.append(newCust);
-  return { ...newCust, outstanding_balance: 0, credit_limit: 0 };
-}
+// CUS-2 — findOrCreateCustomer is GONE. It was a zero-gate silent-creation
+// door (no approval, no CUSTOMER_CREATION_ENABLED check, auto-Active) with
+// no remaining callers; keeping it exported was one require away from
+// reintroducing the typo problem CUS-1 exists to end.
 
 async function addCustomer({ name, phone, address, category, credit_limit, payment_terms, notes }) {
-  const existing = await customersRepo.findByName(name);
-  if (existing) return { status: 'exists', customer: existing };
+  // CUS-2 — the creation door enforces the entity invariant: no new ACTIVE
+  // customer may collide with an existing canonical name OR alias.
+  const customerEntity = require('./customerEntity');
+  const free = await customerEntity.assertNameFree(name);
+  if (!free.ok) return { status: 'exists', customer: free.existing };
   const cust = {
     customer_id: idGen.customer(),
     name, phone: phone || '', address: address || '',
@@ -55,7 +49,7 @@ async function recordPayment({ customer, amount, method, userId }) {
   const cust = await getCustomer(customer);
   if (!cust) return { status: 'not_found', message: `Customer "${customer}" not found.` };
   const txnId = `PAY-${Date.now()}`;
-  await accountingService.recordPaymentReceived({ customer: cust.name, amount, method, userId, txnId });
+  await accountingService.recordPaymentReceived({ customer: cust.name, customerId: cust.customer_id, amount, method, userId, txnId });
   const newBalance = Math.max(0, cust.outstanding_balance - amount);
   await customersRepo.updateOutstanding(cust.customer_id, newBalance);
   return { status: 'completed', customer: cust.name, paid: amount, previousBalance: cust.outstanding_balance, newBalance };
@@ -68,4 +62,4 @@ async function addToOutstanding(customerName, amount) {
   await customersRepo.updateOutstanding(cust.customer_id, newBalance);
 }
 
-module.exports = { findOrCreateCustomer, addCustomer, getCustomer, searchCustomers, listCustomers, recordPayment, addToOutstanding, fmtMoney };
+module.exports = { addCustomer, getCustomer, searchCustomers, listCustomers, recordPayment, addToOutstanding, fmtMoney };

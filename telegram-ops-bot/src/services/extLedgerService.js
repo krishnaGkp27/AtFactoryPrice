@@ -96,10 +96,13 @@ async function _reservePhone(key) {
   return cur <= PER_PHONE_HOURLY;
 }
 
-/** Registered customer for a phone, or null. Never distinguishes outward. */
+/** Registered customer for a phone, or null. Never distinguishes outward.
+ *  CUS-2: live customers only — a Merged husk or unapproved Pending row
+ *  keeps its phone, and matching it minted an OTP session for a dead or
+ *  not-yet-approved identity. */
 async function _customerByPhone(e164) {
   try {
-    const all = await customersRepository.getAll();
+    const all = await require('./customerEntity').activeList();
     return all.find((c) => phoneUtil.samePhone(c.phone, e164)) || null;
   } catch { return null; }
 }
@@ -114,7 +117,10 @@ async function _customerByPhone(e164) {
 async function _nameIsAmbiguous(name) {
   try {
     const want = String(name || '').trim().toLowerCase();
-    const all = await customersRepository.getAll();
+    // CUS-2 — count LIVE customers only: after the owner merges two
+    // duplicate rows, the retained husk used to keep this check refusing
+    // the surviving customer forever.
+    const all = await require('./customerEntity').activeList();
     return all.filter((c) => String(c.name || '').trim().toLowerCase() === want).length > 1;
   } catch { return true; } // can't verify uniqueness → fail safe (refuse)
 }
@@ -302,10 +308,13 @@ function _entryCustomer(narration) {
 }
 
 function _scopeLedger(ledger, customerName) {
-  const want = String(customerName || '').trim().toLowerCase();
+  // CUS-2 — accepts one spelling or the full namesFor() list, so entries
+  // narrated under a merged-away alias stay on the customer's statement.
+  const wants = new Set((Array.isArray(customerName) ? customerName : [customerName])
+    .map((n) => String(n || '').trim().toLowerCase()).filter(Boolean));
   const entries = (ledger.entries || []).filter((e) => {
     const who = _entryCustomer(e.narration);
-    return who && who.toLowerCase() === want;
+    return who && wants.has(who.toLowerCase());
   });
   let running = 0;
   // Whitelisted projection (review R5): raw rows carry internal identifiers
@@ -340,7 +349,13 @@ async function getLedger(token) {
   }
   const accountingService = require('./accountingService');
   const loose = await accountingService.getCustomerLedger(customer);
-  const ledger = _scopeLedger(loose, customer);
+  let names = [customer];
+  try {
+    const ent = require('./customerEntity');
+    const c0 = await ent.resolve({ name: customer });
+    if (c0) names = ent.namesFor(c0);
+  } catch (_) { /* single spelling still scopes */ }
+  const ledger = _scopeLedger(loose, names);
   await usageMeter.record('api', 'ledger_view');
   auditLogRepository.append('ext_ledger_view', { customer }, customer).catch(() => {});
   return { ok: true, customer, ledger };

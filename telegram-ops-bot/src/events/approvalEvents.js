@@ -159,12 +159,19 @@ async function getLastPaidRate(customer, design) {
   try {
     const transactionsRepository = require('../repositories/transactionsRepository');
     const rows = await transactionsRepository.getLast(400);
-    const cust = String(customer).trim().toLowerCase();
+    // CUS-2 — match every spelling this customer has been filed under, so
+    // the "last paid" rate chip survives merges instead of going blind.
+    const custNames = new Set([String(customer).trim().toLowerCase()]);
+    try {
+      const entity = require('../services/customerEntity');
+      const cust0 = await entity.resolve({ name: customer });
+      if (cust0) entity.namesFor(cust0).forEach((n) => custNames.add(String(n).trim().toLowerCase()));
+    } catch (_) { /* single-spelling match still works */ }
     const dgn = String(design).trim().toUpperCase();
     for (let i = rows.length - 1; i >= 0; i--) {
       const r = rows[i];
       if (!/^(sell|sale)/i.test(String(r.action || ''))) continue;
-      if (String(r.customerName || '').trim().toLowerCase() !== cust) continue;
+      if (!custNames.has(String(r.customerName || '').trim().toLowerCase())) continue;
       if (String(r.design || '').trim().toUpperCase() !== dgn) continue;
       const rate = parseFloat(r.pricePerYard);
       if (Number.isFinite(rate) && rate > 0) return rate;
@@ -357,10 +364,12 @@ async function assignCustomer(bot, chatId, state, name) {
   try {
     await approvalQueueRepository.updateActionJSON(state.requestId, { customer: clean, customerId: custId });
   } catch (e) {
-    // The in-memory copy still carries it into execution, so the sale is
-    // not lost — but the row on the sheet would not show who it went to.
+    // CUS-2 — the executor RE-READS actionJSON from the queue sheet, so an
+    // unpersisted assignment would execute the sale with no customer at
+    // all. Fail loud and stay on this step instead of advancing.
     logger.error(`DSP-1: could not persist customer on ${state.requestId}: ${e.message}`);
-    try { await bot.sendMessage(chatId, `⚠️ Customer recorded for this approval, but the queue row could not be updated (${e.message}).`); } catch (_) {}
+    try { await bot.sendMessage(chatId, `⚠️ Could not record the customer on ${state.requestId} (${e.message}). Nothing was saved — tap the customer again.`); } catch (_) {}
+    return false;
   }
   if (state.item && state.item.actionJSON) {
     state.item.actionJSON.customer = clean;
@@ -1700,6 +1709,26 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
   await approvalQueueRepository.updateStatus(requestId, approved ? 'approved' : 'rejected', new Date().toISOString());
 
   if (approved) {
+    // CUS-2 — activation recheck: between request and approval another
+    // customer with this name/alias may have gone Active (or two duplicate
+    // pending requests raced). Activating the second would break the
+    // one-active-name invariant every name-fallback read depends on.
+    try {
+      const hit = await require('../services/customerEntity').resolve({ name: custName });
+      if (hit && hit.customer_id !== custId
+        && String(hit.status || '').trim().toLowerCase() === 'active') {
+        if (custId) {
+          const customersRepo = require('../repositories/customersRepository');
+          await customersRepo.updateRow(custId, { status: 'Rejected', notes: `Name collision at approval with ${hit.customer_id}` }).catch(() => {});
+        }
+        await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString()).catch(() => {});
+        await bot.sendMessage(chatId, `⚠️ "${custName}" already belongs to an ACTIVE customer (${hit.customer_id}). This registration was refused — use the existing customer instead.`);
+        await notifyEmployee(bot, requesterUserId, requestId, `❌ Customer "${custName}" was not registered — that name already belongs to an existing customer. Pick them from the customer list.`);
+        return;
+      }
+    } catch (e) {
+      logger.warn(`new-customer activation recheck failed (continuing): ${e.message}`);
+    }
     if (custId) {
       const customersRepo = require('../repositories/customersRepository');
       await customersRepo.updateRow(custId, { status: 'Active' });
@@ -1710,6 +1739,7 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
     const session = sessionStore.get(requesterUserId);
     if (session && session.type === 'supply_req_flow' && session.step === 'awaiting_customer_approval') {
       session.customer = custName;
+      session.customerId = custId; // CUS-2 — the fresh entity id rides the resumed flow
       session.step = 'salesperson';
       delete session.pendingCustomerId;
       delete session.pendingCustomerName;
@@ -1735,6 +1765,7 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
     } else if (session && session.type === 'sample_flow' && session.step === 'awaiting_customer_approval') {
       // Resume Give Sample flow at the quantity step.
       session.customer = custName;
+      session.customerId = custId; // CUS-2
       session.step = 'quantity';
       delete session.pendingCustomerId;
       delete session.pendingCustomerName;
@@ -1754,6 +1785,7 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
       }
     } else if (session && session.type === 'order_flow' && session.step === 'awaiting_customer_approval') {
       session.customer = custName;
+      session.customerId = custId; // CUS-2
       session.step = 'quantity';
       delete session.pendingCustomerId;
       delete session.pendingCustomerName;
@@ -1781,6 +1813,7 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
       }
     } else if (session && session.type === 'receipt_flow' && session.step === 'awaiting_customer_approval') {
       session.customer = custName;
+      session.customerId = custId; // CUS-2
       session.step = 'amount';
       delete session.pendingCustomerId;
       delete session.pendingCustomerName;

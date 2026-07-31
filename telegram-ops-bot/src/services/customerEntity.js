@@ -24,8 +24,10 @@ const logger = require('../utils/logger');
 
 const norm = (s) => String(s == null ? '' : s).trim().toLowerCase();
 
-/** Statuses that keep a customer OUT of every picker and suggestion. */
-const HIDDEN_STATUSES = new Set(['inactive', 'merged', 'pending']);
+/** Statuses that keep a customer OUT of every picker and suggestion.
+ *  CUS-2: 'rejected' added — the reject door writes it (approvalEvents),
+ *  and without it a rejected registration stayed fully selectable. */
+const HIDDEN_STATUSES = new Set(['inactive', 'merged', 'pending', 'rejected']);
 
 /**
  * Resolve {id} or {name} (canonical or alias) to the canonical customer.
