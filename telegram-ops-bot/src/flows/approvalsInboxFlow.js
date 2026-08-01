@@ -51,7 +51,6 @@
 const sessionStore = require('../utils/sessionStore');
 const { makeRenderer, rowsFor } = require('../utils/flowKit');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
-const inventoryRepository = require('../repositories/inventoryRepository');
 const approvalCards = require('../services/approvalCards');
 const settingsRepository = require('../repositories/settingsRepository');
 const { duplicateIndex } = require('../utils/duplicateApprovals');
@@ -348,9 +347,9 @@ function itemsForCategory(session, pending, dupIdx) {
  *   🔴 IDU▸KAN ·3B        requested, waiting for dispatch
  *   🟡 LAG▸KAN ·3B, 5T    in transit, waiting to be received
  *   🟢 LAG▸KAN ·2B, 4T    received — inventory really moved
- * ·NB = bales, NT = thans in those bales (thans appear once the physical
- * bales are logged at dispatch). Telegram buttons cannot be tinted — the
- * dot emoji is the tint.
+ * ·NB = whole bales, NT = LOOSE thans travelling as their own cargo
+ * (owner 01-Aug: NOT the thans packed inside the bales). Telegram buttons
+ * cannot be tinted — the dot emoji is the tint.
  */
 function whCode(w) {
   const letters = String(w || '').replace(/[^A-Za-z]/g, '').toUpperCase();
@@ -374,35 +373,29 @@ function transferBaleCount(aj) {
   return 0;
 }
 
-/** Inventory rows per bale (one row = one than), keyed by lowercased
- *  PackageNo. Best-effort — null when the sheet is unreadable, and the
- *  chips simply omit the T figure. */
-async function thanCountMap() {
-  try {
-    const map = new Map();
-    for (const r of await inventoryRepository.getAll()) {
-      const k = String(r.packageNo || '').toLowerCase();
-      if (k) map.set(k, (map.get(k) || 0) + 1);
-    }
-    return map;
-  } catch (_) { return null; }
+/** LOOSE thans riding a transfer as their own cargo (owner 01-Aug: "3B, 5T"
+ *  means 3 whole bales AND 5 loose thans — NOT the thans inside the bales).
+ *  The staged bale pipeline carries none today; legacy transfer_than rows
+ *  and any future loose-than lines surface here. */
+function transferThanCount(aj) {
+  if (Array.isArray(aj.thans) && aj.thans.length) return aj.thans.length;
+  if (Array.isArray(aj.thanItems) && aj.thanItems.length) return aj.thanItems.length;
+  if (String(aj.action || '') === 'transfer_than') return 1;
+  return 0;
 }
 
-function transferChipLabel(it, thansOf) {
+function transferChipLabel(it) {
   const aj = it.actionJSON || {};
   const dot = String(it.status || '').toLowerCase() === 'approved' ? '🟢'
     : (aj.stage === 'in_transit' ? '🟡' : '🔴');
   // Legacy rows without a route keep the short ref so the chip isn't blank.
   const route = (aj.from || aj.to) ? `${whCode(aj.from)}▸${whCode(aj.to)}` : shortTransferId(it.requestId);
-  const n = transferBaleCount(aj);
-  if (!n) return `${dot} ${route}`;
-  // Owner layout 01-Aug: units on the counts — ·3B, 5T. Thans only once the
-  // physical bales are logged (dispatch onward); a request is bales-only.
-  let thans = 0;
-  if (thansOf && Array.isArray(aj.bales)) {
-    for (const b of aj.bales) thans += thansOf.get(String(b).toLowerCase()) || 0;
-  }
-  return `${dot} ${route} ·${n}B${thans ? `, ${thans}T` : ''}`;
+  const parts = [];
+  const b = transferBaleCount(aj);
+  const t = transferThanCount(aj);
+  if (b) parts.push(`${b}B`);
+  if (t) parts.push(`${t}T`);
+  return parts.length ? `${dot} ${route} ·${parts.join(', ')}` : `${dot} ${route}`;
 }
 
 async function renderItems(bot, chatId, userId) {
@@ -461,14 +454,13 @@ async function renderItems(bot, chatId, userId) {
     }
   }
 
-  const thansOf = isTransfers ? await thanCountMap() : null;
   const rows = slice.map((it) => {
     const i = items.indexOf(it);
     const days = ageDays(it.createdAt);
     const who = nameOf.get(String(it.user || '')) || it.user || '—';
     const dup = dupIdx.has(String(it.requestId)) ? '⧉ ' : '';
     const label = isTransfers
-      ? transferChipLabel(it, thansOf)
+      ? transferChipLabel(it)
       : `${dup}${ageDot(days)} ${shortDate(it.createdAt)} · ${actionLabel(it)} · ${who}`;
     return [{ text: label.slice(0, 60), callback_data: `${isTransfers ? 'abx:trf' : 'abx:i'}:${i}` }];
   });

@@ -160,6 +160,8 @@ test('APX-6: transfer chips are dot+route+bales on one newest-first timeline', a
   approvalQueueRepository.getAllPending = async () => [
     { requestId: 'TR-20260724-001', user: '7430648262', status: 'pending', createdAt: daysAgo(1), actionJSON: { action: 'transfer_stock', from: 'Lagos', to: 'Kano office', stage: 'requested', lines: [{ design: '9032', shade: '2', qty: 2 }] } },
     { requestId: 'TR-20260724-003', user: '7430648262', status: 'pending', createdAt: daysAgo(2), actionJSON: { action: 'transfer_stock', from: 'IDUMOTA', to: 'Kano office', stage: 'in_transit', bales: ['B1', 'B2', 'B3'], lines: [] } },
+    // Legacy single-than transfer: LOOSE than cargo → ·1T (no route recorded).
+    { requestId: 'abc1d2e3-0000-4000-8000-000000000000', user: '7430648262', status: 'pending', createdAt: daysAgo(3), actionJSON: { action: 'transfer_than', packageNo: '5801', thanNo: 3, warehouse: 'Kano office' } },
   ];
   approvalQueueRepository.getResolved = async () => [
     // Received an hour ago → green.
@@ -170,32 +172,30 @@ test('APX-6: transfer chips are dot+route+bales on one newest-first timeline', a
     // Rejected transfers are not greens.
     { requestId: 'TR-20260730-002', user: '7430648262', status: 'rejected', createdAt: daysAgo(2), resolvedAt: new Date().toISOString(), actionJSON: { action: 'transfer_stock', from: 'Lagos', to: 'IDUMOTA', stage: 'requested', lines: [] } },
   ];
-  const inventoryRepository = require(path.join(SRC, 'repositories/inventoryRepository'));
-  const origInv = inventoryRepository.getAll;
-  // One row = one than: B1 has 2, B2 has 2, B3 has 1 → the 🟡's 3 bales = 5T.
-  inventoryRepository.getAll = async () => [
-    { packageNo: 'B1' }, { packageNo: 'B1' }, { packageNo: 'B2' }, { packageNo: 'B2' }, { packageNo: 'B3' },
-  ];
   try {
     const bot = createFakeBot();
     await flow.start(bot, ADMIN, ADMIN, null);
     const catChip = lastKb(bot).find((b) => b.callback_data === 'abx:cat:transfers');
-    assert.match(catChip.text, /1 🔴 · 1 🟡 · 2 🟢/, `category mix shown, got: ${catChip.text}`);
+    assert.match(catChip.text, /2 🔴 · 1 🟡 · 2 🟢/, `category mix shown, got: ${catChip.text}`);
 
     await flow.handleCallback(bot, cb('abx:cat:transfers', ADMIN));
     const chips = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:trf:')).map((b) => b.text);
     assert.ok(chips.includes('🔴 LAG▸KAN ·2B'), `requested = red dot + requested bales, got: ${chips}`);
-    assert.ok(chips.includes('🟡 IDU▸KAN ·3B, 5T'), `in-transit = yellow dot + bales + thans, got: ${chips}`);
+    // B counts whole bales ONLY — never the thans packed inside them.
+    assert.ok(chips.includes('🟡 IDU▸KAN ·3B'), `in-transit = yellow dot + bale count, got: ${chips}`);
+    // T counts LOOSE thans travelling as their own cargo (legacy single-than row).
+    assert.ok(chips.includes('🔴 R-ABC1 ·1T'), `loose than = T unit + ref fallback, got: ${chips}`);
     assert.ok(chips.includes('🟢 IDU▸KAN'), `received = green dot, got: ${chips}`);
     assert.ok(chips.includes('🟢 LAG▸IDU'), `old green KEPT (default: never vanish), got: ${chips}`);
-    assert.equal(chips.length, 4, 'rejected resolved rows never appear');
+    assert.equal(chips.length, 5, 'rejected resolved rows never appear');
     // No stage words, no date tokens — colour is the stage, position is the date.
     assert.ok(chips.every((t) => !/DSP|RCV|Jul·/.test(t)), `words/dates removed, got: ${chips}`);
     // Newest→oldest across open AND received: the two 1-day rows lead (either
-    // order), the 2-day yellow follows, the 9-day green is last.
-    assert.equal(chips[2], '🟡 IDU▸KAN ·3B, 5T', `2-day row third, got: ${chips}`);
-    assert.equal(chips[3], '🟢 LAG▸IDU', `oldest last, got: ${chips}`);
-    assert.match(lastText(bot), /2\* open · 2 🟢/, `header splits open vs received, got: ${lastText(bot)}`);
+    // order), then 2d yellow, 3d legacy, 9-day green last.
+    assert.equal(chips[2], '🟡 IDU▸KAN ·3B', `2-day row third, got: ${chips}`);
+    assert.equal(chips[3], '🔴 R-ABC1 ·1T', `3-day row fourth, got: ${chips}`);
+    assert.equal(chips[4], '🟢 LAG▸IDU', `oldest last, got: ${chips}`);
+    assert.match(lastText(bot), /3\* open · 2 🟢/, `header splits open vs received, got: ${lastText(bot)}`);
     assert.match(lastText(bot), /🔴 requested · 🟡 in transit · 🟢 received · B bales · T thans/, 'legend teaches the dots and units');
 
     // APX-3e — a Settings row restores the display window once backups exist.
@@ -214,7 +214,6 @@ test('APX-6: transfer chips are dot+route+bales on one newest-first timeline', a
   } finally {
     approvalQueueRepository.getAllPending = orig;
     approvalQueueRepository.getResolved = origResolved;
-    inventoryRepository.getAll = origInv;
     sessionStore.clear(ADMIN);
   }
 });
