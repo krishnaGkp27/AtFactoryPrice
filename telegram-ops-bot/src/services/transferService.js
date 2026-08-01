@@ -25,7 +25,6 @@ const approvalQueueRepository = require('../repositories/approvalQueueRepository
 const inventoryRepository = require('../repositories/inventoryRepository');
 const transactionsRepository = require('../repositories/transactionsRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
-const idGenerator = require('../utils/idGenerator');
 const mutex = require('../utils/asyncMutex');
 
 const ACTION = 'transfer_stock';
@@ -106,12 +105,41 @@ async function findTransfer(requestId) {
  * @param {{from:string,to:string,lines:Array<{design:string,shade:string,qty:number}>,requestedBy:string,dispatcher:string,receiver:string}} p
  * @returns {Promise<{requestId:string, aj:object}>}
  */
+/**
+ * TRID-1 — mint TR-YYYYMMDD-NNN with the sequence seeded from the queue
+ * itself. The old in-memory daily counter reset on every deploy and could
+ * re-issue a live id (two transfers sharing TR-…-001 made all by-id routing
+ * open the wrong one). Reading max(NNN) for today from the sheet survives
+ * restarts; if the sheet is unreadable, a random high sequence beats
+ * reusing a low live number.
+ */
+const _mintedFloor = {}; // date → highest seq handed out by THIS process
+async function uniqueTransferId() {
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  let max = 0;
+  try {
+    const re = new RegExp(`^TR-${date}-(\\d+)$`);
+    for (const row of await approvalQueueRepository.getAllWithRowIndex()) {
+      const m = re.exec(String(row.requestId || ''));
+      if (m) max = Math.max(max, parseInt(m[1], 10));
+    }
+  } catch (_) {
+    max = 500 + Math.floor(Math.random() * 400);
+  }
+  // In-process floor: two transfers created in one batch both read the
+  // queue BEFORE either append lands — the sync floor bump below keeps
+  // their sequences distinct (single-threaded, no await in between).
+  const seq = Math.max(max, _mintedFloor[date] || 0) + 1;
+  _mintedFloor[date] = seq;
+  return `TR-${date}-${String(seq).padStart(3, '0')}`;
+}
+
 async function createTransferRequest({ from, to, lines, requestedBy, dispatcher, receiver }) {
   const cleanLines = (lines || [])
     .map((l) => ({ design: l.design, shade: l.shade, qty: Math.max(0, parseInt(l.qty, 10) || 0) }))
     .filter((l) => l.design && l.qty > 0);
   if (!cleanLines.length) throw new Error('transferService: at least one line with qty > 0 required');
-  const requestId = idGenerator.transfer();
+  const requestId = await uniqueTransferId();
   const aj = {
     action: ACTION,
     from, to,
@@ -285,6 +313,7 @@ async function attachDoc(requestId, kind, doc = {}) {
 module.exports = {
   ACTION,
   STAGES,
+  uniqueTransferId,
   availableBales,
   selectByQuantity,
   getOpenTransfers,

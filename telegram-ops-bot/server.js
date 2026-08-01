@@ -371,6 +371,17 @@ const server = app.listen(PORT, async () => {
     // process (Drive photo imports) and missed one-shot cards. First pass
     // shortly after boot, then the service self-paces per
     // APPROVAL_REMINDER_HOURS (Settings, 0 disables).
+    // TRID-1 — one-shot duplicate-transfer-id repair (owner-approved
+    // 01-Aug): renames PENDING rows whose TR id collides with a resolved
+    // row, so by-id routing stops opening the wrong transfer. Idempotent —
+    // a clean queue is a no-op. Runs BEFORE the reminder sweep so reminders
+    // never re-send cards under a colliding id.
+    const queueRepair = require('./src/services/queueRepair');
+    setTimeout(() => {
+      queueRepair.dedupeTransferIds(bot)
+        .then((r) => { if (r.repaired.length || r.skippedPendingOnly || r.failed) logger.info(`queueRepair: ${JSON.stringify(r)}`); })
+        .catch((e) => logger.warn(`queueRepair boot pass failed: ${e.message}`));
+    }, 20 * 1000);
     const approvalReminder = require('./src/services/approvalReminder');
     setTimeout(() => approvalReminder.sweep(bot), 60 * 1000);
     setInterval(() => approvalReminder.sweep(bot), 60 * 60 * 1000);

@@ -90,6 +90,36 @@ async function getByRequestId(requestId) {
   };
 }
 
+/** TRID-1 — every row WITH its absolute sheet row number (repair tooling).
+ *  While duplicate requestIds exist, all id-keyed updates are ambiguous —
+ *  repairs must address the physical row. */
+async function getAllWithRowIndex() {
+  const rows = await sheets.readRange(SHEET, 'A2:G');
+  return rows.map((r, i) => ({
+    rowIndex: i + 2,
+    requestId: r[0], user: r[1], actionJSON: safeParse(r[2]),
+    riskReason: r[3], status: r[4], createdAt: r[5], resolvedAt: r[6],
+  }));
+}
+
+/**
+ * TRID-1 — rewrite column A (RequestID) of ONE specific row. Guarded
+ * compare-and-set: refuses when the cell no longer holds `expectedOldId`
+ * (row moved / concurrent write), so the repair can never rename the
+ * wrong row.
+ * @param {number} rowIndex absolute sheet row (2-based data rows)
+ * @param {string} expectedOldId
+ * @param {string} newId
+ * @returns {Promise<boolean>} true when the cell was rewritten
+ */
+async function renameRequestIdAtRow(rowIndex, expectedOldId, newId) {
+  const cell = await sheets.readRange(SHEET, `A${rowIndex}:A${rowIndex}`);
+  const current = cell && cell[0] ? String(cell[0][0] || '') : '';
+  if (current !== String(expectedOldId)) return false;
+  await sheets.updateRange(SHEET, `A${rowIndex}`, [[String(newId)]]);
+  return true;
+}
+
 function safeParse(str) {
   try {
     return JSON.parse(str || '{}');
@@ -119,4 +149,7 @@ async function updateActionJSON(requestId, patch) {
   return true;
 }
 
-module.exports = { append, getAllPending, getResolved, updateStatus, updateActionJSON, getByRequestId, ensureHeader };
+module.exports = {
+  append, getAllPending, getResolved, updateStatus, updateActionJSON, getByRequestId,
+  getAllWithRowIndex, renameRequestIdAtRow, ensureHeader,
+};
