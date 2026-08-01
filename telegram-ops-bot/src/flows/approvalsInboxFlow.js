@@ -51,6 +51,7 @@
 const sessionStore = require('../utils/sessionStore');
 const { makeRenderer, rowsFor } = require('../utils/flowKit');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+const inventoryRepository = require('../repositories/inventoryRepository');
 const approvalCards = require('../services/approvalCards');
 const settingsRepository = require('../repositories/settingsRepository');
 const { duplicateIndex } = require('../utils/duplicateApprovals');
@@ -344,11 +345,12 @@ function itemsForCategory(session, pending, dupIdx) {
  * APX-6 (owner 01-Aug, replaces the APX-3c DSP/RCV mnemonics): colour dot
  * IS the stage, position IS the date — the list runs newest → oldest so
  * words and date tokens are noise:
- *   🔴 IDU▸KAN ·3    requested, waiting for dispatch
- *   🟡 LAG▸KAN ·3    in transit, waiting to be received
- *   🟢 LAG▸KAN ·2    received — inventory really moved
- * Trailing ·N = bales on the transfer. Telegram buttons cannot be
- * tinted — the dot emoji is the tint.
+ *   🔴 IDU▸KAN ·3B        requested, waiting for dispatch
+ *   🟡 LAG▸KAN ·3B, 5T    in transit, waiting to be received
+ *   🟢 LAG▸KAN ·2B, 4T    received — inventory really moved
+ * ·NB = bales, NT = thans in those bales (thans appear once the physical
+ * bales are logged at dispatch). Telegram buttons cannot be tinted — the
+ * dot emoji is the tint.
  */
 function whCode(w) {
   const letters = String(w || '').replace(/[^A-Za-z]/g, '').toUpperCase();
@@ -372,14 +374,35 @@ function transferBaleCount(aj) {
   return 0;
 }
 
-function transferChipLabel(it) {
+/** Inventory rows per bale (one row = one than), keyed by lowercased
+ *  PackageNo. Best-effort — null when the sheet is unreadable, and the
+ *  chips simply omit the T figure. */
+async function thanCountMap() {
+  try {
+    const map = new Map();
+    for (const r of await inventoryRepository.getAll()) {
+      const k = String(r.packageNo || '').toLowerCase();
+      if (k) map.set(k, (map.get(k) || 0) + 1);
+    }
+    return map;
+  } catch (_) { return null; }
+}
+
+function transferChipLabel(it, thansOf) {
   const aj = it.actionJSON || {};
   const dot = String(it.status || '').toLowerCase() === 'approved' ? '🟢'
     : (aj.stage === 'in_transit' ? '🟡' : '🔴');
   // Legacy rows without a route keep the short ref so the chip isn't blank.
   const route = (aj.from || aj.to) ? `${whCode(aj.from)}▸${whCode(aj.to)}` : shortTransferId(it.requestId);
   const n = transferBaleCount(aj);
-  return `${dot} ${route}${n ? ` ·${n}` : ''}`;
+  if (!n) return `${dot} ${route}`;
+  // Owner layout 01-Aug: units on the counts — ·3B, 5T. Thans only once the
+  // physical bales are logged (dispatch onward); a request is bales-only.
+  let thans = 0;
+  if (thansOf && Array.isArray(aj.bales)) {
+    for (const b of aj.bales) thans += thansOf.get(String(b).toLowerCase()) || 0;
+  }
+  return `${dot} ${route} ·${n}B${thans ? `, ${thans}T` : ''}`;
 }
 
 async function renderItems(bot, chatId, userId) {
@@ -438,13 +461,14 @@ async function renderItems(bot, chatId, userId) {
     }
   }
 
+  const thansOf = isTransfers ? await thanCountMap() : null;
   const rows = slice.map((it) => {
     const i = items.indexOf(it);
     const days = ageDays(it.createdAt);
     const who = nameOf.get(String(it.user || '')) || it.user || '—';
     const dup = dupIdx.has(String(it.requestId)) ? '⧉ ' : '';
     const label = isTransfers
-      ? transferChipLabel(it)
+      ? transferChipLabel(it, thansOf)
       : `${dup}${ageDot(days)} ${shortDate(it.createdAt)} · ${actionLabel(it)} · ${who}`;
     return [{ text: label.slice(0, 60), callback_data: `${isTransfers ? 'abx:trf' : 'abx:i'}:${i}` }];
   });
@@ -459,7 +483,7 @@ async function renderItems(bot, chatId, userId) {
   rows.push(closeRow());
 
   const note = isTransfers
-    ? '\n🔴 requested · 🟡 in transit · 🟢 received · from▸to ·bales — newest first\n_Not approvals — tap one to open its transfer card._'
+    ? '\n🔴 requested · 🟡 in transit · 🟢 received · B bales · T thans — newest first\n_Not approvals — tap one to open its transfer card._'
     : '';
   const headCount = isTransfers
     ? (() => {
