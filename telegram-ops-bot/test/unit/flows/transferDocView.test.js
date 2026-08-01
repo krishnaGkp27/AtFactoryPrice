@@ -102,11 +102,12 @@ test('stale file_id on both sends falls back to the Drive link', async () => {
 
 /* ── TRF-11 — bale-number chip on every card that has bales ───────────── */
 
-test('TRF-11: short bale lists ride the chip label; long lists become a count', () => {
+test('TRF-11: chip is always the count label (owner pick) — numbers only on tap', () => {
   const { balesChipRow } = transferFlow._internals;
   const short = balesChipRow(REQ, { bales: ['6261', '6275', '6250'] });
-  assert.equal(short[0][0].text, '📦 6261 · 6275 · 6250');
+  assert.equal(short[0][0].text, '📦 3 bales — view all');
   assert.equal(short[0][0].callback_data, `trf:bn:${REQ}`);
+  assert.equal(balesChipRow(REQ, { bales: ['6261'] })[0][0].text, '📦 1 bale — view all');
   const many = balesChipRow(REQ, { bales: Array.from({ length: 12 }, (_, i) => `77${100 + i}`) });
   assert.equal(many[0][0].text, '📦 12 bales — view all');
   assert.deepEqual(balesChipRow(REQ, {}), [], 'no bales (requested stage) — no chip');

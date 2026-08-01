@@ -399,16 +399,15 @@ function docRows(requestId, aj) {
   return rows;
 }
 
-/** TRF-11 (owner 01-Aug) — bale-number chip on every transfer card. The
- *  numbers ride the chip itself when they fit Telegram's 60-char button
- *  limit; otherwise a count label. Tapping shows the full list as a popup
- *  (nothing parked in the chat). Empty before dispatch — bales are logged
- *  when the dispatcher accepts. */
+/** TRF-11 (owner 01-Aug) — bale-number chip on every transfer card: always
+ *  the count ("📦 12 bales — view all", owner-preferred over inlining the
+ *  numbers); tapping shows the full list as a popup (nothing parked in the
+ *  chat). Empty before dispatch — bales are logged when the dispatcher
+ *  accepts. */
 function balesChipRow(requestId, aj) {
   const bales = Array.isArray(aj.bales) ? aj.bales : [];
   if (!bales.length) return [];
-  const inline = `📦 ${bales.join(' · ')}`;
-  const label = inline.length <= 60 ? inline : `📦 ${bales.length} bales — view all`;
+  const label = `📦 ${bales.length} bale${bales.length === 1 ? '' : 's'} — view all`;
   // trf:bn — NOT trf:bl, which is the dispatch picker's namespace.
   return [[{ text: label, callback_data: `trf:bn:${requestId}` }]];
 }
