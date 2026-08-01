@@ -100,6 +100,65 @@ test('stale file_id on both sends falls back to the Drive link', async () => {
   assert.match(msgs[0].args.text, /Receipt doc — 24Jul·02\n🔗 https:\/\/drive\/r/);
 });
 
+/* ── TRF-11 — bale-number chip on every card that has bales ───────────── */
+
+test('TRF-11: short bale lists ride the chip label; long lists become a count', () => {
+  const { balesChipRow } = transferFlow._internals;
+  const short = balesChipRow(REQ, { bales: ['6261', '6275', '6250'] });
+  assert.equal(short[0][0].text, '📦 6261 · 6275 · 6250');
+  assert.equal(short[0][0].callback_data, `trf:bn:${REQ}`);
+  const many = balesChipRow(REQ, { bales: Array.from({ length: 12 }, (_, i) => `77${100 + i}`) });
+  assert.equal(many[0][0].text, '📦 12 bales — view all');
+  assert.deepEqual(balesChipRow(REQ, {}), [], 'no bales (requested stage) — no chip');
+});
+
+test('TRF-11: settled card and receiver card both carry the chip', async () => {
+  stubFind({ ...rowWith({ bales: ['6261', '6275'] }), status: 'approved' });
+  const bot = createFakeBot();
+  await transferFlow.handleCallback(bot, query(`trf:card:${REQ}`, 777));
+  const kb = bot.callsTo('editMessageText')[0].args.opts.reply_markup.inline_keyboard.flat();
+  assert.ok(kb.some((b) => b.callback_data === `trf:bn:${REQ}`), 'settled card chip');
+  const rc = transferFlow._internals.receiverCard(REQ, { from: 'A', to: 'B', lines: [], bales: ['6261'] });
+  assert.ok(rc.kb.inline_keyboard.flat().some((b) => b.callback_data === `trf:bn:${REQ}`), 'receiver card chip');
+});
+
+test('TRF-11: tap shows the full list as a popup, nothing lands in chat', async () => {
+  stubFind(rowWith({ bales: ['6261', '6275', '6250'] }));
+  const bot = createFakeBot();
+  await transferFlow.handleCallback(bot, query(`trf:bn:${REQ}`, 12));
+  const ack = bot.callsTo('answerCallbackQuery').find((c) => c.args.opts && c.args.opts.show_alert);
+  assert.ok(ack, 'popup used');
+  assert.match(ack.args.opts.text, /3 bale\(s\):\n6261, 6275, 6250/);
+  assert.equal(bot.callsTo('sendMessage').length, 0, 'no chat message for short lists');
+});
+
+test('TRF-11: oversized lists fall back to an ephemeral tracked message', async () => {
+  const bales = Array.from({ length: 40 }, (_, i) => `77${1000 + i}`);
+  stubFind(rowWith({ bales }));
+  const bot = createFakeBot();
+  await transferFlow.handleCallback(bot, query(`trf:bn:${REQ}`, 12));
+  const msg = bot.callsTo('sendMessage')[0];
+  assert.ok(msg, 'sent as a message');
+  assert.match(msg.args.text, /40 bale\(s\)/);
+  // Tracked as ephemeral: the next transfer tap sweeps it.
+  const origOpen = transferService.getOpenTransfers;
+  transferService.getOpenTransfers = async () => [];
+  try {
+    await transferFlow.handleCallback(bot, query('trf:list', 12));
+    assert.equal(bot.callsTo('deleteMessage').length, 1, 'swept on navigation');
+  } finally {
+    transferService.getOpenTransfers = origOpen;
+  }
+});
+
+test('TRF-11: requested stage (no bales yet) answers with an explanatory popup', async () => {
+  stubFind(rowWith({ bales: [], stage: 'requested' }));
+  const bot = createFakeBot();
+  await transferFlow.handleCallback(bot, query(`trf:bn:${REQ}`, 12));
+  const ack = bot.callsTo('answerCallbackQuery').find((c) => c.args.opts && c.args.opts.show_alert);
+  assert.match(ack.args.opts.text, /No bales logged yet/);
+});
+
 /* ── TRF-10 — Back to the list the card replaced ──────────────────────── */
 
 test('TRF-10: card opened from the inbox carries ⬅ Back to the chip list', async () => {

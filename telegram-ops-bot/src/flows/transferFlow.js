@@ -35,6 +35,8 @@
  *   trf:acc:<id> · trf:dec:<id> · trf:rcv:<id> · trf:rej:<id>
  *   trf:nn:<id>                  receiver "not now" on the photo gate
  *   trf:vd:d|r:<id>              TRF-9 view attached dispatch/receipt file
+ *   trf:bn:<id>                  TRF-11 bale numbers popup (trf:bl:* is the
+ *                                dispatch bale PICKER — do not reuse)
  */
 
 const sessionStore = require('../utils/sessionStore');
@@ -397,6 +399,45 @@ function docRows(requestId, aj) {
   return rows;
 }
 
+/** TRF-11 (owner 01-Aug) — bale-number chip on every transfer card. The
+ *  numbers ride the chip itself when they fit Telegram's 60-char button
+ *  limit; otherwise a count label. Tapping shows the full list as a popup
+ *  (nothing parked in the chat). Empty before dispatch — bales are logged
+ *  when the dispatcher accepts. */
+function balesChipRow(requestId, aj) {
+  const bales = Array.isArray(aj.bales) ? aj.bales : [];
+  if (!bales.length) return [];
+  const inline = `📦 ${bales.join(' · ')}`;
+  const label = inline.length <= 60 ? inline : `📦 ${bales.length} bales — view all`;
+  // trf:bn — NOT trf:bl, which is the dispatch picker's namespace.
+  return [[{ text: label, callback_data: `trf:bn:${requestId}` }]];
+}
+
+/** TRF-11 — full bale list on tap: popup when it fits, else an ephemeral
+ *  message swept like a doc view. */
+async function showBaleNumbers(bot, query, requestId) {
+  const row = await transferService.findTransfer(requestId);
+  const bales = row && row.actionJSON && Array.isArray(row.actionJSON.bales) ? row.actionJSON.bales : [];
+  if (!row || !bales.length) {
+    await bot.answerCallbackQuery(query.id, {
+      text: row ? '📦 No bales logged yet — they are picked at dispatch.' : '🚚 Transfer not found or already purged.',
+      show_alert: true,
+    }).catch(() => {});
+    return true;
+  }
+  const text = `📦 ${shortTransferRef(requestId)} — ${bales.length} bale(s):\n${bales.join(', ')}`;
+  if (text.length <= 190) { // Telegram alert cap ~200 chars
+    await bot.answerCallbackQuery(query.id, { text, show_alert: true }).catch(() => {});
+    return true;
+  }
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+  const sent = await bot.sendMessage(query.message.chat.id, text).catch(() => null);
+  if (sent && sent.message_id) {
+    require('../services/ephemeralDocs').track(bot, String(query.from.id), query.message.chat.id, sent.message_id);
+  }
+  return true;
+}
+
 function receiverCard(requestId, aj) {
   const shortNote = aj.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
   return {
@@ -404,9 +445,9 @@ function receiverCard(requestId, aj) {
     kb: { inline_keyboard: [[
       { text: '✅ Received', callback_data: `trf:rcv:${requestId}` },
       { text: '⚠️ Reject', callback_data: `trf:rej:${requestId}` },
-    // TRF-9 — let the receiver check the load against the dispatcher's file
-    // BEFORE tapping Received.
-    ], ...docRows(requestId, aj)] },
+    // TRF-11 bale chip + TRF-9 docs — let the receiver check the load
+    // against the numbers and the dispatcher's file BEFORE tapping Received.
+    ], ...balesChipRow(requestId, aj), ...docRows(requestId, aj)] },
   };
 }
 
@@ -1144,9 +1185,10 @@ async function showActionCard(bot, query, requestId, opts = {}) {
   const aj = row.actionJSON;
   if (row.status !== 'pending') {
     await bot.answerCallbackQuery(query.id).catch(() => {});
-    // TRF-9 — a settled transfer still offers its dispatch/receipt files.
+    // TRF-11 bale chip + TRF-9 docs — a settled transfer keeps its numbers
+    // and files one tap away.
     await editInPlace(`🚚 *${shortTransferRef(requestId)}* — ${stateLabel(row)}\n${compactOf(aj)}`,
-      { inline_keyboard: [...docRows(requestId, aj), navRow] });
+      { inline_keyboard: [...balesChipRow(requestId, aj), ...docRows(requestId, aj), navRow] });
     return true;
   }
   const toDispatch = aj.stage !== 'in_transit';
@@ -1473,6 +1515,8 @@ async function handleCallback(bot, query) {
   if (mInfo) return showInfo(bot, query, mInfo[1], true);
   const mVd = data.match(/^trf:vd:([dr]):(.+)$/);
   if (mVd) return sendTransferDoc(bot, query, mVd[2], mVd[1] === 'r' ? 'receive' : 'dispatch');
+  const mBn = data.match(/^trf:bn:(.+)$/);
+  if (mBn) return showBaleNumbers(bot, query, mBn[1]);
   const mLess = data.match(/^trf:less:(.+)$/);
   if (mLess) return showInfo(bot, query, mLess[1], false);
   const mSkip = data.match(/^trf:dsk:([dr]):(.+)$/);
@@ -1641,7 +1685,7 @@ module.exports = {
     parseTypedTransfer, typedBaleMap,
     startDispatchPicker, askDispatchDoc, completeDispatch, completeReceipt,
     armDocGate, gateNotNow, showInfo, promptForDoc, handleFile,
-    docRows, sendTransferDoc,
+    docRows, sendTransferDoc, balesChipRow, showBaleNumbers,
     linesBlock, dispatchedBlock, headOf, compactOf, designHead,
     detailCard, shortCard, showActionCard, dispatcherCard, receiverCard, SESSION_TYPE,
   },
