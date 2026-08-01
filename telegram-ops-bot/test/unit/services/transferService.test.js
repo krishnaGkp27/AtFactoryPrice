@@ -91,9 +91,11 @@ test('dispatch: logs actual bales per line, flips in_transit @ dest', async () =
   // Rose: P1,P2 (full) · Lily: only P4 exists → short 1/2.
   assert.deepEqual(calls.transitions[0], { pkgs: ['P1', 'P2', 'P4'], from: 'available', to: 'in_transit', wh: 'Kano office' });
   assert.equal(res.short, true);
+  // TRF-12 — the per-line bale numbers are stored so cards can print them
+  // in brackets on each row.
   assert.deepEqual(res.aj.dispatched, [
-    { design: 'Rose', shade: 'Red', requested: 2, sent: 2 },
-    { design: 'Lily', shade: 'Blue', requested: 2, sent: 1 },
+    { design: 'Rose', shade: 'Red', requested: 2, sent: 2, bales: ['P1', 'P2'] },
+    { design: 'Lily', shade: 'Blue', requested: 2, sent: 1, bales: ['P4'] },
   ]);
   assert.equal(calls.ajPatches[0].patch.stage, 'in_transit');
   assert.deepEqual(calls.ajPatches[0].patch.bales, ['P1', 'P2', 'P4']);

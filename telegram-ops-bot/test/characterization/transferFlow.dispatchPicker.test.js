@@ -259,8 +259,13 @@ test('admin short card expands to full detail then collapses', async () => {
   await controller.handleCallbackQuery(bi, cb(`trf:info:${requestId}`, 777));
   const expand = bi.callsTo('editMessageText').pop();
   assert.match(expand.args.text, /Dispatcher: Abdul/);
-  assert.match(expand.args.text, /Bales:/);
-  assert.ok(expand.args.opts.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === `trf:less:${requestId}`), 'collapse offered');
+  // TRF-12 — bale numbers ride each row in brackets; the flat "Bales:" line
+  // is gone (the 📦 chip shows the full list on tap).
+  assert.match(expand.args.text, /×\d+ \(/, `per-row bale brackets, got:\n${expand.args.text}`);
+  assert.ok(!expand.args.text.includes('Bales:'), 'flat list removed');
+  const expandKb = expand.args.opts.reply_markup.inline_keyboard.flat();
+  assert.ok(expandKb.some((b) => b.callback_data === `trf:bn:${requestId}`), 'bale chip on the expander');
+  assert.ok(expandKb.some((b) => b.callback_data === `trf:less:${requestId}`), 'collapse offered');
 
   // Collapse.
   const bc = createFakeBot();

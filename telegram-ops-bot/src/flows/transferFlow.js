@@ -333,12 +333,46 @@ function dispatchedBlock(aj) {
   for (const [design, list] of byDesign) {
     out.push(designHead(design));
     for (const d of list) {
+      // TRF-12 (owner 01-Aug) — the bale numbers ride each row in brackets;
+      // the flat bottom list is gone (the 📦 chip still shows it on tap).
+      const nums = Array.isArray(d.bales) && d.bales.length ? ` (${d.bales.join(', ')})` : '';
       out.push(d.sent < d.requested
-        ? ` • Shade ${d.shade} — ${d.sent}/${d.requested} ⚠️ short`
-        : ` • Shade ${d.shade} ×${d.sent}`);
+        ? ` • Shade ${d.shade} — ${d.sent}/${d.requested} ⚠️ short${nums}`
+        : ` • Shade ${d.shade} ×${d.sent}${nums}`);
     }
   }
   return out.join('\n');
+}
+
+/**
+ * TRF-12 — transfers dispatched before per-line storage flattened their
+ * picks into aj.bales only; rebuild the attribution from Inventory
+ * (bale → design+shade) so their cards print numbers per row too. Mutates
+ * the in-memory aj only — the sheet row is never rewritten. New dispatches
+ * carry d.bales directly and skip the read.
+ */
+async function ensureLineBales(aj) {
+  const norm = (v) => String(v == null ? '' : v).trim().toLowerCase();
+  const ds = aj && aj.dispatched;
+  if (!Array.isArray(ds) || !ds.length) return aj;
+  if (ds.every((d) => Array.isArray(d.bales))) return aj;
+  const pool = Array.isArray(aj.bales) ? aj.bales : [];
+  if (!pool.length) return aj;
+  try {
+    const meta = new Map(); // pkg (lowercased) -> {design, shade}
+    for (const r of await inventoryRepository.getAll()) {
+      const k = String(r.packageNo || '').toLowerCase();
+      if (k && !meta.has(k)) meta.set(k, { design: String(r.design || ''), shade: String(r.shade || '') });
+    }
+    for (const d of ds) {
+      if (Array.isArray(d.bales)) continue;
+      d.bales = pool.filter((p) => {
+        const m = meta.get(String(p).toLowerCase());
+        return m && norm(m.design) === norm(d.design) && norm(m.shade) === norm(d.shade);
+      });
+    }
+  } catch (_) { /* cards fall back to bare rows */ }
+  return aj;
 }
 
 /** One-line header: "*Lagos* → *Kano office* · 12 bale(s)". */
@@ -440,7 +474,7 @@ async function showBaleNumbers(bot, query, requestId) {
 function receiverCard(requestId, aj) {
   const shortNote = aj.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
   return {
-    text: `📦 *Transfer ${shortTransferRef(requestId)} incoming*\n${headOf(aj)}\n${dispatchedBlock(aj)}${shortNote}\n📦 Bales: ${baleListPreview(aj.bales)}\n\nConfirm when the goods arrive and match — a photo/PDF of the received goods is required:`,
+    text: `📦 *Transfer ${shortTransferRef(requestId)} incoming*\n${headOf(aj)}\n${dispatchedBlock(aj)}${shortNote}\n\nConfirm when the goods arrive and match — a photo/PDF of the received goods is required:`,
     kb: { inline_keyboard: [[
       { text: '✅ Received', callback_data: `trf:rcv:${requestId}` },
       { text: '⚠️ Reject', callback_data: `trf:rej:${requestId}` },
@@ -483,7 +517,7 @@ async function nameMap(ids) {
 
 /** Full detail card for the "View details" expansion. */
 async function detailCard(row) {
-  const aj = row.actionJSON;
+  const aj = await ensureLineBales(row.actionJSON);
   const names = await nameMap([aj.dispatcher, aj.receiver]);
   const out = [
     `🚚 *${row.requestId}* — ${stateLabel(row)}`,
@@ -492,7 +526,7 @@ async function detailCard(row) {
     '',
     aj.dispatched && aj.dispatched.length ? dispatchedBlock(aj) : linesBlock(aj.lines),
   ];
-  if (aj.bales && aj.bales.length) out.push('', `📦 Bales: ${baleListPreview(aj.bales, 30)}`);
+  // TRF-12 — bale numbers now ride each row; the flat list is the chip's job.
   if (aj.dispatchDoc && aj.dispatchDoc.url) out.push(`📸 Dispatch photo: ${aj.dispatchDoc.url}`);
   if (aj.receiveDoc && aj.receiveDoc.url) out.push(`📸 Receipt photo: ${aj.receiveDoc.url}`);
   return out.join('\n');
@@ -538,7 +572,7 @@ async function showInfo(bot, query, requestId, expand) {
   const aj = row.actionJSON;
   const text = expand ? await detailCard(row) : shortCard(requestId, aj, stateLabel(row));
   const kb = expand
-    ? { inline_keyboard: [...docRows(requestId, aj), [{ text: '◀ Less', callback_data: `trf:less:${requestId}` }]] }
+    ? { inline_keyboard: [...balesChipRow(requestId, aj), ...docRows(requestId, aj), [{ text: '◀ Less', callback_data: `trf:less:${requestId}` }]] }
     : viewMoreKb(requestId);
   await bot.editMessageText(text, {
     chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
@@ -651,6 +685,7 @@ async function handleAction(bot, query, requestId, action) {
   const res = await transferService.abort(requestId, userId);
   if (!res.ok) { await bot.sendMessage(chatId, `⚠️ ${res.message}`); return true; }
   const label = res.kind === 'declined' ? 'declined ❌' : 'rejected ❌';
+  await ensureLineBales(aj); // TRF-12 — per-row numbers on the rejection record
   const card = res.kind === 'declined'
     ? `❌ *${shortTransferRef(requestId)} declined* — nothing was moved.\n${headOf(aj)}\n${linesBlock(aj.lines)}`
     : `❌ *${shortTransferRef(requestId)} rejected* — bales reverted to *${aj.from}*.\n${headOf(aj)}\n${dispatchedBlock(aj)}`;
@@ -894,9 +929,10 @@ async function completeDispatch(bot, session, userId) {
   await notifyAdmins(bot, requestId, aj, 'dispatched 🚚', userId);
   if (row) await notifyRequester(bot, row, requestId, aj, 'dispatched 🚚', userId);
   const shortNote = res.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
+  // TRF-12 — bale numbers ride each row now; no flat list on the seal.
   return {
     ok: true,
-    sealText: `🚚 *${shortTransferRef(requestId)} dispatched* — bales logged\n${headOf(aj)}\n${dispatchedBlock(aj)}${shortNote}\n📦 ${baleListPreview(aj.bales)}`,
+    sealText: `🚚 *${shortTransferRef(requestId)} dispatched* — bales logged\n${headOf(aj)}\n${dispatchedBlock(aj)}${shortNote}`,
   };
 }
 
@@ -906,7 +942,7 @@ async function completeReceipt(bot, session, userId) {
   const row = await transferService.findTransfer(requestId);
   const res = await transferService.confirmReceipt(requestId, userId);
   if (!res.ok) return { ok: false, message: res.message };
-  const aj = res.aj;
+  const aj = await ensureLineBales(res.aj); // TRF-12 — pre-storage transfers
   await notifyAdmins(bot, requestId, aj, 'received ✅', userId);
   if (row) await notifyRequester(bot, row, requestId, aj, 'received ✅', userId);
   return {
@@ -988,7 +1024,7 @@ async function gateNotNow(bot, query, requestId) {
   }
   const row = await transferService.findTransfer(requestId);
   if (!row || row.status !== 'pending') return true;
-  const card = receiverCard(requestId, row.actionJSON);
+  const card = receiverCard(requestId, await ensureLineBales(row.actionJSON));
   await bot.editMessageText(card.text, {
     chat_id: query.message.chat.id, message_id: query.message.message_id,
     parse_mode: 'Markdown', reply_markup: card.kb,
@@ -1202,7 +1238,7 @@ async function showActionCard(bot, query, requestId, opts = {}) {
     const names = await nameMap([aj.receiver]);
     card = dispatcherCard(requestId, aj, names[String(aj.receiver)]);
   } else {
-    card = receiverCard(requestId, aj);
+    card = receiverCard(requestId, await ensureLineBales(aj)); // TRF-12
   }
   await editInPlace(card.text, { inline_keyboard: [...card.kb.inline_keyboard, navRow] });
   return true;
@@ -1684,7 +1720,7 @@ module.exports = {
     parseTypedTransfer, typedBaleMap,
     startDispatchPicker, askDispatchDoc, completeDispatch, completeReceipt,
     armDocGate, gateNotNow, showInfo, promptForDoc, handleFile,
-    docRows, sendTransferDoc, balesChipRow, showBaleNumbers,
+    docRows, sendTransferDoc, balesChipRow, showBaleNumbers, ensureLineBales,
     linesBlock, dispatchedBlock, headOf, compactOf, designHead,
     detailCard, shortCard, showActionCard, dispatcherCard, receiverCard, SESSION_TYPE,
   },

@@ -160,7 +160,53 @@ test('TRF-11: requested stage (no bales yet) answers with an explanatory popup',
   assert.match(ack.args.opts.text, /No bales logged yet/);
 });
 
-/* ── TRF-10 — Back to the list the card replaced ──────────────────────── */
+/* ── TRF-12 — bale numbers in brackets on every row ───────────────────── */
+
+test('TRF-12: dispatched rows print their bale numbers in brackets', () => {
+  const { dispatchedBlock } = transferFlow._internals;
+  const block = dispatchedBlock({
+    dispatched: [
+      { design: '9060-A', shade: '', requested: 5, sent: 5, bales: ['996', '997', '998', '999', '1000'] },
+      { design: '202/201', shade: '4', requested: 2, sent: 1, bales: ['1002'] },
+    ],
+  });
+  assert.match(block, /• Shade {2}×5 \(996, 997, 998, 999, 1000\)/, `full line carries brackets, got:\n${block}`);
+  assert.match(block, /• Shade 4 — 1\/2 ⚠️ short \(1002\)/, `short line keeps warning + numbers, got:\n${block}`);
+});
+
+test('TRF-12: ensureLineBales rebuilds attribution for pre-storage transfers from Inventory', async () => {
+  const inventoryRepository = require('../../../src/repositories/inventoryRepository');
+  const origGetAll = inventoryRepository.getAll;
+  inventoryRepository.getAll = async () => [
+    { packageNo: '996', design: '9060-A', shade: '' },
+    { packageNo: '997', design: '9060-A', shade: '' },
+    { packageNo: '1002', design: '202/201', shade: '4' },
+  ];
+  try {
+    const aj = {
+      bales: ['996', '997', '1002'],
+      dispatched: [
+        { design: '9060-A', shade: '', requested: 2, sent: 2 },   // no .bales — old format
+        { design: '202/201', shade: '4', requested: 1, sent: 1 },
+      ],
+    };
+    await transferFlow._internals.ensureLineBales(aj);
+    assert.deepEqual(aj.dispatched[0].bales, ['996', '997']);
+    assert.deepEqual(aj.dispatched[1].bales, ['1002']);
+  } finally {
+    inventoryRepository.getAll = origGetAll;
+  }
+});
+
+test('TRF-12: receiver card shows per-row numbers and drops the flat Bales line', () => {
+  const rc = transferFlow._internals.receiverCard(REQ, {
+    from: 'IDUMOTA', to: 'Kano office', lines: [],
+    bales: ['996', '1002'],
+    dispatched: [{ design: '9060-A', shade: '', requested: 2, sent: 2, bales: ['996', '1002'] }],
+  });
+  assert.match(rc.text, /×2 \(996, 1002\)/, 'brackets on the row');
+  assert.ok(!rc.text.includes('📦 Bales:'), 'flat list removed — the chip owns it');
+});
 
 test('TRF-10: card opened from the inbox carries ⬅ Back to the chip list', async () => {
   stubFind({ ...rowWith({ bales: ['B1'] }), status: 'approved' });

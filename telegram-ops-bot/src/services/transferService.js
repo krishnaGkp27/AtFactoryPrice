@@ -213,7 +213,9 @@ async function dispatchInner(requestId, byUserId, manualPicks) {
       balesForLine = selectByQuantity(inv, aj.from, l.design, l.shade, l.qty).bales;
     }
     picked.push(...balesForLine);
-    dispatched.push({ design: l.design, shade: l.shade, requested: l.qty, sent: balesForLine.length });
+    // TRF-12 — keep the per-line bale numbers: the cards print them in
+    // brackets on each row, and flattening into aj.bales loses attribution.
+    dispatched.push({ design: l.design, shade: l.shade, requested: l.qty, sent: balesForLine.length, bales: balesForLine });
   }
   if (!picked.length) {
     return { ok: false, message: 'No stock left for any line — decline the transfer instead.' };
