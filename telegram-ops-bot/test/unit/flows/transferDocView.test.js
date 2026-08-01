@@ -33,9 +33,14 @@ function query(data, fromId) {
   return { id: 'q1', data, from: { id: fromId }, message: { chat: { id: 500 }, message_id: 42 } };
 }
 
+const ephemeralDocs = require('../../../src/services/ephemeralDocs');
+
 const origFind = transferService.findTransfer;
 function stubFind(row) { transferService.findTransfer = async () => row; }
-test.afterEach(() => { transferService.findTransfer = origFind; });
+test.afterEach(() => {
+  transferService.findTransfer = origFind;
+  ephemeralDocs._internals._resetForTests();
+});
 
 test('docRows: buttons appear only for attached docs', () => {
   assert.deepEqual(docRows(REQ, {}), [], 'no docs — no buttons');
@@ -93,6 +98,35 @@ test('stale file_id on both sends falls back to the Drive link', async () => {
   const msgs = bot.callsTo('sendMessage');
   assert.equal(msgs.length, 1);
   assert.match(msgs[0].args.text, /Receipt doc — 24Jul·02\n🔗 https:\/\/drive\/r/);
+});
+
+/* ── TRF-9b — doc views are ephemeral ─────────────────────────────────── */
+
+test('TRF-9b: fetching the doc again REPLACES the earlier copy', async () => {
+  stubFind(rowWith({ dispatchDoc: { fileId: 'FILE-PDF', mime: 'application/pdf' } }));
+  const bot = createFakeBot();
+  await transferFlow.handleCallback(bot, query(`trf:vd:d:${REQ}`, 12));
+  const sentIds = () => bot.calls.filter((c) => c.method === 'sendDocument').length;
+  assert.equal(sentIds(), 1);
+  await transferFlow.handleCallback(bot, query(`trf:vd:d:${REQ}`, 12));
+  assert.equal(sentIds(), 2, 'second view sent');
+  const deleted = bot.callsTo('deleteMessage').map((c) => c.args.messageId);
+  assert.equal(deleted.length, 1, `first view deleted before the second lands, got: ${deleted}`);
+});
+
+test('TRF-9b: any other transfer tap sweeps the delivered doc view', async () => {
+  stubFind(rowWith({ dispatchDoc: { fileId: 'FILE-PDF', mime: 'application/pdf' } }));
+  const origOpen = transferService.getOpenTransfers;
+  transferService.getOpenTransfers = async () => [];
+  try {
+    const bot = createFakeBot();
+    await transferFlow.handleCallback(bot, query(`trf:vd:d:${REQ}`, 12));
+    assert.equal(bot.callsTo('deleteMessage').length, 0, 'doc view alive while nothing else tapped');
+    await transferFlow.handleCallback(bot, query('trf:list', 12));
+    assert.equal(bot.callsTo('deleteMessage').length, 1, 'navigation swept the doc view');
+  } finally {
+    transferService.getOpenTransfers = origOpen;
+  }
 });
 
 test('outsiders are refused with a toast and get nothing', async () => {

@@ -9211,6 +9211,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const uid = String(callbackQuery.from.id);
     await bot.answerCallbackQuery(callbackQuery.id);
 
+    // TRF-9b — any menu navigation sweeps this user's fetched doc views
+    // (a delivered dispatch/receipt file must not linger once they move on).
+    try { await require('../services/ephemeralDocs').sweep(bot, uid); } catch (_) { /* viewer state only */ }
+
     // Hub tap → expand sub-activities in place (no keyboard wipe).
     if (actCode.startsWith('__hub__:')) {
       const hubId = actCode.slice('__hub__:'.length);

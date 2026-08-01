@@ -534,6 +534,7 @@ async function sendTransferDoc(bot, query, requestId, kind) {
     return true;
   }
   await bot.answerCallbackQuery(query.id).catch(() => {});
+  const ephemeralDocs = require('../services/ephemeralDocs');
   const caption = `📄 ${label} doc — ${shortTransferRef(requestId)}`;
   if (doc.fileId) {
     // Photos and PDFs need different send calls and reject each other's
@@ -543,14 +544,20 @@ async function sendTransferDoc(bot, query, requestId, kind) {
       ? [() => bot.sendPhoto(chatId, doc.fileId, { caption }), () => bot.sendDocument(chatId, doc.fileId, { caption })]
       : [() => bot.sendDocument(chatId, doc.fileId, { caption }), () => bot.sendPhoto(chatId, doc.fileId, { caption })];
     for (const attempt of attempts) {
-      try { await attempt(); return true; } catch (_) { /* wrong kind / stale id — next */ }
+      try {
+        const sentDoc = await attempt();
+        // TRF-9b — a doc view is ephemeral: swept on the next tap or by
+        // the DOC_VIEW_MINUTES backstop.
+        if (sentDoc && sentDoc.message_id) ephemeralDocs.track(bot, userId, chatId, sentDoc.message_id);
+        return true;
+      } catch (_) { /* wrong kind / stale id — next */ }
     }
   }
-  if (doc.url) {
-    await bot.sendMessage(chatId, `${caption}\n🔗 ${doc.url}`).catch(() => {});
-  } else {
-    await bot.sendMessage(chatId, `⚠️ Could not fetch the ${label.toLowerCase()} file — it may have expired.`).catch(() => {});
-  }
+  const fallback = doc.url
+    ? `${caption}\n🔗 ${doc.url}`
+    : `⚠️ Could not fetch the ${label.toLowerCase()} file — it may have expired.`;
+  const sentNote = await bot.sendMessage(chatId, fallback).catch(() => null);
+  if (sentNote && sentNote.message_id) ephemeralDocs.track(bot, userId, chatId, sentNote.message_id);
   return true;
 }
 
@@ -1448,6 +1455,12 @@ async function handleCallback(bot, query) {
   if (!data.startsWith('trf:')) return false;
   const chatId = query.message && query.message.chat && query.message.chat.id;
   const userId = String(query.from.id);
+
+  // TRF-9b — any transfer tap sweeps this user's fetched doc views first:
+  // a delivered dispatch/receipt file is a peek, not a chat resident. The
+  // trf:vd tap itself goes through here too, so re-fetching REPLACES the
+  // previous copy instead of stacking another.
+  try { await require('../services/ephemeralDocs').sweep(bot, userId); } catch (_) { /* viewer state only */ }
 
   // Session-free actions first (cards live in counterparties' / admins' DMs).
   const m = data.match(/^trf:(acc|dec|rcv|rej):(.+)$/);

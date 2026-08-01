@@ -85,6 +85,10 @@ const DEFAULTS = {
   // Settings row once backups are live; the queue-sheet rows themselves
   // are permanent either way.
   TRANSFER_RECEIVED_HOURS: 0,
+  // TRF-9b — minutes an on-demand dispatch/receipt doc view may sit in the
+  // chat before the backstop deletes it (navigation taps sweep it sooner).
+  // 0 disables the timer; navigation sweeps still apply.
+  DOC_VIEW_MINUTES: 15,
   FLOW_CLEANUP_HEAVY_TYPES: 'supply_req_flow,grn_flow,bulk_receive_flow,photo_receive_flow,bundle_sale_flow,order_flow,receipt_flow,landed_cost_flow,po_new_flow',
   // BKP-1 — automated daily snapshot of the master sheet into the backup
   // Drive folder. Hour is UTC (1 = 02:00 Lagos); copies older than the
