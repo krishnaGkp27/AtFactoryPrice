@@ -34,6 +34,7 @@
  *   trf:pl:go                    typed-preload review → continue (TRF-8b)
  *   trf:acc:<id> · trf:dec:<id> · trf:rcv:<id> · trf:rej:<id>
  *   trf:nn:<id>                  receiver "not now" on the photo gate
+ *   trf:vd:d|r:<id>              TRF-9 view attached dispatch/receipt file
  */
 
 const sessionStore = require('../utils/sessionStore');
@@ -386,6 +387,16 @@ function dispatcherCard(requestId, aj, receiverName) {
  * and for re-sends from the My Tasks transfer queue.
  * @returns {{text:string, kb:object}}
  */
+/** TRF-9 — tappable buttons that deliver the attached dispatch/receipt file
+ *  on demand (the Drive URL in the detail text is no use on a phone). */
+function docRows(requestId, aj) {
+  const has = (d) => d && (d.fileId || d.url);
+  const rows = [];
+  if (has(aj.dispatchDoc)) rows.push([{ text: '📄 Dispatch doc', callback_data: `trf:vd:d:${requestId}` }]);
+  if (has(aj.receiveDoc)) rows.push([{ text: '📄 Receipt doc', callback_data: `trf:vd:r:${requestId}` }]);
+  return rows;
+}
+
 function receiverCard(requestId, aj) {
   const shortNote = aj.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
   return {
@@ -393,7 +404,9 @@ function receiverCard(requestId, aj) {
     kb: { inline_keyboard: [[
       { text: '✅ Received', callback_data: `trf:rcv:${requestId}` },
       { text: '⚠️ Reject', callback_data: `trf:rej:${requestId}` },
-    ]] },
+    // TRF-9 — let the receiver check the load against the dispatcher's file
+    // BEFORE tapping Received.
+    ], ...docRows(requestId, aj)] },
   };
 }
 
@@ -485,12 +498,59 @@ async function showInfo(bot, query, requestId, expand) {
   const aj = row.actionJSON;
   const text = expand ? await detailCard(row) : shortCard(requestId, aj, stateLabel(row));
   const kb = expand
-    ? { inline_keyboard: [[{ text: '◀ Less', callback_data: `trf:less:${requestId}` }]] }
+    ? { inline_keyboard: [...docRows(requestId, aj), [{ text: '◀ Less', callback_data: `trf:less:${requestId}` }]] }
     : viewMoreKb(requestId);
   await bot.editMessageText(text, {
     chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
     disable_web_page_preview: true, reply_markup: kb,
   }).catch(() => {});
+  return true;
+}
+
+/**
+ * TRF-9 — deliver the attached dispatch/receipt file itself on tap. Works for
+ * settled transfers too (the receipt trail outlives the pending card). Only
+ * the people on the transfer (requester, dispatcher, receiver) and admins may
+ * pull it — the load sheet carries designs and quantities.
+ */
+async function sendTransferDoc(bot, query, requestId, kind) {
+  const chatId = query.message.chat.id;
+  const userId = String(query.from.id);
+  const row = await transferService.findTransfer(requestId);
+  if (!row) {
+    await bot.answerCallbackQuery(query.id, { text: '🚚 Transfer not found or already purged.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  const aj = row.actionJSON || {};
+  const parties = [String(row.user || ''), String(aj.dispatcher || ''), String(aj.receiver || '')];
+  if (!parties.includes(userId) && !auth.isAdmin(userId)) {
+    await bot.answerCallbackQuery(query.id, { text: 'This document is for the people on the transfer.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  const doc = kind === 'receive' ? aj.receiveDoc : aj.dispatchDoc;
+  const label = kind === 'receive' ? 'Receipt' : 'Dispatch';
+  if (!doc || (!doc.fileId && !doc.url)) {
+    await bot.answerCallbackQuery(query.id, { text: `No ${label.toLowerCase()} document on this transfer.`, show_alert: true }).catch(() => {});
+    return true;
+  }
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+  const caption = `📄 ${label} doc — ${shortTransferRef(requestId)}`;
+  if (doc.fileId) {
+    // Photos and PDFs need different send calls and reject each other's
+    // file_ids; older docs have no stored mime, so try both.
+    const photoFirst = /^image\//i.test(doc.mime || '');
+    const attempts = photoFirst
+      ? [() => bot.sendPhoto(chatId, doc.fileId, { caption }), () => bot.sendDocument(chatId, doc.fileId, { caption })]
+      : [() => bot.sendDocument(chatId, doc.fileId, { caption }), () => bot.sendPhoto(chatId, doc.fileId, { caption })];
+    for (const attempt of attempts) {
+      try { await attempt(); return true; } catch (_) { /* wrong kind / stale id — next */ }
+    }
+  }
+  if (doc.url) {
+    await bot.sendMessage(chatId, `${caption}\n🔗 ${doc.url}`).catch(() => {});
+  } else {
+    await bot.sendMessage(chatId, `⚠️ Could not fetch the ${label.toLowerCase()} file — it may have expired.`).catch(() => {});
+  }
   return true;
 }
 
@@ -964,7 +1024,7 @@ async function handleFile(bot, msg) {
   }
   const url = (archive && archive.drive && archive.drive.webViewLink) || '';
   await transferService.attachDoc(requestId, kind, {
-    url, name: (archive && archive.readableName) || fileName, fileId, by: userId,
+    url, name: (archive && archive.readableName) || fileName, fileId, mime: mimeType, by: userId,
   });
 
   // Forward the file for eyes-on to the counterparty, admins, and requester.
@@ -1073,8 +1133,9 @@ async function showActionCard(bot, query, requestId) {
   const aj = row.actionJSON;
   if (row.status !== 'pending') {
     await bot.answerCallbackQuery(query.id).catch(() => {});
+    // TRF-9 — a settled transfer still offers its dispatch/receipt files.
     await editInPlace(`🚚 *${shortTransferRef(requestId)}* — ${stateLabel(row)}\n${compactOf(aj)}`,
-      { inline_keyboard: [navRow] });
+      { inline_keyboard: [...docRows(requestId, aj), navRow] });
     return true;
   }
   const toDispatch = aj.stage !== 'in_transit';
@@ -1393,6 +1454,8 @@ async function handleCallback(bot, query) {
   if (m) return handleAction(bot, query, m[2], m[1]);
   const mInfo = data.match(/^trf:info:(.+)$/);
   if (mInfo) return showInfo(bot, query, mInfo[1], true);
+  const mVd = data.match(/^trf:vd:([dr]):(.+)$/);
+  if (mVd) return sendTransferDoc(bot, query, mVd[2], mVd[1] === 'r' ? 'receive' : 'dispatch');
   const mLess = data.match(/^trf:less:(.+)$/);
   if (mLess) return showInfo(bot, query, mLess[1], false);
   const mSkip = data.match(/^trf:dsk:([dr]):(.+)$/);
@@ -1560,6 +1623,7 @@ module.exports = {
     parseTypedTransfer, typedBaleMap,
     startDispatchPicker, askDispatchDoc, completeDispatch, completeReceipt,
     armDocGate, gateNotNow, showInfo, promptForDoc, handleFile,
+    docRows, sendTransferDoc,
     linesBlock, dispatchedBlock, headOf, compactOf, designHead,
     detailCard, shortCard, showActionCard, dispatcherCard, receiverCard, SESSION_TYPE,
   },

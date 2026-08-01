@@ -271,6 +271,9 @@ async function attachDoc(requestId, kind, doc = {}) {
     url: doc.url || '',
     name: doc.name || '',
     fileId: doc.fileId || '',
+    // TRF-9 — photo vs PDF matters at view time: sendPhoto and sendDocument
+    // reject each other's file_ids, so remember which kind this was.
+    mime: doc.mime || '',
     by: String(doc.by || ''),
     at: new Date().toISOString(),
   };
