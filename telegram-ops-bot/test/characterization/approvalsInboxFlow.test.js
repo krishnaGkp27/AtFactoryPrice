@@ -154,15 +154,15 @@ test('APX-1: transfers are NOT approvable — no Approve button, routed instead'
 /* APX-3b — stage-shaded transfer chips: identical trucks hid which
  * transfers needed a hand. requested → 🟠 awaiting dispatch,
  * in_transit → 📦 receipt pending; category chip carries the mix. */
-test('APX-3b/3d: transfer chips carry stage mnemonics + 48h received greens', async () => {
+test('APX-6: transfer chips are dot+route+bales on one newest-first timeline', async () => {
   const orig = approvalQueueRepository.getAllPending;
   const origResolved = approvalQueueRepository.getResolved;
   approvalQueueRepository.getAllPending = async () => [
-    { requestId: 'TR-20260724-001', user: '7430648262', status: 'pending', createdAt: daysAgo(1), actionJSON: { action: 'transfer_stock', from: 'Lagos', to: 'Kano office', stage: 'requested', lines: [] } },
-    { requestId: 'TR-20260724-003', user: '7430648262', status: 'pending', createdAt: daysAgo(2), actionJSON: { action: 'transfer_stock', from: 'IDUMOTA', to: 'Kano office', stage: 'in_transit', lines: [] } },
+    { requestId: 'TR-20260724-001', user: '7430648262', status: 'pending', createdAt: daysAgo(1), actionJSON: { action: 'transfer_stock', from: 'Lagos', to: 'Kano office', stage: 'requested', lines: [{ design: '9032', shade: '2', qty: 2 }] } },
+    { requestId: 'TR-20260724-003', user: '7430648262', status: 'pending', createdAt: daysAgo(2), actionJSON: { action: 'transfer_stock', from: 'IDUMOTA', to: 'Kano office', stage: 'in_transit', bales: ['B1', 'B2', 'B3'], lines: [] } },
   ];
   approvalQueueRepository.getResolved = async () => [
-    // Received an hour ago → green for 48h.
+    // Received an hour ago → green.
     { requestId: 'TR-20260731-001', user: '7430648262', status: 'approved', createdAt: daysAgo(1), resolvedAt: new Date(Date.now() - 3600000).toISOString(), actionJSON: { action: 'transfer_stock', from: 'IDUMOTA', to: 'Kano office', stage: 'in_transit', lines: [] } },
     // Received four days ago → kept too (APX-3e: greens never vanish by
     // default until the owner's backup regime exists).
@@ -174,18 +174,23 @@ test('APX-3b/3d: transfer chips carry stage mnemonics + 48h received greens', as
     const bot = createFakeBot();
     await flow.start(bot, ADMIN, ADMIN, null);
     const catChip = lastKb(bot).find((b) => b.callback_data === 'abx:cat:transfers');
-    assert.match(catChip.text, /1 to dispatch · 1 in transit · 2 ✅/, `category mix shown, got: ${catChip.text}`);
+    assert.match(catChip.text, /1 🔴 · 1 🟡 · 2 🟢/, `category mix shown, got: ${catChip.text}`);
 
     await flow.handleCallback(bot, cb('abx:cat:transfers', ADMIN));
     const chips = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:trf:')).map((b) => b.text);
-    assert.ok(chips.some((t) => t.includes('🟠DSP') && t.includes('LAG▸KAN') && t.includes('24Jul·01')), `requested stage mnemonic, got: ${chips}`);
-    assert.ok(chips.some((t) => t.includes('📦RCV') && t.includes('IDU▸KAN') && t.includes('24Jul·03')), `in-transit stage mnemonic, got: ${chips}`);
-    assert.ok(chips.some((t) => t.includes('✅') && t.includes('31Jul·01')), `fresh green shown, got: ${chips}`);
-    assert.ok(chips.some((t) => t.includes('✅') && t.includes('20Jul·01')), `old green KEPT (default: never vanish), got: ${chips}`);
+    assert.ok(chips.includes('🔴 LAG▸KAN ·2'), `requested = red dot + requested qty, got: ${chips}`);
+    assert.ok(chips.includes('🟡 IDU▸KAN ·3'), `in-transit = yellow dot + bale count, got: ${chips}`);
+    assert.ok(chips.includes('🟢 IDU▸KAN'), `received = green dot, got: ${chips}`);
+    assert.ok(chips.includes('🟢 LAG▸IDU'), `old green KEPT (default: never vanish), got: ${chips}`);
     assert.equal(chips.length, 4, 'rejected resolved rows never appear');
-    assert.equal(chips[2].includes('✅') && chips[3].includes('✅'), true, 'greens ride at the bottom');
-    assert.match(lastText(bot), /2\* open · 2 ✅/, `header splits open vs received, got: ${lastText(bot)}`);
-    assert.match(lastText(bot), /✅ = received/, 'legend teaches the codes');
+    // No stage words, no date tokens — colour is the stage, position is the date.
+    assert.ok(chips.every((t) => !/DSP|RCV|Jul·/.test(t)), `words/dates removed, got: ${chips}`);
+    // Newest→oldest across open AND received: the two 1-day rows lead (either
+    // order), the 2-day yellow follows, the 9-day green is last.
+    assert.equal(chips[2], '🟡 IDU▸KAN ·3', `2-day row third, got: ${chips}`);
+    assert.equal(chips[3], '🟢 LAG▸IDU', `oldest last, got: ${chips}`);
+    assert.match(lastText(bot), /2\* open · 2 🟢/, `header splits open vs received, got: ${lastText(bot)}`);
+    assert.match(lastText(bot), /🔴 requested · 🟡 in transit · 🟢 received/, 'legend teaches the dots');
 
     // APX-3e — a Settings row restores the display window once backups exist.
     const origSettings = settingsRepo.getAll;
@@ -196,7 +201,7 @@ test('APX-3b/3d: transfer chips carry stage mnemonics + 48h received greens', as
       await flow.start(bot2, ADMIN, ADMIN, null);
       await flow.handleCallback(bot2, cb('abx:cat:transfers', ADMIN));
       const chips2 = lastKb(bot2).filter((b) => b.callback_data.startsWith('abx:trf:')).map((b) => b.text);
-      assert.equal(chips2.filter((t) => t.includes('✅')).length, 1, `48h window hides the old green, got: ${chips2}`);
+      assert.equal(chips2.filter((t) => t.includes('🟢')).length, 1, `48h window hides the old green, got: ${chips2}`);
     } finally {
       settingsRepo.getAll = origSettings;
     }

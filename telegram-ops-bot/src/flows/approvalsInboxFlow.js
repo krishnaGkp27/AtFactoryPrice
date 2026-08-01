@@ -271,8 +271,8 @@ async function renderCategories(bot, chatId, userId) {
   if (transfers.length || received.length) {
     const inTransit = transfers.filter((t) => (t.actionJSON || {}).stage === 'in_transit').length;
     const waiting = transfers.length - inTransit;
-    const mix = [waiting ? `${waiting} to dispatch` : '', inTransit ? `${inTransit} in transit` : '',
-      received.length ? `${received.length} ✅` : ''].filter(Boolean).join(' · ');
+    const mix = [waiting ? `${waiting} 🔴` : '', inTransit ? `${inTransit} 🟡` : '',
+      received.length ? `${received.length} 🟢` : ''].filter(Boolean).join(' · ');
     rows.push([{ text: `🚚 Transfers — ${transfers.length + received.length}${mix ? ` (${mix})` : ''}`, callback_data: 'abx:cat:transfers' }]);
   }
   // APX-2 — same request queued more than once (a double-tapped Submit).
@@ -341,12 +341,14 @@ function itemsForCategory(session, pending, dupIdx) {
 }
 
 /**
- * APX-3c — mnemonic transfer chips (owner-confirmed Option A, 31-Jul):
- *   🟠DSP  LAG▸KAN  24Jul·01   dispatch pending (ball with the source)
- *   📦RCV  IDU▸KAN  24Jul·03   on the road, receive pending
- * Warehouse code = first 3 letters; short id = date·sequence from the
- * TR number. The screen hint carries the legend so the codes teach
- * themselves. Telegram buttons cannot be tinted — icon IS the shade.
+ * APX-6 (owner 01-Aug, replaces the APX-3c DSP/RCV mnemonics): colour dot
+ * IS the stage, position IS the date — the list runs newest → oldest so
+ * words and date tokens are noise:
+ *   🔴 IDU▸KAN ·3    requested, waiting for dispatch
+ *   🟡 LAG▸KAN ·3    in transit, waiting to be received
+ *   🟢 LAG▸KAN ·2    received — inventory really moved
+ * Trailing ·N = bales on the transfer. Telegram buttons cannot be
+ * tinted — the dot emoji is the tint.
  */
 function whCode(w) {
   const letters = String(w || '').replace(/[^A-Za-z]/g, '').toUpperCase();
@@ -357,15 +359,27 @@ function whCode(w) {
 // instead of splattering the raw UUID across a chip.
 const shortTransferId = approvalCards.shortTransferRef;
 
+/** Bales riding a transfer: logged bales, else dispatched sum, else the
+ *  requested line quantities (pre-dispatch nothing is logged yet). */
+function transferBaleCount(aj) {
+  if (Array.isArray(aj.bales) && aj.bales.length) return aj.bales.length;
+  if (Array.isArray(aj.dispatched) && aj.dispatched.length) {
+    return aj.dispatched.reduce((s, d) => s + (Number(d.sent) || 0), 0);
+  }
+  if (Array.isArray(aj.lines) && aj.lines.length) {
+    return aj.lines.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+  }
+  return 0;
+}
+
 function transferChipLabel(it) {
   const aj = it.actionJSON || {};
-  const route = aj.from || aj.to ? `  ${whCode(aj.from)}▸${whCode(aj.to)}` : '';
-  // APX-3d — approved = receipt confirmed = inventory really moved.
-  if (String(it.status || '').toLowerCase() === 'approved') {
-    return `✅${route}  ${shortTransferId(it.requestId)}`;
-  }
-  const stage = aj.stage === 'in_transit' ? '📦RCV' : '🟠DSP';
-  return `${stage}${route}  ${shortTransferId(it.requestId)}`;
+  const dot = String(it.status || '').toLowerCase() === 'approved' ? '🟢'
+    : (aj.stage === 'in_transit' ? '🟡' : '🔴');
+  // Legacy rows without a route keep the short ref so the chip isn't blank.
+  const route = (aj.from || aj.to) ? `${whCode(aj.from)}▸${whCode(aj.to)}` : shortTransferId(it.requestId);
+  const n = transferBaleCount(aj);
+  return `${dot} ${route}${n ? ` ·${n}` : ''}`;
 }
 
 async function renderItems(bot, chatId, userId) {
@@ -384,10 +398,13 @@ async function renderItems(bot, chatId, userId) {
   }
 
   let items = itemsForCategory(session, pending, dupIdx);
-  // APX-3d — greens ride at the bottom of the transfers list: actionable
-  // rows first, the last 48h of confirmed receipts after.
+  // APX-6 (owner 01-Aug) — ONE strict newest→oldest timeline across open
+  // and received transfers: the chip carries no date, so position is the
+  // only recency signal and must never lie.
   if (session.category === 'transfers') {
     items = items.concat(await recentReceivedTransfers());
+    const ts = (r) => new Date(r.createdAt || r.resolvedAt || 0).getTime() || 0;
+    items.sort((a, b) => ts(b) - ts(a));
   }
   session._items = items;
   session.step = 'pick_item';
@@ -442,12 +459,12 @@ async function renderItems(bot, chatId, userId) {
   rows.push(closeRow());
 
   const note = isTransfers
-    ? '\n🟠DSP = dispatch pending · 📦RCV = receive pending · ✅ = received · from▸to\n_Not approvals — tap one to open its transfer card._'
+    ? '\n🔴 requested · 🟡 in transit · 🟢 received · from▸to ·bales — newest first\n_Not approvals — tap one to open its transfer card._'
     : '';
   const headCount = isTransfers
     ? (() => {
       const done = items.filter((it) => String(it.status || '').toLowerCase() === 'approved').length;
-      return `*${items.length - done}* open${done ? ` · ${done} ✅` : ''}`;
+      return `*${items.length - done}* open${done ? ` · ${done} 🟢` : ''}`;
     })()
     : `*${items.length}* pending`;
   await render(bot, chatId, userId, `${title} — ${headCount}${note}`, rows);
