@@ -687,9 +687,11 @@ async function handleCallback(bot, query) {
     // Transfers are actioned in their own flow, never approved here.
     const item = (session._items || [])[parseInt(data.slice('abx:trf:'.length), 10)];
     if (!item) { await renderItems(bot, cid, userId); return true; }
+    // TRF-9b — opening a card is navigation: sweep fetched doc views.
+    try { await require('../services/ephemeralDocs').sweep(bot, userId); } catch (_) { /* viewer state only */ }
     try {
-      await require('../flows/transferFlow').handleCallback(bot,
-        Object.assign(Object.create(Object.getPrototypeOf(query)), query, { data: `trf:card:${item.requestId}` }));
+      // TRF-10 — the card replaces THIS list in place; ⬅ Back re-renders it.
+      await require('../flows/transferFlow').showActionCard(bot, query, item.requestId, { backCb: 'abx:cat:transfers' });
     } catch (e) {
       logger.warn(`approvalsInbox: transfer card ${item.requestId} failed: ${e.message}`);
       try { await bot.sendMessage(cid, `🚚 Open 📋 Transfers to action ${item.requestId}.`); } catch (_) { /* ignore */ }

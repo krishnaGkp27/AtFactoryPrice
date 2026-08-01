@@ -1107,7 +1107,7 @@ async function myQueueSection(userId) {
  * Only the assigned actor (or an admin) gets the card.
  * @returns {Promise<boolean>} true (callback consumed)
  */
-async function showActionCard(bot, query, requestId) {
+async function showActionCard(bot, query, requestId, opts = {}) {
   // APX-5 (owner 31-Jul) — IN-PLACE by contract: tapping a transfer edits
   // the tapped card instead of replying below it. Every reply-below left
   // bale numbers, designs and routes permanently in the chat window
@@ -1117,7 +1117,11 @@ async function showActionCard(bot, query, requestId) {
   const chatId = query.message.chat.id;
   const msgId = query.message.message_id;
   const userId = String(query.from.id);
+  // TRF-10 (owner 01-Aug) — when the card replaced a LIST in place, the
+  // caller passes the callback that re-renders that list here, so ⬅ Back
+  // returns exactly where the user came from.
   const navRow = [
+    ...(opts.backCb ? [{ text: '⬅ Back', callback_data: opts.backCb }] : []),
     { text: '📋 Transfers', callback_data: 'trf:list' },
     { text: '🏠 Menu', callback_data: 'act:__back__' },
   ];
@@ -1630,6 +1634,7 @@ module.exports = {
   handleCallback,
   handleFile,
   handleText,
+  showActionCard,
   myQueueSection,
   _internals: {
     candidatesFor, resolvePeople, submit, handleAction, startPrefilled,

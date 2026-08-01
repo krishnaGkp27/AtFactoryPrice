@@ -100,6 +100,25 @@ test('stale file_id on both sends falls back to the Drive link', async () => {
   assert.match(msgs[0].args.text, /Receipt doc — 24Jul·02\n🔗 https:\/\/drive\/r/);
 });
 
+/* ── TRF-10 — Back to the list the card replaced ──────────────────────── */
+
+test('TRF-10: card opened from the inbox carries ⬅ Back to the chip list', async () => {
+  stubFind({ ...rowWith({ bales: ['B1'] }), status: 'approved' });
+  const bot = createFakeBot();
+  await transferFlow.showActionCard(bot, query('abx:trf:0', 777), REQ, { backCb: 'abx:cat:transfers' });
+  const kb = bot.callsTo('editMessageText')[0].args.opts.reply_markup.inline_keyboard.flat();
+  assert.ok(kb.some((b) => b.text === '⬅ Back' && b.callback_data === 'abx:cat:transfers'), 'Back re-renders the inbox list');
+  assert.ok(kb.some((b) => b.callback_data === 'trf:list'), 'Transfers shortcut kept');
+});
+
+test('TRF-10: card opened elsewhere (My Tasks / DM) has no Back button', async () => {
+  stubFind({ ...rowWith({ bales: ['B1'] }), status: 'approved' });
+  const bot = createFakeBot();
+  await transferFlow.handleCallback(bot, query(`trf:card:${REQ}`, 777));
+  const kb = bot.callsTo('editMessageText')[0].args.opts.reply_markup.inline_keyboard.flat();
+  assert.ok(!kb.some((b) => b.text === '⬅ Back'), 'no Back without a list to return to');
+});
+
 /* ── TRF-9b — doc views are ephemeral ─────────────────────────────────── */
 
 test('TRF-9b: fetching the doc again REPLACES the earlier copy', async () => {
