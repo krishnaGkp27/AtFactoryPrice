@@ -39,6 +39,13 @@ Multiple tools (Claude Code, Cursor, humans) push to this repo in parallel.
 
 ## Scope rules (enforced for every session)
 
+0. **Check `telegram-ops-bot/docs/BUSINESS_RULES.md` before designing any
+   feature or idea.** It is the register of the owner's locked business
+   rules (bale-number identity, no bot-side stock selection, image →
+   operator → approval chain, warehouse pinning, …). A proposal that
+   contradicts a rule there is raised with the owner, never built around.
+   New owner rulings get added to that file in the same change.
+
 1. **Default scope: `telegram-ops-bot/` only.** Any file outside requires explicit user instruction.
 2. **Never modify** `src/controllers/telegramController.js` for refactors — parked for TG-8.
    Surgical additions (a dispatch block, an `act:` case, a small feature edit) are allowed
