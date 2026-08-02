@@ -7088,28 +7088,38 @@ async function runS41() {
     pass('S41.2 date list: newest-first days, CSUP-1 "N bales (Y yds)" tiles');
   } else fail('S41.2', JSON.stringify(dateBtns));
 
-  // ---- S41.3 — detail card (price-visible role): bales, thans, ₦ totals ----
+  // ---- S41.3 — SBL-2: date tap lands on the COMPACT supply card, and
+  // 🔎 Full details opens the deep view (price role: thans + ₦) ----
   await flow.handleCallback(bot, cbq('admin', 'sbl:d:0'));
+  const sum = captured.text;
+  const sumOk = /2 bale\(s\) supplied/.test(sum)
+    && / • Shade 11 ×1 \(6534\)/.test(sum) && / • Shade 7 ×1 \(6101\)/.test(sum)
+    && !/₦|than \(#/.test(sum)
+    && flatten(captured.rows).some((b) => b.callback_data === 'sbl:full');
+  await flow.handleCallback(bot, cbq('admin', 'sbl:full'));
   const t = captured.text;
-  if (/Bale 6534/.test(t) && /11 - White/.test(t) && /2 than \(#1,#2\)/.test(t)
+  if (sumOk && /Bale 6534/.test(t) && /11 - White/.test(t) && /2 than \(#1,#2\)/.test(t)
       && /60,000/.test(t) && /Bale 6101/.test(t) && /7 - Charcoal/.test(t)
       && /Total/.test(t) && /75 yd/.test(t) && /88,750/.test(t)) {
-    pass('S41.3 detail (price role): bale/than breakdown + ₦ per-bale + ₦ total');
-  } else fail('S41.3', JSON.stringify(t));
+    pass('S41.3 SBL-2 supply card → full detail (price role): compact lines, then bale/than + ₦');
+  } else fail('S41.3', JSON.stringify({ sumOk, t }));
 
-  // ---- S41.4 — back navigation detail -> dates -> customers ----
+  // ---- S41.4 — back navigation detail -> summary -> dates -> customers ----
+  await flow.handleCallback(bot, cbq('admin', 'sbl:back'));
+  const backToSummary = flatten(captured.rows).some((b) => b.callback_data === 'sbl:full');
   await flow.handleCallback(bot, cbq('admin', 'sbl:back'));
   const backToDates = flatten(captured.rows).some((b) => b.callback_data === 'sbl:d:0');
   await flow.handleCallback(bot, cbq('admin', 'sbl:back'));
   const backToCusts = flatten(captured.rows).some((b) => b.callback_data === 'sbl:c:0');
-  if (backToDates && backToCusts) {
-    pass('S41.4 back navigation: detail → dates → customers');
-  } else fail('S41.4', JSON.stringify({ backToDates, backToCusts }));
+  if (backToSummary && backToDates && backToCusts) {
+    pass('S41.4 back navigation: detail → summary → dates → customers');
+  } else fail('S41.4', JSON.stringify({ backToSummary, backToDates, backToCusts }));
 
   // ---- S41.5 — non-price role sees quantities but NO ₦ figures ----
   await flow.start(bot, 1, 'emp', null);
   await flow.handleCallback(bot, cbq('emp', 'sbl:c:0'));
   await flow.handleCallback(bot, cbq('emp', 'sbl:d:0'));
+  await flow.handleCallback(bot, cbq('emp', 'sbl:full'));
   const te = captured.text;
   if (/Bale 6534/.test(te) && /75 yd/.test(te) && !/₦/.test(te)) {
     pass('S41.5 detail (non-price role): quantities shown, ₦ figures hidden');

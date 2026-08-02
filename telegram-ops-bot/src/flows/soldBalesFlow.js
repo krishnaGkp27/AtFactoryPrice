@@ -25,8 +25,21 @@
  *   sbl:back             step back one level
  *   sbl:all              re-render the customer list expanded (show all)
  *   sbl:c:<idx>          pick customer (index into session._customers)
- *   sbl:d:<idx>          pick date     (index into session._dates)
+ *   sbl:d:<idx>          pick date     (→ SBL-2 compact supply card)
+ *   sbl:doc              SBL-2: deliver the day's sale doc(s) (ephemeral)
+ *   sbl:rec              SBL-2: OCR the sale doc(s), 🟢-dot matched bales
+ *   sbl:full             SBL-2: open the bale-by-bale detail card
  *   sbl:noop             no-op
+ *
+ * SBL-2 (owner, 02-Aug): pick_date now lands on a COMPACT supply card in
+ * the transfer-card grammar (design → "Shade X ×N (bale numbers)"), with
+ * the in-depth thans/yards/₦ view demoted behind 🔎 Full details. The 🧮
+ * chip reads the sale doc(s) via vision OCR and re-renders the SAME card
+ * with a 🟢 in front of every bale number the document contains —
+ * digit-exact matches only, never a guessed near-miss. Unmatched card
+ * bales are listed (the owner's narrowing shortlist); doc numbers not on
+ * the card are listed separately, never attached to a bale. Read-only:
+ * dots live in the session, nothing is written anywhere.
  */
 
 const sessionStore        = require('../utils/sessionStore');
@@ -243,6 +256,206 @@ async function renderDatePicker(bot, chatId, userId) {
     + `_Tap a date for the day's detail._`, rows);
 }
 
+/* ───────────────────────────── supply card (SBL-2) ───────────────────────────── */
+
+function digitsOf(v) { return String(v == null ? '' : v).replace(/\D/g, ''); }
+
+/**
+ * The day's sale documents: resolved (approved) sale approvals for this
+ * customer + date that carry a bill photo/PDF (`sale_doc_file_id`, written
+ * by the snap flows). Deduped by file id.
+ * @returns {Promise<Array<{fileId:string, kind:'photo'|'document'}>>}
+ */
+async function saleDocsFor(customer, soldDate) {
+  try {
+    const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+    const cust = String(customer || '').trim().toLowerCase();
+    const seen = new Set();
+    const docs = [];
+    for (const r of await approvalQueueRepository.getResolved()) {
+      if (String(r.status || '').toLowerCase() !== 'approved') continue;
+      const aj = r.actionJSON || {};
+      if (!aj.sale_doc_file_id || seen.has(aj.sale_doc_file_id)) continue;
+      if (String(aj.customer || '').trim().toLowerCase() !== cust) continue;
+      if (normDay(aj.salesDate) !== soldDate) continue;
+      seen.add(aj.sale_doc_file_id);
+      docs.push({
+        fileId: aj.sale_doc_file_id,
+        // snap PDF batches ride as documents; snap bill photos as photos.
+        kind: aj.action === 'sale_bundle' ? 'document' : 'photo',
+      });
+    }
+    return docs;
+  } catch (_) { return []; }
+}
+
+/**
+ * Group the day's sold rows for the compact card: design → shade → unique
+ * bale numbers (bale identity via baleGroupKey, same as the detail view).
+ */
+async function loadSummary(session) {
+  const sold = await inventoryRepository.getSoldRows();
+  const rows = sold.filter((r) => r.soldTo === session.customer && normDay(r.soldDate) === session.soldDate);
+  const designs = new Map();
+  const seen = new Set();
+  let baleCount = 0;
+  for (const r of rows) {
+    const k = baleGroupKey(r);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    baleCount += 1;
+    if (!designs.has(r.design)) designs.set(r.design, new Map());
+    const shades = designs.get(r.design);
+    const sk = String(r.shade || '');
+    if (!shades.has(sk)) shades.set(sk, []);
+    shades.get(sk).push(String(r.packageNo));
+  }
+  return { designs, baleCount };
+}
+
+/** Render the compact supply card, in place. opts.reading → ⏳ status. */
+async function renderSummary(bot, chatId, userId, opts = {}) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const { designs, baleCount } = await loadSummary(session);
+  if (!baleCount) {
+    await render(bot, chatId, userId,
+      `🧾 *${session.customer}* · ${prettyDate(session.soldDate)}\n\n_Nothing found — it may have been returned._`,
+      [backRow('⬅ Dates'), closeRow()]);
+    return;
+  }
+  if (!Array.isArray(session._docs)) {
+    session._docs = await saleDocsFor(session.customer, session.soldDate);
+    sessionStore.set(userId, session);
+  }
+  const verified = new Set(session._verified || []);
+  let body = `🧾 *${session.customer}* · ${prettyDate(session.soldDate)}\n`
+    + `_${baleCount} bale(s) supplied_\n`;
+  if (opts.reading) {
+    body += '\n⏳ _Reading sale doc…_\n';
+  } else if (session._recDone) {
+    body += `\n📑 Doc check: *${session._recMatched}/${baleCount}* matched\n`;
+    if ((session._recMissing || []).length) {
+      const miss = session._recMissing;
+      body += `⚠️ Not in doc: ${miss.slice(0, 8).join(', ')}${miss.length > 8 ? ` +${miss.length - 8} more` : ''}\n`;
+    }
+    if ((session._docOnly || []).length) {
+      const extra = session._docOnly;
+      body += `_Doc-only numbers: ${extra.slice(0, 8).join(', ')}${extra.length > 8 ? ` +${extra.length - 8} more` : ''}_\n`;
+    }
+    if (session._recError) body += `_${session._recError}_\n`;
+  } else if (session._recError) {
+    body += `\n⚠️ _Doc check failed: ${session._recError}_\n`;
+  }
+  for (const [design, shades] of designs) {
+    const cat = designCategoriesRepository.categoryOfSync(design);
+    body += `\n🧵 *${design}*${cat ? ` · ${cat}` : ''}\n`;
+    for (const [shade, pkgs] of shades) {
+      const nums = pkgs.map((p) => (verified.has(digitsOf(p)) ? `🟢${p}` : p)).join(', ');
+      body += ` • Shade ${shade || '—'} ×${pkgs.length} (${nums})\n`;
+    }
+  }
+  const rows = [];
+  if ((session._docs || []).length && !opts.reading) {
+    const n = session._docs.length;
+    rows.push([{ text: `📄 Sale doc${n > 1 ? ` (${n})` : ''}`, callback_data: 'sbl:doc' }]);
+    rows.push([{ text: session._recDone ? '🔁 Re-check sale doc' : '🧮 Reconcile sale doc', callback_data: 'sbl:rec' }]);
+  }
+  if (!opts.reading) {
+    rows.push([{ text: session.showMoney ? '🔎 Full details — thans, yards & value' : '🔎 Full details — thans & yards', callback_data: 'sbl:full' }]);
+    rows.push(backRow('⬅ Dates'));
+    rows.push(closeRow());
+  }
+  await render(bot, chatId, userId, body, rows);
+}
+
+/** SBL-2 — deliver the day's sale doc(s) as ephemeral views (TRF-9b). */
+async function sendSaleDocs(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || !(session._docs || []).length) return;
+  const ephemeralDocs = require('../services/ephemeralDocs');
+  for (const d of session._docs) {
+    const caption = `📄 Sale doc — ${session.customer} · ${prettyDate(session.soldDate)}`;
+    let sent = null;
+    try {
+      sent = d.kind === 'document'
+        ? await bot.sendDocument(chatId, d.fileId, { caption })
+        : await bot.sendPhoto(chatId, d.fileId, { caption });
+    } catch (_) {
+      // Stored kind can mislie (photo ids can't go out as documents and
+      // vice versa) — retry the other way before giving up.
+      try {
+        sent = d.kind === 'document'
+          ? await bot.sendPhoto(chatId, d.fileId, { caption })
+          : await bot.sendDocument(chatId, d.fileId, { caption });
+      } catch (e2) {
+        logger.warn(`soldBalesFlow: sale doc send failed: ${e2.message}`);
+      }
+    }
+    if (sent && sent.message_id) ephemeralDocs.track(bot, userId, chatId, sent.message_id);
+  }
+}
+
+/**
+ * SBL-2 — 🧮 reconcile: OCR every sale doc, collect the bale numbers the
+ * document actually contains, and re-render the SAME card with 🟢 dots on
+ * digit-exact matches. Never mutates any sheet.
+ */
+async function runReconcile(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || !(session._docs || []).length || session._recRunning) return;
+  session._recRunning = true;
+  session._recError = null;
+  sessionStore.set(userId, session);
+  await renderSummary(bot, chatId, userId, { reading: true });
+
+  const telegramFiles = require('../utils/telegramFiles');
+  const vision = require('../services/vision');
+  const docDigits = new Set();
+  let readErr = null;
+  for (const d of session._docs) {
+    try {
+      const dl = await telegramFiles.downloadTelegramFile(bot, d.fileId);
+      const mime = dl.mimeType || (d.kind === 'document' ? 'application/pdf' : 'image/jpeg');
+      const ocr = await vision.extractBales(dl.buffer, mime);
+      if (!ocr.ok) { readErr = ocr.error || 'document unreadable'; continue; }
+      for (const b of ocr.bales) {
+        const dg = digitsOf(b.packageNo);
+        if (dg) docDigits.add(dg);
+      }
+    } catch (e) { readErr = e.message; }
+  }
+
+  // The user may have navigated away while the OCR ran — only the summary
+  // card of the SAME customer+day gets the result.
+  const s2 = sessionStore.get(userId);
+  if (!s2 || s2.type !== SESSION_TYPE || s2.step !== 'view_summary') return;
+  const { designs } = await loadSummary(s2);
+  const cardBales = [];
+  for (const shades of designs.values()) {
+    for (const pkgs of shades.values()) for (const p of pkgs) cardBales.push({ p, d: digitsOf(p) });
+  }
+  if (!docDigits.size) {
+    s2._recRunning = false;
+    s2._recDone = false;
+    s2._recError = readErr || 'no bale numbers found in the document';
+    sessionStore.set(userId, s2);
+    await renderSummary(bot, chatId, userId);
+    return;
+  }
+  const matched = cardBales.filter((x) => x.d && docDigits.has(x.d));
+  const cardSet = new Set(cardBales.map((x) => x.d));
+  s2._verified = [...new Set(matched.map((x) => x.d))];
+  s2._recMatched = matched.length;
+  s2._recMissing = cardBales.filter((x) => !docDigits.has(x.d)).map((x) => x.p);
+  s2._docOnly = [...docDigits].filter((d) => !cardSet.has(d));
+  s2._recDone = true;
+  s2._recError = readErr ? `partial read (${readErr})` : null;
+  s2._recRunning = false;
+  sessionStore.set(userId, s2);
+  await renderSummary(bot, chatId, userId);
+}
+
 /* ───────────────────────────── detail card ───────────────────────────── */
 
 /**
@@ -266,7 +479,7 @@ async function renderDetail(bot, chatId, userId) {
   if (!rows.length) {
     await render(bot, chatId, userId,
       `🔎 *${session.customer}* · ${prettyDate(session.soldDate)}\n\n_Nothing found — it may have been returned._`,
-      [backRow('⬅ Dates'), closeRow()]);
+      [backRow('⬅ Summary'), closeRow()]);
     return;
   }
 
@@ -320,7 +533,7 @@ async function renderDetail(bot, chatId, userId) {
   body += `\n──────────\n*Total:* ${totThans} than · ${fmtQty(totYards)} yd`;
   if (showMoney) body += ` · *${fmtNgn(totAmount)}*`;
 
-  await render(bot, chatId, userId, body, [backRow('⬅ Dates'), closeRow()]);
+  await render(bot, chatId, userId, body, [backRow('⬅ Summary'), closeRow()]);
 }
 
 /* ───────────────────────────── back navigation ───────────────────────────── */
@@ -336,6 +549,12 @@ async function stepBack(bot, chatId, userId) {
       await renderCustomerPicker(bot, chatId, userId);
       break;
     case 'view_detail':
+      // SBL-2 — detail steps back to the compact supply card, dots intact.
+      session.step = 'view_summary';
+      sessionStore.set(userId, session);
+      await renderSummary(bot, chatId, userId);
+      break;
+    case 'view_summary':
       session.step = 'pick_date';
       session.soldDate = '';
       sessionStore.set(userId, session);
@@ -360,6 +579,10 @@ async function handleCallback(bot, query) {
   if (!data.startsWith('sbl:')) return false;
   const chatId = query.message && query.message.chat && query.message.chat.id;
   const userId = String(query.from.id);
+  // SBL-2/TRF-9b — a delivered sale doc is a peek, not a chat resident:
+  // any sbl tap sweeps this user's fetched doc views first (the sbl:doc
+  // tap itself included, so re-fetching REPLACES instead of stacking).
+  try { await require('../services/ephemeralDocs').sweep(bot, userId); } catch (_) { /* viewer state only */ }
   const session = sessionStore.get(userId);
   if (!session || session.type !== SESSION_TYPE) return false;
 
@@ -408,10 +631,36 @@ async function handleCallback(bot, query) {
     const date = (session._dates || [])[i];
     if (date) {
       session.soldDate = date;
-      session.step = 'view_detail';
+      session.step = 'view_summary';
+      // SBL-2 — a fresh day starts clean: docs re-resolved, dots cleared.
+      delete session._docs;
+      delete session._verified;
+      delete session._recDone; delete session._recMatched;
+      delete session._recMissing; delete session._docOnly;
+      delete session._recError; delete session._recRunning;
       sessionStore.set(userId, session);
-      await renderDetail(bot, chatId, userId);
+      await renderSummary(bot, chatId, userId);
     }
+    return true;
+  }
+
+  if (data === 'sbl:doc') {
+    if (session.step !== 'view_summary' && session.step !== 'view_detail') return true;
+    await sendSaleDocs(bot, chatId, userId);
+    return true;
+  }
+
+  if (data === 'sbl:rec') {
+    if (session.step !== 'view_summary') return true;
+    await runReconcile(bot, chatId, userId);
+    return true;
+  }
+
+  if (data === 'sbl:full') {
+    if (session.step !== 'view_summary') return true;
+    session.step = 'view_detail';
+    sessionStore.set(userId, session);
+    await renderDetail(bot, chatId, userId);
     return true;
   }
 
