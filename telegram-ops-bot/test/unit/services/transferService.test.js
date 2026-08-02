@@ -104,7 +104,8 @@ test('createTransferRequest: refuses an empty order', async () => {
 
 test('dispatch: logs actual bales per line, flips in_transit @ dest', async () => {
   const calls = stub(ROW('requested'));
-  const res = await transferService.dispatch('TR-1', 'abdul');
+  // TRF-15 — picks are always explicit (Rose: P1,P2 · Lily: P4; P5 gone).
+  const res = await transferService.dispatch('TR-1', 'abdul', [['P1', 'P2'], ['P4', 'P5']]);
   assert.equal(res.ok, true);
   // Rose: P1,P2 (full) · Lily: only P4 exists → short 1/2.
   const t0 = calls.transitions[0];
@@ -129,9 +130,14 @@ test('dispatch: logs actual bales per line, flips in_transit @ dest', async () =
 
 test('dispatch: fails when NO line has stock; refuses wrong stage', async () => {
   stub(ROW('requested'), [] /* empty warehouse */);
-  const res = await transferService.dispatch('TR-1', 'abdul');
+  const res = await transferService.dispatch('TR-1', 'abdul', [['P1', 'P2'], ['P4']]);
   assert.equal(res.ok, false);
   assert.match(res.message, /No stock left/);
+  // TRF-15 — a dispatch without explicit picks is refused outright.
+  stub(ROW('requested'));
+  const noPicks = await transferService.dispatch('TR-1', 'abdul');
+  assert.equal(noPicks.ok, false);
+  assert.match(noPicks.message, /explicitly picked/);
   stub(ROW('in_transit'));
   assert.equal((await transferService.dispatch('TR-1', 'abdul')).ok, false);
 });
@@ -225,8 +231,8 @@ test('SEC-P2 H3: concurrent double-dispatch transitions bales only once', async 
   // Both taps fire "at once"; the per-request lock must serialize them so the
   // second sees stage=in_transit and bails instead of re-transitioning.
   const [r1, r2] = await Promise.all([
-    transferService.dispatch('TR-1', 'abdul'),
-    transferService.dispatch('TR-1', 'abdul'),
+    transferService.dispatch('TR-1', 'abdul', [['P1', 'P2'], ['P4']]),
+    transferService.dispatch('TR-1', 'abdul', [['P1', 'P2'], ['P4']]),
   ]);
   const okCount = [r1, r2].filter((r) => r.ok).length;
   assert.equal(okCount, 1, 'exactly one dispatch succeeds');

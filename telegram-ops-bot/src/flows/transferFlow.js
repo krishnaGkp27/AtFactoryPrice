@@ -746,33 +746,29 @@ async function handleAction(bot, query, requestId, action) {
 /* ── dispatcher bale picker (session-backed, anchored on the DM card) ───── */
 
 /**
- * Open the bale picker after the dispatcher accepts. Pre-selects FIFO bales
- * per line; lines with no real choice (candidates ≤ qty) are auto-filled and
- * skipped. When no line needs a decision, jumps straight to the confirm
- * screen. Anchored on the tapped card so everything edits in place.
+ * Open the bale picker after the dispatcher accepts. TRF-15: every line
+ * starts UNTICKED — the dispatcher ticks exactly the bales physically
+ * loaded; the bot never pre-selects, auto-fills, or skips a line. A typed
+ * order's numbers appear as 📌 Ordered guidance only. Anchored on the
+ * tapped card so everything edits in place.
  */
 async function startDispatchPicker(bot, chatId, userId, row, messageId) {
   const aj = row.actionJSON;
   const inv = await availableInventory();
   const pl = (aj.lines || []).map((l) => {
     const cands = transferService.availableBales(inv, aj.from, l.design, l.shade);
-    // TRF-14 — a typed order names its bales: pre-select exactly those, not
-    // the FIFO head of the shelf (02-Aug: FIFO pre-ticks logged neighbouring
-    // numbers while the truck carried the requested ones). Requested bales
-    // no longer available fall back to FIFO fill — surfaced, never silent.
+    // TRF-15 (owner rule, 02-Aug) — the bot NEVER selects bales. Every line
+    // opens unticked and the dispatcher ticks exactly what is physically
+    // loaded; a typed order's numbers are shown as guidance (📌 Ordered),
+    // never pre-applied. FIFO pre-selection and auto-fill are gone — they
+    // logged neighbouring numbers while the truck carried the ordered ones.
     const wanted = Array.isArray(l.bales) && l.bales.length ? l.bales.map(String) : null;
-    const present = wanted ? wanted.filter((p) => cands.includes(p)) : [];
     const missing = wanted ? wanted.filter((p) => !cands.includes(p)) : [];
-    const sel = wanted
-      ? [...present, ...cands.filter((c) => !present.includes(c))].slice(0, l.qty)
-      : cands.slice(0, l.qty);          // FIFO pre-selection (tap-built order)
     return {
       design: l.design, shade: l.shade, qty: l.qty,
       cands, wanted, missing,
-      sel,
-      // A missing requested bale is always something to decide — the
-      // dispatcher must SEE the substitution, not auto-skip past it.
-      choice: cands.length > l.qty || missing.length > 0,
+      sel: [],
+      choice: true, // every line must be seen and ticked by a human
     };
   });
   sessionStore.set(userId, {
@@ -821,7 +817,7 @@ async function showBalePicker(bot, chatId, userId) {
   if (prevChoiceIdx(session, session.idx) !== -1) {
     rows.push([{ text: '◀ Prev line', callback_data: 'trf:bl:pv' }]);
   }
-  rows.push([{ text: '⏭ Auto-pick remaining', callback_data: 'trf:bl:auto' }]);
+  // TRF-15 — no "Auto-pick remaining": the bot never selects bales.
   // Non-destructive exit: Decline aborts the whole transfer and pings the
   // admins, so an accidental tap used to be unrecoverable. "Not now" just
   // parks the request back on the dispatcher's card (My Tasks re-entry).
@@ -960,15 +956,18 @@ async function showDispatchConfirm(bot, chatId, userId) {
   const warnBlock = warns.length
     ? `\n\n${warns.join('\n')}\n_Only dispatch a different bale if it is what is PHYSICALLY loaded._`
     : '';
-  // When stock exactly matched the request there was no picker to show —
-  // say so, or the operator wonders where the bale-picking step went.
-  const autoNote = session.pl.every((p) => !p.choice)
-    ? (session.pl.some((p) => p.wanted)
-      ? '\n_Bales matched the order exactly — nothing to choose._'
-      : '\n_Bales auto-filled (oldest first) — stock matched the request, nothing to choose._')
-    : '';
+  // TRF-15 — nothing ticked means nothing to dispatch: the bot never fills
+  // in bales on its own, so the button only appears once a human has ticked.
+  if (!picked.length) {
+    await render(bot, chatId, userId,
+      `🚚 *${session.requestId}* — no bales ticked yet\n${perLine}\n\n`
+      + '_Tick the bales that are physically loaded, line by line — the bot never picks for you._',
+      [[{ text: '◀ Back to bales', callback_data: 'trf:bl:bk' }],
+        [{ text: '❌ Decline', callback_data: `trf:dec:${session.requestId}` }]]);
+    return;
+  }
   await render(bot, chatId, userId,
-    `🚚 *${session.requestId}* — dispatch ${picked.length} bale(s)?\n${perLine}${warnBlock}${autoNote}\n\n*${session.from}* → *${session.to}*\n📸 _A load photo/PDF is required next._`,
+    `🚚 *${session.requestId}* — dispatch ${picked.length} bale(s)?\n${perLine}${warnBlock}\n\n*${session.from}* → *${session.to}*\n📸 _A load photo/PDF is required next._`,
     [[{ text: '🚚 Dispatch', callback_data: 'trf:bl:go' }],
       [{ text: '◀ Back', callback_data: 'trf:bl:bk' }, { text: '❌ Decline', callback_data: `trf:dec:${session.requestId}` }]]);
 }
@@ -1822,7 +1821,11 @@ async function handleCallback(bot, query) {
       if (prev !== -1) { session.idx = prev; sessionStore.set(userId, session); await showBalePicker(bot, chatId, userId); }
       return true;
     }
-    if (rest === 'auto') { await showDispatchConfirm(bot, chatId, userId); return true; }
+    if (rest === 'auto') {
+      // TRF-15 — legacy button on an old card: auto-pick no longer exists.
+      await showBalePicker(bot, chatId, userId);
+      return true;
+    }
     if (rest === 'bk') {
       const prev = prevChoiceIdx(session, session.pl.length);
       session.step = 'dispatch_pick';

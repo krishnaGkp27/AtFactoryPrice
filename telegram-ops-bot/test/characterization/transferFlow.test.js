@@ -127,7 +127,9 @@ test('dispatch applies only after the mandatory load photo; receive after the re
   // Abdul accepts → picker → review → Dispatch tap arms the photo GATE.
   const bot2 = createFakeBot();
   await controller.handleCallbackQuery(bot2, cb(`trf:acc:${requestId}`, 'abdul'));
-  await controller.handleCallbackQuery(bot2, cb('trf:bl:auto', 'abdul'));
+  await controller.handleCallbackQuery(bot2, cb('trf:bl:t:0', 'abdul')); // tick P1
+  await controller.handleCallbackQuery(bot2, cb('trf:bl:t:1', 'abdul')); // tick P2
+  await controller.handleCallbackQuery(bot2, cb('trf:bl:nx', 'abdul'));  // review
   await controller.handleCallbackQuery(bot2, cb('trf:bl:go', 'abdul'));
   assert.equal(calls.transitions.length, 0, 'TRF-6: nothing moves before the load photo');
   assert.ok(!bot2.callsTo('sendMessage').some((m) => m.args.chatId === 'musa'), 'receiver hears nothing before the photo');
@@ -161,14 +163,15 @@ test('dispatch applies only after the mandatory load photo; receive after the re
 
 test('shortfall at dispatch: partial send recorded and flagged', async () => {
   const { calls, requestId } = await runWizard();
-  // Between order and dispatch, Lagos sold a bale: only P1 remains. With no
-  // real choice, the picker goes straight to the dispatch-confirm screen —
-  // which now says WHY there was no picker (auto-filled).
+  // Between order and dispatch, Lagos sold a bale: only P1 remains.
+  // TRF-15 — the picker still opens (never auto-fills); Abdul ticks P1 and
+  // the review flags the 1/2 shortfall.
   { const _rows = [invRow('P1'), invRow('P9', 'available', 'Kano office')]; inventoryRepository.getAll = async () => _rows; }
   const bot2 = createFakeBot();
   await controller.handleCallbackQuery(bot2, cb(`trf:acc:${requestId}`, 'abdul'));
+  await controller.handleCallbackQuery(bot2, cb('trf:bl:t:0', 'abdul')); // tick P1
+  await controller.handleCallbackQuery(bot2, cb('trf:bl:nx', 'abdul'));  // review
   assert.match(bot2.allText(), /9006\/3: 1\/2 ⚠️ short/, 'per-line shortfall shown on review');
-  assert.match(bot2.allText(), /auto-filled/i, 'review explains the skipped picker');
   await controller.handleCallbackQuery(bot2, cb('trf:bl:go', 'abdul'));
   assert.equal(calls.transitions.length, 0, 'gate: still nothing moved');
   const bp = createFakeBot();
@@ -254,6 +257,8 @@ test('TRF-7: search a bale number, tick the checkbox, it joins the dispatch sele
   await controller.handleCallbackQuery(bot, cb(`trf:acc:${requestId}`, 'abdul'));
   assert.ok(kbTexts(bot).some((t) => t.includes('🔎 Search bale #')), 'search button on the picker');
 
+  // TRF-15 — nothing is pre-ticked; Abdul ticks P2 from the grid himself.
+  await controller.handleCallbackQuery(bot, cb('trf:bl:t:1', 'abdul'));
   await controller.handleCallbackQuery(bot, cb('trf:bl:sr', 'abdul'));
   assert.match(bot.allText(), /Type part of the bale number/);
 
@@ -262,7 +267,7 @@ test('TRF-7: search a bale number, tick the checkbox, it joins the dispatch sele
   let boxes = kbTexts(bot);
   assert.ok(boxes.some((t) => t === '⬜ P8|trf:bl:m:0'), `unticked match shown, got ${boxes}`);
 
-  // Tick it — at qty cap (2, FIFO P1+P2) the oldest swaps out for P8.
+  // Tick it — joins the hand-picked P2.
   await controller.handleCallbackQuery(bot, cb('trf:bl:m:0', 'abdul'));
   boxes = kbTexts(bot);
   assert.ok(boxes.some((t) => t.startsWith('✅ P8|')), 'ticked after tap');

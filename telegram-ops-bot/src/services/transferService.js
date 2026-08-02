@@ -172,12 +172,12 @@ async function createTransferRequest({ from, to, lines, requestedBy, dispatcher,
  * destination, record per-line sent vs requested. Partial dispatch allowed;
  * fails only when nothing is available at all.
  *
- * When `manualPicks` is provided it is an array parallel to `aj.lines`, each
- * element a list of chosen packageNos for that line. Chosen bales are still
- * validated against LIVE availability (someone may have moved stock since the
- * picker opened), capped to the line qty, and de-duped. When omitted, bales
- * are auto-selected FIFO in sheet order (original TRF-3 behaviour, also used
- * by the picker's "Auto-pick remaining" path).
+ * `manualPicks` is REQUIRED (TRF-15, owner rule 02-Aug): an array parallel
+ * to `aj.lines`, each element the list of packageNos a human chose for that
+ * line (picker ticks, or numbers read from the load photo). Chosen bales are
+ * still validated against LIVE availability (someone may have moved stock
+ * since the picker opened), capped to the line qty, and de-duped. The bot
+ * never auto-selects — a call without picks is refused.
  *
  * @param {string} requestId
  * @param {string} byUserId
@@ -208,8 +208,13 @@ async function dispatchInner(requestId, byUserId, manualPicks) {
 }
 
 async function dispatchPickAndFlip(requestId, byUserId, manualPicks, aj) {
+  // TRF-15 (owner rule, 02-Aug) — the bot never selects bales. Every
+  // dispatch must carry the human's explicit per-line picks (picker ticks,
+  // or numbers read from the load photo in snap transfers).
+  if (!Array.isArray(manualPicks)) {
+    return { ok: false, message: 'transferService: dispatch requires explicitly picked bales — the bot does not choose (TRF-15).' };
+  }
   const inv = await inventoryRepository.getAll(true); // fresh, under the lock
-  const useManual = Array.isArray(manualPicks);
   const picked = [];
   const dispatched = [];
   const lines = aj.lines || [];
@@ -225,20 +230,15 @@ async function dispatchPickAndFlip(requestId, byUserId, manualPicks, aj) {
   const lineRowRefs = []; // per line: Map(pkg -> its resolved rows), captured AT PICK TIME
   for (let i = 0; i < lines.length; i += 1) {
     const l = lines[i];
-    let balesForLine;
-    if (useManual) {
-      // Keep only chosen bales still available for this exact line, de-duped,
-      // in the operator's tap order, capped to the requested qty.
-      const availSet = new Set(availableBales(inv, aj.from, l.design, l.shade));
-      const seen = new Set();
-      balesForLine = [];
-      for (const p of (manualPicks[i] || [])) {
-        const pkg = String(p);
-        if (availSet.has(pkg) && !seen.has(pkg)) { seen.add(pkg); balesForLine.push(pkg); }
-        if (balesForLine.length >= l.qty) break;
-      }
-    } else {
-      balesForLine = selectByQuantity(inv, aj.from, l.design, l.shade, l.qty).bales;
+    // Keep only chosen bales still available for this exact line, de-duped,
+    // in the operator's tap order, capped to the requested qty.
+    const availSet = new Set(availableBales(inv, aj.from, l.design, l.shade));
+    const seen = new Set();
+    const balesForLine = [];
+    for (const p of (manualPicks[i] || [])) {
+      const pkg = String(p);
+      if (availSet.has(pkg) && !seen.has(pkg)) { seen.add(pkg); balesForLine.push(pkg); }
+      if (balesForLine.length >= l.qty) break;
     }
     picked.push(...balesForLine);
     const refMap = new Map();

@@ -113,16 +113,18 @@ async function runWizard() {
   return { calls, requestId: calls.appended.requestId };
 }
 
-test('accept opens a bale picker with FIFO pre-selection', async () => {
+test('accept opens a bale picker with NOTHING pre-selected (TRF-15)', async () => {
   const { requestId } = await runWizard();
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb(`trf:acc:${requestId}`, 'abdul'));
   const kb = lastKb(bot);
-  // Four candidate chips, FIFO P1/P2 pre-ticked, plus Next / Auto / Decline.
-  assert.ok(kb.some((b) => b.startsWith('✅ P1|trf:bl:t:0')), 'P1 pre-selected');
-  assert.ok(kb.some((b) => b.startsWith('✅ P2|trf:bl:t:1')), 'P2 pre-selected');
-  assert.ok(kb.some((b) => b === 'P3|trf:bl:t:2'), 'P3 selectable');
-  assert.ok(kb.some((b) => b.includes('trf:bl:auto')), 'auto-pick offered');
+  // Four candidate chips, all unticked — the bot never selects bales — and
+  // no Auto-pick button anywhere.
+  for (let i = 0; i < 4; i += 1) {
+    assert.ok(kb.some((b) => b === `P${i + 1}|trf:bl:t:${i}`), `P${i + 1} selectable, unticked`);
+  }
+  assert.ok(!kb.some((b) => b.startsWith('✅') && b.includes('trf:bl:t:')), 'no bale chip pre-ticked');
+  assert.ok(!kb.some((b) => b.includes('trf:bl:auto')), 'no auto-pick button');
 });
 
 /** Send the gate photo for `uid`; returns the recording bot. */
@@ -138,8 +140,8 @@ test('dispatcher picks exact bales — chosen numbers dispatch once the photo la
   const { calls, requestId } = await runWizard();
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb(`trf:acc:${requestId}`, 'abdul'));
-  await controller.handleCallbackQuery(bot, cb('trf:bl:t:0', 'abdul')); // deselect P1
-  await controller.handleCallbackQuery(bot, cb('trf:bl:t:3', 'abdul')); // select P4
+  await controller.handleCallbackQuery(bot, cb('trf:bl:t:1', 'abdul')); // tick P2
+  await controller.handleCallbackQuery(bot, cb('trf:bl:t:3', 'abdul')); // tick P4
   await controller.handleCallbackQuery(bot, cb('trf:bl:nx', 'abdul'));  // review
   await controller.handleCallbackQuery(bot, cb('trf:bl:go', 'abdul'));  // arm photo gate
   assert.equal(calls.transitions.length, 0, 'TRF-6: no move before the photo');
@@ -152,7 +154,9 @@ test('dispatch photo gate: fresh bottom prompt, archive + link, forward, seal', 
   const { requestId } = await runWizard();
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb(`trf:acc:${requestId}`, 'abdul'));
-  await controller.handleCallbackQuery(bot, cb('trf:bl:auto', 'abdul'));
+  await controller.handleCallbackQuery(bot, cb('trf:bl:t:0', 'abdul')); // tick P1
+  await controller.handleCallbackQuery(bot, cb('trf:bl:t:1', 'abdul')); // tick P2
+  await controller.handleCallbackQuery(bot, cb('trf:bl:nx', 'abdul'));  // review
   await controller.handleCallbackQuery(bot, cb('trf:bl:go', 'abdul'));
   const s = sessionStore.get('abdul');
   assert.equal(s.step, 'await_doc', 'photo gate armed');
@@ -179,7 +183,9 @@ test('Back to bales from the photo gate returns to the review screen', async () 
   const { calls, requestId } = await runWizard();
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb(`trf:acc:${requestId}`, 'abdul'));
-  await controller.handleCallbackQuery(bot, cb('trf:bl:auto', 'abdul'));
+  await controller.handleCallbackQuery(bot, cb('trf:bl:t:0', 'abdul')); // tick P1
+  await controller.handleCallbackQuery(bot, cb('trf:bl:t:1', 'abdul')); // tick P2
+  await controller.handleCallbackQuery(bot, cb('trf:bl:nx', 'abdul'));  // review
   await controller.handleCallbackQuery(bot, cb('trf:bl:go', 'abdul'));
   const bb = createFakeBot();
   await controller.handleCallbackQuery(bb, cb('trf:bl:bk', 'abdul'));
@@ -195,7 +201,9 @@ test('legacy Skip button answers "photos are now required" and re-arms attach', 
   const { requestId } = await runWizard();
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb(`trf:acc:${requestId}`, 'abdul'));
-  await controller.handleCallbackQuery(bot, cb('trf:bl:auto', 'abdul'));
+  await controller.handleCallbackQuery(bot, cb('trf:bl:t:0', 'abdul')); // tick P1
+  await controller.handleCallbackQuery(bot, cb('trf:bl:t:1', 'abdul')); // tick P2
+  await controller.handleCallbackQuery(bot, cb('trf:bl:nx', 'abdul'));  // review
   await controller.handleCallbackQuery(bot, cb('trf:bl:go', 'abdul'));
   await sendPhoto('abdul'); // dispatch complete
   // An old pre-TRF-6 message still carries a Skip button — tap it.
@@ -211,7 +219,9 @@ test('receive photo gate: receipt applies on the file, stored as receiveDoc', as
   const { calls, requestId } = await runWizard();
   const bd = createFakeBot();
   await controller.handleCallbackQuery(bd, cb(`trf:acc:${requestId}`, 'abdul'));
-  await controller.handleCallbackQuery(bd, cb('trf:bl:auto', 'abdul'));
+  await controller.handleCallbackQuery(bd, cb('trf:bl:t:0', 'abdul')); // tick P1
+  await controller.handleCallbackQuery(bd, cb('trf:bl:t:1', 'abdul')); // tick P2
+  await controller.handleCallbackQuery(bd, cb('trf:bl:nx', 'abdul'));  // review
   await controller.handleCallbackQuery(bd, cb('trf:bl:go', 'abdul'));
   await sendPhoto('abdul');
 
@@ -241,7 +251,9 @@ test('receiver "Not now" stands down: card restored, still in transit', async ()
   const { requestId } = await runWizard();
   const bd = createFakeBot();
   await controller.handleCallbackQuery(bd, cb(`trf:acc:${requestId}`, 'abdul'));
-  await controller.handleCallbackQuery(bd, cb('trf:bl:auto', 'abdul'));
+  await controller.handleCallbackQuery(bd, cb('trf:bl:t:0', 'abdul')); // tick P1
+  await controller.handleCallbackQuery(bd, cb('trf:bl:t:1', 'abdul')); // tick P2
+  await controller.handleCallbackQuery(bd, cb('trf:bl:nx', 'abdul'));  // review
   await controller.handleCallbackQuery(bd, cb('trf:bl:go', 'abdul'));
   await sendPhoto('abdul');
 
@@ -261,7 +273,9 @@ test('admin short card expands to full detail then collapses', async () => {
   const { requestId } = await runWizard();
   const bd = createFakeBot();
   await controller.handleCallbackQuery(bd, cb(`trf:acc:${requestId}`, 'abdul'));
-  await controller.handleCallbackQuery(bd, cb('trf:bl:auto', 'abdul'));
+  await controller.handleCallbackQuery(bd, cb('trf:bl:t:0', 'abdul')); // tick P1
+  await controller.handleCallbackQuery(bd, cb('trf:bl:t:1', 'abdul')); // tick P2
+  await controller.handleCallbackQuery(bd, cb('trf:bl:nx', 'abdul'));  // review
   await controller.handleCallbackQuery(bd, cb('trf:bl:go', 'abdul'));
   const bp = await sendPhoto('abdul'); // gate: admin brief goes out with the photo
 

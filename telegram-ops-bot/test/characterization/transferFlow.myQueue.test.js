@@ -105,11 +105,13 @@ async function runWizard() {
   return { calls, requestId: calls.appended.requestId };
 }
 
-/** Drive the dispatcher through auto-pick → photo gate → dispatched. */
+/** Drive the dispatcher through explicit ticks → photo gate → dispatched. */
 async function dispatchAll(requestId) {
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb(`trf:acc:${requestId}`, 'abdul'));
-  await controller.handleCallbackQuery(bot, cb('trf:bl:auto', 'abdul'));
+  await controller.handleCallbackQuery(bot, cb('trf:bl:t:0', 'abdul')); // tick P1
+  await controller.handleCallbackQuery(bot, cb('trf:bl:t:1', 'abdul')); // tick P2
+  await controller.handleCallbackQuery(bot, cb('trf:bl:nx', 'abdul'));  // review
   await controller.handleCallbackQuery(bot, cb('trf:bl:go', 'abdul'));
   // TRF-6: dispatch applies only when the mandatory load photo lands.
   await controller.handleFileMessage(bot, {
