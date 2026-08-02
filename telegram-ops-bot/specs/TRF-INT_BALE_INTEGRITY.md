@@ -51,9 +51,32 @@
   boot-time duplicate report DMs admins the same-warehouse live duplicates
   (repeats each boot until resolved — that is the reminder).
 
-## Known follow-up (flagged, not in this program)
+## TRF-INT4 — sale/return executors warehouse-scoped (OPEN_ITEMS 12e, owner go-ahead 02-Aug-2026)
 
-Sales executors still key `sell_package` by printed number with only a
-status filter — a cross-warehouse duplicate sold by typed sale can flip both
-warehouses' bales. Proper fix: sale items carry the selling warehouse from the
-flow session into the executor (small, separate task — OPEN_ITEMS 12e).
+The last duplicate-number hole after TRF-INT1–3: sale executors keyed
+`sell_package` by printed number + status only, so a cross-warehouse duplicate
+sold once could flip both warehouses' bales. Owner-approved shape (02-Aug):
+
+1. **Sale items carry the selling warehouse.** Every guided sale flow already
+   knows it in-session; it now rides into the approval-queue item
+   (`aj.warehouse`, and per-item `items[].warehouse` for bundles) instead of
+   being dropped at handoff.
+2. **Executors sell/return only in that warehouse.** `markPackageSold`,
+   `markThanSold`, `markPackageAvailable`, `markThanAvailable` and
+   `findByPackage` accept an optional `{ warehouse }` scope — same opts
+   pattern as TRF-INT1's `transitionBales`. Executors pass the aj's warehouse
+   when present. Pre-change pending approvals carry no warehouse and execute
+   the old status-guarded way (accepted, called out to the owner).
+3. **Typed sales of an ambiguous number get one extra tap.** "sell bale 997"
+   with a live 997 in two warehouses shows warehouse chips instead of
+   guessing; live in one place → unchanged.
+4. **Cards show the warehouse** on sale approval/seal cards (rule 3 above).
+5. **The printed number stays the only user-facing key** (rule 4 above) — the
+   warehouse is context, never a new ID.
+
+Accepted legacy corners (documented, not closed): rows whose Warehouse cell is
+BLANK cannot be pinned — a sale/return that resolves to a blank-warehouse row
+keeps the pre-TRF-INT4 unscoped behavior until the cell is filled. Once a
+NAMED warehouse is in play for a number, blank rows are excluded from that
+sale/return's totals and mutation. Pre-change pending approvals (no
+`aj.warehouse`) execute the legacy status-guarded way.

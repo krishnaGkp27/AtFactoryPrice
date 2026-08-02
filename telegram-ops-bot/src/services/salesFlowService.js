@@ -154,7 +154,8 @@ async function buildSummary(session) {
   let totalThans = 0, totalYards = 0, totalValue = 0;
   for (const item of items) {
     if (item.type === 'package') {
-      const info = await inventoryService.getPackageSummary(item.packageNo);
+      // TRF-INT4 — scoped to the item's own warehouse when it carries one.
+      const info = await inventoryService.getPackageSummary(item.packageNo, { warehouse: item.warehouse });
       if (info) {
         text += `  Bale ${item.packageNo}: ${info.design} ${info.shade}, ${info.availableThans} thans, ${fmtQty(info.availableYards)} yds (${info.warehouse})\n`;
         totalThans += info.availableThans;
@@ -164,7 +165,8 @@ async function buildSummary(session) {
         text += `  Bale ${item.packageNo}: not found\n`;
       }
     } else if (item.type === 'than') {
-      const info = await inventoryService.getPackageSummary(item.packageNo);
+      // TRF-INT4 — scoped to the item's own warehouse when it carries one.
+      const info = await inventoryService.getPackageSummary(item.packageNo, { warehouse: item.warehouse });
       const than = info?.thans?.find((t) => t.thanNo === item.thanNo);
       if (than) {
         text += `  Bale ${item.packageNo} Than ${item.thanNo}: ${fmtQty(than.yards)} yds\n`;

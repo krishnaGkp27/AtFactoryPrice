@@ -2343,23 +2343,36 @@ async function showTransferThanConfirm(bot, chatId, userId) {
  */
 async function startReturnThanFlow(bot, chatId, userId, messageId = null) {
   const all = await inventoryRepository.getAll();
+  // TRF-INT4 — one chip per PHYSICAL bale (warehouse + printed number), so a
+  // number sold in two warehouses can never collapse into one ambiguous pick.
   const byPkg = new Map();
   all.forEach((r) => {
     if (r.status !== 'sold') return;
-    const key = String(r.packageNo || '').trim();
-    if (!key) return;
-    if (!byPkg.has(key)) byPkg.set(key, { pkg: key, design: r.design, shade: r.shade, count: 0 });
+    const pkg = String(r.packageNo || '').trim();
+    if (!pkg) return;
+    const wh = String(r.warehouse || '').trim();
+    const key = `${wh.toUpperCase()}|${pkg}`;
+    if (!byPkg.has(key)) byPkg.set(key, { pkg, warehouse: wh, design: r.design, shade: r.shade, count: 0 });
     byPkg.get(key).count += 1;
   });
-  const pkgs = [...byPkg.values()].sort((a, b) => String(a.pkg).localeCompare(String(b.pkg)));
+  const pkgs = [...byPkg.values()].sort((a, b) => String(a.pkg).localeCompare(String(b.pkg)) || String(a.warehouse).localeCompare(String(b.warehouse)));
   if (!pkgs.length) {
     await editOrSend(bot, chatId, messageId, 'No sold thans to return.', {});
     return;
   }
-  sessionStore.set(userId, { type: 'return_than_flow', step: 'package', flowMessageId: messageId || null });
+  const shown = pkgs.slice(0, 30);
+  // Chips are indexes into the session list (rtp:<i>) — warehouse names would
+  // blow Telegram's 64-byte callback_data cap if sent inline.
+  sessionStore.set(userId, {
+    type: 'return_than_flow', step: 'package', flowMessageId: messageId || null,
+    _pkgOptions: shown.map((p) => ({ pkg: p.pkg, warehouse: p.warehouse })),
+  });
   const rows = [];
-  pkgs.slice(0, 30).forEach((p) => {
-    rows.push([{ text: `📦 ${p.pkg} · ${p.design}${p.shade ? ' ' + p.shade : ''} (${p.count} sold)`, callback_data: `rtp:${p.pkg.slice(0, 50)}` }]);
+  shown.forEach((p, i) => {
+    // Warehouse right after the number: Telegram truncates long labels at
+    // the tail, and the warehouse is the ONLY differing token when the same
+    // printed number was sold in two places.
+    rows.push([{ text: `📦 ${p.pkg} · 🏭 ${p.warehouse || '—'} · ${p.design}${p.shade ? ' ' + p.shade : ''} (${p.count} sold)`, callback_data: `rtp:${i}` }]);
   });
   rows.push([{ text: '❌ Cancel', callback_data: 'rtcanc:0' }]);
   await editOrSend(bot, chatId, messageId,
@@ -2370,7 +2383,9 @@ async function startReturnThanFlow(bot, chatId, userId, messageId = null) {
 async function showReturnThanThanPicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const info = await inventoryService.getPackageSummary(session.packageNo);
+  // TRF-INT4 — scoped to the picked warehouse so a same-numbered bale
+  // elsewhere cannot leak its thans into this picker.
+  const info = await inventoryService.getPackageSummary(session.packageNo, { warehouse: session.warehouse });
   session.design = info?.design || '';
   session.shade = info?.shade || '';
   sessionStore.set(userId, session);
@@ -2390,7 +2405,7 @@ async function showReturnThanThanPicker(bot, chatId, userId) {
     { text: '⬅️ Back', callback_data: 'rtb:package' },
     { text: '❌ Cancel', callback_data: 'rtcanc:0' },
   ]);
-  const text = `↩️ *Return Than*\n\n✓ Bale: *${session.packageNo}* (${session.design}${session.shade ? ' ' + session.shade : ''})\n\nSelect the sold than to return:`;
+  const text = `↩️ *Return Than*\n\n✓ Bale: *${session.packageNo}* (${session.design}${session.shade ? ' ' + session.shade : ''})${session.warehouse ? `\n🏭 Warehouse: *${session.warehouse}*` : ''}\n\nSelect the sold than to return:`;
   await editOrSend(bot, chatId, session.flowMessageId, text,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
@@ -2402,11 +2417,11 @@ async function showReturnThanConfirm(bot, chatId, userId) {
   // will credit, so a wrong pick is caught here, not at admin approval.
   let rtSoldTo = '';
   try {
-    const t = await inventoryRepository.findThan(session.packageNo, session.thanNo);
+    const t = await inventoryRepository.findThan(session.packageNo, session.thanNo, { warehouse: session.warehouse });
     rtSoldTo = (t && t.soldTo) || '';
   } catch (_) { /* card still renders without the buyer line */ }
   const { mdEscape: rtEsc } = require('../utils/flowKit');
-  const text = `↩️ *Confirm Return Than*\n\nBale: *${session.packageNo}*\nThan: *#${session.thanNo}*\nDesign: ${session.design}${session.shade ? ' ' + session.shade : ''}\n👤 Sold to: *${rtEsc(rtSoldTo || '(no customer recorded)')}* — the return credits this account\n\n_Will mark the than available again. Queues 2-admin approval._`;
+  const text = `↩️ *Confirm Return Than*\n\nBale: *${session.packageNo}*\nThan: *#${session.thanNo}*\nDesign: ${session.design}${session.shade ? ' ' + session.shade : ''}${session.warehouse ? `\n🏭 Warehouse: *${session.warehouse}*` : ''}\n👤 Sold to: *${rtEsc(rtSoldTo || '(no customer recorded)')}* — the return credits this account\n\n_Will mark the than available again. Queues 2-admin approval._`;
   await editOrSend(bot, chatId, session.flowMessageId, text, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [
@@ -2427,11 +2442,11 @@ async function showReturnThanConfirm(bot, chatId, userId) {
  * the command ("return Bale X from Benduku") is cross-checked against
  * the bale's actual buyer(s) and blocked on mismatch.
  */
-async function startTypedReturnPreview(bot, chatId, userId, action, packageNo, thanNo, claimedCustomer, msgFrom) {
+async function startTypedReturnPreview(bot, chatId, userId, action, packageNo, thanNo, claimedCustomer, msgFrom, warehouse = null) {
   const { mdEscape } = require('../utils/flowKit');
   const pkg = String(packageNo || '').trim();
   const pkgMd = mdEscape(pkg);
-  const rows = await inventoryRepository.findByPackage(pkg);
+  const rows = await inventoryRepository.findByPackage(pkg, { warehouse });
   if (!rows.length) {
     await bot.sendMessage(chatId, `⚠️ Bale *${pkgMd}* was not found in Inventory — check the bale number.`, { parse_mode: 'Markdown' });
     return;
@@ -2446,8 +2461,61 @@ async function startTypedReturnPreview(bot, chatId, userId, action, packageNo, t
       { parse_mode: 'Markdown' });
     return;
   }
-  const yards = sold.reduce((s, r) => s + (r.yards || 0), 0);
-  const soldToNames = [...new Set(sold.map((r) => String(r.soldTo || '').trim()).filter(Boolean))];
+
+  // TRF-INT4 — the printed number may have been sold in MORE than one
+  // warehouse (numbers recycle across intakes). A typed return cannot tell
+  // which physical bale came back, so ask — one tap, then the preview,
+  // queue and executor all stay pinned to that warehouse. Warehouses dedupe
+  // case-insensitively (one physical place, two spellings), and blank
+  // legacy warehouse cells never form a chip — with a named warehouse in
+  // play the blank rows are excluded outright; a number sold ONLY in
+  // blank-warehouse rows keeps the legacy unscoped path.
+  const namedWhs = [];
+  for (const r of sold) {
+    const w = String(r.warehouse || '').trim();
+    if (w && !namedWhs.some((x) => x.toUpperCase() === w.toUpperCase())) namedWhs.push(w);
+  }
+  const whRows = (w) => sold.filter((r) => String(r.warehouse || '').trim().toUpperCase() === String(w).trim().toUpperCase());
+  if (!warehouse && namedWhs.length > 1) {
+    const whOptions = namedWhs.map((w) => {
+      const inWh = whRows(w);
+      return { warehouse: w, thans: inWh.length, yards: inWh.reduce((s, r) => s + (r.yards || 0), 0) };
+    });
+    sessionStore.set(userId, {
+      type: 'return_confirm_flow', step: 'pick_wh', flowMessageId: null,
+      _retPend: {
+        action, packageNo: pkg, thanNo: thanNo || null, claimedCustomer: claimedCustomer || '',
+        fromName: (msgFrom && msgFrom.from && msgFrom.from.first_name) || '',
+      },
+      _whOptions: whOptions,
+    });
+    const chipRows = whOptions.map((o, i) => ([{
+      text: `🏭 ${o.warehouse} — ${o.thans} sold than${o.thans === 1 ? '' : 's'} · ${fmtQty(o.yards)} yds`,
+      callback_data: `rtx:wh:${i}`,
+    }]));
+    chipRows.push([{ text: '❌ Cancel', callback_data: 'rtx:no' }]);
+    const sentPick = await bot.sendMessage(chatId,
+      `↩️ Bale *${pkgMd}* was sold in *${namedWhs.length} warehouses* — which one is this return from?`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: chipRows } });
+    if (sentPick && sentPick.message_id) {
+      const sp = sessionStore.get(userId);
+      if (sp && sp.type === 'return_confirm_flow') { sp.flowMessageId = sentPick.message_id; sessionStore.set(userId, sp); }
+    }
+    return;
+  }
+  const retWarehouse = warehouse || namedWhs[0] || '';
+  // The preview must promise exactly what the scoped executor will flip:
+  // once a warehouse is pinned, blank-warehouse legacy rows (and any other
+  // spelling's rows) drop out of the totals and buyer set too.
+  const scopedSold = retWarehouse ? whRows(retWarehouse) : sold;
+  if (!scopedSold.length) {
+    await bot.sendMessage(chatId,
+      `⚠️ Bale *${pkgMd}* has no sold thans in *${mdEscape(retWarehouse)}* — nothing to return.`,
+      { parse_mode: 'Markdown' });
+    return;
+  }
+  const yards = scopedSold.reduce((s, r) => s + (r.yards || 0), 0);
+  const soldToNames = [...new Set(scopedSold.map((r) => String(r.soldTo || '').trim()).filter(Boolean))];
 
   // A whole-bale return whose thans belong to DIFFERENT buyers cannot be
   // credited to one account — the executor credits a single ledger. Force
@@ -2515,15 +2583,16 @@ async function startTypedReturnPreview(bot, chatId, userId, action, packageNo, t
     type: 'return_confirm_flow', step: 'confirm', flowMessageId: null,
     ret: {
       action, packageNo: pkg, thanNo: thanNo || null,
+      warehouse: retWarehouse,
       soldTo: soldToNames.join(', '),
       customerId: singleBuyer ? singleBuyer.customer_id : '',
-      design: sold[0].design || '', thans: sold.length, yards,
+      design: scopedSold[0].design || '', thans: scopedSold.length, yards,
       fromName: (msgFrom && msgFrom.from && msgFrom.from.first_name) || '',
     },
   });
   const what = action === 'return_package' ? `Bale *${pkgMd}* (whole bale)` : `Bale *${pkgMd}* — Than *#${thanNo}*`;
   const sent = await bot.sendMessage(chatId,
-    `↩️ *Confirm Return*\n\n${what}\nDesign: ${mdEscape(sold[0].design || '—')}\n${sold.length} sold than${sold.length === 1 ? '' : 's'} · ${fmtQty(yards)} yds\n👤 Sold to: *${mdEscape(buyerLabel)}*${unverifiedClaim}\n\nApproving puts the stock back and credits this customer's account.\nQueues dual-admin approval.`,
+    `↩️ *Confirm Return*\n\n${what}\nDesign: ${mdEscape(scopedSold[0].design || '—')}\n🏭 Warehouse: *${mdEscape(retWarehouse || '—')}*\n${scopedSold.length} sold than${scopedSold.length === 1 ? '' : 's'} · ${fmtQty(yards)} yds\n👤 Sold to: *${mdEscape(buyerLabel)}*${unverifiedClaim}\n\nApproving puts the stock back and credits this customer's account.\nQueues dual-admin approval.`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
       [
         { text: '✅ Submit for approval', callback_data: 'rtx:ok' },
@@ -6673,7 +6742,8 @@ async function executeSale(bot, chatId, userId) {
   // resolved or has no available thans, so phantoms never enter the queue.
   const cartIssues = [];
   for (const item of session.items) {
-    const info = await inventoryService.getPackageSummary(item.packageNo);
+    // TRF-INT4 — validate against the item's own warehouse.
+    const info = await inventoryService.getPackageSummary(item.packageNo, { warehouse: item.warehouse });
     if (!info) {
       cartIssues.push(`• Bale ${item.packageNo}: not found in inventory`);
       continue;
@@ -6735,7 +6805,9 @@ async function executeSale(bot, chatId, userId) {
     // full" chip can compute the sale total at approval time.
     const yardsByDesign = {};
     for (const item of session.items) {
-      const info = await inventoryService.getPackageSummary(item.packageNo);
+      // TRF-INT4 — resolve the card line against the item's own warehouse so
+      // a same-numbered bale elsewhere can never misdescribe what will sell.
+      const info = await inventoryService.getPackageSummary(item.packageNo, { warehouse: item.warehouse });
       if (item.type === 'package' && info) {
         detailText += `  Bale ${item.packageNo}: ${info.design} ${info.shade}, ${info.availableThans} thans, ${fmtQty(info.availableYards)} yds (${info.warehouse})\n`;
         totalThans += info.availableThans;
@@ -6810,11 +6882,12 @@ async function executeSale(bot, chatId, userId) {
   const failedItems = [];
   for (const item of session.items) {
     if (item.type === 'package') {
-      const result = await inventoryService.sellPackage(item.packageNo, session.collected.customer, userId, sDate);
+      // TRF-INT4 — the item's warehouse pins the sale to the picked bale.
+      const result = await inventoryService.sellPackage(item.packageNo, session.collected.customer, userId, sDate, { warehouse: item.warehouse });
       if (result.status === 'completed') { soldThans += result.soldThans; totalYards += result.soldYards; soldPkgs.add(item.packageNo); }
       else failedItems.push(`Bale ${item.packageNo}: ${result.status}${result.message ? ' — ' + result.message : ''}`);
     } else if (item.type === 'than') {
-      const result = await inventoryService.sellThan(item.packageNo, item.thanNo, session.collected.customer, userId, sDate);
+      const result = await inventoryService.sellThan(item.packageNo, item.thanNo, session.collected.customer, userId, sDate, { warehouse: item.warehouse });
       if (result.status === 'completed') { soldThans += 1; totalYards += result.than?.yards || 0; soldPkgs.add(item.packageNo); }
       else failedItems.push(`Bale ${item.packageNo} Than ${item.thanNo}: ${result.status}${result.message ? ' — ' + result.message : ''}`);
     } else {
@@ -7958,11 +8031,44 @@ async function handleCallbackQuery(bot, callbackQuery) {
     sessionStore.clear(uid);
 
   /* ─── RET-1 — typed-return preview confirm/cancel ─── */
+  } else if (data.startsWith('rtx:wh:')) {
+    // TRF-INT4 — warehouse pick for a typed return whose printed number was
+    // sold in more than one warehouse. Re-runs the preview scoped to the tap.
+    const uid = String(callbackQuery.from.id);
+    const rtxwChat = callbackQuery.message.chat.id;
+    const session = sessionStore.get(uid);
+    const bound = session && session.type === 'return_confirm_flow' && session.step === 'pick_wh'
+      && session._retPend && (!session.flowMessageId || session.flowMessageId === callbackQuery.message.message_id);
+    if (!bound) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Card expired — type the return command again.' });
+      return;
+    }
+    const opt = (session._whOptions || [])[parseInt(data.slice(7), 10)];
+    if (!opt) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Expired — type the command again.' }); return; }
+    const pend = session._retPend;
+    sessionStore.clear(uid);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: opt.warehouse || undefined });
+    await bot.editMessageText(`↩️ Return of Bale ${pend.packageNo}${pend.thanNo ? ` Than #${pend.thanNo}` : ''} — warehouse: ${opt.warehouse || '—'}. Preparing preview…`,
+      { chat_id: rtxwChat, message_id: callbackQuery.message.message_id }).catch(() => {});
+    await startTypedReturnPreview(bot, rtxwChat, uid, pend.action, pend.packageNo, pend.thanNo,
+      pend.claimedCustomer, pend.fromName ? { from: { first_name: pend.fromName } } : null, opt.warehouse);
+
   } else if (data === 'rtx:ok' || data === 'rtx:no') {
     const uid = String(callbackQuery.from.id);
     const rtxChat = callbackQuery.message.chat.id;
     const rtxMenuRow = { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] };
     const session = sessionStore.get(uid);
+    // TRF-INT4 — ❌ on the warehouse-pick card cancels that pending preview.
+    // Bound to the pick card's own message so a stale confirm card's Cancel
+    // can never kill a NEWER pending pick.
+    if (data === 'rtx:no' && session && session.type === 'return_confirm_flow' && session.step === 'pick_wh'
+      && (!session.flowMessageId || session.flowMessageId === callbackQuery.message.message_id)) {
+      sessionStore.clear(uid);
+      await bot.answerCallbackQuery(callbackQuery.id);
+      await bot.editMessageText('❌ Return cancelled — nothing was queued.',
+        { chat_id: rtxChat, message_id: callbackQuery.message.message_id, reply_markup: rtxMenuRow }).catch(() => {});
+      return;
+    }
     // The tap must come from THIS session's card: a newer preview
     // supersedes older ones (their buttons are disarmed best-effort, but
     // Telegram edits can fail) — without this check a stale ✅ would queue
@@ -7986,13 +8092,15 @@ async function handleCallbackQuery(bot, callbackQuery) {
         { chat_id: rtxChat, message_id: rtxMsgId, reply_markup: rtxMenuRow }).catch(() => {});
       return;
     }
-    const aj = { action: ret.action, packageNo: ret.packageNo, soldTo: ret.soldTo, customerId: ret.customerId };
+    // TRF-INT4 — ret.warehouse pins the executor (and the admin card) to the
+    // physical bale this return was previewed against.
+    const aj = { action: ret.action, packageNo: ret.packageNo, warehouse: ret.warehouse || '', soldTo: ret.soldTo, customerId: ret.customerId };
     if (ret.action === 'return_than') aj.thanNo = ret.thanNo;
     // Pseudo-msg keeps the requester's display name on the admin card for
     // users without a Users-sheet row (requireApproval falls back to it).
     const rtxMsg = ret.fromName ? { from: { first_name: ret.fromName } } : null;
     const queued = await requireApproval(bot, rtxChat, rtxMsg, uid, ret.action, aj,
-      await require('../services/approvalCards').buildReturnCard({ packageNo: ret.packageNo, thanNo: ret.thanNo }));
+      await require('../services/approvalCards').buildReturnCard({ packageNo: ret.packageNo, thanNo: ret.thanNo, warehouse: ret.warehouse }));
     if (queued) {
       await bot.editMessageText(
         `⏳ Return of Bale ${ret.packageNo}${ret.thanNo ? ` Than #${ret.thanNo}` : ''} submitted for dual-admin approval.${ret.soldTo ? `\n👤 Credits: ${ret.soldTo}` : ''}`,
@@ -8026,6 +8134,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
 
     if (target === 'package') {
       delete session.packageNo;
+      delete session.warehouse;
       delete session.thanNo;
       delete session.design;
       delete session.shade;
@@ -8040,12 +8149,22 @@ async function handleCallbackQuery(bot, callbackQuery) {
     }
 
   } else if (data.startsWith('rtp:')) {
-    const pkg = data.slice(4);
     const uid = String(callbackQuery.from.id);
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'return_than_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    // TRF-INT4 — chips are indexes into the session's (warehouse, bale)
+    // list, so the tap must come from THIS session's card: an older picker
+    // (or a pre-index-era rtp:<number> card) indexed against the live list
+    // would silently select a different physical bale.
+    if (session.flowMessageId && session.flowMessageId !== callbackQuery.message.message_id) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Card expired — open Return Than again.' });
+      return;
+    }
+    const picked = (session._pkgOptions || [])[parseInt(data.slice(4), 10)];
+    if (!picked) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Expired — start again.' }); return; }
     await bot.answerCallbackQuery(callbackQuery.id);
-    session.packageNo = pkg;
+    session.packageNo = picked.pkg;
+    session.warehouse = picked.warehouse;
     session.step = 'than';
     sessionStore.set(uid, session);
     await showReturnThanThanPicker(bot, callbackQuery.message.chat.id, uid);
@@ -8076,7 +8195,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const requestId = genId();
     await approvalQueueRepository.append({
       requestId, user: uid,
-      actionJSON: { action: 'return_than', packageNo: session.packageNo, thanNo: session.thanNo },
+      actionJSON: { action: 'return_than', packageNo: session.packageNo, thanNo: session.thanNo, warehouse: session.warehouse || '' },
       riskReason, status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: 'return_than', via: 'tap_flow' }, uid);
@@ -8088,7 +8207,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
       ).catch(() => {});
     }
     const userLabel = await getRequesterDisplayName(uid, null);
-    const summary = `Return Than\nBale: ${session.packageNo}\nThan: ${session.thanNo}\nDesign: ${session.design || '?'} ${session.shade || ''}`;
+    const summary = `Return Than\nBale: ${session.packageNo}\nThan: ${session.thanNo}\nDesign: ${session.design || '?'} ${session.shade || ''}${session.warehouse ? `\nWarehouse: ${session.warehouse}` : ''}`;
     // Exclude the requester from the broadcast so an admin can't approve
     // their own return request. The other admin(s) still get it.
     const excludeId = isAdm ? uid : undefined;

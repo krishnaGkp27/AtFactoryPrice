@@ -142,7 +142,9 @@ async function getDesignsForSale(item) {
   if (aj.action === 'sale_bundle' && Array.isArray(aj.items)) {
     const designs = new Set();
     for (const si of aj.items) {
-      const pkg = si.packageNo ? await inventoryRepository.findByPackage(si.packageNo) : [];
+      // TRF-INT4 — scoped so a same-numbered bale in another warehouse can't
+      // put the wrong design on the admin's rate chips.
+      const pkg = si.packageNo ? await inventoryRepository.findByPackage(si.packageNo, { warehouse: si.warehouse || aj.warehouse }) : [];
       if (pkg.length && pkg[0].design) designs.add(String(pkg[0].design).trim());
     }
     return Array.from(designs);

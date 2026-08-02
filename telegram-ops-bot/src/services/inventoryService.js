@@ -62,9 +62,11 @@ async function checkStock(filters = {}) {
 
 /**
  * Get package detail: all thans with status (available/sold), totals.
+ * TRF-INT4 — opts.warehouse scopes to one physical bale when the printed
+ * number exists in more than one warehouse.
  */
-async function getPackageSummary(packageNo) {
-  const thans = await inventoryRepository.findByPackage(packageNo);
+async function getPackageSummary(packageNo, opts = {}) {
+  const thans = await inventoryRepository.findByPackage(packageNo, { warehouse: opts.warehouse });
   if (!thans.length) return null;
   const available = thans.filter((t) => t.status === 'available');
   const sold = thans.filter((t) => t.status === 'sold');
@@ -116,8 +118,11 @@ async function listPackages(design, shade) {
 /**
  * Sell a single than. Risk-checks first; queues approval if needed.
  */
-async function sellThan(packageNo, thanNo, customer, userId, salesDate) {
-  const than = await inventoryRepository.findThan(packageNo, thanNo);
+async function sellThan(packageNo, thanNo, customer, userId, salesDate, opts = {}) {
+  // TRF-INT4 — opts.warehouse pins the sale to the physical than the caller
+  // picked; the resolved row's warehouse then rides the queue/mutation so a
+  // same-numbered duplicate elsewhere can never be flipped.
+  const than = await inventoryRepository.findThan(packageNo, thanNo, { warehouse: opts.warehouse });
   if (!than) return { status: 'not_found', message: `Than ${thanNo} in Bale ${packageNo} not found.` };
   if (than.status === 'sold') return { status: 'already_sold', message: `Than ${thanNo} in Bale ${packageNo} is already sold.` };
 
@@ -134,14 +139,14 @@ async function sellThan(packageNo, thanNo, customer, userId, salesDate) {
     const requestId = generateId();
     await approvalQueueRepository.append({
       requestId, user: userId,
-      actionJSON: { action: 'sell_than', packageNo, thanNo, customer, yards: than.yards, design: than.design, shade: than.shade, salesDate: salesDate || null },
+      actionJSON: { action: 'sell_than', packageNo, thanNo, customer, yards: than.yards, design: than.design, shade: than.shade, warehouse: than.warehouse || '', salesDate: salesDate || null },
       riskReason: risk.reason, status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
     return { status: 'approval_required', requestId, reason: risk.reason };
   }
 
-  const result = await inventoryRepository.markThanSold(packageNo, thanNo, customer, salesDate);
+  const result = await inventoryRepository.markThanSold(packageNo, thanNo, customer, salesDate, { warehouse: than.warehouse });
   // SEC-P2 (C5): markThanSold returns null when the than was sold/moved between
   // our earlier read and this write — don't record a phantom sale for it.
   if (!result) return { status: 'already_sold', message: `Than ${thanNo} in Bale ${packageNo} is no longer available.` };
@@ -157,11 +162,28 @@ async function sellThan(packageNo, thanNo, customer, userId, salesDate) {
 /**
  * Sell an entire package. Risk-checks based on total value of available thans.
  */
-async function sellPackage(packageNo, customer, userId, salesDate) {
-  const thans = await inventoryRepository.findByPackage(packageNo);
+async function sellPackage(packageNo, customer, userId, salesDate, opts = {}) {
+  // TRF-INT4 — opts.warehouse pins the sale to the physical bale the caller
+  // picked. When unscoped but every available than lives in ONE warehouse,
+  // that warehouse is stamped anyway so the executed sale stays pinned even
+  // if a duplicate number is intaken elsewhere before approval.
+  const thans = await inventoryRepository.findByPackage(packageNo, { warehouse: opts.warehouse });
   if (!thans.length) return { status: 'not_found', message: `Bale ${packageNo} not found.` };
-  const available = thans.filter((t) => t.status === 'available');
+  let available = thans.filter((t) => t.status === 'available');
   if (!available.length) return { status: 'already_sold', message: `Bale ${packageNo} is fully sold.` };
+  const whs = [];
+  for (const t of available) {
+    const w = String(t.warehouse || '').trim();
+    if (w && !whs.some((x) => x.toUpperCase() === w.toUpperCase())) whs.push(w);
+  }
+  const saleWarehouse = opts.warehouse || (whs.length === 1 ? whs[0] : '');
+  if (saleWarehouse) {
+    // Totals, the queued aj and the mutation must all describe the SAME
+    // rows: once a warehouse is pinned, blank-warehouse legacy rows (which
+    // markPackageSold's scope will not flip) drop out of the counts too.
+    available = available.filter((t) => String(t.warehouse || '').trim().toUpperCase() === String(saleWarehouse).trim().toUpperCase());
+    if (!available.length) return { status: 'already_sold', message: `Bale ${packageNo} has no available thans in ${saleWarehouse}.` };
+  }
 
   const totalYards = available.reduce((s, t) => s + t.yards, 0);
   const totalValue = available.reduce((s, t) => s + t.yards * t.pricePerYard, 0);
@@ -178,14 +200,14 @@ async function sellPackage(packageNo, customer, userId, salesDate) {
     const requestId = generateId();
     await approvalQueueRepository.append({
       requestId, user: userId,
-      actionJSON: { action: 'sell_package', packageNo, customer, yards: totalYards, thans: available.length, design: available[0].design, shade: available[0].shade, salesDate: salesDate || null },
+      actionJSON: { action: 'sell_package', packageNo, customer, yards: totalYards, thans: available.length, design: available[0].design, shade: available[0].shade, warehouse: saleWarehouse, salesDate: salesDate || null },
       riskReason: risk.reason, status: 'pending',
     });
     await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
     return { status: 'approval_required', requestId, reason: risk.reason };
   }
 
-  const results = await inventoryRepository.markPackageSold(packageNo, customer, salesDate);
+  const results = await inventoryRepository.markPackageSold(packageNo, customer, salesDate, { warehouse: saleWarehouse || undefined });
   await transactionsRepository.append({
     user: userId, action: 'sell_package', design: available[0].design, color: available[0].shade,
     qty: totalYards, before: `${available.length} thans`, after: 'sold', status: 'completed',
@@ -250,8 +272,9 @@ async function sellBatch(packageNos, customer, userId) {
 /**
  * Return a sold than (undo sale, mark available again).
  */
-async function returnThan(packageNo, thanNo, userId) {
-  const result = await inventoryRepository.markThanAvailable(packageNo, thanNo);
+async function returnThan(packageNo, thanNo, userId, opts = {}) {
+  // TRF-INT4 — opts.warehouse pins the return to the physical than sold there.
+  const result = await inventoryRepository.markThanAvailable(packageNo, thanNo, { warehouse: opts.warehouse });
   if (!result) return { status: 'not_found', message: `Than ${thanNo} in Bale ${packageNo} not found or already available.` };
   await transactionsRepository.append({
     user: userId, action: 'return_than', design: result.design, color: result.shade,
@@ -265,8 +288,9 @@ async function returnThan(packageNo, thanNo, userId) {
 /**
  * Return an entire package (undo all sold thans).
  */
-async function returnPackage(packageNo, userId) {
-  const results = await inventoryRepository.markPackageAvailable(packageNo);
+async function returnPackage(packageNo, userId, opts = {}) {
+  // TRF-INT4 — opts.warehouse pins the return to the physical bale sold there.
+  const results = await inventoryRepository.markPackageAvailable(packageNo, { warehouse: opts.warehouse });
   if (!results.length) return { status: 'not_found', message: `Bale ${packageNo} has no sold thans to return.` };
   const totalYards = results.reduce((s, t) => s + t.yards, 0);
   await transactionsRepository.append({
@@ -351,10 +375,13 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   };
 
   if (aj.action === 'sell_than') {
-    const result = await inventoryRepository.markThanSold(aj.packageNo, aj.thanNo, aj.customer, aj.salesDate);
+    // TRF-INT4 — sell only in the warehouse the request was made from, so a
+    // same-numbered duplicate elsewhere can never be flipped by this sale.
+    // Pre-TRF-INT4 pending rows carry no warehouse → legacy unscoped match.
+    const result = await inventoryRepository.markThanSold(aj.packageNo, aj.thanNo, aj.customer, aj.salesDate, { warehouse: aj.warehouse });
     if (!result) return { ok: false, message: 'Than not found or no longer available.' };
     const pricePerYard = getPricePerYard(enrichment, aj.design);
-    if (pricePerYard > 0) await inventoryRepository.updatePrice({ packageNo: aj.packageNo }, pricePerYard);
+    if (pricePerYard > 0) await inventoryRepository.updatePrice({ packageNo: aj.packageNo, warehouse: aj.warehouse }, pricePerYard);
     await transactionsRepository.append({
       user: item.user, action: 'sell_than', design: aj.design, color: aj.shade,
       qty: aj.yards, before: 'available', after: 'sold', status: 'approved',
@@ -372,10 +399,11 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       } catch (e) { await recordErpFailure('payment record (sell_than)', e); }
     }
   } else if (aj.action === 'sell_package') {
-    const results = await inventoryRepository.markPackageSold(aj.packageNo, aj.customer, aj.salesDate);
+    // TRF-INT4 — see sell_than note above.
+    const results = await inventoryRepository.markPackageSold(aj.packageNo, aj.customer, aj.salesDate, { warehouse: aj.warehouse });
     if (!results.length) return { ok: false, message: 'Bale already sold.' };
     const pricePerYard = getPricePerYard(enrichment, aj.design);
-    if (pricePerYard > 0) await inventoryRepository.updatePrice({ packageNo: aj.packageNo }, pricePerYard);
+    if (pricePerYard > 0) await inventoryRepository.updatePrice({ packageNo: aj.packageNo, warehouse: aj.warehouse }, pricePerYard);
     await transactionsRepository.append({
       user: item.user, action: 'sell_package', design: aj.design, color: aj.shade,
       qty: aj.yards, before: `${aj.thans} thans`, after: 'sold', status: 'approved',
@@ -395,9 +423,10 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   } else if (aj.action === 'return_than') {
     // CUS-2 — capture who it was sold to BEFORE the flip blanks soldTo, so
     // the ledger reversal lands on that customer's statement.
-    const soldRow = await inventoryRepository.findThan(aj.packageNo, aj.thanNo).catch(() => null);
+    const soldRow = await inventoryRepository.findThan(aj.packageNo, aj.thanNo, { warehouse: aj.warehouse }).catch(() => null);
     const returnCust = await resolveReturnCustomer(soldRow ? soldRow.soldTo : '');
-    const result = await inventoryRepository.markThanAvailable(aj.packageNo, aj.thanNo);
+    // TRF-INT4 — return only in the request's warehouse (see sell_than note).
+    const result = await inventoryRepository.markThanAvailable(aj.packageNo, aj.thanNo, { warehouse: aj.warehouse });
     if (!result) return { ok: false, message: 'Than not found or already available.' };
     await transactionsRepository.append({
       user: item.user, action: 'return_than', design: result.design, color: result.shade,
@@ -406,10 +435,11 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     try { erpBus.emit('return', { type: 'return_than', packageNo: aj.packageNo, thanNo: aj.thanNo, yards: result.yards, design: result.design, shade: result.shade, userId: item.user, txnId: `RT-${aj.packageNo}-${aj.thanNo}`, customer: returnCust.name, customerId: returnCust.id }); } catch (_) {}
   } else if (aj.action === 'return_package') {
     // CUS-2 — capture the buyer before the flip clears soldTo.
-    const soldRows = await inventoryRepository.findByPackage(aj.packageNo).catch(() => []);
+    const soldRows = await inventoryRepository.findByPackage(aj.packageNo, { warehouse: aj.warehouse }).catch(() => []);
     const soldToPrior = (soldRows.find((t) => t.status === 'sold' && t.soldTo) || {}).soldTo || '';
     const returnCust = await resolveReturnCustomer(soldToPrior);
-    const results = await inventoryRepository.markPackageAvailable(aj.packageNo);
+    // TRF-INT4 — return only in the request's warehouse (see sell_than note).
+    const results = await inventoryRepository.markPackageAvailable(aj.packageNo, { warehouse: aj.warehouse });
     if (!results.length) return { ok: false, message: 'No sold thans to return.' };
     const totalYards = results.reduce((s, t) => s + t.yards, 0);
     await transactionsRepository.append({
@@ -1063,8 +1093,12 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const appliedPkgs = new Set();
     const failedItems = [];
     for (const si of (aj.items || [])) {
+      // TRF-INT4 — each item sells only in the warehouse the flow picked it
+      // from (per-item, falling back to the bundle's). Pre-TRF-INT4 pending
+      // bundles carry neither → legacy unscoped match.
+      const siWh = si.warehouse || aj.warehouse;
       if (si.type === 'package') {
-        const results = await inventoryRepository.markPackageSold(si.packageNo, aj.customer, aj.salesDate);
+        const results = await inventoryRepository.markPackageSold(si.packageNo, aj.customer, aj.salesDate, { warehouse: siWh });
         if (!results.length) {
           failedItems.push({ packageNo: si.packageNo, type: 'package', reason: 'not found or no available thans' });
           continue;
@@ -1077,10 +1111,10 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
         if (design) byDesign[design] = (byDesign[design] || 0) + pkgYards;
         if (enrichment?.ratePerUnitByDesign && results[0]) {
           const rate = getPricePerYard(enrichment, design);
-          if (rate > 0) await inventoryRepository.updatePrice({ packageNo: si.packageNo }, rate);
+          if (rate > 0) await inventoryRepository.updatePrice({ packageNo: si.packageNo, warehouse: siWh }, rate);
         }
       } else if (si.type === 'than') {
-        const result = await inventoryRepository.markThanSold(si.packageNo, si.thanNo, aj.customer, aj.salesDate);
+        const result = await inventoryRepository.markThanSold(si.packageNo, si.thanNo, aj.customer, aj.salesDate, { warehouse: siWh });
         if (!result) {
           failedItems.push({ packageNo: si.packageNo, thanNo: si.thanNo, type: 'than', reason: 'not found or not available' });
           continue;
@@ -1092,7 +1126,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
         if (design) byDesign[design] = (byDesign[design] || 0) + result.yards;
         if (enrichment?.ratePerUnitByDesign && result.design) {
           const rate = getPricePerYard(enrichment, result.design);
-          if (rate > 0) await inventoryRepository.updatePrice({ packageNo: si.packageNo }, rate);
+          if (rate > 0) await inventoryRepository.updatePrice({ packageNo: si.packageNo, warehouse: siWh }, rate);
         }
       } else {
         failedItems.push({ packageNo: si.packageNo, thanNo: si.thanNo, type: si.type || 'unknown', reason: `unknown item type "${si.type}"` });
@@ -1367,17 +1401,20 @@ async function revertSaleBundle(requestId, userId) {
   const customer = aj.customer || '';
   const returnedThans = [];
   for (const si of aj.items) {
+    // TRF-INT4 — undo the sale in the warehouse it was made in, so the revert
+    // can never resurrect a same-numbered bale somewhere else.
+    const siWh = si.warehouse || aj.warehouse;
     if (si.type === 'package') {
-      const sold = await inventoryRepository.findByPackage(si.packageNo);
+      const sold = await inventoryRepository.findByPackage(si.packageNo, { warehouse: siWh });
       const soldThans = sold.filter((t) => t.status === 'sold');
       if (soldThans.length) {
-        const undone = await inventoryRepository.markPackageAvailable(si.packageNo);
+        const undone = await inventoryRepository.markPackageAvailable(si.packageNo, { warehouse: siWh });
         returnedThans.push(...undone);
       }
     } else if (si.type === 'than') {
-      const than = await inventoryRepository.findThan(si.packageNo, si.thanNo);
+      const than = await inventoryRepository.findThan(si.packageNo, si.thanNo, { warehouse: siWh });
       if (than && than.status === 'sold') {
-        const undone = await inventoryRepository.markThanAvailable(si.packageNo, si.thanNo);
+        const undone = await inventoryRepository.markThanAvailable(si.packageNo, si.thanNo, { warehouse: siWh });
         if (undone) returnedThans.push(undone);
       }
     }

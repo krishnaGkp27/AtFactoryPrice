@@ -161,7 +161,7 @@ async function getSoldRows() {
  * collapse to the most recently-added instance.
  *
  * @param {string|number} packageNo
- * @param {{ latestOnly?: boolean, includeSold?: boolean }} [opts]
+ * @param {{ latestOnly?: boolean, includeSold?: boolean, warehouse?: string }} [opts]
  */
 async function findByPackage(packageNo, opts = {}) {
   const all = await getAll();
@@ -169,6 +169,12 @@ async function findByPackage(packageNo, opts = {}) {
   let rows = all.filter((r) => r.packageNo === p);
   if (opts.includeSold === false) {
     rows = rows.filter((r) => r.status !== 'sold');
+  }
+  // TRF-INT4 — optional warehouse scope so sale/return mutators can act on
+  // the one physical bale the flow meant, not every same-numbered duplicate.
+  if (opts.warehouse) {
+    const wh = upper(opts.warehouse);
+    rows = rows.filter((r) => upper(r.warehouse) === wh);
   }
   rows.sort((a, b) => (b.addedAt || '').localeCompare(a.addedAt || ''));
   if (opts.latestOnly) return rows.length ? [rows[0]] : [];
@@ -192,15 +198,18 @@ async function findAvailable(filters = {}) {
   });
 }
 
-async function findThan(packageNo, thanNo) {
+async function findThan(packageNo, thanNo, opts = {}) {
   const all = await getAll();
   const p = str(packageNo);
   const t = num(thanNo);
-  return all.find((r) => r.packageNo === p && r.thanNo === t) || null;
+  // TRF-INT4 — optional warehouse scope (see findByPackage).
+  const wh = opts.warehouse ? upper(opts.warehouse) : null;
+  return all.find((r) => r.packageNo === p && r.thanNo === t
+    && (!wh || upper(r.warehouse) === wh)) || null;
 }
 
-async function markThanSold(packageNo, thanNo, customer, soldDateOverride) {
-  const than = await findThan(packageNo, thanNo);
+async function markThanSold(packageNo, thanNo, customer, soldDateOverride, opts = {}) {
+  const than = await findThan(packageNo, thanNo, opts);
   if (!than) return null;
   // SEC-P2 (C5): never overwrite a than that is not currently available.
   // markPackageSold already filters on 'available'; markThanSold did not, so a
@@ -221,8 +230,8 @@ async function markThanSold(packageNo, thanNo, customer, soldDateOverride) {
   return { ...than, status: 'sold', soldTo: customer, soldDate, updatedAt: now };
 }
 
-async function markPackageSold(packageNo, customer, soldDateOverride) {
-  const thans = await findByPackage(packageNo);
+async function markPackageSold(packageNo, customer, soldDateOverride, opts = {}) {
+  const thans = await findByPackage(packageNo, { warehouse: opts.warehouse });
   const available = thans.filter((t) => t.status === 'available');
   if (!available.length) return [];
   const now = new Date().toISOString();
@@ -462,8 +471,8 @@ async function getArrivalBatches(opts = {}) {
     .sort((a, b) => b.thans - a.thans || a.label.localeCompare(b.label));
 }
 
-async function markThanAvailable(packageNo, thanNo) {
-  const than = await findThan(packageNo, thanNo);
+async function markThanAvailable(packageNo, thanNo, opts = {}) {
+  const than = await findThan(packageNo, thanNo, opts);
   // TRF-INT1 — a return may only resurrect a SOLD than. Anything else
   // (in_transit above all) must never be flipped back to available by a
   // return: markPackageAvailable already filters on 'sold'; this did not,
@@ -478,8 +487,8 @@ async function markThanAvailable(packageNo, thanNo) {
   return { ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now };
 }
 
-async function markPackageAvailable(packageNo) {
-  const thans = await findByPackage(packageNo);
+async function markPackageAvailable(packageNo, opts = {}) {
+  const thans = await findByPackage(packageNo, { warehouse: opts.warehouse });
   const sold = thans.filter((t) => t.status === 'sold');
   if (!sold.length) return [];
   const now = new Date().toISOString();

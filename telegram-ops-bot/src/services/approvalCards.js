@@ -169,13 +169,16 @@ async function buildSellPackageCard(aj) {
  * shown ONLY the bale number for one of the riskiest dual-admin actions.
  * Enriched best-effort from Inventory; degrades to the bare line.
  */
-async function buildReturnCard({ packageNo, thanNo }) {
+async function buildReturnCard({ packageNo, thanNo, warehouse }) {
+  // TRF-INT4 — when the request pinned a warehouse, every lookup on this
+  // card is scoped to it, so the admins judge the SAME physical bale the
+  // executor will flip (not a same-numbered duplicate elsewhere).
   let text = thanNo
     ? `Return Request\nBale ${packageNo} — Than ${thanNo}`
     : `Return Request\nBale ${packageNo} (whole bale)`;
   try {
     const inventoryService = require('./inventoryService');
-    const info = await inventoryService.getPackageSummary(packageNo);
+    const info = await inventoryService.getPackageSummary(packageNo, { warehouse });
     if (info) {
       text += `\nDesign: ${info.design}${info.shade ? ` Shade ${info.shade}` : ''}`;
       if (info.warehouse) text += `\nWarehouse: ${info.warehouse}`;
@@ -187,7 +190,7 @@ async function buildReturnCard({ packageNo, thanNo }) {
   // the credit, straight from the Inventory rows.
   try {
     const inventoryRepository = require('../repositories/inventoryRepository');
-    const rows = await inventoryRepository.findByPackage(packageNo);
+    const rows = await inventoryRepository.findByPackage(packageNo, { warehouse });
     const sold = rows.filter((r) => r.status === 'sold'
       && (!thanNo || String(r.thanNo) === String(thanNo)));
     if (sold.length) {

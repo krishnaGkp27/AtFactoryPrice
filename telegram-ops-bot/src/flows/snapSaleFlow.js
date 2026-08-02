@@ -598,7 +598,10 @@ async function submitBatch(bot, chatId, userId, session) {
   }
   const actionJSON = {
     action: 'sale_bundle',
-    items: batch.items.map((m) => ({ type: 'package', packageNo: m.packageNo })),
+    // TRF-INT4 — per-item warehouse (matchBatch keys on warehouse|packageNo)
+    // so the executor sells the matched physical bale, not a same-numbered
+    // duplicate in another warehouse. The admin card already showed it.
+    items: batch.items.map((m) => ({ type: 'package', packageNo: m.packageNo, warehouse: m.warehouse || '' })),
     // DSP-1 — assigned by the admin at approval, not by the dispatcher.
     customer: '',
     salesDate: todayInLagos(),

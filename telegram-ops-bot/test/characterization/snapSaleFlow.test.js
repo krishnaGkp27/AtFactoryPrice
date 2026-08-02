@@ -129,9 +129,11 @@ test('SNAP-3 + DSP-1: PDF batch → review card → ONE sale_bundle, no customer
   assert.equal(aj.action, 'sale_bundle');
   // CARD-2: items ride in canonical order — design, then shade (897 is
   // shade 2, 896 is shade 5), then bale number.
+  // TRF-INT4: each item carries the matched warehouse so the executor can
+  // never flip a same-numbered bale in another warehouse.
   assert.deepEqual(aj.items, [
-    { type: 'package', packageNo: '897' },
-    { type: 'package', packageNo: '896' },
+    { type: 'package', packageNo: '897', warehouse: 'IDUMOTA' },
+    { type: 'package', packageNo: '896', warehouse: 'IDUMOTA' },
   ]);
   assert.equal(aj.customer, '', 'DSP-1 — batch queues with NO customer either');
   assert.equal(aj.sale_doc_file_id, 'supply-pdf-1');

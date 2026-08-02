@@ -81,15 +81,32 @@ test('full chip path lands a complete salesFlow session with no typing', async (
   const sale = salesFlow.getSession('555');
   assert.ok(sale, 'salesFlow session must exist after handoff');
   assert.equal(sale.saleType, 'sell_batch');
+  // TRF-INT4: the tapped warehouse rides each item into the sale session so
+  // the queued approval (and its executor) stays pinned to the physical bale.
   assert.deepEqual(sale.items, [
-    { type: 'package', packageNo: '552' },
-    { type: 'package', packageNo: '553' },
+    { type: 'package', packageNo: '552', warehouse: 'IDUMOTA' },
+    { type: 'package', packageNo: '553', warehouse: 'IDUMOTA' },
   ]);
   assert.ok(!sale.collected.customer, 'DSP-1 — no customer from the dispatcher');
   assert.equal(sale.collected.salesperson, 'Abdulazeez');
   assert.ok(!sale.collected.paymentMode, 'DSP-1 — payment set by the admin');
   assert.match(sale.collected.salesDate, /^\d{4}-\d{2}-\d{2}$/);
   assert.equal(sale.awaitingDocument, true, 'bill-photo step must be armed');
+  sessionStore.clear('555');
+});
+
+test('TRF-INT4: "Add more bales" after a typed preload routes through container/warehouse, never an unscoped bale list', async () => {
+  const bot = createFakeBot();
+  await sellBaleFlow.startWithBales(bot, 1, '555', ['552']);
+  let s = sessionStore.get('555');
+  assert.equal(s.cart[0].warehouse, 'IDUMOTA', 'preloaded entry carries its resolved warehouse');
+  assert.ok(!s.warehouse, 'no warehouse picked yet on the typed path');
+
+  await sellBaleFlow.handleCallback(bot, cbq('sb:more'));
+  const kb = (bot.calls.filter((c) => (c.method === 'editMessageText' || c.method === 'sendMessage') && c.args.opts && c.args.opts.reply_markup)
+    .at(-1).args.opts.reply_markup.inline_keyboard).flat();
+  assert.ok(kb.some((b) => b.callback_data.startsWith('sb:ct:')), `container chips shown, got: ${kb.map((b) => b.callback_data)}`);
+  assert.ok(!kb.some((b) => b.callback_data.startsWith('sb:bl:')), 'NO unscoped bale chips — a merged cross-warehouse chip would sell unpinned');
   sessionStore.clear('555');
 });
 

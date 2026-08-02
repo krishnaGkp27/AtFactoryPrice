@@ -150,7 +150,9 @@ async function startWithBales(bot, chatId, userId, packageNos) {
     });
     if (hits.length === 1) {
       const b = hits[0];
-      s.cart.push({ packageNo: b.packageNo, design: b.design, thans: b.thans, yards: b.yards });
+      // TRF-INT4 — the resolved warehouse rides the cart entry so the sale
+      // stays pinned to the physical bale the sheet resolved.
+      s.cart.push({ packageNo: b.packageNo, warehouse: b.warehouse, design: b.design, thans: b.thans, yards: b.yards });
     } else if (hits.length > 1) {
       ambiguous.push({ digits, options: hits });
     } else {
@@ -503,7 +505,11 @@ async function finalize(bot, chatId, userId) {
   // receipt should remain. Must run BEFORE startSession replaces the session.
   await disposeAux(bot, chatId, userId);
   const reviewCardId = s.flowMessageId || null;
-  const items = s.cart.map((c) => ({ type: 'package', packageNo: c.packageNo }));
+  // TRF-INT4 — the warehouse each cart entry resolved to rides the handoff
+  // item, so the queued approval and its executor act only on the physical
+  // bale the flow picked — a same-numbered bale in another warehouse can
+  // never be flipped by this sale.
+  const items = s.cart.map((c) => ({ type: 'package', packageNo: c.packageNo, warehouse: c.warehouse || s.warehouse || '' }));
   const saleType = items.length > 1 ? 'sell_batch' : 'sell_package';
   salesFlow.startSession(userId, saleType, items, {
     // DSP-1 — customer and payment mode are assigned by the admin at
@@ -601,7 +607,8 @@ async function handleCallback(bot, callbackQuery) {
     if (data.startsWith('sb:bl:')) {
       const b = (s._bales || [])[parseInt(data.slice(6), 10)];
       if (!b) { await ack('Expired — pick again.'); return true; }
-      s.cart.push({ packageNo: b.packageNo, design: s.design, thans: b.thans, yards: b.yards });
+      // TRF-INT4 — the flow's tapped warehouse pins the physical bale.
+      s.cart.push({ packageNo: b.packageNo, warehouse: s.warehouse, design: s.design, thans: b.thans, yards: b.yards });
       save(userId, s);
       await ack(`🛒 Bale ${b.packageNo} added`);
       await showBales(bot, chatId, userId);
@@ -612,7 +619,8 @@ async function handleCallback(bot, callbackQuery) {
       const cur = (s._ambigQueue || [])[0];
       const o = cur && cur.options[parseInt(data.slice(7), 10)];
       if (!o) { await ack('Expired — type the command again.'); return true; }
-      s.cart.push({ packageNo: o.packageNo, design: o.design, thans: o.thans, yards: o.yards });
+      // TRF-INT4 — the tapped option's warehouse pins the physical bale.
+      s.cart.push({ packageNo: o.packageNo, warehouse: o.warehouse, design: o.design, thans: o.thans, yards: o.yards });
       s._ambigQueue.shift(); save(userId, s);
       await ack(`🛒 Bale ${o.packageNo} (${o.warehouse}) added`);
       await nextPreloadStep(bot, chatId, userId);
@@ -626,7 +634,29 @@ async function handleCallback(bot, callbackQuery) {
       await nextPreloadStep(bot, chatId, userId);
       return true;
     }
-    if (data === 'sb:more') { await ack(); await showDesigns(bot, chatId, userId); return true; }
+    if (data === 'sb:more') {
+      await ack();
+      // TRF-INT4 — a typed preload never picked a container/warehouse, so
+      // "Add more bales" must route through those steps first: an unscoped
+      // bale list merges same-numbered bales across warehouses into one
+      // chip, and a tap there would sell with no warehouse pinned. The
+      // container list isn't loaded on the preload path — load it here
+      // (start() would clear the cart).
+      if (!s.warehouse) {
+        if (!s._containers) {
+          let containers = [];
+          try { containers = await inventoryRepository.getArrivalBatches(); } catch (_) {}
+          s._containers = containers.map((c) => c.batch);
+          s._containerMeta = containers.map((c) => ({ label: c.label, bales: c.bales }));
+          s.ctPage = 0;
+          save(userId, s);
+        }
+        await showContainers(bot, chatId, userId);
+        return true;
+      }
+      await showDesigns(bot, chatId, userId);
+      return true;
+    }
     // DSP-1 — cart goes straight to salesperson: the customer and the
     // payment terms are the admin's to set at approval.
     if (data === 'sb:rev') {

@@ -103,6 +103,46 @@ test('markThanAvailable flips ONLY sold thans — never an in-transit one', asyn
   assert.equal(blocked, null, 'non-sold thans are untouchable by returns');
 });
 
+// ── TRF-INT4 — sale/return mutators honour the warehouse scope ────────────
+
+test('markPackageSold {warehouse} sells ONLY that warehouse — same number elsewhere untouched', async () => {
+  const sold = await inventoryRepository.markPackageSold('997', 'ACME', null, { warehouse: 'Lagos' });
+  assert.equal(sold.length, 1);
+  assert.equal(sold[0].baleUid, 'U-LAG-997');
+  const all = await inventoryRepository.getAll(true);
+  assert.equal(all.find((r) => r.baleUid === 'U-KAN-997').status, 'available', 'Kano 997 untouched');
+  assert.equal(all.find((r) => r.baleUid === 'U-PH-997').status, 'in_transit', 'PH 997 untouched');
+  // Scoped return: sell Kano too, then return ONLY Kano — Lagos stays sold.
+  await inventoryRepository.markPackageSold('997', 'ACME', null, { warehouse: 'Kano office' });
+  const returned = await inventoryRepository.markPackageAvailable('997', { warehouse: 'Kano office' });
+  assert.equal(returned.length, 1);
+  assert.equal(returned[0].baleUid, 'U-KAN-997');
+  const after = await inventoryRepository.getAll(true);
+  assert.equal(after.find((r) => r.baleUid === 'U-LAG-997').status, 'sold', 'Lagos stays sold');
+  // restore for the next tests
+  await inventoryRepository.markPackageAvailable('997', { warehouse: 'Lagos' });
+});
+
+test('markThanSold {warehouse} picks the physical than in THAT warehouse', async () => {
+  const res = await inventoryRepository.markThanSold('997', 1, 'BUYER', null, { warehouse: 'Kano office' });
+  assert.ok(res, 'Kano 997 than 1 sold');
+  assert.equal(res.design, '70012', 'the KANO bale, not the Lagos one findThan would hit first');
+  const all = await inventoryRepository.getAll(true);
+  assert.equal(all.find((r) => r.baleUid === 'U-LAG-997').status, 'available', 'Lagos untouched');
+  const back = await inventoryRepository.markThanAvailable('997', 1, { warehouse: 'Kano office' });
+  assert.ok(back, 'scoped return restores it');
+});
+
+test('unscoped markPackageSold keeps the legacy behavior for pre-TRF-INT4 pending rows', async () => {
+  // No warehouse on the aj (queued before the change) → every available
+  // instance of the number flips, in-transit stays locked. Documented, not
+  // desired — new queue items always carry the warehouse.
+  const sold = await inventoryRepository.markPackageSold('997', 'X');
+  assert.equal(sold.length, 2, 'Lagos + Kano available rows; PH in_transit untouched');
+  await inventoryRepository.markPackageAvailable('997', { warehouse: 'Lagos' });
+  await inventoryRepository.markPackageAvailable('997', { warehouse: 'Kano office' });
+});
+
 test('baleAuditReport flags same-warehouse duplicates only (cross-warehouse is legal)', async () => {
   const { offenders, crossWarehouse } = await baleAuditReport._internals.computeDuplicates();
   assert.equal(offenders.length, 1, `only the Kano 777 pair, got ${JSON.stringify(offenders)}`);

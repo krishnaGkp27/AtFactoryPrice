@@ -69,6 +69,12 @@ test('typed numbers preload the flow: dedupe, reasons, warehouse tap, then sales
   const session = sessionStore.get('4242');
   assert.equal(session.cart.length, 3);
   assert.deepEqual(session.cart.map((c) => c.packageNo).sort(), ['503', '507', '512']);
+  // TRF-INT4 — the resolved warehouse rides every cart entry: the ambiguity
+  // tap's answer for 512, the single-warehouse resolution for the others.
+  const byPkg = Object.fromEntries(session.cart.map((c) => [c.packageNo, c.warehouse]));
+  assert.equal(byPkg['512'], 'Kano office', 'the tapped warehouse is kept, not discarded');
+  assert.equal(byPkg['507'], 'IDUMOTA');
+  assert.equal(byPkg['503'], 'IDUMOTA');
 
   // DSP-1 — continue goes to the SALESPERSON step. The typed customer name
   // ("mama kafaya") is dropped entirely: no chip, no session field. This is
