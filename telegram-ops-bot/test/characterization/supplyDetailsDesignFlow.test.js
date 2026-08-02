@@ -1,8 +1,12 @@
 'use strict';
 
 /**
- * SDG-1 — 📦 Supply Details → Design wise → Date-wise, as a tappable drill:
- * design → date → customer → bale numbers.
+ * SDG-1/SDG-2 — 📦 Supply Details → Design wise → Date-wise, as a tappable
+ * drill: container → design → date → customer → bale numbers.
+ *
+ * SDG-2 (owner, 02-Aug) inserted the CONTAINER step at the top; these
+ * fixtures carry no arrival_batch, so they all bucket under the synthetic
+ * '(unlabelled)' container — one chip, and the drill continues as before.
  *
  * Owner-locked rules pinned here:
  *  - level 1 shows "supplied / total bales" and NO yards;
@@ -75,9 +79,21 @@ function lastText(bot) {
   return withText.length ? withText[withText.length - 1].args.text : '';
 }
 
+test('SDG-2: the drill opens on a container picker', async () => {
+  const bot = createFakeBot();
+  await flow.start(bot, EMPLOYEE, EMPLOYEE, null);
+  const cts = lastKb(bot).filter((b) => b.callback_data.startsWith('sdg:ct:'));
+  assert.equal(cts.length, 1, 'one container chip for the unlabelled fixture');
+  assert.match(cts[0].text, /\(unlabelled\) — 4B \/ 5B$/, `container pair, got: ${cts[0].text}`);
+  assert.ok(!lastKb(bot).some((b) => b.callback_data.startsWith('sdg:d:')),
+    'the design list is behind the container, not shown yet');
+  sessionStore.clear(EMPLOYEE);
+});
+
 test('SDG-1: level 1 shows supplied/total bales, no yards, most supplied first', async () => {
   const bot = createFakeBot();
   await flow.start(bot, EMPLOYEE, EMPLOYEE, null);
+  await flow.handleCallback(bot, cb('sdg:ct:0', EMPLOYEE));
   const kb = lastKb(bot).filter((b) => b.callback_data.startsWith('sdg:d:'));
 
   assert.match(kb[0].text, /44200 — 3B \/ 4B$/, `44200 first with 3B/4B, got: ${kb[0].text}`);
@@ -92,6 +108,7 @@ test('SDG-1: level 1 shows supplied/total bales, no yards, most supplied first',
 test('SDG-1: drills design → date → customer → bale numbers, and back again', async () => {
   const bot = createFakeBot();
   await flow.start(bot, EMPLOYEE, EMPLOYEE, null);
+  await flow.handleCallback(bot, cb('sdg:ct:0', EMPLOYEE));
   const design = lastKb(bot).find((b) => /44200/.test(b.text));
   await flow.handleCallback(bot, cb(design.callback_data, EMPLOYEE));
 
@@ -110,9 +127,11 @@ test('SDG-1: drills design → date → customer → bale numbers, and back agai
 
   await flow.handleCallback(bot, cb(custs.find((b) => /madam oshodi/.test(b.text)).callback_data, EMPLOYEE));
   const detail = lastText(bot);
-  assert.match(detail, /Shade BLACK — 1 Bale · 3 thans · 90 yds/, `shade breakdown, got: ${detail}`);
-  assert.match(detail, /Bale numbers \(1\)/, 'the reconciliation bale list header');
-  assert.match(detail, /\n824$/, `the bale number itself, got: ${detail}`);
+  // SDG-2 layout: numbers ride the shade row in brackets, quantities below,
+  // and the flat "Bale numbers (N)" list is gone.
+  assert.match(detail, / • Shade BLACK ×1 \(824\)/, `shade row with numbers, got: ${detail}`);
+  assert.match(detail, /3 thans · 90 yds/, 'quantities on the second line');
+  assert.ok(!/Bale numbers \(/.test(detail), 'flat bale list dropped');
 
   // back-chain: detail → customers → dates → designs
   await flow.handleCallback(bot, cb('sdg:back', EMPLOYEE));
@@ -127,6 +146,7 @@ test('SDG-1: drills design → date → customer → bale numbers, and back agai
 test('SDG-1: ₦ is admin-only — an employee never sees value', async () => {
   const empBot = createFakeBot();
   await flow.start(empBot, EMPLOYEE, EMPLOYEE, null);
+  await flow.handleCallback(empBot, cb('sdg:ct:0', EMPLOYEE));
   await flow.handleCallback(empBot, cb('sdg:d:0', EMPLOYEE));
   await flow.handleCallback(empBot, cb('sdg:t:0', EMPLOYEE));
   assert.ok(!/₦/.test(lastText(empBot)), `employee must not see money, got: ${lastText(empBot)}`);
@@ -134,16 +154,17 @@ test('SDG-1: ₦ is admin-only — an employee never sees value', async () => {
 
   const admBot = createFakeBot();
   await flow.start(admBot, ADMIN, ADMIN, null);
+  await flow.handleCallback(admBot, cb('sdg:ct:0', ADMIN));
   await flow.handleCallback(admBot, cb('sdg:d:0', ADMIN));
   await flow.handleCallback(admBot, cb('sdg:t:0', ADMIN));
   assert.match(lastText(admBot), /₦/, 'admin sees the day total in naira');
   sessionStore.clear(ADMIN);
 });
 
-test('SDG-1: an expired card self-heals back to the design list', async () => {
+test('SDG-2: an expired card self-heals back to the container list', async () => {
   const bot = createFakeBot();
   sessionStore.clear(EMPLOYEE);
   await flow.handleCallback(bot, cb('sdg:t:0', EMPLOYEE, 99));
-  assert.ok(lastKb(bot).some((b) => b.callback_data.startsWith('sdg:d:')), 'reseeds to the design list');
+  assert.ok(lastKb(bot).some((b) => b.callback_data.startsWith('sdg:ct:')), 'reseeds to the container list');
   sessionStore.clear(EMPLOYEE);
 });
