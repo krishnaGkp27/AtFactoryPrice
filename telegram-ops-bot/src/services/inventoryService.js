@@ -515,7 +515,19 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // Stock_Ledger line per bale for the audit trail.
     const goodsReceiptsRepo = require('../repositories/goodsReceiptsRepository');
     const stockLedgerRepo = require('../repositories/stockLedgerRepository');
-    const bales = Array.isArray(aj.bales) ? aj.bales : [];
+    const balesIn = Array.isArray(aj.bales) ? aj.bales : [];
+    // TRF-INT3 (owner rule 1) — an incoming bale number colliding with a
+    // LIVE bale (available / in_transit) in this warehouse is refused: no
+    // proof of no-collision → no row. Only the clashing lines are dropped;
+    // a number whose previous bale is fully SOLD may return.
+    const pk = (v) => String(v ?? '').trim();
+    const conflicts = await inventoryRepository.liveBaleConflicts(balesIn.map((b) => b.packageNo), aj.warehouse);
+    const collisionLines = [...conflicts.values()].map((c) =>
+      `Bale ${c.packageNo}: already live in ${aj.warehouse} (${c.design}${c.status === 'in_transit' ? ', in transit' : ''}${c.dateReceived ? `, received ${c.dateReceived}` : ''}) — NOT added`);
+    const bales = balesIn.filter((b) => !conflicts.has(pk(b.packageNo)));
+    if (!bales.length) {
+      return { ok: false, message: `Every bale number already exists live in ${aj.warehouse}:\n${collisionLines.join('\n')}` };
+    }
     const totalYards = bales.reduce((s, b) => s + (parseFloat(b.yards) || 0), 0);
     const grn = await goodsReceiptsRepo.append({
       warehouse: aj.warehouse,
@@ -586,7 +598,9 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // it as a generic carrier so approvalEvents can surface the GRN
     // details in the success card.
     bundleReport = { grnId: grn.grn_id, baleCount: persisted.length, totalYards,
-                     poId: aj.po_id || '', poUpdate };
+                     poId: aj.po_id || '', poUpdate,
+                     // TRF-INT3 — colliding lines the gate refused (owner rule 1).
+                     collisions: collisionLines };
   } else if (aj.action === 'bulk_receive_goods') {
     // P2.5 — Bulk Receive from a CSV/XLSX upload. The actionJSON already
     // carries the validated, normalised bale list (the validator ran at
@@ -644,6 +658,17 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       }
     }
     if (!thans.length) return { ok: false, message: 'No thans in payload.' };
+    // TRF-INT3 (owner rule 1) — same intake gate as receive_goods: a than
+    // whose bale number is already LIVE (available/in_transit) in this
+    // warehouse is refused before any totals or the GRN header are written.
+    const pkB = (v) => String(v ?? '').trim();
+    const bulkConflicts = await inventoryRepository.liveBaleConflicts(thans.map((b) => b.packageNo), aj.warehouse);
+    const bulkCollisionLines = [...bulkConflicts.values()].map((c) =>
+      `Bale ${c.packageNo}: already live in ${aj.warehouse} (${c.design}${c.status === 'in_transit' ? ', in transit' : ''}) — NOT added`);
+    thans = thans.filter((b) => !bulkConflicts.has(pkB(b.packageNo)));
+    if (!thans.length) {
+      return { ok: false, message: `Every bale number already exists live in ${aj.warehouse}:\n${bulkCollisionLines.join('\n')}` };
+    }
     const totalThans = thans.length;
     const totalYards = thans.reduce((s, b) => s + (parseFloat(b.yards) || 0), 0);
     // Bale count = distinct PackageNo. The validator already enforces
@@ -787,6 +812,8 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       poId: aj.po_id || '', poUpdate,
       source: aj.source || 'bulk_csv', fileHash, fileName: aj.fileName || '',
       photoChecklist,
+      // TRF-INT3 — colliding lines the gate refused (owner rule 1).
+      collisions: bulkCollisionLines,
     };
   } else if (aj.action === 'record_office_expense') {
     // BR-OPS C1 — flip the eager pending rows on BranchOpsLog to

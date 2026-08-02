@@ -52,20 +52,34 @@ usersRepository.getAll = async () => [
 ];
 usersRepository.findByUserId = async (id) => ({ user_id: id, name: id === 'abdul' ? 'Abdul' : 'Musa' });
 
+let _rowSeq = 1;
+inventoryRepository.ensureRowUids = async (rows) => new Map(rows.map((r) => [r.rowIndex, r.baleUid]));
 function invRow(pkg, status = 'available', wh = 'Lagos') {
-  return { packageNo: pkg, design: '9006', shade: '3', warehouse: wh, status, productType: 'fabric', yards: 100, pricePerYard: 0 };
+  _rowSeq += 1;
+  return { rowIndex: _rowSeq, baleUid: `U-${pkg}-${_rowSeq}`, packageNo: pkg, design: '9006', shade: '3', warehouse: wh, status, productType: 'fabric', yards: 100, pricePerYard: 0 };
 }
 function seedInventory() {
-  inventoryRepository.getAll = async () => [
+  { const _rows = [
     invRow('P1'), invRow('P2'), invRow('P3'), invRow('P4'),
     invRow('P9', 'available', 'Kano office'),
-  ];
+  ]; inventoryRepository.getAll = async () => _rows; }
 }
 
 function armQueue() {
   const calls = { transitions: [], appended: null, ajPatches: [] };
   let row = null;
-  inventoryRepository.transitionBales = async (pkgs, from, to, wh) => { calls.transitions.push({ pkgs, from, to, wh }); return []; };
+  inventoryRepository.transitionBales = async (pkgs, from_, to, wh, opts = {}) => {
+    calls.transitions.push({ pkgs, from: from_, to, wh, opts });
+    const set = new Set((pkgs || []).map(String));
+    const uidSet = Array.isArray(opts.uids) && opts.uids.length ? new Set(opts.uids.map(String)) : null;
+    const low = (v) => String(v == null ? '' : v).trim().toLowerCase();
+    const all = await inventoryRepository.getAll();
+    const rows = all.filter((r) => r.status === from_
+      && (uidSet ? uidSet.has(String(r.baleUid))
+        : (set.has(String(r.packageNo)) && (!opts.warehouse || low(r.warehouse) === low(opts.warehouse)))));
+    rows.forEach((r) => { r.status = to; if (wh != null) r.warehouse = wh; });
+    return rows.map((r) => ({ ...r }));
+  };
   approvalQueueRepository.append = async (rec) => { calls.appended = rec; row = { ...rec, status: 'pending' }; return rec; };
   approvalQueueRepository.getByRequestId = async () => (row ? JSON.parse(JSON.stringify(row)) : null);
   approvalQueueRepository.getAllPending = async () => (row && row.status === 'pending' ? [JSON.parse(JSON.stringify(row))] : []);

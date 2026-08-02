@@ -431,6 +431,27 @@ async function submit(bot, chatId, userId, msgOrNull) {
   const supplier = session.supplier === '__none__' ? '' : (session.supplier || '');
   const supplierId = session.supplier_id || '';
   const shade = session.shade === '__none__' ? '' : (session.shade || '');
+
+  // TRF-INT3 (owner rule 1) — collision gate at SUBMIT time, before anything
+  // is queued: a bale number already LIVE (available / in_transit) in this
+  // warehouse is refused with a definite reason. The executor re-checks at
+  // approval time as the hard backstop; this is the friendly early door.
+  try {
+    const conflicts = await inventoryRepository.liveBaleConflicts(
+      (session.bales || []).map((b) => b.packageNo), session.warehouse);
+    if (conflicts.size) {
+      const lines = [...conflicts.values()].map((c) =>
+        ` • Bale ${c.packageNo} — already live in ${session.warehouse} (${c.design}${c.status === 'in_transit' ? ', in transit' : ''}${c.dateReceived ? `, received ${c.dateReceived}` : ''})`);
+      await render(bot, chatId, userId,
+        `🚫 *These bale numbers already exist live in ${session.warehouse}:*\n${lines.join('\n')}\n\n`
+        + 'A live number cannot be intaken twice (a fully SOLD number may return). '
+        + 'Check the physical bales — remove the clashing lines or correct the numbers, then submit again.',
+        [[{ text: '⬅ Back to review', callback_data: 'gr:review' }], cancelRow()]);
+      return;
+    }
+  } catch (e) {
+    logger.warn(`goodsReceiptFlow: collision pre-check failed (executor gate still applies): ${e.message}`);
+  }
   const aj = {
     action: 'receive_goods',
     warehouse: session.warehouse,
@@ -794,6 +815,11 @@ async function handleCallback(bot, callbackQuery) {
   // Submit
   if (data === 'gr:submit') {
     await submit(bot, chatId, userId);
+    return true;
+  }
+  // TRF-INT3 — back to the confirm screen from the collision error card.
+  if (data === 'gr:review') {
+    await showConfirmStep(bot, chatId, userId);
     return true;
   }
   return false;

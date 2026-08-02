@@ -55,21 +55,39 @@ telegramFiles.downloadTelegramFile = async () => ({ buffer: Buffer.from('bytes')
 let nextArchive = { drive: { webViewLink: 'https://drive/xyz' }, readableName: 'file.jpg' };
 driveBackup.archiveFile = async () => nextArchive;
 
+let _rowSeq = 1;
 function invRow(pkg, status = 'available', wh = 'Lagos') {
-  return { packageNo: pkg, design: '9006', shade: '3', warehouse: wh, status, productType: 'fabric', yards: 100, pricePerYard: 0 };
+  _rowSeq += 1;
+  return { rowIndex: _rowSeq, baleUid: `U-${pkg}-${wh.slice(0, 3)}`, packageNo: pkg, design: '9006', shade: '3', warehouse: wh, status, productType: 'fabric', yards: 100, pricePerYard: 0 };
 }
+// TRF-INT1 — faithful sheet model: getAll hands out fresh copies (a snapshot
+// never mutates under its holder), transitionBales mutates the store and
+// returns what it ACTUALLY flipped (dispatch/receive check that result).
+let invStore = [];
 function seedInventory() {
   // Four candidate bales in Lagos → a real choice when transferring 2.
-  inventoryRepository.getAll = async () => [
+  invStore = [
     invRow('P1'), invRow('P2'), invRow('P3'), invRow('P4'),
     invRow('P9', 'available', 'Kano office'),
   ];
+  inventoryRepository.getAll = async () => JSON.parse(JSON.stringify(invStore));
+  inventoryRepository.ensureRowUids = async (rows) => new Map(rows.map((r) => [r.rowIndex, r.baleUid]));
 }
 
 function armQueue() {
   const calls = { transitions: [], appended: null, ajPatches: [] };
   let row = null;
-  inventoryRepository.transitionBales = async (pkgs, from, to, wh) => { calls.transitions.push({ pkgs, from, to, wh }); return []; };
+  inventoryRepository.transitionBales = async (pkgs, from, to, wh, opts = {}) => {
+    calls.transitions.push({ pkgs, from, to, wh, opts });
+    const set = new Set((pkgs || []).map(String));
+    const uidSet = Array.isArray(opts.uids) && opts.uids.length ? new Set(opts.uids.map(String)) : null;
+    const low = (v) => String(v == null ? '' : v).trim().toLowerCase();
+    const rows = invStore.filter((r) => r.status === from
+      && (uidSet ? uidSet.has(String(r.baleUid))
+        : (set.has(String(r.packageNo)) && (!opts.warehouse || low(r.warehouse) === low(opts.warehouse)))));
+    rows.forEach((r) => { r.status = to; if (wh != null) r.warehouse = wh; });
+    return rows.map((r) => ({ ...r }));
+  };
   approvalQueueRepository.append = async (rec) => { calls.appended = rec; row = { ...rec, status: 'pending' }; return rec; };
   approvalQueueRepository.getByRequestId = async () => (row ? JSON.parse(JSON.stringify(row)) : null);
   approvalQueueRepository.getAllPending = async () => (row && row.status === 'pending' ? [JSON.parse(JSON.stringify(row))] : []);

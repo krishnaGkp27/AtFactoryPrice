@@ -252,6 +252,10 @@ async function showConfirm(bot, chatId, userId) {
 
 async function submit(bot, chatId, userId) {
   const session = sessionStore.get(userId);
+  // TRF-INT2 — double-tapped Send must not create two live transfer orders.
+  if (session._submitting) return;
+  session._submitting = true;
+  sessionStore.set(userId, session);
   try {
     const { requestId, aj } = await transferService.createTransferRequest({
       from: session.from, to: session.to, lines: session.lines, requestedBy: userId,
@@ -279,6 +283,9 @@ async function submit(bot, chatId, userId) {
     sessionStore.clear(userId);
   } catch (e) {
     logger.error(`transferFlow: submit failed: ${e.message}`);
+    // Failed — re-arm Send so the user can retry.
+    const s = sessionStore.get(userId);
+    if (s) { s._submitting = false; sessionStore.set(userId, s); }
     await render(bot, chatId, userId, `⚠️ Could not create the transfer: ${e.message}`,
       [session.cartOrigin ? cancelRow() : navRow()]);
   }
@@ -458,7 +465,11 @@ async function showBaleNumbers(bot, query, requestId) {
     }).catch(() => {});
     return true;
   }
-  const text = `📦 ${shortTransferRef(requestId)} — ${bales.length} bale(s):\n${bales.join(', ')}`;
+  // TRF-INT2 (owner rule 3) — the warehouse rides the numbers so a bale
+  // number that lives in two warehouses is never ambiguous.
+  const aj2 = row.actionJSON || {};
+  const whereNote = aj2.stage === 'in_transit' ? `${aj2.from} → ${aj2.to}` : (aj2.from ? `from ${aj2.from}` : '');
+  const text = `📦 ${shortTransferRef(requestId)} — ${bales.length} bale(s)${whereNote ? ` (${whereNote})` : ''}:\n${bales.join(', ')}`;
   if (text.length <= 190) { // Telegram alert cap ~200 chars
     await bot.answerCallbackQuery(query.id, { text, show_alert: true }).catch(() => {});
     return true;
@@ -650,15 +661,36 @@ async function handleAction(bot, query, requestId, action) {
     await bot.answerCallbackQuery(query.id, { text: 'This action is for the assigned person only.', show_alert: true });
     return true;
   }
-  // TRF-6: stale-card guard — cards can be tapped days later; refuse taps
-  // that no longer match the live stage instead of relying on the service.
+  // TRF-6/TRF-INT2: stale-card guard — cards can be tapped days later; refuse
+  // taps that no longer match the live stage instead of relying on the
+  // service. Decline is only valid BEFORE dispatch; Reject only AFTER — a
+  // stale ❌ tapped post-dispatch must never perform a full revert.
   if (row.status !== 'pending'
       || (action === 'acc' && aj.stage !== 'requested')
-      || (action === 'rcv' && aj.stage !== 'in_transit')) {
+      || (action === 'rcv' && aj.stage !== 'in_transit')
+      || (action === 'dec' && aj.stage !== 'requested')
+      || ((action === 'rej' || action === 'rejc') && aj.stage !== 'in_transit')) {
     await bot.answerCallbackQuery(query.id, { text: `Transfer is ${stateLabel(row)} — nothing to do here.`, show_alert: true }).catch(() => {});
     return true;
   }
   await bot.answerCallbackQuery(query.id).catch(() => {});
+
+  // TRF-INT2 — rejecting reverts the stock records to the source while the
+  // goods sit at the destination: one accidental tap must not do that.
+  if (action === 'rej') {
+    const n = (aj.bales || []).length;
+    await bot.editMessageText(
+      `⚠️ *Reject ${shortTransferRef(requestId)}?*\nThe records will return ${n} bale(s) to *${aj.from}* — only do this if the goods are NOT being accepted at ${aj.to}.`,
+      {
+        chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [
+          [{ text: '⚠️ Yes — reject the transfer', callback_data: `trf:rejc:${requestId}` }],
+          [{ text: '↩ Back', callback_data: `trf:card:${requestId}` }],
+        ] },
+      },
+    ).catch(() => {});
+    return true;
+  }
 
   // Accept → open the dispatcher's bale picker anchored on the tapped card.
   // Dispatch applies only after bales are reviewed AND the load photo lands.
@@ -681,14 +713,19 @@ async function handleAction(bot, query, requestId, action) {
     return true;
   }
 
-  // dec / rej
+  // dec / rejc (rej goes through the confirm screen above)
   const res = await transferService.abort(requestId, userId);
   if (!res.ok) { await bot.sendMessage(chatId, `⚠️ ${res.message}`); return true; }
   const label = res.kind === 'declined' ? 'declined ❌' : 'rejected ❌';
   await ensureLineBales(aj); // TRF-12 — per-row numbers on the rejection record
+  // TRF-INT1 — a revert that flipped fewer rows than dispatch logged is
+  // surfaced, never silent (sheet touched outside the pipeline).
+  const mmNote = res.mismatch
+    ? `\n⚠️ _Records only partially reverted (${res.mismatch.flippedBales}/${res.mismatch.expectedBales} bales matched) — admins should check the AuditLog._`
+    : '';
   const card = res.kind === 'declined'
     ? `❌ *${shortTransferRef(requestId)} declined* — nothing was moved.\n${headOf(aj)}\n${linesBlock(aj.lines)}`
-    : `❌ *${shortTransferRef(requestId)} rejected* — bales reverted to *${aj.from}*.\n${headOf(aj)}\n${dispatchedBlock(aj)}`;
+    : `❌ *${shortTransferRef(requestId)} rejected* — bales reverted to *${aj.from}*.\n${headOf(aj)}\n${dispatchedBlock(aj)}${mmNote}`;
   await bot.editMessageText(card, {
     chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] },
@@ -813,7 +850,7 @@ async function showBaleSearchResults(bot, chatId, userId) {
       && p.cands.some((c) => String(c).toLowerCase().includes(q)));
     note = other >= 0
       ? `\n_Not in this line — that bale is under ${session.pl[other].design}/${session.pl[other].shade} (line ${other + 1})._`
-      : '\n_No available bale matches — it may be sold, already in transit, or in another warehouse._';
+      : await baleStateNote(q, session.from);
   }
   rows.push([
     { text: '🔄 New search', callback_data: 'trf:bl:sr' },
@@ -823,6 +860,35 @@ async function showBaleSearchResults(bot, chatId, userId) {
     `🔎 *"${session._q}"* — ${matches.length} match(es) · ${line.design}/${line.shade}\n`
     + `Selected: *${line.sel.length}/${line.qty}*${note}\n\nTap to tick / untick:`,
     rows);
+}
+
+/**
+ * TRF-INT2 (owner rule 2) — a searched bale that can't be dispatched gets a
+ * DEFINITE reason, above all when it is already on the road. Best-effort:
+ * falls back to the old generic line if the sheet is unreadable.
+ */
+async function baleStateNote(q, fromWarehouse) {
+  const generic = '\n_No available bale matches — it may be sold, already in transit, or in another warehouse._';
+  try {
+    const needle = String(q).toLowerCase();
+    const low = (v) => String(v == null ? '' : v).trim().toLowerCase();
+    const rows = (await inventoryRepository.getAll())
+      .filter((r) => String(r.packageNo).toLowerCase().includes(needle));
+    if (!rows.length) return '\n🚫 _No bale with that number exists in the records._';
+    const inTransit = rows.find((r) => r.status === 'in_transit');
+    if (inTransit) {
+      return `\n🚫 *${inTransit.packageNo} is IN TRANSIT* (${inTransit.design}, headed to ${inTransit.warehouse}) — a bale on the road cannot be dispatched again until it is received or the transfer is rejected.`;
+    }
+    const elsewhere = rows.find((r) => r.status === 'available' && low(r.warehouse) !== low(fromWarehouse));
+    if (elsewhere) {
+      return `\n🚫 *${elsewhere.packageNo} is at ${elsewhere.warehouse}* (${elsewhere.design}) — not in ${fromWarehouse}.`;
+    }
+    const sold = rows.find((r) => r.status === 'sold');
+    if (sold) {
+      return `\n🚫 *${sold.packageNo} is SOLD*${sold.soldTo ? ` (to ${sold.soldTo})` : ''} — nothing left to dispatch.`;
+    }
+    return generic;
+  } catch (_) { return generic; }
 }
 
 /**
@@ -929,10 +995,15 @@ async function completeDispatch(bot, session, userId) {
   await notifyAdmins(bot, requestId, aj, 'dispatched 🚚', userId);
   if (row) await notifyRequester(bot, row, requestId, aj, 'dispatched 🚚', userId);
   const shortNote = res.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
+  // TRF-INT1 — bales lost to a concurrent transaction between pick and flip
+  // are dropped from the claim; the dispatcher must know they did NOT go.
+  const conflictNote = res.conflicts && res.conflicts.length
+    ? `\n🚫 _NOT dispatched (taken by another transaction just now): ${res.conflicts.join(', ')} — re-pick if they must still go._`
+    : '';
   // TRF-12 — bale numbers ride each row now; no flat list on the seal.
   return {
     ok: true,
-    sealText: `🚚 *${shortTransferRef(requestId)} dispatched* — bales logged\n${headOf(aj)}\n${dispatchedBlock(aj)}${shortNote}`,
+    sealText: `🚚 *${shortTransferRef(requestId)} dispatched* — bales logged\n${headOf(aj)}\n${dispatchedBlock(aj)}${shortNote}${conflictNote}`,
   };
 }
 
@@ -945,9 +1016,22 @@ async function completeReceipt(bot, session, userId) {
   const aj = await ensureLineBales(res.aj); // TRF-12 — pre-storage transfers
   await notifyAdmins(bot, requestId, aj, 'received ✅', userId);
   if (row) await notifyRequester(bot, row, requestId, aj, 'received ✅', userId);
+  // TRF-INT1 — the receive flipped fewer rows than dispatch logged: the
+  // sheet was touched outside the pipeline. Close, but tell the admins.
+  let mismatchNote = '';
+  if (res.mismatch) {
+    mismatchNote = '\n⚠️ _Stock records did not fully match this transfer — admins notified._';
+    for (const adminId of config.access.adminIds) {
+      try {
+        await bot.sendMessage(adminId,
+          `⚠️ *${shortTransferRef(requestId)} receive mismatch* — expected ${res.mismatch.expectedBales} bale(s), records matched ${res.mismatch.flippedBales}. The Inventory sheet was changed outside the transfer pipeline; check the AuditLog (transfer.receive_mismatch).`,
+          { parse_mode: 'Markdown' });
+      } catch (_) { /* best-effort */ }
+    }
+  }
   return {
     ok: true,
-    sealText: `✅ *${shortTransferRef(requestId)} received* — bales are now live at *${aj.to}*.\n${headOf(aj)}\n${dispatchedBlock(aj)}`,
+    sealText: `✅ *${shortTransferRef(requestId)} received* — bales are now live at *${aj.to}*.\n${headOf(aj)}\n${dispatchedBlock(aj)}${mismatchNote}`,
   };
 }
 
@@ -1544,7 +1628,7 @@ async function handleCallback(bot, query) {
   try { await require('../services/ephemeralDocs').sweep(bot, userId); } catch (_) { /* viewer state only */ }
 
   // Session-free actions first (cards live in counterparties' / admins' DMs).
-  const m = data.match(/^trf:(acc|dec|rcv|rej):(.+)$/);
+  const m = data.match(/^trf:(acc|dec|rcv|rej|rejc):(.+)$/);
   if (m) return handleAction(bot, query, m[2], m[1]);
   const mInfo = data.match(/^trf:info:(.+)$/);
   if (mInfo) return showInfo(bot, query, mInfo[1], true);

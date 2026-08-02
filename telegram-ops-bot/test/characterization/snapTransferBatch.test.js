@@ -37,13 +37,24 @@ const snapSaleFlow = require(path.join(SRC, 'flows/snapSaleFlow'));
 
 // Two source stores in Lagos + the Kano destination (bale 800 already there).
 inventoryRepository.getAll = async () => [
-  { packageNo: '600', design: '77016', shade: '5', warehouse: 'LAGOS MAIN', status: 'available', yards: 30 },
-  { packageNo: '601', design: '77016', shade: '5', warehouse: 'LAGOS MAIN', status: 'available', yards: 30 },
-  { packageNo: '700', design: '88001', shade: '2', warehouse: 'IDUMOTA', status: 'available', yards: 55 },
-  { packageNo: '800', design: '99001', shade: '1', warehouse: 'Kano office', status: 'available', yards: 40 },
+  { rowIndex: 2, baleUid: 'U-600', packageNo: '600', design: '77016', shade: '5', warehouse: 'LAGOS MAIN', status: 'available', yards: 30 },
+  { rowIndex: 3, baleUid: 'U-601', packageNo: '601', design: '77016', shade: '5', warehouse: 'LAGOS MAIN', status: 'available', yards: 30 },
+  { rowIndex: 4, baleUid: 'U-700', packageNo: '700', design: '88001', shade: '2', warehouse: 'IDUMOTA', status: 'available', yards: 55 },
+  { rowIndex: 5, baleUid: 'U-800', packageNo: '800', design: '99001', shade: '1', warehouse: 'Kano office', status: 'available', yards: 40 },
 ];
+inventoryRepository.ensureRowUids = async (rows) => new Map(rows.map((r) => [r.rowIndex, r.baleUid]));
 const transitions = [];
-inventoryRepository.transitionBales = async (pkgs, from, to, wh) => { transitions.push({ pkgs, from, to, wh }); };
+// TRF-INT1-faithful: return the rows that match, so the dispatch result
+// check passes (this fixture never re-reads statuses after a flip).
+inventoryRepository.transitionBales = async (pkgs, from, to, wh, opts = {}) => {
+  transitions.push({ pkgs, from, to, wh, opts });
+  const set = new Set((pkgs || []).map(String));
+  const uidSet = Array.isArray(opts.uids) && opts.uids.length ? new Set(opts.uids.map(String)) : null;
+  const all = await inventoryRepository.getAll();
+  return all
+    .filter((r) => r.status === from && (uidSet ? uidSet.has(String(r.baleUid)) : set.has(String(r.packageNo))))
+    .map((r) => ({ ...r, status: to }));
+};
 transactionsRepository.getCustomersByDesign = async () => ['ALABI'];
 usersRepository.getAll = async () => [
   { user_id: '5151', name: 'Sani Kano', role: 'employee', status: 'active', warehouses: ['Kano office'] },

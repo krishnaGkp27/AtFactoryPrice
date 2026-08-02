@@ -190,11 +190,30 @@ async function dispatchInner(requestId, byUserId, manualPicks) {
     return { ok: false, message: `transferService: cannot dispatch (${row.status}/${row.actionJSON.stage})` };
   }
   const aj = row.actionJSON;
-  const inv = await inventoryRepository.getAll();
+  // TRF-INT1 — ONE dispatch at a time per SOURCE warehouse. The per-request
+  // mutex cannot see a different transfer picking from the same shelf; two
+  // overlapping dispatches reading one snapshot would both claim the same
+  // bales. Nested key differs from the requestId key, so no deadlock.
+  return mutex.runExclusive(`dispatch-wh:${norm(aj.from)}`,
+    () => dispatchPickAndFlip(requestId, byUserId, manualPicks, aj));
+}
+
+async function dispatchPickAndFlip(requestId, byUserId, manualPicks, aj) {
+  const inv = await inventoryRepository.getAll(true); // fresh, under the lock
   const useManual = Array.isArray(manualPicks);
   const picked = [];
   const dispatched = [];
   const lines = aj.lines || [];
+  // TRF-INT1 — resolve every picked printed number to its exact rows inside
+  // the pick's own scope (warehouse+design+shade). The printed number stays
+  // the only thing the user sees (owner rule); the rows are what must move.
+  const rowsOfPkg = (pkg, l) => inv.filter((r) => r.status === AVAILABLE
+    && String(r.packageNo) === String(pkg)
+    && norm(r.warehouse) === norm(aj.from)
+    && norm(r.design) === norm(l.design)
+    && norm(r.shade) === norm(l.shade));
+  const pickedRows = [];
+  const lineRowRefs = []; // per line: Map(pkg -> its resolved rows), captured AT PICK TIME
   for (let i = 0; i < lines.length; i += 1) {
     const l = lines[i];
     let balesForLine;
@@ -213,6 +232,13 @@ async function dispatchInner(requestId, byUserId, manualPicks) {
       balesForLine = selectByQuantity(inv, aj.from, l.design, l.shade, l.qty).bales;
     }
     picked.push(...balesForLine);
+    const refMap = new Map();
+    for (const pkg of balesForLine) {
+      const rows = rowsOfPkg(pkg, l);
+      refMap.set(String(pkg), rows);
+      pickedRows.push(...rows);
+    }
+    lineRowRefs.push(refMap);
     // TRF-12 — keep the per-line bale numbers: the cards print them in
     // brackets on each row, and flattening into aj.bales loses attribution.
     dispatched.push({ design: l.design, shade: l.shade, requested: l.qty, sent: balesForLine.length, bales: balesForLine });
@@ -220,12 +246,35 @@ async function dispatchInner(requestId, byUserId, manualPicks) {
   if (!picked.length) {
     return { ok: false, message: 'No stock left for any line — decline the transfer instead.' };
   }
+  // Persist real uids BEFORE storing them (legacy synthetic uids are
+  // rowIndex-derived and would not survive a later backfill).
+  const uidByRow = await inventoryRepository.ensureRowUids(pickedRows);
+  const uids = pickedRows.map((r) => uidByRow.get(r.rowIndex));
+  const flipped = await inventoryRepository.transitionBales(picked, AVAILABLE, IN_TRANSIT, aj.to, { uids });
+  // TRF-INT1 — trust only what ACTUALLY flipped. A bale lost to a concurrent
+  // sale in the same instant is dropped from the claim, never ghost-carried.
+  // Judged from the PICK-TIME row mapping, not a re-filter of the snapshot.
+  const flippedUids = new Set(flipped.map((r) => String(r.baleUid)));
+  const conflicts = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const d = dispatched[i];
+    const refMap = lineRowRefs[i];
+    const kept = d.bales.filter((pkg) =>
+      (refMap.get(String(pkg)) || []).some((r) => flippedUids.has(String(uidByRow.get(r.rowIndex)))));
+    conflicts.push(...d.bales.filter((pkg) => !kept.includes(pkg)));
+    d.bales = kept;
+    d.sent = kept.length;
+  }
+  const keptPkgs = dispatched.flatMap((d) => d.bales);
+  if (!keptPkgs.length) {
+    return { ok: false, message: 'Stock changed while dispatching — every picked bale was taken by another transaction. Open dispatch again and re-pick.' };
+  }
+  const keptUids = flipped.map((r) => String(r.baleUid));
   const short = dispatched.some((d) => d.sent < d.requested);
-  await inventoryRepository.transitionBales(picked, AVAILABLE, IN_TRANSIT, aj.to);
-  const patch = { stage: STAGES.IN_TRANSIT, bales: picked, dispatched, short, dispatchedAt: new Date().toISOString() };
+  const patch = { stage: STAGES.IN_TRANSIT, bales: keptPkgs, baleUids: keptUids, dispatched, short, dispatchedAt: new Date().toISOString() };
   await approvalQueueRepository.updateActionJSON(requestId, patch);
-  await auditLogRepository.append('transfer.dispatched', { requestId, dispatched, short }, String(byUserId || ''));
-  return { ok: true, aj: { ...aj, ...patch }, short };
+  await auditLogRepository.append('transfer.dispatched', { requestId, dispatched, short, conflicts }, String(byUserId || ''));
+  return { ok: true, aj: { ...aj, ...patch }, short, conflicts };
 }
 
 /**
@@ -244,7 +293,25 @@ async function confirmReceiptInner(requestId, byUserId) {
     return { ok: false, message: `transferService: cannot confirm (${row.status}/${row.actionJSON.stage})` };
   }
   const aj = row.actionJSON;
-  await inventoryRepository.transitionBales(aj.bales || [], IN_TRANSIT, AVAILABLE, null);
+  // TRF-INT1 — flip exactly the rows dispatch logged (uids); transfers from
+  // before uid storage fall back to printed numbers scoped to the transfer's
+  // own destination (dispatch stamped the rows there), so a same-numbered
+  // bale elsewhere can never be flipped by this receive.
+  const hasUids = Array.isArray(aj.baleUids) && aj.baleUids.length > 0;
+  const flipped = await inventoryRepository.transitionBales(aj.bales || [], IN_TRANSIT, AVAILABLE, null,
+    hasUids ? { uids: aj.baleUids } : { warehouse: aj.to });
+  // Result check: fewer rows than expected means the sheet was touched
+  // outside the pipeline (hand edit / cross-contamination). The goods are
+  // physically here, so the transfer still closes — but never silently.
+  const expected = hasUids ? aj.baleUids.length : null;
+  const flippedPkgs = new Set(flipped.map((r) => String(r.packageNo)));
+  const mismatch = (hasUids && flipped.length !== expected)
+    || (!hasUids && flippedPkgs.size !== (aj.bales || []).length)
+    ? { expectedRows: expected, flippedRows: flipped.length, expectedBales: (aj.bales || []).length, flippedBales: flippedPkgs.size }
+    : null;
+  if (mismatch) {
+    await auditLogRepository.append('transfer.receive_mismatch', { requestId, ...mismatch }, String(byUserId || ''));
+  }
   await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString());
   const totalSent = (aj.dispatched || []).reduce((s, d) => s + d.sent, 0) || (aj.bales || []).length;
   await transactionsRepository.append({
@@ -254,7 +321,7 @@ async function confirmReceiptInner(requestId, byUserId) {
     qty: totalSent, before: aj.from || '', after: aj.to || '', status: 'completed',
   });
   await auditLogRepository.append('transfer.received', { requestId }, String(byUserId || ''));
-  return { ok: true, aj };
+  return { ok: true, aj, mismatch };
 }
 
 /**
@@ -273,13 +340,25 @@ async function abortInner(requestId, byUserId) {
   if (row.status !== 'pending') return { ok: false, message: `transferService: transfer already ${row.status}` };
   const aj = row.actionJSON;
   const kind = aj.stage === STAGES.IN_TRANSIT ? 'rejected' : 'declined';
+  let mismatch = null;
   if (kind === 'rejected') {
-    // Bales were logged at dispatch — send them home.
-    await inventoryRepository.transitionBales(aj.bales || [], IN_TRANSIT, AVAILABLE, aj.from);
+    // Bales were logged at dispatch — send them home. TRF-INT1: exactly the
+    // logged rows (uids), or printed numbers scoped to this transfer's
+    // destination for pre-uid transfers; result checked, never silent.
+    const hasUids = Array.isArray(aj.baleUids) && aj.baleUids.length > 0;
+    const flipped = await inventoryRepository.transitionBales(aj.bales || [], IN_TRANSIT, AVAILABLE, aj.from,
+      hasUids ? { uids: aj.baleUids } : { warehouse: aj.to });
+    const expected = hasUids ? aj.baleUids.length : null;
+    const flippedPkgs = new Set(flipped.map((r) => String(r.packageNo)));
+    if ((hasUids && flipped.length !== expected)
+      || (!hasUids && flippedPkgs.size !== (aj.bales || []).length)) {
+      mismatch = { expectedRows: expected, flippedRows: flipped.length, expectedBales: (aj.bales || []).length, flippedBales: flippedPkgs.size };
+      await auditLogRepository.append('transfer.reject_mismatch', { requestId, ...mismatch }, String(byUserId || ''));
+    }
   }
   await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString());
   await auditLogRepository.append(`transfer.${kind}`, { requestId }, String(byUserId || ''));
-  return { ok: true, aj, kind };
+  return { ok: true, aj, kind, mismatch };
 }
 
 /**
@@ -294,6 +373,13 @@ async function abortInner(requestId, byUserId) {
  * @returns {Promise<{ok:boolean, key?:string, message?:string}>}
  */
 async function attachDoc(requestId, kind, doc = {}) {
+  // TRF-INT2 — updateActionJSON is read-merge-write; unserialized it can race
+  // a stage change on the same row and resurrect the old stage. Same key as
+  // dispatch/receive/abort, so doc writes and stage writes take turns.
+  return mutex.runExclusive(requestId, () => attachDocInner(requestId, kind, doc));
+}
+
+async function attachDocInner(requestId, kind, doc = {}) {
   const row = await findTransfer(requestId);
   if (!row) return { ok: false, message: 'transferService: transfer not found' };
   const key = kind === 'receive' ? 'receiveDoc' : 'dispatchDoc';

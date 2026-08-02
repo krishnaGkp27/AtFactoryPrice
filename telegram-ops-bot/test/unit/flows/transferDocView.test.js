@@ -129,7 +129,9 @@ test('TRF-11: tap shows the full list as a popup, nothing lands in chat', async 
   await transferFlow.handleCallback(bot, query(`trf:bn:${REQ}`, 12));
   const ack = bot.callsTo('answerCallbackQuery').find((c) => c.args.opts && c.args.opts.show_alert);
   assert.ok(ack, 'popup used');
-  assert.match(ack.args.opts.text, /3 bale\(s\):\n6261, 6275, 6250/);
+  // TRF-INT2 (owner rule 3) — the route rides the popup so a duplicated
+  // number is never ambiguous.
+  assert.match(ack.args.opts.text, /3 bale\(s\) \(Lagos → Kano office\):\n6261, 6275, 6250/);
   assert.equal(bot.callsTo('sendMessage').length, 0, 'no chat message for short lists');
 });
 

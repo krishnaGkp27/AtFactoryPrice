@@ -51,21 +51,36 @@ usersRepository.getAll = async () => [
   { user_id: 'musa', name: 'Musa', role: 'employee', status: 'active', warehouses: ['Kano office'] },
 ];
 
+let _rowSeq = 1;
 function invRow(pkg, status = 'available', wh = 'Lagos') {
-  return { packageNo: pkg, design: '9006', shade: '3', warehouse: wh, status, productType: 'fabric', yards: 100, pricePerYard: 0 };
+  _rowSeq += 1;
+  return { rowIndex: _rowSeq, baleUid: `U-${pkg}-${_rowSeq}`, packageNo: pkg, design: '9006', shade: '3', warehouse: wh, status, productType: 'fabric', yards: 100, pricePerYard: 0 };
 }
+// TRF-INT1 — dispatch resolves picks to rows and stores uids; keep it offline.
+inventoryRepository.ensureRowUids = async (rows) => new Map(rows.map((r) => [r.rowIndex, r.baleUid]));
 function seedInventory() {
-  inventoryRepository.getAll = async () => [
+  { const _rows = [
     invRow('P1'), invRow('P2'), invRow('P3'),
     invRow('P9', 'available', 'Kano office'),
-  ];
+  ]; inventoryRepository.getAll = async () => _rows; }
 }
 
 /** Queue stub with one mutable row; returns recorder. */
 function armQueue() {
   const calls = { transitions: [], appended: null };
   let row = null;
-  inventoryRepository.transitionBales = async (pkgs, from, to, wh) => { calls.transitions.push({ pkgs, from, to, wh }); return []; };
+  inventoryRepository.transitionBales = async (pkgs, from_, to, wh, opts = {}) => {
+    calls.transitions.push({ pkgs, from: from_, to, wh, opts });
+    const set = new Set((pkgs || []).map(String));
+    const uidSet = Array.isArray(opts.uids) && opts.uids.length ? new Set(opts.uids.map(String)) : null;
+    const low = (v) => String(v == null ? '' : v).trim().toLowerCase();
+    const all = await inventoryRepository.getAll();
+    const rows = all.filter((r) => r.status === from_
+      && (uidSet ? uidSet.has(String(r.baleUid))
+        : (set.has(String(r.packageNo)) && (!opts.warehouse || low(r.warehouse) === low(opts.warehouse)))));
+    rows.forEach((r) => { r.status = to; if (wh != null) r.warehouse = wh; });
+    return rows.map((r) => ({ ...r }));
+  };
   approvalQueueRepository.append = async (rec) => { calls.appended = rec; row = { ...rec, status: 'pending' }; return rec; };
   approvalQueueRepository.getByRequestId = async () => (row ? JSON.parse(JSON.stringify(row)) : null);
   approvalQueueRepository.getAllPending = async () => (row && row.status === 'pending' ? [JSON.parse(JSON.stringify(row))] : []);
@@ -120,7 +135,12 @@ test('dispatch applies only after the mandatory load photo; receive after the re
   // The load photo lands → dispatch applies, receiver DM goes out.
   const bp = createFakeBot();
   await controller.handleFileMessage(bp, { chat: { id: 'abdul' }, from: { id: 'abdul', first_name: 'Abdul' }, photo: [{ file_id: 'F1' }] });
-  assert.deepEqual(calls.transitions[0], { pkgs: ['P1', 'P2'], from: 'available', to: 'in_transit', wh: 'Kano office' });
+  const t0 = calls.transitions[0];
+  assert.deepEqual(t0.pkgs, ['P1', 'P2']);
+  assert.equal(t0.from, 'available');
+  assert.equal(t0.to, 'in_transit');
+  assert.equal(t0.wh, 'Kano office');
+  assert.equal(t0.opts.uids.length, 2, 'TRF-INT1: exact rows ride the transition');
   const rdm = bp.callsTo('sendMessage').find((m) => m.args.chatId === 'musa');
   assert.ok(rdm, 'receiver got the incoming card');
   assert.match(rdm.args.text, /Shade 3 ×2/, 'receiver sees the grouped dispatched lines');
@@ -144,7 +164,7 @@ test('shortfall at dispatch: partial send recorded and flagged', async () => {
   // Between order and dispatch, Lagos sold a bale: only P1 remains. With no
   // real choice, the picker goes straight to the dispatch-confirm screen —
   // which now says WHY there was no picker (auto-filled).
-  inventoryRepository.getAll = async () => [invRow('P1'), invRow('P9', 'available', 'Kano office')];
+  { const _rows = [invRow('P1'), invRow('P9', 'available', 'Kano office')]; inventoryRepository.getAll = async () => _rows; }
   const bot2 = createFakeBot();
   await controller.handleCallbackQuery(bot2, cb(`trf:acc:${requestId}`, 'abdul'));
   assert.match(bot2.allText(), /9006\/3: 1\/2 ⚠️ short/, 'per-line shortfall shown on review');
@@ -193,9 +213,9 @@ test('TRF-8: an active employee CAN start the wizard; a stranger cannot', async 
 
 test('Check Stock shows the 🚚 in-transit line at the destination', async () => {
   armQueue();
-  inventoryRepository.getAll = async () => [
+  { const _rows = [
     invRow('P1'), invRow('P2', 'in_transit', 'Kano office'), invRow('P3', 'in_transit', 'Kano office'),
-  ];
+  ]; inventoryRepository.getAll = async () => _rows; }
   // checkStock reads through the repo's internal (fake-sheets) path — stub
   // the availability summary; the in-transit line reads the patched getAll.
   const inventoryService = require(path.join(SRC, 'services/inventoryService'));
@@ -211,10 +231,10 @@ function txt(text, uid) { return { chat: { id: uid }, from: { id: uid, first_nam
 
 /** Wizard run against a 9-bale warehouse so the picker has real choice. */
 async function runWizard9() {
-  inventoryRepository.getAll = async () => [
+  { const _rows = [
     ...Array.from({ length: 9 }, (_, i) => invRow(`P${i + 1}`)),
     invRow('P0', 'available', 'Kano office'),
-  ];
+  ]; inventoryRepository.getAll = async () => _rows; }
   const calls = armQueue();
   sessionStore.clear('777');
   const bot = createFakeBot();
@@ -259,6 +279,8 @@ test('TRF-7: no-match search explains why instead of a dead end', async () => {
   await controller.handleCallbackQuery(bot, cb(`trf:acc:${requestId}`, 'abdul'));
   await controller.handleCallbackQuery(bot, cb('trf:bl:sr', 'abdul'));
   await controller.handleMessage(bot, txt('ZZZ', 'abdul'));
-  assert.match(bot.allText(), /No available bale matches/);
+  // TRF-INT2 (owner rule 2) — a definite reason, not a vague shrug: ZZZ
+  // matches nothing anywhere, and the search says exactly that.
+  assert.match(bot.allText(), /No bale with that number exists/);
   assert.ok(kbTexts(bot).some((t) => t.includes('🔄 New search')), 'retry offered');
 });

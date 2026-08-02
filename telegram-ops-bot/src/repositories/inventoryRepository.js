@@ -116,9 +116,11 @@ async function ensureHeader() {
   _headerReady = true;
 }
 
-async function getAll() {
+async function getAll(fresh = false) {
   const now = Date.now();
-  if (_allCache && (now - _allCacheTs) < CACHE_TTL_MS) return _allCache;
+  // TRF-INT1 — status-mutating paths pass fresh=true: deciding what to flip
+  // from a 5s-old snapshot is exactly how two transactions claim one bale.
+  if (!fresh && _allCache && (now - _allCacheTs) < CACHE_TTL_MS) return _allCache;
   const rows = await sheets.readRange(SHEET, 'A2:W');
   _allCache = rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.packageNo || r.design);
   _allCacheTs = Date.now();
@@ -282,6 +284,59 @@ async function appendBale(bales) {
 }
 
 /**
+ * TRF-INT1 — persist REAL uids for rows about to travel on a transfer. The
+ * read-time synthetic uid of a legacy row is rowIndex-derived: storing it on
+ * a transfer and matching later would break the moment a backfill writes a
+ * different uid into column R. Writing the uid FIRST makes the stored
+ * reference permanent. Returns rowIndex → uid for every given row.
+ * @param {Array<object>} rows parsed inventory rows (from getAll)
+ * @returns {Promise<Map<number,string>>}
+ */
+async function ensureRowUids(rows) {
+  const out = new Map();
+  const updates = [];
+  const nowIso = new Date().toISOString();
+  for (const r of rows || []) {
+    if (!r._legacy) { out.set(r.rowIndex, r.baleUid); continue; }
+    const uid = idGenerator.baleUid(r.packageNo);
+    updates.push({ range: `R${r.rowIndex}:S${r.rowIndex}`, values: [[uid, r.addedAt || nowIso]] });
+    out.set(r.rowIndex, uid);
+  }
+  if (updates.length) {
+    await sheets.batchUpdateRanges(SHEET, updates);
+    invalidateCache();
+  }
+  return out;
+}
+
+/**
+ * TRF-INT3 — live bales (available / in_transit) in a warehouse that already
+ * carry one of the given printed numbers. The GRN intake gate uses this to
+ * refuse a colliding line (owner rule 1: no proof of no-collision → no row).
+ * Sold rows never block — packing-list numbers recycle across containers.
+ * @param {Array<string|number>} packageNos
+ * @param {string} warehouse
+ * @returns {Promise<Map<string, {packageNo:string, design:string, status:string, dateReceived:string}>>}
+ */
+async function liveBaleConflicts(packageNos, warehouse) {
+  const wanted = new Set((packageNos || []).map((p) => str(p)));
+  const wh = upper(warehouse);
+  const out = new Map();
+  if (!wanted.size || !wh) return out;
+  for (const r of await getAll(true)) {
+    if (!wanted.has(r.packageNo)) continue;
+    if (upper(r.warehouse) !== wh) continue;
+    if (r.status !== 'available' && r.status !== 'in_transit') continue;
+    if (!out.has(r.packageNo)) {
+      out.set(r.packageNo, {
+        packageNo: r.packageNo, design: r.design, status: r.status, dateReceived: r.dateReceived,
+      });
+    }
+  }
+  return out;
+}
+
+/**
  * Back-fill legacy Inventory rows (those without bale_uid in column R) with
  * generated bale_uid + addedAt values. Safe to run repeatedly — only touches
  * rows where column R is empty. Returns the count of rows back-filled.
@@ -409,7 +464,11 @@ async function getArrivalBatches(opts = {}) {
 
 async function markThanAvailable(packageNo, thanNo) {
   const than = await findThan(packageNo, thanNo);
-  if (!than || than.status === 'available') return null;
+  // TRF-INT1 — a return may only resurrect a SOLD than. Anything else
+  // (in_transit above all) must never be flipped back to available by a
+  // return: markPackageAvailable already filters on 'sold'; this did not,
+  // so an approved return_than could yank a than out of a live transfer.
+  if (!than || than.status !== 'sold') return null;
   const now = new Date().toISOString();
   await sheets.updateRange(SHEET, `H${than.rowIndex}:P${than.rowIndex}`, [[
     'available', than.warehouse, than.pricePerYard, than.dateReceived,
@@ -495,11 +554,32 @@ async function getDistinctDesigns() {
  * revert). Only rows whose current status === fromStatus are touched.
  * @returns {Promise<Array>} the rows that were updated
  */
-async function transitionBales(packageNos, fromStatus, toStatus, toWarehouse = null) {
+/**
+ * TRF-INT1 — printed bale numbers are NOT unique (the schema says so; the
+ * owner's rule keeps them as the only user-facing key), so status flips must
+ * be scoped or they contaminate same-numbered bales elsewhere:
+ *   opts.uids       — exact rows (bale_uid, column R). The transfer pipeline
+ *                     stores them at dispatch; matching ignores packageNos.
+ *   opts.warehouse  — legacy fallback scope for transfers dispatched before
+ *                     uids were stored: match printed number + status ONLY
+ *                     inside this warehouse.
+ * Reads FRESH (cache bypassed): deciding what to flip from a stale snapshot
+ * is how two transactions claim one bale. Returns the rows actually updated —
+ * callers MUST check it against what they expected to move.
+ */
+async function transitionBales(packageNos, fromStatus, toStatus, toWarehouse = null, opts = {}) {
   const set = new Set((packageNos || []).map((p) => String(p)));
-  if (!set.size) return [];
-  const all = await getAll();
-  const rows = all.filter((r) => set.has(String(r.packageNo)) && r.status === fromStatus);
+  const uidSet = Array.isArray(opts.uids) && opts.uids.length ? new Set(opts.uids.map(String)) : null;
+  if (!set.size && !uidSet) return [];
+  const whScope = opts.warehouse ? upper(opts.warehouse) : null;
+  const all = await getAll(true);
+  const rows = all.filter((r) => {
+    if (r.status !== fromStatus) return false;
+    if (uidSet) return uidSet.has(String(r.baleUid));
+    if (!set.has(String(r.packageNo))) return false;
+    if (whScope && upper(r.warehouse) !== whScope) return false;
+    return true;
+  });
   if (!rows.length) return [];
   const now = new Date().toISOString();
   const updates = [];
@@ -617,6 +697,8 @@ module.exports = {
   updatePrice,
   updateDesignCategory,
   transitionBales,
+  ensureRowUids,
+  liveBaleConflicts,
   appendThans,
   appendBale,
   backfillLegacyBales,

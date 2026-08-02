@@ -382,6 +382,12 @@ const server = app.listen(PORT, async () => {
         .then((r) => { if (r.repaired.length || r.skippedPendingOnly || r.failed) logger.info(`queueRepair: ${JSON.stringify(r)}`); })
         .catch((e) => logger.warn(`queueRepair boot pass failed: ${e.message}`));
     }, 20 * 1000);
+    // TRF-INT3 — same-warehouse duplicate bale numbers DM'd to admins until
+    // resolved physically (the intake gate blocks new ones; read-only scan).
+    setTimeout(() => {
+      require('./src/services/baleAuditReport').report(bot)
+        .catch((e) => logger.warn(`baleAuditReport boot pass failed: ${e.message}`));
+    }, 45 * 1000);
     const approvalReminder = require('./src/services/approvalReminder');
     setTimeout(() => approvalReminder.sweep(bot), 60 * 1000);
     setInterval(() => approvalReminder.sweep(bot), 60 * 60 * 1000);
