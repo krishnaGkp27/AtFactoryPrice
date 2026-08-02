@@ -136,7 +136,16 @@ async function uniqueTransferId() {
 
 async function createTransferRequest({ from, to, lines, requestedBy, dispatcher, receiver }) {
   const cleanLines = (lines || [])
-    .map((l) => ({ design: l.design, shade: l.shade, qty: Math.max(0, parseInt(l.qty, 10) || 0) }))
+    .map((l) => {
+      const line = { design: l.design, shade: l.shade, qty: Math.max(0, parseInt(l.qty, 10) || 0) };
+      // TRF-14 — typed orders pin the REQUESTED bale numbers to the line so
+      // the dispatcher picker pre-selects exactly those (not FIFO stand-ins).
+      const req = Array.isArray(l.bales)
+        ? [...new Set(l.bales.map((b) => String(b).trim()).filter(Boolean))].slice(0, line.qty)
+        : [];
+      if (req.length) line.bales = req;
+      return line;
+    })
     .filter((l) => l.design && l.qty > 0);
   if (!cleanLines.length) throw new Error('transferService: at least one line with qty > 0 required');
   const requestId = await uniqueTransferId();

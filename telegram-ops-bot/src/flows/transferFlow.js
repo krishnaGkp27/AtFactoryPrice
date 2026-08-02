@@ -240,7 +240,10 @@ async function showPersonPicker(bot, chatId, userId, role, cands) {
 async function showConfirm(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   session.step = 'confirm'; sessionStore.set(userId, session);
-  const items = (session.lines || []).map((l) => `  🧵 ${l.design} · Shade ${l.shade} · ×${l.qty} bls`).join('\n');
+  const items = (session.lines || []).map((l) => {
+    const nums = Array.isArray(l.bales) && l.bales.length ? ` (${l.bales.join(', ')})` : '';
+    return `  🧵 ${l.design} · Shade ${l.shade} · ×${l.qty} bls${nums}`;
+  }).join('\n');
   const total = (session.lines || []).reduce((s, l) => s + l.qty, 0);
   await render(bot, chatId, userId,
     `🚚 *Confirm transfer* — ${total} bale(s)\n\n${items}\n\n`
@@ -311,7 +314,12 @@ function linesBlock(lines) {
   const out = [];
   for (const [design, ls] of byDesign) {
     out.push(designHead(design));
-    for (const l of ls) out.push(` • Shade ${l.shade} ×${l.qty}`);
+    for (const l of ls) {
+      // TRF-14 — typed orders pin bale numbers; print them like the
+      // dispatched rows do so every card shows WHICH bales were asked for.
+      const nums = Array.isArray(l.bales) && l.bales.length ? ` (${l.bales.join(', ')})` : '';
+      out.push(` • Shade ${l.shade} ×${l.qty}${nums}`);
+    }
   }
   return out.join('\n');
 }
@@ -748,11 +756,23 @@ async function startDispatchPicker(bot, chatId, userId, row, messageId) {
   const inv = await availableInventory();
   const pl = (aj.lines || []).map((l) => {
     const cands = transferService.availableBales(inv, aj.from, l.design, l.shade);
+    // TRF-14 — a typed order names its bales: pre-select exactly those, not
+    // the FIFO head of the shelf (02-Aug: FIFO pre-ticks logged neighbouring
+    // numbers while the truck carried the requested ones). Requested bales
+    // no longer available fall back to FIFO fill — surfaced, never silent.
+    const wanted = Array.isArray(l.bales) && l.bales.length ? l.bales.map(String) : null;
+    const present = wanted ? wanted.filter((p) => cands.includes(p)) : [];
+    const missing = wanted ? wanted.filter((p) => !cands.includes(p)) : [];
+    const sel = wanted
+      ? [...present, ...cands.filter((c) => !present.includes(c))].slice(0, l.qty)
+      : cands.slice(0, l.qty);          // FIFO pre-selection (tap-built order)
     return {
       design: l.design, shade: l.shade, qty: l.qty,
-      cands,
-      sel: cands.slice(0, l.qty),       // FIFO pre-selection
-      choice: cands.length > l.qty,      // is there anything to decide?
+      cands, wanted, missing,
+      sel,
+      // A missing requested bale is always something to decide — the
+      // dispatcher must SEE the substitution, not auto-skip past it.
+      choice: cands.length > l.qty || missing.length > 0,
     };
   });
   sessionStore.set(userId, {
@@ -810,10 +830,16 @@ async function showBalePicker(bot, chatId, userId) {
   const moreNote = line.cands.length > visible.length
     ? `\n_Showing first ${visible.length} of ${line.cands.length} — 🔎 search finds any bale number._`
     : '';
+  // TRF-14 — show what the order ASKED for, and flag any requested bale
+  // that is no longer available on this shelf.
+  const orderedNote = line.wanted
+    ? `\n📌 Ordered: *${line.wanted.join(', ')}*`
+      + (line.missing.length ? `\n⚠️ _${line.missing.join(', ')} not available here — pick a replacement._` : '')
+    : '';
   await render(bot, chatId, userId,
     `🚚 *${session.requestId}* — line ${session.idx + 1} of ${session.pl.length}\n`
     + `${line.design} · Shade ${line.shade} — pick ${line.qty} bale(s)   _(${line.cands.length} in stock)_\n`
-    + `Selected: *${line.sel.length}/${line.qty}*${moreNote}`,
+    + `Selected: *${line.sel.length}/${line.qty}*${orderedNote}${moreNote}`,
     rows);
 }
 
@@ -919,13 +945,30 @@ async function showDispatchConfirm(bot, chatId, userId) {
   const perLine = session.pl.map((p) => (p.sel.length < p.qty
     ? ` • ${p.design}/${p.shade}: ${p.sel.length}/${p.qty} ⚠️ short`
     : ` • ${p.design}/${p.shade}: ${p.sel.join(', ')}`)).join('\n');
+  // TRF-14 — the order named its bales: any deviation between requested and
+  // selected is spelled out here, loudly, before the Dispatch button.
+  const warns = [];
+  for (const p of session.pl) {
+    if (!p.wanted) continue;
+    const selSet = new Set(p.sel.map(String));
+    const notPicked = p.wanted.filter((w) => !selSet.has(w));
+    if (!notPicked.length) continue;
+    const standIns = p.sel.map(String).filter((s) => !p.wanted.includes(s));
+    warns.push(`⚠️ ${p.design}/${p.shade}: order asked for *${notPicked.join(', ')}*`
+      + (standIns.length ? ` — you are dispatching *${standIns.join(', ')}* instead` : ' — not selected'));
+  }
+  const warnBlock = warns.length
+    ? `\n\n${warns.join('\n')}\n_Only dispatch a different bale if it is what is PHYSICALLY loaded._`
+    : '';
   // When stock exactly matched the request there was no picker to show —
   // say so, or the operator wonders where the bale-picking step went.
   const autoNote = session.pl.every((p) => !p.choice)
-    ? '\n_Bales auto-filled (oldest first) — stock matched the request, nothing to choose._'
+    ? (session.pl.some((p) => p.wanted)
+      ? '\n_Bales matched the order exactly — nothing to choose._'
+      : '\n_Bales auto-filled (oldest first) — stock matched the request, nothing to choose._')
     : '';
   await render(bot, chatId, userId,
-    `🚚 *${session.requestId}* — dispatch ${picked.length} bale(s)?\n${perLine}${autoNote}\n\n*${session.from}* → *${session.to}*\n📸 _A load photo/PDF is required next._`,
+    `🚚 *${session.requestId}* — dispatch ${picked.length} bale(s)?\n${perLine}${warnBlock}${autoNote}\n\n*${session.from}* → *${session.to}*\n📸 _A load photo/PDF is required next._`,
     [[{ text: '🚚 Dispatch', callback_data: 'trf:bl:go' }],
       [{ text: '◀ Back', callback_data: 'trf:bl:bk' }, { text: '❌ Decline', callback_data: `trf:dec:${session.requestId}` }]]);
 }
@@ -1557,11 +1600,16 @@ async function startFromText(bot, chatId, userId, rawText) {
   }
 
   // Group the matched bales into the order lines the flow expects.
+  // TRF-14 — the typed numbers are PINNED to each line (owner, 02-Aug: the
+  // dispatcher pre-selection must be the requested bales, never a FIFO
+  // neighbour of the same design/shade).
   const lineMap = new Map();
   for (const b of loaded) {
     const k = `${b.design}|${b.shade}`;
-    if (!lineMap.has(k)) lineMap.set(k, { design: b.design, shade: b.shade, qty: 0 });
-    lineMap.get(k).qty += 1;
+    if (!lineMap.has(k)) lineMap.set(k, { design: b.design, shade: b.shade, qty: 0, bales: [] });
+    const ln = lineMap.get(k);
+    ln.qty += 1;
+    ln.bales.push(String(b.packageNo));
   }
   const lines = [...lineMap.values()];
 

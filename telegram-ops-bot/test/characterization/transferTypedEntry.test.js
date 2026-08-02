@@ -88,7 +88,8 @@ test('typed bale list preloads the cart, skips the sold bale, pre-selects Kano o
   assert.equal(session.step, 'preload_review');
   assert.equal(session.from, 'Lagos');
   assert.equal(session.to, 'Kano office');
-  assert.deepEqual(session.lines, [{ design: '9006', shade: '3', qty: 2 }]);
+  // TRF-14 — typed numbers are pinned to the line for the dispatch picker.
+  assert.deepEqual(session.lines, [{ design: '9006', shade: '3', qty: 2, bales: ['997', '999'] }]);
 
   // Continue → destination already known → straight to auto-picked people.
   const cont = lastKb(bot).find((b) => b.callback_data === 'trf:pl:go');
@@ -103,7 +104,7 @@ test('typed bale list preloads the cart, skips the sold bale, pre-selects Kano o
   const aj = calls.appended.actionJSON;
   assert.deepEqual(
     { action: aj.action, from: aj.from, to: aj.to, lines: aj.lines, stage: aj.stage },
-    { action: 'transfer_stock', from: 'Lagos', to: 'Kano office', lines: [{ design: '9006', shade: '3', qty: 2 }], stage: 'requested' },
+    { action: 'transfer_stock', from: 'Lagos', to: 'Kano office', lines: [{ design: '9006', shade: '3', qty: 2, bales: ['997', '999'] }], stage: 'requested' },
   );
   assert.equal(calls.appended.user, '4242', 'non-admin creator recorded');
   // Dispatcher card + admin brief still ride the commit-1 pipeline.
