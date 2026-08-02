@@ -332,7 +332,8 @@ async function renderSummary(bot, chatId, userId, opts = {}) {
   let body = `🧾 *${session.customer}* · ${prettyDate(session.soldDate)}\n`
     + `_${baleCount} bale(s) supplied_\n`;
   if (opts.reading) {
-    body += '\n⏳ _Reading sale doc…_\n';
+    const prog = opts.of > 1 ? ` (doc ${opts.at}/${opts.of})` : '';
+    body += `\n⏳ _Reading sale doc…${prog}_\n`;
   } else if (session._recDone) {
     body += `\n📑 Doc check: *${session._recMatched}/${baleCount}* matched\n`;
     if ((session._recMissing || []).length) {
@@ -356,12 +357,16 @@ async function renderSummary(bot, chatId, userId, opts = {}) {
     }
   }
   const rows = [];
-  if ((session._docs || []).length && !opts.reading) {
-    const n = session._docs.length;
-    rows.push([{ text: `📄 Sale doc${n > 1 ? ` (${n})` : ''}`, callback_data: 'sbl:doc' }]);
-    rows.push([{ text: session._recDone ? '🔁 Re-check sale doc' : '🧮 Reconcile sale doc', callback_data: 'sbl:rec' }]);
-  }
-  if (!opts.reading) {
+  if (opts.reading) {
+    // SBL-2b (owner, 02-Aug) — a long OCR must never strand the card
+    // buttonless: Stop restores it instantly and orphans the read.
+    rows.push([{ text: '✖ Stop check', callback_data: 'sbl:recstop' }]);
+  } else {
+    if ((session._docs || []).length) {
+      const n = session._docs.length;
+      rows.push([{ text: `📄 Sale doc${n > 1 ? ` (${n})` : ''}`, callback_data: 'sbl:doc' }]);
+      rows.push([{ text: session._recDone ? '🔁 Re-check sale doc' : '🧮 Reconcile sale doc', callback_data: 'sbl:rec' }]);
+    }
     rows.push([{ text: session.showMoney ? '🔎 Full details — thans, yards & value' : '🔎 Full details — thans & yards', callback_data: 'sbl:full' }]);
     rows.push(backRow('⬅ Dates'));
     rows.push(closeRow());
@@ -404,16 +409,25 @@ async function sendSaleDocs(bot, chatId, userId) {
 async function runReconcile(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session || !(session._docs || []).length || session._recRunning) return;
+  // SBL-2b — generation counter: ✖ Stop (or switching day) bumps it, so a
+  // read still in flight becomes an orphan whose result is discarded — it
+  // can never overwrite a card the user has already taken back.
+  const gen = (session._recGen || 0) + 1;
+  session._recGen = gen;
   session._recRunning = true;
   session._recError = null;
   sessionStore.set(userId, session);
-  await renderSummary(bot, chatId, userId, { reading: true });
 
+  const docs = session._docs.slice();
   const telegramFiles = require('../utils/telegramFiles');
   const vision = require('../services/vision');
   const docDigits = new Set();
   let readErr = null;
-  for (const d of session._docs) {
+  for (let i = 0; i < docs.length; i += 1) {
+    const live = sessionStore.get(userId);
+    if (!live || live.type !== SESSION_TYPE || live._recGen !== gen) return; // stopped
+    await renderSummary(bot, chatId, userId, { reading: true, at: i + 1, of: docs.length });
+    const d = docs[i];
     try {
       const dl = await telegramFiles.downloadTelegramFile(bot, d.fileId);
       const mime = dl.mimeType || (d.kind === 'document' ? 'application/pdf' : 'image/jpeg');
@@ -426,10 +440,10 @@ async function runReconcile(bot, chatId, userId) {
     } catch (e) { readErr = e.message; }
   }
 
-  // The user may have navigated away while the OCR ran — only the summary
-  // card of the SAME customer+day gets the result.
+  // Only the summary card of the SAME customer+day AND the same
+  // (un-stopped) run gets the result.
   const s2 = sessionStore.get(userId);
-  if (!s2 || s2.type !== SESSION_TYPE || s2.step !== 'view_summary') return;
+  if (!s2 || s2.type !== SESSION_TYPE || s2.step !== 'view_summary' || s2._recGen !== gen) return;
   const { designs } = await loadSummary(s2);
   const cardBales = [];
   for (const shades of designs.values()) {
@@ -633,6 +647,9 @@ async function handleCallback(bot, query) {
       session.soldDate = date;
       session.step = 'view_summary';
       // SBL-2 — a fresh day starts clean: docs re-resolved, dots cleared.
+      // SBL-2b — bump the generation: a read still running for the
+      // PREVIOUS day becomes an orphan and can't dot this day's card.
+      session._recGen = (session._recGen || 0) + 1;
       delete session._docs;
       delete session._verified;
       delete session._recDone; delete session._recMatched;
@@ -653,6 +670,17 @@ async function handleCallback(bot, query) {
   if (data === 'sbl:rec') {
     if (session.step !== 'view_summary') return true;
     await runReconcile(bot, chatId, userId);
+    return true;
+  }
+
+  if (data === 'sbl:recstop') {
+    // SBL-2b — instantly take the card back; the in-flight read is
+    // orphaned by the generation bump and its result discarded.
+    if (session.step !== 'view_summary') return true;
+    session._recGen = (session._recGen || 0) + 1;
+    session._recRunning = false;
+    sessionStore.set(userId, session);
+    await renderSummary(bot, chatId, userId);
     return true;
   }
 

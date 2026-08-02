@@ -23,6 +23,13 @@ Owner-approved layout, 02-Aug-2026. Extends the Sold-Bales Lookup (SBL-1).
      bale);
    - chip flips to `🔁 Re-check`; unreadable docs show a failure line and
      leave the card undotted.
+3b. **✖ Stop check (SBL-2b, owner 02-Aug).** The reading state must never
+   strand the card buttonless: it shows `⏳ Reading sale doc… (doc i/n)`
+   with a single `✖ Stop check` button. Stop restores the card instantly;
+   the in-flight OCR is orphaned by a session generation counter
+   (`_recGen`) and its late result is discarded — switching to another
+   day bumps the generation too, so a stale read can never dot the wrong
+   card. After a stop, 🧮 can be re-tapped immediately.
 4. **Read-only, rules-clean.** No sheet writes; dots are session state
    only (reopening the card starts clean). Complies with BUSINESS_RULES
    §2 (bot selects nothing — it only reports what the document says) and

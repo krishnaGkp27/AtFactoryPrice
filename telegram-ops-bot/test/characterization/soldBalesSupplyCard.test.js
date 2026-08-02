@@ -175,6 +175,37 @@ test('🔎 full details opens the deep view; back returns to the card, dots inta
   } finally { vision.extractBales = origExtract; }
 });
 
+test('✖ Stop check aborts a long read: card restored, orphan result discarded', async () => {
+  seed();
+  telegramFiles.downloadTelegramFile = async () => ({ buffer: Buffer.from('pdf'), mimeType: 'application/pdf' });
+  let releaseOcr;
+  const origExtract = vision.extractBales;
+  vision.extractBales = () => new Promise((resolve) => {
+    releaseOcr = () => resolve({ ok: true, bales: [{ packageNo: '1057' }] });
+  });
+  try {
+    const bot = await openSupplyCard();
+    const recDone = flow.handleCallback(bot, q('sbl:rec', '777')); // not awaited — it hangs on OCR
+    for (let i = 0; i < 10 && !releaseOcr; i += 1) await new Promise(setImmediate);
+    // SBL-2b — the reading card carries the escape hatch.
+    assert.match(lastText(bot), /⏳ _Reading sale doc…_/);
+    assert.ok(lastKbTexts(bot).some((b) => b === '✖ Stop check|sbl:recstop'), 'Stop chip on the reading card');
+    await flow.handleCallback(bot, q('sbl:recstop', '777'));
+    const restored = lastText(bot);
+    assert.ok(!/Reading sale doc/.test(restored), 'card restored instantly');
+    assert.ok(lastKbTexts(bot).some((b) => b === '🧮 Reconcile sale doc|sbl:rec'), 'reconcile chip back');
+    // The hung read finishes later — its result must be discarded.
+    releaseOcr();
+    await recDone;
+    const after = lastText(bot);
+    assert.ok(!/Doc check|🟢/.test(after), 'orphaned read never dots the card');
+    // And a fresh run still works after the stop.
+    vision.extractBales = async () => ({ ok: true, bales: [{ packageNo: '846' }] });
+    await flow.handleCallback(bot, q('sbl:rec', '777'));
+    assert.match(lastText(bot), /\(🟢846\)/, 're-run after stop succeeds');
+  } finally { vision.extractBales = origExtract; }
+});
+
 test('📄 delivers the doc as an ephemeral view, swept on the next tap', async () => {
   seed();
   const bot = await openSupplyCard();
