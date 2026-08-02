@@ -382,6 +382,15 @@ const server = app.listen(PORT, async () => {
         .then((r) => { if (r.repaired.length || r.skippedPendingOnly || r.failed) logger.info(`queueRepair: ${JSON.stringify(r)}`); })
         .catch((e) => logger.warn(`queueRepair boot pass failed: ${e.message}`));
     }, 20 * 1000);
+    // REP-2 — one-off guarded bale swap for transfer 02Aug·01 (owner,
+    // 02-Aug): the pre-TRF-14 FIFO pre-pick logged 867/842/873/863 while
+    // the truck carries 869/843/874/864. Fingerprint-matched, state-guarded,
+    // idempotent — once swapped (or if the transfer was rejected) it no-ops.
+    setTimeout(() => {
+      require('./src/services/transferRepair').repair(bot)
+        .then((r) => logger.info(`transferRepair: ${JSON.stringify(r)}`))
+        .catch((e) => logger.warn(`transferRepair boot pass failed: ${e.message}`));
+    }, 30 * 1000);
     // TRF-INT3 — same-warehouse duplicate bale numbers DM'd to admins until
     // resolved physically (the intake gate blocks new ones; read-only scan).
     setTimeout(() => {
