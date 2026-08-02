@@ -27,6 +27,14 @@
  *   sdd:w:<idx>      pick warehouse (index into session._whs)
  *   sdd:d:<idx>      pick date      (index into session._dates)
  *   sdd:c:<idx>      pick customer  (index into session._custs)
+ *   sdd:doc          SDD-2: deliver the day's sale doc(s) (ephemeral)
+ *   sdd:rec          SDD-2: reconcile the sale doc → 🟢 dots in place
+ *   sdd:recstop      SDD-2: abort a long read, restore the card
+ *
+ * SDD-2 (owner-approved, 02-Aug): the level-4 card now carries the printed
+ * BALE NUMBERS in brackets on each design row (it had none), plus the
+ * shared 📄 / 🧮 sale-doc chips. This card is narrower than a sale
+ * document (one warehouse), so doc-only numbers are not listed.
  */
 
 const sessionStore = require('../utils/sessionStore');
@@ -36,6 +44,7 @@ const unitDisplayService = require('../services/unitDisplayService');
 const { baleGroupKey } = require('../utils/inventoryPickers');
 const auth = require('../middlewares/auth');
 const logger = require('../utils/logger');
+const saleDocReconcile = require('../services/saleDocReconcile');
 
 const SESSION_TYPE = 'supply_details_flow';
 const { closeRow, backRow } = rowsFor('sdd');
@@ -181,29 +190,117 @@ async function renderCustomers(bot, chatId, userId) {
 
 /* ─────────────────────────── level 4: designs ─────────────────────────── */
 
-async function renderDetail(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  if (!session) return;
+/** The rows behind this card (warehouse + day + customer). */
+async function detailRows(session) {
   const sold = await inventoryRepository.getSoldRows();
-  const mine = sold.filter((r) => (r.warehouse || '—') === session.warehouse
+  return sold.filter((r) => (r.warehouse || '—') === session.warehouse
     && normDay(r.soldDate) === session.day
     && (r.soldTo || '—') === session.customer);
+}
+
+async function renderDetail(bot, chatId, userId, opts = {}) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const mine = await detailRows(session);
   const byDesign = new Map();
   for (const r of mine) {
     const d = r.design || '—';
-    if (!byDesign.has(d)) byDesign.set(d, []);
-    byDesign.get(d).push(r);
+    if (!byDesign.has(d)) byDesign.set(d, { rows: [], bales: [] });
+    const e = byDesign.get(d);
+    e.rows.push(r);
+    const pkg = String(r.packageNo || '').trim();
+    if (pkg && !e.bales.includes(pkg)) e.bales.push(pkg);
   }
   const designs = Array.from(byDesign.keys())
-    .sort((a, b) => byDesign.get(b).length - byDesign.get(a).length || String(a).localeCompare(String(b), undefined, { numeric: true }));
-  const lines = designs.map((d) => `🧵 ${d}: ${qtyLabel(byDesign.get(d), session.useThans)}`);
+    .sort((a, b) => byDesign.get(b).rows.length - byDesign.get(a).rows.length
+      || String(a).localeCompare(String(b), undefined, { numeric: true }));
+  // SDD-2 (owner-approved) — the printed bale numbers ride each design row
+  // in brackets, so this card is a reconciliation list too. Kano-style
+  // than-visible warehouses keep their `t` unit; the numbers are the bales
+  // those thans came out of.
+  const lines = designs.map((d) => {
+    const e = byDesign.get(d);
+    e.bales.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+    const nums = e.bales.length ? ` (${saleDocReconcile.dotted(e.bales, session._verified)})` : '';
+    return `🧵 ${d}: ${qtyLabel(e.rows, session.useThans)}${nums}`;
+  });
+
+  if (!session._docsLoaded) {
+    session._docs = await saleDocReconcile.docsFor(session.customer, session.day);
+    session._docsLoaded = true;
+  }
   session.step = 'view_detail';
   sessionStore.set(userId, session);
+
+  const cardBaleCount = new Set(mine.map((r) => String(r.packageNo || '').trim()).filter(Boolean)).size;
+  // One warehouse out of the customer's day → partial: doc-only hidden.
+  const status = saleDocReconcile.statusLines(
+    opts.reading ? { reading: true, at: opts.at, of: opts.of } : session._rec,
+    cardBaleCount, { partial: true });
+
+  const rows = [];
+  if (opts.reading) {
+    rows.push([{ text: '✖ Stop check', callback_data: 'sdd:recstop' }]);
+  } else {
+    if ((session._docs || []).length) {
+      const n = session._docs.length;
+      rows.push([{ text: `📄 Sale doc${n > 1 ? ` (${n})` : ''}`, callback_data: 'sdd:doc' }]);
+      rows.push([{ text: (session._rec && session._rec.done) ? '🔁 Re-check sale doc' : '🧮 Reconcile sale doc', callback_data: 'sdd:rec' }]);
+    }
+    rows.push(backRow('⬅ Customers'));
+    rows.push(closeRow());
+  }
+
   await render(bot, chatId, userId,
-    `📦 *${session.warehouse} — ${prettyDate(session.day)} — ${session.customer}*\n\n`
-    + `${lines.join('\n')}\n\n`
+    `📦 *${session.warehouse} — ${prettyDate(session.day)} — ${session.customer}*\n`
+    + status
+    + `\n${lines.join('\n')}\n\n`
     + `Total: *${qtyLabel(mine, session.useThans)}*`,
-    [backRow('⬅ Customers'), closeRow()]);
+    rows);
+}
+
+/** SDD-2 — 🧮 read the day's sale doc(s) and dot this card in place. */
+async function runReconcile(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || !(session._docs || []).length) return;
+  const gen = (session._recGen || 0) + 1;
+  session._recGen = gen;
+  sessionStore.set(userId, session);
+  const stillMine = () => {
+    const s = sessionStore.get(userId);
+    return s && s.type === SESSION_TYPE && s._recGen === gen;
+  };
+
+  const { digits, error, aborted } = await saleDocReconcile.readBaleDigits(bot, session._docs, {
+    onProgress: async (at, of) => { if (stillMine()) await renderDetail(bot, chatId, userId, { reading: true, at, of }); },
+    shouldAbort: () => !stillMine(),
+  });
+  if (aborted || !stillMine()) return;
+
+  const s2 = sessionStore.get(userId);
+  if (!s2 || s2.step !== 'view_detail') return;
+  const mine = await detailRows(s2);
+  const cardBales = [...new Set(mine.map((r) => String(r.packageNo || '').trim()).filter(Boolean))];
+  if (!digits.size) {
+    s2._rec = { done: false, error: error || 'no bale numbers found in the document' };
+    s2._verified = [];
+  } else {
+    const res = saleDocReconcile.reconcile(cardBales, digits);
+    s2._rec = {
+      done: true, matched: res.matched, missing: res.missing,
+      docOnly: res.docOnly, error: error ? `partial read (${error})` : null,
+    };
+    s2._verified = res.verified;
+  }
+  sessionStore.set(userId, s2);
+  await renderDetail(bot, chatId, userId);
+}
+
+/** Clear doc/dot state when the card's subject changes. */
+function resetDocState(session) {
+  session._recGen = (session._recGen || 0) + 1;
+  delete session._docs; delete session._docsLoaded;
+  delete session._rec; delete session._verified;
 }
 
 /* ─────────────────────────── callbacks ─────────────────────────── */
@@ -228,6 +325,9 @@ async function handleCallback(bot, query) {
     return true;
   }
 
+  // SDD-2/TRF-9b — any tap sweeps this user's fetched doc views first.
+  try { await require('../services/ephemeralDocs').sweep(bot, userId); } catch (_) { /* viewer state only */ }
+
   if (data === 'sdd:close') {
     sessionStore.clear(userId);
     try {
@@ -240,7 +340,7 @@ async function handleCallback(bot, query) {
   }
 
   if (data === 'sdd:back') {
-    if (session.step === 'view_detail') { await renderCustomers(bot, chatId, userId); return true; }
+    if (session.step === 'view_detail') { resetDocState(session); sessionStore.set(userId, session); await renderCustomers(bot, chatId, userId); return true; }
     if (session.step === 'pick_customer') { await renderDates(bot, chatId, userId); return true; }
     await renderWarehouses(bot, chatId, userId);
     return true;
@@ -272,6 +372,28 @@ async function handleCallback(bot, query) {
     const cust = (session._custs || [])[i];
     if (cust === undefined) { await renderCustomers(bot, chatId, userId); return true; }
     session.customer = cust;
+    resetDocState(session); // a new card starts with no docs and no dots
+    sessionStore.set(userId, session);
+    await renderDetail(bot, chatId, userId);
+    return true;
+  }
+
+  if (data === 'sdd:doc') {
+    if (session.step !== 'view_detail') return true;
+    await saleDocReconcile.sendDocs(bot, chatId, userId, session._docs || [],
+      `📄 Sale doc — ${session.customer} · ${prettyDate(session.day)}`);
+    return true;
+  }
+
+  if (data === 'sdd:rec') {
+    if (session.step !== 'view_detail') return true;
+    await runReconcile(bot, chatId, userId);
+    return true;
+  }
+
+  if (data === 'sdd:recstop') {
+    if (session.step !== 'view_detail') return true;
+    session._recGen = (session._recGen || 0) + 1; // orphan the in-flight read
     sessionStore.set(userId, session);
     await renderDetail(bot, chatId, userId);
     return true;

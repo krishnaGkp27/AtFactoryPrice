@@ -90,6 +90,19 @@ logged bales 867/842/873/863 while the truck carried 869/843/874/864.
   one action can never flip same-numbered bales in two warehouses. A typed
   number live in two warehouses gets a "which warehouse?" ask.
 
+## 6b · Reports bifurcate by container
+
+**Locked 02-Aug-2026 (SDG-2).**
+
+- Several arrival containers now run at once, so a cumulative per-design
+  figure that clubs every arrival answers nothing. Supply reports pick a
+  container FIRST and scope every level below it — including the "total"
+  side of a supplied/total pair.
+- The picked container rides the header of every card beneath it, and
+  "🌍 All containers" stays available for the deliberate cross-arrival view.
+- Container labels match case-insensitively; unlabelled rows bucket under
+  `(unlabelled)` rather than disappearing.
+
 ## 7 · Bales and loose thans are separate cargo
 
 **Locked 01-Aug-2026 (APX-6c).**

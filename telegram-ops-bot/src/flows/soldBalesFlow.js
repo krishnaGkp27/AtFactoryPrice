@@ -52,6 +52,7 @@ const auth                = require('../middlewares/auth');
 const logger              = require('../utils/logger');
 const { buildShadeNameMap, formatShadeRef } = require('../utils/shadeButtons');
 const { baleGroupKey } = require('../utils/inventoryPickers');
+const saleDocReconcile = require('../services/saleDocReconcile');
 
 const SESSION_TYPE   = 'sold_bales_flow';
 const TILES_PER_ROW  = 2;
@@ -258,37 +259,6 @@ async function renderDatePicker(bot, chatId, userId) {
 
 /* ───────────────────────────── supply card (SBL-2) ───────────────────────────── */
 
-function digitsOf(v) { return String(v == null ? '' : v).replace(/\D/g, ''); }
-
-/**
- * The day's sale documents: resolved (approved) sale approvals for this
- * customer + date that carry a bill photo/PDF (`sale_doc_file_id`, written
- * by the snap flows). Deduped by file id.
- * @returns {Promise<Array<{fileId:string, kind:'photo'|'document'}>>}
- */
-async function saleDocsFor(customer, soldDate) {
-  try {
-    const approvalQueueRepository = require('../repositories/approvalQueueRepository');
-    const cust = String(customer || '').trim().toLowerCase();
-    const seen = new Set();
-    const docs = [];
-    for (const r of await approvalQueueRepository.getResolved()) {
-      if (String(r.status || '').toLowerCase() !== 'approved') continue;
-      const aj = r.actionJSON || {};
-      if (!aj.sale_doc_file_id || seen.has(aj.sale_doc_file_id)) continue;
-      if (String(aj.customer || '').trim().toLowerCase() !== cust) continue;
-      if (normDay(aj.salesDate) !== soldDate) continue;
-      seen.add(aj.sale_doc_file_id);
-      docs.push({
-        fileId: aj.sale_doc_file_id,
-        // snap PDF batches ride as documents; snap bill photos as photos.
-        kind: aj.action === 'sale_bundle' ? 'document' : 'photo',
-      });
-    }
-    return docs;
-  } catch (_) { return []; }
-}
-
 /**
  * Group the day's sold rows for the compact card: design → shade → unique
  * bale numbers (bale identity via baleGroupKey, same as the detail view).
@@ -325,7 +295,7 @@ async function renderSummary(bot, chatId, userId, opts = {}) {
     return;
   }
   if (!Array.isArray(session._docs)) {
-    session._docs = await saleDocsFor(session.customer, session.soldDate);
+    session._docs = await saleDocReconcile.docsFor(session.customer, session.soldDate);
     sessionStore.set(userId, session);
   }
   const verified = new Set(session._verified || []);
@@ -352,7 +322,7 @@ async function renderSummary(bot, chatId, userId, opts = {}) {
     const cat = designCategoriesRepository.categoryOfSync(design);
     body += `\n🧵 *${design}*${cat ? ` · ${cat}` : ''}\n`;
     for (const [shade, pkgs] of shades) {
-      const nums = pkgs.map((p) => (verified.has(digitsOf(p)) ? `🟢${p}` : p)).join(', ');
+      const nums = saleDocReconcile.dotted(pkgs, [...verified]);
       body += ` • Shade ${shade || '—'} ×${pkgs.length} (${nums})\n`;
     }
   }
@@ -377,28 +347,9 @@ async function renderSummary(bot, chatId, userId, opts = {}) {
 /** SBL-2 — deliver the day's sale doc(s) as ephemeral views (TRF-9b). */
 async function sendSaleDocs(bot, chatId, userId) {
   const session = sessionStore.get(userId);
-  if (!session || !(session._docs || []).length) return;
-  const ephemeralDocs = require('../services/ephemeralDocs');
-  for (const d of session._docs) {
-    const caption = `📄 Sale doc — ${session.customer} · ${prettyDate(session.soldDate)}`;
-    let sent = null;
-    try {
-      sent = d.kind === 'document'
-        ? await bot.sendDocument(chatId, d.fileId, { caption })
-        : await bot.sendPhoto(chatId, d.fileId, { caption });
-    } catch (_) {
-      // Stored kind can mislie (photo ids can't go out as documents and
-      // vice versa) — retry the other way before giving up.
-      try {
-        sent = d.kind === 'document'
-          ? await bot.sendPhoto(chatId, d.fileId, { caption })
-          : await bot.sendDocument(chatId, d.fileId, { caption });
-      } catch (e2) {
-        logger.warn(`soldBalesFlow: sale doc send failed: ${e2.message}`);
-      }
-    }
-    if (sent && sent.message_id) ephemeralDocs.track(bot, userId, chatId, sent.message_id);
-  }
+  if (!session) return;
+  await saleDocReconcile.sendDocs(bot, chatId, userId, session._docs || [],
+    `📄 Sale doc — ${session.customer} · ${prettyDate(session.soldDate)}`);
 }
 
 /**
@@ -418,27 +369,16 @@ async function runReconcile(bot, chatId, userId) {
   session._recError = null;
   sessionStore.set(userId, session);
 
-  const docs = session._docs.slice();
-  const telegramFiles = require('../utils/telegramFiles');
-  const vision = require('../services/vision');
-  const docDigits = new Set();
-  let readErr = null;
-  for (let i = 0; i < docs.length; i += 1) {
-    const live = sessionStore.get(userId);
-    if (!live || live.type !== SESSION_TYPE || live._recGen !== gen) return; // stopped
-    await renderSummary(bot, chatId, userId, { reading: true, at: i + 1, of: docs.length });
-    const d = docs[i];
-    try {
-      const dl = await telegramFiles.downloadTelegramFile(bot, d.fileId);
-      const mime = dl.mimeType || (d.kind === 'document' ? 'application/pdf' : 'image/jpeg');
-      const ocr = await vision.extractBales(dl.buffer, mime);
-      if (!ocr.ok) { readErr = ocr.error || 'document unreadable'; continue; }
-      for (const b of ocr.bales) {
-        const dg = digitsOf(b.packageNo);
-        if (dg) docDigits.add(dg);
-      }
-    } catch (e) { readErr = e.message; }
-  }
+  const stillMine = () => {
+    const s = sessionStore.get(userId);
+    return s && s.type === SESSION_TYPE && s._recGen === gen;
+  };
+  const { digits: docDigits, error: readErr, aborted } = await saleDocReconcile.readBaleDigits(
+    bot, session._docs, {
+      onProgress: async (at, of) => { if (stillMine()) await renderSummary(bot, chatId, userId, { reading: true, at, of }); },
+      shouldAbort: () => !stillMine(),
+    });
+  if (aborted) return;
 
   // Only the summary card of the SAME customer+day AND the same
   // (un-stopped) run gets the result.
@@ -447,7 +387,7 @@ async function runReconcile(bot, chatId, userId) {
   const { designs } = await loadSummary(s2);
   const cardBales = [];
   for (const shades of designs.values()) {
-    for (const pkgs of shades.values()) for (const p of pkgs) cardBales.push({ p, d: digitsOf(p) });
+    for (const pkgs of shades.values()) for (const p of pkgs) cardBales.push(String(p));
   }
   if (!docDigits.size) {
     s2._recRunning = false;
@@ -457,12 +397,11 @@ async function runReconcile(bot, chatId, userId) {
     await renderSummary(bot, chatId, userId);
     return;
   }
-  const matched = cardBales.filter((x) => x.d && docDigits.has(x.d));
-  const cardSet = new Set(cardBales.map((x) => x.d));
-  s2._verified = [...new Set(matched.map((x) => x.d))];
-  s2._recMatched = matched.length;
-  s2._recMissing = cardBales.filter((x) => !docDigits.has(x.d)).map((x) => x.p);
-  s2._docOnly = [...docDigits].filter((d) => !cardSet.has(d));
+  const res = saleDocReconcile.reconcile(cardBales, docDigits);
+  s2._verified = res.verified;
+  s2._recMatched = res.matched;
+  s2._recMissing = res.missing;
+  s2._docOnly = res.docOnly;
   s2._recDone = true;
   s2._recError = readErr ? `partial read (${readErr})` : null;
   s2._recRunning = false;
