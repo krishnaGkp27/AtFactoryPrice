@@ -122,15 +122,18 @@ test('SDG-1: drills design → date → customer → bale numbers, and back agai
   const custs = lastKb(bot).filter((b) => b.callback_data.startsWith('sdg:c:'));
   assert.ok(custs.some((b) => /madam oshodi — 1B$/.test(b.text)), `customer with bale count, got: ${custs.map((c) => c.text)}`);
   assert.ok(!custs.some((b) => /yds/.test(b.text)), 'no yards on the customer level');
-  assert.match(lastText(bot), /Day total: 2B · 4 thans/, 'day total counts bales and thans');
+  // TV-8 — one unit per figure; the old "2B · 4 thans" counted the same
+  // goods twice. Fixture is Lagos (bale-only), each bale taken whole.
+  assert.match(lastText(bot), /Day total: 2B/, 'day total in the warehouse unit');
+  assert.ok(!/thans/.test(lastText(bot)), 'never bales AND thans for the same goods');
   assert.ok(!/yds/.test(lastText(bot)), 'no yards on the day total either — still an aggregate');
 
   await flow.handleCallback(bot, cb(custs.find((b) => /madam oshodi/.test(b.text)).callback_data, EMPLOYEE));
   const detail = lastText(bot);
   // SDG-2 layout: numbers ride the shade row in brackets, quantities below,
   // and the flat "Bale numbers (N)" list is gone.
-  assert.match(detail, / • Shade BLACK ×1 \(824\)/, `shade row with numbers, got: ${detail}`);
-  assert.match(detail, /3 thans · 90 yds/, 'quantities on the second line');
+  assert.match(detail, / • Shade BLACK ×1B \(824\)/, `shade row with numbers, got: ${detail}`);
+  assert.match(detail, /90 yds/, 'yards on the second line');
   assert.ok(!/Bale numbers \(/.test(detail), 'flat bale list dropped');
 
   // back-chain: detail → customers → dates → designs

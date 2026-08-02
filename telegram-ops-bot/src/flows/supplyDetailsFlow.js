@@ -72,11 +72,17 @@ function prettyDate(iso) {
   return new Date(ms).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-/** Quantity label in the warehouse's own supply unit (owner-locked). */
-function qtyLabel(rows, useThans) {
+/**
+ * Quantity label in the warehouse's own supply unit (owner-locked), now
+ * whole/loose aware (TV-8, owner 02-Aug): a than-visible warehouse counts
+ * thans; a bale-only one counts WHOLE bales and reports part-taken bales
+ * as loose thans — "3B + 2t" — for when a store starts breaking bales.
+ * `roster` (bale key → total than rows) comes from unitDisplayService;
+ * without it the label degrades to whole-bale counting, as before.
+ */
+function qtyLabel(rows, useThans, roster) {
   if (useThans) return `${rows.length}t`;
-  const bales = new Set(rows.map(baleGroupKey));
-  return `${bales.size}B`;
+  return unitDisplayService.formatQty(rows, { roster });
 }
 
 /* ───────────────────────────── entry ───────────────────────────── */
@@ -149,8 +155,9 @@ async function renderDates(bot, chatId, userId) {
   session._dates = days;
   session.step = 'pick_date';
   sessionStore.set(userId, session);
+  const roster = unitDisplayService.buildBaleRoster(await inventoryRepository.getAll());
   const rows = days.map((d, i) => ([{
-    text: `${prettyDate(d)} — ${qtyLabel(byDay.get(d), session.useThans)}`,
+    text: `${prettyDate(d)} — ${qtyLabel(byDay.get(d), session.useThans, roster)}`,
     callback_data: `sdd:d:${i}`,
   }]));
   rows.push(backRow('⬅ Warehouses'));
@@ -178,8 +185,9 @@ async function renderCustomers(bot, chatId, userId) {
   session._custs = custs;
   session.step = 'pick_customer';
   sessionStore.set(userId, session);
+  const roster = unitDisplayService.buildBaleRoster(await inventoryRepository.getAll());
   const rows = custs.map((c, i) => ([{
-    text: `👤 ${c} — ${qtyLabel(byCust.get(c), session.useThans)}`,
+    text: `👤 ${c} — ${qtyLabel(byCust.get(c), session.useThans, roster)}`,
     callback_data: `sdd:c:${i}`,
   }]));
   rows.push(backRow('⬅ Dates'));
@@ -202,6 +210,7 @@ async function renderDetail(bot, chatId, userId, opts = {}) {
   const session = sessionStore.get(userId);
   if (!session) return;
   const mine = await detailRows(session);
+  const roster = unitDisplayService.buildBaleRoster(await inventoryRepository.getAll());
   const byDesign = new Map();
   for (const r of mine) {
     const d = r.design || '—';
@@ -222,7 +231,7 @@ async function renderDetail(bot, chatId, userId, opts = {}) {
     const e = byDesign.get(d);
     e.bales.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
     const nums = e.bales.length ? ` (${saleDocReconcile.dotted(e.bales, session._verified)})` : '';
-    return `🧵 ${d}: ${qtyLabel(e.rows, session.useThans)}${nums}`;
+    return `🧵 ${d}: ${qtyLabel(e.rows, session.useThans, roster)}${nums}`;
   });
 
   if (!session._docsLoaded) {
@@ -255,7 +264,7 @@ async function renderDetail(bot, chatId, userId, opts = {}) {
     `📦 *${session.warehouse} — ${prettyDate(session.day)} — ${session.customer}*\n`
     + status
     + `\n${lines.join('\n')}\n\n`
-    + `Total: *${qtyLabel(mine, session.useThans)}*`,
+    + `Total: *${qtyLabel(mine, session.useThans, roster)}*`,
     rows);
 }
 

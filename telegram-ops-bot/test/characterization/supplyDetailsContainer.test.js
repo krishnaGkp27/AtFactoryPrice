@@ -35,6 +35,9 @@ const vision = require(path.join(SRC, 'services/vision'));
 const ephemeralDocs = require(path.join(SRC, 'services/ephemeralDocs'));
 
 unitDisplayService.isThanVisibilityWarehouse = async () => false;
+// TV-8 — this fixture is bale-only stock (IDUMOTA); Kano office would show
+// thans. Stubbed so the container assertions don't ride on Settings.
+unitDisplayService.getThanVisibilityWarehouses = async () => new Set(['kano office']);
 
 function row(pkg, opts = {}) {
   return {
@@ -47,7 +50,7 @@ function row(pkg, opts = {}) {
     status: opts.status || 'sold',
     soldTo: opts.status === 'available' ? '' : (opts.customer || 'Madam motunrayo'),
     soldDate: opts.status === 'available' ? '' : (opts.date || '2026-07-27'),
-    warehouse: opts.wh || 'Kano office',
+    warehouse: opts.wh || 'IDUMOTA',
     arrivalBatch: opts.batch === undefined ? 'Jul26' : opts.batch,
     baleUid: `U-${pkg}`,
   };
@@ -136,8 +139,9 @@ test('SDG-2 detail: numbers in brackets per shade, no flat list, chips present',
   await sdg.handleCallback(bot, q('sdg:t:0'));   // 27 Jul
   await sdg.handleCallback(bot, q('sdg:c:0'));   // Madam motunrayo
   const text = lastText(bot);
-  assert.match(text, / • Shade BLACK ×2 \(487, 521\)/);
-  assert.match(text, /2 thans · 300 yds/);
+  assert.match(text, / • Shade BLACK ×2B \(487, 521\)/);
+  assert.match(text, /300 yds/);
+  assert.ok(!/2 thans/.test(text), 'TV-8: one unit per figure, never bales AND thans');
   assert.ok(!/Bale numbers \(/.test(text), 'flat bottom list dropped');
   assert.match(text, /🚢 \*Jul26\*/);
   const kb = lastKb(bot);
@@ -160,7 +164,7 @@ test('SDG-2 🧮 dots matches in place and hides doc-only numbers (narrow card)'
     await sdg.handleCallback(bot, q('sdg:rec'));
     const text = lastText(bot);
     assert.match(text, /📑 Doc check: \*1\/2\* matched/);
-    assert.match(text, / • Shade BLACK ×2 \(🟢487, 521\)/);
+    assert.match(text, / • Shade BLACK ×2B \(🟢487, 521\)/);
     assert.match(text, /⚠️ Not in doc: 521/);
     assert.ok(!/Doc-only/.test(text), 'other designs from the same day are not flagged');
     assert.ok(lastKb(bot).some((b) => b === '🔁 Re-check sale doc|sdg:rec'));

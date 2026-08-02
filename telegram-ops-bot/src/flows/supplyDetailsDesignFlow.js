@@ -75,6 +75,7 @@ const config = require('../config');
 const auth = require('../middlewares/auth');
 const logger = require('../utils/logger');
 const saleDocReconcile = require('../services/saleDocReconcile');
+const unitDisplayService = require('../services/unitDisplayService');
 
 const SESSION_TYPE = 'supply_details_design_flow';
 const { closeRow, backRow } = rowsFor('sdg');
@@ -378,8 +379,11 @@ async function renderCustomers(bot, chatId, userId) {
   session.step = 'pick_customer';
   sessionStore.set(userId, session);
 
+  // TV-8 — these describe what a CUSTOMER received, so they follow the
+  // goods: thans from a than-visible store or a broken bale, else bales.
+  const label = await unitDisplayService.createQtyLabeller(await inventoryRepository.getAll());
   const rows = custs.map((c, i) => ([{
-    text: `👤 ${c} — ${baleCount(byCust.get(c))}B`,
+    text: `👤 ${c} — ${label(byCust.get(c))}`,
     callback_data: `sdg:c:${i}`,
   }]));
   rows.push(backRow('⬅ Dates'));
@@ -387,7 +391,7 @@ async function renderCustomers(bot, chatId, userId) {
 
   await render(bot, chatId, userId,
     `${containerTag(session)}📦 *${session.design}* · 📅 *${prettyDate(session.day)}*\n\n_Who was supplied:_\n\n`
-    + `Day total: ${baleCount(mine)}B · ${mine.length} thans${money(mine, session.showMoney)}`,
+    + `Day total: ${label(mine)}${money(mine, session.showMoney)}`,
     rows);
 }
 
@@ -422,15 +426,17 @@ async function renderDetail(bot, chatId, userId, opts = {}) {
   const session = sessionStore.get(userId);
   if (!session) return;
   const mine = await detailRows(session);
+  // TV-8 — one unit per figure; the old card printed bales AND thans for
+  // the same goods, which counted them twice.
+  const label = await unitDisplayService.createQtyLabeller(await inventoryRepository.getAll());
 
   // SDG-2 (owner-approved) — the bale numbers ride each shade row in
   // brackets (TRF-12 grammar) and the flat bottom list is gone; the money
   // figures sit on a second line so a wide row never wraps into mush.
   const shadeBlocks = byShadeOf(mine).map(([sh, e]) => {
     const yards = e.rows.reduce((s, r) => s + (Number(r.yards) || 0), 0);
-    const b = baleCount(e.rows);
     const nums = e.bales.length ? ` (${saleDocReconcile.dotted(e.bales, session._verified)})` : '';
-    return ` • Shade ${sh} ×${b}${nums}\n   ${e.rows.length} thans · ${fmtQty(yards)} yds${money(e.rows, session.showMoney)}`;
+    return ` • Shade ${sh} ×${label(e.rows)}${nums}\n   ${fmtQty(yards)} yds${money(e.rows, session.showMoney)}`;
   });
 
   if (!session._docsLoaded) {
@@ -465,7 +471,7 @@ async function renderDetail(bot, chatId, userId, opts = {}) {
     `${containerTag(session)}📦 *${session.design}* · 📅 *${prettyDate(session.day)}*\n👤 *${session.customer}*\n`
     + status
     + `\n${shadeBlocks.join('\n')}\n\n`
-    + `*Total: ${total} ${total === 1 ? 'Bale' : 'Bales'} · ${mine.length} thans · ${fmtQty(yards)} yds${money(mine, session.showMoney)}*`,
+    + `*Total: ${label(mine)} · ${fmtQty(yards)} yds${money(mine, session.showMoney)}*`,
     rows);
 }
 

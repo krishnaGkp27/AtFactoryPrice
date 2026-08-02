@@ -30,21 +30,24 @@ const designAssetsRepository = require(path.join(SRC, 'repositories/designAssets
 const telegramFiles = require(path.join(SRC, 'utils/telegramFiles'));
 const vision = require(path.join(SRC, 'services/vision'));
 const ephemeralDocs = require(path.join(SRC, 'services/ephemeralDocs'));
+const unitDisplayService = require(path.join(SRC, 'services/unitDisplayService'));
 
 designAssetsRepository.findActive = async () => null;
+// TV-8 — Kano office supplies in thans; IDUMOTA in bales.
+unitDisplayService.getThanVisibilityWarehouses = async () => new Set(['kano office']);
 
 function soldRow(pkg, design, shade, thanNo, opts = {}) {
   return {
     packageNo: String(pkg), design, shade: String(shade), thanNo,
     yards: opts.yards ?? 30, pricePerYard: opts.price ?? 0,
-    status: 'sold', soldTo: opts.customer ?? 'OKESON',
-    soldDate: opts.date ?? '2026-07-22', warehouse: opts.wh ?? 'Kano office',
+    status: opts.status || 'sold', soldTo: opts.customer ?? 'OKESON',
+    soldDate: opts.date ?? '2026-07-22', warehouse: opts.wh ?? 'IDUMOTA',
     baleUid: `U-${pkg}`,
   };
 }
 
 /** 3 bales sold to OKESON on 22 Jul: 1057+1062 (77008/5,3), 846 (77014/3). */
-function seed({ docs = [{ fileId: 'DOC1', action: 'sale_bundle' }] } = {}) {
+function seed({ docs = [{ fileId: 'DOC1', action: 'sale_bundle' }], extra = [] } = {}) {
   const rows = [
     soldRow('1057', '77008', '5', 1), soldRow('1057', '77008', '5', 2),
     soldRow('1062', '77008', '3', 1),
@@ -53,7 +56,11 @@ function seed({ docs = [{ fileId: 'DOC1', action: 'sale_bundle' }] } = {}) {
     soldRow('999', '9060-A', '', 1, { customer: 'OTHER' }),
     soldRow('555', '77008', '5', 1, { date: '2026-07-20' }),
   ];
-  inventoryRepository.getSoldRows = async () => JSON.parse(JSON.stringify(rows));
+  const world = [...rows, ...extra];
+  // TV-8 — getAll feeds the bale roster (whole vs part-taken bales).
+  inventoryRepository.getAll = async () => JSON.parse(JSON.stringify(world));
+  inventoryRepository.getSoldRows = async () => JSON.parse(JSON.stringify(
+    world.filter((r) => r.status === 'sold')));
   approvalQueueRepository.getResolved = async () => docs.map((d, i) => ({
     requestId: `RQ-${i}`, status: 'approved',
     actionJSON: {
@@ -93,10 +100,10 @@ test('date pick lands on the compact supply card in transfer-card grammar', asyn
   const bot = await openSupplyCard();
   const text = lastText(bot);
   assert.match(text, /OKESON/);
-  assert.match(text, /3 bale\(s\) supplied/);
+  assert.match(text, /3B supplied/);
   assert.match(text, /🧵 \*77008\*/);
-  assert.match(text, / • Shade 5 ×1 \(1057\)/);
-  assert.match(text, / • Shade 3 ×1 \(1062\)/);
+  assert.match(text, / • Shade 5 ×1B \(1057\)/);
+  assert.match(text, / • Shade 3 ×1B \(1062\)/);
   assert.match(text, /🧵 \*77014\*/);
   assert.ok(!/yd|₦|#1/.test(text), 'no thans/yards/money on the compact card');
   assert.ok(!/999|555/.test(text), 'other customers/days never leak in');
@@ -129,9 +136,9 @@ test('🧮 reconcile marks 🟢 dots IN PLACE and lists the shortfall', async ()
     await flow.handleCallback(bot, q('sbl:rec', '777'));
     const text = lastText(bot);
     assert.match(text, /📑 Doc check: \*2\/3\* matched/);
-    assert.match(text, / • Shade 5 ×1 \(🟢1057\)/);
-    assert.match(text, / • Shade 3 ×1 \(🟢1062\)/);
-    assert.match(text, / • Shade 3 ×1 \(846\)/, '846 stays undotted');
+    assert.match(text, / • Shade 5 ×1B \(🟢1057\)/);
+    assert.match(text, / • Shade 3 ×1B \(🟢1062\)/);
+    assert.match(text, / • Shade 3 ×1B \(846\)/, '846 stays undotted');
     assert.match(text, /⚠️ Not in doc: 846/);
     assert.match(text, /Doc-only numbers: 899/);
     // In place: card edits only — the reconcile added no NEW chat card.
@@ -214,4 +221,40 @@ test('📄 delivers the doc as an ephemeral view, swept on the next tap', async 
   // Any next sbl tap sweeps the delivered copy (TRF-9b behaviour).
   await flow.handleCallback(bot, q('sbl:noop', '777'));
   assert.ok(bot.callsTo('deleteMessage').length >= 1, 'doc view swept');
+});
+
+/* ── TV-8: the unit follows the goods (owner, 02-Aug) ───────────────── */
+
+test('TV-8: a than-visible store shows thans, a bale-only store shows bales', async () => {
+  seed();
+  const bot = await openSupplyCard();
+  // Fixture is all IDUMOTA (bale-only), each bale taken whole.
+  assert.match(lastText(bot), /3B supplied/);
+
+  // Same goods out of Kano office → thans.
+  seed();
+  const kano = [
+    soldRow('1057', '77008', '5', 1, { wh: 'Kano office' }),
+    soldRow('1057', '77008', '5', 2, { wh: 'Kano office' }),
+  ];
+  inventoryRepository.getAll = async () => JSON.parse(JSON.stringify(kano));
+  inventoryRepository.getSoldRows = async () => JSON.parse(JSON.stringify(kano));
+  const bot2 = await openSupplyCard();
+  assert.match(lastText(bot2), /2t supplied/, `Kano goods count in thans, got: ${lastText(bot2)}`);
+});
+
+test('TV-8: a part-taken bale reads as loose thans, mixed with whole bales', async () => {
+  // Bale 1057 has 4 thans; the customer took only 2 → 2 loose thans.
+  // Bales 1062 and 846 were taken whole → 2B. Label: "2B + 2t".
+  seed({
+    extra: [
+      soldRow('1057', '77008', '5', 3, { status: 'available' }),
+      soldRow('1057', '77008', '5', 4, { status: 'available' }),
+    ],
+  });
+  const bot = await openSupplyCard();
+  const text = lastText(bot);
+  assert.match(text, /2B \+ 2t supplied/, `whole bales + loose thans, got: ${text}`);
+  assert.match(text, / • Shade 5 ×2t \(1057\)/, 'the broken bale reads in thans');
+  assert.match(text, / • Shade 3 ×1B \(1062\)/, 'whole bales unaffected');
 });

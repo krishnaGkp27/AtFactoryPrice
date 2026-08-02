@@ -53,6 +53,7 @@ const logger              = require('../utils/logger');
 const { buildShadeNameMap, formatShadeRef } = require('../utils/shadeButtons');
 const { baleGroupKey } = require('../utils/inventoryPickers');
 const saleDocReconcile = require('../services/saleDocReconcile');
+const unitDisplayService = require('../services/unitDisplayService');
 
 const SESSION_TYPE   = 'sold_bales_flow';
 const TILES_PER_ROW  = 2;
@@ -146,20 +147,27 @@ async function start(bot, chatId, userId, messageId) {
  * @returns {Promise<Array<{name:string,lastDate:string,thans:number,bales:number,yards:number}>>}
  */
 async function loadCustomers() {
+  // TV-8 — the chip label follows the goods, not a fixed unit: the whole
+  // Inventory feeds the bale roster so a part-taken bale reads as thans.
+  const all = await inventoryRepository.getAll();
+  const label = await unitDisplayService.createQtyLabeller(all);
   const sold = await inventoryRepository.getSoldRows();
   const byCust = new Map();
   for (const r of sold) {
     const name = r.soldTo;
-    if (!byCust.has(name)) byCust.set(name, { name, lastDate: '', thans: 0, yards: 0, bales: new Set() });
+    if (!byCust.has(name)) byCust.set(name, { name, lastDate: '', rows: [], yards: 0, bales: new Set() });
     const e = byCust.get(name);
-    e.thans += 1;
+    e.rows.push(r);
     e.yards += r.yards;
     e.bales.add(baleGroupKey(r));
     const day = normDay(r.soldDate);
     if (day > String(e.lastDate)) e.lastDate = day;
   }
   return Array.from(byCust.values())
-    .map((e) => ({ name: e.name, lastDate: e.lastDate, thans: e.thans, yards: e.yards, bales: e.bales.size }))
+    .map((e) => ({
+      name: e.name, lastDate: e.lastDate, thans: e.rows.length,
+      yards: e.yards, bales: e.bales.size, qty: label(e.rows),
+    }))
     .sort((a, b) => String(b.lastDate).localeCompare(String(a.lastDate)) || a.name.localeCompare(b.name));
 }
 
@@ -180,7 +188,7 @@ async function renderCustomerPicker(bot, chatId, userId) {
   const showAll = session.showAllCustomers;
   const shown = showAll ? customers : customers.slice(0, CUSTOMERS_TOP);
   const tiles = shown.map((c, i) => ({
-    text: `👤 ${c.name} · ${c.thans}t`,
+    text: `👤 ${c.name} · ${c.qty}`,
     callback_data: `sbl:c:${i}`,
   }));
   const rows = chunkButtons(tiles, TILES_PER_ROW);
@@ -202,20 +210,32 @@ async function renderCustomerPicker(bot, chatId, userId) {
  * @returns {Promise<Array<{date:string,thans:number,bales:number,yards:number}>>}
  */
 async function loadDatesForCustomer(customer) {
+  const all = await inventoryRepository.getAll();
+  const label = await unitDisplayService.createQtyLabeller(all);
   const sold = await inventoryRepository.getSoldRows();
   const byDate = new Map();
+  const mine = [];
   for (const r of sold) {
     if (r.soldTo !== customer) continue;
+    mine.push(r);
     const day = normDay(r.soldDate);
-    if (!byDate.has(day)) byDate.set(day, { date: day, thans: 0, yards: 0, bales: new Set() });
+    if (!byDate.has(day)) byDate.set(day, { date: day, rows: [], yards: 0, bales: new Set() });
     const e = byDate.get(day);
-    e.thans += 1;
+    e.rows.push(r);
     e.yards += r.yards;
     e.bales.add(baleGroupKey(r));
   }
-  return Array.from(byDate.values())
-    .map((e) => ({ date: e.date, thans: e.thans, yards: e.yards, bales: e.bales.size }))
+  const out = Array.from(byDate.values())
+    .map((e) => ({
+      date: e.date, thans: e.rows.length, yards: e.yards,
+      bales: e.bales.size, qty: label(e.rows),
+    }))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  // TV-8 — the header total is the customer's whole history in one label,
+  // not the sum of per-day bale counts (a bale split across days would
+  // otherwise be counted twice).
+  out.totalQty = label(mine);
+  return out;
 }
 
 async function renderDatePicker(bot, chatId, userId) {
@@ -234,12 +254,11 @@ async function renderDatePicker(bot, chatId, userId) {
   sessionStore.set(userId, session);
   // CSUP-1 (owner-approved layout): summary header + one wide tile per day,
   // newest first, "DD-MMM-YYYY — N bales (Y yds)", 8 per page.
-  const totBales = dates.reduce((s, d) => s + d.bales, 0);
   const totYards = dates.reduce((s, d) => s + d.yards, 0);
   const first = dates[dates.length - 1];
   const slice = dates.slice(page * DATES_PER_PAGE, (page + 1) * DATES_PER_PAGE);
   const rows = slice.map((d, i) => ([{
-    text: `${prettyDate(d.date)} — ${d.bales} ${d.bales === 1 ? 'bale' : 'bales'} (${d.yards ? `${fmtQty(d.yards)} yds` : '— yds'})`,
+    text: `${prettyDate(d.date)} — ${d.qty} (${d.yards ? `${fmtQty(d.yards)} yds` : '— yds'})`,
     callback_data: `sbl:d:${page * DATES_PER_PAGE + i}`,
   }]));
   const nav = [];
@@ -252,7 +271,7 @@ async function renderDatePicker(bot, chatId, userId) {
   rows.push(closeRow());
   await render(bot, chatId, userId,
     `📒 *Supplies — ${session.customer}*\n\n`
-    + `Total: *${totBales}* bales · *${fmtQty(totYards)}* yds\n`
+    + `Total: *${dates.totalQty}* · *${fmtQty(totYards)}* yds\n`
     + `across *${dates.length}* supply day${dates.length === 1 ? '' : 's'} · first: ${prettyDate(first.date)}\n\n`
     + `_Tap a date for the day's detail._`, rows);
 }
@@ -264,30 +283,37 @@ async function renderDatePicker(bot, chatId, userId) {
  * bale numbers (bale identity via baleGroupKey, same as the detail view).
  */
 async function loadSummary(session) {
+  const all = await inventoryRepository.getAll();
+  const label = await unitDisplayService.createQtyLabeller(all);
   const sold = await inventoryRepository.getSoldRows();
   const rows = sold.filter((r) => r.soldTo === session.customer && normDay(r.soldDate) === session.soldDate);
   const designs = new Map();
   const seen = new Set();
   let baleCount = 0;
   for (const r of rows) {
-    const k = baleGroupKey(r);
-    if (seen.has(k)) continue;
-    seen.add(k);
-    baleCount += 1;
     if (!designs.has(r.design)) designs.set(r.design, new Map());
     const shades = designs.get(r.design);
     const sk = String(r.shade || '');
-    if (!shades.has(sk)) shades.set(sk, []);
-    shades.get(sk).push(String(r.packageNo));
+    // TV-8 — every than row rides the shade bucket (the label decides the
+    // unit); the printed numbers stay one entry per physical bale.
+    if (!shades.has(sk)) shades.set(sk, { bales: [], rows: [] });
+    const e = shades.get(sk);
+    e.rows.push(r);
+    const k = baleGroupKey(r);
+    if (!seen.has(k)) {
+      seen.add(k);
+      baleCount += 1;
+      e.bales.push(String(r.packageNo));
+    }
   }
-  return { designs, baleCount };
+  return { designs, baleCount, label, dayQty: label(rows), rows };
 }
 
 /** Render the compact supply card, in place. opts.reading → ⏳ status. */
 async function renderSummary(bot, chatId, userId, opts = {}) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const { designs, baleCount } = await loadSummary(session);
+  const { designs, baleCount, label, dayQty } = await loadSummary(session);
   if (!baleCount) {
     await render(bot, chatId, userId,
       `🧾 *${session.customer}* · ${prettyDate(session.soldDate)}\n\n_Nothing found — it may have been returned._`,
@@ -300,7 +326,7 @@ async function renderSummary(bot, chatId, userId, opts = {}) {
   }
   const verified = new Set(session._verified || []);
   let body = `🧾 *${session.customer}* · ${prettyDate(session.soldDate)}\n`
-    + `_${baleCount} bale(s) supplied_\n`;
+    + `_${dayQty} supplied_\n`;
   if (opts.reading) {
     const prog = opts.of > 1 ? ` (doc ${opts.at}/${opts.of})` : '';
     body += `\n⏳ _Reading sale doc…${prog}_\n`;
@@ -321,9 +347,9 @@ async function renderSummary(bot, chatId, userId, opts = {}) {
   for (const [design, shades] of designs) {
     const cat = designCategoriesRepository.categoryOfSync(design);
     body += `\n🧵 *${design}*${cat ? ` · ${cat}` : ''}\n`;
-    for (const [shade, pkgs] of shades) {
-      const nums = saleDocReconcile.dotted(pkgs, [...verified]);
-      body += ` • Shade ${shade || '—'} ×${pkgs.length} (${nums})\n`;
+    for (const [shade, e] of shades) {
+      const nums = saleDocReconcile.dotted(e.bales, [...verified]);
+      body += ` • Shade ${shade || '—'} ×${label(e.rows)} (${nums})\n`;
     }
   }
   const rows = [];
@@ -387,7 +413,7 @@ async function runReconcile(bot, chatId, userId) {
   const { designs } = await loadSummary(s2);
   const cardBales = [];
   for (const shades of designs.values()) {
-    for (const pkgs of shades.values()) for (const p of pkgs) cardBales.push(String(p));
+    for (const e of shades.values()) for (const p of e.bales) cardBales.push(String(p));
   }
   if (!docDigits.size) {
     s2._recRunning = false;
@@ -435,6 +461,9 @@ async function renderDetail(bot, chatId, userId) {
       [backRow('⬅ Summary'), closeRow()]);
     return;
   }
+  // TV-8 — header/total follow the goods; the per-bale lines below stay a
+  // than-by-than breakdown, which is what this deep view is for.
+  const dayQty = (await unitDisplayService.createQtyLabeller(await inventoryRepository.getAll()))(rows);
 
   // Group by bale; cache shade-name maps per design.
   const groups = new Map();
@@ -459,7 +488,7 @@ async function renderDetail(bot, chatId, userId) {
   let totThans = 0; let totYards = 0; let totAmount = 0;
   const groupList = Array.from(groups.values());
   let body = `🧾 *${session.customer}* · ${prettyDate(session.soldDate)}\n`
-    + `_${groupList.length} bale(s) sold this day_\n`;
+    + `_${dayQty} sold this day_\n`;
   let shown = 0;
   for (const g of groupList) {
     totThans += g.thans.length;
@@ -483,7 +512,7 @@ async function renderDetail(bot, chatId, userId) {
   if (groupList.length > MAX_DETAIL_BALES) {
     body += `\n_…and ${groupList.length - MAX_DETAIL_BALES} more bale(s) not shown._\n`;
   }
-  body += `\n──────────\n*Total:* ${totThans} than · ${fmtQty(totYards)} yd`;
+  body += `\n──────────\n*Total:* ${dayQty} · ${fmtQty(totYards)} yd`;
   if (showMoney) body += ` · *${fmtNgn(totAmount)}*`;
 
   await render(bot, chatId, userId, body, [backRow('⬅ Summary'), closeRow()]);

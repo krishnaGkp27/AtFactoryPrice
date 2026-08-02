@@ -7043,7 +7043,15 @@ async function runS41() {
 
   const sessionStore = require('../src/utils/sessionStore');
   stubModule(require.resolve('../src/repositories/inventoryRepository'), {
+    // TV-8 — getAll feeds the bale roster (whole bale vs part-taken).
+    getAll: async () => sold,
     getSoldRows: async () => sold,
+  });
+  stubModule(require.resolve('../src/services/unitDisplayService'), {
+    getThanVisibilityWarehouses: async () => new Set(['kano office']),
+    formatQty: require('../src/services/unitDisplayService').formatQty,
+    buildBaleRoster: require('../src/services/unitDisplayService').buildBaleRoster,
+    createQtyLabeller: require('../src/services/unitDisplayService').createQtyLabeller,
   });
   stubModule(require.resolve('../src/repositories/designAssetsRepository'), {
     findActive: async (d) => assets[d] || null,
@@ -7074,8 +7082,8 @@ async function runS41() {
   const custBtns = flatten(captured.rows);
   const cje = custBtns.find((b) => b.callback_data === 'sbl:c:0');
   const ibr = custBtns.find((b) => b.callback_data === 'sbl:c:1');
-  if (cje && /CJE/.test(cje.text) && /4t/.test(cje.text) && ibr && /Ibrahim/.test(ibr.text)) {
-    pass('S41.1 customer list: most-recent buyer first (CJE 4t before Ibrahim)');
+  if (cje && /CJE/.test(cje.text) && /3B/.test(cje.text) && ibr && /Ibrahim/.test(ibr.text)) {
+    pass('S41.1 customer list: most-recent buyer first (TV-8: CJE 3B before Ibrahim)');
   } else fail('S41.1', JSON.stringify(custBtns));
 
   // ---- S41.2 — date list for the chosen customer, newest first ----
@@ -7083,17 +7091,17 @@ async function runS41() {
   const dateBtns = flatten(captured.rows);
   const d0 = dateBtns.find((b) => b.callback_data === 'sbl:d:0');
   const d1 = dateBtns.find((b) => b.callback_data === 'sbl:d:1');
-  if (d0 && /25 Jun 2026 — 2 bales \(75 yds\)/.test(d0.text)
-      && d1 && /20 Jun 2026 — 1 bale \(30 yds\)/.test(d1.text)) {
-    pass('S41.2 date list: newest-first days, CSUP-1 "N bales (Y yds)" tiles');
+  if (d0 && /25 Jun 2026 — 2B \(75 yds\)/.test(d0.text)
+      && d1 && /20 Jun 2026 — 1B \(30 yds\)/.test(d1.text)) {
+    pass('S41.2 date list: newest-first days, TV-8 "NB (Y yds)" tiles');
   } else fail('S41.2', JSON.stringify(dateBtns));
 
   // ---- S41.3 — SBL-2: date tap lands on the COMPACT supply card, and
   // 🔎 Full details opens the deep view (price role: thans + ₦) ----
   await flow.handleCallback(bot, cbq('admin', 'sbl:d:0'));
   const sum = captured.text;
-  const sumOk = /2 bale\(s\) supplied/.test(sum)
-    && / • Shade 11 ×1 \(6534\)/.test(sum) && / • Shade 7 ×1 \(6101\)/.test(sum)
+  const sumOk = /2B supplied/.test(sum)
+    && / • Shade 11 ×1B \(6534\)/.test(sum) && / • Shade 7 ×1B \(6101\)/.test(sum)
     && !/₦|than \(#/.test(sum)
     && flatten(captured.rows).some((b) => b.callback_data === 'sbl:full');
   await flow.handleCallback(bot, cbq('admin', 'sbl:full'));

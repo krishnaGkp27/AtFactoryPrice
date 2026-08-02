@@ -103,6 +103,35 @@ logged bales 867/842/873/863 while the truck carried 869/843/874/864.
 - Container labels match case-insensitively; unlabelled rows bucket under
   `(unlabelled)` rather than disappearing.
 
+## 6c · One quantity grammar: B, t, or "..B + ..t"
+
+**Locked 02-Aug-2026 (TV-8).** Supersedes the per-screen unit choices.
+
+> "Only the customer taking the goods from an allowed store (Kano office,
+> Lagos office) will be showing thans. Remaining will be showing bales with
+> suffix B, or bales plus thans ..B + ..t."
+
+- A quantity is counted in **thans** for two independent reasons, and both
+  fold into one label: (1) the goods left a than-visibility warehouse
+  (Settings `THAN_VISIBILITY_WAREHOUSES`), or (2) the customer took only
+  PART of a bale — a bale-only store that starts breaking bales ("moving
+  the warehouse into small store"). Everything else counts in **bales**.
+- Whole bales first, then every loose than from either source, added:
+  `6B` · `250t` · `4B + 21t`.
+- **Never print both units for the same goods.** "2B · 4 thans" counted
+  one delivery twice and is banned.
+- "Whole" means the customer took EVERY than of that bale, judged against
+  the bale's full than roster (all statuses), keyed
+  design|packageNo|arrival_batch so a re-used printed number in a
+  different container stays its own bale.
+- Yards are a measure, not a packaging unit — they still print alongside.
+- Engine: `unitDisplayService.createQtyLabeller()` / `formatQty()`. Any new
+  screen showing a fabric quantity uses it; hardcoded `${n}B` / `${n}t`
+  is a bug.
+- Navigation tiles that describe a **stock position** rather than what a
+  customer received (container tiles, the design supplied/total pair) stay
+  in bales — owner's call, so the pairs stay readable.
+
 ## 7 · Bales and loose thans are separate cargo
 
 **Locked 01-Aug-2026 (APX-6c).**

@@ -173,6 +173,101 @@ async function setWarehouseMode(warehouse, mode) {
   return next;
 }
 
+/* ── TV-8: the one quantity grammar (owner, 02-Aug-2026) ─────────────
+ *
+ * "Only the customer taking the goods from an allowed store (Kano office,
+ *  Lagos office) will be showing thans. Remaining will be showing bales
+ *  with suffix B, or bales plus thans ..B + ..t."
+ *
+ * Two things make a quantity thans, and BOTH are folded into one label:
+ *   1. the goods left a than-visibility warehouse (TV-1 Settings), or
+ *   2. the customer took only PART of a bale — a bale-only warehouse that
+ *      starts breaking bales (owner: "if we start moving the warehouse
+ *      into small store as well") supplies whole bales + loose thans.
+ *
+ * So: 6B · 250t · 4B + 21t — a customer's whole bales, then every loose
+ * than from either source, added together. Yards are a measure, not a
+ * packaging unit, and are printed alongside by callers as before.
+ *
+ * "Whole" means the customer took EVERY than of that bale — judged
+ * against the bale's full than roster across all statuses, so a bale
+ * split between two customers reads as loose thans for each of them.
+ * Without a roster the labeller degrades to counting whole bales, which
+ * is exactly the pre-TV-8 behaviour.
+ *
+ * KNOWN LIMIT: the roster is keyed design|packageNo|arrival_batch. Printed
+ * numbers are legitimately re-used across intakes (BUSINESS_RULES §5), so
+ * two physical bales sharing a number AND a container would share a
+ * roster and could read as loose. The container axis makes that rare; the
+ * alternative (a per-bale id) does not exist in the sheet — bale_uid is
+ * per-than.
+ */
+
+const { baleGroupKey } = require('../utils/inventoryPickers');
+
+/** Roster key: the bale identity, narrowed by arrival container. */
+function rosterKey(r) {
+  const batch = String((r && r.arrivalBatch) || '').trim().toUpperCase();
+  return `${baleGroupKey(r)}|${batch}`;
+}
+
+/**
+ * Build the than-count roster for every bale — how many than rows exist,
+ * across ALL statuses. Pass `inventoryRepository.getAll()` rows.
+ * @param {Array<object>} allRows
+ * @returns {Map<string, number>}
+ */
+function buildBaleRoster(allRows) {
+  const roster = new Map();
+  for (const r of allRows || []) {
+    const k = rosterKey(r);
+    roster.set(k, (roster.get(k) || 0) + 1);
+  }
+  return roster;
+}
+
+/**
+ * Format one row set in the owner's grammar.
+ * @param {Array<object>} rows sold/held Inventory rows (one row = one than)
+ * @param {{thanWarehouses?:Set<string>, roster?:Map<string,number>, empty?:string}} opts
+ * @returns {string} "6B" · "250t" · "4B + 21t"
+ */
+function formatQty(rows, opts = {}) {
+  const thanSet = opts.thanWarehouses || new Set();
+  const roster = opts.roster || null;
+  let thans = 0;
+  let bales = 0;
+  const byBale = new Map();
+  for (const r of rows || []) {
+    const wh = String((r && r.warehouse) || '').trim().toLowerCase();
+    if (thanSet.has(wh)) { thans += 1; continue; }   // than-visible store
+    const k = rosterKey(r);
+    if (!byBale.has(k)) byBale.set(k, 0);
+    byBale.set(k, byBale.get(k) + 1);
+  }
+  for (const [k, taken] of byBale) {
+    const total = roster ? (roster.get(k) || taken) : taken;
+    if (taken >= total) bales += 1;                  // the whole bale
+    else thans += taken;                             // a broken bale
+  }
+  const parts = [];
+  if (bales) parts.push(`${bales}B`);
+  if (thans) parts.push(`${thans}t`);
+  return parts.length ? parts.join(' + ') : (opts.empty || '0B');
+}
+
+/**
+ * One-call helper for a render: resolves the than-visible set once and
+ * (optionally) builds the roster, returning a SYNC labeller.
+ * @param {Array<object>} [allRows] every Inventory row, for whole/loose
+ * @returns {Promise<function(Array<object>, object=):string>}
+ */
+async function createQtyLabeller(allRows) {
+  const thanWarehouses = await getThanVisibilityWarehouses();
+  const roster = allRows ? buildBaleRoster(allRows) : null;
+  return (rows, extra = {}) => formatQty(rows, { thanWarehouses, roster, ...extra });
+}
+
 module.exports = {
   SETTINGS_KEY,
   formatBalesThans,
@@ -184,4 +279,9 @@ module.exports = {
   isThanVisibilityWarehouse,
   setWarehouseMode,
   invalidateCache,
+  // TV-8
+  formatQty,
+  buildBaleRoster,
+  createQtyLabeller,
+  _internals: { rosterKey },
 };
