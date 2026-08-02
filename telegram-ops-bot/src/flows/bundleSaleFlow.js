@@ -48,7 +48,7 @@
  *   bs:wholebale:<baleUid|pkg:..>  (toggle whole bale from the bale list)
  *   bs:than:<key>                  (toggle one than)
  *   bs:take_all:<baleUid|pkg:..>   (every available than in bale)
- *   bs:smartpack                   (start target-yardage assist)
+ *   bs:smartpack                   (RETIRED by TRF-15 — answers a notice)
  *   bs:cart                        (jump straight to cart view)
  *   bs:expand:<shadeKey>           (collapse/expand a cart line)
  *   bs:rm_line:<key>
@@ -364,8 +364,8 @@ async function renderShadePicker(bot, chatId, userId) {
       text: `✅ Take ALL ${availableShades} shade${availableShades === 1 ? '' : 's'} (${totalRemThans} ${totalRemThans === 1 ? THAN_UNIT.singular : THAN_UNIT.plural})`,
       callback_data: 'bs:all_shades',
     }]);
-    // Smart-pack stays as an extra escape hatch (not present in Supply).
-    rows.push([{ text: '🎯 Pack target yardage', callback_data: 'bs:smartpack' }]);
+    // TRF-15 (owner rule, 02-Aug) — Smart-Pack removed: the bot never
+    // selects physical thans. Every than in a sale is hand-ticked.
   } else {
     rows.push([{ text: '🛒 Review cart', callback_data: 'bs:cart' }]);
   }
@@ -1014,8 +1014,15 @@ async function handleCallback(bot, query) {
     return true;
   }
 
-  if (data === 'bs:smartpack') { await renderSmartPackPrompt(bot, chatId, userId); return true; }
-  if (data === 'bs:smartpack_apply') { await commitSmartPack(bot, chatId, userId); return true; }
+  if (data === 'bs:smartpack' || data === 'bs:smartpack_apply') {
+    // TRF-15 (owner rule, 02-Aug) — the bot never selects physical thans.
+    // Old cards may still carry the button; answer instead of acting.
+    await bot.answerCallbackQuery(query.id, {
+      text: 'Smart-Pack is off — the bot no longer picks thans. Tick each than yourself.',
+      show_alert: true,
+    }).catch(() => {});
+    return true;
+  }
 
   // DSP-1 — cart goes straight to confirm; customer, rate and payment
   // are assigned by the admin at approval.
