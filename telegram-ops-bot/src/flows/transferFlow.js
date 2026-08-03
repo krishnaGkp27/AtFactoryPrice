@@ -37,6 +37,9 @@
  *   trf:vd:d|r:<id>              TRF-9 view attached dispatch/receipt file
  *   trf:bn:<id>                  TRF-11 bale numbers popup (trf:bl:* is the
  *                                dispatch bale PICKER — do not reuse)
+ *   trf:dd:<iso> · trf:dm:<ym> · trf:dq   TRF-16 departure-date picker
+ *                                (the date the goods PHYSICALLY left the
+ *                                store — owner, 03-Aug)
  */
 
 const sessionStore = require('../utils/sessionStore');
@@ -50,6 +53,8 @@ const telegramFiles = require('../utils/telegramFiles');
 const auth = require('../middlewares/auth');
 const config = require('../config');
 const logger = require('../utils/logger');
+const dateCalendar = require('../utils/dateCalendar');
+const fmtDate = require('../utils/formatDate');
 const { isNotModified } = require('../utils/telegramUI');
 // APX-4b — human-readable transfer refs (TR-20260724-003 → "24Jul·03");
 // display-only, callbacks and sheet rows keep the full id.
@@ -396,6 +401,15 @@ function headOf(aj) {
   return `*${aj.from}* → *${aj.to}* · ${n} bale(s)`;
 }
 
+/**
+ * TRF-16 — "📅 Left IDUMOTA: 02 Aug 2026" for a dispatched transfer. Empty
+ * before dispatch and for pre-TRF-16 rows (which never carried the date).
+ */
+function departedLine(aj) {
+  if (!aj || !aj.dispatchedOn) return '';
+  return `\n📅 Left ${aj.from}: *${fmtDate(aj.dispatchedOn)}*`;
+}
+
 /** Compact one-liner for list rows: "12 bale(s) · 80045 Senator · Lagos → Kano office". */
 function compactOf(aj) {
   const designs = [...new Set((aj.lines || []).map((l) => l.design))].map((d) => {
@@ -493,7 +507,7 @@ async function showBaleNumbers(bot, query, requestId) {
 function receiverCard(requestId, aj) {
   const shortNote = aj.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
   return {
-    text: `📦 *Transfer ${shortTransferRef(requestId)} incoming*\n${headOf(aj)}\n${dispatchedBlock(aj)}${shortNote}\n\nConfirm when the goods arrive and match — a photo/PDF of the received goods is required:`,
+    text: `📦 *Transfer ${shortTransferRef(requestId)} incoming*\n${headOf(aj)}${departedLine(aj)}\n${dispatchedBlock(aj)}${shortNote}\n\nConfirm when the goods arrive and match — a photo/PDF of the received goods is required:`,
     kb: { inline_keyboard: [[
       { text: '✅ Received', callback_data: `trf:rcv:${requestId}` },
       { text: '⚠️ Reject', callback_data: `trf:rej:${requestId}` },
@@ -540,7 +554,7 @@ async function detailCard(row) {
   const names = await nameMap([aj.dispatcher, aj.receiver]);
   const out = [
     `🚚 *${row.requestId}* — ${stateLabel(row)}`,
-    headOf(aj),
+    headOf(aj) + departedLine(aj),
     `Dispatcher: ${names[String(aj.dispatcher)]} · Receiver: ${names[String(aj.receiver)]}`,
     '',
     aj.dispatched && aj.dispatched.length ? dispatchedBlock(aj) : linesBlock(aj.lines),
@@ -774,6 +788,10 @@ async function startDispatchPicker(bot, chatId, userId, row, messageId) {
   sessionStore.set(userId, {
     type: SESSION_TYPE, step: 'dispatch_pick',
     requestId: row.requestId, from: aj.from, to: aj.to,
+    // TRF-16 — the date the goods physically leave the store. Defaults to
+    // today, so the common case costs no taps; the dispatcher changes it
+    // when he is logging a load that left earlier.
+    leftOn: dateCalendar.lagosISO(0),
     pl, idx: 0, flowMessageId: messageId || null,
     ttlMs: 30 * 60 * 1000, // physical bale picking — outlasts the default TTL
   });
@@ -922,7 +940,27 @@ async function handleText(bot, msg) {
   const userId = String(msg.from.id);
   const chatId = msg.chat.id;
   const session = sessionStore.get(userId);
-  if (!session || session.type !== SESSION_TYPE || session.step !== 'dispatch_search') return false;
+  if (!session || session.type !== SESSION_TYPE) return false;
+  if (session.step === 'dispatch_date') {
+    const q = String(msg.text || '').trim();
+    if (!q || q.length > 30) return false;
+    const { normalizeSalesDate } = require('../utils/dates');
+    const iso = normalizeSalesDate(q);
+    if (iso && dateCalendar.checkRange(iso, DATE_MAX_DAYS_BACK).ok) {
+      await showDepartureCalendar(bot, msg.chat.id, userId, iso.slice(0, 7), {
+        highlight: iso,
+        note: `You typed *${fmtDate(iso)}* — confirm it with a TAP:`,
+      });
+      return true;
+    }
+    await showDepartureCalendar(bot, msg.chat.id, userId, dateCalendar.lagosISO(0).slice(0, 7), {
+      note: iso
+        ? `⚠️ ${fmtDate(iso)} is out of range (no future, max ${DATE_MAX_DAYS_BACK} days back) — tap a valid day:`
+        : `⚠️ Could not read that as a date — tap the day instead:`,
+    });
+    return true;
+  }
+  if (session.step !== 'dispatch_search') return false;
   const q = String(msg.text || '').trim();
   if (!q) return true;
   session._q = q;
@@ -966,10 +1004,66 @@ async function showDispatchConfirm(bot, chatId, userId) {
         [{ text: '❌ Decline', callback_data: `trf:dec:${session.requestId}` }]]);
     return;
   }
+  const leftOn = session.leftOn || dateCalendar.lagosISO(0);
+  const isToday = leftOn === dateCalendar.lagosISO(0);
   await render(bot, chatId, userId,
-    `🚚 *${session.requestId}* — dispatch ${picked.length} bale(s)?\n${perLine}${warnBlock}\n\n*${session.from}* → *${session.to}*\n📸 _A load photo/PDF is required next._`,
+    `🚚 *${session.requestId}* — dispatch ${picked.length} bale(s)?\n${perLine}${warnBlock}\n\n`
+    + `*${session.from}* → *${session.to}*\n`
+    + `📅 Left the store: *${fmtDate(leftOn)}*${isToday ? ' (today)' : ''}\n`
+    + '📸 _A load photo/PDF is required next._',
     [[{ text: '🚚 Dispatch', callback_data: 'trf:bl:go' }],
+      [{ text: '📅 Change date', callback_data: 'trf:dq' }],
       [{ text: '◀ Back', callback_data: 'trf:bl:bk' }, { text: '❌ Decline', callback_data: `trf:dec:${session.requestId}` }]]);
+}
+
+/* ── TRF-16: departure date (owner, 03-Aug) ─────────────────────────── */
+
+const DATE_MAX_DAYS_BACK = 90;
+
+/** Quick chips + a door to the month grid. */
+async function showDepartureDates(bot, chatId, userId, note) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'dispatch_date';
+  sessionStore.set(userId, session);
+  const rows = dateCalendar.quickChipRows('trf');
+  rows.push([{ text: '◀ Back to review', callback_data: 'trf:bl:bk' }]);
+  await render(bot, chatId, userId,
+    `🚚 *${session.requestId}*\n\n📅 *When did the goods leave ${session.from}?*\n`
+    + `${note ? `\n${note}\n` : ''}\n_Tap a chip, open the calendar, or type it (e.g. ${fmtDate(dateCalendar.lagosISO(1))})._`,
+    rows);
+}
+
+/** Month grid for `ym`. */
+async function showDepartureCalendar(bot, chatId, userId, ym, opts = {}) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'dispatch_date';
+  sessionStore.set(userId, session);
+  const rows = dateCalendar.calendarRows('trf', ym, { maxDaysBack: DATE_MAX_DAYS_BACK, highlight: opts.highlight });
+  rows.push([{ text: '◀ Back to review', callback_data: 'trf:bl:bk' }]);
+  await render(bot, chatId, userId,
+    `🚚 *${session.requestId}*\n\n${opts.note ? `${opts.note}\n\n` : ''}`
+    + `📆 *Tap the day the goods left ${session.from}* (up to ${DATE_MAX_DAYS_BACK} days back). Dots are out of range.`,
+    rows);
+}
+
+/** Every date entry point lands here: range-gate, store, back to review. */
+async function applyDepartureDate(bot, chatId, userId, iso) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const check = dateCalendar.checkRange(iso, DATE_MAX_DAYS_BACK);
+  if (!check.ok) {
+    await showDepartureCalendar(bot, chatId, userId, dateCalendar.lagosISO(0).slice(0, 7), {
+      note: check.reason === 'future'
+        ? `⚠️ ${fmtDate(iso)} is in the FUTURE — goods cannot have left yet.`
+        : `⚠️ ${fmtDate(iso)} is more than ${DATE_MAX_DAYS_BACK} days back — ask an admin if that is genuine.`,
+    });
+    return;
+  }
+  session.leftOn = iso;
+  sessionStore.set(userId, session);
+  await showDispatchConfirm(bot, chatId, userId);
 }
 
 /**
@@ -1018,7 +1112,12 @@ async function askDispatchDoc(bot, chatId, userId) {
     // Label matches where trf:bl:bk actually goes at the gate: the review.
     kb: [[{ text: '◀ Back to review', callback_data: 'trf:bl:bk' },
       { text: '❌ Decline', callback_data: `trf:dec:${requestId}` }]],
-    keep: { pl: session.pl, from: session.from, to: session.to, idx: session.idx || 0 },
+    // TRF-16 — leftOn must survive the gate: the dispatch applies when the
+    // photo lands, long after the date was picked.
+    keep: {
+      pl: session.pl, from: session.from, to: session.to,
+      idx: session.idx || 0, leftOn: session.leftOn || null,
+    },
   });
 }
 
@@ -1027,7 +1126,8 @@ async function completeDispatch(bot, session, userId) {
   const requestId = session.requestId;
   const manualPicks = (session.pl || []).map((p) => p.sel);
   const row = await transferService.findTransfer(requestId);
-  const res = await transferService.dispatch(requestId, userId, manualPicks);
+  const res = await transferService.dispatch(requestId, userId, manualPicks,
+    { leftOn: session.leftOn || null });
   if (!res.ok) return { ok: false, message: res.message };
   const aj = res.aj;
   try {
@@ -1764,8 +1864,30 @@ async function handleCallback(bot, query) {
   }
   if (data === 'trf:send') { await submit(bot, chatId, userId); return true; }
 
+  // TRF-16 — departure-date picker (session-backed, dispatch chain only).
+  if (data === 'trf:noop') return true;
+  if (data === 'trf:dq') {
+    if (!['dispatch_pick', 'dispatch_confirm', 'dispatch_date'].includes(session.step)) return true;
+    await showDepartureDates(bot, chatId, userId);
+    return true;
+  }
+  if (data.startsWith('trf:dm:')) {
+    if (session.step !== 'dispatch_date') return true;
+    await showDepartureCalendar(bot, chatId, userId, data.slice('trf:dm:'.length));
+    return true;
+  }
+  if (data.startsWith('trf:dd:')) {
+    if (session.step !== 'dispatch_date') return true;
+    await applyDepartureDate(bot, chatId, userId, data.slice('trf:dd:'.length));
+    return true;
+  }
+
   // Dispatcher bale picker (session-backed; anchored on the DM card).
   if (data.startsWith('trf:bl:')) {
+    if (session.step === 'dispatch_date' && data === 'trf:bl:bk') {
+      await showDispatchConfirm(bot, chatId, userId);
+      return true;
+    }
     const atGate = session.step === 'await_doc' && session.gate && session.docKind === 'dispatch';
     // "Back to bales" on the photo-gate prompt → return to the review screen.
     if (atGate) {

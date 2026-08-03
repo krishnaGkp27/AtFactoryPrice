@@ -3885,7 +3885,10 @@ async function handleMessage(bot, msg) {
   // the picker's 🔎 step is armed return instant checkbox matches.
   {
     const trfSession = sessionStore.get(userId);
-    if (trfSession && trfSession.type === 'transfer_flow' && trfSession.step === 'dispatch_search') {
+    // TRF-16 adds 'dispatch_date' — a typed departure date navigates the
+    // calendar to that month (the tap still commits).
+    if (trfSession && trfSession.type === 'transfer_flow'
+      && ['dispatch_search', 'dispatch_date'].includes(trfSession.step)) {
       const handled = await require('../flows/transferFlow').handleText(bot, msg);
       if (handled) return;
     }

@@ -184,15 +184,15 @@ async function createTransferRequest({ from, to, lines, requestedBy, dispatcher,
  * @param {Array<Array<string>>} [manualPicks] per-line chosen packageNos
  * @returns {Promise<{ok:boolean, aj?:object, short?:boolean, message?:string}>}
  */
-async function dispatch(requestId, byUserId, manualPicks) {
+async function dispatch(requestId, byUserId, manualPicks, opts = {}) {
   // SEC-P2 (H3): serialize the stage transition per request so a double-tapped
   // Dispatch (or Dispatch racing a Reject) can't both read stage=requested and
   // transition the same bales twice. The re-read + stage guard run inside the
   // lock, so the second caller sees the new stage and bails cleanly.
-  return mutex.runExclusive(requestId, () => dispatchInner(requestId, byUserId, manualPicks));
+  return mutex.runExclusive(requestId, () => dispatchInner(requestId, byUserId, manualPicks, opts));
 }
 
-async function dispatchInner(requestId, byUserId, manualPicks) {
+async function dispatchInner(requestId, byUserId, manualPicks, opts = {}) {
   const row = await findTransfer(requestId);
   if (!row) return { ok: false, message: 'transferService: transfer not found' };
   if (row.status !== 'pending' || row.actionJSON.stage !== STAGES.REQUESTED) {
@@ -204,10 +204,10 @@ async function dispatchInner(requestId, byUserId, manualPicks) {
   // overlapping dispatches reading one snapshot would both claim the same
   // bales. Nested key differs from the requestId key, so no deadlock.
   return mutex.runExclusive(`dispatch-wh:${norm(aj.from)}`,
-    () => dispatchPickAndFlip(requestId, byUserId, manualPicks, aj));
+    () => dispatchPickAndFlip(requestId, byUserId, manualPicks, aj, opts));
 }
 
-async function dispatchPickAndFlip(requestId, byUserId, manualPicks, aj) {
+async function dispatchPickAndFlip(requestId, byUserId, manualPicks, aj, opts = {}) {
   // TRF-15 (owner rule, 02-Aug) — the bot never selects bales. Every
   // dispatch must carry the human's explicit per-line picks (picker ticks,
   // or numbers read from the load photo in snap transfers).
@@ -280,9 +280,20 @@ async function dispatchPickAndFlip(requestId, byUserId, manualPicks, aj) {
   }
   const keptUids = flipped.map((r) => String(r.baleUid));
   const short = dispatched.some((d) => d.sent < d.requested);
-  const patch = { stage: STAGES.IN_TRANSIT, bales: keptPkgs, baleUids: keptUids, dispatched, short, dispatchedAt: new Date().toISOString() };
+  const now = new Date().toISOString();
+  // TRF-16 (owner, 03-Aug) — `dispatchedOn` is the date the goods
+  // PHYSICALLY left the store, chosen by the dispatcher; `dispatchedAt`
+  // stays the system timestamp of the logging, for audit. They differ
+  // whenever a load is logged after the truck left.
+  const leftOn = /^\d{4}-\d{2}-\d{2}$/.test(String(opts.leftOn || ''))
+    ? String(opts.leftOn) : now.slice(0, 10);
+  const patch = {
+    stage: STAGES.IN_TRANSIT, bales: keptPkgs, baleUids: keptUids, dispatched,
+    short, dispatchedAt: now, dispatchedOn: leftOn,
+  };
   await approvalQueueRepository.updateActionJSON(requestId, patch);
-  await auditLogRepository.append('transfer.dispatched', { requestId, dispatched, short, conflicts }, String(byUserId || ''));
+  await auditLogRepository.append('transfer.dispatched',
+    { requestId, dispatched, short, conflicts, dispatchedOn: leftOn }, String(byUserId || ''));
   return { ok: true, aj: { ...aj, ...patch }, short, conflicts };
 }
 
@@ -328,6 +339,10 @@ async function confirmReceiptInner(requestId, byUserId) {
     design: (aj.lines || []).map((l) => l.design).join('+'),
     color: (aj.lines || []).map((l) => l.shade).join('+'),
     qty: totalSent, before: aj.from || '', after: aj.to || '', status: 'completed',
+    // TRF-16 — the physical departure date the dispatcher chose. The
+    // SalesDate column is this sheet's business-date column; backdatedStamp
+    // only stamps sell/sale actions, so a transfer row stays unstamped.
+    salesDate: aj.dispatchedOn || '',
   });
   await auditLogRepository.append('transfer.received', { requestId }, String(byUserId || ''));
   return { ok: true, aj, mismatch };
