@@ -391,6 +391,15 @@ const server = app.listen(PORT, async () => {
         .then((r) => logger.info(`transferRepair: ${JSON.stringify(r)}`))
         .catch((e) => logger.warn(`transferRepair boot pass failed: ${e.message}`));
     }, 30 * 1000);
+    // INV-HDR1 — one-off guarded cleanup of the two orphan Inventory
+    // headers (prev_state/state_since) left by the reverted 480d46e.
+    // Clears X1:Y1 ONLY when both columns are provably empty; a no-op on
+    // every later boot.
+    setTimeout(() => {
+      require('./src/services/inventoryHeaderRepair').repair(bot)
+        .then((r) => { if (r.cleared || r.dataCells) logger.info(`inventoryHeaderRepair: ${JSON.stringify(r)}`); })
+        .catch((e) => logger.warn(`inventoryHeaderRepair boot pass failed: ${e.message}`));
+    }, 35 * 1000);
     // TRF-INT3 — same-warehouse duplicate bale numbers DM'd to admins until
     // resolved physically (the intake gate blocks new ones; read-only scan).
     setTimeout(() => {
