@@ -395,9 +395,15 @@ const server = app.listen(PORT, async () => {
     // headers (prev_state/state_since) left by the reverted 480d46e.
     // Clears X1:Y1 ONLY when both columns are provably empty; a no-op on
     // every later boot.
+    // INV-HDR2 also restores a header cell that has gone broken (`#ERROR!`,
+    // another Sheets error value, or blank) back to its canonical name —
+    // stands down if any cell holds a real but unexpected word.
     setTimeout(() => {
-      require('./src/services/inventoryHeaderRepair').repair(bot)
-        .then((r) => { if (r.cleared || r.dataCells) logger.info(`inventoryHeaderRepair: ${JSON.stringify(r)}`); })
+      require('./src/services/inventoryHeaderRepair').repairAll(bot)
+        .then((r) => {
+          if (r.orphans.cleared || r.orphans.dataCells) logger.info(`inventoryHeaderRepair: ${JSON.stringify(r.orphans)}`);
+          if (r.brokenCells.fixed.length) logger.warn(`inventoryHeaderRepair: ${JSON.stringify(r.brokenCells)}`);
+        })
         .catch((e) => logger.warn(`inventoryHeaderRepair boot pass failed: ${e.message}`));
     }, 35 * 1000);
     // TRF-INT3 — same-warehouse duplicate bale numbers DM'd to admins until

@@ -519,6 +519,15 @@ async function initialize() {
     try {
       let invHeader = await sheets.readRange('Inventory', 'A1:Z1');
       let h = invHeader[0] || [];
+      // INV-HDR2 — every column letter below is derived from h.length, so an
+      // empty read does not mean "no columns yet", it means the next write
+      // lands on A1 and overwrites PackageNo (and the five headers after it).
+      // The sheet exists and is non-empty — that is why we are in this branch
+      // — so an empty header row is a failed read, not a fact. Stand down.
+      if (!h.length) {
+        logger.warn('SchemaMapper: Inventory header read came back empty — skipping column extension rather than writing over A1');
+        throw new Error('empty Inventory header read');
+      }
       if (!h.includes('ProductType')) {
         const nextCol = colLetter(h.length + 1);
         await sheets.updateRange('Inventory', `${nextCol}1:${nextCol}1`, [['ProductType']]);

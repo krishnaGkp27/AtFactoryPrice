@@ -127,3 +127,91 @@ test('survives an unreadable sheet without throwing', async () => {
     assert.equal(writes.length, 0);
   });
 });
+
+/* ── INV-HDR2 — restoring a header cell that has gone broken ─────────────── */
+
+function withHeader(header, fn) {
+  const orig = { read: sheets.readRange, update: sheets.updateRange };
+  const origAudit = auditLogRepository.append;
+  const writes = [];
+  const audits = [];
+  sheets.readRange = async () => [header];
+  sheets.updateRange = async (sheet, range, values) => { writes.push({ range, values }); };
+  auditLogRepository.append = async (evt, payload) => { audits.push({ evt, payload }); };
+  return Promise.resolve(fn(writes, audits)).finally(() => {
+    sheets.readRange = orig.read; sheets.updateRange = orig.update;
+    auditLogRepository.append = origAudit;
+  });
+}
+
+test('restores the exact cell the owner saw — #ERROR! in A1', async () => {
+  await withHeader(['#ERROR!', ...BASE_23.slice(1)], async (writes, audits) => {
+    const res = await repair.repairBrokenHeaders(null);
+    assert.deepEqual(res.fixed, ['A1']);
+    assert.equal(writes.length, 1, 'only the broken cell is written');
+    assert.equal(writes[0].range, 'A1:A1');
+    assert.deepEqual(writes[0].values, [['PackageNo']]);
+    assert.equal(audits[0].evt, 'inventory.header_restored');
+  });
+});
+
+test('every Sheets error value counts as broken, not just #ERROR!', async () => {
+  for (const err of ['#REF!', '#NAME?', '#VALUE!', '#N/A', '#DIV/0!']) {
+    await withHeader([err, ...BASE_23.slice(1)], async (writes) => {
+      const res = await repair.repairBrokenHeaders(null);
+      assert.deepEqual(res.fixed, ['A1'], `${err} should be treated as damage`);
+      assert.deepEqual(writes[0].values, [['PackageNo']]);
+    });
+  }
+});
+
+test('a blank header cell is restored, including a trimmed last column', async () => {
+  // Sheets trims trailing empties, so a broken W1 comes back as a 22-wide row.
+  await withHeader(BASE_23.slice(0, 22), async (writes) => {
+    const res = await repair.repairBrokenHeaders(null);
+    assert.deepEqual(res.fixed, ['W1']);
+    assert.deepEqual(writes[0].values, [['design_category']]);
+  });
+});
+
+test('REFUSES when a cell holds a real word — that is a rename, not damage', async () => {
+  await withHeader(['BaleNumber', ...BASE_23.slice(1)], async (writes) => {
+    const res = await repair.repairBrokenHeaders(null);
+    assert.deepEqual(res.fixed, []);
+    assert.match(res.reason, /rename, not damage/);
+    assert.equal(writes.length, 0, 'never overwrites a name someone chose');
+  });
+});
+
+test('one unexpected name anywhere stands the whole repair down', async () => {
+  // A1 IS broken, but D1 was renamed — fixing A1 alone would half-repair a
+  // header we do not understand, so nothing is touched.
+  const h = ['#ERROR!', ...BASE_23.slice(1)];
+  h[3] = 'DesignCode';
+  await withHeader(h, async (writes) => {
+    const res = await repair.repairBrokenHeaders(null);
+    assert.deepEqual(res.fixed, []);
+    assert.equal(writes.length, 0);
+  });
+});
+
+test('an intact header is a no-op, so it is safe to leave wired', async () => {
+  await withHeader([...BASE_23], async (writes) => {
+    const res = await repair.repairBrokenHeaders(null);
+    assert.deepEqual(res.fixed, []);
+    assert.match(res.reason, /intact/);
+    assert.equal(writes.length, 0);
+  });
+});
+
+test('the admin notice names the cell and says the bot did not write it', async () => {
+  const dms = [];
+  const bot = { sendMessage: async (id, text) => { dms.push({ id, text }); } };
+  await withHeader(['#ERROR!', ...BASE_23.slice(1)], async () => {
+    await repair.repairBrokenHeaders(bot);
+    assert.equal(dms.length, 1);
+    assert.match(dms[0].text, /A1/);
+    assert.match(dms[0].text, /PackageNo/);
+    assert.match(dms[0].text, /cannot write a formula/);
+  });
+});
