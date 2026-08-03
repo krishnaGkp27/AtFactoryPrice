@@ -16,7 +16,9 @@
  * Admin overrides (mark on behalf) hit the same `markPresent` path with
  * `adminUserId` set so audit trail and `logged_via=admin` flow naturally.
  *
- * Callback namespace: `atd_adm:*`. Free-text input is required only for
+ * Callback namespace: `atd_adm:*` (ATT-E1 adds `atd_adm:ev:<id>` for one
+ * person's evidence and `atd_adm:sel:<id>` for their selfie). Free-text
+ * input is required only for
  * the three time/timezone screens; everything else is buttons.
  *
  * Session shape (when waiting for text):
@@ -37,6 +39,7 @@ const sessionStore = require('../utils/sessionStore');
 const auth = require('../middlewares/auth');
 const usersRepo = require('../repositories/usersRepository');
 const attendanceService = require('../services/attendanceService');
+const attendanceRepo = require('../repositories/attendanceRepository');
 const auditLogRepo = require('../repositories/auditLogRepository');
 const logger = require('../utils/logger');
 const fmtDate = require('../utils/formatDate');
@@ -598,13 +601,17 @@ async function renderToday(bot, chatId, userId) {
     } catch (_) { return iso.slice(11, 16); }
   };
 
+  // ATT-E1 — 📎 marks a row that carries evidence (a position fix and/or a
+  // selfie), so the admin knows which names are worth tapping.
+  const hasEvidence = (e) => !!(e && (e.geo || e.photo_file_id));
   const presentLines = present.length
     ? present.map((p) => {
         const e = rows.find((r) => r.telegram_id === p.id);
         const loc = e ? e.location : '?';
         const t = e ? fmtTime(e.logged_at) : '';
         const via = e && e.logged_via === 'admin' ? ' _(via admin)_' : '';
-        return `  ✅ ${p.name} — ${loc} @ ${t}${via}`;
+        const clip = hasEvidence(e) ? ' 📎' : '';
+        return `  ✅ ${p.name} — ${loc} @ ${t}${via}${clip}`;
       }).join('\n')
     : '  _(no one yet)_';
   const missingLines = missing.length
@@ -637,6 +644,21 @@ async function renderToday(bot, chatId, userId) {
     : '';
 
   const kb = [];
+  // ATT-E1 — one chip per person who logged today; tapping opens their
+  // evidence (how far from the site, and the selfie). Extras included:
+  // an ad-hoc log is exactly the kind of entry worth inspecting.
+  const chipFor = (id, name) => {
+    const e = rows.find((r) => r.telegram_id === id);
+    return { text: `${hasEvidence(e) ? '📎' : '👤'} ${name}`, callback_data: `atd_adm:ev:${id}` };
+  };
+  const evChips = [
+    ...present.map((p) => chipFor(p.id, p.name)),
+    ...extras.map((e) => {
+      const u = usersById.get(e.telegram_id);
+      return chipFor(e.telegram_id, (u && u.name) || `(unknown ${e.telegram_id.slice(-4)})`);
+    }),
+  ];
+  for (let i = 0; i < evChips.length; i += 2) kb.push(evChips.slice(i, i + 2));
   if (ghost.length) {
     kb.push([{ text: `🧹 Clean ${ghost.length} ghost ID${ghost.length > 1 ? 's' : ''} now`, callback_data: 'atd_adm:clean_ghosts' }]);
   }
@@ -652,6 +674,105 @@ async function renderToday(bot, chatId, userId) {
     + `_Live view — refresh by re-opening._`,
     kb,
   );
+}
+
+/* ── ATT-E1: one person's evidence for today (owner, 03-Aug) ────────── */
+
+/**
+ * How far the person was from the place they marked attendance for.
+ *
+ * The owner's rule: raw coordinates are meaningless to read, so this card
+ * NEVER prints a lat/lng. It answers the only question that matters —
+ * how close were they to the destined location, and were they inside its
+ * fence. `distance_m` is written at capture time when that location has a
+ * GPS anchor; without an anchor there is nothing to measure against and we
+ * say exactly that rather than implying a pass.
+ */
+function proximityLine(entry, anchorInfo) {
+  if (!entry.geo) {
+    return '📡 _No position recorded_ — location verification was off for this check-in.';
+  }
+  const d = Number(entry.distance_m);
+  if (!entry.distance_m || !Number.isFinite(d)) {
+    return `📡 Position shared, but *${entry.location}* has no GPS anchor set — `
+      + 'nothing to measure the distance against. Set one in 🗺 GPS Anchors.';
+  }
+  const radius = anchorInfo && Number(anchorInfo.radiusM);
+  // Round on the integer metres, not on a binary float: (1450/1000).toFixed(1)
+  // reads 1.4 because 1.45 is stored just under the halfway point.
+  const pretty = d >= 1000 ? `${Math.round(d / 100) / 10} km` : `${Math.round(d)} m`;
+  if (!Number.isFinite(radius)) return `📏 *${pretty}* from ${entry.location}`;
+  return d <= radius
+    ? `📏 *${pretty}* from ${entry.location} — inside the ${radius} m fence ✅`
+    : `📏 *${pretty}* from ${entry.location} — OUTSIDE the ${radius} m fence ⚠️`;
+}
+
+/** Render one person's attendance evidence for today. */
+async function renderEvidence(bot, chatId, userId, telegramId) {
+  const cfg = await attendanceService.getConfig();
+  const { date } = await attendanceService.getTodayAll(cfg.timezone);
+  let entry = null;
+  try { entry = await attendanceRepo.findByDateUser(date, telegramId); } catch (_) { entry = null; }
+
+  let name = `User ${String(telegramId).slice(-4)}`;
+  try {
+    const u = (await usersRepo.getAll()).find((x) => String(x.user_id) === String(telegramId));
+    if (u && u.name) name = u.name;
+  } catch (_) { /* name is cosmetic */ }
+
+  const back = [{ text: '⬅ Back to today', callback_data: 'atd_adm:today' }];
+  if (!entry) {
+    await render(bot, chatId, userId,
+      `👤 *${name}* — ${fmtDate(date)}\n\n_No attendance record found for today._`,
+      [back, backRow()]);
+    return;
+  }
+
+  const fmtTime = (iso) => {
+    try {
+      return new Intl.DateTimeFormat('en-GB', {
+        timeZone: cfg.timezone, hour: '2-digit', minute: '2-digit', hour12: false,
+      }).format(new Date(iso));
+    } catch (_) { return String(iso).slice(11, 16); }
+  };
+  const anchorInfo = attendanceService.coordsFor(cfg, entry.location);
+  const via = entry.logged_via === 'admin'
+    ? `✍️ Marked by admin${entry.marked_by ? ` (${entry.marked_by})` : ''}`
+    : '🙋 Marked by themselves';
+
+  const body = `👤 *${name}* — ${fmtDate(date)}\n`
+    + `✅ ${entry.status || 'present'} · *${entry.location}* · ${fmtTime(entry.logged_at)}\n`
+    + `${via}\n\n`
+    + `${proximityLine(entry, anchorInfo)}\n`
+    + (entry.photo_file_id ? '📷 Selfie attached' : '📷 _No selfie on this check-in_');
+
+  const kb = [];
+  if (entry.photo_file_id) kb.push([{ text: '📷 View selfie', callback_data: `atd_adm:sel:${telegramId}` }]);
+  kb.push(back);
+  kb.push(backRow());
+  await render(bot, chatId, userId, body, kb);
+}
+
+/** ATT-E1 — deliver the selfie as an EPHEMERAL view (swept on the next tap). */
+async function sendSelfie(bot, chatId, userId, telegramId) {
+  const cfg = await attendanceService.getConfig();
+  const { date } = await attendanceService.getTodayAll(cfg.timezone);
+  let entry = null;
+  try { entry = await attendanceRepo.findByDateUser(date, telegramId); } catch (_) { entry = null; }
+  if (!entry || !entry.photo_file_id) return;
+  try {
+    const sent = await bot.sendPhoto(chatId, entry.photo_file_id, {
+      caption: `📷 ${entry.employee_name || telegramId} — ${entry.location} · ${fmtDate(date)}`,
+    });
+    if (sent && sent.message_id) {
+      require('../services/ephemeralDocs').track(bot, String(userId), chatId, sent.message_id);
+    }
+  } catch (e) {
+    logger.warn(`attendanceAdmin: selfie send failed: ${e.message}`);
+    await bot.sendMessage(chatId,
+      '⚠️ Telegram could not return that selfie — the file may have expired on their side.')
+      .catch(() => {});
+  }
 }
 
 async function cleanGhostsNow(bot, chatId, userId) {
@@ -820,6 +941,9 @@ async function handleCallback(bot, query) {
   }
   const chatId = query.message.chat.id;
   await bot.answerCallbackQuery(query.id).catch(() => {});
+  // ATT-E1/TRF-9b — a delivered selfie is a peek, not a chat resident: any
+  // admin tap sweeps it (the sel: tap included, so re-viewing REPLACES).
+  try { await require('../services/ephemeralDocs').sweep(bot, userId); } catch (_) { /* viewer state only */ }
   // Make sure we always have OUR session — seed one when none exists (menu
   // entry without a fresh start() call), and ALSO take over when a FOREIGN
   // session type is live (verified repro: an employee attendance_flow session
@@ -843,6 +967,15 @@ async function handleCallback(bot, query) {
   if (data === 'atd_adm:loc')    { await renderLocationsEditor(bot, chatId, userId); return true; }
   if (data === 'atd_adm:days')   { await renderWorkingDays(bot, chatId, userId); return true; }
   if (data === 'atd_adm:today')  { await renderToday(bot, chatId, userId); return true; }
+  // ATT-E1 — per-person evidence + the selfie as an ephemeral view.
+  if (data.startsWith('atd_adm:ev:')) {
+    await renderEvidence(bot, chatId, userId, data.slice('atd_adm:ev:'.length));
+    return true;
+  }
+  if (data.startsWith('atd_adm:sel:')) {
+    await sendSelfie(bot, chatId, userId, data.slice('atd_adm:sel:'.length));
+    return true;
+  }
   if (data === 'atd_adm:verify') { await renderVerify(bot, chatId, userId); return true; }
   if (data.startsWith('atd_adm:verify_set:')) { await applyVerifyMode(bot, chatId, userId, data.slice('atd_adm:verify_set:'.length)); return true; }
   if (data === 'atd_adm:gps')    {
