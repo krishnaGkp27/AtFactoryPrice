@@ -37,6 +37,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const mutex = require('../utils/asyncMutex');
 
 const SHEET = 'BaleMovements';
 const HEADERS = ['Timestamp', 'MovedOn', 'BaleNo', 'Design', 'Shade', 'Container',
@@ -92,6 +93,12 @@ async function getAll() {
  * is legitimately re-used across arrivals (BUSINESS_RULES §5), so the
  * container joins the key — otherwise a new Jul26 bale 869 would clear the
  * flag on the Mar26 bale that shares its number.
+ *
+ * KNOWN LIMIT: when `arrival_batch` is EMPTY on both bales — legacy rows
+ * predating the container backfill — the key degrades to design|number and
+ * two distinct unlabelled bales share one flag. Nothing finer exists to key
+ * on: `bale_uid` is per-THAN, not per-bale. Stamping containers on legacy
+ * rows closes it; new intake always carries one.
  */
 function baleKey(design, baleNo, container) {
   return `${str(design).toUpperCase()}|${str(baleNo).toUpperCase()}|${str(container).toUpperCase()}`;
@@ -107,6 +114,16 @@ function baleKey(design, baleNo, container) {
 async function append(entries) {
   const list = (entries || []).filter(Boolean);
   if (!list.length) return 0;
+  // Clear-then-append is a read-modify-write: two concurrent transitions of
+  // the same bale could each clear the same stale row and each append a
+  // Current row, leaving two flagged. Transfers are already serialized per
+  // request + source warehouse, but sales and returns are not — so every
+  // writer queues here. Single-process assumption, same as asyncMutex
+  // elsewhere in this codebase.
+  return mutex.runExclusive('bale-movements', () => appendInner(list));
+}
+
+async function appendInner(list) {
   await ensureHeader();
 
   // Clear the flag on whatever was current for these bales. Done BEFORE the

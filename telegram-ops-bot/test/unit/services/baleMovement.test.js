@@ -226,3 +226,60 @@ test('historyFor returns a bale\'s whole chain', async () => {
     assert.equal(current.length, 2, 'one current row per bale');
   });
 });
+
+/* ── defects found by the BMV-1b adversarial review ────────────────── */
+
+test('REVIEW-1: two same-numbered bales from different containers each get their own row', async () => {
+  // §5 permits a printed number to be re-used across arrivals. Grouping on
+  // design|number alone collapsed them into ONE row: the second bale got no
+  // row and kept a stale Current flag, and Thans was inflated.
+  await withSheets([
+    invRow('869', 1, 'available', 'IDUMOTA', { batch: 'Mar26' }),
+    invRow('869', 2, 'available', 'IDUMOTA', { batch: 'Mar26' }),
+    invRow('869', 1, 'available', 'IDUMOTA', { batch: 'Jul26' }),
+  ], [], async ({ moved }) => {
+    await inventoryRepo.transitionBales(['869'], 'available', 'in_transit', 'Kano office', {
+      on: '2026-08-02', fromWarehouse: 'IDUMOTA', kind: 'dispatch', ref: 'TR-1',
+    });
+    assert.equal(moved.length, 2, 'one row per PHYSICAL bale');
+    const byContainer = Object.fromEntries(moved.map((m) => [m.container, m]));
+    assert.equal(byContainer.Mar26.thans, 2, 'Mar26 keeps its own than count');
+    assert.equal(byContainer.Jul26.thans, 1, 'Jul26 is not folded into it');
+  });
+});
+
+test('REVIEW-2: an unscoped batch logs each bale at ITS OWN warehouse', async () => {
+  // /revert_packages 870 takes no warehouse: the same printed number can be
+  // sold in two stores. Deriving one warehouse from the first row filed the
+  // Kano bale's return under Lagos.
+  await withSheets([
+    invRow('870', 1, 'sold', 'Kano office', { batch: 'Mar26', soldTo: 'ALPHA', soldDate: '2026-07-01' }),
+    invRow('870', 1, 'sold', 'Lagos office', { batch: 'Jul26', soldTo: 'BETA', soldDate: '2026-07-02' }),
+  ], [], async ({ moved }) => {
+    const res = await inventoryRepo.markPackageAvailable('870', { on: '2026-08-03' });
+    assert.equal(res.length, 2, 'both flipped in Inventory');
+    assert.equal(moved.length, 2, 'and both logged');
+    const states = moved.map((m) => `${m.fromState} → ${m.toState}`).sort();
+    assert.deepEqual(states, [
+      'sold @ Kano office → available @ Kano office',
+      'sold @ Lagos office → available @ Lagos office',
+    ], 'neither bale is filed under the other store');
+  });
+});
+
+test('REVIEW-3: movement appends are serialized so a bale cannot end with two Current rows', async () => {
+  const prior = [['t', '2026-08-01', '869', 'Rose', 'Red', 'Jul26', 1,
+    'available @ IDUMOTA', 'available @ IDUMOTA', 'x', '', '', 'YES']];
+  await withSheets([invRow('869', 1, 'available', 'IDUMOTA')], prior, async ({ moved, flagClears }) => {
+    // Two writers race; the mutex must make the second see the first's work.
+    await Promise.all([
+      movement.record([{ packageNo: '869', design: 'Rose', shade: 'Red', arrivalBatch: 'Jul26', warehouse: 'IDUMOTA', status: 'available', thanNo: 1 }],
+        { to: 'in_transit', toWarehouse: 'Kano office', on: '2026-08-02', kind: 'dispatch' }),
+      movement.record([{ packageNo: '869', design: 'Rose', shade: 'Red', arrivalBatch: 'Jul26', warehouse: 'IDUMOTA', status: 'available', thanNo: 1 }],
+        { to: 'in_transit', toWarehouse: 'Kano office', on: '2026-08-02', kind: 'dispatch' }),
+    ]);
+    assert.equal(moved.length, 2, 'both movements recorded');
+    // The second run must have found and cleared the first run's flag.
+    assert.ok(flagClears.length >= 2, `each run swept the prior flag, got ${flagClears.length}`);
+  });
+});

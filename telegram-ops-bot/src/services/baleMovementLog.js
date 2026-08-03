@@ -73,7 +73,15 @@ async function record(rows, m = {}) {
   const on = businessDay(m.on);
   const byBale = new Map();
   for (const r of list) {
-    const key = `${r.design || ''}|${r.packageNo || r.baleUid || '?'}`;
+    // The grouping key MUST match baleMovementsRepository.baleKey — design +
+    // printed number + container. Printed numbers are legitimately re-used
+    // across arrivals (BUSINESS_RULES §5), so grouping on design|number
+    // alone collapsed two physical bales into ONE row: the second bale got
+    // no row at all and kept a stale Current flag for ever, while `Thans`
+    // was inflated with the other bale's count. Reachable through any
+    // mutator that selects by printed number — /revert_packages, a return,
+    // a sale — none of which scope by container.
+    const key = `${String(r.design || '').toUpperCase()}|${String(r.packageNo || r.baleUid || '?').toUpperCase()}|${String(r.arrivalBatch || '').trim().toUpperCase()}`;
     if (!byBale.has(key)) {
       byBale.set(key, {
         bale: String(r.packageNo || ''),
@@ -82,15 +90,18 @@ async function record(rows, m = {}) {
         container: String(r.arrivalBatch || ''),
         thans: 0,
         thanNos: [],
-        from: stateLabel(r.status, m.fromWarehouse !== undefined && m.fromWarehouse !== null
-          ? m.fromWarehouse : r.warehouse),
+        // Each bale's OWN warehouse, so a batch spanning two stores is not
+        // all logged at the first row's location. An explicit override (a
+        // transfer's uniform origin/destination) still wins.
+        fromWh: m.fromWarehouse !== undefined && m.fromWarehouse !== null ? m.fromWarehouse : r.warehouse,
+        toWh: m.toWarehouse !== undefined && m.toWarehouse !== null ? m.toWarehouse : r.warehouse,
+        fromStatus: r.status,
       });
     }
     const e = byBale.get(key);
     e.thans += 1;
     if (r.thanNo) e.thanNos.push(r.thanNo);
   }
-  const toState = stateLabel(m.to, m.toWarehouse);
   const entries = [...byBale.values()].map((e) => ({
     movedOn: on,
     baleNo: e.bale,
@@ -98,8 +109,8 @@ async function record(rows, m = {}) {
     shade: e.shade,
     container: e.container,
     thans: e.thans,
-    fromState: e.from,
-    toState,
+    fromState: stateLabel(e.fromStatus, e.fromWh),
+    toState: stateLabel(m.to, e.toWh),
     kind: m.kind || 'move',
     ref: m.ref || '',
     user: String(m.user || 'system'),

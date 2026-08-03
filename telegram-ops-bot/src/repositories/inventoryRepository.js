@@ -229,8 +229,7 @@ async function markThanSold(packageNo, thanNo, customer, soldDateOverride, opts 
   ]]);
   invalidateCache();
   await movement.record([than], {
-    to: 'sold', toWarehouse: than.warehouse, on: soldDate,
-    kind: 'sale', ref: customer || '', user: opts.user,
+    to: 'sold', on: soldDate, kind: 'sale', ref: customer || '', user: opts.user,
   });
   return { ...than, status: 'sold', soldTo: customer, soldDate, updatedAt: now };
 }
@@ -249,9 +248,10 @@ async function markPackageSold(packageNo, customer, soldDateOverride, opts = {})
   }));
   await sheets.batchUpdateRanges(SHEET, updates);
   invalidateCache();
+  // No toWarehouse override: each bale logs at ITS OWN warehouse. The
+  // unscoped path (findByPackage with no warehouse) can span two stores.
   await movement.record(available, {
-    to: 'sold', toWarehouse: available[0] && available[0].warehouse, on: soldDate,
-    kind: 'sale', ref: customer || '', user: opts.user,
+    to: 'sold', on: soldDate, kind: 'sale', ref: customer || '', user: opts.user,
   });
   return available.map((than) => ({ ...than, status: 'sold', soldTo: customer, soldDate, updatedAt: now }));
 }
@@ -500,8 +500,8 @@ async function markThanAvailable(packageNo, thanNo, opts = {}) {
   ]]);
   invalidateCache();
   await movement.record([than], {
-    to: 'available', toWarehouse: than.warehouse, on: opts.on,
-    kind: 'return', ref: than.soldTo || '', user: opts.user,
+    to: 'available', on: opts.on, kind: 'return',
+    ref: than.soldTo || '', user: opts.user,
   });
   return { ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now };
 }
@@ -519,8 +519,8 @@ async function markPackageAvailable(packageNo, opts = {}) {
   await sheets.batchUpdateRanges(SHEET, updates);
   invalidateCache();
   await movement.record(sold, {
-    to: 'available', toWarehouse: sold[0] && sold[0].warehouse, on: opts.on,
-    kind: 'return', ref: (sold[0] && sold[0].soldTo) || '', user: opts.user,
+    to: 'available', on: opts.on, kind: 'return',
+    ref: (sold[0] && sold[0].soldTo) || '', user: opts.user,
   });
   return sold.map((than) => ({ ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now }));
 }
