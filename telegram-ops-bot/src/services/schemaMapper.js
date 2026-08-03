@@ -187,6 +187,18 @@ const REQUIRED_SHEETS = {
   MarketerAllocations: {
     headers: ['marketer_id', 'marketer_name', 'design', 'allocated_qty', 'updated_by', 'updated_at', 'notes'],
   },
+  // BMV-1 (owner, 03-Aug-2026) — bale state history. The owner asked for
+  // the transfer/received date to be filterable but explicitly refused new
+  // Inventory columns ("don't add any unnecessary columns in inventory
+  // sheet, but you can add in different sheet"), so the movement chain
+  // lives here instead. One row per BALE per state change; `Current`
+  // marks each bale's newest row, which makes "what is on the road and
+  // since when" a one-filter answer. Append-only — rows are never deleted,
+  // so the whole chain of every bale survives.
+  BaleMovements: {
+    headers: ['Timestamp', 'MovedOn', 'BaleNo', 'Design', 'Shade', 'Container',
+      'Thans', 'FromState', 'ToState', 'Kind', 'Ref', 'User', 'Current'],
+  },
   // P2 — Goods Receipt Note (GRN) header doc. Bales themselves go into the
   // Inventory sheet directly with grn_id back-pointer; this sheet groups
   // them per "delivery" for audit and supplier reconciliation.
@@ -528,11 +540,7 @@ async function initialize() {
       // DCAT-1 — added `design_category` (Cashmere / Chinos / Gaberdine /
       // Senator / TR / …), stamped per DESIGN by the dual-admin Set Design
       // Category flow. Owner chose an Inventory column over a new sheet.
-      // BMV-1 — added `prev_state` + `state_since` (owner, 03-Aug): the
-      // bale's one-hop movement memory, capped at TWO columns by owner
-      // instruction; the full chain lives in the AuditLog sheet.
-      const INV_NEW_COLS = ['bale_uid', 'addedAt', 'grn_id', 'bin_location', 'arrival_batch', 'design_category',
-        'prev_state', 'state_since'];
+      const INV_NEW_COLS = ['bale_uid', 'addedAt', 'grn_id', 'bin_location', 'arrival_batch', 'design_category'];
       const missingInv = INV_NEW_COLS.filter((c) => !h.includes(c));
       if (missingInv.length) {
         const startCol = colLetter(h.length + 1);

@@ -132,31 +132,36 @@ logged bales 867/842/873/863 while the truck carried 869/843/874/864.
   customer received (container tiles, the design supplied/total pair) stay
   in bales — owner's call, so the pairs stay readable.
 
-## 6d · A bale's movement memory: two columns + the log
+## 6d · Bale movement history lives in its own sheet
 
-**Locked 03-Aug-2026 (BMV-1).** "I want maximum 2 attributes saved in the
-inventory sheet… any further rollover will update those 2 fields, with the
-current state logged at proper place."
+**Locked 03-Aug-2026 (BMV-1).** The owner first approved two Inventory
+columns, then reversed: *"please don't add any unnecessary columns in
+inventory sheet. but you can add in different sheet."*
 
-- Inventory carries exactly **two** movement columns, never more:
-  `prev_state` (X) — what the row was before, as `<status> @ <warehouse it
-  was in / came from>` — and `state_since` (Y), the **business date** the
-  current state began (the day the goods physically left, the sale date,
-  the intake date). Never the machine write time; that stays in `UpdatedAt`.
-- Both are rewritten together on **every** state change. The row therefore
-  remembers ONE hop; the full chain lives in the log. This is deliberate.
-- The log is the existing **AuditLog sheet** (owner's ruling — no new log
-  sheet): one `bale.moved` row per BALE per transition, carrying from/to,
-  the business date, the than count, and the reference (transfer id,
-  customer).
-- `prev_state` keeps the ORIGIN visible after arrival (`in_transit @
-  IDUMOTA`), because a row's Warehouse column is rewritten to the
-  destination the moment it is dispatched.
-- Edits that are not movements — price, category, bin, container — must
-  never touch these two columns.
-- Intake is the row's birth, not a transition: `prev_state` stays blank and
-  nothing is logged (GoodsReceipts is the intake record).
-- A failed log never undoes a physical move.
+- **The Inventory sheet takes no movement columns.** Its Status and
+  Warehouse remain the current truth and its shape stays A..W. Adding a
+  column there needs a fresh owner ruling — "we already have the data" is
+  not one.
+- Every state change appends one row per **BALE** to the **BaleMovements**
+  sheet: `MovedOn · BaleNo · Design · Shade · Container · Thans ·
+  FromState · ToState · Kind · Ref · User · Current`.
+- `MovedOn` is the **business date** — the day the goods physically left,
+  the sale date, the return date. Never the machine write time, which is
+  the sheet's own Timestamp column.
+- `FromState`/`ToState` are `<status> @ <warehouse>`, and `FromState`
+  carries the ORIGIN (`in_transit @ IDUMOTA`) — a row's Warehouse column
+  is rewritten to the destination at dispatch, so the origin would
+  otherwise be lost.
+- `Current` marks each bale's newest row, so "what is on the road and
+  since when" is a one-filter answer. Identity for that flag is
+  design|bale number|container, because printed numbers are re-used across
+  arrivals (§5).
+- Append-only: rows are never edited or deleted, so a bale's whole chain
+  survives. Intake writes nothing — it is a birth, not a transition, and
+  GoodsReceipts is already the intake record.
+- Price, category, bin and container edits are not movements and write
+  nothing.
+- A failed movement write never undoes or blocks a physical stock move.
 
 ## 7 · Bales and loose thans are separate cargo
 

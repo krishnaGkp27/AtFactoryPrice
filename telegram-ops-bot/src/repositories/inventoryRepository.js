@@ -22,10 +22,9 @@
 const sheets = require('./sheetsClient');
 const idGenerator = require('../utils/idGenerator');
 const { normalizeSalesDate } = require('../utils/dates');
-const movementLog = require('../services/baleMovementLog');
 
 const SHEET = 'Inventory';
-const COL_COUNT = 25;
+const COL_COUNT = 23;
 const HEADERS = [
   'PackageNo', 'Indent', 'CSNo', 'Design', 'Shade', 'ThanNo', 'Yards', 'Status',
   'Warehouse', 'PricePerYard', 'DateReceived', 'SoldTo', 'SoldDate', 'NetMtrs', 'NetWeight', 'UpdatedAt',
@@ -46,18 +45,6 @@ const HEADERS = [
   // (designCategoriesRepository) take the first non-empty cell per design so
   // later-received unstamped rows still inherit the label on screens.
   'design_category',
-  // BMV-1 (owner, 03-Aug-2026) — the bale's movement memory, capped at TWO
-  // columns by owner instruction. `prev_state` is what the row was BEFORE
-  // its current state, written as "<status> @ <warehouse it was in / came
-  // from>"; `state_since` is the BUSINESS date the current state began
-  // (the day Abdul says the goods left, the sale date, the intake date —
-  // never the machine write time, which stays in UpdatedAt/P).
-  //
-  // Both are rewritten together on every rollover. The transition that
-  // just ended is appended to the AuditLog sheet as a `bale.moved` row, so
-  // the sheet holds ONE hop and the log holds the whole chain.
-  'prev_state',
-  'state_since',
 ];
 
 /** Short-lived cache for getAll() to avoid hammering the API during batch ops. */
@@ -98,8 +85,6 @@ function parseRow(r, rowIndex) {
     binLocation: str(r[20]),
     arrivalBatch: str(r[21]),
     designCategory: str(r[22]),
-    prevState: str(r[23]),
-    stateSince: str(r[24]),
     _legacy: isLegacy,
   };
 }
@@ -113,7 +98,6 @@ function toRow(o) {
     o.updatedAt ?? '', o.productType ?? 'fabric',
     o.baleUid ?? '', o.addedAt ?? '', o.grnId ?? '', o.binLocation ?? '',
     o.arrivalBatch ?? '', o.designCategory ?? '',
-    o.prevState ?? '', o.stateSince ?? '',
   ];
 }
 
@@ -125,9 +109,9 @@ async function ensureHeader() {
   // append/write paid an extra read (and, where ensureHeader also calls
   // getSheetNames, a whole-spreadsheet metadata call) first.
   if (_headerReady) return;
-  const rows = await sheets.readRange(SHEET, 'A1:Y1');
+  const rows = await sheets.readRange(SHEET, 'A1:W1');
   if (!rows.length || rows[0].length < COL_COUNT) {
-    await sheets.updateRange(SHEET, 'A1:Y1', [HEADERS]);
+    await sheets.updateRange(SHEET, 'A1:W1', [HEADERS]);
   }
   _headerReady = true;
 }
@@ -137,7 +121,7 @@ async function getAll(fresh = false) {
   // TRF-INT1 — status-mutating paths pass fresh=true: deciding what to flip
   // from a 5s-old snapshot is exactly how two transactions claim one bale.
   if (!fresh && _allCache && (now - _allCacheTs) < CACHE_TTL_MS) return _allCache;
-  const rows = await sheets.readRange(SHEET, 'A2:Y');
+  const rows = await sheets.readRange(SHEET, 'A2:W');
   _allCache = rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.packageNo || r.design);
   _allCacheTs = Date.now();
   return _allCache;
@@ -238,21 +222,17 @@ async function markThanSold(packageNo, thanNo, customer, soldDateOverride, opts 
   // (natural-language string, picker ISO, AI-parsed text), the sheet always
   // gets ISO YYYY-MM-DD so queryEngine lexical comparison stays correct.
   const soldDate = normalizeSalesDate(soldDateOverride) || new Date().toISOString().split('T')[0];
-  // BMV-1 — one hop on the row, the transition in the AuditLog.
   const movement = require('../services/baleMovementLog');
-  const pair = movement.pairFor(than, { on: soldDate });
-  await sheets.batchUpdateRanges(SHEET, [
-    { range: `H${than.rowIndex}:P${than.rowIndex}`,
-      values: [['sold', than.warehouse, than.pricePerYard, than.dateReceived,
-        customer || '', soldDate, than.netMtrs, than.netWeight, now]] },
-    { range: `X${than.rowIndex}:Y${than.rowIndex}`, values: [[pair.prevState, pair.stateSince]] },
-  ]);
+  await sheets.updateRange(SHEET, `H${than.rowIndex}:P${than.rowIndex}`, [[
+    'sold', than.warehouse, than.pricePerYard, than.dateReceived,
+    customer || '', soldDate, than.netMtrs, than.netWeight, now,
+  ]]);
   invalidateCache();
   await movement.record([than], {
     to: 'sold', toWarehouse: than.warehouse, on: soldDate,
     kind: 'sale', ref: customer || '', user: opts.user,
   });
-  return { ...than, status: 'sold', soldTo: customer, soldDate, updatedAt: now, ...pair };
+  return { ...than, status: 'sold', soldTo: customer, soldDate, updatedAt: now };
 }
 
 async function markPackageSold(packageNo, customer, soldDateOverride, opts = {}) {
@@ -263,25 +243,17 @@ async function markPackageSold(packageNo, customer, soldDateOverride, opts = {})
   // SDN-1: see markThanSold note above.
   const soldDate = normalizeSalesDate(soldDateOverride) || new Date().toISOString().split('T')[0];
   const movement = require('../services/baleMovementLog');
-  const updates = [];
-  for (const than of available) {
-    const pair = movement.pairFor(than, { on: soldDate });
-    updates.push({
-      range: `H${than.rowIndex}:P${than.rowIndex}`,
-      values: [['sold', than.warehouse, than.pricePerYard, than.dateReceived, customer || '', soldDate, than.netMtrs, than.netWeight, now]],
-    });
-    updates.push({ range: `X${than.rowIndex}:Y${than.rowIndex}`, values: [[pair.prevState, pair.stateSince]] });
-  }
+  const updates = available.map((than) => ({
+    range: `H${than.rowIndex}:P${than.rowIndex}`,
+    values: [['sold', than.warehouse, than.pricePerYard, than.dateReceived, customer || '', soldDate, than.netMtrs, than.netWeight, now]],
+  }));
   await sheets.batchUpdateRanges(SHEET, updates);
   invalidateCache();
   await movement.record(available, {
     to: 'sold', toWarehouse: available[0] && available[0].warehouse, on: soldDate,
     kind: 'sale', ref: customer || '', user: opts.user,
   });
-  return available.map((than) => ({
-    ...than, status: 'sold', soldTo: customer, soldDate, updatedAt: now,
-    ...movement.pairFor(than, { on: soldDate }),
-  }));
+  return available.map((than) => ({ ...than, status: 'sold', soldTo: customer, soldDate, updatedAt: now }));
 }
 
 async function appendThans(thanRows) {
@@ -322,10 +294,6 @@ async function appendBale(bales) {
       baleUid,
       addedAt,
       grnId: b.grnId || '',
-      // BMV-1 — intake is the row's FIRST state: nothing came before it, so
-      // prev_state stays blank; state_since is the intake business date.
-      prevState: b.prevState || '',
-      stateSince: b.stateSince || movementLog.businessDay(b.dateReceived),
     };
   });
   const rows = prepared.map(toRow);
@@ -526,19 +494,16 @@ async function markThanAvailable(packageNo, thanNo, opts = {}) {
   if (!than || than.status !== 'sold') return null;
   const now = new Date().toISOString();
   const movement = require('../services/baleMovementLog');
-  const pair = movement.pairFor(than, { on: opts.on });
-  await sheets.batchUpdateRanges(SHEET, [
-    { range: `H${than.rowIndex}:P${than.rowIndex}`,
-      values: [['available', than.warehouse, than.pricePerYard, than.dateReceived,
-        '', '', than.netMtrs, than.netWeight, now]] },
-    { range: `X${than.rowIndex}:Y${than.rowIndex}`, values: [[pair.prevState, pair.stateSince]] },
-  ]);
+  await sheets.updateRange(SHEET, `H${than.rowIndex}:P${than.rowIndex}`, [[
+    'available', than.warehouse, than.pricePerYard, than.dateReceived,
+    '', '', than.netMtrs, than.netWeight, now,
+  ]]);
   invalidateCache();
   await movement.record([than], {
     to: 'available', toWarehouse: than.warehouse, on: opts.on,
     kind: 'return', ref: than.soldTo || '', user: opts.user,
   });
-  return { ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now, ...pair };
+  return { ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now };
 }
 
 async function markPackageAvailable(packageNo, opts = {}) {
@@ -547,25 +512,17 @@ async function markPackageAvailable(packageNo, opts = {}) {
   if (!sold.length) return [];
   const now = new Date().toISOString();
   const movement = require('../services/baleMovementLog');
-  const updates = [];
-  for (const than of sold) {
-    const pair = movement.pairFor(than, { on: opts.on });
-    updates.push({
-      range: `H${than.rowIndex}:P${than.rowIndex}`,
-      values: [['available', than.warehouse, than.pricePerYard, than.dateReceived, '', '', than.netMtrs, than.netWeight, now]],
-    });
-    updates.push({ range: `X${than.rowIndex}:Y${than.rowIndex}`, values: [[pair.prevState, pair.stateSince]] });
-  }
+  const updates = sold.map((than) => ({
+    range: `H${than.rowIndex}:P${than.rowIndex}`,
+    values: [['available', than.warehouse, than.pricePerYard, than.dateReceived, '', '', than.netMtrs, than.netWeight, now]],
+  }));
   await sheets.batchUpdateRanges(SHEET, updates);
   invalidateCache();
   await movement.record(sold, {
     to: 'available', toWarehouse: sold[0] && sold[0].warehouse, on: opts.on,
     kind: 'return', ref: (sold[0] && sold[0].soldTo) || '', user: opts.user,
   });
-  return sold.map((than) => ({
-    ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now,
-    ...movement.pairFor(than, { on: opts.on }),
-  }));
+  return sold.map((than) => ({ ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now }));
 }
 
 async function updatePrice(filters, newPrice) {
@@ -658,18 +615,17 @@ async function transitionBales(packageNos, fromStatus, toStatus, toWarehouse = n
   });
   if (!rows.length) return [];
   const now = new Date().toISOString();
-  // BMV-1 — the row remembers ONE hop: what it was, and the business date
-  // the new state began. `opts.fromWarehouse` matters on receive/reject:
-  // an in-transit row's warehouse column already holds the DESTINATION, so
-  // the origin has to be supplied for prev_state to stay truthful.
+  // BMV-1 — the Inventory sheet keeps NO movement columns (owner, 03-Aug:
+  // "don't add any unnecessary columns in inventory sheet"). The hop is
+  // recorded in the BaleMovements sheet instead. `opts.fromWarehouse`
+  // matters on receive/reject: an in-transit row's warehouse column already
+  // holds the DESTINATION, so the origin has to be supplied to stay truthful.
   const movement = require('../services/baleMovementLog');
   const updates = [];
   for (const r of rows) {
-    const pair = movement.pairFor(r, { on: opts.on, fromWarehouse: opts.fromWarehouse });
     updates.push({ range: `H${r.rowIndex}`, values: [[toStatus]] });
     if (toWarehouse != null) updates.push({ range: `I${r.rowIndex}`, values: [[toWarehouse]] });
     updates.push({ range: `P${r.rowIndex}`, values: [[now]] });
-    updates.push({ range: `X${r.rowIndex}:Y${r.rowIndex}`, values: [[pair.prevState, pair.stateSince]] });
   }
   await sheets.batchUpdateRanges(SHEET, updates);
   invalidateCache();
@@ -677,8 +633,6 @@ async function transitionBales(packageNos, fromStatus, toStatus, toWarehouse = n
     ...r, status: toStatus,
     warehouse: toWarehouse != null ? toWarehouse : r.warehouse,
     updatedAt: now,
-    prevState: movement.pairFor(r, { on: opts.on, fromWarehouse: opts.fromWarehouse }).prevState,
-    stateSince: movement.businessDay(opts.on),
   }));
   await movement.record(rows, {
     to: toStatus,

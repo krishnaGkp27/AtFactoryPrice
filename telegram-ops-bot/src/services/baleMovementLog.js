@@ -3,29 +3,24 @@
 /**
  * baleMovementLog — BMV-1 (owner, 03-Aug-2026).
  *
- * The owner capped the Inventory sheet at TWO movement attributes:
+ * "Don't add any unnecessary columns in inventory sheet, but you can add in
+ *  different sheet."
  *
- *   X prev_state    "<status> @ <warehouse it was in / came from>"
- *   Y state_since   the BUSINESS date the current state began
- *
- * so the ROW carries one hop and the HISTORY carries the whole chain.
- * The history lives in the existing **AuditLog sheet** (owner's ruling —
- * no new log sheet), one row per BALE per transition:
- *
- *   Timestamp | bale.moved | {bale, from, to, on, ref, …} | user
+ * So the Inventory sheet is left exactly as it was — its Status + Warehouse
+ * stay the current truth — and every state change is written as one row per
+ * BALE to the dedicated **BaleMovements** sheet, which answers the two
+ * things Inventory never could: *since when*, and *what came before*.
  *
  * Bales move whole, so a 43-bale dispatch appends 43 rows in ONE call.
  * Than-level events (a partial sale, a single-than return) carry `thans`
- * so the row still reads truthfully without exploding into one row per
- * than.
+ * so the row still reads truthfully without exploding into one row per than.
  *
  * The date recorded is always the PHYSICAL/business date — the day Abdul
- * says the goods left, the sale date, the intake date — never the machine
- * write time, which stays in Inventory column P (UpdatedAt) and in this
- * log's own Timestamp column.
+ * says the goods left, the sale date, the return date — never the machine
+ * write time, which is the sheet's own Timestamp column.
  */
 
-const auditLogRepository = require('../repositories/auditLogRepository');
+const baleMovementsRepository = require('../repositories/baleMovementsRepository');
 const logger = require('../utils/logger');
 
 /** Canonical "state @ warehouse" label used in prev_state and the log. */
@@ -44,11 +39,11 @@ function businessDay(on) {
 }
 
 /**
- * The pair written to Inventory X/Y for a row entering a new state.
- * @param {object} row the row BEFORE the change (its status/warehouse are
- *        the state being left; `fromWarehouse` overrides when the row's own
- *        warehouse column has already been rewritten — an in-transit row
- *        carries the DESTINATION, so the origin must be passed in).
+ * The state a row is leaving, as it will be written to FromState.
+ * `fromWarehouse` overrides the row's own warehouse when that column has
+ * already been rewritten — an in-transit row carries the DESTINATION, so
+ * the origin must be passed in for the label to stay truthful.
+ * @param {object} row the row BEFORE the change
  * @param {{on?:string, fromWarehouse?:string}} [opts]
  * @returns {{prevState:string, stateSince:string}}
  */
@@ -62,7 +57,7 @@ function pairFor(row, opts = {}) {
 }
 
 /**
- * Append one `bale.moved` row per distinct bale in `rows`.
+ * Append one BaleMovements row per distinct bale in `rows`.
  *
  * @param {Array<object>} rows the Inventory rows that moved (one per than)
  * @param {{to:string, toWarehouse?:string, fromWarehouse?:string,
@@ -95,29 +90,25 @@ async function record(rows, m = {}) {
     e.thans += 1;
     if (r.thanNo) e.thanNos.push(r.thanNo);
   }
-  const events = [...byBale.values()].map((e) => ({
-    eventType: 'bale.moved',
-    payload: {
-      bale: e.bale,
-      design: e.design,
-      shade: e.shade,
-      container: e.container || undefined,
-      thans: e.thans,
-      thanNos: e.thanNos.length && e.thanNos.length <= 12 ? e.thanNos.sort((a, b) => a - b) : undefined,
-      from: e.from,
-      to: stateLabel(m.to, m.toWarehouse),
-      on,
-      kind: m.kind || 'move',
-      ref: m.ref || undefined,
-    },
+  const toState = stateLabel(m.to, m.toWarehouse);
+  const entries = [...byBale.values()].map((e) => ({
+    movedOn: on,
+    baleNo: e.bale,
+    design: e.design,
+    shade: e.shade,
+    container: e.container,
+    thans: e.thans,
+    fromState: e.from,
+    toState,
+    kind: m.kind || 'move',
+    ref: m.ref || '',
     user: String(m.user || 'system'),
   }));
   try {
-    await auditLogRepository.appendMany(events);
-    return events.length;
+    return await baleMovementsRepository.append(entries);
   } catch (e) {
     // The physical move already happened; a failed log must not undo it.
-    logger.warn(`baleMovementLog: append failed (${events.length} events): ${e.message}`);
+    logger.warn(`baleMovementLog: append failed (${entries.length} rows): ${e.message}`);
     return 0;
   }
 }

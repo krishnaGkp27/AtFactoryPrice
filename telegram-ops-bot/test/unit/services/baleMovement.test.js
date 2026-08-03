@@ -1,17 +1,17 @@
 'use strict';
 
 /**
- * BMV-1 (owner, 03-Aug-2026) — the bale's movement memory.
+ * BMV-1 (owner, 03-Aug-2026) — bale state history in its OWN sheet.
  *
- * "I want maximum 2 attributes saved in inventory sheet: the previous state
- *  with the timestamp it started transition. Any further rollover will
- *  update those 2 fields, with the current state logged at proper place."
- *  → the log is the existing AuditLog sheet (owner's ruling).
+ * "Please don't add any unnecessary columns in inventory sheet, but you can
+ *  add in different sheet."
  *
- * So the ROW holds ONE hop:
- *   X prev_state   "<status> @ <warehouse it was in / came from>"
- *   Y state_since  the BUSINESS date the current state began
- * and every transition appends one `bale.moved` row per BALE to AuditLog.
+ * So Inventory is untouched — its Status + Warehouse remain the current
+ * truth — and every state change appends one row per BALE to the
+ * **BaleMovements** sheet, which answers the two things Inventory never
+ * could: *since when*, and *what came before*. The `Current` flag rides the
+ * newest row of each bale, so "what is on the road and since when" is a
+ * one-filter answer.
  */
 
 const test = require('node:test');
@@ -21,166 +21,208 @@ const path = require('path');
 const SRC = path.join(__dirname, '..', '..', '..', 'src');
 const sheets = require(path.join(SRC, 'repositories/sheetsClient'));
 const inventoryRepo = require(path.join(SRC, 'repositories/inventoryRepository'));
+const movementsRepo = require(path.join(SRC, 'repositories/baleMovementsRepository'));
 const movement = require(path.join(SRC, 'services/baleMovementLog'));
 
-/** Inventory columns A..Y; only the read ones matter here. */
+/** Inventory columns A..W — the schema BMV-1 must leave alone. */
 function invRow(pkg, thanNo, status, wh, extra = {}) {
   return [pkg, '', '', extra.design || 'Rose', extra.shade || 'Red', String(thanNo), '30',
     status, wh, '100', '2026-01-01', extra.soldTo || '', extra.soldDate || '', '', '', '',
-    'fabric', `BAL-${pkg}-${thanNo}`, '2026-01-01', '', '', extra.batch || 'Jul26', '',
-    extra.prevState || '', extra.stateSince || ''];
+    'fabric', `BAL-${pkg}-${thanNo}`, '2026-01-01', '', '', extra.batch || 'Jul26', ''];
 }
 
-/** Capture every sheet write + AuditLog append for one call. */
-function withSheet(rows, fn) {
+/** Fake both sheets: Inventory rows in, movement rows captured. */
+function withSheets(invRows, movementRows, fn) {
   const orig = {
     read: sheets.readRange, update: sheets.updateRange,
     batch: sheets.batchUpdateRanges, append: sheets.appendRows,
   };
-  const writes = [];
-  const logged = [];
-  sheets.readRange = async () => rows.map((r) => [...r]);
-  sheets.updateRange = async (sheet, range, values) => { writes.push({ sheet, range, values }); };
-  sheets.batchUpdateRanges = async (sheet, updates) => {
-    (updates || []).forEach((u) => writes.push({ sheet, ...u }));
+  const invWrites = [];
+  const moved = [];
+  const flagClears = [];
+  const store = (movementRows || []).map((r) => [...r]);
+  sheets.readRange = async (sheet, range) => {
+    if (sheet === 'BaleMovements') return range.startsWith('A1') ? [movementsRepo.HEADERS] : store.map((r) => [...r]);
+    return invRows.map((r) => [...r]);
   };
-  sheets.appendRows = async (sheet, rs) => {
-    if (sheet === 'AuditLog') (rs || []).forEach((r) => logged.push({ type: r[1], payload: JSON.parse(r[2]), user: r[3] }));
-    else (rs || []).forEach((r) => writes.push({ sheet, appended: r }));
+  sheets.updateRange = async (sheet, range, values) => {
+    if (sheet === 'Inventory') invWrites.push({ range, values });
+  };
+  sheets.batchUpdateRanges = async (sheet, updates) => {
+    if (sheet === 'Inventory') (updates || []).forEach((u) => invWrites.push(u));
+    else (updates || []).forEach((u) => flagClears.push(u));
+  };
+  sheets.appendRows = async (sheet, rows) => {
+    if (sheet === 'BaleMovements') (rows || []).forEach((r) => moved.push(movementsRepo._internals.parseRow(r, store.push(r) + 1)));
   };
   inventoryRepo.invalidateCache();
-  return Promise.resolve(fn(writes, logged)).finally(() => {
+  return Promise.resolve(fn({ invWrites, moved, flagClears })).finally(() => {
     sheets.readRange = orig.read; sheets.updateRange = orig.update;
     sheets.batchUpdateRanges = orig.batch; sheets.appendRows = orig.append;
     inventoryRepo.invalidateCache();
   });
 }
 
-const pair = (writes) => writes.filter((w) => /^X\d+:Y\d+$/.test(w.range || ''));
+/* ── the Inventory sheet keeps its shape ───────────────────────────── */
+
+test('BMV-1 adds NO columns to Inventory', () => {
+  assert.equal(inventoryRepo.HEADERS.length, 23, 'Inventory stays A..W');
+  assert.equal(inventoryRepo.HEADERS[inventoryRepo.HEADERS.length - 1], 'design_category');
+  assert.ok(!inventoryRepo.HEADERS.includes('prev_state'));
+  assert.ok(!inventoryRepo.HEADERS.includes('state_since'));
+});
 
 /* ── the label grammar ─────────────────────────────────────────────── */
 
-test('prev_state carries the state AND the warehouse it was in', () => {
+test('a state label carries the state AND the warehouse', () => {
   assert.equal(movement.stateLabel('available', 'IDUMOTA'), 'available @ IDUMOTA');
   assert.equal(movement.stateLabel('sold', ''), 'sold');
 });
 
-test('state_since is a business DAY, never a machine timestamp', () => {
+test('MovedOn is a business DAY, never a machine timestamp', () => {
   assert.equal(movement.businessDay('2026-08-02'), '2026-08-02');
   assert.equal(movement.businessDay('2026-08-02T11:22:33.000Z'), '2026-08-02');
   assert.match(movement.businessDay(''), /^\d{4}-\d{2}-\d{2}$/, 'falls back to today');
 });
 
-test('pairFor can override the warehouse — an in-transit row holds the DESTINATION', () => {
-  const row = { status: 'in_transit', warehouse: 'Kano office' };
-  const p = movement.pairFor(row, { on: '2026-08-04', fromWarehouse: 'IDUMOTA' });
-  assert.equal(p.prevState, 'in_transit @ IDUMOTA', 'the origin survives the arrival');
-  assert.equal(p.stateSince, '2026-08-04');
-});
+/* ── every transition writes a movement row ────────────────────────── */
 
-/* ── every transition stamps the pair and logs the hop ─────────────── */
-
-test('dispatch: prev_state remembers the source, state_since is the departure day', async () => {
-  await withSheet([invRow('869', 1, 'available', 'IDUMOTA'), invRow('869', 2, 'available', 'IDUMOTA')],
-    async (writes, logged) => {
-      const moved = await inventoryRepo.transitionBales(['869'], 'available', 'in_transit', 'Kano office', {
+test('dispatch: one row per BALE, from-state remembers the source', async () => {
+  await withSheets([invRow('869', 1, 'available', 'IDUMOTA'), invRow('869', 2, 'available', 'IDUMOTA')], [],
+    async ({ invWrites, moved }) => {
+      const res = await inventoryRepo.transitionBales(['869'], 'available', 'in_transit', 'Kano office', {
         on: '2026-08-02', fromWarehouse: 'IDUMOTA', kind: 'dispatch', ref: 'TR-20260802-001', user: 'abdul',
       });
-      assert.equal(moved.length, 2, 'both thans moved');
-      const pairs = pair(writes);
-      assert.equal(pairs.length, 2, 'one X:Y write per row');
-      assert.deepEqual(pairs[0].values[0], ['available @ IDUMOTA', '2026-08-02']);
-      // One log row per BALE, not per than.
-      assert.equal(logged.length, 1, 'one bale.moved row for the bale');
-      assert.equal(logged[0].type, 'bale.moved');
+      assert.equal(res.length, 2, 'both thans moved');
+      // Inventory took only its usual writes — no new columns.
+      assert.ok(invWrites.every((w) => /^[HIP]\d+$/.test(w.range)), `only H/I/P touched, got ${invWrites.map((w) => w.range)}`);
+      assert.equal(moved.length, 1, 'one movement row for the bale, not per than');
       assert.deepEqual(
-        { bale: logged[0].payload.bale, from: logged[0].payload.from, to: logged[0].payload.to, on: logged[0].payload.on, kind: logged[0].payload.kind, thans: logged[0].payload.thans },
+        { bale: moved[0].baleNo, from: moved[0].fromState, to: moved[0].toState, on: moved[0].movedOn, kind: moved[0].kind, thans: moved[0].thans },
         { bale: '869', from: 'available @ IDUMOTA', to: 'in_transit @ Kano office', on: '2026-08-02', kind: 'dispatch', thans: 2 },
       );
-      assert.equal(logged[0].payload.ref, 'TR-20260802-001');
-      assert.equal(logged[0].user, 'abdul');
+      assert.equal(moved[0].ref, 'TR-20260802-001');
+      assert.equal(moved[0].user, 'abdul');
+      assert.equal(moved[0].current, true, 'the new row is the current one');
+      assert.equal(moved[0].container, 'Jul26');
     });
 });
 
-test('receive: the ORIGIN is still visible on the row after arrival', async () => {
-  await withSheet([invRow('869', 1, 'in_transit', 'Kano office')], async (writes, logged) => {
+test('receive: the ORIGIN stays readable after arrival', async () => {
+  await withSheets([invRow('869', 1, 'in_transit', 'Kano office')], [], async ({ moved }) => {
     await inventoryRepo.transitionBales(['869'], 'in_transit', 'available', null, {
       on: '2026-08-04', fromWarehouse: 'IDUMOTA', kind: 'receive', ref: 'TR-20260802-001',
     });
-    assert.deepEqual(pair(writes)[0].values[0], ['in_transit @ IDUMOTA', '2026-08-04']);
-    assert.equal(logged[0].payload.to, 'available @ Kano office');
-    assert.equal(logged[0].payload.kind, 'receive');
+    assert.equal(moved[0].fromState, 'in_transit @ IDUMOTA', 'not the destination it was rewritten to');
+    assert.equal(moved[0].toState, 'available @ Kano office');
+    assert.equal(moved[0].kind, 'receive');
   });
 });
 
-test('sale: prev_state is where it was sold from, state_since is the sale date', async () => {
-  await withSheet([invRow('1057', 1, 'available', 'Kano office')], async (writes, logged) => {
+test('sale: from-state is where it sold from, MovedOn is the sale date', async () => {
+  await withSheets([invRow('1057', 1, 'available', 'Kano office')], [], async ({ moved }) => {
     const res = await inventoryRepo.markThanSold('1057', 1, 'OKESON', '2026-07-22');
     assert.ok(res);
-    assert.deepEqual(pair(writes)[0].values[0], ['available @ Kano office', '2026-07-22']);
-    assert.equal(logged[0].payload.kind, 'sale');
-    assert.equal(logged[0].payload.to, 'sold @ Kano office');
-    assert.equal(logged[0].payload.ref, 'OKESON');
+    assert.equal(moved[0].fromState, 'available @ Kano office');
+    assert.equal(moved[0].toState, 'sold @ Kano office');
+    assert.equal(moved[0].movedOn, '2026-07-22');
+    assert.equal(moved[0].kind, 'sale');
+    assert.equal(moved[0].ref, 'OKESON');
   });
 });
 
 test('whole-bale sale logs ONE row carrying the than count', async () => {
-  await withSheet([
+  await withSheets([
     invRow('1062', 1, 'available', 'Kano office'),
     invRow('1062', 2, 'available', 'Kano office'),
     invRow('1062', 3, 'available', 'Kano office'),
-  ], async (writes, logged) => {
+  ], [], async ({ moved }) => {
     const res = await inventoryRepo.markPackageSold('1062', 'CJE', '2026-07-25');
     assert.equal(res.length, 3);
-    assert.equal(pair(writes).length, 3, 'every than row keeps its own pair');
-    assert.equal(logged.length, 1, 'one log row for the bale');
-    assert.equal(logged[0].payload.thans, 3);
-    assert.deepEqual(logged[0].payload.thanNos, [1, 2, 3]);
+    assert.equal(moved.length, 1, 'one row for the bale');
+    assert.equal(moved[0].thans, 3);
   });
 });
 
-test('return: sold → available is logged as a return, not a movement', async () => {
-  await withSheet([invRow('1057', 1, 'sold', 'Kano office', { soldTo: 'OKESON', soldDate: '2026-07-22' })],
-    async (writes, logged) => {
+test('return: sold → available is logged as a return', async () => {
+  await withSheets([invRow('1057', 1, 'sold', 'Kano office', { soldTo: 'OKESON', soldDate: '2026-07-22' })], [],
+    async ({ moved }) => {
       const res = await inventoryRepo.markThanAvailable('1057', 1, { on: '2026-07-30' });
       assert.ok(res);
-      assert.deepEqual(pair(writes)[0].values[0], ['sold @ Kano office', '2026-07-30']);
-      assert.equal(logged[0].payload.kind, 'return');
-      assert.equal(logged[0].payload.ref, 'OKESON', 'the buyer it came back from');
+      assert.equal(moved[0].fromState, 'sold @ Kano office');
+      assert.equal(moved[0].kind, 'return');
+      assert.equal(moved[0].ref, 'OKESON', 'the buyer it came back from');
+      assert.equal(moved[0].movedOn, '2026-07-30');
     });
 });
 
-test('a rollover REPLACES the pair — the row keeps one hop, the log keeps the chain', async () => {
-  // The row already carries a dispatch pair; receiving must overwrite it.
-  await withSheet([invRow('869', 1, 'in_transit', 'Kano office',
-    { prevState: 'available @ IDUMOTA', stateSince: '2026-08-02' })], async (writes, logged) => {
+/* ── the Current flag ──────────────────────────────────────────────── */
+
+test('a new movement clears the bale\'s previous Current flag', async () => {
+  const prior = [['2026-08-02T00:00:00.000Z', '2026-08-02', '869', 'Rose', 'Red', 'Jul26', 2,
+    'available @ IDUMOTA', 'in_transit @ Kano office', 'dispatch', 'TR-1', 'abdul', 'YES']];
+  await withSheets([invRow('869', 1, 'in_transit', 'Kano office')], prior, async ({ moved, flagClears }) => {
     await inventoryRepo.transitionBales(['869'], 'in_transit', 'available', null, {
       on: '2026-08-04', fromWarehouse: 'IDUMOTA', kind: 'receive',
     });
-    assert.deepEqual(pair(writes)[0].values[0], ['in_transit @ IDUMOTA', '2026-08-04'],
-      'the older hop is gone from the row');
-    assert.equal(logged.length, 1, 'and preserved in the log instead');
+    assert.equal(flagClears.length, 1, 'the old row is un-flagged');
+    assert.match(flagClears[0].range, /^M2:M2$/, 'the Current cell of the prior row');
+    assert.deepEqual(flagClears[0].values, [['']]);
+    assert.equal(moved[0].current, true, 'the new row takes the flag');
   });
 });
 
-test('a failed log never undoes a physical move', async () => {
+test('a re-used bale number in another container keeps its own flag', async () => {
+  // Mar26 bale 869 is current; a Jul26 bale 869 moving must not clear it.
+  const prior = [['2026-03-02T00:00:00.000Z', '2026-03-02', '869', 'Rose', 'Red', 'Mar26', 1,
+    'available @ Lagos', 'sold @ Lagos', 'sale', 'X', 'u', 'YES']];
+  await withSheets([invRow('869', 1, 'available', 'IDUMOTA', { batch: 'Jul26' })], prior,
+    async ({ flagClears }) => {
+      await inventoryRepo.transitionBales(['869'], 'available', 'in_transit', 'Kano office', {
+        on: '2026-08-02', fromWarehouse: 'IDUMOTA', kind: 'dispatch',
+      });
+      assert.equal(flagClears.length, 0, 'the Mar26 bale is a different physical bale');
+    });
+});
+
+/* ── failure containment ───────────────────────────────────────────── */
+
+test('a failed movement write never undoes a physical move', async () => {
   const origAppend = sheets.appendRows;
-  await withSheet([invRow('869', 1, 'available', 'IDUMOTA')], async (writes) => {
-    sheets.appendRows = async () => { throw new Error('AuditLog unreachable'); };
-    const moved = await inventoryRepo.transitionBales(['869'], 'available', 'in_transit', 'Kano office', {
+  await withSheets([invRow('869', 1, 'available', 'IDUMOTA')], [], async ({ invWrites }) => {
+    sheets.appendRows = async () => { throw new Error('BaleMovements unreachable'); };
+    const res = await inventoryRepo.transitionBales(['869'], 'available', 'in_transit', 'Kano office', {
       on: '2026-08-02', fromWarehouse: 'IDUMOTA', kind: 'dispatch',
     });
-    assert.equal(moved.length, 1, 'the bale still moved');
-    assert.equal(pair(writes).length, 1, 'and the row still got its pair');
+    assert.equal(res.length, 1, 'the bale still moved');
+    assert.ok(invWrites.length >= 2, 'and Inventory still got its status write');
   });
   sheets.appendRows = origAppend;
 });
 
-test('parseRow reads the two columns back', async () => {
-  await withSheet([invRow('869', 1, 'available', 'Kano office',
-    { prevState: 'in_transit @ IDUMOTA', stateSince: '2026-08-04' })], async () => {
-    const all = await inventoryRepo.getAll(true);
-    assert.equal(all[0].prevState, 'in_transit @ IDUMOTA');
-    assert.equal(all[0].stateSince, '2026-08-04');
+test('intake writes no movement row — it is a birth, not a transition', async () => {
+  await withSheets([], [], async ({ moved }) => {
+    await inventoryRepo.appendBale([{
+      packageNo: '900', design: 'Rose', shade: 'Red', thanNo: 1,
+      yards: 30, warehouse: 'IDUMOTA', dateReceived: '2026-07-12',
+    }]);
+    assert.equal(moved.length, 0, 'GoodsReceipts is already the intake record');
+  });
+});
+
+/* ── reading it back ───────────────────────────────────────────────── */
+
+test('historyFor returns a bale\'s whole chain', async () => {
+  const rows = [
+    ['t1', '2026-08-02', '869', 'Rose', 'Red', 'Jul26', 2, 'available @ IDUMOTA', 'in_transit @ Kano office', 'dispatch', 'TR-1', 'abdul', ''],
+    ['t2', '2026-08-04', '869', 'Rose', 'Red', 'Jul26', 2, 'in_transit @ IDUMOTA', 'available @ Kano office', 'receive', 'TR-1', 'musa', 'YES'],
+    ['t3', '2026-08-05', '870', 'Rose', 'Red', 'Jul26', 1, 'available @ Lagos', 'sold @ Lagos', 'sale', 'CJE', 'x', 'YES'],
+  ];
+  await withSheets([], rows, async () => {
+    const hist = await movementsRepo.historyFor('869');
+    assert.equal(hist.length, 2, 'both hops, and only this bale');
+    assert.deepEqual(hist.map((h) => h.kind), ['dispatch', 'receive']);
+    const current = await movementsRepo.currentRows();
+    assert.equal(current.length, 2, 'one current row per bale');
   });
 });
