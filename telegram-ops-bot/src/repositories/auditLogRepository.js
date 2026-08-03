@@ -33,4 +33,26 @@ async function append(eventType, payload, user) {
   await sheets.appendRows(SHEET, [row]);
 }
 
-module.exports = { append, ensureHeader };
+/**
+ * BMV-1 — append many events in ONE call. A 43-bale dispatch logs 43 rows;
+ * appending them one at a time would be 43 round-trips.
+ * @param {Array<{eventType:string, payload:*, user?:string}>} events
+ */
+async function appendMany(events) {
+  const list = Array.isArray(events) ? events.filter(Boolean) : [];
+  if (!list.length) return;
+  if (!_headerReady) {
+    await ensureHeader();
+    _headerReady = true;
+  }
+  const now = new Date().toISOString();
+  const rows = list.map((e) => [
+    now,
+    e.eventType,
+    typeof e.payload === 'string' ? e.payload : JSON.stringify(e.payload || {}),
+    e.user ?? '',
+  ]);
+  await sheets.appendRows(SHEET, rows);
+}
+
+module.exports = { append, appendMany, ensureHeader };

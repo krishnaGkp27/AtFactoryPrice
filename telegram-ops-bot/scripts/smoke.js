@@ -848,6 +848,9 @@ async function runS10() {
       return sheetRows;
     },
     appendRows: async (sheet, rows) => {
+      // BMV-1 — the repository now writes to AuditLog too; a stub that
+      // ignores the sheet name would file movement rows as Inventory rows.
+      if (sheet !== 'Inventory') return;
       appendLog.push(...rows);
       rows.forEach((r) => sheetRows.push(r));
     },
@@ -7282,7 +7285,8 @@ async function runS43() {
   if (schemaSrc43.includes("'design_category'")
       && !schemaSrc43.includes('DesignCategories:')
       && invRepoSrc43.includes("'design_category'")
-      && invRepoSrc43.includes('COL_COUNT = 23')) {
+      // BMV-1 widened Inventory to A..Y (prev_state, state_since).
+      && invRepoSrc43.includes('COL_COUNT = 25')) {
     pass('S43.3 storage: design_category rides the Inventory sheet (owner: no separate sheet)');
   } else fail('S43.3', 'design_category column wiring missing (or stray DesignCategories sheet)');
 

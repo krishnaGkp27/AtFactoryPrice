@@ -259,7 +259,14 @@ async function dispatchPickAndFlip(requestId, byUserId, manualPicks, aj, opts = 
   // rowIndex-derived and would not survive a later backfill).
   const uidByRow = await inventoryRepository.ensureRowUids(pickedRows);
   const uids = pickedRows.map((r) => uidByRow.get(r.rowIndex));
-  const flipped = await inventoryRepository.transitionBales(picked, AVAILABLE, IN_TRANSIT, aj.to, { uids });
+  const leftOn = /^\d{4}-\d{2}-\d{2}$/.test(String(opts.leftOn || ''))
+    ? String(opts.leftOn) : new Date().toISOString().slice(0, 10);
+  const flipped = await inventoryRepository.transitionBales(picked, AVAILABLE, IN_TRANSIT, aj.to, {
+    uids,
+    // BMV-1 — the business date + the origin, so prev_state reads
+    // "available @ IDUMOTA" rather than the destination it was rewritten to.
+    on: leftOn, fromWarehouse: aj.from, kind: 'dispatch', ref: requestId, user: byUserId,
+  });
   // TRF-INT1 — trust only what ACTUALLY flipped. A bale lost to a concurrent
   // sale in the same instant is dropped from the claim, never ghost-carried.
   // Judged from the PICK-TIME row mapping, not a re-filter of the snapshot.
@@ -285,8 +292,6 @@ async function dispatchPickAndFlip(requestId, byUserId, manualPicks, aj, opts = 
   // PHYSICALLY left the store, chosen by the dispatcher; `dispatchedAt`
   // stays the system timestamp of the logging, for audit. They differ
   // whenever a load is logged after the truck left.
-  const leftOn = /^\d{4}-\d{2}-\d{2}$/.test(String(opts.leftOn || ''))
-    ? String(opts.leftOn) : now.slice(0, 10);
   const patch = {
     stage: STAGES.IN_TRANSIT, bales: keptPkgs, baleUids: keptUids, dispatched,
     short, dispatchedAt: now, dispatchedOn: leftOn,
@@ -318,8 +323,12 @@ async function confirmReceiptInner(requestId, byUserId) {
   // own destination (dispatch stamped the rows there), so a same-numbered
   // bale elsewhere can never be flipped by this receive.
   const hasUids = Array.isArray(aj.baleUids) && aj.baleUids.length > 0;
+  const arrivedOn = new Date().toISOString().slice(0, 10);
   const flipped = await inventoryRepository.transitionBales(aj.bales || [], IN_TRANSIT, AVAILABLE, null,
-    hasUids ? { uids: aj.baleUids } : { warehouse: aj.to });
+    Object.assign(hasUids ? { uids: aj.baleUids } : { warehouse: aj.to },
+      // BMV-1 — prev_state keeps the ORIGIN visible after arrival:
+      // "in_transit @ IDUMOTA".
+      { on: arrivedOn, fromWarehouse: aj.from, kind: 'receive', ref: requestId, user: byUserId }));
   // Result check: fewer rows than expected means the sheet was touched
   // outside the pipeline (hand edit / cross-contamination). The goods are
   // physically here, so the transfer still closes — but never silently.
@@ -371,7 +380,9 @@ async function abortInner(requestId, byUserId) {
     // destination for pre-uid transfers; result checked, never silent.
     const hasUids = Array.isArray(aj.baleUids) && aj.baleUids.length > 0;
     const flipped = await inventoryRepository.transitionBales(aj.bales || [], IN_TRANSIT, AVAILABLE, aj.from,
-      hasUids ? { uids: aj.baleUids } : { warehouse: aj.to });
+      Object.assign(hasUids ? { uids: aj.baleUids } : { warehouse: aj.to },
+        { on: new Date().toISOString().slice(0, 10), fromWarehouse: aj.from,
+          kind: 'reject', ref: requestId, user: byUserId }));
     const expected = hasUids ? aj.baleUids.length : null;
     const flippedPkgs = new Set(flipped.map((r) => String(r.packageNo)));
     if ((hasUids && flipped.length !== expected)

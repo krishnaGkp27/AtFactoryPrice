@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS inventory_rows (
   bin_location      TEXT NOT NULL DEFAULT '',
   arrival_batch     TEXT NOT NULL DEFAULT '',
   design_category   TEXT NOT NULL DEFAULT '',
+  prev_state        TEXT NOT NULL DEFAULT '',
+  state_since       TEXT NOT NULL DEFAULT '',
   synced_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 `;
@@ -55,4 +57,15 @@ CREATE INDEX IF NOT EXISTS idx_inventory_rows_bale_uid ON inventory_rows (bale_u
 
 const DDL_STATEMENTS = [CREATE_MIRROR_META, CREATE_INVENTORY_ROWS, CREATE_INDEXES];
 
-module.exports = { DDL_STATEMENTS };
+/**
+ * BMV-1 — the mirror table predates prev_state/state_since, so CREATE TABLE
+ * IF NOT EXISTS alone would leave a live database a column short. These
+ * ALTERs are idempotent and safe to run on every boot.
+ */
+const ADD_MOVEMENT_COLUMNS = `
+ALTER TABLE inventory_rows
+  ADD COLUMN IF NOT EXISTS prev_state  TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS state_since TEXT NOT NULL DEFAULT '';
+`;
+
+module.exports = { DDL_STATEMENTS: [...DDL_STATEMENTS, ADD_MOVEMENT_COLUMNS] };

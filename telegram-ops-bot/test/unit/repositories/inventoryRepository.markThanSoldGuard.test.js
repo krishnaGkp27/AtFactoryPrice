@@ -22,13 +22,21 @@ function invRow(pkg, thanNo, status) {
 function withInventory(rows, fn) {
   const origRead = sheets.readRange;
   const origUpdate = sheets.updateRange;
+  const origBatch = sheets.batchUpdateRanges;
+  const origAppend = sheets.appendRows;
   const writes = [];
   sheets.readRange = async () => rows.map((r) => [...r]);
   sheets.updateRange = async (sheet, range, values) => { writes.push({ range, values }); };
+  // BMV-1 — markThanSold now writes the status range AND the movement pair
+  // (X:Y) in one batch, and appends a bale.moved row to AuditLog.
+  sheets.batchUpdateRanges = async (sheet, updates) => { (updates || []).forEach((u) => writes.push(u)); };
+  sheets.appendRows = async () => {};
   inventoryRepo.invalidateCache();
   return Promise.resolve(fn(writes)).finally(() => {
     sheets.readRange = origRead;
     sheets.updateRange = origUpdate;
+    sheets.batchUpdateRanges = origBatch;
+    sheets.appendRows = origAppend;
     inventoryRepo.invalidateCache();
   });
 }
@@ -46,8 +54,10 @@ test('C5: markThanSold still sells an available than (happy path preserved)', as
     const res = await inventoryRepo.markThanSold('P2', 1, 'ACME');
     assert.ok(res, 'available than sells');
     assert.equal(res.status, 'sold');
-    assert.equal(writes.length, 1, 'exactly one row write');
+    assert.equal(writes.length, 2, 'the status range + the BMV-1 movement pair');
     assert.match(writes[0].range, /^H\d+:P\d+$/, 'writes the status..soldDate range');
+    assert.match(writes[1].range, /^X\d+:Y\d+$/, 'writes prev_state + state_since');
+    assert.equal(writes[1].values[0][0], 'available @ Lagos', 'prev state carries the warehouse');
   });
 });
 

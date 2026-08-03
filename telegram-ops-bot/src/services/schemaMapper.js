@@ -528,7 +528,11 @@ async function initialize() {
       // DCAT-1 — added `design_category` (Cashmere / Chinos / Gaberdine /
       // Senator / TR / …), stamped per DESIGN by the dual-admin Set Design
       // Category flow. Owner chose an Inventory column over a new sheet.
-      const INV_NEW_COLS = ['bale_uid', 'addedAt', 'grn_id', 'bin_location', 'arrival_batch', 'design_category'];
+      // BMV-1 — added `prev_state` + `state_since` (owner, 03-Aug): the
+      // bale's one-hop movement memory, capped at TWO columns by owner
+      // instruction; the full chain lives in the AuditLog sheet.
+      const INV_NEW_COLS = ['bale_uid', 'addedAt', 'grn_id', 'bin_location', 'arrival_batch', 'design_category',
+        'prev_state', 'state_since'];
       const missingInv = INV_NEW_COLS.filter((c) => !h.includes(c));
       if (missingInv.length) {
         const startCol = colLetter(h.length + 1);

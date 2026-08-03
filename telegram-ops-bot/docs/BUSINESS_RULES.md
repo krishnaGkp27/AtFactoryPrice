@@ -132,6 +132,32 @@ logged bales 867/842/873/863 while the truck carried 869/843/874/864.
   customer received (container tiles, the design supplied/total pair) stay
   in bales — owner's call, so the pairs stay readable.
 
+## 6d · A bale's movement memory: two columns + the log
+
+**Locked 03-Aug-2026 (BMV-1).** "I want maximum 2 attributes saved in the
+inventory sheet… any further rollover will update those 2 fields, with the
+current state logged at proper place."
+
+- Inventory carries exactly **two** movement columns, never more:
+  `prev_state` (X) — what the row was before, as `<status> @ <warehouse it
+  was in / came from>` — and `state_since` (Y), the **business date** the
+  current state began (the day the goods physically left, the sale date,
+  the intake date). Never the machine write time; that stays in `UpdatedAt`.
+- Both are rewritten together on **every** state change. The row therefore
+  remembers ONE hop; the full chain lives in the log. This is deliberate.
+- The log is the existing **AuditLog sheet** (owner's ruling — no new log
+  sheet): one `bale.moved` row per BALE per transition, carrying from/to,
+  the business date, the than count, and the reference (transfer id,
+  customer).
+- `prev_state` keeps the ORIGIN visible after arrival (`in_transit @
+  IDUMOTA`), because a row's Warehouse column is rewritten to the
+  destination the moment it is dispatched.
+- Edits that are not movements — price, category, bin, container — must
+  never touch these two columns.
+- Intake is the row's birth, not a transition: `prev_state` stays blank and
+  nothing is logged (GoodsReceipts is the intake record).
+- A failed log never undoes a physical move.
+
 ## 7 · Bales and loose thans are separate cargo
 
 **Locked 01-Aug-2026 (APX-6c).**

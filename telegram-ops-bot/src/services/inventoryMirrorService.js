@@ -44,6 +44,8 @@ function rowToParams(r) {
     r.binLocation || '',
     r.arrivalBatch || '',
     r.designCategory || '',
+    r.prevState || '',
+    r.stateSince || '',
   ];
 }
 
@@ -52,9 +54,9 @@ INSERT INTO inventory_rows (
   sheet_row_index, package_no, indent, cs_no, design, shade, than_no, yards, status,
   warehouse, price_per_yard, date_received, sold_to, sold_date, net_mtrs, net_weight,
   updated_at, product_type, bale_uid, added_at, grn_id, bin_location, arrival_batch,
-  design_category, synced_at
+  design_category, prev_state, state_since, synced_at
 ) VALUES (
-  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24, NOW()
+  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26, NOW()
 )
 ON CONFLICT (sheet_row_index) DO UPDATE SET
   package_no = EXCLUDED.package_no,
@@ -80,6 +82,8 @@ ON CONFLICT (sheet_row_index) DO UPDATE SET
   bin_location = EXCLUDED.bin_location,
   arrival_batch = EXCLUDED.arrival_batch,
   design_category = EXCLUDED.design_category,
+  prev_state = EXCLUDED.prev_state,
+  state_since = EXCLUDED.state_since,
   synced_at = NOW()
 `;
 
