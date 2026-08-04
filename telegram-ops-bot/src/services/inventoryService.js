@@ -4,6 +4,7 @@
  */
 
 const inventoryRepository = require('../repositories/inventoryRepository');
+const stockBuckets = require('../utils/stockBuckets');
 const transactionsRepository = require('../repositories/transactionsRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
@@ -103,14 +104,20 @@ async function listPackages(design, shade) {
     if (!grouped.has(r.packageNo)) {
       grouped.set(r.packageNo, {
         packageNo: r.packageNo, indent: r.indent, design: r.design, shade: r.shade,
-        warehouse: r.warehouse, total: 0, available: 0, sold: 0, totalYards: 0, availableYards: 0,
+        warehouse: r.warehouse, total: 0, available: 0, sold: 0, inTransit: 0, other: 0,
+        totalYards: 0, availableYards: 0, inTransitYards: 0,
       });
     }
     const g = grouped.get(r.packageNo);
     g.total++;
     g.totalYards += r.yards;
-    if (r.status === 'available') { g.available++; g.availableYards += r.yards; }
-    else { g.sold++; }
+    // STK-B1 — in transit is its own bucket (owner, 04-Aug-2026). This used
+    // to be `else { g.sold++ }`, which booked every travelling bale as sold.
+    const b = stockBuckets.bucketOf(r);
+    if (b === stockBuckets.AVAILABLE) { g.available++; g.availableYards += r.yards; }
+    else if (b === stockBuckets.IN_TRANSIT) { g.inTransit++; g.inTransitYards += r.yards; }
+    else if (b === stockBuckets.SOLD) { g.sold++; }
+    else { g.other++; }
   });
   return Array.from(grouped.values());
 }

@@ -3,6 +3,7 @@
  */
 
 const inventoryRepository = require('../repositories/inventoryRepository');
+const stockBuckets = require('../utils/stockBuckets');
 const { fmtMoney, fmtQty } = require('../utils/format');
 
 /** Stock summary grouped by design+shade. */
@@ -11,14 +12,19 @@ async function stockByDesign() {
   const map = new Map();
   all.forEach((r) => {
     const key = `${r.design}|${r.shade}`;
-    if (!map.has(key)) map.set(key, { design: r.design, shade: r.shade, total: 0, available: 0, sold: 0, totalYards: 0, availableYards: 0, soldYards: 0, value: 0, availPkgs: new Set(), soldPkgs: new Set() });
+    if (!map.has(key)) map.set(key, { design: r.design, shade: r.shade, total: 0, available: 0, sold: 0, inTransit: 0, other: 0, totalYards: 0, availableYards: 0, soldYards: 0, inTransitYards: 0, value: 0, availPkgs: new Set(), soldPkgs: new Set(), inTransitPkgs: new Set() });
     const g = map.get(key);
     g.total++;
     g.totalYards += r.yards;
-    if (r.status === 'available') { g.available++; g.availableYards += r.yards; g.value += r.yards * r.pricePerYard; g.availPkgs.add(r.packageNo); }
-    else { g.sold++; g.soldYards += r.yards; g.soldPkgs.add(r.packageNo); }
+    // STK-B1 — a bale mid-transfer is NOT a sale, and an unrecognised status
+    // is not one either. Both used to land in `sold` via a bare else.
+    const b = stockBuckets.bucketOf(r);
+    if (b === stockBuckets.AVAILABLE) { g.available++; g.availableYards += r.yards; g.value += r.yards * r.pricePerYard; g.availPkgs.add(r.packageNo); }
+    else if (b === stockBuckets.IN_TRANSIT) { g.inTransit++; g.inTransitYards += r.yards; g.inTransitPkgs.add(r.packageNo); }
+    else if (b === stockBuckets.SOLD) { g.sold++; g.soldYards += r.yards; g.soldPkgs.add(r.packageNo); }
+    else { g.other++; }
   });
-  return Array.from(map.values()).map((g) => ({ ...g, availPkgs: g.availPkgs.size, soldPkgs: g.soldPkgs.size }));
+  return Array.from(map.values()).map((g) => ({ ...g, availPkgs: g.availPkgs.size, soldPkgs: g.soldPkgs.size, inTransitPkgs: g.inTransitPkgs.size }));
 }
 
 /** Stock summary grouped by warehouse. */

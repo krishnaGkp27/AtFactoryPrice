@@ -4,6 +4,7 @@
  */
 
 const OpenAI = require('openai');
+const stockBuckets = require('../utils/stockBuckets');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const customersRepo = require('../repositories/customersRepository');
 const analytics = require('../ai/analytics');
@@ -145,11 +146,14 @@ async function indentStatus(indent) {
   const map = new Map();
   const filtered = indent ? all.filter((r) => r.indent.toUpperCase().includes(indent.toUpperCase())) : all;
   filtered.forEach((r) => {
-    if (!map.has(r.indent)) map.set(r.indent, { indent: r.indent, total: 0, available: 0, sold: 0, totalYards: 0, availYards: 0, pkgs: new Set() });
+    if (!map.has(r.indent)) map.set(r.indent, { indent: r.indent, total: 0, available: 0, sold: 0, inTransit: 0, totalYards: 0, availYards: 0, pkgs: new Set() });
     const g = map.get(r.indent);
     g.total++; g.totalYards += r.yards; g.pkgs.add(r.packageNo);
-    if (r.status === 'available') { g.available++; g.availYards += r.yards; }
-    else { g.sold++; }
+    // STK-B1 — '% sold' inflated with in-transit stock before this.
+    const b = stockBuckets.bucketOf(r);
+    if (b === stockBuckets.AVAILABLE) { g.available++; g.availYards += r.yards; }
+    else if (b === stockBuckets.IN_TRANSIT) { g.inTransit++; }
+    else if (b === stockBuckets.SOLD) { g.sold++; }
   });
   let text = `📋 *Indent Status${indent ? ' — ' + indent : ''}*\n\n`;
   Array.from(map.values()).forEach((g) => {
@@ -261,9 +265,13 @@ async function freeFormQuery(userQuestion) {
       const cg = byCustomer.get(r.soldTo); cg.thans++; cg.yards += r.yards; cg.value += r.yards * r.pricePerYard; cg.pkgs.add(r.packageNo); cg.designs.add(`${r.design} ${r.shade}`);
     }
 
-    if (!byIndent.has(r.indent)) byIndent.set(r.indent, { total: 0, avail: 0, sold: 0, pkgs: new Set() });
+    if (!byIndent.has(r.indent)) byIndent.set(r.indent, { total: 0, avail: 0, sold: 0, inTransit: 0, pkgs: new Set() });
     const ig = byIndent.get(r.indent); ig.total++; ig.pkgs.add(r.packageNo);
-    if (r.status === 'available') ig.avail++; else ig.sold++;
+    // STK-B1 — the AI analyst was told in-transit bales were sold.
+    const ib = stockBuckets.bucketOf(r);
+    if (ib === stockBuckets.AVAILABLE) ig.avail++;
+    else if (ib === stockBuckets.IN_TRANSIT) ig.inTransit++;
+    else if (ib === stockBuckets.SOLD) ig.sold++;
   });
 
   const designSummary = Array.from(byDesign.values()).map((d) => `${d.design} ${d.shade}: ${d.availPkgs.size} pkgs avail (${d.availThans} thans, ${d.availYards} yds, ${CURRENCY}${d.value}), ${d.soldPkgs.size} pkgs sold (${d.soldThans} thans, ${d.soldYards} yds), buyers: ${Array.from(d.customers).join(', ') || 'none'}`).join('\n');
