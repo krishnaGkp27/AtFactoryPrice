@@ -123,27 +123,31 @@ test('TRF-11: settled card and receiver card both carry the chip', async () => {
   assert.ok(rc.kb.inline_keyboard.flat().some((b) => b.callback_data === `trf:bn:${REQ}`), 'receiver card chip');
 });
 
-test('TRF-11: tap shows the full list as a popup, nothing lands in chat', async () => {
+// TRF-17 (owner, 04-Aug-2026) superseded the TRF-11 popup: the numbers now
+// come back as a design → shade breakdown so they can be read against the
+// dispatch doc. A popup cannot carry that, nor the reconcile chip, so every
+// tap is now a card. The two tests below replace the popup assertions.
+test('TRF-17: tap returns a grouped card, not a popup', async () => {
   stubFind(rowWith({ bales: ['6261', '6275', '6250'] }));
   const bot = createFakeBot();
   await transferFlow.handleCallback(bot, query(`trf:bn:${REQ}`, 12));
-  const ack = bot.callsTo('answerCallbackQuery').find((c) => c.args.opts && c.args.opts.show_alert);
-  assert.ok(ack, 'popup used');
-  // TRF-INT2 (owner rule 3) — the route rides the popup so a duplicated
-  // number is never ambiguous.
-  assert.match(ack.args.opts.text, /3 bale\(s\) \(Lagos → Kano office\):\n6261, 6275, 6250/);
-  assert.equal(bot.callsTo('sendMessage').length, 0, 'no chat message for short lists');
+  const alert = bot.callsTo('answerCallbackQuery').find((c) => c.args.opts && c.args.opts.show_alert);
+  assert.ok(!alert, 'no popup — the breakdown needs more room than an alert allows');
+  const msg = bot.callsTo('sendMessage')[0];
+  assert.ok(msg, 'sent as a card');
+  // TRF-INT2 (owner rule 3) — the route still rides the numbers.
+  assert.match(msg.args.text, /Lagos → Kano office/);
+  assert.match(msg.args.text, /3 bales/);
 });
 
-test('TRF-11: oversized lists fall back to an ephemeral tracked message', async () => {
+test('TRF-17: the card is ephemeral — the next transfer tap sweeps it', async () => {
   const bales = Array.from({ length: 40 }, (_, i) => `77${1000 + i}`);
   stubFind(rowWith({ bales }));
   const bot = createFakeBot();
   await transferFlow.handleCallback(bot, query(`trf:bn:${REQ}`, 12));
   const msg = bot.callsTo('sendMessage')[0];
   assert.ok(msg, 'sent as a message');
-  assert.match(msg.args.text, /40 bale\(s\)/);
-  // Tracked as ephemeral: the next transfer tap sweeps it.
+  assert.match(msg.args.text, /40 bales/);
   const origOpen = transferService.getOpenTransfers;
   transferService.getOpenTransfers = async () => [];
   try {

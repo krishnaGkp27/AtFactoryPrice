@@ -48,6 +48,8 @@ const inventoryRepository = require('../repositories/inventoryRepository');
 const usersRepository = require('../repositories/usersRepository');
 const designCategoriesRepository = require('../repositories/designCategoriesRepository');
 const transferService = require('../services/transferService');
+const saleDocReconcile = require('../services/saleDocReconcile');
+const { baleGroupKey } = require('../utils/inventoryPickers');
 const driveBackup = require('../services/vision/driveBackup');
 const telegramFiles = require('../utils/telegramFiles');
 const auth = require('../middlewares/auth');
@@ -475,8 +477,97 @@ function balesChipRow(requestId, aj) {
   return [[{ text: label, callback_data: `trf:bn:${requestId}` }]];
 }
 
-/** TRF-11 — full bale list on tap: popup when it fits, else an ephemeral
- *  message swept like a doc view. */
+/**
+ * TRF-17 (owner, 04-Aug-2026) — "list of designs with the shade and along
+ * with the shade the bale number separated by comma so that I can check with
+ * the doc and perform reconciliation", in the SBL-2 sold-card grammar.
+ *
+ * A transfer stores only the printed NUMBERS (`aj.bales`); design and shade
+ * live on the Inventory rows. `aj.baleUids` pins the exact rows that were
+ * dispatched (TRF-INT1), so resolution is exact for any transfer created
+ * since uids were recorded. Older transfers have numbers only, and a printed
+ * number can exist in two warehouses — BUSINESS_RULES §2 says the bot never
+ * picks, so those are grouped under a stated "design not recoverable" heading
+ * rather than matched by guesswork.
+ *
+ * @returns {Promise<{text:string, groups:Array, all:Array<string>}>}
+ */
+async function buildBaleBreakdown(requestId, row, opts = {}) {
+  const aj = (row && row.actionJSON) || {};
+  const bales = Array.isArray(aj.bales) ? aj.bales : [];
+  const uids = Array.isArray(aj.baleUids) ? aj.baleUids : [];
+  const verified = opts.verified || [];
+
+  let invRows = [];
+  try { invRows = await inventoryRepository.getAll(); } catch (_) { invRows = []; }
+  const byUid = new Map(invRows.map((r) => [String(r.baleUid), r]));
+  const matched = uids.map((u) => byUid.get(String(u))).filter(Boolean);
+
+  // designs: design -> shade -> { rows, bales[] }
+  const designs = new Map();
+  const seen = new Set();
+  for (const r of matched) {
+    if (!designs.has(r.design)) designs.set(r.design, new Map());
+    const shades = designs.get(r.design);
+    const sk = String(r.shade || '');
+    if (!shades.has(sk)) shades.set(sk, { rows: [], bales: [] });
+    const e = shades.get(sk);
+    e.rows.push(r);
+    const k = baleGroupKey(r);
+    if (!seen.has(k)) { seen.add(k); e.bales.push(String(r.packageNo)); }
+  }
+  // Numbers the uids could not account for — never silently dropped.
+  const shown = new Set([].concat(...[...designs.values()]
+    .map((sh) => [].concat(...[...sh.values()].map((e) => e.bales)))));
+  const unresolved = bales.map(String).filter((b) => !shown.has(b));
+
+  // Counted in BALES, deliberately — unlike a customer supply, a transfer
+  // moves whole bales and this card exists to check printed numbers against
+  // the dispatch doc. TV-8's than-visibility rule (Kano office / Lagos office
+  // show thans) would print "×50t" beside two bale numbers, which reads wrong
+  // on a reconciliation list. The thans stay one tap away on the transfer card.
+  const where = aj.from && aj.to ? `${aj.from} → ${aj.to}` : (aj.from || '');
+  let text = `📦 *${shortTransferRef(requestId)}* — ${bales.length} bale${bales.length === 1 ? '' : 's'}\n`;
+  if (where) text += `_${where}_\n`;
+  text += saleDocReconcile.statusLines(opts.status, bales.length, { partial: !!unresolved.length });
+
+  for (const [design, shades] of designs) {
+    const cat = designCategoriesRepository.categoryOfSync(design);
+    text += `\n🧵 *${design}*${cat ? ` · ${cat}` : ''}\n`;
+    for (const [shade, e] of shades) {
+      const nums = saleDocReconcile.dotted(e.bales, verified);
+      text += ` • Shade ${shade || '—'} ×${e.bales.length}B (${nums})\n`;
+    }
+  }
+  if (unresolved.length) {
+    text += `\n🧵 _design not recoverable_ (${unresolved.length})\n`
+      + ` • ${saleDocReconcile.dotted(unresolved, verified)}\n`
+      + '_These came from an older transfer that stored numbers only. '
+      + 'A printed number can exist in two warehouses, so they are not matched to a design by guesswork._\n';
+  }
+  return { text, all: bales.map(String) };
+}
+
+/** Chips under the breakdown: the docs, and the reconcile toggle. */
+function baleCardRows(requestId, aj, status) {
+  const rows = [];
+  const has = (d) => d && (d.fileId || d.url);
+  const docs = [];
+  if (has(aj.dispatchDoc)) docs.push({ text: '📄 Dispatch doc', callback_data: `trf:vd:d:${requestId}` });
+  if (has(aj.receiveDoc)) docs.push({ text: '📄 Receipt doc', callback_data: `trf:vd:r:${requestId}` });
+  if (docs.length) rows.push(docs);
+  // Reconcile reads the DISPATCH doc — the numbers were pinned from what left
+  // the origin, so that is the document they must agree with.
+  if (has(aj.dispatchDoc)) {
+    rows.push([{
+      text: status && status.done ? '🔁 Re-check dispatch doc' : '🧮 Reconcile dispatch doc',
+      callback_data: `trf:bnr:${requestId}`,
+    }]);
+  }
+  return rows;
+}
+
+/** TRF-17 — the breakdown as its own ephemeral card, swept like a doc view. */
 async function showBaleNumbers(bot, query, requestId) {
   const row = await transferService.findTransfer(requestId);
   const bales = row && row.actionJSON && Array.isArray(row.actionJSON.bales) ? row.actionJSON.bales : [];
@@ -487,20 +578,58 @@ async function showBaleNumbers(bot, query, requestId) {
     }).catch(() => {});
     return true;
   }
-  // TRF-INT2 (owner rule 3) — the warehouse rides the numbers so a bale
-  // number that lives in two warehouses is never ambiguous.
-  const aj2 = row.actionJSON || {};
-  const whereNote = aj2.stage === 'in_transit' ? `${aj2.from} → ${aj2.to}` : (aj2.from ? `from ${aj2.from}` : '');
-  const text = `📦 ${shortTransferRef(requestId)} — ${bales.length} bale(s)${whereNote ? ` (${whereNote})` : ''}:\n${bales.join(', ')}`;
-  if (text.length <= 190) { // Telegram alert cap ~200 chars
-    await bot.answerCallbackQuery(query.id, { text, show_alert: true }).catch(() => {});
-    return true;
-  }
   await bot.answerCallbackQuery(query.id).catch(() => {});
-  const sent = await bot.sendMessage(query.message.chat.id, text).catch(() => null);
+  const { text } = await buildBaleBreakdown(requestId, row);
+  const sent = await bot.sendMessage(query.message.chat.id, text, {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: baleCardRows(requestId, row.actionJSON || {}, null) },
+  }).catch(() => null);
   if (sent && sent.message_id) {
     require('../services/ephemeralDocs').track(bot, String(query.from.id), query.message.chat.id, sent.message_id);
   }
+  return true;
+}
+
+/**
+ * TRF-17 — 🧮 reconcile: OCR the dispatch doc and redraw THIS card in place
+ * with 🟢 on every digit-exact match. Never mutates a sheet — it is a reading
+ * of the document against numbers that were already pinned by the dispatcher.
+ */
+async function reconcileBaleNumbers(bot, query, requestId) {
+  const chatId = query.message.chat.id;
+  const userId = String(query.from.id);
+  const messageId = query.message.message_id;
+  const row = await transferService.findTransfer(requestId);
+  if (!row) {
+    await bot.answerCallbackQuery(query.id, { text: '🚚 Transfer not found or already purged.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  const aj = row.actionJSON || {};
+  const parties = [String(row.user || ''), String(aj.dispatcher || ''), String(aj.receiver || '')];
+  if (!parties.includes(userId) && !auth.isAdmin(userId)) {
+    await bot.answerCallbackQuery(query.id, { text: 'This document is for the people on the transfer.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  const doc = aj.dispatchDoc;
+  if (!doc || !doc.fileId) {
+    await bot.answerCallbackQuery(query.id, { text: 'No dispatch document is attached to this transfer.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+
+  const paint = async (status, verified) => {
+    const { text } = await buildBaleBreakdown(requestId, row, { status, verified });
+    await bot.editMessageText(text, {
+      chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: baleCardRows(requestId, aj, status) },
+    }).catch(() => {});
+  };
+  await paint({ reading: true, at: 1, of: 1 }, []);
+
+  const { digits, error } = await saleDocReconcile.readBaleDigits(bot, [doc]);
+  const all = Array.isArray(aj.bales) ? aj.bales.map(String) : [];
+  const res = saleDocReconcile.reconcile(all, digits);
+  await paint({ done: true, matched: res.matched, missing: res.missing, docOnly: res.docOnly, error }, res.verified);
   return true;
 }
 
@@ -1781,6 +1910,12 @@ async function handleCallback(bot, query) {
   if (mInfo) return showInfo(bot, query, mInfo[1], true);
   const mVd = data.match(/^trf:vd:([dr]):(.+)$/);
   if (mVd) return sendTransferDoc(bot, query, mVd[2], mVd[1] === 'r' ? 'receive' : 'dispatch');
+  // TRF-17 — the two are disjoint because both patterns anchor the colon
+  // ('trf:bnr:x' cannot match /^trf:bn:/), so order is not load-bearing here.
+  // Reconcile is still tested first: if either pattern is ever loosened to a
+  // startsWith, the specific one having priority is what keeps it correct.
+  const mBnr = data.match(/^trf:bnr:(.+)$/);
+  if (mBnr) return reconcileBaleNumbers(bot, query, mBnr[1]);
   const mBn = data.match(/^trf:bn:(.+)$/);
   if (mBn) return showBaleNumbers(bot, query, mBn[1]);
   const mLess = data.match(/^trf:less:(.+)$/);
@@ -1977,7 +2112,8 @@ module.exports = {
     parseTypedTransfer, typedBaleMap,
     startDispatchPicker, askDispatchDoc, completeDispatch, completeReceipt,
     armDocGate, gateNotNow, showInfo, promptForDoc, handleFile,
-    docRows, sendTransferDoc, balesChipRow, showBaleNumbers, ensureLineBales,
+    docRows, sendTransferDoc, balesChipRow, showBaleNumbers, reconcileBaleNumbers,
+    buildBaleBreakdown, baleCardRows, ensureLineBales,
     linesBlock, dispatchedBlock, headOf, compactOf, designHead,
     detailCard, shortCard, showActionCard, dispatcherCard, receiverCard, SESSION_TYPE,
   },
