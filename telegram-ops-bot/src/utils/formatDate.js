@@ -30,4 +30,24 @@ function fmtDate(raw) {
   return `${dd}-${mon}-${yyyy}`;
 }
 
+/**
+ * Same date, 2-digit year: 22-Jul-26.
+ *
+ * For INLINE-KEYBOARD BUTTONS, where the label shares a line with other text
+ * and Telegram truncates rather than wraps — the audit checklist chip reads
+ * `✅ 408/204 (done 22-Jul-26)`. Message bodies keep fmtDate's 4-digit year;
+ * that stays the default everywhere, per the operator's confirmed format.
+ *
+ * @param {string|Date} raw any date fmtDate accepts
+ * @returns {string} DD-MMM-YY, or fmtDate's own fallback when unparseable
+ */
+fmtDate.short = function short(raw) {
+  const full = fmtDate(raw);
+  // Only trim a year we actually produced — an unparseable input comes back
+  // as the caller's raw string and must not be sliced.
+  return /^\d{2}-[A-Z][a-z]{2}-\d{4}$/.test(full)
+    ? `${full.slice(0, 7)}${full.slice(9)}` // '22-Jul-' + '26'
+    : full;
+};
+
 module.exports = fmtDate;

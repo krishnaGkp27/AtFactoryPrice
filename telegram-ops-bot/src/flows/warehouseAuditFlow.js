@@ -40,6 +40,7 @@ const onboardingStock     = require('../data/onboardingStock');
 const auth                = require('../middlewares/auth');
 const config              = require('../config');
 const logger              = require('../utils/logger');
+const fmtDate             = require('../utils/formatDate');
 
 const SESSION_TYPE   = 'wh_audit_flow';
 const MAX_DESIGNS    = 30;
@@ -162,12 +163,38 @@ async function loadChecklist(session) {
   }
   const latest = await stockTakesRepository.latestFor(session.warehouse);
   return Array.from(designs.values())
-    .sort((a, b) => String(a.design).localeCompare(String(b.design), undefined, { numeric: true }))
     .map((d) => {
       const rec = latest.get(String(d.design).toUpperCase());
       const reconciled = !!rec && rec.sheet_bales === d.fullBales && rec.sheet_bundles === d.looseThans;
+      // reconciledAt stays ISO (YYYY-MM-DD) — it is the SORT key. Display
+      // formatting happens at render, never here.
       return { ...d, reconciled, reconciledAt: reconciled ? rec.audited_at.slice(0, 10) : '' };
-    });
+    })
+    .sort(byOldestReconciliation);
+}
+
+/**
+ * AUD-ORD1 (owner, 04-Aug-2026): "in order of the oldest to the newest
+ * reconciliation".
+ *
+ * Never-counted designs sort FIRST — never reconciled is the oldest state
+ * there is, and they are also the only tappable chips on the card, so the
+ * work sits at the top instead of below a wall of ticks. Counted designs
+ * follow, oldest count first, so a stale reconciliation rises toward them.
+ *
+ * Within either group the old design-code order is kept as the tiebreaker,
+ * which also means the offline count sheet — built from the un-reconciled
+ * designs only — comes out in exactly the order it does today.
+ *
+ * Sorts on the ISO date, which orders correctly as plain text; the
+ * DD-MMM-YY label is display-only and never sorted on.
+ */
+function byOldestReconciliation(a, b) {
+  if (a.reconciled !== b.reconciled) return a.reconciled ? 1 : -1;
+  if (a.reconciled && a.reconciledAt !== b.reconciledAt) {
+    return a.reconciledAt < b.reconciledAt ? -1 : 1;
+  }
+  return String(a.design).localeCompare(String(b.design), undefined, { numeric: true });
 }
 
 /* ───────────────────────────── render helper ───────────────────────────── */
@@ -433,6 +460,13 @@ async function renderChecklist(bot, chatId, userId) {
   // sheet whenever old-stock designs are waiting for this store.
   const onboardingPending = onboardingCount(session);
   if (!list.length) {
+    // AUD-ORD1 — the non-empty path below replaces _checklist; this path used
+    // to leave it alone, so switching from a stocked store to an empty one
+    // kept the PREVIOUS store's designs in the session. 📄 Offline count
+    // sheet builds from _checklist, so it handed the auditor a count sheet
+    // for the warehouse they just left. Clear it with the store.
+    session._checklist = [];
+    sessionStore.set(userId, session);
     const rows = [];
     if (onboardingPending) {
       rows.push([{ text: `\u{1F4E5} Add old-stock list (${onboardingPending})`, callback_data: 'wai:onb' }]);
@@ -461,7 +495,7 @@ async function renderChecklist(bot, chatId, userId) {
   const done = list.filter((d) => d.reconciled).length;
   const rows = list.map((d, i) => {
     const s = state.get(String(d.design).toUpperCase()) || {};
-    if (d.reconciled) return [{ text: `✅ ${d.design} (done ${d.reconciledAt})`, callback_data: 'wai:noop' }];
+    if (d.reconciled) return [{ text: `✅ ${d.design} (done ${fmtDate.short(d.reconciledAt)})`, callback_data: 'wai:noop' }];
     if (s.locked) return [{ text: `🚩 ${d.design} — locked (admin review)`, callback_data: 'wai:noop' }];
     const icon = s.mismatches ? '🔁' : '⬜';
     return [{ text: `${icon} ${d.design}`, callback_data: `wai:ck:${i}` }];
@@ -512,6 +546,25 @@ async function renderPad(bot, chatId, userId, note = '') {
 async function openPad(bot, chatId, userId, idx, query) {
   const session = sessionStore.get(userId);
   if (!session || session.step !== 'checklist') return;
+  // AUD-ORD1 — `wai:ck:<i>` is an index into the checklist AS IT WAS when
+  // that card was drawn, and the card is now re-sorted every time a design
+  // is counted (a counted design leaves the un-reconciled block). So an
+  // index only means what it says on the CURRENT card.
+  //
+  // A stale card is reachable: when editMessageText fails, flowKit's
+  // renderer falls through to a fresh sendMessage and re-anchors
+  // flowMessageId, leaving the previous card live in the chat with its old
+  // keyboard. Tapping that would open the pad for a DIFFERENT design and
+  // file the auditor's physical count against it — the exact class of
+  // silent mis-attribution BUSINESS_RULES §2 exists to prevent. Refuse.
+  const tappedId = query && query.message && query.message.message_id;
+  if (session.flowMessageId && tappedId && tappedId !== session.flowMessageId) {
+    await bot.answerCallbackQuery(query.id, {
+      text: 'That card is out of date — use the newest audit card in this chat.',
+      show_alert: true,
+    }).catch(() => {});
+    return;
+  }
   const d = (session._checklist || [])[idx];
   if (!d) return;
   if (d.reconciled) {
