@@ -270,8 +270,12 @@ async function renderCategories(bot, chatId, userId) {
   const received = await recentReceivedTransfers();
   if (transfers.length || received.length) {
     const inTransit = transfers.filter((t) => (t.actionJSON || {}).stage === 'in_transit').length;
-    const waiting = transfers.length - inTransit;
-    const mix = [waiting ? `${waiting} 🔴` : '', inTransit ? `${inTransit} 🟡` : '',
+    // TRF-18 — a parked package is the ADMIN's move; lumping it into the red
+    // "waiting for dispatch" count hid the one stage that is waiting on YOU.
+    const adminReview = transfers.filter((t) => (t.actionJSON || {}).stage === 'admin_review').length;
+    const waiting = transfers.length - inTransit - adminReview;
+    const mix = [adminReview ? `${adminReview} 🛂` : '', waiting ? `${waiting} 🔴` : '',
+      inTransit ? `${inTransit} 🟡` : '',
       received.length ? `${received.length} 🟢` : ''].filter(Boolean).join(' · ');
     rows.push([{ text: `🚚 Transfers — ${transfers.length + received.length}${mix ? ` (${mix})` : ''}`, callback_data: 'abx:cat:transfers' }]);
   }
@@ -387,7 +391,7 @@ function transferThanCount(aj) {
 function transferChipLabel(it) {
   const aj = it.actionJSON || {};
   const dot = String(it.status || '').toLowerCase() === 'approved' ? '🟢'
-    : (aj.stage === 'in_transit' ? '🟡' : '🔴');
+    : (aj.stage === 'in_transit' ? '🟡' : aj.stage === 'admin_review' ? '🛂' : '🔴');
   // Legacy rows without a route keep the short ref so the chip isn't blank.
   const route = (aj.from || aj.to) ? `${whCode(aj.from)}▸${whCode(aj.to)}` : shortTransferId(it.requestId);
   const parts = [];

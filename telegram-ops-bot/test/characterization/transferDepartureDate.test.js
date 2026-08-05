@@ -122,6 +122,18 @@ async function toDispatchReview() {
   return { calls, requestId, bot: b2 };
 }
 
+
+/** TRF-18 — Abdul is not an admin, so his photo PARKS the package; the flip
+ *  happens on the admin's ✅. Drives the approve and returns the admin bot. */
+async function approveAsAdmin(requestId) {
+  // The live card carries a package token derived from submittedAt.
+  const row = await approvalQueueRepository.getByRequestId(requestId);
+  const tok = (Date.parse(((row.actionJSON || {}).pendingDispatch || {}).submittedAt || '') || 0).toString(36);
+  const ba = createFakeBot();
+  await controller.handleCallbackQuery(ba, cb(`trf:adok:${requestId}:${tok}`, 777));
+  return ba;
+}
+
 test('the dispatch review shows today by default with a Change date button', async () => {
   const { bot } = await toDispatchReview();
   const text = lastText(bot);
@@ -183,17 +195,22 @@ test('the chosen day rides the dispatch as dispatchedOn, and dispatchedAt stays'
   await controller.handleFileMessage(bp, {
     chat: { id: 'abdul' }, from: { id: 'abdul', first_name: 'Abdul' }, photo: [{ file_id: 'F1' }],
   });
+  // TRF-18 — Abdul's photo parks the package for admin approval; the date he
+  // picked must survive the park and ride the flip when the admin approves.
+  const parked = calls.ajPatches.find((p) => p.stage === 'admin_review');
+  assert.ok(parked, 'parked for admin review');
+  assert.equal(parked.pendingDispatch.leftOn, YESTERDAY, 'departure date held in the package');
+  const ba = await approveAsAdmin(requestId);
   const patch = calls.ajPatches.find((p) => p.stage === 'in_transit');
-  assert.ok(patch, 'dispatch applied');
+  assert.ok(patch, 'dispatch applied on approve');
   assert.equal(patch.dispatchedOn, YESTERDAY, 'the physical departure date is stored');
   assert.match(patch.dispatchedAt, /^\d{4}-\d{2}-\d{2}T/, 'the logging timestamp is kept too');
-  assert.notEqual(patch.dispatchedOn, patch.dispatchedAt.slice(0, 10) === YESTERDAY ? null : patch.dispatchedAt,
-    'they are separate fields');
-  // The receiver card tells Musa when the goods actually left.
-  const rdm = bp.callsTo('sendMessage').find((m) => m.args.chatId === 'musa');
-  assert.ok(rdm, 'receiver notified');
+  // The receiver card tells Musa when the goods actually left — on APPROVE.
+  const before = bp.callsTo('sendMessage').find((m) => m.args.chatId === 'musa');
+  assert.ok(!before, 'receiver hears nothing while the package awaits approval');
+  const rdm = ba.callsTo('sendMessage').find((m) => m.args.chatId === 'musa');
+  assert.ok(rdm, 'receiver notified on approve');
   assert.match(rdm.args.text, /📅 Left Lagos: \*/, `departure on the receiver card, got: ${rdm.args.text}`);
-  assert.ok(requestId);
 });
 
 test('dispatching without touching the date records today', async () => {
@@ -203,7 +220,10 @@ test('dispatching without touching the date records today', async () => {
   await controller.handleFileMessage(bp, {
     chat: { id: 'abdul' }, from: { id: 'abdul', first_name: 'Abdul' }, photo: [{ file_id: 'F1' }],
   });
+  const parked = calls.ajPatches.find((p) => p.stage === 'admin_review');
+  await approveAsAdmin(calls.appended.requestId);
   const patch = calls.ajPatches.find((p) => p.stage === 'in_transit');
+  assert.equal(parked.pendingDispatch.leftOn, TODAY, 'package holds today by default');
   assert.equal(patch.dispatchedOn, TODAY, 'default is today — zero extra taps');
 });
 
@@ -215,6 +235,7 @@ test('the receipt Transactions row carries the physical departure date', async (
   await controller.handleFileMessage(createFakeBot(), {
     chat: { id: 'abdul' }, from: { id: 'abdul', first_name: 'Abdul' }, photo: [{ file_id: 'F1' }],
   });
+  await approveAsAdmin(requestId); // TRF-18 — nothing to receive until approved
   const br = createFakeBot();
   await controller.handleCallbackQuery(br, cb(`trf:rcv:${requestId}`, 'musa'));
   await controller.handleFileMessage(createFakeBot(), {

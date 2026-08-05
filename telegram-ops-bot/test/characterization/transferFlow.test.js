@@ -134,9 +134,16 @@ test('dispatch applies only after the mandatory load photo; receive after the re
   assert.equal(calls.transitions.length, 0, 'TRF-6: nothing moves before the load photo');
   assert.ok(!bot2.callsTo('sendMessage').some((m) => m.args.chatId === 'musa'), 'receiver hears nothing before the photo');
   assert.match(bot2.allText(), /Photo required/i);
-  // The load photo lands → dispatch applies, receiver DM goes out.
+  // The load photo lands → TRF-18 parks the package; the admin's ✅ applies
+  // the dispatch and only then does the receiver DM go out.
+  const bp0 = createFakeBot();
+  await controller.handleFileMessage(bp0, { chat: { id: 'abdul' }, from: { id: 'abdul', first_name: 'Abdul' }, photo: [{ file_id: 'F1' }] });
+  assert.equal(calls.transitions.length, 0, 'TRF-18: parked, not flipped');
+  assert.ok(!bp0.callsTo('sendMessage').some((m) => m.args.chatId === 'musa'), 'receiver still hears nothing');
+  const _r1 = await approvalQueueRepository.getByRequestId(requestId);
+  const _t1 = (Date.parse(((_r1.actionJSON || {}).pendingDispatch || {}).submittedAt || '') || 0).toString(36);
   const bp = createFakeBot();
-  await controller.handleFileMessage(bp, { chat: { id: 'abdul' }, from: { id: 'abdul', first_name: 'Abdul' }, photo: [{ file_id: 'F1' }] });
+  await controller.handleCallbackQuery(bp, cb(`trf:adok:${requestId}:${_t1}`, 777));
   const t0 = calls.transitions[0];
   assert.deepEqual(t0.pkgs, ['P1', 'P2']);
   assert.equal(t0.from, 'available');
@@ -174,8 +181,11 @@ test('shortfall at dispatch: partial send recorded and flagged', async () => {
   assert.match(bot2.allText(), /9006\/3: 1\/2 ⚠️ short/, 'per-line shortfall shown on review');
   await controller.handleCallbackQuery(bot2, cb('trf:bl:go', 'abdul'));
   assert.equal(calls.transitions.length, 0, 'gate: still nothing moved');
+  await controller.handleFileMessage(createFakeBot(), { chat: { id: 'abdul' }, from: { id: 'abdul', first_name: 'Abdul' }, photo: [{ file_id: 'F1' }] });
+  const _r1 = await approvalQueueRepository.getByRequestId(requestId);
+  const _t1 = (Date.parse(((_r1.actionJSON || {}).pendingDispatch || {}).submittedAt || '') || 0).toString(36);
   const bp = createFakeBot();
-  await controller.handleFileMessage(bp, { chat: { id: 'abdul' }, from: { id: 'abdul', first_name: 'Abdul' }, photo: [{ file_id: 'F1' }] });
+  await controller.handleCallbackQuery(bp, cb(`trf:adok:${requestId}:${_t1}`, 777)); // TRF-18
   assert.deepEqual(calls.transitions[0].pkgs, ['P1'], 'only the existing bale dispatched');
   assert.match(bp.allText(), /Shade 3 — 1\/2 ⚠️ short/, 'grouped shortfall shown');
   assert.match(bp.allText(), /Partially dispatched/i);

@@ -470,7 +470,7 @@ function docRows(requestId, aj) {
  *  chat). Empty before dispatch — bales are logged when the dispatcher
  *  accepts. */
 function balesChipRow(requestId, aj) {
-  const bales = Array.isArray(aj.bales) ? aj.bales : [];
+  const { bales } = effectiveBales(aj);
   if (!bales.length) return [];
   const label = `📦 ${bales.length} bale${bales.length === 1 ? '' : 's'} — view all`;
   // trf:bn — NOT trf:bl, which is the dispatch picker's namespace.
@@ -492,10 +492,27 @@ function balesChipRow(requestId, aj) {
  *
  * @returns {Promise<{text:string, groups:Array, all:Array<string>}>}
  */
+/**
+ * TRF-18 — which bale set a card should read: the dispatched one, or the
+ * package parked for admin review. Review packages hold their numbers under
+ * pendingDispatch until the approve consumes them.
+ */
+function effectiveBales(aj) {
+  if (aj && aj.stage === 'admin_review' && aj.pendingDispatch) {
+    return {
+      bales: aj.pendingDispatch.bales || [],
+      uids: aj.pendingDispatch.baleUids || [],
+    };
+  }
+  return {
+    bales: Array.isArray(aj && aj.bales) ? aj.bales : [],
+    uids: Array.isArray(aj && aj.baleUids) ? aj.baleUids : [],
+  };
+}
+
 async function buildBaleBreakdown(requestId, row, opts = {}) {
   const aj = (row && row.actionJSON) || {};
-  const bales = Array.isArray(aj.bales) ? aj.bales : [];
-  const uids = Array.isArray(aj.baleUids) ? aj.baleUids : [];
+  const { bales, uids } = effectiveBales(aj);
   const verified = opts.verified || [];
 
   let invRows = [];
@@ -570,7 +587,7 @@ function baleCardRows(requestId, aj, status) {
 /** TRF-17 — the breakdown as its own ephemeral card, swept like a doc view. */
 async function showBaleNumbers(bot, query, requestId) {
   const row = await transferService.findTransfer(requestId);
-  const bales = row && row.actionJSON && Array.isArray(row.actionJSON.bales) ? row.actionJSON.bales : [];
+  const bales = row ? effectiveBales(row.actionJSON).bales : [];
   if (!row || !bales.length) {
     await bot.answerCallbackQuery(query.id, {
       text: row ? '📦 No bales logged yet — they are picked at dispatch.' : '🚚 Transfer not found or already purged.',
@@ -627,7 +644,215 @@ async function reconcileBaleNumbers(bot, query, requestId) {
   await paint({ reading: true, at: 1, of: 1 }, []);
 
   const { digits, error } = await saleDocReconcile.readBaleDigits(bot, [doc]);
-  const all = Array.isArray(aj.bales) ? aj.bales.map(String) : [];
+  const all = effectiveBales(aj).bales.map(String);
+  const res = saleDocReconcile.reconcile(all, digits);
+  await paint({ done: true, matched: res.matched, missing: res.missing, docOnly: res.docOnly, error }, res.verified);
+  return true;
+}
+
+/* ── TRF-18 — the admin approval gate ─────────────────────────────────── */
+
+/** Deterministic short token for a parked package (from its submit time). */
+function pkgToken(pending) {
+  const t = Date.parse((pending && pending.submittedAt) || '') || 0;
+  return t.toString(36);
+}
+
+/**
+ * The card an admin sees when a non-admin dispatcher completes a package.
+ * TRF-17 layout; reconciliation ON TAP only (owner, 05-Aug-2026 — the
+ * later ruling; no OCR runs at card time).
+ */
+async function buildAdminReviewCard(requestId, row, opts = {}) {
+  const aj = row.actionJSON || {};
+  const pending = aj.pendingDispatch || {};
+  let who = String(pending.submittedBy || aj.dispatcher || '');
+  try { who = await require('../services/approvalCards').resolveUserLabel(who); } catch (_) { /* id is fine */ }
+  // Markdown-hostile characters in a user-supplied name must not break the
+  // card send — a parse failure here means the admin never sees the card.
+  who = who.replace(/[*_`\[\]]/g, '');
+  // Package token: approve/send-back act on THIS package. A card from
+  // before a send-back must never approve a re-logged package unseen.
+  const tok = pkgToken(pending);
+  const { text } = await buildBaleBreakdown(requestId, row, opts);
+  const head = `🛂 *Transfer ${shortTransferRef(requestId)} — awaiting your approval*\n`
+    + `📅 Left the store: ${fmtDate(pending.leftOn)}\n`
+    + `🙋 Logged by ${who}\n\n`;
+  const kb = [
+    [{ text: '✅ Approve dispatch', callback_data: `trf:adok:${requestId}:${tok}` },
+      { text: '↩️ Send back', callback_data: `trf:adrj:${requestId}:${tok}` }],
+    ...docRows(requestId, aj),
+  ];
+  if (aj.dispatchDoc && aj.dispatchDoc.fileId) {
+    kb.push([{
+      text: opts.status && opts.status.done ? '🔁 Re-check dispatch doc' : '🧮 Reconcile dispatch doc',
+      callback_data: `trf:adrc:${requestId}`,
+    }]);
+  }
+  return { text: head + text, kb: { inline_keyboard: kb } };
+}
+
+/** DM every admin the review card (after the dispatch doc is attached). */
+async function sendAdminReviewCards(bot, requestId) {
+  const row = await transferService.findTransfer(requestId);
+  if (!row || !row.actionJSON || row.actionJSON.stage !== 'admin_review') return;
+  const card = await buildAdminReviewCard(requestId, row);
+  for (const adminId of config.access.adminIds) {
+    try {
+      await bot.sendMessage(adminId, card.text, { parse_mode: 'Markdown', reply_markup: card.kb });
+    } catch (e) { logger.warn(`transferFlow: review card to ${adminId} failed: ${e.message}`); }
+  }
+}
+
+/** True when the tapped card's package token matches the parked package. */
+async function packageTokenCurrent(requestId, tok) {
+  const row = await transferService.findTransfer(requestId);
+  const pending = row && row.actionJSON && row.actionJSON.pendingDispatch;
+  if (!pending) return true; // stage guard downstream gives the precise message
+  return String(tok || '') === pkgToken(pending);
+}
+
+/** trf:adok — approve: the stored package runs the REAL dispatch now. */
+async function handleReviewApprove(bot, query, requestId, tok) {
+  const userId = String(query.from.id);
+  if (!auth.isAdmin(userId)) {
+    await bot.answerCallbackQuery(query.id, { text: 'Admin only.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  if (!(await packageTokenCurrent(requestId, tok))) {
+    await bot.answerCallbackQuery(query.id, {
+      text: 'This card shows an OLDER package — the dispatcher re-logged since. Open 📋 Transfers and approve from the fresh card.',
+      show_alert: true,
+    }).catch(() => {});
+    return true;
+  }
+  const res = await transferService.approveDispatch(requestId, userId);
+  if (!res.ok) {
+    // The flip's own copy says "decline the transfer" — the dispatcher's
+    // move, unreachable while parked. From this card the way out is ↩️.
+    const msg = /decline the transfer/i.test(String(res.message))
+      ? 'Every parked bale was taken by another transaction since review — ↩️ Send back so the dispatcher can re-log.'
+      : res.message;
+    await bot.answerCallbackQuery(query.id, { text: msg, show_alert: true }).catch(() => {});
+    return true;
+  }
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+  const aj = res.aj;
+  // The receiver hears about the goods NOW — card + the dispatch photo.
+  try {
+    const card = receiverCard(requestId, aj);
+    await bot.sendMessage(aj.receiver, card.text, { parse_mode: 'Markdown', reply_markup: card.kb });
+    if (aj.dispatchDoc && aj.dispatchDoc.fileId) {
+      const send = (aj.dispatchDoc.mime || '').includes('pdf') ? 'sendDocument' : 'sendPhoto';
+      await bot[send](aj.receiver, aj.dispatchDoc.fileId, { caption: `📸 Dispatch photo — ${requestId}` });
+    }
+  } catch (e) { logger.warn(`transferFlow: receiver DM failed: ${e.message}`); }
+  const row = await transferService.findTransfer(requestId);
+  await notifyAdmins(bot, requestId, aj, 'approved & dispatched 🚚', userId);
+  if (row) await notifyRequester(bot, row, requestId, aj, 'approved & dispatched 🚚', userId);
+  const shortNote = res.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
+  const conflictNote = res.conflicts && res.conflicts.length
+    ? `\n🚫 _NOT dispatched (taken by another transaction since review): ${res.conflicts.join(', ')}._`
+    : '';
+  const dispatcher = aj.approvedBy !== String(aj.dispatcher || '') ? aj.dispatcher : null;
+  if (dispatcher) {
+    // The dispatcher packed the physical load — bales dropped between
+    // review and approval are exactly what they must hear about.
+    await bot.sendMessage(dispatcher,
+      `✅ *${shortTransferRef(requestId)} approved* — the goods are now in transit to ${aj.to}.${shortNote}${conflictNote}`,
+      { parse_mode: 'Markdown' }).catch(() => {});
+  }
+  // The edited card stays useful: bale list, docs, and the detail expander —
+  // when the approver is the only admin, this edit IS the dispatch brief.
+  await bot.editMessageText(
+    `🚚 *${shortTransferRef(requestId)} — approved by you, dispatched*\n${headOf(aj)}\n${dispatchedBlock(aj)}${shortNote}${conflictNote}`,
+    { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [
+        ...balesChipRow(requestId, aj), ...docRows(requestId, aj),
+        [{ text: '🔎 View details', callback_data: `trf:info:${requestId}` }],
+      ] } },
+  ).catch(() => {});
+  return true;
+}
+
+/** trf:adrj — send back: stage returns to requested, the dispatcher re-logs. */
+async function handleReviewSendBack(bot, query, requestId, tok) {
+  const userId = String(query.from.id);
+  if (!auth.isAdmin(userId)) {
+    await bot.answerCallbackQuery(query.id, { text: 'Admin only.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  if (!(await packageTokenCurrent(requestId, tok))) {
+    await bot.answerCallbackQuery(query.id, {
+      text: 'This card shows an OLDER package — open 📋 Transfers for the current one.',
+      show_alert: true,
+    }).catch(() => {});
+    return true;
+  }
+  const res = await transferService.sendBackFromReview(requestId, userId);
+  if (!res.ok) {
+    await bot.answerCallbackQuery(query.id, { text: res.message, show_alert: true }).catch(() => {});
+    return true;
+  }
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+  const aj = res.aj;
+  // Other admins hold live review cards; their taps now refuse on the
+  // package token, but they still deserve to know why.
+  await notifyAdmins(bot, requestId, aj, 'sent back to the dispatcher ↩️', userId);
+  if (aj.dispatcher) {
+    await bot.sendMessage(aj.dispatcher,
+      `↩️ *${shortTransferRef(requestId)} sent back by admin* — nothing moved. `
+      + 'Open the transfer and log the bales again.',
+      { parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: '🚚 Open transfer', callback_data: `trf:card:${requestId}` }]] } })
+      .catch(() => {});
+  }
+  await bot.editMessageText(
+    `↩️ *${shortTransferRef(requestId)} — sent back to the dispatcher*\n${headOf(aj)}\nNothing moved.`,
+    { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: 'Markdown' },
+  ).catch(() => {});
+  return true;
+}
+
+/** trf:adrc — reconcile the review card in place (on tap only). */
+async function handleReviewReconcile(bot, query, requestId) {
+  const userId = String(query.from.id);
+  if (!auth.isAdmin(userId)) {
+    await bot.answerCallbackQuery(query.id, { text: 'Admin only.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  const row = await transferService.findTransfer(requestId);
+  const aj = row && row.actionJSON;
+  if (!row || aj.stage !== 'admin_review') {
+    await bot.answerCallbackQuery(query.id, { text: `Transfer is ${stateLabel(row)} — nothing to check.`, show_alert: true }).catch(() => {});
+    return true;
+  }
+  const doc = aj.dispatchDoc;
+  if (!doc || !doc.fileId) {
+    await bot.answerCallbackQuery(query.id, { text: 'No dispatch document attached.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+  const chatId = query.message.chat.id;
+  const messageId = query.message.message_id;
+  const paint = async (status, verified) => {
+    const card = await buildAdminReviewCard(requestId, row, { status, verified });
+    await bot.editMessageText(card.text, {
+      chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: card.kb,
+    }).catch(() => {});
+  };
+  await paint({ reading: true, at: 1, of: 1 }, []);
+  const { digits, error } = await saleDocReconcile.readBaleDigits(bot, [doc]);
+  // The OCR takes seconds; if another admin approved or sent back meanwhile,
+  // repainting would resurrect live Approve buttons on a settled transfer.
+  const fresh = await transferService.findTransfer(requestId);
+  if (!fresh || !fresh.actionJSON || fresh.actionJSON.stage !== 'admin_review') {
+    await bot.editMessageText(
+      `🚚 *${shortTransferRef(requestId)}* — ${stateLabel(fresh)}\n_The package was handled while the doc was being read._`,
+      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' }).catch(() => {});
+    return true;
+  }
+  const all = effectiveBales(aj).bales.map(String);
   const res = saleDocReconcile.reconcile(all, digits);
   await paint({ done: true, matched: res.matched, missing: res.missing, docOnly: res.docOnly, error }, res.verified);
   return true;
@@ -652,6 +877,7 @@ function stateLabel(row) {
   if (row.status === 'approved') return 'received ✅';
   if (row.status === 'rejected') return 'closed ❌';
   const stage = row.actionJSON && row.actionJSON.stage;
+  if (stage === 'admin_review') return 'awaiting admin approval 🛂';
   return stage === 'in_transit' ? 'in transit 🚚' : 'awaiting dispatch ⏳';
 }
 
@@ -1255,6 +1481,21 @@ async function completeDispatch(bot, session, userId) {
   const requestId = session.requestId;
   const manualPicks = (session.pl || []).map((p) => p.sel);
   const row = await transferService.findTransfer(requestId);
+  // TRF-18 (owner, 05-Aug-2026) — a NON-ADMIN's dispatch does not move
+  // stock: the package parks for admin approval. An admin in the dispatcher
+  // seat flips immediately — the admin's own action IS the approval.
+  if (!auth.isAdmin(userId)) {
+    const sub = await transferService.submitForAdminReview(requestId, userId, manualPicks,
+      { leftOn: session.leftOn || null });
+    if (!sub.ok) return { ok: false, message: sub.message };
+    const n = (sub.aj.pendingDispatch.bales || []).length;
+    return {
+      ok: true,
+      adminReview: true,
+      sealText: `🛂 *${shortTransferRef(requestId)} — sent for admin approval*\n`
+        + `${headOf(sub.aj)}\n${n} bale(s) logged · nothing moves until an admin approves.`,
+    };
+  }
   const res = await transferService.dispatch(requestId, userId, manualPicks,
     { leftOn: session.leftOn || null });
   if (!res.ok) return { ok: false, message: res.message };
@@ -1471,9 +1712,18 @@ async function handleFile(bot, msg) {
   const caption = `📸 ${kind === 'receive' ? 'Receipt' : 'Dispatch'} photo — ${requestId}`;
   const targets = new Set();
   if (aj) {
-    targets.add(String(kind === 'receive' ? aj.dispatcher : aj.receiver));
+    // TRF-18 — while the package awaits admin approval the receiver has no
+    // goods coming yet; they hear about it (card + photo) on approve.
+    const parked = kind === 'dispatch' && aj.stage === 'admin_review';
+    if (!parked) {
+      targets.add(String(kind === 'receive' ? aj.dispatcher : aj.receiver));
+    }
     for (const a of config.access.adminIds) targets.add(String(a));
-    if (row.user) targets.add(String(row.user));
+    // While parked, the requester forward must not leak to the receiver
+    // through the back door of having RAISED the transfer themselves.
+    if (row.user && !(parked && String(row.user) === String(aj.receiver))) {
+      targets.add(String(row.user));
+    }
   }
   targets.delete(userId);
   for (const t of targets) {
@@ -1494,6 +1744,12 @@ async function handleFile(bot, msg) {
     { chat_id: chatId, message_id: flowMessageId, parse_mode: 'Markdown', disable_web_page_preview: true,
       reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] } },
   ).catch(() => {});
+  // TRF-18 — the doc is on the row now; the admin review cards can go out.
+  // Sent AFTER attachDoc so the 📄/🧮 chips on the card have a doc to open.
+  if (kind === 'dispatch' && aj && aj.stage === 'admin_review') {
+    await sendAdminReviewCards(bot, requestId).catch((e) =>
+      logger.warn(`transferFlow: admin review cards failed: ${e.message}`));
+  }
   return true;
 }
 
@@ -1581,6 +1837,21 @@ async function showActionCard(bot, query, requestId, opts = {}) {
       { inline_keyboard: [...balesChipRow(requestId, aj), ...docRows(requestId, aj), navRow] });
     return true;
   }
+  // TRF-18 — a parked package is the ADMIN's move, nobody else's. The admin
+  // gets the review card (approve / send back / reconcile); the dispatcher
+  // gets a passive status so their old Accept card cannot mislead them.
+  if (aj.stage === 'admin_review') {
+    await bot.answerCallbackQuery(query.id).catch(() => {});
+    if (auth.isAdmin(userId)) {
+      const card = await buildAdminReviewCard(requestId, row);
+      await editInPlace(card.text, { inline_keyboard: [...card.kb.inline_keyboard, navRow] });
+    } else {
+      await editInPlace(
+        `🛂 *${shortTransferRef(requestId)} — awaiting admin approval*\n${compactOf(aj)}\n_Nothing moves until an admin approves. You will be told if it is sent back._`,
+        { inline_keyboard: [...balesChipRow(requestId, aj), navRow] });
+    }
+    return true;
+  }
   const toDispatch = aj.stage !== 'in_transit';
   const allowed = toDispatch ? aj.dispatcher : aj.receiver;
   if (userId !== String(allowed) && !auth.isAdmin(userId)) {
@@ -1606,7 +1877,8 @@ async function showList(bot, chatId, userId, messageId) {
   let text = '🚚 *Open transfers*\n';
   if (!open.length) text += '\n_None — everything is settled._';
   for (const t of open.slice(0, 15)) {
-    const badge = t.actionJSON.stage === 'in_transit' ? '🚚 in transit' : '⏳ awaiting dispatch';
+    const badge = t.actionJSON.stage === 'in_transit' ? '🚚 in transit'
+      : t.actionJSON.stage === 'admin_review' ? '🛂 awaiting approval' : '⏳ awaiting dispatch';
     text += `\n\`${shortTransferRef(t.requestId)}\` ${compactOf(t.actionJSON)} — ${badge}`;
   }
   const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]] } };
@@ -1914,6 +2186,13 @@ async function handleCallback(bot, query) {
   // ('trf:bnr:x' cannot match /^trf:bn:/), so order is not load-bearing here.
   // Reconcile is still tested first: if either pattern is ever loosened to a
   // startsWith, the specific one having priority is what keeps it correct.
+  // TRF-18 — admin review gate callbacks.
+  const mAdok = data.match(/^trf:adok:([^:]+)(?::([a-z0-9]+))?$/);
+  if (mAdok) return handleReviewApprove(bot, query, mAdok[1], mAdok[2]);
+  const mAdrj = data.match(/^trf:adrj:([^:]+)(?::([a-z0-9]+))?$/);
+  if (mAdrj) return handleReviewSendBack(bot, query, mAdrj[1], mAdrj[2]);
+  const mAdrc = data.match(/^trf:adrc:(.+)$/);
+  if (mAdrc) return handleReviewReconcile(bot, query, mAdrc[1]);
   const mBnr = data.match(/^trf:bnr:(.+)$/);
   if (mBnr) return reconcileBaleNumbers(bot, query, mBnr[1]);
   const mBn = data.match(/^trf:bn:(.+)$/);
@@ -2113,7 +2392,9 @@ module.exports = {
     startDispatchPicker, askDispatchDoc, completeDispatch, completeReceipt,
     armDocGate, gateNotNow, showInfo, promptForDoc, handleFile,
     docRows, sendTransferDoc, balesChipRow, showBaleNumbers, reconcileBaleNumbers,
-    buildBaleBreakdown, baleCardRows, ensureLineBales,
+    buildBaleBreakdown, baleCardRows, effectiveBales, ensureLineBales,
+    buildAdminReviewCard, sendAdminReviewCards,
+    handleReviewApprove, handleReviewSendBack, handleReviewReconcile,
     linesBlock, dispatchedBlock, headOf, compactOf, designHead,
     detailCard, shortCard, showActionCard, dispatcherCard, receiverCard, SESSION_TYPE,
   },

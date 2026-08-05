@@ -30,7 +30,7 @@ const mutex = require('../utils/asyncMutex');
 const ACTION = 'transfer_stock';
 const AVAILABLE = 'available';
 const IN_TRANSIT = 'in_transit';
-const STAGES = Object.freeze({ REQUESTED: 'requested', IN_TRANSIT: 'in_transit' });
+const STAGES = Object.freeze({ REQUESTED: 'requested', ADMIN_REVIEW: 'admin_review', IN_TRANSIT: 'in_transit' });
 
 function norm(v) { return String(v == null ? '' : v).trim().toLowerCase(); }
 
@@ -88,6 +88,12 @@ async function getActionableFor(userId) {
     const aj = t.actionJSON;
     if (aj.stage === STAGES.REQUESTED) return String(aj.dispatcher) === uid;
     if (aj.stage === STAGES.IN_TRANSIT) return String(aj.receiver) === uid;
+    // TRF-18 — a parked package is the ADMIN's move; without this, a
+    // transfer awaiting approval sat in NOBODY's My Tasks queue and only
+    // the DM card carried the duty.
+    if (aj.stage === STAGES.ADMIN_REVIEW) {
+      try { return require('../middlewares/auth').isAdmin(uid); } catch (_) { return false; }
+    }
     return false;
   });
 }
@@ -192,6 +198,58 @@ async function dispatch(requestId, byUserId, manualPicks, opts = {}) {
   return mutex.runExclusive(requestId, () => dispatchInner(requestId, byUserId, manualPicks, opts));
 }
 
+/**
+ * TRF-18 — a NON-ADMIN dispatcher's completed package goes to admin review
+ * instead of flipping stock. Same validation and mutexes as dispatch.
+ */
+async function submitForAdminReview(requestId, byUserId, manualPicks, opts = {}) {
+  return mutex.runExclusive(requestId, () =>
+    dispatchInner(requestId, byUserId, manualPicks, { ...opts, stageOnly: true }));
+}
+
+/**
+ * TRF-18 — admin approves: the STORED picks re-run the real dispatch, so
+ * stock lost between review and approval is dropped and reported (TRF-INT1).
+ */
+async function approveDispatch(requestId, adminId) {
+  return mutex.runExclusive(requestId, async () => {
+    const row = await findTransfer(requestId);
+    if (!row) return { ok: false, message: 'transferService: transfer not found' };
+    const aj = row.actionJSON;
+    if (row.status !== 'pending' || aj.stage !== STAGES.ADMIN_REVIEW || !aj.pendingDispatch) {
+      return { ok: false, message: `transferService: nothing awaiting approval (${row.status}/${aj.stage})` };
+    }
+    const pending = aj.pendingDispatch;
+    // The flip path asserts nothing about stage itself (dispatchInner did);
+    // run it directly under the warehouse lock with the stored picks.
+    return mutex.runExclusive(`dispatch-wh:${norm(aj.from)}`,
+      () => dispatchPickAndFlip(requestId, pending.submittedBy || adminId, pending.picks || [], aj,
+        { leftOn: pending.leftOn, approvedBy: adminId }));
+  });
+}
+
+/**
+ * TRF-18 — admin sends the package back: stage returns to `requested`, the
+ * dispatcher re-logs. Nothing flipped, so nothing reverts.
+ */
+async function sendBackFromReview(requestId, adminId) {
+  return mutex.runExclusive(requestId, async () => {
+    const row = await findTransfer(requestId);
+    if (!row) return { ok: false, message: 'transferService: transfer not found' };
+    const aj = row.actionJSON;
+    if (row.status !== 'pending' || aj.stage !== STAGES.ADMIN_REVIEW) {
+      return { ok: false, message: `transferService: nothing awaiting approval (${row.status}/${aj.stage})` };
+    }
+    const patch = {
+      stage: STAGES.REQUESTED, pendingDispatch: null,
+      reviewSentBackBy: String(adminId), reviewSentBackAt: new Date().toISOString(),
+    };
+    await approvalQueueRepository.updateActionJSON(requestId, patch);
+    await auditLogRepository.append('transfer.review_sent_back', { requestId }, String(adminId));
+    return { ok: true, aj: { ...aj, ...patch } };
+  });
+}
+
 async function dispatchInner(requestId, byUserId, manualPicks, opts = {}) {
   const row = await findTransfer(requestId);
   if (!row) return { ok: false, message: 'transferService: transfer not found' };
@@ -261,6 +319,25 @@ async function dispatchPickAndFlip(requestId, byUserId, manualPicks, aj, opts = 
   const uids = pickedRows.map((r) => uidByRow.get(r.rowIndex));
   const leftOn = /^\d{4}-\d{2}-\d{2}$/.test(String(opts.leftOn || ''))
     ? String(opts.leftOn) : new Date().toISOString().slice(0, 10);
+  // TRF-18 — a non-admin's dispatch stops HERE: the picks are validated and
+  // resolved exactly as a real dispatch would, but nothing flips. The package
+  // (picks + resolved preview + departure date) parks on the row for an
+  // admin to approve; approval re-runs this function without stageOnly, so
+  // the flip re-resolves against live stock (TRF-INT1) at approval time.
+  if (opts.stageOnly) {
+    const patch = {
+      stage: STAGES.ADMIN_REVIEW,
+      pendingDispatch: {
+        picks: manualPicks, bales: picked, baleUids: uids.map(String),
+        dispatched, leftOn, submittedBy: String(byUserId || ''),
+        submittedAt: new Date().toISOString(),
+      },
+    };
+    await approvalQueueRepository.updateActionJSON(requestId, patch);
+    await auditLogRepository.append('transfer.review_submitted',
+      { requestId, bales: picked, leftOn }, String(byUserId || ''));
+    return { ok: true, aj: { ...aj, ...patch }, review: true };
+  }
   const flipped = await inventoryRepository.transitionBales(picked, AVAILABLE, IN_TRANSIT, aj.to, {
     uids,
     // BMV-1 — the business date + the origin, so prev_state reads
@@ -295,6 +372,9 @@ async function dispatchPickAndFlip(requestId, byUserId, manualPicks, aj, opts = 
   const patch = {
     stage: STAGES.IN_TRANSIT, bales: keptPkgs, baleUids: keptUids, dispatched,
     short, dispatchedAt: now, dispatchedOn: leftOn,
+    // TRF-18 — approval provenance; pendingDispatch is consumed by the flip.
+    ...(opts.approvedBy ? { approvedBy: String(opts.approvedBy) } : {}),
+    pendingDispatch: null,
   };
   await approvalQueueRepository.updateActionJSON(requestId, patch);
   await auditLogRepository.append('transfer.dispatched',
@@ -444,6 +524,9 @@ module.exports = {
   findTransfer,
   createTransferRequest,
   dispatch,
+  submitForAdminReview,
+  approveDispatch,
+  sendBackFromReview,
   confirmReceipt,
   abort,
   attachDoc,

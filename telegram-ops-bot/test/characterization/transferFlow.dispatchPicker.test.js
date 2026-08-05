@@ -113,6 +113,18 @@ async function runWizard() {
   return { calls, requestId: calls.appended.requestId };
 }
 
+
+/** TRF-18 — Abdul is not an admin: his photo parks the package for admin
+ *  approval and the flip happens on the admin's ✅. */
+async function approveAsAdmin(requestId) {
+  // The live card carries a package token derived from submittedAt.
+  const row = await approvalQueueRepository.getByRequestId(requestId);
+  const tok = (Date.parse(((row.actionJSON || {}).pendingDispatch || {}).submittedAt || '') || 0).toString(36);
+  const ba = createFakeBot();
+  await controller.handleCallbackQuery(ba, cb(`trf:adok:${requestId}:${tok}`, 777));
+  return ba;
+}
+
 test('accept opens a bale picker with NOTHING pre-selected (TRF-15)', async () => {
   const { requestId } = await runWizard();
   const bot = createFakeBot();
@@ -146,6 +158,9 @@ test('dispatcher picks exact bales — chosen numbers dispatch once the photo la
   await controller.handleCallbackQuery(bot, cb('trf:bl:go', 'abdul'));  // arm photo gate
   assert.equal(calls.transitions.length, 0, 'TRF-6: no move before the photo');
   await sendPhoto('abdul');
+  // TRF-18 — the photo PARKS the package; only the admin's ✅ flips stock.
+  assert.equal(calls.transitions.length, 0, 'TRF-18: no move before the admin approves');
+  await approveAsAdmin(requestId);
   assert.deepEqual(calls.transitions[0].pkgs, ['P2', 'P4'], 'exact chosen bales flipped in-transit');
   assert.equal(calls.transitions[0].to, 'in_transit');
 });
@@ -172,11 +187,25 @@ test('dispatch photo gate: fresh bottom prompt, archive + link, forward, seal', 
   const bf = await sendPhoto('abdul');
   const row = await approvalQueueRepository.getByRequestId(requestId);
   assert.equal(row.actionJSON.dispatchDoc.url, 'https://drive/dispatch', 'link stored');
-  assert.equal(row.actionJSON.stage, 'in_transit', 'dispatch applied by the photo');
+  // TRF-18 — the photo parks the package; the flip waits for the admin.
+  assert.equal(row.actionJSON.stage, 'admin_review', 'parked for admin approval');
   assert.match(bf.allText(), /Dispatch photo attached/i);
   assert.ok(!sessionStore.get('abdul'), 'photo session cleared after upload');
-  // Forwarded to the receiver for eyes-on.
-  assert.ok(bf.callsTo('sendPhoto').some((c) => String(c.args.chatId) === 'musa'), 'photo forwarded to receiver');
+  // NOT forwarded to the receiver while awaiting approval — admins only.
+  assert.ok(!bf.callsTo('sendPhoto').some((c) => String(c.args.chatId) === 'musa'),
+    'receiver sees nothing before approval');
+  assert.ok(bf.callsTo('sendPhoto').some((c) => String(c.args.chatId) === '777'),
+    'photo forwarded to the admin');
+  // The admin got the 🛂 review card with approve/send-back.
+  const review = bf.callsTo('sendMessage').find((m) => /awaiting your approval/.test(String(m.args.text)));
+  assert.ok(review, 'review card sent');
+  const rkb = review.args.opts.reply_markup.inline_keyboard.flat();
+  assert.ok(rkb.some((b) => String(b.callback_data).startsWith(`trf:adok:${requestId}:`)), 'approve carries the package token');
+  assert.ok(rkb.some((b) => String(b.callback_data).startsWith(`trf:adrj:${requestId}:`)));
+  // On approve, the receiver finally hears about it (card + photo).
+  const ba = await approveAsAdmin(requestId);
+  assert.ok(ba.callsTo('sendMessage').some((c) => String(c.args.chatId) === 'musa'), 'receiver card on approve');
+  assert.ok(ba.callsTo('sendPhoto').some((c) => String(c.args.chatId) === 'musa'), 'photo forwarded on approve');
 });
 
 test('Back to bales from the photo gate returns to the review screen', async () => {
@@ -191,9 +220,10 @@ test('Back to bales from the photo gate returns to the review screen', async () 
   await controller.handleCallbackQuery(bb, cb('trf:bl:bk', 'abdul'));
   assert.equal(sessionStore.get('abdul').step, 'dispatch_confirm', 'back on the review screen');
   assert.match(bb.allText(), /dispatch 2 bale\(s\)\?/i);
-  // Dispatch again + photo → still exactly one transition.
+  // Dispatch again + photo + approve → still exactly one transition.
   await controller.handleCallbackQuery(bb, cb('trf:bl:go', 'abdul'));
   await sendPhoto('abdul');
+  await approveAsAdmin(requestId);
   assert.equal(calls.transitions.length, 1, 'one dispatch, no double-move');
 });
 
@@ -224,6 +254,7 @@ test('receive photo gate: receipt applies on the file, stored as receiveDoc', as
   await controller.handleCallbackQuery(bd, cb('trf:bl:nx', 'abdul'));  // review
   await controller.handleCallbackQuery(bd, cb('trf:bl:go', 'abdul'));
   await sendPhoto('abdul');
+  await approveAsAdmin(requestId); // TRF-18 — in transit only after the ✅
 
   const br = createFakeBot();
   await controller.handleCallbackQuery(br, cb(`trf:rcv:${requestId}`, 'musa'));
@@ -256,6 +287,7 @@ test('receiver "Not now" stands down: card restored, still in transit', async ()
   await controller.handleCallbackQuery(bd, cb('trf:bl:nx', 'abdul'));  // review
   await controller.handleCallbackQuery(bd, cb('trf:bl:go', 'abdul'));
   await sendPhoto('abdul');
+  await approveAsAdmin(requestId); // TRF-18
 
   const br = createFakeBot();
   await controller.handleCallbackQuery(br, cb(`trf:rcv:${requestId}`, 'musa'));
@@ -277,12 +309,14 @@ test('admin short card expands to full detail then collapses', async () => {
   await controller.handleCallbackQuery(bd, cb('trf:bl:t:1', 'abdul')); // tick P2
   await controller.handleCallbackQuery(bd, cb('trf:bl:nx', 'abdul'));  // review
   await controller.handleCallbackQuery(bd, cb('trf:bl:go', 'abdul'));
-  const bp = await sendPhoto('abdul'); // gate: admin brief goes out with the photo
+  await sendPhoto('abdul');
+  const bp = await approveAsAdmin(requestId); // TRF-18 — the brief rides the approve
 
-  const adminCard = bp.callsTo('sendMessage').find((m) => String(m.args.chatId) === '777');
+  // The approving admin was the only admin, so the brief is the EDIT of
+  // their own review card into the dispatched state (notifyAdmins excludes
+  // the actor).
+  const adminCard = bp.callsTo('editMessageText').find((m) => /approved by you, dispatched/i.test(String(m.args.text)));
   assert.ok(adminCard, 'admin briefed on dispatch');
-  assert.match(adminCard.args.text, /dispatched/i);
-  assert.ok(!/•/.test(adminCard.args.text), 'admin card is a one-liner (no per-line breakdown)');
   const kb = adminCard.args.opts.reply_markup.inline_keyboard.flat();
   assert.ok(kb.some((b) => b.callback_data === `trf:info:${requestId}`), 'View details offered');
 

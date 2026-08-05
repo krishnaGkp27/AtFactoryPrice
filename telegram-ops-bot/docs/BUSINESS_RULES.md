@@ -181,6 +181,17 @@ inventory sheet. but you can add in different sheet."*
   destination. Reject after dispatch sends the logged rows home.
 - Transfer ids are `TR-YYYYMMDD-NNN`, seeded from the sheet so restarts
   can't mint duplicates (TRID-1).
+- **TRF-18 (owner, 05-Aug-2026): a NON-ADMIN's completed dispatch does not
+  move stock — it goes to admin approval first** ("Once Abdul raises a
+  request for transfer, it will come to admin for approval"). The package
+  (picks + departure date + photo) parks at stage `admin_review`; stock
+  flips only on the admin's ✅. Send-back returns it to the dispatcher with
+  nothing moved. An ADMIN dispatching flips immediately — their action is
+  the approval. The admin may act in either seat: receive on behalf of the
+  receiver, raise/dispatch on behalf of the dispatcher.
+- **Reconciliation on the review card is ON TAP only** (owner, 05-Aug-2026,
+  superseding "auto" from earlier the same day): no OCR runs when the card
+  is created; 🧮 reads the dispatch doc and dots the matches in place.
 
 ## 9 · Customers are entities; assignment happens at approval
 

@@ -113,10 +113,16 @@ async function dispatchAll(requestId) {
   await controller.handleCallbackQuery(bot, cb('trf:bl:t:1', 'abdul')); // tick P2
   await controller.handleCallbackQuery(bot, cb('trf:bl:nx', 'abdul'));  // review
   await controller.handleCallbackQuery(bot, cb('trf:bl:go', 'abdul'));
-  // TRF-6: dispatch applies only when the mandatory load photo lands.
+  // TRF-6: dispatch applies only when the mandatory load photo lands —
+  // and since TRF-18 the flip further waits on the admin's ✅.
   await controller.handleFileMessage(bot, {
     chat: { id: 'abdul' }, from: { id: 'abdul', first_name: 'Abdul' }, photo: [{ file_id: 'F1' }],
   });
+  {
+    const _row = await approvalQueueRepository.getByRequestId(requestId);
+    const _tok = (Date.parse(((_row.actionJSON || {}).pendingDispatch || {}).submittedAt || '') || 0).toString(36);
+    await controller.handleCallbackQuery(createFakeBot(), cb(`trf:adok:${requestId}:${_tok}`, 777));
+  }
   sessionStore.clear('abdul');
 }
 
