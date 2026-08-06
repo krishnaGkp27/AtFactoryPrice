@@ -544,11 +544,19 @@ async function renderItem(bot, chatId, userId, idx) {
   }
 
   // APX-4 — one compact footer line; the raw UUID never reaches the screen.
+  // SAB-1 (owner, 06-Aug-2026) — the bill on demand. "(see below)" was a lie
+  // on this card: the forwarded bill sat next to the REQUEST-time DM, which
+  // may have scrolled away days before the admin opens the inbox. The chip
+  // delivers it right here, as an ephemeral view swept on the next tap.
+  const docRow = item.actionJSON && item.actionJSON.sale_doc_file_id
+    ? [[{ text: '📄 Sales bill', callback_data: `abx:doc:${idx}` }]]
+    : [];
   await render(bot, chatId, userId,
     `${card}\n\n_Requested by ${who} · ${ageDot(days)}${days > 0 ? `${days}d` : 'today'} · ${approvalCards.shortRequestRef(item.requestId)}_${dualNote}${dupNote}`,
     [
       [{ text: '✅ Approve', callback_data: `abx:ok:${idx}` },
         { text: '❌ Reject', callback_data: `abx:no:${idx}` }],
+      ...docRow,
       backRow('⬅ Back to list'),
       closeRow(),
     ]);
@@ -628,6 +636,39 @@ async function handleCallback(bot, query) {
   const delegating = data.startsWith('abx:ok:') || data.startsWith('abx:no:');
   if (!delegating) {
     try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
+  }
+  // SAB-1 — bills delivered by 📄 are peeks, not chat residents: any next
+  // inbox tap sweeps them (same contract as the transfer doc views).
+  try { await require('../services/ephemeralDocs').sweep(bot, userId); } catch (_) { /* best-effort */ }
+
+  // SAB-1 — deliver the sales bill for the card being viewed.
+  if (data.startsWith('abx:doc:')) {
+    const session0 = sessionStore.get(userId);
+    const idx = parseInt(data.slice('abx:doc:'.length), 10);
+    const item = session0 && Array.isArray(session0._items) ? session0._items[idx] : null;
+    const aj = item && item.actionJSON;
+    if (!aj || !aj.sale_doc_file_id) {
+      try { await bot.answerCallbackQuery(query.id, { text: 'No bill attached to this request.', show_alert: true }); } catch (_) { /* answered above */ }
+      return true;
+    }
+    const caption = `📄 Sales bill — ${approvalCards.shortRequestRef(item.requestId)}`;
+    let sent = null;
+    try {
+      sent = aj.sale_doc_type === 'photo'
+        ? await bot.sendPhoto(cid, aj.sale_doc_file_id, { caption })
+        : await bot.sendDocument(cid, aj.sale_doc_file_id, { caption });
+    } catch (_) {
+      // Stored kind can be wrong for old rows — the other sender is the fallback.
+      try {
+        sent = aj.sale_doc_type === 'photo'
+          ? await bot.sendDocument(cid, aj.sale_doc_file_id, { caption })
+          : await bot.sendPhoto(cid, aj.sale_doc_file_id, { caption });
+      } catch (e2) { logger.warn(`approvalsInbox: bill send failed for ${item.requestId}: ${e2.message}`); }
+    }
+    if (sent && sent.message_id) {
+      require('../services/ephemeralDocs').track(bot, userId, cid, sent.message_id);
+    }
+    return true;
   }
 
   if (data === 'abx:noop') return true;

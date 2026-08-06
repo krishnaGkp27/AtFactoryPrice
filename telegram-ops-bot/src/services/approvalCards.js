@@ -141,13 +141,19 @@ async function buildSaleCard(p) {
     const qty = [];
     if (Number(it.thans)) qty.push(`${it.thans} thans`);
     if (Number(it.yards)) qty.push(`${fmtQty(it.yards)} yds`);
-    text += `  Bale ${it.packageNo}: ${it.design}${it.shade ? ` ${it.shade}` : ''}${qty.length ? `, ${qty.join(', ')}` : ''}${it.warehouse ? ` (${it.warehouse})` : ''}\n`;
+    // SAB-1 — a single-than sale names its than; an unresolvable bale (no
+    // live rows, or a number living under two designs — §2: never guess)
+    // renders bare rather than as "undefined".
+    const head = `  Bale ${it.packageNo}${it.type === 'than' && it.thanNo ? ` Than ${it.thanNo}` : ''}`;
+    text += it.design
+      ? `${head}: ${it.design}${it.shade ? ` ${it.shade}` : ''}${qty.length ? `, ${qty.join(', ')}` : ''}${it.warehouse ? ` (${it.warehouse})` : ''}\n`
+      : `${head}\n`;
     totalThans += Number(it.thans) || 0;
     totalYards += Number(it.yards) || 0;
   }
   const n = items.length;
   text += `\nTotal: ${n} Bale${n === 1 ? '' : 's'} (${totalThans} thans), ${fmtQty(totalYards)} yards`;
-  if (p.docAttached) text += `\n📎 ${p.docLabel || 'Sales bill'} attached (see below)`;
+  if (p.docAttached) text += `\n📎 ${p.docLabel || 'Sales bill'} attached`;
   return text;
 }
 
@@ -247,28 +253,78 @@ async function buildRemoveBankCard({ bankName }) {
   return text;
 }
 
-/** Card for a queued classic sale_bundle actionJSON (no inventory lookups —
- *  renders exactly what the queue row carries, so reminders can rebuild it). */
-async function buildSaleBundleCard(aj) {
-  let text = `Sale Request\nCustomer: ${aj.customer || '—'}`;
-  const contact = await customerContact(aj.customer);
-  if (contact.phone) text += `\nPhone: ${contact.phone}`;
-  if (contact.address) text += `\nAddress: ${contact.address}`;
-  if (aj.salesPerson) text += `\nSalesperson: ${aj.salesPerson}`;
-  if (aj.paymentMode) text += `\nPayment: ${aj.paymentMode}`;
-  if (aj.salesDate) text += `\nDate: ${fmtDate(aj.salesDate)}`;
-  const items = Array.isArray(aj.items) ? aj.items : [];
-  if (items.length) {
-    text += '\n\nItems:\n';
-    for (const it of items) {
-      text += it.type === 'than'
-        ? `  Bale ${it.packageNo} Than ${it.thanNo}\n`
-        : `  Bale ${it.packageNo}\n`;
-    }
+/**
+ * SAB-1 (owner, 06-Aug-2026: "I cannot see complete details in this
+ * approval") — resolve a bundle's bare bale numbers to design / shade /
+ * warehouse / quantities from Inventory, so the approver judges goods, not
+ * numbers.
+ *
+ * BUSINESS_RULES §2 caveat: a printed number can live twice. A number whose
+ * LIVE rows span two designs stays bare rather than being guessed onto one.
+ * Everything here is best-effort — a Sheets hiccup degrades to the old thin
+ * card (reminders rebuild these cards and must never fail on a read).
+ */
+async function enrichBundleItems(rawItems) {
+  const inventoryRepository = require('../repositories/inventoryRepository');
+  const inv = await inventoryRepository.getAll();
+  const live = inv.filter((r) => r.status === 'available' || r.status === 'in_transit');
+  const byPkg = new Map();
+  for (const r of live) {
+    const k = String(r.packageNo);
+    if (!byPkg.has(k)) byPkg.set(k, []);
+    byPkg.get(k).push(r);
   }
-  if (aj.totalYards) text += `\nTotal: ${fmtQty(aj.totalYards)} yards`;
+  return rawItems.map((it) => {
+    const rows = byPkg.get(String(it.packageNo)) || [];
+    const designs = [...new Set(rows.map((r) => r.design))];
+    if (designs.length !== 1) return { ...it }; // unknown or ambiguous — never guess
+    if (it.type === 'than') {
+      const row = rows.find((r) => String(r.thanNo) === String(it.thanNo)) || rows[0];
+      return {
+        ...it, design: row.design, shade: row.shade, warehouse: row.warehouse,
+        thans: 1, yards: Number(row.yards) || 0,
+      };
+    }
+    const avail = rows.filter((r) => r.status === 'available');
+    return {
+      ...it, design: rows[0].design, shade: rows[0].shade, warehouse: rows[0].warehouse,
+      thans: avail.length, yards: avail.reduce((s, r) => s + (Number(r.yards) || 0), 0),
+    };
+  });
+}
+
+/** The persisted bill-check verdict as one card line (SAB-1). */
+function docVerifyLine(aj) {
+  const v = aj && aj.docVerify;
+  if (!v) return '';
+  const bad = (v.differs || 0) + (v.missing || 0) + (v.extra || 0);
+  return `\n🔬 Bill check: ${v.ok || 0} confirmed · ${v.differs || 0} differ · `
+    + `${v.missing || 0} missing · ${v.extra || 0} extra${bad ? ' ⚠️' : ' ✅'}`;
+}
+
+/** Card for a queued classic sale_bundle actionJSON. SAB-1: enriched from
+ *  Inventory best-effort; degrades to the bare item list on any failure. */
+async function buildSaleBundleCard(aj) {
+  let items = (Array.isArray(aj.items) ? aj.items : []).map((it) => ({ ...it }));
+  try { items = await enrichBundleItems(items); } catch (_) { /* thin items still render */ }
+  let text = await buildSaleCard({
+    headline: 'Sale Request',
+    customer: aj.customer,
+    salesPerson: aj.salesPerson,
+    paymentMode: aj.paymentMode,
+    salesDate: aj.salesDate,
+    items,
+    docAttached: !!aj.sale_doc_file_id,
+    docLabel: 'Sales bill',
+  });
+  // When enrichment could not price a single item (Sheets down, or every
+  // number ambiguous), the computed total reads 0 — the queue row's own
+  // total is the honest figure the requester submitted.
+  if (!items.some((i) => Number(i.yards)) && aj.totalYards) {
+    text += `\nQueued total: ${fmtQty(aj.totalYards)} yards`;
+  }
   if (aj.backdated) text += `\n⚠️ BACKDATED sale (${aj.daysBack || '?'} day(s) in the past)`;
-  if (aj.sale_doc_file_id) text += '\n📎 Sales bill attached (see below)';
+  text += docVerifyLine(aj);
   return text;
 }
 
@@ -294,7 +350,7 @@ function buildSupplyRequestCard(aj) {
     if (cart.length > 15) text += `\n  …+${cart.length - 15} more lines`;
     text += `\nTotal: ${total} container(s)`;
   }
-  if (aj.sale_doc_file_id) text += '\n📎 Bill attached (see below)';
+  if (aj.sale_doc_file_id) text += '\n📎 Bill attached';
   return text;
 }
 
