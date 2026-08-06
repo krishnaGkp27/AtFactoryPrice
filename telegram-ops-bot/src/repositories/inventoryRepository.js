@@ -485,6 +485,20 @@ async function getArrivalBatches(opts = {}) {
     .sort((a, b) => b.thans - a.thans || a.label.localeCompare(b.label));
 }
 
+/**
+ * Flip ONE sold than back to available.
+ *
+ * @param {string} packageNo printed bale number.
+ * @param {number|string} thanNo than number within the bale.
+ * @param {{warehouse?:string, on?:string, user?:string, kind?:string}} [opts]
+ *        `kind` names the movement-log event. It defaults to `return` — a
+ *        genuine, APPROVED customer return, which is the only thing the
+ *        Supply Ledger credits (RET-2). An admin un-doing a mis-entered sale
+ *        must pass `kind:'correction'`: no goods came back, so it may not
+ *        appear on a customer's ledger as one.
+ * @returns {Promise<object|null>} the flipped row (with `soldToPrior`
+ *          carrying the buyer the flip just cleared), or null.
+ */
 async function markThanAvailable(packageNo, thanNo, opts = {}) {
   const than = await findThan(packageNo, thanNo, opts);
   // TRF-INT1 — a return may only resurrect a SOLD than. Anything else
@@ -500,12 +514,26 @@ async function markThanAvailable(packageNo, thanNo, opts = {}) {
   ]]);
   invalidateCache();
   await movement.record([than], {
-    to: 'available', on: opts.on, kind: 'return',
+    to: 'available', on: opts.on, kind: opts.kind || 'return',
     ref: than.soldTo || '', user: opts.user,
   });
-  return { ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now };
+  return {
+    ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now,
+    soldToPrior: than.soldTo || '',
+  };
 }
 
+/**
+ * Flip every sold than of a printed bale number back to available.
+ *
+ * @param {string} packageNo printed bale number.
+ * @param {{warehouse?:string, on?:string, user?:string, kind?:string}} [opts]
+ *        without `warehouse` this matches the number in EVERY store
+ *        (BUSINESS_RULES §5 permits re-use across arrivals); `kind` as in
+ *        markThanAvailable.
+ * @returns {Promise<Array<object>>} the flipped rows, each carrying
+ *          `soldToPrior` — the buyer the flip just cleared.
+ */
 async function markPackageAvailable(packageNo, opts = {}) {
   const thans = await findByPackage(packageNo, { warehouse: opts.warehouse });
   const sold = thans.filter((t) => t.status === 'sold');
@@ -518,11 +546,30 @@ async function markPackageAvailable(packageNo, opts = {}) {
   }));
   await sheets.batchUpdateRanges(SHEET, updates);
   invalidateCache();
-  await movement.record(sold, {
-    to: 'available', on: opts.on, kind: 'return',
-    ref: (sold[0] && sold[0].soldTo) || '', user: opts.user,
-  });
-  return sold.map((than) => ({ ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now }));
+  // RET-2 — the buyer is per-BALE, not per-batch. Without a warehouse this
+  // matches the printed number in every store, so stamping sold[0].soldTo on
+  // all of them filed one customer's return under another customer's name —
+  // and the Supply Ledger reads exactly that Ref column. One record() call
+  // per distinct buyer keeps each bale's Ref its own.
+  const byBuyer = new Map();
+  for (const than of sold) {
+    const buyer = String(than.soldTo || '').trim();
+    if (!byBuyer.has(buyer)) byBuyer.set(buyer, []);
+    byBuyer.get(buyer).push(than);
+  }
+  for (const [buyer, rows] of byBuyer) {
+    // Sequential: baleMovementsRepository.append serializes on its own mutex
+    // and each call sweeps the Current flag, so parallel calls would race.
+    // eslint-disable-next-line no-await-in-loop
+    await movement.record(rows, {
+      to: 'available', on: opts.on, kind: opts.kind || 'return',
+      ref: buyer, user: opts.user,
+    });
+  }
+  return sold.map((than) => ({
+    ...than, status: 'available', soldTo: '', soldDate: '', updatedAt: now,
+    soldToPrior: than.soldTo || '',
+  }));
 }
 
 async function updatePrice(filters, newPrice) {

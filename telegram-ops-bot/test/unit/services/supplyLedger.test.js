@@ -250,3 +250,60 @@ test('the web page emits ABSOLUTE doc links carrying the token', async () => {
     'absolute, token-carrying href — a relative one 404s');
   assert.ok(!/href="doc\//.test(html), 'no relative doc href survives');
 });
+
+/* ── RET-2: a correction is not a return ───────────────────────────────── */
+
+test('a corrected sale leaves the ledger entirely — no phantom debit, no credit', async () => {
+  // `/revert_packages` un-does a MIS-ENTERED sale: no approval, no goods
+  // came back. Before RET-2 it wrote kind:'return', so the customer's ledger
+  // showed a Return they never made. Erasing only the credit is not enough
+  // either — the movement log's own sale row would then re-appear as a
+  // standing debit for goods the customer never took.
+  const rows = [1, 2].map((thanNo) => ({
+    packageNo: '869', design: '9060-A', shade: '01', thanNo, yards: 50,
+    status: 'available', warehouse: 'IDUMOTA', arrivalBatch: 'Jul26',
+  }));
+  inventoryRepository.getAll = async () => rows;
+  inventoryRepository.getSoldRows = async () => [];
+  baleMovementsRepository.getAll = async () => [
+    { kind: 'sale', ref: 'Chief OKSON', movedOn: '2026-08-04', design: '9060-A', baleNo: '869', container: 'Jul26', thans: 2 },
+    { kind: 'correction', ref: 'Chief OKSON', movedOn: '2026-08-05', design: '9060-A', baleNo: '869', container: 'Jul26', thans: 2 },
+  ];
+  const { entries, net } = await svc.buildLedger('Chief OKSON');
+  assert.deepEqual(entries, [], 'the mis-entered sale never happened');
+  assert.equal(net.thans, 0);
+});
+
+test('a correction erases only ITS OWN sale, not a later genuine one', async () => {
+  const sold = {
+    packageNo: '869', design: '9060-A', shade: '01', thanNo: 1, yards: 50,
+    status: 'sold', soldTo: 'Chief OKSON', soldDate: '2026-08-09',
+    warehouse: 'IDUMOTA', arrivalBatch: 'Jul26',
+  };
+  inventoryRepository.getAll = async () => [sold];
+  inventoryRepository.getSoldRows = async () => [sold];
+  baleMovementsRepository.getAll = async () => [
+    { kind: 'sale', ref: 'Chief OKSON', movedOn: '2026-08-04', design: '9060-A', baleNo: '869', container: 'Jul26', thans: 1 },
+    { kind: 'correction', ref: 'Chief OKSON', movedOn: '2026-08-05', design: '9060-A', baleNo: '869', container: 'Jul26', thans: 1 },
+    { kind: 'sale', ref: 'Chief OKSON', movedOn: '2026-08-09', design: '9060-A', baleNo: '869', container: 'Jul26', thans: 1 },
+  ];
+  const { entries, net } = await svc.buildLedger('Chief OKSON');
+  assert.deepEqual(entries.map((e) => [e.day, e.kind]), [['2026-08-09', 'supply']],
+    'the 04-Aug entry is erased; the 09-Aug re-sale stands');
+  assert.equal(net.thans, 1);
+});
+
+test('an APPROVED return is still a credit — corrections do not swallow it', async () => {
+  const rows = [1, 2].map((thanNo) => ({
+    packageNo: '869', design: '9060-A', shade: '01', thanNo, yards: 50,
+    status: 'available', warehouse: 'IDUMOTA', arrivalBatch: 'Jul26',
+  }));
+  inventoryRepository.getAll = async () => rows;
+  inventoryRepository.getSoldRows = async () => [];
+  baleMovementsRepository.getAll = async () => [
+    { kind: 'sale', ref: 'Chief OKSON', movedOn: '2026-08-04', design: '9060-A', baleNo: '869', container: 'Jul26', thans: 2 },
+    { kind: 'return', ref: 'Chief OKSON', movedOn: '2026-08-05', design: '9060-A', baleNo: '869', container: 'Jul26', thans: 2 },
+  ];
+  const { entries } = await svc.buildLedger('Chief OKSON');
+  assert.deepEqual(entries.map((e) => e.kind), ['supply', 'return']);
+});

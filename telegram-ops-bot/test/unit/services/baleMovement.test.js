@@ -283,3 +283,57 @@ test('REVIEW-3: movement appends are serialized so a bale cannot end with two Cu
     assert.ok(flagClears.length >= 2, `each run swept the prior flag, got ${flagClears.length}`);
   });
 });
+
+/* ── RET-2 (07-Aug-2026): the return path's Ref and Kind ─────────────── */
+
+test('RET-2: an unscoped revert files each bale under ITS OWN buyer', async () => {
+  // Ref is the column the Supply Ledger scopes a customer by. Stamping the
+  // first row's buyer on the whole batch credited ALPHA's ledger with
+  // BETA's goods — an unscoped revert legitimately spans two stores.
+  await withSheets([
+    invRow('870', 1, 'sold', 'Kano office', { batch: 'Mar26', soldTo: 'ALPHA', soldDate: '2026-07-01' }),
+    invRow('870', 2, 'sold', 'Kano office', { batch: 'Mar26', soldTo: 'ALPHA', soldDate: '2026-07-01' }),
+    invRow('870', 1, 'sold', 'Lagos office', { batch: 'Jul26', soldTo: 'BETA', soldDate: '2026-07-02' }),
+  ], [], async ({ moved }) => {
+    const res = await inventoryRepo.markPackageAvailable('870', { on: '2026-08-03' });
+    assert.equal(res.length, 3, 'all three thans flipped');
+    assert.equal(moved.length, 2, 'one row per physical bale');
+    assert.deepEqual(Object.fromEntries(moved.map((m) => [m.container, m.ref])),
+      { Mar26: 'ALPHA', Jul26: 'BETA' });
+    assert.deepEqual(moved.map((m) => m.thans).sort(), [1, 2], 'than counts stay with their own bale');
+  });
+});
+
+test('RET-2: the flipped rows hand the caller back the buyer they cleared', async () => {
+  await withSheets([
+    invRow('870', 1, 'sold', 'Kano office', { batch: 'Mar26', soldTo: 'ALPHA', soldDate: '2026-07-01' }),
+  ], [], async () => {
+    const [row] = await inventoryRepo.markPackageAvailable('870', { on: '2026-08-03' });
+    assert.equal(row.soldTo, '', 'the flip clears the buyer, as before');
+    assert.equal(row.soldToPrior, 'ALPHA', 'and reports who it was, so callers need no pre-read');
+    const than = await inventoryRepo.markThanAvailable('870', 1, {});
+    assert.equal(than.soldToPrior, 'ALPHA', 'the than-level path reports it too');
+  });
+});
+
+test('RET-2: kind defaults to `return` but an admin correction can say so', async () => {
+  await withSheets([
+    invRow('870', 1, 'sold', 'Kano office', { batch: 'Mar26', soldTo: 'ALPHA', soldDate: '2026-07-01' }),
+  ], [], async ({ moved }) => {
+    await inventoryRepo.markPackageAvailable('870', { on: '2026-08-03' });
+    assert.equal(moved[0].kind, 'return', 'the approved executors keep the credit-bearing kind');
+  });
+  await withSheets([
+    invRow('870', 1, 'sold', 'Kano office', { batch: 'Mar26', soldTo: 'ALPHA', soldDate: '2026-07-01' }),
+  ], [], async ({ moved }) => {
+    await inventoryRepo.markPackageAvailable('870', { on: '2026-08-03', kind: 'correction' });
+    assert.equal(moved[0].kind, 'correction');
+    assert.equal(moved[0].ref, 'ALPHA', 'still scoped to the customer whose sale was corrected');
+  });
+  await withSheets([
+    invRow('871', 1, 'sold', 'Kano office', { batch: 'Mar26', soldTo: 'ALPHA', soldDate: '2026-07-01' }),
+  ], [], async ({ moved }) => {
+    await inventoryRepo.markThanAvailable('871', 1, { on: '2026-08-03', kind: 'correction' });
+    assert.equal(moved[0].kind, 'correction', 'the than-level path takes the same flag');
+  });
+});

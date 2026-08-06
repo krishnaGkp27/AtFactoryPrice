@@ -4086,23 +4086,47 @@ async function handleMessage(bot, msg) {
       await bot.sendMessage(chatId, 'Only admin can revert Bales.');
       return;
     }
-    const pkgNos = text.replace(/^\/revert_package[s]?\s+/i, '').split(/[\s,]+/).filter(Boolean);
+    // RET-2 — this is a CORRECTION of a mis-entered sale, not a customer
+    // return: it takes no approval, so it must never reach the Supply
+    // Ledger's credit side (which is approved returns only). An optional
+    // trailing `@<warehouse>` pins the revert to one store — without it a
+    // printed number re-used across arrivals (BUSINESS_RULES §5) is flipped
+    // in EVERY store, so the reply names the store and the buyer each bale
+    // was taken from.
+    let revertArg = text.replace(/^\/revert_package[s]?\s+/i, '');
+    let revertWh = '';
+    const revertAt = revertArg.match(/@\s*([^@]+)$/);
+    if (revertAt) { revertWh = revertAt[1].trim(); revertArg = revertArg.slice(0, revertAt.index); }
+    const pkgNos = revertArg.split(/[\s,]+/).filter(Boolean);
     if (!pkgNos.length) {
-      await bot.sendMessage(chatId, 'Usage: /revert_packages 6422 6423 6424 ...');
+      await bot.sendMessage(chatId, 'Usage: /revert_packages 6422 6423 6424 ...\nOptional store scope: /revert_packages 6422 @Kano office');
       return;
     }
     let restored = 0;
     const results = [];
+    const uniq = (vals) => [...new Set(vals.map((v) => String(v || '').trim()).filter(Boolean))].join(', ');
     for (const p of pkgNos) {
       try {
-        const reverted = await inventoryRepository.markPackageAvailable(p);
+        const reverted = await inventoryRepository.markPackageAvailable(p, {
+          warehouse: revertWh || undefined, kind: 'correction', user: userId,
+        });
         restored += reverted.length;
-        results.push(`✅ ${p}: ${reverted.length} thans restored`);
+        if (!reverted.length) {
+          results.push(`⚠️ ${p}: no sold thans${revertWh ? ` in ${revertWh}` : ''}`);
+          continue;
+        }
+        const where = uniq(reverted.map((t) => t.warehouse));
+        const whom = uniq(reverted.map((t) => t.soldToPrior));
+        results.push(`✅ ${p}: ${reverted.length} thans restored${where ? ` @ ${where}` : ''}${whom ? ` — was sold to ${whom}` : ''}`);
       } catch (e) {
         results.push(`⚠️ ${p}: ${e.message}`);
       }
     }
-    await bot.sendMessage(chatId, `📦 *Revert Bales*\n\n${results.join('\n')}\n\nTotal: ${restored} thans restored to available.`, { parse_mode: 'Markdown' });
+    try {
+      await auditLogRepository.append('revert_packages',
+        { packages: pkgNos, warehouse: revertWh, thans: restored, as: 'correction' }, userId);
+    } catch (_) { /* the flip already happened; a failed audit row must not undo it */ }
+    await bot.sendMessage(chatId, `📦 *Revert Bales* — correction, not a customer return\n\n${results.join('\n')}\n\nTotal: ${restored} thans restored to available.`, { parse_mode: 'Markdown' });
     return;
   }
 

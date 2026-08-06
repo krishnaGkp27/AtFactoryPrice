@@ -13,6 +13,9 @@
  *     from the Inventory sheet's sold rows; returns (credit side) come from
  *     the BaleMovements log, whose return transitions exist ONLY via the
  *     approved return executors — an unapproved return cannot appear here.
+ *     An admin's `/revert_packages` correction logs `kind:'correction'`
+ *     instead (RET-2): it erases the mis-entered sale from BOTH sides rather
+ *     than showing the customer a return they never made.
  *   - Everything is derived AT READ TIME. There is no stored ledger copy to
  *     drift: a return or correction that lands in Inventory/BaleMovements
  *     is in the ledger on the next render, and in every other surface that
@@ -115,6 +118,32 @@ async function buildLedger(customerName) {
     .filter((r) => wants.has(norm(r.soldTo)));
   const soldKeys = new Set(sold.map((r) => `${normDay(r.soldDate)}|${bmKey(r.design, r.packageNo, r.arrivalBatch)}`));
 
+  /* A CORRECTION is not a return. `/revert_packages` un-does a MIS-ENTERED
+   * sale: no goods came back and no approval was taken, so it may neither
+   * credit the ledger (the credit side already takes `return` only) NOR
+   * leave the erased sale standing as a debit. Walk each bale's own chain:
+   * a `sale` opens a supply, the next `return` closes it (debit stays, the
+   * credit shows it came back), a `correction` erases it outright. */
+  const correctedSales = new Set();
+  const chains = new Map();
+  for (const m of mine) {
+    if (m.kind !== 'sale' && m.kind !== 'return' && m.kind !== 'correction') continue;
+    const k = bmKey(m.design, m.baleNo, m.container);
+    if (!chains.has(k)) chains.set(k, []);
+    chains.get(k).push(m);
+  }
+  for (const [k, rows] of chains) {
+    rows.sort((a, b) => String(normDay(a.movedOn || a.timestamp)).localeCompare(String(normDay(b.movedOn || b.timestamp)))
+      || String(a.timestamp || '').localeCompare(String(b.timestamp || ''))
+      || (a.rowIndex || 0) - (b.rowIndex || 0));
+    let openDay = null;
+    for (const m of rows) {
+      if (m.kind === 'sale') { openDay = normDay(m.movedOn || m.timestamp); continue; }
+      if (m.kind === 'correction' && openDay) correctedSales.add(`${openDay}|${k}`);
+      openDay = null;
+    }
+  }
+
   const byDay = new Map();
   const dayOf = (d) => {
     if (!byDay.has(d)) byDay.set(d, { pkgs: new Set(), thans: 0, yards: 0, rows: [], extra: 0 });
@@ -132,6 +161,7 @@ async function buildLedger(customerName) {
     const day = normDay(m.movedOn || m.timestamp);
     const key = bmKey(m.design, m.baleNo, m.container);
     if (soldKeys.has(`${day}|${key}`)) continue; // still sold — Inventory has it
+    if (correctedSales.has(`${day}|${key}`)) continue; // the sale was erased
     const e = dayOf(day);
     if (e.pkgs.has(key)) continue;
     e.pkgs.add(key);

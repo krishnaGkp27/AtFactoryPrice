@@ -159,6 +159,14 @@ inventory sheet. but you can add in different sheet."*
 - Append-only: rows are never edited or deleted, so a bale's whole chain
   survives. Intake writes nothing — it is a birth, not a transition, and
   GoodsReceipts is already the intake record.
+- **`Ref` is per-BALE, and `Kind` tells a return from a correction
+  (RET-2, 07-Aug-2026).** A batch flip must stamp each bale with its OWN
+  buyer — an unscoped revert legitimately spans two stores (§5), and the
+  Supply Ledger scopes a customer by this column. `return` means an
+  APPROVED customer return and is the only thing the ledger credits;
+  `correction` means an admin un-did a mis-entered sale (`/revert_packages`)
+  — no approval, no goods moved — and erases that sale from BOTH sides of
+  the ledger instead of showing the customer a return they never made.
 - Price, category, bin and container edits are not movements and write
   nothing.
 - A failed movement write never undoes or blocks a physical stock move.
@@ -246,7 +254,9 @@ sheet. Everything else, you can make a separate logging if not existing."*
   stay EMPTY, reserved for the finance portal, with a blank row after each
   entry for an in-between payment. Debits derive from Inventory sold rows;
   credits ONLY from approved-return transitions in the BaleMovements log.
-  The Particular opens the goods detail with its documents.
+  An admin CORRECTION (§6d) is not a credit — it erases the mis-entered
+  sale from both sides. The Particular opens the goods detail with its
+  documents.
 
 ---
 
@@ -258,5 +268,6 @@ sheet. Everything else, you can make a separate logging if not existing."*
 | 01-Aug-2026 | 46-page dispatch PDF vs card: 14/43 bale numbers differ (unverified mix of causes; 3 foreign pages) | §3 (TRF-13 queued) |
 | 02-Aug-2026 | Transfer 02Aug·01: typed 869/843/874/864/903, FIFO pre-pick logged 867/842/873/863/903 | §2, §4 (TRF-14/15, REP-2 repair) |
 | 02-Aug-2026 | Typed sale could flip a duplicated number in both warehouses | §6 (12e / TRF-INT4) |
+| 07-Aug-2026 | `/revert_packages` logged admin corrections as customer returns, all stamped with the first row's buyer | §6d (RET-2) |
 
 When an incident spawns a new rule: fix, spec, then add the rule HERE.
