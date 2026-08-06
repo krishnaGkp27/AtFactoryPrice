@@ -33,9 +33,25 @@ const baleMovementsRepository = require('../repositories/baleMovementsRepository
 const { baleGroupKey } = require('../utils/inventoryPickers');
 const { normDay } = require('../utils/dates');
 const shareLinkService = require('./shareLinkService');
+const unitDisplayService = require('./unitDisplayService');
 const { fmtQty } = require('../utils/format');
 
 const norm = (v) => String(v == null ? '' : v).trim().toLowerCase();
+
+/**
+ * BUSINESS_RULES §6c in the owner's ledger phrasing. The TV-8 engine is the
+ * ONLY thing allowed to decide bales-vs-thans ("hardcoded ${n}B / ${n}t is a
+ * bug"), so the label comes from unitDisplayService and this only spells its
+ * tokens out: "26B" → "26 Bales", "4B + 21t" → "4 Bales + 21 thans". Without
+ * it a customer who took 21 of a 25-than bale would read "1 Bale" here and
+ * "21t" on Customer Supplies — the cross-surface disagreement the owner
+ * ordered us to prevent.
+ */
+function inWords(label) {
+  return String(label || '')
+    .replace(/(\d+)B/g, (_, n) => `${n} Bale${n === '1' ? '' : 's'}`)
+    .replace(/(\d+)t/g, (_, n) => `${n} than${n === '1' ? '' : 's'}`);
+}
 
 /** Every spelling that files under this customer (canonical + aliases). */
 async function namesFor(customerName) {
@@ -57,14 +73,26 @@ async function buildLedger(customerName) {
 
   const sold = (await inventoryRepository.getSoldRows())
     .filter((r) => wants.has(norm(r.soldTo)));
+  // TV-8 (§6c) — the labeller needs every Inventory row for the whole/loose
+  // roster and the than-visibility warehouse set.
+  let all = [];
+  try { all = await inventoryRepository.getAll(); } catch (_) { all = sold; }
+  let label = null;
+  let roster = new Map();
+  try {
+    label = await unitDisplayService.createQtyLabeller(all);
+    roster = unitDisplayService.buildBaleRoster(all);
+  } catch (_) { label = null; }
+
   const byDay = new Map();
   for (const r of sold) {
     const day = normDay(r.soldDate);
-    if (!byDay.has(day)) byDay.set(day, { pkgs: new Set(), thans: 0, yards: 0 });
+    if (!byDay.has(day)) byDay.set(day, { pkgs: new Set(), thans: 0, yards: 0, rows: [] });
     const e = byDay.get(day);
     e.pkgs.add(baleGroupKey(r));
     e.thans += 1;
     e.yards += Number(r.yards) || 0;
+    e.rows.push(r);
   }
 
   // Credit side — the movement log's `return` transitions carry the customer
@@ -76,29 +104,40 @@ async function buildLedger(customerName) {
   for (const m of moves) {
     if (m.kind !== 'return' || !wants.has(norm(m.ref))) continue;
     const day = normDay(m.movedOn || m.timestamp);
-    if (!retByDay.has(day)) retByDay.set(day, { pkgs: new Set(), thans: 0, yards: 0 });
+    if (!retByDay.has(day)) retByDay.set(day, { pkgs: new Set(), thans: 0, yards: 0, wholeBales: 0, looseThans: 0 });
     const e = retByDay.get(day);
     e.pkgs.add(`${m.design}|${m.baleNo}|${m.container}`);
-    e.thans += Number(m.thans) || 0;
+    const moved = Number(m.thans) || 0;
+    // Same whole/loose test the TV-8 engine applies: a bale counts as a
+    // BALE only when every than of it came back.
+    const total = roster.get(`pkg:${m.design}|${m.baleNo}|${String(m.container || '').toUpperCase()}`);
+    if (total && moved >= total) e.wholeBales += 1; else e.looseThans += moved;
+    e.thans += moved;
   }
 
   const entries = [];
   for (const [day, e] of byDay) {
+    const qty = label ? inWords(label(e.rows)) : `${e.pkgs.size} Bale${e.pkgs.size === 1 ? '' : 's'}`;
     entries.push({
-      day, kind: 'supply', bales: e.pkgs.size, thans: e.thans, yards: e.yards,
-      label: `${e.pkgs.size} Bale${e.pkgs.size === 1 ? '' : 's'} (${fmtQty(e.yards)} yards)`,
+      day, kind: 'supply', bales: e.pkgs.size, thans: e.thans, yards: e.yards, qty,
+      label: `${qty} (${fmtQty(e.yards)} yards)`,
     });
   }
   for (const [day, e] of retByDay) {
+    const parts = [];
+    if (e.wholeBales) parts.push(`${e.wholeBales}B`);
+    if (e.looseThans) parts.push(`${e.looseThans}t`);
+    const qty = inWords(parts.join(' + ')) || `${e.thans} thans`;
     entries.push({
-      day, kind: 'return', bales: e.pkgs.size, thans: e.thans, yards: 0,
-      label: `Return — ${e.pkgs.size} Bale${e.pkgs.size === 1 ? '' : 's'} (${e.thans} thans)`,
+      day, kind: 'return', bales: e.wholeBales, thans: e.thans, yards: 0, qty,
+      label: `Return — ${qty}`,
     });
   }
   entries.sort((a, b) => String(a.day).localeCompare(String(b.day)) || (a.kind === 'supply' ? -1 : 1));
 
   const net = {
     bales: entries.reduce((s, e) => s + (e.kind === 'supply' ? e.bales : -e.bales), 0),
+    thans: entries.reduce((s, e) => s + (e.kind === 'supply' ? e.thans : -e.thans), 0),
     yards: entries.reduce((s, e) => s + (e.kind === 'supply' ? e.yards : 0), 0),
   };
   return { entries, net };

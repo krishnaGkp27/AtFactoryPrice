@@ -36,6 +36,17 @@ function soldRow(pkg, design, shade, day, yards = 150) {
 }
 
 test('supplies group per day from Inventory sold rows; returns come from the movement log', async () => {
+  // The returned bale's own rows must exist for the whole/loose roster —
+  // after a return they are back as `available`, which is the real state.
+  inventoryRepository.getAll = async () => [
+    ...[1, 2, 3, 4].map((thanNo) => ({
+      packageNo: '869', design: '9060-A', shade: '01', thanNo, yards: 0,
+      status: 'available', warehouse: 'IDUMOTA', arrivalBatch: 'Jul26',
+    })),
+    soldRow('869', '9060-A', '01', '2026-08-04'),
+    soldRow('843', '9060-A', '01', '2026-08-04'),
+    soldRow('903', '9037-D', '12', '2026-08-06'),
+  ];
   inventoryRepository.getSoldRows = async () => [
     soldRow('869', '9060-A', '01', '2026-08-04'),
     soldRow('843', '9060-A', '01', '2026-08-04'),
@@ -106,4 +117,56 @@ test('the web page renders option B: empty money columns, reserved rows, no nair
   let s2 = 200; const res2 = { set: () => {}, send: () => {}, status: (c) => { s2 = c; return res2; } };
   await webController.viewPage({ params: { token: 'garbage.token' } }, res2);
   assert.equal(s2, 404);
+});
+
+test('§6c — the quantity comes from the TV-8 engine, never a hardcoded bale count', async () => {
+  // Kano office is a than-visibility warehouse by default, AND this customer
+  // took only 2 of the bale's 4 thans. Both reasons say "thans"; a hardcoded
+  // bale count would read "1 Bale" here while Customer Supplies read "2t" —
+  // exactly the cross-surface disagreement the owner forbade.
+  const bale = (thanNo, sold) => ({
+    packageNo: '869', design: '9060-A', shade: '01', thanNo, yards: 50,
+    status: sold ? 'sold' : 'available', soldTo: sold ? 'Chief OKSON' : '',
+    soldDate: sold ? '2026-08-04' : '', warehouse: 'Kano office', arrivalBatch: 'Jul26',
+  });
+  const all = [bale(1, true), bale(2, true), bale(3, false), bale(4, false)];
+  inventoryRepository.getAll = async () => all;
+  inventoryRepository.getSoldRows = async () => all.filter((r) => r.status === 'sold');
+  baleMovementsRepository.getAll = async () => [];
+
+  const { entries } = await svc.buildLedger('Chief OKSON');
+  assert.equal(entries.length, 1);
+  assert.match(entries[0].qty, /2 thans/, `part-taken bale must read in thans, got: ${entries[0].qty}`);
+  assert.ok(!/1 Bale/.test(entries[0].label), 'must NOT claim a whole bale');
+  assert.match(entries[0].label, /100 yards/, 'yards still ride alongside');
+});
+
+test('§6c — a whole bale still reads in bales, in the owner’s phrasing', async () => {
+  const bale = (thanNo) => ({
+    packageNo: '869', design: '9060-A', shade: '01', thanNo, yards: 50,
+    status: 'sold', soldTo: 'Chief OKSON', soldDate: '2026-08-04',
+    warehouse: 'IDUMOTA', arrivalBatch: 'Jul26',
+  });
+  const all = [bale(1), bale(2)];
+  inventoryRepository.getAll = async () => all;
+  inventoryRepository.getSoldRows = async () => all;
+  baleMovementsRepository.getAll = async () => [];
+  const { entries } = await svc.buildLedger('Chief OKSON');
+  assert.match(entries[0].label, /^1 Bale \(100 yards\)$/, `got: ${entries[0].label}`);
+});
+
+test('a partial return reads in thans, a whole-bale return in bales', async () => {
+  const rows = [1, 2, 3, 4].map((thanNo) => ({
+    packageNo: '869', design: '9060-A', shade: '01', thanNo, yards: 50,
+    status: 'available', warehouse: 'IDUMOTA', arrivalBatch: 'Jul26',
+  }));
+  inventoryRepository.getAll = async () => rows;
+  inventoryRepository.getSoldRows = async () => [];
+  baleMovementsRepository.getAll = async () => [
+    { kind: 'return', ref: 'Chief OKSON', movedOn: '2026-08-05', design: '9060-A', baleNo: '869', container: 'Jul26', thans: 2 },
+    { kind: 'return', ref: 'Chief OKSON', movedOn: '2026-08-06', design: '9060-A', baleNo: '869', container: 'Jul26', thans: 4 },
+  ];
+  const { entries } = await svc.buildLedger('Chief OKSON');
+  assert.match(entries[0].label, /Return — 2 thans/, `partial, got: ${entries[0].label}`);
+  assert.match(entries[1].label, /Return — 1 Bale/, `whole, got: ${entries[1].label}`);
 });
