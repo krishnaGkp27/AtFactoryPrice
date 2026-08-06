@@ -57,7 +57,11 @@ test('named entity generators', async (t) => {
   ];
   for (const [fn, prefix] of cases) {
     await t.test(`${fn}() → ${prefix}-…`, () => {
-      assert.match(ids[fn](), new RegExp(`^${prefix}-\\d{8}-\\d{3}$`));
+      // CUS-ID1 — customer ids carry a random suffix (the daily counter
+      // resets on every restart and was re-minting shared ids); the other
+      // prefixes keep the counter format.
+      const pat = fn === 'customer' ? `^${prefix}-\\d{8}-[A-Z0-9]{4}$` : `^${prefix}-\\d{8}-\\d{3}$`;
+      assert.match(ids[fn](), new RegExp(pat));
     });
   }
 });

@@ -242,9 +242,21 @@ async function sendCustomerStep(bot, chatId, state, note) {
 
   const recent = await getRecentBuyers();
   const names = designBuyers.map((b) => b.name);
+  // CUS-ID2 (owner, 06-Aug-2026: "no recommendation, no guessing, only
+  // solid customers") — recent-buyer chips came from raw Transactions
+  // history, so a retired SPELLING could ride a chip and be filed as the
+  // customer. Every chip now resolves through the registry: only live
+  // entities appear, and each chip shows its CANONICAL name.
   for (const n of recent) {
     if (names.length >= 8) break;
-    if (!names.includes(n)) names.push(n);
+    let canonical = null;
+    try {
+      const cust = await require('../services/customerEntity').resolve({ name: n });
+      if (cust && String(cust.status || 'Active').toLowerCase() === 'active') {
+        canonical = String(cust.name || '').trim();
+      }
+    } catch (_) { /* registry down → no history chips, typed search still works */ }
+    if (canonical && !names.includes(canonical)) names.push(canonical);
   }
   state._custRecent = names;
 
@@ -355,16 +367,33 @@ async function sendCustomerPage(bot, chatId, state, page) {
  * duplicate detector all read aj.customer and none of them need to know
  * the value arrived at approval time rather than at request time.
  */
-async function assignCustomer(bot, chatId, state, name) {
+async function assignCustomer(bot, chatId, state, name, opts = {}) {
   const clean = String(name || '').trim();
   if (!clean) return false;
   // CUS-1 — the entity id rides with the name on the queue row, so every
   // downstream consumer can key on the id once Phase C lands.
   let custId = '';
+  let canonical = clean;
   try {
     const cust = await require('../services/customerEntity').resolve({ name: clean });
-    if (cust) custId = cust.customer_id;
+    if (cust) { custId = cust.customer_id; canonical = String(cust.name || clean).trim(); }
   } catch (_) { /* id is additive; the name still works */ }
+  // CUS-ID2 (owner, 06-Aug-2026: "give the transparency at pick time") —
+  // when the picked spelling resolves to a DIFFERENT canonical customer
+  // (an alias from a merge), the admin confirms before anything is filed.
+  // The invoice and ledger will carry the canonical name; that must never
+  // again be a surprise discovered on the finished paper.
+  if (custId && canonical.toLowerCase() !== clean.toLowerCase() && !opts.aliasConfirmed) {
+    state._aliasPending = { spelling: clean, canonical };
+    await bot.sendMessage(chatId,
+      `ℹ️ *${clean}* is filed under *${canonical}* — the invoice and ledger will read ${canonical}.`,
+      { parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [
+          [{ text: `✅ Continue as ${canonical}`.slice(0, 60), callback_data: 'enr:cust:cf:y' },
+            { text: '👥 Pick another customer', callback_data: 'enr:cust:cf:n' }],
+        ] } });
+    return false;
+  }
   try {
     await approvalQueueRepository.updateActionJSON(state.requestId, { customer: clean, customerId: custId });
   } catch (e) {
@@ -532,6 +561,21 @@ async function handleEnrichmentCallback(bot, callbackQuery) {
   // none of them can fall through to execution without a customer.
   if (data.startsWith('enr:cust:')) {
     const rest = data.slice('enr:cust:'.length);
+    // CUS-ID2 — the alias-transparency confirm.
+    if (rest === 'cf:y') {
+      const p = state._aliasPending;
+      state._aliasPending = null;
+      if (!p) { await ack('That confirmation expired — pick again.'); return true; }
+      await ack(p.canonical);
+      await assignCustomer(bot, chatId, state, p.canonical, { aliasConfirmed: true });
+      return true;
+    }
+    if (rest === 'cf:n') {
+      state._aliasPending = null;
+      await ack();
+      await sendCustomerStep(bot, chatId, state, 'Pick the right customer:');
+      return true;
+    }
     if (rest.startsWith('r:')) {
       const name = (state._custRecent || [])[Number(rest.slice(2))];
       if (!name) { await ack('That option expired — pick again.'); return true; }

@@ -406,6 +406,14 @@ const server = app.listen(PORT, async () => {
         })
         .catch((e) => logger.warn(`inventoryHeaderRepair boot pass failed: ${e.message}`));
     }, 35 * 1000);
+    // CUS-ID1 — guarded one-off: re-key the 10 customers minted onto 4
+    // shared ids (restart-reset counter) and re-file their ledger/invoice
+    // rows by narration name. Exact-triple guards; no-op once done.
+    setTimeout(() => {
+      require('./src/services/customerIdRepair').repair(bot)
+        .then((r) => { if (r && (r.rekeyed || []).length) logger.info(`customerIdRepair: ${JSON.stringify(r.rekeyed)}`); })
+        .catch((e) => logger.warn(`customerIdRepair boot pass failed: ${e.message}`));
+    }, 40 * 1000);
     // TRF-INT3 — same-warehouse duplicate bale numbers DM'd to admins until
     // resolved physically (the intake gate blocks new ones; read-only scan).
     setTimeout(() => {

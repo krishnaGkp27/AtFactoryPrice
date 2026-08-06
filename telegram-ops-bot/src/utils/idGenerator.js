@@ -44,10 +44,28 @@ function baleUid(packageNo) {
   return `BAL-${date}-${pkg}-${rand}`;
 }
 
+/**
+ * CUS-ID1 (owner, 06-Aug-2026) — collision-proof customer ids.
+ *
+ * generate()'s daily sequence lives IN MEMORY, so every deploy or restart
+ * reset it to zero and the first customer created afterwards was minted
+ * `-001` AGAIN — the same id as a customer created earlier that day. Four
+ * shared ids across 14 rows came from exactly this (the bot redeploys many
+ * times a day), and a shared id pools different customers' ledgers and
+ * prints the wrong name on invoices. A random suffix cannot repeat across
+ * restarts; the sheet-side name guard (assertNameFree) stays as the second
+ * fence. Format: CUST-YYYYMMDD-XXXX (4 random base36).
+ */
+function customerId() {
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `CUST-${date}-${rand}`;
+}
+
 module.exports = {
   ledgerEntry: () => generate('LE'),
   stockLedger: () => generate('SL'),
-  customer: () => generate('CUST'),
+  customer: customerId, // CUS-ID1 — never the restart-resetting counter
   user: () => generate('USR'),
   transaction: () => generate('TXN'),
   order: () => generate('ORD'),
