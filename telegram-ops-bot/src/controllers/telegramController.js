@@ -4499,6 +4499,14 @@ async function handleMessage(bot, msg) {
       }
 
       case 'check_balance': {
+        // FIN-V1 (owner, 06-Aug-2026) — a customer's outstanding is money
+        // data: admins + Finance only. This was the one ungated money read
+        // (every other balance surface already checks isAdmin); any typed
+        // "what is X's balance" answered to any registered user.
+        if (!auth.isAdmin(userId) && !config.access.financeIds.includes(String(userId))) {
+          await bot.sendMessage(chatId, 'Customer balances are visible to admins and Finance only.');
+          return;
+        }
         if (!intent.customer) { await bot.sendMessage(chatId, 'Which customer?'); return; }
         const cb = await crmService.getCustomer(intent.customer);
         if (!cb) { await bot.sendMessage(chatId, `Customer "${intent.customer}" not found.`); return; }
