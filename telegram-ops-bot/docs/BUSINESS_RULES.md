@@ -222,6 +222,28 @@ inventory sheet. but you can add in different sheet."*
   (`WRITE_ACTIONS`, `ALWAYS_APPROVAL_ACTIONS`) change only with the
   owner's explicit sign-off — adding a NEW action code included.
 
+## 12 · Customer truth lives in TWO sheets; ids are solid entities
+
+**Owner, 06-Aug-2026** (after the shared-customer-id incident): *"no
+recommendation, no guessing, only solid customers"* · *"only the source of
+truth related to the customer will be the inventory sheet and the customer
+sheet. Everything else, you can make a separate logging if not existing."*
+
+- The **Customers sheet** is the register of who a customer IS (identity,
+  status, contact); the **Inventory sheet** is the record of what they were
+  SUPPLIED (sold rows: soldTo + soldDate per than). Nothing else is a
+  source of truth about a customer — any other store is derived or a log.
+- `customer_id` is a solid entity key: minted with a random suffix
+  (CUS-ID3) so a deploy/restart can never re-mint a shared id. The four
+  historical shared ids were re-keyed by the CUS-ID1 guarded one-off.
+- No surface may GUESS a customer: pickers offer only live registry
+  entities under canonical names; a spelling that resolves to a different
+  canonical customer requires the admin's explicit confirm (CUS-ID2);
+  unresolvable history strings are dropped, never offered.
+- The owner monitors a per-customer GOODS ledger (supplies only, **no
+  finance**), derived from the Inventory sheet at read time — format to be
+  specified by the owner.
+
 ---
 
 ## Incident log (why these rules exist)

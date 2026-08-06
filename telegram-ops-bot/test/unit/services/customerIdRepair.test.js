@@ -142,5 +142,5 @@ test('the new customer ids can never collide across restarts', () => {
   const seen = new Set();
   for (let i = 0; i < 500; i += 1) seen.add(idGen.customer());
   assert.equal(seen.size, 500, 'random suffix — restart cannot re-mint an id');
-  assert.match(idGen.customer(), /^CUST-\d{8}-[A-Z0-9]{4}$/);
+  assert.match(idGen.customer(), /^CUST-\d{8}-[A-Z0-9]{8}$/);
 });

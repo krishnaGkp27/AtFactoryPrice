@@ -13,8 +13,8 @@ const ids = require('../../../src/utils/idGenerator');
 const TODAY = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
 test('generate()', async (t) => {
-  await t.test('formats as PREFIX-YYYYMMDD-NNN', () => {
-    assert.match(ids.generate('LE'), /^LE-\d{8}-\d{3}$/);
+  await t.test('formats as PREFIX-YYYYMMDD-XXXX (CUS-ID3: random, deploy-proof)', () => {
+    assert.match(ids.generate('LE'), /^LE-\d{8}-[A-Z0-9]{8}$/);
   });
 
   await t.test('embeds today (UTC) as the date segment', () => {
@@ -22,12 +22,13 @@ test('generate()', async (t) => {
     assert.equal(id.split('-')[1], TODAY);
   });
 
-  await t.test('increments the per-prefix daily sequence', () => {
-    const a = ids.generate('SEQTEST');
-    const b = ids.generate('SEQTEST');
-    const seqA = Number(a.split('-')[2]);
-    const seqB = Number(b.split('-')[2]);
-    assert.equal(seqB, seqA + 1);
+  await t.test('never repeats across mints — a deploy cannot reset a counter', () => {
+    // CUS-ID3 — the OLD behavior (in-memory daily counter) re-minted the
+    // day's -001 after every restart; four customer ids were shared by 14
+    // rows because of it. Random suffixes have no counter to reset.
+    const seen = new Set();
+    for (let i = 0; i < 300; i += 1) seen.add(ids.generate('SEQTEST'));
+    assert.equal(seen.size, 300);
   });
 
   await t.test('sequences are independent per prefix', () => {
@@ -57,11 +58,11 @@ test('named entity generators', async (t) => {
   ];
   for (const [fn, prefix] of cases) {
     await t.test(`${fn}() → ${prefix}-…`, () => {
-      // CUS-ID1 — customer ids carry a random suffix (the daily counter
-      // resets on every restart and was re-minting shared ids); the other
-      // prefixes keep the counter format.
-      const pat = fn === 'customer' ? `^${prefix}-\\d{8}-[A-Z0-9]{4}$` : `^${prefix}-\\d{8}-\\d{3}$`;
-      assert.match(ids[fn](), new RegExp(pat));
+      // CUS-ID3 — EVERY prefix carries a random suffix now: the daily
+      // counter reset on each deploy and re-minted the day's -001 (the
+      // shared-customer-id incident), and continuous deployment makes
+      // restarts routine.
+      assert.match(ids[fn](), new RegExp(`^${prefix}-\\d{8}-[A-Z0-9]{8}$`));
     });
   }
 });

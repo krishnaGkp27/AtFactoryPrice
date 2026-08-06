@@ -4804,7 +4804,7 @@ async function handleMessage(bot, msg) {
       }
 
       case 'mark_task_done': {
-        const taskId = intent.taskId || (text.match(/TASK-\d{8}-\d{3}/) || [])[0];
+        const taskId = intent.taskId || (text.match(/TASK-\d{8}-[A-Za-z0-9]{3,8}/) || [])[0];
         if (!taskId) {
           await bot.sendMessage(chatId, 'Please specify task ID. Example: "Mark task TASK-20260224-001 done".');
           return;
@@ -4883,7 +4883,7 @@ async function handleMessage(bot, msg) {
       }
 
       case 'return_sample': {
-        const sid = intent.sampleId || (text.match(/SMP-\d{8}-\d{3}/) || [])[0];
+        const sid = intent.sampleId || (text.match(/SMP-\d{8}-[A-Za-z0-9]{3,8}/) || [])[0];
         if (!sid) { await bot.sendMessage(chatId, 'Which sample? e.g. "Sample SMP-20260221-001 returned"'); return; }
         const sample = await samplesRepo.getById(sid);
         if (!sample) { await bot.sendMessage(chatId, `Sample ${sid} not found.`); return; }
@@ -4894,7 +4894,7 @@ async function handleMessage(bot, msg) {
       }
 
       case 'update_sample': {
-        const sid = intent.sampleId || (text.match(/SMP-\d{8}-\d{3}/) || [])[0];
+        const sid = intent.sampleId || (text.match(/SMP-\d{8}-[A-Za-z0-9]{3,8}/) || [])[0];
         if (!sid) { await bot.sendMessage(chatId, 'Which sample? e.g. "Sample SMP-xxx lost" or "Sample SMP-xxx converted"'); return; }
         const sample = await samplesRepo.getById(sid);
         if (!sample) { await bot.sendMessage(chatId, `Sample ${sid} not found.`); return; }
@@ -5086,7 +5086,7 @@ async function handleMessage(bot, msg) {
       }
 
       case 'mark_order_delivered': {
-        const oid = intent.orderId || (text.match(/ORD-\d{8}-\d{3}/) || [])[0];
+        const oid = intent.orderId || (text.match(/ORD-\d{8}-[A-Za-z0-9]{3,8}/) || [])[0];
         if (!oid) {
           await bot.sendMessage(chatId, 'Please specify order ID. Example: "Mark order ORD-20260221-001 delivered".');
           return;
