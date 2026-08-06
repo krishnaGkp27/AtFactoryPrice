@@ -30,7 +30,6 @@
 
 const inventoryRepository = require('../repositories/inventoryRepository');
 const baleMovementsRepository = require('../repositories/baleMovementsRepository');
-const { baleGroupKey } = require('../utils/inventoryPickers');
 const { normDay } = require('../utils/dates');
 const shareLinkService = require('./shareLinkService');
 const unitDisplayService = require('./unitDisplayService');
@@ -47,6 +46,16 @@ const norm = (v) => String(v == null ? '' : v).trim().toLowerCase();
  * "21t" on Customer Supplies — the cross-surface disagreement the owner
  * ordered us to prevent.
  */
+/**
+ * One bale identity for BOTH ledger sides. baleGroupKey omits the arrival
+ * container, so a printed number re-used in a later container collapsed two
+ * physical bales into one (BUSINESS_RULES §1/§5); the TV-8 roster already
+ * keys design|number|container, and now so does this.
+ */
+function bmKey(design, packageNo, container) {
+  return `pkg:${design}|${packageNo}|${String(container || '').trim().toUpperCase()}`;
+}
+
 function inWords(label) {
   return String(label || '')
     .replace(/(\d+)B/g, (_, n) => `${n} Bale${n === '1' ? '' : 's'}`)
@@ -71,12 +80,10 @@ async function namesFor(customerName) {
 async function buildLedger(customerName) {
   const wants = new Set(await namesFor(customerName));
 
-  const sold = (await inventoryRepository.getSoldRows())
-    .filter((r) => wants.has(norm(r.soldTo)));
   // TV-8 (§6c) — the labeller needs every Inventory row for the whole/loose
   // roster and the than-visibility warehouse set.
   let all = [];
-  try { all = await inventoryRepository.getAll(); } catch (_) { all = sold; }
+  try { all = await inventoryRepository.getAll(); } catch (_) { all = []; }
   let label = null;
   let roster = new Map();
   try {
@@ -84,43 +91,83 @@ async function buildLedger(customerName) {
     roster = unitDisplayService.buildBaleRoster(all);
   } catch (_) { label = null; }
 
+  let moves = [];
+  try { moves = await baleMovementsRepository.getAll(); } catch (_) { moves = []; }
+  const mine = moves.filter((m) => wants.has(norm(m.ref)));
+
+  /* ── DEBIT SIDE ────────────────────────────────────────────────────────
+   * A ledger must not lose an entry when the goods later come back. The
+   * Inventory sold rows are CURRENT STATE: an approved return flips them to
+   * `available` and clears SoldTo, so the original supply DISAPPEARS from
+   * them — while its return still shows on the credit side. Reading only
+   * Inventory therefore subtracted a return twice and could drive the net
+   * negative (adversarial review, 07-Aug-2026).
+   *
+   * So the debit side is the union of two views of the same event:
+   *   - Inventory sold rows — the full history, including everything that
+   *     predates the movement log (BMV-1, 03-Aug-2026);
+   *   - `sale` rows in the movement log whose bale is NOT currently sold to
+   *     this customer — i.e. supplies that were later returned, which
+   *     Inventory can no longer show.
+   * Deduped per (day, bale), so a bale still sold is never counted twice.
+   */
+  const sold = (await inventoryRepository.getSoldRows())
+    .filter((r) => wants.has(norm(r.soldTo)));
+  const soldKeys = new Set(sold.map((r) => `${normDay(r.soldDate)}|${bmKey(r.design, r.packageNo, r.arrivalBatch)}`));
+
   const byDay = new Map();
+  const dayOf = (d) => {
+    if (!byDay.has(d)) byDay.set(d, { pkgs: new Set(), thans: 0, yards: 0, rows: [], extra: 0 });
+    return byDay.get(d);
+  };
   for (const r of sold) {
-    const day = normDay(r.soldDate);
-    if (!byDay.has(day)) byDay.set(day, { pkgs: new Set(), thans: 0, yards: 0, rows: [] });
-    const e = byDay.get(day);
-    e.pkgs.add(baleGroupKey(r));
+    const e = dayOf(normDay(r.soldDate));
+    e.pkgs.add(bmKey(r.design, r.packageNo, r.arrivalBatch));
     e.thans += 1;
     e.yards += Number(r.yards) || 0;
     e.rows.push(r);
   }
-
-  // Credit side — the movement log's `return` transitions carry the customer
-  // the goods came back FROM (ref = soldTo at flip time). These rows are
-  // written ONLY by the approved return executors: approval is structural.
-  let moves = [];
-  try { moves = await baleMovementsRepository.getAll(); } catch (_) { moves = []; }
-  const retByDay = new Map();
-  for (const m of moves) {
-    if (m.kind !== 'return' || !wants.has(norm(m.ref))) continue;
+  for (const m of mine) {
+    if (m.kind !== 'sale') continue;
     const day = normDay(m.movedOn || m.timestamp);
-    if (!retByDay.has(day)) retByDay.set(day, { pkgs: new Set(), thans: 0, yards: 0, wholeBales: 0, looseThans: 0 });
+    const key = bmKey(m.design, m.baleNo, m.container);
+    if (soldKeys.has(`${day}|${key}`)) continue; // still sold — Inventory has it
+    const e = dayOf(day);
+    if (e.pkgs.has(key)) continue;
+    e.pkgs.add(key);
+    e.thans += Number(m.thans) || 0;
+    e.extra += Number(m.thans) || 0; // returned since: no Inventory row to label
+  }
+
+  /* ── CREDIT SIDE — approved returns only ─────────────────────────────── */
+  const retByDay = new Map();
+  for (const m of mine) {
+    if (m.kind !== 'return') continue;
+    const day = normDay(m.movedOn || m.timestamp);
+    if (!retByDay.has(day)) retByDay.set(day, { pkgs: new Set(), thans: 0, wholeBales: 0, looseThans: 0 });
     const e = retByDay.get(day);
-    e.pkgs.add(`${m.design}|${m.baleNo}|${m.container}`);
+    e.pkgs.add(bmKey(m.design, m.baleNo, m.container));
     const moved = Number(m.thans) || 0;
     // Same whole/loose test the TV-8 engine applies: a bale counts as a
     // BALE only when every than of it came back.
-    const total = roster.get(`pkg:${m.design}|${m.baleNo}|${String(m.container || '').toUpperCase()}`);
+    const total = roster.get(bmKey(m.design, m.baleNo, m.container));
     if (total && moved >= total) e.wholeBales += 1; else e.looseThans += moved;
     e.thans += moved;
   }
 
   const entries = [];
   for (const [day, e] of byDay) {
-    const qty = label ? inWords(label(e.rows)) : `${e.pkgs.size} Bale${e.pkgs.size === 1 ? '' : 's'}`;
+    // The label engine only understands Inventory rows; a supply whose rows
+    // have since returned contributes thans we count explicitly.
+    let qty = label && e.rows.length ? inWords(label(e.rows)) : '';
+    if (e.extra) {
+      const part = `${e.extra} than${e.extra === 1 ? '' : 's'} (returned since)`;
+      qty = qty ? `${qty} + ${part}` : part;
+    }
+    if (!qty) qty = `${e.pkgs.size} Bale${e.pkgs.size === 1 ? '' : 's'}`;
     entries.push({
       day, kind: 'supply', bales: e.pkgs.size, thans: e.thans, yards: e.yards, qty,
-      label: `${qty} (${fmtQty(e.yards)} yards)`,
+      label: e.yards ? `${qty} (${fmtQty(e.yards)} yards)` : qty,
     });
   }
   for (const [day, e] of retByDay) {
@@ -129,17 +176,21 @@ async function buildLedger(customerName) {
     if (e.looseThans) parts.push(`${e.looseThans}t`);
     const qty = inWords(parts.join(' + ')) || `${e.thans} thans`;
     entries.push({
-      day, kind: 'return', bales: e.wholeBales, thans: e.thans, yards: 0, qty,
+      day, kind: 'return', bales: e.pkgs.size, thans: e.thans, yards: 0, qty,
       label: `Return — ${qty}`,
     });
   }
   entries.sort((a, b) => String(a.day).localeCompare(String(b.day)) || (a.kind === 'supply' ? -1 : 1));
 
-  const net = {
-    bales: entries.reduce((s, e) => s + (e.kind === 'supply' ? e.bales : -e.bales), 0),
-    thans: entries.reduce((s, e) => s + (e.kind === 'supply' ? e.thans : -e.thans), 0),
-    yards: entries.reduce((s, e) => s + (e.kind === 'supply' ? e.yards : 0), 0),
-  };
+  /* ── NET — counted in THANS ───────────────────────────────────────────
+   * Bale counts cannot be summed across days: one bale supplied in two
+   * parts on two days would count twice, and the supply/return sides key
+   * bales differently. Thans are atomic and additive, so the footer figure
+   * is stated in thans and never contradicts the rows above it.
+   */
+  const netThans = entries.reduce((n, e) => n + (e.kind === 'supply' ? e.thans : -e.thans), 0);
+  const heldBales = new Set(sold.map((r) => bmKey(r.design, r.packageNo, r.arrivalBatch)));
+  const net = { thans: netThans, bales: heldBales.size, yards: sold.reduce((n, r) => n + (Number(r.yards) || 0), 0) };
   return { entries, net };
 }
 
@@ -161,7 +212,7 @@ async function dayDetail(customerName, dayIso) {
     const e = shades.get(sk);
     e.thans += 1;
     e.yards += Number(r.yards) || 0;
-    const k = baleGroupKey(r);
+    const k = bmKey(r.design, r.packageNo, r.arrivalBatch);
     if (!seen.has(k)) { seen.add(k); e.bales.push(String(r.packageNo)); }
   }
   let cat = () => '';
@@ -210,6 +261,6 @@ function verifyLedgerToken(token) {
 }
 
 module.exports = {
-  buildLedger, dayDetail, mintLedgerToken, verifyLedgerToken,
-  _internals: { namesFor, TOKEN_RE },
+  buildLedger, dayDetail, mintLedgerToken, verifyLedgerToken, namesFor,
+  _internals: { namesFor, bmKey, inWords, TOKEN_RE },
 };

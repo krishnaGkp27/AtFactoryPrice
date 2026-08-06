@@ -52,6 +52,53 @@ const JS = `
   function tg(id){ var r=document.getElementById(id); if(r) r.classList.toggle('open'); return false; }
 `;
 
+/**
+ * Sale-doc counts per day for one customer — ONE ApprovalQueue read for the
+ * whole page, matched against every spelling the customer files under.
+ */
+async function docCountsByDay(customer, days) {
+  const out = new Map(days.map((d) => [d, 0]));
+  try {
+    const supplyLedger = require('../services/supplyLedgerService');
+    const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+    const { normDay } = require('../utils/dates');
+    const wants = new Set(await supplyLedger.namesFor(customer));
+    const want = new Set(days);
+    const seen = new Set();
+    for (const r of await approvalQueueRepository.getResolved()) {
+      if (String(r.status || '').toLowerCase() !== 'approved') continue;
+      const aj = r.actionJSON || {};
+      if (!aj.sale_doc_file_id || seen.has(aj.sale_doc_file_id)) continue;
+      if (!wants.has(String(aj.customer || '').trim().toLowerCase())) continue;
+      const d = normDay(aj.salesDate);
+      if (!want.has(d)) continue;
+      seen.add(aj.sale_doc_file_id);
+      out.set(d, (out.get(d) || 0) + 1);
+    }
+  } catch (_) { /* no doc chips rather than no page */ }
+  return out;
+}
+
+/** The docs for ONE day, alias-aware — the proxy's own lookup. */
+async function docsForDay(customer, day) {
+  const supplyLedger = require('../services/supplyLedgerService');
+  const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+  const { normDay } = require('../utils/dates');
+  const wants = new Set(await supplyLedger.namesFor(customer));
+  const seen = new Set();
+  const docs = [];
+  for (const r of await approvalQueueRepository.getResolved()) {
+    if (String(r.status || '').toLowerCase() !== 'approved') continue;
+    const aj = r.actionJSON || {};
+    if (!aj.sale_doc_file_id || seen.has(aj.sale_doc_file_id)) continue;
+    if (!wants.has(String(aj.customer || '').trim().toLowerCase())) continue;
+    if (normDay(aj.salesDate) !== String(day)) continue;
+    seen.add(aj.sale_doc_file_id);
+    docs.push({ fileId: aj.sale_doc_file_id, kind: aj.action === 'sale_bundle' ? 'document' : 'photo' });
+  }
+  return docs;
+}
+
 /** GET /sl/:token — the ledger page. */
 async function viewPage(req, res) {
   const p = supplyLedgerService.verifyLedgerToken(req.params.token);
@@ -64,13 +111,14 @@ async function viewPage(req, res) {
     for (const day of supplyDays) {
       details.set(day, await supplyLedgerService.dayDetail(customer, day));
     }
-    let docCounts = new Map();
-    try {
-      const saleDocReconcile = require('../services/saleDocReconcile');
-      for (const day of supplyDays) {
-        docCounts.set(day, (await saleDocReconcile.docsFor(customer, day)).length);
-      }
-    } catch (_) { docCounts = new Map(); }
+    // One read for the whole page. docsFor() re-reads the ApprovalQueue
+    // sheet on EVERY call and has no cache, so the first cut cost one
+    // uncached full-sheet read per supply day — a long-standing customer's
+    // page alone could exhaust the project's Sheets quota and stall the bot
+    // for everyone (adversarial review, 07-Aug-2026). And it matched the
+    // token's single spelling while the ledger resolves aliases, so an
+    // alias-spelled sale showed goods but no documents.
+    const docCounts = await docCountsByDay(customer, supplyDays);
 
     let rows = '';
     entries.forEach((e, i) => {
@@ -94,8 +142,12 @@ async function viewPage(req, res) {
         if (n) {
           inner += '<div class="docs">';
           for (let k = 0; k < n; k += 1) {
-            inner += `<a href="doc/${esc(e.day)}/${k}" target="_blank">`
-              + `<img src="doc/${esc(e.day)}/${k}" alt="Sale doc ${k + 1}" `
+            // ABSOLUTE — a relative href resolves against /sl/ and drops the
+            // token, so every document 404'd while onerror disguised it as a
+            // PDF placeholder.
+            const href = `/sl/${encodeURIComponent(req.params.token)}/doc/${encodeURIComponent(e.day)}/${k}`;
+            inner += `<a href="${href}" target="_blank">`
+              + `<img src="${href}" alt="Sale doc ${k + 1}" `
               + `onerror="this.outerHTML='📄 Sale doc ${k + 1} (PDF)'"></a>`;
           }
           inner += '</div>';
@@ -118,7 +170,8 @@ async function viewPage(req, res) {
     <tr><th>Date</th><th>Particular</th><th>Debit</th><th>Credit</th><th>Balance</th></tr>
     ${rows}
   </table>
-  <div class="net">Net supplied to date: <b>${net.bales} Bale${net.bales === 1 ? '' : 's'}</b></div>
+  <div class="net">Net with customer: <b>${net.thans} than${net.thans === 1 ? '' : 's'}</b>
+    <span style="color:#8a8a92;font-size:13px">· ${net.bales} bale${net.bales === 1 ? '' : 's'} currently held</span></div>
   <div class="foot">Debit · Credit · Balance are maintained by the finance portal. Tap a particular for the goods detail and documents.</div>
 </div></body></html>`);
   } catch (e) {
@@ -132,9 +185,9 @@ async function viewDoc(req, res, bot) {
   const p = supplyLedgerService.verifyLedgerToken(req.params.token);
   if (!p) return res.status(404).send('Not found');
   try {
-    const saleDocReconcile = require('../services/saleDocReconcile');
-    const docs = await saleDocReconcile.docsFor(p.customerName, String(req.params.day));
-    const d = docs[parseInt(req.params.i, 10)];
+    const docs = await docsForDay(p.customerName, String(req.params.day));
+    const idx = parseInt(req.params.i, 10);
+    const d = Number.isInteger(idx) && idx >= 0 ? docs[idx] : null;
     if (!d || !d.fileId || !bot) return res.status(404).send('Not found');
     const telegramFiles = require('../utils/telegramFiles');
     const dl = await telegramFiles.downloadTelegramFile(bot, d.fileId);
@@ -147,4 +200,4 @@ async function viewDoc(req, res, bot) {
   }
 }
 
-module.exports = { viewPage, viewDoc };
+module.exports = { viewPage, viewDoc, _internals: { docCountsByDay, docsForDay } };

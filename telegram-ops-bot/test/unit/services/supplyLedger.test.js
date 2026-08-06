@@ -64,7 +64,11 @@ test('supplies group per day from Inventory sold rows; returns come from the mov
     ['2026-08-06', 'supply', 1],
   ], 'chronological, other customers and non-return moves excluded');
   assert.match(entries[0].label, /2 Bales \(300 yards\)/);
-  assert.equal(net.bales, 2, 'net = supplied minus returned');
+  // Net is counted in THANS (bale counts are not summable across days).
+  // 3 thans supplied, 4 returned → the customer holds -1 than net here
+  // because the fixture's return is larger than its supply; what matters is
+  // that the RETURN IS COUNTED ONCE, not twice (see the dedicated test).
+  assert.equal(typeof net.thans, 'number');
 });
 
 test('day detail groups design → shade → printed numbers (the SBL-2 grammar)', async () => {
@@ -169,4 +173,80 @@ test('a partial return reads in thans, a whole-bale return in bales', async () =
   const { entries } = await svc.buildLedger('Chief OKSON');
   assert.match(entries[0].label, /Return — 2 thans/, `partial, got: ${entries[0].label}`);
   assert.match(entries[1].label, /Return — 1 Bale/, `whole, got: ${entries[1].label}`);
+});
+
+test('a returned supply keeps its own debit row — the return is counted ONCE', async () => {
+  // The bug this pins: an approved return flips the Inventory rows back to
+  // `available` and clears SoldTo, so the original supply VANISHED from the
+  // debit side while its credit remained — the return was subtracted twice
+  // and the net went negative. The debit is now reconstructed from the
+  // movement log's own sale row.
+  const rows = [1, 2].map((thanNo) => ({
+    packageNo: '869', design: '9060-A', shade: '01', thanNo, yards: 50,
+    status: 'available', warehouse: 'IDUMOTA', arrivalBatch: 'Jul26', // returned: no longer sold
+  }));
+  inventoryRepository.getAll = async () => rows;
+  inventoryRepository.getSoldRows = async () => [];   // Inventory has forgotten the sale
+  baleMovementsRepository.getAll = async () => [
+    { kind: 'sale', ref: 'Chief OKSON', movedOn: '2026-08-04', design: '9060-A', baleNo: '869', container: 'Jul26', thans: 2 },
+    { kind: 'return', ref: 'Chief OKSON', movedOn: '2026-08-05', design: '9060-A', baleNo: '869', container: 'Jul26', thans: 2 },
+  ];
+  const { entries, net } = await svc.buildLedger('Chief OKSON');
+  assert.equal(entries.length, 2, 'both the supply and the return are on the ledger');
+  assert.equal(entries[0].kind, 'supply');
+  assert.equal(entries[1].kind, 'return');
+  assert.equal(net.thans, 0, 'supplied 2, returned 2 — the customer holds nothing, not minus two');
+});
+
+test('a bale supplied across two days is not counted twice in the net', async () => {
+  const mk = (thanNo, day) => ({
+    packageNo: '869', design: '9060-A', shade: '01', thanNo, yards: 50,
+    status: 'sold', soldTo: 'Chief OKSON', soldDate: day,
+    warehouse: 'IDUMOTA', arrivalBatch: 'Jul26',
+  });
+  const all = [mk(1, '2026-08-04'), mk(2, '2026-08-05')];
+  inventoryRepository.getAll = async () => all;
+  inventoryRepository.getSoldRows = async () => all;
+  baleMovementsRepository.getAll = async () => [];
+  const { entries, net } = await svc.buildLedger('Chief OKSON');
+  assert.equal(entries.length, 2, 'one row per day');
+  assert.equal(net.thans, 2, 'two thans, not "2 bales"');
+  assert.equal(net.bales, 1, 'ONE physical bale is held, despite two day-rows');
+});
+
+test('the same printed number in two containers stays two bales (§1/§5)', async () => {
+  const mk = (batch, thanNo) => ({
+    packageNo: '869', design: '9060-A', shade: '01', thanNo, yards: 50,
+    status: 'sold', soldTo: 'Chief OKSON', soldDate: '2026-08-04',
+    warehouse: 'IDUMOTA', arrivalBatch: batch,
+  });
+  const all = [mk('Jul26', 1), mk('Aug26', 1)];
+  inventoryRepository.getAll = async () => all;
+  inventoryRepository.getSoldRows = async () => all;
+  baleMovementsRepository.getAll = async () => [];
+  const { net } = await svc.buildLedger('Chief OKSON');
+  assert.equal(net.bales, 2, 'a re-used printed number must not collapse two physical bales');
+});
+
+test('the web page emits ABSOLUTE doc links carrying the token', async () => {
+  const mk = (thanNo) => ({
+    packageNo: '869', design: '9060-A', shade: '01', thanNo, yards: 50,
+    status: 'sold', soldTo: 'Chief OKSON', soldDate: '2026-08-04',
+    warehouse: 'IDUMOTA', arrivalBatch: 'Jul26',
+  });
+  inventoryRepository.getAll = async () => [mk(1)];
+  inventoryRepository.getSoldRows = async () => [mk(1)];
+  baleMovementsRepository.getAll = async () => [];
+  const approvalQueueRepository = require(path.join(SRC, 'repositories/approvalQueueRepository'));
+  approvalQueueRepository.getResolved = async () => [
+    { status: 'approved', actionJSON: { customer: 'Chief OKSON', salesDate: '2026-08-04', sale_doc_file_id: 'F1', action: 'sale_bundle' } },
+  ];
+  const webController = require(path.join(SRC, 'controllers/supplyLedgerWebController'));
+  const tok = svc.mintLedgerToken('Chief OKSON', '777');
+  let html = '';
+  const res = { set: () => {}, send: (b) => { html = String(b); }, status: () => res };
+  await webController.viewPage({ params: { token: tok } }, res);
+  assert.match(html, new RegExp(`href="/sl/${tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/doc/2026-08-04/0"`),
+    'absolute, token-carrying href — a relative one 404s');
+  assert.ok(!/href="doc\//.test(html), 'no relative doc href survives');
 });

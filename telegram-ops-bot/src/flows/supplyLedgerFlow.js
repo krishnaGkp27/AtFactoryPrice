@@ -91,7 +91,11 @@ async function renderLedger(bot, chatId, userId) {
       ? `${fmtDate.short(e.day)} — Supplied ${e.label}\n`
       : `${fmtDate.short(e.day)} — ↩ ${e.label}\n`;
   }
-  body += `\n*Net supplied: ${net.bales} Bale${net.bales === 1 ? '' : 's'} to date*`;
+  // Counted in THANS: bale counts cannot be summed across days (one bale
+  // supplied in two parts would count twice) and the two sides key bales
+  // differently, so a bale net would contradict the rows above it.
+  body += `\n*Net with customer: ${net.thans} than${net.thans === 1 ? '' : 's'}*`
+    + ` · _${net.bales} bale${net.bales === 1 ? '' : 's'} currently held_`;
 
   const kb = [];
   const chips = supplyDays.map((d, i) => ({ text: `📅 ${fmtDate.short(d)}`, callback_data: `slg:d:${i}` }));
@@ -113,7 +117,10 @@ async function openDay(bot, chatId, userId, idx) {
   const soldBalesFlow = require('./soldBalesFlow');
   const sbl = soldBalesFlow._internals;
   sessionStore.set(userId, {
-    type: sbl.SESSION_TYPE, step: 'summary',
+    // 'view_summary' is the step soldBalesFlow gates every button on — the
+    // first cut wrote 'summary', which left the handed-over card's 📄 doc,
+    // 🧮 reconcile, 🔎 details and ⬅ Back all dead.
+    type: sbl.SESSION_TYPE, step: 'view_summary',
     customer: session.customer, soldDate: day,
     flowMessageId: session.flowMessageId || null,
   });
