@@ -6975,6 +6975,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['tsk:'], handle: (bot, cq) => taskFlow.handleCallback(bot, cq) },
   { prefixes: ['nf:'], handle: (bot, cq) => notificationsFlow.handleCallback(bot, cq) },
   { prefixes: ['swv:'], handle: (bot, cq) => salesWorkflowView.handleCallback(bot, cq) },
+  // SLG-1 — per-customer Supply Ledger (goods only; admin-gated in-module).
+  { prefixes: ['slg:'], handle: (bot, cq) => require('../flows/supplyLedgerFlow').handleCallback(bot, cq) },
   { prefixes: ['pp:'], handle: (bot, cq) => procurementPlanView.handleCallback(bot, cq) },
   // Inbound stock flows.
   { prefixes: ['gr:'], handle: (bot, cq) => goodsReceiptFlow.handleCallback(bot, cq) },
@@ -9765,6 +9767,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
       case 'return_than':
         await startReturnThanFlow(bot, chatId, uid, messageId);
         break;
+      case 'supply_ledger': {
+        // SLG-1 — owner's goods-only per-customer ledger.
+        const supplyLedgerFlow = require('../flows/supplyLedgerFlow');
+        await supplyLedgerFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
       case 'supply_statement': {
         // SLED-1 — quantities-only supply statement PDF (admin gate in flow).
         await require('../flows/supplyStatementFlow').start(bot, chatId, uid, messageId);

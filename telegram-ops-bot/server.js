@@ -129,6 +129,13 @@ const invoiceWebController = require('./src/controllers/invoiceWebController');
 app.get('/i/:token.pdf', invoiceWebController.viewInvoicePdf);
 app.get('/i/:token', invoiceWebController.viewInvoice);
 
+// SLG-1 — per-customer Supply Ledger (goods only). Signed token IS the
+// capability; invalid = plain 404. Docs proxied through the bot so no
+// Telegram URL or token reaches the visitor.
+const supplyLedgerWebController = require('./src/controllers/supplyLedgerWebController');
+app.get('/sl/:token/doc/:day/:i', (req, res) => supplyLedgerWebController.viewDoc(req, res, bot));
+app.get('/sl/:token', supplyLedgerWebController.viewPage);
+
 // SHR-1 — tracked catalogue share links (signed token = capability; see
 // specs/SHR-1_SHARE_TRACKING.md). GET-only so the website page never needs
 // a CORS preflight; ACAO * because these are public capability endpoints —

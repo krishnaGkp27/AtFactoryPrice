@@ -148,6 +148,9 @@ const ACTIVITIES = [
   // SLED-1 — quantities-only supply statement PDF; Rate/Amount printed as
   // blank ruled lines (owner 31-Jul-2026). Admin-only (flow gate).
   { code: 'supply_statement',      label: 'Supply Statement',          icon: '📄', callback: 'act:supply_statement',   hub: 'crm' },
+  // SLG-1 — per-customer goods ledger (owner format; money columns reserved
+  // for the finance portal). Admin-only, gated in the flow.
+  { code: 'supply_ledger',         label: 'Supply Ledger',             icon: '📒', callback: 'act:supply_ledger',      hub: 'crm' },
   // CNET-1b — recursive contact network (category → buyers → their people).
   { code: 'contact_network',       label: 'Contact Network',           icon: '📇', callback: 'act:contact_network',    hub: 'crm' },
   // MORN-1 — daily 10:00 admin digest with category toggles. Standalone

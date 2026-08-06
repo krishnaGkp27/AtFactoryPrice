@@ -667,6 +667,9 @@ module.exports = {
   start,
   handleCallback,
   _internals: {
+    // SLG-1 — the Supply Ledger's day chips open THIS card (one detail
+    // surface everywhere, per the owner's no-duplication order).
+    renderSummary,
     renderCustomerPicker, renderDatePicker, renderDetail, stepBack,
     loadCustomers, loadDatesForCustomer, prettyDate, baleGroupKey, chunkButtons,
     SESSION_TYPE,

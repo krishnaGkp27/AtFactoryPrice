@@ -241,8 +241,12 @@ sheet. Everything else, you can make a separate logging if not existing."*
   canonical customer requires the admin's explicit confirm (CUS-ID2);
   unresolvable history strings are dropped, never offered.
 - The owner monitors a per-customer GOODS ledger (supplies only, **no
-  finance**), derived from the Inventory sheet at read time — format to be
-  specified by the owner.
+  finance**), derived at read time (SLG-1). Format locked 07-Aug-2026:
+  Date | Particular | Debit | Credit | Balance — the three money columns
+  stay EMPTY, reserved for the finance portal, with a blank row after each
+  entry for an in-between payment. Debits derive from Inventory sold rows;
+  credits ONLY from approved-return transitions in the BaleMovements log.
+  The Particular opens the goods detail with its documents.
 
 ---
 
