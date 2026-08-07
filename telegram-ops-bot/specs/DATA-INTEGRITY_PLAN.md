@@ -181,9 +181,16 @@ ruling.
 
 ---
 
-## 5 · Open items for the owner
+## 5 · Status (updated 07-Aug-2026, same day)
 
-- [ ] STK-E1: `import-inventory.js` — gate it or retire it?
+- [x] SEN-1 shipped (`8b3636e` + review fixes `804c8c3`): 🩺 Data Health
+  tile + nightly sweep; 17 adversarial-review findings fixed pre-deploy.
+- [x] STK-E1 shipped (`0034aac` identity + `fb3d751` door): baleIdentity
+  everywhere, stockEngine as the only mutation path (smoke S53 enforces),
+  latent sale/intake doors deleted, rename through the repository,
+  addStock/sellBatch deleted.
+- [x] `import-inventory.js` — resolved as GATE (the reversible option):
+  live-collision refusal + engine intake. Owner may still retire it.
 - [ ] STK-PG: go / no-go after SEN-1 + STK-E1 have run clean.
 
 *Audit provenance: 07-Aug-2026 four-agent parallel sweep (doors /
