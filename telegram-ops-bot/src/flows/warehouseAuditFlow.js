@@ -412,12 +412,21 @@ async function reconcileDesign({ warehouse, location, design, bales, bundles, au
   const state = (await todayStateFor(warehouse)).get(String(design).toUpperCase())
     || { mismatches: 0, locked: false };
   if (state.locked) return { status: 'locked', d };
-  if (d.reconciled) return { status: 'already', d };
   const base = {
     warehouse, location: location || '', design: d.design,
     sheet_bales: d.fullBales, sheet_bundles: d.looseThans, sheet_yards: Math.round(d.yards),
     counted_bales: bales, counted_bundles: bundles, auditor,
   };
+  // AUD-F1 — a fresh count of an ALREADY-reconciled design is real work,
+  // not a duplicate: quantities drift with every sale, and the full count
+  // sheet exists precisely to re-verify. A matching re-count refreshes the
+  // reconciliation date; a differing one takes the normal mismatch path.
+  // (Before this, `already` returned BEFORE comparing — a disagreeing
+  // fresh count was silently thrown away.)
+  if (d.reconciled && d.fullBales === bales && d.looseThans === bundles) {
+    await stockTakesRepository.appendMany([{ ...base, result: 'reconciled', note: 're-verified' }]);
+    return { status: 'already', d };
+  }
   if (d.fullBales === bales && d.looseThans === bundles) {
     await stockTakesRepository.appendMany([{ ...base, result: 'reconciled', note: 'blind match' }]);
     return { status: 'match', d };
@@ -505,6 +514,9 @@ async function renderChecklist(bot, chatId, userId) {
   }
   rows.push([{ text: '📄 Offline count sheet', callback_data: 'wai:tmpl' },
     { text: '➕ Add designs', callback_data: 'wai:xd' }]);
+  // AUD-F1 — the full re-audit sheet: every design of the store, reconciled
+  // ones included, because quantities drift with every sale.
+  rows.push([{ text: '📄 Full sheet — ALL designs', callback_data: 'wai:tmplf' }]);
   if (auth.isAdmin(userId)) rows.push([{ text: '🔬 Deep inspect (bale/than level)', callback_data: 'wai:inspect' }]);
   const up = upFromChecklistRow(session);
   if (up) rows.push(up);
@@ -657,9 +669,14 @@ async function sendOfflineTemplate(bot, chatId, userId, opts = {}) {
   const session = sessionStore.get(userId);
   if (!session) return false;
   const state = await todayStateFor(session.warehouse);
+  // AUD-F1 (owner, 07-Aug-2026): opts.full puts EVERY design of the store on
+  // the sheet, reconciled ones included — "the sale happens every time,
+  // quantity changes", so a tick from last week says nothing about today.
+  // Locked designs stay off either sheet: they are pending admin review and
+  // the reconcile engine refuses them anyway.
   const open = (session._checklist || []).filter((d) => {
     const s = state.get(String(d.design).toUpperCase());
-    return !d.reconciled && !(s && s.locked);
+    return (opts.full || !d.reconciled) && !(s && s.locked);
   });
   // AUD-X1 — extra designs the owner added by hand (old-container stock
   // not in Inventory). Same "DESIGN =" line format, so the reply parser
@@ -683,11 +700,46 @@ async function sendOfflineTemplate(bot, chatId, userId, opts = {}) {
   const template = `AUDIT ${session.warehouse}\n${lines.join('\n')}`;
   await bot.sendMessage(chatId, template);
   await bot.sendMessage(chatId,
-    '📄 Your offline count sheet (message above).\n\n'
+    `📄 Your ${opts.full ? `FULL count sheet — all ${lines.length} designs of this store` : 'offline count sheet'} (message above).\n\n`
     + '1. Long-press it → Copy.\n'
     + '2. Walk the store with NO network — paste it into the message box and fill each line: 9032 = 12+5 (bales+bundles). Leave lines you did not count empty.\n'
     + '3. Press send when you are back in coverage — Telegram delivers it automatically and I reply with the results.');
   return true;
+}
+
+/**
+ * AUD-F1 — the admins' DELTA report for one audit batch: ONLY what
+ * increased and what decreased (owner, 07-Aug-2026), never the matches
+ * line-by-line. Goes to ADMINS, not to the auditor — the auditor's reply
+ * stays blind (book numbers never reach the person counting), which is
+ * what keeps the recount honest.
+ *
+ * @param {Array<{design, bookB, bookT, cntB, cntT, status}>} deltas
+ */
+function buildDeltaReport({ warehouse, auditorLabel, deltas, matched, unknown, locked }) {
+  const qty = (b, t) => `${b}B${t ? `+${t}bd` : ''}`;
+  const dirs = (d) => {
+    const parts = [];
+    const db = d.cntB - d.bookB;
+    const dt = d.cntT - d.bookT;
+    if (db) parts.push(`${db > 0 ? '↑' : '↓'}${Math.abs(db)}B`);
+    if (dt) parts.push(`${dt > 0 ? '↑' : '↓'}${Math.abs(dt)} bundle${Math.abs(dt) === 1 ? '' : 's'}`);
+    return parts.join(', ');
+  };
+  let text = `📊 Audit delta — ${warehouse} · counted by ${auditorLabel}\n`
+    + 'Only changes are shown (counted vs book):\n';
+  if (deltas.length) {
+    for (const d of deltas) {
+      const tag = d.status === 'flagged' ? ' 🚩 flagged' : ' · recount asked';
+      text += `\n${d.design}: ${dirs(d)} (book ${qty(d.bookB, d.bookT)} → counted ${qty(d.cntB, d.cntT)})${tag}`;
+    }
+  } else {
+    text += '\nNo increases, no decreases.';
+  }
+  text += `\n\n✅ ${matched} matched the book exactly`;
+  if (unknown) text += ` · 🆕 ${unknown} new design${unknown === 1 ? '' : 's'}`;
+  if (locked) text += ` · 🔒 ${locked} locked`;
+  return text;
 }
 
 /**
@@ -712,6 +764,7 @@ async function handleBatchText(bot, msg) {
   const flagged = [];
   const locked = [];
   const unknown = [];
+  const deltas = [];
   for (const e of parsed.entries) {
     const out = await reconcileDesign({
       warehouse: parsed.warehouse, location, design: e.design,
@@ -727,6 +780,28 @@ async function handleBatchText(bot, msg) {
         warehouse: parsed.warehouse, location, design: e.design,
         bales: e.bales, bundles: e.bundles, d: out.d, flagRow: out.flagRow, auditor: userId,
       });
+    }
+    // AUD-F1 — every compared mismatch feeds the admins' delta report.
+    if ((out.status === 'recount' || out.status === 'flagged') && out.d) {
+      deltas.push({
+        design: e.design, status: out.status,
+        bookB: out.d.fullBales, bookT: out.d.looseThans, cntB: e.bales, cntT: e.bundles,
+      });
+    }
+  }
+  // AUD-F1 — the increases/decreases report, admins only. The auditor's own
+  // reply below stays blind: book numbers must never reach the counter.
+  if (parsed.entries.length) {
+    let who = String(userId);
+    try { who = await require('../services/approvalCards').resolveUserLabel(userId, bot); } catch (_) { /* id fallback */ }
+    const report = buildDeltaReport({
+      warehouse: parsed.warehouse, auditorLabel: who, deltas,
+      matched: matched.length, unknown: unknown.length, locked: locked.length,
+    });
+    for (const adminId of config.access.adminIds) {
+      try { await bot.sendMessage(adminId, report); } catch (e) {
+        logger.warn(`audit delta report to ${adminId} failed: ${e.message}`);
+      }
     }
   }
   try {
@@ -1364,6 +1439,12 @@ async function handleCallback(bot, query) {
     }
     return true;
   }
+  if (data === 'wai:tmplf') {
+    // AUD-F1 — the FULL sheet: reconciled designs ride along for re-audit.
+    try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
+    await sendOfflineTemplate(bot, chatId, userId, { full: true });
+    return true;
+  }
   if (data.startsWith('wai:ck:')) {
     await openPad(bot, chatId, userId, parseInt(data.slice('wai:ck:'.length), 10), query);
     return true;
@@ -1600,7 +1681,7 @@ module.exports = {
   handleText,
   _internals: {
     renderLocationPicker, renderChecklist, loadChecklist, locationOf,
-    reconcileDesign, todayStateFor, sendOfflineTemplate,
+    reconcileDesign, todayStateFor, sendOfflineTemplate, buildDeltaReport,
     renderWarehousePicker, renderDesignPicker, renderShadePicker,
     renderBaleList, renderBaleChoice, renderThanCard, renderReconciliation,
     stepBack, loadBales, markIcon, getAuditMode, baleAuditState, chunkButtons,
