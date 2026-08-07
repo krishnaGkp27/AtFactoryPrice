@@ -433,6 +433,9 @@ const server = app.listen(PORT, async () => {
     // MORN-1 — 09:15 (Lagos) admin morning digest; categories toggle via
     // the ⏰ Morning Digest tile (Settings DIGEST_* keys, no deploy).
     require('./src/services/morningDigest').start(bot);
+    // SEN-1 — nightly read-only cross-sheet consistency checks (Data
+    // Health). SENTINEL_ENABLED / SENTINEL_HOUR in Settings, no deploy.
+    require('./src/services/consistencySentinel').startScheduler(bot);
     // ATT-C3 — 09:00 attendance nudge to department members who haven't
     // marked yet (report-by 09:30, owner 19-Jul). ATTENDANCE_* Settings.
     require('./src/services/attendanceReminder').start(bot);

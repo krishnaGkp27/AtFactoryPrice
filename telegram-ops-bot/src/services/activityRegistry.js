@@ -230,6 +230,9 @@ const ACTIVITIES = [
   // act: case). Mints a single-use link into the ops dashboard.
   { code: 'web_dashboard',         label: 'Dashboard (web)',           icon: '📊', callback: 'act:web_dashboard',      hub: 'reporting' },
   { code: 'attendance_report',     label: 'Attendance Report',         icon: '🗓', callback: 'act:attendance_report',  hub: 'reporting' },
+  // SEN-1 — read-only cross-sheet consistency checks (admin-only, gated in
+  // the flow's start()).
+  { code: 'data_health',           label: 'Data Health',               icon: '🩺', callback: 'act:data_health',        hub: 'reporting' },
   // T3 — admin read-only lens on the supply-order pipeline (Orders +
   // Customers + LedgerBalanceCache joined into one view).
   { code: 'sales_workflow_view',   label: 'Sales Workflow',            icon: '📊', callback: 'act:sales_workflow',     hub: 'reporting' },

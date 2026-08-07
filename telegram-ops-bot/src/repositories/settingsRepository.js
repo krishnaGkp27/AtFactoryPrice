@@ -45,6 +45,11 @@ const DEFAULTS = {
   // owner gets twenty identical DMs and learns to ignore them. Suppressed
   // failures are counted and reported on the next alert. 0 = alert every time.
   ATTENDANCE_ALERT_COOLDOWN_MIN: 15,
+  // SEN-1 — daily read-only cross-sheet consistency checks (Data Health).
+  // SENTINEL_HOUR is the Lagos hour of the run; 0 on ENABLED switches the
+  // schedule and the DM reports off entirely (the 🩺 tile still works).
+  SENTINEL_ENABLED: 1,
+  SENTINEL_HOUR: 20,
   // APX-2 — minutes within which two IDENTICAL requests from the same person
   // are treated as one double-tapped Submit rather than two real requests.
   // Only ever flags a card, never rejects. Widen it if submissions are slow

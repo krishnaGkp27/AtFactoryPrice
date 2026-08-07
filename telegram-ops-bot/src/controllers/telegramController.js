@@ -7024,6 +7024,7 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['sdd:'], handle: (bot, cq) => require('../flows/supplyDetailsFlow').handleCallback(bot, cq) },
   { prefixes: ['sdg:'], handle: (bot, cq) => require('../flows/supplyDetailsDesignFlow').handleCallback(bot, cq) },
   { prefixes: ['sds:'], handle: (bot, cq) => require('../flows/stockByShadeFlow').handleCallback(bot, cq) },
+  { prefixes: ['snt:'], handle: (bot, cq) => require('../flows/dataHealthFlow').handleCallback(bot, cq) },
   { prefixes: ['abx:'], handle: (bot, cq) => require('../flows/approvalsInboxFlow').handleCallback(bot, cq) },
   // DCAT-1 — design → product-category mapping (dual-admin approval).
   { prefixes: ['dcat:'], handle: (bot, cq) => require('../flows/designCategoryFlow').handleCallback(bot, cq) },
@@ -9712,6 +9713,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
         // gate is lifted; only 🔬 Deep inspect stays admin-gated inside.
         const warehouseAuditFlow = require('../flows/warehouseAuditFlow');
         await warehouseAuditFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'data_health': {
+        // SEN-1 — read-only cross-sheet consistency checks (admin-only,
+        // gated in the flow's start()).
+        const dataHealthFlow = require('../flows/dataHealthFlow');
+        await dataHealthFlow.start(bot, chatId, uid, messageId);
         break;
       }
       case 'display_units': {
