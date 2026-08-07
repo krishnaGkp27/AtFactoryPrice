@@ -1646,6 +1646,9 @@ async function runS14c() {
   delete require.cache[require.resolve('../src/repositories/approvalQueueRepository')];
   delete require.cache[require.resolve('../src/repositories/auditLogRepository')];
   delete require.cache[require.resolve('../src/services/inventoryService')];
+  // STK-E1 — the engine sits between the service and the repository now;
+  // a stale cached engine would keep a reference to the PREVIOUS stub.
+  delete require.cache[require.resolve('../src/services/stockEngine')];
 
   // Existing inventory rows the test will assert remain untouched.
   const EXISTING_INV = [
@@ -7713,6 +7716,50 @@ function runS52() {
   } else fail('S52.2', `flow(s) with no menu escape: ${noEscape.join(', ')}`);
 }
 
+/* ── S53 · STK-E1: ONE door to stock state ─────────────────────────────
+ * Every Inventory Status/Warehouse writer is PRIVATE to stockEngine.
+ * The 07-Aug audit counted 19 doors; each recent stock bug was one door
+ * forgetting one rule. This lint makes a 20th door impossible to add by
+ * accident: any src/ file (outside the repository that defines them and
+ * the engine that guards them) mentioning a writer name fails smoke. */
+function runS53() {
+  const ROOT = path.join(__dirname, '..');
+  const WRITERS = [
+    'markThanSold', 'markPackageSold', 'markThanAvailable',
+    'markPackageAvailable', 'transitionBales', 'appendBale', 'appendThans',
+    'renameWarehouse',
+  ];
+  const ALLOWED = new Set([
+    path.join('repositories', 'inventoryRepository.js'), // defines them
+    path.join('services', 'stockEngine.js'),             // the one door
+  ]);
+  const offenders = [];
+  const walk = (dir) => {
+    for (const name of fs.readdirSync(dir)) {
+      const p = path.join(dir, name);
+      const st = fs.statSync(p);
+      if (st.isDirectory()) { walk(p); continue; }
+      if (!name.endsWith('.js')) continue;
+      const rel = path.relative(path.join(ROOT, 'src'), p);
+      if (ALLOWED.has(rel)) continue;
+      // Strip line comments — prose naming a writer is fine; calls are not.
+      const text = fs.readFileSync(p, 'utf8')
+        .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+      for (const w of WRITERS) {
+        // A call on anything EXCEPT the engine itself (stockEngine.… is the
+        // sanctioned path everywhere).
+        if (new RegExp(`(?<!stockEngine)\\.${w}\\s*\\(`).test(text)) offenders.push(`${rel} → ${w}`);
+      }
+    }
+  };
+  walk(path.join(ROOT, 'src'));
+  if (!offenders.length) {
+    pass('S53 STK-E1: stock writers are reachable ONLY through stockEngine');
+  } else {
+    fail('S53', `stock writer called outside stockEngine: ${offenders.join(', ')}`);
+  }
+}
+
 function runS51() {
   // ---- S51 ST-1 Part A: tappable Sell Bale flow (specs/ST-1_TAPPABLE_SALE.md) ----
   const sbSrc = fs.readFileSync(path.join(__dirname, '../src/flows/sellBaleFlow.js'), 'utf8');
@@ -7804,6 +7851,7 @@ function runS51() {
   try { runS50(); } catch (e) { fail('S50 unexpected error', e.message); }
   try { runS51(); } catch (e) { fail('S51 unexpected error', e.message); }
   try { runS52(); } catch (e) { fail('S52 unexpected error', e.message); }
+  try { runS53(); } catch (e) { fail('S53 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

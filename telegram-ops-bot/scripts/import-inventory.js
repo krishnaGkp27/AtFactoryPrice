@@ -52,6 +52,13 @@ async function main() {
   const existing = await inventoryRepo.getAll();
   const existingPackageNos = new Set(existing.map((r) => r.packageNo));
   console.log(`Found ${existingPackageNos.size} existing package numbers.`);
+  // STK-E1 — the same TRF-INT3 gate bot intake applies: refuse a number
+  // that is already LIVE (available/in_transit) in this warehouse. This
+  // script used to be the one intake path outside every gate.
+  const liveHere = new Set(existing
+    .filter((r) => (r.status === 'available' || r.status === 'in_transit')
+      && (r.warehouse || '').toLowerCase() === String(warehouse).toLowerCase())
+    .map((r) => r.packageNo));
 
   const thanRows = [];
   let skipped = 0;
@@ -103,6 +110,15 @@ async function main() {
       });
     });
 
+    if (liveHere.has(packageNo)) {
+      console.error(`  ✗ Bale ${packageNo} is already LIVE in ${warehouse} — refused (re-number the physical bale first).`);
+      skipped += 1;
+      // Drop the rows just queued for this package.
+      for (let k = thanRows.length - 1; k >= 0; k -= 1) {
+        if (thanRows[k].packageNo === packageNo) thanRows.splice(k, 1);
+      }
+      continue;
+    }
     existingPackageNos.add(packageNo);
   }
 
@@ -118,7 +134,10 @@ async function main() {
 
   console.log(`\nUploading ${thanRows.length} rows to Google Sheet...`);
   await inventoryRepo.ensureHeader();
-  const count = await inventoryRepo.appendThans(thanRows);
+  // STK-E1 — births go through the one door like everything else.
+  const stockEngine = require('../src/services/stockEngine');
+  const count = await stockEngine.intakeThans(thanRows,
+    { event: 'intake', system: `cli-import:${process.env.USER || 'operator'}` });
   console.log(`Done. ${count} thans imported.`);
 }
 

@@ -140,10 +140,12 @@ async function repairInner(bot, requestId, out) {
     // Claim the right bale first; only then send the wrong one home. If the
     // second flip fails we are over-claimed (both marked moved) — loud, and
     // recoverable — never under-claimed (transfer pointing at nothing).
-    const rightFlipped = await inventoryRepository.transitionBales([right], AVAILABLE,
-      received ? AVAILABLE : IN_TRANSIT, aj.to, { uids: rightUids });
+    const rightFlipped = await require('./stockEngine').transition([right], AVAILABLE,
+      received ? AVAILABLE : IN_TRANSIT, aj.to, { uids: rightUids },
+      { event: 'repair', system: 'transferRepair' });
     if (!rightFlipped.length) { out.skipped.push({ wrong, right, reason: `flip of ${right} matched no rows (concurrent change)` }); continue; }
-    const wrongFlipped = await inventoryRepository.transitionBales([wrong], wrongStatus, AVAILABLE, aj.from, { uids: wrongUids });
+    const wrongFlipped = await require('./stockEngine').transition([wrong], wrongStatus, AVAILABLE, aj.from, { uids: wrongUids },
+      { event: 'repair', system: 'transferRepair' });
     if (!wrongFlipped.length) {
       out.skipped.push({ wrong, right, reason: `⚠️ ${right} claimed but ${wrong} did not flip back — check rows by hand` });
     }

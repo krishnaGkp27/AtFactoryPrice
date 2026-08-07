@@ -4,6 +4,8 @@
  */
 
 const inventoryRepository = require('../repositories/inventoryRepository');
+// STK-E1 — every stock mutation names its event + authority through here.
+const stockEngine = require('./stockEngine');
 const stockBuckets = require('../utils/stockBuckets');
 const transactionsRepository = require('../repositories/transactionsRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
@@ -153,7 +155,7 @@ async function sellThan(packageNo, thanNo, customer, userId, salesDate, opts = {
     return { status: 'approval_required', requestId, reason: risk.reason };
   }
 
-  const result = await inventoryRepository.markThanSold(packageNo, thanNo, customer, salesDate, { warehouse: than.warehouse });
+  const result = await stockEngine.sellThan(packageNo, thanNo, customer, salesDate, { warehouse: than.warehouse }, { event: 'sale', adminId: userId });
   // SEC-P2 (C5): markThanSold returns null when the than was sold/moved between
   // our earlier read and this write — don't record a phantom sale for it.
   if (!result) return { status: 'already_sold', message: `Than ${thanNo} in Bale ${packageNo} is no longer available.` };
@@ -214,7 +216,7 @@ async function sellPackage(packageNo, customer, userId, salesDate, opts = {}) {
     return { status: 'approval_required', requestId, reason: risk.reason };
   }
 
-  const results = await inventoryRepository.markPackageSold(packageNo, customer, salesDate, { warehouse: saleWarehouse || undefined });
+  const results = await stockEngine.sellPackage(packageNo, customer, salesDate, { warehouse: saleWarehouse || undefined }, { event: 'sale', adminId: userId });
   await transactionsRepository.append({
     user: userId, action: 'sell_package', design: available[0].design, color: available[0].shade,
     qty: totalYards, before: `${available.length} thans`, after: 'sold', status: 'completed',
@@ -224,64 +226,18 @@ async function sellPackage(packageNo, customer, userId, salesDate, opts = {}) {
   return { status: 'completed', soldThans: results.length, soldYards: totalYards };
 }
 
-/**
- * Add stock: append new package thans to the sheet.
- * packageData = { packageNo, indent, csNo, design, shade, warehouse, pricePerYard, dateReceived, thans: [{ yards, netMtrs?, netWeight? }] }
- */
-async function addStock(packageData, userId) {
-  const thanRows = packageData.thans.map((t, i) => ({
-    packageNo: packageData.packageNo,
-    indent: packageData.indent || '',
-    csNo: packageData.csNo || '',
-    design: packageData.design,
-    shade: packageData.shade,
-    thanNo: i + 1,
-    yards: t.yards || 0,
-    status: 'available',
-    warehouse: packageData.warehouse || '',
-    pricePerYard: packageData.pricePerYard || 0,
-    dateReceived: packageData.dateReceived || new Date().toISOString().split('T')[0],
-    soldTo: '', soldDate: '',
-    netMtrs: t.netMtrs || '', netWeight: t.netWeight || '',
-    updatedAt: new Date().toISOString(),
-  }));
-  const count = await inventoryRepository.appendThans(thanRows);
-  const totalYards = thanRows.reduce((s, t) => s + t.yards, 0);
-  await transactionsRepository.append({
-    user: userId, action: 'add_package', design: packageData.design, color: packageData.shade,
-    qty: totalYards, before: '', after: `${count} thans`, status: 'completed',
-  });
-  await auditLogRepository.append('add_package', { packageNo: packageData.packageNo, thans: count, yards: totalYards }, userId);
-  return { status: 'completed', thansAdded: count, totalYards };
-}
-
-/**
- * Batch sell: sell multiple packages at once to the same customer.
- */
-async function sellBatch(packageNos, customer, userId) {
-  const results = [];
-  for (const pkgNo of packageNos) {
-    const result = await sellPackage(pkgNo, customer, userId);
-    results.push({ packageNo: pkgNo, ...result });
-  }
-  const completed = results.filter((r) => r.status === 'completed');
-  const totalYards = completed.reduce((s, r) => s + (r.soldYards || 0), 0);
-  const totalThans = completed.reduce((s, r) => s + (r.soldThans || 0), 0);
-  return {
-    status: 'completed',
-    totalPackages: completed.length,
-    totalThans,
-    totalYards,
-    details: results,
-  };
-}
+/* STK-E1 — the dead exports addStock() and sellBatch() are DELETED. They
+ * had no live caller (NLP 'add' opens addStockFlow → bulk_receive_goods;
+ * 'sell_batch' rides startSaleFlow → sale_bundle), appended rows without
+ * the intake collision gate or bale_uid stamping, and would have become
+ * ungated doors for any future caller (07-Aug audit, door #19). */
 
 /**
  * Return a sold than (undo sale, mark available again).
  */
 async function returnThan(packageNo, thanNo, userId, opts = {}) {
   // TRF-INT4 — opts.warehouse pins the return to the physical than sold there.
-  const result = await inventoryRepository.markThanAvailable(packageNo, thanNo, { warehouse: opts.warehouse });
+  const result = await stockEngine.returnThan(packageNo, thanNo, { warehouse: opts.warehouse }, { event: 'return', adminId: userId });
   if (!result) return { status: 'not_found', message: `Than ${thanNo} in Bale ${packageNo} not found or already available.` };
   await transactionsRepository.append({
     user: userId, action: 'return_than', design: result.design, color: result.shade,
@@ -297,7 +253,7 @@ async function returnThan(packageNo, thanNo, userId, opts = {}) {
  */
 async function returnPackage(packageNo, userId, opts = {}) {
   // TRF-INT4 — opts.warehouse pins the return to the physical bale sold there.
-  const results = await inventoryRepository.markPackageAvailable(packageNo, { warehouse: opts.warehouse });
+  const results = await stockEngine.returnPackage(packageNo, { warehouse: opts.warehouse }, { event: 'return', adminId: userId });
   if (!results.length) return { status: 'not_found', message: `Bale ${packageNo} has no sold thans to return.` };
   const totalYards = results.reduce((s, t) => s + t.yards, 0);
   await transactionsRepository.append({
@@ -385,7 +341,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // TRF-INT4 — sell only in the warehouse the request was made from, so a
     // same-numbered duplicate elsewhere can never be flipped by this sale.
     // Pre-TRF-INT4 pending rows carry no warehouse → legacy unscoped match.
-    const result = await inventoryRepository.markThanSold(aj.packageNo, aj.thanNo, aj.customer, aj.salesDate, { warehouse: aj.warehouse });
+    const result = await stockEngine.sellThan(aj.packageNo, aj.thanNo, aj.customer, aj.salesDate, { warehouse: aj.warehouse }, { event: 'sale', approvalId: requestId, adminId: approvedBy });
     if (!result) return { ok: false, message: 'Than not found or no longer available.' };
     const pricePerYard = getPricePerYard(enrichment, aj.design);
     if (pricePerYard > 0) await inventoryRepository.updatePrice({ packageNo: aj.packageNo, warehouse: aj.warehouse }, pricePerYard);
@@ -407,7 +363,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     }
   } else if (aj.action === 'sell_package') {
     // TRF-INT4 — see sell_than note above.
-    const results = await inventoryRepository.markPackageSold(aj.packageNo, aj.customer, aj.salesDate, { warehouse: aj.warehouse });
+    const results = await stockEngine.sellPackage(aj.packageNo, aj.customer, aj.salesDate, { warehouse: aj.warehouse }, { event: 'sale', approvalId: requestId, adminId: approvedBy });
     if (!results.length) return { ok: false, message: 'Bale already sold.' };
     const pricePerYard = getPricePerYard(enrichment, aj.design);
     if (pricePerYard > 0) await inventoryRepository.updatePrice({ packageNo: aj.packageNo, warehouse: aj.warehouse }, pricePerYard);
@@ -433,7 +389,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const soldRow = await inventoryRepository.findThan(aj.packageNo, aj.thanNo, { warehouse: aj.warehouse }).catch(() => null);
     const returnCust = await resolveReturnCustomer(soldRow ? soldRow.soldTo : '');
     // TRF-INT4 — return only in the request's warehouse (see sell_than note).
-    const result = await inventoryRepository.markThanAvailable(aj.packageNo, aj.thanNo, { warehouse: aj.warehouse });
+    const result = await stockEngine.returnThan(aj.packageNo, aj.thanNo, { warehouse: aj.warehouse }, { event: 'return', approvalId: requestId, adminId: approvedBy });
     if (!result) return { ok: false, message: 'Than not found or already available.' };
     await transactionsRepository.append({
       user: item.user, action: 'return_than', design: result.design, color: result.shade,
@@ -446,7 +402,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const soldToPrior = (soldRows.find((t) => t.status === 'sold' && t.soldTo) || {}).soldTo || '';
     const returnCust = await resolveReturnCustomer(soldToPrior);
     // TRF-INT4 — return only in the request's warehouse (see sell_than note).
-    const results = await inventoryRepository.markPackageAvailable(aj.packageNo, { warehouse: aj.warehouse });
+    const results = await stockEngine.returnPackage(aj.packageNo, { warehouse: aj.warehouse }, { event: 'return', approvalId: requestId, adminId: approvedBy });
     if (!results.length) return { ok: false, message: 'No sold thans to return.' };
     const totalYards = results.reduce((s, t) => s + t.yards, 0);
     await transactionsRepository.append({
@@ -593,7 +549,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       // ARRIVAL-BATCH C1 — operator-chosen container label (e.g. "July26").
       arrivalBatch: aj.arrivalBatch || '',
     }));
-    const persisted = await inventoryRepository.appendBale(baleRows);
+    const persisted = await stockEngine.intakeBale(baleRows, { event: 'intake', approvalId: requestId, adminId: approvedBy });
     try {
       const idGen = require('../utils/idGenerator');
       const today = new Date().toISOString().split('T')[0];
@@ -768,7 +724,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       indent: b.indent || '',
       csNo: b.csNo || '',
     }));
-    const persisted = await inventoryRepository.appendBale(baleRows);
+    const persisted = await stockEngine.intakeBale(baleRows, { event: 'intake', approvalId: requestId, adminId: approvedBy });
     // PL-1 — staged rows are in the sheet now; drop the temp file.
     if (aj.balesStagedPath) {
       try { require('fs').unlinkSync(aj.balesStagedPath); } catch (_) { /* best-effort */ }
@@ -1062,18 +1018,11 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const oldName = String(aj.oldName || '').trim();
     const newName = String(aj.newName || '').trim();
     if (!oldName || !newName) return { ok: false, message: 'Old/new warehouse names required.' };
-    const all = await inventoryRepository.getAll();
-    const matches = all.filter((r) => (r.warehouse || '').toLowerCase() === oldName.toLowerCase());
-    if (!matches.length) return { ok: false, message: `No inventory rows reference "${oldName}".` };
-    const now = new Date().toISOString();
-    const updates = [];
-    for (const row of matches) {
-      updates.push({ range: `I${row.rowIndex}`, values: [[newName]] });
-      updates.push({ range: `P${row.rowIndex}`, values: [[now]] });
-    }
-    const sheetsClient = require('../repositories/sheetsClient');
-    await sheetsClient.batchUpdateRanges('Inventory', updates);
-    inventoryRepository.invalidateCache();
+    // STK-E1 — through the repository like every other Inventory write;
+    // this executor was the ONE raw column-I writer outside it.
+    const renamed = await stockEngine.renameWarehouse(oldName, newName,
+      { event: 'rename', approvalId: requestId, adminId: approvedBy });
+    if (!renamed) return { ok: false, message: `No inventory rows reference "${oldName}".` };
     // Mirror the rename into the WAREHOUSE_LIST setting if present.
     try {
       const settingsRepo4 = require('../repositories/settingsRepository');
@@ -1085,7 +1034,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
         await settingsRepo4.set('WAREHOUSE_LIST', existing.join(','));
       }
     } catch (_) {}
-    bundleReport = { renamed: matches.length, from: oldName, to: newName };
+    bundleReport = { renamed, from: oldName, to: newName };
   } else if (aj.action === 'transfer_than' || aj.action === 'transfer_package' || aj.action === 'transfer_batch') {
     // TRF-5 — legacy instant transfers retired: every entry point now
     // redirects to the staged Transfer Stock flow (dispatcher logs bales,
@@ -1105,7 +1054,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       // bundles carry neither → legacy unscoped match.
       const siWh = si.warehouse || aj.warehouse;
       if (si.type === 'package') {
-        const results = await inventoryRepository.markPackageSold(si.packageNo, aj.customer, aj.salesDate, { warehouse: siWh });
+        const results = await stockEngine.sellPackage(si.packageNo, aj.customer, aj.salesDate, { warehouse: siWh }, { event: 'sale', approvalId: requestId, adminId: approvedBy });
         if (!results.length) {
           failedItems.push({ packageNo: si.packageNo, type: 'package', reason: 'not found or no available thans' });
           continue;
@@ -1121,7 +1070,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
           if (rate > 0) await inventoryRepository.updatePrice({ packageNo: si.packageNo, warehouse: siWh }, rate);
         }
       } else if (si.type === 'than') {
-        const result = await inventoryRepository.markThanSold(si.packageNo, si.thanNo, aj.customer, aj.salesDate, { warehouse: siWh });
+        const result = await stockEngine.sellThan(si.packageNo, si.thanNo, aj.customer, aj.salesDate, { warehouse: siWh }, { event: 'sale', approvalId: requestId, adminId: approvedBy });
         if (!result) {
           failedItems.push({ packageNo: si.packageNo, thanNo: si.thanNo, type: 'than', reason: 'not found or not available' });
           continue;
@@ -1415,13 +1364,13 @@ async function revertSaleBundle(requestId, userId) {
       const sold = await inventoryRepository.findByPackage(si.packageNo, { warehouse: siWh });
       const soldThans = sold.filter((t) => t.status === 'sold');
       if (soldThans.length) {
-        const undone = await inventoryRepository.markPackageAvailable(si.packageNo, { warehouse: siWh });
+        const undone = await stockEngine.returnPackage(si.packageNo, { warehouse: siWh }, { event: 'return', approvalId: requestId, adminId: userId });
         returnedThans.push(...undone);
       }
     } else if (si.type === 'than') {
       const than = await inventoryRepository.findThan(si.packageNo, si.thanNo, { warehouse: siWh });
       if (than && than.status === 'sold') {
-        const undone = await inventoryRepository.markThanAvailable(si.packageNo, si.thanNo, { warehouse: siWh });
+        const undone = await stockEngine.returnThan(si.packageNo, si.thanNo, { warehouse: siWh }, { event: 'return', approvalId: requestId, adminId: userId });
         if (undone) returnedThans.push(undone);
       }
     }
@@ -1459,11 +1408,9 @@ module.exports = {
   listPackages,
   sellThan,
   sellPackage,
-  sellBatch,
   returnThan,
   returnPackage,
   updatePrice,
-  addStock,
   executeApprovedAction,
   rejectApproval,
   revertSaleBundle,

@@ -4107,9 +4107,8 @@ async function handleMessage(bot, msg) {
     const uniq = (vals) => [...new Set(vals.map((v) => String(v || '').trim()).filter(Boolean))].join(', ');
     for (const p of pkgNos) {
       try {
-        const reverted = await inventoryRepository.markPackageAvailable(p, {
-          warehouse: revertWh || undefined, kind: 'correction', user: userId,
-        });
+        const reverted = await require('../services/stockEngine').returnPackage(p,
+          { warehouse: revertWh || undefined }, { event: 'correction', adminId: userId });
         restored += reverted.length;
         if (!reverted.length) {
           results.push(`⚠️ ${p}: no sold thans${revertWh ? ` in ${revertWh}` : ''}`);
@@ -6811,9 +6810,11 @@ async function executeSale(bot, chatId, userId) {
   }
 
   const risk = await riskEvaluate.evaluate({ action: 'sell_batch', userId });
-  const needsApproval = risk.risk === 'approval_required' || isBackdated;
-
-  if (needsApproval) {
+  // STK-E1 — every sale QUEUES, always. The admin-direct execute branch that
+  // used to sit under this block is deleted: unreachable while sell_* is in
+  // ALWAYS_APPROVAL_ACTIONS, but it would have become an unapproved sale
+  // door the moment that policy drifted (07-Aug audit, latent door #18).
+  {
     // Create ONE approval request for the entire sale
     const requestId = genId();
     // DSP-1 — the dispatcher no longer supplies a customer; the admin assigns
@@ -6914,50 +6915,6 @@ async function executeSale(bot, chatId, userId) {
     return;
   }
 
-  // Admin: execute all items directly in sequence. Fix B — track any items
-  // that silently fail so the operator is told exactly what DID NOT apply.
-  let soldThans = 0, totalYards = 0;
-  const soldPkgs = new Set();
-  const failedItems = [];
-  for (const item of session.items) {
-    if (item.type === 'package') {
-      // TRF-INT4 — the item's warehouse pins the sale to the picked bale.
-      const result = await inventoryService.sellPackage(item.packageNo, session.collected.customer, userId, sDate, { warehouse: item.warehouse });
-      if (result.status === 'completed') { soldThans += result.soldThans; totalYards += result.soldYards; soldPkgs.add(item.packageNo); }
-      else failedItems.push(`Bale ${item.packageNo}: ${result.status}${result.message ? ' — ' + result.message : ''}`);
-    } else if (item.type === 'than') {
-      const result = await inventoryService.sellThan(item.packageNo, item.thanNo, session.collected.customer, userId, sDate, { warehouse: item.warehouse });
-      if (result.status === 'completed') { soldThans += 1; totalYards += result.than?.yards || 0; soldPkgs.add(item.packageNo); }
-      else failedItems.push(`Bale ${item.packageNo} Than ${item.thanNo}: ${result.status}${result.message ? ' — ' + result.message : ''}`);
-    } else {
-      failedItems.push(`Bale ${item.packageNo}: unknown item type "${item.type}"`);
-    }
-  }
-  let saleMsg = `✅ Sale complete: ${soldPkgs.size} Bale${soldPkgs.size === 1 ? '' : 's'} (${soldThans} thans), ${fmtQty(totalYards)} yards to ${session.collected.customer}`;
-  if (failedItems.length) {
-    saleMsg += `\n\n⚠️ ${failedItems.length} of ${session.items.length} item${session.items.length > 1 ? 's' : ''} did NOT apply:\n${failedItems.map((l) => '  • ' + l).join('\n')}`;
-  }
-  if (session.sale_doc_file_id) {
-    try {
-      const { buffer, filePath } = await downloadTelegramFile(bot, session.sale_doc_file_id);
-      const ext = filePath.split('.').pop() || (session.sale_doc_type === 'document' ? 'pdf' : 'jpg');
-      const customer = (session.collected.customer || 'unknown').replace(/\s+/g, '_');
-      const fileName = `sale_bill_${customer}_${new Date().toISOString().slice(0, 10)}.${ext}`;
-      const mimeType = session.sale_doc_type === 'document' ? 'application/pdf' : 'image/jpeg';
-      const driveRes = await driveClient.uploadFile(buffer, fileName, mimeType);
-      saleMsg += `\n📎 [View Sales Bill](${driveRes.webViewLink})`;
-    } catch (e) { logger.error('Failed to upload sale doc to Drive (admin direct)', e.message); }
-  }
-  // SJ-4 — same sweep + seal for the admin-direct completion, keeping the
-  // itemized summary the confirm card held (escaped: this send parses
-  // Markdown for the bill link, the summary is raw data).
-  await disposeAux(bot, chatId, userId);
-  try {
-    const { mdEscape } = require('../utils/flowKit');
-    saleMsg = `${mdEscape(await salesFlow.buildSummary(session))}\n\n${saleMsg}`;
-  } catch (_) { /* aggregate-only receipt */ }
-  await sealSaleCard(bot, chatId, session.confirmMsgId, saleMsg, { parse_mode: 'Markdown', disable_web_page_preview: true });
-  sessionStore.clear(userId);
 }
 
 /** Start the order creation flow — show available designs as inline buttons. */

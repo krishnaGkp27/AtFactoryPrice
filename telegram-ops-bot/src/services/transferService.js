@@ -338,12 +338,12 @@ async function dispatchPickAndFlip(requestId, byUserId, manualPicks, aj, opts = 
       { requestId, bales: picked, leftOn }, String(byUserId || ''));
     return { ok: true, aj: { ...aj, ...patch }, review: true };
   }
-  const flipped = await inventoryRepository.transitionBales(picked, AVAILABLE, IN_TRANSIT, aj.to, {
+  const flipped = await require('./stockEngine').transition(picked, AVAILABLE, IN_TRANSIT, aj.to, {
     uids,
     // BMV-1 — the business date + the origin, so prev_state reads
     // "available @ IDUMOTA" rather than the destination it was rewritten to.
-    on: leftOn, fromWarehouse: aj.from, kind: 'dispatch', ref: requestId, user: byUserId,
-  });
+    on: leftOn, fromWarehouse: aj.from, ref: requestId,
+  }, { event: 'dispatch', adminId: byUserId, approvalId: requestId });
   // TRF-INT1 — trust only what ACTUALLY flipped. A bale lost to a concurrent
   // sale in the same instant is dropped from the claim, never ghost-carried.
   // Judged from the PICK-TIME row mapping, not a re-filter of the snapshot.
@@ -404,11 +404,12 @@ async function confirmReceiptInner(requestId, byUserId) {
   // bale elsewhere can never be flipped by this receive.
   const hasUids = Array.isArray(aj.baleUids) && aj.baleUids.length > 0;
   const arrivedOn = new Date().toISOString().slice(0, 10);
-  const flipped = await inventoryRepository.transitionBales(aj.bales || [], IN_TRANSIT, AVAILABLE, null,
+  const flipped = await require('./stockEngine').transition(aj.bales || [], IN_TRANSIT, AVAILABLE, null,
     Object.assign(hasUids ? { uids: aj.baleUids } : { warehouse: aj.to },
       // BMV-1 — prev_state keeps the ORIGIN visible after arrival:
       // "in_transit @ IDUMOTA".
-      { on: arrivedOn, fromWarehouse: aj.from, kind: 'receive', ref: requestId, user: byUserId }));
+      { on: arrivedOn, fromWarehouse: aj.from, ref: requestId }),
+    { event: 'receive', adminId: byUserId, approvalId: requestId });
   // Result check: fewer rows than expected means the sheet was touched
   // outside the pipeline (hand edit / cross-contamination). The goods are
   // physically here, so the transfer still closes — but never silently.
@@ -459,10 +460,10 @@ async function abortInner(requestId, byUserId) {
     // logged rows (uids), or printed numbers scoped to this transfer's
     // destination for pre-uid transfers; result checked, never silent.
     const hasUids = Array.isArray(aj.baleUids) && aj.baleUids.length > 0;
-    const flipped = await inventoryRepository.transitionBales(aj.bales || [], IN_TRANSIT, AVAILABLE, aj.from,
+    const flipped = await require('./stockEngine').transition(aj.bales || [], IN_TRANSIT, AVAILABLE, aj.from,
       Object.assign(hasUids ? { uids: aj.baleUids } : { warehouse: aj.to },
-        { on: new Date().toISOString().slice(0, 10), fromWarehouse: aj.from,
-          kind: 'reject', ref: requestId, user: byUserId }));
+        { on: new Date().toISOString().slice(0, 10), fromWarehouse: aj.from, ref: requestId }),
+      { event: 'reject', adminId: byUserId, approvalId: requestId });
     const expected = hasUids ? aj.baleUids.length : null;
     const flippedPkgs = new Set(flipped.map((r) => String(r.packageNo)));
     if ((hasUids && flipped.length !== expected)

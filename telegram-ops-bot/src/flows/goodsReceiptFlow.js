@@ -59,8 +59,6 @@ const riskEvaluate = require('../risk/evaluate');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const approvalEvents = require('../events/approvalEvents');
 const auditLogRepository = require('../repositories/auditLogRepository');
-const inventoryService = require('../services/inventoryService');
-const adminFeed = require('../services/adminFeed');
 const idGenerator = require('../utils/idGenerator');
 const logger = require('../utils/logger');
 const { editOrSend, isNotModified } = require('../utils/telegramUI');
@@ -470,7 +468,11 @@ async function submit(bot, chatId, userId, msgOrNull) {
   };
 
   const risk = await riskEvaluate.evaluate({ action: 'receive_goods', userId });
-  if (risk.risk === 'approval_required') {
+  // STK-E1 — receive_goods ALWAYS queues (dual-admin). The admin-direct
+  // self-execute path that used to sit under this block is deleted:
+  // unreachable today, an unapproved intake door the moment the policy
+  // drifted (07-Aug audit, door #8 note).
+  {
     const requestId = idGenerator.requestId();
     await approvalQueueRepository.append({
       requestId, user: userId, actionJSON: aj, riskReason: risk.reason, status: 'pending',
@@ -510,41 +512,6 @@ async function submit(bot, chatId, userId, msgOrNull) {
     return;
   }
 
-  // Admin path — execute immediately by faking an approval row and calling
-  // executeApprovedAction. Cleaner than duplicating the persistence logic.
-  const requestId = idGenerator.requestId();
-  await approvalQueueRepository.append({
-    requestId, user: userId, actionJSON: aj, riskReason: 'admin_direct', status: 'pending',
-  });
-  let result;
-  try {
-    result = await inventoryService.executeApprovedAction(requestId, userId);
-  } catch (e) {
-    logger.error(`goodsReceiptFlow.submit: ${e.message}`);
-    await render(bot, chatId, userId, `❌ Receive failed: ${e.message}`,
-      [cancelRow(), [{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-    return;
-  }
-  if (!result || !result.ok) {
-    await render(bot, chatId, userId, `❌ ${result && result.message ? result.message : 'Receive failed.'}`,
-      [cancelRow(), [{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-    return;
-  }
-  const report = result.bundleReport || {};
-  const grnId = report.grnId || '?';
-  const totalYards = report.totalYards || 0;
-  await disposeAux(bot, chatId, userId); // SJ-4 — sweep warning trail
-  await render(bot, chatId, userId,
-    `✅ *Goods received.*\nGRN: \`${grnId}\`\n${report.baleCount || 0} bales · ${fmtQty(totalYards, { maxFraction: 2 })} yards`,
-    [[{ text: '📥 Receive more', callback_data: 'gr:more' }], [{ text: '🏠 Menu', callback_data: 'act:__back__' }]],
-  );
-  sessionStore.clear(userId);
-
-  // Broadcast to admins via the opt-in feed (respects per-admin prefs).
-  try {
-    const text = `📥 *Goods received*\nWarehouse: *${aj.warehouse}*\n${aj.supplier ? 'Supplier: ' + aj.supplier + '\n' : ''}${aj.design}${aj.shade ? ' / ' + aj.shade : ''} · ${report.baleCount || 0} bales · ${fmtQty(totalYards, { maxFraction: 2 })} yards\nGRN: \`${grnId}\``;
-    await adminFeed.notify(bot, 'goods.received', text, { parse_mode: 'Markdown' }, { excludeUserId: userId });
-  } catch (_) { /* feed best-effort */ }
 }
 
 // ---------------------------------------------------------------------------

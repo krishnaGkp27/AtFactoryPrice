@@ -572,6 +572,32 @@ async function markPackageAvailable(packageNo, opts = {}) {
   }));
 }
 
+/**
+ * STK-E1 — warehouse rename (column I is a LABEL here, not a movement).
+ * The old rename_warehouse executor rewrote column I via raw
+ * sheetsClient.batchUpdateRanges, bypassing this repository entirely —
+ * the only writer outside it. Now it lives where every other Inventory
+ * write lives.
+ * @returns {Promise<number>} rows renamed
+ */
+async function renameWarehouse(oldName, newName) {
+  const o = str(oldName).toLowerCase();
+  const n = str(newName);
+  if (!o || !n) throw new Error('inventoryRepository.renameWarehouse: both names required');
+  const all = await getAll(true);
+  const matches = all.filter((r) => (r.warehouse || '').toLowerCase() === o);
+  if (!matches.length) return 0;
+  const now = new Date().toISOString();
+  const updates = [];
+  for (const row of matches) {
+    updates.push({ range: `I${row.rowIndex}`, values: [[n]] });
+    updates.push({ range: `P${row.rowIndex}`, values: [[now]] });
+  }
+  await sheets.batchUpdateRanges(SHEET, updates);
+  invalidateCache();
+  return matches.length;
+}
+
 async function updatePrice(filters, newPrice) {
   const all = await getAll();
   const matches = all.filter((r) => {
@@ -797,6 +823,7 @@ module.exports = {
   markPackageSold,
   markThanAvailable,
   markPackageAvailable,
+  renameWarehouse,
   updatePrice,
   updateDesignCategory,
   transitionBales,
