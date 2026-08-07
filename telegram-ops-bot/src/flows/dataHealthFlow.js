@@ -16,7 +16,7 @@
  */
 
 const sessionStore = require('../utils/sessionStore');
-const { makeRenderer, rowsFor } = require('../utils/flowKit');
+const { makeRenderer, rowsFor, mdEscape } = require('../utils/flowKit');
 const consistencySentinel = require('../services/consistencySentinel');
 const auth = require('../middlewares/auth');
 const logger = require('../utils/logger');
@@ -76,14 +76,33 @@ async function renderFindings(bot, chatId, userId) {
   if (!session) return;
   const c = (session._checks || [])[session.checkIdx];
   if (!c) { await runAndRender(bot, chatId, userId); return; }
-  const pages = Math.max(1, Math.ceil(c.findings.length / LINES_PER_PAGE));
+  // Findings embed raw sheet text (customer names, designs) — mdEscape so
+  // an unbalanced _ or * can never 400 the render, and budget pages by
+  // CHARACTERS so a page of long C3/C6 lines never busts the 4096 cap.
+  // (SEN-1b review findings.)
+  const lines = c.findings.map((f) => `• ${mdEscape(f)}`);
+  const pageStarts = [0];
+  let budget = 0;
+  let count = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (count >= LINES_PER_PAGE || (budget + lines[i].length > 3200 && count > 0)) {
+      pageStarts.push(i);
+      budget = 0;
+      count = 0;
+    }
+    budget += lines[i].length + 1;
+    count += 1;
+  }
+  const pages = pageStarts.length;
   const page = Math.min(Math.max(0, session.page || 0), pages - 1);
-  const slice = c.findings.slice(page * LINES_PER_PAGE, (page + 1) * LINES_PER_PAGE);
+  const from = pageStarts[page];
+  const to = page + 1 < pages ? pageStarts[page + 1] : lines.length;
+  const slice = lines.slice(from, to);
   session.step = 'findings';
   sessionStore.set(userId, session);
-  const body = `⚠️ *${c.id} — ${c.title}*\n${c.findings.length} finding(s)`
+  const body = `⚠️ *${c.id} — ${mdEscape(c.title)}*\n${c.findings.length} finding(s)`
     + `${pages > 1 ? ` · page ${page + 1}/${pages}` : ''}\n\n`
-    + slice.map((f) => `• ${f}`).join('\n');
+    + slice.join('\n');
   const rows = [];
   if (pages > 1) {
     const nav = [];

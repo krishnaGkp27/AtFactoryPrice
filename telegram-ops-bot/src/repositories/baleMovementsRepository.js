@@ -81,11 +81,22 @@ function parseRow(r, rowIndex) {
 /** Every movement row. */
 async function getAll() {
   try {
-    const rows = await sheets.readRange(SHEET, 'A2:M');
-    return rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.baleNo || r.toState);
+    return await getAllStrict();
   } catch (_) {
     return [];
   }
+}
+
+/**
+ * SEN-1 — same read, but a FAILED read THROWS instead of returning [].
+ * The sentinel must tell "sheet unreadable" apart from "sheet empty":
+ * an empty array here makes every sold row look like a swallowed
+ * movement append, which turns one API outage into a wall of false
+ * accusations DMed to every admin.
+ */
+async function getAllStrict() {
+  const rows = await sheets.readRange(SHEET, 'A2:M');
+  return rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.baleNo || r.toState);
 }
 
 /**
@@ -180,6 +191,6 @@ async function currentRows() {
 }
 
 module.exports = {
-  SHEET, HEADERS, ensureHeader, getAll, append, historyFor, currentRows,
+  SHEET, HEADERS, ensureHeader, getAll, getAllStrict, append, historyFor, currentRows,
   _internals: { parseRow, baleKey, CURRENT_YES },
 };

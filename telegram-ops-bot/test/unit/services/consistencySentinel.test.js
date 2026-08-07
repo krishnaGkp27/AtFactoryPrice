@@ -134,8 +134,7 @@ test('C5 flags a soldTo that resolves to no customer', async () => {
 /* ── C7 ── */
 test('C7 flags a requestId reused across queue rows', () => {
   const drift = checkRequestIdUniqueness({
-    pending: [{ requestId: 'REQ-1' }],
-    resolved: [{ requestId: 'REQ-1' }, { requestId: 'REQ-2' }],
+    queueRows: [{ requestId: 'REQ-1' }, { requestId: 'REQ-1' }, { requestId: 'REQ-2' }],
   });
   assert.equal(drift.length, 1);
   assert.match(drift[0], /REQ-1 appears on 2/);
@@ -144,16 +143,15 @@ test('C7 flags a requestId reused across queue rows', () => {
 /* ── sweep ── */
 test('sweep DMs admins on drift, is silent when clean, and honours the kill switch', async () => {
   const origs = {
-    inv: inventoryRepository.getAll, mov: baleMovementsRepository.getAll,
-    pend: approvalQueueRepository.getAllPending, res: approvalQueueRepository.getResolved,
+    inv: inventoryRepository.getAll, mov: baleMovementsRepository.getAllStrict,
+    rows: approvalQueueRepository.getAllWithRowIndex,
     set: settingsRepository.getAll, audit: auditLogRepository.append,
     resolve: customerEntity.resolve, dup: baleAuditReport._internals.computeDuplicates,
   };
   const audits = [];
   inventoryRepository.getAll = async () => [invRow()];
-  baleMovementsRepository.getAll = async () => []; // C1 drift: sale unlogged
-  approvalQueueRepository.getAllPending = async () => [];
-  approvalQueueRepository.getResolved = async () => [];
+  baleMovementsRepository.getAllStrict = async () => []; // C1 drift: sale unlogged
+  approvalQueueRepository.getAllWithRowIndex = async () => [];
   settingsRepository.getAll = async () => ({});
   auditLogRepository.append = async (type, data) => { audits.push({ type, data }); };
   customerEntity.resolve = async () => ({ name: 'OKSON' });
@@ -173,7 +171,7 @@ test('sweep DMs admins on drift, is silent when clean, and honours the kill swit
     assert.equal(audits[0].data.C1, 1);
 
     // Clean run → no DM, still audit-logged.
-    baleMovementsRepository.getAll = async () => [move()];
+    baleMovementsRepository.getAllStrict = async () => [move()];
     sent.length = 0;
     const clean = await sentinel.sweep(bot);
     assert.equal(clean.totalFindings, 0);
@@ -185,11 +183,89 @@ test('sweep DMs admins on drift, is silent when clean, and honours the kill swit
     assert.equal(off.skipped, 'disabled');
   } finally {
     inventoryRepository.getAll = origs.inv;
-    baleMovementsRepository.getAll = origs.mov;
-    approvalQueueRepository.getAllPending = origs.pend;
-    approvalQueueRepository.getResolved = origs.res;
+    baleMovementsRepository.getAllStrict = origs.mov;
+    approvalQueueRepository.getAllWithRowIndex = origs.rows;
     settingsRepository.getAll = origs.set;
     auditLogRepository.append = origs.audit;
     customerEntity.resolve = origs.resolve;
   }
+});
+
+/* ── SEN-1b: the adversarial-review regressions ── */
+
+test('a FAILED sheet read aborts the sweep — it never fabricates drift', async () => {
+  const origs = {
+    inv: inventoryRepository.getAll, mov: baleMovementsRepository.getAllStrict,
+    rows: approvalQueueRepository.getAllWithRowIndex, set: settingsRepository.getAll,
+  };
+  inventoryRepository.getAll = async () => [invRow()];
+  baleMovementsRepository.getAllStrict = async () => { throw new Error('quota'); };
+  approvalQueueRepository.getAllWithRowIndex = async () => [];
+  settingsRepository.getAll = async () => ({});
+  try {
+    const sent = [];
+    const bot = { sendMessage: async (to, text) => { sent.push(text); } };
+    const out = await sentinel.sweep(bot);
+    assert.equal(out.ok, false, 'the sweep reports failure');
+    assert.equal(sent.length, 0, 'and accuses NOBODY');
+  } finally {
+    inventoryRepository.getAll = origs.inv;
+    baleMovementsRepository.getAllStrict = origs.mov;
+    approvalQueueRepository.getAllWithRowIndex = origs.rows;
+    settingsRepository.getAll = origs.set;
+  }
+});
+
+test('C1 tolerates container backfill: a sale logged with a blank container still matches', () => {
+  // The movement was appended BEFORE the arrival_batch backfill stamped
+  // the row — frozen container '' vs current 'Jul26' must not accuse.
+  const clean = checkSoldHaveSaleMovements({
+    inventory: [invRow({ arrivalBatch: 'Jul26' })],
+    movements: [move({ container: '' })],
+  });
+  assert.deepEqual(clean, []);
+  // And the reverse: row still blank, movement stamped.
+  const clean2 = checkSoldHaveSaleMovements({
+    inventory: [invRow({ arrivalBatch: '' })],
+    movements: [move({ container: 'Jul26' })],
+  });
+  assert.deepEqual(clean2, []);
+});
+
+test('C1 skips junk soldDate values instead of accusing legacy rows', () => {
+  // normDay returns raw junk unparsed; 'TBD' sorts after the cutoff and
+  // used to be pulled INTO the check.
+  for (const bad of ['TBD', 'pending', '03/13/2026']) {
+    const out = checkSoldHaveSaleMovements({ inventory: [invRow({ soldDate: bad })], movements: [] });
+    assert.deepEqual(out, [], `soldDate '${bad}' must be out of scope`);
+  }
+});
+
+test('rows and movements written inside the grace window are skipped (mid-write sweep)', () => {
+  const now = Date.now();
+  const fresh = new Date(now - 60 * 1000).toISOString();
+  // C1: sold row flipped 1 min ago — the movement append may be in flight.
+  const c1 = checkSoldHaveSaleMovements({ inventory: [invRow({ updatedAt: fresh })], movements: [], now });
+  assert.deepEqual(c1, []);
+  // C4: the append clears flags before appending — a fresh bale with 0
+  // flags is healthy, not a crash.
+  const c4 = checkCurrentFlags({ movements: [move({ current: false, timestamp: fresh })], now });
+  assert.deepEqual(c4, []);
+  // C2: the queue row flips to approved a few calls after the movement.
+  const c2 = checkReturnsAreApproved({ movements: [move({ kind: 'return', timestamp: fresh })], resolved: [], now });
+  assert.deepEqual(c2, []);
+});
+
+test('C2 date window: an approved return years away no longer whitelists a recycled number', () => {
+  const ret = move({ kind: 'return', movedOn: '2026-08-05' });
+  const farAway = checkReturnsAreApproved({
+    movements: [ret],
+    resolved: [{ requestId: 'R1', status: 'approved', resolvedAt: '2026-01-01T09:00:00.000Z', actionJSON: { action: 'return_package', packageNo: '869' } }],
+  });
+  assert.equal(farAway.length, 1, 'six months apart is not the same return');
+  const near = checkReturnsAreApproved({
+    movements: [ret],
+    resolved: [{ requestId: 'R1', status: 'approved', resolvedAt: '2026-08-04T09:00:00.000Z', actionJSON: { action: 'return_package', packageNo: '869' } }],
+  });
+  assert.deepEqual(near, [], 'a day apart is the same return');
 });

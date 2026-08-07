@@ -34,8 +34,10 @@ const LIVE = new Set(['available', 'in_transit']);
  * design or intake date differs (two physical bales under one number).
  * @returns {Promise<{offenders:Array, crossWarehouse:number}>}
  */
-async function computeDuplicates() {
-  const rows = (await inventoryRepository.getAll(true)).filter((r) => LIVE.has(r.status));
+async function computeDuplicates(allRows) {
+  // SEN-1 passes its own snapshot so one sweep costs one Inventory read;
+  // the boot pass still reads fresh.
+  const rows = (allRows || await inventoryRepository.getAll(true)).filter((r) => LIVE.has(r.status));
   const byKey = new Map(); // wh|pkg -> rows
   for (const r of rows) {
     const k = `${String(r.warehouse).trim().toLowerCase()}|${r.packageNo}`;
