@@ -5069,12 +5069,16 @@ async function handleMessage(bot, msg) {
       }
 
       case 'supply_details': {
+        // SDS-1 — the shade-stock drill renders only for admins + Dispatch.
+        const sdsRows = (await require('../flows/stockByShadeFlow').canUse(userId))
+          ? [[{ text: '🎨 Stock by shade', callback_data: 'sds:start' }]] : [];
         await bot.sendMessage(chatId, '📊 *Supply Details*\n\nSelect view:', {
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: [
             [{ text: '📦 Design / Product wise', callback_data: 'sd:design' }],
             [{ text: '👤 Customer wise', callback_data: 'sd:customer' }],
             [{ text: '🏭 Warehouse wise', callback_data: 'sd:warehouse' }],
+            ...sdsRows,
             menuNav.backToMenuRow(),
           ] },
         });
@@ -7019,6 +7023,7 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['sbl:'], handle: (bot, cq) => require('../flows/soldBalesFlow').handleCallback(bot, cq) },
   { prefixes: ['sdd:'], handle: (bot, cq) => require('../flows/supplyDetailsFlow').handleCallback(bot, cq) },
   { prefixes: ['sdg:'], handle: (bot, cq) => require('../flows/supplyDetailsDesignFlow').handleCallback(bot, cq) },
+  { prefixes: ['sds:'], handle: (bot, cq) => require('../flows/stockByShadeFlow').handleCallback(bot, cq) },
   { prefixes: ['abx:'], handle: (bot, cq) => require('../flows/approvalsInboxFlow').handleCallback(bot, cq) },
   // DCAT-1 — design → product-category mapping (dual-admin approval).
   { prefixes: ['dcat:'], handle: (bot, cq) => require('../flows/designCategoryFlow').handleCallback(bot, cq) },
@@ -9427,17 +9432,22 @@ async function handleCallbackQuery(bot, callbackQuery) {
       case 'give_sample':
         await startSampleFlowButton(bot, chatId, uid, messageId);
         break;
-      case 'supply_details':
+      case 'supply_details': {
+        // SDS-1 — the shade-stock drill renders only for admins + Dispatch.
+        const sdsRows = (await require('../flows/stockByShadeFlow').canUse(uid))
+          ? [[{ text: '🎨 Stock by shade', callback_data: 'sds:start' }]] : [];
         await editOrSend(bot, chatId, messageId, '📊 *Supply Details*\n\nSelect view:', {
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: [
             [{ text: '📦 Design / Product wise', callback_data: 'sd:design' }],
             [{ text: '👤 Customer wise', callback_data: 'sd:customer' }],
             [{ text: '🏭 Warehouse wise', callback_data: 'sd:warehouse' }],
+            ...sdsRows,
             menuNav.backToMenuRow(),
           ] },
         });
         break;
+      }
       case 'stock_value':
         if (!pricingService.canSeeSalePrice(uid)) {
           await bot.sendMessage(chatId, 'Stock Value is available to admins only.');
