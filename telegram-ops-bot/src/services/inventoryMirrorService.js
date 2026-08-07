@@ -111,7 +111,7 @@ function computeMetrics(rows) {
   for (const r of rows) {
     if (!r.packageNo && !r.design) continue;
     if (String(r.status || '').toLowerCase() === 'available' && r.packageNo) {
-      bales.add(`${r.warehouse || ''}||${r.packageNo}`);
+      bales.add(require('./baleIdentity').baleKey(r));
       const wh = r.warehouse || '(none)';
       byWarehouse.set(wh, (byWarehouse.get(wh) || 0) + 1);
     }

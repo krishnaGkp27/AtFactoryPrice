@@ -99,10 +99,22 @@ function clearCart(cart) {
   cart.byKey = new Set();
 }
 
+/**
+ * STK-E1 — canonical bale identity for a CART LINE. Lines carry design +
+ * container since the picker migration; legacy per-THAN baleUids must not
+ * count each than as its own bale in totals or the cart rollup.
+ */
+function lineBaleKey(l) {
+  const bi = require('./baleIdentity');
+  return l.packageNo
+    ? bi.baleKeyOf(l.design, l.packageNo, l.arrivalBatch)
+    : (l.baleUid ? `uid:${l.baleUid}` : 'row');
+}
+
 function totals(cart) {
   let yards = 0, thans = 0;
   const bales = new Set();
-  for (const l of cart.lines) { yards += l.yards; thans += 1; bales.add(l.baleUid || `pkg:${l.packageNo}`); }
+  for (const l of cart.lines) { yards += l.yards; thans += 1; bales.add(lineBaleKey(l)); }
   return { yards, thans, bales: bales.size };
 }
 
@@ -119,8 +131,8 @@ function summarise(cart) {
     const bucket = byShade.get(key);
     bucket.yards += l.yards;
     bucket.thans += 1;
-    const baleKey = l.baleUid || `pkg:${l.packageNo}`;
-    if (!bucket.bales.has(baleKey)) bucket.bales.set(baleKey, { baleUid: l.baleUid, packageNo: l.packageNo, binLocation: l.binLocation, thans: [], yards: 0 });
+    const baleKey = lineBaleKey(l);
+    if (!bucket.bales.has(baleKey)) bucket.bales.set(baleKey, { key: baleKey, baleUid: l.baleUid, packageNo: l.packageNo, binLocation: l.binLocation, thans: [], yards: 0 });
     const baleBucket = bucket.bales.get(baleKey);
     baleBucket.thans.push({ thanNo: l.thanNo, yards: l.yards, key: l._key });
     baleBucket.yards += l.yards;
@@ -320,6 +332,7 @@ function ageBucket(ageDays) {
 
 module.exports = {
   keyOf,
+  lineBaleKey,
   emptyCart,
   addLines,
   removeLines,

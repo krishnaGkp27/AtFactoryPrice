@@ -145,7 +145,9 @@ async function loadChecklist(session) {
   const pkgs = new Map();
   for (const r of all) {
     if ((r.warehouse || '').toLowerCase() !== w || !r.design) continue;
-    const k = r.packageNo;
+    // STK-E1 — canonical identity: a printed number re-used across two
+    // containers in one store is two physical bales on the count sheet.
+    const k = require('../services/baleIdentity').baleKey(r);
     if (!pkgs.has(k)) pkgs.set(k, { design: r.design, total: 0, avail: 0, yards: 0 });
     const p = pkgs.get(k);
     p.total += 1;

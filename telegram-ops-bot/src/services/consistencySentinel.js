@@ -70,9 +70,9 @@ const RETURN_WINDOW_DAYS = 2;
 
 const upper = (v) => String(v == null ? '' : v).trim().toUpperCase();
 
-/** One physical bale — design | printed number | container (§1/§5). */
+/** One physical bale — STK-E1: the canonical identity. */
 function baleKey(design, pkg, container) {
-  return `${upper(design)}|${upper(pkg)}|${upper(container)}`;
+  return require('./baleIdentity').baleKeyOf(design, pkg, container);
 }
 
 /** A REAL ISO calendar day — normDay hands back raw junk unparsed. */
@@ -98,9 +98,10 @@ function checkSoldHaveSaleMovements({ inventory, movements, now }) {
   const anyContainer = new Set();
   for (const m of movements) {
     if (m.kind !== 'sale') continue;
+    const { looseKey } = require('./baleIdentity');
     exact.add(baleKey(m.design, m.baleNo, m.container));
-    anyContainer.add(`${upper(m.design)}|${upper(m.baleNo)}`);
-    if (!upper(m.container)) blankContainer.add(`${upper(m.design)}|${upper(m.baleNo)}`);
+    anyContainer.add(looseKey(m.design, m.baleNo));
+    if (!upper(m.container)) blankContainer.add(looseKey(m.design, m.baleNo));
   }
   const findings = [];
   const seen = new Set();
@@ -115,7 +116,7 @@ function checkSoldHaveSaleMovements({ inventory, movements, now }) {
     if (seen.has(k)) continue;
     seen.add(k);
     if (exact.has(k)) continue;
-    const dp = `${upper(r.design)}|${upper(r.packageNo)}`;
+    const dp = require('./baleIdentity').looseKey(r.design, r.packageNo);
     // Container drift (§1b divergence 8): the movement's container is
     // frozen at sale time; a later arrival_batch backfill must not turn a
     // logged sale into an accusation — and vice versa.

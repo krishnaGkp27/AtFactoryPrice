@@ -88,9 +88,9 @@ function normDay(sRaw) {
   return raw;
 }
 
-/** One physical bale inside a fixed design+shade: printed number + container (§6b). */
+/** One physical bale — STK-E1: the canonical identity. */
 function baleKey(r) {
-  return `${String(r.packageNo).trim()}|${upper(r.arrivalBatch)}`;
+  return require('../services/baleIdentity').baleKey(r);
 }
 
 /** Distinct physical bales in a row set. */

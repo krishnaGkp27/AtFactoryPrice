@@ -81,7 +81,10 @@ async function record(rows, m = {}) {
     // was inflated with the other bale's count. Reachable through any
     // mutator that selects by printed number — /revert_packages, a return,
     // a sale — none of which scope by container.
-    const key = `${String(r.design || '').toUpperCase()}|${String(r.packageNo || r.baleUid || '?').toUpperCase()}|${String(r.arrivalBatch || '').trim().toUpperCase()}`;
+    // STK-E1 — via the canonical identity (the old inline key skipped the
+    // trim on design/number that the repository's key applied, so one
+    // physical bale could split into two grouping buckets).
+    const key = require('./baleIdentity').baleKeyOf(r.design, r.packageNo || r.baleUid || '?', r.arrivalBatch);
     if (!byBale.has(key)) {
       byBale.set(key, {
         bale: String(r.packageNo || ''),

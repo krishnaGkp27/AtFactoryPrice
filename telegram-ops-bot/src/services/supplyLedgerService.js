@@ -50,13 +50,14 @@ const norm = (v) => String(v == null ? '' : v).trim().toLowerCase();
  * ordered us to prevent.
  */
 /**
- * One bale identity for BOTH ledger sides. baleGroupKey omits the arrival
- * container, so a printed number re-used in a later container collapsed two
- * physical bales into one (BUSINESS_RULES §1/§5); the TV-8 roster already
- * keys design|number|container, and now so does this.
+ * One bale identity for BOTH ledger sides — STK-E1: the canonical key
+ * from baleIdentity. The old local version left design/number raw-cased
+ * while the movement writers uppercased, so a case mismatch could break
+ * the debit dedupe and double-count a supply (SEN-1b review, divergence
+ * class 2). One definition now, everywhere.
  */
 function bmKey(design, packageNo, container) {
-  return `pkg:${design}|${packageNo}|${String(container || '').trim().toUpperCase()}`;
+  return require('./baleIdentity').baleKeyOf(design, packageNo, container);
 }
 
 function inWords(label) {

@@ -207,8 +207,9 @@ const { baleGroupKey } = require('../utils/inventoryPickers');
 
 /** Roster key: the bale identity, narrowed by arrival container. */
 function rosterKey(r) {
-  const batch = String((r && r.arrivalBatch) || '').trim().toUpperCase();
-  return `${baleGroupKey(r)}|${batch}`;
+  // STK-E1 — baleGroupKey is now container-aware itself (the canonical
+  // identity); appending the batch again would double it.
+  return baleGroupKey(r);
 }
 
 /**

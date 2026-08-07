@@ -61,7 +61,7 @@ async function sectionStock() {
   const bales = new Set();
   for (const r of rows) {
     if (String(r.status || '').toLowerCase() !== 'available' || !r.packageNo) continue;
-    const key = `${r.warehouse}|${r.packageNo}`;
+    const key = require('../services/baleIdentity').baleKey(r);
     if (bales.has(key)) continue;
     bales.add(key);
     byWh.set(r.warehouse, (byWh.get(r.warehouse) || 0) + 1);

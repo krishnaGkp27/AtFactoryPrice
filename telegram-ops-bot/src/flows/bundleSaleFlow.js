@@ -94,7 +94,9 @@ function thanKey(t) {
  * @returns {string}
  */
 function baleKeyOf(bale) {
-  return bale.baleUid || `pkg:${bale.packageNo}`;
+  // STK-E1 — the canonical identity rides the callback (bale.key from the
+  // repo buckets / cart rollup); uid/pkg fallbacks keep stale cards alive.
+  return bale.key || bale.baleUid || `pkg:${bale.packageNo}`;
 }
 
 /**
@@ -973,9 +975,14 @@ async function handleCallback(bot, query) {
 
   if (data.startsWith('bs:rm_bale:')) {
     const baleKey = data.slice('bs:rm_bale:'.length);
-    // baleKey may be "BAL-xyz" or "pkg:1234"; route accordingly.
-    if (baleKey.startsWith('pkg:')) {
-      const pkg = baleKey.slice(4);
+    // STK-E1 — clear by the canonical line identity, so a LEGACY bale
+    // (per-than uids) clears whole instead of dropping one than. Stale
+    // cards carrying the old payload shapes still route correctly.
+    if (baleKey.startsWith('pkg:') && baleKey.includes('|')) {
+      bundleSaleService.removeLines(session.cart,
+        session.cart.lines.filter((l) => bundleSaleService.lineBaleKey(l) === baleKey).map((l) => l._key));
+    } else if (baleKey.startsWith('pkg:')) {
+      const pkg = baleKey.slice(4); // pre-STK-E1 card: bare packageNo
       bundleSaleService.removeLines(session.cart,
         session.cart.lines.filter((l) => l.packageNo === pkg).map((l) => l._key));
     } else {

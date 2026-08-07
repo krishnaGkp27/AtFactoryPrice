@@ -11,15 +11,26 @@ const assert = require('node:assert/strict');
 const { baleGroupKey, aggregateDesigns, aggregateStockModel } = require('../../../src/utils/inventoryPickers');
 
 test('baleGroupKey()', async (t) => {
-  await t.test('prefers design+packageNo over baleUid', () => {
+  // STK-E1 — the ONE canonical identity: design|number|CONTAINER,
+  // trimmed + uppercased. The container axis is what tells two physical
+  // bales apart when a printed number is re-used across arrivals (§5).
+  await t.test('prefers design+packageNo over baleUid, container-aware', () => {
     assert.equal(
-      baleGroupKey({ design: '9006', packageNo: '6534', baleUid: 'BAL-1' }),
-      'pkg:9006|6534',
+      baleGroupKey({ design: '9006', packageNo: '6534', baleUid: 'BAL-1', arrivalBatch: 'Jul26' }),
+      'pkg:9006|6534|JUL26',
     );
   });
 
+  await t.test('same number, different container = two bales; case/trim never split one', () => {
+    const a = baleGroupKey({ design: '9006', packageNo: '6534', arrivalBatch: 'Jul26' });
+    const b = baleGroupKey({ design: '9006', packageNo: '6534', arrivalBatch: 'Mar26' });
+    assert.notEqual(a, b, 'recycled number stays two physical bales');
+    const c = baleGroupKey({ design: ' 9006 ', packageNo: '6534 ', arrivalBatch: 'jul26' });
+    assert.equal(a, c, 'stray spaces or case must never split one bale in two');
+  });
+
   await t.test('falls back to baleUid when no packageNo', () => {
-    assert.equal(baleGroupKey({ design: '9006', baleUid: 'BAL-7' }), 'BAL-7');
+    assert.equal(baleGroupKey({ design: '9006', baleUid: 'BAL-7' }), 'uid:BAL-7');
   });
 
   await t.test('last-resort "row" when neither present', () => {

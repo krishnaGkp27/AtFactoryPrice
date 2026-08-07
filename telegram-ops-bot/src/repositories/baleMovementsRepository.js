@@ -112,7 +112,9 @@ async function getAllStrict() {
  * rows closes it; new intake always carries one.
  */
 function baleKey(design, baleNo, container) {
-  return `${str(design).toUpperCase()}|${str(baleNo).toUpperCase()}|${str(container).toUpperCase()}`;
+  // STK-E1 — the canonical identity (same shape this always had, now
+  // shared so it can never drift from the other definitions).
+  return require('../services/baleIdentity').baleKeyOf(design, baleNo, container);
 }
 
 /**

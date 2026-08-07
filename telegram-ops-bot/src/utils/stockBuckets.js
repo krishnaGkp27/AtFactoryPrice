@@ -75,7 +75,10 @@ function tally(rows) {
     const g = out[bucketOf(r)];
     g.thans += 1;
     g.yards += Number(r && r.yards) || 0;
-    if (r && r.packageNo) g._pkgs.add(`${r.design}|${r.packageNo}`);
+    // STK-E1 — canonical identity (adds the container axis + case/trim
+    // normalization the inline key lacked). Unnumbered rows still count
+    // zero bales here, as before.
+    if (r && r.packageNo) g._pkgs.add(require('../services/baleIdentity').baleKey(r));
   }
   for (const k of Object.keys(out)) {
     out[k].bales = out[k]._pkgs.size;

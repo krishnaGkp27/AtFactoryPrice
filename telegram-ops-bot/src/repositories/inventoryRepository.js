@@ -737,13 +737,18 @@ async function groupByBaleAndShade(design, warehouse = null, opts = {}) {
     const bucket = byShade.get(shadeKey);
     bucket.summary.thanCount += 1;
     bucket.summary.yards += t.yards || 0;
-    const baleKey = t.baleUid || `pkg:${t.packageNo}`;
+    // STK-E1 — canonical identity: legacy rows carry synthetic per-THAN
+    // baleUids, so keying by uid made every than its own "bale" in the
+    // bundle picker (the "223 bales" inflation, still live here until now).
+    const baleKey = require('../services/baleIdentity').baleKey(t);
     if (!bucket.balesByUid.has(baleKey)) {
       const addedMs = Date.parse(t.addedAt || t.dateReceived || '');
       const ageDays = isFinite(addedMs) ? Math.max(0, Math.round((nowMs - addedMs) / 86400000)) : null;
       bucket.balesByUid.set(baleKey, {
+        key: baleKey,
         baleUid: t.baleUid,
         packageNo: t.packageNo,
+        arrivalBatch: t.arrivalBatch || '',
         binLocation: t.binLocation || '',
         addedAt: t.addedAt || '',
         ageDays,
@@ -758,6 +763,7 @@ async function groupByBaleAndShade(design, warehouse = null, opts = {}) {
       packageNo: t.packageNo,
       baleUid: t.baleUid,
       shade: t.shade,
+      arrivalBatch: t.arrivalBatch || '',
     });
   }
   // Flatten bales map to array, sort by oldest-first (FIFO) so the picker

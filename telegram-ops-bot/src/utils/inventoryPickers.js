@@ -13,16 +13,21 @@
  */
 
 /**
- * Stable per-PHYSICAL-bale group key. The bale/package number is the
- * business identity of a bale; legacy rows carry synthetic per-ROW
- * baleUids (BAL-LEGACY-<rowIndex>), which made every than count as its
- * own bale (CSUP-1b owner report: "223 bales" on one day). Prefer
- * design+packageNo; fall back to baleUid only when no package number.
- * @param {{design?:string, packageNo?:string, baleUid?:string}} r
+ * Stable per-PHYSICAL-bale group key — STK-E1: delegates to the ONE
+ * canonical identity (design|number|container, trimmed+uppercased) in
+ * src/services/baleIdentity. This key used to omit the container, so a
+ * printed number legitimately re-used in a later arrival (BUSINESS_RULES
+ * §5) collapsed two physical bales into one on every surface built here
+ * (Customer Supplies, Supply Details, stock browse) while the movement
+ * log and Supply Ledger counted two — the exact cross-surface
+ * disagreement the 07-Aug audit catalogued. Legacy per-THAN baleUids
+ * still stay distinct rather than inflating into per-than "bales"
+ * (CSUP-1b, "223 bales" on one day).
+ * @param {{design?:string, packageNo?:string, arrivalBatch?:string, baleUid?:string}} r
  * @returns {string}
  */
 function baleGroupKey(r) {
-  return r.packageNo ? `pkg:${r.design}|${r.packageNo}` : (r.baleUid || 'row');
+  return require('../services/baleIdentity').baleKey(r);
 }
 
 /** Numeric-aware string compare (CARD-2 style: '9006' < '80045'). */
