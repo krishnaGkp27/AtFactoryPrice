@@ -1457,7 +1457,7 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
           for (const otherId of others) {
             try {
               await bot.sendMessage(otherId,
-                `🔔 Request ${requestId} (${actName.replace(/_/g, ' ')}) has its first admin approval and needs a SECOND. Use the approval card in your chat.`);
+                `🔔 Request ${requestId} (${require('../services/approvalCards').actionLabel(actName)}) has its first admin approval and needs a SECOND. Use the approval card in your chat.`);
             } catch (e) { logger.warn(`DUAL-1 second-signoff ping failed for ${otherId}: ${e.message}`); }
           }
           return;

@@ -96,6 +96,23 @@ test('APX-1: items are listed NEWEST first', async () => {
   sessionStore.clear(ADMIN);
 });
 
+test('LBL-1: the chip speaks the owner\'s vocabulary — "sale bale", never "sale bundle"', async () => {
+  // Owner, 07-Aug-2026: "'Sale bundle' is not actually a bundle. It is a
+  // bale. A bale means a package." The internal action code sale_bundle is
+  // locked (stamped on every pending row); only the words humans read change.
+  const bot = createFakeBot();
+  await flow.start(bot, ADMIN, ADMIN, null);
+  await flow.handleCallback(bot, cb('abx:cat:sales', ADMIN));
+  const items = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
+  for (const it of items) {
+    assert.match(it.text, /sale bale/, `chip must read "sale bale", got: ${it.text}`);
+    assert.doesNotMatch(it.text, /bundle/, `no "bundle" on a chip, got: ${it.text}`);
+  }
+  // Date · action · requester name — the format the owner confirmed.
+  assert.match(items[0].text, /^🟢 \d{2} \w{3} · sale bale · Abdul$/, `got: ${items[0].text}`);
+  sessionStore.clear(ADMIN);
+});
+
 test('APX-1: Approve delegates to the standard handler with approve:<id>', async () => {
   const bot = createFakeBot();
   const seen = [];

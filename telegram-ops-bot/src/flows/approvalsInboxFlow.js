@@ -120,10 +120,13 @@ function ageLabel(days) {
   return `${days}d`;
 }
 
-/** "sale_bundle" → "sale bundle". */
+/**
+ * LBL-1 — "sale_bundle" → "sale bale", via the shared owner-vocabulary map
+ * in approvalCards (the internal code stays; only the words change).
+ */
 function actionLabel(item) {
   const a = (item && item.actionJSON && item.actionJSON.action) || 'unknown';
-  return a.replace(/_/g, ' ');
+  return approvalCards.actionLabel(a);
 }
 
 function shortDate(createdAt) {

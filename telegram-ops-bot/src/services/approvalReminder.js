@@ -52,7 +52,8 @@ function isStandardApprovable(aj) {
 
 function summarize(aj) {
   if (!aj || typeof aj !== 'object') return 'pending action';
-  const parts = [String(aj.action || 'action').replace(/_/g, ' ')];
+  // LBL-1 — owner vocabulary, one shared map (sale_bundle → "sale bale").
+  const parts = [require('./approvalCards').actionLabel(aj.action)];
   if (aj.design) parts.push(`design ${aj.design}`);
   if (aj.arrivalBatch) parts.push(`container ${aj.arrivalBatch}`);
   if (aj.warehouse) parts.push(`@ ${aj.warehouse}`);

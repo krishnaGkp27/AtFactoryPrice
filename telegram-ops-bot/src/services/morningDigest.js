@@ -180,7 +180,7 @@ const CATEGORIES = [
       for (const id of new Set(shown.map((p) => String(p.user)))) {
         nameOf.set(id, await approvalCards.resolveUserLabel(id, bot));
       }
-      const lines = shown.map((p) => `• ${fmtDay(p.createdAt)} — ${((p.actionJSON || {}).action || 'action').replace(/_/g, ' ')} by ${nameOf.get(String(p.user))} \`${String(p.requestId).slice(0, 8)}\``);
+      const lines = shown.map((p) => `• ${fmtDay(p.createdAt)} — ${approvalCards.actionLabel((p.actionJSON || {}).action)} by ${nameOf.get(String(p.user))} \`${String(p.requestId).slice(0, 8)}\``);
       const older = pending.length - Math.min(pending.length, LIST_CAP);
       return `🛂 *Approvals pending: ${pending.length}* (newest first)\n${lines.join('\n')}${older ? `\n_…and ${older} older — open 🛂 Approvals below to work through all ${pending.length}._` : ''}`;
     },

@@ -42,6 +42,29 @@ const fmtDate = require('../utils/formatDate');
 const _nameCache = new Map(); // id → { label, at }
 const NAME_CACHE_TTL_MS = 10 * 60 * 1000;
 
+/**
+ * LBL-1 (owner, 07-Aug-2026) — the owner's vocabulary for action codes, in
+ * ONE place. "Sale bundle is not actually a bundle. It is a bale. A bale
+ * means a package." The queue keeps the internal codes (they are stamped on
+ * every pending row and locked into the approval policy — renaming them
+ * would orphan history); only the words humans read change. Every surface
+ * that shows an action name (inbox chips, generic cards, the reminder
+ * sweep, the morning digest, the dual-admin notice) must come through here.
+ */
+const ACTION_LABELS = {
+  sale_bundle: 'sale bale',
+  revert_sale_bundle: 'revert sale bale',
+  sell_package: 'sell bale',
+  return_package: 'return bale',
+  transfer_package: 'transfer bale',
+};
+
+/** Human words for an internal action code. */
+function actionLabel(action) {
+  const a = String(action || 'action');
+  return ACTION_LABELS[a] || a.replace(/_/g, ' ');
+}
+
 async function resolveUserLabel(userId, bot) {
   const key = String(userId || '').trim();
   if (!key) return 'Unknown';
@@ -454,7 +477,7 @@ async function buildCardFromActionJSON(aj) {
     if (aj.action === 'supply_request') return buildSupplyRequestCard(aj);
     if (aj.action === 'add_warehouse') return await buildAddWarehouseCard(aj);
   } catch (_) { /* fall through to generic */ }
-  const parts = [String(aj.action || 'action').replace(/_/g, ' ')];
+  const parts = [actionLabel(aj.action)];
   const fields = [
     ['customer', 'Customer'], ['customer_name', 'Customer'], ['name', 'Name'],
     ['design', 'Design'], ['shade', 'Shade'], ['packageNo', 'Bale'],
@@ -503,6 +526,7 @@ async function forwardAttachmentsToAdmins(bot, requestId, attachments, excludeId
 
 module.exports = {
   resolveUserLabel,
+  actionLabel,
   _resetNameCacheForTests,
   sortSaleItems,
   shortRequestRef,
