@@ -7215,6 +7215,14 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await bot.sendMessage(callbackQuery.message.chat.id, `Task ${taskId} not found.`);
       return;
     }
+    // APC-1 Phase D — this legacy branch flipped status with NO current-state
+    // guard: a stale card could "re-complete" a task in any state (the tsk:
+    // sign-off path runs the state machine; this one predates it).
+    if (['completed', 'cancelled'].includes(String(task.status || '').toLowerCase())) {
+      await bot.sendMessage(callbackQuery.message.chat.id,
+        `ℹ️ Task "${task.title}" (${taskId}) is already ${task.status} — this card is stale, nothing was changed.`);
+      return;
+    }
     await tasksRepo.updateStatus(taskId, 'completed', new Date().toISOString());
     let employeeNotified = false;
     try {

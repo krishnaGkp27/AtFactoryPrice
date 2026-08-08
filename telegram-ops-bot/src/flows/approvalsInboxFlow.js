@@ -43,8 +43,9 @@
  *   abx:cat:<key>        open a category
  *   abx:pg:<n>           page within a category
  *   abx:i:<idx>          open one request (index into session._items)
- *   abx:ok:<idx>         → delegates to approve:<requestId>
- *   abx:no:<idx>         → delegates to reject:<requestId>
+ *   abx:ok:<requestId>   → delegates to approve:<requestId> (APC-1: the id
+ *   abx:no:<requestId>     rides the chip — a stale list can't misfire;
+ *                          legacy numeric payloads resolve via the snapshot)
  *   abx:trf:<idx>        open a transfer's own card
  */
 
@@ -599,8 +600,10 @@ async function renderItem(bot, chatId, userId, idx) {
   // dead end. Same shared judgement as the ⚠️ chips and Sentinel C8; if the
   // Inventory read fails, the normal buttons stand and the executor still
   // refuses safely.
-  let decisionRows = [[{ text: '✅ Approve', callback_data: `abx:ok:${idx}` },
-    { text: '❌ Reject', callback_data: `abx:no:${idx}` }]];
+  // APC-1 Phase D — decision chips carry the requestId, never a list index:
+  // the tap acts on the request shown on THIS card, however stale the list.
+  let decisionRows = [[{ text: '✅ Approve', callback_data: `abx:ok:${item.requestId}` },
+    { text: '❌ Reject', callback_data: `abx:no:${item.requestId}` }]];
   try {
     const { allItemsGone, SALE_ACTIONS } = require('../services/saleStockCheck');
     const aj = item.actionJSON || {};
@@ -608,7 +611,7 @@ async function renderItem(bot, chatId, userId, idx) {
       && allItemsGone(aj, await require('../repositories/inventoryRepository').getAll())) {
       decisionRows = [
         [{ text: '✅ Mark as done (no re-run)', callback_data: `apz:done:${item.requestId}` }],
-        [{ text: '❌ Reject', callback_data: `abx:no:${idx}` }],
+        [{ text: '❌ Reject', callback_data: `abx:no:${item.requestId}` }],
       ];
     }
   } catch (e) {
@@ -633,24 +636,41 @@ async function renderItem(bot, chatId, userId, idx) {
  * wipes this card's keyboard and reports the outcome on it, so afterwards we
  * send a fresh one-line footer with the way back into the list.
  */
-async function delegateDecision(bot, query, userId, idx, decision) {
+async function delegateDecision(bot, query, userId, ref, decision) {
   const session = sessionStore.get(userId);
-  if (!session) return;
-  const item = (session._items || [])[idx];
-  if (!item) { await renderItems(bot, chatId(query), userId); return; }
+  // APC-1 Phase D — decision chips carry the requestId ITSELF. The old
+  // index payloads resolved against session._items, which every list render
+  // rewrites — a leftover card's index could land on a DIFFERENT
+  // still-pending request. Legacy numeric payloads (pre-deploy cards) are
+  // honoured via the snapshot while it exists; new chips need no session
+  // at all — the delegated handler carries every guard.
+  let requestId = null;
+  if (/^\d{1,4}$/.test(String(ref))) {
+    const item = session && (session._items || [])[Number(ref)];
+    requestId = item && item.requestId;
+  } else if (String(ref || '').length > 4) {
+    requestId = String(ref);
+  }
+  if (!requestId) {
+    if (session) await renderItems(bot, chatId(query), userId);
+    else { try { await bot.answerCallbackQuery(query.id, { text: 'This card expired — open the Approvals Inbox again.' }); } catch (_) { /* ignore */ } }
+    return;
+  }
 
   const approvalEvents = require('../events/approvalEvents');
   const delegated = Object.assign(Object.create(Object.getPrototypeOf(query)), query, {
-    data: `${decision}:${item.requestId}`,
+    data: `${decision}:${requestId}`,
   });
   try {
     await approvalEvents.handleApprovalCallback(bot, delegated, decision);
   } catch (e) {
-    logger.error(`approvalsInbox: ${decision} of ${item.requestId} failed: ${e.message}`);
+    logger.error(`approvalsInbox: ${decision} of ${requestId} failed: ${e.message}`);
     try {
-      await bot.sendMessage(chatId(query), `⚠️ Could not ${decision} ${item.requestId}: ${e.message}`);
+      await bot.sendMessage(chatId(query), `⚠️ Could not ${decision} ${requestId}: ${e.message}`);
     } catch (_) { /* ignore */ }
   }
+
+  if (!session) return; // decision done; no inbox to re-anchor
 
   // The decided card is now a record. Re-anchor the inbox onto a FRESH
   // message so the admin can carry straight on — and so this never competes
@@ -740,6 +760,18 @@ async function handleCallback(bot, query) {
     return true;
   }
 
+  // APC-1 Phase D — decisions carry their requestId, so an expired inbox
+  // session must not swallow the tap into a "pick a category" reset: the
+  // delegated handler owns every guard and needs no session.
+  if (data.startsWith('abx:ok:')) {
+    await delegateDecision(bot, query, userId, data.slice('abx:ok:'.length), 'approve');
+    return true;
+  }
+  if (data.startsWith('abx:no:')) {
+    await delegateDecision(bot, query, userId, data.slice('abx:no:'.length), 'reject');
+    return true;
+  }
+
   const session = sessionStore.get(userId);
   if (!session || session.type !== SESSION_TYPE) {
     sessionStore.set(userId, {
@@ -807,11 +839,12 @@ async function handleCallback(bot, query) {
   }
 
   if (data.startsWith('abx:ok:')) {
-    await delegateDecision(bot, query, userId, parseInt(data.slice('abx:ok:'.length), 10), 'approve');
+    // Unreachable in practice (handled pre-session above); kept as a guard.
+    await delegateDecision(bot, query, userId, data.slice('abx:ok:'.length), 'approve');
     return true;
   }
   if (data.startsWith('abx:no:')) {
-    await delegateDecision(bot, query, userId, parseInt(data.slice('abx:no:'.length), 10), 'reject');
+    await delegateDecision(bot, query, userId, data.slice('abx:no:'.length), 'reject');
     return true;
   }
 

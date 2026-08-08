@@ -1992,6 +1992,15 @@ async function handleSupplyAssign(bot, callbackQuery) {
     await bot.sendMessage(chatId, `⚠️ Request ${requestId} not found.`);
     return;
   }
+  // APC-1 Phase D — a stale picker card must not re-assign a request that
+  // already resolved (or was never a supply request): the tap used to pass
+  // with NO status/action guard, stamping stage/assignee onto settled rows.
+  const ajCur = item.actionJSON || {};
+  if (ajCur.action !== 'supply_request' || String(item.status || '').toLowerCase() !== 'pending') {
+    await bot.sendMessage(chatId,
+      `ℹ️ Request ${requestId} is ${String(item.status || 'resolved').toLowerCase()} — this picker card is stale, no assignment was made.`);
+    return;
+  }
 
   // Stage 3 change: keep the queue row in `pending` until the
   // dispatch person Accepts. The admin's pick now records the

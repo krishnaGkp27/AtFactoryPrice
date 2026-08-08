@@ -32,7 +32,7 @@ const { installFakeSheets, installFakeIntent, loadController, SRC } = require('.
 
 installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
-loadController();
+const controller = loadController();
 
 const approvalEvents = require(path.join(SRC, 'events/approvalEvents'));
 const approvalQueueRepository = require(path.join(SRC, 'repositories/approvalQueueRepository'));
@@ -202,6 +202,48 @@ test('cancel drops only the newest prompt; the older one is still asked', async 
   assert.equal(pendingReason.get('42')[0].requestId, 'R-S1');
   assert.match(bot.allText(), /Reject supply request.*R-S1/s, 'and is re-asked');
   pendingReason.clear();
+});
+
+/* ── APC-1 Phase D: id-carrying inbox decisions + stale-card guards ── */
+
+test('inbox decision chips carry the requestId — even with NO live session, the right row answers', async () => {
+  const inboxFlow = require(path.join(SRC, 'flows/approvalsInboxFlow'));
+  const sessionStore = require(path.join(SRC, 'utils/sessionStore'));
+  const resolvedRow = {
+    requestId: 'R-DONE', user: '42', status: 'approved', resolvedAt: '2026-08-07T10:00:00.000Z',
+    actionJSON: { action: 'sell_package', packageNo: '1', customer: 'CJE' },
+  };
+  approvalQueueRepository.getByRequestId = async (id) => (String(id) === 'R-DONE' ? { ...resolvedRow } : null);
+  approvalQueueRepository.getAllPending = async () => [];
+  sessionStore.clear(ADMIN);
+  const bot = createFakeBot();
+  await inboxFlow.handleCallback(bot, cbq('abx:ok:R-DONE', 9));
+  assert.match(bot.allText(), /R-DONE was already approved/i,
+    'the delegated guard answered for the request ON THE CARD, no session needed');
+});
+
+test('srf_assign refuses a resolved request — a stale picker card stamps nothing', async () => {
+  const patches = [];
+  approvalQueueRepository.updateActionJSON = async (id, p) => { patches.push({ id, p }); return true; };
+  approvalQueueRepository.getByRequestId = async () => ({
+    requestId: 'R-SUP', user: '42', status: 'approved',
+    actionJSON: { action: 'supply_request', stage: 'completed' },
+  });
+  const bot = createFakeBot();
+  await approvalEvents.handleSupplyAssign(bot, cbq('srf_assign:R-SUP|somebody', 9));
+  assert.equal(patches.length, 0, 'no assignment stamped on a settled row');
+  assert.match(bot.allText(), /stale, no assignment/i);
+});
+
+test('legacy approve_task refuses an already-completed task', async () => {
+  const tasksRepo = require(path.join(SRC, 'repositories/tasksRepository'));
+  tasksRepo.getById = async () => ({ task_id: 'T1', title: 'Sweep store', status: 'completed', assigned_to: '42' });
+  const writes = [];
+  tasksRepo.updateStatus = async (...a) => { writes.push(a); return true; };
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cbq('approve_task:T1', 9));
+  assert.equal(writes.length, 0, 'status not re-flipped by the stale card');
+  assert.match(bot.allText(), /already completed/i);
 });
 
 test('legacy chips: honoured with one wizard open, refused (not guessed) with two', async () => {
