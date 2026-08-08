@@ -279,32 +279,16 @@ async function checkDuplicateLiveNumbers({ inventory }) {
  */
 function checkPendingSalesAlreadySold({ inventory, pending, now }) {
   const HOUR = 60 * 60 * 1000;
-  const availPkgWh = new Set();
-  const availPkg = new Set();
-  for (const r of inventory) {
-    if (r.status !== 'available') continue;
-    const p = upper(r.packageNo);
-    if (!p) continue;
-    availPkg.add(p);
-    availPkgWh.add(`${p}|${upper(r.warehouse)}`);
-  }
+  // APF-2 — the "stock gone" judgement is shared with the approval handler
+  // and the inbox chips (saleStockCheck), so all surfaces agree.
+  const { allItemsGone, SALE_ACTIONS } = require('./saleStockCheck');
   const findings = [];
   for (const q of pending) {
     const aj = q.actionJSON || {};
-    if (!['sale_bundle', 'sell_package', 'sell_than'].includes(aj.action)) continue;
+    if (!SALE_ACTIONS.includes(aj.action)) continue;
     const age = now - Date.parse(String(q.createdAt || ''));
     if (!isFinite(age) || age < HOUR) continue;
-    const items = aj.action === 'sale_bundle'
-      ? (Array.isArray(aj.items) ? aj.items : [])
-      : [{ packageNo: aj.packageNo, warehouse: aj.warehouse }];
-    if (!items.length) continue;
-    const gone = items.every((si) => {
-      const p = upper(si.packageNo);
-      if (!p) return false;
-      const wh = upper(si.warehouse || aj.warehouse);
-      return wh ? !availPkgWh.has(`${p}|${wh}`) : !availPkg.has(p);
-    });
-    if (gone) {
+    if (allItemsGone(aj, inventory)) {
       const days = Math.floor(age / 86400000);
       findings.push(`Request ${q.requestId} is pending${days ? ` for ${days}d` : ''} but every bale in it is already sold/gone — executed-but-unresolved or a duplicate. Open it and use Mark as done or Reject; approving re-runs nothing.`);
     }

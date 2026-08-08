@@ -100,3 +100,55 @@ test('the sale card screams when NOTHING in the request is available', async () 
   assert.match(card, /⚠️ no available stock/);
   assert.match(card, /NOTHING in this request is available/);
 });
+
+/* ── APF-2: stock-gone rows get the real choices, everywhere ── */
+
+test('APF-2: Approve on a PENDING zombie skips the wizard and offers Mark-done / Reject', async () => {
+  const zombie = {
+    requestId: 'R-GONE', user: '888', status: 'pending',
+    createdAt: '2026-08-05T09:00:00.000Z',
+    actionJSON: { action: 'sale_bundle', customer: '', items: [{ packageNo: '516', type: 'package' }] },
+  };
+  approvalQueueRepository.getByRequestId = async (id) => (String(id) === 'R-GONE' ? { ...zombie } : null);
+  inventoryRepository.getAll = async () => []; // 516 gone
+  const bot = createFakeBot();
+  await approvalEvents.handleApprovalCallback(bot, cb('approve:R-GONE'), 'approve');
+  const msgs = bot.callsTo('sendMessage');
+  const choice = msgs.find((m) => /already sold or gone/.test(String(m.args.text)));
+  assert.ok(choice, `the choice card is sent, got: ${msgs.map((m) => m.args.text)}`);
+  const kb = ((choice.args.opts || {}).reply_markup || {}).inline_keyboard.flat();
+  assert.ok(kb.some((b) => b.callback_data === 'apz:done:R-GONE'), 'Mark as done offered');
+  assert.ok(kb.some((b) => b.callback_data === 'reject:R-GONE'), 'Reject offered');
+  assert.ok(!msgs.some((m) => /customer/i.test(String(m.args.text)) && /step/i.test(String(m.args.text))),
+    'no enrichment wizard step was sent');
+});
+
+test('APF-2: the inbox card for a pending zombie shows Mark-done instead of Approve; the chip shows ⚠️', async () => {
+  const zombie = {
+    requestId: 'R-GONE2', user: '888', status: 'pending',
+    createdAt: '2026-08-05T09:00:00.000Z',
+    actionJSON: { action: 'sale_bundle', customer: '', items: [{ packageNo: '516', type: 'package' }] },
+  };
+  approvalQueueRepository.getByRequestId = async (id) => (String(id) === 'R-GONE2' ? { ...zombie } : null);
+  approvalQueueRepository.getAllPending = async () => [zombie];
+  inventoryRepository.getAll = async () => [];
+  const bot = createFakeBot();
+  sessionStore.set(ADMIN, {
+    type: inboxFlow.SESSION_TYPE, step: 'pick_category', flowMessageId: 9,
+    category: '', page: 0, _items: [],
+  });
+  await inboxFlow.handleCallback(bot, cb('abx:cat:sales'));
+  const listCall = bot.calls.filter((c) => c.method === 'sendMessage' || c.method === 'editMessageText').pop();
+  const chip = (((listCall.args.opts || {}).reply_markup || {}).inline_keyboard || []).flat()
+    .find((b) => (b.callback_data || '').startsWith('abx:i:'));
+  assert.match(chip.text, /^⚠️ /, `the zombie chip carries ⚠️, not an age dot — got: ${chip.text}`);
+  assert.match(String(listCall.args.text), /⚠️ stock already gone/, 'the legend explains the icon');
+
+  await inboxFlow.handleCallback(bot, cb('abx:i:0'));
+  const cardCall = bot.calls.filter((c) => c.method === 'sendMessage' || c.method === 'editMessageText').pop();
+  const flat = (((cardCall.args.opts || {}).reply_markup || {}).inline_keyboard || []).flat();
+  assert.ok(flat.some((b) => b.callback_data === 'apz:done:R-GONE2'), 'Mark as done on the card');
+  assert.ok(!flat.some((b) => (b.callback_data || '').startsWith('abx:ok:')), 'plain Approve is GONE');
+  assert.ok(flat.some((b) => (b.callback_data || '').startsWith('abx:no:')), 'Reject stays');
+  sessionStore.clear(ADMIN);
+});

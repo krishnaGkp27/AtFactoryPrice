@@ -1543,6 +1543,31 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
 
       const isSale = item && item.actionJSON && SALE_ACTIONS.includes(item.actionJSON.action);
       if (isSale) {
+        // APF-2 (owner, 08-Aug-2026): when the request's stock is ALREADY
+        // gone, walking the admin through the customer/rate/payment wizard
+        // is nonsense — it can only dead-end at the all-items-failed
+        // refusal. Offer the two real choices up front instead. Best-effort:
+        // an Inventory read failure falls through to the normal wizard,
+        // whose executor still refuses safely.
+        try {
+          const { allItemsGone } = require('../services/saleStockCheck');
+          const inventoryRepository = require('../repositories/inventoryRepository');
+          if (allItemsGone(item.actionJSON, await inventoryRepository.getAll())) {
+            await bot.sendMessage(chatIdCb,
+              `⚠️ Request ${requestId}: every bale/than in it is already sold or gone — there is nothing to sell.\n\n`
+              + 'If this sale already went through (goods sold, papers done), Mark as done '
+              + 'closes the request WITHOUT selling or charging anything again. If it '
+              + 'duplicates another request, Reject it.', {
+                reply_markup: { inline_keyboard: [
+                  [{ text: '✅ Mark as done (no re-run)', callback_data: `apz:done:${requestId}` }],
+                  [{ text: '❌ Reject', callback_data: `reject:${requestId}` }],
+                ] },
+              });
+            return;
+          }
+        } catch (e) {
+          logger.warn(`APF-2 stock-gone pre-check failed for ${requestId}: ${e.message}`);
+        }
         await startApprovalEnrichment(bot, adminId, chatIdCb, requestId, item, requestingUser);
         return;
       }

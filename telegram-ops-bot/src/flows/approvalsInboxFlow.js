@@ -461,14 +461,34 @@ async function renderItems(bot, chatId, userId) {
     }
   }
 
+  // APF-2 (owner, 08-Aug-2026): a pending sale whose stock is already gone
+  // is not a normal "waiting on you" row — the age dot (🔴 = 7d+) read as
+  // "unprocessed" when the sale had in fact executed. Those rows carry ⚠️
+  // instead, matching the transfer group's rule that the icon tells STATE.
+  let goneByReq = new Set();
+  if (slice.some((it) => require('../services/saleStockCheck').SALE_ACTIONS.includes(((it.actionJSON || {}).action) || ''))) {
+    try {
+      const { allItemsGone, SALE_ACTIONS } = require('../services/saleStockCheck');
+      const inv = await require('../repositories/inventoryRepository').getAll();
+      goneByReq = new Set(slice
+        .filter((it) => SALE_ACTIONS.includes(((it.actionJSON || {}).action) || '')
+          && String(it.status || 'pending').toLowerCase() === 'pending'
+          && allItemsGone(it.actionJSON, inv))
+        .map((it) => String(it.requestId)));
+    } catch (e) {
+      logger.warn(`approvalsInbox: stock-gone chips skipped: ${e.message}`);
+    }
+  }
+
   const rows = slice.map((it) => {
     const i = items.indexOf(it);
     const days = ageDays(it.createdAt);
     const who = nameOf.get(String(it.user || '')) || it.user || '—';
     const dup = dupIdx.has(String(it.requestId)) ? '⧉ ' : '';
+    const dot = goneByReq.has(String(it.requestId)) ? '⚠️' : ageDot(days);
     const label = isTransfers
       ? transferChipLabel(it)
-      : `${dup}${ageDot(days)} ${shortDate(it.createdAt)} · ${actionLabel(it)} · ${who}`;
+      : `${dup}${dot} ${shortDate(it.createdAt)} · ${actionLabel(it)} · ${who}`;
     return [{ text: label.slice(0, 60), callback_data: `${isTransfers ? 'abx:trf' : 'abx:i'}:${i}` }];
   });
   if (pages > 1) {
@@ -483,7 +503,7 @@ async function renderItems(bot, chatId, userId) {
 
   const note = isTransfers
     ? '\n🔴 requested · 🟡 in transit · 🟢 received · B bales · T thans — newest first\n_Not approvals — tap one to open its transfer card._'
-    : '';
+    : `\n🟢 new · 🟠 3d+ · 🔴 7d+ waiting${goneByReq.size ? ' · ⚠️ stock already gone — open it and use Mark as done / Reject' : ''}`;
   const headCount = isTransfers
     ? (() => {
       const done = items.filter((it) => String(it.status || '').toLowerCase() === 'approved').length;
@@ -574,11 +594,30 @@ async function renderItem(bot, chatId, userId, idx) {
   const docRow = item.actionJSON && item.actionJSON.sale_doc_file_id
     ? [[{ text: '📄 Sales bill', callback_data: `abx:doc:${idx}` }]]
     : [];
+  // APF-2 (owner, 08-Aug-2026): a pending sale whose stock is ALL gone gets
+  // the two REAL choices — plain Approve could only walk the wizard into a
+  // dead end. Same shared judgement as the ⚠️ chips and Sentinel C8; if the
+  // Inventory read fails, the normal buttons stand and the executor still
+  // refuses safely.
+  let decisionRows = [[{ text: '✅ Approve', callback_data: `abx:ok:${idx}` },
+    { text: '❌ Reject', callback_data: `abx:no:${idx}` }]];
+  try {
+    const { allItemsGone, SALE_ACTIONS } = require('../services/saleStockCheck');
+    const aj = item.actionJSON || {};
+    if (SALE_ACTIONS.includes(aj.action)
+      && allItemsGone(aj, await require('../repositories/inventoryRepository').getAll())) {
+      decisionRows = [
+        [{ text: '✅ Mark as done (no re-run)', callback_data: `apz:done:${item.requestId}` }],
+        [{ text: '❌ Reject', callback_data: `abx:no:${idx}` }],
+      ];
+    }
+  } catch (e) {
+    logger.warn(`approvalsInbox: stock-gone button check failed for ${item.requestId}: ${e.message}`);
+  }
   await render(bot, chatId, userId,
     `${card}\n\n_Requested by ${who} · ${ageDot(days)}${days > 0 ? `${days}d` : 'today'} · ${approvalCards.shortRequestRef(item.requestId)}_${dualNote}${dupNote}`,
     [
-      [{ text: '✅ Approve', callback_data: `abx:ok:${idx}` },
-        { text: '❌ Reject', callback_data: `abx:no:${idx}` }],
+      ...decisionRows,
       ...docRow,
       backRow('⬅ Back to list'),
       closeRow(),
