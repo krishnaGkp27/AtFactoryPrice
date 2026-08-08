@@ -84,3 +84,21 @@ closing balance) are read-time, never persisted.
 
 Real-world challenges raised by the owner in discussion get appended
 here with their agreed solutions before any build starts.
+
+## Challenges discussed
+
+**C1 — Approval concurrency (08-Aug-2026).** Processing one approval
+while another arrives overwrites/cross-wires the in-flight wizard. This
+is approval-wide, not expenses-specific → documented and designed as its
+own track: `specs/APC-1_APPROVAL_CONCURRENCY.md` (design agreed).
+
+**C2 — Documents over typed numbers (08-Aug-2026).** Owner prefers
+images and drafted sheets (e.g. Excel) as the PRIMARY input wherever a
+figure is expected — "possibly a number is always there". Agreed rule
+(shared with APC-1 decision 4): attach → parse/OCR → extracted figures
+shown as confirm chips → only a human-confirmed number is booked; the
+file is archived as evidence linked to the record. EXP-1's entry flow
+should therefore let Abdul photograph a receipt or attach a drafted
+sheet instead of typing, with the parsed amounts confirmed by tap — and
+an attach step may WAIT while he prepares the file, without blocking
+anything else.
