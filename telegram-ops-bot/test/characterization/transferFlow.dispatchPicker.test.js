@@ -102,6 +102,10 @@ async function runWizard() {
   seedInventory();
   const calls = armQueue();
   sessionStore.clear('777');
+  // APC-1 Phase C — a leftover dispatcher/receiver session from an earlier
+  // test would now (correctly) trip the busy guard on the next Accept.
+  sessionStore.clear('abdul');
+  sessionStore.clear('musa');
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('act:transfer_stock', 777));
   await controller.handleCallbackQuery(bot, cb('trf:wh:1', 777)); // Lagos
@@ -217,11 +221,14 @@ test('Back to bales from the photo gate returns to the review screen', async () 
   await controller.handleCallbackQuery(bot, cb('trf:bl:nx', 'abdul'));  // review
   await controller.handleCallbackQuery(bot, cb('trf:bl:go', 'abdul'));
   const bb = createFakeBot();
-  await controller.handleCallbackQuery(bb, cb('trf:bl:bk', 'abdul'));
+  // APC-1 Phase C — gate taps must come from the gate's own prompt card
+  // (in reality the button lives there); a fixed test id now gets refused.
+  const gateMsgId = sessionStore.get('abdul').flowMessageId;
+  await controller.handleCallbackQuery(bb, cb('trf:bl:bk', 'abdul', gateMsgId));
   assert.equal(sessionStore.get('abdul').step, 'dispatch_confirm', 'back on the review screen');
   assert.match(bb.allText(), /dispatch 2 bale\(s\)\?/i);
   // Dispatch again + photo + approve → still exactly one transition.
-  await controller.handleCallbackQuery(bb, cb('trf:bl:go', 'abdul'));
+  await controller.handleCallbackQuery(bb, cb('trf:bl:go', 'abdul', sessionStore.get('abdul').flowMessageId));
   await sendPhoto('abdul');
   await approveAsAdmin(requestId);
   assert.equal(calls.transitions.length, 1, 'one dispatch, no double-move');

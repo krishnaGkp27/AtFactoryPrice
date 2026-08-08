@@ -105,6 +105,9 @@ async function typedOrder() {
   seedInventory();
   const calls = armQueue();
   sessionStore.clear('777');
+  // APC-1 Phase C — a leftover dispatcher session from an earlier test
+  // would now (correctly) trip the busy guard on the next Accept.
+  sessionStore.clear('abdul');
   const bot = createFakeBot();
   const shown = await transferFlow.startFromText(bot, 777, '777', 'Transfer packages 102, 104 to Kano');
   assert.equal(shown, true);
@@ -210,6 +213,7 @@ test('tap-built orders: picker opens unticked, no Ordered note', async () => {
   await controller.handleCallbackQuery(bot, cb('trf:send', 777));
   assert.equal(calls.appended.actionJSON.lines[0].bales, undefined, 'tap orders carry no pinned bales');
   const bot2 = createFakeBot();
+  sessionStore.clear('abdul'); // APC-1 — earlier tests may leave a live pick
   await controller.handleCallbackQuery(bot2, cb(`trf:acc:${calls.appended.requestId}`, 'abdul'));
   const texts = lastKb(bot2);
   // TRF-15 — no FIFO pre-selection here either: everything opens unticked.

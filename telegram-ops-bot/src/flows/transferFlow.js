@@ -1023,6 +1023,51 @@ async function sendTransferDoc(bot, query, requestId, kind) {
   return true;
 }
 
+/**
+ * APC-1 Phase C — the dispatcher/receiver chain holds physical work
+ * (ticked bales, an armed photo gate) in the ONE per-user session. A
+ * second ✅ Accept / ✅ Received used to replace it silently: transfer A's
+ * picks vanished, and the next photo completed only the newest gate. The
+ * busy guard makes the switch EXPLICIT — continue the in-flight one, or
+ * knowingly drop it.
+ */
+function busyWithAnotherTransfer(userId, requestId) {
+  const s = sessionStore.get(String(userId));
+  const BUSY_STEPS = ['dispatch_pick', 'dispatch_search', 'dispatch_confirm', 'dispatch_date', 'await_doc'];
+  return (s && s.type === SESSION_TYPE && s.requestId
+    && String(s.requestId) !== String(requestId)
+    && BUSY_STEPS.includes(s.step)) ? s : null;
+}
+
+/** APC-1 Phase C — `trf:sw:keep:<rid>` / `trf:sw:go:<action>:<rid>`. */
+async function handleBusySwitch(bot, query, verb, rest) {
+  const userId = String(query.from.id);
+  const chatId = query.message.chat.id;
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+  if (verb === 'keep') {
+    const session = sessionStore.get(userId);
+    if (!session || session.type !== SESSION_TYPE || String(session.requestId) !== rest) {
+      await bot.sendMessage(chatId, '🚚 That session is no longer live — open 📋 My Tasks to pick it up.');
+      return true;
+    }
+    if (['dispatch_pick', 'dispatch_search'].includes(session.step)) await showBalePicker(bot, chatId, userId);
+    else if (session.step === 'dispatch_confirm') await showDispatchConfirm(bot, chatId, userId);
+    else if (session.step === 'dispatch_date') await showDepartureDates(bot, chatId, userId);
+    else {
+      await bot.sendMessage(chatId,
+        `📸 Still waiting for the ${session.docKind === 'receive' ? 'receipt' : 'load'} photo for ${shortTransferRef(session.requestId)} — send it now.`);
+    }
+    return true;
+  }
+  // go:<action>:<requestId> — the drop was explicit; restart the new one.
+  const cut = rest.indexOf(':');
+  const action = rest.slice(0, cut);
+  const rid = rest.slice(cut + 1);
+  if (!['acc', 'rcv'].includes(action) || !rid) return true;
+  sessionStore.clear(userId);
+  return handleAction(bot, query, rid, action);
+}
+
 async function handleAction(bot, query, requestId, action) {
   const userId = String(query.from.id);
   const chatId = query.message.chat.id;
@@ -1067,6 +1112,26 @@ async function handleAction(bot, query, requestId, action) {
       },
     ).catch(() => {});
     return true;
+  }
+
+  // APC-1 Phase C — Accept/Received replace the per-user session: refuse to
+  // do that silently while ANOTHER transfer's picks or photo gate are live.
+  if (action === 'acc' || action === 'rcv') {
+    const busy = busyWithAnotherTransfer(userId, requestId);
+    if (busy) {
+      const curRef = shortTransferRef(busy.requestId);
+      const newRef = shortTransferRef(requestId);
+      const doing = busy.step === 'await_doc'
+        ? 'waiting for its photo' : 'picking bales';
+      await bot.sendMessage(chatId,
+        `✋ You are still ${doing} on *${curRef}*. Finish it first, or drop it and start *${newRef}* — dropped picks are NOT saved.`,
+        { parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [
+            [{ text: `▶ Continue ${curRef}`, callback_data: `trf:sw:keep:${busy.requestId}` }],
+            [{ text: `🗑 Drop it — start ${newRef}`, callback_data: `trf:sw:go:${action}:${requestId}` }],
+          ] } });
+      return true;
+    }
   }
 
   // Accept → open the dispatcher's bale picker anchored on the tapped card.
@@ -1600,6 +1665,14 @@ async function rearmDoc(bot, query, code, requestId, opts = {}) {
     await bot.answerCallbackQuery(query.id, { text: 'Only the assigned person can attach this.', show_alert: true }).catch(() => {});
     return true;
   }
+  // APC-1 Phase C — re-arming a gate replaces the per-user session too:
+  // never clobber another transfer's live picks/gate without the choice.
+  const busy = busyWithAnotherTransfer(userId, requestId);
+  if (busy) {
+    await bot.sendMessage(query.message.chat.id,
+      `✋ Finish ${shortTransferRef(busy.requestId)} first (or ↩ Not now it), then tap Attach again.`);
+    return true;
+  }
   const base = `🚚 *${shortTransferRef(requestId)}* — ${stateLabel(row)}`;
   await promptForDoc(bot, query.message.chat.id, userId, requestId, kind, base, query.message.message_id);
   return true;
@@ -1614,7 +1687,10 @@ async function gateNotNow(bot, query, requestId) {
   await bot.answerCallbackQuery(query.id).catch(() => {});
   const userId = String(query.from.id);
   const session = sessionStore.get(userId);
-  if (session && session.type === SESSION_TYPE && session.step === 'await_doc' && session.gate) {
+  // APC-1 Phase C — only stand down THIS transfer's gate: a stale "Not now"
+  // must never kill the gate another transfer is currently waiting on.
+  if (session && session.type === SESSION_TYPE && session.step === 'await_doc' && session.gate
+      && String(session.requestId) === String(requestId)) {
     await disposeAux(bot, query.message.chat.id, userId); // SJ-4 — sweep file-type warnings
     sessionStore.clear(userId);
   }
@@ -2205,6 +2281,10 @@ async function handleCallback(bot, query) {
   if (mAtt) return rearmDoc(bot, query, mAtt[1], mAtt[2]);
   const mNn = data.match(/^trf:nn:(.+)$/);
   if (mNn) return gateNotNow(bot, query, mNn[1]);
+  // APC-1 Phase C — explicit continue/drop when a second Accept/Received
+  // collides with an in-flight pick or photo gate.
+  const mSw = data.match(/^trf:sw:(keep|go):(.+)$/);
+  if (mSw) return handleBusySwitch(bot, query, mSw[1], mSw[2]);
   // Bale-picker "Not now": park the pick, restore the dispatcher's card.
   const mPickNn = data.match(/^trf:bl:nn:(.+)$/);
   if (mPickNn) {
@@ -2223,6 +2303,23 @@ async function handleCallback(bot, query) {
   try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
   if (!session || session.type !== SESSION_TYPE) {
     await bot.sendMessage(chatId, '🚚 This transfer session has expired — open 📋 My Tasks to pick it up again (or Transfer Stock for a new one).');
+    return true;
+  }
+  // APC-1 Phase C — the dispatcher/receiver chain holds PHYSICAL work
+  // (ticked bales, an armed photo gate), and its chips are session-relative
+  // indexes: a leftover picker card from an earlier or replaced dispatch
+  // must not tick bales into the current one. Only the session's own
+  // anchored card may drive these steps. Search-match messages (trf:bl:m:)
+  // are the one legitimate off-anchor surface — TRF-7 sends them
+  // separately. The requester-side create wizard stays un-guarded: its
+  // steps carry no cross-request risk of this class.
+  const DISPATCH_CHAIN_STEPS = ['dispatch_pick', 'dispatch_search', 'dispatch_confirm', 'dispatch_date', 'await_doc'];
+  if (DISPATCH_CHAIN_STEPS.includes(session.step)
+      && data !== 'trf:noop' && !data.startsWith('trf:bl:m:')
+      && session.flowMessageId && query.message && query.message.message_id
+      && query.message.message_id !== session.flowMessageId) {
+    await bot.sendMessage(chatId,
+      `🚚 That card belongs to an earlier step — it was replaced. Use the current ${shortTransferRef(session.requestId || '')} card.`);
     return true;
   }
 
