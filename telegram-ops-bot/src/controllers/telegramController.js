@@ -6982,6 +6982,7 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['sdg:'], handle: (bot, cq) => require('../flows/supplyDetailsDesignFlow').handleCallback(bot, cq) },
   { prefixes: ['sds:'], handle: (bot, cq) => require('../flows/stockByShadeFlow').handleCallback(bot, cq) },
   { prefixes: ['snt:'], handle: (bot, cq) => require('../flows/dataHealthFlow').handleCallback(bot, cq) },
+  { prefixes: ['apz:'], handle: (bot, cq) => require('../events/approvalEvents').handleMarkDone(bot, cq) },
   { prefixes: ['abx:'], handle: (bot, cq) => require('../flows/approvalsInboxFlow').handleCallback(bot, cq) },
   // DCAT-1 — design → product-category mapping (dual-admin approval).
   { prefixes: ['dcat:'], handle: (bot, cq) => require('../flows/designCategoryFlow').handleCallback(bot, cq) },

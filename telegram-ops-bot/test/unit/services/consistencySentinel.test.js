@@ -269,3 +269,37 @@ test('C2 date window: an approved return years away no longer whitelists a recyc
   });
   assert.deepEqual(near, [], 'a day apart is the same return');
 });
+
+/* ── C8 (APF-1): the executed-but-unresolved zombie detector ── */
+
+test('C8 flags an old pending sale whose stock is gone; fresh or live ones are clean', () => {
+  const { checkPendingSalesAlreadySold } = sentinel._internals;
+  const now = Date.now();
+  const oldRow = (extra = {}) => ({
+    requestId: 'R-9CEB', status: 'pending',
+    createdAt: new Date(now - 3 * 86400000).toISOString(),
+    actionJSON: { action: 'sale_bundle', items: [{ packageNo: '516' }] }, ...extra,
+  });
+  // Bale 516 has no available rows anywhere → zombie.
+  const drift = checkPendingSalesAlreadySold({ inventory: [], pending: [oldRow()], now });
+  assert.equal(drift.length, 1);
+  assert.match(drift[0], /R-9CEB is pending for 3d but every bale in it is already sold/);
+  // Same request with the bale still available → clean (a normal pending sale).
+  const live = checkPendingSalesAlreadySold({
+    inventory: [invRow({ packageNo: '516', status: 'available', soldTo: '', soldDate: '' })],
+    pending: [oldRow()], now,
+  });
+  assert.deepEqual(live, []);
+  // Under an hour old → mid-enrichment grace, never flagged.
+  const fresh = checkPendingSalesAlreadySold({
+    inventory: [], now,
+    pending: [oldRow({ createdAt: new Date(now - 10 * 60000).toISOString() })],
+  });
+  assert.deepEqual(fresh, []);
+  // Non-sale pending rows are out of scope.
+  const other = checkPendingSalesAlreadySold({
+    inventory: [], now,
+    pending: [oldRow({ actionJSON: { action: 'transfer_stock', stage: 'requested' } })],
+  });
+  assert.deepEqual(other, []);
+});

@@ -1088,6 +1088,18 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
         failedItems.push({ packageNo: si.packageNo, thanNo: si.thanNo, type: si.type || 'unknown', reason: `unknown item type "${si.type}"` });
       }
     }
+    // APF-1 (owner report, 08-Aug-2026): when NOTHING flipped, this must
+    // not fall through to the money footer — it used to post the payment,
+    // issue a fresh invoice and append a qty-0 Transactions row for a sale
+    // that sold nothing (reachable via a duplicate request, or when
+    // re-approving an executed-but-unresolved row). Refuse instead; the
+    // admin gets the safe Mark-as-done / Reject choice upstream.
+    if ((aj.items || []).length && failedItems.length === (aj.items || []).length) {
+      return {
+        ok: false, allItemsFailed: true,
+        message: 'no item could be applied — every bale/than in this request is already sold or not found.',
+      };
+    }
     bundleReport = {
       requestedItems: (aj.items || []).length,
       appliedPkgCount: appliedPkgs.size,

@@ -168,14 +168,29 @@ async function buildSaleCard(p) {
     // live rows, or a number living under two designs — §2: never guess)
     // renders bare rather than as "undefined".
     const head = `  Bale ${it.packageNo}${it.type === 'than' && it.thanNo ? ` Than ${it.thanNo}` : ''}`;
-    text += it.design
-      ? `${head}: ${it.design}${it.shade ? ` ${it.shade}` : ''}${qty.length ? `, ${qty.join(', ')}` : ''}${it.warehouse ? ` (${it.warehouse})` : ''}\n`
-      : `${head}\n`;
+    // APF-1 — an item with NO live rows used to render as a naked bale
+    // number, quietly producing "Total: 1 Bale (0 thans), 0 yards" for a
+    // bale that is ALREADY SOLD. Say so — that request may have executed
+    // already (R-9CEB), or duplicate one that did. Ambiguous numbers and
+    // Inventory-outage items stay bare: no fact, no claim (§2).
+    if (it.design) {
+      text += `${head}: ${it.design}${it.shade ? ` ${it.shade}` : ''}${qty.length ? `, ${qty.join(', ')}` : ''}${it.warehouse ? ` (${it.warehouse})` : ''}\n`;
+    } else if (it.noStock) {
+      text += `${head}: ⚠️ no available stock (sold already, or unknown number)\n`;
+    } else {
+      text += `${head}\n`;
+    }
     totalThans += Number(it.thans) || 0;
     totalYards += Number(it.yards) || 0;
   }
   const n = items.length;
   text += `\nTotal: ${n} Bale${n === 1 ? '' : 's'} (${totalThans} thans), ${fmtQty(totalYards)} yards`;
+  const noStock = items.filter((it) => it.noStock).length;
+  if (noStock && noStock === items.length) {
+    text += '\n🚨 NOTHING in this request is available — it may already be executed, or duplicate another sale. Approving will NOT sell or charge anything.';
+  } else if (noStock) {
+    text += `\n⚠️ ${noStock} of ${items.length} item(s) have no available stock — check before approving.`;
+  }
   if (p.docAttached) text += `\n📎 ${p.docLabel || 'Sales bill'} attached`;
   return text;
 }
@@ -300,7 +315,13 @@ async function enrichBundleItems(rawItems) {
   return rawItems.map((it) => {
     const rows = byPkg.get(String(it.packageNo)) || [];
     const designs = [...new Set(rows.map((r) => r.design))];
-    if (designs.length !== 1) return { ...it }; // unknown or ambiguous — never guess
+    // APF-1 — the three bare-item causes are DIFFERENT facts and the card
+    // must not conflate them: no live rows at all = sold/unknown (warn
+    // loudly — the R-9CEB executed-but-pending case); two designs under
+    // one number = ambiguous (stay bare, §2: never guess); an Inventory
+    // outage throws before this map and claims nothing.
+    if (!rows.length) return { ...it, noStock: true };
+    if (designs.length !== 1) return { ...it }; // ambiguous — never guess
     if (it.type === 'than') {
       const row = rows.find((r) => String(r.thanNo) === String(it.thanNo)) || rows[0];
       return {

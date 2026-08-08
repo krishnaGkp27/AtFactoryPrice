@@ -505,6 +505,26 @@ async function renderItem(bot, chatId, userId, idx) {
   session.itemIdx = idx;
   sessionStore.set(userId, session);
 
+  // APF-1 — the list is a snapshot; the row may have resolved since (the
+  // other admin, an older card, a race). Re-read LIVE before offering
+  // Approve/Reject: a resolved request renders as a record, not a decision.
+  try {
+    const live = await approvalQueueRepository.getByRequestId(item.requestId);
+    if (live && String(live.status || '').toLowerCase() !== 'pending') {
+      const st = String(live.status).toLowerCase();
+      const when = live.resolvedAt ? ` · ${String(live.resolvedAt).slice(0, 10)}` : '';
+      let card = '';
+      try { card = await approvalCards.buildCardFromActionJSON(live.actionJSON) || ''; } catch (_) { /* bare */ }
+      await render(bot, chatId, userId,
+        `${card}\n\n${st === 'approved' ? '✅' : '❌'} _Already ${st}${when} — no action needed._`,
+        [backRow('⬅ Back to list'), closeRow()]);
+      return;
+    }
+  } catch (e) {
+    logger.warn(`approvalsInbox: live status re-check failed for ${item.requestId}: ${e.message}`);
+    // Fall through to the snapshot card — the executor still refuses.
+  }
+
   let card = '';
   try {
     card = await approvalCards.buildCardFromActionJSON(item.actionJSON) || '';

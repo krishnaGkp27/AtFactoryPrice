@@ -872,6 +872,23 @@ async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, it
           await invoiceService.deliver(bot, result.invoice, [chatId, requestingUser]);
         } catch (e) { logger.warn(`INV-1a delivery failed for ${requestId}: ${e.message}`); }
       }
+    } else if (result.allItemsFailed) {
+      // APF-1 — every bale in the sale is already sold/gone. This is either
+      // an executed-but-unresolved row (a crash landed between the stock
+      // flip and the status flip) or a duplicate of a sale that ran under
+      // another request. NO money side effects ran (the executor aborts
+      // before Transactions/ledger/payment now), and the bot must not
+      // guess which case it is — the admin decides with two safe buttons.
+      await bot.sendMessage(chatId,
+        `⚠️ Request ${requestId}: ${result.message || 'no items could be applied.'}\n\n`
+        + 'If this sale already went through (goods sold, papers done), Mark as done '
+        + 'closes the request WITHOUT selling or charging anything again. If it '
+        + 'duplicates another request, Reject it.', {
+          reply_markup: { inline_keyboard: [
+            [{ text: '✅ Mark as done (no re-run)', callback_data: `apz:done:${requestId}` }],
+            [{ text: '❌ Reject', callback_data: `reject:${requestId}` }],
+          ] },
+        });
     } else {
       await bot.sendMessage(chatId, `⚠️ Approved but execution failed: ${result.message || 'Unknown error'}`);
       await notifyEmployee(bot, requestingUser, requestId, `⚠️ Your request (${requestId}) was approved but could not be completed. Admin has been notified. Please follow up.`);
@@ -1308,6 +1325,29 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
   }
 
   const { item, requestingUser } = await resolveRequest(requestId);
+
+  // APF-1 (owner report, 08-Aug-2026): a request that is no longer pending
+  // is DEAD on every card, everywhere. Before this guard a stale tap passed
+  // every gate — a resolved SALE even walked the admin through the whole
+  // customer/rate/payment wizard before dead-ending, a stale DUAL-1 tap
+  // recorded a phantom signoff, and the eventual refusal read like an error
+  // ("Approved but execution failed") instead of the truth. Old DM cards
+  // and re-sent reminder cards keep live buttons forever, so this is the
+  // one choke point that makes them all harmless.
+  if (item && String(item.status || '').toLowerCase() !== 'pending') {
+    const st = String(item.status || 'resolved').toLowerCase();
+    try { await bot.answerCallbackQuery(callbackQuery.id, { text: `Already ${st} — nothing to do.` }); } catch (_) { /* ignore */ }
+    try {
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+        { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    } catch (_) { /* stale card */ }
+    try {
+      const when = item.resolvedAt ? ` on ${String(item.resolvedAt).slice(0, 10)}` : '';
+      await bot.sendMessage(callbackQuery.message.chat.id,
+        `ℹ️ Request ${requestId} was already ${st}${when} — no change made.`);
+    } catch (_) { /* ignore */ }
+    return;
+  }
 
   // SEC-P1 (H1): an admin may not approve their OWN queued request when a
   // second admin exists to review it. Excluding the requester from the
@@ -2081,9 +2121,51 @@ async function handleSupplyDecline(bot, callbackQuery) {
     { parse_mode: 'Markdown' });
 }
 
+/**
+ * APF-1 — `apz:done:<requestId>`: close an executed-but-unresolved sale
+ * WITHOUT re-running anything. Offered only on the all-items-failed refusal
+ * card (every bale already sold). Flips the queue row to approved, audits
+ * the no-execution closure, and touches neither stock nor money — the safe
+ * exit for the "sold goods, forever-pending row" zombie a crash between
+ * the stock flip and the status flip leaves behind.
+ */
+async function handleMarkDone(bot, callbackQuery) {
+  const data = callbackQuery.data || '';
+  if (!data.startsWith('apz:done:')) return false;
+  const requestId = data.slice('apz:done:'.length);
+  const adminId = String(callbackQuery.from.id);
+  if (!config.access.adminIds.includes(adminId)) {
+    try { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admins only.' }); } catch (_) { /* ignore */ }
+    return true;
+  }
+  const { item } = await resolveRequest(requestId);
+  if (!item || String(item.status || '').toLowerCase() !== 'pending') {
+    try { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Already resolved — nothing to do.' }); } catch (_) { /* ignore */ }
+    try {
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+        { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    } catch (_) { /* stale card */ }
+    return true;
+  }
+  await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString());
+  try {
+    const auditLogRepository = require('../repositories/auditLogRepository');
+    await auditLogRepository.append('approval_marked_done_no_exec',
+      { requestId, note: 'closed by admin — items already sold, nothing re-executed' }, adminId);
+  } catch (_) { /* the closure itself matters more */ }
+  try { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Closed — nothing was re-executed.' }); } catch (_) { /* ignore */ }
+  try {
+    await bot.editMessageText(
+      `✅ Request ${requestId} marked as done by admin — closed WITHOUT re-executing (stock and money untouched).`,
+      { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+  } catch (_) { /* stale card */ }
+  return true;
+}
+
 module.exports = {
   notifyAdminsApprovalRequest,
   handleApprovalCallback,
+  handleMarkDone,
   handleEnrichmentMessage,
   handleEnrichmentCallback,
   handleSupplyAssign,

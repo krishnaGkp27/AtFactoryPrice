@@ -269,6 +269,49 @@ async function checkDuplicateLiveNumbers({ inventory }) {
     `Number ${o.packageNo} @ ${o.warehouse} is TWO live bales: ${o.variants.map((v) => `${v.design} (recd ${v.dateReceived || '?'})`).join(' vs ')}`);
 }
 
+/**
+ * C8 (APF-1, owner report 08-Aug-2026) — pending SALE requests whose stock
+ * is already gone: the executed-but-unresolved zombie. A crash between the
+ * stock flip and the status flip (the status write is the pipeline's last
+ * step) leaves goods sold while the queue row stays pending — showing live
+ * Approve buttons for days, like R-9CEB. An hour's grace keeps rows that
+ * are mid-enrichment (approved, wizard in progress) out of the findings.
+ */
+function checkPendingSalesAlreadySold({ inventory, pending, now }) {
+  const HOUR = 60 * 60 * 1000;
+  const availPkgWh = new Set();
+  const availPkg = new Set();
+  for (const r of inventory) {
+    if (r.status !== 'available') continue;
+    const p = upper(r.packageNo);
+    if (!p) continue;
+    availPkg.add(p);
+    availPkgWh.add(`${p}|${upper(r.warehouse)}`);
+  }
+  const findings = [];
+  for (const q of pending) {
+    const aj = q.actionJSON || {};
+    if (!['sale_bundle', 'sell_package', 'sell_than'].includes(aj.action)) continue;
+    const age = now - Date.parse(String(q.createdAt || ''));
+    if (!isFinite(age) || age < HOUR) continue;
+    const items = aj.action === 'sale_bundle'
+      ? (Array.isArray(aj.items) ? aj.items : [])
+      : [{ packageNo: aj.packageNo, warehouse: aj.warehouse }];
+    if (!items.length) continue;
+    const gone = items.every((si) => {
+      const p = upper(si.packageNo);
+      if (!p) return false;
+      const wh = upper(si.warehouse || aj.warehouse);
+      return wh ? !availPkgWh.has(`${p}|${wh}`) : !availPkg.has(p);
+    });
+    if (gone) {
+      const days = Math.floor(age / 86400000);
+      findings.push(`Request ${q.requestId} is pending${days ? ` for ${days}d` : ''} but every bale in it is already sold/gone — executed-but-unresolved or a duplicate. Open it and use Mark as done or Reject; approving re-runs nothing.`);
+    }
+  }
+  return findings;
+}
+
 /** C7 — requestId uniqueness across every approval family (one read). */
 function checkRequestIdUniqueness({ queueRows }) {
   const seen = new Map();
@@ -318,6 +361,7 @@ async function runAll() {
       { id: 'C5', title: 'Every buyer is a real customer', findings: await checkSoldToResolves(ctx) },
       { id: 'C6', title: 'One live bale per printed number per store', findings: await checkDuplicateLiveNumbers(ctx) },
       { id: 'C7', title: 'Request ids are unique', findings: checkRequestIdUniqueness(ctx) },
+      { id: 'C8', title: 'No pending sale sits on sold stock', findings: checkPendingSalesAlreadySold(ctx) },
     ];
     return { checks, totalFindings: checks.reduce((n, c) => n + c.findings.length, 0) };
   })();
@@ -415,7 +459,7 @@ module.exports = {
   _internals: {
     checkSoldHaveSaleMovements, checkReturnsAreApproved, checkInTransit,
     checkCurrentFlags, checkSoldToResolves, checkDuplicateLiveNumbers,
-    checkRequestIdUniqueness, baleKey, isIsoDay, isRecent,
+    checkRequestIdUniqueness, checkPendingSalesAlreadySold, baleKey, isIsoDay, isRecent,
     BMV_CUTOFF, DM_LINES_PER_CHECK, GRACE_MS,
   },
 };
