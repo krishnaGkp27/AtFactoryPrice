@@ -153,6 +153,57 @@ test('a chip tapped after a redeploy resumes from the persisted answers', async 
   assert.deepEqual(s.ratePerUnitByDesign, { 77016: 1400 }, 'the persisted rate survived the restart');
 });
 
+/* ── APC-1 Phase B: the reject/decline reason channel never drops a prompt ── */
+
+test('two reason prompts queue: the reply answers the NEWEST, then the older is re-asked and answered', async () => {
+  const { pendingReason, armReasonPrompt } = approvalEvents._internals;
+  pendingReason.clear();
+  const bot = createFakeBot();
+  const rows = {
+    'R-S1': { requestId: 'R-S1', user: '42', status: 'pending', actionJSON: { action: 'supply_request', stage: 'dispatch_review' } },
+    'R-S2': { requestId: 'R-S2', user: '42', status: 'pending', actionJSON: { action: 'supply_request', stage: 'dispatch_review' } },
+  };
+  approvalQueueRepository.getByRequestId = async (id) => rows[String(id)] || null;
+  const finalized = [];
+  approvalQueueRepository.updateActionJSON = async (id, patch) => { finalized.push({ id, patch }); return true; };
+  approvalQueueRepository.updateStatus = async (id, status) => { finalized.push({ id, status }); return true; };
+
+  // ❌ on card S1, then ❌ on card S2 before typing anything — the old code
+  // overwrote the slot and stranded S1 forever.
+  armReasonPrompt('42', { kind: 'manager_reject', requestId: 'R-S1', chatId: '42' });
+  const others = armReasonPrompt('42', { kind: 'manager_reject', requestId: 'R-S2', chatId: '42' });
+  assert.equal(others, 1, 'the second arm reports the still-owed first prompt');
+
+  await approvalEvents.handleReasonReply(bot, { from: { id: '42' }, text: 'wrong quantity' });
+  assert.ok(finalized.some((f) => f.id === 'R-S2' && f.status === 'rejected'),
+    'the reply finalizes the request whose prompt the user just saw (newest)');
+  assert.ok(!finalized.some((f) => f.id === 'R-S1' && f.status), 'S1 is NOT touched by S2\'s reason');
+  assert.match(bot.allText(), /Reject supply request.*R-S1/s, 'and S1\'s reason is immediately re-asked');
+
+  await approvalEvents.handleReasonReply(bot, { from: { id: '42' }, text: 'stock damaged' });
+  assert.ok(finalized.some((f) => f.id === 'R-S1' && f.status === 'rejected'), 'S1 gets its own reason');
+  assert.equal(pendingReason.has('42'), false, 'queue drained');
+  const reasons = finalized.filter((f) => f.patch && f.patch.dispatchRejection);
+  assert.equal(reasons.find((f) => f.id === 'R-S2').patch.dispatchRejection.reason, 'wrong quantity');
+  assert.equal(reasons.find((f) => f.id === 'R-S1').patch.dispatchRejection.reason, 'stock damaged');
+});
+
+test('cancel drops only the newest prompt; the older one is still asked', async () => {
+  const { pendingReason, armReasonPrompt } = approvalEvents._internals;
+  pendingReason.clear();
+  const bot = createFakeBot();
+  approvalQueueRepository.getByRequestId = async () => null;
+  armReasonPrompt('42', { kind: 'manager_reject', requestId: 'R-S1', chatId: '42' });
+  armReasonPrompt('42', { kind: 'dispatch_decline', requestId: 'R-S2', chatId: '42' });
+
+  await approvalEvents.handleReasonReply(bot, { from: { id: '42' }, text: 'cancel' });
+  assert.match(bot.allText(), /Cancelled/, 'S2\'s decline is aborted');
+  assert.equal((pendingReason.get('42') || []).length, 1, 'S1\'s prompt survives the cancel');
+  assert.equal(pendingReason.get('42')[0].requestId, 'R-S1');
+  assert.match(bot.allText(), /Reject supply request.*R-S1/s, 'and is re-asked');
+  pendingReason.clear();
+});
+
 test('legacy chips: honoured with one wizard open, refused (not guessed) with two', async () => {
   reset();
   const bot = createFakeBot();

@@ -92,9 +92,41 @@ function activeWizard(adminId, opts = {}) {
 // Tracks dispatch users currently typing a free-text rejection or
 // decline reason. Keyed by user_id so the controller's text handler
 // can route the next message back to the right Stage 1 / Stage 3
-// callback. Values: { kind: 'manager_reject'|'dispatch_decline',
-// requestId, chatId }.
+// callback.
+//
+// APC-1 Phase B — the value is a QUEUE (newest first), not a single slot:
+// tapping ❌ on a second card before typing the first reason used to
+// OVERWRITE the slot, stranding the first request with its buttons
+// already wiped. Now the newest prompt is answered first and the bot
+// re-prompts for each remaining one until the queue is empty — no
+// decision is ever silently dropped. Entries:
+// { kind: 'manager_reject'|'dispatch_decline', requestId, chatId, at }.
 const pendingReason = new Map();
+
+const REASON_KIND_LABEL = {
+  manager_reject: 'Reject supply request',
+  dispatch_decline: 'Decline supply request',
+};
+
+/** Queue a reason prompt (same request re-armed replaces its old entry).
+ *  Returns how many OTHER prompts this user still owes. */
+function armReasonPrompt(userId, entry) {
+  const q = (pendingReason.get(String(userId)) || []).filter((e) => e.requestId !== entry.requestId);
+  pendingReason.set(String(userId), [{ ...entry, at: Date.now() }, ...q]);
+  return q.length;
+}
+
+/** Ask (or re-ask) for the reason at the head of the user's queue. */
+async function promptNextReason(bot, userId) {
+  const q = pendingReason.get(String(userId)) || [];
+  if (!q.length) return;
+  const head = q[0];
+  try {
+    await bot.sendMessage(head.chatId,
+      `❌ *${REASON_KIND_LABEL[head.kind] || 'Reason needed'}* \`${head.requestId}\`\n\nReply with a brief reason (or type *cancel*).`,
+      { parse_mode: 'Markdown' });
+  } catch (_) { /* best-effort */ }
+}
 
 /**
  * Send a notification to the employee who raised the request.
@@ -1345,9 +1377,10 @@ async function handleDispatchManagerCallback(bot, callbackQuery) {
     // approvalEvents) which finalizes the rejection.
     await bot.answerCallbackQuery(callbackQuery.id);
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
-    pendingReason.set(userId, { kind: 'manager_reject', requestId, chatId });
+    const othersQueued = armReasonPrompt(userId, { kind: 'manager_reject', requestId, chatId });
     await bot.sendMessage(chatId,
-      `❌ *Reject supply request* \`${requestId}\`\n\nReply with a brief reason (or type *cancel* to abort).`,
+      `❌ *Reject supply request* \`${requestId}\`\n\nReply with a brief reason (or type *cancel* to abort).`
+      + (othersQueued ? `\n\n_(${othersQueued} other reason${othersQueued === 1 ? '' : 's'} still pending — asked next.)_` : ''),
       { parse_mode: 'Markdown' });
     return;
   }
@@ -1376,8 +1409,17 @@ async function getRequesterDisplayName(userId) {
  */
 async function handleReasonReply(bot, msg) {
   const userId = String(msg.from.id);
-  const state = pendingReason.get(userId);
+  // APC-1 Phase B — answer the NEWEST prompt (the card the user just
+  // tapped), then re-prompt for each remaining one. Nothing is dropped.
+  const queue = pendingReason.get(userId);
+  const state = Array.isArray(queue) ? queue[0] : queue; // array since APC-1
   if (!state) return false;
+  const dropHead = () => {
+    const q = (pendingReason.get(userId) || []).slice(Array.isArray(queue) ? 1 : 0);
+    if (Array.isArray(queue) && q.length) pendingReason.set(userId, q);
+    else pendingReason.delete(userId);
+    return q.length;
+  };
 
   const text = (msg.text || '').trim();
   if (!text) {
@@ -1385,17 +1427,20 @@ async function handleReasonReply(bot, msg) {
     return true;
   }
   if (text.toLowerCase() === 'cancel') {
-    pendingReason.delete(userId);
+    const remaining = dropHead();
     await bot.sendMessage(state.chatId, 'Cancelled. The request stays as it was.');
+    if (remaining) await promptNextReason(bot, userId);
     return true;
   }
   const reason = text.slice(0, 200);
-  pendingReason.delete(userId);
+  const remaining = dropHead();
+  // Every exit of the finalize below re-prompts for the next owed reason.
+  const done = async () => { if (remaining) await promptNextReason(bot, userId); return true; };
 
   const row = await approvalQueueRepository.getByRequestId(state.requestId);
   if (!row) {
     await bot.sendMessage(state.chatId, `⚠️ Request \`${state.requestId}\` no longer exists.`, { parse_mode: 'Markdown' });
-    return true;
+    return done();
   }
 
   const acting = await usersRepository.findByUserId(userId);
@@ -1417,7 +1462,7 @@ async function handleReasonReply(bot, msg) {
 
     await notifyEmployee(bot, row.user, state.requestId,
       `❌ *Dispatch rejected* your supply request \`${state.requestId}\`.\n\nReason: _${reason}_\n\nReason given by: ${actorName}\n\nYou can edit and resubmit if you want to retry.`);
-    return true;
+    return done();
   }
 
   if (state.kind === 'dispatch_decline') {
@@ -1451,10 +1496,10 @@ async function handleReasonReply(bot, msg) {
         logger.warn(`re-show picker failed for admin ${adminId}: ${e.message}`);
       }
     }
-    return true;
+    return done();
   }
 
-  return true;
+  return done();
 }
 
 async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSummary, riskReason, excludeUserId, opts = {}) {
@@ -2341,9 +2386,10 @@ async function handleSupplyDecline(bot, callbackQuery) {
   await bot.answerCallbackQuery(callbackQuery.id);
   await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
 
-  pendingReason.set(userId, { kind: 'dispatch_decline', requestId, chatId });
+  const othersQueued = armReasonPrompt(userId, { kind: 'dispatch_decline', requestId, chatId });
   await bot.sendMessage(chatId,
-    `❌ *Decline supply request* \`${requestId}\`\n\nReply with a brief reason (or type *cancel* to keep the assignment).`,
+    `❌ *Decline supply request* \`${requestId}\`\n\nReply with a brief reason (or type *cancel* to keep the assignment).`
+    + (othersQueued ? `\n\n_(${othersQueued} other reason${othersQueued === 1 ? '' : 's'} still pending — asked next.)_` : ''),
     { parse_mode: 'Markdown' });
 }
 
@@ -2408,5 +2454,6 @@ module.exports = {
     runApprovedSaleWithEnrichment, updateRequesterCard, sendCustomerStep,
     // APC-1 — per-request wizard mechanics, exposed for the concurrency tests.
     wizardsOf, activeWizard, wizKey, lastTouchedWizard, heldEnrichmentText,
+    pendingReason, armReasonPrompt,
   },
 };
