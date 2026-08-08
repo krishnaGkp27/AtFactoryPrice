@@ -343,23 +343,42 @@ async function renderCard(bot, chatId, userId) {
     body += '_none_\n';
   }
 
-  /* 💰 Sold — oldest → newest, number — date — customer */
+  /* 💰 Sold — SDS-2 (owner-confirmed layout, 08-Aug-2026): grouped by
+   * date + customer so ten same-day sales to one buyer read as ONE
+   * delivery event with its numbers together, not ten identical lines.
+   *   26-Jul-26 — OKSON (10B)
+   *   484, 499, 530, …
+   * Oldest date first (AUD-ORD1); within a date, groups appear in
+   * bale-number order. Part-sold bales keep their than tag inside the
+   * list (9830 (3t)); multi-container cards keep the container tag on
+   * each number; a row missing its date/customer groups under — / —,
+   * visible, never hidden. */
   const soldGroups = groupBy(sold, (r) => `${baleKey(r)}|${normDay(r.soldDate)}|${upper(r.soldTo)}`);
   body += `\n💰 *Sold — ${balesWord(new Set(sold.map(baleKey)).size)}*\n`;
   if (soldGroups.size) {
-    const lines = [...soldGroups.values()]
+    const baleEntries = [...soldGroups.values()]
       .sort((a, b) => String(normDay(a[0].soldDate)).localeCompare(String(normDay(b[0].soldDate)))
-        || byBaleNo(a[0].packageNo, b[0].packageNo))
-      .map((rows) => {
-        const r = rows[0];
-        const l = qty(rows);
-        const part = l === '1B' ? '' : ` (${l})`;
-        const day = normDay(r.soldDate);
-        return `${String(r.packageNo).trim()}${part} — ${day ? fmtDate.short(day) : '—'} — ${String(r.soldTo).trim() || '—'}${ctag(r)}`;
-      });
-    const shown = lines.slice(0, SOLD_LINES_CAP);
-    body += shown.join('\n');
-    if (lines.length > shown.length) body += `\n_…and ${lines.length - shown.length} more_`;
+        || byBaleNo(a[0].packageNo, b[0].packageNo));
+    const events = new Map(); // day|CUSTOMER → { day, customer, tokens } in day+number order
+    let counted = 0;
+    let dropped = 0;
+    for (const rows of baleEntries) {
+      const r = rows[0];
+      if (counted >= SOLD_LINES_CAP) { dropped += 1; continue; }
+      counted += 1;
+      const day = normDay(r.soldDate);
+      const customer = String(r.soldTo).trim() || '—';
+      const k = `${day}|${upper(customer)}`;
+      if (!events.has(k)) events.set(k, { day, customer, tokens: [] });
+      const l = qty(rows);
+      const part = l === '1B' ? '' : ` (${l})`;
+      const tag = multiContainer ? ` ·${String(r.arrivalBatch).trim() || '(unlabelled)'}` : '';
+      events.get(k).tokens.push(`${String(r.packageNo).trim()}${part}${tag}`);
+    }
+    body += [...events.values()]
+      .map((e) => `${e.day ? fmtDate.short(e.day) : '—'} — ${e.customer} (${e.tokens.length}B)\n${e.tokens.join(', ')}`)
+      .join('\n\n');
+    if (dropped) body += `\n_…and ${dropped} more bale${dropped === 1 ? '' : 's'}_`;
     body += '\n';
   } else {
     body += '_none_\n';

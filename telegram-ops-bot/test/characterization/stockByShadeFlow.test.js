@@ -112,14 +112,15 @@ test('the card shows the confirmed layout: three buckets, both sides of a part-s
   assert.match(text, /9824/);
   assert.match(text, /9830 \(2t left\)/, `part-sold bale must show its remainder, got:\n${text}`);
 
-  // 💰 Sold — oldest first, number — DD-MMM-YY — customer; partial tagged.
+  // 💰 Sold — SDS-2 grouped layout: date — customer (nB) headers with the
+  // numbers beneath, oldest first; partial sales tagged inside the list.
   assert.match(text, /Sold — 3 Bales/);
-  const sold9825 = text.indexOf('9825 — 26-Jul-26 — OKSON');
-  const sold9827 = text.indexOf('9827 — 27-Jul-26 — Ketu madam');
-  const sold9830 = text.indexOf('9830 (3t) — 01-Aug-26 — OKSON');
-  assert.ok(sold9825 >= 0, `whole-bale sold line, got:\n${text}`);
-  assert.ok(sold9827 >= 0, 'second customer line');
-  assert.ok(sold9830 >= 0, 'part-sold line carries its than count');
+  const sold9825 = text.indexOf('26-Jul-26 — OKSON (1B)\n9825');
+  const sold9827 = text.indexOf('27-Jul-26 — Ketu madam (1B)\n9827');
+  const sold9830 = text.indexOf('01-Aug-26 — OKSON (1B)\n9830 (3t)');
+  assert.ok(sold9825 >= 0, `whole-bale sold group, got:\n${text}`);
+  assert.ok(sold9827 >= 0, 'second customer group');
+  assert.ok(sold9830 >= 0, 'part-sold bale carries its than count in the list');
   assert.ok(sold9825 < sold9827 && sold9827 < sold9830, 'oldest → newest');
 
   // 🚚 In transit — separate bucket with destination, even though the
@@ -128,6 +129,29 @@ test('the card shows the confirmed layout: three buckets, both sides of a part-s
   assert.match(text, /9836 → Kano office/);
 
   sessionStore.clear(ABDUL);
+});
+
+test('SDS-2: same day + same customer collapse into ONE group with the numbers together', async () => {
+  const origGetAll = inventoryRepository.getAll;
+  inventoryRepository.getAll = async () => [
+    ...['484', '499', '530'].map((pkg) => row(pkg, 1, 'sold', { soldTo: 'soldier madam', soldDate: '2026-07-10' })),
+    row('656', 1, 'sold', { soldTo: 'Christ', soldDate: '2026-07-10' }),
+    row('492', 1, 'sold', { soldTo: 'mama kafaya', soldDate: '2026-07-11' }),
+  ];
+  try {
+    const { text } = await drillToCard(ADMIN);
+    assert.match(text, /10-Jul-26 — soldier madam \(3B\)\n484, 499, 530/,
+      `one group, numbers comma-joined, got:\n${text}`);
+    assert.match(text, /10-Jul-26 — Christ \(1B\)\n656/);
+    assert.match(text, /11-Jul-26 — mama kafaya \(1B\)\n492/);
+    const idx = (s) => text.indexOf(s);
+    assert.ok(idx('soldier madam (3B)') < idx('Christ (1B)'), 'same-day groups run in bale-number order');
+    assert.ok(idx('Christ (1B)') < idx('mama kafaya'), 'dates stay oldest → newest');
+    assert.equal((text.match(/soldier madam/g) || []).length, 1, 'the duplicated customer name appears ONCE');
+  } finally {
+    inventoryRepository.getAll = origGetAll;
+    sessionStore.clear(ADMIN);
+  }
 });
 
 test('shade buttons carry available · sold counts; transit rides along', async () => {
