@@ -173,6 +173,25 @@ async function setWarehouseMode(warehouse, mode) {
   return next;
 }
 
+/**
+ * SDS-3 (owner's handwritten note, 08-Aug-2026) — design/shade chip figures
+ * for than-selling warehouses in the Stock-by-shade drill:
+ *
+ *   received B · remaining t / received t   →  "20B · 34t/120t"
+ *
+ * received = every row on the store's books (available + sold);
+ * remaining = available right now. The slash pair keeps TV-4's
+ * remaining/opening order; no spaces inside the pair so the chip stays
+ * short on a phone. Bale-selling warehouses never use this — they keep
+ * the plain "available · sold" chip.
+ * @param {{receivedBales:number|*, remainingThans:number|*, receivedThans:number|*}} counts
+ * @returns {string} e.g. "20B · 34t/120t"
+ */
+function formatReceivedRemaining({ receivedBales, remainingThans, receivedThans } = {}) {
+  const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  return `${n(receivedBales)}B · ${n(remainingThans)}t/${n(receivedThans)}t`;
+}
+
 /* ── TV-8: the one quantity grammar (owner, 02-Aug-2026) ─────────────
  *
  * "Only the customer taking the goods from an allowed store (Kano office,
@@ -274,6 +293,7 @@ module.exports = {
   formatBalesThans,
   formatRemainingOpening,
   formatRemainingOpeningBales,
+  formatReceivedRemaining,
   parseWarehouseCsv,
   computeWarehouseCsv,
   getThanVisibilityWarehouses,

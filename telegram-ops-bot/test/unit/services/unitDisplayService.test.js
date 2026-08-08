@@ -27,6 +27,16 @@ test('parseWarehouseCsv: non-string input yields an empty set', () => {
   assert.equal(unitDisplayService.parseWarehouseCsv(undefined).size, 0);
 });
 
+test('SDS-3 formatReceivedRemaining: received B · left t / received t', () => {
+  assert.equal(unitDisplayService.formatReceivedRemaining({ receivedBales: 20, remainingThans: 34, receivedThans: 120 }),
+    '20B · 34t/120t');
+  assert.equal(unitDisplayService.formatReceivedRemaining({ receivedBales: 1, remainingThans: 2, receivedThans: 2 }),
+    '1B · 2t/2t');
+  assert.equal(unitDisplayService.formatReceivedRemaining({}), '0B · 0t/0t');
+  assert.equal(unitDisplayService.formatReceivedRemaining({ receivedBales: 'x', remainingThans: null, receivedThans: NaN }),
+    '0B · 0t/0t');
+});
+
 test('isThanVisibilityWarehouse: case-insensitive match on configured names', async () => {
   stubSettings('Kano office');
   assert.equal(await unitDisplayService.isThanVisibilityWarehouse('Kano office'), true);

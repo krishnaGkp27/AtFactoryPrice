@@ -21,6 +21,15 @@
  * Supply Details view menu renders only for eligible users; the flow
  * re-checks on every tap because stale cards outlive menus.
  *
+ * SDS-3 (owner's handwritten note, 08-Aug-2026, layout confirmed): for
+ * than-selling warehouses (TV-1 Settings list) the design AND shade chips
+ * read `received B · left t / received t` — e.g. `9043-B (20B · 34t/120t)`
+ * — sorted most-thans-remaining first; the sold figure lives inside the
+ * card. received = rows on this store's books today (available + sold),
+ * same semantics as the Supply Details opening figure; a bale transferred
+ * onward counts at the receiving store. Yards stay off the chips (part of
+ * the confirmed layout). Bale-selling warehouses keep `available · sold`.
+ *
  * RULES BAKED IN:
  *  - in_transit is its own bucket, never merged (owner ruling, 04-Aug) —
  *    and it is design+shade wide, not warehouse-filtered, because an
@@ -170,6 +179,12 @@ async function renderDesigns(bot, chatId, userId) {
   try { all = await inventoryRepository.getAll(); } catch (e) {
     logger.warn(`stockByShade: inventory read failed: ${e.message}`);
   }
+  // SDS-3 (owner note, 08-Aug-2026) — than-selling stores (TV-1 Settings
+  // list) read "received B · left t / received t"; bale stores keep
+  // "available · sold". received = the rows on THIS store's books today
+  // (available + sold) — a bale transferred onward belongs to the other
+  // store's figures, same as the Supply Details opening count.
+  const thanMode = await unitDisplayService.isThanVisibilityWarehouse(session.warehouse);
   const wh = upper(session.warehouse);
   const byDesign = new Map();
   for (const r of all) {
@@ -181,8 +196,15 @@ async function renderDesigns(bot, chatId, userId) {
     byDesign.get(k)[r.status === 'available' ? 'avail' : 'sold'].push(r);
   }
   const designs = [...byDesign.values()]
-    .map((d) => ({ design: d.design, avail: baleCount(d.avail), sold: baleCount(d.sold) }))
-    .sort((a, b) => b.avail - a.avail || b.sold - a.sold || a.design.localeCompare(b.design));
+    .map((d) => ({
+      design: d.design, avail: baleCount(d.avail), sold: baleCount(d.sold),
+      received: baleCount([...d.avail, ...d.sold]),
+      remT: d.avail.length, recT: d.avail.length + d.sold.length,
+    }))
+    .sort(thanMode
+      // Most sellable first: what can still go out the door today.
+      ? (a, b) => b.remT - a.remT || b.recT - a.recT || a.design.localeCompare(b.design)
+      : (a, b) => b.avail - a.avail || b.sold - a.sold || a.design.localeCompare(b.design));
   session._designs = designs;
   session.step = 'pick_design';
   sessionStore.set(userId, session);
@@ -192,11 +214,14 @@ async function renderDesigns(bot, chatId, userId) {
       [backRow('⬅ Warehouses'), menuRow()]);
     return;
   }
+  const chipQty = (d) => (thanMode
+    ? unitDisplayService.formatReceivedRemaining({ receivedBales: d.received, remainingThans: d.remT, receivedThans: d.recT })
+    : `${d.avail}B · ${d.sold} sold`);
   const pages = Math.max(1, Math.ceil(designs.length / DESIGNS_PER_PAGE));
   const page = Math.min(Math.max(0, session.page || 0), pages - 1);
   const slice = designs.slice(page * DESIGNS_PER_PAGE, (page + 1) * DESIGNS_PER_PAGE);
   const rows = slice.map((d, j) => [{
-    text: `🧵 ${d.design} (${d.avail}B · ${d.sold} sold)`,
+    text: `🧵 ${d.design} (${chipQty(d)})`,
     callback_data: `sds:d:${page * DESIGNS_PER_PAGE + j}`,
   }]);
   if (pages > 1) {
@@ -209,7 +234,7 @@ async function renderDesigns(bot, chatId, userId) {
   rows.push(backRow('⬅ Warehouses'));
   rows.push(menuRow());
   await render(bot, chatId, userId,
-    `🎨 *Stock by shade — ${session.warehouse}*\nPick the design (available · sold bales):`, rows);
+    `🎨 *Stock by shade — ${session.warehouse}*\nPick the design (${thanMode ? 'received B · left t / received t' : 'available · sold bales'}):`, rows);
 }
 
 /* ─────────────────────── level 3: shade ─────────────────────── */
@@ -257,12 +282,19 @@ async function renderShades(bot, chatId, userId) {
     nameMap = buildShadeNameMap(await designAssetsRepo.findActive(session.design));
   } catch (_) { /* numbers-only labels */ }
 
+  // SDS-3 — same chip grammar as the design list: than-selling stores read
+  // received B · left t / received t; bale stores keep available · sold.
+  const thanMode = await unitDisplayService.isThanVisibilityWarehouse(session.warehouse);
   const shades = [...shadeMap.values()]
     .map((s) => ({
       shade: s.shade,
       avail: baleCount(s.avail), sold: baleCount(s.sold), transit: baleCount(s.transit),
+      received: baleCount([...s.avail, ...s.sold]),
+      remT: s.avail.length, recT: s.avail.length + s.sold.length,
     }))
-    .sort((a, b) => b.avail - a.avail || b.sold - a.sold || String(a.shade).localeCompare(String(b.shade)));
+    .sort(thanMode
+      ? (a, b) => b.remT - a.remT || b.recT - a.recT || String(a.shade).localeCompare(String(b.shade))
+      : (a, b) => b.avail - a.avail || b.sold - a.sold || String(a.shade).localeCompare(String(b.shade)));
   session._shades = shades.map((s) => s.shade);
   session.step = 'pick_shade';
   sessionStore.set(userId, session);
@@ -273,14 +305,16 @@ async function renderShades(bot, chatId, userId) {
     return;
   }
   const rows = shades.map((s, i) => {
-    const parts = [`${s.avail}B · ${s.sold} sold`];
+    const parts = [thanMode
+      ? unitDisplayService.formatReceivedRemaining({ receivedBales: s.received, remainingThans: s.remT, receivedThans: s.recT })
+      : `${s.avail}B · ${s.sold} sold`];
     if (s.transit) parts.push(`${s.transit}🚚`);
     return [{ text: buildShadeLabel(s.shade, nameMap, parts.join(' · ')), callback_data: `sds:s:${i}` }];
   });
   rows.push(backRow('⬅ Designs'));
   rows.push(menuRow());
   await render(bot, chatId, userId,
-    `📦 *${session.design} — ${session.warehouse}*\nPick the shade (available · sold):`, rows);
+    `📦 *${session.design} — ${session.warehouse}*\nPick the shade (${thanMode ? 'received B · left t / received t' : 'available · sold'}):`, rows);
 }
 
 /* ─────────────────────── level 4: the card ─────────────────────── */

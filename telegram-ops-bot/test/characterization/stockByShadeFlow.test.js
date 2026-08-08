@@ -167,6 +167,57 @@ test('shade buttons carry available · sold counts; transit rides along', async 
   sessionStore.clear(ADMIN);
 });
 
+/* ── SDS-3: than-selling stores read received B · left t / received t ── */
+
+test('SDS-3: than-store chips show received B · left t / received t, most-left first', async () => {
+  const unitDisplayService = require(path.join(SRC, 'services/unitDisplayService'));
+  const origGetAll = inventoryRepository.getAll;
+  const origIsThan = unitDisplayService.isThanVisibilityWarehouse;
+  // K1: bale 700 whole available (5t), 701 part-sold (2t left of 5),
+  // 702 whole sold → received 3B · 7t left / 15t received.
+  // K2: bale 710 whole available (2t) → 1B · 2t/2t. K1 sorts first (7t > 2t).
+  inventoryRepository.getAll = async () => [
+    ...[1, 2, 3, 4, 5].map((t) => row('700', t, 'available', { design: 'K1', warehouse: 'Kano office' })),
+    ...[1, 2].map((t) => row('701', t, 'available', { design: 'K1', warehouse: 'Kano office' })),
+    ...[3, 4, 5].map((t) => row('701', t, 'sold', { design: 'K1', warehouse: 'Kano office', soldTo: 'OKSON', soldDate: '2026-08-01' })),
+    ...[1, 2, 3, 4, 5].map((t) => row('702', t, 'sold', { design: 'K1', warehouse: 'Kano office', soldTo: 'OKSON', soldDate: '2026-08-02' })),
+    ...[1, 2].map((t) => row('710', t, 'available', { design: 'K2', warehouse: 'Kano office' })),
+  ];
+  unitDisplayService.isThanVisibilityWarehouse = async (wh) => String(wh).trim() === 'Kano office';
+  try {
+    const bot = createFakeBot();
+    await flow.start(bot, ADMIN, ADMIN, null);
+    await flow.handleCallback(bot, cb('sds:w:0', ADMIN)); // only Kano office holds stock
+    const designs = lastMsg(bot);
+    assert.match(designs.text, /received B · left t \/ received t/, 'the header explains the pair');
+    const chips = designs.kb.flat().filter((b) => (b.callback_data || '').startsWith('sds:d:')).map((b) => b.text);
+    assert.equal(chips[0], '🧵 K1 (3B · 7t/15t)', `got: ${chips}`);
+    assert.equal(chips[1], '🧵 K2 (1B · 2t/2t)', 'nothing-sold-yet reads 2t/2t');
+
+    await flow.handleCallback(bot, cb('sds:d:0', ADMIN)); // K1
+    const shades = lastMsg(bot);
+    const shadeChip = shades.kb.flat().find((b) => (b.callback_data || '').startsWith('sds:s:'));
+    assert.match(shadeChip.text, /3B · 7t\/15t/, `shade chip carries the same pair, got: ${shadeChip.text}`);
+  } finally {
+    inventoryRepository.getAll = origGetAll;
+    unitDisplayService.isThanVisibilityWarehouse = origIsThan;
+    sessionStore.clear(ADMIN);
+  }
+});
+
+test('SDS-3: bale-selling warehouses keep the available · sold chip untouched', async () => {
+  const bot = createFakeBot();
+  await flow.start(bot, ADMIN, ADMIN, null);
+  const li = sessionStore.get(ADMIN)._whs.indexOf('Lagos');
+  await flow.handleCallback(bot, cb(`sds:w:${li}`, ADMIN));
+  const { text, kb } = lastMsg(bot);
+  assert.match(text, /available · sold bales/);
+  const chip = kb.flat().find((b) => (b.callback_data || '').startsWith('sds:d:'));
+  // 3 available bales design-wide (9824, 9830 part-left, 9901 in shade 5).
+  assert.match(chip.text, /^🧵 9006 \(3B · 3 sold\)$/, `got: ${chip.text}`);
+  sessionStore.clear(ADMIN);
+});
+
 test('back chain: card → shades → designs → warehouses', async () => {
   const { bot } = await drillToCard(ADMIN);
   await flow.handleCallback(bot, cb('sds:back', ADMIN));
