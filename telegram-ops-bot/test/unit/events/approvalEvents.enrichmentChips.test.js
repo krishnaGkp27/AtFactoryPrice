@@ -20,7 +20,7 @@ const settingsRepository = require('../../../src/repositories/settingsRepository
 const inventoryService = require('../../../src/services/inventoryService');
 const approvalQueueRepository = require('../../../src/repositories/approvalQueueRepository');
 
-const { pendingEnrichment, getLastPaidRate } = approvalEvents._internals;
+const { pendingEnrichment, getLastPaidRate, wizKey } = approvalEvents._internals;
 
 transactionsRepository.getLast = async () => [
   { action: 'sell_package', customerName: 'Chima', design: '44200', pricePerYard: '1400' },
@@ -30,6 +30,7 @@ transactionsRepository.getLast = async () => [
 settingsRepository.getAll = async () => ({ BANK_LIST: 'ZENITH BANK,GTBank' });
 approvalQueueRepository.updateStatus = async () => true;
 approvalQueueRepository.getByRequestId = async () => null;
+approvalQueueRepository.updateActionJSON = async () => true; // APC-1 draft persistence
 
 let executed = null;
 inventoryService.executeApprovedAction = async (requestId, adminId, enrichment) => {
@@ -50,19 +51,22 @@ test('chip path: last-paid rate → bank → paid-in-full → executes with comp
     requestId: 'REQ9', user: '555',
     actionJSON: { action: 'sale_bundle', customer: 'Chima', yardsByDesign: { 44200: 150 }, items: [] },
   };
-  pendingEnrichment.set('777', {
-    requestId: 'REQ9', step: 'rate', item, requestingUser: '555',
-    designs: ['44200'], unit: 'yard', lastPaidRate: 1500,
+  // APC-1 — state is keyed adminId|requestId and carries adminId; the
+  // legacy chip payloads (no q: segment) must still resolve while exactly
+  // one wizard is open — old cards in chats keep working across the deploy.
+  pendingEnrichment.set(wizKey('777', 'REQ9'), {
+    requestId: 'REQ9', adminId: '777', step: 'rate', item, requestingUser: '555',
+    designs: ['44200'], unit: 'yard', lastPaidRate: 1500, startedAt: Date.now(),
   });
   const cbq = (data) => ({ id: 'q', data, from: { id: 777 }, message: { chat: { id: 1 }, message_id: 2 } });
 
   await approvalEvents.handleEnrichmentCallback(bot, cbq('enr:rate:v'));
-  let state = pendingEnrichment.get('777');
+  let state = pendingEnrichment.get(wizKey('777', 'REQ9'));
   assert.equal(state.step, 'payment');
   assert.equal(state.ratePerUnitByDesign['44200'], 1500);
 
   await approvalEvents.handleEnrichmentCallback(bot, cbq('enr:pay:b:0'));
-  state = pendingEnrichment.get('777');
+  state = pendingEnrichment.get(wizKey('777', 'REQ9'));
   assert.equal(state.step, 'amount_paid');
   assert.equal(state.paymentMode, 'Paid to ZENITH BANK');
   assert.equal(state.fullAmount, 225000, '150 yds × ₦1500');
@@ -71,16 +75,16 @@ test('chip path: last-paid rate → bank → paid-in-full → executes with comp
   assert.ok(executed, 'sale must execute');
   assert.equal(executed.enrichment.amountPaid, 225000);
   assert.equal(executed.enrichment.paymentMode, 'Paid to ZENITH BANK');
-  assert.equal(pendingEnrichment.has('777'), false, 'state cleaned up');
+  assert.equal(pendingEnrichment.has(wizKey('777', 'REQ9')), false, 'state cleaned up');
 });
 
 test('not-yet-paid chip finishes with zero amount', async () => {
   executed = null;
   const bot = createFakeBot();
-  pendingEnrichment.set('777', {
-    requestId: 'REQ10', step: 'payment', requestingUser: '555',
+  pendingEnrichment.set(wizKey('777', 'REQ10'), {
+    requestId: 'REQ10', adminId: '777', step: 'payment', requestingUser: '555',
     item: { requestId: 'REQ10', user: '555', actionJSON: { action: 'sale_bundle', customer: 'X' } },
-    designs: ['44200'], unit: 'yard', ratePerUnitByDesign: { 44200: 1000 },
+    designs: ['44200'], unit: 'yard', ratePerUnitByDesign: { 44200: 1000 }, startedAt: Date.now(),
   });
   const cbq = { id: 'q', data: 'enr:pay:nyp', from: { id: 777 }, message: { chat: { id: 1 }, message_id: 2 } };
   await approvalEvents.handleEnrichmentCallback(bot, cbq);

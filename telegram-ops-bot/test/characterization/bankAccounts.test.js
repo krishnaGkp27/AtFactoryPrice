@@ -77,10 +77,11 @@ test('sale-approval payment step: one chip per ACCOUNT + the Manage shortcut', a
   const approvalEvents = require(path.join(SRC, 'events/approvalEvents'));
   settings = { BANK_LIST: 'ZENITH — AFP LTD,ZENITH — MAMA KAFAYA ENT,GTB' };
   const bot = createFakeBot();
-  const state = {};
+  const state = { requestId: 'R-B1' };
   await approvalEvents._internals.sendPaymentStep(bot, '777', state);
   const kb = bot.calls.filter((c) => c.method === 'sendMessage').pop().args.opts.reply_markup.inline_keyboard.flat();
-  const bankChips = kb.filter((b) => b.text.startsWith('🏦') && b.callback_data.startsWith('enr:pay:b:'));
+  // APC-1 — chips carry their request: enr:q:<requestId>:pay:b:<i>.
+  const bankChips = kb.filter((b) => b.text.startsWith('🏦') && b.callback_data.startsWith('enr:q:R-B1:pay:b:'));
   assert.deepEqual(bankChips.map((b) => b.text), ['🏦 ZENITH — AFP LTD', '🏦 ZENITH — MAMA KAFAYA ENT', '🏦 GTB'],
     'both same-bank accounts are separate chips');
   assert.ok(kb.some((b) => b.callback_data === 'act:manage_banks'), 'Manage accounts shortcut present');

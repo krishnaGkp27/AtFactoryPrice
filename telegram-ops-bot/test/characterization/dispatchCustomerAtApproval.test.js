@@ -73,9 +73,9 @@ test('DSP-1: a customer-less sale opens the CUSTOMER step first, not the rate st
   const t = texts(bot);
   assert.match(t, /Step 1 — Who is buying/, `customer is asked first, got: ${t}`);
   assert.ok(!/Step 2 — Rate/.test(t), 'the rate step must wait for a buyer');
-  assert.ok(kbOf(bot).some((b) => b.callback_data === 'enr:cust:all:0'), 'full list reachable');
+  assert.ok(kbOf(bot).some((b) => b.callback_data.endsWith(':cust:all:0')), 'full list reachable');
   // CUS-1 — creation left the approval chain entirely: single door (CRM).
-  assert.ok(!kbOf(bot).some((b) => b.callback_data === 'enr:cust:new'),
+  assert.ok(!kbOf(bot).some((b) => (b.callback_data || '').includes('cust:new')),
     'no creation door here — a typed string can never become a customer');
 });
 
@@ -89,7 +89,7 @@ test('DSP-1: picking the customer advances to the rate step and persists it on t
 
   const item = saleItem('');
   await approvalEvents.startApprovalEnrichment(bot, ADMIN, ADMIN, 'R-1', item, '4242');
-  const chip = kbOf(bot).find((b) => b.callback_data === 'enr:cust:r:0');
+  const chip = kbOf(bot).find((b) => b.callback_data.endsWith(':cust:r:0'));
   assert.ok(chip, 'a recent buyer is offered as a chip');
   await approvalEvents.handleEnrichmentCallback(bot, {
     id: 'q1', data: chip.callback_data, from: { id: ADMIN }, message: { chat: { id: ADMIN } },
@@ -101,7 +101,7 @@ test('DSP-1: picking the customer advances to the rate step and persists it on t
   assert.match(texts(bot), /Step 2 — Rate/, 'advances to rate');
   // The suggestion chip is customer-specific — this is precisely why the
   // customer step has to run BEFORE the rate step.
-  const rateChip = kbOf(bot).find((b) => b.callback_data === 'enr:rate:v');
+  const rateChip = kbOf(bot).find((b) => b.callback_data.endsWith(':rate:v'));
   assert.ok(rateChip, 'a last-paid rate chip is offered');
   assert.match(rateChip.text, /last paid by CJE/, `got: ${rateChip.text}`);
 });
@@ -143,7 +143,7 @@ test('CUS-1: an unmatched typed name is REFUSED — search-only, no creation', a
   assert.deepEqual(patches, [], 'nothing assigned from an unmatched typo');
   assert.match(texts(bot), /No customer matches/, 'told plainly');
   assert.match(texts(bot), /CRM/, 'pointed at the single door');
-  assert.ok(!kbOf(bot).some((b) => b.callback_data === 'enr:cust:new'),
+  assert.ok(!kbOf(bot).some((b) => (b.callback_data || '').includes('cust:new')),
     'no add-as-new escape — that was door #1 in the 28-Jul audit');
 });
 
@@ -217,7 +217,7 @@ test('DSP-1b: a mistapped customer is recoverable — ✎ Change customer re-ope
     id: 'q1', data: 'enr:cust:r:0', from: { id: ADMIN }, message: { chat: { id: ADMIN } },
   });
   // Wrong tap. The rate card must offer the way back…
-  const change = kbOf(bot).find((b) => b.callback_data === 'enr:cust:back');
+  const change = kbOf(bot).find((b) => b.callback_data.endsWith(':cust:back'));
   assert.ok(change, 'the rate step must carry ✎ Change customer — without it a wrong tap is locked in');
   assert.match(change.text, /CJE/, 'showing what is currently assigned');
 
@@ -239,7 +239,7 @@ test('DSP-1b: a pre-assigned request ALSO gets the change chip — the re-approv
   await approvalEvents.startApprovalEnrichment(bot, ADMIN, ADMIN, 'R-1', saleItem('CJE'), '4242');
   // Straight to Step 2 (skip is correct) — but the wrong buyer must still be fixable.
   assert.match(texts(bot), /Step 2 — Rate/);
-  assert.ok(kbOf(bot).some((b) => b.callback_data === 'enr:cust:back'),
+  assert.ok(kbOf(bot).some((b) => b.callback_data.endsWith(':cust:back')),
     'without this, abandoning and re-approving skipped Step 1 and locked the wrong buyer in');
 });
 
@@ -258,7 +258,7 @@ test('CUS-1 D: design buyers rank first, each chip carrying their LAST rate for 
   try {
     const bot = createFakeBot();
     await approvalEvents.startApprovalEnrichment(bot, ADMIN, ADMIN, 'R-1', saleItem(''), '4242');
-    const chips = kbOf(bot).filter((b) => b.callback_data.startsWith('enr:cust:r:'));
+    const chips = kbOf(bot).filter((b) => /^enr:q:R-1:cust:r:/.test(b.callback_data));
     assert.match(chips[0].text, /CJE — ₦1,500\/yd/, `newest buyer of the design first, with the rate: ${chips[0].text}`);
     assert.match(chips[1].text, /Ketu madam — ₦1,450\/yd/);
     assert.equal(chips.filter((c) => /CJE/.test(c.text)).length, 1, 'the alias sale deduped onto the canonical entity');

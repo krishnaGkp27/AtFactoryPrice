@@ -28,7 +28,66 @@ const usageTracker = require('../services/usageTracker');
 const SALE_ACTIONS = ['sell_than', 'sell_package', 'sale_bundle'];
 const DEFAULT_SALE_UNIT = 'yard';
 
-const pendingEnrichment = new Map();
+/*
+ * APC-1 (owner, 08-Aug-2026) — approval concurrency, Phase A.
+ *
+ * The sale wizard used to hold ONE state per admin: a second ✅ Approve
+ * mid-wizard silently overwrote the first, and chips carried no request
+ * identity, so a tap on the old card acted on the NEW request (the owner's
+ * "complete mess"). Now:
+ *   - state is keyed adminId|requestId — wizards run in parallel, one per
+ *     request, and starting one never touches another;
+ *   - every chip payload carries its requestId (enr:q:<rid>:…), so a tap
+ *     always acts on the request whose card was tapped;
+ *   - a typed reply goes to the LAST-TOUCHED wizard; with several open and
+ *     none touched recently the bot ASKS which request it is for (§2 —
+ *     never guess);
+ *   - each wizard renders IN PLACE on its approval card (one anchored
+ *     message per request, no step flood);
+ *   - rate/payment answers persist to the queue row (enrichDraft) so a
+ *     redeploy or expiry costs nothing — the wizard rebuilds mid-step.
+ */
+const pendingEnrichment = new Map(); // `${adminId}|${requestId}` → wizard state
+const lastTouchedWizard = new Map(); // adminId → { requestId, at }
+const heldEnrichmentText = new Map(); // adminId → { text, at } parked behind a "which request?" ask
+const WIZARD_TTL_MS = 60 * 60 * 1000;
+const TYPED_ROUTE_FRESH_MS = 5 * 60 * 1000;
+const HELD_TEXT_TTL_MS = 2 * 60 * 1000;
+
+function wizKey(adminId, requestId) { return `${adminId}|${requestId}`; }
+
+function sweepWizards() {
+  const now = Date.now();
+  for (const [k, s] of pendingEnrichment) {
+    if (now - (s.touchedAt || s.startedAt || 0) > WIZARD_TTL_MS) pendingEnrichment.delete(k);
+  }
+}
+
+/** Open wizards belonging to one admin (TTL-swept). */
+function wizardsOf(adminId) {
+  sweepWizards();
+  return [...pendingEnrichment.values()].filter((s) => String(s.adminId) === String(adminId));
+}
+
+function touchWizard(state) {
+  state.touchedAt = Date.now();
+  lastTouchedWizard.set(String(state.adminId), { requestId: state.requestId, at: state.touchedAt });
+}
+
+/**
+ * The wizard an un-addressed input belongs to: the only open one, else the
+ * last-touched. For TYPED input a stale last-touch (several wizards open,
+ * none used in a while) returns null so the caller asks instead of guessing.
+ */
+function activeWizard(adminId, opts = {}) {
+  const open = wizardsOf(adminId);
+  if (!open.length) return null;
+  if (open.length === 1) return open[0];
+  const last = lastTouchedWizard.get(String(adminId));
+  const lastState = last && pendingEnrichment.get(wizKey(adminId, last.requestId));
+  if (lastState && (!opts.forTyping || Date.now() - last.at <= TYPED_ROUTE_FRESH_MS)) return lastState;
+  return null;
+}
 
 // Tracks dispatch users currently typing a free-text rejection or
 // decline reason. Keyed by user_id so the controller's text handler
@@ -265,24 +324,22 @@ async function sendCustomerStep(bot, chatId, state, note) {
   designBuyers.forEach((b, i) => {
     const rate = Number.isFinite(b.rate) && b.rate > 0
       ? ` — ₦${Number(b.rate).toLocaleString('en-NG')}/yd` : '';
-    rows.push([{ text: `👤 ${b.name.slice(0, 24)}${rate}`, callback_data: `enr:cust:r:${i}` }]);
+    rows.push([{ text: `👤 ${b.name.slice(0, 24)}${rate}`, callback_data: wizCb(state, `cust:r:${i}`) }]);
   });
   for (let i = designBuyers.length; i < names.length; i += 2) {
-    const row = [{ text: `👤 ${names[i].slice(0, 26)}`, callback_data: `enr:cust:r:${i}` }];
-    if (names[i + 1]) row.push({ text: `👤 ${names[i + 1].slice(0, 26)}`, callback_data: `enr:cust:r:${i + 1}` });
+    const row = [{ text: `👤 ${names[i].slice(0, 26)}`, callback_data: wizCb(state, `cust:r:${i}`) }];
+    if (names[i + 1]) row.push({ text: `👤 ${names[i + 1].slice(0, 26)}`, callback_data: wizCb(state, `cust:r:${i + 1}`) });
     rows.push(row);
   }
   // CUS-1 — no creation here: the admin picks from the official list. A
   // genuinely new buyer is added via CRM first (single door).
-  rows.push([{ text: '📋 All customers', callback_data: 'enr:cust:all:0' }]);
+  rows.push([{ text: '📋 All customers', callback_data: wizCb(state, 'cust:all:0') }]);
   const what = describeSaleForCustomerStep(state);
-  try {
-    await bot.sendMessage(chatId,
-      `${note ? `${note}\n\n` : ''}📋 *Confirm sale details*\n${what}\n\n`
-      + `*Step 1 — Who is buying${(state.designs || []).length === 1 ? ` ${state.designs[0]}` : ''}?* Tap below, or reply with a name to search.\n`
-      + `${designBuyers.length ? '_Buyers of this design first, with the rate they last paid for it._' : ''}`,
-      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
-  } catch (_) { /* best-effort */ }
+  await renderWizard(bot, chatId, state,
+    `${note ? `${note}\n\n` : ''}${wizHeader(state)}${what}\n\n`
+    + `*Step 1 — Who is buying${(state.designs || []).length === 1 ? ` ${state.designs[0]}` : ''}?* Tap below, or reply with a name to search.\n`
+    + `${designBuyers.length ? '_Buyers of this design first, with the rate they last paid for it._' : ''}${TYPED_NOTE}`,
+    rows);
 }
 
 /** One line describing what is being dispatched, so the admin names the buyer with context. */
@@ -347,16 +404,15 @@ async function sendCustomerPage(bot, chatId, state, page) {
   const pages = Math.max(1, Math.ceil(all.length / PER));
   const p = Math.min(Math.max(0, page), pages - 1);
   state._custPage = all.slice(p * PER, (p + 1) * PER);
-  const rows = state._custPage.map((n, i) => [{ text: `👤 ${n.slice(0, 40)}`, callback_data: `enr:cust:a:${i}` }]);
+  const rows = state._custPage.map((n, i) => [{ text: `👤 ${n.slice(0, 40)}`, callback_data: wizCb(state, `cust:a:${i}`) }]);
   const nav = [];
-  if (p > 0) nav.push({ text: '⬅ Prev', callback_data: `enr:cust:all:${p - 1}` });
-  if (p < pages - 1) nav.push({ text: 'Next ➡', callback_data: `enr:cust:all:${p + 1}` });
+  if (p > 0) nav.push({ text: '⬅ Prev', callback_data: wizCb(state, `cust:all:${p - 1}`) });
+  if (p < pages - 1) nav.push({ text: 'Next ➡', callback_data: wizCb(state, `cust:all:${p + 1}`) });
   if (nav.length) rows.push(nav);
-  rows.push([{ text: '⬅ Back', callback_data: 'enr:cust:back' }]);
-  try {
-    await bot.sendMessage(chatId, `📋 *All customers* (page ${p + 1}/${pages}) — or reply with a name to search.`,
-      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
-  } catch (_) { /* best-effort */ }
+  rows.push([{ text: '⬅ Back', callback_data: wizCb(state, 'cust:back') }]);
+  await renderWizard(bot, chatId, state,
+    `${wizHeader(state)}\n📋 *All customers* (page ${p + 1}/${pages}) — or reply with a name to search.${TYPED_NOTE}`,
+    rows);
 }
 
 /**
@@ -385,13 +441,12 @@ async function assignCustomer(bot, chatId, state, name, opts = {}) {
   // again be a surprise discovered on the finished paper.
   if (custId && canonical.toLowerCase() !== clean.toLowerCase() && !opts.aliasConfirmed) {
     state._aliasPending = { spelling: clean, canonical };
-    await bot.sendMessage(chatId,
-      `ℹ️ *${clean}* is filed under *${canonical}* — the invoice and ledger will read ${canonical}.`,
-      { parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [
-          [{ text: `✅ Continue as ${canonical}`.slice(0, 60), callback_data: 'enr:cust:cf:y' },
-            { text: '👥 Pick another customer', callback_data: 'enr:cust:cf:n' }],
-        ] } });
+    await renderWizard(bot, chatId, state,
+      `${wizHeader(state)}\nℹ️ *${clean}* is filed under *${canonical}* — the invoice and ledger will read ${canonical}.`,
+      [
+        [{ text: `✅ Continue as ${canonical}`.slice(0, 60), callback_data: wizCb(state, 'cust:cf:y') },
+          { text: '👥 Pick another customer', callback_data: wizCb(state, 'cust:cf:n') }],
+      ]);
     return false;
   }
   try {
@@ -414,20 +469,86 @@ async function assignCustomer(bot, chatId, state, name, opts = {}) {
 }
 
 
-async function startApprovalEnrichment(bot, adminId, chatId, requestId, item, requestingUser) {
+/** APC-1 — every wizard chip carries its request: enr:q:<requestId>:<action>. */
+function wizCb(state, suffix) { return `enr:q:${state.requestId}:${suffix}`; }
+
+/** APC-1 — the step header: the admin must always know which request they
+ *  are inside, because several cards can be open at once. */
+function wizHeader(state) {
+  return `📋 *Confirm sale — ${shortRequestRef(state.requestId)}*`;
+}
+
+const TYPED_NOTE = '\n✍️ _A typed reply goes to the request you touched last._';
+
+/**
+ * APC-1 — the wizard lives IN the approval card: every step edits the same
+ * anchored message (per request), so processing three sales is three cards,
+ * not an interleaved stack of step messages. A failed edit (old card, chat
+ * cleared) falls back to a fresh message which becomes the new anchor.
+ */
+async function renderWizard(bot, chatId, state, text, rows) {
+  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
+  const anchorChat = state.anchorChatId || chatId;
+  if (state.anchorMessageId) {
+    try {
+      await bot.editMessageText(text, { chat_id: anchorChat, message_id: state.anchorMessageId, ...opts });
+      return;
+    } catch (_) { /* stale/unchanged card → fresh anchor below */ }
+  }
+  try {
+    const m = await bot.sendMessage(anchorChat, text, opts);
+    if (m && m.message_id) { state.anchorMessageId = m.message_id; state.anchorChatId = anchorChat; }
+  } catch (_) { /* best-effort */ }
+}
+
+/** APC-1 — persist mid-wizard answers on the queue row (best-effort): a
+ *  redeploy or TTL expiry then costs nothing, the wizard rebuilds at the
+ *  first unanswered step. The customer pick has its own load-bearing
+ *  persistence in assignCustomer; this carries rate + payment mode. */
+async function persistEnrichDraft(state) {
+  try {
+    await approvalQueueRepository.updateActionJSON(state.requestId, {
+      enrichDraft: {
+        ratePerUnitByDesign: state.ratePerUnitByDesign || null,
+        paymentMode: state.paymentMode || null,
+      },
+    });
+  } catch (e) {
+    logger.warn(`APC-1: enrichDraft persist failed for ${state.requestId}: ${e.message}`);
+  }
+}
+
+async function startApprovalEnrichment(bot, adminId, chatId, requestId, item, requestingUser, anchorMessageId = null) {
   const designs = await getDesignsForSale(item);
   const unit = DEFAULT_SALE_UNIT;
   const aj = (item && item.actionJSON) || {};
+  const draft = aj.enrichDraft || {};
   const state = {
-    requestId, step: 'rate', item, requestingUser, designs, unit, adminId, customer: aj.customer || '',
+    requestId, step: 'rate', item, requestingUser, designs, unit,
+    adminId: String(adminId), customer: aj.customer || '',
+    anchorChatId: chatId, anchorMessageId: anchorMessageId || null,
+    startedAt: Date.now(),
+    ratePerUnitByDesign: (draft.ratePerUnitByDesign && Object.keys(draft.ratePerUnitByDesign).length)
+      ? draft.ratePerUnitByDesign : undefined,
+    paymentMode: draft.paymentMode || undefined,
   };
-  pendingEnrichment.set(adminId, state);
+  // APC-1 — one wizard per REQUEST: starting this one leaves every other
+  // in-flight wizard untouched.
+  pendingEnrichment.set(wizKey(state.adminId, requestId), state);
+  touchWizard(state);
 
   // DSP-1 — a request that already names a customer (anything queued before
   // this change, and any path that still supplies one) keeps its buyer and
   // goes straight to the rate step. Only customer-less requests are asked.
   if (!String(aj.customer || '').trim()) {
     await sendCustomerStep(bot, chatId, state);
+    return;
+  }
+  // APC-1 resume — answers already persisted on the row skip their steps:
+  // rejoin at the first unanswered one.
+  if (state.ratePerUnitByDesign) {
+    if (state.paymentMode) { await sendAmountStep(bot, chatId, state); return; }
+    await sendPaymentStep(bot, chatId, state);
     return;
   }
   await sendRateStep(bot, chatId, state);
@@ -449,15 +570,15 @@ async function sendRateStep(bot, chatId, state) {
     const last = await getLastPaidRate(customer, designs[0]);
     if (last) {
       state.lastPaidRate = last;
-      rows.push([{ text: `₦${Number(last).toLocaleString('en-NG')}/yd — last paid by ${String(customer).slice(0, 24)}`, callback_data: `enr:rate:v` }]);
+      rows.push([{ text: `₦${Number(last).toLocaleString('en-NG')}/yd — last paid by ${String(customer).slice(0, 24)}`, callback_data: wizCb(state, 'rate:v') }]);
     }
   }
-  rows.push([{ text: '✏️ Type a custom rate', callback_data: 'enr:rate:custom' }]);
+  rows.push([{ text: '✏️ Type a custom rate', callback_data: wizCb(state, 'rate:custom') }]);
   // DSP-1b — a mistapped buyer must be recoverable HERE. Without this chip
   // the wrong customer was locked in: the choice persists on the queue row
   // the moment it is tapped, so abandoning and re-approving skipped Step 1
   // entirely and the only exit was editing the sheet by hand.
-  rows.push([{ text: `✎ Change customer (${String(customer || '—').slice(0, 24)})`, callback_data: 'enr:cust:back' }]);
+  rows.push([{ text: `✎ Change customer (${String(customer || '—').slice(0, 24)})`, callback_data: wizCb(state, 'cust:back') }]);
   // CUS-1 Phase D (owner: "I would go with the outstanding balance on
   // step 2") — credit exposure belongs where more stock is being assigned,
   // not only AFTER the sale executes. Best-effort: a ledger hiccup never
@@ -475,29 +596,28 @@ async function sendRateStep(bot, chatId, state) {
     logger.warn(`outstanding lookup failed for "${customer}": ${e.message}`);
   }
 
-  await bot.sendMessage(chatId,
-    `📋 *Confirm sale details*\n\nCustomer: *${customer || '—'}*${outstandingLine}\nDesign(s): ${designList}\nUnit: ${unit} (Naira per ${unit})\n\n*Step 2 — Rate:* tap below, or reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\``,
-    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+  await renderWizard(bot, chatId, state,
+    `${wizHeader(state)}\n\nCustomer: *${customer || '—'}*${outstandingLine}\nDesign(s): ${designList}\nUnit: ${unit} (Naira per ${unit})\n\n*Step 2 — Rate:* tap below, or reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\`${TYPED_NOTE}`,
+    rows);
 }
 
 /** ST-1 Part B — Step 2 with payment-mode chips (banks from Settings). */
 async function sendPaymentStep(bot, chatId, state) {
   state.step = 'payment';
   state.banks = await getRegisteredBanks();
-  const rows = [[{ text: '💵 Cash', callback_data: 'enr:pay:cash' }, { text: '🕐 Not yet paid', callback_data: 'enr:pay:nyp' }]];
+  const rows = [[{ text: '💵 Cash', callback_data: wizCb(state, 'pay:cash') }, { text: '🕐 Not yet paid', callback_data: wizCb(state, 'pay:nyp') }]];
   for (let i = 0; i < state.banks.length; i += 2) {
-    const row = [{ text: `🏦 ${state.banks[i]}`, callback_data: `enr:pay:b:${i}` }];
-    if (state.banks[i + 1]) row.push({ text: `🏦 ${state.banks[i + 1]}`, callback_data: `enr:pay:b:${i + 1}` });
+    const row = [{ text: `🏦 ${state.banks[i]}`, callback_data: wizCb(state, `pay:b:${i}`) }];
+    if (state.banks[i + 1]) row.push({ text: `🏦 ${state.banks[i + 1]}`, callback_data: wizCb(state, `pay:b:${i + 1}`) });
     rows.push(row);
   }
-  rows.push([{ text: '✏️ Type payment mode', callback_data: 'enr:pay:custom' }]);
+  rows.push([{ text: '✏️ Type payment mode', callback_data: wizCb(state, 'pay:custom') }]);
   // BANK-2 — no dead-end mid-approval: if the receiving account isn't
   // registered yet, one tap opens 🏦 Manage Banks (admin-only anyway).
   rows.push([{ text: '🏦 Manage accounts', callback_data: 'act:manage_banks' }]);
-  try {
-    await bot.sendMessage(chatId, '*Step 3 — Payment mode:* tap below, or reply with one of:\n• Cash\n• Credit\n• Paid to [Bank]\n• Not yet paid',
-      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
-  } catch (_) { /* best-effort */ }
+  await renderWizard(bot, chatId, state,
+    `${wizHeader(state)}\n👤 ${state.customer || '—'}\n\n*Step 3 — Payment mode:* tap below, or reply with one of:\n• Cash\n• Credit\n• Paid to [Bank]\n• Not yet paid${TYPED_NOTE}`,
+    rows);
 }
 
 /** ST-1 Part B — Step 3 with a computed "Paid in full" chip when possible. */
@@ -518,13 +638,12 @@ async function sendAmountStep(bot, chatId, state) {
   state.fullAmount = full > 0 ? Math.round(full) : null;
   const rows = [];
   if (state.fullAmount) {
-    rows.push([{ text: `✅ Paid in full — ₦${state.fullAmount.toLocaleString('en-NG')}`, callback_data: 'enr:amt:full' }]);
+    rows.push([{ text: `✅ Paid in full — ₦${state.fullAmount.toLocaleString('en-NG')}`, callback_data: wizCb(state, 'amt:full') }]);
   }
-  rows.push([{ text: '✏️ Type the amount', callback_data: 'enr:amt:custom' }]);
-  try {
-    await bot.sendMessage(chatId, '*Step 4 — Amount paid:* tap below, or reply with the amount received (Naira), e.g. 50000',
-      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
-  } catch (_) { /* best-effort */ }
+  rows.push([{ text: '✏️ Type the amount', callback_data: wizCb(state, 'amt:custom') }]);
+  await renderWizard(bot, chatId, state,
+    `${wizHeader(state)}\n👤 ${state.customer || '—'} · ${state.paymentMode || ''}\n\n*Step 4 — Amount paid:* tap below, or reply with the amount received (Naira), e.g. 50000${TYPED_NOTE}`,
+    rows);
 }
 
 /**
@@ -533,20 +652,60 @@ async function sendAmountStep(bot, chatId, state) {
  * every step. All acks are best-effort (stale-query hardening).
  */
 async function handleEnrichmentCallback(bot, callbackQuery) {
-  const data = callbackQuery.data || '';
+  let data = callbackQuery.data || '';
   if (!data.startsWith('enr:')) return false;
   const adminId = String(callbackQuery.from.id);
   const chatId = callbackQuery.message.chat.id;
   const ack = async (text) => { try { await bot.answerCallbackQuery(callbackQuery.id, text ? { text } : undefined); } catch (_) {} };
-  const state = pendingEnrichment.get(adminId);
-  if (!state) { await ack('No sale confirmation in progress.'); return true; }
+
+  // APC-1 — chips carry their request (enr:q:<rid>:<rest>): the tap acts on
+  // THAT wizard, never on "whatever the admin opened last".
+  let rid = null;
+  if (data.startsWith('enr:q:')) {
+    const after = data.slice('enr:q:'.length);
+    const cut = after.indexOf(':');
+    if (cut > 0) { rid = after.slice(0, cut); data = `enr:${after.slice(cut + 1)}`; }
+  }
+  let state = null;
+  if (rid) {
+    state = pendingEnrichment.get(wizKey(adminId, rid));
+    if (!state) {
+      // A redeploy or TTL expiry ate the in-memory state. The persisted
+      // customer + enrichDraft let the wizard rebuild — restart it in
+      // place on this card instead of dead-ending the tap.
+      const { item, requestingUser } = await resolveRequest(rid);
+      const resumable = item && String(item.status || '').toLowerCase() === 'pending'
+        && SALE_ACTIONS.includes(((item.actionJSON) || {}).action)
+        && config.access.adminIds.includes(adminId);
+      await ack(resumable ? 'Resuming…' : 'That request is no longer open.');
+      if (resumable) {
+        await startApprovalEnrichment(bot, adminId, chatId, rid, item, requestingUser,
+          callbackQuery.message.message_id);
+      }
+      return true;
+    }
+  } else {
+    // Legacy chip from a pre-APC-1 card: safe only when exactly one wizard
+    // is open — with several, acting on any of them would be a guess (§2).
+    const open = wizardsOf(adminId);
+    if (!open.length) { await ack('No sale confirmation in progress.'); return true; }
+    if (open.length > 1) {
+      await ack('This card is from before the update — tap ✅ Approve on the request again.');
+      return true;
+    }
+    state = open[0];
+  }
+  touchWizard(state);
   const CURRENCY = config.currency || 'NGN';
   const fmt = (n) => `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
 
   const finish = async (amountPaid) => {
     state.amountPaid = amountPaid;
     state.step = null;
-    pendingEnrichment.delete(adminId);
+    pendingEnrichment.delete(wizKey(adminId, state.requestId));
+    // Seal this wizard's card before executing so its chips die with it.
+    await renderWizard(bot, chatId, state,
+      `${wizHeader(state)}\n⏳ Applying…`, []);
     const enrichment = {
       unit: state.unit,
       ratePerUnitByDesign: state.ratePerUnitByDesign,
@@ -555,6 +714,20 @@ async function handleEnrichmentCallback(bot, callbackQuery) {
     };
     await runApprovedSaleWithEnrichment(bot, chatId, adminId, state.requestId, state.item, state.requestingUser, enrichment, fmt);
   };
+
+  // APC-1 — "which request?" pick for a typed reply that was parked because
+  // several wizards were open and none was touched recently.
+  if (data === 'enr:route') {
+    const held = heldEnrichmentText.get(adminId);
+    heldEnrichmentText.delete(adminId);
+    await ack();
+    if (held && Date.now() - held.at <= HELD_TEXT_TTL_MS) {
+      await applyEnrichmentText(bot, chatId, adminId, state, held.text);
+    } else {
+      try { await bot.sendMessage(chatId, 'That reply expired — type it again.'); } catch (_) { /* best-effort */ }
+    }
+    return true;
+  }
 
   // DSP-1 — Step 1 customer taps. Every branch ends either by assigning a
   // buyer (which advances to the rate step) or by re-rendering a picker;
@@ -609,6 +782,7 @@ async function handleEnrichmentCallback(bot, callbackQuery) {
     state.designs.forEach((d) => { rateByDesign[d] = state.lastPaidRate; });
     state.ratePerUnitByDesign = rateByDesign;
     await ack(`Rate: ₦${state.lastPaidRate}/yd`);
+    await persistEnrichDraft(state);
     await sendPaymentStep(bot, chatId, state);
     return true;
   }
@@ -620,6 +794,7 @@ async function handleEnrichmentCallback(bot, callbackQuery) {
   if (data === 'enr:pay:cash' && state.step === 'payment') {
     state.paymentMode = 'Cash';
     await ack('Cash');
+    await persistEnrichDraft(state);
     await sendAmountStep(bot, chatId, state);
     return true;
   }
@@ -634,6 +809,7 @@ async function handleEnrichmentCallback(bot, callbackQuery) {
     if (!bank) { await ack('Expired — pick again.'); return true; }
     state.paymentMode = `Paid to ${bank}`;
     await ack(bank);
+    await persistEnrichDraft(state);
     await sendAmountStep(bot, chatId, state);
     return true;
   }
@@ -657,10 +833,33 @@ async function handleEnrichmentCallback(bot, callbackQuery) {
 }
 
 async function handleEnrichmentMessage(bot, chatId, adminId, text) {
-  const state = pendingEnrichment.get(adminId);
-  if (!state || !text) return false;
+  if (!text) return false;
+  const admin = String(adminId);
+  const open = wizardsOf(admin);
+  if (!open.length) return false;
+  // APC-1 — a typed reply goes to the wizard the admin touched LAST. With
+  // several open and none touched recently, routing would be a guess — ask.
+  const state = activeWizard(admin, { forTyping: true });
+  if (!state) {
+    heldEnrichmentText.set(admin, { text: String(text).trim(), at: Date.now() });
+    const rows = open.map((s) => {
+      const who = s.customer || ((s.item && s.item.actionJSON && s.item.actionJSON.customer)) || `step: ${s.step}`;
+      return [{ text: `${shortRequestRef(s.requestId)} — ${who}`.slice(0, 60), callback_data: wizCb(s, 'route') }];
+    });
+    try {
+      await bot.sendMessage(chatId,
+        '✋ More than one sale confirmation is open — which request is this reply for?',
+        { reply_markup: { inline_keyboard: rows } });
+    } catch (_) { /* best-effort */ }
+    return true;
+  }
+  touchWizard(state);
+  return applyEnrichmentText(bot, chatId, admin, state, text);
+}
 
-  const t = text.trim();
+/** APC-1 — apply one typed reply to ONE resolved wizard state. */
+async function applyEnrichmentText(bot, chatId, adminId, state, text) {
+  const t = String(text).trim();
   const CURRENCY = config.currency || 'NGN';
   const fmt = (n) => `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
 
@@ -718,30 +917,39 @@ async function handleEnrichmentMessage(bot, chatId, adminId, text) {
       }
     }
     state.ratePerUnitByDesign = rateByDesign;
+    await persistEnrichDraft(state);
     // ST-1 Part B — typed rate advances to the same tappable payment step.
     await sendPaymentStep(bot, chatId, state);
     return true;
   }
+
+  // APC-1 — typed finishes seal this wizard's own card and delete ITS state
+  // (never another request's), exactly like the chip finishes.
+  const finishTyped = async (amountPaid) => {
+    state.amountPaid = amountPaid;
+    state.step = null;
+    pendingEnrichment.delete(wizKey(adminId, state.requestId));
+    await renderWizard(bot, chatId, state, `${wizHeader(state)}\n⏳ Applying…`, []);
+    const enrichment = {
+      unit: state.unit,
+      ratePerUnitByDesign: state.ratePerUnitByDesign,
+      paymentMode: state.paymentMode,
+      amountPaid,
+    };
+    await runApprovedSaleWithEnrichment(bot, chatId, adminId, state.requestId, state.item, state.requestingUser, enrichment, fmt);
+  };
 
   if (state.step === 'payment') {
     const mode = t;
     state.paymentMode = mode;
     const isPaid = /^paid\s+to\s+/i.test(mode) || /^cash$/i.test(mode);
     if (isPaid) {
+      await persistEnrichDraft(state);
       // ST-1 Part B — typed mode advances to the same tappable amount step.
       await sendAmountStep(bot, chatId, state);
       return true;
     }
-    state.amountPaid = 0;
-    state.step = null;
-    pendingEnrichment.delete(adminId);
-    const enrichment = {
-      unit: state.unit,
-      ratePerUnitByDesign: state.ratePerUnitByDesign,
-      paymentMode: state.paymentMode,
-      amountPaid: 0,
-    };
-    await runApprovedSaleWithEnrichment(bot, chatId, adminId, state.requestId, state.item, state.requestingUser, enrichment, fmt);
+    await finishTyped(0);
     return true;
   }
 
@@ -751,16 +959,7 @@ async function handleEnrichmentMessage(bot, chatId, adminId, text) {
       await bot.sendMessage(chatId, 'Please enter a valid amount (Naira), e.g. 50000');
       return true;
     }
-    state.amountPaid = amount;
-    state.step = null;
-    pendingEnrichment.delete(adminId);
-    const enrichment = {
-      unit: state.unit,
-      ratePerUnitByDesign: state.ratePerUnitByDesign,
-      paymentMode: state.paymentMode,
-      amountPaid: amount,
-    };
-    await runApprovedSaleWithEnrichment(bot, chatId, adminId, state.requestId, state.item, state.requestingUser, enrichment, fmt);
+    await finishTyped(amount);
     return true;
   }
 
@@ -1568,7 +1767,9 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
         } catch (e) {
           logger.warn(`APF-2 stock-gone pre-check failed for ${requestId}: ${e.message}`);
         }
-        await startApprovalEnrichment(bot, adminId, chatIdCb, requestId, item, requestingUser);
+        // APC-1 — the tapped card (keyboard already wiped above) becomes the
+        // wizard's anchor: every step edits it in place.
+        await startApprovalEnrichment(bot, adminId, chatIdCb, requestId, item, requestingUser, msgIdCb);
         return;
       }
 
@@ -2205,5 +2406,7 @@ module.exports = {
     // DSP-1 — exposed for the fail-closed test: a sale with no customer
     // must never reach executeApprovedAction.
     runApprovedSaleWithEnrichment, updateRequesterCard, sendCustomerStep,
+    // APC-1 — per-request wizard mechanics, exposed for the concurrency tests.
+    wizardsOf, activeWizard, wizKey, lastTouchedWizard, heldEnrichmentText,
   },
 };
