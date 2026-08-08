@@ -344,6 +344,9 @@ const server = app.listen(PORT, async () => {
   try { require('./src/db/extSchema').ensure(); } catch (e) { logger.warn(`extSchema boot: ${e.message}`); }
   // SHR-1 — share_events bootstrap (no-op without DATABASE_URL).
   try { require('./src/services/shareTrackService').ensureSchema(); } catch (e) { logger.warn(`shareSchema boot: ${e.message}`); }
+  // STK-PG — versioned migrations (stock_events shadow ledger; no-op
+  // without DATABASE_URL). Awaited nowhere: a PG outage never delays boot.
+  try { require('./src/db/migrations').migrate().catch((e) => logger.warn(`migrations boot: ${e.message}`)); } catch (e) { logger.warn(`migrations boot: ${e.message}`); }
   try {
     const extLedgerService = require('./src/services/extLedgerService');
     extLedgerService.sweepExpired().catch(() => {});

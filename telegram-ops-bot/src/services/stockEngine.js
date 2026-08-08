@@ -57,18 +57,43 @@ function userOf(auth) {
   return String(auth.adminId || auth.system || `approval:${auth.approvalId}`);
 }
 
+/**
+ * STK-PG Phase 1 — the SHADOW ledger write. Because the engine is the ONE
+ * door (S53), this single hook mirrors every stock mutation into Postgres
+ * stock_events alongside the Sheets writes. Best-effort by contract: the
+ * repository never throws, PG-off is a no-op, and the sheet remains the
+ * source of truth until the owner's explicit flip decision
+ * (specs/STK-PG_PHASE1.md).
+ */
+async function shadow(rows, auth, meta = {}) {
+  try {
+    const stockEventsRepository = require('../repositories/stockEventsRepository');
+    await stockEventsRepository.record((rows || []).filter(Boolean), {
+      event: auth.event,
+      authority: auth.approvalId ? 'approval' : (auth.adminId ? 'admin' : 'system'),
+      approvalId: auth.approvalId || '',
+      actor: userOf(auth),
+      ...meta,
+    });
+  } catch (_) { /* shadow must never disturb the real write */ }
+}
+
 /* ── available → sold ─────────────────────────────────────────────────── */
 
 async function sellThan(packageNo, thanNo, customer, salesDate, opts, auth) {
   assertAuthority('sellThan', auth);
-  return inventoryRepository.markThanSold(packageNo, thanNo, customer, salesDate,
+  const result = await inventoryRepository.markThanSold(packageNo, thanNo, customer, salesDate,
     { ...opts, user: userOf(auth) });
+  if (result) await shadow([result], auth, { customer, businessDay: require('./baleMovementLog').businessDay(salesDate) });
+  return result;
 }
 
 async function sellPackage(packageNo, customer, salesDate, opts, auth) {
   assertAuthority('sellPackage', auth);
-  return inventoryRepository.markPackageSold(packageNo, customer, salesDate,
+  const results = await inventoryRepository.markPackageSold(packageNo, customer, salesDate,
     { ...opts, user: userOf(auth) });
+  if (results && results.length) await shadow(results, auth, { customer, businessDay: require('./baleMovementLog').businessDay(salesDate) });
+  return results;
 }
 
 /* ── sold → available ─────────────────────────────────────────────────── */
@@ -83,14 +108,38 @@ function returnKind(op, auth) {
 
 async function returnThan(packageNo, thanNo, opts, auth) {
   assertAuthority('returnThan', auth);
-  return inventoryRepository.markThanAvailable(packageNo, thanNo,
+  const result = await inventoryRepository.markThanAvailable(packageNo, thanNo,
     { ...opts, kind: returnKind('returnThan', auth), user: userOf(auth) });
+  if (result) {
+    await shadow([result], auth, {
+      customer: result.soldToPrior || '',
+      businessDay: require('./baleMovementLog').businessDay(opts && opts.on),
+    });
+  }
+  return result;
 }
 
 async function returnPackage(packageNo, opts, auth) {
   assertAuthority('returnPackage', auth);
-  return inventoryRepository.markPackageAvailable(packageNo,
+  const results = await inventoryRepository.markPackageAvailable(packageNo,
     { ...opts, kind: returnKind('returnPackage', auth), user: userOf(auth) });
+  if (results && results.length) {
+    // A batch can span buyers (recycled numbers, RET-2) — one shadow event
+    // per buyer keeps the customer column truthful.
+    const byBuyer = new Map();
+    for (const r of results) {
+      const b = String(r.soldToPrior || '');
+      if (!byBuyer.has(b)) byBuyer.set(b, []);
+      byBuyer.get(b).push(r);
+    }
+    for (const [buyer, rows] of byBuyer) {
+      await shadow(rows, auth, {
+        customer: buyer,
+        businessDay: require('./baleMovementLog').businessDay(opts && opts.on),
+      });
+    }
+  }
+  return results;
 }
 
 /* ── transfers: available ⇄ in_transit ────────────────────────────────── */
@@ -100,8 +149,16 @@ async function transition(packageNos, fromStatus, toStatus, toWarehouse, opts, a
   if (!['dispatch', 'receive', 'reject', 'repair'].includes(auth.event)) {
     throw new Error(`stockEngine.transition: event must be a transfer event, got '${auth.event}'`);
   }
-  return inventoryRepository.transitionBales(packageNos, fromStatus, toStatus, toWarehouse,
+  const flipped = await inventoryRepository.transitionBales(packageNos, fromStatus, toStatus, toWarehouse,
     { ...opts, kind: auth.event === 'repair' ? 'transfer' : auth.event, user: userOf(auth) });
+  if (flipped && flipped.length) {
+    await shadow(flipped, auth, {
+      businessDay: require('./baleMovementLog').businessDay(opts && opts.on),
+      warehouseFrom: (opts && opts.fromWarehouse) !== undefined ? opts.fromWarehouse : undefined,
+      warehouseTo: toWarehouse || undefined,
+    });
+  }
+  return flipped;
 }
 
 /* ── births: intake ───────────────────────────────────────────────────── */
@@ -109,13 +166,21 @@ async function transition(packageNos, fromStatus, toStatus, toWarehouse, opts, a
 async function intakeBale(baleRows, auth) {
   assertAuthority('intakeBale', auth);
   if (auth.event !== 'intake') throw new Error(`stockEngine.intakeBale: event must be 'intake', got '${auth.event}'`);
-  return inventoryRepository.appendBale(baleRows);
+  const persisted = await inventoryRepository.appendBale(baleRows);
+  await shadow(baleRows, auth, {
+    businessDay: require('./baleMovementLog').businessDay(baleRows && baleRows[0] && baleRows[0].dateReceived),
+  });
+  return persisted;
 }
 
 async function intakeThans(rows, auth) {
   assertAuthority('intakeThans', auth);
   if (auth.event !== 'intake') throw new Error(`stockEngine.intakeThans: event must be 'intake', got '${auth.event}'`);
-  return inventoryRepository.appendThans(rows);
+  const count = await inventoryRepository.appendThans(rows);
+  await shadow(rows, auth, {
+    businessDay: require('./baleMovementLog').businessDay(rows && rows[0] && rows[0].dateReceived),
+  });
+  return count;
 }
 
 /* ── warehouse rename (column I rewrite — a label, not a movement) ────── */
@@ -129,5 +194,5 @@ async function renameWarehouse(oldName, newName, auth) {
 module.exports = {
   sellThan, sellPackage, returnThan, returnPackage,
   transition, intakeBale, intakeThans, renameWarehouse,
-  _internals: { EVENTS, assertAuthority, userOf },
+  _internals: { EVENTS, assertAuthority, userOf, shadow },
 };

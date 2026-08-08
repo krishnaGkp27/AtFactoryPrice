@@ -46,6 +46,36 @@ async function query(text, params = []) {
   return pool.query(text, params);
 }
 
+/**
+ * STK-PG — run `fn(client)` inside BEGIN…COMMIT on ONE pooled client,
+ * rolling back on any throw. The 07-Aug audit named the absence of this
+ * helper as prerequisite #1 for any transactional ledger work: pool.query
+ * gives implicit single-statement transactions only, so a multi-row
+ * atomic write was previously impossible to express.
+ *
+ * Returns null when Postgres is disabled (the layer's usual contract).
+ * @template T
+ * @param {(client: import('pg').PoolClient) => Promise<T>} fn
+ * @returns {Promise<T|null>}
+ */
+async function withTransaction(fn) {
+  // Via the export so tests can stub the pool at the module seam.
+  const pool = module.exports.getPool();
+  if (!pool) return null;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const out = await fn(client);
+    await client.query('COMMIT');
+    return out;
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* connection died */ }
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 /** Close the pool (tests / graceful shutdown). */
 async function close() {
   if (_pool) {
@@ -54,4 +84,4 @@ async function close() {
   }
 }
 
-module.exports = { isEnabled, getPool, query, close };
+module.exports = { isEnabled, getPool, query, withTransaction, close };
