@@ -17,8 +17,8 @@ ask for their status instead of starting new features; help execute them if aske
 
 | Priority | Task | Owner | Steps doc |
 |---|---|---|---|
-| **0 — NEXT BUILD** | EXP-1 office expenses: daily record + reporting reminder (replaces Abdul's Google Form). Spec drafted 08-Aug-2026; owner is bringing real-world challenges to discussion — 5 rulings pending, do NOT build before they land in the spec. | **Owner + agent** | `telegram-ops-bot/specs/EXP-1_OFFICE_EXPENSES.md` |
-| **0b** | APC-1 approval concurrency: per-request wizards, in-place cards, media-first inputs — design agreed 08-Aug-2026 (parallel model, ALL approval surfaces). Phases A–E in the spec; confirm phase order with owner before building. | **Owner + agent** | `telegram-ops-bot/specs/APC-1_APPROVAL_CONCURRENCY.md` |
+| **0 — NEXT BUILD** | EXP-1 office expenses: daily record + reporting reminder (extends BR-OPS C1 `officeExpenseFlow`/BranchOpsLog — do NOT build a twin). Layout proposed to owner 08-Aug-2026 — awaiting his confirmation before implementation. | **Owner + agent** | `telegram-ops-bot/specs/EXP-1_OFFICE_EXPENSES.md` |
+| ~~0b~~ ✅ | APC-1 approval concurrency — Phases A–D SHIPPED 08-Aug-2026 (per-request sale wizards, reason-prompt queue, transfer pick/gate guards, id-carrying inbox decisions). Phase E (attach→parse→confirm component) rides with EXP-1. | **shipped** | `telegram-ops-bot/specs/APC-1_APPROVAL_CONCURRENCY.md` |
 | 1 (for owner) | Turn ON webhook enforcement (set `TELEGRAM_WEBHOOK_SECRET` → `npm run set-webhook` → `REQUIRE_WEBHOOK_SECRET=1`). Fix is shipped but DORMANT. | **Owner** | `telegram-ops-bot/specs/SEC-P1-P2_PICKUP.md` |
 | 1 (for Emin) | Backup fix + Drive-quota / photo-archive diagnosis (BKP-1). ⚠️ Bot-side job DISABLED by owner request 10-Jul-2026 (`SHEET_BACKUP_ENABLED` default 0) — **no daily sheet backups run at all** until checklist Task 1 (Apps Script) is installed. | **Emin** | `telegram-ops-bot/specs/BKP-1_EMIN_CHECKLIST.md` |
 | 1 (for owner) | TRF-5 manual live test — transfer queue + single-flow retirement (commit `28d9121f`) | **Owner** | `telegram-ops-bot/specs/TRF-5_TEST_STEPS.md` |

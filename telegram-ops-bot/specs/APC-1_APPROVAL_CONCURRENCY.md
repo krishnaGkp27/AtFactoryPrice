@@ -1,6 +1,22 @@
 # APC-1 — Approval concurrency: per-request wizards, in-place cards
 
-**Status: DESIGN AGREED (owner, 08-Aug-2026) — build not started.**
+**Status: Phases A–D SHIPPED 08-Aug-2026** (owner: "managing the
+concurrency is an utmost priority without drilling down into more
+polishing"). Phase E (the shared attach→parse→confirm media component)
+is deferred by that ruling and rides with EXP-1, which needs it anyway.
+Commits: A `96f008c` (sale wizards per-request, in-place, resumable),
+B `83d50a2` (reason-prompt queue), C `8e4961e` (transfer picks/photo
+gates: explicit Continue/Drop, anchored-card-only chips, gate ownership),
+D `3d019d3` (inbox decisions by requestId; srf_assign + approve_task
+stale-card guards).
+
+**Phase C deviation (recorded):** the transfer dispatcher wizard is
+guarded-serial (explicit Continue/Drop switch), not fully parallel
+pickers — physical dispatch is one truck at a time; the mess class was
+SILENT loss/cross-wire, and both are now impossible. Fully-parallel
+pickers can come later if reality ever demands them.
+
+**Original design statement (agreed 08-Aug-2026):**
 Owner's report: processing one approval while another arrives is "a
 complete mess" — starting the second kills or cross-wires the first.
 Owner chose the **parallel model** ("go with the recommendation because it
