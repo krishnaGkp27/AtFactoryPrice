@@ -31,12 +31,20 @@ test('generate()', async (t) => {
     assert.equal(seen.size, 300);
   });
 
-  await t.test('sequences are independent per prefix', () => {
-    const first = Number(ids.generate('ALPHA').split('-')[2]);
+  await t.test('prefixes never bleed into each other', () => {
+    // CUS-ID3 removed per-prefix sequences entirely (random suffixes).
+    // The old form of this test compared Number(suffix) against first+1 —
+    // it only passed because NaN === NaN, and flaked whenever one random
+    // hex suffix happened to be all digits (~2.3% per id). What is
+    // actually promised now: the prefix survives verbatim and ids never
+    // collide, whatever other prefixes were minted in between.
+    const a = ids.generate('ALPHA');
     ids.generate('BETA');
     ids.generate('BETA');
-    const second = Number(ids.generate('ALPHA').split('-')[2]);
-    assert.equal(second, first + 1);
+    const b = ids.generate('ALPHA');
+    assert.match(a, /^ALPHA-\d{8}-[A-Z0-9]{8}$/);
+    assert.match(b, /^ALPHA-\d{8}-[A-Z0-9]{8}$/);
+    assert.notEqual(a, b);
   });
 });
 
