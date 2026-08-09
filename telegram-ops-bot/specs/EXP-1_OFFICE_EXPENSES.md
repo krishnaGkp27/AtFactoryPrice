@@ -1,10 +1,27 @@
 # EXP-1 — Office expenses: daily record + reporting reminder
 
-**Status: DISCUSSION — top priority for the next implementation.**
-Owner is bringing real-world challenges to the table before any layout is
-confirmed. Nothing below is locked except the problem statement; the five
-decisions at the bottom are the owner's to rule on. Do NOT build until the
-rulings land here.
+**Status: CORE SHIPPED 08-Aug-2026** (commits `d03423e` + review fixes
+`ed009a1`). Owner confirmed the proposed layout and all five
+recommendations, adding: entries must land CONCISELY on the sheet, the
+computed running balance is confirmed, and the 20:00 report goes to the
+finance team (admins for now) in the good-morning-message style.
+
+Shipped: category-picker daily record extending BR-OPS C1
+`officeExpenseFlow` (person allowances from the Users sheet /
+office items / commissions / immediate cash-in / day card / dated
+zero-day marker), concise typed BranchOpsLog rows (no new sheet, no new
+columns), read-time running balance (Σ cash_in − non-rejected outflows),
+and `eveningExpenseReport` (🌇 20:00 Lagos admin report per active
+branch + nothing-filed reminder with File-now / zero-day chips;
+EXPENSE_REPORT_* Settings). Adversarially reviewed: 17 distinct
+confirmed defects fixed in `ed009a1` before live use.
+
+Remaining piece: the 📎 attach→parse→confirm component (photo/Excel in,
+OCR'd figures as confirm chips, file archived as evidence) — APC-1
+Phase E; next build on this track. Owner seeds the float by recording
+current cash-in-hand once as the first ➕ Cash received.
+
+## Original problem statement
 
 ## Context (08-Aug-2026)
 
