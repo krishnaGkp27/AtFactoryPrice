@@ -34,13 +34,38 @@
  *     quickPicks:     [{ title, lastAmount }], // loaded once at start
  *   }
  *
+ * EXP-1 (owner-confirmed layout, 08-Aug-2026) — the flow is now the
+ * office's ONE daily record, replacing the Google Form. The entry screen
+ * is a category picker; every item stays a two-field form (who/what →
+ * amount) and lands as ONE concise BranchOpsLog row:
+ *
+ *   👤 Person allowance — person chips from the Users sheet (active
+ *      staff; joiners/leavers never need a redesign), last-time amount
+ *      offered as a one-tap chip. kind=person_allowance, ref_id=user_id.
+ *   🧾 Office item      — the original adaptive title picker. kind=expense.
+ *   🤝 Commission       — short who/what remark + amount. kind=commission.
+ *   ➕ Cash received    — recorded IMMEDIATELY (no approval batch): money
+ *      handed to the office moves the computed balance the moment it is
+ *      typed. kind=cash_in.
+ *   📒 Today's record   — the read-time day card (same shape the finance
+ *      team gets at 20:00), with the running balance.
+ *   ✅ Nothing spent    — explicit zero-day marker so a missing day and a
+ *      zero day are never confused; refused once outflows exist.
+ *
+ * Outflow items still ride ONE approval batch (record_office_expense,
+ * single-admin sign-off — unchanged policy).
+ *
  * Callback namespace `ofex:*`:
  *   ofex:cancel
  *   ofex:back
+ *   ofex:cat:<off|per|com|cash>   category picker taps
+ *   ofex:per:<index>       pick a person by index (session persons list)
  *   ofex:pick:<index>      pick a quick-pick title by index
  *   ofex:other             free-text title
  *   ofex:useamt            accept the suggested (last-used) amount
- *   ofex:add_more
+ *   ofex:today             the day-record card
+ *   ofex:zd                zero-day marker (SESSION-FREE — also the chip
+ *                          on the 20:00 reminder DM)
  *   ofex:submit
  *   ofex:undo              remove last item from the batch
  */
@@ -87,15 +112,139 @@ async function start(bot, chatId, userId, messageId) {
     .catch(() => []);
   sessionStore.set(userId, {
     type: 'office_expense_flow',
-    step: 'pick_title',
+    step: 'pick_cat',
     flowMessageId: messageId || null,
     items: [],
     pendingTitle: '',
     pendingAmount: null,
+    pendingKind: 'expense',
+    pendingRef: '',
+    persons: null,
     quickPicks: quickPicks || [],
     startedAt: new Date().toISOString(),
   });
-  await renderTitlePicker(bot, chatId, userId);
+  await renderCategoryPicker(bot, chatId, userId);
+}
+
+// ---------------------------------------------------------------------------
+// EXP-1 — Step 0: the category picker (the daily-record home screen)
+// ---------------------------------------------------------------------------
+
+const KIND_ICON = { expense: '🧾', person_allowance: '👤', commission: '🤝' };
+
+function batchLines(session) {
+  const lines = [];
+  if (session.items.length) {
+    lines.push(`*Batch so far (${session.items.length} item${session.items.length === 1 ? '' : 's'}):*`);
+    for (const it of session.items) {
+      lines.push(`  ${KIND_ICON[it.kind] || '🧾'} ${escapeMd(it.title)} — ₦${fmtNgn(it.amount)}`);
+    }
+    const total = session.items.reduce((s, it) => s + it.amount, 0);
+    lines.push(`  *Total: ₦${fmtNgn(total)}*`);
+  }
+  return lines;
+}
+
+async function renderCategoryPicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'pick_cat';
+  sessionStore.set(userId, session);
+
+  // Best-effort one-line "today" status — a sheet hiccup never blocks entry.
+  let todayLine = '';
+  try {
+    const branch = await branchOpsService.resolveBranch(userId);
+    const rep = await branchOpsService.getExpenseDayReport({ branch });
+    todayLine = rep.filed
+      ? `Recorded today: spent ₦${fmtNgn(rep.spent)} · balance ₦${fmtNgn(rep.balance)}`
+      : `Recorded today: nothing yet · balance ₦${fmtNgn(rep.balance)}`;
+  } catch (_) { /* line simply absent */ }
+
+  const rows = [
+    [{ text: '👤 Person allowance', callback_data: 'ofex:cat:per' },
+      { text: '🧾 Office item', callback_data: 'ofex:cat:off' }],
+    [{ text: '🤝 Commission', callback_data: 'ofex:cat:com' },
+      { text: '➕ Cash received', callback_data: 'ofex:cat:cash' }],
+    [{ text: '📒 Today’s record', callback_data: 'ofex:today' },
+      { text: '✅ Nothing spent today', callback_data: 'ofex:zd' }],
+  ];
+  if (session.items.length) rows.push([{ text: `✅ Submit batch (${session.items.length})`, callback_data: 'ofex:submit' }]);
+  rows.push(cancelRow());
+  rows.push(menuRow());
+
+  const lines = ['💸 *Office Expenses*'];
+  if (todayLine) lines.push(`_${todayLine}_`);
+  lines.push('');
+  const batch = batchLines(session);
+  if (batch.length) { lines.push(...batch); lines.push(''); }
+  lines.push('Pick what you’re adding:');
+  await render(bot, chatId, userId, lines.join('\n'), rows);
+}
+
+/** EXP-1 — person chips from the Users sheet (active staff only). */
+async function renderPersonPicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  let persons = session.persons;
+  if (!persons) {
+    try {
+      const usersRepository = require('../repositories/usersRepository');
+      persons = (await usersRepository.getAll())
+        .filter((u) => String(u.status || 'active').toLowerCase() === 'active')
+        .map((u) => ({ id: String(u.user_id), name: String(u.name || u.user_id).trim() }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .slice(0, 16);
+    } catch (e) {
+      logger.warn(`officeExpenseFlow: users read failed: ${e.message}`);
+      persons = [];
+    }
+    session.persons = persons;
+  }
+  session.step = 'person_pick';
+  sessionStore.set(userId, session);
+  if (!persons.length) {
+    await renderError(bot, chatId, userId, 'No active staff found on the Users sheet.');
+    return;
+  }
+  const rows = [];
+  for (let i = 0; i < persons.length; i += 2) {
+    const r = [{ text: `👤 ${persons[i].name.slice(0, 26)}`, callback_data: `ofex:per:${i}` }];
+    if (persons[i + 1]) r.push({ text: `👤 ${persons[i + 1].name.slice(0, 26)}`, callback_data: `ofex:per:${i + 1}` });
+    rows.push(r);
+  }
+  rows.push(backRow());
+  rows.push(cancelRow());
+  await render(bot, chatId, userId,
+    '👤 *Person allowance*\n\nWho is this allowance for?', rows);
+}
+
+async function pickPerson(bot, chatId, userId, idx) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const p = (session.persons || [])[idx];
+  if (!p) { await renderError(bot, chatId, userId, 'That option is no longer available — pick again.'); return; }
+  session.pendingKind = 'person_allowance';
+  session.pendingTitle = p.name;
+  session.pendingRef = p.id;
+  session.pendingAmount = await branchOpsService.lastAllowanceAmount(p.id).catch(() => null);
+  session.step = 'amount';
+  sessionStore.set(userId, session);
+  await renderAmountStep(bot, chatId, userId);
+}
+
+/** EXP-1 — 📒 the day-record card (same shape the finance team gets at 20:00). */
+async function renderTodayCard(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  try {
+    const branch = await branchOpsService.resolveBranch(userId);
+    const rep = await branchOpsService.getExpenseDayReport({ branch });
+    const { formatBranchReport } = require('../services/eveningExpenseReport');
+    await render(bot, chatId, userId, formatBranchReport(rep), [backRow(), menuRow()]);
+  } catch (e) {
+    await renderError(bot, chatId, userId, `Could not read today's record: ${e.message}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +269,7 @@ async function renderTitlePicker(bot, chatId, userId) {
   }
   rows.push([{ text: '✏️ Other (type title)', callback_data: 'ofex:other' }]);
   if (session.items.length) rows.push([{ text: '✅ Submit batch', callback_data: 'ofex:submit' }]);
+  rows.push(backRow('⬅ Categories'));
   rows.push(cancelRow());
   rows.push(menuRow());
 
@@ -149,6 +299,8 @@ async function pickTitle(bot, chatId, userId, idx) {
   const pick = (session.quickPicks || [])[idx];
   if (!pick) { await renderError(bot, chatId, userId, 'That option is no longer available — pick another.'); return; }
   session.pendingTitle = pick.title;
+  session.pendingKind = 'expense';
+  session.pendingRef = '';
   session.pendingAmount = pick.lastAmount != null && pick.lastAmount > 0 ? pick.lastAmount : null;
   session.step = 'amount';
   sessionStore.set(userId, session);
@@ -169,6 +321,64 @@ async function startFreeTitle(bot, chatId, userId) {
       cancelRow(),
     ],
   );
+}
+
+/** EXP-1 — 🤝 commission: short who/what remark, then the amount. */
+async function startCommissionNote(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'comm_note';
+  sessionStore.set(userId, session);
+  await render(bot, chatId, userId,
+    '🤝 *Commission*\n\n'
+    + 'Reply with *who / what* this commission is for.\n'
+    + 'Example: `Sir Pee — 52 bales`, `Silk Abdul 24pcs`',
+    [backRow(), cancelRow()]);
+}
+
+/** EXP-1 — ➕ cash received: amount only, recorded immediately. */
+async function startCashIn(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'cashin_amount';
+  sessionStore.set(userId, session);
+  await render(bot, chatId, userId,
+    '➕ *Cash received*\n\n'
+    + 'Reply with the *amount handed to the office* (NGN).\n'
+    + '_Recorded immediately — it moves the balance the moment you send it._\n'
+    + 'Example: `50000`',
+    [backRow(), cancelRow()]);
+}
+
+/** EXP-1 — ✅ zero-day marker. SESSION-FREE on purpose: the 20:00 reminder
+ *  DM carries this chip, and that tap must work with no flow open. */
+async function recordZeroDayTap(bot, query) {
+  const userId = String(query.from.id);
+  const chatId = query.message.chat.id;
+  try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
+  try {
+    const res = await branchOpsService.recordZeroDay({ userId });
+    const text = res.already
+      ? `✅ Already confirmed: nothing spent today (${res.branch}).`
+      : `✅ Recorded: nothing spent today (${res.branch}).`;
+    const session = sessionStore.get(userId);
+    if (session && session.type === 'office_expense_flow') {
+      await render(bot, chatId, userId, `${text}`, [backRow(), menuRow()]);
+    } else {
+      try {
+        await bot.editMessageText(text, {
+          chat_id: chatId, message_id: query.message.message_id,
+          reply_markup: { inline_keyboard: [menuRow()] },
+        });
+      } catch (_) { await bot.sendMessage(chatId, text).catch(() => {}); }
+    }
+  } catch (e) {
+    const msg = `⚠️ ${e.message || 'Could not record the zero day.'}`;
+    const session = sessionStore.get(userId);
+    if (session && session.type === 'office_expense_flow') await renderError(bot, chatId, userId, e.message);
+    else await bot.sendMessage(chatId, msg).catch(() => {});
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,10 +421,45 @@ async function handleText(bot, msg) {
     const title = raw.slice(0, branchOpsService.MAX_EXPENSE_TITLE_LEN);
     if (!title) { await renderError(bot, chatId, userId, 'Title cannot be empty.'); return true; }
     session.pendingTitle = title;
+    session.pendingKind = 'expense';
     session.pendingAmount = null;  // free-text title — no learned suggestion
     session.step = 'amount';
     sessionStore.set(userId, session);
     await renderAmountStep(bot, chatId, userId);
+    return true;
+  }
+
+  // EXP-1 — commission remark → amount step, same two-field shape.
+  if (session.step === 'comm_note') {
+    const note = raw.slice(0, branchOpsService.MAX_EXPENSE_TITLE_LEN);
+    if (!note) { await renderError(bot, chatId, userId, 'The who/what note cannot be empty.'); return true; }
+    session.pendingTitle = note;
+    session.pendingKind = 'commission';
+    session.pendingRef = '';
+    session.pendingAmount = null;
+    session.step = 'amount';
+    sessionStore.set(userId, session);
+    await renderAmountStep(bot, chatId, userId);
+    return true;
+  }
+
+  // EXP-1 — cash received: recorded immediately, shows the new balance.
+  if (session.step === 'cashin_amount') {
+    const v = parseFloat(raw.replace(/,/g, ''));
+    if (!isFinite(v) || v <= 0) {
+      await renderError(bot, chatId, userId, 'Amount must be a number > 0.');
+      return true;
+    }
+    try {
+      const res = await branchOpsService.recordCashIn({ userId, amount: v });
+      session.step = 'pick_cat';
+      sessionStore.set(userId, session);
+      await render(bot, chatId, userId,
+        `➕ *Cash received — recorded*\n\n₦${fmtNgn(res.amount)} added (${escapeMd(res.branch)}).\nBalance in hand: *₦${fmtNgn(res.balance)}*`,
+        [backRow(), menuRow()]);
+    } catch (e) {
+      await renderError(bot, chatId, userId, e.message);
+    }
     return true;
   }
 
@@ -244,18 +489,27 @@ async function handleText(bot, msg) {
 async function commitItem(bot, chatId, userId, amount) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  session.items.push({ title: session.pendingTitle, amount });
+  // EXP-1 — the item keeps its kind + ref so the sheet row stays concise
+  // and typed (person_allowance carries the person's user_id in ref_id).
+  session.items.push({
+    kind: session.pendingKind || 'expense',
+    title: session.pendingTitle,
+    amount,
+    ref_id: session.pendingRef || '',
+  });
   session.pendingTitle = '';
   session.pendingAmount = null;
+  session.pendingKind = 'expense';
+  session.pendingRef = '';
   if (session.items.length >= MAX_ITEMS) {
     session.step = 'review';
     sessionStore.set(userId, session);
     await renderReview(bot, chatId, userId);
     return;
   }
-  session.step = 'pick_title';
+  session.step = 'pick_cat';
   sessionStore.set(userId, session);
-  await renderTitlePicker(bot, chatId, userId);
+  await renderCategoryPicker(bot, chatId, userId);
 }
 
 // ---------------------------------------------------------------------------
@@ -271,7 +525,7 @@ async function renderReview(bot, chatId, userId) {
     '',
     `Batch (${session.items.length} items, max reached):`,
   ];
-  for (const it of session.items) lines.push(`  • ${escapeMd(it.title)} — ₦${fmtNgn(it.amount)}`);
+  for (const it of session.items) lines.push(`  ${KIND_ICON[it.kind] || '🧾'} ${escapeMd(it.title)} — ₦${fmtNgn(it.amount)}`);
   lines.push(`  *Total: ₦${fmtNgn(total)}*`);
   await render(bot, chatId, userId, lines.join('\n'), [
     [{ text: '✅ Submit batch', callback_data: 'ofex:submit' }],
@@ -300,7 +554,7 @@ async function submit(bot, chatId, userId) {
     // Itemise the admin card so a spelling mistake is visible: the admin
     // can correct the title/amount on the BranchOpsLog sheet before
     // approving (approval only flips status, never rewrites the cells).
-    const itemLines = (items || session.items).map((it) => `• ${it.title} — ₦${fmtNgn(it.amount)}`);
+    const itemLines = (items || session.items).map((it) => `${KIND_ICON[it.kind] || '🧾'} ${it.title} — ₦${fmtNgn(it.amount)}`);
     const shown = itemLines.length > MAX_CARD_ITEMS
       ? itemLines.slice(0, MAX_CARD_ITEMS).concat([`…and ${itemLines.length - MAX_CARD_ITEMS} more`])
       : itemLines;
@@ -350,10 +604,31 @@ async function handleCallback(bot, query) {
   if (!data.startsWith('ofex:')) return false;
   const chatId = query.message?.chat?.id;
   const userId = String(query.from.id);
+
+  // EXP-1 — the zero-day chip is SESSION-FREE: it lives on the 20:00
+  // reminder DM and must work with no flow open.
+  if (data === 'ofex:zd') return recordZeroDayTap(bot, query);
+
   const session = sessionStore.get(userId);
   if (!session || session.type !== 'office_expense_flow') return false;
 
   try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
+
+  // EXP-1 — category picker taps.
+  if (data === 'ofex:cat:per') { await renderPersonPicker(bot, chatId, userId); return true; }
+  if (data === 'ofex:cat:off') {
+    session.step = 'pick_title';
+    sessionStore.set(userId, session);
+    await renderTitlePicker(bot, chatId, userId);
+    return true;
+  }
+  if (data === 'ofex:cat:com') { await startCommissionNote(bot, chatId, userId); return true; }
+  if (data === 'ofex:cat:cash') { await startCashIn(bot, chatId, userId); return true; }
+  if (data === 'ofex:today') { await renderTodayCard(bot, chatId, userId); return true; }
+  if (data.startsWith('ofex:per:')) {
+    await pickPerson(bot, chatId, userId, parseInt(data.slice('ofex:per:'.length), 10));
+    return true;
+  }
 
   if (data === 'ofex:cancel') {
     sessionStore.clear(userId);
@@ -398,17 +673,30 @@ async function stepBack(bot, chatId, userId) {
   if (!session) return;
   switch (session.step) {
     case 'free_title':
-    case 'amount':
-      session.step = 'pick_title';
       session.pendingTitle = '';
       session.pendingAmount = null;
+      session.step = 'pick_title';
+      sessionStore.set(userId, session);
+      await renderTitlePicker(bot, chatId, userId);
+      break;
+    case 'amount':
+      // EXP-1 — back returns to where the item came from.
+      session.pendingTitle = '';
+      session.pendingAmount = null;
+      if (session.pendingKind === 'person_allowance') { await renderPersonPicker(bot, chatId, userId); break; }
+      if (session.pendingKind === 'commission') { await startCommissionNote(bot, chatId, userId); break; }
+      session.step = 'pick_title';
       sessionStore.set(userId, session);
       await renderTitlePicker(bot, chatId, userId);
       break;
     case 'pick_title':
-      // The error card's ⬅ Back used to fall into the default branch and
-      // silently destroy the batch. Re-render the screen instead.
-      await renderTitlePicker(bot, chatId, userId);
+    case 'person_pick':
+    case 'comm_note':
+    case 'cashin_amount':
+    case 'pick_cat':
+      // EXP-1 — every sub-screen backs out to the category picker; the
+      // error card's ⬅ Back must never destroy the batch.
+      await renderCategoryPicker(bot, chatId, userId);
       break;
     case 'review':
       await renderReview(bot, chatId, userId);

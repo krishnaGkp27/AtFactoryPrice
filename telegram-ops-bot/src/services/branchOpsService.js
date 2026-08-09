@@ -163,9 +163,33 @@ async function openDay({ userId, cash, cameraOk, cameraNote }) {
   return { alreadyOpen: false, branch, date, manager, rows: batch };
 }
 
+/* ── EXP-1 (owner-confirmed layout, 08-Aug-2026) ─────────────────────────
+ *
+ * The daily office record extends the BR-OPS expense batch with three new
+ * OUTFLOW kinds riding the same approval batch, plus two record-only rows:
+ *
+ *   person_allowance — subject = person's name, ref_id = their user_id
+ *   commission       — subject = the remark (who/what)
+ *   cash_in          — money handed to the office (record-only, immediate)
+ *   zero_day         — explicit "nothing spent today" marker (record-only)
+ *
+ * Sheet rows stay CONCISE (owner): one row per item, subject short, no
+ * prose — every derived figure (per-person totals, running balance) is
+ * computed at read time, never persisted (BUSINESS_RULES 5b).
+ *
+ * Running cash balance = Σ cash_in − Σ outflows (non-rejected), whole
+ * history per branch. Auditable and anchor-free: the float is seeded by
+ * recording the current cash-in-hand once as the first ➕ Cash received.
+ * Pending rows COUNT as spent — the cash left the drawer when it was
+ * spent, not when the admin signed the book.
+ */
+const EXPENSE_OUTFLOW_KINDS = ['expense', 'person_allowance', 'commission'];
+
 /**
  * Validate a list of expense items. Returns sanitised copy or throws.
  * Pure — used by both submitExpenseBatch and smoke tests.
+ * EXP-1: items may carry a kind (default 'expense') and a ref_id
+ * (person_allowance → the person's user_id).
  */
 function validateExpenseItems(items) {
   if (!Array.isArray(items) || items.length === 0) {
@@ -191,7 +215,14 @@ function validateExpenseItems(items) {
       err.code = 'BOPS_BAD_AMOUNT';
       throw err;
     }
-    return { title, amount: +amount.toFixed(2) };
+    // EXP-1 — item kinds; anything unknown is refused, not coerced.
+    const kind = String(it.kind || 'expense').trim();
+    if (!EXPENSE_OUTFLOW_KINDS.includes(kind)) {
+      const err = new Error(`Item #${i + 1} ("${title}"): unknown kind '${kind}'.`);
+      err.code = 'BOPS_BAD_KIND';
+      throw err;
+    }
+    return { kind, title, amount: +amount.toFixed(2), ref_id: String(it.ref_id || '') };
   });
 }
 
@@ -218,9 +249,11 @@ async function submitExpenseBatch({ userId, items }) {
     riskReason: risk.reason || 'admin_approval_required', status: 'pending',
   });
   // Eager pending rows so the manager's "Today" lens reflects what's in flight.
+  // EXP-1 — each row keeps its own kind; subject stays the concise title.
   await branchOpsLogRepository.appendMany(cleaned.map((it) => ({
     date, branch, manager_id: manager.id, manager_name: manager.name,
-    kind: 'expense', subject: it.title, amount: it.amount,
+    kind: it.kind || 'expense', subject: it.title, amount: it.amount,
+    ref_id: it.ref_id || '',
     status: 'pending_approval', approval_request_id: requestId,
   })));
   await auditLogRepository.append('approval_queued',
@@ -245,7 +278,8 @@ async function applyExpenseBatch({ aj, approvedBy, requestId }) {
     await branchOpsLogRepository.appendMany((aj.items || []).map((it) => ({
       date: aj.date, branch: aj.branch,
       manager_id: aj.manager_id, manager_name: aj.manager_name,
-      kind: 'expense', subject: it.title, amount: it.amount,
+      kind: it.kind || 'expense', subject: it.title, amount: it.amount,
+      ref_id: it.ref_id || '',
       status: 'approved', approval_request_id: requestId,
       notes: 'late-write (eager rows missing)',
     })));
@@ -377,6 +411,145 @@ async function getExpenseQuickPicks(userId, opts = {}) {
 }
 
 /**
+ * EXP-1 — record money handed to the office. Record-only (the giver is
+ * the owner/admin side; the evening report shows it the same day), writes
+ * one concise row and returns the new running balance.
+ */
+async function recordCashIn({ userId, amount, source }) {
+  const v = Number(amount);
+  if (!isFinite(v) || v <= 0 || v > MAX_OPENING_CASH) {
+    const err = new Error(`Cash amount must be > 0 and ≤ ₦${MAX_OPENING_CASH.toLocaleString()}.`);
+    err.code = 'BOPS_BAD_CASH';
+    throw err;
+  }
+  const branch = await resolveBranch(userId);
+  const manager = await _resolveManager(userId);
+  await branchOpsLogRepository.append({
+    date: todayInTz(), branch, manager_id: manager.id, manager_name: manager.name,
+    kind: 'cash_in', subject: String(source || 'Cash received').trim().slice(0, MAX_EXPENSE_TITLE_LEN),
+    amount: +v.toFixed(2), status: 'logged',
+  });
+  await auditLogRepository.append('office_cash_in', { branch, amount: +v.toFixed(2) }, manager.id);
+  const balance = await getCashBalance({ branch });
+  return { branch, amount: +v.toFixed(2), balance };
+}
+
+/**
+ * EXP-1 — explicit "nothing spent today" marker, so a missing day and a
+ * zero day are never confused (§2 — the bot never guesses). Refused when
+ * the day already has outflow rows: the marker would contradict them.
+ */
+async function recordZeroDay({ userId }) {
+  const branch = await resolveBranch(userId);
+  const manager = await _resolveManager(userId);
+  const date = todayInTz();
+  const rows = await branchOpsLogRepository.findByBranchDate(branch, date);
+  if (rows.some((r) => EXPENSE_OUTFLOW_KINDS.includes(r.kind) && r.status !== 'rejected')) {
+    const err = new Error('Expenses are already recorded today — a zero-day marker would contradict them.');
+    err.code = 'BOPS_ZERO_CONFLICT';
+    throw err;
+  }
+  if (rows.some((r) => r.kind === 'zero_day')) {
+    return { branch, date, already: true };
+  }
+  await branchOpsLogRepository.append({
+    date, branch, manager_id: manager.id, manager_name: manager.name,
+    kind: 'zero_day', subject: 'Nothing spent', amount: '', status: 'logged',
+  });
+  return { branch, date, already: false };
+}
+
+/**
+ * EXP-1 — the running office cash balance for a branch, computed at read
+ * time (never persisted): Σ cash_in − Σ outflows, non-rejected, whole
+ * history. Pending rows count as spent — cash leaves the drawer when it
+ * is spent, not when the admin signs the book. Seed the float by
+ * recording the current cash-in-hand once as the first cash_in.
+ */
+function computeCashBalance(rows) {
+  let bal = 0;
+  for (const r of rows || []) {
+    if (r.status === 'rejected') continue;
+    if (r.kind === 'cash_in') bal += r.amount || 0;
+    else if (EXPENSE_OUTFLOW_KINDS.includes(r.kind)) bal -= r.amount || 0;
+  }
+  return +bal.toFixed(2);
+}
+
+async function getCashBalance({ branch }) {
+  const b = String(branch || '').toLowerCase();
+  const all = await branchOpsLogRepository.getAll();
+  return computeCashBalance(all.filter((r) => r.branch.toLowerCase() === b));
+}
+
+/**
+ * EXP-1 — one branch's day in report shape: per-person allowances, office
+ * items, commissions, cash in, spent total, running balance, and whether
+ * anything was filed (zero-day counts as filed). Pure roll-up over rows.
+ */
+function buildDayReport(dayRows, allBranchRows) {
+  const live = (dayRows || []).filter((r) => r.status !== 'rejected');
+  const of = (kind) => live.filter((r) => r.kind === kind);
+  const sum = (list) => +list.reduce((s, r) => s + (r.amount || 0), 0).toFixed(2);
+  const allowances = of('person_allowance');
+  const office = of('expense');
+  const commissions = of('commission');
+  const cashIn = of('cash_in');
+  const spent = +(sum(allowances) + sum(office) + sum(commissions)).toFixed(2);
+  return {
+    allowances: allowances.map((r) => ({ name: r.subject, amount: r.amount })),
+    office: office.map((r) => ({ title: r.subject, amount: r.amount })),
+    commissions: commissions.map((r) => ({ note: r.subject, amount: r.amount })),
+    cashIn: cashIn.map((r) => ({ source: r.subject, amount: r.amount })),
+    cashInTotal: sum(cashIn),
+    spent,
+    pendingCount: live.filter((r) => EXPENSE_OUTFLOW_KINDS.includes(r.kind) && r.status === 'pending_approval').length,
+    zeroDay: live.some((r) => r.kind === 'zero_day'),
+    filed: spent > 0 || cashIn.length > 0 || live.some((r) => r.kind === 'zero_day'),
+    balance: computeCashBalance(allBranchRows),
+  };
+}
+
+async function getExpenseDayReport({ branch, date }) {
+  const d = date || todayInTz();
+  const b = String(branch || '').toLowerCase();
+  const all = await branchOpsLogRepository.getAll();
+  const branchRows = all.filter((r) => r.branch.toLowerCase() === b);
+  return { branch, date: d, ...buildDayReport(branchRows.filter((r) => r.date === d), branchRows) };
+}
+
+/**
+ * EXP-1 — the person's last allowance amount (any branch), for the
+ * one-tap "same as last time" chip. Null when they have none on record.
+ */
+async function lastAllowanceAmount(refId) {
+  const id = String(refId || '');
+  if (!id) return null;
+  const all = await branchOpsLogRepository.getAll();
+  const mine = all
+    .filter((r) => r.kind === 'person_allowance' && r.ref_id === id && r.status !== 'rejected')
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  return mine.length && mine[0].amount > 0 ? mine[0].amount : null;
+}
+
+/**
+ * EXP-1 — who files expenses for which branch: distinct manager_ids seen
+ * on a branch's rows in the last `days` days. Drives the evening reminder
+ * recipients without any hardcoded person.
+ */
+async function activeExpenseBranches({ days = 14 } = {}) {
+  const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const all = await branchOpsLogRepository.getAll();
+  const map = new Map(); // branch → Set<manager_id>
+  for (const r of all) {
+    if (r.date < cutoff || !r.branch) continue;
+    if (!map.has(r.branch)) map.set(r.branch, new Set());
+    if (r.manager_id) map.get(r.branch).add(r.manager_id);
+  }
+  return [...map.entries()].map(([branch, filers]) => ({ branch, filers: [...filers] }));
+}
+
+/**
  * Roll-up for the manager's "Today" card and the weekly finance read.
  * Tallies opening cash + approved/pending expenses + counts of
  * pointer rows (samples, receipts, customers, marketers).
@@ -426,6 +599,16 @@ module.exports = {
   rankExpenseTitles,
   getExpenseQuickPicks,
   todayInTz,
+  // EXP-1
+  recordCashIn,
+  recordZeroDay,
+  lastAllowanceAmount,
+  getCashBalance,
+  computeCashBalance,
+  buildDayReport,
+  getExpenseDayReport,
+  activeExpenseBranches,
+  EXPENSE_OUTFLOW_KINDS,
   // tunable constants — exposed for smoke
   MAX_EXPENSE_AMOUNT,
   MAX_EXPENSE_TITLE_LEN,

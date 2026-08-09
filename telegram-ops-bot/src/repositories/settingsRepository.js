@@ -64,6 +64,13 @@ const DEFAULTS = {
   DIGEST_ENABLED: 1,
   DIGEST_TIME: '10:00',
   DIGEST_TIMEZONE: 'Africa/Lagos',
+  // EXP-1 (owner, 08-Aug-2026) — 🌇 evening office-expense report to the
+  // finance team (admins for now) + the nothing-filed reminder to the
+  // office. Time is HH:MM in DIGEST_TIMEZONE; catch-up window mirrors the
+  // morning digest (a late redeploy never reports at midnight).
+  EXPENSE_REPORT_ENABLED: 1,
+  EXPENSE_REPORT_TIME: '20:00',
+  EXPENSE_REPORT_CATCHUP_MINUTES: 120,
   DIGEST_NOTES_DAYS: 7,
   DIGEST_CUSTOMER_NOTES: 1,
   DIGEST_FOLLOWUPS: 0,
