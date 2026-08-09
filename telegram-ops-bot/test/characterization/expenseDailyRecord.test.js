@@ -197,10 +197,41 @@ test('nothing filed: recent filers get the two-chip reminder, admins get the ⚠
   const rem = bot.callsTo('sendMessage').find((c) => String(c.args.chatId) === 'abdul');
   assert.ok(rem, 'reminder DM sent');
   const chips = (rem.args.opts.reply_markup.inline_keyboard || []).flat().map((b) => b.callback_data);
-  assert.deepEqual(chips, ['act:office_expense', 'ofex:zd'], 'File now + zero-day chips');
+  // EXP-1b — the zero-day chip carries ITS day so a late tap can refuse.
+  assert.deepEqual(chips, ['act:office_expense', `ofex:zd:${TODAY}`], 'File now + dated zero-day chips');
   const adm = bot.callsTo('sendMessage').find((c) => String(c.args.chatId) === '777');
   assert.match(String(adm.args.text), /Nothing filed today/i);
   assert.match(String(adm.args.text), /Reminder sent/i);
+});
+
+test('EXP-1b: a dated zero-day chip tapped after its day refuses; report claims stay honest', async () => {
+  logRows = []; queued = [];
+  sessionStore.clear('abdul');
+  const bot = createFakeBot();
+  await flow.handleCallback(bot, cb('ofex:zd:2026-01-01', 'abdul'));
+  assert.equal(logRows.filter((r) => r.kind === 'zero_day').length, 0, 'yesterday\'s chip marks nothing');
+  assert.match(bot.allText(), /day has passed/i);
+
+  // No reachable filer → the admins' card must NOT claim a reminder went out.
+  logRows = [
+    { branch: 'Idumota', date: '2026-08-01', kind: 'expense', subject: 'Fuel', amount: 500, status: 'approved', manager_id: 'gone' },
+  ];
+  const bot2 = createFakeBot();
+  const { reminders } = await eveningReport.sendReports(bot2);
+  assert.equal(reminders, 0, 'inactive filer skipped');
+  const adm = bot2.callsTo('sendMessage').find((c) => String(c.args.chatId) === '777');
+  assert.match(String(adm.args.text), /Could not reach any filer/i, 'the card says what actually happened');
+  assert.ok(!/Reminder sent/i.test(String(adm.args.text)));
+});
+
+test('EXP-1b: zero-day marker goes VOID once outflows land the same day', async () => {
+  logRows = [
+    { branch: 'Idumota', date: TODAY, kind: 'zero_day', subject: 'Nothing spent', amount: 0, status: 'logged', manager_id: 'abdul' },
+    { branch: 'Idumota', date: TODAY, kind: 'expense', subject: 'Fuel', amount: 5500, status: 'approved', manager_id: 'abdul' },
+  ];
+  const rep = await branchOpsService.getExpenseDayReport({ branch: 'Idumota' });
+  assert.equal(rep.zeroDay, false, 'the day reads as its expenses, never as both');
+  assert.equal(rep.spent, 5500);
 });
 
 test('tick: fires once per day at/after the set time, never after the catch-up window', async () => {

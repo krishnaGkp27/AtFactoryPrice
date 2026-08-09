@@ -151,23 +151,34 @@ async function renderCategoryPicker(bot, chatId, userId) {
   session.step = 'pick_cat';
   sessionStore.set(userId, session);
 
-  // Best-effort one-line "today" status — a sheet hiccup never blocks entry.
-  let todayLine = '';
-  try {
-    const branch = await branchOpsService.resolveBranch(userId);
-    const rep = await branchOpsService.getExpenseDayReport({ branch });
-    todayLine = rep.filed
-      ? `Recorded today: spent ₦${fmtNgn(rep.spent)} · balance ₦${fmtNgn(rep.balance)}`
-      : `Recorded today: nothing yet · balance ₦${fmtNgn(rep.balance)}`;
-  } catch (_) { /* line simply absent */ }
+  // Best-effort one-line "today" status — a sheet hiccup never blocks
+  // entry. EXP-1b: cached ~60s on the session so tapping around the
+  // picker doesn't cost a full sheet read per render.
+  let todayLine = session._todayLine || '';
+  if (!session._todayLineAt || Date.now() - session._todayLineAt > 60 * 1000) {
+    try {
+      const branch = await branchOpsService.resolveBranch(userId);
+      const rep = await branchOpsService.getExpenseDayReport({ branch });
+      todayLine = rep.filed
+        ? `Recorded today: spent ₦${fmtNgn(rep.spent)} · balance ₦${fmtNgn(rep.balance)}`
+        : `Recorded today: nothing yet · balance ₦${fmtNgn(rep.balance)}`;
+      session._todayLine = todayLine;
+      session._todayLineAt = Date.now();
+      sessionStore.set(userId, session);
+    } catch (_) { /* line simply absent */ }
+  }
 
   const rows = [
     [{ text: '👤 Person allowance', callback_data: 'ofex:cat:per' },
       { text: '🧾 Office item', callback_data: 'ofex:cat:off' }],
     [{ text: '🤝 Commission', callback_data: 'ofex:cat:com' },
       { text: '➕ Cash received', callback_data: 'ofex:cat:cash' }],
-    [{ text: '📒 Today’s record', callback_data: 'ofex:today' },
-      { text: '✅ Nothing spent today', callback_data: 'ofex:zd' }],
+    // EXP-1b — no zero-day chip while unsubmitted items sit in the batch:
+    // offering it there was a one-tap contradiction.
+    session.items.length
+      ? [{ text: '📒 Today’s record', callback_data: 'ofex:today' }]
+      : [{ text: '📒 Today’s record', callback_data: 'ofex:today' },
+        { text: '✅ Nothing spent today', callback_data: 'ofex:zd' }],
   ];
   if (session.items.length) rows.push([{ text: `✅ Submit batch (${session.items.length})`, callback_data: 'ofex:submit' }]);
   rows.push(cancelRow());
@@ -182,8 +193,12 @@ async function renderCategoryPicker(bot, chatId, userId) {
   await render(bot, chatId, userId, lines.join('\n'), rows);
 }
 
-/** EXP-1 — person chips from the Users sheet (active staff only). */
-async function renderPersonPicker(bot, chatId, userId) {
+/** EXP-1 — person chips from the Users sheet (active staff only).
+ *  EXP-1b — PAGED, never capped: with a big roster the 17th person must
+ *  still be reachable, and a new hire must never silently evict anyone. */
+const PERSONS_PER_PAGE = 12;
+
+async function renderPersonPicker(bot, chatId, userId, page = null) {
   const session = sessionStore.get(userId);
   if (!session) return;
   let persons = session.persons;
@@ -193,8 +208,7 @@ async function renderPersonPicker(bot, chatId, userId) {
       persons = (await usersRepository.getAll())
         .filter((u) => String(u.status || 'active').toLowerCase() === 'active')
         .map((u) => ({ id: String(u.user_id), name: String(u.name || u.user_id).trim() }))
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .slice(0, 16);
+        .sort((a, b) => a.name.localeCompare(b.name));
     } catch (e) {
       logger.warn(`officeExpenseFlow: users read failed: ${e.message}`);
       persons = [];
@@ -202,16 +216,30 @@ async function renderPersonPicker(bot, chatId, userId) {
     session.persons = persons;
   }
   session.step = 'person_pick';
+  if (page != null) session.personPage = page;
+  const pages = Math.max(1, Math.ceil(persons.length / PERSONS_PER_PAGE));
+  const p = Math.min(Math.max(0, session.personPage || 0), pages - 1);
+  session.personPage = p;
   sessionStore.set(userId, session);
   if (!persons.length) {
     await renderError(bot, chatId, userId, 'No active staff found on the Users sheet.');
     return;
   }
   const rows = [];
-  for (let i = 0; i < persons.length; i += 2) {
-    const r = [{ text: `👤 ${persons[i].name.slice(0, 26)}`, callback_data: `ofex:per:${i}` }];
-    if (persons[i + 1]) r.push({ text: `👤 ${persons[i + 1].name.slice(0, 26)}`, callback_data: `ofex:per:${i + 1}` });
+  const start = p * PERSONS_PER_PAGE;
+  const slice = persons.slice(start, start + PERSONS_PER_PAGE);
+  for (let i = 0; i < slice.length; i += 2) {
+    const gi = start + i;
+    const r = [{ text: `👤 ${slice[i].name.slice(0, 26)}`, callback_data: `ofex:per:${gi}` }];
+    if (slice[i + 1]) r.push({ text: `👤 ${slice[i + 1].name.slice(0, 26)}`, callback_data: `ofex:per:${gi + 1}` });
     rows.push(r);
+  }
+  if (pages > 1) {
+    const nav = [];
+    if (p > 0) nav.push({ text: '◀ Prev', callback_data: `ofex:pp:${p - 1}` });
+    nav.push({ text: `${p + 1}/${pages}`, callback_data: 'ofex:noop' });
+    if (p < pages - 1) nav.push({ text: 'Next ▶', callback_data: `ofex:pp:${p + 1}` });
+    rows.push(nav);
   }
   rows.push(backRow());
   rows.push(cancelRow());
@@ -351,11 +379,31 @@ async function startCashIn(bot, chatId, userId) {
 }
 
 /** EXP-1 — ✅ zero-day marker. SESSION-FREE on purpose: the 20:00 reminder
- *  DM carries this chip, and that tap must work with no flow open. */
-async function recordZeroDayTap(bot, query) {
+ *  DM carries this chip, and that tap must work with no flow open.
+ *  EXP-1b — a dated chip (ofex:zd:<ISO>) refuses once its day has passed
+ *  (a reminder tapped tomorrow must not mark the wrong day), and a live
+ *  batch of unsubmitted outflow items refuses too — the sheet guard
+ *  cannot see the session. */
+async function recordZeroDayTap(bot, query, chipDate) {
   const userId = String(query.from.id);
   const chatId = query.message.chat.id;
   try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
+  const today = branchOpsService.todayInTz();
+  if (chipDate && chipDate !== today) {
+    try {
+      await bot.editMessageText(
+        `ℹ️ That reminder was for ${chipDate} — the day has passed. Today's record is filed separately.`,
+        { chat_id: chatId, message_id: query.message.message_id, reply_markup: { inline_keyboard: [menuRow()] } });
+    } catch (_) { /* stale card */ }
+    return true;
+  }
+  const liveSession = sessionStore.get(userId);
+  if (liveSession && liveSession.type === 'office_expense_flow'
+      && Array.isArray(liveSession.items) && liveSession.items.length) {
+    await renderError(bot, chatId, userId,
+      'Your batch has unsubmitted items — submit or cancel it; a zero-day would contradict it.');
+    return true;
+  }
   try {
     const res = await branchOpsService.recordZeroDay({ userId });
     const text = res.already
@@ -422,6 +470,7 @@ async function handleText(bot, msg) {
     if (!title) { await renderError(bot, chatId, userId, 'Title cannot be empty.'); return true; }
     session.pendingTitle = title;
     session.pendingKind = 'expense';
+    session.pendingRef = ''; // EXP-1b — never inherit an abandoned person's id
     session.pendingAmount = null;  // free-text title — no learned suggestion
     session.step = 'amount';
     sessionStore.set(userId, session);
@@ -606,11 +655,21 @@ async function handleCallback(bot, query) {
   const userId = String(query.from.id);
 
   // EXP-1 — the zero-day chip is SESSION-FREE: it lives on the 20:00
-  // reminder DM and must work with no flow open.
-  if (data === 'ofex:zd') return recordZeroDayTap(bot, query);
+  // reminder DM and must work with no flow open. Dated form: ofex:zd:<ISO>.
+  if (data === 'ofex:zd' || data.startsWith('ofex:zd:')) {
+    return recordZeroDayTap(bot, query, data.startsWith('ofex:zd:') ? data.slice('ofex:zd:'.length) : null);
+  }
 
   const session = sessionStore.get(userId);
-  if (!session || session.type !== 'office_expense_flow') return false;
+  if (!session || session.type !== 'office_expense_flow') {
+    // EXP-1b — a chip from an expired flow must explain itself, not fall
+    // through to the controller's terminal "Unknown action.".
+    try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
+    try {
+      await bot.sendMessage(chatId, '💸 That Office Expenses card expired — open 💸 Office Expense from the menu to continue. Unsubmitted items were not saved.');
+    } catch (_) { /* best-effort */ }
+    return true;
+  }
 
   try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
 
@@ -625,6 +684,11 @@ async function handleCallback(bot, query) {
   if (data === 'ofex:cat:com') { await startCommissionNote(bot, chatId, userId); return true; }
   if (data === 'ofex:cat:cash') { await startCashIn(bot, chatId, userId); return true; }
   if (data === 'ofex:today') { await renderTodayCard(bot, chatId, userId); return true; }
+  if (data === 'ofex:noop') { return true; }
+  if (data.startsWith('ofex:pp:')) {
+    await renderPersonPicker(bot, chatId, userId, parseInt(data.slice('ofex:pp:'.length), 10) || 0);
+    return true;
+  }
   if (data.startsWith('ofex:per:')) {
     await pickPerson(bot, chatId, userId, parseInt(data.slice('ofex:per:'.length), 10));
     return true;

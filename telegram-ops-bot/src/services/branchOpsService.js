@@ -250,12 +250,20 @@ async function submitExpenseBatch({ userId, items }) {
   });
   // Eager pending rows so the manager's "Today" lens reflects what's in flight.
   // EXP-1 — each row keeps its own kind; subject stays the concise title.
-  await branchOpsLogRepository.appendMany(cleaned.map((it) => ({
-    date, branch, manager_id: manager.id, manager_name: manager.name,
-    kind: it.kind || 'expense', subject: it.title, amount: it.amount,
-    ref_id: it.ref_id || '',
-    status: 'pending_approval', approval_request_id: requestId,
-  })));
+  // EXP-1b — best-effort: the QUEUE row is the source of truth, and
+  // applyExpenseBatch late-writes missing rows on approval. Throwing here
+  // after the queue append made the manager re-submit a request that
+  // already existed — two approvals, double-counted rows.
+  try {
+    await branchOpsLogRepository.appendMany(cleaned.map((it) => ({
+      date, branch, manager_id: manager.id, manager_name: manager.name,
+      kind: it.kind || 'expense', subject: it.title, amount: it.amount,
+      ref_id: it.ref_id || '',
+      status: 'pending_approval', approval_request_id: requestId,
+    })));
+  } catch (e) {
+    logger.error(`branchOps.submitExpenseBatch: eager rows failed for ${requestId} (${e.message}) — approval row stands, rows late-write on approval`);
+  }
   await auditLogRepository.append('approval_queued',
     { requestId, action: 'record_office_expense', branch, total, count: cleaned.length }, manager.id);
   logger.info(`branchOps.submitExpenseBatch: ${branch} ${cleaned.length} items total=₦${total} request=${requestId} by=${manager.id}`);
@@ -504,7 +512,9 @@ function buildDayReport(dayRows, allBranchRows) {
     cashInTotal: sum(cashIn),
     spent,
     pendingCount: live.filter((r) => EXPENSE_OUTFLOW_KINDS.includes(r.kind) && r.status === 'pending_approval').length,
-    zeroDay: live.some((r) => r.kind === 'zero_day'),
+    // EXP-1b — a marker filed BEFORE a late expense is VOID the moment
+    // outflows exist: the day reads as its expenses, never as both.
+    zeroDay: spent === 0 && live.some((r) => r.kind === 'zero_day'),
     filed: spent > 0 || cashIn.length > 0 || live.some((r) => r.kind === 'zero_day'),
     balance: computeCashBalance(allBranchRows),
   };
@@ -534,19 +544,31 @@ async function lastAllowanceAmount(refId) {
 
 /**
  * EXP-1 — who files expenses for which branch: distinct manager_ids seen
- * on a branch's rows in the last `days` days. Drives the evening reminder
- * recipients without any hardcoded person.
+ * on a branch's EXPENSE-RECORD rows in the last `days` days. Drives the
+ * evening reminder recipients without any hardcoded person.
+ *
+ * EXP-1b — only expense-record kinds count (outflows, cash_in, zero_day):
+ * a branch that merely opens its day / logs pointers must not get nightly
+ * nothing-filed nags, and a camera-check author is not a filer. Branch
+ * names group case-insensitively (first-seen casing wins) so a casing
+ * drift on the sheet cannot mint duplicate report cards. A branch dark
+ * for the whole window drops off the report — that is the intended
+ * boundary of "active".
  */
-async function activeExpenseBranches({ days = 14 } = {}) {
+const EXPENSE_RECORD_KINDS = [...EXPENSE_OUTFLOW_KINDS, 'cash_in', 'zero_day'];
+
+async function activeExpenseBranches({ days = 30 } = {}) {
   const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const all = await branchOpsLogRepository.getAll();
-  const map = new Map(); // branch → Set<manager_id>
+  const map = new Map(); // lower(branch) → { branch, filers:Set }
   for (const r of all) {
     if (r.date < cutoff || !r.branch) continue;
-    if (!map.has(r.branch)) map.set(r.branch, new Set());
-    if (r.manager_id) map.get(r.branch).add(r.manager_id);
+    if (!EXPENSE_RECORD_KINDS.includes(r.kind)) continue;
+    const key = r.branch.toLowerCase();
+    if (!map.has(key)) map.set(key, { branch: r.branch, filers: new Set() });
+    if (r.manager_id) map.get(key).filers.add(r.manager_id);
   }
-  return [...map.entries()].map(([branch, filers]) => ({ branch, filers: [...filers] }));
+  return [...map.values()].map(({ branch, filers }) => ({ branch, filers: [...filers] }));
 }
 
 /**
@@ -561,9 +583,12 @@ async function getDailySummary({ branch, date }) {
   const dailyOpen = rows.find((r) => r.kind === 'daily_open') || null;
   const cameraCheck = rows.find((r) => r.kind === 'camera_check') || null;
 
-  const expensesApproved = rows.filter((r) => r.kind === 'expense' && r.status === 'approved');
-  const expensesPending  = rows.filter((r) => r.kind === 'expense' && r.status === 'pending_approval');
-  const expensesRejected = rows.filter((r) => r.kind === 'expense' && r.status === 'rejected');
+  // EXP-1b — every OUTFLOW kind counts here, not just 'expense': the
+  // manager's Today card and the weekly finance read must see allowances
+  // and commissions too.
+  const expensesApproved = rows.filter((r) => EXPENSE_OUTFLOW_KINDS.includes(r.kind) && r.status === 'approved');
+  const expensesPending  = rows.filter((r) => EXPENSE_OUTFLOW_KINDS.includes(r.kind) && r.status === 'pending_approval');
+  const expensesRejected = rows.filter((r) => EXPENSE_OUTFLOW_KINDS.includes(r.kind) && r.status === 'rejected');
 
   const total = (list) => list.reduce((s, r) => s + (r.amount || 0), 0);
 
@@ -609,6 +634,7 @@ module.exports = {
   getExpenseDayReport,
   activeExpenseBranches,
   EXPENSE_OUTFLOW_KINDS,
+  EXPENSE_RECORD_KINDS,
   // tunable constants — exposed for smoke
   MAX_EXPENSE_AMOUNT,
   MAX_EXPENSE_TITLE_LEN,

@@ -1338,7 +1338,15 @@ async function rejectApprovalInner(requestId, rejectedBy) {
       const branchOpsService = require('./branchOpsService');
       await branchOpsService.cancelExpenseBatch({ requestId, rejectedBy });
     } catch (e) {
-      logger.warn(`record_office_expense reject cleanup failed: ${e.message}`);
+      // EXP-1b — loud, not just a log line: rows stuck pending_approval
+      // keep COUNTING AS SPENT in the running balance (H6 posture). The
+      // audit row names the request so the sheet can be fixed by hand.
+      logger.error(`record_office_expense reject cleanup FAILED for ${requestId}: ${e.message} — pending rows still depress the cash balance`);
+      try {
+        const auditLogRepository = require('../repositories/auditLogRepository');
+        await auditLogRepository.append('office_expense_reject_cleanup_failed',
+          { requestId, error: e.message }, String(rejectedBy || 'system'));
+      } catch (_) { /* audit best-effort */ }
     }
   }
   if (aj.action === 'finalize_landed_cost' && aj.grn_id) {
