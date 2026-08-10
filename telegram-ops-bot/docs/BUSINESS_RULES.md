@@ -210,6 +210,28 @@ inventory sheet. but you can add in different sheet."*
 - Sale flows do not carry customer/rate/payment; the admin assigns them at
   approval time.
 
+## 9b · Every sale carries seller, date and bill — no assumptions
+
+**Locked 10-Aug-2026 (owner: "Yes, date, salesperson and bill on the same
+than sale card. Yes, sales bill is always required. Make it mandatory
+everywhere in the business rules.").**
+
+- **The sales bill is mandatory on every sale door.** No sale reaches the
+  approval queue without a photo or PDF of the bill attached to the
+  request; the approver sees the bill before deciding. This binds Sell
+  Bale (Lagos), the Kano than sale, Snap Sale and any future sale door.
+  *Supply requests stay OPTIONAL* — owner ruling the same day; they are a
+  request for goods, not a completed sale.
+- **The salesperson is PICKED, never assumed.** The submitter is offered
+  first but the seller is a chip, because the person typing is not always
+  the person who sold. It is stamped on the queue row and written to
+  Transactions column M by every sale executor (SLP-1).
+- **The sale date is TAPPED, never assumed.** Chips + a 90-day calendar;
+  no future dates; beyond yesterday is flagged BACKDATED on the approval
+  card and stamped on the record (owner rule, 21-Jul).
+- A flow that cannot collect one of the three does not queue the sale — it
+  asks again. A silent default is a wrong record nobody can spot later.
+
 ## 10 · Storage layering
 
 **Locked 16-Jul-2026 (owner rule; also in CLAUDE.md).**

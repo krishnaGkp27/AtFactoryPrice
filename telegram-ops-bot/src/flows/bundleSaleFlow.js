@@ -53,10 +53,13 @@
  *   bs:expand:<shadeKey>           (collapse/expand a cart line)
  *   bs:rm_line:<key>
  *   bs:rm_bale:<baleUid>
- *   bs:proceed                     (advance from cart → confirm)
+ *   bs:proceed                     (cart → salesperson → date → confirm)
+ *   bs:sp:<i> · bs:spx             (SELL-K1 salesperson chips)
+ *   bs:dq · bs:dm:<ym> · bs:dd:<iso>  (SELL-K1 sale-date chips + calendar)
+ *   bs:fin                         (arm the mandatory sales bill)
  *   bs:submit
  *
- * SELL-T2 (owner-confirmed 09-Aug-2026) — the typed than-list preload.
+ * SELL-T3 (owner-confirmed 09-Aug-2026) — the typed than-list preload.
  * Abdul sells single thans out of many DIFFERENT bales/designs to one
  * customer; drilling design → shade → bale for each one was the whole
  * cost. He now types the list ("sell 1100/1, 1091/1, 1082/1 kano", or the
@@ -78,6 +81,7 @@ const sessionStore        = require('../utils/sessionStore');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const customersRepository = require('../repositories/customersRepository');
 const shadesRepository    = require('../repositories/shadesRepository');
+const usersRepository     = require('../repositories/usersRepository');
 const designAssetsRepository = require('../repositories/designAssetsRepository');
 const transactionsRepository = require('../repositories/transactionsRepository');
 const bundleSaleService   = require('../services/bundleSaleService');
@@ -86,6 +90,8 @@ const auth                = require('../middlewares/auth');
 const logger              = require('../utils/logger');
 const { rememberRequesterCard } = require('../utils/requesterCard');
 const { rowsFor, mdEscape: mdEscapeV1 } = require('../utils/flowKit');
+const dateCalendar        = require('../utils/dateCalendar');
+const fmtDate             = require('../utils/formatDate');
 const { isNotModified }   = require('../utils/telegramUI');
 const {
   buildShadeNameMap, buildShadeLabel, layoutShadeRows, formatShadeRef,
@@ -164,7 +170,15 @@ function cartRow(yards, thans) {
 }
 function fmtQty(n)   { return (Math.round((n || 0) * 100) / 100).toLocaleString('en-NG'); }
 function fmtNgn(n)   { return `₦${Math.round(n || 0).toLocaleString('en-NG')}`; }
-function escapeMd(s) { return String(s || '').replace(/[*_`\[\]()~>#+\-=|{}.!]/g, (m) => `\\${m}`); }
+/**
+ * Every card in this flow is sent with `parse_mode: 'Markdown'` (v1), but
+ * this used to escape the MarkdownV2 set — so v1 printed the backslashes
+ * literally and a design like `9043-B` reached Abdul as `9043\-B` on the
+ * picker, the cart and the confirm card. Same class of bug as SELL-T3b's
+ * `\(sold, or wrong number\)`. flowKit's mdEscape is the v1-safe one
+ * (`_ * [` and backtick only); the name stays so call sites don't churn.
+ */
+const escapeMd = mdEscapeV1;
 
 async function renderError(bot, chatId, userId, errText) {
   const session = sessionStore.get(userId);
@@ -206,7 +220,7 @@ async function start(bot, chatId, userId, messageId) {
 }
 
 /* ───────────────────────────────────────────────────────────────────── */
-/*  SELL-T2 — typed than-list preload                                   */
+/*  SELL-T3 — typed than-list preload                                   */
 /* ───────────────────────────────────────────────────────────────────── */
 
 /**
@@ -257,7 +271,7 @@ async function startWithThans(bot, chatId, userId, parsed) {
         { reply_markup: { inline_keyboard: matches.slice(0, 6).map((w) => [{ text: `🏭 ${w}`, callback_data: `bs:wh:${w}` }]) } });
       return true;
     } else {
-      // SELL-T2b — an unknown store name used to fall through silently to
+      // SELL-T3b — an unknown store name used to fall through silently to
       // "any store", which then reported every bale as missing. Say it.
       await bot.sendMessage(chatId,
         `🏭 I don't know a store called “${hint}”.\nStores with stock: ${storesWithStock.join(', ') || '(none)'}\n\nSend the line again with one of those names.`);
@@ -278,7 +292,7 @@ async function startWithThans(bot, chatId, userId, parsed) {
   const inStore = (r) => !wLow || String(r.warehouse || '').toLowerCase() === wLow;
 
   /**
-   * SELL-T2b — say WHY, from the row's real state. "sold, or wrong number"
+   * SELL-T3b — say WHY, from the row's real state. "sold, or wrong number"
    * sent Abdul hunting; the sheet already knows whether the bale is on the
    * road, sold, in another store, or simply not a number we hold.
    */
@@ -364,7 +378,7 @@ async function startWithThans(bot, chatId, userId, parsed) {
   return true;
 }
 
-/** SELL-T2 — the review card: what loaded, what did not, and the way on. */
+/** SELL-T3 — the review card: what loaded, what did not, and the way on. */
 async function renderPreloadReview(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
@@ -405,7 +419,7 @@ async function renderPreloadReview(bot, chatId, userId) {
   }
   if (pl.notLoaded.length) {
     text += `\n⚠️ *Not loaded (${pl.notLoaded.length})*\n`;
-    // SELL-T2b — the reasons are prose with brackets and dashes, so they go
+    // SELL-T3b — the reasons are prose with brackets and dashes, so they go
     // through the Markdown-v1 escaper (mdEscape). escapeMd here is the
     // v2-style one: it backslashes "(" and "-", which v1 then PRINTS, and
     // Abdul saw "\(sold, or wrong number\)" on his card.
@@ -417,7 +431,7 @@ async function renderPreloadReview(bot, chatId, userId) {
   if (pl.commaThanHint) {
     text += '\n_For several thans of one bale use_ `1100/1+2+3` _(a comma always means a new bale)._\n';
   }
-  // SELL-T2b — he writes the customer and date on the same line out of
+  // SELL-T3b — he writes the customer and date on the same line out of
   // habit. Say plainly that they were read and ignored, rather than
   // failing on them (DSP-1: the admin sets both at approval).
   if (pl.ignoredCustomer || pl.ignoredDate) {
@@ -435,7 +449,7 @@ async function renderPreloadReview(bot, chatId, userId) {
     rows.push(row);
   }
   if (totals.thans) {
-    rows.push([{ text: '✅ Confirm & submit', callback_data: 'bs:proceed' }]);
+    rows.push([{ text: '✅ Continue — seller, date, bill', callback_data: 'bs:proceed' }]);
     rows.push([{ text: '🛒 Edit list', callback_data: 'bs:cart' }]);
   }
   rows.push([{ text: '➕ Add more', callback_data: 'bs:pl:more' }]);
@@ -446,7 +460,7 @@ async function renderPreloadReview(bot, chatId, userId) {
 }
 
 /**
- * SELL-T2 — jump straight into one bale's than chips from the review card.
+ * SELL-T3 — jump straight into one bale's than chips from the review card.
  * Sets the design/shade context the picker needs, so he can tick exactly
  * which thans he is selling.
  */
@@ -926,7 +940,7 @@ async function renderCart(bot, chatId, userId) {
   }
 
   rows.push([{ text: '➕ Add more thans', callback_data: 'bs:back_to_shades' }]);
-  rows.push([{ text: '✅ Proceed to review', callback_data: 'bs:proceed' }]);
+  rows.push([{ text: '✅ Continue — seller, date, bill', callback_data: 'bs:proceed' }]);
   rows.push(cancelRow());
 
   await render(bot, chatId, userId, text, rows);
@@ -966,6 +980,141 @@ async function handleCustomerSearch(bot, chatId, userId, query) {
 
 
 
+/* ───────────────────────────────────────────────────────────────────── */
+/*  SELL-K1 — salesperson · date · sales bill (owner, 10-Aug-2026)      */
+/* ───────────────────────────────────────────────────────────────────── */
+
+/**
+ * SELL-K1 (owner, 10-Aug-2026): "Yes, date, salesperson and bill on the
+ * same than-sale card. Yes, the sales bill is always required."
+ *
+ * Lagos's Sell Bale has asked all three since July (sellBaleFlow: chips for
+ * the salesperson, the SELL-T2 calendar for the date, a mandatory bill
+ * before submit). The Kano than sale never did — it stamped today's date,
+ * stamped the submitter as the salesperson, and queued with no bill. Three
+ * silent assumptions on the highest-volume sale door, and the approver
+ * could not tell an assumed date from a chosen one.
+ *
+ * This is the SAME chain, reusing the SAME shared pieces (the Users sheet
+ * for names, dateCalendar for the grid, the 90-day / no-future / backdated
+ * rule) so Kano and Lagos cannot drift apart again.
+ */
+const CALENDAR_MAX_DAYS_BACK = 90;
+
+async function renderSalespersonPicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  let names = [];
+  try {
+    names = (await usersRepository.getAll())
+      .filter((u) => (u.status || 'active').toLowerCase() === 'active')
+      .map((u) => u.name || String(u.user_id))
+      .filter(Boolean);
+  } catch (_) { /* Users sheet down — the "me" chip below still works */ }
+  // The submitter is always offered first: he is the common case and the
+  // one name we can resolve without the sheet.
+  if (!session._sellerLabel) {
+    try {
+      session._sellerLabel = await require('../services/approvalCards').resolveUserLabel(userId, bot);
+    } catch (_) { session._sellerLabel = ''; }
+  }
+  const me = session._sellerLabel || '';
+  if (me && !names.some((n) => n.toLowerCase() === me.toLowerCase())) names.unshift(me);
+  session._salespersons = names.slice(0, 24);
+  session.step = 'pick_salesperson';
+  sessionStore.set(userId, session);
+
+  const rows = [];
+  for (let i = 0; i < session._salespersons.length; i += 2) {
+    const row = [{ text: `🧑 ${session._salespersons[i]}`, callback_data: `bs:sp:${i}` }];
+    if (session._salespersons[i + 1]) row.push({ text: `🧑 ${session._salespersons[i + 1]}`, callback_data: `bs:sp:${i + 1}` });
+    rows.push(row);
+  }
+  if (!rows.length && me) rows.push([{ text: `🧑 ${me}`, callback_data: 'bs:sp:me' }]);
+  rows.push(backRow());
+  rows.push(cancelRow());
+  await render(bot, chatId, userId, '🧑 *Who sold this?*\n\nPick the salesperson — it is stamped on the sales record.', rows);
+}
+
+async function renderDatePicker(bot, chatId, userId, opts = {}) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'pick_date';
+  sessionStore.set(userId, session);
+  const rows = opts.ym
+    ? dateCalendar.calendarRows('bs', opts.ym, { maxDaysBack: CALENDAR_MAX_DAYS_BACK })
+    : dateCalendar.quickChipRows('bs');
+  rows.push(backRow());
+  rows.push(cancelRow());
+  const head = opts.note ? `${opts.note}\n\n` : '';
+  await render(bot, chatId, userId,
+    `${head}📅 *When was it sold?*\n\nTap the sale date${opts.ym ? ` — dots are out of range (max ${CALENDAR_MAX_DAYS_BACK} days back)` : ''}.\n_Beyond yesterday is flagged BACKDATED to the approver._`,
+    rows);
+}
+
+/** The one gate every date pick (chip or grid cell) passes through. */
+async function applyDate(bot, chatId, userId, iso) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const range = dateCalendar.checkRange(iso, CALENDAR_MAX_DAYS_BACK);
+  if (!range.ok) {
+    const why = range.reason === 'future'
+      ? `⚠️ ${iso} is in the FUTURE — future sales are not allowed.`
+      : `⚠️ ${iso} is more than ${CALENDAR_MAX_DAYS_BACK} days back — ask an admin if this is a genuine old sale.`;
+    await renderDatePicker(bot, chatId, userId, { note: why });
+    return;
+  }
+  session.salesDate = iso;
+  const daysBack = Math.round((Date.parse(dateCalendar.lagosISO(0)) - Date.parse(iso)) / 86400000);
+  // Owner rule (21-Jul): BEYOND yesterday is backdated.
+  session.backdatedDays = daysBack >= 2 ? daysBack : 0;
+  sessionStore.set(userId, session);
+  await renderConfirm(bot, chatId, userId);
+}
+
+/**
+ * Arm the mandatory sales-bill upload. The cart is NOT queued until the
+ * photo/PDF lands — a sale with no bill has no door here at all.
+ */
+async function requestBill(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'await_doc';
+  sessionStore.set(userId, session);
+  await render(bot, chatId, userId,
+    '📎 *Send the sales bill*\n\nPhoto or PDF of the bill for this sale — it is required before the request goes for approval.\n\n_Nothing is submitted until the bill arrives._',
+    [backRow(), cancelRow()]);
+}
+
+/**
+ * The bill lands here (routed from the controller's file handler). Stores
+ * the file id on the session and submits in one motion — no second tap, so
+ * a sale can never sit half-submitted with a bill attached.
+ */
+async function handleFile(bot, msg) {
+  const userId = String(msg.from.id);
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'bundle_sale_flow' || session.step !== 'await_doc') return false;
+  const chatId = msg.chat.id;
+  let fileId = '';
+  let docType = 'image';
+  if (msg.photo && msg.photo.length) {
+    fileId = msg.photo[msg.photo.length - 1].file_id;
+  } else if (msg.document) {
+    fileId = msg.document.file_id;
+    docType = 'document';
+  }
+  if (!fileId) {
+    await render(bot, chatId, userId, '⚠️ Please send a *photo* or *PDF* of the sales bill.', [backRow(), cancelRow()]);
+    return true;
+  }
+  session.saleDocFileId = fileId;
+  session.saleDocType = docType;
+  sessionStore.set(userId, session);
+  await submit(bot, chatId, userId);
+  return true;
+}
+
 async function renderConfirm(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
@@ -994,20 +1143,29 @@ async function renderConfirm(bot, chatId, userId) {
     const emoji = shadesRepository.chipFromList(shadesList, s.shade) || '🎨';
     return `${emoji} ${escapeMd(s.shade || '—')} — ${fmtQty(s.yards)} yd · ${s.thans} than`;
   });
-  // SELL-T2 — a typed list spans designs, so the header names them all
+  // SELL-T3 — a typed list spans designs, so the header names them all
   // rather than only the design that happened to be picked last.
   const cartDesigns = [...new Set(session.cart.lines.map((l) => l.design).filter(Boolean))];
   const designHead = cartDesigns.length > 1
     ? `${cartDesigns.length} designs — ${cartDesigns.slice(0, 4).join(', ')}${cartDesigns.length > 4 ? '…' : ''}`
     : (cartDesigns[0] || session.design || '—');
-  let text = `🧾 *Confirm Bundle Sale*\n\n`
+  // SELL-K1 — the salesperson and the date are FACTS he chose, shown on the
+  // same card as the goods, each re-tappable in place (APC-1: edit here,
+  // never a fresh card).
+  let text = `🧾 *Confirm sale*\n\n`
     + `*${escapeMd(designHead)}* @ *${escapeMd(session.warehouse || '—')}*\n`
     + `${lines.join('\n')}\n\n`
-    + `*Total: ${fmtQty(totals.yards)} yd*\n\n`
-    + `_Queued for admin approval; cart is locked at submission._\n`
-    + `_The admin assigns the customer, rate and payment — you will get the customer name and number back here once approved._`;
+    + `*Total: ${totals.thans} than · ${fmtQty(totals.yards)} yd*\n\n`
+    + `🧑 ${escapeMd(session.salesPerson || '—')}\n`
+    + `📅 ${escapeMd(fmtDate(session.salesDate) || '—')}\n`
+    + (session.backdatedDays
+      ? `\n⚠️ *BACKDATED — ${session.backdatedDays} days back.* The approver sees this flag and it is stamped on the record.\n`
+      : '')
+    + `\n_Next: the sales bill, then it goes for approval._\n`
+    + `_Customer, rate and payment are set at approval — you get the customer name back here once approved._`;
   await render(bot, chatId, userId, text, [
-    [{ text: '✅ Submit for approval', callback_data: 'bs:submit' }],
+    [{ text: '📎 Attach bill & submit', callback_data: 'bs:fin' }],
+    [{ text: '🧑 Change seller', callback_data: 'bs:spx' }, { text: '📅 Change date', callback_data: 'bs:dq' }],
     backRow(),
     cancelRow(),
   ]);
@@ -1025,37 +1183,76 @@ async function submit(bot, chatId, userId) {
     await renderError(bot, chatId, userId, `${reconciled.dropped.length} item(s) became unavailable. Cart was trimmed — please re-confirm.`);
     return;
   }
+  // SELL-K1 — the bill is mandatory. A tampered/expired session that lost
+  // it never queues silently; it goes back to the bill prompt.
+  if (!session.saleDocFileId) { await requestBill(bot, chatId, userId); return; }
   try {
-    const todayIso = new Date().toISOString().slice(0, 10);
+    const approvalCards = require('../services/approvalCards');
     // APU-1 sweep (owner 19-Jul): human-readable name on the queue row and
     // in the eventual Transactions ledger row, not a raw Telegram id.
-    const sellerLabel = await require('../services/approvalCards').resolveUserLabel(userId, bot);
+    const submitterLabel = session._sellerLabel
+      || await approvalCards.resolveUserLabel(userId, bot);
+    // SELL-K1 — the salesperson is the one he PICKED; the date is the one he
+    // TAPPED. Only a session that somehow skipped both falls back, and the
+    // fallback is stated on the card rather than assumed silently.
+    const sellerLabel = session.salesPerson || submitterLabel;
+    const saleIso = session.salesDate || dateCalendar.lagosISO(0);
+    const backdated = Number(session.backdatedDays) || 0;
     const { requestId } = await bundleSaleService.submitForApproval({
       cart: session.cart,
       sale: {
         // DSP-1 — customer, rate and payment are the admin's to set at
         // approval; the dispatcher supplies only what physically ships.
         customer: '',
-        salesDate: todayIso,
+        salesDate: saleIso,
         salesPerson: sellerLabel,
         paymentMode: '',
         pricePerYard: 0,
         designSummary: session.design,
         warehouse: session.warehouse,
         amountPaid: 0,
+        backdated: backdated > 0,
+        daysBack: backdated,
+        saleDocFileId: session.saleDocFileId,
+        saleDocType: session.saleDocType || 'image',
       },
       user: { id: userId, userId, username: '' },
-      riskReason: 'Bundle sale (Kano poly-colour) requires admin approval.',
+      riskReason: backdated ? `Backdated sale (${backdated} days in the past).` : '',
     });
     const isAdm = auth.isAdmin(userId);
     const excludeId = isAdm ? userId : undefined;
-    const detail =
-      `🧵 Bundle sale — ${session.design} @ ${session.warehouse || '—'}\n`
-      + `${totals.thans} than · ${fmtQty(totals.yards)} yd`;
+    // CARD-3 — the approver gets the SAME card the reminder sweep and the
+    // approvals inbox rebuild from the queue row, not a two-line summary.
+    let detail;
+    try {
+      detail = await approvalCards.buildSaleCard({
+        headline: 'Sale',
+        customer: '',
+        salesPerson: sellerLabel,
+        salesDate: saleIso,
+        items: session.cart.lines.map((l) => ({
+          type: 'than', packageNo: l.packageNo, thanNo: l.thanNo,
+          design: l.design, shade: l.shade, thans: 1, yards: Number(l.yards) || 0,
+          warehouse: l.warehouse || session.warehouse || '',
+        })),
+        docAttached: true,
+      });
+      if (backdated) detail += `\n⚠️ BACKDATED sale — ${backdated} day(s) in the past. Check the date before approving.`;
+    } catch (_) {
+      detail = `🧵 ${session.design || 'Sale'} @ ${session.warehouse || '—'}\n${totals.thans} than · ${fmtQty(totals.yards)} yd`;
+    }
     await approvalEvents.notifyAdminsApprovalRequest(
-      bot, requestId, sellerLabel, detail,
-      'Bundle sale (Kano poly-colour) requires admin approval.', excludeId,
+      bot, requestId, submitterLabel, detail,
+      backdated ? `Backdated sale (${backdated} days in the past).` : '', excludeId,
     );
+    // The bill itself follows the card, same as every other sale door.
+    try {
+      await approvalCards.forwardAttachmentsToAdmins(bot, requestId, [{
+        fileId: session.saleDocFileId,
+        kind: session.saleDocType === 'document' ? 'document' : 'photo',
+        caption: `📎 Sales bill for request ${requestId}`,
+      }], excludeId);
+    } catch (e) { logger.warn(`bundleSaleFlow: bill forward failed for ${requestId}: ${e.message}`); }
     await render(bot, chatId, userId,
       `⏳ *Submitted for approval*\n\n`
       + `• Request: \`${requestId}\`\n`
@@ -1340,7 +1537,7 @@ async function handleCallback(bot, query) {
 
   // DSP-1 — cart goes straight to confirm; customer, rate and payment
   // are assigned by the admin at approval.
-  // SELL-T2 — preload-review chips.
+  // SELL-T3 — preload-review chips.
   if (data.startsWith('bs:pl:open:')) {
     await openBaleFromPreload(bot, chatId, userId, data.slice('bs:pl:open:'.length));
     return true;
@@ -1355,7 +1552,35 @@ async function handleCallback(bot, query) {
     return true;
   }
 
-  if (data === 'bs:proceed') { await renderConfirm(bot, chatId, userId); return true; }
+  // SELL-K1 — cart → salesperson → date → confirm → bill → submit.
+  if (data === 'bs:proceed' || data === 'bs:spx') {
+    await renderSalespersonPicker(bot, chatId, userId);
+    return true;
+  }
+  if (data.startsWith('bs:sp:')) {
+    const raw = data.slice('bs:sp:'.length);
+    const pick = raw === 'me'
+      ? (session._sellerLabel || '')
+      : (session._salespersons || [])[parseInt(raw, 10)];
+    if (!pick) { await renderSalespersonPicker(bot, chatId, userId); return true; }
+    session.salesPerson = pick;
+    sessionStore.set(userId, session);
+    // Re-picking the seller from the confirm card returns straight there;
+    // the first pass continues to the date.
+    if (session.salesDate) await renderConfirm(bot, chatId, userId);
+    else await renderDatePicker(bot, chatId, userId);
+    return true;
+  }
+  if (data === 'bs:dq') { await renderDatePicker(bot, chatId, userId); return true; }
+  if (data.startsWith('bs:dm:')) {
+    await renderDatePicker(bot, chatId, userId, { ym: data.slice('bs:dm:'.length) });
+    return true;
+  }
+  if (data.startsWith('bs:dd:')) {
+    await applyDate(bot, chatId, userId, data.slice('bs:dd:'.length));
+    return true;
+  }
+  if (data === 'bs:fin') { await requestBill(bot, chatId, userId); return true; }
 
   if (data === 'bs:submit') { await submit(bot, chatId, userId); return true; }
 
@@ -1405,7 +1630,7 @@ async function stepBack(bot, chatId, userId) {
       await renderShadePicker(bot, chatId, userId);
       break;
     case 'bale_detail':
-      // SELL-T2 — a bale opened from the typed-list review goes BACK to
+      // SELL-T3 — a bale opened from the typed-list review goes BACK to
       // that review, not into a bale list he never came from.
       if (session._preload) {
         session.step = 'preload_review';
@@ -1434,12 +1659,22 @@ async function stepBack(bot, chatId, userId) {
       sessionStore.set(userId, session);
       await renderShadePicker(bot, chatId, userId);
       break;
-    // DSP-1 — confirm now sits directly above the cart: the customer, rate
-    // and payment levels moved to the admin's approval chain.
-    case 'confirm':
+    // DSP-1 — the customer, rate and payment levels moved to the admin's
+    // approval chain. SELL-K1 put salesperson → date → bill back between
+    // the cart and the queue, so back walks that chain in reverse.
+    case 'pick_salesperson':
       session.step = 'cart_review';
       sessionStore.set(userId, session);
       await renderCart(bot, chatId, userId);
+      break;
+    case 'pick_date':
+      await renderSalespersonPicker(bot, chatId, userId);
+      break;
+    case 'await_doc':
+      await renderConfirm(bot, chatId, userId);
+      break;
+    case 'confirm':
+      await renderDatePicker(bot, chatId, userId);
       break;
     default:
       await render(bot, chatId, userId, '❌ Cancelled.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
@@ -1449,10 +1684,12 @@ async function stepBack(bot, chatId, userId) {
 
 module.exports = {
   start,
-  startWithThans,   // SELL-T2 — typed than-list entry
+  startWithThans,   // SELL-T3 — typed than-list entry
   handleCallback,
   handleText,
+  handleFile,       // SELL-K1 — mandatory sales bill
   _internals: {
+    renderSalespersonPicker, renderDatePicker, applyDate, requestBill,
     renderContainerPicker, renderWarehousePicker, renderDesignPicker, renderShadePicker,
     renderBalePicker, renderBaleDetail, renderCart, renderConfirm, submit,
     applySmartPack, commitSmartPack, stepBack, thanKey, baleKeyOf,

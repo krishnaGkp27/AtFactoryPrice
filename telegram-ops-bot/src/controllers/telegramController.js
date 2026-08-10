@@ -3643,6 +3643,14 @@ async function handleFileMessage(bot, msg) {
     if (handled) return;
   }
 
+  // SELL-K1 — the Kano than sale now requires a sales bill before it queues;
+  // route the photo/PDF to the flow while it is armed.
+  if (session && session.type === 'bundle_sale_flow' && session.step === 'await_doc'
+      && (msg.photo || msg.document)) {
+    const handled = await require('../flows/bundleSaleFlow').handleFile(bot, msg);
+    if (handled) return;
+  }
+
   if (session && session.type === 'sale_flow' && session.awaitingDocument) {
     let telegramFileId, fileType, mimeType;
     if (msg.photo && msg.photo.length) {
@@ -4240,7 +4248,7 @@ async function handleMessage(bot, msg) {
     if (handled) return;
   }
 
-  // SELL-T2 (owner-confirmed 09-Aug-2026) — the than-list shorthand is
+  // SELL-T3 (owner-confirmed 09-Aug-2026) — the than-list shorthand is
   // parsed LOCALLY, before the AI round trip: "sell 1100/1, 1091/1 kano".
   // Deterministic, free, and it still works when the provider is down —
   // which matters because this is Abdul's fastest daily path in Kano.
@@ -4358,7 +4366,7 @@ async function handleMessage(bot, msg) {
 
       case 'sell_mixed': {
         if (!intent.thanItems || !intent.thanItems.length) { await bot.sendMessage(chatId, 'Which thans? e.g. "Sell than 1 from 5801, than 2 from 5804 to Customer"'); return; }
-        // SELL-T2 — the long sentence lands on the SAME preload review as
+        // SELL-T3 — the long sentence lands on the SAME preload review as
         // the shorthand. Before this, sell_mixed fell through to the
         // generic "use Sell Bale" redirect and the typed list was lost.
         const byBale = new Map();

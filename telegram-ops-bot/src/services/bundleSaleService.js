@@ -267,6 +267,14 @@ function buildApprovalPayload(cart, sale, user) {
     bundleFlow: 'BUNDLE-SALE-C1',
     designSummary: sale.designSummary || '',
     warehouse: sale.warehouse || '',
+    // SELL-K1 (owner 10-Aug-2026) — the sales bill is mandatory on this door
+    // and rides the queue row, so the reminder sweep, the approvals inbox
+    // and the supply-ledger doc list all find it exactly where every other
+    // sale keeps it. Backdating is a fact of the request, not of the render.
+    ...(sale.saleDocFileId
+      ? { sale_doc_file_id: sale.saleDocFileId, sale_doc_type: sale.saleDocType || 'image' }
+      : {}),
+    ...(sale.backdated ? { backdated: true, daysBack: Number(sale.daysBack) || 0 } : {}),
     submittedBy: user && (user.id || user.userId) || '',
     submittedAt: new Date().toISOString(),
   };
