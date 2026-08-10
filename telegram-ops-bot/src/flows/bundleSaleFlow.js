@@ -55,6 +55,23 @@
  *   bs:rm_bale:<baleUid>
  *   bs:proceed                     (advance from cart → confirm)
  *   bs:submit
+ *
+ * SELL-T2 (owner-confirmed 09-Aug-2026) — the typed than-list preload.
+ * Abdul sells single thans out of many DIFFERENT bales/designs to one
+ * customer; drilling design → shade → bale for each one was the whole
+ * cost. He now types the list ("sell 1100/1, 1091/1, 1082/1 kano", or the
+ * long sentence the AI parser already reads) and lands on a review card
+ * with the cart pre-filled from HIS OWN numbers.
+ *
+ * This does not weaken BUSINESS_RULES §2 ("the bot NEVER selects physical
+ * stock"): every than in the cart was named by the human. What the bot
+ * refuses to do is SUBSTITUTE — a than he named that is gone is reported,
+ * never swapped for its neighbour, and "1100 x3" opens that bale's chips
+ * instead of choosing three. Same shape as the TRF-8b transfer preload and
+ * SELL-T1's whole-bale preload.
+ *
+ *   bs:pl:go                       (preload review → cart)
+ *   bs:pl:open:<pkg>               (open one bale's than chips)
  */
 
 const sessionStore        = require('../utils/sessionStore');
@@ -186,6 +203,240 @@ async function start(bot, chatId, userId, messageId) {
     smartPack: null,
   });
   await renderContainerPicker(bot, chatId, userId);
+}
+
+/* ───────────────────────────────────────────────────────────────────── */
+/*  SELL-T2 — typed than-list preload                                   */
+/* ───────────────────────────────────────────────────────────────────── */
+
+/**
+ * Resolve a typed bale/than list against LIVE available stock and open the
+ * review card. Nothing is written; the cart still goes through the normal
+ * confirm → approval path.
+ *
+ * @param {object} bot
+ * @param {number|string} chatId
+ * @param {string} userId
+ * @param {{items:Array<{packageNo:string, thans?:number[], count?:number}>,
+ *          warehouseHint?:string, bad?:string[], commaThanHint?:boolean}} parsed
+ * @returns {Promise<boolean>} true when a card was shown
+ */
+async function startWithThans(bot, chatId, userId, parsed) {
+  if (!auth.isAdmin(userId) && !auth.isEmployee(userId)) {
+    await bot.sendMessage(chatId, '🧵 Bundle sale is available to employees and admins.');
+    return true;
+  }
+  const items = (parsed && parsed.items) || [];
+  if (!items.length) return false;
+
+  let all = [];
+  try {
+    all = await inventoryRepository.getAll();
+  } catch (e) {
+    logger.warn(`bundleSaleFlow.startWithThans: inventory read failed: ${e.message}`);
+    await bot.sendMessage(chatId, '⚠️ Could not read stock right now — try again in a moment.');
+    return true;
+  }
+  const avail = all.filter((r) => r.status === 'available');
+
+  // Warehouse: an explicit hint wins; otherwise infer from where the typed
+  // bales actually are. Bales split across stores is ambiguous — ASK (§2).
+  const hint = String((parsed && parsed.warehouseHint) || '').trim().toLowerCase();
+  const wanted = new Set(items.map((i) => String(i.packageNo)));
+  const hits = avail.filter((r) => wanted.has(String(r.packageNo)));
+  const storesFound = [...new Set(hits.map((r) => r.warehouse).filter(Boolean))];
+  let warehouse = '';
+  if (hint) {
+    const matches = [...new Set(avail.map((r) => r.warehouse).filter(Boolean))]
+      .filter((w) => w.toLowerCase().includes(hint) || hint.includes(w.toLowerCase()));
+    if (matches.length === 1) [warehouse] = matches;
+    else if (matches.length > 1) {
+      await bot.sendMessage(chatId,
+        `🏭 Which store did you mean by “${hint}”?`,
+        { reply_markup: { inline_keyboard: matches.slice(0, 6).map((w) => [{ text: `🏭 ${w}`, callback_data: `bs:wh:${w}` }]) } });
+      return true;
+    }
+  }
+  if (!warehouse) {
+    if (storesFound.length === 1) [warehouse] = storesFound;
+    else if (storesFound.length > 1) {
+      await bot.sendMessage(chatId,
+        `🏭 Those bales sit in ${storesFound.length} different stores (${storesFound.join(', ')}).\nSay which one, e.g. \`… from ${storesFound[0]}\`.`,
+        { parse_mode: 'Markdown' });
+      return true;
+    }
+  }
+
+  const wLow = warehouse.toLowerCase();
+  const inStore = (r) => !wLow || String(r.warehouse || '').toLowerCase() === wLow;
+
+  const lines = [];        // resolved than rows → cart
+  const notLoaded = [];    // { packageNo, reason }
+  const needPick = [];     // { packageNo, count } — he chooses the thans
+  for (const it of items) {
+    const pkg = String(it.packageNo);
+    const rows = avail.filter((r) => String(r.packageNo) === pkg && inStore(r));
+    if (!rows.length) {
+      const elsewhere = avail.find((r) => String(r.packageNo) === pkg);
+      notLoaded.push({
+        packageNo: pkg,
+        reason: elsewhere
+          ? `not in ${warehouse || 'that store'} — it is in ${elsewhere.warehouse}`
+          : 'no available than on this bale (sold, or wrong number)',
+      });
+      continue;
+    }
+    if (Array.isArray(it.thans) && it.thans.length) {
+      for (const n of it.thans) {
+        const row = rows.find((r) => Number(r.thanNo) === Number(n));
+        if (!row) {
+          // §2 — never substitute. Report it and offer the bale's chips.
+          notLoaded.push({ packageNo: pkg, reason: `than ${n} is not available` });
+          continue;
+        }
+        lines.push({
+          baleUid: row.baleUid, packageNo: row.packageNo, thanNo: row.thanNo,
+          yards: row.yards, design: row.design, shade: row.shade,
+          binLocation: row.binLocation || '',
+        });
+      }
+      continue;
+    }
+    // "x3" or a bare bale — the human picks which thans, on chips.
+    needPick.push({ packageNo: pkg, count: it.count || 0, available: rows.length });
+  }
+
+  sessionStore.set(userId, {
+    type: 'bundle_sale_flow',
+    step: 'preload_review',
+    flowMessageId: null,
+    startedAt: new Date().toISOString(),
+    arrivalBatch: '',            // typed entry spans containers
+    warehouse,
+    design: '', designKey: '', shadeKey: '', activeBaleUid: '',
+    cart: bundleSaleService.emptyCart(),
+    customer: '', rate: 0, paymentMode: '',
+    expandedShade: '', smartPack: null,
+    _preload: { notLoaded, needPick, bad: (parsed && parsed.bad) || [], commaThanHint: !!(parsed && parsed.commaThanHint) },
+  });
+  const session = sessionStore.get(userId);
+  const added = bundleSaleService.addLines(session.cart, lines);
+  sessionStore.set(userId, session);
+  logger.info(`bundleSaleFlow.startWithThans: user=${userId} typed=${items.length} loaded=${added} notLoaded=${notLoaded.length} needPick=${needPick.length} wh=${warehouse}`);
+  await renderPreloadReview(bot, chatId, userId);
+  return true;
+}
+
+/** SELL-T2 — the review card: what loaded, what did not, and the way on. */
+async function renderPreloadReview(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const pl = session._preload || { notLoaded: [], needPick: [], bad: [] };
+  const totals = bundleSaleService.totals(session.cart);
+  const typedTotal = totals.thans + pl.notLoaded.length + pl.needPick.length;
+
+  let text = `🧵 *Sell Thans — ${totals.thans} of ${typedTotal} typed than(s) loaded*\n`;
+  text += `From *${escapeMd(session.warehouse || 'any store')}*\n\n`;
+
+  if (totals.thans) {
+    // One line per bale, in the order he typed them.
+    const byBale = new Map();
+    for (const l of session.cart.lines) {
+      const k = String(l.packageNo);
+      if (!byBale.has(k)) byBale.set(k, { design: l.design, shade: l.shade, thans: [], yards: 0 });
+      const b = byBale.get(k);
+      b.thans.push(l.thanNo);
+      b.yards += l.yards || 0;
+    }
+    for (const [pkg, b] of byBale) {
+      text += `📦 ${escapeMd(pkg)} · ${escapeMd(b.design || '—')} · Shade ${escapeMd(String(b.shade || '—'))}`
+        + ` — than ${b.thans.join(', ')} · ${fmtQty(b.yards)} yd\n`;
+    }
+    text += `━━━━━━━━━━\n*${totals.thans} than · ${fmtQty(totals.yards)} yd · ${totals.bales} bale(s)*\n`;
+  } else {
+    text += '_Nothing loaded yet._\n';
+  }
+
+  const rows = [];
+  if (pl.needPick.length) {
+    text += `\n🔎 *Pick the thans yourself (${pl.needPick.length})*\n`;
+    for (const n of pl.needPick) {
+      text += n.count
+        ? `• ${escapeMd(n.packageNo)} — you asked for ${n.count} of ${n.available} available\n`
+        : `• ${escapeMd(n.packageNo)} — ${n.available} than available\n`;
+    }
+  }
+  if (pl.notLoaded.length) {
+    text += `\n⚠️ *Not loaded (${pl.notLoaded.length})*\n`;
+    for (const n of pl.notLoaded) text += `• ${escapeMd(n.packageNo)} — ${escapeMd(n.reason)}\n`;
+  }
+  if (pl.bad && pl.bad.length) {
+    text += `\n❓ Could not read: ${pl.bad.map((b) => `\`${escapeMd(b)}\``).join(', ')}\n`;
+  }
+  if (pl.commaThanHint) {
+    text += '\n_For several thans of one bale use_ `1100/1+2+3` _(a comma always means a new bale)._\n';
+  }
+
+  // One chip per bale that still needs a human pick — opens its than list.
+  const openable = [...new Set([...pl.needPick.map((n) => n.packageNo), ...pl.notLoaded.map((n) => n.packageNo)])];
+  for (let i = 0; i < openable.length; i += 2) {
+    const row = [{ text: `🔎 Open ${openable[i]}`, callback_data: `bs:pl:open:${openable[i]}` }];
+    if (openable[i + 1]) row.push({ text: `🔎 Open ${openable[i + 1]}`, callback_data: `bs:pl:open:${openable[i + 1]}` });
+    rows.push(row);
+  }
+  if (totals.thans) {
+    rows.push([{ text: '✅ Confirm & submit', callback_data: 'bs:proceed' }]);
+    rows.push([{ text: '🛒 Edit list', callback_data: 'bs:cart' }]);
+  }
+  rows.push([{ text: '➕ Add more', callback_data: 'bs:pl:more' }]);
+  rows.push(cancelRow());
+
+  text += '\n_The admin assigns the customer, rate and payment when approving._';
+  await render(bot, chatId, userId, text, rows);
+}
+
+/**
+ * SELL-T2 — jump straight into one bale's than chips from the review card.
+ * Sets the design/shade context the picker needs, so he can tick exactly
+ * which thans he is selling.
+ */
+async function openBaleFromPreload(bot, chatId, userId, packageNo) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  let all = [];
+  try { all = await inventoryRepository.getAll(); } catch (_) { all = []; }
+  const wLow = String(session.warehouse || '').toLowerCase();
+  const row = all.find((r) => r.status === 'available'
+    && String(r.packageNo) === String(packageNo)
+    && (!wLow || String(r.warehouse || '').toLowerCase() === wLow));
+  if (!row) {
+    await renderError(bot, chatId, userId, `Bale ${packageNo} has no available than in ${session.warehouse || 'this store'}.`);
+    return;
+  }
+  session.design = row.design;
+  session.designKey = String(row.design || '').toUpperCase();
+  session.warehouse = session.warehouse || row.warehouse;
+  session._grouped = null;
+  session.shadeKey = '';
+  sessionStore.set(userId, session);
+  // Find the shade bucket that holds this bale, then open its detail card.
+  const grouped = await inventoryRepository.groupByBaleAndShade(session.design, session.warehouse, { arrivalBatch: '' });
+  session._grouped = grouped;
+  for (const sh of grouped.shades) {
+    const bale = sh.bales.find((b) => String(b.packageNo) === String(packageNo));
+    if (bale) {
+      session.shadeKey = sh.shadeKey;
+      session.activeBaleUid = baleKeyOf(bale);
+      break;
+    }
+  }
+  session.step = 'bale_detail';
+  sessionStore.set(userId, session);
+  if (!session.activeBaleUid) {
+    await renderError(bot, chatId, userId, `Could not open bale ${packageNo}.`);
+    return;
+  }
+  await renderBaleDetail(bot, chatId, userId);
 }
 
 /**
@@ -693,8 +944,14 @@ async function renderConfirm(bot, chatId, userId) {
     const emoji = shadesRepository.chipFromList(shadesList, s.shade) || '🎨';
     return `${emoji} ${escapeMd(s.shade || '—')} — ${fmtQty(s.yards)} yd · ${s.thans} than`;
   });
+  // SELL-T2 — a typed list spans designs, so the header names them all
+  // rather than only the design that happened to be picked last.
+  const cartDesigns = [...new Set(session.cart.lines.map((l) => l.design).filter(Boolean))];
+  const designHead = cartDesigns.length > 1
+    ? `${cartDesigns.length} designs — ${cartDesigns.slice(0, 4).join(', ')}${cartDesigns.length > 4 ? '…' : ''}`
+    : (cartDesigns[0] || session.design || '—');
   let text = `🧾 *Confirm Bundle Sale*\n\n`
-    + `*${escapeMd(session.design)}* @ *${escapeMd(session.warehouse || '—')}*\n`
+    + `*${escapeMd(designHead)}* @ *${escapeMd(session.warehouse || '—')}*\n`
     + `${lines.join('\n')}\n\n`
     + `*Total: ${fmtQty(totals.yards)} yd*\n\n`
     + `_Queued for admin approval; cart is locked at submission._\n`
@@ -1033,6 +1290,21 @@ async function handleCallback(bot, query) {
 
   // DSP-1 — cart goes straight to confirm; customer, rate and payment
   // are assigned by the admin at approval.
+  // SELL-T2 — preload-review chips.
+  if (data.startsWith('bs:pl:open:')) {
+    await openBaleFromPreload(bot, chatId, userId, data.slice('bs:pl:open:'.length));
+    return true;
+  }
+  if (data === 'bs:pl:more') {
+    // Keep the cart; drop into the normal design picker for this store.
+    session.step = 'pick_design';
+    session._grouped = null;
+    sessionStore.set(userId, session);
+    if (session.warehouse) await renderDesignPicker(bot, chatId, userId);
+    else await renderWarehousePicker(bot, chatId, userId);
+    return true;
+  }
+
   if (data === 'bs:proceed') { await renderConfirm(bot, chatId, userId); return true; }
 
   if (data === 'bs:submit') { await submit(bot, chatId, userId); return true; }
@@ -1083,10 +1355,22 @@ async function stepBack(bot, chatId, userId) {
       await renderShadePicker(bot, chatId, userId);
       break;
     case 'bale_detail':
+      // SELL-T2 — a bale opened from the typed-list review goes BACK to
+      // that review, not into a bale list he never came from.
+      if (session._preload) {
+        session.step = 'preload_review';
+        session.activeBaleUid = '';
+        sessionStore.set(userId, session);
+        await renderPreloadReview(bot, chatId, userId);
+        break;
+      }
       session.step = 'pick_bales';
       session.activeBaleUid = '';
       sessionStore.set(userId, session);
       await renderBalePicker(bot, chatId, userId);
+      break;
+    case 'preload_review':
+      await renderPreloadReview(bot, chatId, userId);
       break;
     case 'await_smartpack_target':
     case 'preview_smartpack':
@@ -1115,6 +1399,7 @@ async function stepBack(bot, chatId, userId) {
 
 module.exports = {
   start,
+  startWithThans,   // SELL-T2 — typed than-list entry
   handleCallback,
   handleText,
   _internals: {
@@ -1122,5 +1407,6 @@ module.exports = {
     renderBalePicker, renderBaleDetail, renderCart, renderConfirm, submit,
     applySmartPack, commitSmartPack, stepBack, thanKey, baleKeyOf,
     rowInBatch, listWarehousesInBatch,
+    renderPreloadReview, openBaleFromPreload,
   },
 };

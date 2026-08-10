@@ -4240,6 +4240,22 @@ async function handleMessage(bot, msg) {
     if (handled) return;
   }
 
+  // SELL-T2 (owner-confirmed 09-Aug-2026) — the than-list shorthand is
+  // parsed LOCALLY, before the AI round trip: "sell 1100/1, 1091/1 kano".
+  // Deterministic, free, and it still works when the provider is down —
+  // which matters because this is Abdul's fastest daily path in Kano.
+  {
+    const { looksLikeThanList, parseThanList } = require('../utils/thanListParser');
+    if (looksLikeThanList(text)) {
+      const parsed = parseThanList(text);
+      if (parsed.items.length) {
+        const shown = await require('../flows/bundleSaleFlow')
+          .startWithThans(bot, chatId, userId, parsed);
+        if (shown) return;
+      }
+    }
+  }
+
   // P3 — userId enables the per-user OpenAI rate limit inside the parser.
   const intent = await intentParser.parse(text, userId);
   // ANL-1 — typed-command usage (surface=nlp); no-op until analytics enabled.
@@ -4342,6 +4358,21 @@ async function handleMessage(bot, msg) {
 
       case 'sell_mixed': {
         if (!intent.thanItems || !intent.thanItems.length) { await bot.sendMessage(chatId, 'Which thans? e.g. "Sell than 1 from 5801, than 2 from 5804 to Customer"'); return; }
+        // SELL-T2 — the long sentence lands on the SAME preload review as
+        // the shorthand. Before this, sell_mixed fell through to the
+        // generic "use Sell Bale" redirect and the typed list was lost.
+        const byBale = new Map();
+        for (const t of intent.thanItems) {
+          if (!t || !t.packageNo) continue;
+          const k = String(t.packageNo);
+          if (!byBale.has(k)) byBale.set(k, { packageNo: k, thans: [] });
+          if (t.thanNo != null && t.thanNo !== '') byBale.get(k).thans.push(Number(t.thanNo));
+        }
+        const shown = await require('../flows/bundleSaleFlow').startWithThans(bot, chatId, userId, {
+          items: [...byBale.values()].map((b) => (b.thans.length ? b : { packageNo: b.packageNo })),
+          warehouseHint: intent.warehouse || '',
+        });
+        if (shown) return;
         const mixedItems = intent.thanItems.map((t) => ({ type: 'than', packageNo: t.packageNo, thanNo: t.thanNo }));
         await startSaleFlow(bot, chatId, msg, userId, 'sell_mixed', mixedItems, intent);
         return;
