@@ -1,7 +1,11 @@
-# SELL-T2 — Typed than-list sale (mixed bales, one customer)
+# SELL-T3 — Typed than-list sale (mixed bales, one customer)
+
+> Renamed 10-Aug-2026: this shipped as "SELL-T2", which was already the tag
+> of the 21-Jul sale-date calendar (`sellBaleFlow`, `dateCalendar`). The
+> calendar keeps SELL-T2; the typed than-list is SELL-T3.
 
 **Status: SHIPPED.** `55d3b2a` (build, owner-confirmed 09-Aug-2026) +
-`2f855c2` (SELL-T2b, fixes from Abdul's first live use the same day).
+`2f855c2` (SELL-T3b, fixes from Abdul's first live use the same day).
 
 ## Problem
 
@@ -91,7 +95,7 @@ each carrying its own design/shade), so mixed-design sales needed no
 change downstream — only the confirm header, which used to print a
 single design and now names them all.
 
-## Reason taxonomy (SELL-T2b)
+## Reason taxonomy (SELL-T3b)
 
 The first cut answered every failure with "no available than on this bale
 (sold, or wrong number)". Abdul's live card showed four bales rejected

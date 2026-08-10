@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * SELL-T2 (owner-confirmed 09-Aug-2026) — Abdul sells single thans out of
+ * SELL-T3 (owner-confirmed 09-Aug-2026) — Abdul sells single thans out of
  * many DIFFERENT bales and designs to one customer, in one message.
  *
  * Before this, "sell than 1 from package 1100, than 1 from package 1091 …"
@@ -126,7 +126,7 @@ test('a than that is gone is reported — never swapped for its neighbour', asyn
   const t = lastText(bot).replace(/\\/g, '');
 
   assert.match(t, /Not loaded \(3\)/);
-  // SELL-T2b — each reason names the REAL state, and the than case lists
+  // SELL-T3b — each reason names the REAL state, and the than case lists
   // what the bale actually has so he can fix the number himself.
   assert.match(t, /1122 — than 1 is not available — this bale has than 2/);
   assert.match(t, /1105 — already sold/);
@@ -193,7 +193,7 @@ test('the long sentence (AI-parsed sell_mixed) lands on the same review card', a
   sessionStore.clear('4242');
 });
 
-/* ── SELL-T2b: say WHY, and read the whole line he actually writes ── */
+/* ── SELL-T3b: say WHY, and read the whole line he actually writes ── */
 
 test('Abdul’s full line loads every bale and reports what it ignored', async () => {
   sessionStore.clear('4242');

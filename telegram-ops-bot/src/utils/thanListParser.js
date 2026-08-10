@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * thanListParser — SELL-T2 (owner-confirmed 09-Aug-2026).
+ * thanListParser — SELL-T3 (owner-confirmed 09-Aug-2026).
  *
  * Abdul sells single thans out of many different bales to one customer.
  * The AI intent parser already understands the long sentence form
@@ -79,7 +79,7 @@ function isDateLike(s) {
 /**
  * Parse the shorthand into bale/than intents.
  *
- * SELL-T2b (Abdul, 09-Aug-2026) — he naturally writes the WHOLE sale in one
+ * SELL-T3b (Abdul, 09-Aug-2026) — he naturally writes the WHOLE sale in one
  * line: "Sell 1108/1, 1126/1 … from kano office to karibullah, 06 august
  * 2026". The first cut only looked for a warehouse at the very END, so the
  * customer + date tail swallowed the last bale and the store was lost.

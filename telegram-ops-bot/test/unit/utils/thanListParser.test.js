@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * SELL-T2 — the deterministic than-list shorthand. Pure parsing: no AI,
+ * SELL-T3 — the deterministic than-list shorthand. Pure parsing: no AI,
  * no sheet, so it keeps working when the provider is down.
  *
  * The grammar rule that carries the weight: a COMMA always starts a new
@@ -75,7 +75,7 @@ test('unreadable tokens are reported, never guessed at', () => {
   assert.deepEqual(out.bad, ['1100/abc']);
 });
 
-/* ── SELL-T2b: Abdul writes the whole sale on one line ── */
+/* ── SELL-T3b: Abdul writes the whole sale on one line ── */
 
 test('Abdul’s real message: store, customer and date all survive the parse', () => {
   const out = parseThanList(
