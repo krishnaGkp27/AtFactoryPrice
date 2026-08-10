@@ -348,6 +348,12 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     await transactionsRepository.append({
       user: item.user, action: 'sell_than', design: aj.design, color: aj.shade,
       qty: aj.yards, before: 'available', after: 'sold', status: 'approved',
+      // SLP-1 (owner 10-Aug-2026, "are you logging the salesperson?") — the
+      // Transactions sheet has had a SalesPerson column since APU-1 and only
+      // sale_bundle filled it. Snap Sale queues sell_package with the name on
+      // the row and it was dropped at execution; sales history could not be
+      // read per seller. Same one line on both approved sale executors.
+      salesPerson: aj.salesPerson || '',
       salesDate: aj.salesDate || '', customerName: aj.customer || '', paymentMode: enrichment?.paymentMode || '',
       saleRefId: requestId, pricePerYard: pricePerYard || '', amountPaid: enrichment?.amountPaid ?? '',
       customerId: aj.customerId || '',
@@ -370,6 +376,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     await transactionsRepository.append({
       user: item.user, action: 'sell_package', design: aj.design, color: aj.shade,
       qty: aj.yards, before: `${aj.thans} thans`, after: 'sold', status: 'approved',
+      salesPerson: aj.salesPerson || '',   // SLP-1 — see the sell_than note above
       salesDate: aj.salesDate || '', customerName: aj.customer || '', paymentMode: enrichment?.paymentMode || '',
       saleRefId: requestId, pricePerYard: pricePerYard || '', amountPaid: enrichment?.amountPaid ?? '',
       customerId: aj.customerId || '',
