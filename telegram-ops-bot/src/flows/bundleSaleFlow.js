@@ -85,7 +85,7 @@ const approvalEvents      = require('../events/approvalEvents');
 const auth                = require('../middlewares/auth');
 const logger              = require('../utils/logger');
 const { rememberRequesterCard } = require('../utils/requesterCard');
-const { rowsFor }         = require('../utils/flowKit');
+const { rowsFor, mdEscape: mdEscapeV1 } = require('../utils/flowKit');
 const { isNotModified }   = require('../utils/telegramUI');
 const {
   buildShadeNameMap, buildShadeLabel, layoutShadeRows, formatShadeRef,
@@ -246,14 +246,21 @@ async function startWithThans(bot, chatId, userId, parsed) {
   const hits = avail.filter((r) => wanted.has(String(r.packageNo)));
   const storesFound = [...new Set(hits.map((r) => r.warehouse).filter(Boolean))];
   let warehouse = '';
+  const storesWithStock = [...new Set(avail.map((r) => r.warehouse).filter(Boolean))];
   if (hint) {
-    const matches = [...new Set(avail.map((r) => r.warehouse).filter(Boolean))]
+    const matches = storesWithStock
       .filter((w) => w.toLowerCase().includes(hint) || hint.includes(w.toLowerCase()));
     if (matches.length === 1) [warehouse] = matches;
     else if (matches.length > 1) {
       await bot.sendMessage(chatId,
         `🏭 Which store did you mean by “${hint}”?`,
         { reply_markup: { inline_keyboard: matches.slice(0, 6).map((w) => [{ text: `🏭 ${w}`, callback_data: `bs:wh:${w}` }]) } });
+      return true;
+    } else {
+      // SELL-T2b — an unknown store name used to fall through silently to
+      // "any store", which then reported every bale as missing. Say it.
+      await bot.sendMessage(chatId,
+        `🏭 I don't know a store called “${hint}”.\nStores with stock: ${storesWithStock.join(', ') || '(none)'}\n\nSend the line again with one of those names.`);
       return true;
     }
   }
@@ -270,6 +277,27 @@ async function startWithThans(bot, chatId, userId, parsed) {
   const wLow = warehouse.toLowerCase();
   const inStore = (r) => !wLow || String(r.warehouse || '').toLowerCase() === wLow;
 
+  /**
+   * SELL-T2b — say WHY, from the row's real state. "sold, or wrong number"
+   * sent Abdul hunting; the sheet already knows whether the bale is on the
+   * road, sold, in another store, or simply not a number we hold.
+   */
+  const explainBale = (pkg) => {
+    const anyRows = all.filter((r) => String(r.packageNo) === pkg);
+    if (!anyRows.length) return 'no bale with this number on record';
+    const elsewhere = anyRows.find((r) => r.status === 'available');
+    if (elsewhere) return `available in *${mdEscapeV1(elsewhere.warehouse)}*, not ${mdEscapeV1(warehouse || 'this store')}`;
+    const transit = anyRows.find((r) => r.status === 'in_transit');
+    if (transit) return `still on the road to *${mdEscapeV1(transit.warehouse)}* — receive it into the store first`;
+    const sold = anyRows.find((r) => r.status === 'sold');
+    if (sold) {
+      const who = mdEscapeV1(String(sold.soldTo || '').trim());
+      const when = String(sold.soldDate || '').slice(0, 10);
+      return `already sold${who ? ` to ${who}` : ''}${when ? ` on ${when}` : ''}`;
+    }
+    return `not available (status: ${anyRows[0].status})`;
+  };
+
   const lines = [];        // resolved than rows → cart
   const notLoaded = [];    // { packageNo, reason }
   const needPick = [];     // { packageNo, count } — he chooses the thans
@@ -277,21 +305,24 @@ async function startWithThans(bot, chatId, userId, parsed) {
     const pkg = String(it.packageNo);
     const rows = avail.filter((r) => String(r.packageNo) === pkg && inStore(r));
     if (!rows.length) {
-      const elsewhere = avail.find((r) => String(r.packageNo) === pkg);
-      notLoaded.push({
-        packageNo: pkg,
-        reason: elsewhere
-          ? `not in ${warehouse || 'that store'} — it is in ${elsewhere.warehouse}`
-          : 'no available than on this bale (sold, or wrong number)',
-      });
+      notLoaded.push({ packageNo: pkg, reason: explainBale(pkg) });
       continue;
     }
     if (Array.isArray(it.thans) && it.thans.length) {
       for (const n of it.thans) {
         const row = rows.find((r) => Number(r.thanNo) === Number(n));
         if (!row) {
-          // §2 — never substitute. Report it and offer the bale's chips.
-          notLoaded.push({ packageNo: pkg, reason: `than ${n} is not available` });
+          // §2 — never substitute. Report it, and show which thans this
+          // bale DOES have so he can correct the number himself.
+          const has = rows.map((r) => r.thanNo).sort((a, b) => a - b);
+          const state = all.find((r) => String(r.packageNo) === pkg && Number(r.thanNo) === Number(n));
+          const why = state && state.status === 'sold'
+            ? `than ${n} is already sold${state.soldTo ? ` to ${mdEscapeV1(String(state.soldTo).trim())}` : ''}`
+            : `than ${n} is not available`;
+          notLoaded.push({
+            packageNo: pkg,
+            reason: `${why} — this bale has than ${has.join(', ')}`,
+          });
           continue;
         }
         lines.push({
@@ -317,7 +348,13 @@ async function startWithThans(bot, chatId, userId, parsed) {
     cart: bundleSaleService.emptyCart(),
     customer: '', rate: 0, paymentMode: '',
     expandedShade: '', smartPack: null,
-    _preload: { notLoaded, needPick, bad: (parsed && parsed.bad) || [], commaThanHint: !!(parsed && parsed.commaThanHint) },
+    _preload: {
+      notLoaded, needPick,
+      bad: (parsed && parsed.bad) || [],
+      commaThanHint: !!(parsed && parsed.commaThanHint),
+      ignoredCustomer: (parsed && parsed.ignoredCustomer) || '',
+      ignoredDate: (parsed && parsed.ignoredDate) || '',
+    },
   });
   const session = sessionStore.get(userId);
   const added = bundleSaleService.addLines(session.cart, lines);
@@ -368,13 +405,26 @@ async function renderPreloadReview(bot, chatId, userId) {
   }
   if (pl.notLoaded.length) {
     text += `\n⚠️ *Not loaded (${pl.notLoaded.length})*\n`;
-    for (const n of pl.notLoaded) text += `• ${escapeMd(n.packageNo)} — ${escapeMd(n.reason)}\n`;
+    // SELL-T2b — the reasons are prose with brackets and dashes, so they go
+    // through the Markdown-v1 escaper (mdEscape). escapeMd here is the
+    // v2-style one: it backslashes "(" and "-", which v1 then PRINTS, and
+    // Abdul saw "\(sold, or wrong number\)" on his card.
+    for (const n of pl.notLoaded) text += `• ${mdEscapeV1(n.packageNo)} — ${n.reason}\n`;
   }
   if (pl.bad && pl.bad.length) {
-    text += `\n❓ Could not read: ${pl.bad.map((b) => `\`${escapeMd(b)}\``).join(', ')}\n`;
+    text += `\n❓ Could not read: ${pl.bad.map((b) => `\`${mdEscapeV1(b)}\``).join(', ')}\n`;
   }
   if (pl.commaThanHint) {
     text += '\n_For several thans of one bale use_ `1100/1+2+3` _(a comma always means a new bale)._\n';
+  }
+  // SELL-T2b — he writes the customer and date on the same line out of
+  // habit. Say plainly that they were read and ignored, rather than
+  // failing on them (DSP-1: the admin sets both at approval).
+  if (pl.ignoredCustomer || pl.ignoredDate) {
+    const bits = [];
+    if (pl.ignoredCustomer) bits.push(`customer "${mdEscapeV1(pl.ignoredCustomer)}"`);
+    if (pl.ignoredDate) bits.push(`date "${mdEscapeV1(pl.ignoredDate)}"`);
+    text += `\nℹ️ I ignored the ${bits.join(' and ')} — the admin sets that when approving.\n`;
   }
 
   // One chip per bale that still needs a human pick — opens its than list.

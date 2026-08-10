@@ -126,9 +126,11 @@ test('a than that is gone is reported — never swapped for its neighbour', asyn
   const t = lastText(bot).replace(/\\/g, '');
 
   assert.match(t, /Not loaded \(3\)/);
-  assert.match(t, /1122 — than 1 is not available/);
-  assert.match(t, /1105 — no available than on this bale/);
-  assert.match(t, /1108 — not in Kano office — it is in IDUMOTA/);
+  // SELL-T2b — each reason names the REAL state, and the than case lists
+  // what the bale actually has so he can fix the number himself.
+  assert.match(t, /1122 — than 1 is not available — this bale has than 2/);
+  assert.match(t, /1105 — already sold/);
+  assert.match(t, /1108 — available in \*IDUMOTA\*, not Kano office/);
 
   const session = sessionStore.get('4242');
   assert.equal(session.cart.lines.length, 1, 'only the than he named AND that exists');
@@ -189,6 +191,83 @@ test('the long sentence (AI-parsed sell_mixed) lands on the same review card', a
   assert.ok(!/ABBA/.test(t), 'the typed buyer is dropped; the admin assigns it');
   intent = { action: 'unknown', confidence: 0 };
   sessionStore.clear('4242');
+});
+
+/* ── SELL-T2b: say WHY, and read the whole line he actually writes ── */
+
+test('Abdul’s full line loads every bale and reports what it ignored', async () => {
+  sessionStore.clear('4242');
+  const bot = createFakeBot();
+  await controller.handleMessage(bot,
+    msg('Sell 1100/1, 1091/1, 1082/1 from kano office to karibullah, 06 august 2026'));
+  const t = lastText(bot).replace(/\\/g, '');
+  assert.match(t, /3 of 3 typed than\(s\) loaded/, `the tail no longer eats a bale: ${t}`);
+  assert.match(t, /From \*Kano office\*/, 'the store is read even with a customer after it');
+  assert.match(t, /ignored the customer "karibullah" and date "06 august 2026"/);
+  assert.equal(sessionStore.get('4242').cart.lines.length, 3);
+});
+
+test('a bale still on the road says so — not "sold, or wrong number"', async () => {
+  sessionStore.clear('4242');
+  const orig = inventoryRepository.getAll;
+  inventoryRepository.getAll = async () => ([
+    ...ROWS.map((r) => ({ ...r })),
+    { packageNo: '1300', thanNo: 1, design: '9006', shade: '3', warehouse: 'Kano office',
+      status: 'in_transit', yards: 30, baleUid: 'U-1300-1', arrivalBatch: 'Jul26', rowIndex: 900 },
+  ]);
+  try {
+    const bot = createFakeBot();
+    await controller.handleMessage(bot, msg('sell 1300/1 kano'));
+    const t = lastText(bot).replace(/\\/g, '');
+    assert.match(t, /still on the road to \*Kano office\* — receive it into the store first/,
+      `the real reason is shown, got: ${t}`);
+    assert.ok(!/sold, or wrong number/.test(t), 'the vague catch-all is gone');
+  } finally { inventoryRepository.getAll = orig; }
+});
+
+test('a sold bale names the buyer; a wrong number says it is not on record', async () => {
+  sessionStore.clear('4242');
+  const orig = inventoryRepository.getAll;
+  inventoryRepository.getAll = async () => ([
+    ...ROWS.map((r) => ({ ...r })),
+    { packageNo: '1400', thanNo: 1, design: '9006', shade: '3', warehouse: 'Kano office',
+      status: 'sold', soldTo: 'OKSON', soldDate: '2026-08-02', yards: 30, baleUid: 'U-1400-1', rowIndex: 901 },
+  ]);
+  try {
+    const bot = createFakeBot();
+    await controller.handleMessage(bot, msg('sell 1400/1, 999999/1 kano'));
+    const t = lastText(bot).replace(/\\/g, '');
+    assert.match(t, /1400 — already sold to OKSON on 2026-08-02/);
+    assert.match(t, /999999 — no bale with this number on record/);
+  } finally { inventoryRepository.getAll = orig; }
+});
+
+test('a than that is gone lists the thans the bale DOES have', async () => {
+  sessionStore.clear('4242');
+  const bot = createFakeBot();
+  // 1100 has thans 1,2,3 available — ask for than 9.
+  await controller.handleMessage(bot, msg('sell 1100/9 kano'));
+  const t = lastText(bot).replace(/\\/g, '');
+  assert.match(t, /than 9 is not available — this bale has than 1, 2, 3/);
+});
+
+test('an unknown store is named, with the real store list — not "any store"', async () => {
+  sessionStore.clear('4242');
+  const bot = createFakeBot();
+  await controller.handleMessage(bot, msg('sell 1100/1 from lagoss'));
+  const t = lastText(bot);
+  assert.match(t, /don't know a store called/i);
+  assert.match(t, /Kano office/, 'the stores that DO have stock are listed');
+  assert.ok(!sessionStore.get('4242'), 'no half-open session on a bad store');
+});
+
+test('the card carries no stray backslashes (Markdown v1)', async () => {
+  sessionStore.clear('4242');
+  const bot = createFakeBot();
+  await controller.handleMessage(bot, msg('sell 999999/1 kano'));
+  const raw = lastText(bot);
+  assert.ok(!/\\\(|\\\)|\\-/.test(raw),
+    `escaped parens/dashes must not reach the card: ${raw}`);
 });
 
 test('bales split across stores: the bot asks instead of choosing one', async () => {

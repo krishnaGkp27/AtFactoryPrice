@@ -75,6 +75,34 @@ test('unreadable tokens are reported, never guessed at', () => {
   assert.deepEqual(out.bad, ['1100/abc']);
 });
 
+/* ── SELL-T2b: Abdul writes the whole sale on one line ── */
+
+test('Abdul’s real message: store, customer and date all survive the parse', () => {
+  const out = parseThanList(
+    'Sell 1108/1, 1126/1, 1120/1, 1093/1, 1085/1 from kano office to karibullah, 06 august 2026');
+  assert.deepEqual(out.items.map((i) => i.packageNo), ['1108', '1126', '1120', '1093', '1085'],
+    'the LAST bale is no longer eaten by the customer/date tail');
+  assert.deepEqual(out.items[4], { packageNo: '1085', thans: [1] });
+  assert.equal(out.warehouseHint, 'kano office');
+  assert.equal(out.ignoredCustomer, 'karibullah');
+  assert.equal(out.ignoredDate, '06 august 2026');
+  assert.deepEqual(out.bad, [], 'nothing is reported as unreadable');
+});
+
+test('a customer clause never becomes the store name', () => {
+  const out = parseThanList('sell 1100/1+2 from Kano office to ABBA');
+  assert.equal(out.warehouseHint, 'Kano office');
+  assert.equal(out.ignoredCustomer, 'ABBA');
+  assert.deepEqual(out.items, [{ packageNo: '1100', thans: [1, 2] }]);
+});
+
+test('a date with no comma is lifted out, not read as a than or a store', () => {
+  const out = parseThanList('sell 1100/1 6/8/2026');
+  assert.deepEqual(out.items, [{ packageNo: '1100', thans: [1] }], 'the date is not a than number');
+  assert.equal(out.ignoredDate, '6/8/2026');
+  assert.equal(out.warehouseHint, '', 'a date is never a store name');
+});
+
 test('"and" separates bales exactly like a comma', () => {
   assert.deepEqual(parseThanList('sell 1100/1 and 1091/2').items, [
     { packageNo: '1100', thans: [1] }, { packageNo: '1091', thans: [2] },
