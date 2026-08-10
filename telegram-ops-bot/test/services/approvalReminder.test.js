@@ -123,10 +123,11 @@ test('APU-1: sale reminders rebuild the full card and re-forward the bill', asyn
   const sent = await reminder.sweep(bot, { now: NOW });
   assert.equal(sent, 1);
   const text = bot.allText().replace(/\\/g, '');
-  assert.match(text, /Customer: OKESON/);
-  assert.match(text, /Salesperson: Abdul/);
-  assert.match(text, /Bale 896/);
-  assert.match(text, /Sales bill attached/);
+  // CARD-3 — same facts, compact grammar.
+  assert.match(text, /👤 OKESON/);
+  assert.match(text, /🧑 Abdul/);
+  assert.match(text, /896/);
+  assert.match(text, /📎 Sales bill/);
   const photos = bot.calls.filter((c) => c.method === 'sendPhoto');
   assert.equal(photos.length, 2, 'bill re-forwarded to both admins');
   assert.equal(photos[0].args.photo, 'bill-1');

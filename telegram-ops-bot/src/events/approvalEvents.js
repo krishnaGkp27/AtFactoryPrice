@@ -1508,7 +1508,12 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
   // to surface "✅ Confirmed by Dispatch: <name> on <time>" at the top
   // of the admin card so reviewers see upstream provenance at a glance).
   const noteLine = opts && opts.prependNote ? `${esc(opts.prependNote)}\n\n` : '';
-  const text = `${noteLine}🔔 *Approval required*\n\nRequest ID: \`${requestId}\`\nUser: ${esc(userLabel)}\nAction: ${esc(actionSummary)}\nReason: ${esc(riskReason)}\n\nUse buttons below to approve or reject\\.`;
+  // CARD-3 (owner 10-Aug-2026) — the boilerplate half of the reason repeats
+  // the header and names the approver's role, which is no longer always an
+  // admin. Only facts about THIS request survive; the rest reads "Sent for
+  // approval". Real reasons (backdated, threshold) are untouched.
+  const shortWhy = require('../services/approvalCards').shortReason(riskReason);
+  const text = `${noteLine}🔔 *Approval required*\n\nRef: \`${requestId}\`\nFrom: ${esc(userLabel)}\n\n${esc(actionSummary)}\n\n_${esc(shortWhy)}_\n\nUse buttons below to approve or reject\\.`;
   const keyboard = {
     inline_keyboard: [
       [{ text: '✅ Approve', callback_data: `approve:${requestId}` }, { text: '❌ Reject', callback_data: `reject:${requestId}` }],
@@ -1537,7 +1542,7 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
     } catch (e) {
       logger.error('Failed to notify admin', adminId, e.message);
       try {
-        const plain = `🔔 Approval required\n\nRequest ID: ${requestId}\nUser: ${userLabel}\nAction: ${actionSummary}\nReason: ${riskReason}\n\nUse buttons below to approve or reject.`;
+        const plain = `🔔 Approval required\n\nRef: ${requestId}\nFrom: ${userLabel}\n\n${actionSummary}\n\n${shortWhy}\n\nUse buttons below to approve or reject.`;
         await bot.sendMessage(adminId, plain, { reply_markup: keyboard });
         sent += 1;
       } catch (e2) {

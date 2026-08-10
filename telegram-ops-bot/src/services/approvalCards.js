@@ -112,7 +112,7 @@ async function customerContact(customerName) {
  * telegramController ~6140-6220).
  *
  * @param {object} p
- * @param {string} p.headline       e.g. 'Sale Request (Snap Sale)'
+ * @param {string} p.headline       e.g. 'Sale · Snap'
  * @param {string} p.customer
  * @param {string} [p.salesPerson]
  * @param {string} [p.paymentMode]
@@ -132,73 +132,123 @@ function sortSaleItems(items) {
     cmp(a.design, b.design) || cmp(a.shade, b.shade) || cmp(a.packageNo, b.packageNo));
 }
 
+/**
+ * CARD-3 (owner, 10-Aug-2026) — "I cannot see the details properly … there
+ * is repetition of words like 'shade', 'bale', 'than'. Make it elegant and
+ * short."
+ *
+ * The old card wrote the three nouns once per LINE. A five-than Kano sale
+ * printed "Bale" five times, "Than" five times and "thans" six times, and
+ * the numbers that matter drowned in them. CARD-3 states each noun exactly
+ * once — in a key line at the foot — and writes the goods in the same
+ * grammar Abdul already types (`bale/than`, `#shade`):
+ *
+ *   🧾 Sale · Kano office
+ *   👤 set at approval
+ *   🧑 Abdul · 📅 09-Aug-2026
+ *   📎 Sales bill
+ *
+ *   🧵 77014 · Cashmere — 3 · 90 yd
+ *     #11 → 1100/1 · 1091/2
+ *     #14 → 1082/1
+ *   🧵 77020 — 2 · 60 yd
+ *     #03 → 1122/1 · 1113/1
+ *
+ *   Σ 5 than · 150 yd · 5 bale
+ *   (bale/than · #shade)
+ *
+ * Nothing is dropped: every fact the SAB-1/APF-1/CARD-2 card carried is
+ * still here (design, category, shade, bale, than, yards, warehouse,
+ * salesperson, date, payment, doc, no-stock warnings) — only the words
+ * around them are gone. Warnings stay in full sentences: an exception is
+ * the one thing that must never be terse.
+ */
+
+/** One item as a token in the typed grammar: `1100/1`, or `1100 ×3`. */
+function itemToken(it, showWarehouse) {
+  const pkg = String(it.packageNo ?? '?');
+  let tok;
+  if (it.type === 'than' && it.thanNo) tok = `${pkg}/${it.thanNo}`;
+  else if (Number(it.thans) > 1) tok = `${pkg} ×${it.thans}`;
+  else tok = pkg;
+  if (it.noStock) tok += ' ⚠️';
+  if (showWarehouse && it.warehouse) tok += ` @${it.warehouse}`;
+  return tok;
+}
+
 async function buildSaleCard(p) {
-  let text = `${p.headline || 'Sale Request'}\nCustomer: ${p.customer || '— (assigned at approval)'}`;
+  const items = sortSaleItems(p.items);
+  // The store is a header fact when the whole request ships from one place;
+  // a mixed request keeps it per item so no bale is mis-attributed.
+  const stores = [...new Set(items.map((it) => String(it.warehouse || '')).filter(Boolean))];
+  const oneStore = stores.length === 1 ? stores[0] : '';
+
+  let text = `🧾 ${p.headline || 'Sale'}${oneStore ? ` · ${oneStore}` : ''}`;
+  text += `\n👤 ${p.customer || 'set at approval'}`;
   const contact = await customerContact(p.customer);
-  if (contact.phone) text += `\nPhone: ${contact.phone}`;
-  if (contact.address) text += `\nAddress: ${contact.address}`;
-  if (p.salesPerson) text += `\nSalesperson: ${p.salesPerson}`;
-  if (p.paymentMode) text += `\nPayment: ${p.paymentMode}`;
-  if (p.salesDate) text += `\nDate: ${fmtDate(p.salesDate)}`;
-  text += '\n\nItems:\n';
+  const who = [contact.phone, contact.address].filter(Boolean).join(' · ');
+  if (who) text += `\n   ${who}`;
+  const meta = [];
+  if (p.salesPerson) meta.push(`🧑 ${p.salesPerson}`);
+  if (p.salesDate) meta.push(`📅 ${fmtDate(p.salesDate)}`);
+  if (p.paymentMode) meta.push(`💳 ${p.paymentMode}`);
+  if (meta.length) text += `\n${meta.join(' · ')}`;
+  if (p.docAttached) text += `\n📎 ${p.docLabel || 'Sales bill'}`;
+  text += '\n';
+
   let totalYards = 0;
   let totalThans = 0;
-  // CARD-2 — sorted by design → shade → bale; multi-design batches get a
-  // per-design subtotal header + a blank separator line, so the approver
-  // sees at a glance how many of each design ride in the request.
-  const items = sortSaleItems(p.items);
-  const designs = [...new Set(items.map((it) => String(it.design ?? '')))];
-  const grouped = designs.length > 1;
-  let lastDesign = null;
-  for (const it of items) {
-    const dKey = String(it.design ?? '');
-    if (grouped && dKey !== lastDesign) {
-      const group = items.filter((x) => String(x.design ?? '') === dKey);
-      const gThans = group.reduce((s, x) => s + (Number(x.thans) || 0), 0);
-      const gYards = group.reduce((s, x) => s + (Number(x.yards) || 0), 0);
-      let cat = '';
-      try { cat = require('../repositories/designCategoriesRepository').categoryOfSync(it.design) || ''; } catch (_) { /* bare */ }
-      text += `${lastDesign === null ? '' : '\n'}🧵 ${it.design}${cat ? ` · ${cat}` : ''} — ${group.length} bale${group.length === 1 ? '' : 's'} (${gThans} thans), ${fmtQty(gYards)} yds\n`;
-      lastDesign = dKey;
+  // APF-1 / §2 — an item with no design heads no design group, and the
+  // two causes are DIFFERENT facts that must not share a heading: "no live
+  // rows at all" is sold-already / unknown-number (a warning), while "one
+  // number living under two designs" is merely unknown — never guessed.
+  const groupKey = (it) => (it.design ? `d:${it.design}` : (it.noStock ? 'gone' : 'unknown'));
+  const groupKeys = [...new Set(items.map(groupKey))];
+  for (const gk of groupKeys) {
+    const dKey = gk.startsWith('d:') ? gk.slice(2) : '';
+    const group = items.filter((x) => groupKey(x) === gk);
+    const gThans = group.reduce((s, x) => s + (Number(x.thans) || 0), 0);
+    const gYards = group.reduce((s, x) => s + (Number(x.yards) || 0), 0);
+    let cat = '';
+    if (dKey) {
+      try { cat = require('../repositories/designCategoriesRepository').categoryOfSync(dKey) || ''; } catch (_) { /* bare */ }
     }
-    const qty = [];
-    if (Number(it.thans)) qty.push(`${it.thans} thans`);
-    if (Number(it.yards)) qty.push(`${fmtQty(it.yards)} yds`);
-    // SAB-1 — a single-than sale names its than; an unresolvable bale (no
-    // live rows, or a number living under two designs — §2: never guess)
-    // renders bare rather than as "undefined".
-    const head = `  Bale ${it.packageNo}${it.type === 'than' && it.thanNo ? ` Than ${it.thanNo}` : ''}`;
-    // APF-1 — an item with NO live rows used to render as a naked bale
-    // number, quietly producing "Total: 1 Bale (0 thans), 0 yards" for a
-    // bale that is ALREADY SOLD. Say so — that request may have executed
-    // already (R-9CEB), or duplicate one that did. Ambiguous numbers and
-    // Inventory-outage items stay bare: no fact, no claim (§2).
-    if (it.design) {
-      text += `${head}: ${it.design}${it.shade ? ` ${it.shade}` : ''}${qty.length ? `, ${qty.join(', ')}` : ''}${it.warehouse ? ` (${it.warehouse})` : ''}\n`;
-    } else if (it.noStock) {
-      text += `${head}: ⚠️ no available stock (sold already, or unknown number)\n`;
-    } else {
-      text += `${head}\n`;
+    const head = dKey
+      ? `🧵 ${dKey}${cat ? ` · ${cat}` : ''}`
+      : (gk === 'gone'
+        ? '⚠️ no available stock (sold already, or unknown number)'
+        : '🧵 not resolved — this number lives under more than one design');
+    const qty = [gThans ? `${gThans} than` : '', gYards ? `${fmtQty(gYards)} yd` : '']
+      .filter(Boolean).join(' · ');
+    text += `\n${head}${qty ? ` — ${qty}` : ''}`;
+    const shades = [...new Set(group.map((x) => String(x.shade ?? '')))];
+    for (const sh of shades) {
+      const line = group.filter((x) => String(x.shade ?? '') === sh);
+      const toks = line.map((it) => itemToken(it, !oneStore)).join(' · ');
+      text += `\n  ${sh ? `#${sh} → ` : ''}${toks}`;
     }
-    totalThans += Number(it.thans) || 0;
-    totalYards += Number(it.yards) || 0;
+    totalThans += gThans;
+    totalYards += gYards;
   }
-  const n = items.length;
-  text += `\nTotal: ${n} Bale${n === 1 ? '' : 's'} (${totalThans} thans), ${fmtQty(totalYards)} yards`;
+
+  // Distinct printed numbers, not item rows: a five-than sale out of three
+  // bales is "3 bale", never "5 bale".
+  const n = new Set(items.map((it) => String(it.packageNo ?? ''))).size;
+  text += `\n\nΣ ${totalThans ? `${totalThans} than · ` : ''}${fmtQty(totalYards)} yd · ${n} bale`;
+  text += '\n(bale/than · #shade)';
   const noStock = items.filter((it) => it.noStock).length;
   if (noStock && noStock === items.length) {
     text += '\n🚨 NOTHING in this request is available — it may already be executed, or duplicate another sale. Approving will NOT sell or charge anything.';
   } else if (noStock) {
-    text += `\n⚠️ ${noStock} of ${items.length} item(s) have no available stock — check before approving.`;
+    text += `\n⚠️ ${noStock} of ${items.length} item(s) marked ⚠️ have no available stock — check before approving.`;
   }
-  if (p.docAttached) text += `\n📎 ${p.docLabel || 'Sales bill'} attached`;
   return text;
 }
 
 /** Card for a queued snap-sale sell_package actionJSON. */
 async function buildSellPackageCard(aj) {
   return buildSaleCard({
-    headline: aj.source === 'snap_sale' ? 'Sale Request (Snap Sale)' : 'Sale Request',
+    headline: aj.source === 'snap_sale' ? 'Sale · Snap' : 'Sale',
     customer: aj.customer,
     salesPerson: aj.salesPerson,
     salesDate: aj.salesDate,
@@ -352,7 +402,7 @@ async function buildSaleBundleCard(aj) {
   let items = (Array.isArray(aj.items) ? aj.items : []).map((it) => ({ ...it }));
   try { items = await enrichBundleItems(items); } catch (_) { /* thin items still render */ }
   let text = await buildSaleCard({
-    headline: 'Sale Request',
+    headline: 'Sale',
     customer: aj.customer,
     salesPerson: aj.salesPerson,
     paymentMode: aj.paymentMode,
@@ -516,6 +566,29 @@ async function buildCardFromActionJSON(aj) {
 }
 
 /**
+ * CARD-3 (owner, 10-Aug-2026): "No need to write a big reason stating
+ * everything explicitly like 'requires admin approval' — just write sent
+ * for approval. It will not always be approved by an admin."
+ *
+ * Every queued row carries a riskReason, and most of them are boilerplate
+ * that repeats what the card's own header already says — and names the
+ * approver's ROLE, which is wrong now that approval rights are moving to
+ * other roles. Strip the boilerplate sentences; keep anything that is a
+ * real fact about THIS request (a backdated sale, a threshold breach).
+ *
+ * @param {string} reason
+ * @returns {string}
+ */
+const BOILERPLATE_REASON = /\b(requires?|require)\s+(a\s+|an\s+)?(admin|second admin|dual[- ]admin|manager)?\s*approval\b/i;
+function shortReason(reason) {
+  const kept = String(reason || '')
+    .split(/(?<=\.)\s+|\n+/)
+    .map((s) => s.trim())
+    .filter((s) => s && !BOILERPLATE_REASON.test(s));
+  return kept.join(' ') || 'Sent for approval';
+}
+
+/**
  * Forward a request's attachments (bill photo, receipt, …) to every admin
  * except excludeId — the same loop the classic sale card runs at
  * telegramController 6205-6216, shared. Best-effort per admin; returns how
@@ -550,6 +623,7 @@ module.exports = {
   actionLabel,
   _resetNameCacheForTests,
   sortSaleItems,
+  shortReason,
   shortRequestRef,
   shortTransferRef,
   buildAddWarehouseCard,

@@ -45,11 +45,14 @@ test('a bare bale number becomes design, shade, warehouse and quantities', async
     salesDate: '2026-08-05', items: [{ type: 'package', packageNo: '516' }],
     totalYards: 150, sale_doc_file_id: 'F1',
   });
-  assert.match(text, /Customer: — \(assigned at approval\)/);
-  assert.match(text, /Salesperson: Abdul/);
-  assert.match(text, /Bale 516: 9060-A 01, 3 thans, 150 yds \(IDUMOTA\)/);
-  assert.match(text, /Total: 1 Bale \(3 thans\), 150 yards/);
-  assert.match(text, /📎 Sales bill attached/);
+  // CARD-3 — the same facts, without the words repeated on every line.
+  assert.match(text, /👤 set at approval/);
+  assert.match(text, /🧑 Abdul/);
+  assert.match(text, /🧾 Sale · IDUMOTA/, 'one store rides the header, not every line');
+  assert.match(text, /🧵 9060-A — 3 than · 150 yd/);
+  assert.match(text, /#01 → 516 ×3/);
+  assert.match(text, /Σ 3 than · 150 yd · 1 bale/);
+  assert.match(text, /📎 Sales bill/);
   assert.ok(!text.includes('see below'), 'the stale pointer is gone');
 });
 
@@ -61,7 +64,8 @@ test('a number living under TWO designs stays bare — never guessed (§2)', asy
   const text = await approvalCards.buildSaleBundleCard({
     action: 'sale_bundle', items: [{ type: 'package', packageNo: '516' }], totalYards: 150,
   });
-  assert.match(text, / {2}Bale 516\n/, 'bare line, no design attached');
+  assert.match(text, /🧵 not resolved/, 'no design attached');
+  assert.match(text, /\n {2}516/, 'the number still shows');
   assert.ok(!text.includes('9060-A') && !text.includes('77008'), 'no design was invented');
   assert.match(text, /Queued total: 150 yards/, 'the requester’s figure still shows');
 });
@@ -74,7 +78,9 @@ test('a single-than sale names its than', async () => {
   const text = await approvalCards.buildSaleBundleCard({
     action: 'sale_bundle', items: [{ type: 'than', packageNo: '516', thanNo: 2 }],
   });
-  assert.match(text, /Bale 516 Than 2: 9060-A 01, 1 thans, 50 yds \(IDUMOTA\)/);
+  // CARD-3 — the than rides the bale in the grammar Abdul already types.
+  assert.match(text, /🧵 9060-A — 1 than · 50 yd/);
+  assert.match(text, /#01 → 516\/2/);
 });
 
 test('an Inventory outage degrades to the bare list — the card never fails', async () => {
@@ -82,7 +88,7 @@ test('an Inventory outage degrades to the bare list — the card never fails', a
   const text = await approvalCards.buildSaleBundleCard({
     action: 'sale_bundle', items: [{ type: 'package', packageNo: '516' }], totalYards: 150,
   });
-  assert.match(text, / {2}Bale 516\n/);
+  assert.match(text, /\n {2}516/);
   assert.match(text, /Queued total: 150 yards/);
 });
 

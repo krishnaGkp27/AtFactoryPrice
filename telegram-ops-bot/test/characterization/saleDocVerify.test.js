@@ -211,7 +211,7 @@ test('wiring: notifyAdminsApprovalRequest launches the check (awaitVerify pins i
   assert.match(msgs, /🔬 Bill check — request R9/, 'verdict follows the card');
 });
 
-test('CARD-2: multi-design card is sorted + grouped with per-design subtotals; single design stays flat', async () => {
+test('CARD-3: designs grouped, shades folded, each noun said once', async () => {
   const card = await approvalCards.buildSaleCard({
     customer: 'OKESON',
     items: [
@@ -221,17 +221,20 @@ test('CARD-2: multi-design card is sorted + grouped with per-design subtotals; s
       { packageNo: '881', design: '77016', shade: '2', thans: 5, yards: 150, warehouse: 'IDUMOTA' },
     ],
   });
-  const i77014 = card.indexOf('🧵 77014 — 2 bales (10 thans), 150+150'.slice(0, 8));
-  assert.match(card, /🧵 77014 — 2 bales \(10 thans\), 300 yds/);
-  assert.match(card, /🧵 77016 — 2 bales \(10 thans\), 300 yds/);
-  assert.ok(card.indexOf('🧵 77014') < card.indexOf('Bale 836'), 'header precedes its group');
-  assert.ok(card.indexOf('Bale 836') < card.indexOf('Bale 844'), 'shade 1 before shade 2');
-  assert.ok(card.indexOf('Bale 844') < card.indexOf('🧵 77016'), '77014 group closes before 77016 opens');
-  assert.ok(card.indexOf('Bale 879') < card.indexOf('Bale 881'), '77016 sorted by shade');
-  assert.match(card, /\n\n🧵 77016/, 'blank separator line between design groups');
-  assert.match(card, /Total: 4 Bales \(20 thans\), 600 yards/, 'grand total unchanged');
-  assert.ok(i77014 !== -1);
+  assert.match(card, /🧵 77014 — 10 than · 300 yd/);
+  assert.match(card, /🧵 77016 — 10 than · 300 yd/);
+  assert.ok(card.indexOf('🧵 77014') < card.indexOf('836'), 'header precedes its group');
+  assert.ok(card.indexOf('836') < card.indexOf('844'), 'shade 1 before shade 2');
+  assert.ok(card.indexOf('844') < card.indexOf('🧵 77016'), '77014 closes before 77016 opens');
+  assert.ok(card.indexOf('879') < card.indexOf('881'), '77016 sorted by shade');
+  assert.match(card, /Σ 20 than · 600 yd · 4 bale/, 'one totals line');
+  assert.match(card, /🧾 Sale · IDUMOTA/, 'one store, stated once in the header');
+  // The point of CARD-3: the three nouns appear ONCE, in the key line.
+  assert.equal((card.match(/\bbale\b/gi) || []).length, 2, `"bale" said twice (total + key), got: ${card}`);
+  assert.equal((card.match(/\bthan\b/gi) || []).length, 4, 'than: 2 group heads + total + key');
+  assert.equal((card.match(/\bshade\b/gi) || []).length, 1, 'shade: the key line only');
 
+  // A single-design sale needs no design header repeated per line either.
   const single = await approvalCards.buildSaleCard({
     customer: 'X',
     items: [
@@ -239,8 +242,8 @@ test('CARD-2: multi-design card is sorted + grouped with per-design subtotals; s
       { packageNo: '896', design: '77016', shade: '5', thans: 2, yards: 60 },
     ],
   });
-  assert.ok(!single.includes('🧵'), 'single-design card keeps the flat layout');
-  assert.ok(single.indexOf('Bale 897') < single.indexOf('Bale 896'), 'still sorted by shade');
+  assert.match(single, /🧵 77016 — 3 than · 115 yd/, 'one design head');
+  assert.ok(single.indexOf('#2 → 897') < single.indexOf('#5 → 896 ×2'), 'still sorted by shade');
 });
 
 /* ── VRF-1b: the partial-sale false-mismatch class (owner, 29-Jul) ────── */

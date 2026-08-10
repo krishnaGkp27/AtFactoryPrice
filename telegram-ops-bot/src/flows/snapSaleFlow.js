@@ -627,7 +627,7 @@ async function submitBatch(bot, chatId, userId, session) {
     const approvalEvents = require('../events/approvalEvents');
     const approvalCards = require('../services/approvalCards');
     let card = await approvalCards.buildSaleCard({
-      headline: 'Sale Request (Snap PDF batch)',
+      headline: 'Sale · Snap PDF',
       customer: '',
       salesPerson: sellerLabel,
       salesDate: actionJSON.salesDate,

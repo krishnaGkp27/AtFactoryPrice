@@ -80,11 +80,13 @@ test('DSP-1: photo → match card with OCR read-back → straight to Submit, NO 
   // notifyAdminsApprovalRequest MarkdownV2-escapes the card — strip the
   // escape backslashes so assertions read like the rendered text.
   const adminMsgs = bot.calls.filter((c) => c.method === 'sendMessage' && String(c.args.chatId) === '777').map((c) => c.args.text).join('\n').replace(/\\/g, '');
-  assert.match(adminMsgs, /Sale Request \(Snap Sale\)/, 'gold-standard headline');
-  assert.match(adminMsgs, /Salesperson: Yarima/);
-  assert.match(adminMsgs, /Bale 896: 77016 5, 2 thans, 60 yds \(IDUMOTA\)/, 'full item line');
-  assert.match(adminMsgs, /Total: 1 Bale \(2 thans\), 60 yards/);
-  assert.match(adminMsgs, /Sales bill \(label photo\) attached/);
+  // CARD-3 — the gold-standard card, in the compact grammar.
+  assert.match(adminMsgs, /🧾 Sale · Snap · IDUMOTA/, 'gold-standard headline + store');
+  assert.match(adminMsgs, /🧑 Yarima/);
+  assert.match(adminMsgs, /🧵 77016 — 2 than · 60 yd/, 'full item line');
+  assert.match(adminMsgs, /#5 → 896 ×2/);
+  assert.match(adminMsgs, /Σ 2 than · 60 yd · 1 bale/);
+  assert.match(adminMsgs, /📎 Sales bill \(label photo\)/);
   const adminPhotos = bot.calls.filter((c) => c.method === 'sendPhoto' && String(c.args.chatId) === '777');
   assert.equal(adminPhotos.length, 1, 'label photo forwarded to the admin');
   assert.equal(adminPhotos[0].args.photo, 'label-photo-file-id');
@@ -142,8 +144,9 @@ test('SNAP-3 + DSP-1: PDF batch → review card → ONE sale_bundle, no customer
   assert.equal(aj.totalYards, 115, '60+55 yards from the sheet, not the PDF');
   // Admin side: full card + the PDF forwarded as a document.
   const adminMsgs = bot.calls.filter((c) => c.method === 'sendMessage' && String(c.args.chatId) === '777').map((c) => c.args.text).join('\n').replace(/\\/g, '');
-  assert.match(adminMsgs, /Sale Request \(Snap PDF batch\)/);
-  assert.match(adminMsgs, /Bale 896: 77016 5, 2 thans, 60 yds \(IDUMOTA\)/);
+  assert.match(adminMsgs, /🧾 Sale · Snap PDF/);
+  assert.match(adminMsgs, /🧵 77016 — 3 than · 115 yd/);
+  assert.match(adminMsgs, /#5 → 896 ×2/);
   assert.match(adminMsgs, /Skipped from the PDF \(1\): 999 11111/);
   const adminDocs = bot.calls.filter((c) => c.method === 'sendDocument' && String(c.args.chatId) === '777');
   assert.equal(adminDocs.length, 1, 'PDF forwarded to the admin');
