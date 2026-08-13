@@ -505,11 +505,52 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     if (banks.length === before) return { ok: false, message: `Bank "${aj.bank_name}" not found.` };
     await settingsRepo2.set('BANK_LIST', banks.join(','));
   } else if (aj.action === 'add_contact') {
+    // CNET-2 (owner, 13-Aug-2026) — the approving admin ROUTES the contact.
+    // aj.destination is persisted by the triage chips before approval:
+    //   'customer' → CRM entity + a Contacts node bound to it (buyer node)
+    //   'network'  → Contacts node + subordinate_of edge under aj.boss_contact_id
+    //   'contact' / absent → phonebook only (pre-CNET-2 behaviour, and the
+    //   safe default for a plain approve from any old or generic surface)
     const contactsRepository = require('../repositories/contactsRepository');
-    await contactsRepository.append({
-      name: aj.name || '', phone: aj.phone || '', type: aj.type || 'other',
-      address: aj.address || '', notes: aj.notes || '',
-    });
+    const dest = aj.destination || 'contact';
+    if (dest === 'customer') {
+      const crmService = require('./crmService');
+      const addRes = await crmService.addCustomer({
+        name: aj.name, phone: aj.phone, address: aj.address, notes: aj.notes,
+      });
+      // CUS-2 fail-loud, same as add_customer: a collision must never
+      // report success for a no-op. The request stays pending so the admin
+      // can route it to 📒 Contact instead (or reject).
+      if (!addRes || addRes.status !== 'created') {
+        const ex = (addRes && addRes.customer) || {};
+        return { ok: false, message: `"${aj.name}" already exists as customer ${ex.name || ''}${ex.customer_id ? ` (${ex.customer_id})` : ''} — nothing was created. Choose 📒 Contact on the card, or reject.` };
+      }
+      await contactsRepository.append({
+        name: aj.name || '', phone: aj.phone || '', type: 'customer',
+        address: aj.address || '', notes: aj.notes || '',
+        customer_id: addRes.customer.customer_id, updated_by: approvedBy,
+      });
+      customMessage = `✅ ${aj.name} registered as a CUSTOMER (${addRes.customer.customer_id}) — sale-assignable, and in the network as a buyer.`;
+    } else if (dest === 'network' && aj.boss_contact_id) {
+      const created = await contactsRepository.append({
+        name: aj.name || '', phone: aj.phone || '', type: aj.type || 'other',
+        address: aj.address || '', notes: aj.notes || '', updated_by: approvedBy,
+      });
+      const contactLinksRepo = require('../repositories/contactLinksRepository');
+      const link = await contactLinksRepo.append({
+        from_contact_id: created.contact_id, to_contact_id: aj.boss_contact_id,
+        relation: 'subordinate_of', notes: aj.notes || '', created_by: item.user,
+      });
+      customMessage = link.duplicate
+        ? `ℹ️ ${aj.name} added to contacts — the link under ${aj.boss_name} already existed.`
+        : `✅ ${aj.name} added to contacts and placed under ${aj.boss_name} in the network.`;
+    } else {
+      await contactsRepository.append({
+        name: aj.name || '', phone: aj.phone || '', type: aj.type || 'other',
+        address: aj.address || '', notes: aj.notes || '', updated_by: approvedBy,
+      });
+      customMessage = `✅ ${aj.name} added to the contacts phonebook (${aj.type || 'other'}).`;
+    }
   } else if (aj.action === 'receive_goods') {
     // P2 — write GRN header, then append bales via inventoryRepository so
     // server-generated bale_uid + addedAt are stamped per row, then drop a

@@ -103,9 +103,12 @@ async function sweep(bot, { now = Date.now() } = {}) {
         const userLabel = await approvalCards.resolveUserLabel(q.user, bot);
         const card = await approvalCards.buildCardFromActionJSON(q.actionJSON);
         const excludeId = config.access.adminIds.includes(String(q.user)) ? String(q.user) : undefined;
+        // CNET-2 — an add_contact reminder rebuild keeps its destination
+        // chips; every other action keeps the standard Approve/Reject pair.
+        const kb = approvalCards.keyboardForRequest(q.requestId, q.actionJSON);
         await approvalEvents.notifyAdminsApprovalRequest(
           bot, q.requestId, userLabel, card, q.riskReason || 'Pending approval', excludeId,
-          { prependNote: '⏰ Reminder — this approval is still waiting' },
+          { prependNote: '⏰ Reminder — this approval is still waiting', ...(kb ? { keyboard: kb } : {}) },
         );
         if (q.actionJSON && q.actionJSON.sale_doc_file_id) {
           const kind = q.actionJSON.sale_doc_type === 'document' ? 'document' : 'photo';

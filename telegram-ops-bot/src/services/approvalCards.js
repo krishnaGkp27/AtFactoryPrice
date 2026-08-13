@@ -245,6 +245,62 @@ async function buildSaleCard(p) {
   return text;
 }
 
+/**
+ * CNET-2 (owner, 13-Aug-2026) — the add-contact TRIAGE card.
+ *
+ * "Even after approving a contact requested by Abdul, I am not able to see
+ * this customer when approving the sales bill." The old card approved a
+ * phonebook row and nothing else, and the admin had no way to say WHERE the
+ * person belongs. This card shows everything the requester's message parsed
+ * into, and the keyboard routes the approval to one of three destinations:
+ *
+ *   🛒 Customer — CRM entity (sale-assignable) + a bound network buyer node
+ *   📒 Contact  — phonebook row, exactly the old behaviour
+ *   🕸 Network  — phonebook row + a subordinate_of edge under a buyer
+ *
+ * A plain `approve:` from any old/generic surface (inbox delegate, stale
+ * card) executes as 📒 Contact — the pre-CNET-2 behaviour, never a surprise
+ * registration.
+ */
+function buildAddContactCard(aj) {
+  let text = `📇 New contact — ${aj.name || '?'}`;
+  const bits = [`🏷 typed as: ${aj.type || 'other'}`];
+  if (aj.phone) bits.push(`📞 ${aj.phone}`);
+  text += `\n${bits.join(' · ')}`;
+  if (aj.address) text += `\n🏠 ${aj.address}`;
+  if (aj.notes) text += `\n📝 ${aj.notes}`;
+  if (aj.destination) {
+    // A second admin's reminder copy after a choice was already persisted.
+    text += `\n\n➡️ Destination chosen: ${aj.destination}${aj.boss_name ? ` (under ${aj.boss_name})` : ''}`;
+  }
+  text += '\n\nWhere does this person belong?'
+    + '\n🛒 Customer — registered for sales bills, and joins the network as a buyer'
+    + '\n📒 Contact — phonebook only'
+    + "\n🕸 Network — phonebook + placed under a buyer's people";
+  return text;
+}
+
+/**
+ * CNET-2 — the keyboard a pending request should carry. Returns null for
+ * every action that keeps the standard Approve/Reject pair, so callers can
+ * fall through unchanged.
+ */
+function keyboardForRequest(requestId, aj) {
+  if (!aj || aj.action !== 'add_contact') return null;
+  return {
+    inline_keyboard: [
+      [
+        { text: '🛒 Customer', callback_data: `ctg:${requestId}:c` },
+        { text: '📒 Contact', callback_data: `ctg:${requestId}:p` },
+      ],
+      [
+        { text: '🕸 Network', callback_data: `ctg:${requestId}:n` },
+        { text: '❌ Reject', callback_data: `reject:${requestId}` },
+      ],
+    ],
+  };
+}
+
 /** Card for a queued snap-sale sell_package actionJSON. */
 async function buildSellPackageCard(aj) {
   return buildSaleCard({
@@ -546,6 +602,7 @@ async function buildCardFromActionJSON(aj) {
     if (aj.action === 'sell_package') return await buildSellPackageCard(aj);
     if (aj.action === 'sale_bundle') return await buildSaleBundleCard(aj);
     if (aj.action === 'supply_request') return buildSupplyRequestCard(aj);
+    if (aj.action === 'add_contact') return buildAddContactCard(aj);
     if (aj.action === 'add_warehouse') return await buildAddWarehouseCard(aj);
   } catch (_) { /* fall through to generic */ }
   const parts = [actionLabel(aj.action)];
@@ -631,6 +688,8 @@ module.exports = {
   buildSellPackageCard,
   buildReturnCard,
   buildSaleBundleCard,
+  buildAddContactCard,
+  keyboardForRequest,
   buildSupplyRequestCard,
   buildPaymentCard,
   buildRemoveBankCard,

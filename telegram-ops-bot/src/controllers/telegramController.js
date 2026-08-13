@@ -225,7 +225,14 @@ async function requireApproval(bot, chatId, msg, userId, action, actionJSON, sum
   await bot.sendMessage(chatId, `⏳ Needs ${approverLabel} approval (${risk.reason}). Ref: ${shortRequestRef(requestId)}`);
   const userLabel = await getRequesterDisplayName(userId, msg);
   const excludeId = isAdm ? userId : undefined;
-  await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, risk.reason, excludeId);
+  // CNET-2 — an add_contact card carries the full parsed detail and the
+  // destination chips (Customer / Contact / Network) instead of a bare
+  // Approve, so the admin routes the person while approving.
+  const approvalCardsMod = require('../services/approvalCards');
+  const kb = approvalCardsMod.keyboardForRequest(requestId, actionJSON);
+  const cardText = kb ? await approvalCardsMod.buildCardFromActionJSON(actionJSON) : summary;
+  await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, cardText, risk.reason, excludeId,
+    kb ? { keyboard: kb } : {});
   return true;
 }
 
@@ -7176,6 +7183,11 @@ async function handleCallbackQuery(bot, callbackQuery) {
   }
   if (data.startsWith('rpk:')) {
     await handleRecordPaymentPickCallback(bot, callbackQuery);
+    return;
+  }
+  // CNET-2 — add-contact triage chips (destination routing at approval).
+  if (data.startsWith('ctg:')) {
+    await approvalEvents.handleContactTriageCallback(bot, callbackQuery);
     return;
   }
   if (data.startsWith('enr:')) {

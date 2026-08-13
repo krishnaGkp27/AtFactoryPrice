@@ -102,7 +102,7 @@ Major namespaces already taken:
 - Supply request: `srf_*` · legacy inline flows: `up*` (price), `tp*`/`tt*` (transfers), `rt*` (return), `sm*` (sample), `ac*` (add customer)
 - Flow modules: `gr:` `br:` `addstock:` `pr:` `wh:` `wai:` `bs:` `udf:` `sbl:` `lcost:` `bops:` `ofex:` `usr:` `umg:` `rol:` `atd:` `atd_rpt:` `atd_adm:` `tsk:` `nf:` `swv:` `pp:` `pu:` `cms:` `shr:` (share links) `oq/oc/od*` (orders) `rc*` (receipts)
 - Catalog: `csf:` `clf:` `crf:` `mkr:` `ctr:` `dab:` `das:` `dat:` `dap:` `dam:` `dav:`
-- Approvals: `approve:` `reject:` `srf_acc/ack/dec/assign:` `smc:` `confirm_sale:` `cancel_sale:`
+- Approvals: `approve:` `reject:` `ctg:` (contact triage) `srf_acc/ack/dec/assign:` `smc:` `confirm_sale:` `cancel_sale:`
 - Reports: `cks:` `lpk:` `svr:` `inv:` `sr:`/`srg:` `mdo:`
 
 Telegram caps `callback_data` at 64 bytes — keep payloads short (indexes into

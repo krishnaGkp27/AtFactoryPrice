@@ -86,6 +86,7 @@ const PREFIX_FEATURES = {
   'trf:': 'transfers',
   'smc:': 'supply_dispatch_confirm',
   'enr:': 'approval_enrichment',
+  'ctg:': 'contact_triage',
   'approve:': 'approvals', 'reject:': 'approvals',
   'confirm_sale:': 'sale', 'cancel_sale:': 'sale',
   'cks:': 'check_stock', 'lpk:': 'list_packages', 'svr:': 'stock_value',

@@ -1518,7 +1518,9 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
   // approval". Real reasons (backdated, threshold) are untouched.
   const shortWhy = require('../services/approvalCards').shortReason(riskReason);
   const text = `${noteLine}🔔 *Approval required*\n\nRef: \`${requestId}\`\nFrom: ${esc(userLabel)}\n\n${esc(actionSummary)}\n\n_${esc(shortWhy)}_\n\nUse buttons below to approve or reject\\.`;
-  const keyboard = {
+  // CNET-2 — a caller may hand the card a routing keyboard (the add-contact
+  // destination chips); everything else keeps the standard pair.
+  const keyboard = (opts && opts.keyboard) || {
     inline_keyboard: [
       [{ text: '✅ Approve', callback_data: `approve:${requestId}` }, { text: '❌ Reject', callback_data: `reject:${requestId}` }],
     ],
@@ -2452,9 +2454,187 @@ async function handleMarkDone(bot, callbackQuery) {
   return true;
 }
 
+/* ───────────────────────────────────────────────────────────────────── */
+/*  CNET-2 — add-contact triage at approval (owner, 13-Aug-2026)         */
+/* ───────────────────────────────────────────────────────────────────── */
+
+/**
+ * "Even after approving a contact requested by Abdul, I am not able to see
+ * this customer when approving the sales bill." The approving admin now
+ * ROUTES the contact: 🛒 Customer (CRM entity + bound buyer node),
+ * 📒 Contact (phonebook, the old behaviour) or 🕸 Network (phonebook + a
+ * subordinate_of edge under a buyer picked in place on the same card).
+ *
+ * The chips persist the choice onto the queued actionJSON and then delegate
+ * to handleApprovalCallback('approve'), so EVERY existing guard holds:
+ * stale-request, self-approval, super-admin, dual-admin. A plain `approve:`
+ * from any old or generic surface executes as 📒 Contact — pre-CNET-2
+ * behaviour, never a surprise registration.
+ *
+ * Callback shapes (all carry the requestId — APC-1 rule, no cross-wiring):
+ *   ctg:<rid>:c        → destination customer, approve
+ *   ctg:<rid>:p        → destination contact (phonebook), approve
+ *   ctg:<rid>:n        → open the buyer picker in place
+ *   ctg:<rid>:pg:<n>   → picker page
+ *   ctg:<rid>:b:<i>    → pick buyer i (index into per-admin state)
+ *   ctg:<rid>:ok       → confirm placement, approve
+ *   ctg:<rid>:x        → back to the triage card
+ */
+const pendingTriage = new Map(); // `${adminId}|${requestId}` → { bosses, page, pick, at }
+const TRIAGE_TTL_MS = 60 * 60 * 1000;
+const TRIAGE_PAGE = 10;
+
+function triageSweep() {
+  const now = Date.now();
+  for (const [k, v] of pendingTriage) {
+    if (!v || now - (v.at || 0) > TRIAGE_TTL_MS) pendingTriage.delete(k);
+  }
+}
+
+/** Buyer nodes a person can be placed under: customer-typed or CRM-bound contacts. */
+async function triageBuyerList() {
+  const contactsRepository = require('../repositories/contactsRepository');
+  const all = await contactsRepository.getAll();
+  return all
+    .filter((c) => (c.status || 'active').toLowerCase() === 'active'
+      && (c.type === 'customer' || c.customer_id))
+    .sort((a, b) => a.name.localeCompare(b.name, 'en'));
+}
+
+async function renderTriageCard(bot, chatId, messageId, requestId, aj) {
+  const approvalCards = require('../services/approvalCards');
+  const esc = (t) => (t || '').replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+  const text = `🔔 *Approval required*\n\nRef: \`${requestId}\`\n\n${esc(approvalCards.buildAddContactCard(aj))}`;
+  const keyboard = approvalCards.keyboardForRequest(requestId, aj);
+  try {
+    await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: 'MarkdownV2', reply_markup: keyboard });
+  } catch (e) {
+    if (!/not modified/i.test(String(e.message || ''))) {
+      // MarkdownV2 hiccup → plain-text fallback, never a dead card.
+      await bot.editMessageText(`🔔 Approval required\n\nRef: ${requestId}\n\n${approvalCards.buildAddContactCard(aj)}`,
+        { chat_id: chatId, message_id: messageId, reply_markup: keyboard }).catch(() => {});
+    }
+  }
+}
+
+async function renderTriagePicker(bot, query, requestId, state, aj) {
+  const chatId = query.message.chat.id;
+  const messageId = query.message.message_id;
+  const start = state.page * TRIAGE_PAGE;
+  const slice = state.bosses.slice(start, start + TRIAGE_PAGE);
+  const rows = [];
+  for (let i = 0; i < slice.length; i += 2) {
+    const row = [{ text: `👤 ${slice[i].name}`.slice(0, 60), callback_data: `ctg:${requestId}:b:${start + i}` }];
+    if (slice[i + 1]) row.push({ text: `👤 ${slice[i + 1].name}`.slice(0, 60), callback_data: `ctg:${requestId}:b:${start + i + 1}` });
+    rows.push(row);
+  }
+  const nav = [];
+  if (state.page > 0) nav.push({ text: '⬅️ Prev', callback_data: `ctg:${requestId}:pg:${state.page - 1}` });
+  if (start + TRIAGE_PAGE < state.bosses.length) nav.push({ text: 'More ▸', callback_data: `ctg:${requestId}:pg:${state.page + 1}` });
+  if (nav.length) rows.push(nav);
+  rows.push([{ text: '⬅️ Back', callback_data: `ctg:${requestId}:x` }]);
+  const esc = (t) => (t || '').replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+  const text = `🕸 *Where in the network?*\n\nPlace *${esc(aj.name || '?')}* under one of the buyers:`
+    + (state.bosses.length ? '' : '\n\n_No buyer nodes in the network yet — register a customer first, or choose 📒 Contact\\._');
+  await bot.editMessageText(text, {
+    chat_id: chatId, message_id: messageId, parse_mode: 'MarkdownV2',
+    reply_markup: { inline_keyboard: rows },
+  }).catch(() => {});
+}
+
+async function handleContactTriageCallback(bot, callbackQuery) {
+  triageSweep();
+  const data = String(callbackQuery.data || '');
+  const m = data.match(/^ctg:([^:]+):(c|p|n|ok|x|pg:\d+|b:\d+)$/);
+  if (!m) { try { await bot.answerCallbackQuery(callbackQuery.id); } catch (_) {} return; }
+  const [, requestId, op] = m;
+  const adminId = String(callbackQuery.from.id);
+  if (!config.access.adminIds.includes(adminId)) {
+    try { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only admins can approve.' }); } catch (_) {}
+    return;
+  }
+  const { item } = await resolveRequest(requestId);
+  if (!item || String(item.status || '').toLowerCase() !== 'pending') {
+    try {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Already resolved — nothing to do.' });
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+        { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
+    } catch (_) { /* stale card */ }
+    return;
+  }
+  const aj = item.actionJSON || {};
+  if (aj.action !== 'add_contact') {
+    try { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Not a contact request.' }); } catch (_) {}
+    return;
+  }
+  const key = `${adminId}|${requestId}`;
+  const approve = async (patch) => {
+    await approvalQueueRepository.updateActionJSON(requestId, patch);
+    pendingTriage.delete(key);
+    // Delegate with a rewritten payload so the FULL approve path runs —
+    // stale guard, self-approval, super-admin, dual-admin, executor, cards.
+    await handleApprovalCallback(bot, { ...callbackQuery, data: `approve:${requestId}` }, 'approve');
+  };
+
+  if (op === 'c') { await approve({ destination: 'customer' }); return; }
+  if (op === 'p') { await approve({ destination: 'contact' }); return; }
+
+  if (op === 'n') {
+    const bosses = await triageBuyerList().catch(() => []);
+    const state = { bosses, page: 0, at: Date.now() };
+    pendingTriage.set(key, state);
+    try { await bot.answerCallbackQuery(callbackQuery.id); } catch (_) {}
+    await renderTriagePicker(bot, callbackQuery, requestId, state, aj);
+    return;
+  }
+  if (op.startsWith('pg:')) {
+    const state = pendingTriage.get(key);
+    if (!state) { await handleContactTriageCallback(bot, { ...callbackQuery, data: `ctg:${requestId}:n` }); return; }
+    state.page = Math.max(0, parseInt(op.slice(3), 10) || 0);
+    state.at = Date.now();
+    try { await bot.answerCallbackQuery(callbackQuery.id); } catch (_) {}
+    await renderTriagePicker(bot, callbackQuery, requestId, state, aj);
+    return;
+  }
+  if (op.startsWith('b:')) {
+    const state = pendingTriage.get(key);
+    const boss = state && state.bosses[parseInt(op.slice(2), 10)];
+    if (!boss) { await handleContactTriageCallback(bot, { ...callbackQuery, data: `ctg:${requestId}:n` }); return; }
+    state.pick = boss;
+    state.at = Date.now();
+    try { await bot.answerCallbackQuery(callbackQuery.id); } catch (_) {}
+    const esc = (t) => (t || '').replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+    await bot.editMessageText(
+      `🕸 *Confirm placement*\n\n👤 ${esc(aj.name || '?')} → under *${esc(boss.name)}*`,
+      {
+        chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id,
+        parse_mode: 'MarkdownV2',
+        reply_markup: { inline_keyboard: [
+          [{ text: '✅ Place & approve', callback_data: `ctg:${requestId}:ok` }],
+          [{ text: '⬅️ Back', callback_data: `ctg:${requestId}:n` }],
+        ] },
+      },
+    ).catch(() => {});
+    return;
+  }
+  if (op === 'ok') {
+    const state = pendingTriage.get(key);
+    if (!state || !state.pick) { await handleContactTriageCallback(bot, { ...callbackQuery, data: `ctg:${requestId}:n` }); return; }
+    await approve({ destination: 'network', boss_contact_id: state.pick.contact_id, boss_name: state.pick.name });
+    return;
+  }
+  if (op === 'x') {
+    pendingTriage.delete(key);
+    try { await bot.answerCallbackQuery(callbackQuery.id); } catch (_) {}
+    await renderTriageCard(bot, callbackQuery.message.chat.id, callbackQuery.message.message_id, requestId, aj);
+    return;
+  }
+}
+
 module.exports = {
   notifyAdminsApprovalRequest,
   handleApprovalCallback,
+  handleContactTriageCallback,
   handleMarkDone,
   handleEnrichmentMessage,
   handleEnrichmentCallback,
