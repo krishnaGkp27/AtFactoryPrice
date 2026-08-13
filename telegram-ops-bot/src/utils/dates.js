@@ -13,6 +13,21 @@ function todayInLagos() {
 }
 
 /**
+ * TIME-1 — the Lagos calendar day `n` days from now (negative = past).
+ *
+ * The scheduled jobs used to build "tomorrow" by adding a day to the raw
+ * clock and slicing the UTC ISO, which is the previous Lagos day between
+ * midnight and 01:00. Same door as todayInLagos, shifted.
+ *
+ * @param {number} n
+ * @returns {string} YYYY-MM-DD
+ */
+function lagosDayPlus(n = 0) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: LAGOS_TZ })
+    .format(new Date(Date.now() + n * 86400000));
+}
+
+/**
  * Compare YYYY-MM-DD strings against today (Lagos).
  * Returns:
  *   < 0  : saleDate is before today (backdated)
@@ -159,6 +174,14 @@ function normalizeSalesDate(input) {
 function normDay(raw) {
   const s = String(raw == null ? '' : raw).trim();
   if (!s) return '';
+  // TIME-1 — a full TIMESTAMP with a zone is an instant: its calendar day is
+  // Lagos's, not UTC's. Slicing the ISO prefix dated anything logged after
+  // Lagos midnight to the day before (the sentinel's return checks compared
+  // that day against approval days and reported false mismatches).
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s) && /(Z|[+-]\d{2}:?\d{2})$/.test(s)) {
+    const inst = new Date(s);
+    if (!isNaN(inst.getTime())) return inst.toLocaleDateString('en-CA', { timeZone: LAGOS_TZ });
+  }
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
   const dmy = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
   if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
@@ -167,4 +190,4 @@ function normDay(raw) {
   return s;
 }
 
-module.exports = { todayInLagos, compareWithToday, daysBeforeToday, normalizeSalesDate, normDay, LAGOS_TZ };
+module.exports = { todayInLagos, lagosDayPlus, compareWithToday, daysBeforeToday, normalizeSalesDate, normDay, LAGOS_TZ };
