@@ -52,6 +52,20 @@ test('withTime degrades instead of throwing', () => {
   assert.equal(fmtDate.withTime('not a date'), 'not a date');
 });
 
+test('withTime never lets the LOCALE name the month', () => {
+  // Regression: Intl en-GB `month: 'short'` abbreviates September as "Sept"
+  // under CLDR 42+, so one month of the year silently broke the locked
+  // DD-MMM-YYYY house format. The month now comes from our own table.
+  assert.equal(fmtDate.withTime('2026-09-15T15:58:34.018Z'), '15-Sep-2026, 16:58');
+  for (let m = 1; m <= 12; m += 1) {
+    const iso = `2026-${String(m).padStart(2, '0')}-15T12:00:00.000Z`;
+    assert.equal(fmtDate.withTime(iso).split(', ')[0], fmtDate(iso),
+      `month ${m}: withTime's date half must equal fmtDate exactly`);
+    assert.match(fmtDate.withTime(iso, { dateOnly: true }), /^\d{2}-[A-Z][a-z]{2}-\d{4}$/,
+      `month ${m}: house format DD-MMM-YYYY`);
+  }
+});
+
 /* ── fmtDate itself — an instant resolves to its Lagos day ── */
 
 test('fmtDate reads a zone-bearing timestamp as an instant, not a UTC prefix', () => {

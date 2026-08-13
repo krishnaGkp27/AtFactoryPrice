@@ -34,7 +34,7 @@ const render = makeRenderer({ disablePreview: true });
 function menuRow() { return [{ text: '🏠 Menu', callback_data: 'act:__back__' }]; }
 
 const PERIODS = {
-  month: { label: 'This month', fromDate: () => new Date().toISOString().slice(0, 8) + '01' },
+  month: { label: 'This month', fromDate: () => `${todayInLagos().slice(0, 7)}-01` },  // TIME-1
   m30: { label: 'Last 30 days', fromDate: () => lagosDayPlus(-30) },  // TIME-1
   m90: { label: 'Last 90 days', fromDate: () => lagosDayPlus(-90) },  // TIME-1
   all: { label: 'All time', fromDate: () => '' },

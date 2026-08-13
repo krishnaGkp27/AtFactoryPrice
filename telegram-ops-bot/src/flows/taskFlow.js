@@ -618,8 +618,11 @@ async function renderCalendar(bot, chatId, userId) {
   const [year, month] = ym.split('-').map((s) => parseInt(s, 10));
   const monthName = new Date(year, month - 1, 1).toLocaleString('en-US', { month: 'long' });
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // TIME-1 — anchor the grid on the LAGOS day, like todayYM()/addDays() above.
+  // Leaving this on the server clock made the two deadline pickers disagree:
+  // the chips offered one day while the grid marked and permitted another.
+  const [_ty, _tm, _td] = todayInLagos().split('-').map(Number);
+  const today = new Date(_ty, _tm - 1, _td);
   const minYm = todayYM();
   const maxYm = addMonthsYM(minYm, CAL_MAX_FORWARD_MONTHS);
   const canPrev = ymCompare(ym, minYm) > 0;

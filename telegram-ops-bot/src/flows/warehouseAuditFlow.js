@@ -29,7 +29,7 @@
  */
 
 const sessionStore        = require('../utils/sessionStore');
-const { todayInLagos } = require('../utils/dates');
+const { todayInLagos, normDay } = require('../utils/dates');
 const { makeRenderer, rowsFor } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const inventoryService    = require('../services/inventoryService');
@@ -171,7 +171,8 @@ async function loadChecklist(session) {
       const reconciled = !!rec && rec.sheet_bales === d.fullBales && rec.sheet_bundles === d.looseThans;
       // reconciledAt stays ISO (YYYY-MM-DD) — it is the SORT key. Display
       // formatting happens at render, never here.
-      return { ...d, reconciled, reconciledAt: reconciled ? rec.audited_at.slice(0, 10) : '' };
+      // TIME-1 — the Lagos day of the stored instant, matching the state above.
+      return { ...d, reconciled, reconciledAt: reconciled ? normDay(rec.audited_at) : '' };
     })
     .sort(byOldestReconciliation);
 }

@@ -188,3 +188,42 @@ already covers the one configurable case.
 | `src/services/transferService.js` | 321 | server-tz-today | low | admin/dispatch DM (transfer cards, transferFlow lines 679/1432 print f | 📅 Left the store: 11-Aug-2026  (transfer dispatched 00:30 Lagos on 12-Aug via any caller not passing leftOn) |
 | `src/services/usageRollupJob.js` | 66 | server-tz-today | low | web analytics dashboard (usage_daily served by /api/analytics/*) | the admin analytics dashboard's per-day usage series buckets events by the server-local (UTC) day - activity from 00:00- |
 | `src/services/vision/index.js` | 171 | server-tz-today | low | web page /ops (SNAP-3 OCR spend tile); the cap check (line 156) also g | ops dashboard shows ocr: { day: "2026-08-11", today: 37 } at 00:30 Lagos on 12-Aug, and the counter/cap resets at 01:00  |
+
+---
+
+## Post-implementation review (12-Aug-2026)
+
+The TIME-1a/b/c diff was put through a five-lens adversarial review before
+deploy. It confirmed **six regressions introduced by the fix itself**, all
+corrected in `TIME-1d` before anything reached `main`:
+
+1. **`withTime` let the LOCALE name the month.** `Intl` `en-GB`
+   `month: 'short'` abbreviates September as **"Sept"** under CLDR 42+
+   (Node 18.13+), so one month a year silently broke the locked
+   DD-MMM-YYYY house format — `15-Sept-2026` on the onboarding card and the
+   dispatch note. The formatter now takes only locale-independent digits
+   from `Intl` and indexes the file's own `MONTHS` table.
+2. **A Lagos day compared against a UTC instant** (`stockTakesRepository
+   .rowsForDay`). Moving `todayStateFor` to Lagos was half a change: the
+   rows it filters carry `audited_at` as a UTC instant matched by string
+   PREFIX. For the hour after Lagos midnight the same-day audit state came
+   back EMPTY — the flag lock stopped holding. Both sides now go through
+   `normDay`.
+3. **Same split in the ops-dashboard audits tile** (`apiController`), which
+   would have read `audits today: 0` for that hour.
+4. **`taskFlow`'s calendar anchor** was left on the server clock while its
+   chips moved to Lagos, so the two deadline pickers disagreed by a day.
+5. **The statement's "This month"** was left on UTC while `m30`/`m90` in
+   the same object were converted — it could build the previous month under
+   a label saying the current one.
+6. **Mixed date formats** in one order keyboard: the Today chip was wrapped
+   in `fmtDate` while the Mon/Fri chips still printed raw ISO.
+
+**The lesson, and the rule to apply next time:** converting a *write* to
+Lagos silently breaks every *read* that still compares it against a stored
+UTC instant. Any "day meets timestamp" comparison must send BOTH sides
+through `normDay` — that is now the single door, and
+`test/unit/repositories/stockTakesDayBoundary.test.js` pins it.
+
+Regression tests added: the twelve-month house-format loop
+(`test/unit/utils/lagosTime.test.js`) and the day-boundary suite above.

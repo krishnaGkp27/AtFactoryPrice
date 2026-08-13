@@ -8565,7 +8565,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     await bot.sendMessage(callbackQuery.message.chat.id, 'Schedule supply date:', {
       reply_markup: { inline_keyboard: [
         [{ text: `📅 Today (${fmtDate(today)})`, callback_data: 'odt:today' }],
-        [{ text: `📅 Next Monday (${nextMon})`, callback_data: 'odt:mon' }, { text: `📅 Next Friday (${nextFri})`, callback_data: 'odt:fri' }],
+        [{ text: `📅 Next Monday (${fmtDate(nextMon)})`, callback_data: 'odt:mon' }, { text: `📅 Next Friday (${fmtDate(nextFri)})`, callback_data: 'odt:fri' }],
         [{ text: '✏️ Custom date', callback_data: 'odt:custom' }],
         [
           { text: '⬅️ Back', callback_data: 'obb:payment' },

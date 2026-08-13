@@ -19,6 +19,7 @@
  */
 
 const crypto = require('crypto');
+const { normDay } = require('../utils/dates');
 const sheets = require('./sheetsClient');
 
 const SHEET = 'StockTakes';
@@ -110,7 +111,13 @@ async function latestFor(warehouse) {
 async function rowsForDay(warehouse, dayIso) {
   const all = await getAll();
   const w = str(warehouse).toLowerCase();
-  return all.filter((r) => r.warehouse.toLowerCase() === w && r.audited_at.startsWith(dayIso));
+  // TIME-1 — `audited_at` is a stored UTC instant while the caller now asks
+  // for a LAGOS day. A prefix match compares two different clocks and finds
+  // nothing for the hour after Lagos midnight, which silently emptied the
+  // same-day audit state (flag locks stopped holding). normDay resolves both
+  // sides to the same calendar day; a bare/legacy cell passes through it too.
+  const day = normDay(dayIso);
+  return all.filter((r) => r.warehouse.toLowerCase() === w && normDay(r.audited_at) === day);
 }
 
 /** Find one row by its stocktake_id (for flag-clear cards). */

@@ -96,12 +96,16 @@ fmtDate.withTime = function withTime(raw, opts = {}) {
   if (typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) return fmtDate(raw);
   const dt = raw instanceof Date ? raw : new Date(String(raw).trim());
   if (isNaN(dt.getTime())) return fmtDate(raw);
+  // Ask Intl only for locale-independent DIGITS and index our own MONTHS
+  // table. `month: 'short'` is a locale string: under CLDR 42+ (Node 18.13+)
+  // en-GB abbreviates September as "Sept", four letters, which would break
+  // the locked DD-MMM-YYYY house format for one month of the year.
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: LAGOS_TZ,
-    day: '2-digit', month: 'short', year: 'numeric',
+    day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit', hour12: false,
   }).formatToParts(dt).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
-  const day = `${parts.day}-${parts.month}-${parts.year}`;
+  const day = `${parts.day}-${MONTHS[Number(parts.month) - 1]}-${parts.year}`;
   if (opts.dateOnly) return day;
   return `${day}, ${parts.hour}:${parts.minute}`;
 };

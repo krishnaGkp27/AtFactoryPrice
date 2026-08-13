@@ -3,7 +3,7 @@
  */
 
 const settingsRepository = require('../repositories/settingsRepository');
-const { todayInLagos, lagosDayPlus } = require('../utils/dates');
+const { todayInLagos, lagosDayPlus, normDay } = require('../utils/dates');
 const config = require('../config');
 const logger = require('../utils/logger');
 const fmtDate = require('../utils/formatDate');
@@ -331,7 +331,7 @@ async function getOpsOverview(req, res) {
     }),
     section(async () => {
       const rows = (await require('../repositories/stockTakesRepository').getAll())
-        .filter((r) => String(r.audited_at).startsWith(todayIso));
+        .filter((r) => normDay(r.audited_at) === todayIso);  // TIME-1 — Lagos day both sides
       const flagged = rows.filter((r) => r.result === 'flagged').length;
       const cleared = rows.filter((r) => r.result === 'flag_cleared').length;
       return { today: rows.length, openFlags: Math.max(flagged - cleared, 0) };
