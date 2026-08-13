@@ -151,6 +151,7 @@ flow (DCAT-1) — owner chose an Inventory column over a separate mapping sheet.
 | `RISK_THRESHOLD` / `LOW_STOCK_THRESHOLD` | 300 / 100 | risk engine thresholds |
 | `THAN_VISIBILITY_WAREHOUSES` | `Kano office` | CSV of warehouses listing stock in thans (TV-1); togglable in-bot via 📐 Display Units behind admin approval (TV-2) |
 | `FLOW_CLEANUP_MINUTES` / `_HEAVY` | 30 / 60 | stale-flow tombstone grace (SJ-1) |
+| `SALE_CALENDAR_MAX_DAYS_BACK` | 180 | how far back the sale-date calendars reach (BKD-1; Sell Bale + Kano than sale) |
 | `FLOW_CLEANUP_HEAVY_TYPES` | CSV | session types counted as heavy |
 
 New defaults live in `settingsRepository.DEFAULTS`; a sheet row of the same key overrides.

@@ -102,4 +102,20 @@ function checkRange(iso, maxDaysBack = 90) {
   return { ok: true };
 }
 
-module.exports = { lagosISO, quickChipRows, calendarRows, checkRange };
+/**
+ * BKD-1 — the sale calendars' reach, owner-tunable via the Settings sheet
+ * (SALE_CALENDAR_MAX_DAYS_BACK; in-code default 180). One reader shared by
+ * Sell Bale and the Kano than sale so the two can never drift. Clamped to
+ * [1, 366]; any read failure falls back to the default rather than locking
+ * the calendar.
+ */
+async function saleMaxDaysBack() {
+  try {
+    const settingsRepository = require('../repositories/settingsRepository');
+    const v = Number((await settingsRepository.getAll()).SALE_CALENDAR_MAX_DAYS_BACK);
+    if (Number.isFinite(v) && v >= 1 && v <= 366) return Math.floor(v);
+  } catch (_) { /* fall through */ }
+  return 180;
+}
+
+module.exports = { lagosISO, quickChipRows, calendarRows, checkRange, saleMaxDaysBack };

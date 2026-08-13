@@ -106,14 +106,20 @@ test('chip tap: yesterday is NOT backdated (owner rule)', async () => {
   sessionStore.clear('4242');
 });
 
-test('future and >90d dates are refused; junk text gets the calendar hint', async () => {
+test('future and beyond-reach dates are refused; junk text gets the calendar hint', async () => {
   const bot = createFakeBot();
   await reachDateStep(bot);
   const sellBaleFlow = require(path.join(SRC, 'flows/sellBaleFlow'));
   await sellBaleFlow._internals.applyDate(bot, '4242', '4242', lagosISO(-3));
   assert.match(bot.allText().replace(/\\/g, ''), /is in the FUTURE/);
+  // BKD-1 — the reach is the Settings knob (default 180): 120 days back is
+  // now a VALID backfill date; one beyond the knob is refused.
   await sellBaleFlow._internals.applyDate(bot, '4242', '4242', lagosISO(120));
-  assert.match(bot.allText().replace(/\\/g, ''), /more than 90 days back/);
+  assert.equal(sessionStore.get('4242').salesDate, lagosISO(120), '120d back accepted for backfill');
+  assert.equal(sessionStore.get('4242').backdatedDays, 120, 'and flagged BACKDATED');
+  sessionStore.get('4242').salesDate = ''; sessionStore.get('4242').step = 'date';
+  await sellBaleFlow._internals.applyDate(bot, '4242', '4242', lagosISO(200));
+  assert.match(bot.allText().replace(/\\/g, ''), /more than 180 days back/);
   await controller.handleMessage(bot, { from: { id: '4242' }, chat: { id: '4242' }, text: 'someday soon' });
   assert.match(bot.allText().replace(/\\/g, ''), /Could not read "someday soon" as a date — tap it instead/);
   assert.ok(lastKb(bot).some((b) => b.callback_data.startsWith('sb:cd:')), 'calendar shown for the junk text');

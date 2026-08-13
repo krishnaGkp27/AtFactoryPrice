@@ -376,7 +376,10 @@ async function showSalespersons(bot, chatId, userId) {
 }
 
 
-const CALENDAR_MAX_DAYS_BACK = 90;
+// BKD-1 (owner, 13-Aug-2026) — the reach is the shared Settings knob
+// (SALE_CALENDAR_MAX_DAYS_BACK, default 180) read via dateCalendar, so
+// Sell Bale and the Kano than sale can never drift apart on it.
+const { saleMaxDaysBack } = require('../utils/dateCalendar');
 
 async function showDates(bot, chatId, userId) {
   const s = getSession(userId);
@@ -399,7 +402,7 @@ async function showDates(bot, chatId, userId) {
 
 /**
  * SELL-T2 — month-grid calendar. Bounds: no future days, no further back
- * than CALENDAR_MAX_DAYS_BACK. ym = 'YYYY-MM'.
+ * than the Settings reach (saleMaxDaysBack). ym = 'YYYY-MM'.
  * opts.highlight — an ISO day rendered as [D]: a TYPED date only marks the
  * day; the TAP is the sole commit (owner refinement 21-Jul).
  * opts.note — one-line message above the grid.
@@ -407,7 +410,8 @@ async function showDates(bot, chatId, userId) {
 async function showCalendar(bot, chatId, userId, ym, opts = {}) {
   const s = getSession(userId);
   const todayIso = lagosISO(0);
-  const oldestIso = lagosISO(CALENDAR_MAX_DAYS_BACK);
+  const maxBack = await saleMaxDaysBack();
+  const oldestIso = lagosISO(maxBack);
   const [y, m] = ym.split('-').map(Number);
   const monthName = new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-GB', { month: 'long', timeZone: 'UTC' });
   const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
@@ -439,7 +443,7 @@ async function showCalendar(bot, chatId, userId, ym, opts = {}) {
   rows.push(cancelRow());
   s.step = 'date'; save(userId, s);
   await render(bot, chatId, userId,
-    `${header(s)}\n\n${opts.note ? `${opts.note}\n\n` : ''}📆 *Tap* the sale date (up to ${CALENDAR_MAX_DAYS_BACK} days back). Dots are out of range.`, rows);
+    `${header(s)}\n\n${opts.note ? `${opts.note}\n\n` : ''}📆 *Tap* the sale date (up to ${maxBack} days back). Dots are out of range.`, rows);
 }
 
 /**
@@ -456,9 +460,10 @@ async function applyDate(bot, chatId, userId, iso) {
       [[{ text: '📆 Open calendar', callback_data: `sb:cal:${todayIso.slice(0, 7)}` }], [{ text: '⬅ Quick dates', callback_data: 'sb:dts' }], cancelRow()]);
     return;
   }
-  if (iso < lagosISO(CALENDAR_MAX_DAYS_BACK)) {
+  const maxBack = await saleMaxDaysBack();
+  if (iso < lagosISO(maxBack)) {
     await render(bot, chatId, userId,
-      `${header(s)}\n\n⚠️ ${fmtDate(iso)} is more than ${CALENDAR_MAX_DAYS_BACK} days back — ask an admin if this is a genuine old sale. Pick again:`,
+      `${header(s)}\n\n⚠️ ${fmtDate(iso)} is more than ${maxBack} days back — ask an admin if this is a genuine old sale. Pick again:`,
       [[{ text: '📆 Open calendar', callback_data: `sb:cal:${todayIso.slice(0, 7)}` }], [{ text: '⬅ Quick dates', callback_data: 'sb:dts' }], cancelRow()]);
     return;
   }
@@ -717,7 +722,8 @@ async function handleText(bot, msg) {
     const { normalizeSalesDate } = require('../utils/dates');
     const iso = normalizeSalesDate(q);
     const todayIso = lagosISO(0);
-    const oldestIso = lagosISO(CALENDAR_MAX_DAYS_BACK);
+    const maxBack = await saleMaxDaysBack();
+    const oldestIso = lagosISO(maxBack);
     if (iso && iso <= todayIso && iso >= oldestIso) {
       await showCalendar(bot, msg.chat.id, userId, iso.slice(0, 7), {
         highlight: iso,
@@ -727,7 +733,7 @@ async function handleText(bot, msg) {
     }
     await showCalendar(bot, msg.chat.id, userId, todayIso.slice(0, 7), {
       note: iso
-        ? `⚠️ ${fmtDate(iso)} is out of range (no future, max ${CALENDAR_MAX_DAYS_BACK} days back) — tap a valid date:`
+        ? `⚠️ ${fmtDate(iso)} is out of range (no future, max ${maxBack} days back) — tap a valid date:`
         : `⚠️ Could not read "${esc(q)}" as a date — tap it instead:`,
     });
     return true;
@@ -737,5 +743,5 @@ async function handleText(bot, msg) {
 
 module.exports = {
   start, startWithBales, handleCallback, handleText, SESSION_TYPE,
-  _internals: { showDates, showCalendar, applyDate, CALENDAR_MAX_DAYS_BACK },
+  _internals: { showDates, showCalendar, applyDate },
 };

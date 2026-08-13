@@ -205,6 +205,24 @@ test('a backdated sale is flagged to the approver and stamped on the row', async
   assert.match(adminText, /BACKDATED/);
 });
 
+test('BKD-1: a five-months-back Kano sale is accepted and loudly backdated', async () => {
+  queued = [];
+  const bot = createFakeBot();
+  const deepBack = new Date(Date.now() - 150 * 86400000)
+    .toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' });
+  await toConfirm(bot, { dateIso: deepBack });
+  assert.equal(sessionStore.get('4242').salesDate, deepBack, 'pre-May backfill date accepted');
+  assert.match(lastText(bot).replace(/\\/g, ''), /BACKDATED — 150 days back/);
+
+  await controller.handleCallbackQuery(bot, cb('bs:fin'));
+  await controller.handleFileMessage(bot, {
+    from: { id: '4242' }, chat: { id: '4242' }, photo: [{ file_id: 'bill-old-1' }],
+  });
+  const aj = queued[0].actionJSON;
+  assert.equal(aj.salesDate, deepBack);
+  assert.equal(aj.daysBack, 150, 'the approver sees exactly how deep the backfill goes');
+});
+
 test('a future date is refused — the picker asks again', async () => {
   const bot = createFakeBot();
   sessionStore.clear('4242');

@@ -12,6 +12,10 @@ const SHEET = 'Settings';
 const HEADERS = ['Key', 'Value', 'UpdatedAt'];
 
 const DEFAULTS = {
+  // BKD-1 (owner, 13-Aug-2026) — how far back the SALE date calendars reach
+  // (Sell Bale + the Kano than sale). Raised from the hardcoded 90 so Abdul
+  // can backfill Kano sales from before May; sheet row overrides, no deploy.
+  SALE_CALENDAR_MAX_DAYS_BACK: 180,
   RISK_THRESHOLD: 300,
   LOW_STOCK_THRESHOLD: 100,
   // VRF-1 — OCR bill-vs-request check on documented sale approvals

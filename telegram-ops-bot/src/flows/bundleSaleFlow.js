@@ -999,7 +999,9 @@ async function handleCustomerSearch(bot, chatId, userId, query) {
  * for names, dateCalendar for the grid, the 90-day / no-future / backdated
  * rule) so Kano and Lagos cannot drift apart again.
  */
-const CALENDAR_MAX_DAYS_BACK = 90;
+// BKD-1 (owner, 13-Aug-2026) — the reach is a Settings knob now
+// (SALE_CALENDAR_MAX_DAYS_BACK, default 180) so Abdul can backfill old
+// Kano sales without a deploy. Shared with Sell Bale via dateCalendar.
 
 async function renderSalespersonPicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
@@ -1041,14 +1043,15 @@ async function renderDatePicker(bot, chatId, userId, opts = {}) {
   if (!session) return;
   session.step = 'pick_date';
   sessionStore.set(userId, session);
+  const maxBack = await dateCalendar.saleMaxDaysBack();
   const rows = opts.ym
-    ? dateCalendar.calendarRows('bs', opts.ym, { maxDaysBack: CALENDAR_MAX_DAYS_BACK })
+    ? dateCalendar.calendarRows('bs', opts.ym, { maxDaysBack: maxBack })
     : dateCalendar.quickChipRows('bs');
   rows.push(backRow());
   rows.push(cancelRow());
   const head = opts.note ? `${opts.note}\n\n` : '';
   await render(bot, chatId, userId,
-    `${head}📅 *When was it sold?*\n\nTap the sale date${opts.ym ? ` — dots are out of range (max ${CALENDAR_MAX_DAYS_BACK} days back)` : ''}.\n_Beyond yesterday is flagged BACKDATED to the approver._`,
+    `${head}📅 *When was it sold?*\n\nTap the sale date${opts.ym ? ` — dots are out of range (max ${maxBack} days back)` : ''}.\n_Beyond yesterday is flagged BACKDATED to the approver._`,
     rows);
 }
 
@@ -1056,11 +1059,12 @@ async function renderDatePicker(bot, chatId, userId, opts = {}) {
 async function applyDate(bot, chatId, userId, iso) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const range = dateCalendar.checkRange(iso, CALENDAR_MAX_DAYS_BACK);
+  const maxBack = await dateCalendar.saleMaxDaysBack();
+  const range = dateCalendar.checkRange(iso, maxBack);
   if (!range.ok) {
     const why = range.reason === 'future'
       ? `⚠️ ${iso} is in the FUTURE — future sales are not allowed.`
-      : `⚠️ ${iso} is more than ${CALENDAR_MAX_DAYS_BACK} days back — ask an admin if this is a genuine old sale.`;
+      : `⚠️ ${iso} is more than ${maxBack} days back — ask an admin if this is a genuine old sale.`;
     await renderDatePicker(bot, chatId, userId, { note: why });
     return;
   }

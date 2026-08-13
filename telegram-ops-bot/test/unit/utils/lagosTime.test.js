@@ -121,3 +121,25 @@ test('a Lagos day is never derived from the raw UTC prefix again', () => {
   assert.notEqual(fmtDate.lagosDay(AFTER_MIDNIGHT), naive);
   assert.equal(fmtDate.lagosDay(AFTER_MIDNIGHT), '2026-08-13');
 });
+
+/* ── BKD-1: the sale calendars' reach is a Settings knob ── */
+
+test('saleMaxDaysBack: default 180, sheet override wins, junk clamps to default', async () => {
+  const dateCalendar = require('../../../src/utils/dateCalendar');
+  const settingsRepository = require('../../../src/repositories/settingsRepository');
+  const orig = settingsRepository.getAll;
+  try {
+    settingsRepository.getAll = async () => ({ SALE_CALENDAR_MAX_DAYS_BACK: 180 });
+    assert.equal(await dateCalendar.saleMaxDaysBack(), 180, 'the in-code default');
+    settingsRepository.getAll = async () => ({ SALE_CALENDAR_MAX_DAYS_BACK: '60' });
+    assert.equal(await dateCalendar.saleMaxDaysBack(), 60, 'owner can tighten via the sheet');
+    settingsRepository.getAll = async () => ({ SALE_CALENDAR_MAX_DAYS_BACK: 'abc' });
+    assert.equal(await dateCalendar.saleMaxDaysBack(), 180, 'junk falls back');
+    settingsRepository.getAll = async () => ({ SALE_CALENDAR_MAX_DAYS_BACK: 9999 });
+    assert.equal(await dateCalendar.saleMaxDaysBack(), 180, 'out of [1,366] falls back');
+    settingsRepository.getAll = async () => { throw new Error('sheets down'); };
+    assert.equal(await dateCalendar.saleMaxDaysBack(), 180, 'a read failure never locks the calendar');
+  } finally {
+    settingsRepository.getAll = orig;
+  }
+});
