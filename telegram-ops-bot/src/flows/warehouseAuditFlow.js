@@ -158,9 +158,11 @@ async function loadChecklist(session) {
   for (const p of pkgs.values()) {
     if (!p.avail) continue;
     const k = p.design;
-    if (!designs.has(k)) designs.set(k, { design: k, fullBales: 0, looseThans: 0, yards: 0 });
+    if (!designs.has(k)) designs.set(k, { design: k, fullBales: 0, looseThans: 0, yards: 0, closedBaleSizes: [] });
     const d = designs.get(k);
-    if (p.avail === p.total) d.fullBales += 1;
+    // WAU-4 — each closed bale's own piece count rides along so the
+    // reconciliation can recognise a bale counted as its pieces.
+    if (p.avail === p.total) { d.fullBales += 1; d.closedBaleSizes.push(p.total); }
     else d.looseThans += p.avail;
     d.yards += p.yards;
   }
@@ -435,6 +437,23 @@ async function reconcileDesign({ warehouse, location, design, bales, bundles, au
     await stockTakesRepository.appendMany([{ ...base, result: 'reconciled', note: 'blind match' }]);
     return { status: 'match', d };
   }
+  // WAU-4 (owner, 13-Aug-2026) — a bale opened for display with nothing
+  // sold: the book calls it a full bale, the physical rule ("sealed = bale,
+  // opened = pieces") counts its pieces loose. When the shortfall of k
+  // bales is explained EXACTLY by the surplus loose pieces — using the
+  // ledger's own per-bale piece counts, variable sizes included — the count
+  // matches. One missing piece breaks the equality and stays a mismatch.
+  const missingBales = d.fullBales - bales;
+  const surplusThans = bundles - d.looseThans;
+  const { openedBaleEquivalence } = require('../utils/auditCountParser');
+  if (missingBales > 0 && surplusThans > 0
+      && openedBaleEquivalence(d.closedBaleSizes, missingBales, surplusThans)) {
+    await stockTakesRepository.appendMany([{
+      ...base, result: 'reconciled',
+      note: `opened-bale match: ${missingBales} bale(s) counted as pieces, all present`,
+    }]);
+    return { status: 'match_opened', d, openedBales: missingBales };
+  }
   if (state.mismatches >= 1) {
     const [flagRow] = await stockTakesRepository.appendMany([{ ...base, result: 'flagged', note: `attempt ${state.mismatches + 1}` }]);
     return { status: 'flagged', d, flagRow };
@@ -629,12 +648,16 @@ async function commitPadCount(bot, chatId, userId, query) {
     warehouse: session.warehouse, location: session.location,
     design: session.countDesign, bales: count.bales, bundles: count.bundles, auditor: userId,
   });
-  if (out.status === 'match' || out.status === 'already') {
+  if (out.status === 'match' || out.status === 'already' || out.status === 'match_opened') {
     try {
       await auditLogRepository.append('stocktake_reconciled',
-        { warehouse: session.warehouse, design: session.countDesign, mode: 'blind_tap' }, userId);
+        { warehouse: session.warehouse, design: session.countDesign, mode: 'blind_tap', openedBales: out.openedBales || 0 }, userId);
     } catch (e) { logger.warn(`audit append 'stocktake_reconciled' failed (${session.warehouse}/${session.countDesign}): ${e.message}`); }
-    await bot.answerCallbackQuery(query.id, { text: `✅ ${session.countDesign} matches — reconciled.` }).catch(() => {});
+    await bot.answerCallbackQuery(query.id, {
+      text: out.status === 'match_opened'
+        ? `✅ ${session.countDesign} matches — ${out.openedBales} bale(s) counted as opened, pieces all present.`
+        : `✅ ${session.countDesign} matches — reconciled.`,
+    }).catch(() => {});
     session.step = 'checklist';
     delete session.countDesign; delete session.padDraft;
     sessionStore.set(userId, session);
@@ -707,6 +730,8 @@ async function sendOfflineTemplate(bot, chatId, userId, opts = {}) {
     `📄 Your ${opts.full ? `FULL count sheet — all ${lines.length} designs of this store` : 'offline count sheet'} (message above).\n\n`
     + '1. Long-press it → Copy.\n'
     + '2. Walk the store with NO network — paste it into the message box and fill each line: 9032 = 12+5 (bales+bundles). Leave lines you did not count empty.\n'
+    + '   • SEALED bale → count as a bale. OPENED bale → count every piece as loose, even if none were sold. Never judge by eye whether an open bale is complete.\n'
+    + '   • The printed piece-count on each bale is for RECHECKS only — if I ask you to recount, compare the label to the pieces.\n'
     + '3. Press send when you are back in coverage — Telegram delivers it automatically and I reply with the results.');
   return true;
 }
@@ -775,6 +800,7 @@ async function handleBatchText(bot, msg) {
       bales: e.bales, bundles: e.bundles, auditor: userId,
     });
     if (out.status === 'match' || out.status === 'already') matched.push(e.design);
+    else if (out.status === 'match_opened') matched.push(`${e.design} (${out.openedBales} opened bale${out.openedBales === 1 ? '' : 's'}, pieces all present)`);
     else if (out.status === 'recount') recount.push(e.design);
     else if (out.status === 'locked') locked.push(e.design);
     else if (out.status === 'new_design') unknown.push(`${e.design} = ${e.bales}${e.bundles ? `+${e.bundles}` : ''}`);

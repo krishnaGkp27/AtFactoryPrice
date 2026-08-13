@@ -77,4 +77,52 @@ function parseAuditBatch(text, knownWarehouses) {
   return { ok: true, warehouse, entries, skipped, errors };
 }
 
-module.exports = { parseCount, parseAuditBatch };
+/**
+ * WAU-4 (owner, 13-Aug-2026) — the opened-bale equivalence.
+ *
+ * Kano bales carry VARIABLE piece counts (6 in one, 4 in another), so the
+ * auditor's rule is physical: sealed → count as a bale, opened → count its
+ * pieces as loose. A bale opened for display with NOTHING sold then reads
+ * differently on the two sides: the book still calls it a full bale, the
+ * count reports its pieces loose. That is not a discrepancy — the pieces
+ * are all there.
+ *
+ * This answers: can the counted shortfall of `missingBales` bales be
+ * explained EXACTLY by `surplusThans` loose pieces, using the real piece
+ * counts of this design's closed bales? Subset-sum with cardinality — is
+ * there a set of exactly `missingBales` closed bales whose sizes sum to
+ * exactly `surplusThans`? A shortfall is never forgiven: one missing piece
+ * breaks the equality and stays a mismatch.
+ *
+ * Sizes come from the ledger's own per-bale rows (row-level truth), never
+ * from an assumed pack size.
+ *
+ * @param {number[]} closedBaleSizes piece counts of the design's closed bales
+ * @param {number} missingBales  book fullBales − counted bales (must be > 0)
+ * @param {number} surplusThans  counted loose − book loose (must be > 0)
+ * @returns {boolean}
+ */
+function openedBaleEquivalence(closedBaleSizes, missingBales, surplusThans) {
+  const sizes = (closedBaleSizes || []).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+  const k = Number(missingBales);
+  const sum = Number(surplusThans);
+  if (!Number.isInteger(k) || !Number.isInteger(sum) || k <= 0 || sum <= 0) return false;
+  if (k > sizes.length) return false;
+  // DP over (bales used, pieces summed). Tiny inputs: a design rarely has
+  // more than ~30 closed bales of ≤ ~20 pieces each.
+  if (sum > sizes.reduce((a, b) => a + b, 0)) return false;
+  let reachable = [new Set([0])]; // reachable[c] = sums achievable using c bales
+  for (const size of sizes) {
+    const next = reachable.map((set) => new Set(set));
+    for (let c = 0; c < reachable.length && c < k; c += 1) {
+      if (!next[c + 1]) next[c + 1] = new Set();
+      for (const v of reachable[c]) {
+        if (v + size <= sum) next[c + 1].add(v + size);
+      }
+    }
+    reachable = next;
+  }
+  return Boolean(reachable[k] && reachable[k].has(sum));
+}
+
+module.exports = { parseCount, parseAuditBatch, openedBaleEquivalence };

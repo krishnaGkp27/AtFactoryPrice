@@ -36,3 +36,28 @@ test('parseAuditBatch: header matching, filled/blank/broken lines', () => {
   assert.equal(parseAuditBatch('AUDIT Nowhere\n9032 = 1', ['IDUMOTA']).ok, false, 'unknown warehouse rejected');
   assert.equal(parseAuditBatch('hello', ['IDUMOTA']).ok, false, 'missing header rejected');
 });
+
+/* ── WAU-4: the opened-bale equivalence (pure math) ── */
+
+const { openedBaleEquivalence } = require('../../../src/utils/auditCountParser');
+
+test('openedBaleEquivalence: exact bale⇄pieces swaps only, variable sizes', () => {
+  // The owner's 6-and-4 reality.
+  assert.equal(openedBaleEquivalence([6, 4], 1, 6), true, 'the 6-bale as pieces');
+  assert.equal(openedBaleEquivalence([6, 4], 1, 4), true, 'the 4-bale as pieces');
+  assert.equal(openedBaleEquivalence([6, 4], 2, 10), true, 'both');
+  assert.equal(openedBaleEquivalence([6, 4], 1, 5), false, 'a missing piece is never forgiven');
+  assert.equal(openedBaleEquivalence([6, 4], 2, 9), false);
+  assert.equal(openedBaleEquivalence([6, 6, 4], 2, 10), true, 'subset choice: 6+4');
+  assert.equal(openedBaleEquivalence([6, 6, 4], 2, 12), true, 'subset choice: 6+6');
+  assert.equal(openedBaleEquivalence([6, 6, 4], 2, 11), false, 'no subset sums to 11');
+});
+
+test('openedBaleEquivalence: degenerate inputs are refused, never guessed', () => {
+  assert.equal(openedBaleEquivalence([], 1, 6), false, 'no closed bales to swap');
+  assert.equal(openedBaleEquivalence([6], 2, 6), false, 'more bales than exist');
+  assert.equal(openedBaleEquivalence([6], 0, 6), false, 'zero shortfall is not a swap');
+  assert.equal(openedBaleEquivalence([6], 1, 0), false, 'zero surplus is not a swap');
+  assert.equal(openedBaleEquivalence([6], -1, -6), false);
+  assert.equal(openedBaleEquivalence(['x', null, 6], 1, 6), true, 'junk sizes are dropped, real ones kept');
+});
