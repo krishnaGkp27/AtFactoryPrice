@@ -4,6 +4,7 @@
  */
 
 const sessionStore = require('../utils/sessionStore');
+const { todayInLagos } = require('../utils/dates');
 const customersRepo = require('../repositories/customersRepository');
 const usersRepo = require('../repositories/usersRepository');
 const settingsRepo = require('../repositories/settingsRepository');
@@ -83,7 +84,7 @@ async function validateField(field, value) {
       return { valid: true, value: match };
     }
     case 'salesDate': {
-      if (v.toLowerCase() === 'today') return { valid: true, value: new Date().toISOString().split('T')[0] };
+      if (v.toLowerCase() === 'today') return { valid: true, value: todayInLagos() };  // TIME-1
       const parsed = parseDate(v);
       if (!parsed) return { valid: false, message: 'Invalid date. Use DD-MM-YYYY or YYYY-MM-DD or "today".' };
       return { valid: true, value: parsed };
@@ -93,19 +94,27 @@ async function validateField(field, value) {
   }
 }
 
+/**
+ * TIME-1 — a typed date is already a calendar day; it needs no clock and no
+ * timezone. Building a local Date and slicing its UTC ISO made the answer
+ * depend on where the server runs (and silently shifted a day on any host
+ * behind UTC). Validate the parts, then emit them.
+ */
 function parseDate(str) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const ok = (y, m, d) => {
+    const yi = +y, mi = +m, di = +d;
+    if (mi < 1 || mi > 12 || di < 1 || di > 31) return null;
+    // Reject a day the month does not have (31-Feb), using UTC so the check
+    // itself carries no timezone.
+    const probe = new Date(Date.UTC(yi, mi - 1, di));
+    if (probe.getUTCMonth() !== mi - 1 || probe.getUTCDate() !== di) return null;
+    return `${yi}-${pad(mi)}-${pad(di)}`;
+  };
   const ddmmyyyy = str.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
-  if (ddmmyyyy) {
-    const [, d, m, y] = ddmmyyyy;
-    const date = new Date(y, m - 1, d);
-    if (!isNaN(date.getTime())) return date.toISOString().split('T')[0];
-  }
+  if (ddmmyyyy) { const [, d, m, y] = ddmmyyyy; return ok(y, m, d); }
   const yyyymmdd = str.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
-  if (yyyymmdd) {
-    const [, y, m, d] = yyyymmdd;
-    const date = new Date(y, m - 1, d);
-    if (!isNaN(date.getTime())) return date.toISOString().split('T')[0];
-  }
+  if (yyyymmdd) { const [, y, m, d] = yyyymmdd; return ok(y, m, d); }
   return null;
 }
 
@@ -116,7 +125,7 @@ function startSession(userId, saleType, items, intentData) {
   if (intentData.paymentMode) collected.paymentMode = intentData.paymentMode;
   if (intentData.salesDate) {
     collected.salesDate = intentData.salesDate.toLowerCase() === 'today'
-      ? new Date().toISOString().split('T')[0] : intentData.salesDate;
+      ? todayInLagos() : intentData.salesDate;  // TIME-1
   }
 
   sessionStore.set(userId, {
@@ -183,7 +192,7 @@ async function buildSummary(session) {
 
 function getSaleDetails(session) {
   return {
-    salesDate: session.collected.salesDate || new Date().toISOString().split('T')[0],
+    salesDate: session.collected.salesDate || todayInLagos(),  // TIME-1
     customerName: session.collected.customer || '',
     salesPerson: session.collected.salesperson || '',
     paymentMode: session.collected.paymentMode || '',

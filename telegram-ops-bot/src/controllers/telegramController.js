@@ -289,7 +289,7 @@ function buildReportLegend(parts, hasMoney) {
 
 const getMaterialInfo = productTypesRepo.getMaterialInfo;
 const fmtDate = require('../utils/formatDate');
-const { compareWithToday, daysBeforeToday, todayInLagos } = require('../utils/dates');
+const { compareWithToday, daysBeforeToday, todayInLagos, lagosDayPlus } = require('../utils/dates');
 
 /** Parse date string to YYYY-MM-DD for ledger range. Supports YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY. */
 function parseLedgerDate(str) {
@@ -304,9 +304,13 @@ function parseLedgerDate(str) {
 
 /** Compute next occurrence of a weekday (1=Mon..5=Fri) as YYYY-MM-DD. */
 function nextWeekday(dayOfWeek) {
-  const d = new Date();
-  const diff = (dayOfWeek - d.getDay() + 7) % 7 || 7;
-  d.setDate(d.getDate() + diff);
+  // TIME-1 — walk forward from the LAGOS day, and build the answer from its
+  // parts: the old version read the server weekday and round-tripped through
+  // UTC, landing a day early for an hour after Lagos midnight.
+  const [y, m, d0] = todayInLagos().split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1, d0));
+  const diff = (dayOfWeek - d.getUTCDay() + 7) % 7 || 7;
+  d.setUTCDate(d.getUTCDate() + diff);
   return d.toISOString().split('T')[0];
 }
 
@@ -581,9 +585,9 @@ async function buildInventoryDesignReport(allItems, opts = {}) {
 // ─── Sales Report (Interactive) ─────────────────────────────────────────────
 
 function filterSoldByPeriod(sold, periodDays) {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - periodDays);
-  const cutoffStr = cutoff.toISOString().split('T')[0];
+  // TIME-1 — the window is counted back from the LAGOS day; soldDate rows
+  // are Lagos calendar days, so a UTC cutoff let an extra day in.
+  const cutoffStr = lagosDayPlus(-periodDays);
   return sold.filter((r) => r.soldDate >= cutoffStr);
 }
 
@@ -763,9 +767,7 @@ async function getInactiveCustomers(daysThreshold = 30) {
     const c = customers.get(name);
     if (r.soldDate > c.lastDate) { c.lastDate = r.soldDate; c.lastAction = 'Sale'; }
   }
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - daysThreshold);
-  const cutoffStr = cutoff.toISOString().split('T')[0];
+  const cutoffStr = lagosDayPlus(-daysThreshold);  // TIME-1 — Lagos day
   return [...customers.entries()]
     .filter(([, c]) => c.lastDate && c.lastDate < cutoffStr)
     .map(([name, c]) => ({ name, lastDate: c.lastDate, lastAction: c.lastAction, daysAgo: Math.floor((Date.now() - new Date(c.lastDate).getTime()) / 86400000) }))
@@ -1749,11 +1751,10 @@ async function showSampleTypePicker(bot, chatId, userId) {
 }
 
 async function showSampleFollowupPicker(bot, chatId, userId) {
-  const now = new Date();
-  const mkDate = (d) => d.toISOString().slice(0, 10);
-  const d3 = mkDate(new Date(now.getTime() + 3 * 86400000));
-  const d7 = mkDate(new Date(now.getTime() + 7 * 86400000));
-  const d14 = mkDate(new Date(now.getTime() + 14 * 86400000));
+  // TIME-1 — offsets from the Lagos day, not the server clock.
+  const d3 = lagosDayPlus(3);
+  const d7 = lagosDayPlus(7);
+  const d14 = lagosDayPlus(14);
   const rows = [
     [
       { text: `📅 ${fmtDate(d3)} (+3d)`,  callback_data: `smfq:${d3}` },
@@ -4651,7 +4652,7 @@ async function handleMessage(bot, msg) {
           await sendLong(bot, chatId, ledgerText, { parse_mode: 'Markdown' });
           return;
         }
-        const today = new Date().toISOString().split('T')[0];
+        const today = todayInLagos();  // TIME-1 — the daybook the owner means
         const entries = await accountingService.getDaybook(today);
         if (!entries.length) { await bot.sendMessage(chatId, `No ledger entries for ${fmtDate(today)}.`); return; }
         let ledgerText = `📒 *Ledger — ${fmtDate(today)}*\n\n`;
@@ -5493,7 +5494,11 @@ async function renderGreetingMenuEdit(bot, chatId, messageId, userId, showAll = 
 /* ─── FUTURE-ONLY DATE PICKER ─── */
 
 function buildDatePicker(callbackPrefix, monthOffset = 0) {
-  const today = new Date();
+  // TIME-1 — anchor the grid on the LAGOS calendar day. `new Date()` reads
+  // the server clock (UTC on Railway), so between midnight and 01:00 Lagos
+  // the grid greyed out today and the "📅 Today" chip stored yesterday.
+  const [_ty, _tm, _td] = todayInLagos().split('-').map(Number);
+  const today = new Date(_ty, _tm - 1, _td);
   const viewDate = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
@@ -5527,7 +5532,7 @@ function buildDatePicker(callbackPrefix, monthOffset = 0) {
     while (week.length < 7) week.push({ text: ' ', callback_data: 'noop' });
     rows.push(week);
   }
-  rows.push([{ text: '📅 Today', callback_data: `${callbackPrefix}pick:${today.toISOString().split('T')[0]}` }]);
+  rows.push([{ text: '📅 Today', callback_data: `${callbackPrefix}pick:${todayInLagos()}` }]);
   return rows;
 }
 
@@ -6586,8 +6591,9 @@ async function showSupplyPaymentPicker(bot, chatId, userId) {
 }
 
 async function showSupplyDatePicker(bot, chatId, userId) {
-  const today = new Date().toISOString().split('T')[0];
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+  // TIME-1 — chip labels AND the stored supply date come from the Lagos day.
+  const today = todayInLagos();
+  const tomorrow = lagosDayPlus(1);
   const nextMon = nextWeekday(1);
   const nextFri = nextWeekday(5);
   const rows = [
@@ -8555,10 +8561,10 @@ async function handleCallbackQuery(bot, callbackQuery) {
     sessionStore.set(uid, session);
     const nextMon = nextWeekday(1);
     const nextFri = nextWeekday(5);
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayInLagos();  // TIME-1 — Lagos day, and shown in house format
     await bot.sendMessage(callbackQuery.message.chat.id, 'Schedule supply date:', {
       reply_markup: { inline_keyboard: [
-        [{ text: `📅 Today (${today})`, callback_data: 'odt:today' }],
+        [{ text: `📅 Today (${fmtDate(today)})`, callback_data: 'odt:today' }],
         [{ text: `📅 Next Monday (${nextMon})`, callback_data: 'odt:mon' }, { text: `📅 Next Friday (${nextFri})`, callback_data: 'odt:fri' }],
         [{ text: '✏️ Custom date', callback_data: 'odt:custom' }],
         [
@@ -8576,7 +8582,7 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (!session || session.type !== 'order_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
     await bot.answerCallbackQuery(callbackQuery.id);
     if (val === 'today') {
-      session.scheduled_date = new Date().toISOString().split('T')[0];
+      session.scheduled_date = todayInLagos();  // TIME-1 — Lagos day
     } else if (val === 'mon') {
       session.scheduled_date = nextWeekday(1);
     } else if (val === 'fri') {

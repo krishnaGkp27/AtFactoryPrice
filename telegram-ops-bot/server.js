@@ -10,6 +10,7 @@ const config = require('./src/config');
 const telegramController = require('./src/controllers/telegramController');
 const apiController = require('./src/controllers/apiController');
 const logger = require('./src/utils/logger');
+const { todayInLagos, lagosDayPlus } = require('./src/utils/dates');
 const schemaMapper = require('./src/services/schemaMapper');
 const erpEventBus = require('./src/events/erpEventBus');
 
@@ -297,8 +298,10 @@ async function checkColdCustomerAlerts() {
   if (!bot) return;
   // APR-2: admin-directed nudges are opt-in (REMINDER_HOURS_ADMIN > 0).
   if (!(await require('./src/services/reminderPolicy').hoursForAdmin())) return;
-  const today = new Date().toISOString().split('T')[0];
-  const dayOfWeek = new Date().getDay();
+  // TIME-1 — the Monday gate and the dedupe day follow the LAGOS calendar:
+  // on the UTC clock this alert could fire ~00:30 Lagos on a Tuesday.
+  const today = todayInLagos();
+  const dayOfWeek = new Date(`${today}T12:00:00Z`).getUTCDay();
   if (dayOfWeek !== 1 || lastColdAlertDay === today) return;
   lastColdAlertDay = today;
   try {
@@ -310,9 +313,7 @@ async function checkColdCustomerAlerts() {
       if (!customers.has(r.soldTo)) customers.set(r.soldTo, '');
       if (r.soldDate > customers.get(r.soldTo)) customers.set(r.soldTo, r.soldDate);
     }
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 30);
-    const cutoffStr = cutoff.toISOString().split('T')[0];
+    const cutoffStr = lagosDayPlus(-30);  // TIME-1 — soldDate is a Lagos day
     const inactive = [...customers.entries()]
       .filter(([, lastDate]) => lastDate && lastDate < cutoffStr)
       .map(([name, lastDate]) => ({ name, lastDate, daysAgo: Math.floor((Date.now() - new Date(lastDate).getTime()) / 86400000) }))

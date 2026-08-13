@@ -32,6 +32,7 @@
  */
 
 const containerChargesRepository = require('../repositories/containerChargesRepository');
+const { todayInLagos } = require('../utils/dates');
 const goodsReceiptsRepository    = require('../repositories/goodsReceiptsRepository');
 const approvalQueueRepository    = require('../repositories/approvalQueueRepository');
 const auditLogRepository         = require('../repositories/auditLogRepository');
@@ -163,7 +164,7 @@ async function getForBale(bale) {
  * once that ships, or by typing into the sheet directly today).
  */
 async function resolveFxRate({ baseDate } = {}) {
-  const date = baseDate || new Date().toISOString().slice(0, 10);
+  const date = baseDate || todayInLagos();  // TIME-1
   try {
     const r = await forex.rate('USD', 'NGN', date);
     return { rate: Number(r.rate) || 0, source: r.source, date: r.date };

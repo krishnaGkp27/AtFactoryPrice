@@ -20,6 +20,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { todayInLagos } = require('../utils/dates');
 const idGenerator = require('../utils/idGenerator');
 const { normalizeSalesDate } = require('../utils/dates');
 
@@ -221,7 +222,10 @@ async function markThanSold(packageNo, thanNo, customer, soldDateOverride, opts 
   // SDN-1: bottom-of-write normalisation. Whatever shape the caller passed
   // (natural-language string, picker ISO, AI-parsed text), the sheet always
   // gets ISO YYYY-MM-DD so queryEngine lexical comparison stays correct.
-  const soldDate = normalizeSalesDate(soldDateOverride) || new Date().toISOString().split('T')[0];
+  // TIME-1 — the fallback sale day is Lagos's; the UTC day booked a sale
+  // made after Lagos midnight under yesterday, in Inventory and in every
+  // report that reads soldDate afterwards.
+  const soldDate = normalizeSalesDate(soldDateOverride) || todayInLagos();
   const movement = require('../services/baleMovementLog');
   await sheets.updateRange(SHEET, `H${than.rowIndex}:P${than.rowIndex}`, [[
     'sold', than.warehouse, than.pricePerYard, than.dateReceived,
@@ -240,7 +244,10 @@ async function markPackageSold(packageNo, customer, soldDateOverride, opts = {})
   if (!available.length) return [];
   const now = new Date().toISOString();
   // SDN-1: see markThanSold note above.
-  const soldDate = normalizeSalesDate(soldDateOverride) || new Date().toISOString().split('T')[0];
+  // TIME-1 — the fallback sale day is Lagos's; the UTC day booked a sale
+  // made after Lagos midnight under yesterday, in Inventory and in every
+  // report that reads soldDate afterwards.
+  const soldDate = normalizeSalesDate(soldDateOverride) || todayInLagos();
   const movement = require('../services/baleMovementLog');
   const updates = available.map((than) => ({
     range: `H${than.rowIndex}:P${than.rowIndex}`,

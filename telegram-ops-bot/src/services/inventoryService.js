@@ -4,6 +4,7 @@
  */
 
 const inventoryRepository = require('../repositories/inventoryRepository');
+const { todayInLagos } = require('../utils/dates');
 // STK-E1 — every stock mutation names its event + authority through here.
 const stockEngine = require('./stockEngine');
 const stockBuckets = require('../utils/stockBuckets');
@@ -549,7 +550,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       shade: b.shade || aj.shade,
       thanNo: b.thanNo || 1, yards: parseFloat(b.yards) || 0,
       warehouse: aj.warehouse, pricePerYard: b.pricePerYard || 0,
-      dateReceived: aj.dateReceived || new Date().toISOString().split('T')[0],
+      dateReceived: aj.dateReceived || todayInLagos(),  // TIME-1 — Lagos day
       productType: aj.productType || 'fabric',
       grnId: grn.grn_id,
       binLocation: b.binLocation || aj.binLocation || '',
@@ -559,7 +560,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const persisted = await stockEngine.intakeBale(baleRows, { event: 'intake', approvalId: requestId, adminId: approvedBy });
     try {
       const idGen = require('../utils/idGenerator');
-      const today = new Date().toISOString().split('T')[0];
+      const today = todayInLagos();  // TIME-1 — Lagos day
       for (const b of persisted) {
         await stockLedgerRepo.append({
           entry_id: idGen.stockLedger(),
@@ -721,7 +722,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       netWeight: parseFloat(b.netWeight) || 0,
       warehouse: aj.warehouse,
       pricePerYard: 0,
-      dateReceived: aj.dateReceived || new Date().toISOString().split('T')[0],
+      dateReceived: aj.dateReceived || todayInLagos(),  // TIME-1 — Lagos day
       productType: aj.productType || 'fabric',
       grnId: grn.grn_id,
       // ARRIVAL-BATCH C1 — operator-chosen container label (e.g. "July26").
@@ -739,7 +740,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
 
     try {
       const idGen = require('../utils/idGenerator');
-      const today = new Date().toISOString().split('T')[0];
+      const today = todayInLagos();  // TIME-1 — Lagos day
       for (const b of persisted) {
         await stockLedgerRepo.append({
           entry_id: idGen.stockLedger(),

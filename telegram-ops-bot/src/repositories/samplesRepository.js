@@ -5,6 +5,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { todayInLagos } = require('../utils/dates');
 const idGen = require('../utils/idGenerator');
 
 const SHEET = 'Samples';
@@ -96,7 +97,7 @@ async function updateStatus(sampleId, status, updatedBy, notes) {
 
 async function getPendingFollowups() {
   const all = await getAll();
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayInLagos();  // TIME-1 — match the Lagos day the user picked
   return all.filter((s) =>
     s.status === 'with_customer' &&
     s.followup_date === today &&

@@ -30,6 +30,7 @@
 'use strict';
 
 const sessionStore = require('../utils/sessionStore');
+const { todayInLagos, lagosDayPlus } = require('../utils/dates');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const procurementOrdersRepo = require('../repositories/procurementOrdersRepository');
 const contactsRepository = require('../repositories/contactsRepository');
@@ -532,8 +533,7 @@ async function handleCallback(bot, callbackQuery) {
     } else {
       const days = parseInt(v, 10);
       if (Number.isFinite(days) && days > 0) {
-        const d = new Date(Date.now() + days * 86400000);
-        session.expected_date = d.toISOString().split('T')[0];
+        session.expected_date = lagosDayPlus(days);  // TIME-1 — Lagos day
       }
     }
     sessionStore.set(userId, session);

@@ -310,7 +310,7 @@ async function buildReturnCard({ packageNo, thanNo, warehouse }) {
  * signing admins have monetary context, not just the amount.
  */
 async function buildPaymentCard({ customer, amount, method }) {
-  let text = `Record Payment Request\nCustomer: ${customer}\nAmount: ₦${Number(amount || 0).toLocaleString('en-NG')}\nMethod: ${method || '—'}\nDate: ${fmtDate(new Date().toISOString().slice(0, 10))}`;
+  let text = `Record Payment Request\nCustomer: ${customer}\nAmount: ₦${Number(amount || 0).toLocaleString('en-NG')}\nMethod: ${method || '—'}\nDate: ${fmtDate(require('../utils/dates').todayInLagos())  /* TIME-1 */}`;
   try {
     const accountingService = require('./accountingService');
     const { outstandingAsOfToday } = await accountingService.getCustomerLedger(customer);

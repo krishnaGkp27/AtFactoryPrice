@@ -29,6 +29,7 @@
  */
 
 const sessionStore        = require('../utils/sessionStore');
+const { todayInLagos } = require('../utils/dates');
 const { makeRenderer, rowsFor } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const inventoryService    = require('../services/inventoryService');
@@ -373,7 +374,7 @@ async function renderLocationPicker(bot, chatId, userId) {
  * (a 'flagged' row today with no later 'flag_cleared' row today).
  */
 async function todayStateFor(warehouse) {
-  const dayIso = new Date().toISOString().slice(0, 10);
+  const dayIso = todayInLagos();  // TIME-1 — the audit day rolls at Lagos midnight
   const rows = await stockTakesRepository.rowsForDay(warehouse, dayIso);
   const map = new Map();
   for (const r of rows) {

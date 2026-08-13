@@ -4,6 +4,7 @@
  */
 
 const OpenAI = require('openai');
+const { todayInLagos, lagosDayPlus } = require('../utils/dates');
 const stockBuckets = require('../utils/stockBuckets');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const customersRepo = require('../repositories/customersRepository');
@@ -54,12 +55,14 @@ async function salesReport(period) {
   const now = new Date();
   let from;
   let label;
-  if (period === 'today') { from = now.toISOString().split('T')[0]; label = 'Today'; }
+  // TIME-1 — soldDate rows are Lagos calendar days, so the window that
+  // selects them must be too; the UTC clock reported yesterday's figures
+  // for an hour after Lagos midnight, and last month on the 1st.
+  if (period === 'today') { from = todayInLagos(); label = 'Today'; }
   else if (period === 'this week' || period === 'week') {
-    const d = new Date(now); d.setDate(d.getDate() - 7);
-    from = d.toISOString().split('T')[0]; label = 'This Week';
+    from = lagosDayPlus(-7); label = 'This Week';
   } else if (period === 'this month' || period === 'month') {
-    from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`; label = 'This Month';
+    from = `${todayInLagos().slice(0, 7)}-01`; label = 'This Month';
   } else { from = '2000-01-01'; label = 'All Time'; }
 
   const filtered = sold.filter((r) => r.soldDate >= from);
@@ -179,8 +182,7 @@ async function lowStockAlert(threshold) {
 
 async function agingStock(days) {
   const limit = days || 60;
-  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - limit);
-  const cutoffStr = cutoff.toISOString().split('T')[0];
+  const cutoffStr = lagosDayPlus(-limit);  // TIME-1 — dateReceived is a Lagos day
   const all = await inventoryRepository.getAll();
   const old = all.filter((r) => r.status === 'available' && r.dateReceived && r.dateReceived < cutoffStr);
   const pkgs = new Set(old.map((r) => r.packageNo)).size;
@@ -215,12 +217,14 @@ async function soldReport(warehouse, customer, period) {
   const now = new Date();
   let from;
   let label;
-  if (period === 'today') { from = now.toISOString().split('T')[0]; label = 'Today'; }
+  // TIME-1 — soldDate rows are Lagos calendar days, so the window that
+  // selects them must be too; the UTC clock reported yesterday's figures
+  // for an hour after Lagos midnight, and last month on the 1st.
+  if (period === 'today') { from = todayInLagos(); label = 'Today'; }
   else if (period === 'this week' || period === 'week') {
-    const d = new Date(now); d.setDate(d.getDate() - 7);
-    from = d.toISOString().split('T')[0]; label = 'This Week';
+    from = lagosDayPlus(-7); label = 'This Week';
   } else if (period === 'this month' || period === 'month') {
-    from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`; label = 'This Month';
+    from = `${todayInLagos().slice(0, 7)}-01`; label = 'This Month';
   } else { from = '2000-01-01'; label = 'All Time'; }
   const filtered = sold.filter((r) => r.soldDate >= from);
   const pkgs = new Set(filtered.map((r) => r.packageNo)).size;

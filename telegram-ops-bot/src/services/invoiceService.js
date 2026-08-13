@@ -15,6 +15,7 @@
  */
 
 const crypto = require('crypto');
+const { todayInLagos } = require('../utils/dates');
 const path = require('path');
 const PDFDocument = require('pdfkit');
 
@@ -34,7 +35,8 @@ const GOLD = '#c9a24b';
 const RED = '#c0392b';
 const MUTED = '#8a8578';
 
-function todayIso() { return new Date().toISOString().slice(0, 10); }
+// TIME-1 — the invoice's issue date is a business fact shown to the customer.
+function todayIso() { return todayInLagos(); }
 
 /** "Paid to GTBank" / "GTBank transfer" → "GTBank"; plain modes → ''. */
 function bankFromPaymentMode(paymentMode) {

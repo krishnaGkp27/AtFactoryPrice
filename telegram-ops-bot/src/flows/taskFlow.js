@@ -26,6 +26,7 @@
 'use strict';
 
 const usersRepository = require('../repositories/usersRepository');
+const { todayInLagos, lagosDayPlus } = require('../utils/dates');
 const departmentsRepo = require('../repositories/departmentsRepository');
 const tasksRepository = require('../repositories/tasksRepository');
 const taskEventsRepository = require('../repositories/taskEventsRepository');
@@ -122,14 +123,12 @@ function fmtDate(iso) {
 }
 
 function addDays(days) {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return lagosDayPlus(days);  // TIME-1 — offsets from the Lagos day
 }
 
 function todayYM() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  // TIME-1 — the calendar's min month follows the Lagos day too.
+  return todayInLagos().slice(0, 7);
 }
 
 function addMonthsYM(ym, delta) {

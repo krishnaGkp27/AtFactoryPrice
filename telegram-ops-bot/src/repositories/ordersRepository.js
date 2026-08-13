@@ -5,6 +5,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { lagosDayPlus } = require('../utils/dates');
 const idGen = require('../utils/idGenerator');
 
 const SHEET = 'Orders';
@@ -91,9 +92,8 @@ async function updateStatus(orderId, status, extraFields = {}) {
 
 async function getPendingReminders() {
   const all = await getAll();
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = tomorrow.toISOString().split('T')[0];
+  // TIME-1 — 'tomorrow' in Lagos, matching the day the salesperson picked.
+  const tomorrowStr = lagosDayPlus(1);
   return all.filter((o) =>
     o.status === 'accepted' &&
     o.scheduled_date === tomorrowStr &&

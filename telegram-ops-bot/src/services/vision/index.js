@@ -49,6 +49,7 @@
 'use strict';
 
 const config = require('../../config');
+const { todayInLagos } = require('../../utils/dates');
 const stub = require('./stub');
 const openai = require('./openai');
 const anthropic = require('./anthropic');
@@ -153,7 +154,7 @@ const _usage = { day: '', count: 0 };
 
 async function checkDailyCap(providerName) {
   if (providerName === 'stub') return { ok: true, cap: Infinity };
-  const day = new Date().toISOString().slice(0, 10);
+  const day = todayInLagos();  // TIME-1 — the cap resets at Lagos midnight
   if (_usage.day !== day) { _usage.day = day; _usage.count = 0; }
   let cap = 100;
   try {
@@ -168,7 +169,7 @@ async function checkDailyCap(providerName) {
 
 /** Today's metered OCR call count (since last restart) + the active cap. */
 function getOcrUsage() {
-  const day = new Date().toISOString().slice(0, 10);
+  const day = todayInLagos();  // TIME-1 — the cap resets at Lagos midnight
   return { day, today: _usage.day === day ? _usage.count : 0 };
 }
 

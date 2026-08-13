@@ -40,6 +40,7 @@
 'use strict';
 
 const fs = require('fs');
+const { todayInLagos } = require('../utils/dates');
 const path = require('path');
 
 const sessionStore = require('../utils/sessionStore');
@@ -472,7 +473,7 @@ async function submit(bot, chatId, userId) {
     sourceUrl: session.driveLink || '',
     sourceFilename: session.sourceFilename || '',
     driveFileId: session.driveFileId || '',
-    dateReceived: new Date().toISOString().split('T')[0],
+    dateReceived: todayInLagos()  /* TIME-1 — Lagos day, not the UTC clock */,
     productType: 'fabric',
     // ARRIVAL-BATCH C1 — container label stamped on every appended bale row.
     arrivalBatch: session.arrivalBatch || '',

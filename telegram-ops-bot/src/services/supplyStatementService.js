@@ -16,6 +16,7 @@
  */
 
 const path = require('path');
+const { todayInLagos } = require('../utils/dates');
 const PDFDocument = require('pdfkit');
 
 const FONT = path.join(__dirname, '../assets/fonts/DejaVuSans.ttf');
@@ -97,7 +98,7 @@ function renderPdf({ customerName, periodLabel, lines, totals }) {
         .text(`${String(customerName || '').toUpperCase()} `, M, 22, { continued: true })
         .fillColor(GOLD).text('— SUPPLY STATEMENT');
       doc.font(FONT).fontSize(8).fillColor('#cfcfcf')
-        .text(`Period: ${periodLabel}    ·    Statement date: ${fmtDate(new Date().toISOString().slice(0, 10))}    ·    Quantities net as of today (returned goods excluded)`, M, 52);
+        .text(`Period: ${periodLabel}    ·    Statement date: ${fmtDate(todayInLagos())  /* TIME-1 */}    ·    Quantities net as of today (returned goods excluded)`, M, 52);
       let y0 = 108;
       doc.font(FONT).fontSize(7).fillColor(MUTED);
       ['DATE', 'DESIGN', 'SHADES', 'BALES', 'THANS', 'YARDS', 'RATE/YD', 'AMOUNT'].forEach((h, i) => {

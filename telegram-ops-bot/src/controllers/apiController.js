@@ -3,8 +3,10 @@
  */
 
 const settingsRepository = require('../repositories/settingsRepository');
+const { todayInLagos, lagosDayPlus } = require('../utils/dates');
 const config = require('../config');
 const logger = require('../utils/logger');
+const fmtDate = require('../utils/formatDate');
 
 /**
  * Log an API failure server-side with route context.
@@ -295,7 +297,7 @@ async function section(fn) {
 async function getOpsOverview(req, res) {
   const identity = await gate(req, res);
   if (!identity) return;
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = todayInLagos();  // TIME-1
   const [approvals, attendance, notes, samples, orders, audits] = await Promise.all([
     section(async () => {
       const pending = await require('../repositories/approvalQueueRepository').getAllPending();
@@ -315,7 +317,7 @@ async function getOpsOverview(req, res) {
     }),
     section(async () => {
       const all = await require('../repositories/customerNotesRepository').getAll();
-      const cutoff = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+      const cutoff = lagosDayPlus(-7);  // TIME-1
       return { total: all.length, last7: all.filter((n) => String(n.created_at) >= cutoff).length };
     }),
     section(async () => {
@@ -387,7 +389,11 @@ async function getOpsAttendance(req, res) {
       ok: true, date, deadline: cfg.deadlineTime,
       marked: audience.filter((a) => byId.has(a.user_id)).map((a) => {
         const r = byId.get(a.user_id);
-        return { name: a.name, location: r.location, at: String(r.logged_at).slice(11, 16), viaAdmin: r.logged_via === 'admin' };
+        // TIME-1 — the row's `date` is already Lagos while this clock was
+        // sliced from the UTC ISO, so the panel showed a Lagos day beside a
+        // UTC hour (08:45 check-in rendered 07:45). One timezone now.
+        const at = r.logged_at ? (fmtDate.withTime(r.logged_at).split(', ')[1] || '') : '';
+        return { name: a.name, location: r.location, at, viaAdmin: r.logged_via === 'admin' };
       }),
       missing: audience.filter((a) => !byId.has(a.user_id)).map((a) => ({ name: a.name })),
     });

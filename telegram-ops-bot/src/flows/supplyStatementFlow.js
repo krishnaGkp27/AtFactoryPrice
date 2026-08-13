@@ -18,6 +18,8 @@
  */
 
 const sessionStore = require('../utils/sessionStore');
+const { todayInLagos, lagosDayPlus } = require('../utils/dates');
+const fmtDate = require('../utils/formatDate');
 const { makeRenderer, chunk, mdEscape } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const supplyStatementService = require('../services/supplyStatementService');
@@ -33,8 +35,8 @@ function menuRow() { return [{ text: '🏠 Menu', callback_data: 'act:__back__' 
 
 const PERIODS = {
   month: { label: 'This month', fromDate: () => new Date().toISOString().slice(0, 8) + '01' },
-  m30: { label: 'Last 30 days', fromDate: () => new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10) },
-  m90: { label: 'Last 90 days', fromDate: () => new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10) },
+  m30: { label: 'Last 30 days', fromDate: () => lagosDayPlus(-30) },  // TIME-1
+  m90: { label: 'Last 90 days', fromDate: () => lagosDayPlus(-90) },  // TIME-1
   all: { label: 'All time', fromDate: () => '' },
 };
 
@@ -94,7 +96,7 @@ async function sendStatement(bot, chatId, userId, periodKey) {
     const fromDate = period.fromDate();
     const { lines, totals } = supplyStatementService.buildStatement(all, names, { fromDate });
     const periodLabel = fromDate
-      ? `${fromDate} to ${new Date().toISOString().slice(0, 10)}`
+      ? `${fmtDate(fromDate)} to ${fmtDate(todayInLagos())}`  // TIME-1 — Lagos day, house format
       : 'All time';
     const pdf = await supplyStatementService.renderPdf({
       customerName: (resolved && resolved.name) || customer.name,

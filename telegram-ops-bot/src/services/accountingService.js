@@ -4,6 +4,7 @@
  */
 
 const ledgerRepo = require('../repositories/ledgerRepository');
+const { todayInLagos } = require('../utils/dates');
 const chartRepo = require('../repositories/chartOfAccountsRepository');
 const idGen = require('../utils/idGenerator');
 const config = require('../config');
@@ -21,7 +22,10 @@ async function getAccountCode(name) {
 async function recordSale({ customer, customerId, yards, pricePerYard, packageNo, design, shade, userId, txnId, paymentMode, amountPaid }) {
   const amount = (yards || 0) * (pricePerYard || 0);
   if (amount <= 0) return;
-  const date = new Date().toISOString().split('T')[0];
+  // TIME-1 — this row's business date decides which daybook and which line
+  // of the customer's statement it lands on. The UTC day put every entry
+  // made after Lagos midnight onto the previous day, permanently.
+  const date = todayInLagos();
   const debitCode = await getAccountCode('Customer Receivable') || RECEIVABLE_CODE;
   const payMode = (paymentMode || '').trim() || 'Not yet paid';
   const paid = Number(amountPaid) || 0;
@@ -42,7 +46,10 @@ async function recordSale({ customer, customerId, yards, pricePerYard, packageNo
 async function recordReturn({ yards, pricePerYard, packageNo, design, shade, userId, txnId, customer, customerId }) {
   const amount = (yards || 0) * (pricePerYard || 0);
   if (amount <= 0) return;
-  const date = new Date().toISOString().split('T')[0];
+  // TIME-1 — this row's business date decides which daybook and which line
+  // of the customer's statement it lands on. The UTC day put every entry
+  // made after Lagos midnight onto the previous day, permanently.
+  const date = todayInLagos();
   const creditCode = await getAccountCode('Customer Receivable') || RECEIVABLE_CODE;
   const narration = `Return: ${yards} yds ${design || ''} ${shade || ''} pkg ${packageNo || ''}${customer ? ` from ${customer}` : ''}`;
   await ledgerRepo.append({
@@ -54,7 +61,10 @@ async function recordReturn({ yards, pricePerYard, packageNo, design, shade, use
 
 async function recordPaymentReceived({ customer, customerId, amount, method, userId, txnId }) {
   if (!amount || amount <= 0) return;
-  const date = new Date().toISOString().split('T')[0];
+  // TIME-1 — this row's business date decides which daybook and which line
+  // of the customer's statement it lands on. The UTC day put every entry
+  // made after Lagos midnight onto the previous day, permanently.
+  const date = todayInLagos();
   const cashOrBank = (method || '').toLowerCase().includes('bank') ? 'Bank' : 'Cash';
   const debitCode = await getAccountCode(cashOrBank) || '1001';
   const creditCode = await getAccountCode('Customer Receivable') || '1100';
@@ -99,7 +109,7 @@ async function getTrialBalance() {
 }
 
 async function getDaybook(date) {
-  const target = date || new Date().toISOString().split('T')[0];
+  const target = date || todayInLagos();  // TIME-1 — Lagos day, not UTC
   return ledgerRepo.findByDateRange(target, target);
 }
 

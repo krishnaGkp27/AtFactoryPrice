@@ -22,6 +22,7 @@
  */
 
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+const { todayInLagos } = require('../utils/dates');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const transactionsRepository = require('../repositories/transactionsRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
@@ -121,7 +122,7 @@ async function findTransfer(requestId) {
  */
 const _mintedFloor = {}; // date → highest seq handed out by THIS process
 async function uniqueTransferId() {
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const date = todayInLagos().replace(/-/g, '');  // TIME-1 — TR ids follow the Lagos day
   let max = 0;
   try {
     const re = new RegExp(`^TR-${date}-(\\d+)$`);
@@ -318,7 +319,7 @@ async function dispatchPickAndFlip(requestId, byUserId, manualPicks, aj, opts = 
   const uidByRow = await inventoryRepository.ensureRowUids(pickedRows);
   const uids = pickedRows.map((r) => uidByRow.get(r.rowIndex));
   const leftOn = /^\d{4}-\d{2}-\d{2}$/.test(String(opts.leftOn || ''))
-    ? String(opts.leftOn) : new Date().toISOString().slice(0, 10);
+    ? String(opts.leftOn) : todayInLagos();  // TIME-1
   // TRF-18 — a non-admin's dispatch stops HERE: the picks are validated and
   // resolved exactly as a real dispatch would, but nothing flips. The package
   // (picks + resolved preview + departure date) parks on the row for an
@@ -403,7 +404,7 @@ async function confirmReceiptInner(requestId, byUserId) {
   // own destination (dispatch stamped the rows there), so a same-numbered
   // bale elsewhere can never be flipped by this receive.
   const hasUids = Array.isArray(aj.baleUids) && aj.baleUids.length > 0;
-  const arrivedOn = new Date().toISOString().slice(0, 10);
+  const arrivedOn = todayInLagos();  // TIME-1
   const flipped = await require('./stockEngine').transition(aj.bales || [], IN_TRANSIT, AVAILABLE, null,
     Object.assign(hasUids ? { uids: aj.baleUids } : { warehouse: aj.to },
       // BMV-1 — prev_state keeps the ORIGIN visible after arrival:
@@ -462,7 +463,7 @@ async function abortInner(requestId, byUserId) {
     const hasUids = Array.isArray(aj.baleUids) && aj.baleUids.length > 0;
     const flipped = await require('./stockEngine').transition(aj.bales || [], IN_TRANSIT, AVAILABLE, aj.from,
       Object.assign(hasUids ? { uids: aj.baleUids } : { warehouse: aj.to },
-        { on: new Date().toISOString().slice(0, 10), fromWarehouse: aj.from, ref: requestId }),
+        { on: todayInLagos(), fromWarehouse: aj.from, ref: requestId }),  // TIME-1
       { event: 'reject', adminId: byUserId, approvalId: requestId });
     const expected = hasUids ? aj.baleUids.length : null;
     const flippedPkgs = new Set(flipped.map((r) => String(r.packageNo)));

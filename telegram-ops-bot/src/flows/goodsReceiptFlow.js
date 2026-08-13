@@ -49,6 +49,7 @@
 'use strict';
 
 const sessionStore = require('../utils/sessionStore');
+const { todayInLagos } = require('../utils/dates');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const contactsRepository = require('../repositories/contactsRepository');
 const settingsRepository = require('../repositories/settingsRepository');
@@ -458,7 +459,7 @@ async function submit(bot, chatId, userId, msgOrNull) {
     design: session.design,
     shade,
     bales: session.bales || [],
-    dateReceived: new Date().toISOString().split('T')[0],
+    dateReceived: todayInLagos()  /* TIME-1 — Lagos day, not the UTC clock */,
     productType: 'fabric',
     // P4 linkage — when the GRN was started from a PO context (via
     // "📥 Receive against this PO" in the Procurement Plan), the po_id

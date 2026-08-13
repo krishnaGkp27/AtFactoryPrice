@@ -85,6 +85,7 @@
 'use strict';
 
 const sessionStore = require('../utils/sessionStore');
+const { todayInLagos } = require('../utils/dates');
 const procurementOrdersRepo = require('../repositories/procurementOrdersRepository');
 const settingsRepository = require('../repositories/settingsRepository');
 const goodsReceiptsRepo = require('../repositories/goodsReceiptsRepository');
@@ -958,7 +959,7 @@ async function submit(bot, chatId, userId) {
     editedRows: accepted.filter((r) => r.editedFields.length).map((r) => ({
       idx: r.idx, fields: r.editedFields.slice(),
     })),
-    dateReceived: new Date().toISOString().split('T')[0],
+    dateReceived: todayInLagos()  /* TIME-1 — Lagos day, not the UTC clock */,
     productType: 'fabric',
   };
 

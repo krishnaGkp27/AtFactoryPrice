@@ -21,6 +21,7 @@
  */
 
 const baleMovementsRepository = require('../repositories/baleMovementsRepository');
+const { todayInLagos } = require('../utils/dates');
 const logger = require('../utils/logger');
 
 /** Canonical "state @ warehouse" label used in prev_state and the log. */
@@ -35,7 +36,10 @@ function businessDay(on) {
   const raw = String(on || '').trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
   if (/^\d{4}-\d{2}-\d{2}T/.test(raw)) return raw.slice(0, 10);
-  return new Date().toISOString().slice(0, 10);
+  // TIME-1 — this day dates the credit row on the customer's supply-ledger
+  // web page. stockEngine's return paths pass no `on`, so every approved
+  // return takes this fallback.
+  return todayInLagos();
 }
 
 /**
