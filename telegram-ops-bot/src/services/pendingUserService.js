@@ -75,17 +75,31 @@ function _politeReply() {
  * (e.g. a user literally named "Office_BPanther").
  */
 const { mdEscape: _mdEscape } = require('../utils/flowKit');
+const fmtDate = require('../utils/formatDate');
 
+/**
+ * CARD-3 + TIME-1 (owner, 12-Aug-2026) — the card carried four `Label:`
+ * prefixes and a raw UTC ISO stamp (`When: 2026-08-12T15:58:34.018Z`).
+ * Symbols replace the labels, name and handle fold onto one line, and the
+ * arrival is the Lagos wall-clock the owner actually reads.
+ *
+ * 🕓 not 📅 on purpose: this is an INSTANT something happened, distinct from
+ * the 📅 business date a human chose on the sale cards.
+ *
+ * The id keeps its monospace — tap-to-copy is the one load-bearing
+ * affordance here — and the footer stays a full sentence, because an
+ * instruction is the one thing that must never be terse.
+ */
 function _adminCard(entry) {
-  const username = entry.username ? `@${_mdEscape(entry.username)}` : '(no username)';
-  const name = _mdEscape([entry.first_name, entry.last_name].filter(Boolean).join(' ')) || '(no name set)';
+  const handle = entry.username ? `@${_mdEscape(entry.username)}` : 'no username';
+  const name = _mdEscape([entry.first_name, entry.last_name].filter(Boolean).join(' '));
+  const who = name ? `${name} · ${handle}` : handle;
   return (
-    '🆕 *New /start from an unknown user*\n\n'
-    + `Name: ${name}\n`
-    + `Telegram: ${username}\n`
-    + `ID: \`${entry.telegram_id}\`\n`
-    + `When: ${entry.arrived_at}\n\n`
-    + 'Tap *Onboard* to start the Add Employee flow with these details pre-filled, or *Ignore* if this is spam.'
+    '🆕 *Unknown user sent /start*\n\n'
+    + `👤 ${who}\n`
+    + `🆔 \`${entry.telegram_id}\`\n`
+    + `🕓 ${_mdEscape(fmtDate.withTime(entry.arrived_at))}\n\n`
+    + 'Onboard opens Add Employee with these details pre-filled; Ignore marks it as spam.'
   );
 }
 

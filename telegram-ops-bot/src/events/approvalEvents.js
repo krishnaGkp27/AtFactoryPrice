@@ -1347,7 +1347,11 @@ async function handleDispatchManagerCallback(bot, callbackQuery) {
     const excludeId = requesterIsAdmin ? row.user : undefined;
     const userLabel = await getRequesterDisplayName(row.user);
     const summary = await buildSupplyDispatchFullSummary(aj);
-    const fmtTime = (() => { try { return new Date(confirmedAt).toLocaleString('en-NG'); } catch { return confirmedAt; } })();
+    // TIME-1 — toLocaleString with no timeZone renders the SERVER's clock
+    // (Railway = UTC), so this note was an hour behind Lagos on every card.
+    const fmtTime = (() => {
+      try { return require('../utils/formatDate').withTime(confirmedAt); } catch { return confirmedAt; }
+    })();
     await notifyAdminsApprovalRequest(
       bot, requestId, userLabel, summary, row.riskReason || 'Supply request requires admin approval',
       excludeId,
@@ -1591,7 +1595,7 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
         { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
     } catch (_) { /* stale card */ }
     try {
-      const when = item.resolvedAt ? ` on ${String(item.resolvedAt).slice(0, 10)}` : '';
+      const when = item.resolvedAt ? ` on ${fmtDate(item.resolvedAt)}` : '';  // TIME-1
       await bot.sendMessage(callbackQuery.message.chat.id,
         `ℹ️ Request ${requestId} was already ${st}${when} — no change made.`);
     } catch (_) { /* ignore */ }

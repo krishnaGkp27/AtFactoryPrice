@@ -50,6 +50,8 @@
  */
 
 const sessionStore = require('../utils/sessionStore');
+const { LAGOS_TZ } = require('../utils/dates');
+const fmtDate = require('../utils/formatDate');
 const { makeRenderer, rowsFor } = require('../utils/flowKit');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const approvalCards = require('../services/approvalCards');
@@ -133,7 +135,11 @@ function actionLabel(item) {
 function shortDate(createdAt) {
   const ms = Date.parse(createdAt || '');
   if (!isFinite(ms)) return '—';
-  return new Date(ms).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+  // TIME-1 — createdAt is a stored UTC instant; without a timeZone this
+  // printed the server's calendar day on the chip.
+  return new Date(ms).toLocaleDateString('en-GB', {
+    timeZone: LAGOS_TZ, day: '2-digit', month: 'short',
+  });
 }
 
 /**
@@ -533,7 +539,7 @@ async function renderItem(bot, chatId, userId, idx) {
     const live = await approvalQueueRepository.getByRequestId(item.requestId);
     if (live && String(live.status || '').toLowerCase() !== 'pending') {
       const st = String(live.status).toLowerCase();
-      const when = live.resolvedAt ? ` · ${String(live.resolvedAt).slice(0, 10)}` : '';
+      const when = live.resolvedAt ? ` · ${fmtDate(live.resolvedAt)}` : '';  // TIME-1
       let card = '';
       try { card = await approvalCards.buildCardFromActionJSON(live.actionJSON) || ''; } catch (_) { /* bare */ }
       await render(bot, chatId, userId,

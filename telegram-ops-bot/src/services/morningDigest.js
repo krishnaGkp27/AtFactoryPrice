@@ -43,7 +43,13 @@ function timeInTz(now, tz) {
   try { return new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false }).format(now); }
   catch { return now.toISOString().slice(11, 16); }
 }
-function fmtDay(iso) { return String(iso || '').slice(0, 10); }
+// TIME-1 — a stored instant's calendar day is Lagos's, not UTC's; a plain
+// slice dated a note written just after Lagos midnight to the day before.
+// A value that is already a bare date passes through untouched.
+function fmtDay(iso) {
+  const s = String(iso || '');
+  return /^\d{4}-\d{2}-\d{2}T/.test(s) ? (fmtDate.lagosDay(s) || s.slice(0, 10)) : s.slice(0, 10);
+}
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 /** Owner 17-Jul: friendly note dates — "27-May", with year only when it differs. */
@@ -153,7 +159,10 @@ const CATEGORIES = [
       if (marked.length) {
         s += `\n*Reported (${marked.length}):*\n${marked.map((m) => {
           const r = byId.get(m.user_id);
-          const t = String(r.logged_at || '').slice(11, 16);
+          // TIME-1 — slicing HH:MM out of the stored UTC ISO printed every
+          // check-in an hour early (08:15 Lagos read as 07:15). Format the
+          // instant in the business timezone instead.
+          const t = r.logged_at ? fmtDate.withTime(r.logged_at).split(', ')[1] || '' : '';
           return `• ✅ ${m.name} — ${r.location}${t ? ` · ${t}` : ''}${r.logged_via === 'admin' ? ' (via admin)' : ''}`;
         }).join('\n')}`;
       }
