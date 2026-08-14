@@ -106,6 +106,13 @@ const ALWAYS_APPROVAL_ACTIONS = [
   // container charges + FX rate). Sealing wrong numbers cascades into
   // every margin report + sales decision, so always dual-admin.
   'finalize_landed_cost',
+  // PAY-1 (owner mandate, 14-Aug-2026): "all the financially related
+  // transactions go through Dual Admin for now. This includes the first
+  // one." Registering a payee account decides WHERE money may be sent —
+  // a wrong number here is an unrecoverable transfer to a stranger — and
+  // a payment request is the money itself. Both always need two admins,
+  // whatever the amount; the ₦50,000 threshold only badges a request.
+  'register_payment_account', 'request_payment',
   // TV-2 — switch a warehouse's supply-screen display unit (bales ⇄ thans,
   // Settings THAN_VISIBILITY_WAREHOUSES). Admins + managers may request;
   // an admin (≠ an admin requester) must approve before it applies.

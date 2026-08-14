@@ -1,9 +1,12 @@
 # PAY-1 — payment requests: registered accounts, dual-admin, one finance hand
 
-**Status: SPEC LOCKED 14-Aug-2026 — owner said "go", implementation
-assigned to the next session.** Every decision below is an owner ruling
-from the 14-Aug discussion (his hand-drawn system-design card + Q&A).
-Nothing here is open; build from this document without re-asking.
+**Status: SHIPPED 14-Aug-2026.** The spec was locked with the owner
+first and then built to exactly; every decision below is his ruling from
+the 14-Aug discussion (his hand-drawn system-design card + Q&A), kept
+here as the record of why each piece is shaped the way it is.
+
+**Owner step still outstanding:** put the Office phone in a `Finance`
+department in the Users sheet — see "After shipping" at the foot.
 
 ## What this is
 

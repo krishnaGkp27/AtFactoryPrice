@@ -18,6 +18,12 @@ const DEFAULTS = {
   SALE_CALENDAR_MAX_DAYS_BACK: 180,
   RISK_THRESHOLD: 300,
   LOW_STOCK_THRESHOLD: 100,
+  // PAY-1 (owner, 14-Aug-2026) — the naira line above which a payment
+  // request is BADGED as large. It changes no approval today: every
+  // financial action is dual-admin regardless ("all dual for now"). It
+  // exists so big money is unmissable on the cards, and so the gate can
+  // be switched on from the sheet at scaling without a deploy.
+  PAYMENT_THRESHOLD_NGN: 50000,
   // VRF-1 — OCR bill-vs-request check on documented sale approvals
   // (skips snap-sourced requests). 0 switches it off, no deploy.
   PDF_VERIFY_ENABLED: 1,

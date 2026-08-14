@@ -1893,6 +1893,20 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
           }
         }
 
+        // PAY-1 — an approved payment is not a paid payment. Hand it to
+        // the ONE finance id (owner's business rule) as an actionable
+        // card; the money leaves only when a human transfers it at the
+        // bank and taps Mark Done. Fire-and-forget: a delivery failure
+        // must never roll back an approval that already happened.
+        if (item && item.actionJSON && item.actionJSON.action === 'request_payment') {
+          try {
+            const paymentCards = require('../services/paymentCards');
+            await paymentCards.sendFinanceCard(bot, item.actionJSON.payment_id);
+          } catch (e) {
+            logger.warn(`PAY-1 finance card dispatch failed for ${requestId}: ${e.message}`);
+          }
+        }
+
         const customer = item && item.actionJSON && (item.actionJSON.customer || item.actionJSON.customerName);
         if (customer) {
           try {

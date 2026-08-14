@@ -174,6 +174,24 @@ const REQUIRED_SHEETS = {
   CatalogLedger: {
     headers: ['LedgerId', 'Design', 'CatalogSize', 'Warehouse', 'Quantity', 'Action', 'RecipientType', 'RecipientName', 'Status', 'DateOut', 'DateReturned', 'RequestedBy', 'ApprovedBy', 'ApprovalRequestId', 'Notes', 'CreatedAt'],
   },
+  // PAY-1 (owner, 14-Aug-2026) — money going OUT. Two raw records:
+  // WHERE the business may send money (a payee account, dual-admin
+  // approved before it can ever be picked), and the ledger of what was
+  // asked for, approved, and actually transferred at the bank.
+  PaymentAccounts: {
+    headers: ['account_id', 'owner_name', 'owner_type', 'owner_telegram_id',
+      'account_number', 'bank', 'status', 'registered_by',
+      'approval_request_id', 'approved_by', 'created_at', 'notes'],
+  },
+  PaymentRequests: {
+    headers: ['payment_id', 'payee_name', 'payee_type',
+      'account_id', 'account_number', 'bank',
+      'amount_ngn', 'above_threshold',
+      'raised_by', 'raised_at',
+      'approval_request_id', 'approved_by', 'status',
+      'bill_file_id', 'proof_file_id',
+      'done_by', 'done_at', 'decline_reason'],
+  },
   // LOC-1 (owner, 14-Aug-2026) — the register of PHYSICAL PLACES and the
   // city each sits in. Until now a warehouse was only a name on Inventory
   // rows: nothing recorded which location it belongs to, or whether it is a

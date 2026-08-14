@@ -17,7 +17,7 @@ ask for their status instead of starting new features; help execute them if aske
 
 | Priority | Task | Owner | Steps doc |
 |---|---|---|---|
-| **0 — NEXT BUILD (Opus 5)** | PAY-1 payment requests: registered payee accounts + dual-admin approval + single finance hand (Mark Done). Spec is FULLY LOCKED — build from it without re-asking; owner edits the Office phone's Users row himself after shipping (guide him). | **Agent (Opus 5)** | `telegram-ops-bot/specs/PAY-1_PAYMENT_REQUESTS.md` |
+| **0 — OWNER STEP** | PAY-1 SHIPPED 14-Aug-2026. Owner: add `Finance` to the Office phone's `department` cell in the Users sheet (sole member) — until then payment cards go to ALL admins with a warning instead of to the one finance hand. Then register the first accounts (each employee their own; an admin for contractors), dual-approve, and run one small live payment end to end. | **Owner** | `telegram-ops-bot/specs/PAY-1_PAYMENT_REQUESTS.md` §After shipping |
 | 0b | EXP-1 attach→parse→confirm component (APC-1 Phase E): photo/Excel in → OCR'd figures as confirm chips → file archived as evidence; lands in the expense flow first, then the approval wizards. EXP-1 core SHIPPED 08-Aug-2026 (`d03423e`+`ed009a1`): daily record, running balance, 20:00 finance report + reminder. Owner: seed the float by recording current cash-in-hand once via ➕ Cash received. | **Owner + agent** | `telegram-ops-bot/specs/EXP-1_OFFICE_EXPENSES.md` |
 | ~~0b~~ ✅ | APC-1 approval concurrency — Phases A–D SHIPPED 08-Aug-2026 (per-request sale wizards, reason-prompt queue, transfer pick/gate guards, id-carrying inbox decisions). Phase E (attach→parse→confirm component) rides with EXP-1. | **shipped** | `telegram-ops-bot/specs/APC-1_APPROVAL_CONCURRENCY.md` |
 | **0c — RUN FIRST** | Sheet-audit follow-through: owner runs `scripts/repair-contacts-staircase.js` (dry-run → `--commit`; until then 4 Contacts rows are invisible to the bot) and `scripts/format-date-columns.js --commit`; seeds `Locations` sheet (activates VRF-2 store bill-check skip); uploads 9037's 2 catalogue photos (tests CAT-P1 album); tests IDR-2 triage with a fresh account. Full state-at-pause + open rulings (AuditLog col D rename, Contacts writer elegance): see steps doc. | **Owner + agent** | `telegram-ops-bot/docs/SHEET_AUDIT_2026-08-14.md` §State at pause |
@@ -102,7 +102,8 @@ Major namespaces already taken:
 
 - Menus: `act:` (tiles; `act:__hub__:<id>`, `act:__back__` are session-free navigation)
 - Supply request: `srf_*` · legacy inline flows: `up*` (price), `tp*`/`tt*` (transfers), `rt*` (return), `sm*` (sample), `ac*` (add customer)
-- Flow modules: `gr:` `br:` `addstock:` `pr:` `wh:` `wai:` `bs:` `udf:` `sbl:` `lcost:` `bops:` `ofex:` `usr:` `umg:` `rol:` `atd:` `atd_rpt:` `atd_adm:` `tsk:` `nf:` `swv:` `pp:` `pu:` (pending-user triage — IDR-2 adds
+- Flow modules: `gr:` `br:` `addstock:` `pr:` `wh:` `wai:` `bs:` `udf:` `sbl:` `lcost:` `bops:` `ofex:` `usr:` `umg:` `rol:` `atd:` `atd_rpt:` `atd_adm:` `tsk:` `nf:` `swv:` `pp:` `pay:` (PAY-1 payments; `pay:done|dec` are
+  session-free) `pu:` (pending-user triage — IDR-2 adds
   `pu:cust|net|link|linkcancel`) `cms:` `shr:` (share links) `oq/oc/od*` (orders) `rc*` (receipts)
 - Catalog: `csf:` `clf:` `crf:` `mkr:` `ctr:` `dab:` `das:` `dat:` `dap:` (incl.
   `dap:page:add|replace` — CAT-P1 add-a-page vs replace) `dam:` `dav:`
@@ -143,6 +144,7 @@ session arrays, `cbSafe()` from `src/utils/telegramUI.js`).
 `Samples`, `ApprovalQueue`, `Tasks`, `Contacts`, `ProductTypes`, `Settings`,
 `Receipts`, `AuditLog`, `DesignAssets`, `CatalogStock`, `CatalogLedger`,
 `Marketers`, `MarketerAllocations`, `UserPrefs`, `LedgerTransactions`,
+`PaymentAccounts`, `PaymentRequests`,
 `LedgerBalanceCache`, `Transfers`, `GoodsReceipts`, `PendingUsers`, `Locations`.
 
 Inventory column W = `design_category` (Cashmere / Chinos / Gaberdine /
@@ -157,6 +159,7 @@ flow (DCAT-1) — owner chose an Inventory column over a separate mapping sheet.
 | `THAN_VISIBILITY_WAREHOUSES` | `Kano office` | CSV of warehouses listing stock in thans (TV-1); togglable in-bot via 📐 Display Units behind admin approval (TV-2) |
 | `FLOW_CLEANUP_MINUTES` / `_HEAVY` | 30 / 60 | stale-flow tombstone grace (SJ-1) |
 | `SALE_CALENDAR_MAX_DAYS_BACK` | 180 | how far back the sale-date calendars reach (BKD-1; Sell Bale + Kano than sale) |
+| `PAYMENT_THRESHOLD_NGN` | 50000 | PAY-1 large-payment badge line (badges, never gates) |
 | `FLOW_CLEANUP_HEAVY_TYPES` | CSV | session types counted as heavy |
 
 New defaults live in `settingsRepository.DEFAULTS`; a sheet row of the same key overrides.

@@ -195,6 +195,12 @@ const ACTIVITIES = [
   // LANDED-COST C1 — admin finalises USD cost/yard + import charges for a
   // GRN. Dual-admin gated via `finalize_landed_cost`.
   { code: 'finalize_landed_cost',  label: 'Finalize Landed Cost',      icon: '💵', callback: 'act:finalize_landed_cost', hub: 'finance' },
+  // PAY-1 — money going OUT: register a payee account (dual-admin), raise
+  // a payment against a registered one (dual-admin), and see what became
+  // of your own requests. Open to every user: an employee asking for the
+  // money owed to them is the ordinary case, and every write behind this
+  // tile is approval-gated anyway.
+  { code: 'payments',              label: 'Payments',                  icon: '💳', callback: 'act:payments',           hub: 'finance' },
 
   // ── Human Resources (people + attendance) ────────────────────────────
   // ATT-C1 — Mark Attendance (employee-facing). Injected at menu-render

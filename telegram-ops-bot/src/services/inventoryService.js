@@ -1188,6 +1188,33 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     }
   } else if (aj.action === 'supply_request') {
     // Intimation only — no inventory changes. Approval + assignment handled in approvalEvents.
+  } else if (aj.action === 'register_payment_account') {
+    // PAY-1 — the second admin's signature is what turns a proposed payee
+    // account into one the business may actually send money to. Until
+    // this runs the row is 'pending' and no payment flow will offer it.
+    const paymentAccountsRepo = require('../repositories/paymentAccountsRepository');
+    const acct = await paymentAccountsRepo.findByApprovalRequestId(requestId);
+    if (!acct) return { ok: false, message: 'Payment account row not found for this request.' };
+    if (acct.status === 'active') {
+      customMessage = `ℹ️ ${acct.owner_name}'s account was already active — nothing changed.`;
+    } else {
+      await paymentAccountsRepo.setStatus(acct.account_id, 'active', approvedBy);
+      customMessage = `✅ Account registered for *${acct.owner_name}* — ${acct.bank} ${acct.account_number}. Payments may now be raised against it.`;
+    }
+  } else if (aj.action === 'request_payment') {
+    // PAY-1 — approval AUTHORISES the payment; it does not pay it. The
+    // request moves to the finance head's queue, and the money only
+    // leaves when a human transfers it at the bank and taps Mark Done.
+    const paymentRequestsRepo = require('../repositories/paymentRequestsRepository');
+    const pay = await paymentRequestsRepo.findByApprovalRequestId(requestId);
+    if (!pay) return { ok: false, message: 'Payment request row not found for this request.' };
+    if (pay.status !== 'pending_approval') {
+      customMessage = `ℹ️ Payment ${pay.payment_id} is already ${pay.status} — nothing changed.`;
+    } else {
+      await paymentRequestsRepo.update(pay.payment_id, { status: 'approved', approved_by: approvedBy });
+      const paymentService = require('./paymentService');
+      customMessage = `✅ Payment of ${paymentService.fmtNaira(pay.amount_ngn)} to *${pay.payee_name}* approved — now with finance to pay.`;
+    }
   } else if (aj.action === 'design_asset_upload') {
     // Activate the staged DesignAssets row keyed by this requestId. Any
     // older active asset for the same design is automatically marked

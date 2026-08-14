@@ -265,6 +265,46 @@ everywhere in the business rules.").**
   both read as `warehouse` — a missing row may never be what silently
   disables a check.
 
+## 13 · Money leaving the business (PAY-1)
+
+**Locked 14-Aug-2026** (owner's hand-drawn system design + rulings).
+
+- **The bot never moves money.** A human transfers it at the bank; the
+  bot records the request, the approvals, and that the transfer happened.
+- **An account number is registered once, then only ever PICKED.** No
+  payment names a typed account. A wrong number is an unrecoverable
+  transfer to a stranger, so the care goes into the register, not the
+  moment of payment — and the number is typed TWICE at registration,
+  because it is the one field nothing else can check.
+- **Every financially related action is dual-admin, registration
+  included** — owner's words: *"All the financially related transactions
+  go through Dual Admin for now. This includes the first one."*
+- **ONE finance Telegram ID makes payments at any moment in time.** A
+  business rule, not a convenience. That ID alone marks a payment done or
+  declines it, and its own approval counts as one of the two signatures.
+  It is resolved by READING the Users sheet (the single active member of
+  the Finance department) — the owner maintains that membership by hand
+  and the bot never writes it. A sheet naming zero or several finance
+  people degrades to all-admins **with a warning**: an unfinished sheet
+  must never strand approved money in a queue nobody can see.
+- **₦50,000 badges, it does not gate.** Above the line a request renders
+  `⚠️ large payment` everywhere; the approval requirement is unchanged
+  because it is already the maximum. The line is a Settings key
+  (`PAYMENT_THRESHOLD_NGN`) so it can become a real gate at scaling.
+- **Self only.** An employee raises against their OWN registered account
+  — *"Abdul can raise for himself. Yerima will raise for himself."* A
+  contractor, who may not use Telegram at all, is raised for by an admin
+  against the contractor's registered account. Nobody ever raises money
+  into another employee's bank account.
+- **Approved ≠ paid.** Approval authorises; the money leaves on Mark
+  Done. Finance may still **Decline** an approved payment (wrong account,
+  no funds, a duplicate) — with a reason, which reaches the requester.
+- **Evidence is offered, never demanded** (owner's choice): the bill at
+  raise time and the transfer proof at Mark Done are both optional.
+- **History is snapshot, not looked up.** A payment row keeps the account
+  number and bank as they were when it was raised, so correcting an
+  account next month cannot rewrite where last month's money went.
+
 ## 10 · Storage layering
 
 **Locked 16-Jul-2026 (owner rule; also in CLAUDE.md).**

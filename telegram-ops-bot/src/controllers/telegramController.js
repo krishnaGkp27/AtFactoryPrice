@@ -3561,6 +3561,12 @@ async function handleFileMessage(bot, msg) {
 
   const session = sessionStore.get(userId);
 
+  // PAY-1 — the optional bill/invoice attached while raising a payment.
+  if (session && session.type === 'payment_flow') {
+    const handled = await require('../flows/paymentFlow').handleFile(bot, chatId, userId, msg);
+    if (handled) return;
+  }
+
   if (session && session.type === 'design_asset_flow' && session.step === 'photo') {
     const handled = await handleDesignAssetPhotoMessage(bot, chatId, userId, msg);
     if (handled) return;
@@ -3911,6 +3917,16 @@ async function handleMessage(bot, msg) {
     const cnStep = String((cnSession && cnSession.step) || '');
     if (cnSession && cnSession.type === 'contact_network_flow' && (cnStep.startsWith('add_') || cnStep.startsWith('edit_'))) {
       const handled = await require('../flows/contactNetworkFlow').handleText(bot, msg);
+      if (handled) return;
+    }
+  }
+
+  // PAY-1 — payment flow takes typed input for the contractor name, the
+  // account number (twice), the amount, and a decline reason.
+  {
+    const paySession = sessionStore.get(userId);
+    if (paySession && paySession.type === 'payment_flow') {
+      const handled = await require('../flows/paymentFlow').handleText(bot, chatId, userId, text);
       if (handled) return;
     }
   }
@@ -7090,6 +7106,10 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['shr:'], handle: (bot, cq) => require('../flows/shareFlow').handleCallback(bot, cq) },
   // SLED-1 — customer supply statement PDF (quantities only).
   { prefixes: ['sst:'], handle: (bot, cq) => require('../flows/supplyStatementFlow').handleCallback(bot, cq) },
+  // PAY-1 — payment requests. `pay:done:` / `pay:dec:` are deliberately
+  // SESSION-FREE: the finance head taps them on a card that arrived hours
+  // earlier, long after any flow session has expired.
+  { prefixes: ['pay:'], handle: (bot, cq) => require('../flows/paymentFlow').handleCallback(bot, cq) },
   // People / HR flows.
   { prefixes: ['usr:'], handle: (bot, cq) => require('../flows/userAddFlow').handleCallback(bot, cq) },
   { prefixes: ['umg:'], handle: (bot, cq) => require('../flows/userManageFlow').handleCallback(bot, cq) },
@@ -9675,6 +9695,13 @@ async function handleCallbackQuery(bot, callbackQuery) {
       case 'sample_status': {
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Sample status report is admin-only.'); break; }
         await showSampleStatusDatePicker(bot, chatId);
+        break;
+      }
+      // PAY-1 — open to everyone: an employee asking for money owed to
+      // them is the ordinary case, and every write behind this tile goes
+      // through dual-admin approval anyway.
+      case 'payments': {
+        await require('../flows/paymentFlow').start(bot, chatId, uid, messageId);
         break;
       }
       case 'manage_users': {
