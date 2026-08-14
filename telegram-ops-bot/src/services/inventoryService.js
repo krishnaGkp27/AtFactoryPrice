@@ -1193,7 +1193,10 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // older active asset for the same design is automatically marked
     // 'replaced' so consumers always read the freshest photo.
     const designAssetsService = require('./designAssetsService');
-    const r = await designAssetsService.activateByApprovalRequestId(requestId, approvedBy);
+    // CAT-P1 — the uploader chose "add as page" or "replace" at upload time;
+    // the choice rides the request so approval simply honours it.
+    const r = await designAssetsService.activateByApprovalRequestId(requestId, approvedBy,
+      { addPage: aj.catalogMode === 'add_page' });
     if (!r.ok) return { ok: false, message: r.message || 'Could not activate design photo asset.' };
   } else if (aj.action === 'give_sample') {
     const samplesRepo = require('../repositories/samplesRepository');

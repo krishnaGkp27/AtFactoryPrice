@@ -191,15 +191,26 @@ async function persistPending(staged, approvalRequestId) {
  * Called from inventoryService.executeApprovedAction for action
  * 'design_asset_upload'.
  */
-async function activateByApprovalRequestId(approvalRequestId, approvedBy) {
+async function activateByApprovalRequestId(approvalRequestId, approvedBy, opts = {}) {
   const row = await designAssetsRepo.findByApprovalRequestId(approvalRequestId);
   if (!row) return { ok: false, message: 'Asset not found.' };
 
-  // Supersede any prior active version for this (design, batch) — CAT-C1:
-  // photos of OTHER batches stay active (one look per shipment).
-  await designAssetsRepo.deactivatePriorActive(row.design, row.arrivalBatch);
+  // CAT-P1 — the uploader already answered the only question that matters
+  // here: is this photo a NEW PAGE of the design's shade card, or a better
+  // shot of the page that exists? A page joins the set; a replacement
+  // supersedes. Defaulting to replace keeps every pre-CAT-P1 upload, and
+  // every upload for a design with no photo yet, behaving exactly as before.
+  if (!opts.addPage) {
+    // Supersede any prior active version for this (design, batch) — CAT-C1:
+    // photos of OTHER batches stay active (one look per shipment).
+    await designAssetsRepo.deactivatePriorActive(row.design, row.arrivalBatch);
+  }
   await designAssetsRepo.updateStatus(row.rowIndex, 'active', approvedBy || '');
-  return { ok: true, design: row.design, arrivalBatch: row.arrivalBatch || '' };
+  const pages = await designAssetsRepo.findActivePages(row.design, row.arrivalBatch);
+  return {
+    ok: true, design: row.design, arrivalBatch: row.arrivalBatch || '',
+    addedAsPage: !!opts.addPage, pageCount: pages.length,
+  };
 }
 
 /**
@@ -283,6 +294,118 @@ async function getPhotoForSend(design, opts = {}) {
 function toDirectDownloadUrl(fileId) {
   if (!fileId) return '';
   return `https://drive.google.com/uc?export=download&id=${fileId}`;
+}
+
+/* ── CAT-P1: multi-page catalogues ─────────────────────────────────────── */
+
+/**
+ * Telegram caps an album at 10 items. A catalogue with more pages than
+ * that is not a thing today (9037 has two); the cap is a guard, not a
+ * feature, and `sendDesignAlbum` says out loud when it trims.
+ */
+const ALBUM_MAX = 10;
+
+/** One page's row turned into something sendable. See getPhotoForSend. */
+async function resolvePhoto(row, design) {
+  const baseInfo = {
+    rowIndex: row.rowIndex,
+    design: row.design,
+    productType: row.productType,
+    shadeCount: row.shadeCount,
+    shades: row.shades || [],
+    shadeNames: row.shadeNames,
+    telegramFileId: row.telegramFileId || '',
+    labeledDriveUrl: row.labeledDriveUrl,
+    labeledDriveFileId: row.labeledDriveFileId,
+  };
+  if (row.telegramFileId) {
+    return { ...baseInfo, photo: row.telegramFileId, photoSource: 'telegram_file_id' };
+  }
+  const fileId = row.labeledDriveFileId || row.rawDriveFileId;
+  if (fileId) {
+    try {
+      const buffer = await driveClient.downloadFile(fileId);
+      return { ...baseInfo, photo: buffer, photoSource: 'drive_buffer' };
+    } catch (e) {
+      logger.warn(`resolvePhoto(${design}) row ${row.rowIndex}: Drive download failed (${e.message})`);
+    }
+  }
+  const url = row.labeledDriveFileId
+    ? toDirectDownloadUrl(row.labeledDriveFileId)
+    : (row.rawDriveFileId ? toDirectDownloadUrl(row.rawDriveFileId) : '');
+  if (!url) return null;
+  return { ...baseInfo, photo: url, photoSource: 'drive_url' };
+}
+
+/**
+ * CAT-P1 — every page of a design's catalogue, in reading order, each one
+ * resolved to something sendable.
+ *
+ * A page that cannot be served (no cached file_id, Drive download failed,
+ * no ids at all) is DROPPED rather than failing the set: one unreachable
+ * page must not cost the owner the page that still works.
+ *
+ * @returns {Promise<Array>} [] when the design has no active photo at all
+ */
+async function getPhotosForSend(design, opts = {}) {
+  if (!design) return [];
+  const rows = await designAssetsRepo.findActivePages(design, opts.arrivalBatch);
+  if (!rows.length) {
+    logger.info(`getPhotosForSend(${design}${opts.arrivalBatch ? `, batch=${opts.arrivalBatch}` : ''}): no active asset`);
+    return [];
+  }
+  const out = [];
+  for (const row of rows) {
+    const p = await resolvePhoto(row, design);
+    if (p) out.push({ ...p, page: out.length + 1 });
+    else logger.warn(`getPhotosForSend(${design}): page at row ${row.rowIndex} could not be served — skipped`);
+  }
+  return out;
+}
+
+/**
+ * CAT-P1 — send a design's catalogue pages as ONE album bubble.
+ *
+ * Telegram albums cannot carry an inline keyboard — a platform limit, not
+ * a choice — so a caller that needs buttons sends this first and puts the
+ * keyboard on the message that follows. That is exactly the owner's
+ * layout: the pages back to back, the shade picker directly beneath.
+ *
+ * Only ever used for 2+ pages. A single-page design keeps the existing
+ * one-bubble photo+buttons combo, which reads better and stays cheaper.
+ *
+ * @returns {Promise<number[]>} message ids of the album (empty on failure)
+ */
+async function sendDesignAlbum({ bot, chatId, photos, caption }) {
+  const pages = (photos || []).slice(0, ALBUM_MAX);
+  if (pages.length < 2) return [];
+  if ((photos || []).length > ALBUM_MAX) {
+    logger.warn(`sendDesignAlbum(${pages[0].design}): ${photos.length} pages, Telegram caps albums at ${ALBUM_MAX} — sending the first ${ALBUM_MAX}`);
+  }
+  // The caption belongs to the FIRST item only; Telegram shows it under
+  // the album as a whole. Captioning every item repeats it on each tap.
+  const media = pages.map((p, i) => ({
+    type: 'photo',
+    media: p.photo,
+    ...(i === 0 && caption ? { caption, parse_mode: 'Markdown' } : {}),
+  }));
+  let sent;
+  try {
+    sent = await bot.sendMediaGroup(chatId, media);
+  } catch (e) {
+    logger.warn(`sendDesignAlbum(${pages[0].design}): album send failed — ${e.message}`);
+    return [];
+  }
+  const msgs = Array.isArray(sent) ? sent : [];
+  // Cache each page's file_id so the next send skips Drive entirely.
+  msgs.forEach((m, i) => {
+    const p = pages[i];
+    if (!p || p.photoSource === 'telegram_file_id') return;
+    if (m && m.photo && m.photo.length) {
+      cacheTelegramFileId(p.rowIndex, m.photo[m.photo.length - 1].file_id).catch(() => {});
+    }
+  });
+  return msgs.map((m) => m && m.message_id).filter(Boolean);
 }
 
 /**
@@ -437,6 +560,8 @@ module.exports = {
   activateByApprovalRequestId,
   rejectByApprovalRequestId,
   getPhotoForSend,
+  getPhotosForSend,
+  sendDesignAlbum,
   cacheTelegramFileId,
   sendShadePicker,
   sendDesignPhoto,

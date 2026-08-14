@@ -208,6 +208,40 @@ async function findActive(design, arrivalBatch) {
   return pickActive(all, design, arrivalBatch);
 }
 
+/**
+ * CAT-P1 (owner 14-Aug-2026) — every active PAGE of a design's catalogue,
+ * in reading order.
+ *
+ * A design's shade card can run to more than one photo (9037 ships twelve
+ * shades over two pages). Pages are simply the active rows for the design,
+ * ordered oldest-first, so page 1 is the sheet the owner uploaded first —
+ * no new column, no new sheet.
+ *
+ * The `replaced` status still does its old job: a REPLACED photo is not a
+ * page, it is a previous version, so it never appears here. Which of the
+ * two an upload becomes is the uploader's choice at upload time (see
+ * designAssetsService.activateByApprovalRequestId).
+ *
+ * @returns {Promise<Array>} [] when the design has no active photo
+ */
+async function findActivePages(design, arrivalBatch) {
+  if (!design) return [];
+  const all = await getAll();
+  return pickActivePages(all, design, arrivalBatch);
+}
+
+/** Pure half of findActivePages, for callers that already hold the rows. */
+function pickActivePages(rows, design, arrivalBatch) {
+  const d = upper(design);
+  let actives = rows.filter((r) => upper(r.design) === d && r.status === 'active');
+  if (arrivalBatch !== undefined && arrivalBatch !== null && String(arrivalBatch).trim() !== '') {
+    const b = upper(arrivalBatch);
+    actives = actives.filter((r) => upper(r.arrivalBatch) === b);
+  }
+  // Oldest first: the order they were added is the order they are read.
+  return actives.sort((a, b) => (a.uploadedAt || '').localeCompare(b.uploadedAt || ''));
+}
+
 /** Find the most recent asset for a design regardless of status, or null. */
 async function findLatest(design) {
   if (!design) return null;
@@ -305,6 +339,8 @@ module.exports = {
   getAll,
   findActive,
   pickActive,
+  findActivePages,
+  pickActivePages,
   findLatest,
   findByApprovalRequestId,
   list,

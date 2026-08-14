@@ -6297,7 +6297,35 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   let comboSent = null;
   if (asset && session) {
     try {
-      const photoAsset = await designAssetsService.getPhotoForSend(design);
+      // CAT-P1 — a design whose shade card runs to more than one page sends
+      // the pages as ONE album, then the picker beneath it: Telegram albums
+      // cannot carry an inline keyboard, so the buttons need their own
+      // message. A single-page design keeps the tighter photo+buttons combo.
+      const pages = await designAssetsService.getPhotosForSend(design);
+      if (pages.length > 1) {
+        const albumIds = await designAssetsService.sendDesignAlbum({
+          bot, chatId, photos: pages,
+          caption: `📷 *${design}* — *${warehouse}* · ${pages.length} pages`,
+        });
+        if (albumIds.length) {
+          // The janitor sweeps _auxMsgIds when the flow goes stale, so the
+          // album is cleaned up with the rest of the screen, not left behind.
+          session._auxMsgIds = [...(session._auxMsgIds || []), ...albumIds];
+          const picker = await bot.sendMessage(chatId,
+            `📦 *${design}* in *${warehouse}*${soldOutDesign ? soldOutNote : '\n\nSelect shade:'}${overflowNote}`, {
+              parse_mode: 'Markdown',
+              reply_markup: { inline_keyboard: rows },
+            });
+          if (picker && picker.message_id) {
+            session.previewMessageId = picker.message_id;
+            session.flowMessageId = null;
+            sessionStore.set(userId, session);
+          }
+          return;
+        }
+        // Album failed to send → fall through to the single-photo combo.
+      }
+      const photoAsset = pages.length ? pages[0] : await designAssetsService.getPhotoForSend(design);
       if (photoAsset && photoAsset.photo) {
         comboSent = await bot.sendPhoto(chatId, photoAsset.photo, {
           caption: `📷 *${design}* — *${warehouse}*${soldOutNote}${overflowNote}`,
@@ -6395,7 +6423,28 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
   // catalog asset or the send fails.
   if (singleShade && session) {
     try {
-      const photoAsset = await designAssetsService.getPhotoForSend(design);
+      // CAT-P1 — same album rule as the shade picker: 2+ pages go up as one
+      // album with the quantity buttons on the message beneath.
+      const pages = await designAssetsService.getPhotosForSend(design);
+      if (pages.length > 1) {
+        await clearDesignPreview(bot, chatId, userId);
+        const albumIds = await designAssetsService.sendDesignAlbum({
+          bot, chatId, photos: pages, caption: `📷 *${design}* · ${pages.length} pages`,
+        });
+        if (albumIds.length) {
+          session._auxMsgIds = [...(session._auxMsgIds || []), ...albumIds];
+          const picker = await bot.sendMessage(chatId, caption, {
+            parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows },
+          });
+          if (picker && picker.message_id) {
+            session.previewMessageId = picker.message_id;
+            session.flowMessageId = null;
+            sessionStore.set(userId, session);
+            return;
+          }
+        }
+      }
+      const photoAsset = pages.length ? pages[0] : await designAssetsService.getPhotoForSend(design);
       if (photoAsset && photoAsset.photo) {
         await clearDesignPreview(bot, chatId, userId);
         const sent = await bot.sendPhoto(chatId, photoAsset.photo, {
@@ -11073,6 +11122,49 @@ function formatShadesPreview(shades) {
   return shades.map((s) => `${s.number}. ${s.name}`).join(' • ');
 }
 
+/**
+ * CAT-P1 — ask whether an incoming photo JOINS the design's catalogue as a
+ * new page or REPLACES what is already there.
+ *
+ * Only asked when there is something to replace: a design with no active
+ * photo for this container has nothing to choose between, so it never sees
+ * this step. Answering "replace" reproduces the pre-CAT-P1 behaviour
+ * exactly, which is why that is also what an unanswered session defaults to.
+ *
+ * @returns {Promise<boolean>} true when the question was asked (caller stops)
+ */
+async function showDesignAssetPageChoice(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || !session.design) return false;
+  let pages;
+  try {
+    pages = await designAssetsRepo.findActivePages(session.design, session.arrivalBatch || '');
+  } catch (e) {
+    // Never block an upload on this lookup — fall through to the old path.
+    logger.warn(`design_asset_flow: page lookup failed for ${session.design} — ${e.message}`);
+    return false;
+  }
+  if (!pages.length) return false;
+
+  const where = session.arrivalBatch ? ` (container *${session.arrivalBatch}*)` : '';
+  const shown = pages.length === 1 ? '1 catalogue page' : `${pages.length} catalogue pages`;
+  session.step = 'page_choice';
+  sessionStore.set(userId, session);
+  await bot.sendMessage(chatId,
+    `📸 *${session.design}* already has ${shown}${where}.\n\nIs this photo another page, or a better shot of what is there?`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: `➕ Add as page ${pages.length + 1}`, callback_data: 'dap:page:add' }],
+          [{ text: '♻️ Replace the existing photo', callback_data: 'dap:page:replace' }],
+          [{ text: '✖ Cancel', callback_data: 'dap:cancel' }],
+        ],
+      },
+    });
+  return true;
+}
+
 async function showDesignAssetPhotoPrompt(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
@@ -11332,6 +11424,10 @@ async function submitDesignAssetForApproval(bot, chatId, userId, msg) {
       labeledDriveUrl: staged.labeledDriveUrl,
       uploaderUserId: userId,
       arrivalBatch: session.arrivalBatch || '',
+      // CAT-P1 — 'add_page' keeps the design's existing pages alive beside
+      // this one; anything else (including an older request with no field
+      // at all) means replace, which is the pre-CAT-P1 behaviour.
+      catalogMode: session.catalogMode === 'add_page' ? 'add_page' : 'replace',
     },
     riskReason: 'Product-photo asset must be approved before it appears to consumers.',
     status: 'pending',
@@ -11340,7 +11436,12 @@ async function submitDesignAssetForApproval(bot, chatId, userId, msg) {
 
   const userLabel = await getRequesterDisplayName(userId, msg);
   const isAdm = config.access.adminIds.includes(userId);
-  const summary = `Product photo: ${staged.design} (${staged.shadeCount} shades)`;
+  // CAT-P1 — the approver is deciding between two different outcomes (a page
+  // JOINS the design's card, a replacement RETIRES what is there), so the
+  // card must say which. Silence would read as the old replace-always.
+  const addingPage = session.catalogMode === 'add_page';
+  const summary = `Product photo: ${staged.design} (${staged.shadeCount} shades)`
+    + (addingPage ? ' — NEW PAGE, keeps the existing photo' : '');
   const previewPhoto = session.previewFileId || (staged.labeledDriveFileId ? `https://drive.google.com/uc?export=download&id=${staged.labeledDriveFileId}` : null);
   const previewLines = formatShadesPreview(staged.shades);
   await approvalEvents.notifyAdminsApprovalRequest(
@@ -11353,7 +11454,7 @@ async function submitDesignAssetForApproval(bot, chatId, userId, msg) {
   sessionStore.clear(userId);
   const approverLabel = isAdm ? '2nd admin' : 'admin';
   await bot.sendMessage(chatId,
-    `✅ *Submitted for approval*\n\nDesign: *${staged.design}*\nShades: *${staged.shadeCount}*\nRequest ID: \`${requestId}\`\n\n⏳ Waiting for ${approverLabel}. You'll be notified when the photo goes live.`,
+    `✅ *Submitted for approval*\n\nDesign: *${staged.design}*\nShades: *${staged.shadeCount}*\n${addingPage ? 'Adding as: *a new page*\n' : ''}Request ID: \`${requestId}\`\n\n⏳ Waiting for ${approverLabel}. You'll be notified when the photo goes live.`,
     { parse_mode: 'Markdown' });
 }
 
@@ -11640,6 +11741,28 @@ async function handleDesignAssetCallback(bot, callbackQuery) {
     delete session.containerChoices;
     sessionStore.set(uid, session);
     await bot.answerCallbackQuery(callbackQuery.id);
+    // CAT-P1 — if this (design, container) already has catalogue pages, the
+    // uploader must say which this photo is: another PAGE of the shade card,
+    // or a REPLACEMENT of what is there. Asked here, after the container is
+    // known, because pages belong to a (design, container) pair. A design
+    // with no photo yet skips straight to the photo prompt as before.
+    if (await showDesignAssetPageChoice(bot, chatId, uid)) return true;
+    await showDesignAssetPhotoPrompt(bot, chatId, uid);
+    return true;
+  }
+  // CAT-P1 — the answer to that question.
+  if (data === 'dap:page:add' || data === 'dap:page:replace') {
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'design_asset_flow') {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' });
+      return true;
+    }
+    session.catalogMode = data === 'dap:page:add' ? 'add_page' : 'replace';
+    sessionStore.set(uid, session);
+    await bot.answerCallbackQuery(callbackQuery.id,
+      { text: session.catalogMode === 'add_page' ? 'Adding as a new page' : 'Replacing the existing photo' });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+      { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
     await showDesignAssetPhotoPrompt(bot, chatId, uid);
     return true;
   }
@@ -11923,11 +12046,24 @@ async function maybeSendDesignPreview(bot, chatId, design, captionExtra, userId)
 async function clearDesignPreview(bot, chatId, userId) {
   if (!userId) return;
   const session = sessionStore.get(userId);
-  if (session && session.previewMessageId) {
+  if (!session) return;
+  let touched = false;
+  if (session.previewMessageId) {
     await bot.deleteMessage(chatId, session.previewMessageId).catch(() => {});
     session.previewMessageId = null;
-    sessionStore.set(userId, session);
+    touched = true;
   }
+  // CAT-P1 — a multi-page design leaves an ALBUM above the picker. It is a
+  // separate message from the one previewMessageId tracks, so clearing only
+  // that id would strand the pages on screen as the flow moved on.
+  if (Array.isArray(session._auxMsgIds) && session._auxMsgIds.length) {
+    for (const mid of session._auxMsgIds) {
+      await bot.deleteMessage(chatId, mid).catch(() => {});
+    }
+    session._auxMsgIds = [];
+    touched = true;
+  }
+  if (touched) sessionStore.set(userId, session);
 }
 
 /**

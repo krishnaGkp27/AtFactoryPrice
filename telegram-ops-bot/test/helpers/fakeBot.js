@@ -44,6 +44,19 @@ function createFakeBot() {
       record('sendPhoto', { chatId, photo, opts });
       return sent(chatId);
     },
+    /**
+     * CAT-P1 — albums. The real client answers with one message PER item,
+     * each carrying its own photo sizes, which is what callers read to
+     * collect message ids and cache file_ids. The fake must too.
+     */
+    async sendMediaGroup(chatId, media, opts) {
+      record('sendMediaGroup', { chatId, media, opts });
+      return (media || []).map((_, i) => ({
+        message_id: (messageId += 1),
+        chat: { id: chatId },
+        photo: [{ file_id: `album_${i}_small` }, { file_id: `album_${i}_large` }],
+      }));
+    },
     async sendDocument(chatId, doc, opts) {
       record('sendDocument', { chatId, doc, opts });
       return sent(chatId);
