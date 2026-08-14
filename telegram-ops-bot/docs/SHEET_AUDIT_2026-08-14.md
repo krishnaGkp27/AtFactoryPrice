@@ -68,6 +68,13 @@ a write that lands as text while old cells display through `mmmd` splits
 one container into two in every picker. Any future migration to real
 text labels is its own guarded one-off with the owner's sign-off.
 
+Owner clarification (14-Aug-2026, follow-up): the label is purely a
+month-of-offload marker to tell one container's goods from another's.
+Containers land at most about once a month, so **3-letter month +
+2-digit year ("Mar26") is the sufficient convention for now**; if
+offloads ever exceed one per month, labels graduate to an exact date
+carrying month and year. Keep new labels to that convention.
+
 ### F4 · Two customer phones lost their leading zero
 
 Customers rows 29–30: `9484774839`, `8030946228` — stored as numbers,
