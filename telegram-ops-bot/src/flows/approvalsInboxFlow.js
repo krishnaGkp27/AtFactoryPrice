@@ -41,6 +41,7 @@
  *   abx:close            end the flow → menu
  *   abx:back             step back one level
  *   abx:cat:<key>        open a category
+ *   abx:loc:<location>   LOC-1 — narrow sales to one city ('__all__' = every)
  *   abx:pg:<n>           page within a category
  *   abx:i:<idx>          open one request (index into session._items)
  *   abx:ok:<requestId>   → delegates to approve:<requestId> (APC-1: the id
@@ -328,6 +329,65 @@ function titleFor(key) {
   return meta ? meta.label : key;
 }
 
+/* ────────────── level 2a: location (LOC-1, sales only) ────────────── */
+
+/**
+ * LOC-1 (owner, 14-Aug-2026) — "add chips before this step to select the
+ * location since we are adding multiple locations now."
+ *
+ * Sales now span cities: Lagos (warehouses + the Lagos office store) and
+ * Kano (the Kano office store today, warehouses later). The inbox gains one
+ * level between the category and the list, driven by the Locations register
+ * — so adding a place is a sheet row, never a deploy.
+ *
+ * Shown ONLY when there is a real choice: a single location (today, until
+ * Lagos sales arrive) skips straight to the list, so the extra tap appears
+ * exactly when it starts earning its place. Unregistered places collect
+ * under one Unassigned chip — visible work, never hidden rows.
+ */
+async function renderLocations(bot, chatId, userId, items) {
+  const session = sessionStore.get(userId);
+  if (!session) return false;
+
+  let groups;
+  let places;
+  try {
+    const locationService = require('../services/locationService');
+    places = await locationService.allPlaces();
+    groups = await locationService.listLocations();
+  } catch (e) {
+    logger.warn(`approvalsInbox: location register read failed, skipping the picker: ${e.message}`);
+    return false; // the register is an ANNOTATION — never a gate
+  }
+
+  const locationService = require('../services/locationService');
+  const counted = groups
+    .map((g) => ({
+      ...g,
+      n: items.filter((it) => {
+        const { place } = saleWarehouses(it.actionJSON || {});
+        return locationService.placeIsIn(place, g.location, places);
+      }).length,
+    }))
+    .filter((g) => g.n > 0);
+
+  // Nothing to choose between → no extra tap.
+  if (counted.length <= 1) return false;
+
+  session.step = 'pick_location';
+  sessionStore.set(userId, session);
+  const rows = counted.map((g) => ([{
+    text: `${g.location === locationService.UNASSIGNED ? '❓' : '🏙'} ${g.label} — ${g.n}`,
+    callback_data: `abx:loc:${encodeURIComponent(g.location)}`,
+  }]));
+  rows.push([{ text: '🗂 All locations', callback_data: 'abx:loc:__all__' }]);
+  rows.push(backRow('⬅ Categories'));
+  rows.push(closeRow());
+  await render(bot, chatId, userId,
+    `${titleFor(session.category)} — *${items.length}* pending\n\nWhere?`, rows);
+  return true;
+}
+
 /* ───────────────────────── level 2: items ───────────────────────── */
 
 /**
@@ -348,6 +408,14 @@ function itemsForCategory(session, pending, dupIdx) {
   } else {
     list = pending.filter((p) => categoryOf(p) === session.category);
   }
+  // LOC-1 — a chosen location narrows the list to that city's places
+  // (warehouses AND stores). `_places` is the snapshot the picker resolved
+  // from, so paging never re-reads the register.
+  if (session.location && session.location !== '__all__') {
+    const locationService = require('../services/locationService');
+    list = list.filter((p) => locationService.placeIsIn(
+      saleWarehouses(p.actionJSON || {}).place, session.location, session._places || []));
+  }
   // Newest first (owner 31-Jul-2026) — recent requests are the ones a
   // requester is actively waiting on; the 🔴 age badges keep stale items
   // findable further down (and the Stale group still collects 3d+).
@@ -365,6 +433,85 @@ function itemsForCategory(session, pending, dupIdx) {
  * (owner 01-Aug: NOT the thans packed inside the bales). Telegram buttons
  * cannot be tinted — the dot emoji is the tint.
  */
+/**
+ * LOC-1 / SLC-1 — the place a SALE request ships from. sale_bundle carries
+ * per-item warehouses (TRF-INT4), the single-bale doors carry one. Mixed
+ * stores on one request are rare but real: the first is used for grouping
+ * and the chip says so.
+ * @returns {{place:string, mixed:boolean}}
+ */
+function saleWarehouses(aj) {
+  const names = [];
+  if (Array.isArray(aj && aj.items)) {
+    for (const it of aj.items) if (it && it.warehouse) names.push(String(it.warehouse));
+  }
+  if (aj && aj.warehouse) names.push(String(aj.warehouse));
+  const uniq = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
+  return { place: uniq[0] || '', mixed: uniq.length > 1 };
+}
+
+/**
+ * SLC-1 — the GOODS on a sale request, in the house B/t grammar, straight
+ * from the queued actionJSON (no Inventory read: this renders 8 chips a
+ * page and must stay cheap).
+ *   bales  = whole-bale items · thans = than items · yards = queued total
+ */
+function saleGoods(aj) {
+  let bales = 0;
+  let thans = 0;
+  const items = Array.isArray(aj && aj.items) ? aj.items : [];
+  for (const it of items) {
+    if (!it) continue;
+    if (it.type === 'than') thans += 1;
+    else bales += 1;
+  }
+  if (!items.length && aj) {
+    // sell_package / sell_than shapes carry one item inline.
+    if (aj.thanNo) thans += 1;
+    else if (aj.packageNo) bales += 1;
+  }
+  const yards = Math.round(Number(aj && aj.totalYards) || Number(aj && aj.yards) || 0);
+  return { bales, thans, yards };
+}
+
+/**
+ * SLC-1 (owner, 14-Aug-2026) — the sales chip.
+ *
+ * "Take reference from the indicators shown for transfer… since I can
+ * already see the list newest first, the colour indicator doesn't make
+ * sense." The age traffic-light and the created-date both restated the sort
+ * order, and "sale bale" repeated down all 45 rows. Following the transfer
+ * rule — the icon tells STATE, never age — a chip is now the STORE, the
+ * GOODS and WHO, and an icon appears only when something is unusual:
+ *
+ *   KAN · 3T · 90yd — Abdul            an ordinary sale
+ *   ⏪ 12-Feb · KAN · 2T — Abdul       backfill: the SALE date is what matters
+ *   ⚠️ KAN · 2B — Abdul                stock already gone (APF-2)
+ *   ⧉ IDU · 1B · 55yd — Abdul          possible duplicate (APX-2)
+ *   KAN · 4T · 120yd — Abdul · ⏳4d    quietly stale: age shows only at 3d+
+ */
+function saleChipLabel(it, who, { gone, dup } = {}) {
+  const aj = it.actionJSON || {};
+  const { place, mixed } = saleWarehouses(aj);
+  const { bales, thans, yards } = saleGoods(aj);
+  const marks = [];
+  if (dup) marks.push('⧉');
+  if (gone) marks.push('⚠️');
+  if (aj.backdated) marks.push('⏪');
+  const parts = [];
+  // A backfilled sale is filed under the day it HAPPENED, not the day it
+  // was typed — that date is the fact the approver is judging.
+  if (aj.backdated && aj.salesDate) parts.push(fmtDate.short(aj.salesDate));
+  parts.push(mixed ? 'MIXED' : (whCode(place) === '???' ? '—' : whCode(place)));
+  const qty = [bales ? `${bales}B` : '', thans ? `${thans}T` : ''].filter(Boolean).join(', ');
+  if (qty) parts.push(qty);
+  if (yards) parts.push(`${yards}yd`);
+  const days = ageDays(it.createdAt);
+  const tail = days >= 3 ? ` · ⏳${days}d` : '';
+  const head = marks.length ? `${marks.join('')} ` : '';
+  return `${head}${parts.join(' · ')} — ${who}${tail}`;
+}
+
 function whCode(w) {
   const letters = String(w || '').replace(/[^A-Za-z]/g, '').toUpperCase();
   return letters.slice(0, 3) || '???';
@@ -412,7 +559,7 @@ function transferChipLabel(it) {
   return parts.length ? `${dot} ${route} ·${parts.join(', ')}` : `${dot} ${route}`;
 }
 
-async function renderItems(bot, chatId, userId) {
+async function renderItems(bot, chatId, userId, opts = {}) {
   const session = sessionStore.get(userId);
   if (!session) return;
   let pending;
@@ -437,10 +584,26 @@ async function renderItems(bot, chatId, userId) {
     items.sort((a, b) => ts(b) - ts(a));
   }
   session._items = items;
+  // LOC-1 — sales get the location level first, unless the admin just
+  // chose one (or there is only one to choose).
+  if (session.category === 'sales' && !opts.skipLocationPicker && !session.location) {
+    try {
+      const locationService = require('../services/locationService');
+      session._places = await locationService.allPlaces();
+      sessionStore.set(userId, session);
+    } catch (_) { session._places = []; }
+    const shown = await renderLocations(bot, chatId, userId, items);
+    if (shown) return;
+  }
+
   session.step = 'pick_item';
   sessionStore.set(userId, session);
 
-  const title = titleFor(session.category);
+  const title = titleFor(session.category)
+    + (session.location && session.location !== '__all__'
+      ? ` · ${session.location === require('../services/locationService').UNASSIGNED
+        ? require('../services/locationService').UNASSIGNED_LABEL : session.location}`
+      : '');
 
   if (!items.length) {
     await render(bot, chatId, userId,
@@ -487,15 +650,21 @@ async function renderItems(bot, chatId, userId) {
     }
   }
 
+  const isSales = session.category === 'sales';
   const rows = slice.map((it) => {
     const i = items.indexOf(it);
     const days = ageDays(it.createdAt);
     const who = nameOf.get(String(it.user || '')) || it.user || '—';
-    const dup = dupIdx.has(String(it.requestId)) ? '⧉ ' : '';
-    const dot = goneByReq.has(String(it.requestId)) ? '⚠️' : ageDot(days);
-    const label = isTransfers
-      ? transferChipLabel(it)
-      : `${dup}${dot} ${shortDate(it.createdAt)} · ${actionLabel(it)} · ${who}`;
+    const dupd = dupIdx.has(String(it.requestId));
+    const gone = goneByReq.has(String(it.requestId));
+    let label;
+    if (isTransfers) label = transferChipLabel(it);
+    // SLC-1 — sales follow the transfer rule: store + goods + who, icons
+    // only for exceptions. Every other category keeps its dated chip.
+    else if (isSales) label = saleChipLabel(it, who, { gone, dup: dupd });
+    else {
+      label = `${dupd ? '⧉ ' : ''}${gone ? '⚠️' : ageDot(days)} ${shortDate(it.createdAt)} · ${actionLabel(it)} · ${who}`;
+    }
     return [{ text: label.slice(0, 60), callback_data: `${isTransfers ? 'abx:trf' : 'abx:i'}:${i}` }];
   });
   if (pages > 1) {
@@ -508,9 +677,20 @@ async function renderItems(bot, chatId, userId) {
   rows.push(backRow('⬅ Categories'));
   rows.push(closeRow());
 
-  const note = isTransfers
-    ? '\n🔴 requested · 🟡 in transit · 🟢 received · B bales · T thans — newest first\n_Not approvals — tap one to open its transfer card._'
-    : `\n🟢 new · 🟠 3d+ · 🔴 7d+ waiting${goneByReq.size ? ' · ⚠️ stock already gone — open it and use Mark as done / Reject' : ''}`;
+  let note;
+  if (isTransfers) {
+    note = '\n🔴 requested · 🟡 in transit · 🟢 received · B bales · T thans — newest first\n_Not approvals — tap one to open its transfer card._';
+  } else if (isSales) {
+    // SLC-1 — the legend names only what an icon MEANS; a bare chip is an
+    // ordinary sale. Exceptions are listed only when the page has one.
+    const marks = ['B bales · T thans'];
+    if (slice.some((it) => (it.actionJSON || {}).backdated)) marks.push('⏪ backdated (sale date shown)');
+    if (goneByReq.size) marks.push('⚠️ stock already gone — open it and use Mark as done / Reject');
+    if (slice.some((it) => dupIdx.has(String(it.requestId)))) marks.push('⧉ possible duplicate');
+    note = `\n${marks.join(' · ')} — newest first`;
+  } else {
+    note = `\n🟢 new · 🟠 3d+ · 🔴 7d+ waiting${goneByReq.size ? ' · ⚠️ stock already gone — open it and use Mark as done / Reject' : ''}`;
+  }
   const headCount = isTransfers
     ? (() => {
       const done = items.filter((it) => String(it.status || '').toLowerCase() === 'approved').length;
@@ -624,7 +804,9 @@ async function renderItem(bot, chatId, userId, idx) {
     logger.warn(`approvalsInbox: stock-gone button check failed for ${item.requestId}: ${e.message}`);
   }
   await render(bot, chatId, userId,
-    `${card}\n\n_Requested by ${who} · ${ageDot(days)}${days > 0 ? `${days}d` : 'today'} · ${approvalCards.shortRequestRef(item.requestId)}_${dualNote}${dupNote}`,
+    // SLC-1 — the age traffic-light left the chips, so it leaves the card
+    // footer too: one vocabulary, and age is a plain fact here.
+    `${card}\n\n_Requested by ${who} · ${days > 0 ? `${days}d ago` : 'today'} · ${approvalCards.shortRequestRef(item.requestId)}_${dualNote}${dupNote}`,
     [
       ...decisionRows,
       ...docRow,
@@ -803,6 +985,16 @@ async function handleCallback(bot, query) {
 
   if (data === 'abx:back') {
     if (session.step === 'view_item') { await renderItems(bot, cid, userId); return true; }
+    // LOC-1 — Back from a location-filtered list returns to the location
+    // chips, not all the way out to the categories.
+    if (session.step === 'pick_item' && session.category === 'sales' && session.location) {
+      session.location = '';
+      session.page = 0;
+      sessionStore.set(userId, session);
+      await renderItems(bot, cid, userId);
+      return true;
+    }
+    if (session.step === 'pick_location') { await renderCategories(bot, cid, userId); return true; }
     if (session.step === 'pick_item' && session.category) { await renderCategories(bot, cid, userId); return true; }
     await renderCategories(bot, cid, userId);
     return true;
@@ -811,8 +1003,18 @@ async function handleCallback(bot, query) {
   if (data.startsWith('abx:cat:')) {
     session.category = data.slice('abx:cat:'.length);
     session.page = 0;
+    session.location = '';           // LOC-1 — a fresh category asks again
     sessionStore.set(userId, session);
     await renderItems(bot, cid, userId);
+    return true;
+  }
+
+  // LOC-1 — a location chip narrows the sales list to that city's places.
+  if (data.startsWith('abx:loc:')) {
+    session.location = decodeURIComponent(data.slice('abx:loc:'.length));
+    session.page = 0;
+    sessionStore.set(userId, session);
+    await renderItems(bot, cid, userId, { skipLocationPicker: true });
     return true;
   }
 

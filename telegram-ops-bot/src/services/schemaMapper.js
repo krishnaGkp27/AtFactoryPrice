@@ -174,6 +174,15 @@ const REQUIRED_SHEETS = {
   CatalogLedger: {
     headers: ['LedgerId', 'Design', 'CatalogSize', 'Warehouse', 'Quantity', 'Action', 'RecipientType', 'RecipientName', 'Status', 'DateOut', 'DateReturned', 'RequestedBy', 'ApprovedBy', 'ApprovalRequestId', 'Notes', 'CreatedAt'],
   },
+  // LOC-1 (owner, 14-Aug-2026) — the register of PHYSICAL PLACES and the
+  // city each sits in. Until now a warehouse was only a name on Inventory
+  // rows: nothing recorded which location it belongs to, or whether it is a
+  // warehouse or a (smaller, differently packaged) STORE. Annotation only —
+  // names still come from Inventory + WAREHOUSE_LIST, and a place missing
+  // here is bucketed as unassigned, never hidden.
+  Locations: {
+    headers: ['name', 'location', 'kind', 'status', 'notes', 'updated_by', 'updated_at'],
+  },
   Marketers: {
     headers: ['MarketerId', 'Name', 'Phone', 'Area', 'PersonPhotoFileId', 'PersonPhotoDriveId', 'CatalogPhotoFileId', 'CatalogPhotoDriveId', 'Status', 'ApprovedBy', 'ApprovalRequestId', 'Notes', 'CreatedAt'],
   },

@@ -123,6 +123,7 @@ session arrays, `cbSafe()` from `src/utils/telegramUI.js`).
 | `src/services/activityRegistry.js` | Menu hubs + tiles (single source of menu truth) |
 | `src/services/schemaMapper.js` | Startup sheet bootstrap (register new sheets here) |
 | `src/services/unitDisplayService.js` | TV-1/2 bales⇄thans display modes (Settings-driven) |
+| `src/services/locationService.js` + `src/repositories/locationsRepository.js` | LOC-1 place register: which city a warehouse/store sits in, and which kind it is |
 | `src/services/sessionJanitor.js` | SJ-1/2 stale-flow tombstoning |
 | `src/services/transferService.js` + `src/repositories/transfersRepository.js` | TRF-1 staged warehouse transfers (foundation; UI pending) |
 | `src/repositories/*.js` | One file per Google Sheet |
@@ -138,7 +139,7 @@ session arrays, `cbSafe()` from `src/utils/telegramUI.js`).
 `Samples`, `ApprovalQueue`, `Tasks`, `Contacts`, `ProductTypes`, `Settings`,
 `Receipts`, `AuditLog`, `DesignAssets`, `CatalogStock`, `CatalogLedger`,
 `Marketers`, `MarketerAllocations`, `UserPrefs`, `LedgerTransactions`,
-`LedgerBalanceCache`, `Transfers`, `GoodsReceipts`, `PendingUsers`.
+`LedgerBalanceCache`, `Transfers`, `GoodsReceipts`, `PendingUsers`, `Locations`.
 
 Inventory column W = `design_category` (Cashmere / Chinos / Gaberdine /
 Senator / TR / …), stamped per DESIGN by the dual-admin Set Design Category

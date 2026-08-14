@@ -91,8 +91,14 @@ test('APX-1: items are listed NEWEST first', async () => {
   await flow.handleCallback(bot, cb('abx:cat:sales', ADMIN));
   const items = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
   assert.equal(items.length, 2);
-  assert.match(items[0].text, /🟢/, `newest first — got: ${items.map((i) => i.text)}`);
-  assert.match(items[1].text, /🔴/, 'oldest last, still age-badged');
+  // SLC-1 (owner 14-Aug-2026) — the age traffic-light is gone from sales
+  // chips: "since I can already see the list newest first, the colour
+  // indicator doesn't make sense". Order is the index order itself, and
+  // only a chip 3d+ old carries a quiet ⏳ age tag.
+  assert.equal(items[0].callback_data, 'abx:i:0', 'newest is first');
+  assert.ok(!/🟢|🟠|🔴/.test(items[0].text), `no age dots on sales chips, got: ${items[0].text}`);
+  assert.ok(!/⏳/.test(items[0].text), 'a 1-day-old request is not tagged');
+  assert.match(items[1].text, /⏳11d/, 'the 11-day-old one still says so, quietly');
   sessionStore.clear(ADMIN);
 });
 
@@ -103,13 +109,19 @@ test('LBL-1: the chip speaks the owner\'s vocabulary — "sale bale", never "sal
   const bot = createFakeBot();
   await flow.start(bot, ADMIN, ADMIN, null);
   await flow.handleCallback(bot, cb('abx:cat:sales', ADMIN));
+  // SLC-1 — the SALES chips dropped the action word entirely (it repeated
+  // down every row); LBL-1's vocabulary still rules every other surface, so
+  // the rule is pinned on a category that still names its action.
+  await flow.handleCallback(bot, cb('abx:cat:crm', ADMIN));
   const items = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
+  assert.ok(items.length, 'the CRM group has chips');
+  assert.ok(!items.some((it) => /sale bundle/.test(it.text)), 'never the internal code');
+  assert.equal(approvalCards.actionLabel('sale_bundle'), 'sale bale', 'the vocabulary itself');
   for (const it of items) {
-    assert.match(it.text, /sale bale/, `chip must read "sale bale", got: ${it.text}`);
     assert.doesNotMatch(it.text, /bundle/, `no "bundle" on a chip, got: ${it.text}`);
   }
-  // Date · action · requester name — the format the owner confirmed.
-  assert.match(items[0].text, /^🟢 \d{2} \w{3} · sale bale · Abdul$/, `got: ${items[0].text}`);
+  // Non-sales chips keep the dated format: dot · date · action · name.
+  assert.match(items[0].text, /^🟢 \d{2} \w{3} · add contact · John$/, `got: ${items[0].text}`);
   sessionStore.clear(ADMIN);
 });
 

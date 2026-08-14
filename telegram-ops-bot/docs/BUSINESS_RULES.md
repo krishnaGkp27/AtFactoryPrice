@@ -232,6 +232,20 @@ everywhere in the business rules.").**
 - A flow that cannot collect one of the three does not queue the sale — it
   asks again. A silent default is a wrong record nobody can spot later.
 
+## 6e · Places have a city and a kind
+
+**Locked 14-Aug-2026 (LOC-1).**
+
+- Every physical place is registered in the **Locations** sheet with its
+  `location` (city) and `kind`: a **warehouse** (bulk) or a **store**
+  (physically smaller, different supply packaging, sells in thans — e.g.
+  Lagos office, Kano office). Owner-edited; `planned` status declares a
+  place before it holds stock.
+- The register **annotates**, it never gates: place names still come from
+  Inventory and WAREHOUSE_LIST, and any place missing from the register is
+  shown under **Unassigned** — never hidden from a screen or a count.
+- A location groups its warehouses AND its stores together.
+
 ## 10 · Storage layering
 
 **Locked 16-Jul-2026 (owner rule; also in CLAUDE.md).**
