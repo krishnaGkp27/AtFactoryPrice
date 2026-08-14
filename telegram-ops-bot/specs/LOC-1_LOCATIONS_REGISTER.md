@@ -131,12 +131,60 @@ Everything else on the card is the already-shipped CARD-3 render.
 
 ---
 
+---
+
+## VRF-2 — the first rule that keys on `kind`
+
+**SHIPPED 14-Aug-2026.** Owner, on a screenshot of a Kano sale carrying
+*"🔬 Bill check — ⚠️ Could not read the attached bill (No bale rows
+recognised.)"*:
+
+> "Can you stop giving the approval check only for Kano office, especially
+> from any store. But keep it intact as it is from warehouse supply."
+
+VRF-1 OCRs an attached sales bill looking for **bale rows** and reconciles
+them against the request. A warehouse bill has them. A **store** bill does
+not — it sells in thans and its bill is handwritten, so the check could
+only ever return the same failure, on every single Kano sale. A warning
+that fires every time is worse than no warning: it trains the eye to skip
+the 🔬 line, which is exactly the line that matters on a warehouse sale.
+
+So `saleDocVerifyService.maybeVerify` now declines a request whose origin
+is a store — before the download and before the vision call, so the OCR
+read is saved rather than spent and discarded. **The bill stays mandatory
+(§9b) and is still forwarded with the card**; only the machine read stops.
+
+It keys on `kind`, not on the name "Kano office", so Lagos office is
+covered the day its row says `store`. Every uncertain case fails towards
+checking:
+
+| Origin | Bill check |
+|---|---|
+| every place is a registered `store` | **skipped** |
+| any warehouse — including store + warehouse on one request | runs |
+| place not in the register | runs (`kindOf` defaults to warehouse) |
+| Locations sheet unreachable | runs |
+
+That last row is the point of the design: a missing row or a sheet outage
+must never be what quietly disables a verification.
+
+One consequence for the owner: **the skip only takes effect once
+`Kano office | Kano | store | active` exists in the Locations sheet.**
+Until then every place reads as a warehouse and the check keeps running.
+
+`placesInAction(aj)` — the "which place does this request ship from?"
+reader — moved into `locationService` in the same change, because the
+inbox chips and the bill check now both ask it and a second copy would
+drift.
+
 ## Files
 
 `repositories/locationsRepository.js` (new) · `services/locationService.js`
-(new) · `services/schemaMapper.js` (register the sheet) ·
+(new; VRF-2 adds `placesInAction` + `shipsOnlyFromStores`) ·
+`services/schemaMapper.js` (register the sheet) ·
 `flows/approvalsInboxFlow.js` (location level, `abx:loc:` callback, sale
-chip grammar, legend, footer).
+chip grammar, legend, footer; `saleWarehouses` now delegates) ·
+`services/saleDocVerifyService.js` (VRF-2 store gate).
 
 ## Tests
 

@@ -58,6 +58,7 @@ const approvalQueueRepository = require('../repositories/approvalQueueRepository
 const approvalCards = require('../services/approvalCards');
 const settingsRepository = require('../repositories/settingsRepository');
 const { duplicateIndex } = require('../utils/duplicateApprovals');
+const locationService = require('../services/locationService');
 const config = require('../config');
 const logger = require('../utils/logger');
 
@@ -352,7 +353,6 @@ async function renderLocations(bot, chatId, userId, items) {
   let groups;
   let places;
   try {
-    const locationService = require('../services/locationService');
     places = await locationService.allPlaces();
     groups = await locationService.listLocations();
   } catch (e) {
@@ -360,7 +360,6 @@ async function renderLocations(bot, chatId, userId, items) {
     return false; // the register is an ANNOTATION — never a gate
   }
 
-  const locationService = require('../services/locationService');
   const counted = groups
     .map((g) => ({
       ...g,
@@ -412,7 +411,6 @@ function itemsForCategory(session, pending, dupIdx) {
   // (warehouses AND stores). `_places` is the snapshot the picker resolved
   // from, so paging never re-reads the register.
   if (session.location && session.location !== '__all__') {
-    const locationService = require('../services/locationService');
     list = list.filter((p) => locationService.placeIsIn(
       saleWarehouses(p.actionJSON || {}).place, session.location, session._places || []));
   }
@@ -441,13 +439,10 @@ function itemsForCategory(session, pending, dupIdx) {
  * @returns {{place:string, mixed:boolean}}
  */
 function saleWarehouses(aj) {
-  const names = [];
-  if (Array.isArray(aj && aj.items)) {
-    for (const it of aj.items) if (it && it.warehouse) names.push(String(it.warehouse));
-  }
-  if (aj && aj.warehouse) names.push(String(aj.warehouse));
-  const uniq = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
-  return { place: uniq[0] || '', mixed: uniq.length > 1 };
+  // VRF-2 moved the body to locationService so the bill check and this
+  // screen read a request's origin the same way, from one definition.
+  const { place, mixed } = locationService.placesInAction(aj);
+  return { place, mixed };
 }
 
 /**
@@ -588,7 +583,6 @@ async function renderItems(bot, chatId, userId, opts = {}) {
   // chose one (or there is only one to choose).
   if (session.category === 'sales' && !opts.skipLocationPicker && !session.location) {
     try {
-      const locationService = require('../services/locationService');
       session._places = await locationService.allPlaces();
       sessionStore.set(userId, session);
     } catch (_) { session._places = []; }
@@ -601,8 +595,8 @@ async function renderItems(bot, chatId, userId, opts = {}) {
 
   const title = titleFor(session.category)
     + (session.location && session.location !== '__all__'
-      ? ` · ${session.location === require('../services/locationService').UNASSIGNED
-        ? require('../services/locationService').UNASSIGNED_LABEL : session.location}`
+      ? ` · ${session.location === locationService.UNASSIGNED
+        ? locationService.UNASSIGNED_LABEL : session.location}`
       : '');
 
   if (!items.length) {

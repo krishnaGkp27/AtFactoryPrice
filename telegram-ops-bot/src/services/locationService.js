@@ -139,7 +139,53 @@ async function kindOf(placeName) {
   return (hit && hit.kind) || 'warehouse';
 }
 
+/**
+ * The place(s) a queued request ships from, read off its actionJSON.
+ *
+ * One definition, because two screens now ask the same question and a
+ * second copy would drift: `sale_bundle` carries a warehouse per item
+ * (TRF-INT4) while the single-bale doors carry one on the request itself.
+ * A request spanning two places is rare but real — `mixed` says so rather
+ * than letting a caller silently pick the first.
+ *
+ * Pure and synchronous: no sheet read, so it is safe in a render loop.
+ *
+ * @returns {{place:string, places:string[], mixed:boolean}}
+ */
+function placesInAction(aj) {
+  const names = [];
+  if (Array.isArray(aj && aj.items)) {
+    for (const it of aj.items) if (it && it.warehouse) names.push(String(it.warehouse));
+  }
+  if (aj && aj.warehouse) names.push(String(aj.warehouse));
+  const places = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
+  return { place: places[0] || '', places, mixed: places.length > 1 };
+}
+
+/**
+ * True only when EVERY place a request ships from is a registered STORE.
+ *
+ * Deliberately strict, because callers use it to DROP a check (VRF-2's
+ * bill OCR). Three ways it answers false, all of them fail-safe:
+ *   - the request names no place at all;
+ *   - a place is not in the register (kindOf defaults to warehouse, so an
+ *     unregistered store keeps its checks until the owner registers it);
+ *   - the request spans a store AND a warehouse — the warehouse half is
+ *     still worth checking, so the whole request is.
+ */
+async function shipsOnlyFromStores(aj) {
+  const { places } = placesInAction(aj);
+  if (!places.length) return false;
+  // One register read for all the names, not one per name.
+  const known = await allPlaces();
+  return places.every((n) => {
+    const hit = known.find((p) => norm(p.name) === norm(n));
+    return ((hit && hit.kind) || 'warehouse') === 'store';
+  });
+}
+
 module.exports = {
   UNASSIGNED, UNASSIGNED_LABEL,
   allPlaces, locationOf, listLocations, placeIsIn, kindOf,
+  placesInAction, shipsOnlyFromStores,
 };

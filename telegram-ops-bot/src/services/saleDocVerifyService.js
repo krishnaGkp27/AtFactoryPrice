@@ -41,6 +41,7 @@ const settingsRepository = require('../repositories/settingsRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const designAssetsRepository = require('../repositories/designAssetsRepository');
+const locationService = require('./locationService');
 
 const SALE_ACTIONS = ['sell_than', 'sell_package', 'sale_bundle'];
 const QTY_TOLERANCE = 0.15; // OCR + meters→yards rounding slack
@@ -363,6 +364,28 @@ async function maybeVerify(bot, requestId, opts = {}) {
     let settings = {};
     try { settings = await settingsRepository.getAll(); } catch { settings = {}; }
     if (Number(settings.PDF_VERIFY_ENABLED ?? 1) !== 1) return false;
+    // VRF-2 (owner 14-Aug-2026): "stop giving the approval check from any
+    // store, but keep it intact from warehouse supply." A STORE sells in
+    // thans and its bill is a handwritten than-receipt with no bale rows
+    // printed on it, so this bale-row OCR can only ever answer "No bale
+    // rows recognised" — the identical false warning on every Kano office
+    // sale, which trains the eye to ignore the one that matters. Warehouse
+    // bills DO list bale numbers, so the check stays whole there.
+    // The bill itself is still mandatory and still forwarded with the card;
+    // only the automated read is dropped, and only where it cannot work.
+    // Its own try, deliberately: this function's outer catch returns false,
+    // so an exception escaping the lookup would SKIP the check — the exact
+    // opposite of the rule. Only a positive answer may drop it.
+    let storeOnly = false;
+    try {
+      storeOnly = await locationService.shipsOnlyFromStores(aj);
+    } catch (e) {
+      logger.warn(`saleDocVerify ${requestId}: place lookup failed, checking anyway: ${e.message}`);
+    }
+    if (storeOnly) {
+      logger.info(`saleDocVerify ${requestId}: store-origin sale — bill check skipped (VRF-2)`);
+      return false;
+    }
 
     const { downloadTelegramFile } = require('../utils/telegramFiles');
     const vision = require('./vision');

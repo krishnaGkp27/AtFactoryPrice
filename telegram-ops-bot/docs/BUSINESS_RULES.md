@@ -231,6 +231,19 @@ everywhere in the business rules.").**
   card and stamped on the record (owner rule, 21-Jul).
 - A flow that cannot collect one of the three does not queue the sale — it
   asks again. A silent default is a wrong record nobody can spot later.
+- **The AUTOMATED bill check is warehouse-only** (VRF-2, owner 14-Aug-2026:
+  *"stop giving the approval check from any store, but keep it intact from
+  warehouse supply"*). A warehouse bill lists bale numbers, so the OCR can
+  reconcile it against the request. A store's bill is a handwritten
+  than-receipt with no bale rows on it, so the same check could only ever
+  answer "No bale rows recognised" — a false warning on every store sale,
+  which teaches the eye to skip the 🔬 line and costs the warehouse checks
+  their meaning. **The bill itself stays mandatory and is still forwarded
+  with the card for every sale, store included** — only the machine read is
+  dropped, and only where it cannot work. A request spanning a store and a
+  warehouse is still checked, and an unregistered place is treated as a
+  warehouse: the check is never lost to a missing row or an unreachable
+  sheet.
 
 ## 6e · Places have a city and a kind
 
@@ -245,6 +258,12 @@ everywhere in the business rules.").**
   Inventory and WAREHOUSE_LIST, and any place missing from the register is
   shown under **Unassigned** — never hidden from a screen or a count.
 - A location groups its warehouses AND its stores together.
+- **`kind` carries consequences, so registering a place is a real act.**
+  It already decides whether a sale's bill gets the automated OCR check
+  (§9b). Any rule that keys on `kind` must fail TOWARDS the warehouse
+  behaviour, because an unregistered place and an unreachable register
+  both read as `warehouse` — a missing row may never be what silently
+  disables a check.
 
 ## 10 · Storage layering
 
