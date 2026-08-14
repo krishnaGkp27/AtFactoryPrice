@@ -40,9 +40,9 @@ test('legitimate business values are untouched (no silent retyping)', () => {
     '9043-B', 'Kano office', 'madam oshodi cashmere', 'SA/2521', 'BK/1',
     // numbers Sheets must keep typing as numbers
     '30', '4826.5', '0',
-    // negative adjustments and phone numbers both start with a formula lead
-    // character but parse as finite numbers, so their storage is unchanged
-    '-5', '-12.75', '+2348012345678',
+    // a negative adjustment starts with a formula lead character but is a
+    // real number, so its storage is unchanged
+    '-5', '-12.75',
     // ISO + local dates
     '2026-07-25', '25-07-2026',
     // already-escaped values (settingsRepository does this itself)
@@ -51,6 +51,22 @@ test('legitimate business values are untouched (no silent retyping)', () => {
   for (const v of safe) {
     assert.equal(sanitizeCell(v), v, `should NOT change: ${v}`);
   }
+});
+
+test('SHEET-FIX-3: an E.164 phone is stored as TEXT, so the + survives', () => {
+  // This pin is the REVERSE of what it was until 14-Aug-2026, and the
+  // owner's full-workbook export is why. "+2348012345678" parses as a
+  // finite number, so the guard used to wave it through — and
+  // USER_ENTERED then stored the integer 2348012345678, destroying the
+  // leading +. Nine of the eleven phones in the live sheet are bare
+  // integers because of it, none of them tappable, which is exactly what
+  // the owner's "+234 for one-tap call on any messenger" ruling needs.
+  assert.equal(sanitizeCell('+2348012345678'), "'+2348012345678");
+  assert.equal(sanitizeCell('+2349484774839'), "'+2349484774839");
+  // Narrow on purpose: + then digits only. A signed quantity is not a phone.
+  assert.equal(sanitizeCell('+5'), '+5', 'too short to be a phone — still a number');
+  assert.equal(sanitizeCell('+234-801-2345678'), "'+234-801-2345678",
+    'punctuated forms are not E.164, and the formula guard escapes them anyway');
 });
 
 test('non-strings and empties pass through by identity', () => {

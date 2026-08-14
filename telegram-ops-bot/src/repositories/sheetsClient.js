@@ -72,23 +72,40 @@ const spreadsheetId = () => config.sheets.sheetId;
 const FORMULA_LEAD = /^[=+\-@\t\r]/;
 
 /**
+ * SHEET-FIX-3 (owner audit, 14-Aug-2026) — an E.164 phone is TEXT.
+ *
+ * `+2348066725502` parses as a finite number, so the rule below waved it
+ * through unescaped and `USER_ENTERED` stored the integer 2348066725502 —
+ * the leading `+` destroyed on write. The owner's export proves it: nine
+ * of eleven stored phones are bare integers, not one of them tappable,
+ * and two lost a leading zero the same way.
+ *
+ * The owner's ruling ("append +234 for perfect integration with one-tap
+ * call on any messenger") is only deliverable if the `+` survives, so an
+ * E.164-shaped string is escaped to text. Deliberately narrow: `+` then
+ * 6-15 digits and nothing else, which is a phone and never a quantity.
+ */
+const E164 = /^\+\d{6,15}$/;
+
+/**
  * Neutralise a single cell value if — and only if — it is a string that
- * Sheets would evaluate as a formula.
+ * Sheets would evaluate as a formula, or an E.164 phone Sheets would
+ * silently turn into a number.
  *
  * Deliberately NOT touched, so existing data keeps its exact typing:
  *  - non-strings (numbers/booleans/null) — never formulas;
- *  - anything numeric, including "-5" and "+2348012345678" (a phone number
- *    parses as a finite number, so its storage is unchanged);
+ *  - plain numerics such as "-5" (a signed quantity stays a number);
  *  - values already apostrophe-escaped by a caller (settingsRepository).
  *
  * @param {*} v raw cell value
- * @returns {*} the value, apostrophe-escaped when it would evaluate
+ * @returns {*} the value, apostrophe-escaped when it would evaluate or coerce
  */
 function sanitizeCell(v) {
   if (typeof v !== 'string' || !v) return v;
   if (v[0] === "'") return v;
+  if (E164.test(v)) return `'${v}`; // keep the + — see above
   if (!FORMULA_LEAD.test(v)) return v;
-  if (Number.isFinite(Number(v))) return v; // "-5", "+234…" stay numeric
+  if (Number.isFinite(Number(v))) return v; // "-5" stays numeric
   return `'${v}`;
 }
 
