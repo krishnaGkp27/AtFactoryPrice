@@ -136,26 +136,54 @@ future genuinely-replaced pages.
    Onboard as employee / Link to existing customer (CUS-1 pick chips, no
    free text) / Add to network (CNET placement) / Ignore.
 
-## Build queue (in order)
+## Build queue — ALL SHIPPED 14-Aug-2026
 
-1. **SHEET-FIX-1 — structure**: schemaMapper heals header WIDTH (appends
-   missing trailing headers on existing sheets: Contacts→12,
-   Customers→13, Ledger_Entries→11, Transactions col S name, AuditLog
-   col F name per their repos); `appendRows` anchors at `A1` instead of
-   `A:Z` (also removes the silent 26-column cap Inventory is 2 columns
-   from hitting); regression tests across appending repos.
-2. **SHEET-FIX-2 — Contacts repair one-off**: re-lay the staircase into
-   A–L (5 records), clear junk cells, Mr femi dup → inactive, `+234…`
-   phone repair on Customers rows 29–30. Dry-run → `--commit`.
-3. **SHEET-FIX-3 — writer elegance**: coercion-proof writes for id/phone
-   fields (text-quoted); Contacts `updated_by` stores the person's NAME;
-   Contacts timestamps write `YYYY-MM-DD HH:MM` Lagos (sortable AND
-   readable); stop writing "CNET shadow node (auto)" robot notes.
-4. **IDR-1 — identity register**: the five end-columns + one
-   identityService as the single read/write door.
-5. **IDR-2 — triage card**: four buttons + first-message quote + Ignore
-   wording fix. Approval-gated exactly like today (customer link and
-   network placement ride existing pipelines).
+1. ✅ **SHEET-FIX-1** (`cdbbaad`) — `healHeaderWidth` in schemaMapper
+   (generic, guards: empty read = failed read; append-only; strict-prefix
+   or hands off) + `appendRows` anchored at `A1`.
+2. ✅ **SHEET-FIX-2** (`3b9dddd`) — `scripts/repair-contacts-staircase.js`
+   (staircase re-lay + Mr femi dup → inactive + phone repair; dry-run
+   default). **⚠️ NOT YET RUN against the live sheet — owner step below.**
+3. ✅ **SHEET-FIX-3** (same commit) — E.164 phones write as TEXT so the
+   `+` survives (sanitizeCell; reversed a SEC-FI1 pin, reason recorded in
+   `sheetsClient.formulaGuard.test.js`). Note: the SHEET-FIX-3 items
+   "updated_by stores NAME" and "no robot notes / Lagos timestamps in
+   Contacts" were NOT built — superseded in priority by the phone-plus
+   discovery; still open, listed below.
+4. ✅ **IDR-1** (`6d74e40`) — PendingUsers J–N link columns +
+   `identityService` (spec: `specs/IDR-1_IDENTITY_REGISTER.md`).
+5. ✅ **IDR-2** (same commit) — four-chip triage card, first-message
+   quote, every-stranger capture, solid-record link pickers.
 
-Every step: spec'd decisions above, tests, `npm test` + `npm run smoke`
-+ `npm run lint` 0 errors, one task one commit, deploy per house rule.
+---
+
+## State at pause (14-Aug-2026, session close-out)
+
+**Owner steps pending (in order):**
+1. Confirm the bot redeployed (header heal runs at boot), then run
+   `node scripts/repair-contacts-staircase.js` (dry-run) → `--commit`.
+   Until then Solomon, Obinna and both Mr femi Contacts rows stay
+   invisible to pickers/network.
+2. `node scripts/format-date-columns.js --commit` (SDN-2 display half;
+   read-side normaliser is live, so it is safe) — if not already run.
+3. Seed the `Locations` sheet (`Kano office | Kano | store | active` …)
+   — until then VRF-2's store bill-check skip does not take effect.
+4. Upload 9037's two catalogue photos (second gets "Add as page 2");
+   test the album picker.
+5. Test the new-user triage live (fresh account → four-chip card).
+
+**Awaiting owner ruling:**
+- AuditLog column D is HEADED "Module" but the writer puts the USER ID
+  there (211+ rows). Fix = header rename → needs explicit sign-off.
+- Contacts writer elegance leftovers (see item 3 above): `updated_by` as
+  name-not-id, human-readable Contacts timestamps, drop "CNET shadow
+  node (auto)" notes text.
+
+**Open feature discussions (owner-initiated, not started):**
+- Sales approval card layout redesign + "process pipeline channel" — my
+  4 clarifying questions were never answered (what "status" means on the
+  card; triage vs history; Telegram channel?; what must not appear
+  publicly).
+- INV-SEND (invoice → WhatsApp/Telegram, low priority):
+  `specs/INV-SEND_RESEARCH.md`. IDR-1's `telegramIdFor()` now provides
+  the customer→chat lookup it was missing.
