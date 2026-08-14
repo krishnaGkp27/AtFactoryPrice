@@ -378,6 +378,52 @@ const AUDIT_EXTENDED_HEADERS = ['Module', 'ReferenceId'];
 
 let schemaCache = null;
 
+/**
+ * SHEET-FIX-1 — label the columns a sheet WRITES but does not NAME.
+ *
+ * Append-only and prefix-guarded; see the call site for why this exists.
+ * Never throws: a heal failure must not stop the bot from booting.
+ *
+ * @param {string} name    sheet/tab name
+ * @param {string[]} want  the full header row the code writes
+ */
+async function healHeaderWidth(name, want) {
+  if (!Array.isArray(want) || !want.length) return;
+  try {
+    const read = await sheets.readRange(name, `A1:${colLetter(want.length)}1`);
+    const have = ((read && read[0]) || []).map((v) => String(v ?? '').trim());
+    while (have.length && !have[have.length - 1]) have.pop();
+
+    // An empty read is a FAILED read, not "no columns yet" (INV-HDR2):
+    // treating it as empty would write the header from column A over
+    // live data. The sheet exists — that is why we are here.
+    if (!have.length) {
+      logger.warn(`SchemaMapper: "${name}" header row read back empty — skipping width heal rather than writing over column A`);
+      return;
+    }
+    if (have.length >= want.length) return;
+
+    // Only ever ADD names past the end. If what is there disagrees with
+    // what the code expects, a human reordered or renamed something and
+    // this must not "correct" it (owner rule: never rename a column).
+    const at = have.findIndex((h, i) => h !== want[i]);
+    if (at !== -1) {
+      logger.warn(`SchemaMapper: "${name}" header differs from the code's at column ${colLetter(at + 1)} ("${have[at]}" vs "${want[at]}") — left alone, needs a human look`);
+      return;
+    }
+
+    const missing = want.slice(have.length);
+    await sheets.updateRange(
+      name,
+      `${colLetter(have.length + 1)}1:${colLetter(want.length)}1`,
+      [missing],
+    );
+    logger.info(`SchemaMapper: labelled ${missing.length} unnamed column(s) on "${name}" (${missing.join(', ')})`);
+  } catch (e) {
+    logger.warn(`SchemaMapper: could not heal "${name}" header width — ${e.message}`);
+  }
+}
+
 async function initialize() {
   logger.info('SchemaMapper: detecting existing sheets...');
   const existing = await sheets.getSheetNames();
@@ -395,6 +441,44 @@ async function initialize() {
         logger.info(`SchemaMapper: seeded ${def.seed.length} default rows into "${name}"`);
       }
     }
+  }
+
+  // ── SHEET-FIX-1 (owner audit, 14-Aug-2026) — heal header WIDTH ────────
+  //
+  // Headers are written ONCE, at sheet creation. A sheet that already
+  // existed keeps its original header row forever, so every column a later
+  // feature added (CNET-1a's whatsapp…updated_at, CUS-1's aliases, the
+  // ledger's customer_id) has been landing under a BLANK header. The
+  // owner's full-workbook export showed the damage: Contacts 7 headers
+  // over 12-wide data, Customers 12 over 13, Ledger_Entries 10 over 11.
+  //
+  // That gap is not cosmetic — it is what fed the Contacts staircase.
+  // `values.append` detects a table, and a header narrower than the data
+  // leaves a hole for detection to latch onto, so appends walked right
+  // until four contacts sat outside the range every reader scans.
+  //
+  // Until now each instance was patched by hand-writing another block
+  // below (Transactions, Users, Departments, Tasks, StockTakes, Inventory,
+  // all after a bug). This loop is the general rule those blocks were
+  // approximating, so the next added column heals itself.
+  //
+  // Three guards, each earned:
+  //   - an EMPTY header read is a failed read, never "no columns" — the
+  //     INV-HDR2 lesson: writing from column 1 would overwrite PackageNo;
+  //   - APPEND-ONLY past the existing width. No cell that already has a
+  //     name is ever rewritten (owner rule: never rename a column);
+  //   - the existing header must be a strict PREFIX of the expected one.
+  //     Anything else means a human reordered or renamed columns, and the
+  //     sheet is left alone with a warning rather than "corrected".
+  for (const [name, def] of Object.entries(REQUIRED_SHEETS)) {
+    if (!existing.includes(name)) continue;
+    await healHeaderWidth(name, def.headers);
+  }
+  // Repo-owned sheets that schemaMapper does not create still drift the
+  // same way. Transactions carries CUS-1's `customer_id` in an unnamed
+  // column S today (18 named headers, 19 written values).
+  if (existing.includes('Transactions')) {
+    await healHeaderWidth('Transactions', require('../repositories/transactionsRepository').HEADERS);
   }
 
   // Extend Transactions sheet with sale detail columns if missing

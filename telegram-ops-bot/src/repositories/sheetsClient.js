@@ -109,12 +109,33 @@ async function readRange(sheetName, range) {
   }, `readRange(${sheetName})`);
 }
 
+/**
+ * SHEET-FIX-1 (owner audit, 14-Aug-2026) — append anchored at A1.
+ *
+ * `values.append` does not append "after the last row": it DETECTS a table
+ * inside the range you give it and appends after THAT. The old range here
+ * was `A:Z`, which let Sheets pick any table it found in those columns —
+ * so when a sheet's header row was narrower than its data (Contacts: 7
+ * headers over 12-wide rows, with a gap at H), detection latched onto the
+ * previous row's trailing block and each append landed further right than
+ * the last. Rows 3, 4, 5 of Contacts start at columns I, T and Z: four
+ * real contacts sitting outside the A:L range every reader scans, which
+ * is why an approved contact could not be found afterwards.
+ *
+ * `A1` is Google's documented anchor form: detection starts from A1, so
+ * the table is always the one that begins in column A. Paired with the
+ * header-width heal in schemaMapper (which removes the gap that confused
+ * detection in the first place), the drift cannot start again.
+ *
+ * It also drops a silent 26-column ceiling: `A:Z` cannot address column
+ * AA, and Inventory is already at 23 columns.
+ */
 async function appendRows(sheetName, rows) {
   const s = await getSheets();
   return withRetry(async () => {
     await s.spreadsheets.values.append({
       spreadsheetId: spreadsheetId(),
-      range: `${sheetName}!A:Z`,
+      range: `${sheetName}!A1`,
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: sanitizeRows(rows) },
