@@ -57,6 +57,30 @@ function str(v) { return (v ?? '').toString().trim(); }
 function num(v) { return parseFloat(v) || 0; }
 function upper(v) { return str(v).toUpperCase(); }
 
+/**
+ * SDN-2 (owner 14-Aug-2026) — a date COLUMN is read as whatever the cell
+ * DISPLAYS, so the sheet's number format decides what the bot parses.
+ *
+ * Sheets are read with the default FORMATTED_VALUE render, so a cell
+ * holding a real date renders through its own format: the same instant
+ * reads back `2026-08-06` in one row and `28-February-2026` in the next
+ * (the owner's screenshot). Every reader downstream compares these as ISO
+ * TEXT — `soldDate >= from` windows, `.slice(0, 10)` day keys, lexical
+ * sorts — so a day-monthname-year row silently fell out of sales windows
+ * and keyed the supply statement under "28-Februar".
+ *
+ * Normalising HERE, at the single door every Inventory row comes through,
+ * makes the cell's display format a free cosmetic choice: the owner can
+ * format the column however he likes and the bot still reads one ISO day.
+ * Unparseable text falls through unchanged rather than becoming empty — a
+ * sold row with an odd date must stay a sold row, not vanish from reports.
+ */
+function isoDay(raw) {
+  const s = str(raw);
+  if (!s) return '';
+  return normalizeSalesDate(s) || s;
+}
+
 function parseRow(r, rowIndex) {
   const rawUid = str(r[17]);
   const rawAddedAt = str(r[18]);
@@ -73,15 +97,20 @@ function parseRow(r, rowIndex) {
     status: str(r[7]).toLowerCase() || 'available',
     warehouse: str(r[8]),
     pricePerYard: num(r[9]),
-    dateReceived: str(r[10]),
+    // SDN-2 — both date columns pass through the same normaliser; column K
+    // matters too because `addedAt` below falls back to it.
+    dateReceived: isoDay(r[10]),
     soldTo: str(r[11]),
-    soldDate: str(r[12]),
+    soldDate: isoDay(r[12]),
     netMtrs: num(r[13]),
     netWeight: num(r[14]),
     updatedAt: str(r[15]),
     productType: str(r[16]) || 'fabric',
     baleUid: rawUid || `BAL-LEGACY-${rowIndex}`,
-    addedAt: rawAddedAt || str(r[10]) || '',
+    // SDN-2 — the fallback reads the NORMALISED column K, not the raw cell.
+    // `rawAddedAt` itself is left alone: it is a full timestamp, and running
+    // it through the day normaliser would throw its time away.
+    addedAt: rawAddedAt || isoDay(r[10]) || '',
     grnId: str(r[19]),
     binLocation: str(r[20]),
     arrivalBatch: str(r[21]),
