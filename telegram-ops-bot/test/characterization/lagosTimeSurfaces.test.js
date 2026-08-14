@@ -38,11 +38,13 @@ test('the onboarding card shows the Lagos wall-clock, not a raw ISO stamp', () =
 
 test('the card carries every fact it did before, in the CARD-3 grammar', () => {
   const t = card();
-  assert.match(t, /🆕 \*Unknown user sent \/start\*/);
+  // IDR-2 (14-Aug-2026): the heading widened from "/start" because the
+  // card now greets ANY first contact, not just a greeting.
+  assert.match(t, /🆕 \*Unknown user messaged the bot\*/);
   assert.match(t, /👤 Shreya Singh · no username/, 'name and handle fold onto one line');
   assert.match(t, /🆔 `8968542393`/, 'the id keeps its tap-to-copy monospace');
   // The instruction stays a full sentence — an instruction is never terse.
-  assert.match(t, /Onboard opens Add Employee.*Ignore marks it as spam\./);
+  assert.match(t, /Who are they\? Employee opens Add Employee.*remember this Telegram account for them\./s);
   // CARD-3: the four `Label:` prefixes are gone.
   for (const label of ['Name:', 'Telegram:', 'ID:', 'When:']) {
     assert.ok(!t.includes(label), `"${label}" label dropped`);

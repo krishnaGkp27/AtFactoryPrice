@@ -100,7 +100,8 @@ Major namespaces already taken:
 
 - Menus: `act:` (tiles; `act:__hub__:<id>`, `act:__back__` are session-free navigation)
 - Supply request: `srf_*` · legacy inline flows: `up*` (price), `tp*`/`tt*` (transfers), `rt*` (return), `sm*` (sample), `ac*` (add customer)
-- Flow modules: `gr:` `br:` `addstock:` `pr:` `wh:` `wai:` `bs:` `udf:` `sbl:` `lcost:` `bops:` `ofex:` `usr:` `umg:` `rol:` `atd:` `atd_rpt:` `atd_adm:` `tsk:` `nf:` `swv:` `pp:` `pu:` `cms:` `shr:` (share links) `oq/oc/od*` (orders) `rc*` (receipts)
+- Flow modules: `gr:` `br:` `addstock:` `pr:` `wh:` `wai:` `bs:` `udf:` `sbl:` `lcost:` `bops:` `ofex:` `usr:` `umg:` `rol:` `atd:` `atd_rpt:` `atd_adm:` `tsk:` `nf:` `swv:` `pp:` `pu:` (pending-user triage — IDR-2 adds
+  `pu:cust|net|link|linkcancel`) `cms:` `shr:` (share links) `oq/oc/od*` (orders) `rc*` (receipts)
 - Catalog: `csf:` `clf:` `crf:` `mkr:` `ctr:` `dab:` `das:` `dat:` `dap:` (incl.
   `dap:page:add|replace` — CAT-P1 add-a-page vs replace) `dam:` `dav:`
 - Approvals: `approve:` `reject:` `ctg:` (contact triage) `srf_acc/ack/dec/assign:` `smc:` `confirm_sale:` `cancel_sale:`

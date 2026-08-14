@@ -3738,24 +3738,20 @@ async function handleMessage(bot, msg) {
   const text = (msg.text || '').trim();
 
   if (!auth.isAllowed(userId)) {
-    // USR-C2 — strangers who tap /start (or just say hi) get captured into
-    // PendingUsers and an admin is notified, instead of seeing a curt
-    // "not authorized" message. Anyone else (an unknown sender pushing
-    // arbitrary text) still gets the polite-but-firm rejection so we
-    // don't spam admins with noise from drive-by traffic.
-    const looksLikeFirstContact = !text
-      || /^\/start\b/i.test(text)
-      || /^(hi|hello|hey)\b/i.test(text);
-    if (looksLikeFirstContact) {
-      try {
-        const pendingUserService = require('../services/pendingUserService');
-        await pendingUserService.captureStranger(bot, msg);
-      } catch (e) {
-        try { require('../utils/logger').warn(`captureStranger failed: ${e.message}`); } catch (_) {}
-      }
-      return;
+    // USR-C2 + IDR-2 (owner, 14-Aug-2026) — every stranger's FIRST contact
+    // is captured into PendingUsers and shown to an admin, whatever they
+    // typed. It used to be greetings only: someone who opened with a real
+    // request ("I want 5 bales of 9037") got a curt rejection and vanished
+    // without a trace, which is the exact person the business most wants
+    // to know about. The admin card quotes what they said, so a customer
+    // is distinguishable from noise at a glance, and the 10/hour global
+    // cap still keeps a spammer from flooding the feed.
+    try {
+      const pendingUserService = require('../services/pendingUserService');
+      await pendingUserService.captureStranger(bot, msg);
+    } catch (e) {
+      try { require('../utils/logger').warn(`captureStranger failed: ${e.message}`); } catch (_) {}
     }
-    await bot.sendMessage(chatId, 'You are not authorized to use this bot.');
     return;
   }
 
@@ -7183,6 +7179,46 @@ async function handleCallbackQuery(bot, callbackQuery) {
     const parts = data.split(':'); // pu, action, telegramId
     const action = parts[1];
     const targetId = parts[2] || '';
+    // IDR-2 — the chosen record from the link picker above.
+    if (action === 'linkcancel') {
+      sessionStore.clear(adminId);
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelled' });
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+        { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id }).catch(() => {});
+      return;
+    }
+    if (action === 'link') {
+      const session = sessionStore.get(adminId);
+      const pick = session && session._puLink && session._puLink.options[parseInt(targetId, 10)];
+      if (!pick) {
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'That list expired — open the card again.', show_alert: true });
+        return;
+      }
+      const { telegram_id: tgId, kind, who } = session._puLink;
+      const { mdEscape } = require('../utils/flowKit');
+      const identityService = require('../services/identityService');
+      const res = await identityService.link(tgId, { type: kind, id: pick.id, name: pick.name }, adminId);
+      sessionStore.clear(adminId);
+      if (!res.ok) {
+        await bot.answerCallbackQuery(callbackQuery.id, { text: `Failed: ${res.reason}`, show_alert: true });
+        return;
+      }
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Linked.' });
+      await bot.editMessageText(
+        `✅ *${mdEscape(who)}* is ${kind === 'customer' ? 'customer' : 'contact'} *${mdEscape(pick.name)}*\n`
+        + `🆔 \`${tgId}\` · \`${pick.id}\`\n\n`
+        + '_This Telegram account is now on record for them._',
+        {
+          chat_id: callbackQuery.message.chat.id,
+          message_id: callbackQuery.message.message_id,
+          parse_mode: 'Markdown',
+        }).catch(() => {});
+      try {
+        await auditLogRepository.append('user.identity_linked',
+          { telegram_id: tgId, link_type: kind, link_id: pick.id, link_name: pick.name }, adminId);
+      } catch (_) { /* best-effort */ }
+      return;
+    }
     const pendingUserService = require('../services/pendingUserService');
     if (action === 'ignore') {
       try { await pendingUserService.ignore(targetId, adminId); } catch (_) {}
@@ -7193,6 +7229,23 @@ async function handleCallbackQuery(bot, callbackQuery) {
         );
       } catch (_) {}
       await bot.answerCallbackQuery(callbackQuery.id, { text: 'Ignored.' });
+      return;
+    }
+    // IDR-2 (owner, 14-Aug-2026) — the two destinations that are NOT a
+    // hire. Both bind the account in the identity register so the
+    // business can reach that person on Telegram afterwards, which is the
+    // whole thing that was impossible before: an arriving customer could
+    // only be ignored and re-entered by hand, losing their chat forever.
+    if (action === 'cust' || action === 'net') {
+      const pendingUsersRepo = require('../repositories/pendingUsersRepository');
+      const pu = await pendingUsersRepo.findByTelegramId(targetId);
+      if (!pu) {
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Register row not found.', show_alert: true });
+        return;
+      }
+      await bot.answerCallbackQuery(callbackQuery.id);
+      await showPendingUserLinkPicker(bot, callbackQuery.message.chat.id, adminId, pu,
+        action === 'cust' ? 'customer' : 'contact');
       return;
     }
     if (action === 'onboard') {
@@ -12043,6 +12096,69 @@ async function maybeSendDesignPreview(bot, chatId, design, captionExtra, userId)
 }
 
 /** Helper: delete the active preview photo (if any) and clear the session ref. */
+/**
+ * IDR-2 — offer the existing people this Telegram account could BE.
+ *
+ * Solid records only, never free text (owner rule: "no recommendation, no
+ * guessing, only solid customers"), so the picker lists real CUS-1
+ * customers or real Contacts nodes and nothing else. The person's own
+ * name is used to sort likely matches to the top, but every record stays
+ * reachable — a guess must never hide the right answer.
+ *
+ * @param {'customer'|'contact'} kind
+ */
+async function showPendingUserLinkPicker(bot, chatId, adminId, pu, kind) {
+  const { mdEscape } = require('../utils/flowKit');
+  const who = [pu.first_name, pu.last_name].filter(Boolean).join(' ') || pu.username || pu.telegram_id;
+  let records = [];
+  try {
+    if (kind === 'customer') {
+      const rows = await require('../services/crmService').listCustomers();
+      records = (rows || [])
+        .filter((c) => (c.status || 'active') !== 'inactive')
+        .map((c) => ({ id: c.customer_id, name: c.name }));
+    } else {
+      const rows = await require('../repositories/contactsRepository').getAll();
+      records = (rows || [])
+        .filter((c) => (c.status || 'active') === 'active')
+        .map((c) => ({ id: c.contact_id, name: c.name }));
+    }
+  } catch (e) {
+    logger.warn(`pu link picker (${kind}): ${e.message}`);
+    await bot.sendMessage(chatId, `⚠️ Could not read the ${kind} list — try again in a moment.`);
+    return;
+  }
+  records = records.filter((r) => r.id && r.name);
+  if (!records.length) {
+    await bot.sendMessage(chatId,
+      `No ${kind} records exist yet, so there is nothing to link *${mdEscape(who)}* to.\n\n`
+      + `Create the ${kind} first, then link this account from 👥 Pending users.`,
+      { parse_mode: 'Markdown' });
+    return;
+  }
+
+  // Likely matches first — same words in the name — then everything else.
+  const needle = who.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  const score = (n) => needle.reduce((s, w) => s + (n.toLowerCase().includes(w) ? 1 : 0), 0);
+  records.sort((a, b) => score(b.name) - score(a.name) || a.name.localeCompare(b.name, 'en'));
+
+  const session = sessionStore.get(adminId) || {};
+  session.type = 'pu_link_flow';
+  session.step = 'pick';
+  session._puLink = { telegram_id: pu.telegram_id, kind, who, options: records.slice(0, 24) };
+  sessionStore.set(adminId, session);
+
+  const rows = session._puLink.options.map((r, i) => ([{
+    text: `${kind === 'customer' ? '🤝' : '🕸'} ${r.name}`.slice(0, 60),
+    callback_data: `pu:link:${i}`,
+  }]));
+  rows.push([{ text: '✖ Cancel', callback_data: 'pu:linkcancel' }]);
+  await bot.sendMessage(chatId,
+    `🔗 *Link ${mdEscape(who)}*\n🆔 \`${pu.telegram_id}\`\n\n`
+    + `Which ${kind} is this?${records.length > 24 ? `\n\n_Showing the first 24 of ${records.length}._` : ''}`,
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
 async function clearDesignPreview(bot, chatId, userId) {
   if (!userId) return;
   const session = sessionStore.get(userId);

@@ -252,11 +252,18 @@ const REQUIRED_SHEETS = {
   // USR-C2 — strangers who sent /start but aren't in the Users sheet yet.
   // Admin sees a notification with [Onboard] | [Ignore]; Onboard routes
   // into the dual-admin Add Employee flow (USR-C3).
+  // IDR-1 (owner, 14-Aug-2026) — this sheet is also the TELEGRAM IDENTITY
+  // REGISTER. The owner ruled that identity lives in ONE sheet and grows
+  // by columns, never blobs, so J–N record what each account IS
+  // (employee / customer / contact) instead of scattering a telegram_id
+  // column across Customers, Contacts and Marketers. The width heal in
+  // initialize() adds these to the live sheet on the next boot.
   PendingUsers: {
     headers: [
       'telegram_id', 'username', 'first_name', 'last_name',
       'arrived_at', 'status', 'last_notified_msg_id',
       'handled_by', 'handled_at',
+      'link_type', 'link_id', 'link_name', 'linked_by', 'linked_at',
     ],
   },
   // ATT-C1 — daily attendance log. One row per (date, telegram_id).

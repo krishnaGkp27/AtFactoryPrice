@@ -47,14 +47,25 @@ function message(fromId, text) {
   };
 }
 
-test('rejects an unknown user sending arbitrary text', async () => {
+test('IDR-2: an unknown user opening with a real request is CAPTURED, not turned away', async () => {
+  // This pin is the reverse of what it was until 14-Aug-2026. The curt
+  // rejection used to be sent to anyone whose first message was not a
+  // greeting — so a customer who opened with "I want 5 bales of 9037"
+  // vanished without a trace, which is the exact person the business most
+  // wants to know about. The owner ruled: capture them, and quote what
+  // they said on the admin card so a customer is distinguishable from
+  // noise at a glance.
   const bot = createFakeBot();
-  await controller.handleMessage(bot, message(STRANGER_ID, 'sell package 5801'));
+  await controller.handleMessage(bot, message(STRANGER_ID, 'I want 5 bales of 9037'));
 
-  const sends = bot.callsTo('sendMessage');
-  assert.equal(sends.length, 1);
-  assert.equal(sends[0].args.text, 'You are not authorized to use this bot.');
-  assert.equal(sends[0].args.chatId, STRANGER_ID);
+  assert.ok(!bot.allText().includes('not authorized to use this bot'),
+    'no curt rejection for a first contact, whatever they typed');
+  const toStranger = bot.callsTo('sendMessage').filter((c) => c.args.chatId === STRANGER_ID);
+  assert.equal(toStranger.length, 1, 'they get exactly one polite reply');
+  assert.match(toStranger[0].args.text, /not yet registered/i);
+  // …and an admin gets a card carrying what they actually asked for.
+  assert.match(bot.allText(), /I want 5 bales of 9037/,
+    'the opening message reaches the admin card — it is the whole triage signal');
 });
 
 test('does NOT send the rejection for first-contact greetings (stranger capture path)', async () => {

@@ -90,25 +90,58 @@ const fmtDate = require('../utils/formatDate');
  * affordance here — and the footer stays a full sentence, because an
  * instruction is the one thing that must never be terse.
  */
+/** How much of a stranger's opening message the card quotes. */
+const FIRST_MSG_MAX = 180;
+
 function _adminCard(entry) {
   const handle = entry.username ? `@${_mdEscape(entry.username)}` : 'no username';
   const name = _mdEscape([entry.first_name, entry.last_name].filter(Boolean).join(' '));
   const who = name ? `${name} · ${handle}` : handle;
+  // IDR-2 (owner, 14-Aug-2026) — quote what they actually said. A bare
+  // "/start" tells you nothing, but "I want 5 bales of 9037" tells you at
+  // a glance whether this is a customer, a marketer, or noise — which is
+  // the whole decision the chips below ask you to make.
+  const said = _firstMessageLine(entry.first_message);
   return (
-    '🆕 *Unknown user sent /start*\n\n'
+    '🆕 *Unknown user messaged the bot*\n\n'
     + `👤 ${who}\n`
     + `🆔 \`${entry.telegram_id}\`\n`
-    + `🕓 ${_mdEscape(fmtDate.withTime(entry.arrived_at))}\n\n`
-    + 'Onboard opens Add Employee with these details pre-filled; Ignore marks it as spam.'
+    + `🕓 ${_mdEscape(fmtDate.withTime(entry.arrived_at))}\n`
+    + said
+    + '\nWho are they? Employee opens Add Employee; the other two record them '
+    + 'and remember this Telegram account for them.'
   );
 }
 
+/** The quoted-message line, or '' for a bare greeting. */
+function _firstMessageLine(raw) {
+  const text = String(raw ?? '').trim();
+  if (!text) return '';
+  // A greeting or /start carries no information the card doesn't already
+  // show — quoting it would be noise on every ordinary first contact.
+  if (/^\/start\b/i.test(text) || /^(hi|hello|hey)[\s!.]*$/i.test(text)) return '';
+  const clipped = text.length > FIRST_MSG_MAX ? `${text.slice(0, FIRST_MSG_MAX)}…` : text;
+  return `💬 _${_mdEscape(clipped.replace(/\s+/g, ' '))}_\n`;
+}
+
+/**
+ * IDR-2 (owner, 14-Aug-2026) — the card is a TRIAGE, not a hire form.
+ *
+ * Until now the only door out of this card led to Add Employee, so an
+ * arriving CUSTOMER could only be ignored and re-entered by hand — and
+ * their Telegram identity was thrown away in the process. The owner's
+ * three destinations each get a chip; whichever is chosen, the account is
+ * bound in the identity register (IDR-1) so the business can reach that
+ * person on Telegram afterwards.
+ */
 function _adminCardKeyboard(telegramId) {
   return {
-    inline_keyboard: [[
-      { text: '✅ Onboard', callback_data: `pu:onboard:${telegramId}` },
-      { text: '🚫 Ignore',  callback_data: `pu:ignore:${telegramId}` },
-    ]],
+    inline_keyboard: [
+      [{ text: '👔 Onboard as employee', callback_data: `pu:onboard:${telegramId}` }],
+      [{ text: '🤝 Link to existing customer', callback_data: `pu:cust:${telegramId}` }],
+      [{ text: '🕸 Add to network', callback_data: `pu:net:${telegramId}` }],
+      [{ text: '🚫 Ignore', callback_data: `pu:ignore:${telegramId}` }],
+    ],
   };
 }
 
@@ -154,6 +187,10 @@ async function captureStranger(bot, msg) {
     last_name: msg.from.last_name || '',
     arrived_at: new Date().toISOString(),
     status: 'pending',
+    // IDR-2 — carried to the admin card only. Deliberately NOT persisted:
+    // the register holds identity, and a chat message is neither identity
+    // nor a business record (storage rule 5b).
+    first_message: msg.text || msg.caption || '',
   };
 
   // Upsert the PendingUsers row so the person shows up in the Add Employee
