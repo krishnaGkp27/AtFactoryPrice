@@ -95,12 +95,17 @@ Every degradation keeps the owner looking at a working picker:
 
 ## 9037 itself
 
-Its page 1 was marked `replaced` when page 2 was uploaded, so it needs
-turning back into a page once:
+**Corrected by the 14-Aug full-workbook audit** (see
+`docs/SHEET_AUDIT_2026-08-14.md` F7): DesignAssets has NO rows for 9037 —
+the two shade-card images were never uploaded, so there is nothing to
+restore. The owner simply uploads both images through catalogue upload;
+the second gets the "➕ Add as page 2" chip and the album appears.
+
+`catalog-pages.js` stays for future genuinely-replaced pages:
 
 ```
-node scripts/catalog-pages.js --design 9037                 # list the rows
-node scripts/catalog-pages.js --design 9037 --restore <row> --commit
+node scripts/catalog-pages.js --design <D>                 # list the rows
+node scripts/catalog-pages.js --design <D> --restore <row> --commit
 ```
 
 The script writes column J only, and only `replaced` → `active`.
