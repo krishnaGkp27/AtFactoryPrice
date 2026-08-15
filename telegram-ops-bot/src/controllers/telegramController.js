@@ -5308,6 +5308,19 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
     logger.warn(`buildGreetingMenuMarkup: attendance visibility failed: ${e.message}`);
   }
 
+  // PAY-1 — 💳 Payments is injected for EVERY user, not drawn from a
+  // department's allowed_activities. Asking for money you are owed is not
+  // a departmental duty: the owner's own system design lists "Abdul,
+  // Yarima, Shreya, John, other employees or contractor" as the people
+  // who raise these. Gating it behind a CSV would mean a new employee
+  // silently cannot ask to be paid until someone edits a sheet. Every
+  // write behind the tile is dual-admin approved, and the pickers show a
+  // person only their own registered account, so surfacing it costs
+  // nothing in safety.
+  for (const a of activityRegistry.filterByCodes(['payments'])) {
+    if (!allowed.find((x) => x.code === a.code)) allowed.push(a);
+  }
+
   if (!allowed.length) {
     return {
       empty: true,
@@ -5425,6 +5438,12 @@ async function renderHubSubmenu(bot, chatId, messageId, userId, hubId) {
     }
   } catch (e) {
     logger.warn(`renderHubSubmenu: taskFlow visibility failed: ${e.message}`);
+  }
+  // PAY-1 — same universal injection as the greeting menu, so the tile is
+  // still there when the Finance hub is opened rather than vanishing one
+  // level down.
+  for (const a of activityRegistry.filterByCodes(['payments'])) {
+    if (!allowed.find((x) => x.code === a.code)) allowed.push(a);
   }
   // A hub renders its visible child sub-hubs (each holding ≥1 allowed
   // activity) PLUS the activities that sit directly on it. Sub-hub tiles
