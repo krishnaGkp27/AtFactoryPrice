@@ -1,8 +1,14 @@
 # VRF-3 — the bill check keys on the GOODS: thans skip, bales verify
 
-**Status: SPEC LOCKED 15-Aug-2026 — owner confirmed the understanding,
-implementation assigned to the next "go".** Build from this document
-without re-asking.
+**Status: SHIPPED 15-Aug-2026.** Spec locked with the owner first, then
+built to it exactly.
+
+One addition found during the build (adversarial review of the diff): on a
+mixed sale, a bill row naming an excluded than's SOURCE bale matched
+nothing once the than lines were filtered out, so it would have surfaced
+as "on the bill but NOT in the request" — the same false alarm this
+feature removes, wearing a different icon. Those numbers are now excused
+from the extras list (`excusedPackageNos`).
 
 ## The owner's ruling (15-Aug-2026, with screenshot)
 
@@ -58,7 +64,7 @@ Pure bale sales (Lagos Sell Bale) verify as today · snap-source skip ·
 `PDF_VERIFY_ENABLED` kill-switch · VRF-2 store skip · bill mandatoriness
 at entry (§9b) · the unreadable-bill warning for sales that DO qualify.
 
-## Build steps (one commit)
+## Build steps (done)
 
 1. Goods classifier in `saleDocVerifyService` (pure, exported via
    `_internals`) + the gate before download, with a log line naming the

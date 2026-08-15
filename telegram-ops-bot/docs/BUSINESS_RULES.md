@@ -231,6 +231,18 @@ everywhere in the business rules.").**
   card and stamped on the record (owner rule, 21-Jul).
 - A flow that cannot collect one of the three does not queue the sale — it
   asks again. A silent default is a wrong record nobody can spot later.
+- **The AUTOMATED bill check needs a BALE to check** (VRF-3, owner
+  15-Aug-2026, on a screenshot of ten false ❌ lines: *"stop doing bill
+  checks for the sale which is made in thans… there is no use of wasting
+  the credit unless you find that there is a complete bale sold in the
+  approval card"*). A than's bill line carries no bale number, so the
+  bale-row OCR can only ever report every line missing — after paying for
+  the read. A **thans-only sale is never machine-checked**; a sale
+  carrying **any complete bale is**, and a **mixed** sale is checked on
+  its bale lines alone, with its thans named once so the verdict never
+  implies it covered more than it did. Goods that cannot be classified
+  are checked: uncertainty always degrades TOWARDS verifying. This rule
+  keys on the GOODS, so unlike §VRF-2 below it needs no sheet to work.
 - **The AUTOMATED bill check is warehouse-only** (VRF-2, owner 14-Aug-2026:
   *"stop giving the approval check from any store, but keep it intact from
   warehouse supply"*). A warehouse bill lists bale numbers, so the OCR can

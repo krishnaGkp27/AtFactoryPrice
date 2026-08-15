@@ -448,8 +448,15 @@ function docVerifyLine(aj) {
   const v = aj && aj.docVerify;
   if (!v) return '';
   const bad = (v.differs || 0) + (v.missing || 0) + (v.extra || 0);
+  // VRF-3 — a MIXED sale's thans are never compared (a than has no bale
+  // number on the bill). Without saying so the line renders a clean ✅ for
+  // a request that was only partly checked, which is a worse lie than the
+  // false ❌s this feature removed: the approver reads it as "all good".
+  const unchecked = Number(v.thanUnchecked) || 0;
+  const tail = unchecked ? ` · ${unchecked} than not checked` : '';
   return `\n🔬 Bill check: ${v.ok || 0} confirmed · ${v.differs || 0} differ · `
-    + `${v.missing || 0} missing · ${v.extra || 0} extra${bad ? ' ⚠️' : ' ✅'}`;
+    + `${v.missing || 0} missing · ${v.extra || 0} extra${tail}`
+    + `${bad ? ' ⚠️' : (unchecked ? ' ◍' : ' ✅')}`;
 }
 
 /** Card for a queued classic sale_bundle actionJSON. SAB-1: enriched from

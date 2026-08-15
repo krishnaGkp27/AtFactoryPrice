@@ -74,7 +74,15 @@ approvalQueueRepository.updateActionJSON = async () => true;
 const ROWS = new Map();
 approvalQueueRepository.getByRequestId = async (id) => ROWS.get(id) || null;
 
-/** A documented Kano-style than sale from `warehouses`. */
+/**
+ * A documented WHOLE-BALE sale shipping from `warehouses`.
+ *
+ * The goods are bales on purpose. This file pins the PLACE rule, and
+ * VRF-3 (15-Aug-2026) later gave the GOODS a rule of their own: a
+ * than-only sale is now skipped before the place is ever considered. With
+ * than fixtures these tests would still pass while proving nothing about
+ * VRF-2 — bales keep the place rule the only thing under test here.
+ */
 function sale(requestId, warehouses) {
   ROWS.set(requestId, {
     requestId,
@@ -86,9 +94,9 @@ function sale(requestId, warehouses) {
       sale_doc_file_id: `bill-${requestId}`,
       sale_doc_type: 'photo',
       items: warehouses.map((warehouse, i) => ({
-        type: 'than', packageNo: `90${i}`, thanNo: 1, warehouse, thans: 1, yards: 30,
+        type: 'package', packageNo: `90${i}`, warehouse, thans: 3, yards: 90,
       })),
-      totalYards: 30 * warehouses.length,
+      totalYards: 90 * warehouses.length,
     },
   });
   return requestId;

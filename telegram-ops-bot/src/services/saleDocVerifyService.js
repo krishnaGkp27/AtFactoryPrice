@@ -124,18 +124,88 @@ function editDistance(a, b) {
   return prev[n];
 }
 
-/** Request items in a uniform shape, whatever the sale action stores. */
+/**
+ * Is this line a LOOSE THAN rather than a whole bale?
+ *
+ * VRF-3 — the distinction decides whether a bill can be machine-read at
+ * all, so it is drawn the same way the sales inbox chips draw it
+ * (approvalsInboxFlow.saleGoods): an explicit `type`, else the presence
+ * of a than number on the line.
+ */
+function itemIsThan(i) {
+  if (!i) return false;
+  if (i.type) return String(i.type).toLowerCase() === 'than';
+  return i.thanNo !== undefined && i.thanNo !== null && String(i.thanNo).trim() !== '';
+}
+
+/**
+ * VRF-3 — does this request sell any bale ENTIRELY, even though its lines
+ * are written as thans?
+ *
+ * The bundle-sale door offers "📦 Take whole bale", and
+ * `bundleSaleService.buildApprovalPayload` writes every cart line as
+ * `type: 'than'` regardless — so a complete bale reaches the queue looking
+ * exactly like ten loose pieces. Judging on the line shape alone would
+ * skip the check on the very case the owner carved out ("unless you find
+ * that there is a complete bale sold in the approval card").
+ *
+ * So the lines are counted against the bale's real size in Inventory: a
+ * bale whose every than is in this request is being sold whole.
+ *
+ * @returns {Promise<Set<string>>} digits of the bales sold complete
+ */
+async function completeBalesAmongThans(thanItems) {
+  const wanted = new Map(); // bale digits → thans in THIS request
+  for (const it of thanItems) {
+    const k = digits(it.packageNo);
+    if (!k) continue;
+    wanted.set(k, (wanted.get(k) || 0) + 1);
+  }
+  if (!wanted.size) return new Set();
+  let inv;
+  try {
+    inv = await inventoryRepository.getAll();
+  } catch (e) {
+    // Cannot tell — fall back to the shape, which is the owner's own
+    // description of the problem case ("the sale which is made in thans").
+    // A rare Inventory outage must not resurrect the noise he asked us to
+    // remove; the bill still rides the card for his own eyes.
+    logger.warn(`saleDocVerify: Inventory read failed, judging goods by shape alone: ${e.message}`);
+    return new Set();
+  }
+  const size = new Map(); // bale digits → how many thans the bale has
+  for (const r of inv || []) {
+    const k = digits(r.packageNo);
+    if (!k || !wanted.has(k)) continue;
+    size.set(k, (size.get(k) || 0) + 1);
+  }
+  const complete = new Set();
+  for (const [k, n] of wanted) {
+    const total = size.get(k) || 0;
+    if (total && n >= total) complete.add(k);
+  }
+  return complete;
+}
+
+/**
+ * Request items in a uniform shape, whatever the sale action stores.
+ * Each carries `isThan` so VRF-3 can tell goods a bill can name from
+ * goods it cannot.
+ */
 function itemsFromActionJSON(aj) {
   if (Array.isArray(aj.items) && aj.items.length) {
     return aj.items.map((i) => ({
       packageNo: String(i.packageNo ?? ''), design: String(i.design ?? ''),
       shade: String(i.shade ?? ''), thans: Number(i.thans) || 0, yards: Number(i.yards) || 0,
+      isThan: itemIsThan(i),
     }));
   }
   if (aj.packageNo) {
+    // sell_than / sell_package carry their one line inline on the request.
     return [{
       packageNo: String(aj.packageNo), design: String(aj.design ?? ''),
       shade: String(aj.shade ?? ''), thans: Number(aj.thans) || 0, yards: Number(aj.yards) || 0,
+      isThan: itemIsThan(aj),
     }];
   }
   return [];
@@ -295,8 +365,41 @@ function compareItemsToLabels(items, labels, opts = {}) {
   return { results, extras };
 }
 
-/** Human verdict message. Long batches collapse the ✅ list to a count. */
-function buildVerdictMessage(requestId, results, extras) {
+/**
+ * VRF-3 — drop the bill rows that belong to goods this run is NOT
+ * comparing (the loose thans of a mixed sale).
+ *
+ * Done BEFORE the compare, not after it, because such a row is not merely
+ * an unwanted "extra": left in the pool it stays claimable, and the
+ * misread-pairing pass can hand it to a bale that is genuinely absent
+ * from the bill, turning a hard miss into a soft "matched by details".
+ * Suppressing it at the end would hide the false alarm while leaving that
+ * rescue in place.
+ *
+ * Numbers match the same suffix-tolerant way the primary matcher does
+ * ("P896" on the bill IS bale 896); exact equality here would let a
+ * prefixed row slip through and be reported anyway.
+ */
+function dropLabelsFor(labels, packageNos) {
+  const keys = [...(packageNos || [])].map(digits).filter(Boolean);
+  if (!keys.length) return labels;
+  return labels.filter((l) => {
+    const lD = digits(l.packageNo);
+    if (!lD) return true;
+    return !keys.some((k) => lD === k || lD.endsWith(k) || k.endsWith(lD));
+  });
+}
+
+
+/**
+ * Human verdict message. Long batches collapse the ✅ list to a count.
+ *
+ * @param {object} [opts]
+ * @param {number} [opts.thanExcluded] VRF-3 — loose thans on a mixed sale
+ *        that were deliberately left out of the compare. Named so the
+ *        verdict never silently implies it covered the whole request.
+ */
+function buildVerdictMessage(requestId, results, extras, opts = {}) {
   const ok = results.filter((r) => r.status === 'ok');
   const okPlain = ok.filter((r) => !(r.notes && r.notes.length));
   const okNoted = ok.filter((r) => r.notes && r.notes.length);
@@ -317,9 +420,19 @@ function buildVerdictMessage(requestId, results, extras) {
   }
   if (extras.length > 8) lines.push(`➕ …and ${extras.length - 8} more extra label(s)`);
   lines.push('');
+  const thanExcluded = Number(opts.thanExcluded) || 0;
+  if (thanExcluded) {
+    lines.push(`ℹ️ ${thanExcluded} than item(s) not machine-checked — a than has no bale number on the bill.`);
+  }
   lines.push(`Verdict: ${ok.length} confirmed · ${differs.length} differ · ${missing.length} missing · ${extras.length} extra`);
   if (differs.length || missing.length || extras.length) {
     lines.push('⚠️ Open the attached bill and compare before approving.');
+  } else if (thanExcluded) {
+    // VRF-3 — the closing sentence must not out-claim the comparison. A
+    // clean run on the bale lines of a MIXED sale has said nothing about
+    // the thans, and "the bill and the request agree" would be read as
+    // covering the whole request.
+    lines.push('The bale lines and the bill agree — the than items above were not compared.');
   } else {
     lines.push('The bill and the request agree.');
   }
@@ -387,6 +500,54 @@ async function maybeVerify(bot, requestId, opts = {}) {
       return false;
     }
 
+    // VRF-3 (owner 15-Aug-2026, with a screenshot of ten false ❌ lines):
+    // "Stop doing bill checks for the sale which is made in thans…
+    // selling in thans doesn't have detailed information in the image
+    // attached inside the PDF of the bill, therefore there is no use of
+    // wasting the credit unless you find that there is a complete bale
+    // sold in the approval card."
+    //
+    // A than sale's bill is a handwritten receipt: it names no bale
+    // numbers, so this bale-row OCR can only ever report every line as
+    // missing. Deciding on the GOODS rather than the place also makes the
+    // rule work today — VRF-2's store skip waits on a Locations sheet
+    // that is not seeded yet, so it never fired on the owner's Kano sale.
+    //
+    // The gate sits BEFORE the download and the vision call, so the OCR
+    // credit is genuinely saved rather than spent and then discarded.
+    const allItems = itemsFromActionJSON(aj);
+    const looseThans = allItems.filter((i) => i.isThan);
+    // A bale taken WHOLE through the bundle door still arrives as than
+    // lines, so the shape alone would skip the case the owner carved out.
+    // Inventory says which of those bales are going out complete.
+    const wholeFromThans = looseThans.length
+      ? await completeBalesAmongThans(looseThans)
+      : new Set();
+    // Those lines COLLAPSE to one item per bale: the bill carries a single
+    // row for the bale, so leaving five than lines standing would match the
+    // first and report the other four missing — the noise, rebuilt.
+    const collapsed = [];
+    for (const k of wholeFromThans) {
+      const lines = looseThans.filter((i) => digits(i.packageNo) === k);
+      if (!lines.length) continue;
+      collapsed.push({
+        packageNo: lines[0].packageNo,
+        design: lines.find((l) => l.design)?.design || '',
+        shade: lines.find((l) => l.shade)?.shade || '',
+        thans: lines.length,
+        yards: lines.reduce((s, l) => s + (Number(l.yards) || 0), 0),
+        isThan: false,
+      });
+    }
+    const baleItems = allItems.filter((i) => !i.isThan).concat(collapsed);
+    const thanItems = looseThans.filter((i) => !wholeFromThans.has(digits(i.packageNo)));
+    if (allItems.length && !baleItems.length) {
+      logger.info(`saleDocVerify ${requestId}: than-only sale (${thanItems.length} than item(s)) — bill check skipped (VRF-3)`);
+      return false;
+    }
+    // Goods that cannot be classified at all (a malformed actionJSON) still
+    // get checked: uncertainty degrades TOWARDS verifying, never away.
+
     const { downloadTelegramFile } = require('../utils/telegramFiles');
     const vision = require('./vision');
     const dl = await downloadTelegramFile(bot, aj.sale_doc_file_id);
@@ -405,10 +566,23 @@ async function maybeVerify(bot, requestId, opts = {}) {
       return true;
     }
 
-    const items = await enrichItems(itemsFromActionJSON(aj));
+    // VRF-3 — a MIXED sale (whole bales + loose thans) is checked on its
+    // BALE lines only. A than's bill line carries no bale number, so
+    // comparing it could only ever add a false "NOT found" beside real
+    // findings, which is what taught the owner to distrust the whole
+    // verdict. The thans are named once, quietly, so the reader knows
+    // what the verdict does NOT cover.
+    const toCheck = baleItems.length ? baleItems : allItems;
+    const items = await enrichItems(toCheck);
     const shadeCatalog = await loadShadeCatalog(items);
-    const { results, extras } = compareItemsToLabels(items, ocr.bales, { shadeCatalog });
-    const msg = buildVerdictMessage(requestId, results, extras);
+    // The excluded thans' own bill rows leave the pool entirely — see
+    // dropLabelsFor for why suppressing them later would not be enough.
+    const labels = baleItems.length
+      ? dropLabelsFor(ocr.bales, thanItems.map((i) => i.packageNo))
+      : ocr.bales;
+    const { results, extras } = compareItemsToLabels(items, labels, { shadeCatalog });
+    const msg = buildVerdictMessage(requestId, results, extras,
+      { thanExcluded: baleItems.length ? thanItems.length : 0 });
     // Persist the verdict on the queue row so pending views can surface it.
     try {
       await approvalQueueRepository.updateActionJSON(requestId, {
@@ -417,6 +591,9 @@ async function maybeVerify(bot, requestId, opts = {}) {
           differs: results.filter((r) => r.status === 'differs').length,
           missing: results.filter((r) => r.status === 'missing').length,
           extra: extras.length,
+          // VRF-3 — carried so the approval card cannot render a clean ✅
+          // for a request whose than items were never compared.
+          thanUnchecked: baleItems.length ? thanItems.length : 0,
           at: new Date().toISOString(),
         },
       });
@@ -433,6 +610,7 @@ module.exports = {
   maybeVerify,
   _internals: {
     compareItemsToLabels, itemsFromActionJSON, enrichItems, buildVerdictMessage, SALE_ACTIONS,
+    itemIsThan, dropLabelsFor, completeBalesAmongThans,
     compareShades, normShade, designPrefixMisread, editDistance, loadShadeCatalog,
   },
 };
