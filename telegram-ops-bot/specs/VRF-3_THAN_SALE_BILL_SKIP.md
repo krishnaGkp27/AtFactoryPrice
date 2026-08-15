@@ -79,3 +79,24 @@ at entry (§9b) · the unreadable-bill warning for sales that DO qualify.
    (no new namespace, no new sheet, no new toggle).
 5. Full gate (`npm test` + smoke + lint 0 errors) → commit → ff-push
    `main`.
+
+## Known trade-off (surfaced by the review, owner's call)
+
+Honouring the ruling literally — *"unless you find that there is a
+complete bale sold"* — means a **whole bale sold through the bundle door
+from Kano office is checked again**, and a Kano bill is handwritten, so
+that check will report "could not read the attached bill". The noise
+window is narrow (whole-bale sales only; loose thans, the ordinary Kano
+case, stay silent) and it **closes the moment the `Locations` sheet names
+Kano office as a `store`** — VRF-2 then declines it on the place, before
+the goods rule is consulted.
+
+That seeding is already the owner's step 0c. Until then the alternative
+would be to skip whole-bale sales too, which contradicts the ruling, so
+the noisier-but-obedient side was chosen deliberately.
+
+A cleaner long-term fix belongs upstream: `bundleSaleService.buildApprovalPayload`
+hardcodes `type: 'than'` on every cart line, so a bale taken whole loses
+that fact before it ever reaches the queue. A real whole-bale marker
+there would let every reader — this check, the inbox chips, the approval
+card's "Σ 8 than" — stop inferring it.
