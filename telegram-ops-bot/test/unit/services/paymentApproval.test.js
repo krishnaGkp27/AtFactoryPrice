@@ -47,8 +47,24 @@ async function execute(action, requestId, aj = {}) {
 }
 
 test('PAY-1: both money actions are ALWAYS dual-admin, whatever the amount', () => {
-  assert.ok(riskEvaluate.ALWAYS_APPROVAL_ACTIONS.includes('register_payment_account'));
-  assert.ok(riskEvaluate.ALWAYS_APPROVAL_ACTIONS.includes('request_payment'));
+  // This test used to assert ALWAYS membership only, and its name did the
+  // rest — which is how the gap survived a shipped feature: both actions
+  // were ALWAYS-gated but absent from DUAL_ADMIN_ACTIONS, so a SINGLE
+  // admin tap registered a payee account or released a payment. Assert the
+  // number of taps, not the list membership that is supposed to cause it.
+  for (const action of ['register_payment_account', 'request_payment']) {
+    assert.ok(riskEvaluate.ALWAYS_APPROVAL_ACTIONS.includes(action), `${action} ALWAYS-gated`);
+    assert.ok(riskEvaluate.DUAL_ADMIN_ACTIONS.includes(action), `${action} dual-admin`);
+    // An employee raises it → two DISTINCT admins must tap.
+    assert.equal(
+      riskEvaluate.requiredAdminApprovals({ action, requesterIsAdmin: false, adminCount: 3 }), 2,
+      `${action}: an employee request needs two admin taps`);
+    // An admin raises it → they count as the first signature, so one OTHER
+    // admin approves (self-approval is blocked by the SEC-P1 guard).
+    assert.equal(
+      riskEvaluate.requiredAdminApprovals({ action, requesterIsAdmin: true, adminCount: 3 }), 1,
+      `${action}: an admin requester still needs a second pair of eyes`);
+  }
 });
 
 test('PAY-1: approving a registration makes the account payable', async () => {

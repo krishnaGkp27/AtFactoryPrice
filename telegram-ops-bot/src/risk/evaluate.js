@@ -174,6 +174,15 @@ const DUAL_ADMIN_ACTIONS = [
   'add_bank', 'remove_bank',
   'record_office_expense', 'finalize_landed_cost',
   'confirm_bank_reconciliation',
+  // PAY-1 (owner mandate 14-Aug-2026, repaired 16-Aug-2026): "Account
+  // registration will go through dual admin approval. All other
+  // financial-related transactions will also follow the same." Both
+  // actions were added to ALWAYS_APPROVAL_ACTIONS with a comment there
+  // claiming they needed two admins — but they were never listed HERE,
+  // so requiredAdminApprovals() returned 1 and a single tap registered a
+  // payee account or released a payment. The comment was true; the code
+  // was not.
+  'register_payment_account', 'request_payment',
 ];
 
 /**
