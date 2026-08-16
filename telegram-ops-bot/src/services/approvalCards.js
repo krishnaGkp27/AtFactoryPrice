@@ -618,6 +618,48 @@ async function buildAddWarehouseCard(aj) {
   return text;
 }
 
+/**
+ * RMV-1 — the removal card. Two admins decide with the consequences in
+ * view, so this card's job is disclosure, not persuasion.
+ *
+ * CARD-3 grammar: a line only when it has something to say. The
+ * outstanding balance is BADGED, never a gate — the owner's decision 4,
+ * mirroring §13 where a threshold badges and does not block.
+ */
+function buildRemoveCustomerCard(aj) {
+  const removing = aj.action === 'remove_customer';
+  let text = removing
+    ? `🚪 Remove customer — ${aj.name || '?'}`
+    : `↩️ Restore customer — ${aj.name || '?'}`;
+
+  const bits = [];
+  if (aj.customer_id) bits.push(`🆔 ${aj.customer_id}`);
+  if (aj.phone) bits.push(`📞 ${aj.phone}`);
+  if (aj.category) bits.push(`🏷 ${aj.category}`);
+  if (bits.length) text += `\n${bits.join(' · ')}`;
+
+  const owed = Number(aj.outstanding_balance || 0);
+  if (owed > 0) {
+    text += `\n\n⚠️ *Owes ₦${owed.toLocaleString('en-NG')}* — removing them does not clear it, and their ledger stays on record.`;
+  }
+
+  if (aj.supply_count) {
+    text += `\n📦 ${aj.supply_count} supply record${aj.supply_count === 1 ? '' : 's'}`
+      + (aj.last_supply_date ? ` · last ${aj.last_supply_date}` : '')
+      + `\n_History is never rewritten — every sale stays exactly as recorded._`;
+  }
+  if (aj.network_children) {
+    text += `\n🕸 ${aj.network_children} person(s) sit under them in the network and will be left without a parent.`;
+  }
+
+  if (aj.reason) text += `\n\n📝 Reason: ${aj.reason}`;
+
+  text += removing
+    ? `\n\n_Two admins must approve. They keep their row and full history; they stop appearing in pickers, search and the network._`
+    : `\n\n_Two admins must approve. They return to pickers, search and the network._`;
+  return text;
+}
+
 async function buildCardFromActionJSON(aj) {
   if (!aj || typeof aj !== 'object') return 'pending action';
   try {
@@ -625,6 +667,7 @@ async function buildCardFromActionJSON(aj) {
     if (aj.action === 'sale_bundle') return await buildSaleBundleCard(aj);
     if (aj.action === 'supply_request') return buildSupplyRequestCard(aj);
     if (aj.action === 'add_contact') return buildAddContactCard(aj);
+    if (aj.action === 'remove_customer' || aj.action === 'restore_customer') return buildRemoveCustomerCard(aj);
     if (aj.action === 'add_warehouse') return await buildAddWarehouseCard(aj);
   } catch (_) { /* fall through to generic */ }
   const parts = [actionLabel(aj.action)];
@@ -711,6 +754,7 @@ module.exports = {
   buildReturnCard,
   buildSaleBundleCard,
   buildAddContactCard,
+  buildRemoveCustomerCard,
   keyboardForRequest,
   buildSupplyRequestCard,
   buildPaymentCard,

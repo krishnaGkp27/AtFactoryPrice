@@ -503,6 +503,77 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
         notes: aj.category || '',
       });
     } catch (_) { /* swallowed in service; second guard for safety */ }
+  } else if (aj.action === 'remove_customer' || aj.action === 'restore_customer') {
+    // RMV-1 (owner, 16-Aug-2026) — removal is a STATUS FLIP, never a
+    // deletion (§14). The bot has no row-delete primitive and must not
+    // gain one: the Inventory sold rows recording what this customer was
+    // supplied are history, and §12 forbids falsifying them.
+    //
+    // CON-1 made a customer exist in BOTH registers — the Customers row
+    // and a bound Contacts node. So removal moves BOTH. Flipping one and
+    // leaving the other re-opens the split-brain from the other side: a
+    // person gone from the customer list but still live in the network,
+    // or the reverse.
+    const removing = aj.action === 'remove_customer';
+    const customersRepo2 = require('../repositories/customersRepository');
+    const contactsRepo2 = require('../repositories/contactsRepository');
+
+    const all = await customersRepo2.getAll();
+    const target = all.find((c) => c.customer_id === String(aj.customer_id || ''));
+    if (!target) {
+      return { ok: false, message: `Customer ${aj.customer_id || '(no id)'} no longer exists — nothing was changed.` };
+    }
+    const isInactive = String(target.status || 'Active').trim().toLowerCase() === 'inactive';
+    // CUS-2 fail-loud: an approval must never report success for a no-op.
+    if (removing && isInactive) {
+      return { ok: false, message: `*${target.name}* was already removed — nothing was changed.` };
+    }
+    if (!removing && !isInactive) {
+      return { ok: false, message: `*${target.name}* is already active — nothing was changed.` };
+    }
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const reason = String(aj.reason || '').trim();
+    // §14 keeps the STATUS cell as machinery. The why goes to the queue row
+    // (permanent), the AuditLog, and a short dated stamp a human reading
+    // the sheet can follow — no new column (CLAUDE.md rule 4).
+    const noteStamp = removing
+      ? `[removed ${stamp}${reason ? `: ${reason}` : ''}]`
+      : `[restored ${stamp}${reason ? `: ${reason}` : ''}]`;
+    const notes = [String(target.notes || '').trim(), noteStamp].filter(Boolean).join(' ');
+
+    await customersRepo2.updateRow(target.customer_id, {
+      status: removing ? 'inactive' : 'Active',
+      notes,
+    });
+
+    // The bound node. Fire-and-forget: the register is already correct, so
+    // a node failure must not report the approval as failed — but it must
+    // be loud in the log, because the two registers are now out of step.
+    let nodeMoved = false;
+    try {
+      const node = await contactsRepo2.findByCustomerId(target.customer_id);
+      if (node) {
+        await contactsRepo2.update(node.contact_id,
+          { status: removing ? 'inactive' : 'active' }, approvedBy);
+        nodeMoved = true;
+      }
+    } catch (nodeErr) {
+      logger.error(`${aj.action}: contacts node not moved for ${target.name}: ${nodeErr.message}`);
+    }
+
+    await auditLogRepository.append(aj.action, {
+      customer_id: target.customer_id, name: target.name,
+      reason: reason || '(none given)', node_moved: nodeMoved,
+      outstanding_at_action: target.outstanding_balance || 0,
+    }, approvedBy);
+
+    // NOT an early return: the shared tail marks the queue row approved and
+    // writes the approval audit line. Returning here would leave the request
+    // pending for ever — a live card that a second admin could execute again.
+    customMessage = removing
+      ? `🚪 *${target.name}* removed.\nThey no longer appear in customer pickers, search or the network. Every sale on record is untouched.${nodeMoved ? '' : '\n\n⚠️ Their network node was not found — the customer list is correct, the network may still show them.'}`
+      : `↩️ *${target.name}* restored and active again.${nodeMoved ? '' : '\n\n⚠️ Their network node was not found — restore it from Contact Network if needed.'}`;
   } else if (aj.action === 'add_bank') {
     const settingsRepo2 = require('../repositories/settingsRepository');
     const all = await settingsRepo2.getAll();
@@ -1082,8 +1153,28 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     if (!tgId) return { ok: false, message: 'deactivate_user: telegram_id missing.' };
     const target = await usersRepo.findByUserId(tgId);
     if (!target) return { ok: false, message: `deactivate_user: ${tgId} not found.` };
-    if ((target.status || 'active') !== 'active') {
+    if (String(target.status || 'active').trim().toLowerCase() !== 'active') {
       return { ok: false, message: `deactivate_user: ${tgId} is already ${target.status}.` };
+    }
+    // RMV-1 (owner, 16-Aug-2026) — two guards the analysis found missing.
+    // The picker deliberately offers admins and the executor checked only
+    // "not found" / "already inactive", so nothing stopped an admin from
+    // removing themselves, or the business from being left with none.
+    if (tgId === String(item.user || '').trim()) {
+      return { ok: false, message: 'You cannot remove yourself. Ask another admin to raise it.' };
+    }
+    const isAdminRow = String(target.role || '').trim().toLowerCase() === 'admin';
+    if (isAdminRow) {
+      const remaining = (await usersRepo.getAll()).filter((u) =>
+        String(u.user_id || '') !== tgId
+        && String(u.role || '').trim().toLowerCase() === 'admin'
+        && String(u.status || 'active').trim().toLowerCase() === 'active');
+      // Env-held admins (config.access.adminIds) are not in the sheet at
+      // all and cannot be removed by this action, so they count as cover.
+      const envAdmins = (config.access.adminIds || []).map(String).filter((id) => id !== tgId);
+      if (!remaining.length && !envAdmins.length) {
+        return { ok: false, message: `Refusing: *${target.name || tgId}* is the last active admin. Promote someone else first.` };
+      }
     }
     await usersRepo.updateStatus(tgId, 'inactive');
     try { await auth.invalidate(); } catch (_) {}

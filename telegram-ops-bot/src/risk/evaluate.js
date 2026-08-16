@@ -24,6 +24,9 @@ const WRITE_ACTIONS = [
   'transfer_than', 'transfer_package', 'transfer_batch',
   // Bank management — settings writes, admin only in controller
   'add_bank', 'remove_bank',
+  // RMV-1 — taking a customer out of circulation, and putting them back.
+  // A status flip, never a deletion (§14): history is never rewritten.
+  'remove_customer', 'restore_customer',
   // User management — admin only in controller
   'add_user',
   // P2 — Goods Receipt Note (admin executes directly; employee routes
@@ -106,6 +109,12 @@ const ALWAYS_APPROVAL_ACTIONS = [
   // container charges + FX rate). Sealing wrong numbers cascades into
   // every margin report + sales decision, so always dual-admin.
   'finalize_landed_cost',
+  // RMV-1 (owner, 16-Aug-2026) — removing a person, and restoring one.
+  // Removal decides who may still be sold to and whose money surfaces
+  // stay live; restoring one puts them back. Both always need two admins,
+  // and both are in DUAL_ADMIN_ACTIONS below — §14 forbids the PAY-1
+  // shape where a comment claimed two admins and the matrix returned one.
+  'remove_customer', 'restore_customer',
   // PAY-1 (owner mandate, 14-Aug-2026): "all the financially related
   // transactions go through Dual Admin for now. This includes the first
   // one." Registering a payee account decides WHERE money may be sent —
@@ -183,6 +192,14 @@ const DUAL_ADMIN_ACTIONS = [
   // payee account or released a payment. The comment was true; the code
   // was not.
   'register_payment_account', 'request_payment',
+  // RMV-1 (owner, 16-Aug-2026) — taking a person out of circulation, and
+  // putting them back. `deactivate_user` is the EXISTING employee door and
+  // stays the only one; it joins this list rather than being duplicated by
+  // a second removal action, because two doors doing one job is the very
+  // thing the owner's standing rule forbids. Without it the two-admin gate
+  // on the customer side would be theatre: one admin could reach the same
+  // outcome through the employee door.
+  'remove_customer', 'restore_customer', 'deactivate_user',
 ];
 
 /**
