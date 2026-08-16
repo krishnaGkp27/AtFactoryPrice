@@ -365,6 +365,37 @@ sheet. Everything else, you can make a separate logging if not existing."*
   sale from both sides. The Particular opens the goods detail with its
   documents.
 
+### 12b · One door adds a person, and it asks WHAT KIND first
+
+**Owner, 15-Aug-2026** (after an Add Customer card arrived with no triage
+chips): *"Keep single entry of any user added in telegram. Add contact
+flow has perfect build in this situation. For any other addition contact
+will have sub-categories if-needed. All other employees still keep on
+added through railway variables."*
+
+- **One tile — ➕ Add Contact.** There is no second creation door. Its
+  first question is the KIND of person (🛒 Customer · 👷 Worker · 🤝 Agent
+  · 🚚 Supplier · 📎 Other) — the contact's own `type`, so nothing new is
+  stored.
+- **Sub-categories only when needed:** a Customer is asked trade category,
+  credit limit and payment terms; every other kind walks straight past
+  them. A card never carries an empty trade line.
+- **One shape leaves the door:** every person queues as `add_contact`, so
+  every person-card carries the CNET-2 triage chips. The `add_customer`
+  action stays in the enum, policy and executor so rows already pending
+  keep approving — it is simply no longer produced.
+- **A plain Approve HONOURS the requested kind.** A Customer-typed request
+  approved without touching a chip lands in BOTH registers (CRM row +
+  bound Contacts node). Silence used to mean "phonebook", which re-created
+  the very split-brain CNET-2 was built to end. Every other kind keeps the
+  phonebook default; the chips remain the admin's override.
+- **Both registers, always together.** Anything that creates a customer
+  creates its bound node in the same breath — the approval executor and
+  the admin ⚡ Quick Add one-liner alike. A customer with no node is a bug,
+  not a state.
+- **Employees are not here.** They keep arriving through the Railway
+  variables, the Add Employee door and the IDR-2 pending-user triage.
+
 ---
 
 ## Incident log (why these rules exist)
@@ -376,5 +407,6 @@ sheet. Everything else, you can make a separate logging if not existing."*
 | 02-Aug-2026 | Transfer 02Aug·01: typed 869/843/874/864/903, FIFO pre-pick logged 867/842/873/863/903 | §2, §4 (TRF-14/15, REP-2 repair) |
 | 02-Aug-2026 | Typed sale could flip a duplicated number in both warehouses | §6 (12e / TRF-INT4) |
 | 07-Aug-2026 | `/revert_packages` logged admin corrections as customer returns, all stamped with the first row's buyer | §6d (RET-2) |
+| 15-Aug-2026 | ➕ Add Customer queued a card with no triage chips: which card an admin saw depended on which of two doors the requester used, and an approved customer could exist with no network node | §12b (CON-1) |
 
 When an incident spawns a new rule: fix, spec, then add the rule HERE.

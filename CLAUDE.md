@@ -102,7 +102,9 @@ choosing a new namespace, `grep "startsWith('" src/controllers/telegramControlle
 Major namespaces already taken:
 
 - Menus: `act:` (tiles; `act:__hub__:<id>`, `act:__back__` are session-free navigation)
-- Supply request: `srf_*` · legacy inline flows: `up*` (price), `tp*`/`tt*` (transfers), `rt*` (return), `sm*` (sample), `ac*` (add customer)
+- Supply request: `srf_*` · legacy inline flows: `up*` (price), `tp*`/`tt*` (transfers), `rt*` (return), `sm*` (sample), `ac*` (CON-1 add-person one door:
+  `actype:` kind · `accat:`/`accred:`/`acpt:` customer sub-categories ·
+  `acskip:`/`acb:`/`acconf:`/`accanc:`/`acquick:`)
 - Flow modules: `gr:` `br:` `addstock:` `pr:` `wh:` `wai:` `bs:` `udf:` `sbl:` `lcost:` `bops:` `ofex:` `usr:` `umg:` `rol:` `atd:` `atd_rpt:` `atd_adm:` `tsk:` `nf:` `swv:` `pp:` `pay:` (PAY-1 payments; `pay:done|dec` are
   session-free) `pu:` (pending-user triage — IDR-2 adds
   `pu:cust|net|link|linkcancel`) `cms:` `shr:` (share links) `oq/oc/od*` (orders) `rc*` (receipts)

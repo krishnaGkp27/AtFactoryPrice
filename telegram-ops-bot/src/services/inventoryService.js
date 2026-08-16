@@ -477,6 +477,22 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       const ex = (addRes && addRes.customer) || {};
       return { ok: false, message: `Customer "${aj.name}" already exists as ${ex.name || 'an existing customer'}${ex.customer_id ? ` (${ex.customer_id})` : ''} — nothing was created. Pick them from the customer list instead.` };
     }
+    // CON-1 — this action is retired (nothing produces it any more), but
+    // rows raised before the change can still be sitting in the queue.
+    // Approving one used to leave a customer with no node in the network.
+    // Stitch it here too, so the retired door cannot deposit a split-brain
+    // on its way out. Fire-and-forget: the customer already exists, so a
+    // node failure must not report the approval as failed.
+    try {
+      const contactsRepository = require('../repositories/contactsRepository');
+      await contactsRepository.append({
+        name: aj.name || '', phone: aj.phone || '', type: 'customer',
+        address: aj.address || '', notes: aj.notes || '',
+        customer_id: addRes.customer.customer_id, updated_by: approvedBy,
+      });
+    } catch (nodeErr) {
+      logger.error(`add_customer: contacts node failed for ${aj.name}: ${nodeErr.message}`);
+    }
     // BR-OPS C1 — pointer for the branch daily roll-up. Fire-and-forget;
     // swallows its own errors so a roll-up blip never fails a customer add.
     try {
@@ -512,11 +528,23 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     //   'contact' / absent → phonebook only (pre-CNET-2 behaviour, and the
     //   safe default for a plain approve from any old or generic surface)
     const contactsRepository = require('../repositories/contactsRepository');
-    const dest = aj.destination || 'contact';
+    // CON-1 (owner, 15-Aug-2026) — a plain Approve now HONOURS the kind
+    // the requester picked. Before, every untriaged approval fell to the
+    // phonebook, so a request explicitly raised as a CUSTOMER could be
+    // approved and still not exist in the customer list — the exact
+    // split-brain CNET-2 was built to end, arriving through the other
+    // door. The chips remain the admin's override; this only changes
+    // what silence means.
+    const dest = aj.destination || (aj.type === 'customer' ? 'customer' : 'contact');
     if (dest === 'customer') {
       const crmService = require('./crmService');
       const addRes = await crmService.addCustomer({
         name: aj.name, phone: aj.phone, address: aj.address, notes: aj.notes,
+        // CON-1 — the sub-categories the flow collected for a customer.
+        // Absent on a request raised as any other kind, and crmService
+        // applies its own defaults then.
+        category: aj.category, credit_limit: aj.credit_limit,
+        payment_terms: aj.payment_terms,
       });
       // CUS-2 fail-loud, same as add_customer: a collision must never
       // report success for a no-op. The request stays pending so the admin

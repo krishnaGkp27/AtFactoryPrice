@@ -287,7 +287,7 @@ async function renderStatusPanel(bot, chatId, userId) {
     ],
     [
       { text: '🧾 Upload Receipt', callback_data: 'act:upload_receipt' },
-      { text: '👤 Add Customer',   callback_data: 'act:add_customer' },
+      { text: '👤 Add Contact',    callback_data: 'act:add_customer' },
     ],
     [
       { text: '🧑‍💼 Register Marketer', callback_data: 'act:register_marketer' },

@@ -268,6 +268,15 @@ function buildAddContactCard(aj) {
   if (aj.phone) bits.push(`📞 ${aj.phone}`);
   text += `\n${bits.join(' · ')}`;
   if (aj.address) text += `\n🏠 ${aj.address}`;
+  // CON-1 — the customer-only answers, shown only when the flow collected
+  // them (CARD-3: a line appears when it has something to say).
+  const trade = [];
+  if (aj.category) trade.push(`🏷 ${aj.category}`);
+  if (aj.credit_limit !== undefined && aj.credit_limit !== null && aj.credit_limit !== '') {
+    trade.push(`💳 limit ${Number(aj.credit_limit).toLocaleString('en-NG')}`);
+  }
+  if (aj.payment_terms) trade.push(`📄 ${aj.payment_terms}`);
+  if (trade.length) text += `\n${trade.join(' · ')}`;
   if (aj.notes) text += `\n📝 ${aj.notes}`;
   if (aj.destination) {
     // A second admin's reminder copy after a choice was already persisted.
@@ -277,6 +286,12 @@ function buildAddContactCard(aj) {
     + '\n🛒 Customer — registered for sales bills, and joins the network as a buyer'
     + '\n📒 Contact — phonebook only'
     + "\n🕸 Network — phonebook + placed under a buyer's people";
+  // CON-1 — silence is no longer "phonebook": a plain Approve now honours
+  // the kind the requester picked, so the card says so rather than
+  // leaving an admin to guess what not choosing will do.
+  if (aj.type === 'customer') {
+    text += '\n\n_Approving without choosing registers them as a CUSTOMER, as requested._';
+  }
   return text;
 }
 

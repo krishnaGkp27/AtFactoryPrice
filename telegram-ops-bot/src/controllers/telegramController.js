@@ -950,6 +950,23 @@ async function handleAddCustomerFlowText(bot, chatId, userId, text) {
           { parse_mode: 'Markdown' });
         return true;
       }
+      // CON-1 (owner, 15-Aug-2026) — one person, one entry. Quick Add
+      // wrote the Customers row and stopped, so an admin's one-liner
+      // produced a customer with no node in the network — the same
+      // split-brain the approval door was fixed for. Mirror the
+      // `add_contact` executor's customer branch: CRM row + bound node.
+      // Fire-and-forget: the customer already exists at this point, so a
+      // node failure must not report the add as failed.
+      try {
+        const contactsRepo = require('../repositories/contactsRepository');
+        await contactsRepo.append({
+          name: cust.name, phone: cust.phone || '', type: 'customer',
+          address: cust.address || '', notes: '',
+          customer_id: addRes.customer.customer_id, updated_by: String(userId),
+        });
+      } catch (nodeErr) {
+        logger.error(`Quick add: contacts node failed for ${cust.name}: ${nodeErr.message}`);
+      }
     } catch (e) {
       logger.error(`Quick add customer failed: ${e.message}`);
       await bot.sendMessage(chatId, `❌ Failed to save: ${e.message}`);
@@ -989,9 +1006,8 @@ async function handleAddCustomerFlowText(bot, chatId, userId, text) {
 
   if (session.step === 'address') {
     session.address = trimmed;
-    session.step = 'category';
     sessionStore.set(userId, session);
-    await showAddCustomerCategoryPicker(bot, chatId, userId);
+    await showAddPersonAfterAddress(bot, chatId, userId);
     return true;
   }
 
@@ -1805,8 +1821,40 @@ async function showSampleConfirmation(bot, chatId, userId) {
 const CUSTOMER_CATEGORIES = ['Wholesale', 'Retail', 'Distributor', 'Wholesaler'];
 const CREDIT_PRESETS = [0, 50000, 100000, 200000, 500000];
 
+/**
+ * CON-1 (owner, 15-Aug-2026) — "Keep single entry of any user added in
+ * telegram. Add contact flow has perfect build in this situation. For any
+ * other addition contact will have sub-categories if-needed."
+ *
+ * One door adds a person, and the FIRST question is what kind of person
+ * they are. The kinds are contactsRepository.TYPES, so the answer is the
+ * contact's own `type` — nothing new to store.
+ *
+ * The sub-categories (Wholesale/Retail/…, credit limit, payment terms)
+ * belong to a CUSTOMER and are asked only when Customer is picked; every
+ * other kind walks straight past them. Employees are NOT here: they keep
+ * arriving through the Railway variables and the Add Employee door.
+ */
+const PERSON_TYPES = [
+  { key: 'customer', label: '🛒 Customer' },
+  { key: 'worker', label: '👷 Worker' },
+  { key: 'agent', label: '🤝 Agent' },
+  { key: 'supplier', label: '🚚 Supplier' },
+  { key: 'other', label: '📎 Other' },
+];
+
+/** Only a customer carries a trade category, a credit limit and terms. */
+function personTypeIsCustomer(session) {
+  return (session && session.personType) === 'customer';
+}
+
+const PERSON_TYPE_LABEL = (k) => (PERSON_TYPES.find((t) => t.key === k) || {}).label || k;
+
 function _acHeader(session) {
-  const lines = ['👥 *Add Customer*'];
+  // CON-1 — one door, so the title names the KIND being added rather
+  // than always saying "Customer".
+  const lines = ['➕ *Add contact*'];
+  if (session.personType) lines.push(`✓ Type: *${PERSON_TYPE_LABEL(session.personType)}*`);
   if (session.name) lines.push(`✓ Name: *${session.name}*`);
   if (session.phone) lines.push(`✓ Phone: *${session.phone}*`);
   if (session.phone === '') lines.push(`✓ Phone: _skipped_`);
@@ -1841,18 +1889,68 @@ async function _acRender(bot, chatId, userId, prompt, rows) {
 
 async function startAddCustomerFlow(bot, chatId, userId, messageId = null) {
   sessionStore.set(userId, {
-    type: 'add_customer_flow', step: 'name', requestedBy: userId,
+    // CON-1 — the session type keeps its name so every existing guard,
+    // janitor entry and text handler keeps working; what changed is that
+    // the flow now asks WHO this is before anything else.
+    type: 'add_customer_flow', step: 'type', requestedBy: userId,
     flowMessageId: messageId || null,
   });
-  // P3 — admins see a ⚡ Quick Add fast path that compresses the 8-step
-  // pickers into one line ("Name, +234..."). Non-admins keep the existing
-  // gated full flow (still routes through admin approval).
+  await showAddPersonTypePicker(bot, chatId, userId);
+}
+
+/** CON-1 — step 1 of the one door: what kind of person is this? */
+async function showAddPersonTypePicker(bot, chatId, userId) {
   const rows = [];
-  if (config.access.adminIds.includes(userId)) {
-    rows.push([{ text: '⚡ Quick Add (name+phone in one line)', callback_data: 'acquick:1' }]);
+  for (let i = 0; i < PERSON_TYPES.length; i += 2) {
+    const row = [{ text: PERSON_TYPES[i].label, callback_data: `actype:${PERSON_TYPES[i].key}` }];
+    if (PERSON_TYPES[i + 1]) row.push({ text: PERSON_TYPES[i + 1].label, callback_data: `actype:${PERSON_TYPES[i + 1].key}` });
+    rows.push(row);
   }
   rows.push([{ text: '❌ Cancel', callback_data: 'accanc:0' }]);
-  await _acRender(bot, chatId, userId, 'Enter the customer *full name* (reply in chat), or tap Quick Add for a one-liner:', rows);
+  await _acRender(bot, chatId, userId,
+    '➕ *Add contact*\n\nWho are you adding?', rows);
+}
+
+/** The name prompt, worded for whichever kind was picked. */
+async function showAddPersonNameStep(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  const isCust = personTypeIsCustomer(session);
+  // P3 — admins get a ⚡ Quick Add one-liner. Offered on the CUSTOMER
+  // path only: it exists to register a buyer fast, and the other kinds
+  // have too few fields for a one-liner to save anything.
+  const rows = [];
+  if (isCust && config.access.adminIds.includes(userId)) {
+    rows.push([{ text: '⚡ Quick Add (name+phone in one line)', callback_data: 'acquick:1' }]);
+  }
+  rows.push([
+    { text: '⬅️ Back', callback_data: 'acb:type' },
+    { text: '❌ Cancel', callback_data: 'accanc:0' },
+  ]);
+  await _acRender(bot, chatId, userId,
+    `Enter the *full name* (reply in chat)${isCust && config.access.adminIds.includes(userId) ? ', or tap Quick Add for a one-liner' : ''}:`,
+    rows);
+}
+
+/**
+ * CON-1 — the one place that decides what follows the address.
+ *
+ * A customer goes on to its sub-categories; every other kind skips
+ * straight to notes. Routing lived inline in three separate handlers
+ * (typed address, skipped address, Back), so a single router is what
+ * stops them drifting apart the next time a step moves.
+ */
+async function showAddPersonAfterAddress(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  if (personTypeIsCustomer(session)) {
+    session.step = 'category';
+    sessionStore.set(userId, session);
+    await showAddCustomerCategoryPicker(bot, chatId, userId);
+    return;
+  }
+  session.step = 'notes';
+  sessionStore.set(userId, session);
+  await showAddCustomerNotesStep(bot, chatId, userId);
 }
 
 /**
@@ -4559,9 +4657,12 @@ async function handleMessage(bot, msg) {
       case 'add_customer': {
         // CUS-1 — typed customer creation is closed (owner, 29-Jul). One
         // door: the CRM flow, where the entry is deliberate and gated.
+        // CON-1 — that door is now ➕ Add Contact, which asks the kind
+        // first; a typed "add customer …" therefore lands in the same
+        // flow and never produces a bare `add_customer` request.
         await bot.sendMessage(chatId,
-          '➕ Customer creation is tap-only now — open 👥 CRM → ➕ Add Customer.',
-          { reply_markup: { inline_keyboard: [[{ text: '➕ Add Customer', callback_data: 'act:add_customer' }]] } });
+          '➕ Adding a person is tap-only now — open 👥 CRM → ➕ Add Contact and pick 🛒 Customer on the first step.',
+          { reply_markup: { inline_keyboard: [[{ text: '➕ Add Contact', callback_data: 'act:add_customer' }]] } });
         return;
       }
 
@@ -7715,12 +7816,15 @@ async function handleCallbackQuery(bot, callbackQuery) {
     // Wipe any field captured AT or AFTER the target step so the user
     // genuinely re-answers from there. Order: name, phone, address,
     // category, credit, terms, notes.
-    const order = ['name', 'phone', 'address', 'category', 'credit', 'terms', 'notes'];
+    // CON-1 — 'type' leads the order, so stepping back to it also drops
+    // the kind (and with it the customer-only answers below).
+    const order = ['type', 'name', 'phone', 'address', 'category', 'credit', 'terms', 'notes'];
     const idx = order.indexOf(target);
     if (idx >= 0) {
       for (let i = idx; i < order.length; i++) {
         const f = order[i];
-        if (f === 'name') delete session.name;
+        if (f === 'type') delete session.personType;
+        else if (f === 'name') delete session.name;
         else if (f === 'phone') delete session.phone;
         else if (f === 'address') delete session.address;
         else if (f === 'category') delete session.category;
@@ -7732,11 +7836,12 @@ async function handleCallbackQuery(bot, callbackQuery) {
     session.step = target;
     sessionStore.set(uid, session);
 
-    if (target === 'name') {
+    if (target === 'type') {
+      await showAddPersonTypePicker(bot, chatId, uid);
+    } else if (target === 'name') {
       // Restart from the entry screen. _acRender shows the prompt and
       // a Cancel button; name itself is captured via free text.
-      await _acRender(bot, chatId, uid, 'Enter the customer *full name* (reply in chat):',
-        [[{ text: '❌ Cancel', callback_data: 'accanc:0' }]]);
+      await showAddPersonNameStep(bot, chatId, uid);
     } else if (target === 'phone') {
       await showAddCustomerPhoneStep(bot, chatId, uid);
     } else if (target === 'address') {
@@ -7751,6 +7856,19 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await showAddCustomerNotesStep(bot, chatId, uid);
     }
 
+  } else if (data.startsWith('actype:')) {
+    // CON-1 — the kind of person, asked first and carried to approval.
+    const key = data.slice(7);
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'add_customer_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    if (!PERSON_TYPES.some((t) => t.key === key)) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Unknown type.' }); return; }
+    session.personType = key;
+    session.step = 'name';
+    sessionStore.set(uid, session);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await showAddPersonNameStep(bot, callbackQuery.message.chat.id, uid);
+
   } else if (data.startsWith('acskip:')) {
     const field = data.slice(7);
     const uid = String(callbackQuery.from.id);
@@ -7764,9 +7882,8 @@ async function handleCallbackQuery(bot, callbackQuery) {
       await showAddCustomerAddressStep(bot, callbackQuery.message.chat.id, uid);
     } else if (field === 'address') {
       session.address = '';
-      session.step = 'category';
       sessionStore.set(uid, session);
-      await showAddCustomerCategoryPicker(bot, callbackQuery.message.chat.id, uid);
+      await showAddPersonAfterAddress(bot, callbackQuery.message.chat.id, uid);
     } else if (field === 'notes') {
       session.notes = '';
       session.step = 'confirm';
@@ -7826,39 +7943,58 @@ async function handleCallbackQuery(bot, callbackQuery) {
     if (!session || session.type !== 'add_customer_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Submitting...' });
 
+    // CON-1 — ONE pipeline. Every person raised here queues as
+    // `add_contact`, so every approval card carries the CNET-2 triage
+    // chips (🛒 Customer · 📒 Contact · 🕸 Network) whatever kind was
+    // picked. The customer-only answers ride along and are used only if
+    // the request lands as a customer.
+    const isCust = personTypeIsCustomer(session);
     const custData = {
       name: session.name,
       phone: session.phone || '',
       address: session.address || '',
-      category: session.category || 'Retail',
-      credit_limit: session.credit_limit || 0,
-      payment_terms: session.payment_terms || 'COD',
       notes: session.notes || '',
+      ...(isCust ? {
+        category: session.category || 'Retail',
+        credit_limit: session.credit_limit || 0,
+        payment_terms: session.payment_terms || 'COD',
+      } : {}),
     };
 
-    // Queue for 2-admin approval (same pattern as existing add_customer text flow).
     const requestId = genId();
     await approvalQueueRepository.append({
       requestId, user: uid,
-      actionJSON: { action: 'add_customer', ...custData },
-      riskReason: 'New customer requires admin approval',
+      actionJSON: {
+        action: 'add_contact',
+        type: session.personType || 'other',
+        ...custData,
+      },
+      riskReason: 'New contact requires admin approval',
       status: 'pending',
     });
-    await auditLogRepository.append('approval_queued', { requestId, reason: 'add_customer' }, uid);
+    await auditLogRepository.append('approval_queued',
+      { requestId, reason: 'add_contact', type: session.personType || 'other' }, uid);
 
     if (session.flowMessageId) {
       await bot.editMessageText(
-        `👥 *Add Customer — submitted*\n\n${_acHeader(session)}\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
+        `👥 *Add contact — submitted*\n\n${_acHeader(session)}\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
         { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
       ).catch(() => {});
     }
 
     const userLabel = await getRequesterDisplayName(uid, null);
     const summary =
-      `Add Customer\nName: ${custData.name}\nPhone: ${custData.phone || '—'}\nAddress: ${custData.address || '—'}\n` +
-      `Category: ${custData.category}\nCredit limit: ${fmtMoney(custData.credit_limit)}\n` +
-      `Payment terms: ${custData.payment_terms}\nNotes: ${custData.notes || '—'}`;
-    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'New customer requires admin approval');
+      `Add contact: ${custData.name} (${session.personType || 'other'})\n`
+      + `Phone: ${custData.phone || '—'}\nAddress: ${custData.address || '—'}\n`
+      // CON-1 — the sub-categories exist only for a customer, so they are
+      // printed only for a customer (CARD-3: a line when it has something
+      // to say). A worker's card is not padded with "Credit limit: ₦0".
+      + (isCust
+        ? `Category: ${custData.category}\nCredit limit: ${fmtMoney(custData.credit_limit)}\n`
+          + `Payment terms: ${custData.payment_terms}\n`
+        : '')
+      + `Notes: ${custData.notes || '—'}`;
+    await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'New contact requires admin approval');
 
     sessionStore.clear(uid);
 

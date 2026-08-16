@@ -169,7 +169,12 @@ const ACTIVITIES = [
   // Top level: it is the morning first-open screen, like Approvals.
   { code: 'business_glance',       label: 'Business Glance',           icon: '📈', callback: 'act:business_glance',    hub: null },
   { code: 'add_customer_note',     label: 'Add Note',                  icon: '✏️', callback: 'act:add_note',           hub: 'crm' },
-  { code: 'add_customer',          label: 'Add Customer',              icon: '➕', callback: 'act:add_customer',       hub: 'crm' },
+  // CON-1 (owner, 15-Aug-2026) — "keep single entry of any user added in
+  // telegram". ONE tile adds a person of any kind; the flow asks which
+  // kind first, and everything queues as add_contact so every card
+  // carries the CNET-2 triage. The `add_customer` code is kept as the
+  // tile's identity so a department CSV listing it keeps working.
+  { code: 'add_customer',          label: 'Add Contact',               icon: '➕', callback: 'act:add_customer',       hub: 'crm' },
   // CUS-1 Phase E — the typo-cleanup tool: fold a duplicate into the real
   // customer (merge, not delete — owner 29-Jul). Admin-gated in the flow.
   { code: 'merge_customers',       label: 'Merge Customers',           icon: '🔀', callback: 'act:merge_customers',    hub: 'crm' },
