@@ -398,6 +398,46 @@ added through railway variables."*
 
 ---
 
+## 14 · Removing a person is a status flip, never a deletion
+
+**Locked 16-Aug-2026** (owner, after the removal impact analysis): *"I can
+see these problems can be curbed with the recommendation which you put in
+the file. Please go ahead with the recommendation."*
+
+- **The bot cannot delete, and must not learn how.** `sheetsClient` exposes
+  read / append / update / find and nothing else; there is no row-delete
+  anywhere in the codebase. Removal is therefore a **status flip**, which is
+  what §12 requires anyway — the Inventory sold rows recording what a
+  customer was supplied are history and are never rewritten.
+- **`inactive` is the one word for "gone".** No new status vocabulary. It
+  was already hidden by `customerEntity.HIDDEN_STATUSES` and respected by
+  the contact graph; RMV-1 made `customersRepository` and the phone lookup
+  agree. A *new* word would be caught by the whitelists and sail through
+  every blacklist — hiding the person from some screens while leaving them
+  a valid sale target. Any reason or note for a removal goes in its own
+  column; **the status cell stays machinery, not commentary.**
+- **Every reading of a status is normalised** (trimmed, lower-cased),
+  because those cells are hand-editable. A BLANK status still means active.
+- **Removing a user is an ACCESS problem the bot cannot finish.** The
+  allow-set is `env ids ∪ active sheet rows`, and `isAdmin()` consults the
+  env list before the sheet. For anyone carried in a Railway variable — per
+  §12b, that is how employees arrive — a sheet flip revokes nothing. Any
+  removal surface must SAY so and name the variables to edit. The proof of
+  revocation is the removed person messaging the bot and getting the
+  stranger reply.
+- **Removal must be reversible.** A wrong removal is recovered in-bot,
+  under the same two-admin gate, not by hand-editing the workbook.
+- **Money is disclosed, not enforced.** An outstanding balance is shown on
+  the removal card so two admins decide with it in view; it never blocks
+  the removal. (Mirrors §13: thresholds badge, they do not gate.)
+- **Two admins, and the gate must be real.** A removal action belongs in
+  `WRITE_ACTIONS`, `ALWAYS_APPROVAL_ACTIONS` **and** `DUAL_ADMIN_ACTIONS`.
+  Membership of the first two alone yields a single tap — the defect that
+  shipped in PAY-1 and was repaired 16-Aug-2026. Tests assert the number of
+  taps `requiredAdminApprovals()` returns, never list membership.
+
+---
+
 ## Incident log (why these rules exist)
 
 | Date | Incident | Rule born |

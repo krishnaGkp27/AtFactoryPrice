@@ -313,9 +313,32 @@ async function checkColdCustomerAlerts() {
       if (!customers.has(r.soldTo)) customers.set(r.soldTo, '');
       if (r.soldDate > customers.get(r.soldTo)) customers.set(r.soldTo, r.soldDate);
     }
+    // RMV-1 (owner, 16-Aug-2026) — this list is derived from Inventory sold
+    // rows alone and never opened the Customers register, so a REMOVED
+    // customer could never leave it: they will not buy again, their
+    // days-since-activity only grows, and the sort is descending — they
+    // would head this DM to every admin permanently. Drop the ones the
+    // register says are gone. History itself is untouched (§12): we are
+    // filtering a nudge, not rewriting what they bought.
+    let liveNames = null;
+    try {
+      const customersRepository = require('./src/repositories/customersRepository');
+      const all = await customersRepository.getAll();
+      liveNames = new Set(all
+        .filter((c) => String(c.status || 'Active').trim().toLowerCase() !== 'inactive')
+        .map((c) => String(c.name || '').trim().toLowerCase())
+        .filter(Boolean));
+    } catch (e) {
+      // A failed read must not silently empty the alert — fall back to the
+      // pre-RMV-1 behaviour of nudging on every name history knows.
+      logger.warn(`Cold customer alert: customer register unread (${e.message}); not filtering removed customers`);
+      liveNames = null;
+    }
+    const stillLive = (name) => !liveNames || liveNames.has(String(name || '').trim().toLowerCase());
+
     const cutoffStr = lagosDayPlus(-30);  // TIME-1 — soldDate is a Lagos day
     const inactive = [...customers.entries()]
-      .filter(([, lastDate]) => lastDate && lastDate < cutoffStr)
+      .filter(([name, lastDate]) => lastDate && lastDate < cutoffStr && stillLive(name))
       .map(([name, lastDate]) => ({ name, lastDate, daysAgo: Math.floor((Date.now() - new Date(lastDate).getTime()) / 86400000) }))
       .sort((a, b) => b.daysAgo - a.daysAgo);
     if (!inactive.length) return;

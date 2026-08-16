@@ -41,6 +41,27 @@ const approvalEvents = require('../events/approvalEvents');
 const riskEvaluate = require('../risk/evaluate');
 const idGenerator = require('../utils/idGenerator');
 const logger = require('../utils/logger');
+const config = require('../config');
+
+/**
+ * RMV-1 — which Railway variables carry this telegram id.
+ *
+ * These four lists are parsed once, into `config.access`, at require time;
+ * nothing re-reads `process.env`. So membership here is exactly the set of
+ * grants a sheet edit cannot touch, and the set an admin must go and edit
+ * by hand. Returned as variable NAMES so the card can name them.
+ */
+function envListsHolding(telegramId) {
+  const id = String(telegramId || '');
+  if (!id) return [];
+  const a = config.access || {};
+  return [
+    ['ADMIN_IDS', a.adminIds],
+    ['EMPLOYEE_IDS', a.employeeIds],
+    ['SUPER_ADMIN_IDS', a.superAdminIds],
+    ['FINANCE_IDS', a.financeIds],
+  ].filter(([, list]) => (list || []).map(String).includes(id)).map(([name]) => name);
+}
 const { isNotModified } = require('../utils/telegramUI');
 
 const PAGE_SIZE = 8;
@@ -209,9 +230,20 @@ async function renderConfirmStep(bot, chatId, userId) {
   const label = FLOW_LABEL[session.flow];
   const t = session.target;
   const dept = (t.departments && t.departments.length) ? t.departments.join(', ') : (t.department || '—');
+  // RMV-1 (owner, 16-Aug-2026) — this line used to promise, flatly, that
+  // "Deactivating revokes bot access on the next message". That is true only
+  // for someone who exists ONLY in the Users sheet. The allow-set is built
+  // as env ids UNION active sheet rows (middlewares/auth.js), and isAdmin()
+  // returns true from the env list before the sheet is read at all — so for
+  // anyone carried in a Railway variable, which per BUSINESS_RULES §12b is
+  // how employees arrive, the flip changes nothing. Tell the admin which of
+  // the two cases they are actually in, and what is left to do by hand.
+  const envHeld = envListsHolding(t.telegram_id);
   const note = session.flow === 'promote'
     ? '\n\n_Promoting grants this user admin power: they can submit and (with one other admin) approve dual-admin actions. **Approval of this request itself requires SUPER_ADMIN.**_'
-    : '\n\n_Deactivating revokes bot access on the next message; the row + full history are preserved. Re-activation requires another in-bot flow._';
+    : (envHeld.length
+      ? `\n\n⚠️ *This alone will NOT revoke their access.*\nThey are carried in ${envHeld.map((v) => `\`${v}\``).join(', ')} on Railway, and those lists are read once at start-up — the sheet cannot override them.\n\n*To actually revoke:* remove their id from ${envHeld.length > 1 ? 'those variables' : 'that variable'} and redeploy, then have them message the bot — the stranger reply is the proof it worked.\n\n_The row and full history are preserved either way._`
+      : '\n\n_Deactivating revokes bot access on the next message — this person is held in the sheet only. The row + full history are preserved. Re-activation requires another in-bot flow._');
   await render(bot, chatId, userId,
     `${label.title} — *Confirm*\n\n_Step 2 of 2_\n\n`
     + `*Name:* ${mdEscape(t.name || '—')}\n`

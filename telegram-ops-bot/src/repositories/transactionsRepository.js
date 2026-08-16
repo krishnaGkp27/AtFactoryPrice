@@ -165,6 +165,30 @@ async function getCustomersByDesign(design) {
     }
   } catch (_) {}
 
+  // RMV-1 (owner, 16-Aug-2026) — both sources above are HISTORY: raw buyer
+  // name strings, with no status anywhere. These names become tappable
+  // customer chips, so a removed customer stayed one step from a fresh sale
+  // — while the sale-approval buyer list already resolves through the
+  // customer entity and drops non-active rows. The two surfaces disagreed.
+  // Drop the removed names here, so a chip you can tap always means a
+  // customer you may still sell to. §12 is untouched: the Inventory rows
+  // themselves are never rewritten, only this derived picker.
+  try {
+    const customersRepository = require('./customersRepository');
+    const all = await customersRepository.getAll();
+    const removed = new Set(all
+      .filter((c) => String(c.status || 'Active').trim().toLowerCase() === 'inactive')
+      .map((c) => String(c.name || '').trim().toLowerCase())
+      .filter(Boolean));
+    if (removed.size) {
+      for (const name of [...customers]) {
+        if (removed.has(String(name).trim().toLowerCase())) customers.delete(name);
+      }
+    }
+  } catch (_) {
+    // Unreadable register → offer history as-is rather than an empty picker.
+  }
+
   return Array.from(customers);
 }
 

@@ -73,7 +73,16 @@ async function findById(customerId) {
 // CUS-2 — statuses that are dead husks for lookup purposes: a Merged row's
 // history belongs to its canonical customer (via the alias it left there),
 // and a Rejected registration must never match as an existing customer.
-const HUSK_STATUSES = new Set(['merged', 'rejected']);
+//
+// RMV-1 (owner, 16-Aug-2026) — `inactive` joins them. It was the one status
+// customerEntity.HIDDEN_STATUSES hid but this list did not, and the two
+// disagreeing is what made "removed" cosmetic: findByName still matched, so
+// an inactive customer stayed a valid sale target (salesFlowService
+// validateField), still absorbed money (crmService.addToOutstanding) and was
+// still re-created as a network node (contactGraphService). One vocabulary
+// now, in both places. History lookups are unaffected — they read Inventory
+// sold rows by name, never this register.
+const HUSK_STATUSES = new Set(['merged', 'rejected', 'inactive']);
 const isHusk = (c) => HUSK_STATUSES.has(String(c.status || '').trim().toLowerCase());
 
 /**

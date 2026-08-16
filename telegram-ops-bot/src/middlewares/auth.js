@@ -47,7 +47,13 @@ async function refresh() {
   try {
     const usersRepo = require('../repositories/usersRepository');
     const users = await usersRepo.getAll();
-    const activeUsers = users.filter((u) => (u.status || 'active') === 'active' && u.user_id);
+    // RMV-1 — this comparison used to be case- and whitespace-sensitive, so
+    // a Users row reading 'Active' (or ' active') was silently locked OUT of
+    // the bot while reading as active to every human looking at the sheet.
+    // Normalise, matching the customer-side pickers, which already do.
+    // A BLANK cell must keep meaning active (`||`, not `??`) — that is the
+    // shipped behaviour and many rows rely on it.
+    const activeUsers = users.filter((u) => String(u.status || 'active').trim().toLowerCase() === 'active' && u.user_id);
     const active = activeUsers.map((u) => String(u.user_id));
     _allowed = new Set([
       ...envAdminIds(),

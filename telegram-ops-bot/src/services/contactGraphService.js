@@ -26,7 +26,9 @@ async function loadGraph() {
     contactsRepository.getAll(),
     contactLinksRepository.getActive(),
   ]);
-  const nodes = new Map(contacts.filter((c) => c.status !== 'inactive').map((c) => [c.contact_id, c]));
+  // RMV-1 — was a raw `!== 'inactive'`, so 'Inactive' from a hand edit read
+  // as live and a removed person stayed in the network. One shared reading.
+  const nodes = new Map(contacts.filter((c) => !contactsRepository.isInactive(c)).map((c) => [c.contact_id, c]));
   const down = new Map(); // boss contact_id → [subordinate nodes]
   const up = new Map();   // subordinate contact_id → [boss nodes]
   for (const l of links) {

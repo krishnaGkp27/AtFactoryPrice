@@ -41,6 +41,16 @@ function parse(r, rowIndex) {
   };
 }
 
+/**
+ * RMV-1 — the ONE reading of "this person is gone" for contact rows.
+ * Normalised (case + whitespace) because the cell is hand-editable and
+ * 'Inactive' must not read as live. Shared with contactGraphService so the
+ * phonebook and the network cannot disagree about who still exists.
+ */
+function isInactive(c) {
+  return String((c && c.status) || 'active').trim().toLowerCase() === 'inactive';
+}
+
 async function getAll() {
   const now = Date.now();
   if (_cache && now - _cacheTs < CACHE_TTL_MS) return [..._cache];
@@ -71,11 +81,22 @@ async function findByCustomerId(customerId) {
   return all.find((c) => c.customer_id === str(customerId)) || null;
 }
 
-/** First contact whose number matches (last-10-digit equality). */
+/**
+ * First LIVE contact whose number matches (last-10-digit equality).
+ *
+ * RMV-1 (owner, 16-Aug-2026) — this had no status filter, and its only
+ * caller is the duplicate guard on the Add-Contact step. So a removed
+ * person's number blocked that number for good: the same person could not
+ * come back, and neither could a different person who inherited the SIM —
+ * routine in this market. Worse than a refusal, the guard's remedy button
+ * offered to LINK the removed node, quietly pulling it back into the
+ * network. An inactive row is not a duplicate to guard against.
+ */
 async function findByPhone(rawPhone) {
   if (!str(rawPhone)) return null;
   const all = await getAll();
-  return all.find((c) => phone.samePhone(c.phone, rawPhone) || phone.samePhone(c.whatsapp, rawPhone)) || null;
+  return all.find((c) => !isInactive(c)
+    && (phone.samePhone(c.phone, rawPhone) || phone.samePhone(c.whatsapp, rawPhone))) || null;
 }
 
 async function append(contact) {
@@ -114,4 +135,4 @@ async function update(contactId, patch, updatedBy) {
   return { ...merged, updated_by: str(updatedBy), updated_at: now };
 }
 
-module.exports = { getAll, getByType, searchByName, findById, findByCustomerId, findByPhone, append, update, invalidateCache, SHEET, TYPES };
+module.exports = { getAll, getByType, searchByName, findById, findByCustomerId, findByPhone, append, update, invalidateCache, isInactive, SHEET, TYPES };
