@@ -26,6 +26,7 @@ ask for their status instead of starting new features; help execute them if aske
 | 1 (for Emin) | Backup fix + Drive-quota / photo-archive diagnosis (BKP-1). ⚠️ Bot-side job DISABLED by owner request 10-Jul-2026 (`SHEET_BACKUP_ENABLED` default 0) — **no daily sheet backups run at all** until checklist Task 1 (Apps Script) is installed. | **Emin** | `telegram-ops-bot/specs/BKP-1_EMIN_CHECKLIST.md` |
 | 1 (for owner) | TRF-5 manual live test — transfer queue + single-flow retirement (commit `28d9121f`) | **Owner** | `telegram-ops-bot/specs/TRF-5_TEST_STEPS.md` |
 | 2 (agent) | Resume security remediation H6 + P3–P7 (audit fix plan) | **fresh session** | `telegram-ops-bot/docs/CODE_AUDIT_2026-07-07.md` |
+| 3 (agent, owner-paused 17-Aug) | RMV-1 finish: the ➖ Remove Contact tile (engine shipped `5dfca04`, no Telegram door yet; controller edit needs owner go) + attendance `getAudience` status normalisation + Phase C reach items | **paused** | `telegram-ops-bot/specs/RMV-1_PERSON_REMOVAL.md` §Open when resumed |
 
 Known follow-up waiting on Emin's Task-4 finding: if photo archives to Drive are failing
 (service-account quota), build the OAuth-as-user upload fix for `driveBackup`.

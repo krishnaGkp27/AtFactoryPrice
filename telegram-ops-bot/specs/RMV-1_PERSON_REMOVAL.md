@@ -1,9 +1,30 @@
 # RMV-1 — removing a person, behind two admins
 
-**Status: Phase A SHIPPED 16-Aug-2026 (`ee6828a`). Phase B locked from the
-owner's decisions on the removal impact analysis, 16-Aug-2026: "I can see
-these problems can be curbed with the recommendation which you put in the
-file. Please go ahead with the recommendation."**
+**Status: Phase A SHIPPED 16-Aug-2026 (`ee6828a`); Phase B CORE SHIPPED
+16-Aug-2026 (`5dfca04`) — actions, policy (all three lists), executor
+(both registers move together), card, employee guards, tests. PAUSED
+17-Aug-2026 by owner ("push it to the to-dos, less priority") with ONE
+piece open: the tile.** Locked from the owner's decisions on the removal
+impact analysis, 16-Aug-2026: "I can see these problems can be curbed
+with the recommendation which you put in the file. Please go ahead with
+the recommendation."
+
+## Open when resumed (in order)
+
+1. **The customer-removal tile** — `remove_customer`/`restore_customer`
+   work end to end but nothing in Telegram raises one yet. Build: a
+   ➖ Remove Contact door (CRM hub, CON-1's shape: pick person → reason →
+   card enriched with outstanding/supply-count/children → queue), one
+   `act:` case + one prefix dispatch block in the controller (surgical —
+   **needs the owner's explicit go on the controller edit**, rule 2).
+2. Attendance/auth status divergence (small): `attendanceService`
+   compares `status`/`role` with exact `===` while `middlewares/auth.js`
+   normalises since `ee6828a` — a Users cell reading `Active` keeps bot
+   access but silently drops off the attendance roster. Normalise
+   `getAudience` the same way.
+3. Phase C (each independent): web-session revoke-by-user; `/sl/` and
+   `/i/` link kill paths; the three zero-approval side doors; the Drive
+   public-upload exposure.
 
 Source: the 8-subsystem impact analysis of 16-Aug-2026 (250 references,
 6 claims refuted on adversarial review, 3 confirmed by running the code).
