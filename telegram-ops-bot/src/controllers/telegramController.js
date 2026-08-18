@@ -6,6 +6,7 @@ const intentParser = require('../ai/intentParser');
 const inventoryService = require('../services/inventoryService');
 const approvalEvents = require('../events/approvalEvents');
 const auth = require('../middlewares/auth');
+const callbackAck = require('../utils/callbackAck'); // MNU-1 — no silent taps
 const riskEvaluate = require('../risk/evaluate');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
@@ -7251,7 +7252,29 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['sbr:'], handle: (bot, cq) => require('../flows/salesBrowserFlow').handleCallback(bot, cq) },
 ];
 
+/**
+ * MNU-1 — the safety net around callback dispatch.
+ *
+ * Branches answer as they always have (many carry real toasts and alerts, and
+ * Telegram accepts only ONE answer per query, so those must win). This adds
+ * the guarantee that nothing reaches the end of dispatch still spinning: any
+ * query that was never answered gets an empty answer, which clears the
+ * spinner without printing anything over a branch's deliberate silence.
+ */
 async function handleCallbackQuery(bot, callbackQuery) {
+  // Install the recorder HERE, not in server.js wiring: the guarantee must
+  // hold for whoever constructed the bot — production, a test harness, a
+  // future entry point — and not depend on a separate file remembering to
+  // opt in. install() is idempotent.
+  callbackAck.install(bot);
+  try {
+    return await handleCallbackQueryInner(bot, callbackQuery);
+  } finally {
+    await callbackAck.ensureAnswered(bot, callbackQuery);
+  }
+}
+
+async function handleCallbackQueryInner(bot, callbackQuery) {
   const data = (callbackQuery.data || '').trim();
 
   // SEC-P1 (C2): global allow-list gate for button taps — the same boundary

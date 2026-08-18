@@ -41,6 +41,13 @@ const DEFAULTS = {
   // Settings sheet rows of the same keys, no deploy needed.
   FLOW_CLEANUP_MINUTES: 30,
   FLOW_CLEANUP_MINUTES_HEAVY: 60,
+  // MNU-1 (owner, 17-Aug-2026) — menu anchor tracking: edit the live menu in
+  // place while it is probably still on screen, re-anchor it to the bottom
+  // once it probably is not. Ships DARK: 0 is exactly today's behaviour, so
+  // deploying changes nothing and enabling is one cell (<=30s, no deploy).
+  // The default is the safe legacy path on purpose — a Sheets read failure
+  // falls back to DEFAULTS, so the toggle's own failure mode is "off".
+  MENU_ANCHOR_ENABLED: 0,
   // SJ-3 (owner 31-Jul) — stale flow cards are DELETED from the chat after
   // the grace period (business data must not linger); 0 reverts to the
   // tombstone edit. Approval cards + attachments are never touched.

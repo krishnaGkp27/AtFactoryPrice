@@ -23,6 +23,39 @@ if (!config.telegram.token) {
 // to flip it to `true`, which would race the production webhook for updates.
 const bot = config.telegram.token ? new TelegramBot(config.telegram.token) : null;
 
+/**
+ * MNU-1 — teach the anchor tracker about every message the bot sends.
+ *
+ * The staleness signal is `latestMessageId - anchorMessageId`, i.e. how many
+ * messages sit BELOW the live menu. Event messages — approval cards, the
+ * morning digest, reminders — never become anchors, but they are exactly
+ * what buries one. A tracker that could not see them would keep believing a
+ * long-buried menu was still on screen. That is acceptance criterion AC9.
+ *
+ * Wrapping the single shared bot instance is what makes this total: every
+ * caller in the codebase, including ones written later, is covered without
+ * touching a single call site.
+ */
+if (bot) {
+  // (The callback-answer recorder installs itself inside the dispatcher, so
+  // the guarantee does not depend on this wiring — see telegramController.)
+  const menuAnchor = require('./src/services/menuAnchor');
+  for (const method of ['sendMessage', 'sendPhoto', 'sendDocument', 'sendMediaGroup']) {
+    const original = bot[method];
+    if (typeof original !== 'function') continue;
+    bot[method] = async function trackedSend(chatId, ...rest) {
+      const sent = await original.call(this, chatId, ...rest);
+      try {
+        // sendMediaGroup resolves with an array of messages.
+        for (const m of (Array.isArray(sent) ? sent : [sent])) {
+          if (m && m.message_id) menuAnchor.noteMessage(m.chat ? m.chat.id : chatId, m.message_id);
+        }
+      } catch (_) { /* tracking must never break a send */ }
+      return sent;
+    };
+  }
+}
+
 const app = express();
 app.use(express.json());
 
@@ -178,6 +211,29 @@ if (!WEBHOOK_SECRET) {
   logger.warn('TELEGRAM_WEBHOOK_SECRET not set — webhook is UNAUTHENTICATED. Set it, run `npm run set-webhook`, then set REQUIRE_WEBHOOK_SECRET=1 to enforce.');
 }
 
+/**
+ * MNU-1 — remember recently-handled update ids so a redelivered update is
+ * dropped instead of producing a second greeting. Bounded ring: Telegram
+ * only ever retries recent updates, so a few thousand ids is ample and the
+ * memory cost is fixed.
+ */
+const _seenUpdates = new Set();
+const _seenOrder = [];
+const SEEN_UPDATES_MAX = 4096;
+
+/** @returns {boolean} true if this update is NEW and should be processed. */
+function seenUpdate(updateId) {
+  const id = String(updateId);
+  if (_seenUpdates.has(id)) {
+    logger.warn(`webhook: dropped duplicate update_id=${id}`);
+    return false;
+  }
+  _seenUpdates.add(id);
+  _seenOrder.push(id);
+  if (_seenOrder.length > SEEN_UPDATES_MAX) _seenUpdates.delete(_seenOrder.shift());
+  return true;
+}
+
 app.post('/webhook', (req, res) => {
   if (WEBHOOK_SECRET) {
     const incoming = req.headers['x-telegram-bot-api-secret-token'];
@@ -190,6 +246,25 @@ app.post('/webhook', (req, res) => {
   res.sendStatus(200);
   const body = req.body;
   if (!body) return;
+
+  // MNU-1 / audit D-1 — idempotency on update_id.
+  //
+  // The greeting was arriving 2-3x per summon, and only the last copy carried
+  // a keyboard, so the history filled with prompts that look interactive and
+  // are not. The 200 above is sent BEFORE any processing, so slow handlers
+  // cannot be the cause; redelivery around a restart can, and there was no
+  // dedupe at any layer. Cheap, total, and it protects every handler at once.
+  if (body.update_id != null && !seenUpdate(body.update_id)) return;
+
+  // Any message the bot can see buries the live menu a little further —
+  // including the user's own, which is also the strongest re-anchor signal.
+  try {
+    const m = body.message || body.edited_message
+      || (body.callback_query && body.callback_query.message);
+    if (m && m.chat && m.message_id) {
+      require('./src/services/menuAnchor').noteMessage(m.chat.id, m.message_id);
+    }
+  } catch (_) { /* tracking must never break dispatch */ }
 
   if (body.callback_query) {
     if (bot) telegramController.handleCallbackQuery(bot, body.callback_query).catch((e) => logger.error('Callback error', e));
