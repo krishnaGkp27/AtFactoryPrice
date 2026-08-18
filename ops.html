@@ -86,11 +86,32 @@
 
     <section id="tab-approvals">
       <div class="card"><h2>🛂 Pending approvals</h2>
+        <!-- WEB-1: six pages of eight rows in an inline keyboard is a table,
+             not a menu. Filtering happens client-side over the JSON already
+             fetched, so typing costs no extra request. -->
+        <div style="margin:8px 0">
+          <input id="apprFilter" type="search" placeholder="Filter by action, person or id…"
+                 style="width:100%;max-width:420px;padding:8px 10px;border-radius:8px;
+                        border:1px solid rgba(128,128,128,.4);background:transparent;
+                        color:inherit;font:inherit">
+        </div>
         <div class="scroll"><table id="apprTable">
-          <thead><tr><th>When</th><th>Action</th><th>Requested by</th><th>Age</th></tr></thead><tbody></tbody>
+          <thead><tr><th>When</th><th>Action</th><th>Requested by</th><th>Age</th><th></th></tr></thead><tbody></tbody>
         </table></div>
         <div class="hint" id="apprHint"></div>
         <div class="hint">Approve / reject stays in Telegram (two-admin governance) — this view is for oversight.</div>
+        <div id="apprDetail" style="display:none;margin-top:14px;padding:12px;
+             border:1px solid rgba(128,128,128,.35);border-radius:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+            <strong id="apprDetailTitle"></strong>
+            <button id="apprDetailClose" style="font:inherit;cursor:pointer;background:none;
+                    border:1px solid rgba(128,128,128,.4);border-radius:8px;padding:4px 10px;
+                    color:inherit">Close</button>
+          </div>
+          <pre id="apprDetailCard" style="white-space:pre-wrap;word-break:break-word;
+               margin:10px 0 0;font:inherit"></pre>
+          <div class="hint" id="apprDetailMeta"></div>
+        </div>
       </div>
     </section>
 
@@ -154,15 +175,54 @@
     $('genAt').textContent='Updated '+new Date(d.generatedAt).toLocaleTimeString();
   }
 
+  // WEB-1 — keep the last payload so filtering is instant and request-free.
+  var _apprRows=[], _apprTotal=0;
+
   function renderApprovals(d){
+    if(d){ _apprRows=d.rows||[]; _apprTotal=d.total||_apprRows.length; }
+    var q=($('apprFilter').value||'').trim().toLowerCase();
+    var rows=_apprRows.filter(function(r){
+      if(!q) return true;
+      return [r.action,r.requester,r.requestId,(r.createdAt||'').slice(0,10)]
+        .join(' ').toLowerCase().indexOf(q)>=0;
+    });
     var tb=$('apprTable').tBodies[0]; tb.innerHTML='';
-    (d.rows||[]).forEach(function(r){
+    rows.forEach(function(r){
       var tr=document.createElement('tr');
       tr.innerHTML='<td>'+esc((r.createdAt||'').slice(0,10))+'</td><td>'+esc(r.action)+'</td><td>'+esc(r.requester)+'</td>'
-        +'<td>'+(r.ageDays==null?'—':(r.ageDays>7?'<span class="pill warn">':'<span class="pill mut">')+esc(r.ageDays)+'d</span>')+'</td>';
+        +'<td>'+(r.ageDays==null?'—':(r.ageDays>7?'<span class="pill warn">':'<span class="pill mut">')+esc(r.ageDays)+'d</span>')+'</td>'
+        +'<td><button class="apprOpen" data-id="'+esc(r.requestId)+'" style="font:inherit;cursor:pointer;'
+        +'background:none;border:1px solid rgba(128,128,128,.4);border-radius:8px;padding:2px 10px;color:inherit">View</button></td>';
       tb.appendChild(tr);
     });
-    $('apprHint').textContent=d.total>(d.rows||[]).length?('Showing newest '+(d.rows||[]).length+' of '+d.total+'.'):'';
+    // Audit D-4: rows on the biggest page could render as identical strings,
+    // and the screen they open is irreversible. Say so rather than hide it.
+    var labels=rows.map(function(r){ return r.action+'|'+r.requester+'|'+(r.createdAt||'').slice(0,10); });
+    var dupes=labels.length-(new Set(labels)).size;
+    $('apprHint').textContent=
+      (q?('Showing '+rows.length+' of '+_apprRows.length+' loaded. '):
+         (_apprTotal>_apprRows.length?('Showing newest '+_apprRows.length+' of '+_apprTotal+'. '):''))
+      +(dupes?(dupes+' row(s) look identical — open one to tell them apart.'):'');
+  }
+
+  function openApprovalDetail(requestId){
+    var box=$('apprDetail');
+    $('apprDetailTitle').textContent='Request '+requestId;
+    $('apprDetailCard').textContent='Loading…';
+    $('apprDetailMeta').textContent='';
+    box.style.display='block';
+    api('/api/ops/approvals/'+encodeURIComponent(requestId)).then(function(d){
+      $('apprDetailCard').textContent=d.card||'(no card available)';
+      var need=d.approvalsRequired||1, got=d.approvalsSoFar||0;
+      $('apprDetailMeta').textContent=
+        'Raised by '+(d.requester||'?')+' · '+(d.createdAt||'').slice(0,16).replace('T',' ')
+        +' · needs '+need+' admin approval'+(need===1?'':'s')+(got?(' · '+got+' so far'):'')
+        +' · '+(d.riskReason||'')
+        +' — approve or reject in Telegram.';
+    }).catch(function(e){
+      $('apprDetailCard').textContent='Could not load: '+(e&&e.message||e)
+        +'\n(It may already have been approved or rejected.)';
+    });
   }
 
   function renderAttendance(d){
@@ -214,6 +274,15 @@
       b.classList.add('on'); $('tab-'+b.dataset.tab).classList.add('on');
     };
   });
+  // WEB-1 — filter as you type (no request), and delegate the row buttons so
+  // they keep working after every re-render.
+  $('apprFilter').oninput=function(){ renderApprovals(null); };
+  $('apprTable').onclick=function(ev){
+    var b=ev.target.closest && ev.target.closest('button.apprOpen');
+    if(b) openApprovalDetail(b.getAttribute('data-id'));
+  };
+  $('apprDetailClose').onclick=function(){ $('apprDetail').style.display='none'; };
+
   $('refreshBtn').onclick=loadAll;
   $('setupBtn').onclick=function(){showSetup('');};
   $('loadBtn').onclick=function(){
@@ -231,8 +300,15 @@
   sessionMode=true;
   fetch(location.origin+'/api/ops/overview',{credentials:'same-origin'})
     .then(function(r){
-      if(r.ok){ localStorage.setItem(LS_BASE, location.origin); openApp(); }
-      else { sessionMode=false; if(key()){ openApp(); } else { showSetup(''); } }
+      // WEB-1 — r.ok alone is not proof of a session. Firebase hosting has a
+      // catch-all rewrite to index.html, so on atfactoryprice.live this probe
+      // gets HTTP 200 with an HTML body, and the page would wrongly enter
+      // session mode and then fail on the first r.json(). Require JSON.
+      var ct=(r.headers.get('content-type')||'').toLowerCase();
+      if(r.ok && ct.indexOf('application/json')>=0){
+        localStorage.setItem(LS_BASE, location.origin); openApp(); return;
+      }
+      sessionMode=false; if(key()){ openApp(); } else { showSetup(''); }
     })
     .catch(function(){ sessionMode=false; if(key()){ openApp(); } else { showSetup(''); } });
 })();

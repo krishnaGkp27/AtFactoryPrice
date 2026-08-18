@@ -126,9 +126,25 @@ app.get('/api/ops/usage', apiController.getOpsUsage);
 
 app.get('/api/ops/overview', apiController.getOpsOverview);
 app.get('/api/ops/approvals', apiController.getOpsApprovals);
+// WEB-1 — one request in full (read-only; approve/reject stays in Telegram).
+app.get('/api/ops/approvals/:requestId', apiController.getOpsApprovalDetail);
 app.get('/api/ops/attendance', apiController.getOpsAttendance);
 app.get('/api/ops/stocktakes', apiController.getOpsStockTakes);
-app.get('/ops', (req, res) => res.sendFile(require('path').join(__dirname, '..', 'ops.html')));
+/**
+ * WEB-1 — the pages this server serves behind a magic-link session, and the
+ * ONLY destinations /auth will redirect to.
+ *
+ * Derived from one list rather than hardcoded in two places: the redirect
+ * whitelist used to name '/analytics', which no route ever served, so a link
+ * built with `?to=/analytics` redeemed the single-use token and then landed
+ * on a 404 — the token spent, the user stranded. One list cannot drift.
+ */
+const SESSION_PAGES = {
+  '/ops': 'ops.html',
+};
+for (const [route, file] of Object.entries(SESSION_PAGES)) {
+  app.get(route, (req, res) => res.sendFile(require('path').join(__dirname, '..', file)));
+}
 
 // ANA-1a — magic-link login: the bot mints a single-use token; redeeming
 // it here sets a role-scoped session cookie. Telegram IS the identity
@@ -146,7 +162,7 @@ app.get('/auth', async (req, res) => {
   res.setHeader('Set-Cookie',
     `afp_session=${out.sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(require('./src/services/webSessionService').SESSION_TTL_MS / 1000)}${config.baseUrl.startsWith('https') ? '; Secure' : ''}`);
   const to = String(req.query.to || '/ops');
-  res.redirect(['/ops', '/analytics'].includes(to) ? to : '/ops');
+  res.redirect(Object.prototype.hasOwnProperty.call(SESSION_PAGES, to) ? to : '/ops');
 });
 app.get('/auth/logout', async (req, res) => {
   const raw = String(req.headers.cookie || '');

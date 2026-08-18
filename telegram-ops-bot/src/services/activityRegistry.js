@@ -239,7 +239,11 @@ const ACTIVITIES = [
   // ATT-RPT-1 — read-only attendance report (today + window stats). Admin-only for now.
   // ANA-1a — magic-link web login (admins + managers; role-gated in the
   // act: case). Mints a single-use link into the ops dashboard.
-  { code: 'web_dashboard',         label: 'Dashboard (web)',           icon: '📊', callback: 'act:web_dashboard',      hub: 'reporting' },
+  // WEB-1 / audit W-11 — the richest surface the product has was buried at
+  // depth 1 inside Reporting, sixth of nine, reachable only if you already
+  // knew to press More Options. hub: null promotes it to the top level,
+  // where a dense table belongs one tap away rather than three.
+  { code: 'web_dashboard',         label: 'Dashboard (web)',           icon: '📊', callback: 'act:web_dashboard',      hub: null },
   { code: 'attendance_report',     label: 'Attendance Report',         icon: '🗓', callback: 'act:attendance_report',  hub: 'reporting' },
   // SEN-1 — read-only cross-sheet consistency checks (admin-only, gated in
   // the flow's start()).

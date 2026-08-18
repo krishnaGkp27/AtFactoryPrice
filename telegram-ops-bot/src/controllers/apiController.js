@@ -371,6 +371,69 @@ async function getOpsApprovals(req, res) {
   }
 }
 
+/**
+ * WEB-1 — one pending request in full, rendered as the SAME card an admin
+ * sees in Telegram.
+ *
+ * The audit's D-4 is why this exists: five of eight rows on the biggest
+ * approval page rendered as identical strings, and the screen they open
+ * commits an irreversible approve/reject. A list you cannot tell apart is
+ * a blind choice. On the web the row can carry its id and open the full
+ * card, which is the cheapest way to make the choice sighted.
+ *
+ * READ-ONLY, deliberately and permanently. There is no approve or reject
+ * endpoint anywhere in this API and there must not be: approvals ride the
+ * two-admin pipeline in Telegram, with its self-approval and dual-signature
+ * guards. The web shows; Telegram decides.
+ */
+async function getOpsApprovalDetail(req, res) {
+  const identity = await gate(req, res);
+  if (!identity) return;
+  if (identity.role !== 'admin') {
+    return res.status(403).json({ ok: false, error: 'Approvals oversight is admin-only.' });
+  }
+  try {
+    const requestId = String(req.params.requestId || '').trim();
+    if (!requestId) return res.status(400).json({ ok: false, error: 'requestId required.' });
+
+    const pending = await require('../repositories/approvalQueueRepository').getAllPending();
+    const item = pending.find((p) => String(p.requestId) === requestId);
+    if (!item) {
+      // Already approved or rejected — not an error, just no longer pending.
+      return res.status(404).json({ ok: false, error: 'Not pending (already resolved, or unknown).' });
+    }
+    const approvalCards = require('../services/approvalCards');
+    const riskEvaluate = require('../risk/evaluate');
+    const aj = item.actionJSON || {};
+
+    let card = '';
+    try { card = await approvalCards.buildCardFromActionJSON(aj); } catch (_) { /* card is best-effort */ }
+
+    res.json({
+      ok: true,
+      requestId: item.requestId,
+      action: aj.action || '',
+      actionLabel: riskEvaluate.formatAction ? riskEvaluate.formatAction(aj) : (aj.action || 'action'),
+      requester: await approvalCards.resolveUserLabel(item.user),
+      requesterId: String(item.user || ''),
+      createdAt: item.createdAt || '',
+      ageDays: item.createdAt ? Math.floor((Date.now() - Date.parse(item.createdAt)) / 86400000) : null,
+      riskReason: item.riskReason || '',
+      // How many distinct admin taps this needs — the thing an admin most
+      // wants to know before opening Telegram to act on it.
+      approvalsRequired: riskEvaluate.requiredAdminApprovals
+        ? riskEvaluate.requiredAdminApprovals({
+          action: aj.action, requesterIsAdmin: false, adminCount: undefined })
+        : 1,
+      approvalsSoFar: Array.isArray(aj.approvals) ? aj.approvals.length : 0,
+      card,
+    });
+  } catch (e) {
+    logApiError('GET /api/ops/approvals/:requestId', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
 async function getOpsAttendance(req, res) {
   const identity = await gate(req, res);
   if (!identity) return;
@@ -509,6 +572,6 @@ async function getOpsUsage(req, res) {
 
 module.exports = {
   getSettings, updateSettings, getAnalyticsSummary, getAnalyticsFeature, getShareAnalytics, getContactsGraph,
-  getOpsOverview, getOpsApprovals, getOpsAttendance, getOpsStockTakes,
+  getOpsOverview, getOpsApprovals, getOpsApprovalDetail, getOpsAttendance, getOpsStockTakes,
   postExtOtpRequest, postExtOtpVerify, getExtLedger, getOpsUsage,
 };
