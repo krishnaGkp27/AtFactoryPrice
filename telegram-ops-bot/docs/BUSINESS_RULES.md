@@ -438,6 +438,35 @@ the file. Please go ahead with the recommendation."*
 
 ---
 
+## 15 · One live menu per chat, and the web displays what Telegram decides
+
+**Locked 17-Aug-2026** (owner brief + UI/UX audit; MNU-1 / WEB-1).
+
+- **Navigation edits; it does not append.** Walking three levels deep and
+  back adds ZERO messages to the chat. Appending is reserved for genuine
+  events — a new approval, a scheduled digest.
+- **But the anchor must be visible when it updates.** A Telegram edit does
+  not move the message, does not scroll the client, and keeps the original
+  timestamp, so editing a message that has scrolled away is a silent no-op
+  from the user's side. When two or more messages sit below the live menu,
+  it is re-sent at the bottom and the old one retired.
+- **Send before delete, always.** A failed send must leave the user with a
+  working menu, never none. A failed delete strips the old keyboard instead
+  — an abandoned menu that is still tappable is its own bug.
+- **No tap is silent.** Every callback is answered; a re-anchor says so.
+- **Menu order is fixed and semantic**, never sorted by usage. The surface
+  people hit most often must be the one they can build muscle memory for.
+- **The menu is always one tap away** — a registered Menu button and `/menu`
+  are infrastructure, not features. No flow may depend on scrolling history
+  to find a live keyboard.
+- **The web DISPLAYS; Telegram DECIDES.** Dense views — paginated approval
+  lists, reports — belong on atfactoryprice.live, which is read-only by
+  design. There is no approve/reject endpoint in the ops API and there must
+  not be: writes ride the two-admin pipeline in Telegram, with its
+  self-approval and dual-signature guards.
+
+---
+
 ## Incident log (why these rules exist)
 
 | Date | Incident | Rule born |
