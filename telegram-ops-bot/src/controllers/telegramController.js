@@ -7,6 +7,8 @@ const inventoryService = require('../services/inventoryService');
 const approvalEvents = require('../events/approvalEvents');
 const auth = require('../middlewares/auth');
 const callbackAck = require('../utils/callbackAck'); // MNU-1 — no silent taps
+const menuAnchor = require('../services/menuAnchor'); // MNU-1 — one live menu per chat
+const { isNotModified } = require('../utils/telegramUI'); // MNU-1 — identical edit ≠ failure
 const riskEvaluate = require('../risk/evaluate');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
@@ -1627,7 +1629,14 @@ async function _sampleRender(bot, chatId, userId, prompt, rows) {
     try {
       await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
       return;
-    } catch (_) { /* fall through to send */ }
+    } catch (e) {
+      // MNU-1 — "message is not modified" means the screen is ALREADY correct.
+      // Without this guard it fell through to sendMessage and spawned a
+      // duplicate card on every such tap. The shared helpers fixed this long
+      // ago (telegramUI.js:18-25); these two legacy renderers never got it.
+      if (isNotModified(e)) return;
+      /* deleted / photo anchor — fall through to a fresh send */
+    }
   }
   const sent = await bot.sendMessage(chatId, text, opts);
   session.flowMessageId = sent.message_id;
@@ -1881,7 +1890,12 @@ async function _acRender(bot, chatId, userId, prompt, rows) {
     try {
       await bot.editMessageText(text, { chat_id: chatId, message_id: mid, ...opts });
       return;
-    } catch (_) { /* fall through */ }
+    } catch (e) {
+      // MNU-1 — same duplicate-card bug as _sampleRender: an identical edit
+      // throws "message is not modified", which is success, not failure.
+      if (isNotModified(e)) return;
+      /* deleted / photo anchor — fall through to a fresh send */
+    }
   }
   const sent = await bot.sendMessage(chatId, text, opts);
   session.flowMessageId = sent.message_id;
@@ -5486,15 +5500,120 @@ function entryToButton(entry) {
   return { text: `${a.icon} ${a.label}`, callback_data: a.callback };
 }
 
-async function buildGreetingMenu(bot, chatId, userId, showAll = false) {
-  const markup = await buildGreetingMenuMarkup(userId, showAll);
-  if (markup.empty) {
-    await bot.sendMessage(chatId, markup.text);
+/**
+ * MNU-1 — the ONE place menu rendering decides where its answer lands.
+ *
+ * Every menu surface (the summoned greeting, a hub, More Options, Back to
+ * menu) routes through here, so the anchor policy lives in exactly one
+ * function instead of being re-implemented per call site.
+ *
+ * Behind MENU_ANCHOR_ENABLED. With the flag off this is byte-for-byte the
+ * legacy behaviour — send when asked to send, edit the tapped message when
+ * asked to edit — which is what makes the rollback a single Settings cell.
+ *
+ * @param {object} p
+ * @param {number|string} p.chatId
+ * @param {string} p.userId
+ * @param {{text:string, reply_markup?:object, empty?:boolean}} p.markup
+ * @param {string} p.view              e.g. 'main_menu' | 'hub:finance'
+ * @param {object} [p.viewParams]      small UI cursor (page, filter) — never data
+ * @param {number} [p.tappedMessageId] the message the button sat on, if any
+ * @param {object} [p.callbackQuery]   for the "menu moved" toast
+ * @param {boolean} [p.userInitiated]  triggered by an incoming user MESSAGE
+ */
+async function renderMenuView(bot, { chatId, userId, markup, view, viewParams = {},
+  tappedMessageId = null, callbackQuery = null, userInitiated = false }) {
+  const sendFresh = async () => {
+    if (markup.empty) return bot.sendMessage(chatId, markup.text);
+    return bot.sendMessage(chatId, markup.text, {
+      parse_mode: 'Markdown', reply_markup: markup.reply_markup, disable_notification: true,
+    });
+  };
+  const editAt = async (mid) => bot.editMessageText(markup.text, {
+    chat_id: chatId, message_id: mid,
+    parse_mode: 'Markdown', reply_markup: markup.reply_markup,
+  });
+
+  let enabled = false;
+  try {
+    const s = await settingsRepo.getAll();
+    enabled = Number(s.MENU_ANCHOR_ENABLED ?? 0) === 1;
+  } catch (_) { /* unreadable settings → legacy path, never the new one */ }
+
+  // ── legacy path: exactly what shipped before MNU-1 ──
+  if (!enabled) {
+    if (tappedMessageId && !markup.empty) {
+      await editAt(tappedMessageId).catch(async () => { await sendFresh(); });
+      return;
+    }
+    await sendFresh();
     return;
   }
-  await bot.sendMessage(chatId, markup.text, {
-    parse_mode: 'Markdown',
-    reply_markup: markup.reply_markup,
+
+  // ── anchored path ──
+  // The lock covers read → decide → write only. Telegram calls happen
+  // outside it, or one slow round-trip would serialise every chat.
+  const decision = await menuAnchor.withChatLock(chatId, async () =>
+    menuAnchor.decide({ chatId, userInitiated }));
+
+  if (decision.action === 'edit' && !markup.empty) {
+    try {
+      await editAt(decision.anchorMessageId);
+      await menuAnchor.withChatLock(chatId, async () => {
+        menuAnchor.compareAndSet(chatId, decision.anchorMessageId, {
+          anchorMessageId: decision.anchorMessageId, view, viewParams,
+        });
+      });
+      return;
+    } catch (e) {
+      if (isNotModified(e)) return; // screen already correct — not a failure
+      /* anchor gone (deleted, or a photo message) → fall through and re-anchor */
+    }
+  }
+
+  // Send BEFORE retiring the old one. If the send fails the user still has a
+  // working menu; delete-first plus a failed send leaves them with nothing
+  // and no way back.
+  const sent = await sendFresh();
+  const newId = sent && sent.message_id;
+  if (!newId) return;
+
+  const won = await menuAnchor.withChatLock(chatId, async () =>
+    menuAnchor.compareAndSet(chatId, decision.anchorMessageId, {
+      anchorMessageId: newId, view, viewParams,
+    }));
+
+  if (!won) {
+    // A concurrent tap re-anchored first. Ours is now a duplicate menu, so
+    // clean up after ourselves rather than leaving two live menus.
+    await menuAnchor.retire(bot, chatId, newId);
+    return;
+  }
+
+  if (decision.anchorMessageId && decision.anchorMessageId !== newId) {
+    await menuAnchor.retire(bot, chatId, decision.anchorMessageId);
+  }
+  // A silent re-anchor is as disorienting as the bug it fixes — the menu
+  // vanishes from under the user's finger with no explanation.
+  if (decision.action === 'reanchor' && callbackQuery && callbackQuery.id) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Menu moved to the bottom ↓' })
+      .catch(() => {});
+  }
+  if (tappedMessageId && tappedMessageId !== newId
+      && tappedMessageId !== decision.anchorMessageId) {
+    // The button the user pressed lived on some other message — strip it so
+    // an abandoned keyboard cannot be tapped into unexpected state.
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+      { chat_id: chatId, message_id: tappedMessageId }).catch(() => {});
+  }
+}
+
+async function buildGreetingMenu(bot, chatId, userId, showAll = false) {
+  const markup = await buildGreetingMenuMarkup(userId, showAll);
+  await renderMenuView(bot, {
+    chatId, userId, markup,
+    view: showAll ? 'main_menu.all' : 'main_menu',
+    viewParams: { showAll: !!showAll },
   });
 }
 
@@ -5502,7 +5621,7 @@ async function buildGreetingMenu(bot, chatId, userId, showAll = false) {
  * Render a hub's sub-activities in place (editing the tapped message).
  * Sub-activities are ordered by the user's individual usage counts.
  */
-async function renderHubSubmenu(bot, chatId, messageId, userId, hubId) {
+async function renderHubSubmenu(bot, chatId, messageId, userId, hubId, callbackQuery = null) {
   const hub = activityRegistry.getHub(hubId);
   if (!hub) {
     await bot.sendMessage(chatId, 'Unknown menu section.');
@@ -5595,39 +5714,32 @@ async function renderHubSubmenu(bot, chatId, messageId, userId, hubId) {
     rows.push([{ text: '⬅ Back', callback_data: 'act:__back__' }]);
   }
 
-  await bot.editMessageText(`${hub.icon} *${hub.label}*\n\nPick an action:`, {
-    chat_id: chatId,
-    message_id: messageId,
-    parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: rows },
-  }).catch(async () => {
-    // Fallback if edit fails (original message too old / deleted).
-    await bot.sendMessage(chatId, `${hub.icon} *${hub.label}*\n\nPick an action:`, {
-      parse_mode: 'Markdown',
+  // MNU-1 — hubs are navigation, so they render through the same funnel as
+  // the greeting menu and More Options. With the flag off this is the exact
+  // edit-with-send-fallback that shipped before.
+  await renderMenuView(bot, {
+    chatId, userId,
+    markup: {
+      text: `${hub.icon} *${hub.label}*\n\nPick an action:`,
       reply_markup: { inline_keyboard: rows },
-    });
+    },
+    view: `hub:${hubId}`,
+    viewParams: { hub: hubId },
+    tappedMessageId: messageId,
+    callbackQuery,
   });
 }
 
 /**
  * Edit an existing message back to the greeting menu (used by ⬅ Back).
  */
-async function renderGreetingMenuEdit(bot, chatId, messageId, userId, showAll = false) {
+async function renderGreetingMenuEdit(bot, chatId, messageId, userId, showAll = false, callbackQuery = null) {
   const markup = await buildGreetingMenuMarkup(userId, showAll);
-  if (markup.empty) {
-    await bot.sendMessage(chatId, markup.text);
-    return;
-  }
-  await bot.editMessageText(markup.text, {
-    chat_id: chatId,
-    message_id: messageId,
-    parse_mode: 'Markdown',
-    reply_markup: markup.reply_markup,
-  }).catch(async () => {
-    await bot.sendMessage(chatId, markup.text, {
-      parse_mode: 'Markdown',
-      reply_markup: markup.reply_markup,
-    });
+  await renderMenuView(bot, {
+    chatId, userId, markup,
+    view: showAll ? 'main_menu.all' : 'main_menu',
+    viewParams: { showAll: !!showAll },
+    tappedMessageId: messageId, callbackQuery,
   });
 }
 
@@ -9703,7 +9815,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     // Hub tap → expand sub-activities in place (no keyboard wipe).
     if (actCode.startsWith('__hub__:')) {
       const hubId = actCode.slice('__hub__:'.length);
-      await renderHubSubmenu(bot, chatId, messageId, uid, hubId);
+      await renderHubSubmenu(bot, chatId, messageId, uid, hubId, callbackQuery);
       return;
     }
 
@@ -9713,14 +9825,21 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       return;
     }
 
+    // MNU-1 / audit D-2 — More Options used to fall through to the keyboard
+    // wipe below and then fresh-send the expanded grid, so ONE button in the
+    // menu behaved under different physics from its six siblings — and it
+    // was the one that destroyed your place in the chat (audit L-3), with no
+    // way back to the six-item view (L-4). It is navigation like the rest of
+    // them, so it now renders through the same path: edit in place while the
+    // menu is visible, re-anchor only when it is buried.
+    if (actCode === '__more__') {
+      await renderGreetingMenuEdit(bot, chatId, messageId, uid, true, callbackQuery);
+      return;
+    }
+
     // Any other tap ends the menu lifecycle → wipe the keyboard so the
     // stale message can't be tapped again.
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
-
-    if (actCode === '__more__') {
-      await buildGreetingMenu(bot, chatId, uid, true);
-      return;
-    }
 
     // Normalize count key to the activity's canonical `code` (some
     // callbacks differ from their code, e.g. act:mark_delivered ↔ mark_order_delivered).
