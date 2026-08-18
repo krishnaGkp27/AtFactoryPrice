@@ -5465,7 +5465,16 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
     entries.push({ kind: 'activity', activity: a, count: counts[a.code] || 0 });
   }
 
-  entries.sort((a, b) => b.count - a.count);
+  // MNU-1 / audit D-3 — the grid used to be sorted by each user's usage
+  // counts, so it re-ordered between emissions: four of six positions moved
+  // ten minutes apart. The surface people hit most often was the one they
+  // could not build muscle memory for. Registry order is fixed and semantic,
+  // so a tile stays where it was yesterday.
+  //
+  // Counts are still recorded (they feed the usage analytics and the hub
+  // aggregates above) — they simply no longer move buttons under people.
+  // If recency is wanted later it belongs in a separate pinned row ABOVE a
+  // frozen grid, never as a re-sort of the grid itself.
 
   const MAX_MENU = 6;
   const visible = showAll ? entries : entries.slice(0, MAX_MENU);
@@ -5695,7 +5704,9 @@ async function renderHubSubmenu(bot, chatId, messageId, userId, hubId, callbackQ
   for (const a of directSubs) {
     entries.push({ kind: 'activity', activity: a, count: counts[a.code] || 0 });
   }
-  entries.sort((a, b) => b.count - a.count);
+  // MNU-1 / audit D-3 — frozen for the same reason as the main grid: a
+  // hub the user opens daily should present its actions in the same
+  // places every time. Registry order, not usage order.
 
   const rows = [];
   for (let i = 0; i < entries.length; i += 2) {
