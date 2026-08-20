@@ -82,6 +82,13 @@ usersRepository.findByUserId = async (id) => (String(id) === '4242'
 
 let queued = [];
 approvalQueueRepository.append = async (row) => { queued.push(row); return row; };
+// SUB-1 — the bundle door now submits through the idempotent front door.
+approvalQueueRepository.appendOnce = async (row) => {
+  const existing = queued.find((q) => String(q.requestId) === String(row.requestId));
+  if (existing) return { created: false, existing };
+  queued.push(row);
+  return { created: true, existing: null };
+};
 
 function msg(text, uid = '4242') { return { from: { id: uid }, chat: { id: uid }, text }; }
 function cb(data, uid = '4242') {

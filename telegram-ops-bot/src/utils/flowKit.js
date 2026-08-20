@@ -170,4 +170,40 @@ function mdEscape(s) {
   return String(s == null ? '' : s).replace(/([_*`[\]])/g, '\\$1');
 }
 
-module.exports = { makeRenderer, rowsFor, guardSession, chunk, mdEscape, trackAux, disposeAux };
+/**
+ * SUB-1 — single-flight guard for a flow's SUBMIT step.
+ *
+ * The incident: one Kano sale queued five times, five request ids, five
+ * admin cards, all in the same minute. Two live triggers, same mechanism:
+ * the sales-bill photo fires submit (an ALBUM fires it once per photo),
+ * and the submit button stays tappable during the slow work (sheet append,
+ * audit row, notifying every admin). The step guards all flip AFTER those
+ * awaits, so every re-entry passed them.
+ *
+ * The fix is the first statement being SYNCHRONOUS: Node runs one JS
+ * thread, so a flag flipped before the first `await` is visible to every
+ * later re-entry with no window at all. Everything else (idempotent
+ * append, the duplicate flag on cards) is defence behind this line.
+ *
+ * Usage, at the very top of a submit handler:
+ *   if (!beginSubmit(session, userId)) { <toast "already submitting">; return; }
+ *   try { ...slow work... }
+ *   catch (e) { endSubmit(session, userId); throw/render-retry; }
+ *   // on success: clear the session as usual — no endSubmit needed.
+ */
+function beginSubmit(session, userId) {
+  if (!session) return false;
+  if (session._submitting) return false;
+  session._submitting = true;
+  sessionStore.set(userId, session);
+  return true;
+}
+
+/** Re-open the door after a FAILED submit, so the user can retry. */
+function endSubmit(session, userId) {
+  if (!session) return;
+  delete session._submitting;
+  sessionStore.set(userId, session);
+}
+
+module.exports = { makeRenderer, rowsFor, guardSession, chunk, mdEscape, trackAux, disposeAux, beginSubmit, endSubmit };

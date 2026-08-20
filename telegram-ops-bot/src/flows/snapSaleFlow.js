@@ -28,7 +28,7 @@
  */
 
 const sessionStore = require('../utils/sessionStore');
-const { makeRenderer, chunk, mdEscape } = require('../utils/flowKit');
+const { makeRenderer, chunk, mdEscape, beginSubmit, endSubmit } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
@@ -507,6 +507,10 @@ async function showTransferConfirm(bot, chatId, userId) {
 }
 
 async function submitTransferBatch(bot, chatId, userId, session) {
+  // SUB-1 — single-flight: the button stays live through slow work, and a
+  // second tap must not dispatch a second transfer. Synchronous, first.
+  if (!beginSubmit(session, userId)) return true;
+  await render(bot, chatId, userId, '⏳ *Submitting…*', []);
   const transferService = require('../services/transferService');
   const tf = require('./transferFlow')._internals;
   const to = session.transferTo;
@@ -586,6 +590,9 @@ async function submitTransferBatch(bot, chatId, userId, session) {
 }
 
 async function submitBatch(bot, chatId, userId, session) {
+  // SUB-1 — same single-flight as the single-bale path below.
+  if (!beginSubmit(session, userId)) return true;
+  await render(bot, chatId, userId, '⏳ *Submitting…*', []);
   const batch = session.batch;
   const seller = await usersRepository.findByUserId(userId).catch(() => null);
   const sellerLabel = (seller && seller.name)
@@ -743,6 +750,11 @@ async function handleCallback(bot, callbackQuery) {
       return submitBatch(bot, chatId, userId, session);
     }
     if (session.step !== 'confirm' || !session.bale) return true;
+    // SUB-1 — single-flight for the single-bale submit: the step check
+    // above only flips after all the slow work below, so it never stopped
+    // a second tap on its own. This flag flips before the first await.
+    if (!beginSubmit(session, userId)) return true;
+    await render(bot, chatId, userId, '⏳ *Submitting…*', []);
     const b = session.bale;
     const seller = await usersRepository.findByUserId(userId).catch(() => null);
     const sellerLabel = (seller && seller.name)

@@ -1517,7 +1517,26 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
   // admin. Only facts about THIS request survive; the rest reads "Sent for
   // approval". Real reasons (backdated, threshold) are untouched.
   const shortWhy = require('../services/approvalCards').shortReason(riskReason);
-  const text = `${noteLine}🔔 *Approval required*\n\nRef: \`${requestId}\`\nFrom: ${esc(userLabel)}\n\n${esc(actionSummary)}\n\n_${esc(shortWhy)}_\n\nUse buttons below to approve or reject\\.`;
+  // SUB-1 — the last line of defence against a duplicated submit: if another
+  // PENDING row from the same requester carries the same business payload,
+  // say so ON THE CARD, where the deciding admin is actually looking. The
+  // inbox has flagged duplicates for weeks, but admins decide from these DMs
+  // and never saw it. Flag loudly, never suppress — a silent drop could eat
+  // a genuine repeat order, and that is a worse failure than a warning line.
+  let dupeLine = '';
+  try {
+    const { duplicateIndex } = require('../utils/duplicateApprovals');
+    const pending = await approvalQueueRepository.getAllPending();
+    const index = duplicateIndex(pending);
+    const group = index.get(String(requestId)) || [];
+    const others = group.filter((r) => String(r.requestId) !== String(requestId));
+    if (others.length) {
+      const refs = others.slice(0, 3)
+        .map((r) => `\`${esc(String(r.requestId).slice(0, 8))}…\``).join(', ');
+      dupeLine = `⚠️ *Possible duplicate* — same request also pending as ${refs}\\. Approve ONE, reject the rest\\.\n\n`;
+    }
+  } catch (_) { /* the flag is best-effort; the card must always send */ }
+  const text = `${noteLine}${dupeLine}🔔 *Approval required*\n\nRef: \`${requestId}\`\nFrom: ${esc(userLabel)}\n\n${esc(actionSummary)}\n\n_${esc(shortWhy)}_\n\nUse buttons below to approve or reject\\.`;
   // CNET-2 — a caller may hand the card a routing keyboard (the add-contact
   // destination chips); everything else keeps the standard pair.
   const keyboard = (opts && opts.keyboard) || {

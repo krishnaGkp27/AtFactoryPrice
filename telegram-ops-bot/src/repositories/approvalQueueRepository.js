@@ -4,6 +4,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const mutex = require('../utils/asyncMutex');
 
 const SHEET = 'ApprovalQueue';
 const HEADERS = ['RequestID', 'User', 'ActionJSON', 'RiskReason', 'Status', 'CreatedAt', 'ResolvedAt'];
@@ -72,6 +73,35 @@ async function getResolved() {
       requestId: r[0], user: r[1], actionJSON: safeParse(r[2]),
       riskReason: r[3], status: r[4], createdAt: r[5], resolvedAt: r[6],
     }));
+}
+
+/**
+ * SUB-1 — append exactly once per requestId.
+ *
+ * `append` is a blind write, and it has ~40 callers — every submit door in
+ * the bot. When a door mints its request id at CONFIRM-RENDER time and
+ * routes through here, a re-entered submit (album burst, double tap, retry
+ * after a timeout) collapses into the row that already exists instead of
+ * becoming a second pending request with its own admin card.
+ *
+ * Serialised per requestId on the existing asyncMutex, so two concurrent
+ * calls with the same id cannot both pass the existence check: the second
+ * waits, then sees the first's row. Sheets has no unique constraint — this
+ * mutex plus the read-before-write IS the constraint, and it holds because
+ * the bot is a single process (the same assumption every approval action
+ * already rests on).
+ *
+ * @returns {Promise<{created:boolean, existing:object|null}>}
+ */
+async function appendOnce(record) {
+  const requestId = String(record.requestId || '');
+  if (!requestId) { await append(record); return { created: true, existing: null }; }
+  return mutex.runExclusive(`apq-append:${requestId}`, async () => {
+    const existing = await getByRequestId(requestId);
+    if (existing) return { created: false, existing };
+    await append(record);
+    return { created: true, existing: null };
+  });
 }
 
 /** Get one approval queue row by requestId (any status). */
@@ -150,6 +180,6 @@ async function updateActionJSON(requestId, patch) {
 }
 
 module.exports = {
-  append, getAllPending, getResolved, updateStatus, updateActionJSON, getByRequestId,
+  append, appendOnce, getAllPending, getResolved, updateStatus, updateActionJSON, getByRequestId,
   getAllWithRowIndex, renameRequestIdAtRow, ensureHeader,
 };

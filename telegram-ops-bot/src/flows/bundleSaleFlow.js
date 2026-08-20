@@ -89,7 +89,9 @@ const approvalEvents      = require('../events/approvalEvents');
 const auth                = require('../middlewares/auth');
 const logger              = require('../utils/logger');
 const { rememberRequesterCard } = require('../utils/requesterCard');
-const { rowsFor, mdEscape: mdEscapeV1 } = require('../utils/flowKit');
+const flowKit = require('../utils/flowKit');
+const idGenerator = require('../utils/idGenerator');
+const { rowsFor, mdEscape: mdEscapeV1 } = flowKit;
 const dateCalendar        = require('../utils/dateCalendar');
 const fmtDate             = require('../utils/formatDate');
 const { isNotModified }   = require('../utils/telegramUI');
@@ -1178,18 +1180,38 @@ async function renderConfirm(bot, chatId, userId) {
 async function submit(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== 'bundle_sale_flow') return;
+  // SUB-1 — single-flight, and it must be the FIRST thing that happens.
+  // Two live triggers re-enter this function: the sales-bill photo (an
+  // album delivers one message per photo, so one bill sent as five photos
+  // called this five times) and the bs:submit button, which stayed tappable
+  // through several seconds of sheet appends and admin notifies. Every
+  // guard below flips only after those awaits; this flag flips before any
+  // of them, synchronously, which on one JS thread leaves no window.
+  if (!flowKit.beginSubmit(session, userId)) return;
   const totals = bundleSaleService.totals(session.cart);
-  if (!totals.thans) { await renderError(bot, chatId, userId, 'Cart is empty.'); return; }
+  if (!totals.thans) { flowKit.endSubmit(session, userId); await renderError(bot, chatId, userId, 'Cart is empty.'); return; }
+  // The button disappears NOW, not after the slow work — the user sees
+  // "Submitting…" within a beat of the first trigger, and there is nothing
+  // left on screen to tap again.
+  await render(bot, chatId, userId, '⏳ *Submitting for approval…*', []);
   // One last reconciliation right before queueing.
   const reconciled = await bundleSaleService.reconcileWithLive(session.cart);
   if (!reconciled.ok) {
     bundleSaleService.removeLines(session.cart, reconciled.dropped.map((d) => d.line._key));
+    flowKit.endSubmit(session, userId);
     await renderError(bot, chatId, userId, `${reconciled.dropped.length} item(s) became unavailable. Cart was trimmed — please re-confirm.`);
     return;
   }
   // SELL-K1 — the bill is mandatory. A tampered/expired session that lost
   // it never queues silently; it goes back to the bill prompt.
-  if (!session.saleDocFileId) { await requestBill(bot, chatId, userId); return; }
+  if (!session.saleDocFileId) { flowKit.endSubmit(session, userId); await requestBill(bot, chatId, userId); return; }
+  // SUB-1 — mint the request id ONCE per confirm cycle and keep it on the
+  // session: any re-entry that somehow survives the flag carries the same
+  // id and collapses in appendOnce instead of becoming a second request.
+  if (!session.pendingRequestId) {
+    session.pendingRequestId = idGenerator.requestId();
+    sessionStore.set(userId, session);
+  }
   try {
     const approvalCards = require('../services/approvalCards');
     // APU-1 sweep (owner 19-Jul): human-readable name on the queue row and
@@ -1202,7 +1224,8 @@ async function submit(bot, chatId, userId) {
     const sellerLabel = session.salesPerson || submitterLabel;
     const saleIso = session.salesDate || dateCalendar.lagosISO(0);
     const backdated = Number(session.backdatedDays) || 0;
-    const { requestId } = await bundleSaleService.submitForApproval({
+    const { requestId, duplicate } = await bundleSaleService.submitForApproval({
+      requestId: session.pendingRequestId,
       cart: session.cart,
       sale: {
         // DSP-1 — customer, rate and payment are the admin's to set at
@@ -1223,6 +1246,15 @@ async function submit(bot, chatId, userId) {
       user: { id: userId, userId, username: '' },
       riskReason: backdated ? `Backdated sale (${backdated} days in the past).` : '',
     });
+    if (duplicate) {
+      // The queue row already exists from an earlier entry of this same
+      // confirm cycle — the admins already have their card. Nothing more to
+      // send; just show the seller the pending state.
+      await render(bot, chatId, userId,
+        `✅ *Already submitted.*\nRequest: \`${requestId}\`\n\n⏳ Waiting for admin approval.`, []);
+      sessionStore.clear(userId);
+      return;
+    }
     const isAdm = auth.isAdmin(userId);
     const excludeId = isAdm ? userId : undefined;
     // CARD-3 — the approver gets the SAME card the reminder sweep and the
@@ -1270,6 +1302,10 @@ async function submit(bot, chatId, userId) {
     logger.info(`bundleSaleFlow.submit: req=${requestId} thans=${totals.thans} yards=${totals.yards} by=${userId}`);
   } catch (e) {
     logger.error('bundleSaleFlow.submit error', e.message);
+    // SUB-1 — a FAILED submit re-opens the door: without this the flag
+    // would lock the user out of retrying after a transient error.
+    const s2 = sessionStore.get(userId);
+    if (s2) flowKit.endSubmit(s2, userId);
     await renderError(bot, chatId, userId, e.message || 'Failed to submit.');
   }
 }

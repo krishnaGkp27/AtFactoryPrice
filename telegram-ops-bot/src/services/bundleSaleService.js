@@ -292,9 +292,15 @@ function buildApprovalPayload(cart, sale, user) {
  * JSON ensures it survives a queue replay even if the in-memory
  * enrichment cache is lost.
  */
-async function submitForApproval({ cart, sale, user, riskReason }) {
+async function submitForApproval({ cart, sale, user, riskReason, requestId: presetId }) {
   const payload = buildApprovalPayload(cart, sale, user);
-  const requestId = (idGenerator.requestId && idGenerator.requestId()) || `AR-${Date.now()}`;
+  // SUB-1 — the caller mints the id when the CONFIRM screen renders and
+  // passes it here, so a re-entered submit (an album delivering the bill as
+  // five photos, a double tap, a retry) carries the SAME id and collapses
+  // into one queue row via appendOnce. Minting here at submit time was the
+  // hole: five entries, five fresh ids, five admin cards.
+  const requestId = presetId
+    || (idGenerator.requestId && idGenerator.requestId()) || `AR-${Date.now()}`;
   const designKey = sale.designSummary || (payload.items[0] && payload.items[0].design) || '';
   const enrichment = {
     ratePerUnitByDesign: designKey ? { [designKey]: num(sale.pricePerYard) } : {},
@@ -302,19 +308,24 @@ async function submitForApproval({ cart, sale, user, riskReason }) {
     amountPaid: num(sale.amountPaid) || 0,
   };
   const actionJSON = { ...payload, enrichment, requestId };
-  await approvalQueueRepository.append({
+  const { created, existing } = await approvalQueueRepository.appendOnce({
     requestId,
     user: String((user && (user.id || user.userId)) || ''),
     actionJSON,
     riskReason: riskReason || 'All sale operations require admin approval.',
     status: 'pending',
   });
+  if (!created) {
+    // The row already exists — this call is a re-entry. Report it so the
+    // flow can skip the admin notify instead of producing a second card.
+    return { requestId, actionJSON: (existing && existing.actionJSON) || actionJSON, duplicate: true };
+  }
   try {
     await auditLogRepository.append('approval_queued',
       { requestId, action: 'sale_bundle', flow: 'BUNDLE-SALE-C1', thans: cart.lines.length },
       String((user && (user.id || user.userId)) || 'system'));
   } catch (_) { /* audit failures must never block the sale */ }
-  return { requestId, actionJSON };
+  return { requestId, actionJSON, duplicate: false };
 }
 
 /* ──────────────────────────────────────────────────────────────────── */

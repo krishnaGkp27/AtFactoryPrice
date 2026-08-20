@@ -5118,6 +5118,13 @@ async function runS29() {
   const auditAppended29 = [];
   stubModule(require.resolve('../src/repositories/approvalQueueRepository'), {
     append: async (r) => { queueAppended29.push(r); return r; },
+    // SUB-1 — the service now routes through the idempotent front door.
+    appendOnce: async (r) => {
+      const existing = queueAppended29.find((q) => String(q.requestId) === String(r.requestId));
+      if (existing) return { created: false, existing };
+      queueAppended29.push(r);
+      return { created: true, existing: null };
+    },
   });
   stubModule(require.resolve('../src/repositories/auditLogRepository'), {
     append: async (...args) => { auditAppended29.push(args); },

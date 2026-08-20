@@ -476,6 +476,7 @@ the file. Please go ahead with the recommendation."*
 | 02-Aug-2026 | Transfer 02Aug·01: typed 869/843/874/864/903, FIFO pre-pick logged 867/842/873/863/903 | §2, §4 (TRF-14/15, REP-2 repair) |
 | 02-Aug-2026 | Typed sale could flip a duplicated number in both warehouses | §6 (12e / TRF-INT4) |
 | 07-Aug-2026 | `/revert_packages` logged admin corrections as customer returns, all stamped with the first row's buyer | §6d (RET-2) |
+| 19-Aug-2026 | One Kano sale queued FIVE times with five refs — the sales-bill photo fires submit (an album fires it per photo), the button stayed live through the slow work, and the queue append was blind | SUB-1 (single-flight + render-minted id + appendOnce + card-level duplicate flag) |
 | 15-Aug-2026 | ➕ Add Customer queued a card with no triage chips: which card an admin saw depended on which of two doors the requester used, and an approved customer could exist with no network node | §12b (CON-1) |
 
 When an incident spawns a new rule: fix, spec, then add the rule HERE.
