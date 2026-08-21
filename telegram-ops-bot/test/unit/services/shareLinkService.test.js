@@ -8,6 +8,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+// The "no DATABASE_URL" case must be asserted against a process that really
+// has none: a host/CI container that exports one (Railway-style) otherwise
+// makes shareTrackService believe Postgres is live and this file fails for
+// environmental reasons alone. Scrubbed BEFORE src/config caches it.
+delete process.env.DATABASE_URL;
+
 const shareLinkService = require('../../../src/services/shareLinkService');
 const shareTrackService = require('../../../src/services/shareTrackService');
 
