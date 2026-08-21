@@ -145,49 +145,34 @@ function getSession(userId) {
   return s;
 }
 
+/**
+ * CARD-4 (owner 23-Aug-2026) — "club together all the paths from the same
+ * code in the same layout without any ambiguity."
+ *
+ * This used to write its own verbose block ("Bale 1003: 9060-B , 7 thans,
+ * 210 yds … Total: 1 Bale (7 thans), 210 yards"), which is why a Sell Bale
+ * sale looked nothing like the Kano than sale even though both are sales.
+ * The goods are now resolved by the SHARED enrichment and rendered by the
+ * SHARED CARD-3 builder, so the seller's confirm card, the admin's approval
+ * card, the reminder sweep and the approvals inbox all read identically.
+ *
+ * The old money line is deliberately gone: the rate is set by the approving
+ * admin (DSP-1), so a pre-approval "value" was a guess from list price and
+ * showed stock value to sellers who may not see prices at all.
+ */
 async function buildSummary(session) {
-  const { saleType, items, collected } = session;
-  let text = 'Sale Summary:\n';
-  text += `  Customer: ${collected.customer}\n`;
-  try {
-    const cust = await customersRepo.findByName(collected.customer);
-    if (cust) {
-      if (cust.phone) text += `  Phone: ${cust.phone}\n`;
-      if (cust.address) text += `  Address: ${cust.address}\n`;
-    }
-  } catch (_) {}
-  text += `  Salesperson: ${collected.salesperson}\n`;
-  text += `  Payment: ${collected.paymentMode}\n`;
-  text += `  Date: ${collected.salesDate}\n\n`;
-
-  let totalThans = 0, totalYards = 0, totalValue = 0;
-  for (const item of items) {
-    if (item.type === 'package') {
-      // TRF-INT4 — scoped to the item's own warehouse when it carries one.
-      const info = await inventoryService.getPackageSummary(item.packageNo, { warehouse: item.warehouse });
-      if (info) {
-        text += `  Bale ${item.packageNo}: ${info.design} ${info.shade}, ${info.availableThans} thans, ${fmtQty(info.availableYards)} yds (${info.warehouse})\n`;
-        totalThans += info.availableThans;
-        totalYards += info.availableYards;
-        totalValue += info.availableYards * info.pricePerYard;
-      } else {
-        text += `  Bale ${item.packageNo}: not found\n`;
-      }
-    } else if (item.type === 'than') {
-      // TRF-INT4 — scoped to the item's own warehouse when it carries one.
-      const info = await inventoryService.getPackageSummary(item.packageNo, { warehouse: item.warehouse });
-      const than = info?.thans?.find((t) => t.thanNo === item.thanNo);
-      if (than) {
-        text += `  Bale ${item.packageNo} Than ${item.thanNo}: ${fmtQty(than.yards)} yds\n`;
-        totalThans += 1;
-        totalYards += than.yards;
-        totalValue += than.yards * (info.pricePerYard || 0);
-      }
-    }
-  }
-  const totalPkgs = new Set(items.map((i) => i.packageNo)).size;
-  text += `\n  Total: ${totalPkgs} Bale${totalPkgs === 1 ? '' : 's'} (${totalThans} thans), ${fmtQty(totalYards)} yards, ${fmtMoney(totalValue)}`;
-  return text;
+  const approvalCards = require('./approvalCards');
+  const { items, collected } = session || {};
+  const cardItems = await approvalCards.enrichBundleItems(Array.isArray(items) ? items : []);
+  return approvalCards.buildSaleCard({
+    headline: 'Sale',
+    customer: (collected && collected.customer) || '',
+    salesPerson: (collected && collected.salesperson) || '',
+    paymentMode: (collected && collected.paymentMode) || '',
+    salesDate: (collected && collected.salesDate) || '',
+    items: cardItems,
+    docAttached: !!(session && session.sale_doc_file_id),
+  });
 }
 
 function getSaleDetails(session) {

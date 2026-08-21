@@ -1272,8 +1272,11 @@ async function submit(bot, chatId, userId) {
           warehouse: l.warehouse || session.warehouse || '',
         })),
         docAttached: true,
+        // CARD-4 — the banner is the SHARED builder's job now, so every
+        // door words it identically instead of each appending its own.
+        backdated: backdated > 0,
+        daysBack: backdated,
       });
-      if (backdated) detail += `\n⚠️ BACKDATED sale — ${backdated} day(s) in the past. Check the date before approving.`;
     } catch (_) {
       detail = `🧵 ${session.design || 'Sale'} @ ${session.warehouse || '—'}\n${totals.thans} than · ${fmtQty(totals.yards)} yd`;
     }

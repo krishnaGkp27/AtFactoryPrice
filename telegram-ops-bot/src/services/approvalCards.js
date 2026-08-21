@@ -242,6 +242,14 @@ async function buildSaleCard(p) {
   } else if (noStock) {
     text += `\n⚠️ ${noStock} of ${items.length} item(s) marked ⚠️ have no available stock — check before approving.`;
   }
+  // CARD-4 (owner 23-Aug) — the backdated banner belongs to the SHARED
+  // builder, not to each door. Every sale path used to word it its own way
+  // (or prepend it), so the same fact read three different ways depending
+  // on which tile the seller used.
+  if (p.backdated) {
+    const d = Number(p.daysBack) || 0;
+    text += `\n⚠️ BACKDATED sale — ${d ? `${d} day(s)` : 'dated'} in the past. Check the date before approving.`;
+  }
   return text;
 }
 
@@ -434,7 +442,15 @@ async function enrichBundleItems(rawItems) {
     byPkg.get(k).push(r);
   }
   return rawItems.map((it) => {
-    const rows = byPkg.get(String(it.packageNo)) || [];
+    let rows = byPkg.get(String(it.packageNo)) || [];
+    // TRF-INT4 parity — when the item names its own store, resolve inside
+    // THAT store so a same-numbered bale elsewhere can never describe it.
+    // (Falls back to the unscoped rows when the store holds none.)
+    if (it.warehouse) {
+      const scoped = rows.filter((r) => String(r.warehouse || '').trim().toLowerCase()
+        === String(it.warehouse).trim().toLowerCase());
+      if (scoped.length) rows = scoped;
+    }
     const designs = [...new Set(rows.map((r) => r.design))];
     // APF-1 — the three bare-item causes are DIFFERENT facts and the card
     // must not conflate them: no live rows at all = sold/unknown (warn
@@ -488,6 +504,8 @@ async function buildSaleBundleCard(aj) {
     items,
     docAttached: !!aj.sale_doc_file_id,
     docLabel: 'Sales bill',
+    backdated: !!aj.backdated,
+    daysBack: aj.daysBack,
   });
   // When enrichment could not price a single item (Sheets down, or every
   // number ambiguous), the computed total reads 0 — the queue row's own
@@ -495,7 +513,6 @@ async function buildSaleBundleCard(aj) {
   if (!items.some((i) => Number(i.yards)) && aj.totalYards) {
     text += `\nQueued total: ${fmtQty(aj.totalYards)} yards`;
   }
-  if (aj.backdated) text += `\n⚠️ BACKDATED sale (${aj.daysBack || '?'} day(s) in the past)`;
   text += docVerifyLine(aj);
   return text;
 }
@@ -745,6 +762,8 @@ module.exports = {
   actionLabel,
   _resetNameCacheForTests,
   sortSaleItems,
+  // CARD-4 — the one enrichment every sale door resolves goods through.
+  enrichBundleItems,
   shortReason,
   shortRequestRef,
   shortTransferRef,

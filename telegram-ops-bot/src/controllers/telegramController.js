@@ -7177,56 +7177,34 @@ async function executeSale(bot, chatId, userId) {
     // DSP-1 — the dispatcher no longer supplies a customer; the admin assigns
     // it at approval, so the card must say that instead of "undefined".
     const collectedCustomer = String(session.collected.customer || '').trim();
-    let detailText = `Sale Request\nCustomer: ${collectedCustomer || '— (assigned at approval)'}`;
-    if (isBackdated) {
-      detailText = `⚠️ BACKDATED — sale date is ${daysBack} day${daysBack === 1 ? '' : 's'} in the past. Verify the date and inventory are correct before approving.\n\n` + detailText;
-    }
-    try {
-      if (collectedCustomer) {
-        const cust = await crmService.getCustomer(collectedCustomer);
-        if (cust && (cust.phone || cust.address)) {
-          if (cust.phone) detailText += `\nPhone: ${cust.phone}`;
-          if (cust.address) detailText += `\nAddress: ${cust.address}`;
-        }
-      }
-    } catch (_) {}
-    // Owner mandate 14-Jul: the approval card ALWAYS shows the canonical
-    // DD-MMM-YYYY date regardless of how the requester typed it.
-    detailText += `\nSalesperson: ${details.salesPerson}\nPayment: ${details.paymentMode}\nDate: ${fmtDate(sDate)}\n\nItems:\n`;
-    // Fix A — count only items actually rendered; surface any phantom that
-    // slipped through (defence-in-depth; Fix C should prevent this entirely).
+    // CARD-4 (owner 23-Aug-2026) — "club together all the paths from the
+    // same code in the same layout without any ambiguity."
+    //
+    // This door used to hand-write its own verbose card ("Bale 1003:
+    // 9060-B , 7 thans, 210 yds (Kano office) … Total: 1 Bale (7 thans),
+    // 210 yards") while the than sale and the snap sale already rendered
+    // CARD-3, so the SAME business event looked different depending on
+    // which tile the seller used. The goods are now resolved by the SHARED
+    // enrichment and the text comes from the SHARED builder, rendered from
+    // the queued actionJSON — so this first card is identical to the one
+    // the reminder sweep and the approvals inbox rebuild later.
+    const approvalCards = require('../services/approvalCards');
+    const cardItems = await approvalCards.enrichBundleItems(session.items || []);
     let totalYards = 0, totalThans = 0;
-    const renderedPkgs = new Set();
-    const phantomLines = [];
     // ST-1 Part B — per-design yardage snapshot so the enrichment "Paid in
     // full" chip can compute the sale total at approval time.
     const yardsByDesign = {};
-    for (const item of session.items) {
-      // TRF-INT4 — resolve the card line against the item's own warehouse so
-      // a same-numbered bale elsewhere can never misdescribe what will sell.
-      const info = await inventoryService.getPackageSummary(item.packageNo, { warehouse: item.warehouse });
-      if (item.type === 'package' && info) {
-        detailText += `  Bale ${item.packageNo}: ${info.design} ${info.shade}, ${info.availableThans} thans, ${fmtQty(info.availableYards)} yds (${info.warehouse})\n`;
-        totalThans += info.availableThans;
-        totalYards += info.availableYards;
-        yardsByDesign[info.design] = (yardsByDesign[info.design] || 0) + info.availableYards;
-        renderedPkgs.add(item.packageNo);
-      } else if (item.type === 'than' && info) {
-        const t = info.thans?.find((th) => th.thanNo === item.thanNo);
-        detailText += `  Bale ${item.packageNo} Than ${item.thanNo}: ${info.design} ${info.shade}, ${t ? fmtQty(t.yards) + ' yds' : '?'} (${info.warehouse})\n`;
-        totalThans += 1;
-        totalYards += t ? t.yards : 0;
-        if (t) yardsByDesign[info.design] = (yardsByDesign[info.design] || 0) + t.yards;
-        renderedPkgs.add(item.packageNo);
-      } else {
-        phantomLines.push(`  ⚠️ Bale ${item.packageNo}${item.type === 'than' ? ` Than ${item.thanNo}` : ''}: UNRESOLVED (skipped)`);
-      }
+    const renderedPkgs = new Set();
+    for (const it of cardItems) {
+      if (it.noStock) continue;               // unresolved: warned on the card
+      totalThans += Number(it.thans) || 0;
+      totalYards += Number(it.yards) || 0;
+      renderedPkgs.add(String(it.packageNo));
+      if (it.design) yardsByDesign[it.design] = (yardsByDesign[it.design] || 0) + (Number(it.yards) || 0);
     }
+    // Distinct printed numbers — the seller's sealed receipt counts BALES,
+    // so a five-than sale out of three bales reads "3 Bales", never "5".
     const totalPkgs = renderedPkgs.size;
-    detailText += `\nTotal: ${totalPkgs} Bale${totalPkgs === 1 ? '' : 's'} (${totalThans} thans), ${fmtQty(totalYards)} yards`;
-    if (phantomLines.length) {
-      detailText += `\n\n⚠️ ${phantomLines.length} item${phantomLines.length > 1 ? 's' : ''} could not be resolved and will NOT be applied:\n${phantomLines.join('\n')}`;
-    }
 
     const saleDocInfo = session.sale_doc_file_id
       ? { sale_doc_file_id: session.sale_doc_file_id, sale_doc_type: session.sale_doc_type, sale_doc_mime: session.sale_doc_mime }
@@ -7243,7 +7221,13 @@ async function executeSale(bot, chatId, userId) {
     const userLabel = await getRequesterDisplayName(userId, null);
     const isSubmitterAdmin = config.access.adminIds.includes(userId);
     const excludeId = isSubmitterAdmin ? userId : undefined;
-    if (session.sale_doc_file_id) detailText += '\n📎 Sales bill attached (see below)';
+    // The card is rendered from the QUEUED row (attachment note and the
+    // backdated banner included), never hand-assembled here.
+    const detailText = await approvalCards.buildSaleBundleCard({
+      action: 'sale_bundle', items: session.items, customer: session.collected.customer,
+      salesDate: sDate, salesPerson: details.salesPerson, paymentMode: details.paymentMode,
+      backdated: isBackdated, daysBack, totalYards, yardsByDesign, ...saleDocInfo,
+    });
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, detailText, effectiveRiskReason, excludeId);
     if (session.sale_doc_file_id) {
       for (const adminId of config.access.adminIds) {
