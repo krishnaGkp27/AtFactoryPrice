@@ -110,7 +110,10 @@ test('the card shows the confirmed layout: three buckets, both sides of a part-s
   // ✅ Available — 9824 whole, 9830 partially left with a TV-8 label.
   assert.match(text, /Available — 2 Bales/);
   assert.match(text, /9824/);
-  assert.match(text, /9830 \(2t left\)/, `part-sold bale must show its remainder, got:\n${text}`);
+  // SDS-3 (owner, 20-Aug-2026) — the word "left" is gone from the roster:
+  // his handwritten card reads `784(3)`, and the bracket already means
+  // "still inside". The remainder itself is unchanged.
+  assert.match(text, /9830 \(2t\)/, `part-sold bale must show its remainder, got:\n${text}`);
 
   // 💰 Sold — SDS-2 grouped layout: date — customer (nB) headers with the
   // numbers beneath, oldest first; partial sales tagged inside the list.

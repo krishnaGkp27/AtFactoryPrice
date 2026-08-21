@@ -59,6 +59,7 @@ const { makeRenderer, rowsFor } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const usersRepository = require('../repositories/usersRepository');
 const unitDisplayService = require('../services/unitDisplayService');
+const locationService = require('../services/locationService'); // SDS-3 — store vs warehouse units
 const { buildShadeNameMap, buildShadeLabel } = require('../utils/shadeButtons');
 const auth = require('../middlewares/auth');
 const fmtDate = require('../utils/formatDate');
@@ -117,6 +118,32 @@ function byBaleNo(a, b) {
 
 function balesWord(n) {
   return `${n} Bale${n === 1 ? '' : 's'}`;
+}
+
+/**
+ * SDS-3 (owner, 20-Aug-2026) — at a STORE the bale count answers nothing:
+ * "once a bale is open, the than is what sells". So the Available header
+ * counts THANS there, exactly as his handwritten card does (`Available =
+ * 21t`). Warehouses keep the bale count — sealed bales are the unit that
+ * matters on a warehouse shelf.
+ *
+ * Where a store holds whole unopened bales alongside loose ones, the header
+ * uses the locked §6c grammar (`2B + 4t`) rather than flattening them into
+ * a than figure — whole as B, open as t, never double-counted. That is
+ * exactly what `unitDisplayService`'s labeller already produces, so this
+ * asks IT rather than counting rows itself.
+ *
+ * @param {Array<Array<object>>} baleGroups rows grouped per bale
+ * @param {(rows:Array<object>)=>string} qty the labeller from createQtyLabeller
+ */
+function availHeadQty(baleGroups, qty) {
+  const flat = baleGroups.flat();
+  if (!flat.length) return '0t';
+  try {
+    const l = qty(flat);
+    if (l && String(l).trim()) return String(l).trim();
+  } catch (_) { /* fall through to the plain than count */ }
+  return `${flat.length}t`;
 }
 
 /* ───────────────────────────── entry ───────────────────────────── */
@@ -333,6 +360,17 @@ async function renderCard(bot, chatId, userId) {
 
   const { avail, sold, transit } = sliceRows(all, session, session.shade);
 
+  // SDS-3 — which UNITS this card speaks. The LOC-1 register is the single
+  // source: kindOf() returns 'warehouse' for any place not registered, so an
+  // unmarked place keeps today's bale-first card. Deliberately NOT keyed on
+  // THAN_VISIBILITY_WAREHOUSES: that setting drives the TV-8 quantity
+  // grammar elsewhere, and the owner asked for this card to follow the
+  // place's KIND. Both entries are intentional — see specs/SDS-3.
+  let isStore = false;
+  try {
+    isStore = (await locationService.kindOf(session.warehouse)) === 'store';
+  } catch (_) { /* register unreadable → warehouse card, the safe default */ }
+
   let nameMap = new Map();
   try {
     const designAssetsRepo = require('../repositories/designAssetsRepository');
@@ -360,7 +398,14 @@ async function renderCard(bot, chatId, userId) {
 
   /* ✅ Available */
   const availBales = groupBy(avail, baleKey);
-  body += `\n✅ *Available — ${balesWord(availBales.size)}*\n`;
+  // SDS-3 — a STORE sells opened bales, so its header counts thans; a
+  // warehouse holds sealed bales and keeps counting bales. `isStore` comes
+  // from the LOC-1 register, which defaults any UNREGISTERED place to
+  // warehouse — so a place the owner has not marked can never silently
+  // switch units.
+  body += `\n✅ *Available — ${isStore
+    ? availHeadQty([...availBales.values()], qty)
+    : balesWord(availBales.size)}*\n`;
   if (availBales.size) {
     const entries = [...availBales.entries()].sort((a, b) => byBaleNo(a[1][0].packageNo, b[1][0].packageNo));
     if (multiContainer) {
@@ -388,7 +433,11 @@ async function renderCard(bot, chatId, userId) {
    * each number; a row missing its date/customer groups under — / —,
    * visible, never hidden. */
   const soldGroups = groupBy(sold, (r) => `${baleKey(r)}|${normDay(r.soldDate)}|${upper(r.soldTo)}`);
-  body += `\n💰 *Sold — ${balesWord(new Set(sold.map(baleKey)).size)}*\n`;
+  // SDS-3 — at a store the sold bale count is meaningless (the bales are
+  // open); the per-day than totals below carry the answer instead.
+  body += isStore
+    ? '\n💰 *Sold*\n'
+    : `\n💰 *Sold — ${balesWord(new Set(sold.map(baleKey)).size)}*\n`;
   if (soldGroups.size) {
     const baleEntries = [...soldGroups.values()]
       .sort((a, b) => String(normDay(a[0].soldDate)).localeCompare(String(normDay(b[0].soldDate)))
@@ -403,14 +452,27 @@ async function renderCard(bot, chatId, userId) {
       const day = normDay(r.soldDate);
       const customer = String(r.soldTo).trim() || '—';
       const k = `${day}|${upper(customer)}`;
-      if (!events.has(k)) events.set(k, { day, customer, tokens: [] });
+      if (!events.has(k)) events.set(k, { day, customer, tokens: [], rows: [] });
+      events.get(k).rows.push(...rows);
       const l = qty(rows);
       const part = l === '1B' ? '' : ` (${l})`;
       const tag = multiContainer ? ` ·${String(r.arrivalBatch).trim() || '(unlabelled)'}` : '';
       events.get(k).tokens.push(`${String(r.packageNo).trim()}${part}${tag}`);
     }
+    // SDS-3 — the per-event quantity, through the SAME labeller the rest of
+    // the card uses, so a store showing part-bales and a warehouse showing
+    // whole ones stay in one grammar.
+    for (const e of events.values()) {
+      try { e.thanQty = qty(e.rows); } catch (_) { e.thanQty = `${e.rows.length}t`; }
+    }
     body += [...events.values()]
-      .map((e) => `${e.day ? fmtDate.short(e.day) : '—'} — ${e.customer} (${e.tokens.length}B)\n${e.tokens.join(', ')}`)
+      .map((e) => {
+        // SDS-3 — at a store the day-line carries the THANS that left that
+        // day (his note: `Owaibula : 26`), so the figure he wants is read
+        // rather than mentally summed from the per-bale tags beneath.
+        const head = isStore ? e.thanQty : `${e.tokens.length}B`;
+        return `${e.day ? fmtDate.short(e.day) : '—'} — ${e.customer} (${head})\n${e.tokens.join(', ')}`;
+      })
       .join('\n\n');
     if (dropped) body += `\n_…and ${dropped} more bale${dropped === 1 ? '' : 's'}_`;
     body += '\n';
@@ -443,7 +505,9 @@ async function renderCard(bot, chatId, userId) {
 function availLabel(rows, qty) {
   const l = qty(rows);
   const no = String(rows[0].packageNo).trim();
-  return l === '1B' ? no : `${no} (${l} left)`;
+  // SDS-3 (owner, 20-Aug-2026) — the word "left" is gone: his handwritten
+  // card reads `784(3)`, and the bracket already means "still inside".
+  return l === '1B' ? no : `${no} (${l})`;
 }
 
 /* ──────────────────────────── callbacks ─────────────────────────── */
