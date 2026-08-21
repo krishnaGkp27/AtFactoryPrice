@@ -1,9 +1,8 @@
 # SDS-3 — the Stock-by-Shade card counts thans, not bales
 
-**Status: LAYOUT LOCKED 20-Aug-2026 by the owner (from his handwritten
-card, refined over four rounds in chat). NOT YET IMPLEMENTED — the owner
-is batching this with the next issue; build both together when he says
-go.** Layout questions are settled; do not re-ask.
+**Status: SHIPPED 21-Aug-2026 (`b07c314`).** Layout locked 20-Aug-2026 by
+the owner from his handwritten card, refined over four rounds in chat.
+Layout questions are settled; do not re-ask.
 
 ## The owner's reasoning
 
@@ -43,11 +42,22 @@ Everything else on the card (grouping oldest-first, container tags,
 missing-detail dashes, the sold-lines cap, the In-transit bucket) stays
 exactly as SDS-2 shipped it.
 
-## After the build
+## Which places get the than-first card
 
-- Refresh `Stock_by_Shade_Reading_Guide.pdf` (Abdul's one-pager) so the
-  example card matches.
-- Update the SDS layout notes in the flow header comment.
-- Tests: pin the three changes with the fixture from the chat preview
-  (624/784 available, 701/720 sold to Owaibula on 12-Jul) — the same
-  numbers the owner approved on screen.
+Not a warehouse list and not a Settings toggle: the card asks the LOC-1
+`Locations` register what kind of place this is, and renders than-first
+only where `kind = store`. The owner marked `Kano office` a store on
+20-Aug-2026, so it is the first (and today the only) one. Marking another
+place a store switches its card over with no deploy. If the register is
+unreachable the flow defaults to `false` — the bale-first card every
+warehouse had before this change.
+
+## After the build — all done 21-Aug-2026
+
+- ✅ `Stock_by_Shade_Reading_Guide.pdf` (Abdul's one-pager) rebuilt: the
+  example section now shows BOTH cards side by side — store and bale
+  warehouse — so a reader can see which shape belongs to which place.
+- ✅ SDS layout notes updated in the flow header comment.
+- ✅ Tests pin the three changes with the owner's on-screen fixture
+  (624/784 available, 701/720 sold to Owaibula on 12-Jul) in
+  `test/unit/flows/sdsThanFirstCard.test.js`.

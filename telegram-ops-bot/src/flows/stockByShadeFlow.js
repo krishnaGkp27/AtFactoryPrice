@@ -12,6 +12,22 @@
  *   💰 Sold — 5 Bales        (number — date — customer, oldest first)
  *   🚚 In transit — 1 Bale   (number → destination, separate bucket)
  *
+ * SDS-3 second pass (owner's handwritten card, layout locked 20-Aug-2026)
+ * changes what the two headers COUNT at a place the Locations sheet marks
+ * `store` — where bales are opened and the than is what sells, "2 Bales"
+ * answers nothing. At a store the same card reads:
+ *
+ *   ✅ Available — 4t        (than count; `2B + 4t` where whole bales sit
+ *   624 (1t), 784 (3t)        alongside open ones — never double-counted)
+ *   💰 Sold                   (plain header, no bale figure)
+ *   12-Jul-26 — Owaibula (26t)  (the day-line carries the than total)
+ *   701 (14t), 720 (12t)
+ *
+ * A bale warehouse is untouched by all three: it still counts sealed bales
+ * in both headers and tags each sold day-line `(2B)`. The one change that
+ * crosses both is cosmetic — the roster dropped the word `left`, because
+ * a bracket under Available can only ever mean what remains.
+ *
  * No screen showed both sides before (survey 07-Aug): pickers list
  * available only, Supply Details lists sold only per customer+day.
  *
