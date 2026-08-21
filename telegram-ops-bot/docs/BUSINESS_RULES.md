@@ -24,6 +24,35 @@ what, why (incident), where enforced.
 - Enforced: `inventoryRepository` (uid plumbing), `transferService`
   (uid-scoped transitions), spec `specs/TRF-INT_BALE_INTEGRITY.md`.
 
+## 1b · One live number, one design — guaranteed at sheet entry
+
+**Locked 23-Aug-2026 (owner, during CARD-4).**
+
+> "Every time the bale which is taken in the inventory sheet is unique
+> (primary key). If there is any duplicate bale number that exists, then it
+> will be sorted out during the entry of those numbers in the sheet, making
+> sure there is no conflict between two bales having the same shared common
+> number and having two different designs."
+
+- Among LIVE stock, a printed bale number maps to exactly **one design**.
+  Humans guarantee this at data-entry time; the bot may **assume** the
+  mapping is unique and must not build flows around the conflicted case.
+- Therefore: **no new ambiguity UX** (no "which design is 1003?" pickers,
+  no multi-design accommodation) in any upcoming feature. Rule 6's
+  "which warehouse?" ask stays — same number in two STORES is legitimate;
+  same number under two DESIGNS is not.
+- When code nonetheless DETECTS two designs under one live number, that is
+  a **sheet-entry error**: be loud (flag it as a data error naming the
+  bale, keep DMing admins until fixed), never guess a design, never
+  silently zero a figure because of it (the CARD-4a incident), and never
+  quietly pick one side.
+- Enforced: GRN/intake live-collision rejection (rule 5),
+  `baleAuditReport` boot scan (clusters spanning designs → admins DM'd
+  until resolved), `consistencySentinel` daily check, and the card
+  builders' refuse-to-guess posture (`enrichBundleItems`).
+- Standing practice: every future feature's pre-implementation
+  understanding states how it treats bale identity under this rule.
+
 ## 2 · The bot NEVER selects physical stock
 
 **Locked 02-Aug-2026 (TRF-15), after transfer 02Aug·01** — FIFO pre-ticks
