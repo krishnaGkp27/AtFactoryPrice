@@ -31,6 +31,43 @@ const logger = require('../utils/logger');
 const RATE_LIMIT_MAX = 10;             // captures per window
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
+/**
+ * IDR-3 (owner, 21-Aug-2026) — ONE living card per stranger.
+ *
+ * The bug he saw: two messages from Ekwealor Chukwudi ("Hii", then
+ * "/menu") produced two identical onboarding cards a minute apart. The old
+ * rule was "notify on every capture", capped only by a GLOBAL 10/hour —
+ * which both cluttered the feed and let one chatty stranger eat the budget
+ * a genuinely new person needs.
+ *
+ * The fix is his own idea, and it is the better one: notify when a person
+ * ENTERS the pending state, then EDIT that same card as they keep talking,
+ * carrying a running log of what they said. The log is the triage evidence
+ * — three lines together often answer "who are they?" outright, which is
+ * exactly the question the chips ask.
+ *
+ * State is in memory, keyed by telegram id (the entity key). Losing it on
+ * restart costs one extra card and self-heals — the same trade menuAnchor
+ * makes, and safe for the same reason: single replica by construction.
+ *
+ * The log lives on the CARD only, never in a sheet: a chat message is
+ * neither identity nor a business record (storage rule 5b), and the card
+ * text survives in Telegram permanently anyway.
+ */
+const _liveCards = new Map(); // telegramId → { deliveries, messages:[{at,text}], at }
+const CARD_LOG_MAX = 5;               // lines kept before older ones collapse
+const CARD_TTL_MS = 12 * 60 * 60 * 1000;  // a card older than this starts fresh
+
+function _liveCard(telegramId) {
+  const c = _liveCards.get(String(telegramId));
+  if (!c) return null;
+  if (Date.now() - (c.at || 0) > CARD_TTL_MS) { _liveCards.delete(String(telegramId)); return null; }
+  return c;
+}
+
+/** Drop the living card so the NEXT message starts a new one (resolution). */
+function _clearLiveCard(telegramId) { _liveCards.delete(String(telegramId)); }
+
 let _windowStart = Date.now();
 let _windowCount = 0;
 
@@ -45,9 +82,15 @@ function _checkRateLimit() {
   return true;
 }
 
+/**
+ * Reset the per-test service state: the flood window AND (IDR-3) the living
+ * cards. Every caller wants "a fresh scenario"; leaving a card behind makes
+ * the next test's first message look like a returning stranger's second.
+ */
 function _resetRateLimitForTests() {
   _windowStart = Date.now();
   _windowCount = 0;
+  _liveCards.clear();
 }
 
 function _displayName(msg) {
@@ -108,6 +151,54 @@ function _adminCard(entry) {
     + `🆔 \`${entry.telegram_id}\`\n`
     + `🕓 ${_mdEscape(fmtDate.withTime(entry.arrived_at))}\n`
     + said
+    + '\nWho are they? Employee opens Add Employee; the other two record them '
+    + 'and remember this Telegram account for them.'
+  );
+}
+
+/**
+ * IDR-3 — the same card, with the running message log the owner asked for:
+ * "you can still log the subsequent messages edited in place rather than
+ * popping up separate card". Three lines together usually answer the very
+ * question the chips ask, so the log IS the triage evidence.
+ *
+ * Capped at CARD_LOG_MAX lines with the older ones collapsed to a count —
+ * a chatty stranger must not grow the card past Telegram's size limit.
+ */
+function _adminCardWithLog(entry, messages) {
+  const handle = entry.username ? `@${_mdEscape(entry.username)}` : 'no username';
+  const name = _mdEscape([entry.first_name, entry.last_name].filter(Boolean).join(' '));
+  const who = name ? `${name} · ${handle}` : handle;
+
+  const list = Array.isArray(messages) ? messages : [];
+  const shown = list.slice(-CARD_LOG_MAX);
+  const hidden = list.length - shown.length;
+
+  // IDR-2 still stands for a SINGLE message: a bare "hi" or "/start"
+  // carries nothing the card does not already show, so quoting it would be
+  // noise. From the SECOND message on, the log earns its place — the
+  // pattern itself is information (they came back, at these times), which
+  // is what the owner asked to see instead of a second card.
+  const singleBare = list.length === 1 && !_firstMessageLine(list[0] && list[0].text);
+
+  let log = '';
+  if (shown.length && !singleBare) {
+    log = `\n💬 *Messages (${list.length})*\n`;
+    if (hidden > 0) log += `_…and ${hidden} earlier_\n`;
+    log += shown.map((m) => {
+      const when = _mdEscape(fmtDate.withTime(m.at).slice(-5)); // HH:MM
+      const said = _mdEscape(String(m.text || '').replace(/\s+/g, ' ').trim().slice(0, 90)) || '_(no text)_';
+      return `${when} — _${said}_`;
+    }).join('\n');
+    log += '\n';
+  }
+
+  return (
+    '🆕 *Unknown user messaged the bot*\n\n'
+    + `👤 ${who}\n`
+    + `🆔 \`${entry.telegram_id}\`\n`
+    + `🕓 ${_mdEscape(fmtDate.withTime(entry.arrived_at))}\n`
+    + log
     + '\nWho are they? Employee opens Add Employee; the other two record them '
     + 'and remember this Telegram account for them.'
   );
@@ -210,16 +301,38 @@ async function captureStranger(bot, msg) {
     logger.error(`pendingUser: PendingUsers upsert failed for ${telegramId} (admin will still be notified): ${e.message}`);
   }
 
-  // ALWAYS notify admins — a fresh Onboard card on every /start from an
-  // unknown or deactivated user (capped by the rate limit above). Decoupled
-  // from the sheet write so a PendingUsers hiccup can't silently swallow the
-  // one signal that gets the person onboarded.
+  // IDR-3 — ONE living card per stranger. A NEW card is sent only when this
+  // person enters the pending state; while they are already pending, the
+  // card each admin holds is EDITED with the growing message log. That is
+  // the edge-vs-level rule: notify on the transition, not on every
+  // observation — which is what removes the clutter structurally rather
+  // than throttling it.
+  //
+  // Still decoupled from the sheet write: a PendingUsers hiccup must not
+  // swallow the one signal that gets the person onboarded.
+  const card = _liveCard(telegramId);
+  const opts = { parse_mode: 'Markdown', reply_markup: _adminCardKeyboard(telegramId) };
   try {
-    await adminFeed.notify(
-      bot, 'user.pending',
-      _adminCard(entry),
-      { parse_mode: 'Markdown', reply_markup: _adminCardKeyboard(telegramId) },
-    );
+    if (card) {
+      card.messages.push({ at: entry.arrived_at, text: entry.first_message });
+      card.at = Date.now();
+      const { edited } = await adminFeed.editDelivered(
+        bot, card.deliveries, _adminCardWithLog(entry, card.messages), opts);
+      if (!edited) {
+        // Every copy is gone or too old to edit (deleted card, restart):
+        // start ONE fresh card rather than leaving the admins with nothing.
+        const res = await adminFeed.notify(bot, 'user.pending',
+          _adminCardWithLog(entry, card.messages), opts);
+        card.deliveries = (res && res.deliveries) || [];
+      }
+    } else {
+      const messages = [{ at: entry.arrived_at, text: entry.first_message }];
+      const res = await adminFeed.notify(bot, 'user.pending',
+        _adminCardWithLog(entry, messages), opts);
+      _liveCards.set(String(telegramId), {
+        deliveries: (res && res.deliveries) || [], messages, at: Date.now(),
+      });
+    }
   } catch (e) {
     logger.warn(`pendingUser: admin notify failed for ${telegramId}: ${e.message}`);
   }
@@ -240,6 +353,10 @@ async function captureStranger(bot, msg) {
  * Admin clicked [Ignore] — flips the row to status=ignored.
  */
 async function ignore(telegramId, adminUserId) {
+  // IDR-3 — the card's life ends with the decision. If this person comes
+  // back later, that is a NEW arrival and deserves a fresh card rather than
+  // silent appends to a log an admin has already acted on.
+  _clearLiveCard(telegramId);
   return pendingUsersRepo.updateStatus(telegramId, 'ignored', adminUserId);
 }
 
@@ -249,6 +366,7 @@ async function ignore(telegramId, adminUserId) {
  * stop seeing them in the queue.
  */
 async function markOnboarded(telegramId, adminUserId) {
+  _clearLiveCard(telegramId); // IDR-3 — see ignore()
   return pendingUsersRepo.updateStatus(telegramId, 'onboarded', adminUserId);
 }
 
@@ -261,6 +379,10 @@ module.exports = {
     RATE_LIMIT_MAX,
     RATE_LIMIT_WINDOW_MS,
     _resetRateLimitForTests,
+    _liveCards,
+    _clearLiveCard,
+    _adminCardWithLog,
+    CARD_LOG_MAX,
     _adminCard,
     _mdEscape,
   },

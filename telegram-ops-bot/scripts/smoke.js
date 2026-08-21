@@ -2855,27 +2855,32 @@ async function runS18() {
     pass('S18.1 stranger /start: pending row + polite reply + admin notify');
   } else fail('S18.1', JSON.stringify({ writes, sent: fakeBot._sent.length }));
 
-  // S18.2 — same stranger re-pings: NO duplicate row, but admin IS re-notified
-  // (a returning / deactivated user must resurface), polite reply re-sent.
+  // S18.2 — same stranger re-pings: NO duplicate row, and (IDR-3, owner
+  // 21-Aug-2026) NO second card either — the living card is EDITED with the
+  // growing message log instead. Two identical cards a minute apart was the
+  // clutter he reported. The polite reply is still re-sent: that one is for
+  // the stranger, who may have lost it.
   const r2 = await svc.captureStranger(fakeBot, mkMsg(701, '/start', { first: 'Mohammad', username: 'msani' }));
   if (r2.captured && writes.appended.length === 1
-      && writes.notified === 2
+      && writes.notified === 1
       && fakeBot._sent.length === 2) {
-    pass('S18.2 re-ping: no dup row, admin RE-notified, reply resent');
+    pass('S18.2 re-ping: no dup row, card EDITED not re-sent, reply resent');
   } else fail('S18.2', JSON.stringify({ writes, sent: fakeBot._sent.length }));
 
   // S18.3 — second distinct stranger: appended + notified.
   await svc.captureStranger(fakeBot, mkMsg(702, '/start', { first: 'Adamu' }));
-  if (writes.appended.length === 2 && writes.notified === 3) {
+  if (writes.appended.length === 2 && writes.notified === 2) {
     pass('S18.3 distinct stranger: separate row + separate notify');
   } else fail('S18.3', JSON.stringify(writes));
 
-  // S18.4 — flood cap (RATE_LIMIT_MAX) counts EVERY capture, including re-pings,
-  // since each one notifies. 3 used so far (S18.1-3); 7 more reach the cap of 10.
+  // S18.4 — the flood cap counts every CAPTURE (a re-ping still costs one,
+  // even though IDR-3 now spends it on an edit rather than a new card).
+  // 3 used so far (S18.1-3); 7 more reach the cap of 10. Distinct strangers
+  // each get their own first card, so 9 notifies for 9 people.
   for (let i = 0; i < 7; i++) {
     await svc.captureStranger(fakeBot, mkMsg(710 + i, '/start'));
   }
-  if (writes.appended.length === 9 && writes.notified === 10) {
+  if (writes.appended.length === 9 && writes.notified === 9) {
     pass('S18.4 rate-limit admits up to 10 notifications per window');
   } else fail('S18.4', JSON.stringify({ appended: writes.appended.length, notified: writes.notified }));
 
@@ -2883,7 +2888,7 @@ async function runS18() {
   const dropped = await svc.captureStranger(fakeBot, mkMsg(999, '/start'));
   if (!dropped.captured && dropped.reason === 'rate_limited'
       && writes.appended.length === 9
-      && writes.notified === 10
+      && writes.notified === 9
       && fakeBot._sent.length === sentBefore) {
     pass('S18.5 over-cap capture dropped silently — no row, no notify, no reply');
   } else fail('S18.5', JSON.stringify({ dropped, len: writes.appended.length }));

@@ -122,6 +122,11 @@ async function notify(bot, eventType, text, opts = {}, extra = {}) {
 
   let sent = 0;
   let skipped = 0;
+  // IDR-3 — report WHERE each copy landed, so a caller keeping one living
+  // card per subject can edit those messages in place instead of sending a
+  // fresh card every time. Purely additive: existing callers read only
+  // .sent/.skipped and are unaffected.
+  const deliveries = [];
 
   for (const rawId of adminIds) {
     const id = String(rawId);
@@ -135,23 +140,56 @@ async function notify(bot, eventType, text, opts = {}, extra = {}) {
     }
     if (!isEnabled(prefs, eventType)) { skipped += 1; continue; }
     try {
-      await bot.sendMessage(id, text, opts);
+      const m = await bot.sendMessage(id, text, opts);
       sent += 1;
+      if (m && m.message_id) deliveries.push({ adminId: id, messageId: m.message_id });
     } catch (e) {
       // A Markdown parse failure (unescaped user data in `text`) must not
       // silently drop the notification — retry once as plain text.
       try {
         const plainOpts = { ...opts };
         delete plainOpts.parse_mode;
-        await bot.sendMessage(id, text, plainOpts);
+        const m2 = await bot.sendMessage(id, text, plainOpts);
         sent += 1;
+        if (m2 && m2.message_id) deliveries.push({ adminId: id, messageId: m2.message_id });
       } catch (e2) {
         logger.warn(`adminFeed.notify: send to ${id} failed for ${eventType}: ${e2.message}`);
         skipped += 1;
       }
     }
   }
-  return { sent, skipped };
+  return { sent, skipped, deliveries };
+}
+
+/**
+ * IDR-3 — repaint copies already delivered by notify().
+ *
+ * One subject, one card per admin: when the same subject produces more
+ * news (another message from the same stranger), the card each admin holds
+ * is EDITED rather than joined by a sibling. Never throws — a card that has
+ * been deleted, or is too old to edit, simply reports itself as not
+ * repainted, and the caller decides whether that warrants a fresh send.
+ *
+ * @param {object} bot
+ * @param {Array<{adminId:string, messageId:number}>} deliveries from notify()
+ * @returns {Promise<{edited:number, failed:number}>}
+ */
+async function editDelivered(bot, deliveries, text, opts = {}) {
+  let edited = 0;
+  let failed = 0;
+  for (const d of deliveries || []) {
+    if (!d || !d.adminId || !d.messageId) { failed += 1; continue; }
+    try {
+      await bot.editMessageText(text, { chat_id: d.adminId, message_id: d.messageId, ...opts });
+      edited += 1;
+    } catch (e) {
+      // An identical repaint is success, not failure — the card is already
+      // correct (the same isNotModified rule the flow renderers follow).
+      if (/not modified/i.test(e && e.message)) { edited += 1; continue; }
+      failed += 1;
+    }
+  }
+  return { edited, failed };
 }
 
 /** All event types in declaration order — used by the toggle screen. */
@@ -171,6 +209,7 @@ function listGroups() {
 
 module.exports = {
   notify,
+  editDelivered,
   isEnabled,
   listEventTypes,
   getCatalogEntry,
