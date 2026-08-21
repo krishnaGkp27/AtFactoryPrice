@@ -447,9 +447,13 @@ async function enrichBundleItems(rawItems) {
     // THAT store so a same-numbered bale elsewhere can never describe it.
     // (Falls back to the unscoped rows when the store holds none.)
     if (it.warehouse) {
-      const scoped = rows.filter((r) => String(r.warehouse || '').trim().toLowerCase()
+      // CARD-4a — NO fallback to the unscoped rows. Falling back described
+      // a pinned request using a same-numbered bale in ANOTHER store —
+      // different design, shade and yardage — with no warning at all. The
+      // pinned store holding nothing live is a FACT the approver must see,
+      // so it degrades to noStock ("sold already, or unknown number").
+      rows = rows.filter((r) => String(r.warehouse || '').trim().toLowerCase()
         === String(it.warehouse).trim().toLowerCase());
-      if (scoped.length) rows = scoped;
     }
     const designs = [...new Set(rows.map((r) => r.design))];
     // APF-1 — the three bare-item causes are DIFFERENT facts and the card

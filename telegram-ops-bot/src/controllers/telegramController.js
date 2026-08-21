@@ -7189,18 +7189,35 @@ async function executeSale(bot, chatId, userId) {
     // the queued actionJSON — so this first card is identical to the one
     // the reminder sweep and the approvals inbox rebuild later.
     const approvalCards = require('../services/approvalCards');
-    const cardItems = await approvalCards.enrichBundleItems(session.items || []);
+    // CARD-4a — the money snapshot persisted on the queue row is computed
+    // from the AUTHORITATIVE warehouse-scoped lookup, exactly as before the
+    // card convergence. Card enrichment deliberately declines to describe a
+    // printed number that lives under two designs (BUSINESS_RULES §2: never
+    // guess) — correct for TEXT, but as the source of totals it stamped
+    // 0 yards on the row, which the customer INVOICE is minted from.
+    // Presentation converged; the persisted data did not change.
     let totalYards = 0, totalThans = 0;
     // ST-1 Part B — per-design yardage snapshot so the enrichment "Paid in
     // full" chip can compute the sale total at approval time.
     const yardsByDesign = {};
     const renderedPkgs = new Set();
-    for (const it of cardItems) {
-      if (it.noStock) continue;               // unresolved: warned on the card
-      totalThans += Number(it.thans) || 0;
-      totalYards += Number(it.yards) || 0;
-      renderedPkgs.add(String(it.packageNo));
-      if (it.design) yardsByDesign[it.design] = (yardsByDesign[it.design] || 0) + (Number(it.yards) || 0);
+    for (const item of session.items) {
+      // TRF-INT4 — resolve against the item's OWN warehouse so a
+      // same-numbered bale elsewhere can never misdescribe what will sell.
+      const info = await inventoryService.getPackageSummary(item.packageNo, { warehouse: item.warehouse });
+      if (!info) continue;                    // unresolved: warned on the card
+      if (item.type === 'package') {
+        totalThans += info.availableThans;
+        totalYards += info.availableYards;
+        yardsByDesign[info.design] = (yardsByDesign[info.design] || 0) + info.availableYards;
+        renderedPkgs.add(String(item.packageNo));
+      } else if (item.type === 'than') {
+        const t = info.thans?.find((th) => th.thanNo === item.thanNo);
+        totalThans += 1;
+        totalYards += t ? t.yards : 0;
+        if (t) yardsByDesign[info.design] = (yardsByDesign[info.design] || 0) + t.yards;
+        renderedPkgs.add(String(item.packageNo));
+      }
     }
     // Distinct printed numbers — the seller's sealed receipt counts BALES,
     // so a five-than sale out of three bales reads "3 Bales", never "5".

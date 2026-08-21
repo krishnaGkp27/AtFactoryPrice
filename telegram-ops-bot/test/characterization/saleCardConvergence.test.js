@@ -107,3 +107,54 @@ test('an unresolvable bale is warned by the shared builder, not silently dropped
   assert.match(text, /no available stock/i);
   assert.match(text, /NOTHING in this request is available/);
 });
+
+/* ── CARD-4a: what the adversarial review caught, pinned ─────────────── */
+
+test('REGRESSION: an ambiguous printed number must NOT zero the persisted money snapshot', async () => {
+  // A number living under two designs is one the card refuses to describe
+  // (BUSINESS_RULES §2 — never guess). That is right for TEXT, but when it
+  // was also used to compute totals it stamped 0 yards on the queue row,
+  // and the customer INVOICE is minted from that row.
+  const enriched = await approvalCards.enrichBundleItems([
+    { type: 'package', packageNo: '1003' },   // no warehouse → spans 2 designs
+  ]);
+  assert.equal(enriched[0].design, undefined, 'still declines to guess the design');
+  assert.equal(enriched[0].noStock, undefined, 'and it is NOT "no stock" — the bale exists');
+  // It therefore yields NO yards — which is the trap: summing enrichment
+  // to build the queue row's totals wrote 0 yards for a real sale, and the
+  // invoice is minted from that row. executeSale must keep sourcing the
+  // money snapshot from the authoritative warehouse-scoped lookup.
+  assert.equal(Number(enriched[0].yards) || 0, 0, 'no yards from an ambiguous number');
+  const controller = require('fs').readFileSync(
+    require('path').join(SRC, 'controllers/telegramController.js'), 'utf8');
+  const block = controller.slice(controller.indexOf('CARD-4a'), controller.indexOf('CARD-4a') + 1600);
+  assert.match(block, /getPackageSummary\(item\.packageNo, \{ warehouse: item\.warehouse \}\)/,
+    'the persisted totals come from the authoritative per-item lookup, not from card enrichment');
+  assert.ok(!/for \(const it of cardItems\)/.test(block),
+    'totals are never summed from the card-enrichment output');
+});
+
+test('REGRESSION: a pinned store with nothing live is reported, never described from another store', async () => {
+  // Before the fix this silently rendered the IDUMOTA bale — different
+  // design, shade, yardage and STORE — on a request pinned to Kano.
+  const saved = inventoryRepository.getAll;
+  inventoryRepository.getAll = async () => [
+    { packageNo: '1003', thanNo: 1, design: '77014', shade: '2', warehouse: 'IDUMOTA', status: 'available', yards: 25 },
+  ];
+  try {
+    const [it] = await approvalCards.enrichBundleItems([
+      { type: 'package', packageNo: '1003', warehouse: 'Kano office' },
+    ]);
+    assert.equal(it.noStock, true, 'pinned store empty → reported as no stock');
+    assert.equal(it.design, undefined, 'never borrows the other store\'s design');
+    assert.equal(it.warehouse, 'Kano office', 'the pinned store is not overwritten');
+    const card = await approvalCards.buildSaleBundleCard({
+      action: 'sale_bundle',
+      items: [{ type: 'package', packageNo: '1003', warehouse: 'Kano office' }],
+      totalYards: 60,
+    });
+    assert.match(card, /no available stock/i, 'and the approver is told');
+    // The queued figure still shows, so a card is never a blank 0.
+    assert.match(card, /Queued total: 60 yards/);
+  } finally { inventoryRepository.getAll = saved; }
+});
