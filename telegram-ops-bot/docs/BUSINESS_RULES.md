@@ -494,6 +494,19 @@ the file. Please go ahead with the recommendation."*
   not be: writes ride the two-admin pipeline in Telegram, with its
   self-approval and dual-signature guards.
 
+### 15b · Customer money views live on the website, not in the bot
+
+**Locked 22-Aug-2026** (owner, dropping the proposed in-bot receivables
+queue). Pending-payment / outstanding-balance queues and any further
+finance buildup are NOT built in the Telegram bot: they will be integrated
+on the website, fed from another data source, meeting the bot's data at a
+point on the site. This extends the SLG-1 Option B lock (money columns
+reserved for the finance portal). The bot keeps only the money surfaces it
+already has (payment approval cards, the typed ledger statement, the
+enrichment outstanding line); no new list/queue/report of customer money
+is added bot-side without a fresh owner ruling. The bot-side pending queue
+is GOODS ONLY — the 🚚 Pending Supply view (SUPQ-1).
+
 ---
 
 ## Incident log (why these rules exist)

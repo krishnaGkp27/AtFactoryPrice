@@ -250,7 +250,9 @@ const ACTIVITIES = [
   { code: 'data_health',           label: 'Data Health',               icon: '🩺', callback: 'act:data_health',        hub: 'reporting' },
   // T3 — admin read-only lens on the supply-order pipeline (Orders +
   // Customers + LedgerBalanceCache joined into one view).
-  { code: 'sales_workflow_view',   label: 'Sales Workflow',            icon: '📊', callback: 'act:sales_workflow',     hub: 'reporting' },
+  // SUPQ-1 (owner, 22-Aug-2026): relabeled — this IS the goods-owed queue.
+  // Code + callback unchanged so Departments CSVs and old cards keep working.
+  { code: 'sales_workflow_view',   label: 'Pending Supply',            icon: '🚚', callback: 'act:sales_workflow',     hub: 'reporting' },
   // T2 — per-user opt-in/out toggles for the Admin Activity Feed. Injected
   // per-user by the controller (admin-only); not in any department CSV.
   { code: 'notifications_settings',label: 'Notifications',             icon: '⚙️', callback: 'act:notifications',      hub: 'reporting' },

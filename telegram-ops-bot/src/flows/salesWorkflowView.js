@@ -1,10 +1,19 @@
 /**
- * Sales Workflow View (T3) — admin lens.
+ * 🚚 Pending Supply (T3 Sales Workflow view, extended by SUPQ-1) — the
+ * admin's goods-owed queue.
  *
- * Read-only consolidated view of every supply order grouped by status,
- * joined with the customer's contact info and current credit position.
- * No writes; no admin override actions in this commit (those are
- * deferred to a follow-up that requires an order state-machine).
+ * Read-only. Three kinds of "promised but not delivered", all derived at
+ * read time (BUSINESS_RULES §10 — no new sheets):
+ *   - Orders not yet accepted / accepted-in-flight (the Orders sheet, the
+ *     only store with a real undelivered lifecycle), joined with the
+ *     customer's contact info and credit position;
+ *   - Supply requests still in the approval pipeline (pending
+ *     ApprovalQueue rows, action = supply_request, any stage), shown with
+ *     the stage in human words and who currently holds it.
+ * An approved SALE is delivered by construction (stock flips sold at
+ * approval; no dispatch state exists) and never appears here. Money is
+ * deliberately absent beyond the existing ledger-balance line — customer
+ * money views live on the website (§15b, owner 22-Aug-2026).
  *
  * Visibility: admin-only. Routed from `act:sales_workflow_view` in
  * the controller; this module gates again via `isAdmin` so it's
@@ -13,6 +22,7 @@
  * Callback namespace: `swv:*`
  *   swv:list                — re-render the grouped list
  *   swv:d:<orderId>         — open the detail card for that order
+ *   swv:s:<requestId>       — open the detail card for a supply request
  */
 
 'use strict';
@@ -98,6 +108,63 @@ function pendingDays(iso) {
   return Math.max(0, Math.floor((Date.now() - t) / (24 * 3600 * 1000)));
 }
 
+/* ── SUPQ-1: supply requests still in the approval pipeline ────────────────
+ * The stage rides actionJSON (sheet Status stays 'pending' through every
+ * intermediate stage), so the queue must parse each pending row's JSON.   */
+
+const STAGE_LABELS = {
+  dispatch_review: 'awaiting dispatch check',
+  admin_review: 'awaiting admin approval',
+  admin_repick: 'admin re-picking warehouse boy',
+  dispatch_acceptance: 'awaiting %s',
+};
+
+/**
+ * Reduce pending ApprovalQueue rows to render-ready supply-pipeline items.
+ * Pure — unit-tested with fixture rows. Unknown/missing stages read as
+ * admin_review (that is where a dispatchSkipped request actually sits).
+ * @param {Array<{requestId:string,user:string,actionJSON:object,createdAt:string}>} pendingRows
+ */
+function supplyPipeline(pendingRows) {
+  const items = [];
+  for (const r of pendingRows || []) {
+    const aj = r.actionJSON || {};
+    if (aj.action !== 'supply_request') continue;
+    const stage = STAGE_LABELS[aj.stage] ? aj.stage : 'admin_review';
+    const assigned = (aj.assignedDispatch && aj.assignedDispatch.name) || '';
+    const stageLabel = stage === 'dispatch_acceptance'
+      ? STAGE_LABELS[stage].replace('%s', assigned || 'warehouse boy')
+      : STAGE_LABELS[stage];
+    const holder = stage === 'dispatch_review' ? 'Dispatch pool'
+      : stage === 'dispatch_acceptance' ? (assigned || 'assigned warehouse boy')
+        : 'Admins';
+    const cart = Array.isArray(aj.cart) ? aj.cart : [];
+    const bales = cart.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
+    items.push({
+      requestId: r.requestId,
+      requester: r.user,
+      customer: aj.customer || '—',
+      warehouse: aj.warehouse || '—',
+      salesperson: aj.salesperson || '',
+      bales,
+      cart,
+      stage,
+      stageLabel,
+      holder,
+      createdAt: r.createdAt || '',
+      stamps: {
+        confirmedByDispatch: aj.confirmedByDispatch || null,
+        approvedByAdmin: aj.approvedByAdmin || null,
+        assignedDispatch: aj.assignedDispatch || null,
+        dispatchDecline: aj.dispatchDecline || null,
+      },
+    });
+  }
+  // Oldest first — the queue exists so old promises stay visible.
+  items.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  return items;
+}
+
 /**
  * Render the grouped list. Admins only. Reads three sheets in parallel
  * (Orders, Customers, LedgerBalanceCache) so the page renders in one
@@ -106,17 +173,20 @@ function pendingDays(iso) {
 async function showSalesWorkflow(bot, chatId, userId, messageId) {
   if (!auth.isAdmin(userId)) {
     await editOrSend(bot, chatId, messageId,
-      '🔒 Sales Workflow is admin-only.',
+      '🔒 Pending Supply is admin-only.',
       { reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
 
-  let orders, customers, balanceCache;
+  let orders, customers, balanceCache, pendingApprovals;
   try {
-    [orders, customers, balanceCache] = await Promise.all([
+    [orders, customers, balanceCache, pendingApprovals] = await Promise.all([
       ordersRepo.getAll(),
       customersRepo.getAll().catch(() => []),
       ledgerCache.getAll().catch(() => []),
+      // SUPQ-1 — null (not []) marks a failed read so the section can say
+      // "couldn't read" instead of a false "none in pipeline".
+      require('../repositories/approvalQueueRepository').getAllPending().catch(() => null),
     ]);
   } catch (e) {
     logger.error(`salesWorkflowView.show: read failed: ${e.message}`);
@@ -138,11 +208,14 @@ async function showSalesWorkflow(bot, chatId, userId, messageId) {
     .sort((a, b) => String(b.delivered_at).localeCompare(String(a.delivered_at)))
     .slice(0, RECENT_DELIVERED_LIMIT);
 
-  const lines = ['📊 *Sales Workflow*', ''];
+  const pipeline = supplyPipeline(pendingApprovals || []);
+
+  const totalOpen = pending.length + accepted.length + pipeline.length;
+  const lines = [`🚚 *Pending Supply${totalOpen ? ` — ${totalOpen} open` : ''}*`, ''];
   const rows = [];
 
-  if (!pending.length && !accepted.length && !delivered.length) {
-    lines.push('_No orders in the system yet._');
+  if (!totalOpen && !delivered.length && pendingApprovals !== null) {
+    lines.push('✅ _Nothing owed — no open orders, nothing in the supply pipeline._');
     rows.push(navFooterRow());
     await editOrSend(bot, chatId, messageId, lines.join('\n'), {
       parse_mode: 'Markdown',
@@ -191,6 +264,28 @@ async function showSalesWorkflow(bot, chatId, userId, messageId) {
     lines.push('');
   }
 
+  // --- SUPQ-1: supply requests still in the approval pipeline --------------
+  if (pendingApprovals === null) {
+    lines.push('🛂 *Supply requests* — ⚠️ _could not read the queue just now._', '');
+  } else {
+    lines.push(`🛂 *Supply requests in pipeline* (${pipeline.length})`);
+    if (!pipeline.length) {
+      lines.push('   _none_', '');
+    } else {
+      for (const it of pipeline) {
+        const days = pendingDays(it.createdAt);
+        const ageHint = days != null ? ` · ${days}d waiting` : '';
+        lines.push(`• \`${it.requestId}\` · ${escapeMd(it.customer)} · ${it.bales}B · ${escapeMd(it.warehouse)}`);
+        lines.push(`   ⏳ ${escapeMd(it.stageLabel)} · 👤 ${escapeMd(it.holder)}${ageHint}`);
+        rows.push([{
+          text: `🛂 ${truncate(it.customer + ' · ' + it.stageLabel, 38)}`,
+          callback_data: `swv:s:${it.requestId}`,
+        }]);
+      }
+      lines.push('');
+    }
+  }
+
   // --- Recently delivered tail --------------------------------------------
   if (delivered.length) {
     lines.push(`🗂 *Recently delivered (last ${RECENT_DELIVERED_LIMIT})*`);
@@ -221,7 +316,7 @@ async function showSalesWorkflow(bot, chatId, userId, messageId) {
 async function showOrderDetail(bot, chatId, userId, messageId, orderId) {
   if (!auth.isAdmin(userId)) {
     await editOrSend(bot, chatId, messageId,
-      '🔒 Sales Workflow is admin-only.',
+      '🔒 Pending Supply is admin-only.',
       { reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
@@ -306,6 +401,71 @@ async function showOrderDetail(bot, chatId, userId, messageId, orderId) {
   });
 }
 
+/**
+ * SUPQ-1 — detail card for one in-pipeline supply request: the cart, who
+ * asked, who holds it now, and the stage trail so the admin can see where
+ * a promise has been sitting. Admin-gated like everything else here.
+ */
+async function showSupplyRequestDetail(bot, chatId, userId, messageId, requestId) {
+  if (!auth.isAdmin(userId)) {
+    await editOrSend(bot, chatId, messageId,
+      '🔒 Pending Supply is admin-only.',
+      { reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+  let item = null;
+  let readFailed = false;
+  try {
+    const rows = await require('../repositories/approvalQueueRepository').getAllPending();
+    item = supplyPipeline(rows).find((it) => it.requestId === requestId) || null;
+  } catch (e) {
+    logger.error(`salesWorkflowView.supplyDetail: read failed: ${e.message}`);
+    readFailed = true;
+  }
+  if (readFailed || !item) {
+    await editOrSend(bot, chatId, messageId,
+      readFailed
+        ? '⚠️ Could not read the supply request just now — try again.'
+        : '✅ This supply request has left the pipeline (approved, rejected, or withdrawn since the list was drawn).',
+      { reply_markup: { inline_keyboard: [[
+        { text: '⬅ Back to list', callback_data: 'swv:list' },
+        { text: '🏠 Menu', callback_data: 'act:__back__' },
+      ]] } });
+    return;
+  }
+
+  const days = pendingDays(item.createdAt);
+  const lines = [
+    `🛂 *Supply request \`${item.requestId}\`*`, '',
+    `👤 *Customer:* ${escapeMd(item.customer)}`,
+    `🏭 *Warehouse:* ${escapeMd(item.warehouse)}`,
+  ];
+  if (item.salesperson) lines.push(`👷 *Salesperson:* ${escapeMd(item.salesperson)}`);
+  lines.push('');
+  lines.push(`📦 *Goods* (${item.bales}B total)`);
+  for (const l of item.cart) {
+    lines.push(`   • ${escapeMd(l.design)}${l.shadeName || l.shade ? ' / ' + escapeMd(l.shadeName || l.shade) : ''} × ${escapeMd(String(l.quantity))}B`);
+  }
+  lines.push('');
+  lines.push(`⏳ *Stage:* ${escapeMd(item.stageLabel)} · 👤 ${escapeMd(item.holder)}`);
+  if (item.createdAt) lines.push(`   _raised ${fmtDate(item.createdAt)}${days != null ? ` · ${days}d ago` : ''}_`);
+  const st = item.stamps;
+  if (st.confirmedByDispatch) lines.push(`   _dispatch check ✅ ${escapeMd(st.confirmedByDispatch.name || '')}_`);
+  if (st.approvedByAdmin) lines.push('   _admin approved ✅_');
+  if (st.assignedDispatch) lines.push(`   _assigned to ${escapeMd(st.assignedDispatch.name || '')}_`);
+  if (st.dispatchDecline) lines.push(`   _declined once by ${escapeMd(st.dispatchDecline.name || '')}: ${escapeMd(st.dispatchDecline.reason || '')}_`);
+  lines.push('');
+  lines.push('_Decisions stay in the 🛂 Approvals inbox — this card only shows where it stands._');
+
+  await editOrSend(bot, chatId, messageId, lines.join('\n'), {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [[
+      { text: '⬅ Back to list', callback_data: 'swv:list' },
+      { text: '🏠 Menu', callback_data: 'act:__back__' },
+    ]] },
+  });
+}
+
 /** Single callback entry point used by telegramController. */
 async function handleCallback(bot, callbackQuery) {
   const data = callbackQuery.data || '';
@@ -324,11 +484,18 @@ async function handleCallback(bot, callbackQuery) {
     await showOrderDetail(bot, chatId, userId, messageId, orderId);
     return true;
   }
+  if (data.startsWith('swv:s:')) {
+    const requestId = data.slice('swv:s:'.length);
+    await showSupplyRequestDetail(bot, chatId, userId, messageId, requestId);
+    return true;
+  }
   return false;
 }
 
 module.exports = {
   showSalesWorkflow,
   showOrderDetail,
+  showSupplyRequestDetail,
   handleCallback,
+  _internals: { supplyPipeline, STAGE_LABELS },
 };
