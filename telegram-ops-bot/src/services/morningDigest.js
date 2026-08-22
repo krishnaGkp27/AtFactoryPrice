@@ -237,10 +237,13 @@ const CATEGORIES = [
   {
     key: 'DIGEST_ORDERS',
     label: '🚚 Orders',
+    // SUPQ-1 fix: unaccepted orders are status 'pending_accept' — the old
+    // filter tested 'pending', a value no code ever writes, so this count
+    // was silently 0 from the day it shipped.
     async summarize(settings, todayIso) {
       const all = await require('../repositories/ordersRepository').getAll();
       const due = all.filter((o) => (o.status || '') === 'accepted' && fmtDay(o.scheduled_date) && fmtDay(o.scheduled_date) <= todayIso);
-      const unaccepted = all.filter((o) => (o.status || '') === 'pending');
+      const unaccepted = all.filter((o) => (o.status || '') === 'pending_accept');
       const count = due.length + unaccepted.length;
       if (!count) return { line: '', count: 0 };
       return { line: `🚚 Orders: *${due.length}* due today${unaccepted.length ? ` · *${unaccepted.length}* unaccepted` : ''}`, count };
@@ -248,7 +251,7 @@ const CATEGORIES = [
     async detail(settings, todayIso) {
       const all = await require('../repositories/ordersRepository').getAll();
       const due = all.filter((o) => (o.status || '') === 'accepted' && fmtDay(o.scheduled_date) && fmtDay(o.scheduled_date) <= todayIso);
-      const unaccepted = all.filter((o) => (o.status || '') === 'pending');
+      const unaccepted = all.filter((o) => (o.status || '') === 'pending_accept');
       if (!due.length && !unaccepted.length) return '🚚 *Orders* — nothing due.';
       let s = '🚚 *Orders*';
       if (due.length) s += `\n\n*Due today:*\n${due.slice(0, LIST_CAP).map((o) => `• ${o.design} → ${o.customer} (@${o.salesperson_name || o.salesperson_id})`).join('\n')}`;

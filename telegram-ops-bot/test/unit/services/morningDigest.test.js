@@ -181,3 +181,16 @@ test('notes toggle on but sheet empty → digest still greets with the none-yet 
   const text = await digest.buildDigest(settings, AFTER);
   assert.match(text, /Customer notes: none yet/);
 });
+
+test('SUPQ-1: unaccepted orders count status pending_accept (the value orders are actually created with)', async () => {
+  const ordersRepository = require(path.join(SRC, 'repositories/ordersRepository'));
+  ordersRepository.getAll = async () => [
+    { order_id: 'ORD-1', status: 'pending_accept', customer: 'Owaibula', design: '9043', salesperson_name: 'Musa', scheduled_date: '' },
+    { order_id: 'ORD-2', status: 'accepted', customer: 'Benduku', design: '9006', salesperson_name: 'Aisha', scheduled_date: '2099-01-01' },
+    { order_id: 'ORD-3', status: 'delivered', customer: 'Habiba', design: '9010', salesperson_name: 'Musa', scheduled_date: '' },
+  ];
+  const cat = digest.CATEGORIES.find((c) => c.key === 'DIGEST_ORDERS');
+  const { line, count } = await cat.summarize(baseSettings({ DIGEST_ORDERS: 1 }), '2026-08-22');
+  assert.equal(count, 1, 'one unaccepted order, none due today');
+  assert.match(line, /\*1\* unaccepted/);
+});
