@@ -12,11 +12,17 @@ const config = require('../config');
 const logger = require('../utils/logger');
 
 // Events that count as a feature being "started" / "completed" for the
-// completion-rate KPI. flow submission to the approval queue IS the user's
-// completion of their part; flow_completed is reserved for future direct
-// completion signals.
+// completion-rate KPI. Flow submission to the approval queue IS the user's
+// completion of their part; flow_completed (ANL-2) is the direct signal for
+// flows that never queue — a flow emits ONE of the two, never both.
+// Abandons: TTL expiry and deliberate cancel are both "didn't finish"
+// (the raw events keep them apart); flow_interrupted stays raw-only
+// because wizard→wizard handoffs are legitimate. Errors: a handler that
+// threw out of dispatch and an approved action whose executor failed.
 const START_EVENTS = ['flow_started', 'tile_tapped', 'nlp_intent'];
 const COMPLETE_EVENTS = ['flow_completed', 'approval_queued'];
+const ABANDON_EVENTS = ['flow_abandoned', 'flow_cancelled'];
+const ERROR_EVENTS = ['flow_error', 'exec_error'];
 
 /** Rollup SQL for one day; $1 = day (date). Upserts per (feature, role). */
 const ROLLUP_SQL = `
@@ -27,8 +33,8 @@ SELECT
   r.role,
   COUNT(*) FILTER (WHERE event = ANY($2)) AS starts,
   COUNT(*) FILTER (WHERE event = ANY($3)) AS completions,
-  COUNT(*) FILTER (WHERE event = 'flow_abandoned') AS abandons,
-  COUNT(*) FILTER (WHERE event = 'flow_error') AS errors,
+  COUNT(*) FILTER (WHERE event = ANY($4)) AS abandons,
+  COUNT(*) FILTER (WHERE event = ANY($5)) AS errors,
   COUNT(DISTINCT user_id) AS unique_users,
   (percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms IS NOT NULL))::int AS p50_duration_ms,
   (percentile_cont(0.5) WITHIN GROUP (ORDER BY steps) FILTER (WHERE steps IS NOT NULL))::int AS p50_steps
@@ -42,8 +48,8 @@ SELECT
   '*',
   COUNT(*) FILTER (WHERE event = ANY($2)),
   COUNT(*) FILTER (WHERE event = ANY($3)),
-  COUNT(*) FILTER (WHERE event = 'flow_abandoned'),
-  COUNT(*) FILTER (WHERE event = 'flow_error'),
+  COUNT(*) FILTER (WHERE event = ANY($4)),
+  COUNT(*) FILTER (WHERE event = ANY($5)),
   COUNT(DISTINCT user_id),
   (percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms IS NOT NULL))::int,
   (percentile_cont(0.5) WITHIN GROUP (ORDER BY steps) FILTER (WHERE steps IS NOT NULL))::int
@@ -74,7 +80,7 @@ async function runOnce(dayISO = yesterdayISO()) {
   if (!postgresPool.isEnabled() || !config.analytics.enabled) {
     return { ok: false, reason: 'analytics_disabled' };
   }
-  await postgresPool.query(ROLLUP_SQL, [dayISO, START_EVENTS, COMPLETE_EVENTS]);
+  await postgresPool.query(ROLLUP_SQL, [dayISO, START_EVENTS, COMPLETE_EVENTS, ABANDON_EVENTS, ERROR_EVENTS]);
   logger.info(`usageRollup: rolled up ${dayISO}`);
   return { ok: true, day: dayISO };
 }
@@ -109,5 +115,5 @@ function stop() {
 
 module.exports = {
   runOnce, start, stop,
-  _internals: { ROLLUP_SQL, yesterdayISO, msUntilNextRun, START_EVENTS, COMPLETE_EVENTS },
+  _internals: { ROLLUP_SQL, yesterdayISO, msUntilNextRun, START_EVENTS, COMPLETE_EVENTS, ABANDON_EVENTS, ERROR_EVENTS },
 };

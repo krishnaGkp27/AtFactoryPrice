@@ -13,6 +13,7 @@ const logger = require('./src/utils/logger');
 const { todayInLagos, lagosDayPlus } = require('./src/utils/dates');
 const schemaMapper = require('./src/services/schemaMapper');
 const erpEventBus = require('./src/events/erpEventBus');
+const usageTracker = require('./src/services/usageTracker');
 
 if (!config.telegram.token) {
   logger.warn('TELEGRAM_TOKEN not set. Bot will not start.');
@@ -283,7 +284,13 @@ app.post('/webhook', (req, res) => {
   } catch (_) { /* tracking must never break dispatch */ }
 
   if (body.callback_query) {
-    if (bot) telegramController.handleCallbackQuery(bot, body.callback_query).catch((e) => logger.error('Callback error', e));
+    if (bot) {
+      telegramController.handleCallbackQuery(bot, body.callback_query).catch((e) => {
+        logger.error('Callback error', e);
+        // ANL-2 — a handler that threw out of dispatch is the error KPI.
+        usageTracker.trackError(body.callback_query.from && body.callback_query.from.id, 'callback', e.message);
+      });
+    }
     return;
   }
 
@@ -296,12 +303,32 @@ app.post('/webhook', (req, res) => {
 
   const msg = body.message;
   if (msg && msg.text) {
-    if (bot) telegramController.handleMessage(bot, msg).catch((e) => logger.error('Message error', e));
+    // ANL-2 — a typed message while a wizard is live is a step of that
+    // wizard (taps alone under-counted text-heavy flows).
+    if (msg.from) usageTracker.trackTextStep(msg.from.id);
+    if (bot) {
+      telegramController.handleMessage(bot, msg).catch((e) => {
+        logger.error('Message error', e);
+        usageTracker.trackError(msg.from && msg.from.id, 'message', e.message);
+      });
+    }
   } else if (msg && (msg.photo || msg.document)) {
-    if (bot) telegramController.handleFileMessage(bot, msg).catch((e) => logger.error('File message error', e));
+    // ANL-2 — media uploads had no usage hook of any kind.
+    if (msg.from) usageTracker.trackMedia(msg.from.id, msg.photo ? 'photo' : 'document');
+    if (bot) {
+      telegramController.handleFileMessage(bot, msg).catch((e) => {
+        logger.error('File message error', e);
+        usageTracker.trackError(msg.from && msg.from.id, 'file', e.message);
+      });
+    }
   } else if (msg && msg.location) {
     // ATT-C4 — GPS shares for attendance verification (previously dropped).
-    if (bot) telegramController.handleLocationMessage(bot, msg).catch((e) => logger.error('Location message error', e));
+    if (bot) {
+      telegramController.handleLocationMessage(bot, msg).catch((e) => {
+        logger.error('Location message error', e);
+        usageTracker.trackError(msg.from && msg.from.id, 'location', e.message);
+      });
+    }
   }
 });
 

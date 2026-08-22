@@ -232,7 +232,7 @@ async function applyRole(bot, chatId, userId, tgId, role) {
     `✅ *Role updated*\n\n*${target.name || tgId}* (\`${tgId}\`)\n${from} → *${role}*${warn}`,
     rows,
   );
-  sessionStore.clear(userId);
+  sessionStore.clear(userId, 'completed');
 }
 
 // ---------------------------------------------------------------------------
@@ -260,7 +260,7 @@ async function handleCallback(bot, query) {
     // Render BEFORE clearing so the cancelled card edits the anchored message.
     await render(bot, chatId, userId, '_Change Role cancelled._',
       [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]);
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     return true;
   }
   if (data === 'rol:noop') return true;

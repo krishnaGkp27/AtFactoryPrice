@@ -197,6 +197,17 @@ function handleSessionSet(userId, data) {
     const key = String(userId);
     const prev = flowState.get(key);
     if (prev && prev.type === data.type) return; // step transition, same flow
+    if (prev) {
+      // ANL-2: a different flow type replacing a LIVE one means the old flow
+      // never ended — the user (or a designed handoff) walked out of it.
+      // Raw-only breadcrumb: handoffs between wizards are legitimate, so
+      // this is deliberately NOT counted as an abandon in the rollup.
+      track({
+        userId, surface: 'flow', feature: prev.type, event: 'flow_interrupted',
+        sessionType: prev.type, durationMs: Date.now() - prev.startedAt,
+        steps: prev.steps, meta: { next: data.type },
+      });
+    }
     if (flowState.size >= FLOW_STATE_MAX && !flowState.has(key)) {
       const oldest = flowState.keys().next().value;
       flowState.delete(oldest);
@@ -227,6 +238,96 @@ function handleSessionExpired(snap) {
   } catch (e) {
     logger.warn(`usageTracker.handleSessionExpired failed (ignored): ${e.message}`);
   }
+}
+
+/**
+ * ANL-2 — sessionStore onCleared observer. A deliberate clear() is a flow
+ * ENDING, and the call site declares why:
+ *   'completed' → flow_completed  (flows that do NOT queue an approval;
+ *                 approval_queued is the completion signal for those that do)
+ *   'cancelled' → flow_cancelled  (user backed out; rolls into abandons)
+ *   undefined   → flow_ended      (unannotated site — raw-only breadcrumb)
+ * Also deletes the per-user flowState so restarting the SAME flow type
+ * emits a fresh flow_started (before ANL-2 the stale entry suppressed it).
+ */
+function handleSessionCleared(snap, outcome) {
+  try {
+    if (!isEnabled() || !snap || !snap.type) return;
+    const key = String(snap.userId);
+    const fs = flowState.get(key);
+    const matched = fs && fs.type === snap.type;
+    const durationMs = matched ? Date.now() - fs.startedAt : null;
+    const steps = matched ? fs.steps : null;
+    flowState.delete(key);
+    const event = outcome === 'completed' ? 'flow_completed'
+      : outcome === 'cancelled' ? 'flow_cancelled'
+        : 'flow_ended';
+    track({
+      userId: snap.userId, surface: 'flow', feature: snap.type,
+      event, sessionType: snap.type,
+      durationMs: durationMs === null ? undefined : durationMs,
+      steps: steps === null ? undefined : steps,
+      meta: { step: snap.step || null },
+    });
+  } catch (e) {
+    logger.warn(`usageTracker.handleSessionCleared failed (ignored): ${e.message}`);
+  }
+}
+
+/**
+ * ANL-2 — hook for the server.js dispatch catch handlers: an update handler
+ * threw all the way out. Feature = the user's live flow if one is known
+ * (that is the flow the error interrupted), else 'other'.
+ * @param {string|number} userId @param {string} kind callback|message|file|location
+ * @param {string} [message] error message (first 200 chars kept in meta)
+ */
+function trackError(userId, kind, message) {
+  try {
+    if (!isEnabled()) return;
+    const fs = flowState.get(String(userId));
+    track({
+      userId, surface: 'flow', feature: (fs && fs.type) || 'other',
+      event: 'flow_error', sessionType: fs ? fs.type : null,
+      meta: { kind: String(kind || ''), error: String(message || '').slice(0, 200) },
+    });
+  } catch (e) {
+    logger.warn(`usageTracker.trackError failed (ignored): ${e.message}`);
+  }
+}
+
+/**
+ * ANL-2 — every inbound photo/document (server.js media branch). Counts as
+ * a step of the live flow (media IS how several wizards advance) and leaves
+ * a raw media_received event; feature = the live flow else 'media'.
+ * @param {string|number} userId @param {'photo'|'document'} kind
+ */
+function trackMedia(userId, kind) {
+  try {
+    if (!isEnabled()) return;
+    const fs = flowState.get(String(userId));
+    if (fs) fs.steps += 1;
+    track({
+      userId, surface: 'message', feature: (fs && fs.type) || 'media',
+      event: 'media_received', sessionType: fs ? fs.type : null,
+      meta: { kind },
+    });
+  } catch (e) {
+    logger.warn(`usageTracker.trackMedia failed (ignored): ${e.message}`);
+  }
+}
+
+/**
+ * ANL-2 — a typed message while a flow session is live is a STEP of that
+ * flow (text-heavy wizards under-counted steps when only taps were
+ * counted). Steps-only: no event row, the p50_steps KPI just gets honest.
+ * @param {string|number} userId
+ */
+function trackTextStep(userId) {
+  try {
+    if (!isEnabled()) return;
+    const fs = flowState.get(String(userId));
+    if (fs) fs.steps += 1;
+  } catch (_) { /* never throws by contract */ }
 }
 
 const INSERT_COLS = '(ts, user_id, role, surface, feature, event, session_type, request_id, duration_ms, steps, meta)';
@@ -275,6 +376,7 @@ function init() {
   const sessionStore = require('../utils/sessionStore');
   if (typeof sessionStore.onSet === 'function') sessionStore.onSet(handleSessionSet);
   if (typeof sessionStore.onExpired === 'function') sessionStore.onExpired(handleSessionExpired);
+  if (typeof sessionStore.onCleared === 'function') sessionStore.onCleared(handleSessionCleared);
   _timer = setInterval(() => {
     flushNow().catch((e) => logger.warn(`usageTracker flush tick failed: ${e.message}`));
   }, config.analytics.flushMs);
@@ -290,6 +392,10 @@ async function stop() {
 }
 
 module.exports = {
-  track, trackCallback, init, stop, flushNow, ensureSchema, isEnabled,
-  _internals: { buffer, classifyCallback, handleSessionSet, handleSessionExpired, flowState, PREFIX_FEATURES },
+  track, trackCallback, trackError, trackMedia, trackTextStep,
+  init, stop, flushNow, ensureSchema, isEnabled,
+  _internals: {
+    buffer, classifyCallback, handleSessionSet, handleSessionExpired,
+    handleSessionCleared, flowState, PREFIX_FEATURES,
+  },
 };

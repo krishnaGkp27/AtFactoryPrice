@@ -343,7 +343,7 @@ async function handleCallback(bot, query) {
   await bot.answerCallbackQuery(query.id).catch(() => {});
 
   if (data === 'umg:cancel') {
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     await render(bot, chatId, userId, '_Cancelled._',
       [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]);
     return true;

@@ -351,7 +351,7 @@ async function handleCallback(bot, query) {
     // Render BEFORE clearing — this renderer is requireSession and no-ops
     // once the session is gone (the Cancelled card would never appear).
     await render(bot, chatId, userId, '❌ Cancelled.', [menuRow()]);
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     return true;
   }
   if (data === 'bops:noop') return true;
@@ -411,7 +411,7 @@ async function stepBack(bot, chatId, userId) {
       break;
     default:
       await render(bot, chatId, userId, '❌ Cancelled.', [menuRow()]);
-      sessionStore.clear(userId);
+      sessionStore.clear(userId, 'cancelled');
   }
 }
 

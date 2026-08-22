@@ -152,7 +152,7 @@ async function start(bot, chatId, userId, messageId = null) {
       + `_If this is wrong, ask an admin to override (audited)._`,
       [homeRow()],
     );
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'completed');
     return;
   }
 
@@ -435,7 +435,7 @@ async function finalizeMark(bot, chatId, userId) {
     + tail,
     [homeRow()],
   );
-  sessionStore.clear(userId);
+  sessionStore.clear(userId, 'completed');
 }
 
 // ---------------------------------------------------------------------------
@@ -455,7 +455,7 @@ async function handleCallback(bot, query) {
       // Clean up the reply keyboard the GPS step put up.
       try { await bot.sendMessage(chatId, 'Cancelled.', { reply_markup: { remove_keyboard: true } }); } catch (_) {}
     }
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     // Let the controller's menu logic take over from here — we just edit
     // the anchored card to a polite "go home" prompt so the user isn't
     // stuck on a stale screen.

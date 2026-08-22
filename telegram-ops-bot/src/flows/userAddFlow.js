@@ -801,7 +801,7 @@ async function handleCallback(bot, query) {
 async function _dispatchCallback(bot, query, session, chatId, userId, data) {
 
   if (data === 'usr:cancel') {
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     await render(bot, chatId, userId,
       '_Add Employee cancelled._',
       [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]);

@@ -173,7 +173,7 @@ async function handleCallback(bot, query) {
   }
 
   if (data === 'sst:x') {
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'completed');
     try {
       await bot.editMessageText('✅ Closed.', {
         chat_id: chatId, message_id: session.flowMessageId || query.message?.message_id,

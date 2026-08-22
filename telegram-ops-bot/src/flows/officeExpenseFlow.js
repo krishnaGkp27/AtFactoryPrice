@@ -695,7 +695,7 @@ async function handleCallback(bot, query) {
   }
 
   if (data === 'ofex:cancel') {
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     await render(bot, chatId, userId, '❌ Cancelled.', [menuRow()]);
     return true;
   }
@@ -767,7 +767,7 @@ async function stepBack(bot, chatId, userId) {
       break;
     default:
       await render(bot, chatId, userId, '❌ Cancelled.', [menuRow()]);
-      sessionStore.clear(userId);
+      sessionStore.clear(userId, 'cancelled');
   }
 }
 

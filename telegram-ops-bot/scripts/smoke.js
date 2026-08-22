@@ -7562,15 +7562,19 @@ function runS47() {
   } else fail('S47.2', 'usageTracker init not wired');
 
   const ctlSrc47 = fs.readFileSync(path.join(__dirname, '../src/controllers/telegramController.js'), 'utf8');
+  const apqSrc47 = fs.readFileSync(path.join(__dirname, '../src/repositories/approvalQueueRepository.js'), 'utf8');
+  // ANL-2: approval_queued moved from the controller (one producer) to
+  // approvalQueueRepository.append (the seam all producers share).
   if (ctlSrc47.includes('usageTracker.trackCallback(cbUserId, data)') &&
       ctlSrc47.includes("event: 'nlp_intent'") &&
-      ctlSrc47.includes("event: 'approval_queued'")) {
-    pass('S47.3 controller: callback + nlp + approval-queue hooks present');
-  } else fail('S47.3', 'controller hooks missing');
+      apqSrc47.includes("event: 'approval_queued'")) {
+    pass('S47.3 callback + nlp hooks in controller, approval-queue hook at the repository seam');
+  } else fail('S47.3', 'usage hooks missing');
 
   const ssMod47 = require('../src/utils/sessionStore');
-  if (typeof ssMod47.onSet === 'function' && typeof ssMod47.onExpired === 'function') {
-    pass('S47.4 sessionStore: onSet/onExpired analytics observers exported');
+  if (typeof ssMod47.onSet === 'function' && typeof ssMod47.onExpired === 'function'
+      && typeof ssMod47.onCleared === 'function') {
+    pass('S47.4 sessionStore: onSet/onExpired/onCleared analytics observers exported');
   } else fail('S47.4', 'sessionStore observers missing');
 
   const { DDL_STATEMENTS: ddl47 } = require('../src/db/usageSchema');
@@ -7603,6 +7607,30 @@ function runS47() {
       srvSrc47.includes("app.get('/api/analytics/feature/:code', apiController.getAnalyticsFeature)")) {
     pass('S47.9 server.js: /api/analytics routes registered (key-gated)');
   } else fail('S47.9', 'analytics routes missing');
+
+  // ---- ANL-2: the five blind-spot fixes ----
+  const tk47 = tracker47;
+  if (typeof tk47.trackError === 'function' && typeof tk47.trackMedia === 'function'
+      && typeof tk47.trackTextStep === 'function'
+      && typeof tk47._internals.handleSessionCleared === 'function') {
+    pass('S47.10 usageTracker: cleared/error/media/text-step hooks exported');
+  } else fail('S47.10', 'ANL-2 tracker hooks missing');
+
+  if (srvSrc47.includes("usageTracker.trackError(") && srvSrc47.includes('usageTracker.trackMedia(')
+      && srvSrc47.includes('usageTracker.trackTextStep(')) {
+    pass('S47.11 server.js: dispatch-catch error + media + text-step seams wired');
+  } else fail('S47.11', 'server.js ANL-2 seams missing');
+
+  const rl47 = require('../src/services/usageRollupJob')._internals;
+  if (rl47.ABANDON_EVENTS && rl47.ABANDON_EVENTS.includes('flow_cancelled')
+      && rl47.ERROR_EVENTS && rl47.ERROR_EVENTS.includes('exec_error')) {
+    pass('S47.12 rollup: cancels count as abandons, executor failures as errors');
+  } else fail('S47.12', 'ANL-2 rollup event classes missing');
+
+  const invSrc47 = fs.readFileSync(path.join(__dirname, '../src/services/inventoryService.js'), 'utf8');
+  if (invSrc47.includes("event: 'approval_executed'") && invSrc47.includes("event: 'exec_error'")) {
+    pass('S47.13 executor: approval_executed / exec_error outcome tracking');
+  } else fail('S47.13', 'executor outcome tracking missing');
 }
 
 function runS48() {

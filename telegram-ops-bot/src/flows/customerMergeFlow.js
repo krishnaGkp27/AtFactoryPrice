@@ -174,7 +174,7 @@ async function handleCallback(bot, query) {
   if (rest === 'cancel') {
     await render(bot, chatId, userId, '🔀 Merge cancelled — nothing changed.',
       [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     return true;
   }
   if (rest === 'restart') {

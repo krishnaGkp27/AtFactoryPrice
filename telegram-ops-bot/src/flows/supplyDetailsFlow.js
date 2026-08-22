@@ -338,7 +338,7 @@ async function handleCallback(bot, query) {
   try { await require('../services/ephemeralDocs').sweep(bot, userId); } catch (_) { /* viewer state only */ }
 
   if (data === 'sdd:close') {
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'completed');
     try {
       await bot.editMessageText('📦 Closed.', {
         chat_id: chatId, message_id: query.message.message_id,

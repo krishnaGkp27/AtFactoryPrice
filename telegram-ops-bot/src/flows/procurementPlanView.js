@@ -384,7 +384,7 @@ async function submitNewPO(bot, chatId, userId) {
       backRow(),
     ],
   );
-  sessionStore.clear(userId);
+  sessionStore.clear(userId, 'completed');
 
   // Broadcast PO creation through the admin feed (respects per-admin opt-in).
   try {
@@ -413,7 +413,7 @@ async function handleCallback(bot, callbackQuery) {
   if (data.startsWith('pp:po:'))      { await showPODetail(bot, chatId, userId, messageId, data.slice('pp:po:'.length)); return true; }
   if (data === 'pp:new')              { await startNewPO(bot, chatId, userId, messageId); return true; }
   if (data === 'pp:new_cancel') {
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     await editOrSend(bot, chatId, messageId, '❌ Cancelled.',
       { reply_markup: { inline_keyboard: [backRow()] } });
     return true;

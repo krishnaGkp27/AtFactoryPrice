@@ -967,7 +967,7 @@ async function handleCallback(bot, query) {
   }
 
   if (data === 'abx:close') {
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'completed');
     try {
       await bot.editMessageText('🛂 Closed.', {
         chat_id: cid, message_id: query.message.message_id,

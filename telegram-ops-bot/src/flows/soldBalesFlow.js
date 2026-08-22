@@ -573,7 +573,7 @@ async function handleCallback(bot, query) {
   if (data === 'sbl:noop') return true;
 
   if (data === 'sbl:close') {
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'completed');
     await render(bot, chatId, userId, '🔎 Closed.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
     return true;
   }

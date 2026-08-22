@@ -557,7 +557,7 @@ async function handleCallback(bot, query) {
   sessionStore.set(userId, session);
 
   if (data === 'sds:close') {
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'completed');
     try {
       await bot.editMessageText('🎨 Closed.', {
         chat_id: chatId, message_id: query.message.message_id,

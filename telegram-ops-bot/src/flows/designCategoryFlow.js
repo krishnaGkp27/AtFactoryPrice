@@ -286,7 +286,7 @@ async function handleCallback(bot, query) {
     // leave a Menu button on the closed card.
     await render(bot, chatId, userId, '❌ Cancelled — nothing was changed.',
       [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     return true;
   }
 

@@ -1487,7 +1487,7 @@ async function handleCallback(bot, query) {
   if (data === 'wai:close') {
     // Render BEFORE clearing so the closed card edits the anchored message.
     await render(bot, chatId, userId, '🔍 Audit closed.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     return true;
   }
 

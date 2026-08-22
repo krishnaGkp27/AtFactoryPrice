@@ -20,7 +20,10 @@ postgresPool.query = async (text, params) => {
 };
 
 const job = require('../../../src/services/usageRollupJob');
-const { yesterdayISO, msUntilNextRun, START_EVENTS, COMPLETE_EVENTS } = job._internals;
+const {
+  yesterdayISO, msUntilNextRun,
+  START_EVENTS, COMPLETE_EVENTS, ABANDON_EVENTS, ERROR_EVENTS,
+} = job._internals;
 
 test('yesterdayISO computes local YYYY-MM-DD for the prior day', () => {
   const iso = yesterdayISO(new Date(2026, 6, 12, 3, 0, 0)); // 12-Jul-2026 03:00
@@ -46,6 +49,17 @@ test('runOnce upserts the requested day with event-class params', async () => {
   assert.equal(queries[0].params[0], '2026-07-11');
   assert.deepEqual(queries[0].params[1], START_EVENTS);
   assert.deepEqual(queries[0].params[2], COMPLETE_EVENTS);
+  assert.deepEqual(queries[0].params[3], ABANDON_EVENTS);
+  assert.deepEqual(queries[0].params[4], ERROR_EVENTS);
+});
+
+test('ANL-2: cancels roll into abandons, executor failures into errors, one completion signal per journey', () => {
+  assert.deepEqual(ABANDON_EVENTS, ['flow_abandoned', 'flow_cancelled']);
+  assert.deepEqual(ERROR_EVENTS, ['flow_error', 'exec_error']);
+  // flow_interrupted stays raw-only: wizard→wizard handoffs are legitimate.
+  assert.ok(!ABANDON_EVENTS.includes('flow_interrupted'));
+  // flow_ended (unannotated exits) counts nowhere in the daily KPIs.
+  assert.ok(!COMPLETE_EVENTS.includes('flow_ended') && !ABANDON_EVENTS.includes('flow_ended'));
 });
 
 test('completion classes include approval_queued (flow-submitted proxy)', () => {

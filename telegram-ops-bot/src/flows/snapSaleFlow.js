@@ -694,7 +694,7 @@ async function handleCallback(bot, callbackQuery) {
     // Render BEFORE clearing — this renderer is requireSession and no-ops
     // once the session is gone (the cancelled card would never appear).
     await render(bot, chatId, userId, '📸 Snap Sale cancelled.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     return true;
   }
   if (rest.startsWith('m:')) {

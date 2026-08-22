@@ -474,7 +474,7 @@ async function applyDecline(bot, chatId, userId, reason) {
     { payment_id: pay.payment_id, reason }, userId).catch(() => {});
   await notifyRaiser(bot, pay,
     `✖ *Payment declined*\n\n${paymentService.fmtNaira(pay.amount_ngn)} to ${pay.payee_name} was not paid.\n\n_${reason}_`);
-  sessionStore.clear(userId);
+  sessionStore.clear(userId, 'completed');
   await render(bot, chatId, userId,
     `✖ *Declined* — ${mdEscape(paymentService.fmtNaira(pay.amount_ngn))} to ${mdEscape(pay.payee_name)}\n\n`
     + `_${mdEscape(reason)}_\n\nThe requester has been told.`, [menuRow()]);
@@ -597,7 +597,7 @@ async function handleCallback(bot, callbackQuery) {
   if (rest.startsWith('dec:')) { await startDecline(bot, chatId, userId, rest.slice(4), cbId); return true; }
 
   if (rest === 'cancel') {
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     await answer(bot, cbId, 'Cancelled');
     await render(bot, chatId, userId, '❌ Cancelled.', [menuRow()]);
     return true;

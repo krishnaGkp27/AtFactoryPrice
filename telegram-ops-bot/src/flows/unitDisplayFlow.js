@@ -197,7 +197,7 @@ async function handleCallback(bot, query) {
   }
 
   if (data === 'udf:cancel') {
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     await render(bot, chatId, userId, '📐 Closed.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
     return true;
   }

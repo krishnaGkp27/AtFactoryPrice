@@ -1363,7 +1363,7 @@ async function handleCallback(bot, query) {
   if (data === 'bs:cancel') {
     // Render BEFORE clearing — render() early-returns once the session is gone.
     await render(bot, chatId, userId, '❌ Cancelled.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     return true;
   }
 
@@ -1721,7 +1721,7 @@ async function stepBack(bot, chatId, userId) {
       break;
     default:
       await render(bot, chatId, userId, '❌ Cancelled.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-      sessionStore.clear(userId);
+      sessionStore.clear(userId, 'cancelled');
   }
 }
 

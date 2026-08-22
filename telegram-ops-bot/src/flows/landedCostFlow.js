@@ -377,7 +377,7 @@ async function handleCallback(bot, query) {
   if (data === 'lcost:cancel') {
     // Render BEFORE clearing — requireSession renderer no-ops without a session.
     await render(bot, chatId, userId, '❌ Cancelled.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     return true;
   }
   if (data === 'lcost:noop') return true;
@@ -454,7 +454,7 @@ async function stepBack(bot, chatId, userId) {
       break;
     default:
       await render(bot, chatId, userId, '❌ Cancelled.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-      sessionStore.clear(userId);
+      sessionStore.clear(userId, 'cancelled');
   }
 }
 

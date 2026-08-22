@@ -288,7 +288,7 @@ async function handleCallback(bot, query) {
     // renderer loses flowMessageId once the session is gone).
     await render(bot, chatId, userId, '❌ Cancelled — nothing was changed.',
       [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     return true;
   }
 

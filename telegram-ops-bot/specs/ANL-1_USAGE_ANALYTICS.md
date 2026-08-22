@@ -157,6 +157,38 @@ reference if PG-1 isn't wired yet) → ③ deploy hosting for the dashboard page
 → ④ open atfactoryprice.com/admin-analytics.html, sign in, paste key.
 After 30 days of data: first real "which feature to improve" review.
 
+## 7b · ANL-2 — the five blind-spot fixes (shipped 22-Aug-2026, owner "go")
+
+Shipped BEFORE the owner's activation flip so the data is trustworthy from
+day one. What changed:
+
+1. **Deliberate flow endings are now events.** `sessionStore.clear(userId,
+   outcome)` fires an `onCleared` observer; 49 call sites across 31 flow
+   modules were annotated: `'cancelled'` on cancel/close of a write wizard,
+   `'completed'` on direct-write successes and on read-only viewers being
+   deliberately closed. Unannotated sites (incl. the parked controller's
+   ~75) emit `flow_ended` — visible in raw, counted in no KPI. **One
+   completion signal per journey:** flows that queue an approval do NOT
+   also pass `'completed'` — `approval_queued` is their completion.
+2. **`approval_queued` moved to the one seam all producers share** —
+   `approvalQueueRepository.append` (~25 producers; the old controller-only
+   hook covered one of them and was removed as a duplicate).
+3. **Errors are real.** server.js dispatch catches emit `flow_error`
+   (attributed to the live flow); the executor wrapper in inventoryService
+   emits `approval_executed` / `exec_error` (benign second-tap no-ops
+   skipped). Rollup errors = `flow_error` + `exec_error`.
+4. **Cancels count.** Rollup abandons = `flow_abandoned` + `flow_cancelled`
+   (raw keeps them apart). `flow_interrupted` (a different wizard replacing
+   a live one) is raw-only — wizard→wizard handoffs are legitimate.
+5. **Media + typed steps count.** Every inbound photo/document emits
+   `media_received` and bumps the live flow's step counter; typed messages
+   inside a live flow bump steps too (no event row). Clearing a flow also
+   frees its step-state, so restarting the same wizard emits a fresh
+   `flow_started` (previously suppressed).
+
+No schema change: all new events ride the existing `usage_events` table
+and the fixed `usage_daily` columns.
+
 ## 8 · Owner decisions — LOCKED 12-Jul-2026
 
 | # | Decision | Owner's call |

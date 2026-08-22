@@ -308,7 +308,37 @@ function getPricePerYard(enrichment, design) {
  * approved; the second re-reads, finds it resolved, and no-ops.
  */
 async function executeApprovedAction(requestId, approvedBy, enrichment) {
-  return mutex.runExclusive(requestId, () => executeApprovedActionInner(requestId, approvedBy, enrichment));
+  // ANL-2 — the approval TAP was already tracked at decision time; this
+  // records whether the executor (the thing that actually mutates sheets)
+  // then succeeded or failed. Benign idempotent no-ops (second admin's tap
+  // finding the row already resolved) are not activity and are skipped.
+  const usageTracker = require('./usageTracker');
+  const t0 = Date.now();
+  try {
+    const result = await mutex.runExclusive(requestId, () => executeApprovedActionInner(requestId, approvedBy, enrichment));
+    if (result && result.ok === false) {
+      if (result.message !== 'Request not found or already resolved.') {
+        usageTracker.track({
+          userId: approvedBy, surface: 'system', feature: 'approvals',
+          event: 'exec_error', requestId, durationMs: Date.now() - t0,
+          meta: { message: String(result.message || '').slice(0, 200) },
+        });
+      }
+    } else {
+      usageTracker.track({
+        userId: approvedBy, surface: 'system', feature: 'approvals',
+        event: 'approval_executed', requestId, durationMs: Date.now() - t0,
+      });
+    }
+    return result;
+  } catch (e) {
+    usageTracker.track({
+      userId: approvedBy, surface: 'system', feature: 'approvals',
+      event: 'exec_error', requestId, durationMs: Date.now() - t0,
+      meta: { error: String(e.message || e).slice(0, 200) },
+    });
+    throw e;
+  }
 }
 
 async function executeApprovedActionInner(requestId, approvedBy, enrichment) {

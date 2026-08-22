@@ -275,7 +275,7 @@ async function handleCallback(bot, query) {
     // session is gone, so the old order left the card un-edited and dead.
     await render(bot, chatId, userId, '❌ Cancelled.',
       [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     return true;
   }
 

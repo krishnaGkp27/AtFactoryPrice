@@ -445,7 +445,7 @@ async function submitTask(bot, chatId, userId) {
     return;
   }
 
-  sessionStore.clear(userId);
+  sessionStore.clear(userId, 'completed');
   const pm = PRIORITY_META[d.priority || 'normal'];
   const tm = TRACK_META[d.track || 'salaried'];
 
@@ -714,7 +714,7 @@ async function submitProposal(bot, chatId, userId) {
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
-  sessionStore.clear(userId);
+  sessionStore.clear(userId, 'completed');
   await editOrSend(bot, chatId, session.flowMessageId,
     `✅ *Proposal sent*\n\n⏱ ${fmtHours(t.hours)} · 📅 ${fmtDate(t.deadline)}\n\n_Waiting for your assigner to accept or counter._`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
@@ -976,7 +976,7 @@ async function submitCounter(bot, chatId, userId, reason) {
     await editOrSend(bot, chatId, session.flowMessageId, `❌ Couldn\'t counter: ${e.message}`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
-  sessionStore.clear(userId);
+  sessionStore.clear(userId, 'completed');
   await editOrSend(bot, chatId, session.flowMessageId,
     `↩ *Counter sent*\n\n${escapeMd(t.taskTitle)}\n\n_The doer will propose a fresh timeline._`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
@@ -1082,7 +1082,7 @@ async function finalizeIncentive(bot, chatId, userId, amount) {
   }
   const returnToCard = !!t.returnToProposalCard;
   const cardMsgId = session.flowMessageId;
-  sessionStore.clear(userId);
+  sessionStore.clear(userId, 'completed');
   if (returnToCard) {
     // Re-render the proposal card in-place with the new amount + Accept enabled.
     await renderProposalCardForAssigner(bot, t.taskId, {
@@ -1265,7 +1265,7 @@ async function submitDrop(bot, chatId, userId, reason) {
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
-  sessionStore.clear(userId);
+  sessionStore.clear(userId, 'completed');
   const reasonLine = reason ? `\n💬 _Reason:_ ${escapeMd(reason)}` : '';
   await editOrSend(bot, chatId, session.flowMessageId,
     `🚫 *Task dropped*\n\n${escapeMd(t.taskTitle)}\n👤 ${escapeMd(t.doerName)} has been notified.${reasonLine}`,
@@ -1475,7 +1475,7 @@ async function handleCallback(bot, callbackQuery) {
   }
   if (data === 'tsk:drop_cancel') {
     const s = sessionStore.get(userId);
-    if (s && s.type === 'task_drop_flow') sessionStore.clear(userId);
+    if (s && s.type === 'task_drop_flow') sessionStore.clear(userId, 'cancelled');
     await editOrSend(bot, chatId, messageId, '❌ Drop cancelled.', {
       reply_markup: { inline_keyboard: [navFooterRow()] },
     });
@@ -1488,7 +1488,7 @@ async function handleCallback(bot, callbackQuery) {
     if (s && (s.type === 'task_assign_flow' || s.type === 'task_propose_flow'
               || s.type === 'task_counter_flow' || s.type === 'task_incentive_flow'
               || s.type === 'task_drop_flow')) {
-      sessionStore.clear(userId);
+      sessionStore.clear(userId, 'cancelled');
     }
     await editOrSend(bot, chatId, messageId, '❌ Cancelled.', {
       reply_markup: { inline_keyboard: [navFooterRow()] },
@@ -1498,7 +1498,7 @@ async function handleCallback(bot, callbackQuery) {
 
   // ----- Propose-timeline flow (`task_propose_flow`) ----------------------
   if (data === 'tsk:pcn') {
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     await editOrSend(bot, chatId, messageId, '❌ Proposal cancelled.', {
       reply_markup: { inline_keyboard: [navFooterRow()] },
     });
@@ -1594,7 +1594,7 @@ async function handleCallback(bot, callbackQuery) {
     const session = sessionStore.get(userId);
     if (session && session.type === 'task_counter_flow') {
       if (data === 'tsk:cnt_canc') {
-        sessionStore.clear(userId);
+        sessionStore.clear(userId, 'cancelled');
         await editOrSend(bot, chatId, messageId, '❌ Counter cancelled.', {
           reply_markup: { inline_keyboard: [navFooterRow()] },
         });

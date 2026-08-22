@@ -55,6 +55,7 @@ function onExpiredByRead(cb) {
 // try/catch — an observer can never break a flow.
 let _onSetObserver = null;
 let _onExpiredObserver = null;
+let _onClearedObserver = null;
 
 /** ANL-1: observe every set() (usageTracker flow_started). Null detaches. */
 function onSet(cb) {
@@ -64,6 +65,19 @@ function onSet(cb) {
 /** ANL-1: observe every timeout-expiry (usageTracker flow_abandoned). */
 function onExpired(cb) {
   _onExpiredObserver = typeof cb === 'function' ? cb : null;
+}
+
+/**
+ * ANL-2: observe every deliberate clear() (usageTracker flow_completed /
+ * flow_cancelled / flow_ended). The callback receives the same snapshot
+ * shape as onExpired plus the caller-declared outcome:
+ *   cb(snap, outcome)  — outcome is 'completed' | 'cancelled' | undefined.
+ * Undefined means the call site has not been annotated yet; the tracker
+ * records those as flow_ended so unannotated exits stay visible in the
+ * raw data instead of silently vanishing.
+ */
+function onCleared(cb) {
+  _onClearedObserver = typeof cb === 'function' ? cb : null;
 }
 
 function _notifyExpiredObserver(snap) {
@@ -128,11 +142,24 @@ function set(userId, data) {
   }
 }
 
-function clear(userId) {
+/**
+ * Deliberately end a session. `outcome` is the caller's declaration of WHY
+ * (ANL-2): 'completed' when the flow reached its natural end without
+ * queueing an approval (approval_queued is the completion signal for flows
+ * that queue — passing 'completed' there too would double-count), and
+ * 'cancelled' when the user backed out. Omitted = unannotated call site.
+ */
+function clear(userId, outcome) {
   const key = String(userId);
   const s = sessions.get(key);
   if (s) _stashHint(key, s);
   sessions.delete(key);
+  if (_onClearedObserver && s) {
+    const snap = _snapshotOf(key, s);
+    if (snap) {
+      try { _onClearedObserver(snap, outcome); } catch (_) { /* observers never break flows */ }
+    }
+  }
 }
 
 function touch(userId) {
@@ -192,6 +219,6 @@ module.exports = {
   get, set, clear, touch,
   getLastSessionHint, clearLastSessionHint,
   sweepExpired, drainExpiredForCleanup, onExpiredByRead,
-  onSet, onExpired,
+  onSet, onExpired, onCleared,
   DEFAULT_TTL_MS,
 };

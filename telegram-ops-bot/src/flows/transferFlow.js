@@ -1812,7 +1812,7 @@ async function handleFile(bot, msg) {
 
   const flowMessageId = session.flowMessageId;
   await disposeAux(bot, chatId, userId); // SJ-4 — sweep file-type warnings
-  sessionStore.clear(userId);
+  sessionStore.clear(userId, 'completed');
   const linkNote = url ? `\n🔗 ${url}` : '';
   const head = sealText || `🚚 *${requestId}*`;
   await bot.editMessageText(
@@ -2324,7 +2324,7 @@ async function handleCallback(bot, query) {
   }
 
   if (data === 'trf:cancel') {
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     await render(bot, chatId, userId, '🚚 Transfer cancelled — nothing was moved.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
     return true;
   }

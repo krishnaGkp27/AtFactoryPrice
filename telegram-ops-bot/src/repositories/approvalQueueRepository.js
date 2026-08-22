@@ -36,6 +36,18 @@ async function append(record) {
     record.resolvedAt ?? '',
   ];
   await sheets.appendRows(SHEET, [row]);
+  // ANL-2 — approval_queued is the completions signal for every wizard that
+  // queues, and ~25 producers reach this seam (flows, services, controller):
+  // tracking anywhere else misses most of them. Lazy require: repositories
+  // must not eagerly pull the service layer.
+  try {
+    const aj = typeof record.actionJSON === 'string'
+      ? JSON.parse(record.actionJSON || '{}') : (record.actionJSON || {});
+    require('../services/usageTracker').track({
+      userId: record.user, surface: 'approval', feature: aj.action || 'other',
+      event: 'approval_queued', requestId: record.requestId,
+    });
+  } catch (_) { /* analytics never breaks a queue write */ }
   return record;
 }
 

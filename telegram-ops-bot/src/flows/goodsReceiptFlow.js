@@ -602,7 +602,7 @@ async function handleCallback(bot, callbackQuery) {
   }
   if (data === 'gr:cancel') {
     await disposeAux(bot, chatId, userId); // SJ-4 — sweep warning trail first
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     await editOrSend(bot, chatId, messageId, '❌ Cancelled.',
       { reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] } });
     return true;

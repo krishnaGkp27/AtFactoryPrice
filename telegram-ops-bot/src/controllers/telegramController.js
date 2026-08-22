@@ -221,7 +221,9 @@ async function requireApproval(bot, chatId, msg, userId, action, actionJSON, sum
     requestId, user: userId, actionJSON, riskReason: risk.reason, status: 'pending',
   });
   await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
-  usageTracker.track({ userId, surface: 'approval', feature: action, event: 'approval_queued', requestId });
+  // ANL-2 — approval_queued is now tracked inside approvalQueueRepository
+  // .append (the seam ALL ~25 producers share); a second emit here would
+  // double-count this path's completions.
   const isAdm = config.access.adminIds.includes(userId);
   const approverLabel = isAdm ? '2nd admin' : 'admin';
   // APX-4 — human-readable ref; the raw UUID stays internal.

@@ -576,7 +576,7 @@ async function handleCallback(bot, callbackQuery) {
 
 async function _dispatch(bot, callbackQuery, data, userId, chatId, messageId) {
   if (data === 'br:cancel') {
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     await editOrSend(bot, chatId, messageId, '❌ Cancelled.',
       { reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] } });
     return true;

@@ -501,7 +501,7 @@ async function handleCallback(bot, query) {
 
   if (data === 'pr:cancel') {
     await disposeAux(bot, chatId, userId); // SJ-4 — sweep edit prompts/acks first
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'cancelled');
     // Edit the tapped card in place (a fresh sendMessage would leave the old
     // card behind with dead pr:* buttons) and keep a Menu button on it.
     const cancelKb = { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] };

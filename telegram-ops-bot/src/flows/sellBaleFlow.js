@@ -567,7 +567,7 @@ async function handleCallback(bot, callbackQuery) {
       // leave a Menu button instead of a dead empty keyboard.
       await render(bot, chatId, userId, '❌ Sale cancelled. Nothing was submitted.',
         [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-      sessionStore.clear(userId);
+      sessionStore.clear(userId, 'cancelled');
       return true;
     }
     if (data === 'sb:noop') { await ack(); return true; }

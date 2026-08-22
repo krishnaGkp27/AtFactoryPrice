@@ -479,7 +479,7 @@ async function handleCallback(bot, query) {
   const rest = data.slice(NS.length);
   if (rest === 'noop') return true;
   if (rest === 'close') {
-    sessionStore.clear(userId);
+    sessionStore.clear(userId, 'completed');
     await bot.editMessageText('📈 Sales Browser closed.',
       { chat_id: chatId, message_id: query.message.message_id,
         reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] } }).catch(() => {});
