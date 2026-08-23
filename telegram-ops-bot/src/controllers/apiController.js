@@ -556,6 +556,224 @@ async function getExtLedger(req, res) {
   } catch (e) { logApiError('GET /api/ext/ledger', e); res.status(500).json({ ok: false, error: 'Something went wrong.' }); }
 }
 
+/* ── SUP-1 — the customer's SUPPLY RECORD (atfactoryprice.live/ledger.html)
+ *
+ * Four read-only endpoints behind the EXT-1 bearer session. They are the
+ * goods-only face of exactly what /sl/:token already renders — every figure
+ * comes from supplyLedgerService and every document from the /sl/ proxy's
+ * own lookup — so the two surfaces cannot drift apart.
+ *
+ * OWNER LOCK: not one naira crosses this boundary. No rate, no amount, no
+ * payment, and never a landed cost. Each body below is a WHITELIST built
+ * field by field from the service's output — never a spread of an internal
+ * row — so a money column added upstream tomorrow cannot leak through here
+ * by accident. The same rule kills internal ids, created_by and sheet row
+ * indexes: the customer sees goods, dates and their own documents.
+ */
+
+/** Days are the ledger's own `YYYY-MM-DD` keys; anything else is not a day. */
+const SUPPLY_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** Printed design codes: "8802-A", "9031-C", "9037". No path tricks. */
+const DESIGN_CODE_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$/;
+
+/**
+ * The customer behind `Authorization: Bearer <token>`, or null once a 401
+ * has been sent. Sessions are minted ONLY by the OTP flow, so this is the
+ * single gate for every supply endpoint.
+ *
+ * @returns {Promise<string|null>} canonical customer name
+ */
+async function supplySession(req, res) {
+  const auth = String(req.headers.authorization || '');
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  const customer = await require('../services/extLedgerService').sessionCustomer(token);
+  if (!customer) {
+    res.status(401).json({ ok: false, error: 'Session expired — please sign in again.' });
+    return null;
+  }
+  return customer;
+}
+
+/**
+ * GET /api/ext/supply — the whole record: one row per day + the hero totals.
+ *
+ * Rows carry `kind`. buildLedger returns approved RETURNS alongside
+ * supplies, and a page that rendered a return as a supply would both
+ * disagree with /sl/ and overstate what the customer holds — so the kind
+ * travels with the row instead of being flattened away.
+ */
+async function getExtSupply(req, res) {
+  if (!ipThrottle(req, res, 120)) return;
+  try {
+    const customer = await supplySession(req, res);
+    if (!customer) return;
+    const supplyLedger = require('../services/supplyLedgerService');
+    const { entries, net } = await supplyLedger.buildLedger(customer);
+
+    // The ledger groups by DAY and so carries no design codes; they come
+    // from the same dayDetail the /sl/ page calls per day. Both reads ride
+    // inventoryRepository's short-lived cache, so a long record still costs
+    // ONE sheet read, not one per day (the quota lesson from /sl/, 07-Aug).
+    const days = [];
+    for (const e of entries) {
+      let designs = [];
+      if (e.kind === 'supply') {
+        try {
+          designs = (await supplyLedger.dayDetail(customer, e.day))
+            .map((d) => String(d.design || '')).filter(Boolean);
+        } catch (err) { logApiError(`GET /api/ext/supply designs ${e.day}`, err); }
+      }
+      days.push({
+        date: String(e.day),
+        kind: e.kind === 'return' ? 'return' : 'supply',
+        designs,
+        bales: Number(e.bales) || 0,
+        yards: Math.round(Number(e.yards) || 0),
+      });
+    }
+
+    res.json({
+      ok: true,
+      customer: String(customer),
+      days,
+      // Always from the service's own net — a page that summed the visible
+      // rows would count a bale supplied in two parts twice and would drop
+      // returns entirely once paging hid them.
+      totals: {
+        bales: Number(net.bales) || 0,
+        yards: Math.round(Number(net.yards) || 0),
+        thans: Number(net.thans) || 0,
+      },
+    });
+  } catch (e) { logApiError('GET /api/ext/supply', e); res.status(500).json({ ok: false, error: 'Something went wrong.' }); }
+}
+
+/**
+ * GET /api/ext/supply/day/:day — one day opened up: design → shade →
+ * printed bale numbers → yards, plus the day's sale documents by position.
+ *
+ * Documents are listed as `{i, label}` only. The Telegram file_id stays
+ * server-side: handing it out would let anyone with the bot token fetch the
+ * file directly, outside this session.
+ */
+async function getExtSupplyDay(req, res) {
+  if (!ipThrottle(req, res, 120)) return;
+  try {
+    const customer = await supplySession(req, res);
+    if (!customer) return;
+    const day = String(req.params.day || '');
+    if (!SUPPLY_DAY_RE.test(day)) return res.status(400).json({ ok: false, error: 'Bad day.' });
+
+    const detail = await require('../services/supplyLedgerService').dayDetail(customer, day);
+    const designs = detail.map((d) => ({
+      design: String(d.design || ''),
+      category: String(d.category || ''),
+      shades: (d.shades || []).map((s) => ({
+        shade: String(s.shade || ''),
+        bales: (s.bales || []).map((b) => String(b)),
+        yards: Math.round(Number(s.yards) || 0),
+      })),
+    }));
+
+    let docs = [];
+    try {
+      const found = await require('./supplyLedgerWebController')._internals.docsForDay(customer, day);
+      docs = found.map((d, i) => ({
+        i,
+        label: d.kind === 'document' ? `Sale document ${i + 1}` : `Sale photo ${i + 1}`,
+      }));
+    } catch (err) { logApiError(`GET /api/ext/supply/day/${day} docs`, err); }
+
+    res.json({ ok: true, day, designs, docs });
+  } catch (e) { logApiError('GET /api/ext/supply/day', e); res.status(500).json({ ok: false, error: 'Something went wrong.' }); }
+}
+
+/**
+ * GET /api/ext/supply/doc/:day/:i — stream one sale document.
+ *
+ * Same file resolution as the /sl/ proxy, authenticated by the bearer
+ * session instead of a token in the URL. CROSS-CUSTOMER SAFETY: the docs
+ * are resolved FOR THE SESSION'S CUSTOMER first and :i only indexes into
+ * that list, so walking :day and :i can reach nothing but this customer's
+ * own documents — there is no global id to guess.
+ */
+async function getExtSupplyDoc(req, res, bot) {
+  if (!ipThrottle(req, res, 120)) return;
+  try {
+    const customer = await supplySession(req, res);
+    if (!customer) return;
+    const day = String(req.params.day || '');
+    if (!SUPPLY_DAY_RE.test(day)) return res.status(404).send('Not found');
+    // Strict digits, not parseInt: "1e0" and "0.5" both parse to a number
+    // and would quietly serve a DIFFERENT document than the one addressed.
+    if (!/^\d{1,3}$/.test(String(req.params.i || ''))) return res.status(404).send('Not found');
+    const idx = parseInt(req.params.i, 10);
+    const docs = await require('./supplyLedgerWebController')._internals.docsForDay(customer, day);
+    const d = Number.isInteger(idx) && idx >= 0 ? docs[idx] : null;
+    if (!d || !d.fileId || !bot) return res.status(404).send('Not found');
+    const dl = await require('../utils/telegramFiles').downloadTelegramFile(bot, d.fileId);
+    res.set('Content-Type', dl.mimeType || (d.kind === 'document' ? 'application/pdf' : 'image/jpeg'));
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.send(dl.buffer);
+  } catch (e) { logApiError('GET /api/ext/supply/doc', e); res.status(404).send('Not found'); }
+}
+
+/**
+ * Was this design ever supplied to this customer? Alias-aware, via the same
+ * namesFor() the ledger uses.
+ *
+ * Without this check the catalogue endpoint would be a logged-in
+ * enumeration of the entire design book: one guessed code at a time, any
+ * customer could pull every picture the office has ever published.
+ */
+async function supplyHasDesign(customer, design) {
+  const supplyLedger = require('../services/supplyLedgerService');
+  const wants = new Set(await supplyLedger.namesFor(customer));
+  const want = String(design || '').trim().toLowerCase();
+  if (!want) return false;
+  const rows = await require('../repositories/inventoryRepository').getSoldRows();
+  return rows.some((r) => wants.has(String(r.soldTo || '').trim().toLowerCase())
+    && String(r.design || '').trim().toLowerCase() === want);
+}
+
+/**
+ * GET /api/ext/design/:code/photo — the catalogue picture for one design,
+ * streamed through the bot exactly as the sale documents are.
+ *
+ * Same lookup the bot uses when it sends a catalogue picture
+ * (designAssetsService.getPhotoForSend), so the customer sees the very
+ * image the office sends on Telegram. 404 when the design has no active
+ * asset — the page just hides the button's content.
+ */
+async function getExtDesignPhoto(req, res, bot) {
+  if (!ipThrottle(req, res, 120)) return;
+  try {
+    const customer = await supplySession(req, res);
+    if (!customer) return;
+    const code = String(req.params.code || '').trim();
+    if (!DESIGN_CODE_RE.test(code)) return res.status(404).send('Not found');
+    if (!await supplyHasDesign(customer, code)) return res.status(404).send('Not found');
+
+    const photo = await require('../services/designAssetsService').getPhotoForSend(code);
+    if (!photo || !photo.photo) return res.status(404).send('Not found');
+    res.set('Cache-Control', 'private, max-age=86400');
+    if (photo.photoSource === 'telegram_file_id') {
+      if (!bot) return res.status(404).send('Not found');
+      const dl = await require('../utils/telegramFiles').downloadTelegramFile(bot, photo.photo);
+      res.set('Content-Type', dl.mimeType || 'image/jpeg');
+      return res.send(dl.buffer);
+    }
+    if (Buffer.isBuffer(photo.photo)) {
+      res.set('Content-Type', 'image/jpeg');
+      return res.send(photo.photo);
+    }
+    // photoSource 'drive_url' — the bytes were unreachable (Drive download
+    // already failed upstream). Redirecting the customer to a Google URL
+    // would leak the asset outside the session, so this is a 404.
+    return res.status(404).send('Not found');
+  } catch (e) { logApiError('GET /api/ext/design/:code/photo', e); res.status(404).send('Not found'); }
+}
+
 /**
  * GET /api/ops/usage — the owner's cumulative channel-usage metric for the
  * WEBSITE (admin/session gated like every ops endpoint).
@@ -673,4 +891,7 @@ module.exports = {
   getOpsOverview, getOpsApprovals, getOpsApprovalDetail, getOpsAttendance, getOpsStockTakes,
   postExtOtpRequest, postExtOtpVerify, getExtLedger, getOpsUsage,
   getOpsAllocations, postOpsAllocation,
+  // SUP-1 — customer Supply Record (goods only)
+  getExtSupply, getExtSupplyDay, getExtSupplyDoc, getExtDesignPhoto,
+  _internals: { supplyHasDesign, SUPPLY_DAY_RE, DESIGN_CODE_RE },
 };

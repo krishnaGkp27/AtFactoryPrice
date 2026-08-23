@@ -213,8 +213,21 @@ const config = {
    * never reflects an arbitrary caller's Origin. Set this in production so a
    * random webpage cannot script the settings endpoints from a victim's
    * browser.
+   *
+   * SUP-1: the live site's two spellings are ALWAYS merged in when the env
+   * var is set, because ledger.html is served from there and must survive
+   * the preflight. Leaving it to the env var alone means a deployment that
+   * sets ADMIN_ALLOWED_ORIGINS for the admin pages silently locks the
+   * customer's Supply Record out. When the var is UNSET the server still
+   * falls back to `*` (see server.js), so the empty case is left empty
+   * rather than narrowed here — narrowing it would be a behaviour change
+   * for every other caller.
    */
-  adminAllowedOrigins: parseIds(process.env.ADMIN_ALLOWED_ORIGINS),
+  adminAllowedOrigins: (() => {
+    const env = parseIds(process.env.ADMIN_ALLOWED_ORIGINS);
+    if (!env.length) return [];
+    return [...new Set([...env, 'https://atfactoryprice.live', 'https://www.atfactoryprice.live'])];
+  })(),
 
   /**
    * TG-INT — third-party integration adapter selection. Every block

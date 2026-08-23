@@ -79,8 +79,19 @@ app.use((req, res, next) => {
   } else {
     res.setHeader('Access-Control-Allow-Origin', '*');
   }
-  res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key');
+  // SUP-1: the customer Supply Record page needs POST (a JSON OTP request is
+  // preflighted) and Authorization (every /api/ext/supply* read is a bearer
+  // session). Without both, ledger.html dies at the preflight and never
+  // reaches a handler — and the failure reads as "the page is broken".
+  //
+  // SCOPED TO /api/ DELIBERATELY. This middleware is global, so announcing
+  // POST for every path would also answer the preflight for `/webhook` —
+  // teaching browsers they may send a cross-origin JSON POST at the bot's
+  // update endpoint, which they refuse today. The API needs POST; the
+  // webhook must keep the answer it has always given.
+  const isApi = String(req.path || '').startsWith('/api/');
+  res.setHeader('Access-Control-Allow-Methods', isApi ? 'GET, POST, PUT, OPTIONS' : 'GET, PUT, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', isApi ? 'Content-Type, X-API-Key, Authorization' : 'Content-Type, X-API-Key');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
@@ -123,6 +134,15 @@ app.get('/api/contacts/graph', apiController.getContactsGraph);
 app.post('/api/ext/otp/request', apiController.postExtOtpRequest);
 app.post('/api/ext/otp/verify', apiController.postExtOtpVerify);
 app.get('/api/ext/ledger', apiController.getExtLedger);
+// SUP-1 — the customer's Supply Record (atfactoryprice.live/ledger.html).
+// Goods only: dates, designs, bales, yards, their own sale documents and the
+// catalogue picture for a design they were actually supplied. Same bearer
+// session as /api/ext/ledger; documents and photos stream through the bot so
+// no Telegram file URL or bot token ever reaches the browser.
+app.get('/api/ext/supply', apiController.getExtSupply);
+app.get('/api/ext/supply/day/:day', apiController.getExtSupplyDay);
+app.get('/api/ext/supply/doc/:day/:i', (req, res) => apiController.getExtSupplyDoc(req, res, bot));
+app.get('/api/ext/design/:code/photo', (req, res) => apiController.getExtDesignPhoto(req, res, bot));
 app.get('/api/ops/usage', apiController.getOpsUsage);
 app.get('/api/ops/allocations', apiController.getOpsAllocations); // MYP-1
 app.post('/api/ops/allocations', apiController.postOpsAllocation);      // MYP-1 §15c session-only write
