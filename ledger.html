@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>My Supply Record — AtFactoryPrice</title>
+<style>
+:root{--ink:#171717;--gold:#c9a227;--red:#b3261e;--green:#1e7d32;--amber:#b26a00}
+*{box-sizing:border-box;margin:0}
+body{font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;background:#e8e8e5;color:#222;min-height:100vh}
+.sheet{max-width:560px;margin:0 auto;background:#fff;min-height:100vh;box-shadow:0 0 40px rgba(0,0,0,.08);padding-bottom:72px}
+header{background:var(--ink);color:#fff;padding:24px 24px 20px}
+header h1{font-size:19px;letter-spacing:.4px}
+header h1 span{color:var(--gold);font-weight:600}
+.meta{margin-top:8px;font-size:12.5px;color:#cfcfcf;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.meta b{color:#fff;font-weight:600}
+.meta a{color:#9db8d6;text-decoration:none;margin-left:auto;font-size:12px}
+main{padding:22px 24px 30px}
+a{color:#1a5c9e}a:hover{color:#0f3d6b}
+.lead{font-size:14px;color:#555;line-height:1.55;margin-bottom:20px}
+label{display:block;font-size:12px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#777;margin:0 0 7px}
+input{width:100%;padding:13px 14px;border:2px solid #ddd;border-radius:6px;font-size:16px;font-family:inherit}
+input:focus{outline:none;border-color:var(--ink)}
+.seg{display:flex;gap:0;background:#f0f0ee;border-radius:8px;padding:4px;margin:16px 0 20px}
+.seg button{flex:1;padding:10px;border:0;background:transparent;border-radius:6px;font:600 14px/1 inherit;color:#666;cursor:pointer}
+.seg button.on{background:#fff;color:#111;box-shadow:0 1px 5px rgba(0,0,0,.1)}
+.btn{display:block;width:100%;text-align:center;background:var(--ink);color:#fff;text-decoration:none;padding:14px;border-radius:6px;font-size:15px;font-weight:600;border:0;cursor:pointer;font-family:inherit}
+.btn:hover{color:#fff;background:#000}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.note{margin-top:14px;font-size:11.5px;color:#999;text-align:center;line-height:1.5}
+.hint{font-size:12.5px;color:#888;margin-top:8px}
+.hint b{color:#555}
+.sent{background:#eef4ec;color:#2c5232;font-size:13px;padding:11px 13px;border-radius:6px;margin-bottom:18px;line-height:1.5}
+.warn{background:#fdf1ef;color:#8c2f26;font-size:13px;padding:11px 13px;border-radius:6px;margin-bottom:18px;line-height:1.5}
+.code-row{display:flex;gap:10px;align-items:center;margin-top:6px}
+.code-row input{letter-spacing:8px;font-size:22px;text-align:center;font-variant-numeric:tabular-nums}
+.resend{display:flex;justify-content:space-between;font-size:12.5px;color:#888;margin:12px 2px 20px}
+.resend a{color:#1a5c9e;text-decoration:none}
+.hero{display:flex;justify-content:space-between;align-items:baseline;gap:12px;border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:4px}
+.hero .lbl{font-size:11px;letter-spacing:.9px;text-transform:uppercase;color:#888;font-weight:700}
+.hero .amt{font-size:26px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap}
+.hero .amt small{font-size:12px;font-weight:600;letter-spacing:.8px;display:block;text-align:right;color:#888}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:10.5px;letter-spacing:.8px;text-transform:uppercase;color:#888;border-bottom:1px solid #ccc;padding:8px 4px;font-weight:700}
+td{padding:9px 4px;border-bottom:1px solid #ececea;vertical-align:top;line-height:1.4}
+.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+th.num{text-align:right}
+.narr{color:#444;padding:9px 4px}
+tr.sep td{background:#f6f5f2;color:#8b8b84;font-size:10.5px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:7px 4px;border-bottom:1px solid #e4e3dd}
+tr.ret td{color:#7a7a72}
+tr.ret .rlab{font-weight:600}
+a.tap{color:#1a5c9e;text-decoration:none;font-weight:600;display:block;padding:14px 4px;margin:-9px -4px;min-height:44px}
+a.tap>i{font-style:normal;border-bottom:1px dotted #1a5c9e66}
+a.tap::after{content:'\203A';display:inline-block;margin-left:6px;font-weight:700;transition:transform .15s;color:#8aa8c4}
+tr.open a.tap::after{transform:rotate(90deg)}
+tr.det{display:none}
+tr.det.show{display:table-row}
+tr.det>td{background:#faf9f6;padding:14px 12px 16px;border-bottom:1px solid #e2e2de}
+tr.open>td>a.tap{color:#0f3d6b}
+.dhd{display:flex;align-items:baseline;gap:8px;padding-bottom:5px;margin-bottom:7px;border-bottom:1px solid #e4e3dd}
+.dhd .nm{font-weight:700;font-size:12.5px;letter-spacing:.4px;color:#111;white-space:nowrap}
+.dhd .cat{font-size:12px;font-weight:600;color:#8a7a3c}
+button.cimg{margin-left:auto;border:1px solid #d5d3cb;background:#fff;color:#6b6b64;font:600 11px/1 inherit;letter-spacing:.3px;padding:6px 10px;border-radius:4px;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:5px}
+button.cimg::after{content:'\203A';font-size:12px;transform:rotate(90deg);transition:transform .15s;color:#a9a79e}
+button.cimg.on{background:#f2f1ec;color:#333}
+button.cimg.on::after{transform:rotate(-90deg)}
+.cbox{display:none;margin:2px 0 12px}
+.cbox.show{display:block}
+.cbox img{display:block;width:100%;max-width:260px;border:1px solid #d8d8d4;border-radius:4px}
+.cbox .cph{display:block;width:100%;max-width:260px;aspect-ratio:4/3;border:1px solid #d8d8d4;border-radius:4px;background-image:repeating-linear-gradient(135deg,#efeee9 0 6px,#e6e5df 6px 12px)}
+.cbox figcaption{font:10px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;color:#8b8b84;margin-top:4px;letter-spacing:.2px}
+.blk+.blk{margin-top:14px}
+.shl{display:grid;grid-template-columns:auto 1fr auto;gap:3px 10px;font-size:12.5px;color:#555;align-items:baseline}
+.shl b{font-weight:600;color:#333;white-space:nowrap}
+.shl span{font-variant-numeric:tabular-nums;color:#7d7d76}
+.shl u{text-decoration:none;text-align:right;color:#8b8b84;font-variant-numeric:tabular-nums;white-space:nowrap}
+.docs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.docs figure{margin:0;width:118px}
+.docs .ph{display:block;width:118px;height:86px;border:1px solid #d8d8d4;border-radius:4px;background-image:repeating-linear-gradient(135deg,#efeee9 0 6px,#e6e5df 6px 12px)}
+.docs img{display:block;width:118px;height:86px;object-fit:cover;border:1px solid #d8d8d4;border-radius:4px}
+.docs figcaption{font:10px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;color:#8b8b84;margin-top:4px;letter-spacing:.2px}
+.more{display:block;width:100%;margin-top:16px;padding:12px;border:1px solid #d5d3cb;background:#fff;border-radius:6px;font:600 13px/1 inherit;color:#444;cursor:pointer}
+.more:hover{background:#faf9f6}
+.empty{padding:26px 4px;text-align:center;color:#888;font-size:13.5px;line-height:1.6}
+.foot{margin-top:26px;font-size:11.5px;color:#999;text-align:center;line-height:1.6}
+.foot a{color:#888}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="sheet">
+
+<!-- STATE 1 — phone -->
+<section id="s-phone">
+  <header>
+    <h1>AtFactoryPrice <span>— My Supply Record</span></h1>
+    <div class="meta"><span>Supply record · quantities only</span></div>
+  </header>
+  <main>
+    <div id="phone-msg" hidden></div>
+    <p class="lead">Confirm the phone number registered with our office and we'll send you a one-time login code.</p>
+    <label for="ph">Registered phone number</label>
+    <input id="ph" type="tel" inputmode="tel" autocomplete="tel" placeholder="+234 800 000 0000">
+    <p class="hint" id="ph-hint" hidden></p>
+    <div class="seg" id="chan">
+      <button type="button" class="on" data-chan="whatsapp">WhatsApp</button>
+      <button type="button" data-chan="sms">SMS</button>
+    </div>
+    <button class="btn" id="send-code" type="button">Send login code</button>
+    <p class="note">If this number is registered, a login code is on its way.<br>Codes expire after 5 minutes.</p>
+  </main>
+</section>
+
+<!-- STATE 2 — code -->
+<section id="s-code" hidden>
+  <header>
+    <h1>AtFactoryPrice <span>— My Supply Record</span></h1>
+    <div class="meta"><span>Supply record · quantities only</span></div>
+  </header>
+  <main>
+    <div class="sent" id="sent-line"></div>
+    <div id="code-msg" hidden></div>
+    <label for="otp">Login code</label>
+    <div class="code-row"><input id="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;"></div>
+    <div class="resend">
+      <a href="#" id="change-number">Change number</a>
+      <span id="resend-line"></span>
+    </div>
+    <button class="btn" id="verify" type="button">Verify &amp; open my record</button>
+    <p class="note">5 attempts per code. You'll stay signed in on this device until you close the browser.</p>
+  </main>
+</section>
+
+<!-- STATE 3 — the record -->
+<section id="s-ledger" hidden>
+  <header>
+    <h1 id="cust-name">— <span>SUPPLY RECORD</span></h1>
+    <div class="meta">
+      <span id="signed-as"></span>
+      <span id="as-of"></span>
+      <a href="#" id="sign-out">Sign out</a>
+    </div>
+  </header>
+  <main>
+    <div id="ledger-msg" hidden></div>
+    <div class="hero">
+      <span class="lbl">Supplied to date</span>
+      <span class="amt" id="hero-bales">&mdash;<small id="hero-yards"></small></span>
+    </div>
+    <div id="table-wrap"></div>
+    <button class="more" id="show-earlier" type="button" hidden>Show earlier supplies</button>
+    <p class="hint" id="tap-hint" style="margin:14px 2px 0" hidden>Tap any row to see the shades, bale numbers, yardage and the dispatch documents.</p>
+    <p class="foot">This is a private supply record — don't forward links from it.<br>
+      <a href="#" id="sign-out-2">Sign out</a> · Questions? Message us on WhatsApp.</p>
+  </main>
+</section>
+
+</div>
+
+<script>
+(function () {
+'use strict';
+
+var AFP = {
+  /* ══════════════════════════════════════════════════════════════════════
+   * SET THIS before deploying: the bot's Railway origin, no trailing slash.
+   * e.g. 'https://telegram-ops-bot-production.up.railway.app'
+   * Leave it '' and the page says so plainly on the login screen rather
+   * than failing with an unexplained network error.
+   * ═════════════════════════════════════════════════════════════════════ */
+  API_BASE: ''
+};
+
+/* ── the two session keys, and nothing else ────────────────────────────
+ * sessionStorage, NOT localStorage: the record dies with the browser tab,
+ * so a shared or borrowed phone does not keep a stranger signed in.
+ */
+var TOKEN_KEY = 'afp_ext_token';
+var PHONE_KEY = 'afp_ext_phone';
+
+var $ = function (id) { return document.getElementById(id); };
+
+/** Everything that reaches innerHTML goes through this. No exceptions. */
+function esc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+var state = {
+  customer: '', days: [], totals: null, shown: 0,
+  dayCache: {},      // 'YYYY-MM-DD' → the day's detail, fetched once
+  blobs: []          // object URLs to revoke on sign-out
+};
+var PAGE = 25;
+var channel = 'whatsapp';
+
+/* ── session ───────────────────────────────────────────────────────────── */
+
+function token() { try { return sessionStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } }
+function setToken(t) { try { sessionStorage.setItem(TOKEN_KEY, t); } catch (e) { /* private mode */ } }
+function savedPhone() { try { return sessionStorage.getItem(PHONE_KEY) || ''; } catch (e) { return ''; } }
+function setSavedPhone(p) { try { sessionStorage.setItem(PHONE_KEY, p); } catch (e) { /* private mode */ } }
+
+function clearSession() {
+  try { sessionStorage.removeItem(TOKEN_KEY); sessionStorage.removeItem(PHONE_KEY); } catch (e) { /* ignore */ }
+  for (var i = 0; i < state.blobs.length; i += 1) {
+    try { URL.revokeObjectURL(state.blobs[i]); } catch (e) { /* ignore */ }
+  }
+  state = { customer: '', days: [], totals: null, shown: 0, dayCache: {}, blobs: [] };
+}
+
+/* ── screens ───────────────────────────────────────────────────────────── */
+
+function show(which) {
+  ['phone', 'code', 'ledger'].forEach(function (k) { $('s-' + k).hidden = k !== which; });
+  window.scrollTo(0, 0);
+}
+
+function msg(id, text, kind) {
+  var el = $(id);
+  if (!text) { el.hidden = true; el.textContent = ''; return; }
+  el.className = kind === 'ok' ? 'sent' : 'warn';
+  el.textContent = text;   // textContent, never innerHTML — server text is not markup
+  el.hidden = false;
+}
+
+/* ── the API ───────────────────────────────────────────────────────────── */
+
+function authHeaders() {
+  var h = {};
+  var t = token();
+  if (t) h.Authorization = 'Bearer ' + t;
+  return h;
+}
+
+/** A 401 anywhere means the session is gone: drop it and go back to the door. */
+function sessionExpired() {
+  clearSession();
+  show('phone');
+  msg('phone-msg', 'Your session has ended. Please sign in again.', 'warn');
+}
+
+async function apiJson(path, opts) {
+  opts = opts || {};
+  var init = { method: opts.method || 'GET', headers: authHeaders() };
+  if (opts.body) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(opts.body);
+  }
+  var r = await fetch(AFP.API_BASE + path, init);
+  var body = null;
+  try { body = await r.json(); } catch (e) { body = null; }
+  if (r.status === 401 && opts.authed) { sessionExpired(); throw { handled: true }; }
+  if (r.status === 429) { throw { rate: true, message: (body && body.error) || 'Too many requests — please slow down and try again shortly.' }; }
+  return { status: r.status, body: body };
+}
+
+/** Bytes behind the bearer session — an <img src> cannot carry the header. */
+async function apiBlobUrl(path) {
+  var r = await fetch(AFP.API_BASE + path, { headers: authHeaders() });
+  if (r.status === 401) { sessionExpired(); throw { handled: true }; }
+  if (!r.ok) throw { missing: true };
+  var url = URL.createObjectURL(await r.blob());
+  state.blobs.push(url);
+  return url;
+}
+
+/* ── step 1: the phone ─────────────────────────────────────────────────── */
+
+/** "+2348138475360" → "+234 ••• 5360". Enough to recognise, not to read out. */
+function maskPhone(p) {
+  var s = String(p || '').replace(/\s+/g, '');
+  if (s.length <= 4) return s;
+  return s.slice(0, Math.max(0, Math.min(4, s.length - 4))) + ' ••• ' + s.slice(-4);
+}
+
+$('chan').addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-chan]');
+  if (!b) return;
+  channel = b.getAttribute('data-chan');
+  Array.prototype.forEach.call($('chan').children, function (x) { x.classList.remove('on'); });
+  b.classList.add('on');
+});
+
+$('send-code').addEventListener('click', async function () {
+  var phone = $('ph').value.trim();
+  if (!phone) { msg('phone-msg', 'Please enter the phone number registered with our office.', 'warn'); return; }
+  var btn = this;
+  btn.disabled = true;
+  msg('phone-msg', '');
+  try {
+    var r = await apiJson('/api/ext/otp/request', { method: 'POST', body: { phone: phone, channel: channel } });
+    // The reply is DELIBERATELY the same whether or not the number is
+    // registered — showing anything number-specific here would turn this
+    // box into a "is this person a customer?" oracle.
+    if (r.body && r.body.ok === false && r.body.error) {
+      msg('phone-msg', r.body.error, 'warn');
+    } else {
+      setSavedPhone(phone);
+      $('sent-line').textContent = 'A 6-digit code was sent by '
+        + (channel === 'sms' ? 'SMS' : 'WhatsApp') + ' to ' + maskPhone(phone) + '.';
+      msg('code-msg', '');
+      $('otp').value = '';
+      show('code');
+      startResendTimer();
+      $('otp').focus();
+    }
+  } catch (err) {
+    msg('phone-msg', err && err.rate ? err.message
+      : 'We could not reach the office system just now. Please try again in a moment.', 'warn');
+  } finally { btn.disabled = false; }
+});
+
+/* ── step 2: the code ──────────────────────────────────────────────────── */
+
+var resendTimer = null;
+function startResendTimer() {
+  var left = 60;
+  clearInterval(resendTimer);
+  var paint = function () {
+    $('resend-line').textContent = left > 0
+      ? 'Resend in 0:' + (left < 10 ? '0' : '') + left
+      : 'You can request a new code';
+    if (left <= 0) clearInterval(resendTimer);
+    left -= 1;
+  };
+  paint();
+  resendTimer = setInterval(paint, 1000);
+}
+
+$('change-number').addEventListener('click', function (e) {
+  e.preventDefault();
+  clearInterval(resendTimer);
+  msg('phone-msg', '');
+  show('phone');
+});
+
+$('verify').addEventListener('click', async function () {
+  var code = $('otp').value.trim();
+  if (!code) { msg('code-msg', 'Enter the 6-digit code we sent you.', 'warn'); return; }
+  var btn = this;
+  btn.disabled = true;
+  msg('code-msg', '');
+  try {
+    var r = await apiJson('/api/ext/otp/verify', { method: 'POST', body: { phone: savedPhone(), code: code } });
+    if (r.body && r.body.ok && r.body.token) {
+      setToken(r.body.token);
+      clearInterval(resendTimer);
+      await openRecord();
+    } else {
+      msg('code-msg', (r.body && r.body.error) || 'That code did not work. Check it and try again.', 'warn');
+    }
+  } catch (err) {
+    msg('code-msg', err && err.rate ? err.message
+      : 'We could not reach the office system just now. Please try again in a moment.', 'warn');
+  } finally { btn.disabled = false; }
+});
+
+$('otp').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('verify').click(); });
+$('ph').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('send-code').click(); });
+
+/* ── step 3: the record ────────────────────────────────────────────────── */
+
+var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+var SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function dayShort(iso) {
+  var p = String(iso || '').split('-');
+  if (p.length !== 3) return String(iso || '');
+  return p[2] + '-' + (SHORT[Number(p[1]) - 1] || p[1]);
+}
+function monthLabel(iso) {
+  var p = String(iso || '').split('-');
+  if (p.length !== 3) return '';
+  return (MONTHS[Number(p[1]) - 1] || p[1]) + ' ' + p[0];
+}
+function num(n) { return Number(n || 0).toLocaleString('en-US'); }
+
+async function openRecord() {
+  msg('ledger-msg', '');
+  try {
+    var r = await apiJson('/api/ext/supply', { authed: true });
+    if (r.status === 404) {
+      // The endpoints are not deployed yet. Show a calm, finished-looking
+      // page rather than a broken one — this is the deploy-order case.
+      show('ledger');
+      $('cust-name').innerHTML = '&mdash; <span>SUPPLY RECORD</span>';
+      $('table-wrap').innerHTML = '<div class="empty">Your supply record isn\'t available just yet.<br>Please check back shortly.</div>';
+      return;
+    }
+    if (!r.body || !r.body.ok) { msg('code-msg', 'We could not open your record. Please try again.', 'warn'); return; }
+
+    state.customer = r.body.customer || '';
+    state.days = (r.body.days || []).slice().reverse();  // newest first
+    state.totals = r.body.totals || { bales: 0, yards: 0 };
+    state.shown = 0;
+
+    $('cust-name').innerHTML = esc(String(state.customer).toUpperCase()) + ' <span>— SUPPLY RECORD</span>';
+    $('signed-as').innerHTML = 'Signed in via <b>' + esc(maskPhone(savedPhone())) + '</b>';
+    $('as-of').innerHTML = 'As of <b>' + esc(dayShort(new Date().toISOString().slice(0, 10))
+      + '-' + new Date().getFullYear()) + '</b>';
+
+    // The hero is ALWAYS the service's own total — never a sum of the rows
+    // on screen, which would shrink every time paging hid a row.
+    $('hero-bales').innerHTML = esc(num(state.totals.bales)) + ' bales<small>'
+      + esc(num(state.totals.yards)) + ' YARDS</small>';
+
+    renderRows(true);
+    show('ledger');
+  } catch (err) {
+    if (err && err.handled) return;
+    msg('code-msg', err && err.rate ? err.message
+      : 'We could not reach the office system just now. Please try again in a moment.', 'warn');
+  }
+}
+
+function renderRows(reset) {
+  if (reset) { $('table-wrap').innerHTML = ''; state.shown = 0; }
+
+  if (!state.days.length) {
+    $('table-wrap').innerHTML = '<div class="empty">No supplies recorded against your name yet.<br>'
+      + 'They will appear here as soon as goods leave for you.</div>';
+    $('show-earlier').hidden = true;
+    $('tap-hint').hidden = true;
+    return;
+  }
+
+  var next = state.days.slice(state.shown, state.shown + PAGE);
+  var spansMonths = state.days.length > 1
+    && monthLabel(state.days[0].date) !== monthLabel(state.days[state.days.length - 1].date);
+
+  var html = '';
+  if (state.shown === 0) {
+    html += '<table><thead><tr><th>Date</th><th>Design</th>'
+      + '<th class="num">Bales</th><th class="num">Yards</th></tr></thead><tbody>';
+  }
+
+  var prevMonth = state.shown === 0 ? '' : monthLabel(state.days[state.shown - 1].date);
+  for (var i = 0; i < next.length; i += 1) {
+    var d = next[i];
+    var m = monthLabel(d.date);
+    if (spansMonths && m !== prevMonth) {
+      html += '<tr class="sep"><td colspan="4">' + esc(m) + '</td></tr>';
+      prevMonth = m;
+    }
+    var idx = state.shown + i;
+    if (d.kind === 'return') {
+      // A return is not a supply. It is shown, plainly, so the record
+      // agrees with the office's own ledger — but it is never tappable and
+      // never counted as goods going out.
+      html += '<tr class="ret"><td>' + esc(dayShort(d.date)) + '</td>'
+        + '<td class="narr"><span class="rlab">&#8617; Returned</span></td>'
+        + '<td class="num">' + esc(num(d.bales)) + '</td><td class="num">&mdash;</td></tr>';
+    } else {
+      var codes = (d.designs || []).join(', ') || '—';
+      html += '<tr data-row="' + idx + '"><td>' + esc(dayShort(d.date)) + '</td>'
+        + '<td class="narr"><a class="tap" href="#" data-open="' + idx + '"><i>' + esc(codes) + '</i></a></td>'
+        + '<td class="num">' + esc(num(d.bales)) + '</td>'
+        + '<td class="num">' + esc(num(d.yards)) + '</td></tr>'
+        + '<tr class="det" data-det="' + idx + '"><td colspan="4"></td></tr>';
+    }
+  }
+
+  if (state.shown === 0) {
+    html += '</tbody></table>';
+    $('table-wrap').innerHTML = html;
+  } else {
+    $('table-wrap').querySelector('tbody').insertAdjacentHTML('beforeend', html);
+  }
+
+  state.shown += next.length;
+  $('show-earlier').hidden = state.shown >= state.days.length;
+  $('tap-hint').hidden = false;
+}
+
+$('show-earlier').addEventListener('click', function () { renderRows(false); });
+
+/* ── one day, opened ───────────────────────────────────────────────────── */
+
+$('table-wrap').addEventListener('click', function (e) {
+  var a = e.target.closest('a.tap');
+  if (!a) return;
+  e.preventDefault();
+  toggleDay(Number(a.getAttribute('data-open')), a);
+});
+
+async function toggleDay(idx, anchor) {
+  var det = $('table-wrap').querySelector('tr.det[data-det="' + idx + '"]');
+  var row = anchor.closest('tr');
+  if (!det) return;
+
+  if (det.classList.contains('show')) {
+    det.classList.remove('show');
+    row.classList.remove('open');
+    return;
+  }
+  det.classList.add('show');
+  row.classList.add('open');
+
+  var day = state.days[idx].date;
+  var cell = det.firstElementChild;
+  if (state.dayCache[day]) { paintDay(cell, state.dayCache[day], day); return; }
+
+  cell.innerHTML = '<div class="empty" style="padding:10px">Loading…</div>';
+  try {
+    var r = await apiJson('/api/ext/supply/day/' + encodeURIComponent(day), { authed: true });
+    if (!r.body || !r.body.ok) throw { missing: true };
+    state.dayCache[day] = r.body;
+    paintDay(cell, r.body, day);
+  } catch (err) {
+    if (err && err.handled) return;
+    cell.innerHTML = '<div class="empty" style="padding:10px">'
+      + esc(err && err.rate ? err.message : 'Could not load this day just now.') + '</div>';
+  }
+}
+
+function paintDay(cell, detail, day) {
+  var html = '';
+  var designs = detail.designs || [];
+  for (var i = 0; i < designs.length; i += 1) {
+    var d = designs[i];
+    html += '<div class="blk">'
+      + '<div class="dhd"><span class="nm">' + esc(d.design) + '</span>'
+      + (d.category ? '<span class="cat">' + esc(d.category) + '</span>' : '')
+      + '<button class="cimg" type="button" data-cat="' + esc(d.design) + '">Catalogue</button></div>'
+      + '<figure class="cbox"><span class="cph"></span>'
+      + '<figcaption>catalogue — ' + esc(d.design) + '</figcaption></figure>'
+      + '<div class="shl">';
+    var shades = d.shades || [];
+    for (var j = 0; j < shades.length; j += 1) {
+      var s = shades[j];
+      html += '<b>Shade ' + esc(s.shade) + ' &times;' + esc(String((s.bales || []).length)) + 'B</b>'
+        + '<span>(' + esc((s.bales || []).join(', ')) + ')</span>'
+        + '<u>' + esc(num(s.yards)) + ' yds</u>';
+    }
+    html += '</div></div>';
+  }
+  if (!designs.length) html += '<div class="empty" style="padding:10px">No goods detail recorded for this day.</div>';
+
+  var docs = detail.docs || [];
+  if (docs.length) {
+    html += '<div class="docs">';
+    for (var k = 0; k < docs.length; k += 1) {
+      html += '<figure data-doc="' + esc(String(docs[k].i)) + '"><span class="ph"></span>'
+        + '<figcaption>' + esc(docs[k].label) + '</figcaption></figure>';
+    }
+    html += '</div>';
+  }
+  cell.innerHTML = html;
+  loadDocs(cell, day);
+}
+
+/* ── documents and catalogue pictures ──────────────────────────────────
+ * Both live behind the bearer session, and an <img src> cannot carry an
+ * Authorization header — so the bytes are fetched and handed to the page
+ * as object URLs. Nothing about the file's real location ever reaches
+ * the browser.
+ */
+function loadDocs(cell, day) {
+  var figs = cell.querySelectorAll('figure[data-doc]');
+  for (var i = 0; i < figs.length; i += 1) {
+    (async function (fig) {
+      var idx = fig.getAttribute('data-doc');
+      try {
+        var url = await apiBlobUrl('/api/ext/supply/doc/' + encodeURIComponent(day) + '/' + encodeURIComponent(idx));
+        var img = new Image();
+        img.onload = function () {
+          var a = document.createElement('a');
+          a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+          a.appendChild(img);
+          fig.replaceChild(a, fig.firstElementChild);
+        };
+        img.onerror = function () {
+          // A PDF has no thumbnail — offer it as a link instead.
+          var a = document.createElement('a');
+          a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+          a.className = 'ph'; a.style.display = 'flex';
+          a.style.alignItems = 'center'; a.style.justifyContent = 'center';
+          a.textContent = 'Open';
+          fig.replaceChild(a, fig.firstElementChild);
+        };
+        img.src = url;
+      } catch (err) {
+        if (err && err.handled) return;
+        fig.remove();   // an unreachable document is hidden, not left as a broken box
+      }
+    }(figs[i]));
+  }
+}
+
+$('table-wrap').addEventListener('click', async function (e) {
+  var b = e.target.closest('button.cimg');
+  if (!b) return;
+  var box = b.closest('.blk').querySelector('.cbox');
+  var on = !box.classList.contains('show');
+  box.classList.toggle('show', on);
+  b.classList.toggle('on', on);
+  if (!on || b.getAttribute('data-loaded')) return;
+  b.setAttribute('data-loaded', '1');
+  try {
+    var url = await apiBlobUrl('/api/ext/design/' + encodeURIComponent(b.getAttribute('data-cat')) + '/photo');
+    var img = new Image();
+    img.alt = '';
+    img.src = url;
+    box.replaceChild(img, box.firstElementChild);
+  } catch (err) {
+    if (err && err.handled) return;
+    // No catalogue picture for this design — take the button away rather
+    // than leave a control that opens an empty box.
+    box.classList.remove('show');
+    b.remove();
+  }
+});
+
+/* ── sign out ──────────────────────────────────────────────────────────── */
+
+function signOut(e) {
+  if (e) e.preventDefault();
+  clearInterval(resendTimer);
+  clearSession();
+  $('ph').value = prefillPhone();
+  $('otp').value = '';
+  msg('phone-msg', 'You have been signed out.', 'ok');
+  msg('code-msg', '');
+  msg('ledger-msg', '');
+  show('phone');
+}
+$('sign-out').addEventListener('click', signOut);
+$('sign-out-2').addEventListener('click', signOut);
+
+/* ── boot ──────────────────────────────────────────────────────────────── */
+
+function prefillPhone() {
+  // Set by js/auth-ui.js for a signed-in website customer. This page never
+  // loads that script, so the value travels through sessionStorage — shared
+  // across same-origin pages in the SAME tab, and gone when the tab closes.
+  try {
+    if (window.AFP_PROFILE_PHONE) return String(window.AFP_PROFILE_PHONE);
+    return sessionStorage.getItem('afp_profile_phone') || '';
+  } catch (e) { return ''; }
+}
+
+(function boot() {
+  if (!AFP.API_BASE) {
+    msg('phone-msg', 'This page is not connected to the office system yet. Please try again later.', 'warn');
+    $('send-code').disabled = true;
+    show('phone');
+    return;
+  }
+  var p = prefillPhone();
+  if (p) {
+    $('ph').value = p;
+    $('ph-hint').innerHTML = 'Number filled from your profile — change it if the office has a different one.';
+    $('ph-hint').hidden = false;
+  }
+  if (token()) { openRecord(); return; }   // same tab, already verified
+  show('phone');
+}());
+
+}());
+</script>
+</body>
+</html>
