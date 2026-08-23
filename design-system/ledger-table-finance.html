@@ -1,0 +1,24 @@
+<!-- @dsCard group="Ledger" -->
+<!doctype html><html><head><meta charset="utf-8"><title>Finance ledger table</title><style>
+body{margin:0;padding:24px;background:#0d0d0f;color:#f2f2f2;font:15px/1.5 Inter,'Segoe UI',Arial,sans-serif}
+table{width:100%;border-collapse:collapse;background:#121215;max-width:820px}
+th{background:#1c1c22;color:#d4af5f;text-transform:uppercase;font-size:11px;letter-spacing:1.5px;padding:10px 8px;border:1px solid #2c2c33;text-align:left}
+td{padding:9px 8px;border:1px solid #26262d;vertical-align:top;font-variant-numeric:tabular-nums}
+td.dr{color:#e0a1a1;text-align:right;width:110px}
+td.cr{color:#8fd18f;text-align:right;width:110px}
+td.bal{color:#d4af5f;text-align:right;width:120px;font-weight:600}
+tr.pay td{background:#101312}
+.cap{color:#6a6a72;font-size:11px;margin-top:10px;max-width:70ch}
+</style></head><body>
+<table>
+<tr><th>Date</th><th>Particular</th><th>Debit</th><th>Credit</th><th>Balance</th></tr>
+<tr><td>12-Jul-2026</td><td>Sale — 9043 Shade A · 26t</td><td class="dr">780,000</td><td class="cr"></td><td class="bal">780,000</td></tr>
+<tr class="pay"><td>20-Jul-2026</td><td>Payment received — GTBank</td><td class="dr"></td><td class="cr">200,000</td><td class="bal">580,000</td></tr>
+<tr><td>28-Jul-2026</td><td>Sale — 9006 · 2B</td><td class="dr">670,000</td><td class="cr"></td><td class="bal">1,250,000</td></tr>
+<tr class="pay"><td colspan="5" style="height:30px;background:#0f0f12"></td></tr>
+</table>
+<p class="cap">The §15b instance — the same grid the supply ledger keeps reserved, filled
+from the authoritative receivable ledger. Debits rose-red, credits green,
+running balance gold. Payments sit in the reserved rows between supplies,
+exactly where the owner's hand-drawn format left room for them.</p>
+</body></html>
