@@ -72,7 +72,12 @@ const TEST_FILES = fs.existsSync(path.join(ROOT, 'test'))
 
 const escapeRe = (s2) => String(s2).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return ''; } };
-const rel = (f) => path.relative(ROOT, f);
+// POSIX separators, always. On Windows path.relative returns
+// "src\utils\thing.js", while every reader of this JSON — the orphan
+// self-test included — matches on "src/utils/thing.js". The detector was
+// firing correctly and being read as silent: precisely the failure mode
+// this script exists to rule out, reintroduced by a path separator.
+const rel = (f) => path.relative(ROOT, f).split(path.sep).join('/');
 
 /** Every source text that could reference a module, keyed by path. */
 const ALL_TEXT = new Map();
