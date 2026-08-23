@@ -26,7 +26,8 @@
       "**/*.ps1",
       "**/Makefile",
       "**/*.md",
-      "**/*.txt",
+      "tasks.txt",
+      "config_object.txt",
       "package*.json",
       "firestore.rules",
       "firestore.indexes.json"

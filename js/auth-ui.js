@@ -909,6 +909,13 @@ function updateNavbarAuth(fromCache = false) {
         const initials = getInitials(displayName);
         const firstName = displayName.split(' ')[0];
         const referralCode = currentUserData?.referralCode || '';
+
+        // SUP-1 — ledger.html reads this to prefill the phone step, so a
+        // signed-in customer taps "My Supply Record" and goes straight to
+        // "send me a code" instead of retyping the number the office
+        // already has. Deliberately NOT interpolated into the menu HTML:
+        // it is a value the page reads, never markup.
+        window.AFP_PROFILE_PHONE = currentUserData?.phone || '';
         const profilePicture = currentUserData?.profilePicture || currentUser?.photoURL || '';
         
         // Avatar HTML - show profile pic with initials overlay, or just initials
@@ -969,6 +976,15 @@ function updateNavbarAuth(fromCache = false) {
                             <path d="M16 10a4 4 0 0 1-8 0"></path>
                         </svg>
                         My Orders
+                    </a>
+                    <a href="ledger.html" class="user-dropdown-item">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 4h11a2 2 0 0 1 2 2v14H6a2 2 0 0 1-2-2z"></path>
+                            <path d="M17 8h3v10a2 2 0 0 1-2 2h-1"></path>
+                            <line x1="8" y1="9" x2="13" y2="9"></line>
+                            <line x1="8" y1="13" x2="13" y2="13"></line>
+                        </svg>
+                        My Supply Record
                     </a>
                     <a href="dashboard.html#referrals" class="user-dropdown-item">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+# SUP-1 — the customer's private supply record. It is already behind an OTP
+# login, so this is not the lock; it keeps the login page itself out of
+# search results, where a "My Supply Record" hit would invite the wrong
+# people to try the door.
+Disallow: /ledger.html
