@@ -3,153 +3,477 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Allocations — AtFactoryPrice</title>
+<meta name="robots" content="noindex,nofollow">
+<title>Allocation Matrix — /allocations (admin)</title>
 <style>
-/* MYP-1 §15c — the allocation matrix, ledger-family dark registry look. */
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#0d0d0f;color:#f2f2f2;font:15px/1.5 'Segoe UI',Arial,sans-serif;padding:24px 12px}
-.wrap{max-width:980px;margin:0 auto}
-h1{font-size:22px;letter-spacing:2px}
-h1 .accent{color:#d4af5f}
-.sub{color:#9a9a9a;font-size:12px;letter-spacing:1px;text-transform:uppercase;margin:2px 0 18px}
-.bar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
-select,button,input{font:14px 'Segoe UI',Arial,sans-serif;background:#1c1c22;color:#f2f2f2;border:1px solid #2c2c33;padding:7px 10px;border-radius:4px}
-button{cursor:pointer}
-button.gold{background:#d4af5f;color:#14161e;font-weight:600;border-color:#d4af5f}
-button:disabled{opacity:.45;cursor:default}
-.mode{color:#d4af5f;font-size:12px;text-transform:uppercase;letter-spacing:1px}
-table{width:100%;border-collapse:collapse;background:#121215}
-th{background:#1c1c22;color:#d4af5f;text-transform:uppercase;font-size:11px;letter-spacing:1.5px;padding:10px 8px;border:1px solid #2c2c33;text-align:left}
-td{padding:8px;border:1px solid #26262d;font-variant-numeric:tabular-nums}
-td.num{text-align:right;width:110px}
-td input{width:70px;text-align:right}
-.ok{color:#8fd18f}.warn{color:#e0a878}
-#msg{margin:12px 0;min-height:20px;font-size:13px}
-.foot{margin-top:22px;color:#6a6a72;font-size:11px}
-.hide{display:none}
+:root{--bg:#0d0d0f;--panel:#121215;--hdr:#1c1c22;--bd:#2c2c33;--bd2:#26262d;--tx:#f2f2f2;--gold:#d4af5f;--pos:#8fd18f;--warn:#e0a878;--dim:#55555e;--mut:#8b8b93}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--tx);font:14px/1.45 -apple-system,'Segoe UI',Roboto,Arial,sans-serif;min-height:100vh;font-variant-numeric:tabular-nums}
+a{color:var(--gold)}a:hover{color:#e6c883}
+.bar{display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--bd2);flex-wrap:wrap}
+.wm{font-size:14px;font-weight:700;letter-spacing:2.5px;white-space:nowrap}
+.wm b{color:var(--gold);font-weight:700}
+.wm small{display:block;font-size:9.5px;letter-spacing:1.8px;color:var(--mut);font-weight:600;margin-top:2px}
+.bar .sp{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.rfr{background:var(--hdr);color:var(--tx);border:1px solid var(--bd);border-radius:3px;font:600 12px/1 inherit;padding:10px 14px;cursor:pointer;white-space:nowrap;min-height:44px}
+.rfr:hover{border-color:var(--gold)}
+.rfr .ic{display:inline-block}
+.rfr.spin .ic{animation:rot .6s linear infinite}
+@keyframes rot{to{transform:rotate(360deg)}}
+.stamp{font:11px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--mut);letter-spacing:.4px;white-space:nowrap}
+.stamp b{color:var(--tx);font-weight:600}
+.stamp.flash b{color:var(--gold)}
+.panel{background:var(--panel);border:1px solid var(--bd);margin:0 18px 16px;border-radius:4px}
+#ov{position:fixed;inset:0;background:rgba(5,5,7,.72);z-index:20;display:flex;align-items:flex-start;justify-content:center;padding:5vh 16px;overflow:auto}
+.mdl{background:var(--panel);border:1px solid var(--bd);border-radius:4px;width:100%;max-width:860px;box-shadow:0 24px 60px rgba(0,0,0,.6)}
+.mhd{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--bd);font:700 11.5px/1 inherit;letter-spacing:1.4px;text-transform:uppercase;color:var(--mut)}
+.mhd .x{margin-left:auto;background:transparent;border:1px solid var(--bd);color:var(--mut);border-radius:3px;font:600 13px/1 inherit;min-width:44px;min-height:44px;cursor:pointer}
+.mhd .x:hover{border-color:var(--gold);color:var(--tx)}
+.mnote{padding:12px 16px 16px;font-size:11.5px;color:var(--mut);letter-spacing:.3px}
+a.pl{color:var(--tx);text-decoration:none;border-bottom:1px dotted #6f6f7a;font-weight:600;letter-spacing:.3px;cursor:pointer}
+a.pl:hover{color:var(--gold);border-bottom-color:var(--gold)}
+tfoot td.gt{color:var(--gold)}
+.mdl th:last-child,.mdl td.rt,.mdl tfoot td:last-child{position:sticky;right:0;background:var(--panel);z-index:2;border-left:1px solid var(--bd)}
+.mdl th:last-child{background:var(--hdr);z-index:5}
+.mdl tfoot td:last-child{background:#16161a;z-index:3}
+.wrap{overflow:auto;max-height:64vh}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:13px}
+th{background:var(--hdr);font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--mut);font-weight:700;text-align:right;padding:9px 12px;border-bottom:1px solid var(--bd);border-right:1px solid var(--bd2);position:sticky;top:0;z-index:2;white-space:nowrap}
+th.pc{text-align:left;left:0;z-index:4;min-width:170px}
+td{padding:8px 12px;border-bottom:1px solid var(--bd2);border-right:1px solid var(--bd2);text-align:right;white-space:nowrap;min-width:86px;height:40px}
+#mx td.pc,#mx th.pc{min-width:170px}
+td.ro{color:var(--tx)}
+td.pc{position:sticky;left:0;background:var(--panel);z-index:1;text-align:left}
+.who{display:flex;align-items:center;gap:8px;position:relative;cursor:default}
+.chip2{font:700 9.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:1px;border:1px solid #3a3a44;color:var(--mut);border-radius:2px;padding:3px 5px}
+.chip2.mkt{border-color:var(--gold);color:var(--gold)}
+.who .nm{font-weight:600;letter-spacing:.3px}
+.who .full{display:none;position:absolute;left:0;top:calc(100% + 6px);background:#0a0a0c;border:1px solid var(--bd);color:var(--tx);font-size:12px;padding:6px 9px;border-radius:3px;white-space:nowrap;z-index:6;box-shadow:0 6px 18px rgba(0,0,0,.5)}
+.who:hover .full,.who:focus .full{display:block}
+td.ed{cursor:text;position:relative}
+td.ed:hover{background:#17171b}
+td.ed.editing{background:#17171b;box-shadow:inset 0 0 0 1.5px var(--gold)}
+td.ed.saving::after{content:'';position:absolute;right:6px;top:50%;width:10px;height:10px;margin-top:-5px;border:1.5px solid var(--bd);border-top-color:var(--gold);border-radius:50%;animation:rot .7s linear infinite}
+td.ed.saved::after{content:'\2713';position:absolute;right:6px;top:50%;line-height:0;color:var(--pos);font-weight:700}
+td.ed.refused{box-shadow:inset 0 0 0 1.5px var(--warn);animation:shake .2s}
+@keyframes shake{25%{transform:translateX(-2px)}75%{transform:translateX(2px)}}
+.ci{width:100%;background:transparent;border:0;color:var(--tx);font:inherit;text-align:right;outline:none;padding:0}
+.dim{color:var(--dim)}
+tfoot td{position:sticky;bottom:0;background:#16161a;border-top:1px solid var(--bd);font-weight:600;z-index:2}
+tfoot tr.ta td{bottom:45px;border-top:1px solid var(--bd)}
+tfoot td.pc{z-index:3;background:#16161a;font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--mut);font-weight:700}
+tfoot .pos{color:var(--pos)}
+tfoot .zero{color:var(--warn)}
+.legend{display:flex;gap:10px 20px;flex-wrap:wrap;padding:10px 18px 14px;font-size:11.5px;color:var(--mut);line-height:1.6}
+.legend i{font-style:normal}
+.legend .sw{display:inline-block;width:8px;height:8px;border-radius:1px;margin-right:5px;vertical-align:-1px}
+.note{padding:14px 18px 20px;border-top:1px solid var(--bd2);margin:0 18px;font-size:11.5px;color:var(--mut);letter-spacing:.3px}
+#refmsg{position:absolute;background:#1d1712;border:1px solid var(--warn);color:var(--warn);font-size:12px;line-height:1.5;padding:9px 11px;border-radius:3px;max-width:300px;z-index:9;box-shadow:0 8px 22px rgba(0,0,0,.55);white-space:normal;text-align:left}
+.card{max-width:430px;margin:10vh auto;background:var(--panel);border:1px solid var(--bd);border-radius:4px;padding:30px 28px;text-align:center}
+.card .wm{justify-content:center;margin-bottom:18px}
+.card p{font-size:13.5px;color:var(--mut);line-height:1.6}
+.card p b{color:var(--tx)}
+.card .k{display:inline-block;margin-top:16px;border:1px solid var(--bd);border-radius:3px;padding:10px 14px;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--gold);letter-spacing:.5px}
+.empty{padding:26px 18px;color:var(--mut);font-size:13px}
+[hidden]{display:none!important}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>AT<span class="accent">FACTORY</span>PRICE</h1>
-  <div class="sub">Allocation matrix — customers &amp; marketers × designs</div>
-
-  <div id="login" class="hide">
-    <p>Sign in from the bot: tap <b>📊 Dashboard</b> in Telegram and open the link it sends, then return here.</p>
-  </div>
-
-  <div id="app" class="hide">
-    <div class="bar">
-      <label for="person">Person</label>
-      <select id="person"></select>
-      <button id="refresh">↻ Refresh</button>
-    </div>
-    <div id="msg"></div>
-    <table id="grid">
-      <thead><tr><th>Design</th><th>Shade</th><th>Category</th><th>Available</th><th>Allocated</th><th></th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <p class="foot">Allocation can never exceed what the warehouse holds at the time of writing (§16) — the server refuses more, naming the live number. Changes reach the person's 📦 My Products within ~15 seconds. Approvals stay in Telegram (§15).</p>
-  </div>
+<div id="app" data-screen-label="Allocation Matrix — admin">
+<div class="bar">
+<div class="wm">AT<b>FACTORY</b>PRICE<small>ALLOCATION MATRIX · ADMIN</small></div>
+<div class="sp">
+<span class="stamp" id="stamp">last updated <b>—</b></span>
+<button class="rfr" id="refresh" type="button"><span class="ic">&#8635;</span> Refresh</button>
+</div>
+</div>
+<section id="sheet0" style="margin-top:16px">
+<div class="panel"><div class="wrap">
+<table id="mx">
+<thead><tr id="mxh"><th class="pc">Person</th></tr></thead>
+<tbody id="mxb"></tbody>
+<tfoot id="mxf"></tfoot>
+</table>
+</div>
+<div class="empty" id="mxempty" hidden>No linked customers or marketers yet — link someone in the bot first.</div>
+</div>
+<div class="legend"><i><span class="sw" style="background:var(--pos)"></span>available</i><i><span class="sw" style="background:var(--warn)"></span>none in stock / refused (§16)</i><i><span class="sw" style="background:var(--gold)"></span>tap a name to edit shades</i><i>quantities are whole <b style="color:var(--tx)">bales</b> — e.g. <b style="color:var(--tx)">25B</b></i><i>Available = live stock across all warehouses; each write is capped at that person's own warehouse</i></div>
+</section>
+<div id="ov" hidden><div class="mdl" role="dialog" aria-modal="true" aria-labelledby="mtitle"><div class="mhd"><span id="mtitle">Shade allocation</span><button class="x" type="button" id="mclose" aria-label="Close">&#10005;</button></div>
+<div class="wrap" id="mbody"></div>
+<p class="mnote">Row totals reconcile to that person's line on the matrix. Every write is capped at live stock (§16).</p></div></div>
+<p class="note">Every write is validated against live stock (§16) and logged. This page live-mirrors the Telegram bot every 15s — edits made in the bot appear here and vice versa.</p>
+</div>
+<div id="out" hidden data-screen-label="Signed out">
+<div class="card">
+<div class="wm" style="display:flex">AT<b>FACTORY</b>PRICE</div>
+<p><b>Admin sign-in required.</b><br>Sign in via the bot (📊 Dashboard) — allocation writes are session-only.</p>
+<span class="k">/allocations · magic-link session expired</span>
+</div>
 </div>
 <script>
-(function () {
-  'use strict';
-  var DATA = null, PERSON = null;
-  var $ = function (id) { return document.getElementById(id); };
+'use strict';
+/* ALC-1 — the signed-off Allocation Matrix wired to the live API.
+ * The server is the ONLY authority on the §16 cap: this page never computes
+ * one, it POSTs and renders whatever 422 comes back, verbatim. The matrix is
+ * read-only; every edit happens in the per-person shade sheet, and one
+ * re-render from the single data model is what keeps the two surfaces from
+ * ever disagreeing about the same person+design. */
+var DATA = null;         // last payload
+var OPENP = null;        // person id whose shade sheet is open
+var EDITING = false;     // a cell is being typed in — the 15s poll must not clobber it
+var msg = null;          // floating refusal message
+var NO_SHADE = '—'; // column key for the design-level (blank shade) row
 
-  function api(path, opts) {
-    return fetch(path, Object.assign({ credentials: 'same-origin' }, opts || {}))
-      .then(function (r) {
-        var ct = r.headers.get('content-type') || '';
-        if (ct.indexOf('json') === -1) throw new Error('not-json');
-        return r.json().then(function (j) { if (!r.ok && !j.error) throw new Error('http ' + r.status); return j; });
-      });
-  }
-  function msg(text, cls) { var m = $('msg'); m.textContent = text || ''; m.className = cls || ''; }
-
-  function availFor(design) {
-    if (!DATA || !PERSON) return 0;
-    if (PERSON.warehouse) {
-      var w = DATA.availability[PERSON.warehouse] || {};
-      return w[design] || 0;
-    }
-    var total = 0;
-    Object.keys(DATA.availability).forEach(function (w) { total += DATA.availability[w][design] || 0; });
-    return total;
-  }
-
-  function renderPerson() {
-    PERSON = DATA.people.find(function (p) { return p.id === $('person').value; }) || null;
-    if (!PERSON) return;
-    var byKey = {};
-    (PERSON.allocations || []).forEach(function (a) { byKey[a.design + '|' + (a.shade || '')] = a.qty; });
-    var tb = $('grid').tBodies[0]; tb.innerHTML = '';
-    // MYP-2: one row per existing allocation (design+shade) plus a
-    // design-level row for every design with live stock — the owner's
-    // Claude Design matrix will replace these visuals; the API is ready.
-    var seen = {};
-    (PERSON.allocations || []).forEach(function (a) { addRow(a.design, a.shade || '', a.qty); });
-    DATA.designs.forEach(function (d) { if (!seen[d.design + '|']) { var av = availFor(d.design); if (av) addRow(d.design, '', 0); } });
-    function addRow(design, shade, alloc) {
-      var key = design + '|' + shade;
-      if (seen[key]) return; seen[key] = 1;
-      var avail = availFor(design);
-      var cat = ''; DATA.designs.forEach(function (d) { if (d.design === design) cat = d.category; });
-      var tr = document.createElement('tr');
-      tr.innerHTML = '<td>' + design + '</td><td>' + (shade || '—') + '</td><td>' + (cat || '—') + '</td>'
-        + '<td class="num ' + (avail ? 'ok' : 'warn') + '">' + avail + 'B</td>'
-        + '<td class="num"><input type="number" min="0" value="' + alloc + '" data-design="' + design + '" data-shade="' + shade + '"></td>'
-        + '<td><button data-save="' + design + '" data-saveshade="' + shade + '">Save</button></td>';
-      tb.appendChild(tr);
-    }
-  }
-
-  function load() {
-    msg('Loading…');
-    api('/api/ops/allocations').then(function (j) {
-      if (!j.ok) throw new Error(j.error || 'load failed');
-      DATA = j;
-      var sel = $('person'); var keep = sel.value;
-      sel.innerHTML = '';
-      j.people.forEach(function (p) {
-        var o = document.createElement('option');
-        o.value = p.id; o.textContent = p.name + ' (' + p.kind.replace('linked-', '') + ')';
-        sel.appendChild(o);
-      });
-      if (keep) sel.value = keep;
-      $('app').className = ''; $('login').className = 'hide';
-      msg('');
-      renderPerson();
-    }).catch(function (e) {
-      if (e.message === 'not-json') { $('login').className = ''; $('app').className = 'hide'; }
-      else msg('⚠ ' + e.message, 'warn');
-    });
-  }
-
-  document.addEventListener('click', function (ev) {
-    var d = ev.target.getAttribute && ev.target.getAttribute('data-save');
-    if (d && PERSON) {
-      var sh = ev.target.getAttribute('data-saveshade') || '';
-      var input = document.querySelector('input[data-design="' + d + '"][data-shade="' + sh + '"]');
-      var qty = parseInt(input.value, 10) || 0;
-      ev.target.disabled = true;
-      api('/api/ops/allocations', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ personId: PERSON.id, personName: PERSON.name, design: d, shade: sh, qty: qty }),
-      }).then(function (j) {
-        ev.target.disabled = false;
-        if (!j.ok) { msg('⚠ ' + (j.error || 'refused'), 'warn'); return; }
-        msg('✓ Saved ' + d + ' = ' + qty + 'B for ' + PERSON.name, 'ok');
-        load();
-      }).catch(function (e) { ev.target.disabled = false; msg('⚠ ' + e.message, 'warn'); });
-    }
+function el(id) { return document.getElementById(id); }
+function fmtB(n) { return n > 0 ? n + 'B' : '—'; }
+/** '25B' / '25' / '' / dash -> whole bales, or null when it is not a bale figure. */
+function parseB(s) {
+  s = String(s == null ? '' : s).trim();
+  if (!s || s === '—' || s === '-') return 0;
+  var m = s.match(/^(\d+)\s*B?$/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+function esc(v) {
+  return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function shortName(n) {
+  n = String(n || '');
+  return n.length > 15 ? n.slice(0, 14) + '…' : n;
+}
+function personById(id) {
+  var ps = (DATA && DATA.people) || [];
+  for (var i = 0; i < ps.length; i++) if (String(ps[i].id) === String(id)) return ps[i];
+  return null;
+}
+function same(a, b) {
+  return String(a == null ? '' : a).trim().toLowerCase() === String(b == null ? '' : b).trim().toLowerCase();
+}
+/** Bales this person holds of a design — every shade, or one named shade. */
+function allocFor(p, design, shade) {
+  var n = 0;
+  (p.allocations || []).forEach(function (a) {
+    if (!same(a.design, design)) return;
+    if (shade !== undefined && !same(a.shade, shade === NO_SHADE ? '' : shade)) return;
+    n += Number(a.qty) || 0;
   });
-  $('person').addEventListener('change', renderPerson);
-  $('refresh').addEventListener('click', load);
-  load();
-  setInterval(load, 15000); // §15c mirror: bot-side toggles surface here
-}());
+  return n;
+}
+function personTotal(p) {
+  return (p.allocations || []).reduce(function (n, a) { return n + (Number(a.qty) || 0); }, 0);
+}
+/** Live stock of a design across every warehouse — the footer reference. */
+function availAll(design) {
+  var av = (DATA && DATA.availability) || {}, n = 0;
+  Object.keys(av).forEach(function (w) { n += Number(av[w][design]) || 0; });
+  return n;
+}
+/** Live stock of one shade in the person's warehouse (all warehouses if none). */
+function availShade(p, design, shade) {
+  var by = (DATA && DATA.availabilityByShade) || {};
+  if (shade === NO_SHADE) {
+    if (p.warehouse) return Number(((DATA.availability || {})[p.warehouse] || {})[design]) || 0;
+    return availAll(design);
+  }
+  if (p.warehouse) return Number(((by[p.warehouse] || {})[design] || {})[shade]) || 0;
+  var n = 0;
+  Object.keys(by).forEach(function (w) { n += Number(((by[w] || {})[design] || {})[shade]) || 0; });
+  return n;
+}
+
+/* -- Matrix (read-only) -------------------------------------------------- */
+function renderMatrix() {
+  var people = (DATA && DATA.people) || [];
+  var designs = ((DATA && DATA.designs) || []).map(function (d) { return d.design; });
+  // Only designs somebody holds or that have live stock — the whole Inventory
+  // design list would be hundreds of empty columns.
+  designs = designs.filter(function (d) {
+    if (availAll(d) > 0) return true;
+    return people.some(function (p) { return allocFor(p, d) > 0; });
+  });
+  el('mxempty').hidden = people.length > 0;
+
+  var h = ['<th class="pc">Person</th>'];
+  designs.forEach(function (d) { h.push('<th>' + esc(d) + '</th>'); });
+  h.push('<th>Total</th>');
+  el('mxh').innerHTML = h.join('');
+
+  el('mxb').innerHTML = people.map(function (p) {
+    var mkt = p.kind !== 'linked-customer';
+    var kindWord = p.kind === 'linked-customer' ? 'customer'
+      : (p.kind === 'role-marketer' ? 'marketer (staff)' : 'marketer');
+    var cells = designs.map(function (d) {
+      var n = allocFor(p, d);
+      return '<td class="' + (n > 0 ? 'ro' : 'dim') + '" data-d="' + esc(d) + '">' + fmtB(n) + '</td>';
+    });
+    var tot = personTotal(p);
+    return '<tr data-p="' + esc(p.id) + '">'
+      + '<td class="pc"><span class="who" tabindex="0">'
+      + '<span class="chip2' + (mkt ? ' mkt' : '') + '">' + (mkt ? 'MKT' : 'CUST') + '</span>'
+      + '<a class="pl" href="#" data-open="' + esc(p.id) + '">' + esc(shortName(p.name)) + '</a>'
+      + '<span class="full">' + esc(p.name) + ' — ' + kindWord
+      + (p.warehouse ? ' · ' + esc(p.warehouse) : '') + '</span></span></td>'
+      + cells.join('')
+      + '<td class="rt' + (tot ? '' : ' dim') + '">' + fmtB(tot) + '</td></tr>';
+  }).join('');
+
+  var ta = ['<tr class="ta"><td class="pc">Total allocated</td>'];
+  var av = ['<tr class="av"><td class="pc">Available</td>'];
+  designs.forEach(function (d) {
+    var t = people.reduce(function (n, p) { return n + allocFor(p, d); }, 0);
+    ta.push('<td' + (t ? '' : ' class="dim"') + '>' + fmtB(t) + '</td>');
+    var a = availAll(d);
+    av.push('<td class="' + (a > 0 ? 'pos' : 'zero') + '">' + (a > 0 ? a + 'B' : '—') + '</td>');
+  });
+  ta.push('<td></td></tr>');
+  av.push('<td></td></tr>');
+  el('mxf').innerHTML = ta.join('') + av.join('');
+}
+
+/* -- Shade sheet (the ONLY editable surface) ----------------------------- */
+function shadesFor(p, designs) {
+  var set = {};
+  (p.allocations || []).forEach(function (a) {
+    var sh = String(a.shade || '').trim();
+    if (sh) set[sh] = true;
+  });
+  var by = (DATA && DATA.availabilityByShade) || {};
+  Object.keys(by).forEach(function (w) {
+    if (p.warehouse && w !== p.warehouse) return;
+    designs.forEach(function (d) {
+      Object.keys((by[w] || {})[d] || {}).forEach(function (sh) { set[sh] = true; });
+    });
+  });
+  return Object.keys(set).sort(function (a, b) {
+    return a.localeCompare(b, undefined, { numeric: true });
+  });
+}
+function designsForPerson(p) {
+  return ((DATA && DATA.designs) || []).map(function (d) { return d.design; })
+    .filter(function (d) {
+      if (allocFor(p, d) > 0) return true;
+      if (p.warehouse) return Number(((DATA.availability || {})[p.warehouse] || {})[d]) > 0;
+      return availAll(d) > 0;
+    });
+}
+function renderShades() {
+  var p = personById(OPENP);
+  if (!p) { closeShades(); return; }
+  var designs = designsForPerson(p);
+  var cols = [NO_SHADE].concat(shadesFor(p, designs));
+
+  el('mtitle').textContent = 'Shade allocation — '
+    + (p.kind === 'linked-customer' ? 'CUST' : 'MKT') + ' · ' + p.name
+    + (p.warehouse ? ' · ' + p.warehouse : '');
+
+  if (!designs.length) {
+    el('mbody').innerHTML = '<div class="empty">No designs with live stock to allocate right now.</div>';
+    return;
+  }
+  var h = ['<th class="pc">Design</th>'];
+  cols.forEach(function (sh) {
+    h.push('<th>' + (sh === NO_SHADE ? 'No shade' : 'Shade ' + esc(sh)) + '</th>');
+  });
+  h.push('<th>Total</th>');
+
+  var body = designs.map(function (d) {
+    var cells = cols.map(function (sh) {
+      var n = allocFor(p, d, sh);
+      var cap = availShade(p, d, sh);
+      var title = cap + ' bale' + (cap === 1 ? '' : 's') + ' available'
+        + (p.warehouse ? ' in ' + p.warehouse : '');
+      return '<td class="ed' + (n > 0 ? '' : ' dim') + '" data-d="' + esc(d) + '"'
+        + ' data-sh="' + esc(sh === NO_SHADE ? '' : sh) + '" title="' + esc(title) + '">'
+        + fmtB(n) + '</td>';
+    });
+    var tot = allocFor(p, d);
+    return '<tr><td class="pc"><span class="who"><span class="nm">' + esc(d) + '</span></span></td>'
+      + cells.join('') + '<td class="rt' + (tot ? '' : ' dim') + '">' + fmtB(tot) + '</td></tr>';
+  });
+
+  var foot = ['<td class="pc">Shade total</td>'];
+  cols.forEach(function (sh) {
+    var t = designs.reduce(function (n, d) { return n + allocFor(p, d, sh); }, 0);
+    foot.push('<td' + (t ? '' : ' class="dim"') + '>' + fmtB(t) + '</td>');
+  });
+  foot.push('<td class="gt">' + fmtB(personTotal(p)) + '</td>');
+
+  el('mbody').innerHTML = '<table><thead><tr>' + h.join('') + '</tr></thead><tbody>'
+    + body.join('') + '</tbody><tfoot><tr>' + foot.join('') + '</tr></tfoot></table>';
+}
+function openShades(id) {
+  OPENP = String(id);
+  renderShades();
+  el('ov').hidden = false;
+  document.body.style.overflow = 'hidden';
+  return false;
+}
+function closeShades() {
+  OPENP = null;
+  EDITING = false;
+  el('ov').hidden = true;
+  document.body.style.overflow = '';
+}
+el('mclose').addEventListener('click', closeShades);
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape' && !el('ov').hidden && !EDITING) closeShades();
+});
+el('ov').addEventListener('click', function (e) { if (e.target === this) closeShades(); });
+
+/* -- Refusal: the server's own words, never a client-side cap ------------ */
+function refuse(td, text) {
+  td.classList.add('refused');
+  if (msg) msg.remove();
+  msg = document.createElement('div');
+  msg.id = 'refmsg';
+  msg.textContent = text;
+  document.body.appendChild(msg);
+  var r = td.getBoundingClientRect();
+  msg.style.left = Math.max(10, Math.min(r.left + window.scrollX, window.innerWidth - 320)) + 'px';
+  msg.style.top = (r.bottom + window.scrollY + 6) + 'px';
+  setTimeout(function () { td.classList.remove('refused'); }, 1200);
+  setTimeout(function () { if (msg) { msg.remove(); msg = null; } }, 5200);
+}
+
+/** Write one cell through the one door; the server decides. */
+function save(td, design, shade, qty) {
+  var p = personById(OPENP);
+  if (!p) return;
+  td.classList.add('saving');
+  fetch('/api/ops/allocations', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      personId: p.id, personName: p.name, design: design, shade: shade, qty: qty
+    })
+  }).then(function (r) {
+    return r.text().then(function (t) {
+      var j = null;
+      try { j = JSON.parse(t); } catch (_) { j = null; }
+      return { status: r.status, j: j };
+    });
+  }).then(function (res) {
+    td.classList.remove('saving');
+    if (!res.j) { signedOut(); return; }
+    if (!res.j.ok) { refuse(td, res.j.error || 'Refused.'); renderShades(); return; }
+    // Update the model, then re-render BOTH surfaces from it — that chain is
+    // what keeps the shade sheet and the matrix reconciled.
+    var keep = (p.allocations || []).filter(function (a) {
+      return !(same(a.design, design) && same(a.shade, shade));
+    });
+    if (qty > 0) keep.push({ design: design, shade: shade, qty: qty });
+    p.allocations = keep;
+    td.classList.add('saved');
+    renderShades();
+    renderMatrix();
+    stampNow();
+    setTimeout(load, 800); // reconcile against the server's own numbers
+  }).catch(function () {
+    td.classList.remove('saving');
+    refuse(td, 'Could not reach the server — nothing was saved.');
+  });
+}
+
+document.addEventListener('click', function (e) {
+  if (msg && !e.target.closest('#refmsg')) { msg.remove(); msg = null; }
+  var open = e.target.closest('a.pl[data-open]');
+  if (open) { e.preventDefault(); openShades(open.getAttribute('data-open')); return; }
+  var td = e.target.closest('td.ed');
+  if (!td || td.classList.contains('editing') || !el('out').hidden) return;
+
+  var old = td.textContent.trim();
+  var design = td.dataset.d;
+  var shade = td.dataset.sh || '';
+  var settled = false;
+  EDITING = true;
+  td.classList.add('editing');
+  td.classList.remove('dim');
+  td.innerHTML = '';
+  var inp = document.createElement('input');
+  inp.className = 'ci';
+  inp.value = old === '—' ? '' : old.replace(/B$/i, '');
+  inp.setAttribute('inputmode', 'numeric');
+  td.appendChild(inp);
+  inp.focus();
+  inp.select();
+
+  function restore(val, dim) {
+    td.textContent = val;
+    td.classList.toggle('dim', !!dim);
+  }
+  function done(commit) {
+    if (settled) return;
+    settled = true;
+    EDITING = false;
+    td.classList.remove('editing');
+    var v = commit ? parseB(inp.value) : null;
+    if (!commit) { restore(old, old === '—'); return; }
+    if (v === null) {
+      restore(old, old === '—');
+      refuse(td, 'Enter a whole number of bales, e.g. 25.');
+      return;
+    }
+    if (v === parseB(old)) { restore(old, old === '—'); return; }
+    restore(fmtB(v), !v);
+    save(td, design, shade, v);
+  }
+  inp.onkeydown = function (k) {
+    if (k.key === 'Enter') { inp.blur(); return; }
+    if (k.key === 'Escape') {
+      k.stopPropagation();
+      settled = true;
+      EDITING = false;
+      inp.onblur = null;
+      td.classList.remove('editing');
+      restore(old, old === '—');
+    }
+  };
+  inp.onblur = function () { done(true); };
+});
+
+/* -- Load / 15s mirror --------------------------------------------------- */
+function stampNow() {
+  var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+  var e = el('stamp');
+  e.innerHTML = 'last updated <b>' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '</b>';
+  e.classList.add('flash');
+  setTimeout(function () { e.classList.remove('flash'); }, 700);
+}
+function signedOut() {
+  el('app').hidden = true;
+  el('out').hidden = false;
+  el('ov').hidden = true;
+  document.body.style.overflow = '';
+}
+function load() {
+  if (EDITING) return; // never clobber what the admin is typing
+  var btn = el('refresh');
+  btn.classList.add('spin');
+  fetch('/api/ops/allocations', {
+    credentials: 'same-origin', headers: { Accept: 'application/json' }
+  }).then(function (r) {
+    return r.text().then(function (t) {
+      var j = null;
+      try { j = JSON.parse(t); } catch (_) { j = null; }
+      return j;
+    });
+  }).then(function (j) {
+    btn.classList.remove('spin');
+    // A non-JSON body (the login redirect) or a refusal means: not signed in.
+    if (!j || !j.ok) { signedOut(); return; }
+    el('app').hidden = false;
+    el('out').hidden = true;
+    DATA = j;
+    renderMatrix();
+    if (OPENP) renderShades();
+    stampNow();
+  }).catch(function () { btn.classList.remove('spin'); });
+}
+el('refresh').addEventListener('click', function () { load(); });
+load();
+setInterval(load, 15000);
 </script>
 </body>
 </html>

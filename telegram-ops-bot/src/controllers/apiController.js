@@ -840,25 +840,44 @@ async function getOpsAllocations(req, res) {
       }
     }
 
-    // Availability: distinct available bales per (warehouse, design).
+    // Availability: distinct available bales per (warehouse, design), and
+    // — ALC-1 — the same count at SHADE grain, so the matrix's shade sheet
+    // can show the cap the server will actually apply. Both are built in
+    // this one pass over the rows already read; counting distinct packageNo
+    // per (warehouse, design, shade) mirrors myProductsService
+    // .availableForDesign exactly, so the page never contradicts the cap.
     const availability = {};
+    const availabilityByShade = {};
     for (const r of invAll) {
       if (r.status !== 'available' || !r.design) continue;
       const w = r.warehouse || '';
-      availability[w] = availability[w] || {};
       const d = String(r.design).trim();
+      availability[w] = availability[w] || {};
       availability[w][d] = availability[w][d] || new Set();
       availability[w][d].add(r.packageNo);
+      const sh = String(r.shade == null ? '' : r.shade).trim();
+      if (!sh) continue; // a blank shade is the design-level stock, already counted above
+      availabilityByShade[w] = availabilityByShade[w] || {};
+      availabilityByShade[w][d] = availabilityByShade[w][d] || {};
+      availabilityByShade[w][d][sh] = availabilityByShade[w][d][sh] || new Set();
+      availabilityByShade[w][d][sh].add(r.packageNo);
     }
     for (const w of Object.keys(availability)) {
       for (const d of Object.keys(availability[w])) availability[w][d] = availability[w][d].size;
+    }
+    for (const w of Object.keys(availabilityByShade)) {
+      for (const d of Object.keys(availabilityByShade[w])) {
+        for (const sh of Object.keys(availabilityByShade[w][d])) {
+          availabilityByShade[w][d][sh] = availabilityByShade[w][d][sh].size;
+        }
+      }
     }
 
     const designs = [...new Set(invAll.filter((r) => r.design).map((r) => String(r.design).trim()))]
       .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
       .map((d) => ({ design: d, category: designCategoriesRepository.categoryOfSync(d) || '' }));
 
-    res.json({ ok: true, people, designs, availability });
+    res.json({ ok: true, people, designs, availability, availabilityByShade });
   } catch (e) {
     logApiError('GET /api/ops/allocations', e);
     res.status(500).json({ ok: false, error: e.message });

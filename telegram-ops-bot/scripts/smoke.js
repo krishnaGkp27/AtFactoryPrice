@@ -7818,6 +7818,29 @@ function runS54() {
       && marSrc54.includes("'shade'")) {
     pass('S54.7 MYP-2: shade column + linked taps raise real srf-pipeline requests');
   } else fail('S54.7', 'linked supply-request path incomplete');
+
+  // ---- S54.8 — ALC-1 allocation matrix: fixtures gone, server owns the cap ----
+  const pageSrc = fs.readFileSync(path.join(__dirname, '../../allocations.html'), 'utf8');
+  const apiSrc54 = fs.readFileSync(path.join(__dirname, '../src/controllers/apiController.js'), 'utf8');
+  const fixturesGone = !pageSrc.includes('CAPS')
+    && !pageSrc.includes('CAPTXT')
+    && !pageSrc.includes('class="demo"')
+    && !/Chukwudi|Owaribulla|OKSON/.test(pageSrc);
+  // The one rule the page cannot break: it never decides a cap. No comparison
+  // against an availability figure may gate a write — it POSTs and renders the
+  // server's 422 verbatim.
+  const serverOwnsCap = pageSrc.includes('res.j.error')
+    && !/if\s*\(\s*(qty|v|nb)\s*>\s*(cap|avail)/i.test(pageSrc);
+  const wiring = pageSrc.includes("fetch('/api/ops/allocations'")
+    && pageSrc.includes('shade: shade')
+    && pageSrc.includes('availabilityByShade')
+    && pageSrc.includes('if (EDITING) return;')   // a mirror tick never clobbers a live edit
+    && pageSrc.includes('setInterval(load, 15000)');
+  if (fixturesGone && serverOwnsCap && wiring && apiSrc54.includes('availabilityByShade')) {
+    pass('S54.8 ALC-1: matrix wired live; cap stays server-side; no demo fixtures');
+  } else {
+    fail('S54.8', JSON.stringify({ fixturesGone, serverOwnsCap, wiring }));
+  }
 }
 
 function runS53() {
