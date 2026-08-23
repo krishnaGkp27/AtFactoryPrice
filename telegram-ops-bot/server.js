@@ -124,6 +124,8 @@ app.post('/api/ext/otp/request', apiController.postExtOtpRequest);
 app.post('/api/ext/otp/verify', apiController.postExtOtpVerify);
 app.get('/api/ext/ledger', apiController.getExtLedger);
 app.get('/api/ops/usage', apiController.getOpsUsage);
+app.get('/api/ops/allocations', apiController.getOpsAllocations); // MYP-1
+app.post('/api/ops/allocations', apiController.postOpsAllocation);      // MYP-1 §15c session-only write
 
 app.get('/api/ops/overview', apiController.getOpsOverview);
 app.get('/api/ops/approvals', apiController.getOpsApprovals);
@@ -142,6 +144,7 @@ app.get('/api/ops/stocktakes', apiController.getOpsStockTakes);
  */
 const SESSION_PAGES = {
   '/ops': 'ops.html',
+  '/allocations': 'allocations.html', // MYP-1 §15c — the allocation matrix
 };
 for (const [route, file] of Object.entries(SESSION_PAGES)) {
   app.get(route, (req, res) => res.sendFile(require('path').join(__dirname, '..', file)));

@@ -59,9 +59,9 @@ usersRepository.findByUserId = async (id) => (await usersRepository.getAll())
   .find((u) => u.user_id === String(id)) || { user_id: String(id), name: String(id) };
 
 
-test('admin allocates 44200 ×10 to the marketer; sheet row + DM land', async () => {
+test('admin allocates 44200 — ×10 is REFUSED by the §16 cap, ×2 saves with sheet row + DM', async () => {
   sessionStore.clear('777');
-  const bot = createFakeBot();
+  let bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('act:allocate_marketer', 777));
   assert.ok(lastKb(bot).some((b) => b.includes('Musa Marketer|mal:mk:0')), 'marketer chip listed');
 
@@ -72,18 +72,30 @@ test('admin allocates 44200 ×10 to the marketer; sheet row + DM land', async ()
   await controller.handleCallbackQuery(bot, cb('mal:dg:0', 777));   // 44200
   assert.match(bot.allText(), /In stock: 2 bales/);
 
-  await controller.handleCallbackQuery(bot, cb('mal:q:10', 777));   // qty 10
-  assert.match(bot.allText(), /Confirm/);
+  // MYP-1 §16 (owner, 23-Aug-2026): the allocation can never exceed what
+  // the warehouse actually holds at write time. 10 > 2 → refused, live
+  // number named, nothing written, no DM.
+  await controller.handleCallbackQuery(bot, cb('mal:q:10', 777));
+  await controller.handleCallbackQuery(bot, cb('mal:save', 777));
+  assert.match(bot.allText(), /Only 2 bales/);
+  assert.equal(fakeSheets._store.get('MarketerAllocations').slice(1).length, 0, 'refused write never reached the sheet');
 
+  // Within the cap it lands: sheet row + the category-labelled DM.
+  sessionStore.clear('777');
+  bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('act:allocate_marketer', 777));
+  await controller.handleCallbackQuery(bot, cb('mal:mk:0', 777));
+  await controller.handleCallbackQuery(bot, cb('mal:dg:0', 777));
+  await controller.handleCallbackQuery(bot, cb('mal:q:2', 777));
   await controller.handleCallbackQuery(bot, cb('mal:save', 777));
   assert.match(bot.allText(), /Saved/);
 
   const rows = fakeSheets._store.get('MarketerAllocations').slice(1);
   assert.equal(rows.length, 1);
-  assert.deepEqual([rows[0][0], rows[0][2], rows[0][3]], ['mkt1', '44200', 10]);
+  assert.deepEqual([rows[0][0], rows[0][2], rows[0][3]], ['mkt1', '44200', 2]);
 
   const dm = bot.callsTo('sendMessage').find((c) => String(c.args.chatId) === 'mkt1');
-  assert.ok(dm && /allocated.*10 bales.*44200 \(Cashmere\)/s.test(dm.args.text), 'marketer DM sent');
+  assert.ok(dm && /allocated.*2 bales.*44200 \(Cashmere\)/s.test(dm.args.text), 'marketer DM sent');
   sessionStore.clear('777');
 });
 
@@ -105,7 +117,7 @@ test("marketer's My Products opens with tappable category chips, then designs + 
   await controller.handleCallbackQuery(bot, cb(cashmereCb, 'mkt1'));
   const text = bot.allText();
   assert.match(text, /\*44200\*/);
-  assert.match(text, /Allocated to you: \*10 bales\*/);
+  assert.match(text, /Allocated to you: \*2 bales\*/);
   assert.match(text, /Available now: 2 bales/);
   sessionStore.clear('mkt1');
 });

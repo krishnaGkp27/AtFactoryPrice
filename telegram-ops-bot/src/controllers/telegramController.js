@@ -3670,6 +3670,14 @@ async function handleFileMessage(bot, msg) {
   const userId = String(msg.from?.id || '');
 
   if (!auth.isAllowed(userId)) {
+    // MYP-1 §16 — linked people are view-only; a photo does nothing.
+    try {
+      const linked = await require('../services/linkedAccessService').infoFor(userId);
+      if (linked) {
+        await bot.sendMessage(chatId, '📦 Your access is view-only — tap 📦 My Products to see your designs.');
+        return;
+      }
+    } catch (_) { /* fall through to the refusal */ }
     await bot.sendMessage(chatId, 'You are not authorized to use this bot.');
     return;
   }
@@ -3865,6 +3873,21 @@ async function handleMessage(bot, msg) {
   const text = (msg.text || '').trim();
 
   if (!auth.isAllowed(userId)) {
+    // MYP-1 §16 — a LINKED customer/marketer is not staff (isAllowed stays
+    // false for them everywhere else, on purpose) but owns exactly one
+    // surface: 📦 My Products. Any text they send routes there — no intent
+    // parsing, no flows, no capture card.
+    try {
+      const linked = await require('../services/linkedAccessService').infoFor(userId);
+      if (linked) {
+        await bot.sendMessage(chatId,
+          `👋 Hello${linked.linkName ? ` ${linked.linkName}` : ''}! Tap below to see your products.`,
+          { reply_markup: { inline_keyboard: [[{ text: '📦 My Products', callback_data: 'act:my_products' }]] } });
+        return;
+      }
+    } catch (e) {
+      try { require('../utils/logger').warn(`linked fence (text): ${e.message}`); } catch (_) {}
+    }
     // USR-C2 + IDR-2 (owner, 14-Aug-2026) — every stranger's FIRST contact
     // is captured into PendingUsers and shown to an admin, whatever they
     // typed. It used to be greetings only: someone who opened with a real
@@ -7323,6 +7346,9 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['sb:'], handle: (bot, cq) => require('../flows/sellBaleFlow').handleCallback(bot, cq) },
   // PTK-1 — Snap Task (photo → task).
   { prefixes: ['ptk:'], handle: (bot, cq) => require('../flows/snapTaskFlow').handleCallback(bot, cq) },
+  // MYP-1 — linked-person My Products (their taps route via the fence;
+  // this line only keeps a stray card in a staff chat from going dead).
+  { prefixes: ['myp:'], handle: (bot, cq) => require('../flows/myProductsFlow').handleCallback(bot, cq) },
   // Catalog hub: design assets / browse / search / catalog + CMS flows.
   { prefixes: ['dap:', 'dam:'], handle: (bot, cq) => handleDesignAssetCallback(bot, cq) },
   { prefixes: ['dav:'], handle: (bot, cq) => handleDesignAssetViewCallback(bot, cq) },
@@ -7424,6 +7450,31 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
   // this is the fence.
   const cbUserId = String(callbackQuery.from?.id || '');
   if (!auth.isAllowed(cbUserId)) {
+    // MYP-1 §16 — the linked class taps exactly three things: their one
+    // tile, its myp: chips, and the back button (which re-renders the same
+    // view). Every other callback answers view-only and does nothing.
+    try {
+      const linked = await require('../services/linkedAccessService').infoFor(cbUserId);
+      if (linked) {
+        const d = callbackQuery.data || '';
+        if (d === 'act:my_products' || d === 'act:__back__') {
+          try { await bot.answerCallbackQuery(callbackQuery.id); } catch (_) { /* ignore */ }
+          await require('../flows/myProductsFlow').start(
+            bot, callbackQuery.message.chat.id, cbUserId, linked, callbackQuery.message.message_id);
+          return;
+        }
+        if (d.startsWith('myp:')) {
+          await require('../flows/myProductsFlow').handleCallback(bot, callbackQuery);
+          return;
+        }
+        try {
+          await bot.answerCallbackQuery(callbackQuery.id, { text: 'Your access is view-only.', show_alert: true });
+        } catch (_) { /* stale */ }
+        return;
+      }
+    } catch (e) {
+      try { require('../utils/logger').warn(`linked fence (cb): ${e.message}`); } catch (_) {}
+    }
     try {
       await bot.answerCallbackQuery(callbackQuery.id, {
         text: 'You are not authorized to use this bot.',
@@ -7506,8 +7557,10 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         return;
       }
       await bot.answerCallbackQuery(callbackQuery.id, { text: 'Linked.' });
+      // MYP-1 — access flips the moment the link lands.
+      try { require('../services/linkedAccessService').invalidate(); } catch (_) { /* ignore */ }
       await bot.editMessageText(
-        `✅ *${mdEscape(who)}* is ${kind === 'customer' ? 'customer' : 'contact'} *${mdEscape(pick.name)}*\n`
+        `✅ *${mdEscape(who)}* is ${kind === 'customer' ? 'customer' : kind === 'marketer' ? 'marketer' : 'contact'} *${mdEscape(pick.name)}*\n`
         + `🆔 \`${tgId}\` · \`${pick.id}\`\n\n`
         + '_This Telegram account is now on record for them._',
         {
@@ -7538,7 +7591,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     // business can reach that person on Telegram afterwards, which is the
     // whole thing that was impossible before: an arriving customer could
     // only be ignored and re-entered by hand, losing their chat forever.
-    if (action === 'cust' || action === 'net') {
+    if (action === 'cust' || action === 'net' || action === 'mkt') {
       const pendingUsersRepo = require('../repositories/pendingUsersRepository');
       const pu = await pendingUsersRepo.findByTelegramId(targetId);
       if (!pu) {
@@ -7547,7 +7600,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       }
       await bot.answerCallbackQuery(callbackQuery.id);
       await showPendingUserLinkPicker(bot, callbackQuery.message.chat.id, adminId, pu,
-        action === 'cust' ? 'customer' : 'contact');
+        action === 'cust' ? 'customer' : action === 'mkt' ? 'marketer' : 'contact');
       return;
     }
     if (action === 'onboard') {
@@ -12471,6 +12524,14 @@ async function showPendingUserLinkPicker(bot, chatId, adminId, pu, kind) {
       records = (rows || [])
         .filter((c) => (c.status || 'active') !== 'inactive')
         .map((c) => ({ id: c.customer_id, name: c.name }));
+    } else if (kind === 'marketer') {
+      // MYP-1 §16 — real Marketers-sheet people only. A new marketer is
+      // registered through the Marketers hub first (register_marketer
+      // approval), then linked from this card.
+      const rows = await require('../repositories/marketersRepository').getAll();
+      records = (rows || [])
+        .filter((m) => String(m.status || '').toLowerCase() === 'active')
+        .map((m) => ({ id: m.marketer_id, name: m.name }));
     } else {
       const rows = await require('../repositories/contactsRepository').getAll();
       records = (rows || [])
@@ -12486,7 +12547,9 @@ async function showPendingUserLinkPicker(bot, chatId, adminId, pu, kind) {
   if (!records.length) {
     await bot.sendMessage(chatId,
       `No ${kind} records exist yet, so there is nothing to link *${mdEscape(who)}* to.\n\n`
-      + `Create the ${kind} first, then link this account from 👥 Pending users.`,
+      + (kind === 'marketer'
+        ? 'Register the marketer first (🧑\u200d💼 Marketers hub → Register Marketer, two-admin approved), then link this account from 👥 Pending users.'
+        : `Create the ${kind} first, then link this account from 👥 Pending users.`),
       { parse_mode: 'Markdown' });
     return;
   }
@@ -12503,7 +12566,7 @@ async function showPendingUserLinkPicker(bot, chatId, adminId, pu, kind) {
   sessionStore.set(adminId, session);
 
   const rows = session._puLink.options.map((r, i) => ([{
-    text: `${kind === 'customer' ? '🤝' : '🕸'} ${r.name}`.slice(0, 60),
+    text: `${kind === 'customer' ? '🤝' : kind === 'marketer' ? '📣' : '🕸'} ${r.name}`.slice(0, 60),
     callback_data: `pu:link:${i}`,
   }]));
   rows.push([{ text: '✖ Cancel', callback_data: 'pu:linkcancel' }]);

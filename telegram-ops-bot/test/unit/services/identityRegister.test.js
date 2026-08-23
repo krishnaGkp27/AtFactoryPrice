@@ -128,7 +128,10 @@ test('IDR-1: whoIs reports an unlinked account as unlinked, not as missing', asy
 test('IDR-1: bad input and a sheet outage fail quietly, never throwing at a caller', async () => {
   stub([row({ telegram_id: '111' })]);
   assert.equal((await identity.link('', { type: 'customer' }, 'x')).ok, false);
-  assert.equal((await identity.link('111', { type: 'marketer' }, 'x')).ok, false, 'unknown domain refused');
+  // MYP-1 §16 — 'marketer' became a REAL link domain (owner 23-Aug-2026);
+  // a genuinely unknown domain is still refused.
+  assert.equal((await identity.link('111', { type: 'alien' }, 'x')).ok, false, 'unknown domain refused');
+  assert.equal((await identity.link('111', { type: 'marketer', id: 'MK-1', name: 'M' }, 'x')).ok, true, 'marketer links like a customer');
   assert.equal((await identity.link('404', { type: 'customer' }, 'x')).ok, false, 'no row for that account');
 
   sheets.readRange = async () => { throw new Error('sheet unreachable'); };

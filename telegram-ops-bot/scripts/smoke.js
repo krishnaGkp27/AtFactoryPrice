@@ -7762,6 +7762,47 @@ function runS52() {
  * forgetting one rule. This lint makes a 20th door impossible to add by
  * accident: any src/ file (outside the repository that defines them and
  * the engine that guards them) mentioning a writer name fails smoke. */
+function runS54() {
+  // ---- S54 MYP-1: linked people, one product view, the governed cap ----
+  // Source-read, not require: earlier smoke sections stubModule() this repo.
+  const puSrc54 = fs.readFileSync(path.join(__dirname, '../src/repositories/pendingUsersRepository.js'), 'utf8');
+  if (/LINK_TYPES = \[[^\]]*'marketer'/.test(puSrc54)) {
+    pass('S54.1 identity register: marketer is a link type (§16)');
+  } else fail('S54.1', 'marketer missing from LINK_TYPES');
+
+  const pusSrc54 = fs.readFileSync(path.join(__dirname, '../src/services/pendingUserService.js'), 'utf8');
+  if (pusSrc54.includes('pu:mkt:')) {
+    pass('S54.2 triage card: Link-as-marketer chip');
+  } else fail('S54.2', 'pu:mkt chip missing');
+
+  const ctl54 = fs.readFileSync(path.join(__dirname, '../src/controllers/telegramController.js'), 'utf8');
+  const fenceCount = (ctl54.match(/linkedAccessService/g) || []).length;
+  if (fenceCount >= 3 && ctl54.includes("text: 'Your access is view-only.'")) {
+    pass('S54.3 controller: linked fence on text + callbacks + files');
+  } else fail('S54.3', `fence sites=${fenceCount}`);
+
+  const alloc54 = require('../src/services/allocationService');
+  const malSrc54 = fs.readFileSync(path.join(__dirname, '../src/flows/allocateMarketerFlow.js'), 'utf8');
+  if (typeof alloc54.setAllocation === 'function' && typeof alloc54.setMode === 'function'
+      && malSrc54.includes("allocationService').setAllocation")) {
+    pass('S54.4 allocation: one capped door, mal: flow rides it');
+  } else fail('S54.4', 'allocationService not the single door');
+
+  const srv54 = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
+  const api54 = require('../src/controllers/apiController');
+  if (srv54.includes("'/allocations': 'allocations.html'")
+      && srv54.includes("app.get('/api/ops/allocations'")
+      && srv54.includes("app.post('/api/ops/allocations'")
+      && typeof api54.getOpsAllocations === 'function' && typeof api54.postOpsAllocation === 'function') {
+    pass('S54.5 web: /allocations page + GET/POST endpoints (§15c)');
+  } else fail('S54.5', 'allocations web surface incomplete');
+
+  const mypSrc54 = fs.readFileSync(path.join(__dirname, '../src/flows/myProductsFlow.js'), 'utf8');
+  if (mypSrc54.includes('B / ') && ctl54.includes("prefixes: ['myp:']")) {
+    pass('S54.6 My Products: sdg chip grammar + myp: routed');
+  } else fail('S54.6', 'linked My Products surface incomplete');
+}
+
 function runS53() {
   const ROOT = path.join(__dirname, '..');
   const WRITERS = [
@@ -7892,6 +7933,7 @@ function runS51() {
   try { runS51(); } catch (e) { fail('S51 unexpected error', e.message); }
   try { runS52(); } catch (e) { fail('S52 unexpected error', e.message); }
   try { runS53(); } catch (e) { fail('S53 unexpected error', e.message); }
+  try { runS54(); } catch (e) { fail('S54 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

@@ -230,6 +230,8 @@ function _adminCardKeyboard(telegramId) {
     inline_keyboard: [
       [{ text: '👔 Onboard as employee', callback_data: `pu:onboard:${telegramId}` }],
       [{ text: '🤝 Link to existing customer', callback_data: `pu:cust:${telegramId}` }],
+      // MYP-1 §16 — a marketer is NOT company: they LINK, never Add Employee.
+      [{ text: '📣 Link as marketer', callback_data: `pu:mkt:${telegramId}` }],
       [{ text: '🕸 Add to network', callback_data: `pu:net:${telegramId}` }],
       [{ text: '🚫 Ignore', callback_data: `pu:ignore:${telegramId}` }],
     ],

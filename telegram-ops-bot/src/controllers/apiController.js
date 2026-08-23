@@ -570,8 +570,112 @@ async function getOpsUsage(req, res) {
   } catch (e) { logApiError('GET /api/ops/usage', e); res.status(500).json({ ok: false, error: e.message }); }
 }
 
+/**
+ * MYP-1 §15c/§16 — the allocation matrix.
+ * GET: rows = linked people + role marketers; columns = designs with
+ *      categories; cells = allocations; availability per (warehouse,design)
+ *      so the page can show the cap context. Admin-only.
+ * POST: one cell or a mode flip — SESSION-ONLY (the magic link is the §15c
+ *       grant; the shared API key never writes allocations) and always
+ *       through allocationService, so the never-more-than-the-warehouse-
+ *       holds cap cannot be bypassed by choosing the web door.
+ */
+async function getOpsAllocations(req, res) {
+  const identity = await gate(req, res);
+  if (!identity) return;
+  if (identity.role !== 'admin') {
+    return res.status(403).json({ ok: false, error: 'Allocations are admin-only.' });
+  }
+  try {
+    const linkedAccessService = require('../services/linkedAccessService');
+    const usersRepository = require('../repositories/usersRepository');
+    const allocRepo = require('../repositories/marketerAllocationsRepository');
+    const inventoryRepository = require('../repositories/inventoryRepository');
+    const designCategoriesRepository = require('../repositories/designCategoriesRepository');
+    const myProductsService = require('../services/myProductsService');
+
+    const [linked, users, allocRows, invAll] = await Promise.all([
+      linkedAccessService.list(),
+      usersRepository.getAll().catch(() => []),
+      allocRepo.getAll().catch(() => []),
+      inventoryRepository.getAll(),
+    ]);
+
+    const people = [
+      ...linked.map((l) => ({ id: l.telegramId, name: l.linkName || l.telegramId, kind: `linked-${l.type}` })),
+      ...users.filter((u) => String(u.role || '').toLowerCase() === 'marketer'
+          && String(u.status || 'active').trim().toLowerCase() === 'active')
+        .map((u) => ({ id: String(u.user_id), name: u.name || String(u.user_id), kind: 'role-marketer' })),
+    ];
+
+    for (const p of people) {
+      const mine = (allocRows || []).filter((a) => String(a.marketer_id) === p.id);
+      const modeRow = mine.find((a) => String(a.design).trim() === '*');
+      p.mode = modeRow && String(modeRow.notes || '').trim().toLowerCase() === 'curated' ? 'curated' : 'auto';
+      p.allocations = mine.filter((a) => String(a.design).trim() !== '*' && Number(a.allocated_qty) > 0)
+        .map((a) => ({ design: a.design, qty: Number(a.allocated_qty) }));
+      if (p.kind.startsWith('linked-')) {
+        p.warehouse = await myProductsService.sourceWarehouseFor({
+          telegramId: p.id, type: p.kind.slice(7), linkName: p.name,
+        }).catch(() => null);
+      } else {
+        p.warehouse = null; // role marketers: Users.warehouses scope, cap global
+      }
+    }
+
+    // Availability: distinct available bales per (warehouse, design).
+    const availability = {};
+    for (const r of invAll) {
+      if (r.status !== 'available' || !r.design) continue;
+      const w = r.warehouse || '';
+      availability[w] = availability[w] || {};
+      const d = String(r.design).trim();
+      availability[w][d] = availability[w][d] || new Set();
+      availability[w][d].add(r.packageNo);
+    }
+    for (const w of Object.keys(availability)) {
+      for (const d of Object.keys(availability[w])) availability[w][d] = availability[w][d].size;
+    }
+
+    const designs = [...new Set(invAll.filter((r) => r.design).map((r) => String(r.design).trim()))]
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+      .map((d) => ({ design: d, category: designCategoriesRepository.categoryOfSync(d) || '' }));
+
+    res.json({ ok: true, people, designs, availability });
+  } catch (e) {
+    logApiError('GET /api/ops/allocations', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
+async function postOpsAllocation(req, res) {
+  const webSessionService = require('../services/webSessionService');
+  const identity = await webSessionService.identityFromRequest(req);
+  if (!identity || identity.role !== 'admin') {
+    return res.status(403).json({ ok: false, error: 'Sign in via the bot (📊 Dashboard) — allocation writes are session-only (§15c).' });
+  }
+  try {
+    const allocationService = require('../services/allocationService');
+    const b = req.body || {};
+    if (b.mode) {
+      const r = await allocationService.setMode(b.personId, b.personName || '', b.mode, `web:${identity.userId || 'admin'}`);
+      return res.json({ ok: true, mode: r.mode });
+    }
+    const r = await allocationService.setAllocation({
+      personId: b.personId, personName: b.personName || '', design: b.design,
+      qty: b.qty, updatedBy: `web:${identity.userId || 'admin'}`,
+    });
+    if (!r.ok) return res.status(422).json({ ok: false, error: r.reason, cap: r.cap });
+    res.json({ ok: true });
+  } catch (e) {
+    logApiError('POST /api/ops/allocations', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
 module.exports = {
   getSettings, updateSettings, getAnalyticsSummary, getAnalyticsFeature, getShareAnalytics, getContactsGraph,
   getOpsOverview, getOpsApprovals, getOpsApprovalDetail, getOpsAttendance, getOpsStockTakes,
   postExtOtpRequest, postExtOtpVerify, getExtLedger, getOpsUsage,
+  getOpsAllocations, postOpsAllocation,
 };

@@ -1,8 +1,21 @@
 # MYP-1 — My Products for linked customers & marketers + the allocation matrix
 
-**Status: DESIGN FINALIZED 23-Aug-2026 by the owner (chat rounds + his
-chip screenshot). NOT YET IMPLEMENTED — build assigned to a separate
-model session. This spec + BUSINESS_RULES §16 are the complete hand-off.**
+**Status: SHIPPED 23-Aug-2026.** Design finalized the same day by the
+owner (chat rounds + his chip screenshot); BUSINESS_RULES §16 records
+the rulings. Three implementation notes where the build chose the
+narrower path:
+
+- **New-marketer registration is NOT an inline mini-form**: the link
+  picker's empty state points to the existing Marketers-hub
+  registration (the register_marketer approval), then linking from the
+  triage card. One registration door, not two.
+- **Role marketers keep marketerCatalogFlow untouched**; the new
+  myProductsFlow (`myp:`) serves the LINKED class only. Two renderers
+  coexist exactly as salesman's fieldCatalog always has.
+- **The matrix page shows available + allocated** (the governance
+  numbers); supplied-so-far context lives on the bot cards. The
+  Claude-Design design-set grouping slots in when the owner's canvas
+  work lands.
 
 ## The owner's rulings (all locked, recorded in BUSINESS_RULES §16)
 

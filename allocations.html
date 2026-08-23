@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Allocations — AtFactoryPrice</title>
+<style>
+/* MYP-1 §15c — the allocation matrix, ledger-family dark registry look. */
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d0d0f;color:#f2f2f2;font:15px/1.5 'Segoe UI',Arial,sans-serif;padding:24px 12px}
+.wrap{max-width:980px;margin:0 auto}
+h1{font-size:22px;letter-spacing:2px}
+h1 .accent{color:#d4af5f}
+.sub{color:#9a9a9a;font-size:12px;letter-spacing:1px;text-transform:uppercase;margin:2px 0 18px}
+.bar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+select,button,input{font:14px 'Segoe UI',Arial,sans-serif;background:#1c1c22;color:#f2f2f2;border:1px solid #2c2c33;padding:7px 10px;border-radius:4px}
+button{cursor:pointer}
+button.gold{background:#d4af5f;color:#14161e;font-weight:600;border-color:#d4af5f}
+button:disabled{opacity:.45;cursor:default}
+.mode{color:#d4af5f;font-size:12px;text-transform:uppercase;letter-spacing:1px}
+table{width:100%;border-collapse:collapse;background:#121215}
+th{background:#1c1c22;color:#d4af5f;text-transform:uppercase;font-size:11px;letter-spacing:1.5px;padding:10px 8px;border:1px solid #2c2c33;text-align:left}
+td{padding:8px;border:1px solid #26262d;font-variant-numeric:tabular-nums}
+td.num{text-align:right;width:110px}
+td input{width:70px;text-align:right}
+.ok{color:#8fd18f}.warn{color:#e0a878}
+#msg{margin:12px 0;min-height:20px;font-size:13px}
+.foot{margin-top:22px;color:#6a6a72;font-size:11px}
+.hide{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>AT<span class="accent">FACTORY</span>PRICE</h1>
+  <div class="sub">Allocation matrix — customers &amp; marketers × designs</div>
+
+  <div id="login" class="hide">
+    <p>Sign in from the bot: tap <b>📊 Dashboard</b> in Telegram and open the link it sends, then return here.</p>
+  </div>
+
+  <div id="app" class="hide">
+    <div class="bar">
+      <label for="person">Person</label>
+      <select id="person"></select>
+      <span class="mode" id="modeLabel"></span>
+      <button id="modeBtn"></button>
+      <button id="refresh">↻ Refresh</button>
+    </div>
+    <div id="msg"></div>
+    <table id="grid">
+      <thead><tr><th>Design</th><th>Category</th><th>Available</th><th>Allocated</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="foot">Allocation can never exceed what the warehouse holds at the time of writing (§16) — the server refuses more, naming the live number. Changes reach the person's 📦 My Products within ~15 seconds. Approvals stay in Telegram (§15).</p>
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var DATA = null, PERSON = null;
+  var $ = function (id) { return document.getElementById(id); };
+
+  function api(path, opts) {
+    return fetch(path, Object.assign({ credentials: 'same-origin' }, opts || {}))
+      .then(function (r) {
+        var ct = r.headers.get('content-type') || '';
+        if (ct.indexOf('json') === -1) throw new Error('not-json');
+        return r.json().then(function (j) { if (!r.ok && !j.error) throw new Error('http ' + r.status); return j; });
+      });
+  }
+  function msg(text, cls) { var m = $('msg'); m.textContent = text || ''; m.className = cls || ''; }
+
+  function availFor(design) {
+    if (!DATA || !PERSON) return 0;
+    if (PERSON.warehouse) {
+      var w = DATA.availability[PERSON.warehouse] || {};
+      return w[design] || 0;
+    }
+    var total = 0;
+    Object.keys(DATA.availability).forEach(function (w) { total += DATA.availability[w][design] || 0; });
+    return total;
+  }
+
+  function renderPerson() {
+    PERSON = DATA.people.find(function (p) { return p.id === $('person').value; }) || null;
+    if (!PERSON) return;
+    $('modeLabel').textContent = 'mode: ' + PERSON.mode + (PERSON.warehouse ? ' · ' + PERSON.warehouse : ' · all warehouses');
+    $('modeBtn').textContent = PERSON.mode === 'auto' ? 'Switch to curated' : 'Switch to auto';
+    var byDesign = {};
+    (PERSON.allocations || []).forEach(function (a) { byDesign[a.design] = a.qty; });
+    var tb = $('grid').tBodies[0]; tb.innerHTML = '';
+    DATA.designs.forEach(function (d) {
+      var avail = availFor(d.design);
+      var alloc = byDesign[d.design] || 0;
+      if (!avail && !alloc) return; // keep the grid to live rows
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + d.design + '</td><td>' + (d.category || '—') + '</td>'
+        + '<td class="num ' + (avail ? 'ok' : 'warn') + '">' + avail + 'B</td>'
+        + '<td class="num"><input type="number" min="0" value="' + alloc + '" data-design="' + d.design + '"></td>'
+        + '<td><button data-save="' + d.design + '">Save</button></td>';
+      tb.appendChild(tr);
+    });
+  }
+
+  function load() {
+    msg('Loading…');
+    api('/api/ops/allocations').then(function (j) {
+      if (!j.ok) throw new Error(j.error || 'load failed');
+      DATA = j;
+      var sel = $('person'); var keep = sel.value;
+      sel.innerHTML = '';
+      j.people.forEach(function (p) {
+        var o = document.createElement('option');
+        o.value = p.id; o.textContent = p.name + ' (' + p.kind.replace('linked-', '') + ')';
+        sel.appendChild(o);
+      });
+      if (keep) sel.value = keep;
+      $('app').className = ''; $('login').className = 'hide';
+      msg('');
+      renderPerson();
+    }).catch(function (e) {
+      if (e.message === 'not-json') { $('login').className = ''; $('app').className = 'hide'; }
+      else msg('⚠ ' + e.message, 'warn');
+    });
+  }
+
+  document.addEventListener('click', function (ev) {
+    var d = ev.target.getAttribute && ev.target.getAttribute('data-save');
+    if (d && PERSON) {
+      var input = document.querySelector('input[data-design="' + d + '"]');
+      var qty = parseInt(input.value, 10) || 0;
+      ev.target.disabled = true;
+      api('/api/ops/allocations', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personId: PERSON.id, personName: PERSON.name, design: d, qty: qty }),
+      }).then(function (j) {
+        ev.target.disabled = false;
+        if (!j.ok) { msg('⚠ ' + (j.error || 'refused'), 'warn'); return; }
+        msg('✓ Saved ' + d + ' = ' + qty + 'B for ' + PERSON.name, 'ok');
+        load();
+      }).catch(function (e) { ev.target.disabled = false; msg('⚠ ' + e.message, 'warn'); });
+    }
+  });
+  $('modeBtn').addEventListener('click', function () {
+    if (!PERSON) return;
+    var next = PERSON.mode === 'auto' ? 'curated' : 'auto';
+    api('/api/ops/allocations', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ personId: PERSON.id, personName: PERSON.name, mode: next }),
+    }).then(function (j) {
+      if (!j.ok) { msg('⚠ ' + (j.error || 'refused'), 'warn'); return; }
+      msg('✓ ' + PERSON.name + ' → ' + next, 'ok'); load();
+    }).catch(function (e) { msg('⚠ ' + e.message, 'warn'); });
+  });
+  $('person').addEventListener('change', renderPerson);
+  $('refresh').addEventListener('click', load);
+  load();
+  setInterval(load, 15000); // §15c mirror: bot-side toggles surface here
+}());
+</script>
+</body>
+</html>

@@ -103,16 +103,19 @@ test('IDR-2: a bare greeting is captured too, without a pointless quote line', a
     '"hi" carries nothing the card does not already show — quoting it would be noise');
 });
 
-test('IDR-2: the card offers all four destinations', async () => {
+test('IDR-2/MYP-1: the card offers all five destinations', async () => {
+  // §16 (owner, 23-Aug-2026) added the fifth: a marketer is NOT company —
+  // they LINK like a customer, never through Add Employee.
   pendingUserService._internals._resetRateLimitForTests();
   const bot = createFakeBot();
   await controller.handleMessage(bot, strangerMsg('/start'));
   const kb = adminCard(bot).args.opts.reply_markup.inline_keyboard.flat();
   assert.deepEqual(kb.map((b) => b.callback_data), [
-    `pu:onboard:${STRANGER}`, `pu:cust:${STRANGER}`, `pu:net:${STRANGER}`, `pu:ignore:${STRANGER}`,
+    `pu:onboard:${STRANGER}`, `pu:cust:${STRANGER}`, `pu:mkt:${STRANGER}`, `pu:net:${STRANGER}`, `pu:ignore:${STRANGER}`,
   ]);
   assert.match(kb[1].text, /customer/i);
-  assert.match(kb[2].text, /network/i);
+  assert.match(kb[2].text, /marketer/i);
+  assert.match(kb[3].text, /network/i);
 });
 
 test('IDR-2: "link to customer" lists solid records, likeliest first, no free text', async () => {

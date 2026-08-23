@@ -31,7 +31,6 @@ const usersRepository = require('../repositories/usersRepository');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const marketerAllocationsRepository = require('../repositories/marketerAllocationsRepository');
 const designCategoriesRepository = require('../repositories/designCategoriesRepository');
-const auditLogRepository = require('../repositories/auditLogRepository');
 const fieldRoles = require('../services/fieldRoles');
 const logger = require('../utils/logger');
 
@@ -199,22 +198,24 @@ async function save(bot, chatId, userId) {
   const { marketerId, marketerName, design, qty } = session;
 
   try {
-    await marketerAllocationsRepository.setAllocation({
-      marketerId, marketerName, design, qty, updatedBy: String(userId),
+    // MYP-1 §16 — every allocation write rides allocationService so the
+    // never-more-than-the-warehouse-holds cap cannot be bypassed by door.
+    // Role marketers are capped against global availability (their view
+    // scopes to Users.warehouses, which can be several); linked people are
+    // capped against their source warehouse inside the service.
+    const cat0 = designCategoriesRepository.categoryOfSync(design);
+    const res = await require('../services/allocationService').setAllocation({
+      personId: marketerId, personName: marketerName, design, qty,
+      updatedBy: String(userId), warehouse: null, bot,
+      label: cat0 ? `${design} (${cat0})` : design,
     });
-    await auditLogRepository.append('marketer_allocation',
-      { marketerId, marketerName, design, qty }, String(userId));
+    if (!res.ok) {
+      await render(bot, chatId, userId, `⚠️ ${res.reason || 'Could not save.'}`, [navRow()]);
+      return;
+    }
 
     const cat = designCategoriesRepository.categoryOfSync(design);
     const label = cat ? `${design} (${cat})` : design;
-    try {
-      await bot.sendMessage(marketerId, qty > 0
-        ? `📦 *Products update*\n\nYou've been allocated *${qty} bale${qty === 1 ? '' : 's'}* of design *${label}*.\nOpen 📦 My Products to see it.`
-        : `📦 *Products update*\n\nDesign *${label}* has been removed from your allocation.`,
-      { parse_mode: 'Markdown' });
-    } catch (e) {
-      logger.info(`allocateMarketerFlow: DM to ${marketerId} skipped (${e.message})`);
-    }
 
     await render(bot, chatId, userId,
       `✅ *Saved*\n\n• ${marketerName} — ${label}: *${qty} bale${qty === 1 ? '' : 's'}*\n\n_The marketer's My Products updates immediately._`,

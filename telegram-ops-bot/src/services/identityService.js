@@ -31,6 +31,7 @@ const logger = require('../utils/logger');
 const TYPE_EMPLOYEE = 'employee';
 const TYPE_CUSTOMER = 'customer';
 const TYPE_CONTACT = 'contact';
+const TYPE_MARKETER = 'marketer'; // MYP-1 — external, commission-eligible
 
 const norm = (v) => String(v ?? '').trim();
 
@@ -139,4 +140,5 @@ module.exports = {
   TYPE_EMPLOYEE,
   TYPE_CUSTOMER,
   TYPE_CONTACT,
+  TYPE_MARKETER,
 };

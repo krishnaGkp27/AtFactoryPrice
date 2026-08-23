@@ -51,7 +51,9 @@ const HEADERS = [
 ];
 
 /** IDR-1 — the domains a Telegram account can be bound to. */
-const LINK_TYPES = ['employee', 'customer', 'contact'];
+// MYP-1 (owner, 23-Aug-2026): a marketer is NOT company — they link like
+// a customer. Only a marketer may take commission (BUSINESS_RULES §16).
+const LINK_TYPES = ['employee', 'customer', 'contact', 'marketer'];
 
 function str(v) { return (v ?? '').toString().trim(); }
 
