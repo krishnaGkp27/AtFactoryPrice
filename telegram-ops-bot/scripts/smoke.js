@@ -7798,9 +7798,16 @@ function runS54() {
   } else fail('S54.5', 'allocations web surface incomplete');
 
   const mypSrc54 = fs.readFileSync(path.join(__dirname, '../src/flows/myProductsFlow.js'), 'utf8');
-  if (mypSrc54.includes('B / ') && ctl54.includes("prefixes: ['myp:']")) {
-    pass('S54.6 My Products: sdg chip grammar + myp: routed');
-  } else fail('S54.6', 'linked My Products surface incomplete');
+  // STK-PRIV: the chip shows supplied-to-them ONLY — the availability half
+  // (…B / …B) must be gone from every non-admin surface.
+  const mktSrc54 = fs.readFileSync(path.join(__dirname, '../src/flows/marketerCatalogFlow.js'), 'utf8');
+  const fcSrc54 = fs.readFileSync(path.join(__dirname, '../src/services/fieldCatalog.js'), 'utf8');
+  if (mypSrc54.includes('${it.suppliedB}B') && !mypSrc54.includes('availableB}B')
+      && ctl54.includes("prefixes: ['myp:']")
+      && !mktSrc54.includes('Available now: ${avail}')
+      && !fcSrc54.includes('thans} thans')) {
+    pass('S54.6 STK-PRIV: no live stock number on any non-admin product surface');
+  } else fail('S54.6', 'a stock count still renders to non-admins');
 }
 
 function runS53() {

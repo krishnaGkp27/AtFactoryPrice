@@ -85,7 +85,10 @@ test('act:my_products renders THEIR chips in the sdg grammar; isAllowed still re
   const chips = (last.args.opts || last.args).reply_markup.inline_keyboard.flat();
   const chip = chips.find((b) => String(b.callback_data).startsWith('myp:d:'));
   assert.ok(chip, 'a design chip exists');
-  assert.match(chip.text, /^📦 9037 — 1B \/ 2B$/, 'supplied/available pair, Supply Details grammar');
+  // STK-PRIV (owner, 23-Aug-2026): the chip carries only what was supplied
+  // TO THEM — live stock numbers are admin-only, so no second figure.
+  assert.match(chip.text, /^📦 9037 — 1B$/, 'supplied-to-them only, no stock count');
+  assert.ok(!/2B/.test(chip.text), 'the live availability number must not leak');
   assert.equal(auth.isAllowed(LINKED), false, 'the fence is a pre-gate, not an allow-set hole');
 });
 

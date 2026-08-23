@@ -86,7 +86,7 @@ async function viaAnthropic(buffer, mimeType) {
     _anthropic = new Anthropic({ apiKey: key });
   }
   const resp = await _anthropic.messages.create({
-    model: config.ocr.anthropicModel,
+    model: config.ocr.taskNoteModel || config.ocr.anthropicModel,
     max_tokens: 800,
     messages: [{
       role: 'user',
@@ -111,7 +111,7 @@ async function viaOpenai(buffer, mimeType) {
   }
   const dataUrl = `data:${mimeType};base64,${buffer.toString('base64')}`;
   const resp = await _openai.chat.completions.create({
-    model: config.ocr.openaiModel,
+    model: config.ocr.taskNoteOpenaiModel || config.ocr.openaiModel,
     temperature: 0,
     max_tokens: 700,
     response_format: { type: 'json_object' },

@@ -118,7 +118,9 @@ test("marketer's My Products opens with tappable category chips, then designs + 
   const text = bot.allText();
   assert.match(text, /\*44200\*/);
   assert.match(text, /Allocated to you: \*2 bales\*/);
-  assert.match(text, /Available now: 2 bales/);
+  // STK-PRIV: the count is admin-only; the marketer gets the word.
+  assert.match(text, /✅ In stock/);
+  assert.ok(!/Available now: \d/.test(text), 'no live stock number for a marketer');
   sessionStore.clear('mkt1');
 });
 

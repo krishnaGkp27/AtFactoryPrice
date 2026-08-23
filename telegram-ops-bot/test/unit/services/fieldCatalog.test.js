@@ -21,7 +21,7 @@ test('buildCatalog() warehouse scoping', async (t) => {
     assert.match(text, /44200/);
     assert.match(text, /9006/);
     // Kano-only bale 9901 and the sold bale 5803 must not inflate Lagos totals.
-    assert.match(text, /Shade BLACK: 1 Bales · 2 thans · 50 yds/);
+    assert.match(text, /Shade BLACK: ✅ in stock/);
   });
 
   await t.test('matches warehouse case-insensitively', () => {
@@ -31,7 +31,7 @@ test('buildCatalog() warehouse scoping', async (t) => {
 
   await t.test('excludes other warehouses entirely', () => {
     const { text } = buildCatalog(ITEMS, ['Kano'], {});
-    assert.match(text, /Shade BLACK: 1 Bales · 1 thans · 25 yds/);
+    assert.match(text, /Shade \w+: ✅ in stock/);
     assert.doesNotMatch(text, /9006/);
   });
 });

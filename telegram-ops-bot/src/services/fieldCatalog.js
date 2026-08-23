@@ -13,7 +13,7 @@
  * price resolver. No Sheets, no Telegram, no credentials — unit-testable.
  */
 
-const { fmtQty, fmtMoneyShort } = require('../utils/format');
+const { fmtMoneyShort } = require('../utils/format');
 const pricing = require('./pricingService');
 
 /** @param {string} w */
@@ -34,7 +34,8 @@ function buildCatalog(items, warehouses, opts = {}) {
   const whLabel = whList.join(', ') || '—';
 
   let header = `📦 *My Products — ${whLabel}*\n`;
-  header += showPrice ? '_Bales · thans · yds · price_\n' : '_Bales · thans · yds_\n';
+  // STK-PRIV (owner, 23-Aug-2026): stock counts are admin-only everywhere.
+  header += showPrice ? '_Designs · shades · price_\n' : '_Designs · shades_\n';
 
   if (!whSet.size) {
     return { text: `${header}\n⚠️ No warehouse assigned to you yet. Ask your admin.`, empty: true };
@@ -65,15 +66,15 @@ function buildCatalog(items, warehouses, opts = {}) {
   for (const [design, dg] of sorted) {
     text += `📦 *${design}*\n`;
     const shadesSorted = [...dg.shades.entries()].sort((a, b) => b[1].yards - a[1].yards);
-    for (const [shade, s] of shadesSorted) {
-      let line = `   Shade ${shade}: ${s.pkgs.size} Bales · ${s.thans} thans · ${fmtQty(s.yards)} yds`;
+    for (const [shade] of shadesSorted) {
+      let line = `   Shade ${shade}: ✅ in stock`;
       if (showPrice) {
         const sp = pricing.resolveSalePrice(items, design, shade);
         if (sp.price > 0) line += ` · ${fmtMoneyShort(sp.price)}/yd${sp.mixed ? ' (varies)' : ''}`;
       }
       text += `${line}\n`;
     }
-    text += `   _Total: ${dg.pkgs.size} Bales · ${dg.thans} thans · ${fmtQty(dg.yards)} yds_\n\n`;
+    text += '\n';
   }
   return { text: text.trimEnd(), empty: false };
 }

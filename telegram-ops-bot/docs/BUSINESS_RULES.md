@@ -525,6 +525,13 @@ but this goes as our company rules for now").
   designs they already purchased, with stock from the SAME warehouse
   those purchases were supplied from. The admin can switch any person
   to a curated set.
+- **Actual stock counts are ADMIN-ONLY on every product surface**
+  (owner, 23-Aug-2026, STK-PRIV). A marketer, customer, salesman or any
+  non-admin sees what was supplied TO THEM and what is allocated TO THEM
+  — never a live availability number. Availability renders as a word
+  (✅ in stock / ⛔ out of stock), nothing more. Staff OPERATIONAL
+  surfaces (dept-gated stock work: pickers, check-stock, audits) are not
+  product surfaces and keep their numbers.
 - **Allocation is governed from the admin's dashboard matrix**
   (customers + marketers × design set), and the allocated quantity can
   NEVER exceed the actual available quantity in that warehouse at the

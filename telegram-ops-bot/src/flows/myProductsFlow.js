@@ -49,13 +49,15 @@ async function start(bot, chatId, userId, info, messageId = null) {
     type: SESSION_TYPE, step: 'list', flowMessageId: messageId || null,
     _items: items, _warehouse: view.warehouse, _mode: view.mode,
   });
+  // STK-PRIV (owner, 23-Aug-2026): the sdg pair would leak live stock to a
+  // non-admin — the chip carries only what was supplied TO THEM.
   const rows = items.map((it, i) => ([{
-    text: `📦 ${it.design} — ${it.suppliedB}B / ${it.availableB}B`,
+    text: `📦 ${it.design} — ${it.suppliedB}B`,
     callback_data: `myp:d:${i}`,
   }]));
   rows.push(menuRow());
   const head = `📦 *My Products*${view.warehouse ? `\n🏭 ${mdEscape(view.warehouse)}` : ''}`
-    + `\n_(supplied to you / available now)_`
+    + `\n_(bales supplied to you)_`
     + (view.mixedHistory ? '\n⚠️ _History spans warehouses — showing your most recent one._' : '');
   const sent = await editOrSend(bot, chatId, messageId, head, {
     parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows },
@@ -100,7 +102,8 @@ async function showDesign(bot, chatId, userId, idx) {
     lines.push(...shown.map((d) => `• ${d}`));
     lines.push('');
   }
-  lines.push(`Allocated: *${it.allocatedB} B* · Available: *${it.availableB} B*`);
+  // STK-PRIV — allocated is THEIR number; availability is a word, never a count.
+  lines.push(`Allocated: *${it.allocatedB} B* · ${it.availableB > 0 ? '✅ In stock' : '⛔ Out of stock right now'}`);
   lines.push('', '_Allocation is set by your admin._');
   await editOrSend(bot, chatId, session.flowMessageId, lines.join('\n'), {
     parse_mode: 'Markdown',

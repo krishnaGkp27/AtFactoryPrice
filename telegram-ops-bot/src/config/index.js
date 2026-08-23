@@ -148,6 +148,11 @@ const config = {
     openaiModel: process.env.OCR_OPENAI_MODEL || 'gpt-4o',
     /** Claude vision model when provider=anthropic */
     anthropicModel: process.env.OCR_ANTHROPIC_MODEL || 'claude-opus-4-8',
+    // PTK-1b (owner, 23-Aug-2026): task notes are routine work — a short
+    // instruction on a photo. The strong bale-label model is waste here;
+    // notes ride the cheapest capable tier unless the owner overrides.
+    taskNoteModel: process.env.OCR_TASKNOTE_MODEL || 'claude-haiku-4-5-20251001',
+    taskNoteOpenaiModel: process.env.OCR_TASKNOTE_OPENAI_MODEL || 'gpt-4o-mini',
     /**
      * SNAP-3 — model for PDF batch reads. Owner cost decision 20-Jul:
      * Sonnet, not Opus ("caviar prices for rice") — ~60 labels/day stays
