@@ -214,7 +214,9 @@ const REQUIRED_SHEETS = {
   // folded into Inventory (per-bale rows) or Users (one row per person)
   // without JSON blobs, so this is a genuinely necessary sheet.
   MarketerAllocations: {
-    headers: ['marketer_id', 'marketer_name', 'design', 'allocated_qty', 'updated_by', 'updated_at', 'notes'],
+    headers: ['marketer_id', 'marketer_name', 'design', 'allocated_qty', 'updated_by', 'updated_at', 'notes',
+      // MYP-2 — shade-level allocation (end column).
+      'shade'],
   },
   // BMV-1 (owner, 03-Aug-2026) — bale state history. The owner asked for
   // the transfer/received date to be filterable but explicitly refused new

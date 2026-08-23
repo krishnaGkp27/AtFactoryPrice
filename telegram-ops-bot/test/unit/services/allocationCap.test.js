@@ -61,14 +61,17 @@ test('warehouse null caps against ALL warehouses; qty 0 (remove) always passes',
   assert.equal(zero.ok, true, 'removal never needs stock');
 });
 
-test('every write is audited; setMode stores the * row without touching designs', async () => {
+test('every write is audited; a SHADE row is capped against that shade alone', async () => {
   saved = []; audits = [];
   await allocationService.setAllocation({ personId: '900', personName: 'O', design: '9037', qty: 1, updatedBy: '777', warehouse: 'Kano office' });
   assert.equal(audits[0].ev, 'marketer_allocation');
-  const r = await allocationService.setMode('900', 'O', 'curated', '777');
-  assert.equal(r.mode, 'curated');
-  const star = saved.find((x) => x.design === '*');
-  assert.ok(star && star.notes === 'curated');
+  // ROWS hold no shade values → shade-scoped availability is 0: refused.
+  const shOver = await allocationService.setAllocation({
+    personId: '900', personName: 'O', design: '9037', shade: '1', qty: 1,
+    updatedBy: '777', warehouse: 'Kano office',
+  });
+  assert.equal(shOver.ok, false, 'shade cap uses shade-scoped stock, not the design total');
+  assert.equal(shOver.cap, 0);
 });
 
 test('junk input refused before any read', async () => {

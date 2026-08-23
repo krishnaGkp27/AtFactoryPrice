@@ -118,9 +118,9 @@ test("marketer's My Products opens with tappable category chips, then designs + 
   const text = bot.allText();
   assert.match(text, /\*44200\*/);
   assert.match(text, /Allocated to you: \*2 bales\*/);
-  // STK-PRIV: the count is admin-only; the marketer gets the word.
-  assert.match(text, /✅ In stock/);
-  assert.ok(!/Available now: \d/.test(text), 'no live stock number for a marketer');
+  // STK-PRIV v4: no availability reference of any kind on the marketer card.
+  assert.ok(!/In stock|Out of stock|Available now/.test(text), 'no availability reference at all');
+  assert.match(text, /Allocated to you:/);
   sessionStore.clear('mkt1');
 });
 

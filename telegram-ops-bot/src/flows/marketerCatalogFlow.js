@@ -132,9 +132,9 @@ async function showCategoryDesigns(bot, chatId, userId) {
   let text = `${icon} *${category}* — your designs\n`;
   for (const a of allocs) {
     const avail = (availBales.get(designCategoriesRepository.normalizeDesign(a.design)) || new Set()).size;
-    // STK-PRIV (owner, 23-Aug-2026): actual stock counts are admin-only.
-    // The marketer gets a word — in stock / out of stock — never the number.
-    text += `\n🧵 *${a.design}*\n   Allocated to you: *${a.allocated_qty} bale${a.allocated_qty === 1 ? '' : 's'}*\n   ${avail > 0 ? '✅ In stock' : '⛔ Out of stock right now'}\n`;
+    // STK-PRIV v4 (owner, 23-Aug-2026): no warehouse reference of ANY kind
+    // — not even a word. The allocation is the whole story on this card.
+    text += `\n🧵 *${a.design}*\n   Allocated to you: *${a.allocated_qty} bale${a.allocated_qty === 1 ? '' : 's'}*\n`;
   }
   text += '\n_Allocation is set by your admin._';
   await render(bot, chatId, userId, text,

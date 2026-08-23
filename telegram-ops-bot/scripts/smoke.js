@@ -7419,7 +7419,7 @@ async function runS44() {
     readRange: async () => store44.map((r) => [...r]),
     appendRows: async (sheet, rows) => { for (const r of rows) store44.push([...r]); },
     updateRange: async (sheet, range, values) => {
-      const m = range.match(/^A(\d+):G\d+$/);
+      const m = range.match(/^A(\d+):H\d+$/); // MYP-2: shade col H
       if (m) store44[parseInt(m[1], 10) - 2] = [...values[0]];
     },
   });
@@ -7783,7 +7783,8 @@ function runS54() {
 
   const alloc54 = require('../src/services/allocationService');
   const malSrc54 = fs.readFileSync(path.join(__dirname, '../src/flows/allocateMarketerFlow.js'), 'utf8');
-  if (typeof alloc54.setAllocation === 'function' && typeof alloc54.setMode === 'function'
+  // v4 removed setMode — allocation-driven only, no display-mode switch.
+  if (typeof alloc54.setAllocation === 'function' && alloc54.setMode === undefined
       && malSrc54.includes("allocationService').setAllocation")) {
     pass('S54.4 allocation: one capped door, mal: flow rides it');
   } else fail('S54.4', 'allocationService not the single door');
@@ -7798,16 +7799,25 @@ function runS54() {
   } else fail('S54.5', 'allocations web surface incomplete');
 
   const mypSrc54 = fs.readFileSync(path.join(__dirname, '../src/flows/myProductsFlow.js'), 'utf8');
-  // STK-PRIV: the chip shows supplied-to-them ONLY — the availability half
-  // (…B / …B) must be gone from every non-admin surface.
+  // MYP-2: the recursive pair (supplied / ALLOCATED) — and no availability
+  // figure or word anywhere on a non-admin surface.
   const mktSrc54 = fs.readFileSync(path.join(__dirname, '../src/flows/marketerCatalogFlow.js'), 'utf8');
   const fcSrc54 = fs.readFileSync(path.join(__dirname, '../src/services/fieldCatalog.js'), 'utf8');
-  if (mypSrc54.includes('${it.suppliedB}B') && !mypSrc54.includes('availableB}B')
+  if (mypSrc54.includes('(${it.suppliedB}B / ${it.allocatedB}B)')
+      && !mypSrc54.includes('availableB')
       && ctl54.includes("prefixes: ['myp:']")
-      && !mktSrc54.includes('Available now: ${avail}')
+      && !mktSrc54.includes('Available now: ${avail}') && !mktSrc54.includes('In stock')
       && !fcSrc54.includes('thans} thans')) {
-    pass('S54.6 STK-PRIV: no live stock number on any non-admin product surface');
-  } else fail('S54.6', 'a stock count still renders to non-admins');
+    pass('S54.6 MYP-2: recursive supplied/allocated pair; zero warehouse reference to non-admins');
+  } else fail('S54.6', 'grammar or a stock reference is wrong on a non-admin surface');
+
+  const lssSrc54 = fs.readFileSync(path.join(__dirname, '../src/services/linkedSupplyService.js'), 'utf8');
+  const marSrc54 = fs.readFileSync(path.join(__dirname, '../src/repositories/marketerAllocationsRepository.js'), 'utf8');
+  if (lssSrc54.includes("action: 'supply_request'") && lssSrc54.includes("stage: 'dispatch_review'")
+      && lssSrc54.includes('appendOnce') && mypSrc54.includes('linkedSupplyService')
+      && marSrc54.includes("'shade'")) {
+    pass('S54.7 MYP-2: shade column + linked taps raise real srf-pipeline requests');
+  } else fail('S54.7', 'linked supply-request path incomplete');
 }
 
 function runS53() {

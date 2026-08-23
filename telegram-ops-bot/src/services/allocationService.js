@@ -31,11 +31,13 @@ async function setAllocation(p) {
     } catch (_) { warehouse = null; }
   }
   if (qty > 0) {
-    const cap = await myProductsService.availableForDesign(p.design, warehouse || null);
+    // MYP-2 — the cap follows the allocation's grain: a shade row is capped
+    // against that shade's live stock, a design row against the design's.
+    const cap = await myProductsService.availableForDesign(p.design, warehouse || null, p.shade || null);
     if (qty > cap) {
       return {
         ok: false, cap,
-        reason: `Only ${cap} bale${cap === 1 ? '' : 's'} of ${p.design} ${warehouse ? `in ${warehouse}` : 'in stock'} right now — the allocation cannot exceed that (§16).`,
+        reason: `Only ${cap} bale${cap === 1 ? '' : 's'} of ${p.design}${p.shade ? ` / ${p.shade}` : ''} ${warehouse ? `in ${warehouse}` : 'in stock'} right now — the allocation cannot exceed that (§16).`,
       };
     }
   }
@@ -43,10 +45,11 @@ async function setAllocation(p) {
   const res = await repo.setAllocation({
     marketerId: String(p.personId), marketerName: p.personName || '',
     design: p.design, qty, updatedBy: String(p.updatedBy || ''),
+    shade: p.shade || '',
   });
   try {
     await require('../repositories/auditLogRepository').append('marketer_allocation',
-      { marketerId: String(p.personId), marketerName: p.personName || '', design: p.design, qty, warehouse: warehouse || '' },
+      { marketerId: String(p.personId), marketerName: p.personName || '', design: p.design, shade: p.shade || '', qty, warehouse: warehouse || '' },
       String(p.updatedBy || ''));
   } catch (_) { /* best-effort */ }
   if (p.bot) {
@@ -61,19 +64,8 @@ async function setAllocation(p) {
   return { ok: true, updated: res.updated };
 }
 
-/** Auto ↔ curated. Stored as the design='*' row's notes (no new columns). */
-async function setMode(personId, personName, mode, updatedBy) {
-  const m = mode === 'curated' ? 'curated' : 'auto';
-  const repo = require('../repositories/marketerAllocationsRepository');
-  await repo.setAllocation({
-    marketerId: String(personId), marketerName: personName || '',
-    design: '*', qty: 0, updatedBy: String(updatedBy || ''), notes: m,
-  });
-  try {
-    await require('../repositories/auditLogRepository').append('marketer_allocation_mode',
-      { marketerId: String(personId), mode: m }, String(updatedBy || ''));
-  } catch (_) { /* best-effort */ }
-  return { ok: true, mode: m };
-}
+// MYP-2 (owner, 23-Aug-2026): the auto/curated display mode is superseded —
+// the linked view is allocation-driven only, so there is no mode to set.
+// Legacy '*' rows in the sheet are ignored by every reader.
 
-module.exports = { setAllocation, setMode };
+module.exports = { setAllocation };

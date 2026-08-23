@@ -610,10 +610,9 @@ async function getOpsAllocations(req, res) {
 
     for (const p of people) {
       const mine = (allocRows || []).filter((a) => String(a.marketer_id) === p.id);
-      const modeRow = mine.find((a) => String(a.design).trim() === '*');
-      p.mode = modeRow && String(modeRow.notes || '').trim().toLowerCase() === 'curated' ? 'curated' : 'auto';
+      // MYP-2: allocation-driven only — legacy '*' mode rows are ignored.
       p.allocations = mine.filter((a) => String(a.design).trim() !== '*' && Number(a.allocated_qty) > 0)
-        .map((a) => ({ design: a.design, qty: Number(a.allocated_qty) }));
+        .map((a) => ({ design: a.design, shade: String(a.shade || ''), qty: Number(a.allocated_qty) }));
       if (p.kind.startsWith('linked-')) {
         p.warehouse = await myProductsService.sourceWarehouseFor({
           telegramId: p.id, type: p.kind.slice(7), linkName: p.name,
@@ -657,13 +656,9 @@ async function postOpsAllocation(req, res) {
   try {
     const allocationService = require('../services/allocationService');
     const b = req.body || {};
-    if (b.mode) {
-      const r = await allocationService.setMode(b.personId, b.personName || '', b.mode, `web:${identity.userId || 'admin'}`);
-      return res.json({ ok: true, mode: r.mode });
-    }
     const r = await allocationService.setAllocation({
       personId: b.personId, personName: b.personName || '', design: b.design,
-      qty: b.qty, updatedBy: `web:${identity.userId || 'admin'}`,
+      shade: b.shade || '', qty: b.qty, updatedBy: `web:${identity.userId || 'admin'}`,
     });
     if (!r.ok) return res.status(422).json({ ok: false, error: r.reason, cap: r.cap });
     res.json({ ok: true });

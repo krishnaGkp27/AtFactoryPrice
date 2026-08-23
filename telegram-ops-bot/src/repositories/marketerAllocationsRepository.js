@@ -15,7 +15,9 @@
 const sheets = require('./sheetsClient');
 
 const SHEET = 'MarketerAllocations';
-const HEADERS = ['marketer_id', 'marketer_name', 'design', 'allocated_qty', 'updated_by', 'updated_at', 'notes'];
+// MYP-2 (owner, 23-Aug-2026): shade-level allocation — col H at the END
+// (§10). A blank shade = the design-level row (pre-MYP-2 rows unchanged).
+const HEADERS = ['marketer_id', 'marketer_name', 'design', 'allocated_qty', 'updated_by', 'updated_at', 'notes', 'shade'];
 
 let _cache = null;
 let _cacheTs = 0;
@@ -33,6 +35,7 @@ function parse(row) {
     updated_by: str(row[4]),
     updated_at: str(row[5]),
     notes: str(row[6]),
+    shade: str(row[7]), // MYP-2
   };
 }
 
@@ -44,7 +47,7 @@ async function getAll() {
   const now = Date.now();
   if (_cache && (now - _cacheTs) < CACHE_TTL_MS) return _cache;
   try {
-    const rows = await sheets.readRange(SHEET, 'A2:G');
+    const rows = await sheets.readRange(SHEET, 'A2:H');
     _cache = (rows || []).map(parse).filter((r) => r.marketer_id && r.design);
     _cacheTs = Date.now();
     return _cache;
@@ -91,18 +94,23 @@ async function countsByMarketer() {
  * @param {string} [p.notes] Optional note.
  * @returns {Promise<{updated: boolean, qty: number}>} updated=true when an existing row was overwritten.
  */
-async function setAllocation({ marketerId, marketerName = '', design, qty, updatedBy, notes = '' }) {
+async function setAllocation({ marketerId, marketerName = '', design, qty, updatedBy, notes = '', shade = '' }) {
   const id = str(marketerId);
   const d = str(design);
+  const sh = str(shade);
   const q = Math.max(0, parseInt(qty, 10) || 0);
   if (!id) throw new Error('marketerAllocationsRepository: marketerId required');
   if (!d) throw new Error('marketerAllocationsRepository: design required');
   const updatedAt = new Date().toISOString();
-  const record = [id, str(marketerName), d, q, str(updatedBy), updatedAt, str(notes)];
-  const rows = await sheets.readRange(SHEET, 'A2:G');
-  const idx = (rows || []).findIndex((r) => str(r[0]) === id && str(r[2]).toUpperCase() === d.toUpperCase());
+  const record = [id, str(marketerName), d, q, str(updatedBy), updatedAt, str(notes), sh];
+  // MYP-2 — one row per (marketer, design, shade); blank shade is the
+  // design-level row and matches only other blank-shade rows.
+  const rows = await sheets.readRange(SHEET, 'A2:H');
+  const idx = (rows || []).findIndex((r) => str(r[0]) === id
+    && str(r[2]).toUpperCase() === d.toUpperCase()
+    && str(r[7]).toUpperCase() === sh.toUpperCase());
   if (idx >= 0) {
-    await sheets.updateRange(SHEET, `A${idx + 2}:G${idx + 2}`, [record]);
+    await sheets.updateRange(SHEET, `A${idx + 2}:H${idx + 2}`, [record]);
   } else {
     await sheets.appendRows(SHEET, [record]);
   }

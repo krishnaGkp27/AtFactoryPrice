@@ -521,21 +521,34 @@ but this goes as our company rules for now").
 - **Linked customers and marketers get exactly ONE bot surface:** the
   📦 My Products view. Every other tile, flow, callback and typed
   action refuses them — the field-role fence, extended.
-- **Default product set = purchase history.** A linked person sees the
-  designs they already purchased, with stock from the SAME warehouse
-  those purchases were supplied from. The admin can switch any person
-  to a curated set.
-- **Actual stock counts are ADMIN-ONLY on every product surface**
-  (owner, 23-Aug-2026, STK-PRIV). A marketer, customer, salesman or any
-  non-admin sees what was supplied TO THEM and what is allocated TO THEM
-  — never a live availability number. Availability renders as a word
-  (✅ in stock / ⛔ out of stock), nothing more. Staff OPERATIONAL
-  surfaces (dept-gated stock work: pickers, check-stock, audits) are not
-  product surfaces and keep their numbers.
+- **The display set is the ALLOCATION, nothing else** (owner,
+  23-Aug-2026, v4 — supersedes the earlier purchase-history default).
+  A linked person sees exactly the designs (and shades, where the
+  matrix set shade rows) the admin allocated to them. Purchase history
+  feeds only the supplied-so-far numbers and the internal source
+  warehouse; it never decides what they see.
+- **The recursive one-grammar law.** Every product chip everywhere
+  reads `design (doneB / totalB)` — the same grammar the admin sees —
+  but the TOTAL is always the reader's own scope: warehouse totals on
+  the admin's screens, the admin's allocation on a linked person's
+  screen. Same syntax, scoped truth.
+- **No warehouse fact of ANY kind reaches a linked person** (owner,
+  23-Aug-2026, STK-PRIV final). No live count, no availability word
+  (the earlier ✅ in-stock / ⛔ out-of-stock wording is withdrawn), no
+  warehouse or market name, no price. Their world is
+  supplied-to-them / allocated-to-them, full stop. Staff OPERATIONAL
+  surfaces (dept-gated stock work: pickers, check-stock, audits) are
+  not product surfaces and keep their numbers.
+- **A linked person's tap RAISES a real supply request** — the exact
+  srf_ pipeline shape (dispatch feasibility → admin approval →
+  warehouse-boy), quantity = remaining allocation, never typed. The
+  admin decides; nothing moves on the tap (§15 unchanged). One open
+  request per (person, design, shade).
 - **Allocation is governed from the admin's dashboard matrix**
-  (customers + marketers × design set), and the allocated quantity can
-  NEVER exceed the actual available quantity in that warehouse at the
-  time of writing — every write door validates against live stock.
+  (customers + marketers × design set, shade-level where wanted), and
+  the allocated quantity can NEVER exceed the actual available quantity
+  in that warehouse at the time of writing — every write door validates
+  against live stock.
 - **§15c — the web may OPERATE non-approval admin toggles** behind the
   magic-link login (the allocation matrix is the first). Approvals and
   every two-admin action stay Telegram-only (§15 unchanged).

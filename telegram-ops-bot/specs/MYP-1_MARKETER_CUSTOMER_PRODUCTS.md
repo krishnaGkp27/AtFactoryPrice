@@ -134,3 +134,43 @@ maths is not built). Photos on product cards. Prices for linked
 users. Multi-warehouse mixed histories (v1 pins ONE source warehouse
 per person: the warehouse of their most recent purchase; a mixed
 history is listed per that warehouse only — flagged on the card).
+
+## MYP-2 (v4) — shipped 23-Aug-2026: allocation-only view + real supply requests
+
+The owner rejected the v1–v3 renderings in four rounds and locked the
+final shape ("Give opus5 for it's full execution"):
+
+1. **Allocation-driven ONLY.** The purchase-history default and the
+   admin mode switch are GONE (`allocationService.setMode` removed;
+   legacy `design='*'` rows are ignored). What the matrix allocates is
+   the whole product set. Purchase history feeds only supplied-so-far
+   numbers and the internal routing warehouse.
+2. **The recursive one-grammar law.** Chip = `📦 design (suppliedB /
+   allocatedB)` — the admin's own Supply Details grammar, with the
+   total re-scoped to the reader (warehouse total → their allocation).
+3. **Zero warehouse facts.** No availability number, no in-stock/out-
+   of-stock word, no warehouse/market name, no price — anywhere in a
+   linked person's world (chips, cards, captions, toasts).
+4. **The orders-flow drill.** Tapping a design shows the catalogue
+   PHOTO card (DesignAssets, caption = design only) with per-shade
+   pair chips + `✅ Take ALL` — exactly the srf_ orders card. Tapping
+   a shade (or Take ALL) raises a REAL `supply_request` into the
+   existing dispatch→admin→warehouse-boy pipeline via
+   `linkedSupplyService.raise()`: quantity = remaining allocation
+   (allocated − supplied), `appendOnce`, one open request per
+   (person, design, shade), provenance in `raisedByLinked`, dispatch
+   first with admin fallback. The person sees "Request sent — your
+   admin will confirm supply." The admin decides; nothing moves on
+   the tap.
+
+Schema: `MarketerAllocations` col H = `shade` (end-column, §10-safe);
+upsert key is now (marketer_id, design, shade); the §16 cap validates
+shade-aware against live stock. Web matrix (`/allocations` +
+GET/POST `/api/ops/allocations`) carries `shade`, mode removed — the
+owner is designing the dashboard layout on this API.
+
+Files: `myProductsService.js` (rewritten), `myProductsFlow.js`
+(rewritten, ns `myp:`), `linkedSupplyService.js` (new),
+`allocationService.js`, `marketerAllocationsRepository.js`,
+`schemaMapper.js`, `apiController.js`, `allocations.html`,
+`marketerCatalogFlow.js` (in-stock word removed). Smoke S54.6/S54.7.

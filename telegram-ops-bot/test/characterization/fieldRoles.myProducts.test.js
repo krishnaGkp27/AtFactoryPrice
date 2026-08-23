@@ -116,11 +116,10 @@ test('marketer My Products = allocation-scoped category chips, then designs, no 
   out = bot.allText();
   assert.match(out, /44200/);
   assert.match(out, /Allocated to you: \*5 bales\*/);
-  // STK-PRIV (owner, 23-Aug-2026): the live count is admin-only — the
-  // marketer sees the word, and the Kano-excluded scoping still holds
-  // because an out-of-scope design would read out-of-stock.
-  assert.match(out, /✅ In stock/);
-  assert.ok(!/Available now: \d/.test(out), 'no live stock number for a marketer');
+  // STK-PRIV v4 (owner, 23-Aug-2026): no warehouse reference of ANY kind —
+  // not even a word. Allocated is the whole story on this card.
+  assert.ok(!/In stock|Out of stock|Available now/.test(out), 'no availability reference at all');
+  assert.match(out, /Allocated to you:/);
   assert.doesNotMatch(out, /\/yd/);
   assert.doesNotMatch(out, /₦/);
 });

@@ -42,13 +42,11 @@ td input{width:70px;text-align:right}
     <div class="bar">
       <label for="person">Person</label>
       <select id="person"></select>
-      <span class="mode" id="modeLabel"></span>
-      <button id="modeBtn"></button>
       <button id="refresh">↻ Refresh</button>
     </div>
     <div id="msg"></div>
     <table id="grid">
-      <thead><tr><th>Design</th><th>Category</th><th>Available</th><th>Allocated</th><th></th></tr></thead>
+      <thead><tr><th>Design</th><th>Shade</th><th>Category</th><th>Available</th><th>Allocated</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
     <p class="foot">Allocation can never exceed what the warehouse holds at the time of writing (§16) — the server refuses more, naming the live number. Changes reach the person's 📦 My Products within ~15 seconds. Approvals stay in Telegram (§15).</p>
@@ -84,22 +82,27 @@ td input{width:70px;text-align:right}
   function renderPerson() {
     PERSON = DATA.people.find(function (p) { return p.id === $('person').value; }) || null;
     if (!PERSON) return;
-    $('modeLabel').textContent = 'mode: ' + PERSON.mode + (PERSON.warehouse ? ' · ' + PERSON.warehouse : ' · all warehouses');
-    $('modeBtn').textContent = PERSON.mode === 'auto' ? 'Switch to curated' : 'Switch to auto';
-    var byDesign = {};
-    (PERSON.allocations || []).forEach(function (a) { byDesign[a.design] = a.qty; });
+    var byKey = {};
+    (PERSON.allocations || []).forEach(function (a) { byKey[a.design + '|' + (a.shade || '')] = a.qty; });
     var tb = $('grid').tBodies[0]; tb.innerHTML = '';
-    DATA.designs.forEach(function (d) {
-      var avail = availFor(d.design);
-      var alloc = byDesign[d.design] || 0;
-      if (!avail && !alloc) return; // keep the grid to live rows
+    // MYP-2: one row per existing allocation (design+shade) plus a
+    // design-level row for every design with live stock — the owner's
+    // Claude Design matrix will replace these visuals; the API is ready.
+    var seen = {};
+    (PERSON.allocations || []).forEach(function (a) { addRow(a.design, a.shade || '', a.qty); });
+    DATA.designs.forEach(function (d) { if (!seen[d.design + '|']) { var av = availFor(d.design); if (av) addRow(d.design, '', 0); } });
+    function addRow(design, shade, alloc) {
+      var key = design + '|' + shade;
+      if (seen[key]) return; seen[key] = 1;
+      var avail = availFor(design);
+      var cat = ''; DATA.designs.forEach(function (d) { if (d.design === design) cat = d.category; });
       var tr = document.createElement('tr');
-      tr.innerHTML = '<td>' + d.design + '</td><td>' + (d.category || '—') + '</td>'
+      tr.innerHTML = '<td>' + design + '</td><td>' + (shade || '—') + '</td><td>' + (cat || '—') + '</td>'
         + '<td class="num ' + (avail ? 'ok' : 'warn') + '">' + avail + 'B</td>'
-        + '<td class="num"><input type="number" min="0" value="' + alloc + '" data-design="' + d.design + '"></td>'
-        + '<td><button data-save="' + d.design + '">Save</button></td>';
+        + '<td class="num"><input type="number" min="0" value="' + alloc + '" data-design="' + design + '" data-shade="' + shade + '"></td>'
+        + '<td><button data-save="' + design + '" data-saveshade="' + shade + '">Save</button></td>';
       tb.appendChild(tr);
-    });
+    }
   }
 
   function load() {
@@ -127,12 +130,13 @@ td input{width:70px;text-align:right}
   document.addEventListener('click', function (ev) {
     var d = ev.target.getAttribute && ev.target.getAttribute('data-save');
     if (d && PERSON) {
-      var input = document.querySelector('input[data-design="' + d + '"]');
+      var sh = ev.target.getAttribute('data-saveshade') || '';
+      var input = document.querySelector('input[data-design="' + d + '"][data-shade="' + sh + '"]');
       var qty = parseInt(input.value, 10) || 0;
       ev.target.disabled = true;
       api('/api/ops/allocations', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ personId: PERSON.id, personName: PERSON.name, design: d, qty: qty }),
+        body: JSON.stringify({ personId: PERSON.id, personName: PERSON.name, design: d, shade: sh, qty: qty }),
       }).then(function (j) {
         ev.target.disabled = false;
         if (!j.ok) { msg('⚠ ' + (j.error || 'refused'), 'warn'); return; }
@@ -140,17 +144,6 @@ td input{width:70px;text-align:right}
         load();
       }).catch(function (e) { ev.target.disabled = false; msg('⚠ ' + e.message, 'warn'); });
     }
-  });
-  $('modeBtn').addEventListener('click', function () {
-    if (!PERSON) return;
-    var next = PERSON.mode === 'auto' ? 'curated' : 'auto';
-    api('/api/ops/allocations', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ personId: PERSON.id, personName: PERSON.name, mode: next }),
-    }).then(function (j) {
-      if (!j.ok) { msg('⚠ ' + (j.error || 'refused'), 'warn'); return; }
-      msg('✓ ' + PERSON.name + ' → ' + next, 'ok'); load();
-    }).catch(function (e) { msg('⚠ ' + e.message, 'warn'); });
   });
   $('person').addEventListener('change', renderPerson);
   $('refresh').addEventListener('click', load);
