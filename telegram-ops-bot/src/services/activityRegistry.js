@@ -261,6 +261,8 @@ const ACTIVITIES = [
   // Task codes are injected per-user by the controller (admin / has-manages
   // → assign/team/signoff; everyone → My Tasks); never from a department
   // CSV. Do not list these in any department's allowed_activities.
+  // PTK-1 — photo → task. Injected per-user beside assign_task (same gate).
+  { code: 'snap_task',             label: 'Snap Task',                 icon: '📸', callback: 'act:snap_task',          hub: 'planning' },
   { code: 'assign_task',           label: 'Assign Task',               icon: '➕', callback: 'act:assign_task',        hub: 'planning' },
   { code: 'my_tasks',              label: 'My Tasks',                  icon: '📋', callback: 'act:my_tasks',           hub: 'planning' },
   { code: 'team_tasks',            label: 'Team Tasks',                icon: '👥', callback: 'act:team_tasks',         hub: 'planning' },

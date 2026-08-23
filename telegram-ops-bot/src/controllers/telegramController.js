@@ -3848,6 +3848,12 @@ async function handleFileMessage(bot, msg) {
     return;
   }
 
+  // PTK-1 — Snap Task note photo.
+  if (session && session.type === 'snap_task_flow') {
+    const handled = await require('../flows/snapTaskFlow').handleFile(bot, msg);
+    if (handled) return;
+  }
+
   await bot.sendMessage(chatId, 'To upload a receipt, first type "Upload receipt" to start the process.\nFor a supply request, tap "Supply Request" from the menu.');
 }
 
@@ -4101,6 +4107,11 @@ async function handleMessage(bot, msg) {
     const tskSession = sessionStore.get(userId);
     if (tskSession && tskSession.type === 'task_assign_flow') {
       const handled = await taskFlow.handleTextStep(bot, msg);
+      if (handled) return;
+    }
+    // PTK-1 — Snap Task: typed task at the arm step, title/details edits.
+    if (tskSession && tskSession.type === 'snap_task_flow') {
+      const handled = await require('../flows/snapTaskFlow').handleTextStep(bot, msg);
       if (handled) return;
     }
   }
@@ -5375,7 +5386,7 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
   const fieldRole = (!isAdminUser && user) ? fieldRoles.classify(user.role) : null;
 
   let allowed = [];
-  const TASK_CODES = new Set(['assign_task', 'my_tasks', 'team_tasks', 'pending_signoff', 'payouts']);
+  const TASK_CODES = new Set(['assign_task', 'snap_task', 'my_tasks', 'team_tasks', 'pending_signoff', 'payouts']);
   if (fieldRole) {
     allowed = activityRegistry.filterByCodes(['my_products']);
   } else if (isAdminUser) {
@@ -5646,7 +5657,7 @@ async function renderHubSubmenu(bot, chatId, messageId, userId, hubId, callbackQ
     : (user && user.department ? [user.department] : (isAdminUser ? ['Admin'] : []));
 
   let allowed = [];
-  const TASK_CODES = new Set(['assign_task', 'my_tasks', 'team_tasks', 'pending_signoff', 'payouts']);
+  const TASK_CODES = new Set(['assign_task', 'snap_task', 'my_tasks', 'team_tasks', 'pending_signoff', 'payouts']);
   if (isAdminUser) {
     allowed = activityRegistry.getAll().filter((a) => !TASK_CODES.has(a.code));
   } else if (userDepts.length) {
@@ -7310,6 +7321,8 @@ async function startOrderFlow(bot, chatId, userId) {
 const FLOW_CALLBACK_ROUTES = [
   // ST-1 — tappable Sell Bale flow.
   { prefixes: ['sb:'], handle: (bot, cq) => require('../flows/sellBaleFlow').handleCallback(bot, cq) },
+  // PTK-1 — Snap Task (photo → task).
+  { prefixes: ['ptk:'], handle: (bot, cq) => require('../flows/snapTaskFlow').handleCallback(bot, cq) },
   // Catalog hub: design assets / browse / search / catalog + CMS flows.
   { prefixes: ['dap:', 'dam:'], handle: (bot, cq) => handleDesignAssetCallback(bot, cq) },
   { prefixes: ['dav:'], handle: (bot, cq) => handleDesignAssetViewCallback(bot, cq) },
@@ -10341,6 +10354,9 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       // Task hub entries — delegate to taskFlow module.
       case 'assign_task':
         await taskFlow.startAssign(bot, chatId, uid, messageId);
+        break;
+      case 'snap_task': // PTK-1
+        await require('../flows/snapTaskFlow').start(bot, chatId, uid, messageId);
         break;
       case 'my_tasks':
         await taskFlow.showMyTasks(bot, chatId, uid, messageId);

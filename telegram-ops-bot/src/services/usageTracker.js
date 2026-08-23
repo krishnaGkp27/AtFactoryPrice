@@ -44,6 +44,7 @@ const PREFIX_FEATURES = {
   'atd_rpt:': 'attendance_report',
   'atd_adm:': 'attendance_admin',
   'tsk:': 'tasks',
+  'ptk:': 'snap_task',
   'nf:': 'notifications',
   'swv:': 'sales_workflow_view',
   'pp:': 'procurement_plan',

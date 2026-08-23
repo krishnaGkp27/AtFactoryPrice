@@ -48,8 +48,8 @@ const sheets = require('./sheetsClient');
 const idGenerator = require('../utils/idGenerator');
 
 const SHEET = 'Tasks';
-const READ_RANGE = 'A2:T';
-const NUM_COLS = 20;
+const READ_RANGE = 'A2:U';
+const NUM_COLS = 21; // PTK-1: col U source_file_id (photo the task came from)
 
 const STATUSES = Object.freeze({
   ASSIGNED: 'assigned',
@@ -102,6 +102,7 @@ function parse(r, rowIndex) {
     started_at: str(r[17]),
     approved_at: str(r[18]) || str(r[8]),
     last_event_at: str(r[19]) || createdAt,
+    source_file_id: str(r[20]), // PTK-1
   };
 }
 
@@ -202,6 +203,7 @@ async function append(task) {
   row[17] = task.started_at || '';
   row[18] = task.approved_at || '';
   row[19] = task.last_event_at || now;
+  row[20] = task.source_file_id || ''; // PTK-1 — the note photo's Telegram file id
 
   await sheets.appendRows(SHEET, [row]);
   return { ...task, task_id: taskId, status, track, last_event_at: row[19] };
@@ -222,6 +224,7 @@ const COLUMN_BY_FIELD = Object.freeze({
   started_at: 'R',
   approved_at: 'S',
   last_event_at: 'T',
+  source_file_id: 'U', // PTK-1
 });
 
 /**

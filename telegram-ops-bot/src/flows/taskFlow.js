@@ -220,7 +220,7 @@ async function visibleTaskActivityCodes(userId) {
   const user = await usersRepository.findByUserId(userId);
   const isAdm = isAdmin(userId);
   const codes = ['my_tasks'];
-  if (canManage(user, isAdm)) codes.push('assign_task', 'team_tasks', 'pending_signoff');
+  if (canManage(user, isAdm)) codes.push('assign_task', 'snap_task', 'team_tasks', 'pending_signoff'); // PTK-1: snap_task rides the same gate
   // Payouts is finance-only — it's the one surface that reads the
   // Incentives sheet and writes paid_status. Money stays gated.
   if (isFinance(userId)) codes.push('payouts');
@@ -500,6 +500,18 @@ async function dmAssigneeNewTask(bot, task, assignerUserId) {
           ]],
         },
       });
+    // PTK-1 — a snapped task carries its note photo; the doer reads the
+    // original (the object of the task can BE the image). Best-effort.
+    if (task.source_file_id) {
+      try {
+        await bot.sendPhoto(task.assigned_to, task.source_file_id, {
+          caption: `📎 The task note — ${task.task_id}`,
+          disable_notification: true,
+        });
+      } catch (e2) {
+        logger.warn(`taskFlow.dmAssigneeNewTask: note photo failed for ${task.task_id}: ${e2.message}`);
+      }
+    }
   } catch (e) {
     logger.warn(`taskFlow.dmAssigneeNewTask: could not DM ${task.assigned_to}: ${e.message}`);
   }
@@ -530,11 +542,22 @@ async function startProposeFlow(bot, callbackQuery, taskId) {
     return;
   }
 
+  // PTK-1 — if the task came from a photo whose text named a date, offer
+  // it as the FIRST deadline chip (suggestion only: the doer still
+  // proposes — the owner's agreed-not-assigned-at rule stays intact).
+  let noteDue = null;
+  try {
+    const events = await require('../repositories/taskEventsRepository').getByTaskId(taskId);
+    const ocrEv = (events || []).find((e) => e.meta && e.meta.ocr);
+    const iso = ocrEv && ocrEv.meta.ocr.dueDateISO;
+    if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso) && iso >= new Date().toISOString().slice(0, 10)) noteDue = iso;
+  } catch (_) { /* suggestion only — never blocks the picker */ }
+
   sessionStore.set(userId, {
     type: 'task_propose_flow',
     step: 'hours',
     flowMessageId: messageId,
-    data: { taskId, taskTitle: task.title, taskPriority: task.priority, taskTrack: task.track },
+    data: { taskId, taskTitle: task.title, taskPriority: task.priority, taskTrack: task.track, noteDue },
   });
   await renderHoursPicker(bot, chatId, userId);
 }
@@ -588,6 +611,13 @@ async function renderDeadlinePicker(bot, chatId, userId) {
       callback_data: `tsk:pdl:${key}`,
     }];
   });
+  // PTK-1 — the note's own date leads, marked as such.
+  if (session.data?.noteDue) {
+    rows.unshift([{
+      text: `📅 ${fmtDate(session.data.noteDue)} — from the note${cur === session.data.noteDue ? ' ✓' : ''}`,
+      callback_data: 'tsk:pdl:note',
+    }]);
+  }
   rows.push([{ text: '📅 Pick a specific date', callback_data: 'tsk:pcal' }]);
   rows.push([
     { text: '⬅️ Back',  callback_data: 'tsk:pbk:hours' },
@@ -1534,8 +1564,12 @@ async function handleCallback(bot, callbackQuery) {
     }
     if (data.startsWith('tsk:pdl:')) {
       const key = data.slice('tsk:pdl:'.length);
-      const preset = DEADLINE_PRESETS.find(([k]) => k === key);
-      if (preset) session.data.deadline = addDays(preset[2]);
+      if (key === 'note' && session.data.noteDue) {
+        session.data.deadline = session.data.noteDue; // PTK-1
+      } else {
+        const preset = DEADLINE_PRESETS.find(([k]) => k === key);
+        if (preset) session.data.deadline = addDays(preset[2]);
+      }
       session.step = 'confirm';
       sessionStore.set(userId, session);
       await renderProposeConfirmCard(bot, chatId, userId);
@@ -2394,6 +2428,7 @@ async function handleMarkPaid(bot, callbackQuery, taskId) {
 module.exports = {
   visibleTaskActivityCodes,
   startAssign,
+  dmAssigneeNewTask, // PTK-1 — snapTaskFlow reuses the one DM builder
   handleCallback,
   handleTextStep,
   showMyTasks,

@@ -237,8 +237,54 @@ function avg(arr) {
   return arr.reduce((s, n) => s + n, 0) / arr.length;
 }
 
+/**
+ * PTK-1 — read a TASK NOTE photo → {ok, provider, title, details,
+ * dueDateISO, confidence, lowConfidence, rawText, error?}. Same guards as
+ * extractBales (kill-switch, size cap, daily cap, provider chain); photos
+ * only — a task note is never a PDF.
+ */
+async function extractTaskNote(buffer, mimeType, opts = {}) {
+  if (!config.ocr.enabled && !opts.providerOverride) {
+    return { ok: false, error: 'OCR is disabled in config. Set OCR_ENABLED=true.', title: '', details: '', dueDateISO: null, confidence: 0, lowConfidence: true, rawText: '' };
+  }
+  if (!Buffer.isBuffer(buffer) || !buffer.length) {
+    return { ok: false, error: 'Empty or invalid file buffer.', title: '', details: '', dueDateISO: null, confidence: 0, lowConfidence: true, rawText: '' };
+  }
+  if (buffer.length > config.ocr.maxFileBytes) {
+    return { ok: false, error: `Photo too large (${(buffer.length / 1024 / 1024).toFixed(2)} MB). Limit is ${(config.ocr.maxFileBytes / 1024 / 1024).toFixed(1)} MB.`, title: '', details: '', dueDateISO: null, confidence: 0, lowConfidence: true, rawText: '' };
+  }
+  const capCheck = await checkDailyCap(opts.providerOverride || config.ocr.provider);
+  if (!capCheck.ok) {
+    return { ok: false, error: `Daily OCR limit reached (${capCheck.cap} reads). It resets at midnight — or raise OCR_DAILY_CAP in Settings.`, title: '', details: '', dueDateISO: null, confidence: 0, lowConfidence: true, rawText: '' };
+  }
+  const taskNote = require('./taskNoteExtraction');
+  const requested = opts.providerOverride || config.ocr.provider || 'stub';
+  const chain = resolveChain(requested);
+  let lastErr = null;
+  for (const providerName of chain) {
+    const run = taskNote.RUNNERS[providerName];
+    if (!run) { lastErr = `Unknown provider "${providerName}".`; continue; }
+    try {
+      const { parsed, rawText } = await run(buffer, (mimeType || '').toLowerCase());
+      const mapped = taskNote.mapParsed(parsed);
+      return {
+        ok: true,
+        provider: providerName,
+        ...mapped,
+        lowConfidence: mapped.confidence < (config.ocr.lowConfidenceThreshold || 0.7),
+        rawText: String(rawText || '').slice(0, 2000),
+      };
+    } catch (e) {
+      logger.warn(`vision.extractTaskNote: provider "${providerName}" threw: ${e.message}`);
+      lastErr = e.message;
+    }
+  }
+  return { ok: false, error: lastErr || 'No OCR provider available.', title: '', details: '', dueDateISO: null, confidence: 0, lowConfidence: true, rawText: '' };
+}
+
 module.exports = {
   extractBales,
+  extractTaskNote,
   getOcrUsage,
   PROVIDERS,
   SUPPORTED_MIMES,

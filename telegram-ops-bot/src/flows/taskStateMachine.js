@@ -335,6 +335,7 @@ async function create(spec) {
     status: STATUSES.ASSIGNED,
     track: spec.track || 'salaried',
     priority: spec.priority || 'normal',
+    source_file_id: spec.source_file_id || '', // PTK-1 — the note photo
   });
   await taskEventsRepository.append({
     task_id: created.task_id,
@@ -345,6 +346,8 @@ async function create(spec) {
     meta: {
       track: created.track,
       priority: created.priority,
+      // PTK-1 — raw OCR rides the audit event, never a sheet column (§10).
+      ...(spec.eventMeta && typeof spec.eventMeta === 'object' ? spec.eventMeta : {}),
     },
   });
   return created;

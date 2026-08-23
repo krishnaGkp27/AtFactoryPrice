@@ -60,6 +60,8 @@ const REQUIRED_SHEETS = {
       'track', 'priority', 'assigned_at', 'accepted_at',
       'proposed_hours', 'proposed_deadline', 'negotiation_rounds',
       'timeline_agreed_at', 'started_at', 'approved_at', 'last_event_at',
+      // PTK-1 — Snap Task: the note photo the task was read from.
+      'source_file_id',
     ],
   },
   // Money-side of the Tasks workflow. Kept in its own sheet so admin /
