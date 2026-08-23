@@ -125,7 +125,10 @@ test('TRID-1: non-TR ids (UUID approvals) are never considered', async () => {
 });
 
 test('TRID-1: uniqueTransferId seeds the sequence from the queue (restart-proof)', async () => {
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  // TIME-1: ids follow the LAGOS day — building this from the UTC date made
+  // the test fail every night in the 23:00-00:00 UTC window (Lagos already
+  // on the next day). Use the same source the code under test uses.
+  const date = require('../../../src/utils/dates').todayInLagos().replace(/-/g, '');
   approvalQueueRepository.getAllWithRowIndex = async () => [
     trRow(2, `TR-${date}-007`, 'approved'),
     trRow(3, `TR-${date}-002`, 'pending'),

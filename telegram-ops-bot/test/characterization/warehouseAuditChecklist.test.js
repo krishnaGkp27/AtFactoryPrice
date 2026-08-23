@@ -55,7 +55,9 @@ usersRepository.getAll = async () => [];
 let takes = [];
 stockTakesRepository.appendMany = async (records) => {
   const minted = records.map((r, i) => ({
-    audited_at: new Date().toISOString(), ...r,
+    // TIME-1: the flow filters rows by todayInLagos(), so a UTC-stamped
+    // fixture vanished from its own checklist between 23:00 and 00:00 UTC.
+    audited_at: `${require('../../src/utils/dates').todayInLagos()}T${new Date().toISOString().slice(11)}`, ...r,
     stocktake_id: r.stocktake_id || `ST-${takes.length + i}`,
     result: r.result || 'reconciled',
   }));
