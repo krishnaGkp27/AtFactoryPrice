@@ -509,6 +509,30 @@ is GOODS ONLY — the 🚚 Pending Supply view (SUPQ-1).
 
 ---
 
+## 16 · Three kinds of people, and who may take commission
+
+**Locked 23-Aug-2026** (owner, designing MYP-1; "different firms differ,
+but this goes as our company rules for now").
+
+- **A marketer is NOT part of the company.** They join through the
+  identity LINK path like a customer — never through Add Employee. The
+  defining distinction between the three kinds: **a marketer can take
+  commission; an employee cannot; a customer cannot.**
+- **Linked customers and marketers get exactly ONE bot surface:** the
+  📦 My Products view. Every other tile, flow, callback and typed
+  action refuses them — the field-role fence, extended.
+- **Default product set = purchase history.** A linked person sees the
+  designs they already purchased, with stock from the SAME warehouse
+  those purchases were supplied from. The admin can switch any person
+  to a curated set.
+- **Allocation is governed from the admin's dashboard matrix**
+  (customers + marketers × design set), and the allocated quantity can
+  NEVER exceed the actual available quantity in that warehouse at the
+  time of writing — every write door validates against live stock.
+- **§15c — the web may OPERATE non-approval admin toggles** behind the
+  magic-link login (the allocation matrix is the first). Approvals and
+  every two-admin action stay Telegram-only (§15 unchanged).
+
 ## Incident log (why these rules exist)
 
 | Date | Incident | Rule born |
