@@ -915,7 +915,15 @@ function updateNavbarAuth(fromCache = false) {
         // "send me a code" instead of retyping the number the office
         // already has. Deliberately NOT interpolated into the menu HTML:
         // it is a value the page reads, never markup.
+        //
+        // The sessionStorage copy is what actually carries it: ledger.html
+        // is a standalone file that never loads this script, but same-tab
+        // navigation shares sessionStorage. sessionStorage, not local —
+        // the number should not outlive the tab on a shared phone.
         window.AFP_PROFILE_PHONE = currentUserData?.phone || '';
+        try {
+            if (window.AFP_PROFILE_PHONE) sessionStorage.setItem('afp_profile_phone', window.AFP_PROFILE_PHONE);
+        } catch (e) { /* private mode — the customer types the number instead */ }
         const profilePicture = currentUserData?.profilePicture || currentUser?.photoURL || '';
         
         // Avatar HTML - show profile pic with initials overlay, or just initials
