@@ -271,6 +271,13 @@ async function handleCallback(bot, query) {
   if (!data.startsWith('mal:')) return false;
   const chatId = query.message?.chat?.id;
   const userId = String(query.from.id);
+  // STK-PRIV — this flow renders live stock context; re-gate every tap so a
+  // forwarded card can never show it to a non-admin (defence-in-depth: the
+  // session check below already blocks it, this makes the boundary explicit).
+  if (!auth.isAdmin(userId)) {
+    try { await bot.answerCallbackQuery(query.id, { text: 'Admin only.', show_alert: true }); } catch { /* ignore */ }
+    return true;
+  }
   const session = sessionStore.get(userId);
 
   if (!session || session.type !== SESSION_TYPE) {
