@@ -586,9 +586,21 @@ const DESIGN_CODE_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$/;
 async function supplySession(req, res) {
   const auth = String(req.headers.authorization || '');
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-  const customer = await require('../services/extLedgerService').sessionCustomer(token);
+  const extLedgerService = require('../services/extLedgerService');
+  const customer = await extLedgerService.sessionCustomer(token);
   if (!customer) {
     res.status(401).json({ ok: false, error: 'Session expired — please sign in again.' });
+    return null;
+  }
+  // SUP-2 — the supply record is name-keyed just like the money one, so it
+  // inherits the same refusal: two live customers sharing a display name
+  // would see one merged record. Every /api/ext/supply* endpoint routes
+  // through here; the admin-minted /sl/<token> page is the OTHER door onto
+  // the same data and carries the identical guard in
+  // supplyLedgerWebController.
+  const refusal = await extLedgerService.accessRefusalFor(customer);
+  if (refusal) {
+    res.status(refusal.status).json({ ok: false, error: refusal.error });
     return null;
   }
   return customer;

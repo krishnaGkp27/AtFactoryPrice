@@ -105,6 +105,13 @@ async function viewPage(req, res) {
   if (!p) return res.status(404).send('Not found');
   try {
     const customer = p.customerName;
+    // SUP-2 — this page is name-keyed exactly like /api/ext/supply, and a
+    // ledger token carries only the NAME. Two live customers sharing a
+    // display name would render BOTH their days, bale numbers and sale
+    // documents to whoever holds the link. Same refusal as every other
+    // door: uniqueness unverified is never a reason to serve.
+    const refusal = await require('../services/extLedgerService').accessRefusalFor(customer);
+    if (refusal) return res.status(refusal.status).send(esc(refusal.error));
     const { entries, net } = await supplyLedgerService.buildLedger(customer);
     const supplyDays = entries.filter((e) => e.kind === 'supply').map((e) => e.day);
     const details = new Map();
@@ -185,6 +192,10 @@ async function viewDoc(req, res, bot) {
   const p = supplyLedgerService.verifyLedgerToken(req.params.token);
   if (!p) return res.status(404).send('Not found');
   try {
+    // SUP-2 — the document proxy is the same door by another name; guard it
+    // too, or the page refuses while its attachments still stream.
+    const refusal = await require('../services/extLedgerService').accessRefusalFor(p.customerName);
+    if (refusal) return res.status(refusal.status).send('Not found');
     const docs = await docsForDay(p.customerName, String(req.params.day));
     const idx = parseInt(req.params.i, 10);
     const d = Number.isInteger(idx) && idx >= 0 ? docs[idx] : null;

@@ -30,6 +30,16 @@ const telegramFiles = require(path.join(SRC, 'utils/telegramFiles'));
 
 const SESSIONS = { 'tok-qari': 'Qaribullah', 'tok-bello': 'Bello' };
 
+// SUP-2 — supplySession now verifies that the session's display name is not
+// shared by two live customers before reading a single row, so these tests
+// have to supply the identity context that guard reads. Both names are
+// unique here, which is what lets every case below reach its endpoint.
+const customersRepository = require(path.join(SRC, 'repositories/customersRepository'));
+customersRepository.getAll = async () => ([
+  { customer_id: 'CUST-1', name: 'Qaribullah', phone: '+2348138475360', status: 'Active' },
+  { customer_id: 'CUST-2', name: 'Bello', phone: '+2348012345678', status: 'Active' },
+]);
+
 extLedgerService.sessionCustomer = async (t) => SESSIONS[String(t)] || null;
 
 supplyLedgerService.namesFor = async (c) => [String(c).toLowerCase()];

@@ -56,6 +56,7 @@ const _throttle = new Map(); // per-phone-hour bucket → { count, exp }
 
 function _hash(code) { return crypto.createHash('sha256').update(String(code)).digest('hex'); }
 const GENERIC_OK = { ok: true, message: 'If this number is registered, a login code is on its way.' };
+const OFFICE_CONFIRM_MSG = 'Your account needs to be confirmed at the office before online access — please contact us.';
 
 async function _enabled() {
   try { return Number((await settingsRepository.getAll()).EXT_LEDGER_ENABLED ?? 1) === 1; }
@@ -96,33 +97,92 @@ async function _reservePhone(key) {
   return cur <= PER_PHONE_HOURLY;
 }
 
-/** Registered customer for a phone, or null. Never distinguishes outward.
- *  CUS-2: live customers only — a Merged husk or unapproved Pending row
- *  keeps its phone, and matching it minted an OTP session for a dead or
- *  not-yet-approved identity. */
-async function _customerByPhone(e164) {
+/**
+ * Resolve a phone to the ONE live customer that owns it.
+ *
+ * CUS-2: live customers only — a Merged husk or unapproved Pending row
+ * keeps its phone, and matching it minted an OTP session for a dead or
+ * not-yet-approved identity.
+ *
+ * SUP-2 (23-Aug-2026): this used to take the FIRST match. phoneUtil
+ * .samePhone compares the LAST TEN DIGITS, so +1-803-456-7890 and
+ * +234-803-456-7890 collapse into one bucket, and phone uniqueness is
+ * enforced NOWHERE upstream (there is no findByPhone, no assert, a blank
+ * status cell reads as Active, and Customers column C still holds
+ * hand-typed shapes). First-match-wins therefore logged one customer into
+ * another customer's record — the exact cross-customer disclosure that
+ * accessRefusalFor already refuses to risk on the name side. Two matches
+ * now refuse, and the refusal is AUDITED so the office can see that a real
+ * customer is blocked by a duplicate row, instead of the login silently
+ * doing nothing forever.
+ *
+ * @returns {Promise<{customer:object|null, ambiguous:boolean}>}
+ */
+async function _resolvePhone(e164) {
   try {
     const all = await require('./customerEntity').activeList();
-    return all.find((c) => phoneUtil.samePhone(c.phone, e164)) || null;
-  } catch { return null; }
+    const hits = all.filter((c) => phoneUtil.samePhone(c.phone, e164));
+    if (hits.length === 1) return { customer: hits[0], ambiguous: false };
+    if (hits.length > 1) {
+      auditLogRepository.append('ext_phone_ambiguous',
+        { count: hits.length, names: hits.map((c) => c.name).slice(0, 5) },
+        phoneUtil.phoneKey(e164) || 'unknown').catch(() => {});
+      return { customer: null, ambiguous: true };
+    }
+    return { customer: null, ambiguous: false };
+  } catch (e) {
+    // Cannot verify uniqueness -> refuse, never guess. The reply to the
+    // caller stays generic (anti-enumeration), so the log is the only
+    // place this is visible; without it the login would go quiet with no
+    // trace of why.
+    logger.warn(`extLedger resolvePhone: cannot verify phone uniqueness (${e.message})`);
+    return { customer: null, ambiguous: true };
+  }
+}
+
+/** Registered customer for a phone, or null. Never distinguishes outward. */
+async function _customerByPhone(e164) {
+  return (await _resolvePhone(e164)).customer;
 }
 
 /**
- * Is a customer display-name shared by MORE THAN ONE customer record?
- * The ledger is name-keyed (narrations embed the name, no customer_id
- * linkage), so a shared name would MERGE two people's financials. When
- * that happens we refuse to serve rather than risk cross-customer
- * disclosure (review R4) — the office resolves the duplicate.
+ * May this session's customer be served at all?
+ *
+ * BOTH customer records are NAME-keyed — the money ledger matches
+ * narrations, the supply ledger matches soldTo — so a display name shared
+ * by two live customers merges two people's records. getLedger has refused
+ * on that since review R4; SUP-1's supply doors were added later and did
+ * not inherit the check, so the goods record could still merge namesakes.
+ * One guard now, used by every door.
+ *
+ * Two failure modes, deliberately told apart (SUP-2): a name we can SEE is
+ * shared is the customer's problem to resolve at the office (409, and it
+ * will not fix itself by retrying), while a Customers sheet we could not
+ * READ is ours (503, retry shortly). Both refuse — uniqueness unverified
+ * is never a reason to serve — but sending "confirmed at the office" to
+ * every customer during a transient Sheets outage would send the whole
+ * customer base to the phone for a fault that clears itself.
+ *
+ * CUS-2 — count LIVE customers only: after the owner merges two duplicate
+ * rows, the retained husk used to keep this refusing the survivor forever.
+ *
+ * @returns {Promise<null|{status:number, error:string}>} null = serve them
  */
-async function _nameIsAmbiguous(name) {
+async function accessRefusalFor(customer) {
+  let shared = 0;
   try {
-    const want = String(name || '').trim().toLowerCase();
-    // CUS-2 — count LIVE customers only: after the owner merges two
-    // duplicate rows, the retained husk used to keep this check refusing
-    // the surviving customer forever.
+    const want = String(customer || '').trim().toLowerCase();
     const all = await require('./customerEntity').activeList();
-    return all.filter((c) => String(c.name || '').trim().toLowerCase() === want).length > 1;
-  } catch { return true; } // can't verify uniqueness → fail safe (refuse)
+    shared = all.filter((c) => String(c.name || '').trim().toLowerCase() === want).length;
+  } catch (e) {
+    logger.warn(`extLedger accessRefusal: cannot verify name uniqueness (${e.message})`);
+    return { status: 503, error: 'Service temporarily unavailable — please try again shortly.' };
+  }
+  if (shared > 1) {
+    auditLogRepository.append('ext_ledger_ambiguous_name', { customer, shared }, customer).catch(() => {});
+    return { status: 409, error: OFFICE_CONFIRM_MSG };
+  }
+  return null;
 }
 
 /** Persist a fresh OTP (single store). Best-effort. */
@@ -177,8 +237,14 @@ async function requestOtp(phoneRaw, channel = 'whatsapp') {
   // customer lookup), so foreground latency doesn't reveal membership.
   const withinLimit = await _reservePhone(key);
   const throttled = !withinLimit;
-  const customer = await _customerByPhone(norm.e164 || norm.value);
+  const { customer, ambiguous } = await _resolvePhone(norm.e164 || norm.value);
   if (throttled) usageMeter.record(channel, 'otp_rate_limited').catch(() => {});
+  // SUP-2: an ambiguous phone sends NOTHING — no paid message, no stored
+  // code — so a duplicate row can never mint a session for the wrong
+  // customer. It meters under its own reason so the owner's usage view
+  // shows a blocked real customer rather than a silent nothing. The reply
+  // below stays byte-identical either way (anti-enumeration).
+  else if (ambiguous) usageMeter.record(channel, 'otp_ambiguous_phone').catch(() => {});
   else if (!customer) usageMeter.record(channel, 'otp_unknown_phone').catch(() => {});
 
   // Reply generically & immediately; the customer-only work runs in the
@@ -343,10 +409,8 @@ async function getLedger(token) {
   if (!customer) return { ok: false, status: 401, error: 'Login again.' };
   // Refuse a name-scoped ledger when the name is not unique — a shared
   // name would leak another customer's financials (review R4).
-  if (await _nameIsAmbiguous(customer)) {
-    auditLogRepository.append('ext_ledger_ambiguous_name', { customer }, customer).catch(() => {});
-    return { ok: false, status: 409, error: 'Your account needs to be confirmed at the office before online access — please contact us.' };
-  }
+  const refusal = await accessRefusalFor(customer);
+  if (refusal) return { ok: false, status: refusal.status, error: refusal.error };
   const accountingService = require('./accountingService');
   const loose = await accountingService.getCustomerLedger(customer);
   let names = [customer];
@@ -382,7 +446,7 @@ function _resetForTests() { _otps.length = 0; _sessions.clear(); _pending.clear(
 async function _settle() { await Promise.all([..._pending]); }
 
 module.exports = {
-  requestOtp, verifyOtp, sessionCustomer, getLedger, sweepExpired,
+  requestOtp, verifyOtp, sessionCustomer, accessRefusalFor, getLedger, sweepExpired,
   OTP_TTL_MS, SESSION_TTL_MS, _resetForTests, _settle,
   _internals: { MAX_VERIFY_ATTEMPTS, PER_PHONE_HOURLY, _entryCustomer, _scopeLedger },
 };

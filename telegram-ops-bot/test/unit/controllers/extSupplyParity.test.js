@@ -48,6 +48,13 @@ approvalQueueRepository.getResolved = async () => [];
 // No Customers sheet in this test: namesFor falls back to the single spelling.
 customerEntity.resolve = async () => null;
 extLedgerService.sessionCustomer = async (t) => (t === 'tok' ? 'Qaribullah' : null);
+
+// SUP-2 — supplySession verifies the session name is not shared by two live
+// customers before reading anything, so the parity run needs the identity
+// context that guard reads. One live 'Qaribullah' = unique = served.
+require(path.join(SRC, 'repositories/customersRepository')).getAll = async () => ([
+  { customer_id: 'CUST-1', name: 'Qaribullah', phone: '+2348138475360', status: 'Active' },
+]);
 supplyLedgerService.verifyLedgerToken = (t) => (t === 'sl-token' ? { customerName: 'Qaribullah', mintedBy: '1', mintedAt: 0 } : null);
 
 /* ── harness ───────────────────────────────────────────────────────────── */
