@@ -628,6 +628,10 @@ const server = app.listen(PORT, async () => {
     // rows (retired actions the executor refuses anyway). One-shot, async.
     require('./src/services/legacyCleanup').rejectStaleLegacyTransfers()
       .catch((e) => logger.warn(`legacyCleanup failed: ${e.message}`));
+    // BANK-3 — repair any "X — X" BANK_LIST entry approved before the flow
+    // fix (e.g. "OPAY — OPAY"). Idempotent; writes nothing when clean.
+    require('./src/services/legacyCleanup').normalizeBankList()
+      .catch((e) => logger.warn(`legacyCleanup BANK_LIST failed: ${e.message}`));
   } catch (e) {
     logger.error('Init error (bot still running):', e.message);
   }

@@ -54,4 +54,42 @@ async function rejectStaleLegacyTransfers() {
   return { rejected, failed };
 }
 
-module.exports = { rejectStaleLegacyTransfers, LEGACY_TRANSFER_ACTIONS };
+/**
+ * BANK-3 (owner 23-Aug-2026) — repair BANK_LIST entries shaped "X — X".
+ *
+ * The bad shape reached the live list before the flow was fixed (the Office
+ * user typed the bank name at the account step, and it was approved), so
+ * "OPAY — OPAY" now prints inside every payment-account line. One-shot at
+ * boot, idempotent: a clean list is left untouched and nothing is written.
+ *
+ * @returns {Promise<{changed:boolean, before?:string, after?:string}>}
+ */
+async function normalizeBankList() {
+  const settingsRepository = require('../repositories/settingsRepository');
+  const bankEntry = require('../utils/bankEntry');
+  try {
+    const all = await settingsRepository.getAll();
+    const before = String(all.BANK_LIST || '');
+    if (!before.trim()) return { changed: false };
+    const seen = new Set();
+    const out = [];
+    for (const raw of before.split(',')) {
+      const entry = bankEntry.normalize(raw);
+      if (!entry) continue;
+      const k = bankEntry.key(entry);
+      if (seen.has(k)) continue;   // collapsing may create a duplicate
+      seen.add(k);
+      out.push(entry);
+    }
+    const after = out.join(',');
+    if (after === before) return { changed: false };
+    await settingsRepository.set('BANK_LIST', after);
+    logger.info(`legacyCleanup: BANK_LIST normalised — "${before}" -> "${after}"`);
+    return { changed: true, before, after };
+  } catch (e) {
+    logger.warn(`legacyCleanup: BANK_LIST normalise skipped: ${e.message}`);
+    return { changed: false };
+  }
+}
+
+module.exports = { rejectStaleLegacyTransfers, normalizeBankList, LEGACY_TRANSFER_ACTIONS };

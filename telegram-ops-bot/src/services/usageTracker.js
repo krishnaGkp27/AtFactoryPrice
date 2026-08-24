@@ -68,7 +68,7 @@ const PREFIX_FEATURES = {
   'adm:': 'admin_actions',
   'add_stock:': 'add_stock',
   'approve_task:': 'tasks',
-  'bkadd:': 'manage_banks', 'bkback:': 'manage_banks',
+  'bkadd:': 'manage_banks', 'bkback:': 'manage_banks', 'bkonly:': 'manage_banks',
   'bkrm:': 'manage_banks', 'bkrmc:': 'manage_banks',
   'cd:': 'customer_details',
   'rk:': 'customer_ranking',
