@@ -68,13 +68,35 @@ function buildApprovalSummary(pay) {
   return out.join('\n');
 }
 
-/** The card for registering a payee account (the other dual-admin door). */
+/**
+ * The card for registering a payee account (the other dual-admin door).
+ *
+ * PAY-ID (owner hard rule, 23-Aug-2026) — the two approving admins must see
+ * WHO, not a typed name. An employee account states the VERIFIED Telegram
+ * identity behind it; a contractor account states plainly that there is no
+ * Telegram identity and an admin is vouching.
+ *
+ * @param {object} acct owner_name, owner_type, account_number, bank,
+ *   owner_telegram_id, and optionally `verifiedUser` (a Users-sheet row).
+ */
 function buildAccountSummary(acct) {
-  return [
+  const out = [
     `Register payment account: ${acct.owner_name} (${acct.owner_type})`,
     `Account: ${[acct.account_number, acct.bank].filter(Boolean).join(' · ')}`,
-    'Once approved, payments can be raised against this account.',
-  ].join('\n');
+  ];
+  if (acct.owner_type === 'contractor') {
+    out.push('Identity: contractor — no Telegram account; an admin is vouching for this payee.');
+  } else {
+    const employeeIdentity = require('./employeeIdentity');
+    const line = acct.verifiedUser
+      ? employeeIdentity.cardLine(acct.verifiedUser)
+      : (acct.owner_telegram_id
+        ? `Linked Telegram: ${acct.owner_name} · ${acct.owner_telegram_id} ✓ registered employee`
+        : '⚠️ NO Telegram identity linked — do not approve; the payee must be onboarded first.');
+    out.push(line);
+  }
+  out.push('Once approved, payments can be raised against this account.');
+  return out.join('\n');
 }
 
 /**

@@ -53,6 +53,35 @@ what, why (incident), where enforced.
 - Standing practice: every future feature's pre-implementation
   understanding states how it treats bale identity under this rule.
 
+## 1c · Money is registered only against a verified employee Telegram ID
+
+**Locked 23-Aug-2026 (owner, HARD RULE), after the OPAY/Muhammad card.**
+
+> "Any approval which comes for like this has to have linked with telegram
+>  ID associated as employee before. Make it as hard business rule."
+
+- A payment ACCOUNT may be registered for an employee only when their
+  Telegram ID already exists as an **ACTIVE row in the Users sheet**
+  (onboarded via HR → Add User). Being on the env admin/employee list is
+  NOT enough — a payee is a person on the register, not an ID in config.
+- The approving admins must SEE the linkage on the card
+  (`Linked Telegram: <name> · <id> ✓ registered employee`). A card with no
+  linked identity says so and tells them not to approve.
+- **Checked twice, deliberately:** at the door (nothing unverified is ever
+  queued) and again in the EXECUTOR at approval time — so a request raised
+  while someone was an employee cannot become a payable account after they
+  were deactivated or removed.
+- **Fails closed.** If the Users sheet cannot be read, the answer is
+  refuse-and-retry; "cannot prove employment" must never read as approved.
+- Contractors have no Telegram identity by design: PAY-1's rule stands in
+  for it — an **admin** registers a contractor account and the card states
+  that an admin is vouching.
+- Because payment REQUESTS can only reference registered accounts, gating
+  registration makes every downstream payment inherit the guarantee.
+- Enforced: `services/employeeIdentity.js` (the one guard), `flows/
+  paymentFlow.js` (door), `services/inventoryService.js`
+  (`register_payment_account` executor), `services/paymentCards.js` (card).
+
 ## 2 · The bot NEVER selects physical stock
 
 **Locked 02-Aug-2026 (TRF-15), after transfer 02Aug·01** — FIFO pre-ticks

@@ -67,8 +67,15 @@ test('PAY-1: both money actions are ALWAYS dual-admin, whatever the amount', () 
   }
 });
 
+// PAY-ID (owner hard rule, 23-Aug-2026) — an employee account only becomes
+// payable when its linked Telegram ID is an ACTIVE Users-sheet employee, so
+// these fixtures carry the identity a real row carries.
+const usersRepository = require(path.join(SRC, 'repositories/usersRepository'));
+usersRepository.findByUserId = async (id) => (String(id) === '4242'
+  ? { user_id: '4242', name: 'Abdul', status: 'active' } : null);
+
 test('PAY-1: approving a registration makes the account payable', async () => {
-  const rows = [{ account_id: 'PAC-1', owner_name: 'Abdul', bank: 'GTBank', account_number: '0123456789', status: 'pending' }];
+  const rows = [{ account_id: 'PAC-1', owner_name: 'Abdul', owner_type: 'employee', owner_telegram_id: '4242', bank: 'GTBank', account_number: '0123456789', status: 'pending' }];
   const writes = [];
   accountsRepo.findByApprovalRequestId = async () => rows[0];
   accountsRepo.setStatus = async (id, status, by) => { writes.push({ id, status, by }); rows[0].status = status; return rows[0]; };
@@ -81,7 +88,7 @@ test('PAY-1: approving a registration makes the account payable', async () => {
 });
 
 test('PAY-1: re-approving a registration changes nothing', async () => {
-  const row = { account_id: 'PAC-1', owner_name: 'Abdul', bank: 'GTBank', account_number: '1', status: 'active' };
+  const row = { account_id: 'PAC-1', owner_name: 'Abdul', owner_type: 'employee', owner_telegram_id: '4242', bank: 'GTBank', account_number: '1', status: 'active' };
   let wrote = false;
   accountsRepo.findByApprovalRequestId = async () => row;
   accountsRepo.setStatus = async () => { wrote = true; };
@@ -129,4 +136,30 @@ test('PAY-1: a missing payment row fails loudly too', async () => {
   const res = await execute('request_payment', 'R-GONE', { payment_id: 'NOPE' });
   assert.equal(res.ok, false);
   assert.match(res.message, /Payment request row not found/);
+});
+
+test('PAY-ID: an employee account with NO linked Telegram ID is refused at approval', async () => {
+  // The exact shape of the owner's OPAY card: a typed name, no identity.
+  accountsRepo.findByApprovalRequestId = async () => ({
+    account_id: 'PAC-9', owner_name: 'Muhammad', owner_type: 'employee',
+    owner_telegram_id: '', bank: 'OPAY', account_number: '7044196792', status: 'pending',
+  });
+  let wrote = false;
+  accountsRepo.setStatus = async () => { wrote = true; };
+  const res = await execute('register_payment_account', 'R-NOID');
+  assert.equal(res.ok, false, 'money is never registered against an unverified name');
+  assert.match(res.message, /Not registered/);
+  assert.equal(wrote, false);
+});
+
+test('PAY-ID: a CONTRACTOR account still registers — an admin vouches for it', async () => {
+  const writes = [];
+  accountsRepo.findByApprovalRequestId = async () => ({
+    account_id: 'PAC-C', owner_name: 'Musa Welder', owner_type: 'contractor',
+    owner_telegram_id: '', bank: 'GTB', account_number: '0123456789', status: 'pending',
+  });
+  accountsRepo.setStatus = async (id, status) => { writes.push([id, status]); };
+  const res = await execute('register_payment_account', 'R-CON');
+  assert.notEqual(res.ok, false, 'contractors have no Telegram identity by design');
+  assert.deepEqual(writes, [['PAC-C', 'active']]);
 });

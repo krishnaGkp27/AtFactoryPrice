@@ -863,9 +863,20 @@ async function handleAddBankFlowText(bot, chatId, userId, text) {
     session.bankName = trimmed;
     session.step = 'account';
     sessionStore.set(userId, session);
+    // BANK-3 (owner 23-Aug): "OPAY is a Bank addition, not an account under
+    // a bank." Skipping step 2 used to need the typed magic word `skip` —
+    // invisible, and against the tap-first rule — so the Office user typed
+    // the bank name again and got the nonsense entry "OPAY — OPAY". The
+    // bank-only path is a BUTTON now; typing skip still works.
     await bot.sendMessage(chatId,
-      `🏦 *Step 2 of 2* — enter the ACCOUNT name at *${trimmed}* (e.g. \`MAMA KAFAYA ENT\`),\nor type \`skip\` to register the bank without an account label.`,
-      { parse_mode: 'Markdown' });
+      `🏦 *Step 2 of 2* — enter the ACCOUNT name at *${trimmed}* (e.g. \`MAMA KAFAYA ENT\`).\n\n_No separate account under this bank? Tap below._`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [
+          [{ text: `⏭ Bank only — just ${trimmed}`, callback_data: 'bkonly:0' }],
+          [{ text: '❌ Cancel', callback_data: 'bkback:0' }],
+        ] },
+      });
     return true;
   }
   if (session.step === 'account') {
@@ -874,7 +885,11 @@ async function handleAddBankFlowText(bot, chatId, userId, text) {
       await bot.sendMessage(chatId, 'Account name too short — re-enter, or type "skip":');
       return true;
     }
-    const entry = isSkip ? session.bankName : `${session.bankName} — ${trimmed}`;
+    // BANK-3 — "OPAY at bank OPAY" is nobody's intent: collapse it to the
+    // plain bank rather than storing the duplicate as a named account.
+    const bankKey = (v) => String(v || '').trim().toUpperCase().replace(/\s+/g, ' ');
+    const sameAsBank = bankKey(trimmed) === bankKey(session.bankName);
+    const entry = (isSkip || sameAsBank) ? session.bankName : `${session.bankName} — ${trimmed}`;
     // Dedupe check against current list before queuing approval.
     const all = await settingsRepo.getAll();
     const existing = (all.BANK_LIST || '').split(',').map((b) => b.trim().toLowerCase()).filter(Boolean);
@@ -900,7 +915,9 @@ async function handleAddBankFlowText(bot, chatId, userId, text) {
     const userLabel = await getRequesterDisplayName(userId, null);
     await approvalEvents.notifyAdminsApprovalRequest(
       bot, requestId, userLabel,
-      `Add Bank Account\nEntry: ${entry}${isSkip ? '' : `\nBank: ${session.bankName}\nAccount: ${trimmed}`}`,
+      (isSkip || sameAsBank)
+        ? `Add Bank\nBank: ${entry}`
+        : `Add Bank Account\nEntry: ${entry}\nBank: ${session.bankName}\nAccount: ${trimmed}`,
       'New bank addition requires admin approval',
       config.access.adminIds.includes(userId) ? userId : undefined,
     );
@@ -8228,6 +8245,20 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'bkback:0' }]] },
     });
+
+  /* ─── BANK MANAGER: "bank only" — finish step 2 with no account name ─── */
+  } else if (data.startsWith('bkonly:')) {
+    // BANK-3 — the tappable form of typing `skip`. Routed through the SAME
+    // text handler so there is one submit path, not two that can drift.
+    const uid = String(callbackQuery.from.id);
+    const chatId = callbackQuery.message.chat.id;
+    const sess = sessionStore.get(uid);
+    if (!sess || sess.type !== 'add_bank_flow' || sess.step !== 'account') {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'That step has expired — open Manage Banks again.', show_alert: true });
+      return;
+    }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    await handleAddBankFlowText(bot, chatId, uid, 'skip');
 
   /* ─── BANK MANAGER: back to manager screen ─── */
   } else if (data.startsWith('bkback:')) {

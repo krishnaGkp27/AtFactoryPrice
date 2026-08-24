@@ -51,6 +51,7 @@ const riskEvaluate = require('../risk/evaluate');
 const idGenerator = require('../utils/idGenerator');
 const fmtDate = require('../utils/formatDate');
 const auth = require('../middlewares/auth');
+const employeeIdentity = require('../services/employeeIdentity');
 const logger = require('../utils/logger');
 
 const SESSION_TYPE = 'payment_flow';
@@ -131,15 +132,37 @@ async function applyOwnerType(bot, chatId, userId, kind) {
   const session = sessionStore.get(userId);
   if (!session) return;
   if (kind === 'emp') {
+    // PAY-ID (owner hard rule) — an account may only be registered against
+    // a Telegram ID already onboarded as an employee. Checked HERE so
+    // nothing unverified is ever queued, and again at the executor so a
+    // request cannot be approved after the person was deactivated.
+    const check = await employeeIdentity.verifyEmployee(userId);
+    if (!check.ok) {
+      await render(bot, chatId, userId,
+        `🚫 *Cannot register an account yet*\n\n${mdEscape(check.message)}`,
+        [menuRow()]);
+      return;
+    }
     session.reg.owner_type = 'employee';
     session.reg.owner_telegram_id = String(userId);
-    session.reg.owner_name = await resolveName(userId);
+    session.reg.owner_name = check.user.name || await resolveName(userId);
+    session.reg.owner_verified = true;
     session.step = 'reg_number';
     sessionStore.set(userId, session);
     return askAccountNumber(bot, chatId, userId);
   }
+  // PAY-ID — a contractor has no Telegram identity to verify, so PAY-1's
+  // own rule stands in for it: an ADMIN vouches for a contractor account.
+  if (!auth.isAdmin(userId)) {
+    await render(bot, chatId, userId,
+      '🚫 *Admins register contractor accounts*\n\nA contractor has no Telegram identity for the bot to verify, '
+      + 'so an admin must raise this one. Ask an admin to register it.',
+      [menuRow()]);
+    return;
+  }
   session.reg.owner_type = 'contractor';
   session.reg.owner_telegram_id = '';
+  session.reg.owner_verified = false;
   session.step = 'reg_name';
   sessionStore.set(userId, session);
   await render(bot, chatId, userId,
@@ -235,6 +258,9 @@ async function submitRegister(bot, chatId, userId) {
         account_id: saved.account_id,
         owner_name: r.owner_name, owner_type: r.owner_type,
         account_number: r.number, bank: r.bank,
+        // PAY-ID — the linked identity rides the row so the executor can
+        // re-verify it at approval time, not just trust the card text.
+        owner_telegram_id: r.owner_telegram_id || '',
       },
       riskReason: risk.reason || 'dual_admin_required',
       status: 'pending',
@@ -245,7 +271,7 @@ async function submitRegister(bot, chatId, userId) {
     const label = await resolveName(userId);
     await approvalEvents.notifyAdminsApprovalRequest(
       bot, requestId, label,
-      paymentCards.buildAccountSummary({ ...r, account_number: r.number }),
+      paymentCards.buildAccountSummary({ ...r, account_number: r.number, owner_telegram_id: r.owner_telegram_id }),
       risk.reason, auth.isAdmin(userId) ? String(userId) : undefined,
     );
     sessionStore.clear(userId);

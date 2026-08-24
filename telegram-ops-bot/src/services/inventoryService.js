@@ -606,12 +606,18 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       : `↩️ *${target.name}* restored and active again.${nodeMoved ? '' : '\n\n⚠️ Their network node was not found — restore it from Contact Network if needed.'}`;
   } else if (aj.action === 'add_bank') {
     const settingsRepo2 = require('../repositories/settingsRepository');
+    const bankEntry = require('../utils/bankEntry');
     const all = await settingsRepo2.getAll();
     const banks = (all.BANK_LIST || '').split(',').map((b) => b.trim()).filter(Boolean);
-    if (banks.map((b) => b.toLowerCase()).includes(String(aj.bank_name || '').toLowerCase())) {
-      return { ok: false, message: `Bank "${aj.bank_name}" already exists.` };
+    // BANK-3 — normalise at the WRITE, so "OPAY — OPAY" can never enter the
+    // list even from a request queued before the flow fix (or by any future
+    // caller). Dedupe compares normalised too: "X — X" IS "X".
+    const entry = bankEntry.normalize(aj.bank_name);
+    if (!entry) return { ok: false, message: 'Bank name missing.' };
+    if (banks.some((b) => bankEntry.same(b, entry))) {
+      return { ok: false, message: `Bank "${entry}" already exists.` };
     }
-    banks.push(aj.bank_name);
+    banks.push(entry);
     await settingsRepo2.set('BANK_LIST', banks.join(','));
   } else if (aj.action === 'remove_bank') {
     const settingsRepo2 = require('../repositories/settingsRepository');
@@ -1344,6 +1350,20 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const paymentAccountsRepo = require('../repositories/paymentAccountsRepository');
     const acct = await paymentAccountsRepo.findByApprovalRequestId(requestId);
     if (!acct) return { ok: false, message: 'Payment account row not found for this request.' };
+    // PAY-ID (owner hard rule, 23-Aug-2026) — re-verify the linked identity
+    // AT APPROVAL, not just at submit. A request raised while someone was an
+    // employee must not become a payable account after they were deactivated
+    // or removed. Contractors carry no Telegram identity by design; PAY-1's
+    // admin-vouches rule covers them at the door.
+    const ownerType = String(acct.owner_type || aj.owner_type || '').toLowerCase();
+    if (ownerType !== 'contractor') {
+      const linkedId = acct.owner_telegram_id || aj.owner_telegram_id || '';
+      const employeeIdentity = require('./employeeIdentity');
+      const check = await employeeIdentity.verifyEmployee(linkedId);
+      if (!check.ok) {
+        return { ok: false, message: `Not registered: ${check.message}` };
+      }
+    }
     if (acct.status === 'active') {
       customMessage = `ℹ️ ${acct.owner_name}'s account was already active — nothing changed.`;
     } else {
