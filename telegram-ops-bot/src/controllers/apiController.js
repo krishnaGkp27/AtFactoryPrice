@@ -962,10 +962,23 @@ async function getOpsTasks(req, res) {
 
     // Everyone who could hold work, so an idle person still gets a row —
     // "nothing assigned" is a fact a work plan should show, not hide.
+    const holdsWork = new Set(tasks.map((t) => t.person_id));
     const people = (users || [])
-      .filter((u) => String(u.status || 'active').trim().toLowerCase() === 'active')
+      // Active staff, PLUS anyone still holding live work. Filtering on
+      // status alone orphaned a deactivated person's unfinished tasks: they
+      // stayed in the payload with no row to draw them on, so the work
+      // silently left the plan at the moment someone most needs to see it.
+      .filter((u) => String(u.status || 'active').trim().toLowerCase() === 'active'
+        || holdsWork.has(String(u.user_id)))
       .map((u) => ({ id: String(u.user_id), name: u.name || String(u.user_id) }))
       .sort((a, b) => a.name.localeCompare(b.name));
+    // A task whose assignee is not on the Users sheet at all still needs a row.
+    for (const id of holdsWork) {
+      if (!people.some((p) => p.id === id)) {
+        const t = tasks.find((x) => x.person_id === id);
+        people.push({ id, name: (t && t.person_name) || id });
+      }
+    }
 
     res.json({ ok: true, people, tasks, now: new Date().toISOString() });
   } catch (e) {

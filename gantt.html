@@ -183,18 +183,28 @@ function barFor(task, win, now) {
   if (task.status === 'completed' || task.status === 'submitted') {
     end = new Date(task.submitted_at || task.approved_at || now);
   } else if (task.track === 'incentivized' && task.agreed_deadline) {
-    end = new Date(task.agreed_deadline);
-    if (VIEW === 'day') { end.setHours(HOURS[1], 0, 0, 0); }
+    // A date-only 'YYYY-MM-DD' parses as UTC midnight — 01:00 that morning
+    // in Lagos — so an untouched deadline read as "blown" for the whole of
+    // the day it was actually due. The deal runs to the END of its agreed
+    // day, in BOTH views; correcting only the day view made the two scales
+    // disagree about the same task on the same date.
+    end = new Date(task.agreed_deadline + 'T00:00:00');
+    end.setHours(HOURS[1], 0, 0, 0);
   } else if (task.eta_hours != null) {
     end = new Date(start.getTime() + task.eta_hours * 3600000);
   } else {
     end = new Date(now);
   }
-  if (end < win.start || start > win.end) return null; // not in view
+  if (start > win.end) return null;            // hasn't begun in this view
+  var over = (task.status === 'active') && end < now;
+  // A bar that ran out before the window opened is NOT out of view: that is
+  // exactly the overdue work this chart exists to surface, and dropping it
+  // also erased it from the person's overdue count. Only settled work that
+  // finished earlier is genuinely off today's plan.
+  if (end < win.start && !over) return null;
 
   var l = pct(start, win);
-  var r = pct(end, win);
-  var over = (task.status === 'active') && end < now;
+  var r = Math.max(pct(end, win), l + 2);
   var cls = task.status === 'completed' ? 'done'
     : (task.track === 'incentivized' ? 'inc' : 'sal');
   return {
@@ -210,7 +220,7 @@ function barFor(task, win, now) {
 function barLabel(task, bar) {
   if (bar.waiting) return esc(task.title) + ' <span class="eta">· waiting</span>';
   var tail = '';
-  if (task.status === 'completed') tail = '· ETA ' + fmtHours(task.eta_hours) + ' ✓';
+  if (task.status === 'completed') tail = task.eta_hours != null ? '· ETA ' + fmtHours(task.eta_hours) + ' ✓' : '· done ✓';
   else if (task.track === 'incentivized') {
     tail = '· by ' + (task.agreed_deadline ? esc(task.agreed_deadline.slice(5)) : '—') + (task.hasIncentive ? ' · ₦' : '');
   } else if (task.eta_hours != null) tail = '· ETA ' + fmtHours(task.eta_hours);
@@ -229,7 +239,7 @@ function tipFor(task, bar, now) {
   }
   if (bar.over) parts.push('PAST ITS TIME — over by ' + fmtHours(Math.round((now - bar.end) / 3600000 * 10) / 10));
   parts.push('From ' + task.assigned_by_name + ' · priority: ' + task.priority);
-  return parts.join('|');
+  return parts;
 }
 
 /* ── Render ─────────────────────────────────────────────────────────────── */
@@ -297,7 +307,8 @@ function render() {
           : (done ? ' · <b>' + done + ' done</b>' : ' · <b>on track</b>'));
 
     html += '<div class="grow"><div class="gwho"><div class="nm">' + esc(p.name) + '</div>'
-      + '<div class="load">' + load + '</div></div><div class="gtrack">' + grid
+      + '<div class="load">' + load + '</div></div><div class="gtrack" style="min-height:'
+      + Math.max(56, 8 + Math.max(1, bars.length) * 28) + 'px">' + grid
       + '<span class="nowline" style="left:' + nowPct.toFixed(2) + '%"></span>'
       + (firstRow ? '<span class="nowtag" style="left:' + nowPct.toFixed(2) + '%">NOW ' + hhmm(now) + '</span>' : '');
     firstRow = false;
@@ -306,14 +317,16 @@ function render() {
       html += '<span class="gempty">nothing assigned ' + (VIEW === 'day' ? 'today' : 'this week') + '</span>';
     } else {
       bars.forEach(function (b, i) {
-        var top = 8 + (i % 2) * 28;
+        // One line per bar; the row grows to fit, so a third task can no
+        // longer paint on top of the first and hide it entirely.
+        var top = 8 + i * 28;
         if (b.bar.over && b.bar.overTo != null) {
           html += '<div class="overflag" style="left:' + (b.bar.left + b.bar.width).toFixed(2) + '%;width:'
             + Math.max(0, b.bar.overTo - b.bar.left - b.bar.width).toFixed(2) + '%;top:' + top + 'px"></div>';
         }
         html += '<div class="task ' + b.bar.cls + '" style="left:' + b.bar.left.toFixed(2) + '%;width:'
           + b.bar.width.toFixed(2) + '%;top:' + top + 'px" data-info="'
-          + esc(b.t.title + '|' + tipFor(b.t, b.bar, now)) + '">'
+          + esc(JSON.stringify([b.t.title].concat(tipFor(b.t, b.bar, now)))) + '">'
           + '<span class="dot ' + priClass(b.t.priority) + '"></span>'
           + '<span class="tx">' + barLabel(b.t, b.bar) + '</span></div>';
       });
@@ -382,7 +395,8 @@ function hideTip() { tip.hidden = true; }
 document.addEventListener('click', function (e) {
   var t = e.target.closest('.task');
   if (!t || !t.dataset.info) { if (!e.target.closest('#tip')) hideTip(); return; }
-  var parts = t.dataset.info.split('|');
+  var parts;
+  try { parts = JSON.parse(t.dataset.info); } catch (_) { return; }
   tip.innerHTML = '<b></b>' + parts.slice(1).map(function () { return '<div class="l"></div>'; }).join('');
   tip.querySelector('b').textContent = parts[0];
   tip.querySelectorAll('.l').forEach(function (node, i) { node.textContent = parts[i + 1]; });

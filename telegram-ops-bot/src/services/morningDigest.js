@@ -28,6 +28,30 @@ const { LAGOS_TZ } = require('../utils/dates');
 
 const CHECK_INTERVAL_MS = 60 * 1000;
 const NOTES_CAP = 15;
+/**
+ * TSK-V2 — is this task past its time?
+ *
+ * Two tracks, two clocks. An incentivized task has an agreed DATE. A
+ * salaried task has no date at all: the worker committed HOURS and the
+ * finish is start + those hours, computed here (§10 — deriving it is the
+ * whole point; storing it would create a second source of truth).
+ *
+ * Without this the split would have made every salaried task invisible to
+ * the overdue count — the digest filtered on a column salaried work no
+ * longer fills.
+ */
+function taskIsOverdue(t, todayIso, nowMs) {
+  if ((t.status || '') !== 'active') return false;
+  if (t.proposed_deadline) {
+    const day = fmtDay(t.proposed_deadline);
+    return !!day && day <= todayIso;
+  }
+  const hrs = Number(t.proposed_hours);
+  const start = t.started_at ? new Date(t.started_at).getTime() : NaN;
+  if (!Number.isFinite(hrs) || Number.isNaN(start)) return false;
+  return start + hrs * 3600000 <= nowMs;
+}
+
 const LIST_CAP = 10;
 const LOWSTOCK_CAP = 20;
 const MAX_BUTTONS = 5;
@@ -199,7 +223,8 @@ const CATEGORIES = [
     label: '📋 Tasks',
     async summarize(settings, todayIso) {
       const all = await require('../repositories/tasksRepository').getAll();
-      const due = all.filter((t) => (t.status || '') === 'active' && fmtDay(t.proposed_deadline) && fmtDay(t.proposed_deadline) <= todayIso);
+      const nowMs = Date.now();
+      const due = all.filter((t) => taskIsOverdue(t, todayIso, nowMs));
       const submitted = all.filter((t) => (t.status || '') === 'submitted');
       const count = due.length + submitted.length;
       if (!count) return { line: '', count: 0 };
@@ -207,7 +232,8 @@ const CATEGORIES = [
     },
     async detail(settings, todayIso) {
       const all = await require('../repositories/tasksRepository').getAll();
-      const due = all.filter((t) => (t.status || '') === 'active' && fmtDay(t.proposed_deadline) && fmtDay(t.proposed_deadline) <= todayIso);
+      const nowMs = Date.now();
+      const due = all.filter((t) => taskIsOverdue(t, todayIso, nowMs));
       const submitted = all.filter((t) => (t.status || '') === 'submitted');
       if (!due.length && !submitted.length) return '📋 *Tasks* — nothing due.';
       // The row carries no assigned_to_name — tasksRepository.parse() never
@@ -219,7 +245,7 @@ const CATEGORIES = [
         try { nameOf.set(id, await cards.resolveUserLabel(id)); } catch (_) { nameOf.set(id, id); }
       }
       let s = '📋 *Tasks*';
-      if (due.length) s += `\n\n*Due/overdue:*\n${due.slice(0, LIST_CAP).map((t) => `• "${t.title || t.task_id}" — ${nameOf.get(String(t.assigned_to)) || t.assigned_to}, due ${fmtDay(t.proposed_deadline)}`).join('\n')}`;
+      if (due.length) s += `\n\n*Due/overdue:*\n${due.slice(0, LIST_CAP).map((t) => `• "${t.title || t.task_id}" — ${nameOf.get(String(t.assigned_to)) || t.assigned_to}, ${t.proposed_deadline ? `due ${fmtDay(t.proposed_deadline)}` : `${t.proposed_hours}h given, over`}`).join('\n')}`;
       if (submitted.length) s += `\n\n*Awaiting sign-off:* ${submitted.length}`;
       return s;
     },

@@ -33,6 +33,10 @@ const taskEventsRepository = require('../repositories/taskEventsRepository');
 const incentivesRepository = require('../repositories/incentivesRepository');
 const taskStateMachine = require('./taskStateMachine');
 const sessionStore = require('../utils/sessionStore');
+// TSK-V2 — the LOCAL fmtDate below is date-only; clock times come from the
+// shared util, which is also Lagos-aware (TIME-1). Kept under a distinct
+// name so the 14 existing fmtDate call sites are untouched.
+const dateUtil = require('../utils/formatDate');
 const deptGraph = require('../org/deptGraph');
 const auth = require('../middlewares/auth');
 const config = require('../config');
@@ -578,6 +582,20 @@ async function startProposeFlow(bot, callbackQuery, taskId) {
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
+  // TSK-V2 — salaried work no longer negotiates. Cards minted before the
+  // split still carry this chip, so send them to the one that works rather
+  // than letting them walk the wizard and fail at the end.
+  if (task.track !== 'incentivized') {
+    await editOrSend(bot, chatId, messageId,
+      `📋 *${escapeMd(task.title)}*${descLine(task.description)}\n\n`
+      + 'This one just needs the time you need — no date to agree.',
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
+        [{ text: '⏱ Accept — give time', callback_data: `tsk:est:${taskId}` },
+          { text: '❌ Decline', callback_data: `tsk:dec:${taskId}` }],
+        navFooterRow(),
+      ] } });
+    return;
+  }
 
   // PTK-1 — if the task came from a photo whose text named a date, offer
   // it as the FIRST deadline chip (suggestion only: the doer still
@@ -594,7 +612,10 @@ async function startProposeFlow(bot, callbackQuery, taskId) {
     type: 'task_propose_flow',
     step: 'hours',
     flowMessageId: messageId,
-    data: { taskId, taskTitle: task.title, taskPriority: task.priority, taskTrack: task.track, noteDue },
+    data: {
+      taskId, taskTitle: task.title, taskDescription: task.description,
+      taskPriority: task.priority, taskTrack: task.track, noteDue,
+    },
   });
   await renderHoursPicker(bot, chatId, userId);
 }
@@ -786,7 +807,7 @@ async function submitEstimate(bot, chatId, userId, hours) {
 /** "Working" card — the same message, now showing the running commitment. */
 function runningCardText(task) {
   const pm = PRIORITY_META[task.priority] || PRIORITY_META.normal;
-  const started = task.started_at ? fmtDate.withTime(task.started_at) : '';
+  const started = task.started_at ? dateUtil.withTime(task.started_at) : '';
   return `🟢 *Working — clock started*\n\n`
     + `${pm.icon} *${escapeMd(task.title)}*${descLine(task.description)}\n\n`
     + `⏱ Time you gave: *${fmtHours(task.proposed_hours)}*${started ? ` · started ${escapeMd(started)}` : ''}\n`
@@ -805,7 +826,7 @@ function impliedEnd(task) {
   if (!start || Number.isNaN(start.getTime()) || !Number.isFinite(hrs)) return '—';
   const end = new Date(start.getTime() + hrs * 3600 * 1000);
   const sameDay = end.toDateString() === start.toDateString();
-  const hhmm = fmtDate.withTime(end.toISOString());
+  const hhmm = dateUtil.withTime(end.toISOString());
   return sameDay ? `${String(hhmm).slice(-5)} today` : String(hhmm);
 }
 
@@ -949,7 +970,7 @@ async function submitProposal(bot, chatId, userId) {
     logger.error(`taskFlow.submitProposal: ${e.message}`);
     sessionStore.clear(userId);
     await editOrSend(bot, chatId, session.flowMessageId,
-      `❌ Couldn\'t submit proposal: ${e.message}`,
+      `❌ Couldn\'t submit proposal: ${escapeMd(e.message)}`,
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }

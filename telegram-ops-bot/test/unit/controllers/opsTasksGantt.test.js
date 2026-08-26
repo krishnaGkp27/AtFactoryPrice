@@ -107,7 +107,25 @@ test('every active person gets a row, so an idle one is visible too', async () =
   const { body } = await asAdmin();
   const names = body.people.map((p) => p.name);
   assert.ok(names.includes('Abdul'), 'someone holding no tasks still appears');
-  assert.ok(!names.includes('Gone'), 'inactive staff do not');
+  assert.ok(!names.includes('Gone'), 'inactive staff with no live work do not');
+});
+
+test('a deactivated person still holding live work keeps their row', async () => {
+  // Filtering on status alone orphaned their unfinished tasks: still in the
+  // payload, but with no row to draw them on, so the work silently left the
+  // plan at exactly the moment someone needs to reassign it.
+  const original = tasksRepository.getAll;
+  tasksRepository.getAll = async () => ([
+    { task_id: 'T9', title: 'Half-finished', assigned_to: '902', assigned_by: '100',
+      status: 'active', track: 'salaried', priority: 'normal', started_at: TODAY, proposed_hours: 4 },
+  ]);
+  try {
+    const { body } = await asAdmin();
+    assert.ok(body.people.some((p) => p.id === '902'), 'the deactivated holder still gets a row');
+    assert.ok(body.tasks.some((t) => t.person_id === '902'), 'and their work is still drawn');
+  } finally {
+    tasksRepository.getAll = original;
+  }
 });
 
 test('admin-only, and never a write path', async () => {
