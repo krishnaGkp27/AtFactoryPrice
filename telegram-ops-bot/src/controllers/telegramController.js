@@ -10200,18 +10200,28 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
           break;
         }
         const webSessionService = require('../services/webSessionService');
-        const token = webSessionService.mintLoginToken({
+        // GNT-2 — the reporting selection. Each button carries its OWN
+        // single-use token (a magic link redeems once, so one token cannot
+        // feed three buttons) and lands on its page via the /auth `to`
+        // whitelist. Once inside, the pages cross-link through the nav
+        // strip on the 12h session cookie.
+        const identity = {
           userId: uid,
           name: (u && u.name) || uid,
           role: isAdm ? 'admin' : 'manager',
           departments: (u && u.departments) || [],
           warehouses: (u && u.warehouses) || [],
-        });
+        };
+        const linkTo = (page) => `${config.baseUrl}/auth?t=${webSessionService.mintLoginToken(identity)}&to=${encodeURIComponent(page)}`;
         await bot.sendMessage(chatId,
-          `📊 *Your dashboard login*\n\nOne tap, no password — this link works ONCE and expires in 5 minutes. Don't forward it.`,
+          `📊 *Your dashboard login*\n\nPick a report. Each link works ONCE and expires in 5 minutes — once you're in, the top bar switches between all of them for 12 hours. Don't forward these.`,
           {
             parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: [[{ text: '📊 Open Dashboard', url: `${config.baseUrl}/auth?t=${token}` }]] },
+            reply_markup: { inline_keyboard: [
+              [{ text: '📊 Overview', url: linkTo('/ops') }],
+              [{ text: '🧮 Allocation Matrix', url: linkTo('/allocations') }],
+              [{ text: '📅 Employee Work Plan', url: linkTo('/gantt') }],
+            ] },
           });
         break;
       }

@@ -76,12 +76,22 @@ tfoot .zero{color:var(--warn)}
 .card .k{display:inline-block;margin-top:16px;border:1px solid var(--bd);border-radius:3px;padding:10px 14px;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--gold);letter-spacing:.5px}
 .empty{padding:26px 18px;color:var(--mut);font-size:13px}
 [hidden]{display:none!important}
+
+/* GNT-2 — the reporting selection: one strip, same three links on every
+   session page, current page lit. The 12h cookie rides plain <a> links. */
+.repnav{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.repnav a{display:inline-block;background:#1c1c22;border:1px solid #2c2c33;border-radius:3px;
+  color:#8b8b93;font-size:12px;font-weight:600;letter-spacing:.4px;padding:9px 13px;
+  text-decoration:none;min-height:38px;line-height:1.4}
+.repnav a:hover{border-color:#d4af5f;color:#f2f2f2}
+.repnav a.here{background:#d4af5f;border-color:#d4af5f;color:#14161e}
 </style>
 </head>
 <body>
 <div id="app" data-screen-label="Allocation Matrix — admin">
 <div class="bar">
 <div class="wm">AT<b>FACTORY</b>PRICE<small>ALLOCATION MATRIX · ADMIN</small></div>
+<nav class="repnav"><a href="/ops">📊 Overview</a><a href="/allocations" class="here">🧮 Allocations</a><a href="/gantt">📅 Work plan</a></nav>
 <div class="sp">
 <span class="stamp" id="stamp">last updated <b>—</b></span>
 <button class="rfr" id="refresh" type="button"><span class="ic">&#8635;</span> Refresh</button>

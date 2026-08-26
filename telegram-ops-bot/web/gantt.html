@@ -77,12 +77,22 @@ a{color:#7fb8ff}a:hover{color:#a8cdff}
 .demo button{border:0;background:transparent;color:#999;font:600 11px/1 inherit;padding:6px 9px;border-radius:14px;cursor:pointer;white-space:nowrap}
 .demo button.on{background:var(--gold);color:#111}
 [hidden]{display:none!important}
+
+/* GNT-2 — the reporting selection: one strip, same three links on every
+   session page, current page lit. The 12h cookie rides plain <a> links. */
+.repnav{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.repnav a{display:inline-block;background:#1c1c22;border:1px solid #2c2c33;border-radius:3px;
+  color:#8b8b93;font-size:12px;font-weight:600;letter-spacing:.4px;padding:9px 13px;
+  text-decoration:none;min-height:38px;line-height:1.4}
+.repnav a:hover{border-color:#d4af5f;color:#f2f2f2}
+.repnav a.here{background:#d4af5f;border-color:#d4af5f;color:#14161e}
 </style>
 </head>
 <body>
 <div id="app" data-screen-label="Employee Gantt — admin">
 <div class="bar">
 <div class="wm">AT<b>FACTORY</b>PRICE<small>EMPLOYEE GANTT · WORK PLAN</small></div>
+<nav class="repnav"><a href="/ops">📊 Overview</a><a href="/allocations">🧮 Allocations</a><a href="/gantt" class="here">📅 Work plan</a></nav>
 <div class="sp">
 <div class="seg"><button id="vday" class="on" onclick="setView('day')">Day</button><button id="vweek" onclick="setView('week')">Week</button></div>
 <span class="stamp" id="stamp">last updated <b>—</b></span>

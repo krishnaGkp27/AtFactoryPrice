@@ -169,7 +169,12 @@ const SESSION_PAGES = {
   '/gantt': 'gantt.html',             // GNT-1 — the employee work plan
 };
 for (const [route, file] of Object.entries(SESSION_PAGES)) {
-  app.get(route, (req, res) => res.sendFile(require('path').join(__dirname, '..', file)));
+  // GNT-2 — the session pages live INSIDE the bot directory. They used to sit
+  // at the repo root and be served from `__dirname/..`, which worked on a
+  // full checkout but 404'd in production: Railway deploys only
+  // telegram-ops-bot/, so the parent directory simply is not in the
+  // container. Every session page was unreachable on the live server.
+  app.get(route, (req, res) => res.sendFile(require('path').join(__dirname, 'web', file)));
 }
 
 // ANA-1a — magic-link login: the bot mints a single-use token; redeeming

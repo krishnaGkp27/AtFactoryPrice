@@ -7829,7 +7829,7 @@ function runS54() {
   } else fail('S54.7', 'linked supply-request path incomplete');
 
   // ---- S54.8 — ALC-1 allocation matrix: fixtures gone, server owns the cap ----
-  const pageSrc = fs.readFileSync(path.join(__dirname, '../../allocations.html'), 'utf8');
+  const pageSrc = fs.readFileSync(path.join(__dirname, '../web/allocations.html'), 'utf8');
   const apiSrc54 = fs.readFileSync(path.join(__dirname, '../src/controllers/apiController.js'), 'utf8');
   const fixturesGone = !pageSrc.includes('CAPS')
     && !pageSrc.includes('CAPTXT')
@@ -7852,7 +7852,7 @@ function runS54() {
   }
 
   // ---- S54.9 — GNT-1 employee gantt: wired, read-only, money-free ----
-  const ganttSrc = fs.readFileSync(path.join(__dirname, '../../gantt.html'), 'utf8');
+  const ganttSrc = fs.readFileSync(path.join(__dirname, '../web/gantt.html'), 'utf8');
   const srvGantt = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
   const apiGantt = fs.readFileSync(path.join(__dirname, '../src/controllers/apiController.js'), 'utf8');
   const gWired = ganttSrc.includes("fetch('/api/ops/tasks'")
@@ -7866,8 +7866,19 @@ function runS54() {
   const gMoneyFree = apiGantt.includes('hasIncentive: withIncentive.has')
     && !/amount/.test(apiGantt.slice(apiGantt.indexOf('async function getOpsTasks'),
       apiGantt.indexOf('async function postOpsAllocation')));
-  if (gWired && gReadOnly && gRoute && gMoneyFree) {
-    pass('S54.9 GNT-1: gantt wired live, read-only, no amounts on the chart');
+  // GNT-2 — the production 404 lesson: the pages must live INSIDE the bot
+  // directory (Railway deploys only telegram-ops-bot/), and every session
+  // page must carry the reporting-selection nav to the other two.
+  const inContainer = fs.existsSync(path.join(__dirname, '../web/ops.html'))
+    && fs.existsSync(path.join(__dirname, '../web/allocations.html'))
+    && fs.existsSync(path.join(__dirname, '../web/gantt.html'))
+    && srvGantt.includes("join(__dirname, 'web', file)");
+  const navEverywhere = ['ops', 'allocations', 'gantt'].every((pg) => {
+    const src = fs.readFileSync(path.join(__dirname, `../web/${pg}.html`), 'utf8');
+    return src.includes('href="/ops"') && src.includes('href="/allocations"') && src.includes('href="/gantt"');
+  });
+  if (gWired && gReadOnly && gRoute && gMoneyFree && inContainer && navEverywhere) {
+    pass('S54.9 GNT-1/2: gantt wired + pages in-container + nav on every session page');
   } else {
     fail('S54.8', JSON.stringify({ fixturesGone, serverOwnsCap, wiring }));
   }
