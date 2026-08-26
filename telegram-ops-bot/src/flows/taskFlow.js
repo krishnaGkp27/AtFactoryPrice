@@ -33,6 +33,9 @@ const taskEventsRepository = require('../repositories/taskEventsRepository');
 const incentivesRepository = require('../repositories/incentivesRepository');
 const taskStateMachine = require('./taskStateMachine');
 const sessionStore = require('../utils/sessionStore');
+// TSK-V3 — the stall threshold (TASK_STALL_DAYS) is owner-tunable from the
+// Settings sheet; 30s repo cache keeps this off the hot path.
+const settingsRepository = require('../repositories/settingsRepository');
 // TSK-V2 — the LOCAL fmtDate below is date-only; clock times come from the
 // shared util, which is also Lagos-aware (TIME-1). Kept under a distinct
 // name so the 14 existing fmtDate call sites are untouched.
@@ -1410,7 +1413,38 @@ async function startPriorityPicker(bot, callbackQuery, taskId) {
     });
 }
 
-async function applyPriority(bot, callbackQuery, taskId, newPriority) {
+/**
+ * TSK-V3 — the same 4-priority pick rendered ONTO the admin task card
+ * (minimum depth: the card becomes the picker, the pick returns the card).
+ */
+async function renderInlinePriorityPicker(bot, callbackQuery, taskId, ctx) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const task = await tasksRepository.getById(taskId);
+  if (!task || !OPEN_STATUSES.has(task.status)) {
+    await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx);
+    return;
+  }
+  if (!(await _guardAssignerOrAdmin(bot, callbackQuery, task))) return;
+  const cur = getPriority(task);
+  const cs = ctxStr(ctx);
+  const btns = ['critical', 'high', 'normal', 'low'].map((p) => ({
+    text: `${PRIORITY_META[p].icon} ${PRIORITY_META[p].label}${cur === p ? ' ✓' : ''}`,
+    callback_data: `tsk:tps:${cs}:${p}:${taskId}`,
+  }));
+  await editOrSend(bot, chatId, messageId,
+    `🔝 *Priority*\n\n${escapeMd(task.title)}\n\nCurrent: ${PRIORITY_META[cur]?.icon || ''} *${PRIORITY_META[cur]?.label || cur}* — tap the new one:`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [
+        btns.slice(0, 2), btns.slice(2, 4),
+        [{ text: '⬅ Back', callback_data: `tsk:tt:${cs}:${taskId}` }],
+      ] },
+    });
+}
+
+async function applyPriority(bot, callbackQuery, taskId, newPriority, opts = {}) {
   const userId = String(callbackQuery.from.id);
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
@@ -1424,6 +1458,8 @@ async function applyPriority(bot, callbackQuery, taskId, newPriority) {
 
   const oldPriority = getPriority(task);
   if (oldPriority === newPriority) {
+    // TSK-V3 in-place path: tapping the current priority just returns the card.
+    if (opts.afterRender) { await opts.afterRender(); return; }
     await editOrSend(bot, chatId, messageId,
       `ℹ️ Priority is already *${PRIORITY_META[newPriority].label}*.`,
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
@@ -1443,9 +1479,15 @@ async function applyPriority(bot, callbackQuery, taskId, newPriority) {
 
   const oldPm = PRIORITY_META[oldPriority] || PRIORITY_META.normal;
   const newPm = PRIORITY_META[newPriority];
-  await editOrSend(bot, chatId, messageId,
-    `🔝 *Priority changed*\n\n${escapeMd(task.title)}\n${oldPm.icon} ${oldPm.label} → ${newPm.icon} *${newPm.label}*`,
-    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+  if (opts.afterRender) {
+    // TSK-V3 — return to the card (now wearing the new dot) instead of a
+    // terminal "changed" screen; the doer DM + feed below still go out.
+    await opts.afterRender();
+  } else {
+    await editOrSend(bot, chatId, messageId,
+      `🔝 *Priority changed*\n\n${escapeMd(task.title)}\n${oldPm.icon} ${oldPm.label} → ${newPm.icon} *${newPm.label}*`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+  }
 
   // Smart doer notification: silent DM when the new priority is normal/
   // low (no need to interrupt them), audible DM when it's high/critical
@@ -1473,8 +1515,12 @@ async function applyPriority(bot, callbackQuery, taskId, newPriority) {
   }
 }
 
-/** Show the drop confirm card with optional reason reply. */
-async function startDropAsk(bot, callbackQuery, taskId) {
+/**
+ * Show the drop confirm card with optional reason reply. `returnCtx`
+ * (TSK-V3) is the list position to land on after the drop — the drop
+ * session already exists for the typed reason, so the context rides it.
+ */
+async function startDropAsk(bot, callbackQuery, taskId, returnCtx = null) {
   const userId = String(callbackQuery.from.id);
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
@@ -1497,7 +1543,7 @@ async function startDropAsk(bot, callbackQuery, taskId) {
   sessionStore.set(userId, {
     type: 'task_drop_flow',
     flowMessageId: messageId,
-    data: { taskId, taskTitle: task.title, doerName },
+    data: { taskId, taskTitle: task.title, doerName, returnCtx },
   });
   await editOrSend(bot, chatId, messageId,
     `🚫 *Drop task*\n\n${escapeMd(task.title)}\n👤 From: *${escapeMd(doerName)}*\n\n` +
@@ -1505,8 +1551,8 @@ async function startDropAsk(bot, callbackQuery, taskId) {
     {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: [
-        [{ text: '🚫 Confirm drop', callback_data: `tsk:drop_go:${taskId}` }],
-        [{ text: '⬅ Cancel',         callback_data: 'tsk:drop_cancel' }],
+        [{ text: '🚫 Yes, drop', callback_data: `tsk:drop_go:${taskId}` },
+         { text: '⬅ Keep',       callback_data: 'tsk:drop_cancel' }],
       ] },
     });
 }
@@ -1527,9 +1573,14 @@ async function submitDrop(bot, chatId, userId, reason) {
   }
   sessionStore.clear(userId, 'completed');
   const reasonLine = reason ? `\n💬 _Reason:_ ${escapeMd(reason)}` : '';
-  await editOrSend(bot, chatId, session.flowMessageId,
-    `🚫 *Task dropped*\n\n${escapeMd(t.taskTitle)}\n👤 ${escapeMd(t.doerName)} has been notified.${reasonLine}`,
-    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+  if (t.returnCtx) {
+    // TSK-V3 — back to the list, task gone; that IS the confirmation.
+    await renderTeamList(bot, chatId, userId, session.flowMessageId, parseListCtx(t.returnCtx));
+  } else {
+    await editOrSend(bot, chatId, session.flowMessageId,
+      `🚫 *Task dropped*\n\n${escapeMd(t.taskTitle)}\n👤 ${escapeMd(t.doerName)} has been notified.${reasonLine}`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+  }
   // Polite DM to the doer — they should know not to do the work.
   try {
     const task = await tasksRepository.getById(t.taskId);
@@ -1712,6 +1763,56 @@ async function handleCallback(bot, callbackQuery) {
     await renderDoerTaskCard(bot, chatId, userId, data.slice('tsk:eback:'.length), messageId);
     return true;
   }
+  // TSK-V3 — the Team Tasks admin list. List context (mode:filter:page)
+  // rides in the callback_data, never in a session: a restart or a week-old
+  // message can't strand the pager. Session-free by construction.
+  if (data.startsWith('tsk:tp:')) {
+    await renderTeamList(bot, chatId, userId, messageId, parseListCtx(data.slice('tsk:tp:'.length)));
+    return true;
+  }
+  if (data.startsWith('tsk:tt:')) {
+    const p = data.slice('tsk:tt:'.length).split(':');
+    await renderAdminTaskCard(bot, chatId, userId, p.slice(3).join(':'), messageId,
+      parseListCtx(p.slice(0, 3).join(':')));
+    return true;
+  }
+  if (data.startsWith('tsk:tpp:')) {
+    const p = data.slice('tsk:tpp:'.length).split(':');
+    await renderInlinePriorityPicker(bot, callbackQuery, p.slice(3).join(':'),
+      parseListCtx(p.slice(0, 3).join(':')));
+    return true;
+  }
+  if (data.startsWith('tsk:tps:')) {
+    // tsk:tps:<mode>:<filter>:<page>:<priority>:<taskId>
+    const p = data.slice('tsk:tps:'.length).split(':');
+    const ctx = parseListCtx(p.slice(0, 3).join(':'));
+    const tid = p.slice(4).join(':');
+    await applyPriority(bot, callbackQuery, tid, p[3], {
+      afterRender: () => renderAdminTaskCard(bot, chatId, userId, tid, messageId, ctx),
+    });
+    return true;
+  }
+  if (data.startsWith('tsk:sg:')) {
+    // tsk:sg:<y|n>:<mode>:<filter>:<page>:<taskId> — sign-off from the admin
+    // card; on success the LIST re-renders with the task gone, so the next
+    // one is right there.
+    const p = data.slice('tsk:sg:'.length).split(':');
+    const ctx = parseListCtx(p.slice(1, 4).join(':'));
+    await handleSignOff(bot, callbackQuery, p.slice(4).join(':'), p[0] === 'y', {
+      afterRender: () => renderTeamList(bot, chatId, userId, messageId, ctx),
+    });
+    return true;
+  }
+  if (data.startsWith('tsk:rmd:')) {
+    const p = data.slice('tsk:rmd:'.length).split(':');
+    await handleRemind(bot, callbackQuery, parseListCtx(p.slice(0, 3).join(':')), p.slice(3).join(':'));
+    return true;
+  }
+  if (data.startsWith('tsk:tdd:')) {
+    const p = data.slice('tsk:tdd:'.length).split(':');
+    await startDropAsk(bot, callbackQuery, p.slice(3).join(':'), p.slice(0, 3).join(':'));
+    return true;
+  }
   if (data.startsWith('tsk:prp:'))     { await startProposeFlow (bot, callbackQuery, data.slice('tsk:prp:'.length)); return true; }
   if (data.startsWith('tsk:dec:'))     { await handleDecline    (bot, callbackQuery, data.slice('tsk:dec:'.length)); return true; }
   if (data.startsWith('tsk:acc:'))     { await handleAcceptTimeline(bot, callbackQuery, data.slice('tsk:acc:'.length)); return true; }
@@ -1759,7 +1860,14 @@ async function handleCallback(bot, callbackQuery) {
   }
   if (data === 'tsk:drop_cancel') {
     const s = sessionStore.get(userId);
+    const back = s && s.type === 'task_drop_flow' ? s.data : null;
     if (s && s.type === 'task_drop_flow') sessionStore.clear(userId, 'cancelled');
+    if (back && back.returnCtx) {
+      // TSK-V3 — "Keep" returns the untouched task card, not a dead end.
+      await renderAdminTaskCard(bot, chatId, userId, back.taskId, messageId,
+        parseListCtx(back.returnCtx));
+      return true;
+    }
     await editOrSend(bot, chatId, messageId, '❌ Drop cancelled.', {
       reply_markup: { inline_keyboard: [navFooterRow()] },
     });
@@ -2153,7 +2261,7 @@ async function handleMarkDone(bot, callbackQuery, taskId) {
   }
 }
 
-async function handleSignOff(bot, callbackQuery, taskId, approve) {
+async function handleSignOff(bot, callbackQuery, taskId, approve, opts = {}) {
   const userId = String(callbackQuery.from.id);
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
@@ -2186,9 +2294,15 @@ async function handleSignOff(bot, callbackQuery, taskId, approve) {
     const assignerIncentiveLine = incentiveInfo
       ? `\n💰 Incentive: ${fmtMoney(incentiveInfo.amount, incentiveInfo.currency)} — *queued for payout*`
       : '';
-    await editOrSend(bot, chatId, messageId,
-      `✅ Task *${escapeMd(task.title)}* marked completed.\nID: \`${taskId}\`${assignerIncentiveLine}`,
-      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    if (opts.afterRender) {
+      // TSK-V3 — approving from the admin card re-renders the LIST with
+      // this task gone; the next sign-off is right there. DMs still go out.
+      await opts.afterRender();
+    } else {
+      await editOrSend(bot, chatId, messageId,
+        `✅ Task *${escapeMd(task.title)}* marked completed.\nID: \`${taskId}\`${assignerIncentiveLine}`,
+        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    }
     try {
       const doerIncentiveLine = incentiveInfo
         ? `\n💰 *Incentive earned:* ${fmtMoney(incentiveInfo.amount, incentiveInfo.currency)}  _(pending payout)_`
@@ -2208,9 +2322,13 @@ async function handleSignOff(bot, callbackQuery, taskId, approve) {
       logger.warn(`taskFlow.handleSignOff: adminFeed task.completed: ${e.message}`);
     }
   } else {
-    await editOrSend(bot, chatId, messageId,
-      `↩ Task *${escapeMd(task.title)}* sent back to active.\nID: \`${taskId}\``,
-      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    if (opts.afterRender) {
+      await opts.afterRender();
+    } else {
+      await editOrSend(bot, chatId, messageId,
+        `↩ Task *${escapeMd(task.title)}* sent back to active.\nID: \`${taskId}\``,
+        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    }
     try {
       await bot.sendMessage(task.assigned_to,
         `↩ Your task was sent back: *${escapeMd(task.title)}* — please re-check and tap *Mark done* again.`,
@@ -2345,119 +2463,477 @@ async function showMyTasks(bot, chatId, userId, messageId) {
   });
 }
 
-async function showTeamTasks(bot, chatId, userId, messageId) {
-  const isAdm = isAdmin(userId);
-  const actor = await usersRepository.findByUserId(userId);
-  if (!canManage(actor, isAdm)) {
-    await editOrSend(bot, chatId, messageId,
-      'You don\'t manage any department, so there are no team tasks to show.',
-      { reply_markup: { inline_keyboard: [navFooterRow()] } });
-    return;
+// ---------------------------------------------------------------------------
+// TSK-V3 — TEAM TASKS, the admin list (owner-approved layout, 26-Aug-2026).
+//
+// The old view rendered every task plus two buttons into one message: with
+// ~16 open tasks that was a 32-button pillar under a text wall nobody could
+// navigate, and past the 4096-char ceiling it silently failed. Now it is a
+// paged CHIP list: one tappable chip per task (status fact FIRST — phones
+// cut button text at ~28 chars, so whatever is last is what disappears),
+// priority-first order, a hard cap of TEAM_PAGE chips per page with a
+// Prev/Next pager, and each chip opening the task's own card edited in
+// place. List context (mode:filter:page) rides in the callback_data itself,
+// NOT in a session — a restart or a week-old message can never strand the
+// pager, and two admins can page independently.
+// ---------------------------------------------------------------------------
+
+const TEAM_PAGE = 8;
+// Statuses whose next move is the ASSIGNER'S (the 👉 group).
+const NEEDS_ASSIGNER = new Set(['awaiting_timeline_ack', 'awaiting_incentive', 'submitted']);
+// Statuses waiting on the WORKER — the only ones that can go ⚠️ stale.
+const WAITING_ON_WORKER = new Set(['assigned', 'awaiting_final_ack']);
+
+/** `o:a:0` → {mode, filter, page}. Tolerant: anything malformed → page 1 of All. */
+function parseListCtx(s) {
+  const parts = String(s || '').split(':');
+  const mode = ['o', 'd', 's'].includes(parts[0]) ? parts[0] : 'o';
+  const filter = /^\d+$/.test(parts[1] || '') ? parts[1] : 'a';
+  const page = Math.max(0, parseInt(parts[2], 10) || 0);
+  return { mode, filter, page };
+}
+function ctxStr(ctx) { return `${ctx.mode}:${ctx.filter}:${ctx.page}`; }
+
+async function stallDaysSetting() {
+  try {
+    const s = await settingsRepository.getAll();
+    const n = Number(s.TASK_STALL_DAYS);
+    return Number.isFinite(n) && n > 0 ? n : 7;
+  } catch (_) { return 7; }
+}
+
+/** Whole days since the task last moved (fallbacks for legacy rows). NaN → null. */
+function silentDays(task, nowMs) {
+  const iso = task.last_event_at || task.assigned_at || task.created_at;
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return null;
+  return Math.max(0, Math.floor(((nowMs ?? Date.now()) - t) / 86400000));
+}
+
+function isStalled(task, stallDays, nowMs) {
+  if (!WAITING_ON_WORKER.has(task.status)) return false;
+  const d = silentDays(task, nowMs);
+  return d != null && d > stallDays;
+}
+
+/** "11-May-2026" → "11-May" — chips and card metadata use the short form. */
+function fmtDateShort(iso) {
+  const s = fmtDate(iso);
+  return s && s.length > 6 ? s.slice(0, 6) : s;
+}
+
+function firstName(name) {
+  return String(name || '').trim().split(/\s+/)[0] || '';
+}
+
+/** The status fact that leads every chip. ~14 chars so the title survives. */
+function teamChipFact(t, stallDays, nowMs) {
+  switch (t.status) {
+    case 'awaiting_timeline_ack': {
+      const inc = t.track === 'incentivized' ? '₦ + ' : '';
+      const h = Number.isFinite(Number(t.proposed_hours)) ? ` ${fmtHours(t.proposed_hours)}` : '';
+      return `👉 ${inc}accept${h}?`;
+    }
+    case 'awaiting_incentive': return '👉 set ₦';
+    case 'submitted': return '👉 sign off';
+    case 'awaiting_final_ack': return '⌛ his OK';
+    case 'active':
+      if (t.track !== 'incentivized' && t.started_at && t.proposed_hours) {
+        return `🔵 ends ~${impliedEnd(t)}`;
+      }
+      return t.proposed_deadline ? `🔵 by ${fmtDateShort(t.proposed_deadline)}` : '🔵 running';
+    default: {
+      const d = silentDays(t, nowMs);
+      if (d == null) return '📨 waiting';
+      const icon = d > stallDays ? '⚠️' : '📨';
+      return `${icon} ${d === 0 ? 'today' : `${d}d`}`;
+    }
   }
+}
+
+/**
+ * Priority-first (owner's ruling over whose-move-first): 🔴→🟠→🟡→⚪;
+ * inside a colour the tasks needing the ASSIGNER come first, then the
+ * longest-assigned. In place.
+ */
+function sortForAdmin(list, nowMs) {
+  const assignedMs = (t) => {
+    const iso = t.assigned_at || t.created_at;
+    const ms = iso ? new Date(iso).getTime() : NaN;
+    return Number.isNaN(ms) ? (nowMs ?? Date.now()) : ms;
+  };
+  list.sort((a, b) => {
+    const pa = PRIORITY_RANK[getPriority(a)] ?? 2;
+    const pb = PRIORITY_RANK[getPriority(b)] ?? 2;
+    if (pa !== pb) return pa - pb;
+    const na = NEEDS_ASSIGNER.has(a.status) ? 0 : 1;
+    const nb = NEEDS_ASSIGNER.has(b.status) ? 0 : 1;
+    if (na !== nb) return na - nb;
+    return assignedMs(a) - assignedMs(b);
+  });
+  return list;
+}
+
+/**
+ * Two open tasks sharing a title are told apart by their assigned date
+ * ("Catelog upload (11-May)"). Map task_id → suffixed title.
+ */
+function dedupeTitles(list) {
+  const byTitle = new Map();
+  for (const t of list) {
+    const k = String(t.title || '').trim().toLowerCase();
+    byTitle.set(k, (byTitle.get(k) || 0) + 1);
+  }
+  const out = new Map();
+  for (const t of list) {
+    const k = String(t.title || '').trim().toLowerCase();
+    const dupe = (byTitle.get(k) || 0) > 1;
+    const when = dupe ? fmtDateShort(t.assigned_at || t.created_at) : '';
+    out.set(t.task_id, when ? `${t.title} (${when})` : t.title);
+  }
+  return out;
+}
+
+/**
+ * The task pool an admin's list draws from: everyone they manage UNION
+ * everything they personally assigned — a manager who assigned outside
+ * their department still sees (and can act on) that task.
+ */
+async function _teamPoolFor(userId, actor, isAdm) {
   const allUsers = await usersRepository.getAll();
   const depts = await departmentsRepo.getAll();
   const { graph } = deptGraph.validateForest(depts);
   const team = deptGraph.listAssignableUsers(actor, allUsers, graph, {
     isAdmin: isAdm, excludeSelf: false,
   });
-  const teamIds = team.map((u) => String(u.user_id));
-  const tasks = await tasksRepository.getByAssignedToMany(teamIds);
-  if (!tasks.length) {
-    await editOrSend(bot, chatId, messageId, 'No tasks for your team yet.', {
-      reply_markup: { inline_keyboard: [navFooterRow()] },
-    });
-    return;
-  }
   const nameById = new Map(team.map((u) => [String(u.user_id), u.name || u.user_id]));
-  const openSet = new Set([
-    'assigned', 'awaiting_timeline_ack', 'awaiting_incentive', 'awaiting_final_ack',
-    'active', 'submitted',
-  ]);
-  const open = tasks.filter((t) => openSet.has(t.status));
-  const recent = tasks.filter((t) => t.status === 'completed').slice(-5);
-
-  // Sort open tasks by priority (critical first) so the manager scans
-  // urgency first, then by assignee for grouping. Within priority,
-  // tasks the doer hasn't even proposed on yet sort below in-flight ones.
-  const PHASE_RANK = {
-    active: 0, submitted: 1, awaiting_final_ack: 2, awaiting_timeline_ack: 3,
-    awaiting_incentive: 4, assigned: 5,
-  };
-  open.sort((a, b) => {
-    const pa = PRIORITY_RANK[getPriority(a)] ?? 2;
-    const pb = PRIORITY_RANK[getPriority(b)] ?? 2;
-    if (pa !== pb) return pa - pb;
-    return (PHASE_RANK[a.status] ?? 9) - (PHASE_RANK[b.status] ?? 9);
-  });
-
-  const lines = ['👥 *Team Tasks*\n_(scrum-master view — no money shown)_', ''];
-  const rows = [];
-  if (!open.length) lines.push('_No open tasks._');
-  else {
-    for (const t of open) {
-      const pm = PRIORITY_META[getPriority(t)] || PRIORITY_META.normal;
-      const tm = TRACK_META[t.track] || TRACK_META.salaried;
-      lines.push(`${pm.icon} ${escapeMd(t.title)} · ${tm.icon} ${tm.label}`);
-      lines.push(`     👤 ${escapeMd(nameById.get(t.assigned_to) || t.assigned_to)} · ${statusBadge(t.status)}  \`${t.task_id}\``);
-      if (t.proposed_hours && t.proposed_deadline) {
-        lines.push(`     ⏱ ${fmtHours(t.proposed_hours)} · 📅 ${fmtDate(t.proposed_deadline)}`);
-      }
-      // Manager controls: Re-prioritize + Drop-off. Drop is hidden on
-      // 'submitted' (doer marked done — assigner should approve/reject,
-      // not silently drop the delivered work).
-      const mgrRow = [
-        { text: `🔝 Prio · ${truncate(t.title, 14)}`, callback_data: `tsk:prio_pick:${t.task_id}` },
-      ];
-      if (t.status !== 'submitted') {
-        mgrRow.push({ text: '🚫 Drop', callback_data: `tsk:drop_ask:${t.task_id}` });
-      }
-      rows.push(mgrRow);
-    }
-  }
-  if (recent.length) {
-    lines.push('', '✅ *Recently completed:*');
-    for (const t of recent) {
-      lines.push(`   ${escapeMd(t.title)} — ${escapeMd(nameById.get(t.assigned_to) || t.assigned_to)}`);
-    }
-  }
-  rows.push(navFooterRow());
-  await editOrSend(bot, chatId, messageId, lines.join('\n'), {
-    parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: rows },
-  });
+  const byTeam = await tasksRepository.getByAssignedToMany(team.map((u) => String(u.user_id)));
+  const byMe = await tasksRepository.getByAssignedBy(userId);
+  const seen = new Set(byTeam.map((t) => t.task_id));
+  const tasks = byTeam.concat(byMe.filter((t) => !seen.has(t.task_id)));
+  return { tasks, nameById };
 }
 
-async function showPendingSignOff(bot, chatId, userId, messageId) {
+/** The one renderer behind Team Tasks (o), 🗂 Completed (d), Pending Sign-off (s). */
+async function renderTeamList(bot, chatId, userId, messageId, ctx) {
   const isAdm = isAdmin(userId);
-  const tasks = isAdm
-    ? await tasksRepository.getSubmittedPendingApproval()
-    : await tasksRepository.getSubmittedForAssigner(userId);
-  if (!tasks.length) {
-    await editOrSend(bot, chatId, messageId, 'No tasks waiting for your sign-off.', {
-      reply_markup: { inline_keyboard: [navFooterRow()] },
-    });
-    return;
-  }
-  const lines = ['⏳ *Pending Sign-off*', ''];
-  const rows = [];
-  for (const t of tasks) {
-    const pm = PRIORITY_META[getPriority(t)] || PRIORITY_META.normal;
-    const tm = TRACK_META[t.track] || TRACK_META.salaried;
-    const by = (await usersRepository.findByUserId(t.assigned_to))?.name || t.assigned_to;
-    lines.push(`${pm.icon} ${escapeMd(t.title)} · ${tm.icon} ${tm.label}  \`${t.task_id}\``);
-    lines.push(`     👤 ${escapeMd(by)}`);
-    if (t.proposed_hours && t.proposed_deadline) {
-      lines.push(`     ⏱ ${fmtHours(t.proposed_hours)} · 📅 ${fmtDate(t.proposed_deadline)}`);
+  const actor = await usersRepository.findByUserId(userId);
+
+  // Sign-off keeps its historical gate (any assigner with submitted work);
+  // the team views require managing someone.
+  let tasks; let nameById = new Map();
+  if (ctx.mode === 's') {
+    tasks = isAdm
+      ? await tasksRepository.getSubmittedPendingApproval()
+      : await tasksRepository.getSubmittedForAssigner(userId);
+  } else {
+    if (!canManage(actor, isAdm)) {
+      await editOrSend(bot, chatId, messageId,
+        'You don\'t manage any department, so there are no team tasks to show.',
+        { reply_markup: { inline_keyboard: [navFooterRow()] } });
+      return;
     }
+    ({ tasks, nameById } = await _teamPoolFor(userId, actor, isAdm));
+  }
+
+  const stallDays = await stallDaysSetting();
+  const nowMs = Date.now();
+  const filtered = ctx.filter === 'a' ? tasks : tasks.filter((t) => t.assigned_to === ctx.filter);
+
+  const lines = [];
+  const rows = [];
+  let list;
+
+  if (ctx.mode === 'd') {
+    list = filtered.filter((t) => t.status === 'completed');
+    list.sort((a, b) => String(b.completed_at || '').localeCompare(String(a.completed_at || '')));
+  } else if (ctx.mode === 's') {
+    list = sortForAdmin(filtered.filter((t) => t.status === 'submitted'), nowMs);
+  } else {
+    list = sortForAdmin(filtered.filter((t) => OPEN_STATUSES.has(t.status)), nowMs);
+  }
+
+  const pageCount = Math.max(1, Math.ceil(list.length / TEAM_PAGE));
+  const page = Math.min(ctx.page, pageCount - 1);
+  const slice = list.slice(page * TEAM_PAGE, (page + 1) * TEAM_PAGE);
+  const here = { ...ctx, page };
+  const filterName = ctx.filter === 'a' ? '' : firstName(nameById.get(ctx.filter) || ctx.filter);
+
+  if (ctx.mode === 'd') {
+    lines.push(`🗂 *Completed* — ${list.length}${filterName ? ` · ${escapeMd(filterName)}` : ''}`);
+    if (!list.length) lines.push('', '_None completed yet._');
+    else {
+      lines.push('');
+      for (const t of slice) {
+        const took = etaVsActual(t).replace(/[*⏱]/g, '').trim(); // "ETA 4h · took 5h"
+        const who = escapeMd(nameById.get(t.assigned_to) || t.assigned_to);
+        const when = t.completed_at ? ` · ✅ ${fmtDateShort(t.completed_at)}` : '';
+        lines.push(`• ${escapeMd(t.title)} — ${who}${took ? ` · ${escapeMd(took)}` : ''}${when}`);
+      }
+    }
+  } else {
+    const needYou = list.filter((t) => NEEDS_ASSIGNER.has(t.status)).length;
+    const stalled = list.filter((t) => isStalled(t, stallDays, nowMs)).length;
+    const running = list.filter((t) => t.status === 'active').length;
+    if (ctx.mode === 's') {
+      lines.push(`⏳ *Pending Sign-off* — ${list.length}`);
+      if (!list.length) lines.push('', '_No tasks waiting for your sign-off._');
+    } else {
+      lines.push(`👥 *Team Tasks* — ${list.length} open${filterName ? ` · ${escapeMd(filterName)}` : ''}`);
+      lines.push(`👉 *${needYou} need YOU* · ⚠️ ${stalled} stalled · 🔵 ${running} running`);
+      if (!list.length) lines.push('', '_No open tasks._');
+    }
+    if (list.length) lines.push('', '_Tap a task to open it._');
+
+    // Person filter — one tap narrows this same card to one employee.
+    // Only on the open list, and only when there is more than one person.
+    if (ctx.mode === 'o') {
+      const openAll = tasks.filter((t) => OPEN_STATUSES.has(t.status));
+      const counts = new Map();
+      for (const t of openAll) counts.set(t.assigned_to, (counts.get(t.assigned_to) || 0) + 1);
+      if (counts.size > 1 || ctx.filter !== 'a') {
+        const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+        const frow = [{
+          text: `All${ctx.filter === 'a' ? ' ✓' : ''}`,
+          callback_data: `tsk:tp:o:a:0`,
+        }];
+        for (const [uid, n] of top) {
+          frow.push({
+            text: `${firstName(nameById.get(uid) || uid)} (${n})${ctx.filter === uid ? ' ✓' : ''}`,
+            callback_data: `tsk:tp:o:${uid}:0`,
+          });
+        }
+        rows.push(frow);
+      }
+    }
+
+    const titleFor = dedupeTitles(list);
+    for (const t of slice) {
+      const pm = PRIORITY_META[getPriority(t)] || PRIORITY_META.normal;
+      const fact = teamChipFact(t, stallDays, nowMs);
+      rows.push([{
+        text: `${pm.icon} ${fact} · ${truncate(titleFor.get(t.task_id) || t.title, 24)}`,
+        callback_data: `tsk:tt:${ctxStr(here)}:${t.task_id}`,
+      }]);
+    }
+  }
+
+  if (pageCount > 1) {
     rows.push([
-      { text: `✅ Approve ${truncate(t.title, 22)}`, callback_data: `tsk:sign:ok:${t.task_id}` },
-      { text: '❌ Reject', callback_data: `tsk:sign:no:${t.task_id}` },
+      { text: '⬅ Prev', callback_data: page > 0 ? `tsk:tp:${here.mode}:${here.filter}:${page - 1}` : 'tsk:noop' },
+      { text: `Page ${page + 1}/${pageCount}`, callback_data: 'tsk:noop' },
+      { text: 'Next ➡', callback_data: page < pageCount - 1 ? `tsk:tp:${here.mode}:${here.filter}:${page + 1}` : 'tsk:noop' },
     ]);
   }
-  rows.push(navFooterRow());
+
+  if (ctx.mode === 'o') {
+    const doneCount = filtered.filter((t) => t.status === 'completed').length;
+    rows.push([
+      { text: `🗂 Completed (${doneCount})`, callback_data: `tsk:tp:d:${here.filter}:0` },
+      { text: '🏠 Menu', callback_data: 'act:__back__' },
+    ]);
+  } else if (ctx.mode === 'd') {
+    rows.push([
+      { text: '⬅ Back', callback_data: `tsk:tp:o:${here.filter}:0` },
+      { text: '🏠 Menu', callback_data: 'act:__back__' },
+    ]);
+  } else {
+    rows.push(navFooterRow());
+  }
+
   await editOrSend(bot, chatId, messageId, lines.join('\n'), {
     parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows },
   });
+}
+
+/** The admin phrasing of "where this task is" — always names the worker's
+ *  side as HIS move ("waiting on Abdul"), never "waiting for you" when the
+ *  you is him. */
+function adminStatusLine(t, doerFirst, stallDays, nowMs) {
+  const d = silentDays(t, nowMs);
+  const dTail = d == null ? '' : (d === 0 ? '' : ` — waiting ${d}d`);
+  switch (t.status) {
+    case 'assigned':
+      return isStalled(t, stallDays, nowMs)
+        ? `⚠️ *Silent ${d} days* — assigned ${fmtDateShort(t.assigned_at || t.created_at)}, never answered`
+        : `📨 Waiting on ${escapeMd(doerFirst)} to answer${dTail}`;
+    case 'awaiting_timeline_ack':
+      return `👉 *His proposal needs your answer*${dTail}`;
+    case 'awaiting_incentive':
+      return `👉 *Your ₦ is needed to close the deal*`;
+    case 'awaiting_final_ack':
+      return `⌛ Deal made — waiting on his final OK${dTail}`;
+    case 'active':
+      return t.track !== 'incentivized' && t.started_at && t.proposed_hours
+        ? `🔵 Running — ends ~${escapeMd(impliedEnd(t))}`
+        : `🔵 Running${t.proposed_deadline ? ` — due ${fmtDateShort(t.proposed_deadline)}` : ''}`;
+    case 'submitted':
+      return `👉 *Waiting on your sign-off*`;
+    default:
+      return statusBadge(t.status);
+  }
+}
+
+/**
+ * TSK-V3 — the assigner's per-task card. ONE card, edited in place: status
+ * line first, the full description, then ONLY the buttons legal in this
+ * state. `ctx` is the list position to return to; a manager who neither
+ * assigned the task nor is admin gets a 👁 view-only card.
+ */
+async function renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx, opts = {}) {
+  const task = await tasksRepository.getById(taskId);
+  const backRowList = [
+    { text: '⬅ Back', callback_data: `tsk:tp:${ctxStr(ctx)}` },
+    { text: '🏠 Menu', callback_data: 'act:__back__' },
+  ];
+  if (!task) {
+    await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`,
+      { reply_markup: { inline_keyboard: [backRowList] } });
+    return;
+  }
+  const stallDays = await stallDaysSetting();
+  const nowMs = Date.now();
+  const pm = PRIORITY_META[getPriority(task)] || PRIORITY_META.normal;
+  const tm = TRACK_META[task.track] || TRACK_META.salaried;
+  const canAct = task.assigned_by === userId || isAdmin(userId);
+  const doer = await usersRepository.findByUserId(task.assigned_to);
+  const doerName = doer?.name || task.assigned_to;
+  const doerFirst = firstName(doerName) || doerName;
+  let assignerLabel = 'you';
+  if (task.assigned_by !== userId) {
+    const by = await usersRepository.findByUserId(task.assigned_by);
+    assignerLabel = by?.name || task.assigned_by;
+  }
+  const cs = ctxStr(ctx);
+
+  const lines = [
+    `${pm.icon} *${escapeMd(task.title)}*`,
+    `${tm.icon} ${tm.label} · ${adminStatusLine(task, doerFirst, stallDays, nowMs)}`,
+    '',
+    `👤 ${escapeMd(doerName)} · assigned by ${escapeMd(assignerLabel)} ${fmtDateShort(task.assigned_at || task.created_at)}`
+      + descLine(task.description),
+  ];
+  if (opts.note) lines.push('', opts.note);
+
+  const datePassed = task.proposed_deadline
+    && new Date(task.proposed_deadline).getTime() < nowMs - 86400000;
+  if (task.status === 'awaiting_timeline_ack' && task.proposed_hours) {
+    lines.push('', `He proposed: ⏱ *${fmtHours(task.proposed_hours)}*`
+      + (task.proposed_deadline
+        ? ` · 📅 by ${fmtDate(task.proposed_deadline)}${datePassed ? ' *(date passed)*' : ''}` : ''));
+    if (datePassed) {
+      lines.push(`_Accepting restarts his ${fmtHours(task.proposed_hours)} from today._`);
+    }
+  } else if (task.status === 'submitted') {
+    const line = etaVsActual(task);
+    if (line) lines.push('', line + (task.proposed_deadline ? ` · 📅 agreed ${fmtDateShort(task.proposed_deadline)}` : ''));
+  } else if (task.status === 'active' && task.proposed_hours) {
+    lines.push('', task.track !== 'incentivized'
+      ? `⏱ Time he gave: *${fmtHours(task.proposed_hours)}*`
+      : `⏱ *${fmtHours(task.proposed_hours)}*${task.proposed_deadline ? ` · 📅 by *${fmtDate(task.proposed_deadline)}*` : ''}`);
+  }
+  lines.push('', `ID: \`${task.task_id}\``);
+
+  const rows = [];
+  if (!canAct) {
+    lines.splice(lines.length - 2, 0, '', `_👁 View only — this task was assigned by ${escapeMd(assignerLabel)}._`);
+  } else if (OPEN_STATUSES.has(task.status)) {
+    switch (task.status) {
+      case 'awaiting_timeline_ack':
+        rows.push([
+          { text: datePassed ? `✅ Accept — restart ${fmtHours(task.proposed_hours)}` : '✅ Accept', callback_data: `tsk:acc:${task.task_id}` },
+          { text: '↩ Counter', callback_data: `tsk:cnt:${task.task_id}` },
+        ]);
+        break;
+      case 'awaiting_incentive':
+        rows.push([{ text: '💰 Set incentive', callback_data: `tsk:six:${task.task_id}` }]);
+        break;
+      case 'submitted':
+        rows.push([
+          { text: '✅ Approve', callback_data: `tsk:sg:y:${cs}:${task.task_id}` },
+          { text: '❌ Reject', callback_data: `tsk:sg:n:${cs}:${task.task_id}` },
+        ]);
+        break;
+      default:
+        if (WAITING_ON_WORKER.has(task.status)) {
+          rows.push([{ text: `🔔 Remind ${doerFirst}`, callback_data: `tsk:rmd:${cs}:${task.task_id}` }]);
+        }
+    }
+    // Drop stays hidden on 'submitted' — delivered work is approved or
+    // rejected, never silently dropped (long-standing rule).
+    if (task.status !== 'submitted') {
+      rows.push([
+        { text: '🔝 Priority', callback_data: `tsk:tpp:${cs}:${task.task_id}` },
+        { text: '🚫 Drop task', callback_data: `tsk:tdd:${cs}:${task.task_id}` },
+      ]);
+    }
+  }
+  rows.push(backRowList);
+
+  await editOrSend(bot, chatId, messageId, lines.join('\n'),
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+/**
+ * 🔔 Remind — one polite DM to the worker, at most once per task per Lagos
+ * day. The dedupe ledger is in-memory ON PURPOSE: it is operational state,
+ * not a business record (§10 — no new log sheets), and the worst case after
+ * a restart is one extra polite reminder.
+ */
+const _remindedOn = new Map(); // task_id → Lagos day it was last reminded
+
+async function handleRemind(bot, callbackQuery, ctx, taskId) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const task = await tasksRepository.getById(taskId);
+  if (!task) {
+    await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx);
+    return;
+  }
+  if (!(await _guardAssignerOrAdmin(bot, callbackQuery, task))) return;
+  if (!WAITING_ON_WORKER.has(task.status)) {
+    await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx,
+      { note: 'ℹ️ _This task is no longer waiting on him — no reminder needed._' });
+    return;
+  }
+  const day = todayInLagos();
+  if (_remindedOn.get(taskId) === day) {
+    await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx,
+      { note: '🔔 _Already reminded today — one nudge per day is enough._' });
+    return;
+  }
+  const pm = PRIORITY_META[getPriority(task)] || PRIORITY_META.normal;
+  const assigner = await usersRepository.findByUserId(userId);
+  const doerFirst = firstName((await usersRepository.findByUserId(task.assigned_to))?.name) || 'him';
+  const ask = task.status === 'assigned'
+    ? (task.track !== 'incentivized'
+      ? 'It is waiting on your time — open it and tap *Accept — give time*.'
+      : 'It is waiting on your timeline — open it and tap *Propose timeline*.')
+    : 'The deal is ready — open it and give your final OK.';
+  try {
+    const act = buttonsForMyTask(task);
+    await bot.sendMessage(task.assigned_to,
+      `🔔 *Reminder from ${escapeMd(assigner?.name || 'your assigner')}*\n\n`
+      + `${pm.icon} *${escapeMd(task.title)}*${descLine(task.description)}\n\n${ask}\nID: \`${taskId}\``,
+      { parse_mode: 'Markdown', reply_markup: act ? { inline_keyboard: [act] } : undefined });
+    _remindedOn.set(taskId, day);
+    await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx,
+      { note: `🔔 _Reminder sent to ${escapeMd(doerFirst)} just now._` });
+  } catch (e) {
+    logger.warn(`taskFlow.handleRemind: DM failed: ${e.message}`);
+    await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx,
+      { note: '⚠️ _Could not deliver the reminder (he may not have opened the bot)._' });
+  }
+}
+
+async function showTeamTasks(bot, chatId, userId, messageId) {
+  await renderTeamList(bot, chatId, userId, messageId, { mode: 'o', filter: 'a', page: 0 });
+}
+
+async function showPendingSignOff(bot, chatId, userId, messageId) {
+  await renderTeamList(bot, chatId, userId, messageId, { mode: 's', filter: 'a', page: 0 });
 }
 
 // ---------------------------------------------------------------------------
@@ -2664,11 +3140,20 @@ module.exports = {
   showTeamTasks,
   showPendingSignOff,
   showPayouts,
-  // exported for smoke harness
+  // exported for smoke harness + unit tests
   _internals: {
     fmtHours,
     fmtDate,
     decodeLegacyDescription,
     getPriority,
+    // TSK-V3
+    parseListCtx,
+    teamChipFact,
+    silentDays,
+    isStalled,
+    sortForAdmin,
+    dedupeTitles,
+    fmtDateShort,
+    TEAM_PAGE,
   },
 };

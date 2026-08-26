@@ -102,6 +102,10 @@ const DEFAULTS = {
   ATTENDANCE_REMINDER_ENABLED: 1,
   // SNAP-3 spend guard: max metered vision (OCR) calls per day.
   OCR_DAILY_CAP: 100,
+  // TSK-V3 (owner, 26-Aug-2026) — days a task may sit waiting on the worker
+  // (assigned / awaiting final OK) before the Team Tasks list flags it ⚠️
+  // stalled instead of 📨 waiting. Strictly greater-than: day 7 is still 📨.
+  TASK_STALL_DAYS: 7,
   // SHR-1 — tracked catalogue share links. Master switch hides the 📤 Share
   // button on catalog cards when 0. SHARE_PAGE_BASE_URL is where minted
   // links point (the website's /d page, e.g. https://atfactoryprice.com);
