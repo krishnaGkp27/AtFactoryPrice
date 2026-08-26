@@ -44,6 +44,9 @@ const PREFIX_FEATURES = {
   'atd_rpt:': 'attendance_report',
   'atd_adm:': 'attendance_admin',
   'tsk:': 'tasks',
+  // TSK-FIX — retired but still dispatched (old cards answer inertly), so the
+  // namespace stays named rather than falling through as "other".
+  'approve_task:': 'tasks',
   'ptk:': 'snap_task',
   'myp:': 'my_products',
   'nf:': 'notifications',
@@ -67,7 +70,6 @@ const PREFIX_FEATURES = {
   'adm_ws:': 'assign_warehouse', 'adm_wt:': 'assign_warehouse', 'adm_wu:': 'assign_warehouse',
   'adm:': 'admin_actions',
   'add_stock:': 'add_stock',
-  'approve_task:': 'tasks',
   'bkadd:': 'manage_banks', 'bkback:': 'manage_banks', 'bkonly:': 'manage_banks',
   'bkrm:': 'manage_banks', 'bkrmc:': 'manage_banks',
   'cd:': 'customer_details',

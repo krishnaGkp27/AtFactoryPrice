@@ -6,7 +6,7 @@
  * Admin-only, direct writes (owner's ask: a simple toggle screen; changes
  * are audit-logged). One row per category from morningDigest.CATEGORIES,
  * time chips, and a "send me a test now" button so the owner can see the
- * exact 09:15 message on demand.
+ * exact digest message on demand.
  */
 
 const sessionStore = require('../utils/sessionStore');
@@ -33,13 +33,13 @@ async function showScreen(bot, chatId, userId) {
     callback_data: `${NS}t:${c.key}`,
   })), 1));
   rows.push(TIME_CHIPS.map((t) => ({
-    text: `${String(settings.DIGEST_TIME || '09:15') === t ? '🕘 ' : ''}${t}`,
+    text: `${String(settings.DIGEST_TIME || '10:00') === t ? '🕘 ' : ''}${t}`,
     callback_data: `${NS}tm:${t.replace(':', '')}`,
   })));
   rows.push([{ text: '▶ Send me a test digest now', callback_data: `${NS}test` }]);
   rows.push([{ text: '🏠 Menu', callback_data: 'act:__back__' }]);
   await render(bot, chatId, userId,
-    `⏰ *Morning Digest* — sent to all admins daily at *${settings.DIGEST_TIME || '09:15'}* (Nigeria time).\n\nTap a category to toggle it. Only ticked sections appear.`,
+    `⏰ *Morning Digest* — sent to all admins daily at *${settings.DIGEST_TIME || '10:00'}* (Nigeria time).\n\nTap a category to toggle it. Only ticked sections appear.`,
     rows);
 }
 

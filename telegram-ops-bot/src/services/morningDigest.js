@@ -210,8 +210,16 @@ const CATEGORIES = [
       const due = all.filter((t) => (t.status || '') === 'active' && fmtDay(t.proposed_deadline) && fmtDay(t.proposed_deadline) <= todayIso);
       const submitted = all.filter((t) => (t.status || '') === 'submitted');
       if (!due.length && !submitted.length) return '📋 *Tasks* — nothing due.';
+      // The row carries no assigned_to_name — tasksRepository.parse() never
+      // produces one — so this printed a raw Telegram id where a name
+      // belonged. Resolve it the way every other digest section does.
+      const cards = require('./approvalCards');
+      const nameOf = new Map();
+      for (const id of new Set(due.map((t) => String(t.assigned_to)))) {
+        try { nameOf.set(id, await cards.resolveUserLabel(id)); } catch (_) { nameOf.set(id, id); }
+      }
       let s = '📋 *Tasks*';
-      if (due.length) s += `\n\n*Due/overdue:*\n${due.slice(0, LIST_CAP).map((t) => `• "${t.title || t.task_id}" — @${t.assigned_to_name || t.assigned_to}, due ${fmtDay(t.proposed_deadline)}`).join('\n')}`;
+      if (due.length) s += `\n\n*Due/overdue:*\n${due.slice(0, LIST_CAP).map((t) => `• "${t.title || t.task_id}" — ${nameOf.get(String(t.assigned_to)) || t.assigned_to}, due ${fmtDay(t.proposed_deadline)}`).join('\n')}`;
       if (submitted.length) s += `\n\n*Awaiting sign-off:* ${submitted.length}`;
       return s;
     },

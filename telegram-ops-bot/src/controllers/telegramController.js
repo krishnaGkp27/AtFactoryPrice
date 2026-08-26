@@ -5055,38 +5055,23 @@ async function handleMessage(bot, msg) {
       }
 
       case 'mark_task_done': {
-        const taskId = intent.taskId || (text.match(/TASK-\d{8}-[A-Za-z0-9]{3,8}/) || [])[0];
-        if (!taskId) {
-          await bot.sendMessage(chatId, 'Please specify task ID. Example: "Mark task TASK-20260224-001 done".');
-          return;
-        }
-        const tasksRepo = require('../repositories/tasksRepository');
-        const task = await tasksRepo.getById(taskId);
-        if (!task) {
-          await bot.sendMessage(chatId, `Task ${taskId} not found.`);
-          return;
-        }
-        if (task.assigned_to !== userId) {
-          await bot.sendMessage(chatId, 'You can only mark your own tasks as done.');
-          return;
-        }
-        if (task.status === 'completed') {
-          await bot.sendMessage(chatId, 'This task is already completed.');
-          return;
-        }
-        await tasksRepo.updateStatus(taskId, 'submitted', new Date().toISOString());
-        const requesterName = await getRequesterDisplayName(userId, msg);
-        const esc = (s) => (s || '').replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
-        const notifText = `📋 *Task submitted for approval*\n\nTask: ${esc(task.title)}\nID: \`${taskId}\`\nMarked done by: ${esc(requesterName)}\n\nApprove to mark as complete for the employee\\.`;
-        const keyboard = { inline_keyboard: [[{ text: '✅ Approve completion', callback_data: `approve_task:${taskId}` }]] };
-        for (const adminId of config.access.adminIds) {
-          try {
-            await bot.sendMessage(adminId, notifText, { parse_mode: 'MarkdownV2', reply_markup: keyboard });
-          } catch (e) {
-            try { await bot.sendMessage(adminId, `Task submitted: ${task.title} (${taskId}) by ${requesterName}. Approve completion?`, { reply_markup: keyboard }); } catch (_) {}
-          }
-        }
-        await bot.sendMessage(chatId, `⏳ Task "${task.title}" submitted for admin approval. You'll be notified when it's approved.`);
+        /* TSK-FIX (owner, 26-Aug-2026) — RETIRED.
+         *
+         * This path wrote `submitted` straight onto the sheet and DM'd every
+         * admin an "Approve completion" card of its own. It bypassed the
+         * state machine entirely, which meant: no TaskEvents row (the history
+         * the work-assessment data is built from), no state validation (a task
+         * still in `assigned` could jump to `submitted`), and — the costly one
+         * — approving through that card never called
+         * incentivesRepository.markAwaitingPayout, so an incentivized task was
+         * marked complete while the worker's bonus silently vanished from the
+         * Payouts queue.
+         *
+         * The phrase still works; it now opens My Tasks, where ✅ Mark done
+         * runs the real transition.
+         */
+        const sent = await bot.sendMessage(chatId, 'Loading your tasks…');
+        await taskFlow.showMyTasks(bot, chatId, userId, sent.message_id);
         return;
       }
 
@@ -7729,43 +7714,18 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       await bot.sendMessage(callbackQuery.message.chat.id, 'Sale cancelled.');
     }
   } else if (data.startsWith('approve_task:')) {
-    const taskId = data.replace('approve_task:', '');
-    const adminId = String(callbackQuery.from.id);
-    if (!config.access.adminIds.includes(adminId)) {
-      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only admins can approve task completion.' });
-      return;
-    }
-    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Approving...' });
+    // TSK-FIX — RETIRED with its minting site above. Old cards may still be
+    // sitting in an admin's chat; they must not write. Sign-off lives on the
+    // task's own card (tsk:sign:ok), which runs the state machine and queues
+    // the incentive this path used to drop.
+    await bot.answerCallbackQuery(callbackQuery.id, {
+      text: 'This card is retired — open ⏳ Pending Sign-off to approve.',
+      show_alert: true,
+    });
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
       chat_id: callbackQuery.message.chat.id,
       message_id: callbackQuery.message.message_id,
-    });
-    const tasksRepo = require('../repositories/tasksRepository');
-    const task = await tasksRepo.getById(taskId);
-    if (!task) {
-      await bot.sendMessage(callbackQuery.message.chat.id, `Task ${taskId} not found.`);
-      return;
-    }
-    // APC-1 Phase D — this legacy branch flipped status with NO current-state
-    // guard: a stale card could "re-complete" a task in any state (the tsk:
-    // sign-off path runs the state machine; this one predates it).
-    if (['completed', 'cancelled'].includes(String(task.status || '').toLowerCase())) {
-      await bot.sendMessage(callbackQuery.message.chat.id,
-        `ℹ️ Task "${task.title}" (${taskId}) is already ${task.status} — this card is stale, nothing was changed.`);
-      return;
-    }
-    await tasksRepo.updateStatus(taskId, 'completed', new Date().toISOString());
-    let employeeNotified = false;
-    try {
-      await bot.sendMessage(task.assigned_to, `✅ Your task "${task.title}" (${taskId}) has been approved by admin and marked complete.`);
-      employeeNotified = true;
-    } catch (notifErr) {
-      const logger = require('../utils/logger');
-      logger.error(`Failed to notify employee ${task.assigned_to} about task ${taskId} approval`, notifErr.message);
-    }
-    await bot.sendMessage(callbackQuery.message.chat.id, employeeNotified
-      ? `✅ Task "${task.title}" (${taskId}) marked complete. Employee has been notified.`
-      : `✅ Task "${task.title}" (${taskId}) marked complete. ⚠️ Could not notify the employee — please inform them manually.`);
+    }).catch(() => {});
   } else if (data.startsWith('inv:')) {
     const view = data.slice(4);
     const uid = String(callbackQuery.from.id);

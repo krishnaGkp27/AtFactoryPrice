@@ -235,15 +235,21 @@ test('srf_assign refuses a resolved request — a stale picker card stamps nothi
   assert.match(bot.allText(), /stale, no assignment/i);
 });
 
-test('legacy approve_task refuses an already-completed task', async () => {
+test('TSK-FIX: the retired approve_task card cannot write, whatever its state', async () => {
+  // This card used to flip a task to `completed` directly on the sheet: no
+  // history row, no state validation, and — because it never called
+  // markAwaitingPayout — an incentivized worker's bonus silently vanished
+  // from the Payouts queue. Cards already sitting in admin chats must now be
+  // inert for EVERY status, not just the already-completed one.
   const tasksRepo = require(path.join(SRC, 'repositories/tasksRepository'));
-  tasksRepo.getById = async () => ({ task_id: 'T1', title: 'Sweep store', status: 'completed', assigned_to: '42' });
-  const writes = [];
-  tasksRepo.updateStatus = async (...a) => { writes.push(a); return true; };
-  const bot = createFakeBot();
-  await controller.handleCallbackQuery(bot, cbq('approve_task:T1', 9));
-  assert.equal(writes.length, 0, 'status not re-flipped by the stale card');
-  assert.match(bot.allText(), /already completed/i);
+  for (const status of ['submitted', 'active', 'completed']) {
+    tasksRepo.getById = async () => ({ task_id: 'T1', title: 'Sweep store', status, assigned_to: '42' });
+    const writes = [];
+    tasksRepo.updateStatus = async (...a) => { writes.push(a); return true; };
+    const bot = createFakeBot();
+    await controller.handleCallbackQuery(bot, cbq('approve_task:T1', 9));
+    assert.equal(writes.length, 0, `no write from the retired card (status=${status})`);
+  }
 });
 
 test('legacy chips: honoured with one wizard open, refused (not guessed) with two', async () => {
