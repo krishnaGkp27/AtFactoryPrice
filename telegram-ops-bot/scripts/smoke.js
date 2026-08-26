@@ -609,7 +609,8 @@ async function runS8() {
   }
 
   // S8.9 rounds cap: counter + renegotiate cap at MAX_NEGOTIATION_ROUNDS.
-  const t2 = await sm.create({ title: 'Negotiate me', assigned_to: 'doer-2', assigned_by: 'mgr-2', track: 'salaried' });
+  // TSK-V2: negotiation (and therefore the rounds cap) is incentivized-only.
+  const t2 = await sm.create({ title: 'Negotiate me', assigned_to: 'doer-2', assigned_by: 'mgr-2', track: 'incentivized' });
   for (let i = 0; i < 3; i++) {
     await sm.transition(t2.task_id, 'propose_timeline', 'doer-2', { hours: 1, deadline: '2026-05-30' });
     await sm.transition(t2.task_id, 'counter_timeline', 'mgr-2');
@@ -624,15 +625,25 @@ async function runS8() {
   if (exhausted) pass(`S8.9 rounds cap: 4th counter_timeline rejected at ${sm.MAX_NEGOTIATION_ROUNDS} rounds`);
   else fail(`S8.9 rounds cap: 4th counter_timeline rejected at ${sm.MAX_NEGOTIATION_ROUNDS} rounds`);
 
-  // S8.10 salaried track: accept_timeline → awaiting_final_ack (no incentive step).
+  // S8.10 TSK-V2 salaried track: the worker commits TIME and the clock
+  // starts on that one tap — no negotiation states, and no stored deadline
+  // (the finish is start + hours, derived at read time, §10).
   const t3 = await sm.create({ title: 'Salaried task', assigned_to: 'doer-3', assigned_by: 'mgr-3', track: 'salaried' });
-  await sm.transition(t3.task_id, 'propose_timeline', 'doer-3', { hours: 2, deadline: '2026-05-20' });
-  await sm.transition(t3.task_id, 'accept_timeline', 'mgr-3');
+  await sm.transition(t3.task_id, 'accept_estimate', 'doer-3', { hours: 2 });
   const t3now = await tasksRepo.getById(t3.task_id);
-  if (t3now.status === 'awaiting_final_ack') {
-    pass('S8.10 accept_timeline (salaried): skips incentive → awaiting_final_ack');
+  let crossed = false;
+  try {
+    const t3b = await sm.create({ title: 'Salaried again', assigned_to: 'doer-3', assigned_by: 'mgr-3', track: 'salaried' });
+    await sm.transition(t3b.task_id, 'propose_timeline', 'doer-3', { hours: 2, deadline: '2026-05-20' });
+  } catch (e) {
+    if (e.code === 'ILLEGAL_TRANSITION') crossed = true;
+  }
+  if (t3now.status === 'active' && Number(t3now.proposed_hours) === 2
+      && !t3now.proposed_deadline && t3now.started_at && crossed) {
+    pass('S8.10 salaried: accept_estimate → active in one step; no deadline stored; cannot negotiate');
   } else {
-    fail('S8.10 accept_timeline (salaried): skips incentive → awaiting_final_ack', JSON.stringify(t3now));
+    fail('S8.10 salaried: accept_estimate → active in one step',
+      JSON.stringify({ status: t3now.status, hours: t3now.proposed_hours, dl: t3now.proposed_deadline, crossed }));
   }
 
   // S8.11 cancel works from non-terminal states.
@@ -705,10 +716,9 @@ async function runS8() {
   } else {
     fail('S8.15b update_priority: self-transition kept status, swapped priority', JSON.stringify(t5now));
   }
-  // Even from 'active' (after a full negotiation loop), priority can flip.
-  await sm.transition(t5.task_id, 'propose_timeline', 'doer-5', { hours: 1, deadline: '2026-06-01' });
-  await sm.transition(t5.task_id, 'accept_timeline', 'mgr-5');
-  await sm.transition(t5.task_id, 'final_ack', 'doer-5');
+  // Even from 'active', priority can flip. (TSK-V2: this salaried task
+  // reaches active by committing time, not by negotiating.)
+  await sm.transition(t5.task_id, 'accept_estimate', 'doer-5', { hours: 1 });
   await sm.transition(t5.task_id, 'update_priority', 'mgr-5', { priority: 'low' });
   t5now = await tasksRepo.getById(t5.task_id);
   if (t5now.status === 'active' && t5now.priority === 'low') {
@@ -729,10 +739,9 @@ async function runS8() {
     fail('S8.16a drop: assigned → dropped', JSON.stringify(t6now));
   }
   // Drop from a submitted task is illegal — assigner must approve/reject.
+  // TSK-V2: a salaried task reaches `submitted` in two taps, not five.
   const t7 = await sm.create({ title: 'Submitted then drop?', assigned_to: 'doer-7', assigned_by: 'mgr-7' });
-  await sm.transition(t7.task_id, 'propose_timeline', 'doer-7', { hours: 1, deadline: '2026-06-01' });
-  await sm.transition(t7.task_id, 'accept_timeline', 'mgr-7');
-  await sm.transition(t7.task_id, 'final_ack', 'doer-7');
+  await sm.transition(t7.task_id, 'accept_estimate', 'doer-7', { hours: 1 });
   await sm.transition(t7.task_id, 'mark_done', 'doer-7');
   try {
     await sm.transition(t7.task_id, 'drop', 'mgr-7');

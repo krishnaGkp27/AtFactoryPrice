@@ -134,10 +134,37 @@ const DROP = Object.freeze({
 
 const TRANSITIONS = Object.freeze({
   [STATUSES.ASSIGNED]: {
+    /* TSK-V2 (owner, 26-Aug-2026) — the tracks split here.
+     *
+     * SALARIED work is an instruction, not a bargain: the doer commits the
+     * time they need ("ETA") and the clock starts on that same tap. No
+     * counter, no deal card, no rounds. The implied finish is start + ETA,
+     * COMPUTED at read time and never stored (§10) — writing a deadline
+     * column would turn a derived fact into a second source of truth.
+     *
+     * INCENTIVIZED work carries money, and a price is negotiated: hours,
+     * date and ₦ are one deal, so it keeps propose_timeline below.
+     *
+     * The guards are what keep a task on its own track. Tasks already
+     * mid-negotiation when this shipped are unaffected: their live states
+     * (awaiting_*) carry their own unguarded edges. */
+    accept_estimate: {
+      to: STATUSES.ACTIVE,
+      actorRole: 'doer',
+      eventType: 'doer_accepted_estimate',
+      guard: (task) => task.track !== 'incentivized',
+      // accepted_at = they took it on; timeline_agreed_at = the commitment
+      // needs no counterparty here; started_at = the clock.
+      setsTimestamps: ['accepted_at', 'timeline_agreed_at', 'started_at'],
+      patchExtras: (meta) => ({
+        proposed_hours: meta?.hours != null ? Number(meta.hours) : null,
+      }),
+    },
     propose_timeline: {
       to: STATUSES.AWAITING_TIMELINE_ACK,
       actorRole: 'doer',
       eventType: 'doer_proposed_timeline',
+      guard: (task) => task.track === 'incentivized',
       setsTimestamps: ['accepted_at'],
       patchExtras: (meta) => ({
         proposed_hours: meta?.hours != null ? Number(meta.hours) : null,
@@ -379,6 +406,11 @@ async function transition(taskId, event, actorUserId, meta = {}) {
   }
   const t = transitionsForStatus[event];
   if (!t) throw new IllegalTransitionError(event, fromStatus, taskId);
+  // TSK-V2 — a track-scoped edge is illegal on the other track. Reported as
+  // an ordinary illegal transition so callers need no new error type.
+  if (typeof t.guard === 'function' && !t.guard(task)) {
+    throw new IllegalTransitionError(event, fromStatus, taskId);
+  }
 
   assertActorRole(t, task, actorUserId);
 

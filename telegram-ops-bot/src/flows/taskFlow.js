@@ -86,10 +86,28 @@ const OPEN_STATUSES = new Set([
   'awaiting_final_ack', 'active', 'submitted',
 ]);
 
-const HOURS_PRESETS = [
-  ['1h', 1], ['2h', 2], ['4h', 4], ['8h', 8],
-  ['1d', 24], ['2d', 48], ['5d', 120], ['1w', 168],
+/* TSK-V2 (owner, 26-Aug-2026) — the time chart. Twelve values, tap only.
+ * The typed "custom hours" entry is GONE: a free-text number is the one
+ * place this flow could take a mistyped or nonsense figure into the sheet,
+ * and every downstream reading of effort (the Gantt bar, ETA-vs-actual,
+ * any future assessment) is only as clean as this input. Two rows so the
+ * worker reads it as a chart, not a list. */
+// TSK-V2 — chips per page. Bounds the message so the 4096-char ceiling
+// that used to break these lists silently cannot be reached.
+const MY_TASKS_PAGE = 9;
+
+const HOURS_CHART = [1, 2, 3, 4, 6, 8];
+const DAYS_CHART = [
+  ['1d', 24], ['2d', 48], ['3d', 72], ['4d', 96], ['5d', 120], ['1w', 168],
 ];
+/** The two chart rows as inline-keyboard rows, ticking the current pick. */
+function timeChartRows(current, cbPrefix) {
+  const tick = (v) => (Number(current) === v ? ' ✓' : '');
+  return [
+    HOURS_CHART.map((h) => ({ text: `${h}h${tick(h)}`, callback_data: `${cbPrefix}${h}` })),
+    DAYS_CHART.map(([label, h]) => ({ text: `${label}${tick(h)}`, callback_data: `${cbPrefix}${h}` })),
+  ];
+}
 
 const DEADLINE_PRESETS = [
   ['today', 'Today', 0],
@@ -228,6 +246,16 @@ async function visibleTaskActivityCodes(userId) {
 }
 
 const { mdEscape: escapeMd } = require('../utils/flowKit');
+
+/* TSK-V2 — the description follows the task onto every card. It used to
+ * live only in the first DM, which the propose flow then edited away: one
+ * tap and the worker could never read their instruction again. Carrying it
+ * is what makes editing in place safe. */
+function descLine(text) {
+  const t = String(text || '').trim();
+  if (!t) return '';
+  return `\n\u{1F5D2} ${escapeMd(t.length > 400 ? `${t.slice(0, 400)}\u2026` : t)}`;
+}
 
 function truncate(s, n) {
   const t = String(s || '');
@@ -485,18 +513,27 @@ async function dmAssigneeNewTask(bot, task, assignerUserId) {
     const incentiveHint = task.track === 'incentivized'
       ? '\n\n💰 _Incentivized track — your assigner will set a bonus after they accept your timeline._'
       : '';
+    // TSK-V2 — the tracks ask different questions. Salaried work needs one
+    // number (the time they commit to); incentivized work opens a deal.
+    const salaried = task.track !== 'incentivized';
+    const ask = salaried
+      ? '*How much time do you need for this work?*'
+      : `*How long do you need, and by when?*${incentiveHint}`;
+    const firstChip = salaried
+      ? { text: '⏱ Accept — give time', callback_data: `tsk:est:${task.task_id}` }
+      : { text: '⏱ Propose timeline', callback_data: `tsk:prp:${task.task_id}` };
     await bot.sendMessage(task.assigned_to,
       `${pm.icon} *New Task — ${pm.label}*\n${tm.icon} ${tm.label}\n\n` +
       `📝 *${escapeMd(task.title)}*${descLine}${fromLine}\n\n` +
-      `*How long do you need, and by when?*${incentiveHint}\n\n` +
+      `${ask}\n\n` +
       `ID: \`${task.task_id}\``,
       {
         parse_mode: 'Markdown',
         disable_notification: priorityIsSilent(task.priority),
         reply_markup: {
           inline_keyboard: [[
-            { text: '⏱ Propose timeline', callback_data: `tsk:prp:${task.task_id}` },
-            { text: '❌ Decline',          callback_data: `tsk:dec:${task.task_id}` },
+            firstChip,
+            { text: '❌ Decline', callback_data: `tsk:dec:${task.task_id}` },
           ]],
         },
       });
@@ -566,38 +603,210 @@ async function renderHoursPicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
   const cur = session.data?.hours;
-  const rows = [];
-  for (let i = 0; i < HOURS_PRESETS.length; i += 4) {
-    rows.push(HOURS_PRESETS.slice(i, i + 4).map(([label, value]) => ({
-      text: `⏱ ${label}${cur === value ? ' ✓' : ''}`,
-      callback_data: `tsk:phr:${value}`,
-    })));
-  }
-  rows.push([{ text: '⌨ Custom hours', callback_data: 'tsk:phr_custom' }]);
+  const rows = timeChartRows(cur, 'tsk:phr:');
   rows.push([{ text: '⬅️ Back', callback_data: 'tsk:pcn' }]);
   const t = session.data;
   const pm = PRIORITY_META[t.taskPriority] || PRIORITY_META.normal;
   await anchor(bot, chatId, userId,
-    `⏱ *Propose Timeline — Step 1/2*\n\n${pm.icon} *${escapeMd(t.taskTitle)}*\n\nHow long do you need?\n_Use a preset, or tap *Custom hours* to reply with a specific number._`,
+    `⏱ *Time needed — tap one*\n\n${pm.icon} *${escapeMd(t.taskTitle)}*${descLine(t.taskDescription)}\n\n`
+    + 'How much time do you need for this work?\n_Step 1 of 2 — the date comes next._',
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
 
-async function renderHoursCustomPrompt(bot, chatId, userId) {
+/* ───────────────────────────────────────────────────────────────────────
+ * TSK-V2 — SALARIED: the whole doer side, in one card edited in place.
+ *
+ *   task card  →  time chart  →  clock running  →  (Mark done)
+ *
+ * No deadline is ever asked for and none is stored: the implied finish is
+ * start + ETA, computed wherever it is shown (§10 — a derived fact must
+ * not become a second source of truth). No negotiation, no rounds — a
+ * salary instruction is not a bargain.
+ * ─────────────────────────────────────────────────────────────────────── */
+
+/**
+ * TSK-V2 — the doer's per-task card. ONE card, edited in place, carrying
+ * the description and only the chips legal in the task's current state.
+ * Every list drills into this; Back from the chart returns to it.
+ */
+async function renderDoerTaskCard(bot, chatId, userId, taskId, messageId) {
+  const task = await tasksRepository.getById(taskId);
+  if (!task) {
+    await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`,
+      { reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+  const pm = PRIORITY_META[getPriority(task)] || PRIORITY_META.normal;
+  const tm = TRACK_META[task.track] || TRACK_META.salaried;
+  const salaried = task.track !== 'incentivized';
+
+  const lines = [
+    `${pm.icon} *${escapeMd(task.title)}*`,
+    `${tm.icon} ${tm.label} · ${statusBadge(task.status)}`,
+    descLine(task.description),
+    '',
+  ];
+  if (task.status === 'active' && task.proposed_hours) {
+    lines.push(salaried
+      ? `⏱ Time you gave: *${fmtHours(task.proposed_hours)}* · finish by about *${escapeMd(impliedEnd(task))}*`
+      : `⏱ *${fmtHours(task.proposed_hours)}* · 📅 by *${fmtDate(task.proposed_deadline)}*`);
+  } else if (task.proposed_hours && task.proposed_deadline) {
+    lines.push(`⏱ *${fmtHours(task.proposed_hours)}* · 📅 *${fmtDate(task.proposed_deadline)}*`);
+  }
+  try {
+    const from = await usersRepository.findByUserId(task.assigned_by);
+    if (from) lines.push(`👤 From: ${escapeMd(from.name || task.assigned_by)}`);
+  } catch (_) { /* name is a nicety */ }
+  lines.push('', `ID: \`${task.task_id}\``);
+
+  const rows = [];
+  const act = buttonsForMyTask(task);
+  if (act) rows.push(act);
+  rows.push([
+    { text: '⬅ My Tasks', callback_data: 'tsk:mine' },
+    { text: '🏠 Menu', callback_data: 'act:__back__' },
+  ]);
+  await editOrSend(bot, chatId, messageId, lines.filter((l) => l !== null).join('\n'),
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+/**
+ * TSK-V2 — "ETA 4h · took 5h 20m": the work-assessment line. Both numbers
+ * are already on the row (the committed hours, and start→submit from the
+ * timestamps), so this is read-time arithmetic, never a stored figure.
+ */
+function etaVsActual(task) {
+  const hrs = Number(task.proposed_hours);
+  const start = task.started_at ? new Date(task.started_at) : null;
+  const end = task.submitted_at ? new Date(task.submitted_at) : null;
+  if (!Number.isFinite(hrs)) return '';
+  const eta = `⏱ ETA *${fmtHours(hrs)}*`;
+  if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return eta;
+  const mins = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+  const took = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${mins % 60 ? ` ${mins % 60}m` : ''}`;
+  return `${eta} · took *${took}*`;
+}
+
+/** Open the time chart for a salaried task, editing the task card itself. */
+async function startEstimateFlow(bot, callbackQuery, taskId) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+
+  const task = await tasksRepository.getById(taskId);
+  if (!task) {
+    await editOrSend(bot, chatId, messageId, `❌ Task ${taskId} not found.`,
+      { reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+  // The pre-ACK at the top of handleCallback makes a show_alert toast a
+  // no-op, so every refusal is rendered into the card the tapper is looking
+  // at instead of a popup they would never see.
+  if (String(task.assigned_to) !== userId) {
+    await editOrSend(bot, chatId, messageId,
+      'ℹ️ Only the person this task was given to can accept it.',
+      { reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+  if (task.status !== 'assigned') {
+    await editOrSend(bot, chatId, messageId,
+      `ℹ️ This task is *${escapeMd(task.status)}* — it is no longer waiting on your time.`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+
+  sessionStore.set(userId, {
+    type: 'task_estimate_flow',
+    step: 'hours',
+    flowMessageId: messageId,
+    data: {
+      taskId,
+      taskTitle: task.title,
+      taskDescription: task.description,
+      taskPriority: task.priority,
+    },
+  });
+  await renderEstimateChart(bot, chatId, userId);
+}
+
+async function renderEstimateChart(bot, chatId, userId) {
   const session = sessionStore.get(userId);
-  if (!session) return;
+  if (!session || session.type !== 'task_estimate_flow') return;
   const t = session.data;
   const pm = PRIORITY_META[t.taskPriority] || PRIORITY_META.normal;
+  const rows = timeChartRows(null, 'tsk:ehr:');
+  rows.push([
+    { text: '⬅️ Back', callback_data: `tsk:eback:${t.taskId}` },
+    { text: '❌ Decline task', callback_data: `tsk:dec:${t.taskId}` },
+  ]);
   await anchor(bot, chatId, userId,
-    `⌨ *Custom hours*\n\n${pm.icon} ${escapeMd(t.taskTitle)}\n\nReply with the number of hours (e.g. \`6\`, \`0.5\`, \`36\`).\n_Max 720 hours (= 30 days). Decimals OK._`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '⬅️ Back to presets', callback_data: 'tsk:pbk:hours' },
-          { text: '❌ Cancel',           callback_data: 'tsk:pcn' },
-        ]],
-      },
-    });
+    `⏱ *Time needed — tap one*\n\n${pm.icon} *${escapeMd(t.taskTitle)}*${descLine(t.taskDescription)}\n\n`
+    + 'How much time do you need for this work?\n_The clock starts when you pick._',
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+/** The tap that commits the time AND starts the clock. */
+async function submitEstimate(bot, chatId, userId, hours) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'task_estimate_flow') return;
+  const t = session.data;
+  let task;
+  try {
+    const res = await taskStateMachine.transition(t.taskId, 'accept_estimate', userId, { hours });
+    task = res.task;
+  } catch (e) {
+    logger.error(`taskFlow.submitEstimate: ${e.message}`);
+    sessionStore.clear(userId);
+    await editOrSend(bot, chatId, session.flowMessageId,
+      `❌ Couldn't start this task: ${escapeMd(e.message)}`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+    return;
+  }
+  sessionStore.clear(userId, 'completed');
+  await editOrSend(bot, chatId, session.flowMessageId, runningCardText(task),
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
+      [{ text: '✅ Mark done', callback_data: `tsk:done:${t.taskId}` }],
+    ] } });
+
+  // The assigner learns the commitment — information, not an approval step.
+  try {
+    const pm = PRIORITY_META[task.priority] || PRIORITY_META.normal;
+    const doer = await usersRepository.findByUserId(userId);
+    await bot.sendMessage(task.assigned_by,
+      `⏱ *Time given — clock started*\n\n`
+      + `${pm.icon} ${escapeMd(task.title)}\n`
+      + `👤 ${escapeMd(doer?.name || userId)} needs *${fmtHours(hours)}* · finish by about *${impliedEnd(task)}*\n`
+      + `ID: \`${t.taskId}\``,
+      { parse_mode: 'Markdown', disable_notification: priorityIsSilent(task.priority) });
+  } catch (e) {
+    logger.warn(`taskFlow.submitEstimate: assigner DM failed: ${e.message}`);
+  }
+}
+
+/** "Working" card — the same message, now showing the running commitment. */
+function runningCardText(task) {
+  const pm = PRIORITY_META[task.priority] || PRIORITY_META.normal;
+  const started = task.started_at ? fmtDate.withTime(task.started_at) : '';
+  return `🟢 *Working — clock started*\n\n`
+    + `${pm.icon} *${escapeMd(task.title)}*${descLine(task.description)}\n\n`
+    + `⏱ Time you gave: *${fmtHours(task.proposed_hours)}*${started ? ` · started ${escapeMd(started)}` : ''}\n`
+    + `🎯 Finish by about *${escapeMd(impliedEnd(task))}*\n\n`
+    + `When done, tap *Mark done*.\nID: \`${task.task_id}\``;
+}
+
+/**
+ * The implied finish of a salaried task: start + committed hours. COMPUTED,
+ * never stored — the sheet keeps the two facts it was given and this is
+ * derived from them at read time (§10).
+ */
+function impliedEnd(task) {
+  const start = task.started_at ? new Date(task.started_at) : null;
+  const hrs = Number(task.proposed_hours);
+  if (!start || Number.isNaN(start.getTime()) || !Number.isFinite(hrs)) return '—';
+  const end = new Date(start.getTime() + hrs * 3600 * 1000);
+  const sameDay = end.toDateString() === start.toDateString();
+  const hhmm = fmtDate.withTime(end.toISOString());
+  return sameDay ? `${String(hhmm).slice(-5)} today` : String(hhmm);
 }
 
 async function renderDeadlinePicker(bot, chatId, userId) {
@@ -1458,6 +1667,30 @@ async function handleCallback(bot, callbackQuery) {
   if (data.startsWith('tsk:done:'))    { await handleMarkDone   (bot, callbackQuery, data.slice('tsk:done:'.length));    return true; }
   if (data.startsWith('tsk:sign:ok:')) { await handleSignOff    (bot, callbackQuery, data.slice('tsk:sign:ok:'.length), true);  return true; }
   if (data.startsWith('tsk:sign:no:')) { await handleSignOff    (bot, callbackQuery, data.slice('tsk:sign:no:'.length), false); return true; }
+  // TSK-V2 — salaried: open the chart, or commit the time. `tsk:eback:`
+  // returns the untouched task card so Back never strands the worker.
+  // TSK-V2 — the list/detail pair, both in the one anchored message.
+  if (data === 'tsk:mine') { await showMyTasks(bot, chatId, userId, messageId); return true; }
+  if (data.startsWith('tsk:t:')) { await renderDoerTaskCard(bot, chatId, userId, data.slice('tsk:t:'.length), messageId); return true; }
+  if (data.startsWith('tsk:est:')) { await startEstimateFlow(bot, callbackQuery, data.slice('tsk:est:'.length)); return true; }
+  if (data.startsWith('tsk:ehr:')) {
+    const est = sessionStore.get(userId);
+    if (!est || est.type !== 'task_estimate_flow') {
+      await editOrSend(bot, chatId, messageId,
+        '⏳ This card has expired. Open the task again and tap *Accept — give time*.',
+        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
+      return true;
+    }
+    est.flowMessageId = messageId;
+    sessionStore.set(userId, est);
+    await submitEstimate(bot, chatId, userId, Number(data.slice('tsk:ehr:'.length)));
+    return true;
+  }
+  if (data.startsWith('tsk:eback:')) {
+    sessionStore.clear(userId, 'cancelled');
+    await renderDoerTaskCard(bot, chatId, userId, data.slice('tsk:eback:'.length), messageId);
+    return true;
+  }
   if (data.startsWith('tsk:prp:'))     { await startProposeFlow (bot, callbackQuery, data.slice('tsk:prp:'.length)); return true; }
   if (data.startsWith('tsk:dec:'))     { await handleDecline    (bot, callbackQuery, data.slice('tsk:dec:'.length)); return true; }
   if (data.startsWith('tsk:acc:'))     { await handleAcceptTimeline(bot, callbackQuery, data.slice('tsk:acc:'.length)); return true; }
@@ -1517,7 +1750,7 @@ async function handleCallback(bot, callbackQuery) {
     const s = sessionStore.get(userId);
     if (s && (s.type === 'task_assign_flow' || s.type === 'task_propose_flow'
               || s.type === 'task_counter_flow' || s.type === 'task_incentive_flow'
-              || s.type === 'task_drop_flow')) {
+              || s.type === 'task_drop_flow' || s.type === 'task_estimate_flow')) {
       sessionStore.clear(userId, 'cancelled');
     }
     await editOrSend(bot, chatId, messageId, '❌ Cancelled.', {
@@ -1534,7 +1767,7 @@ async function handleCallback(bot, callbackQuery) {
     });
     return true;
   }
-  if (data.startsWith('tsk:phr:') || data === 'tsk:phr_custom'
+  if (data.startsWith('tsk:phr:')
       || data.startsWith('tsk:pdl:') || data === 'tsk:pcal' || data === 'tsk:cbk'
       || data.startsWith('tsk:cmv:') || data.startsWith('tsk:cdy:')
       || data === 'tsk:pcf' || data.startsWith('tsk:pbk:')) {
@@ -1554,12 +1787,6 @@ async function handleCallback(bot, callbackQuery) {
       session.step = 'deadline';
       sessionStore.set(userId, session);
       await renderDeadlinePicker(bot, chatId, userId);
-      return true;
-    }
-    if (data === 'tsk:phr_custom') {
-      session.step = 'hours_text';
-      sessionStore.set(userId, session);
-      await renderHoursCustomPrompt(bot, chatId, userId);
       return true;
     }
     if (data.startsWith('tsk:pdl:')) {
@@ -1783,22 +2010,7 @@ async function handleTextStep(bot, msg) {
   }
 
   if (session.type === 'task_propose_flow') {
-    if (session.step === 'hours_text') {
-      if (!/^\d+(\.\d+)?$/.test(text)) {
-        await bot.sendMessage(chatId, '⚠️ Reply with a number only (e.g. `6`, `0.5`, `36`).', { parse_mode: 'Markdown' });
-        return true;
-      }
-      const hrs = Number(text);
-      if (!Number.isFinite(hrs) || hrs <= 0 || hrs > 720) {
-        await bot.sendMessage(chatId, '⚠️ Hours must be greater than 0 and ≤ 720 (= 30 days). Please reply again.');
-        return true;
-      }
-      session.data.hours = hrs;
-      session.step = 'deadline';
-      sessionStore.set(userId, session);
-      await renderDeadlinePicker(bot, chatId, userId);
-      return true;
-    }
+    // TSK-V2 — effort is chart-only now; nothing typed reaches the sheet.
     return false;
   }
 
@@ -1881,8 +2093,13 @@ async function handleMarkDone(bot, callbackQuery, taskId) {
     return;
   }
 
+  // TSK-V2 — keep the POST-transition row: submitted_at is stamped by the
+  // transition, and the sign-off card's "took" figure is computed from it.
+  // Using the pre-read row would have silently dropped half that line.
+  let submitted = task;
   try {
-    await taskStateMachine.transition(taskId, 'mark_done', userId);
+    const res = await taskStateMachine.transition(taskId, 'mark_done', userId);
+    if (res && res.task) submitted = res.task;
   } catch (e) {
     logger.error(`taskFlow.handleMarkDone: ${e.message}`);
     await editOrSend(bot, chatId, messageId, `❌ Could not submit: ${e.message}`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
@@ -1897,8 +2114,9 @@ async function handleMarkDone(bot, callbackQuery, taskId) {
   try {
     await bot.sendMessage(task.assigned_by,
       `📨 *Task awaiting your sign-off*\n\n` +
-      `${pm.icon} ${escapeMd(task.title)}\n` +
+      `${pm.icon} ${escapeMd(task.title)}${descLine(task.description)}\n` +
       `👤 By: ${escapeMd((await usersRepository.findByUserId(task.assigned_to))?.name || task.assigned_to)}\n` +
+      `${etaVsActual(submitted)}\n` +
       `ID: \`${taskId}\``,
       {
         parse_mode: 'Markdown',
@@ -2000,28 +2218,59 @@ function statusBadge(status) {
 function buttonsForMyTask(task) {
   switch (task.status) {
     case 'assigned':
-      return [
-        { text: `⏱ Propose — ${truncate(task.title, 22)}`, callback_data: `tsk:prp:${task.task_id}` },
-        { text: '❌ Decline', callback_data: `tsk:dec:${task.task_id}` },
-      ];
+      // TSK-V2 — salaried commits time and starts; incentivized opens a deal.
+      return task.track !== 'incentivized'
+        ? [
+          { text: '⏱ Accept — give time', callback_data: `tsk:est:${task.task_id}` },
+          { text: '❌ Decline', callback_data: `tsk:dec:${task.task_id}` },
+        ]
+        : [
+          { text: '⏱ Propose timeline', callback_data: `tsk:prp:${task.task_id}` },
+          { text: '❌ Decline', callback_data: `tsk:dec:${task.task_id}` },
+        ];
     case 'awaiting_final_ack':
       return [
-        { text: `✅ Accept — ${truncate(task.title, 22)}`, callback_data: `tsk:fa:${task.task_id}` },
+        { text: '✅ Accept the deal', callback_data: `tsk:fa:${task.task_id}` },
         { text: '↩ Renegotiate', callback_data: `tsk:rng:${task.task_id}` },
       ];
     case 'active':
       return [
-        { text: `✅ Done — ${truncate(task.title, 30)}`, callback_data: `tsk:done:${task.task_id}` },
+        { text: '✅ Mark done', callback_data: `tsk:done:${task.task_id}` },
       ];
     default:
       return null;
   }
 }
 
+/** One chip per task: what it is, and what it is waiting for. */
+function waitingWord(t) {
+  switch (t.status) {
+    case 'assigned':
+      return t.track !== 'incentivized' ? 'time needed' : 'timeline needed';
+    case 'awaiting_timeline_ack': return 'with your assigner';
+    case 'awaiting_final_ack': return 'your OK needed';
+    case 'active':
+      return t.track !== 'incentivized' && t.started_at && t.proposed_hours
+        ? `ends ~${impliedEnd(t)}`
+        : (t.proposed_deadline ? `by ${fmtDate(t.proposed_deadline)}` : 'in progress');
+    case 'submitted': return 'at sign-off';
+    default: return statusBadge(t.status);
+  }
+}
+
+/**
+ * TSK-V2 — My Tasks is a LIST OF CHIPS, not a wall of text.
+ *
+ * The old view rendered every task plus its buttons into one message: past
+ * roughly fifteen tasks it silently exceeded Telegram's 4096-char limit and
+ * simply failed to render, and the action chips sat far from the rows they
+ * belonged to. Now each task is one chip that opens its own card, so the
+ * message length is bounded by the page size and every action is beside the
+ * task it acts on.
+ */
 async function showMyTasks(bot, chatId, userId, messageId) {
   // TRF-5 — transfers waiting on this user (dispatch / receive) surface at
   // the top of My Tasks. Session-free: rebuilt from the live ApprovalQueue.
-  // Lazy require avoids a load-order cycle; failures never hide the tasks.
   let transferQueue = { lines: [], rows: [] };
   try {
     transferQueue = await require('./transferFlow').myQueueSection(userId);
@@ -2035,43 +2284,17 @@ async function showMyTasks(bot, chatId, userId, messageId) {
     });
     return;
   }
-  if (!tasks.length) {
-    await editOrSend(bot, chatId, messageId,
-      [...transferQueue.lines, '', '_No other assigned tasks._'].join('\n'), {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [...transferQueue.rows, navFooterRow()] },
-      });
-    return;
-  }
 
-  // Sort primarily by priority (critical → high → normal → low). When
-  // two tasks share priority, the one with the soonest deadline wins
-  // (urgency). When neither has a deadline, fall back to workflow phase
-  // so actionable items (active) appear above blocked ones (awaiting).
-  const PHASE_RANK = {
-    active: 0, awaiting_final_ack: 1, assigned: 2,
-    awaiting_timeline_ack: 3, awaiting_incentive: 4, submitted: 5,
-  };
-  function deadlineMs(t) {
-    if (!t.proposed_deadline) return Number.POSITIVE_INFINITY;
-    const ms = new Date(t.proposed_deadline).getTime();
-    return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
-  }
-  const visible = tasks
-    .filter((t) => PHASE_RANK[t.status] != null)
-    .sort((a, b) => {
-      const pa = PRIORITY_RANK[getPriority(a)] ?? 2;
-      const pb = PRIORITY_RANK[getPriority(b)] ?? 2;
-      if (pa !== pb) return pa - pb;
-      const da = deadlineMs(a);
-      const db = deadlineMs(b);
-      if (da !== db) return da - db;
-      return PHASE_RANK[a.status] - PHASE_RANK[b.status];
-    });
-  const done = tasks.filter((t) => t.status === 'completed').slice(-5);
-  const offRoll = tasks.filter((t) =>
-    t.status === 'declined' || t.status === 'cancelled' || t.status === 'dropped'
-  ).slice(-3);
+  const open = tasks.filter((t) => OPEN_STATUSES.has(t.status));
+  open.sort((a, b) => {
+    const pa = PRIORITY_RANK[getPriority(a)] ?? 2;
+    const pb = PRIORITY_RANK[getPriority(b)] ?? 2;
+    if (pa !== pb) return pa - pb;
+    const da = a.proposed_deadline ? new Date(a.proposed_deadline).getTime() : Infinity;
+    const db = b.proposed_deadline ? new Date(b.proposed_deadline).getTime() : Infinity;
+    return da - db;
+  });
+  const doneCount = tasks.filter((t) => t.status === 'completed').length;
 
   const lines = [];
   const rows = [];
@@ -2079,36 +2302,21 @@ async function showMyTasks(bot, chatId, userId, messageId) {
     lines.push(...transferQueue.lines, '');
     rows.push(...transferQueue.rows);
   }
-  lines.push('📋 *Your Tasks* — _by priority, soonest first_', '');
+  lines.push(`📋 *My Tasks* — ${open.length} open`);
+  lines.push('_Tap a task to open it._');
 
-  // Render with a tiny priority header that resets each time the priority
-  // tier changes — easier to scan when the list is long.
-  let lastPriorityTier = null;
-  for (const t of visible) {
-    const p = getPriority(t);
-    if (p !== lastPriorityTier) {
-      lastPriorityTier = p;
-      const pm = PRIORITY_META[p] || PRIORITY_META.normal;
-      lines.push('', `${pm.icon} *${pm.label}*`);
-    }
-    const tm = TRACK_META[t.track] || TRACK_META.salaried;
-    lines.push(`   ${escapeMd(t.title)} · ${tm.icon} ${tm.label}  \`${t.task_id}\``);
-    lines.push(`     ${statusBadge(t.status)}`);
-    if (t.proposed_hours && t.proposed_deadline) {
-      lines.push(`     ⏱ ${fmtHours(t.proposed_hours)} · 📅 ${fmtDate(t.proposed_deadline)}`);
-    }
-    const btns = buttonsForMyTask(t);
-    if (btns) rows.push(btns);
+  for (const t of open.slice(0, MY_TASKS_PAGE)) {
+    const pm = PRIORITY_META[getPriority(t)] || PRIORITY_META.normal;
+    rows.push([{
+      text: `${pm.icon} ${truncate(t.title, 26)} — ${waitingWord(t)}`,
+      callback_data: `tsk:t:${t.task_id}`,
+    }]);
   }
-  if (done.length) {
-    lines.push('', '✅ *Recently completed:*');
-    for (const t of done) lines.push(`   ${escapeMd(t.title)}`);
+  if (open.length > MY_TASKS_PAGE) {
+    lines.push(`_Showing the first ${MY_TASKS_PAGE} of ${open.length}._`);
   }
-  if (offRoll.length) {
-    lines.push('', '🚫 *Declined / cancelled / dropped:*');
-    for (const t of offRoll) lines.push(`   ${escapeMd(t.title)}  (${t.status})`);
-  }
-
+  if (!open.length) lines.push('', '_Nothing open right now._');
+  if (doneCount) lines.push('', `✅ ${doneCount} completed so far.`);
   rows.push(navFooterRow());
 
   await editOrSend(bot, chatId, messageId, lines.join('\n'), {
