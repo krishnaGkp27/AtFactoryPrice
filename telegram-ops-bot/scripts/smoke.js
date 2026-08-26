@@ -7850,6 +7850,27 @@ function runS54() {
   } else {
     fail('S54.8', JSON.stringify({ fixturesGone, serverOwnsCap, wiring }));
   }
+
+  // ---- S54.9 — GNT-1 employee gantt: wired, read-only, money-free ----
+  const ganttSrc = fs.readFileSync(path.join(__dirname, '../../gantt.html'), 'utf8');
+  const srvGantt = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
+  const apiGantt = fs.readFileSync(path.join(__dirname, '../src/controllers/apiController.js'), 'utf8');
+  const gWired = ganttSrc.includes("fetch('/api/ops/tasks'")
+    && !/Musa|Yarima|Owaribulla/.test(ganttSrc)          // design fixtures gone
+    && ganttSrc.includes('setInterval(load, 15000)');
+  // §15 — the web DISPLAYS. No write of any kind may exist on this page.
+  const gReadOnly = !/method:\s*'POST'/i.test(ganttSrc) && !ganttSrc.includes('postOpsTasks');
+  const gRoute = srvGantt.includes("'/gantt': 'gantt.html'")
+    && srvGantt.includes("app.get('/api/ops/tasks'");
+  // The amount stays in Incentives; the chart may only know a bonus exists.
+  const gMoneyFree = apiGantt.includes('hasIncentive: withIncentive.has')
+    && !/amount/.test(apiGantt.slice(apiGantt.indexOf('async function getOpsTasks'),
+      apiGantt.indexOf('async function postOpsAllocation')));
+  if (gWired && gReadOnly && gRoute && gMoneyFree) {
+    pass('S54.9 GNT-1: gantt wired live, read-only, no amounts on the chart');
+  } else {
+    fail('S54.8', JSON.stringify({ fixturesGone, serverOwnsCap, wiring }));
+  }
 }
 
 function runS53() {

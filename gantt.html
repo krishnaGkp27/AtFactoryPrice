@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Employee Gantt — /gantt (admin)</title>
+<style>
+:root{--bg:#0d0d0f;--panel:#121215;--hdr:#1c1c22;--bd:#2c2c33;--bd2:#26262d;--tx:#f2f2f2;--gold:#d4af5f;--pos:#8fd18f;--warn:#e0a878;--crit:#e07a72;--dim:#55555e;--mut:#8b8b93;--sal:#5a8fc4;--saldk:#38618c}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--tx);font:14px/1.45 -apple-system,'Segoe UI',Roboto,Arial,sans-serif;min-height:100vh;font-variant-numeric:tabular-nums}
+a{color:#7fb8ff}a:hover{color:#a8cdff}
+.bar{display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--bd2);flex-wrap:wrap}
+.wm{font-size:14px;font-weight:700;letter-spacing:2.5px;white-space:nowrap}
+.wm b{color:var(--gold)}
+.wm small{display:block;font-size:9.5px;letter-spacing:1.8px;color:var(--mut);font-weight:600;margin-top:2px}
+.sp{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.stamp{font:11px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--mut);letter-spacing:.4px}
+.stamp b{color:var(--tx)}
+.stamp.flash b{color:var(--gold)}
+.seg{display:flex;border:1px solid var(--bd);border-radius:3px;overflow:hidden}
+.seg button{background:var(--hdr);color:var(--mut);border:0;font:600 12px/1 inherit;padding:11px 16px;cursor:pointer;min-height:44px}
+.seg button.on{background:var(--gold);color:#14161e}
+.rfr{background:var(--hdr);color:var(--tx);border:1px solid var(--bd);border-radius:3px;font:600 12px/1 inherit;padding:10px 14px;cursor:pointer;min-height:44px}
+.rfr:hover{border-color:var(--gold)}
+.rfr .ic{display:inline-block}
+.rfr.spin .ic{animation:rot .6s linear infinite}
+@keyframes rot{to{transform:rotate(360deg)}}
+.panel{background:var(--panel);border:1px solid var(--bd);margin:16px 18px;border-radius:4px;overflow:hidden}
+.ghead{display:flex;border-bottom:1px solid var(--bd)}
+.gcorner{flex:none;width:170px;background:var(--hdr);border-right:1px solid var(--bd);padding:9px 12px;font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--mut);font-weight:700}
+.gscale{flex:1;display:flex;background:var(--hdr);position:relative}
+.gscale span{flex:1;padding:9px 0;text-align:center;font-size:10.5px;letter-spacing:.8px;color:var(--mut);font-weight:700;border-left:1px solid var(--bd2)}
+.grow{display:flex;border-bottom:1px solid var(--bd2);min-height:64px}
+.grow:last-child{border-bottom:0}
+.gwho{flex:none;width:170px;border-right:1px solid var(--bd);padding:10px 12px;position:sticky;left:0;background:var(--panel);z-index:2}
+.gwho .nm{font-weight:600;letter-spacing:.3px}
+.gwho .load{font-size:11px;color:var(--mut);margin-top:3px}
+.gwho .load b{color:var(--pos);font-weight:600}
+.gwho .load .bad{color:var(--crit);font-weight:600}
+.gtrack{flex:1;position:relative}
+.gridline{position:absolute;top:0;bottom:0;width:1px;background:var(--bd2)}
+.nowline{position:absolute;top:0;bottom:0;width:2px;background:var(--gold);z-index:3}
+.nowtag{position:absolute;top:-1px;transform:translateX(-50%);background:var(--gold);color:#14161e;font-size:9px;font-weight:700;letter-spacing:.8px;padding:2px 6px;border-radius:0 0 3px 3px;z-index:4}
+.task{position:absolute;height:24px;border-radius:3px;font-size:11px;font-weight:600;color:#fff;display:flex;align-items:center;gap:6px;padding:0 8px;white-space:nowrap;overflow:hidden;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.35)}
+.task .tx{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.task:hover{filter:brightness(1.15)}
+.task.sal{background:linear-gradient(180deg,var(--sal),var(--saldk))}
+.task.inc{background:linear-gradient(180deg,#c9a24f,#8a6a12);color:#14161e}
+.task.done{background:linear-gradient(180deg,#4f9c6b,#2e6b46);opacity:.85}
+.task.over{box-shadow:inset 0 0 0 1.5px var(--crit),0 2px 6px rgba(0,0,0,.35)}
+.task.wait{background:repeating-linear-gradient(45deg,#2c2c33,#2c2c33 6px,#232329 6px,#232329 12px);color:var(--mut);box-shadow:inset 0 0 0 1px var(--bd)}
+.task .eta{font-weight:400;opacity:.85}
+.dot{flex:none;width:7px;height:7px;border-radius:50%}
+.dot.crit{background:var(--crit)}
+.dot.high{background:var(--warn)}
+.dot.norm{background:#9aa3ad}
+.task.inc .dot.norm{background:#5c4a15}
+.overflag{position:absolute;height:24px;border-radius:0 3px 3px 0;background:repeating-linear-gradient(45deg,#b3261e55,#b3261e55 5px,#7a1a1455 5px,#7a1a1455 10px)}
+.gempty{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:11.5px;color:var(--dim);letter-spacing:.4px}
+.legend{display:flex;gap:10px 22px;flex-wrap:wrap;padding:12px 18px 4px;font-size:11.5px;color:var(--mut)}
+.legend i{font-style:normal;display:flex;align-items:center;gap:6px}
+.lsw{display:inline-block;width:22px;height:10px;border-radius:2px}
+.ldot{display:inline-block;width:7px;height:7px;border-radius:50%}
+.note{padding:10px 18px 20px;font-size:11.5px;color:var(--mut);letter-spacing:.3px}
+.evoid{padding:64px 24px;text-align:center}
+.evoid .t{font-size:14px;font-weight:600;letter-spacing:.4px}
+.evoid p{font-size:12.5px;color:var(--mut);margin-top:8px;line-height:1.6}
+#tip{position:fixed;background:#0a0a0c;border:1px solid var(--bd);border-radius:3px;padding:10px 12px;font-size:12px;line-height:1.6;z-index:60;max-width:280px;box-shadow:0 10px 28px rgba(0,0,0,.6)}
+#tip b{display:block;font-size:12.5px;letter-spacing:.3px;margin-bottom:2px}
+#tip .l{color:var(--mut)}
+.card{max-width:430px;margin:10vh auto;background:var(--panel);border:1px solid var(--bd);border-radius:4px;padding:30px 28px;text-align:center}
+.card p{font-size:13.5px;color:var(--mut);line-height:1.6}
+.card p b{color:var(--tx)}
+.card .k{display:inline-block;margin-top:16px;border:1px solid var(--bd);border-radius:3px;padding:10px 14px;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--gold)}
+.demo{position:fixed;bottom:14px;left:14px;background:#000;border:1px solid var(--bd);border-radius:20px;padding:5px 6px;display:flex;gap:4px;align-items:center;z-index:50}
+.demo span{color:#666;font-size:10px;padding:0 4px 0 8px;letter-spacing:.5px}
+.demo button{border:0;background:transparent;color:#999;font:600 11px/1 inherit;padding:6px 9px;border-radius:14px;cursor:pointer;white-space:nowrap}
+.demo button.on{background:var(--gold);color:#111}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div id="app" data-screen-label="Employee Gantt — admin">
+<div class="bar">
+<div class="wm">AT<b>FACTORY</b>PRICE<small>EMPLOYEE GANTT · WORK PLAN</small></div>
+<div class="sp">
+<div class="seg"><button id="vday" class="on" onclick="setView('day')">Day</button><button id="vweek" onclick="setView('week')">Week</button></div>
+<span class="stamp" id="stamp">last updated <b>—</b></span>
+<button class="rfr" id="rfr" type="button"><span class="ic">↻</span> Refresh</button>
+</div>
+</div>
+<div class="legend" id="legend">
+<i><span class="lsw" style="background:linear-gradient(180deg,#5a8fc4,#38618c)"></span>salaried — start + ETA</i>
+<i><span class="lsw" style="background:linear-gradient(180deg,#c9a24f,#8a6a12)"></span>incentivized — start → agreed date</i>
+<i><span class="lsw" style="background:linear-gradient(180deg,#4f9c6b,#2e6b46)"></span>signed off today</i>
+<i><span class="lsw" style="background:repeating-linear-gradient(45deg,#2c2c33,#2c2c33 6px,#232329 6px,#232329 12px)"></span>waiting — no time given yet</i>
+<i><span class="lsw" style="box-shadow:inset 0 0 0 2px #e07a72;background:#121215"></span>past its time</i>
+<i><span class="ldot" style="background:var(--crit)"></span>critical <span class="ldot" style="background:var(--warn);margin-left:8px"></span>high <span class="ldot" style="background:#9aa3ad;margin-left:8px"></span>normal</i>
+</div>
+<div id="chart"></div>
+<div class="panel" id="pv-empty" hidden>
+<div class="evoid"><div class="t">No live tasks right now</div>
+<p>Assignments made in the bot appear here the moment they're given.<br>Waiting, active, overdue and signed-off-today all show on the timeline.</p></div>
+</div>
+<p class="note" id="note">Blue bars run start → start + ETA (the worker's own committed time). Gold bars run start → the agreed date of the deal. Striped grey = assigned but no time given yet — the silent stalls, finally visible. Tap a bar for its full story. Live-mirrors the bot every 15s; read-only (§15: the web displays, Telegram decides).</p>
+</div>
+<div id="out" hidden data-screen-label="Signed out">
+<div class="card">
+<div class="wm" style="display:flex;justify-content:center">AT<b>FACTORY</b>PRICE</div>
+<p style="margin-top:14px"><b>Admin sign-in required.</b><br>Sign in via the bot (📊 Dashboard).</p>
+<span class="k">/gantt · magic-link session expired</span>
+</div>
+</div>
+<div id="tip" hidden></div>
+<div class="demo"><span>DEMO</span><button id="dv0" class="on" onclick="dv(0)">Admin view</button><button id="dv2" onclick="dv(2)">Empty</button><button id="dv1" onclick="dv(1)">Signed out</button></div>
+<script>
+'use strict';
+/* GNT-1 — the employee work plan, wired to GET /api/ops/tasks.
+ * Read-only by construction (§15: the web displays, Telegram decides): this
+ * page has no write path of any kind. Bar geometry is computed here from the
+ * two facts the sheet holds — when work started and the time committed —
+ * because the finish is a derived fact and storing it would create a second
+ * source of truth (§10). Amounts never arrive; `hasIncentive` only marks
+ * that a bonus exists. */
+
+var DATA = null;
+var VIEW = 'day';
+var DEMO = 0;          // 0 = live, 2 = forced-empty preview
+var HOURS = [8, 20];   // the working window the Day scale spans
+
+function el(id) { return document.getElementById(id); }
+function esc(v) {
+  return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function hhmm(d) {
+  var p = function (n) { return (n < 10 ? '0' : '') + n; };
+  return p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function fmtHours(h) {
+  var n = Number(h);
+  if (!isFinite(n)) return '?';
+  return n < 24 ? n + 'h' : (Math.round(n / 24 * 10) / 10) + 'd';
+}
+function dayKey(d) {
+  return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+}
+function priClass(p) { return p === 'critical' ? 'crit' : (p === 'high' ? 'high' : 'norm'); }
+
+/* ── The window each view spans ─────────────────────────────────────────── */
+function windowFor(now) {
+  if (VIEW === 'day') {
+    var s = new Date(now); s.setHours(HOURS[0], 0, 0, 0);
+    var e = new Date(now); e.setHours(HOURS[1], 0, 0, 0);
+    return { start: s, end: e };
+  }
+  var mon = new Date(now);
+  mon.setHours(0, 0, 0, 0);
+  mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7)); // Monday-first
+  var end = new Date(mon);
+  end.setDate(end.getDate() + 6);
+  return { start: mon, end: end };
+}
+function pct(t, win) {
+  var span = win.end - win.start;
+  if (span <= 0) return 0;
+  return Math.max(0, Math.min(100, (t - win.start) / span * 100));
+}
+
+/* ── One task → one bar, or null when it falls outside the window ──────── */
+function barFor(task, win, now) {
+  var start = task.started_at ? new Date(task.started_at) : null;
+  var waiting = !start || isNaN(start.getTime());
+
+  if (waiting) {
+    // Assigned but no time committed: there is no real geometry, so it sits
+    // at "now" as a striped marker. These are the silent stalls — a task
+    // nobody answered has no deadline and shows up nowhere else.
+    var at = pct(now, win);
+    return { cls: 'wait', left: Math.min(at, 88), width: 12, waiting: true, end: null };
+  }
+  var end;
+  if (task.status === 'completed' || task.status === 'submitted') {
+    end = new Date(task.submitted_at || task.approved_at || now);
+  } else if (task.track === 'incentivized' && task.agreed_deadline) {
+    end = new Date(task.agreed_deadline);
+    if (VIEW === 'day') { end.setHours(HOURS[1], 0, 0, 0); }
+  } else if (task.eta_hours != null) {
+    end = new Date(start.getTime() + task.eta_hours * 3600000);
+  } else {
+    end = new Date(now);
+  }
+  if (end < win.start || start > win.end) return null; // not in view
+
+  var l = pct(start, win);
+  var r = pct(end, win);
+  var over = (task.status === 'active') && end < now;
+  var cls = task.status === 'completed' ? 'done'
+    : (task.track === 'incentivized' ? 'inc' : 'sal');
+  return {
+    cls: cls + (over ? ' over' : ''),
+    left: l,
+    width: Math.max(3, r - l),
+    over: over,
+    overTo: over ? pct(now, win) : null,
+    end: end,
+  };
+}
+
+function barLabel(task, bar) {
+  if (bar.waiting) return esc(task.title) + ' <span class="eta">· waiting</span>';
+  var tail = '';
+  if (task.status === 'completed') tail = '· ETA ' + fmtHours(task.eta_hours) + ' ✓';
+  else if (task.track === 'incentivized') {
+    tail = '· by ' + (task.agreed_deadline ? esc(task.agreed_deadline.slice(5)) : '—') + (task.hasIncentive ? ' · ₦' : '');
+  } else if (task.eta_hours != null) tail = '· ETA ' + fmtHours(task.eta_hours);
+  return esc(task.title) + (tail ? ' <span class="eta">' + tail + '</span>' : '');
+}
+
+function tipFor(task, bar, now) {
+  var parts = [];
+  parts.push(task.person_name + ' · ' + task.track + ' · ' + task.status.replace(/_/g, ' '));
+  if (bar.waiting) parts.push('Assigned — no time committed yet');
+  else {
+    var line = 'Started ' + hhmm(new Date(task.started_at));
+    if (task.eta_hours != null) line += ' · ETA ' + fmtHours(task.eta_hours);
+    if (bar.end) line += ' (till ' + hhmm(bar.end) + ')';
+    parts.push(line);
+  }
+  if (bar.over) parts.push('PAST ITS TIME — over by ' + fmtHours(Math.round((now - bar.end) / 3600000 * 10) / 10));
+  parts.push('From ' + task.assigned_by_name + ' · priority: ' + task.priority);
+  return parts.join('|');
+}
+
+/* ── Render ─────────────────────────────────────────────────────────────── */
+function scaleCells(win) {
+  var out = [];
+  if (VIEW === 'day') {
+    for (var h = HOURS[0]; h <= HOURS[1]; h += 2) out.push(('0' + h).slice(-2) + ':00');
+  } else {
+    var d = new Date(win.start);
+    var names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    for (var i = 0; i < 6; i++) {
+      out.push(names[i] + ' ' + d.getDate());
+      d.setDate(d.getDate() + 1);
+    }
+  }
+  return out;
+}
+
+function render() {
+  var host = el('chart');
+  if (!host) return;
+  if (DEMO === 2 || !DATA) { host.innerHTML = ''; el('pv-empty').hidden = DEMO !== 2; return; }
+
+  var now = new Date(DATA.now || Date.now());
+  var win = windowFor(now);
+  var byPerson = {};
+  (DATA.tasks || []).forEach(function (t) {
+    (byPerson[t.person_id] = byPerson[t.person_id] || []).push(t);
+  });
+  // Only people who hold work, plus everyone else after them — an idle row
+  // is a fact worth showing, but it should not push the busy rows down.
+  var people = (DATA.people || []).slice().sort(function (a, b) {
+    var na = (byPerson[a.id] || []).length, nb = (byPerson[b.id] || []).length;
+    if ((na > 0) !== (nb > 0)) return nb - na;
+    return a.name.localeCompare(b.name);
+  });
+  if (!people.length) { host.innerHTML = ''; el('pv-empty').hidden = false; return; }
+  el('pv-empty').hidden = true;
+
+  var cells = scaleCells(win);
+  var nowPct = pct(now, win);
+  var grid = '';
+  for (var g = 1; g < cells.length; g++) {
+    grid += '<span class="gridline" style="left:' + (g / cells.length * 100).toFixed(2) + '%"></span>';
+  }
+
+  var html = '<div class="panel"><div class="ghead"><div class="gcorner">Person</div><div class="gscale">'
+    + cells.map(function (c) { return '<span>' + esc(c) + '</span>'; }).join('') + '</div></div>';
+
+  var firstRow = true;
+  people.forEach(function (p) {
+    var mine = (byPerson[p.id] || []);
+    var bars = [];
+    var overdue = 0, done = 0;
+    mine.forEach(function (t) {
+      var bar = barFor(t, win, now);
+      if (!bar) return;
+      if (bar.over) overdue++;
+      if (t.status === 'completed') done++;
+      bars.push({ t: t, bar: bar });
+    });
+    var load = mine.length === 0 ? '0 tasks'
+      : mine.length + ' task' + (mine.length === 1 ? '' : 's')
+        + (overdue ? ' · <span class="bad">' + overdue + ' overdue</span>'
+          : (done ? ' · <b>' + done + ' done</b>' : ' · <b>on track</b>'));
+
+    html += '<div class="grow"><div class="gwho"><div class="nm">' + esc(p.name) + '</div>'
+      + '<div class="load">' + load + '</div></div><div class="gtrack">' + grid
+      + '<span class="nowline" style="left:' + nowPct.toFixed(2) + '%"></span>'
+      + (firstRow ? '<span class="nowtag" style="left:' + nowPct.toFixed(2) + '%">NOW ' + hhmm(now) + '</span>' : '');
+    firstRow = false;
+
+    if (!bars.length) {
+      html += '<span class="gempty">nothing assigned ' + (VIEW === 'day' ? 'today' : 'this week') + '</span>';
+    } else {
+      bars.forEach(function (b, i) {
+        var top = 8 + (i % 2) * 28;
+        if (b.bar.over && b.bar.overTo != null) {
+          html += '<div class="overflag" style="left:' + (b.bar.left + b.bar.width).toFixed(2) + '%;width:'
+            + Math.max(0, b.bar.overTo - b.bar.left - b.bar.width).toFixed(2) + '%;top:' + top + 'px"></div>';
+        }
+        html += '<div class="task ' + b.bar.cls + '" style="left:' + b.bar.left.toFixed(2) + '%;width:'
+          + b.bar.width.toFixed(2) + '%;top:' + top + 'px" data-info="'
+          + esc(b.t.title + '|' + tipFor(b.t, b.bar, now)) + '">'
+          + '<span class="dot ' + priClass(b.t.priority) + '"></span>'
+          + '<span class="tx">' + barLabel(b.t, b.bar) + '</span></div>';
+      });
+    }
+    html += '</div></div>';
+  });
+  html += '</div>';
+  host.innerHTML = html;
+}
+
+/* ── Load / 15s mirror ──────────────────────────────────────────────────── */
+function stampNow() {
+  var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+  var e = el('stamp');
+  e.innerHTML = 'last updated <b>' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '</b>';
+  e.classList.add('flash');
+  setTimeout(function () { e.classList.remove('flash'); }, 700);
+}
+function signedOut() {
+  el('app').hidden = true;
+  el('out').hidden = false;
+}
+function load() {
+  var b = el('rfr');
+  b.classList.add('spin');
+  fetch('/api/ops/tasks', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+    .then(function (r) {
+      return r.text().then(function (t) {
+        var j = null;
+        try { j = JSON.parse(t); } catch (_) { j = null; }
+        return j;
+      });
+    })
+    .then(function (j) {
+      b.classList.remove('spin');
+      // A non-JSON body (the login redirect) or a refusal means: not signed in.
+      if (!j || !j.ok) { signedOut(); return; }
+      el('app').hidden = false;
+      el('out').hidden = true;
+      DATA = j;
+      render();
+      stampNow();
+    })
+    .catch(function () { b.classList.remove('spin'); });
+}
+
+function setView(v) {
+  VIEW = v;
+  el('vday').classList.toggle('on', v === 'day');
+  el('vweek').classList.toggle('on', v === 'week');
+  render();
+}
+function dv(n) {
+  DEMO = n === 2 ? 2 : 0;
+  el('app').hidden = n === 1;
+  el('out').hidden = n !== 1;
+  [['dv0', 0], ['dv2', 2], ['dv1', 1]].forEach(function (pair) {
+    el(pair[0]).classList.toggle('on', n === pair[1]);
+  });
+  hideTip();
+  if (n !== 1) render();
+}
+
+var tip = el('tip');
+function hideTip() { tip.hidden = true; }
+document.addEventListener('click', function (e) {
+  var t = e.target.closest('.task');
+  if (!t || !t.dataset.info) { if (!e.target.closest('#tip')) hideTip(); return; }
+  var parts = t.dataset.info.split('|');
+  tip.innerHTML = '<b></b>' + parts.slice(1).map(function () { return '<div class="l"></div>'; }).join('');
+  tip.querySelector('b').textContent = parts[0];
+  tip.querySelectorAll('.l').forEach(function (node, i) { node.textContent = parts[i + 1]; });
+  tip.hidden = false;
+  var w = Math.min(280, window.innerWidth - 20);
+  tip.style.left = Math.max(10, Math.min(e.clientX, window.innerWidth - w - 10)) + 'px';
+  tip.style.top = Math.min(e.clientY + 14, window.innerHeight - tip.offsetHeight - 10) + 'px';
+});
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideTip(); });
+el('rfr').onclick = function () { load(); };
+load();
+setInterval(load, 15000);
+</script>
+</body>
+</html>

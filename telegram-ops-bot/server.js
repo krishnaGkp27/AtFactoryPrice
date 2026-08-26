@@ -144,6 +144,7 @@ app.get('/api/ext/supply/day/:day', apiController.getExtSupplyDay);
 app.get('/api/ext/supply/doc/:day/:i', (req, res) => apiController.getExtSupplyDoc(req, res, bot));
 app.get('/api/ext/design/:code/photo', (req, res) => apiController.getExtDesignPhoto(req, res, bot));
 app.get('/api/ops/usage', apiController.getOpsUsage);
+app.get('/api/ops/tasks', apiController.getOpsTasks);                   // GNT-1 employee gantt (read-only)
 app.get('/api/ops/allocations', apiController.getOpsAllocations); // MYP-1
 app.post('/api/ops/allocations', apiController.postOpsAllocation);      // MYP-1 §15c session-only write
 
@@ -165,6 +166,7 @@ app.get('/api/ops/stocktakes', apiController.getOpsStockTakes);
 const SESSION_PAGES = {
   '/ops': 'ops.html',
   '/allocations': 'allocations.html', // MYP-1 §15c — the allocation matrix
+  '/gantt': 'gantt.html',             // GNT-1 — the employee work plan
 };
 for (const [route, file] of Object.entries(SESSION_PAGES)) {
   app.get(route, (req, res) => res.sendFile(require('path').join(__dirname, '..', file)));

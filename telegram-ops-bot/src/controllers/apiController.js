@@ -896,6 +896,84 @@ async function getOpsAllocations(req, res) {
   }
 }
 
+/**
+ * GNT-1 — the employee Gantt feed (admin-only, read-only).
+ *
+ * One bar per live task. The geometry is DERIVED here, never stored (§10):
+ *   salaried     started_at → started_at + proposed_hours   (the committed time)
+ *   incentivized started_at → proposed_deadline             (the agreed date)
+ *   waiting      no start yet — the silent stalls the chart exists to show
+ *
+ * Money never crosses this line. `hasIncentive` says a bonus EXISTS so the
+ * bar can carry a ₦ marker; the amount stays in the Incentives sheet where
+ * only finance reads it (the scrum-master rule the Tasks views already keep).
+ */
+async function getOpsTasks(req, res) {
+  const identity = await gate(req, res);
+  if (!identity) return;
+  if (identity.role !== 'admin') {
+    return res.status(403).json({ ok: false, error: 'The work plan is admin-only.' });
+  }
+  try {
+    const tasksRepository = require('../repositories/tasksRepository');
+    const usersRepository = require('../repositories/usersRepository');
+    const incentivesRepository = require('../repositories/incentivesRepository');
+
+    const [all, users, incentives] = await Promise.all([
+      tasksRepository.getAll(),
+      usersRepository.getAll().catch(() => []),
+      incentivesRepository.getAll().catch(() => []),
+    ]);
+
+    const nameById = new Map((users || []).map((u) => [String(u.user_id), u.name || String(u.user_id)]));
+    const withIncentive = new Set((incentives || []).map((i) => String(i.task_id)));
+
+    // Live work, plus what was signed off today — a chart that dropped
+    // finished bars at midnight would erase the day's evidence of delivery.
+    const today = todayInLagos();
+    const LIVE = new Set(['assigned', 'awaiting_timeline_ack', 'awaiting_incentive',
+      'awaiting_final_ack', 'active', 'submitted']);
+    const shown = (all || []).filter((t) => {
+      if (LIVE.has(t.status)) return true;
+      const done = t.approved_at || t.completed_at;
+      return t.status === 'completed' && done && normDay(done) === today;
+    });
+
+    const tasks = shown.map((t) => ({
+      task_id: t.task_id,
+      title: t.title,
+      person_id: String(t.assigned_to),
+      person_name: nameById.get(String(t.assigned_to)) || String(t.assigned_to),
+      assigned_by_name: nameById.get(String(t.assigned_by)) || String(t.assigned_by),
+      track: t.track === 'incentivized' ? 'incentivized' : 'salaried',
+      status: t.status,
+      priority: t.priority || 'normal',
+      assigned_at: t.assigned_at || t.created_at || '',
+      started_at: t.started_at || '',
+      // null (not 0) when no time has been committed: Number(null) is 0, and
+      // a zero would draw as "ETA 0h" instead of reading as "still waiting".
+      eta_hours: (t.proposed_hours === null || t.proposed_hours === undefined || t.proposed_hours === ''
+        || !Number.isFinite(Number(t.proposed_hours))) ? null : Number(t.proposed_hours),
+      agreed_deadline: t.proposed_deadline || '',
+      submitted_at: t.submitted_at || '',
+      approved_at: t.approved_at || '',
+      hasIncentive: withIncentive.has(String(t.task_id)),
+    }));
+
+    // Everyone who could hold work, so an idle person still gets a row —
+    // "nothing assigned" is a fact a work plan should show, not hide.
+    const people = (users || [])
+      .filter((u) => String(u.status || 'active').trim().toLowerCase() === 'active')
+      .map((u) => ({ id: String(u.user_id), name: u.name || String(u.user_id) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    res.json({ ok: true, people, tasks, now: new Date().toISOString() });
+  } catch (e) {
+    logApiError('GET /api/ops/tasks', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
 async function postOpsAllocation(req, res) {
   const webSessionService = require('../services/webSessionService');
   const identity = await webSessionService.identityFromRequest(req);
@@ -922,6 +1000,7 @@ module.exports = {
   getOpsOverview, getOpsApprovals, getOpsApprovalDetail, getOpsAttendance, getOpsStockTakes,
   postExtOtpRequest, postExtOtpVerify, getExtLedger, getOpsUsage,
   getOpsAllocations, postOpsAllocation,
+  getOpsTasks, // GNT-1 — the employee Gantt feed
   // SUP-1 — customer Supply Record (goods only)
   getExtSupply, getExtSupplyDay, getExtSupplyDoc, getExtDesignPhoto,
   _internals: { supplyHasDesign, SUPPLY_DAY_RE, DESIGN_CODE_RE },
