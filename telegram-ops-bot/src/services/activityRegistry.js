@@ -220,6 +220,10 @@ const ACTIVITIES = [
   // USR-C3 — in-bot add employee (dual-admin gated). Listed just above
   // Manage Users so the two related entries sit together.
   { code: 'add_user',              label: 'Add Employee',              icon: '➕', callback: 'act:add_user',          hub: 'hr' },
+  // IDR-4 — the queue of strangers who messaged the bot, awaiting triage
+  // (admin-only, gated in the flow's start()). Sits beside Add Employee
+  // because placing an arrival usually ends in one of these two doors.
+  { code: 'pending_users',         label: 'Pending Users',             icon: '👋', callback: 'act:pending_users',      hub: 'hr' },
   { code: 'manage_users',          label: 'Manage Users',              icon: '👥', callback: 'act:manage_users',       hub: 'hr' },
   // USR-C3b — promote an existing user to admin (super-admin gated).
   { code: 'promote_admin',         label: 'Promote to Admin',          icon: '👑', callback: 'umg:start:promote',    hub: 'hr' },

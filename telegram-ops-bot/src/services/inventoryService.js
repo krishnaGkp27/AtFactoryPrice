@@ -307,6 +307,31 @@ function getPricePerYard(enrichment, design) {
  * re-check INSIDE it is atomic enough: the first caller marks the row
  * approved; the second re-reads, finds it resolved, and no-ops.
  */
+/**
+ * IDR-4 — bind a Pending user's Telegram account to the record an approval
+ * just created (marketer / customer / contact). Best-effort by design: the
+ * approval's own write must never be undone by a register hiccup, so this
+ * returns false instead of throwing, and the caller says so in the result
+ * message. Also drops the living stranger card and refreshes linked access
+ * so the person's next tap already lands on their new surface.
+ */
+async function _linkPendingAccount(telegramId, linkSpec, approvedBy) {
+  try {
+    const identityService = require('./identityService');
+    const res = await identityService.link(telegramId, linkSpec, approvedBy);
+    if (!res.ok) {
+      logger.warn(`IDR-4 link-on-approval failed for ${telegramId}: ${res.reason}`);
+      return false;
+    }
+    try { require('./linkedAccessService').invalidate(); } catch (_) { /* cache only */ }
+    try { require('./pendingUserService')._internals._clearLiveCard(telegramId); } catch (_) { /* card only */ }
+    return true;
+  } catch (e) {
+    logger.warn(`IDR-4 link-on-approval failed for ${telegramId}: ${e.message}`);
+    return false;
+  }
+}
+
 async function executeApprovedAction(requestId, approvedBy, enrichment) {
   // ANL-2 — the approval TAP was already tracked at decision time; this
   // records whether the executor (the thing that actually mutates sheets)
@@ -666,6 +691,14 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
         customer_id: addRes.customer.customer_id, updated_by: approvedBy,
       });
       customMessage = `✅ ${aj.name} registered as a CUSTOMER (${addRes.customer.customer_id}) — sale-assignable, and in the network as a buyer.`;
+      // IDR-4 — raised from a Pending user's card: bind their Telegram
+      // account to the new customer entity. Best-effort, never un-approves.
+      if (aj.pendingTelegramId) {
+        const linked = await _linkPendingAccount(aj.pendingTelegramId,
+          { type: 'customer', id: addRes.customer.customer_id, name: aj.name }, approvedBy);
+        customMessage += linked ? ' Telegram account linked.'
+          : ' ⚠️ Telegram link failed — link them from 👋 Pending Users.';
+      }
     } else if (dest === 'network' && aj.boss_contact_id) {
       const created = await contactsRepository.append({
         name: aj.name || '', phone: aj.phone || '', type: aj.type || 'other',
@@ -679,12 +712,22 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       customMessage = link.duplicate
         ? `ℹ️ ${aj.name} added to contacts — the link under ${aj.boss_name} already existed.`
         : `✅ ${aj.name} added to contacts and placed under ${aj.boss_name} in the network.`;
+      if (aj.pendingTelegramId) {
+        await _linkPendingAccount(aj.pendingTelegramId,
+          { type: 'contact', id: created.contact_id, name: aj.name }, approvedBy);
+      }
     } else {
-      await contactsRepository.append({
+      const createdContact = await contactsRepository.append({
         name: aj.name || '', phone: aj.phone || '', type: aj.type || 'other',
         address: aj.address || '', notes: aj.notes || '', updated_by: approvedBy,
       });
       customMessage = `✅ ${aj.name} added to the contacts phonebook (${aj.type || 'other'}).`;
+      // IDR-4 — the approving admin may route a pending-user request to the
+      // phonebook via the chips; the account still gets bound, as a contact.
+      if (aj.pendingTelegramId) {
+        await _linkPendingAccount(aj.pendingTelegramId,
+          { type: 'contact', id: (createdContact && createdContact.contact_id) || '', name: aj.name }, approvedBy);
+      }
     }
   } else if (aj.action === 'receive_goods') {
     // P2 — write GRN header, then append bales via inventoryRepository so
@@ -1467,6 +1510,17 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const row = await marketersRepo.findByApprovalRequestId(requestId);
     if (!row) return { ok: false, message: 'Marketer record not found.' };
     await marketersRepo.updateStatus(row.rowIndex, 'active', approvedBy);
+    // IDR-4 — a registration raised from a Pending user's card also binds
+    // that Telegram account to the new marketer, so approve = active AND
+    // linked (📦 My Products works on their next tap). Best-effort: a link
+    // failure never un-approves the marketer.
+    if (aj.pendingTelegramId) {
+      const linked = await _linkPendingAccount(aj.pendingTelegramId,
+        { type: 'marketer', id: row.marketer_id, name: row.name || aj.name }, approvedBy);
+      customMessage = `✅ Marketer ${row.name || aj.name} approved and active.`
+        + (linked ? ' Telegram account linked — 📦 My Products is live for them.'
+          : ' ⚠️ Telegram link failed — link them from 👋 Pending Users.');
+    }
     // BR-OPS C1 — pointer for the branch daily roll-up.
     try {
       const branchOpsService = require('./branchOpsService');

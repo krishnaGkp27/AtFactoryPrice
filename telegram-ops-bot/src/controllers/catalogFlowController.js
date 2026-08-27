@@ -163,6 +163,10 @@ async function submitMarketer(bot, chatId, userId, session) {
     requestedBy: String(userId),
   };
   if (session.parentFlow) actionJSON.parentFlow = session.parentFlow;
+  // IDR-4 — raised from a Pending user's card: on approval the executor
+  // also binds this Telegram account to the new marketer, so the person
+  // opens the bot and 📦 My Products is already theirs.
+  if (session.pendingTelegramId) actionJSON.pendingTelegramId = session.pendingTelegramId;
 
   await approvalQueueRepo.append({ requestId, user: String(userId), actionJSON, riskReason: 'New marketer registration requires approval', status: 'pending' });
 
@@ -174,7 +178,10 @@ async function submitMarketer(bot, chatId, userId, session) {
     } catch (_) { /* ignore */ }
   }
 
-  const summary = `Register marketer: ${session.marketerName}\nPhone: ${session.marketerPhone || '—'}\nArea: ${session.marketerArea || '—'}`;
+  const summary = `Register marketer: ${session.marketerName}\nPhone: ${session.marketerPhone || '—'}\nArea: ${session.marketerArea || '—'}`
+    + (session.pendingTelegramId
+      ? `\nFrom Pending user ${session.pendingTelegramId} — account will be linked on approval`
+      : '');
   await notifyAdminsApprovalRequest(bot, requestId, displayName, summary, 'New marketer registration requires approval', String(userId));
   await auditLogRepo.append('register_marketer_request', actionJSON, String(userId));
 

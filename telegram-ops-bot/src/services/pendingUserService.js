@@ -372,10 +372,21 @@ async function markOnboarded(telegramId, adminUserId) {
   return pendingUsersRepo.updateStatus(telegramId, 'onboarded', adminUserId);
 }
 
+/**
+ * IDR-4 — the living card's message log, for the queue's chips and detail
+ * card. In-memory by design (storage rule 5b); after a restart it is empty
+ * and the queue simply shows no snippets.
+ */
+function liveMessages(telegramId) {
+  const c = _liveCard(telegramId);
+  return c && Array.isArray(c.messages) ? c.messages.slice() : [];
+}
+
 module.exports = {
   captureStranger,
   ignore,
   markOnboarded,
+  liveMessages,
   // exported for tests:
   _internals: {
     RATE_LIMIT_MAX,

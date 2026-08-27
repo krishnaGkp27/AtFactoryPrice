@@ -53,6 +53,7 @@ const PREFIX_FEATURES = {
   'swv:': 'sales_workflow_view',
   'pp:': 'procurement_plan',
   'pu:': 'pending_users',
+  'puq:': 'pending_users', // IDR-4 — the queue tile behind the pu: triage cards
   'cms:': 'customers',
   'csf:': 'catalog', 'clf:': 'catalog', 'crf:': 'catalog', 'mkr:': 'marketers',
   'ctr:': 'catalog_tracker', 'mal:': 'allocate_marketer', 'mkp:': 'my_products',

@@ -7525,6 +7525,20 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
   // USR-C2 — Pending user actions from the admin-feed notification card.
   //   pu:onboard:<telegramId>  → ack now; USR-C3 will route into Add Employee.
   //   pu:ignore:<telegramId>   → flip status=ignored, edit card to confirm.
+  // IDR-4 — 👋 Pending Users queue. The two ➕ shortcuts enter the EXISTING
+  // registration flows (CON-1 one door / Register Marketer) with the name
+  // pre-filled, so the flow starters are injected rather than re-exported.
+  if (data.startsWith('puq:')) {
+    const pendingUsersFlow = require('../flows/pendingUsersFlow');
+    await pendingUsersFlow.handleCallback(bot, callbackQuery, {
+      startAddCustomerFlow,
+      showAddCustomerPhoneStep,
+      startRegisterMarketer: catalogFlows.startRegisterMarketerFlow,
+      feedMarketerName: catalogFlows.handleCatalogFlowTextStep,
+    });
+    return;
+  }
+
   if (data.startsWith('pu:')) {
     const adminId = String(callbackQuery.from.id);
     if (!auth.isAdmin(adminId)) {
@@ -8160,6 +8174,10 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         action: 'add_contact',
         type: session.personType || 'other',
         ...custData,
+        // IDR-4 — raised from a Pending user's card: on approval the
+        // executor also binds this Telegram account in the identity
+        // register, so "register then link" is one journey.
+        ...(session.pendingTelegramId ? { pendingTelegramId: session.pendingTelegramId } : {}),
       },
       riskReason: 'New contact requires admin approval',
       status: 'pending',
@@ -8185,7 +8203,10 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         ? `Category: ${custData.category}\nCredit limit: ${fmtMoney(custData.credit_limit)}\n`
           + `Payment terms: ${custData.payment_terms}\n`
         : '')
-      + `Notes: ${custData.notes || '—'}`;
+      + `Notes: ${custData.notes || '—'}`
+      + (session.pendingTelegramId
+        ? `\nFrom Pending user ${session.pendingTelegramId} — account will be linked on approval`
+        : '');
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'New contact requires admin approval');
 
     sessionStore.clear(uid);
@@ -10096,6 +10117,12 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
         const userAddFlow = require('../flows/userAddFlow');
         await userAddFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'pending_users': {
+        // IDR-4 — the queue behind the stranger cards (admin gate in start()).
+        const pendingUsersFlow = require('../flows/pendingUsersFlow');
+        await pendingUsersFlow.start(bot, chatId, uid, messageId);
         break;
       }
       case 'mark_attendance': {
