@@ -7882,6 +7882,24 @@ function runS54() {
   } else {
     fail('S54.8', JSON.stringify({ fixturesGone, serverOwnsCap, wiring }));
   }
+
+  // ---- S54.10 — ALC-2: two-level sheet + FREE reference, still no client cap ----
+  // The owner's ruling: STOCK/FREE are VISIBLE references (words in the
+  // header once, numbers in the rows), FREE = stock minus everyone's
+  // allocations, red when over — shown, never blocked. S54.8 above already
+  // proves no client-side gate exists on the same source.
+  const alc2 = pageSrc.includes('function allocEveryone(')
+    && pageSrc.includes('data-opend')            // level 1 → level 2 drill
+    && pageSrc.includes("el('mback')")           // and a way back
+    && pageSrc.includes('>Give<')                // header words, once
+    && pageSrc.includes('>Free<')
+    && pageSrc.includes('freeTd(')               // FREE rendered with its colour
+    && !/if\s*\(\s*free\s*[<>=]/.test(pageSrc);  // FREE never gates a write
+  if (alc2) {
+    pass('S54.10 ALC-2: person→design drill-down + FREE reference, display-only');
+  } else {
+    fail('S54.10', 'ALC-2 sheet structure or FREE reference missing/gating');
+  }
 }
 
 function runS53() {

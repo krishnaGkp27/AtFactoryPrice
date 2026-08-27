@@ -60,7 +60,7 @@ td.ed.refused{box-shadow:inset 0 0 0 1.5px var(--warn);animation:shake .2s}
 .ci{width:100%;background:transparent;border:0;color:var(--tx);font:inherit;text-align:right;outline:none;padding:0}
 .dim{color:var(--dim)}
 tfoot td{position:sticky;bottom:0;background:#16161a;border-top:1px solid var(--bd);font-weight:600;z-index:2}
-tfoot tr.ta td{bottom:45px;border-top:1px solid var(--bd)}
+tfoot tr.ta td{bottom:90px;border-top:1px solid var(--bd)}
 tfoot td.pc{z-index:3;background:#16161a;font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--mut);font-weight:700}
 tfoot .pos{color:var(--pos)}
 tfoot .zero{color:var(--warn)}
@@ -75,6 +75,18 @@ tfoot .zero{color:var(--warn)}
 .card p b{color:var(--tx)}
 .card .k{display:inline-block;margin-top:16px;border:1px solid var(--bd);border-radius:3px;padding:10px 14px;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--gold);letter-spacing:.5px}
 .empty{padding:26px 18px;color:var(--mut);font-size:13px}
+/* ALC-2 — the two-level sheet: 4 narrow columns must fit a phone, the words
+   live in the header once, and FREE carries its own colour. */
+.mdl th.pc,.mdl td.pc{min-width:112px}
+.mdl td{min-width:54px}
+td.free.pos{color:var(--pos)}
+td.free.zero,td.free.neg{color:var(--warn)}
+tr.drill{cursor:pointer}
+tr.drill:hover td{background:#17171b}
+td.chev{color:var(--mut);font-weight:700;min-width:34px}
+.mhd .bk{background:transparent;border:1px solid var(--bd);color:var(--mut);border-radius:3px;font:600 15px/1 inherit;min-width:44px;min-height:44px;cursor:pointer}
+.mhd .bk:hover{border-color:var(--gold);color:var(--tx)}
+tfoot tr.av td{bottom:45px}
 [hidden]{display:none!important}
 
 /* GNT-2 — the reporting selection: one strip, same three links on every
@@ -107,11 +119,11 @@ tfoot .zero{color:var(--warn)}
 </div>
 <div class="empty" id="mxempty" hidden>No linked customers or marketers yet — link someone in the bot first.</div>
 </div>
-<div class="legend"><i><span class="sw" style="background:var(--pos)"></span>available</i><i><span class="sw" style="background:var(--warn)"></span>none in stock / refused (§16)</i><i><span class="sw" style="background:var(--gold)"></span>tap a name to edit shades</i><i>quantities are whole <b style="color:var(--tx)">bales</b> — e.g. <b style="color:var(--tx)">25B</b></i><i>Available = live stock across all warehouses; each write is capped at that person's own warehouse</i></div>
+<div class="legend"><i><span class="sw" style="background:var(--pos)"></span>available</i><i><span class="sw" style="background:var(--warn)"></span>none in stock / refused (§16)</i><i><span class="sw" style="background:var(--gold)"></span>tap a name, then a design, to allocate</i><i>quantities are whole <b style="color:var(--tx)">bales</b> — e.g. <b style="color:var(--tx)">25B</b></i><i>Free = stock minus everyone's allocations; each write is capped at that person's own warehouse</i></div>
 </section>
-<div id="ov" hidden><div class="mdl" role="dialog" aria-modal="true" aria-labelledby="mtitle"><div class="mhd"><span id="mtitle">Shade allocation</span><button class="x" type="button" id="mclose" aria-label="Close">&#10005;</button></div>
+<div id="ov" hidden><div class="mdl" role="dialog" aria-modal="true" aria-labelledby="mtitle"><div class="mhd"><button class="bk" type="button" id="mback" aria-label="Back" hidden>&#8249;</button><span id="mtitle">Allocation</span><button class="x" type="button" id="mclose" aria-label="Close">&#10005;</button></div>
 <div class="wrap" id="mbody"></div>
-<p class="mnote">Row totals reconcile to that person's line on the matrix. Every write is capped at live stock (§16).</p></div></div>
+<p class="mnote">STOCK is live bales. FREE is stock minus what is already promised to everyone — a red figure means promised beyond stock. The server still decides every write (§16); this page only shows the reference.</p></div></div>
 <p class="note">Every write is validated against live stock (§16) and logged. This page live-mirrors the Telegram bot every 15s — edits made in the bot appear here and vice versa.</p>
 </div>
 <div id="out" hidden data-screen-label="Signed out">
@@ -130,7 +142,8 @@ tfoot .zero{color:var(--warn)}
  * re-render from the single data model is what keeps the two surfaces from
  * ever disagreeing about the same person+design. */
 var DATA = null;         // last payload
-var OPENP = null;        // person id whose shade sheet is open
+var OPENP = null;        // person id whose sheet is open
+var OPEND = null;        // ALC-2 — design open inside that sheet (level 2)
 var EDITING = false;     // a cell is being typed in — the 15s poll must not clobber it
 var msg = null;          // floating refusal message
 var NO_SHADE = '—'; // column key for the design-level (blank shade) row
@@ -230,15 +243,22 @@ function renderMatrix() {
 
   var ta = ['<tr class="ta"><td class="pc">Total allocated</td>'];
   var av = ['<tr class="av"><td class="pc">Available</td>'];
+  // ALC-2 — the running reference: FREE = stock minus everyone's allocations,
+  // derived at read time. A red figure means promised beyond stock — shown,
+  // never blocked (owner ruling 27-Aug-2026); the server still owns the cap.
+  var fr = ['<tr class="fr"><td class="pc">Free</td>'];
   designs.forEach(function (d) {
     var t = people.reduce(function (n, p) { return n + allocFor(p, d); }, 0);
     ta.push('<td' + (t ? '' : ' class="dim"') + '>' + fmtB(t) + '</td>');
     var a = availAll(d);
     av.push('<td class="' + (a > 0 ? 'pos' : 'zero') + '">' + (a > 0 ? a + 'B' : '—') + '</td>');
+    var f = a - t;
+    fr.push('<td class="free ' + (f > 0 ? 'pos' : (f === 0 ? 'zero' : 'neg')) + '">' + f + 'B</td>');
   });
   ta.push('<td></td></tr>');
   av.push('<td></td></tr>');
-  el('mxf').innerHTML = ta.join('') + av.join('');
+  fr.push('<td></td></tr>');
+  el('mxf').innerHTML = ta.join('') + av.join('') + fr.join('');
 }
 
 /* -- Shade sheet (the ONLY editable surface) ----------------------------- */
@@ -267,53 +287,96 @@ function designsForPerson(p) {
       return availAll(d) > 0;
     });
 }
+/* ALC-2 (owner, 27-Aug-2026) — two levels, words in the header ONCE.
+ *
+ * Level 1, tap a name: that person's designs — GIVEN · STOCK · FREE per
+ * design, one row each, no sideways scrolling. Level 2, tap a design: its
+ * shades — STOCK · FREE · GIVE, where GIVE is the only thing you type.
+ * FREE = stock minus EVERYONE's allocations, recomputed on every save; a
+ * red figure warns that more is promised than exists — shown, never
+ * blocked, and the server alone still decides every write (§16). */
+
+/** Everyone's allocation of a design (optionally one shade) — the FREE base. */
+function allocEveryone(design, shade) {
+  var ps = (DATA && DATA.people) || [], n = 0;
+  for (var i = 0; i < ps.length; i++) n += allocFor(ps[i], design, shade);
+  return n;
+}
+/** Bales of a design carrying NO shade = whole design minus the shaded ones. */
+function stockBlank(p, d, shades) {
+  var n = availShade(p, d, NO_SHADE);
+  shades.forEach(function (sh) { n -= availShade(p, d, sh); });
+  return Math.max(0, n);
+}
+function freeTd(n) {
+  return '<td class="free ' + (n > 0 ? 'pos' : (n === 0 ? 'zero' : 'neg')) + '">' + n + 'B</td>';
+}
+
 function renderShades() {
   var p = personById(OPENP);
   if (!p) { closeShades(); return; }
-  var designs = designsForPerson(p);
-  var cols = [NO_SHADE].concat(shadesFor(p, designs));
+  if (OPEND && designsForPerson(p).indexOf(OPEND) === -1 && allocFor(p, OPEND) === 0) OPEND = null;
+  el('mback').hidden = !OPEND;
+  if (OPEND) renderDesignEditor(p); else renderPersonSheet(p);
+}
 
-  el('mtitle').textContent = 'Shade allocation — '
+/* Level 1 — the person's designs, read-only rows that drill down. */
+function renderPersonSheet(p) {
+  var designs = designsForPerson(p);
+  el('mtitle').textContent = 'Allocation — '
     + (p.kind === 'linked-customer' ? 'CUST' : 'MKT') + ' · ' + p.name
     + (p.warehouse ? ' · ' + p.warehouse : '');
-
   if (!designs.length) {
     el('mbody').innerHTML = '<div class="empty">No designs with live stock to allocate right now.</div>';
     return;
   }
-  var h = ['<th class="pc">Design</th>'];
-  cols.forEach(function (sh) {
-    h.push('<th>' + (sh === NO_SHADE ? 'No shade' : 'Shade ' + esc(sh)) + '</th>');
-  });
-  h.push('<th>Total</th>');
-
+  var h = '<th class="pc">Design</th><th>Given</th><th>Stock</th><th>Free</th><th></th>';
   var body = designs.map(function (d) {
-    var cells = cols.map(function (sh) {
-      var n = allocFor(p, d, sh);
-      var cap = availShade(p, d, sh);
-      var title = cap + ' bale' + (cap === 1 ? '' : 's') + ' available'
-        + (p.warehouse ? ' in ' + p.warehouse : '');
-      return '<td class="ed' + (n > 0 ? '' : ' dim') + '" data-d="' + esc(d) + '"'
-        + ' data-sh="' + esc(sh === NO_SHADE ? '' : sh) + '" title="' + esc(title) + '">'
-        + fmtB(n) + '</td>';
-    });
-    var tot = allocFor(p, d);
-    return '<tr><td class="pc"><span class="who"><span class="nm">' + esc(d) + '</span></span></td>'
-      + cells.join('') + '<td class="rt' + (tot ? '' : ' dim') + '">' + fmtB(tot) + '</td></tr>';
+    var given = allocFor(p, d);
+    var stock = availShade(p, d, NO_SHADE);
+    var free = stock - allocEveryone(d);
+    return '<tr class="drill" data-opend="' + esc(d) + '">'
+      + '<td class="pc"><span class="who"><span class="nm">' + esc(d) + '</span></span></td>'
+      + '<td class="' + (given ? 'ro' : 'dim') + '">' + fmtB(given) + '</td>'
+      + '<td class="' + (stock ? 'ro' : 'dim') + '">' + fmtB(stock) + '</td>'
+      + freeTd(free)
+      + '<td class="chev rt">&#8250;</td></tr>';
   });
-
-  var foot = ['<td class="pc">Shade total</td>'];
-  cols.forEach(function (sh) {
-    var t = designs.reduce(function (n, d) { return n + allocFor(p, d, sh); }, 0);
-    foot.push('<td' + (t ? '' : ' class="dim"') + '>' + fmtB(t) + '</td>');
-  });
-  foot.push('<td class="gt">' + fmtB(personTotal(p)) + '</td>');
-
-  el('mbody').innerHTML = '<table><thead><tr>' + h.join('') + '</tr></thead><tbody>'
-    + body.join('') + '</tbody><tfoot><tr>' + foot.join('') + '</tr></tfoot></table>';
+  var foot = '<td class="pc">Total</td><td class="gt">' + fmtB(personTotal(p))
+    + '</td><td class="dim"></td><td class="dim"></td><td class="rt"></td>';
+  el('mbody').innerHTML = '<table><thead><tr>' + h + '</tr></thead><tbody>'
+    + body.join('') + '</tbody><tfoot><tr>' + foot + '</tr></tfoot></table>';
 }
+
+/* Level 2 — one design's shades; GIVE is the only editable column. */
+function renderDesignEditor(p) {
+  var d = OPEND;
+  var shades = shadesFor(p, [d]);
+  el('mtitle').textContent = d + ' — ' + p.name;
+  var rows = [NO_SHADE].concat(shades);
+  var h = '<th class="pc">Shade</th><th>Stock</th><th>Free</th><th>Give</th>';
+  var body = rows.map(function (sh) {
+    var stock = sh === NO_SHADE ? stockBlank(p, d, shades) : availShade(p, d, sh);
+    var free = stock - allocEveryone(d, sh);
+    var given = allocFor(p, d, sh);
+    return '<tr><td class="pc"><span class="who"><span class="nm">'
+      + (sh === NO_SHADE ? '—' : esc(sh)) + '</span></span></td>'
+      + '<td class="' + (stock ? 'ro' : 'dim') + '">' + fmtB(stock) + '</td>'
+      + freeTd(free)
+      + '<td class="ed rt' + (given > 0 ? '' : ' dim') + '" data-d="' + esc(d) + '"'
+      + ' data-sh="' + esc(sh === NO_SHADE ? '' : sh) + '">' + fmtB(given) + '</td></tr>';
+  });
+  var stockAll = availShade(p, d, NO_SHADE);
+  var foot = '<td class="pc">Total</td><td>' + fmtB(stockAll) + '</td>'
+    + freeTd(stockAll - allocEveryone(d))
+    + '<td class="gt rt">' + fmtB(allocFor(p, d)) + '</td>';
+  el('mbody').innerHTML = '<table><thead><tr>' + h + '</tr></thead><tbody>'
+    + body.join('') + '</tbody><tfoot><tr>' + foot + '</tr></tfoot></table>';
+}
+
 function openShades(id) {
   OPENP = String(id);
+  OPEND = null;
   renderShades();
   el('ov').hidden = false;
   document.body.style.overflow = 'hidden';
@@ -321,13 +384,17 @@ function openShades(id) {
 }
 function closeShades() {
   OPENP = null;
+  OPEND = null;
   EDITING = false;
   el('ov').hidden = true;
   document.body.style.overflow = '';
 }
 el('mclose').addEventListener('click', closeShades);
+el('mback').addEventListener('click', function () { OPEND = null; renderShades(); });
 document.addEventListener('keydown', function (e) {
-  if (e.key === 'Escape' && !el('ov').hidden && !EDITING) closeShades();
+  if (e.key !== 'Escape' || el('ov').hidden || EDITING) return;
+  // Escape walks back the way it came: design → person → closed.
+  if (OPEND) { OPEND = null; renderShades(); } else closeShades();
 });
 el('ov').addEventListener('click', function (e) { if (e.target === this) closeShades(); });
 
@@ -390,6 +457,9 @@ document.addEventListener('click', function (e) {
   if (msg && !e.target.closest('#refmsg')) { msg.remove(); msg = null; }
   var open = e.target.closest('a.pl[data-open]');
   if (open) { e.preventDefault(); openShades(open.getAttribute('data-open')); return; }
+  // ALC-2 — level 1 → level 2: a design row opens its shade editor.
+  var drill = e.target.closest('tr.drill[data-opend]');
+  if (drill) { OPEND = drill.getAttribute('data-opend'); renderShades(); return; }
   var td = e.target.closest('td.ed');
   if (!td || td.classList.contains('editing') || !el('out').hidden) return;
 
