@@ -7900,6 +7900,23 @@ function runS54() {
   } else {
     fail('S54.10', 'ALC-2 sheet structure or FREE reference missing/gating');
   }
+
+  // ---- S54.11 — PIN-1: the warehouse pin, one column + one resolution point ----
+  const puRepoSrc = fs.readFileSync(path.join(__dirname, '../src/repositories/pendingUsersRepository.js'), 'utf8');
+  const mypSrc = fs.readFileSync(path.join(__dirname, '../src/services/myProductsService.js'), 'utf8');
+  const pin1 = srv54.includes("app.post('/api/ops/pin'")
+    && puRepoSrc.includes("'pinned_warehouse'")
+    && puRepoSrc.includes('setPinnedWarehouse')
+    && mypSrc.includes('_pinFor')                     // every consumer resolves through here
+    && pageSrc.includes("fetch('/api/ops/pin'")
+    && pageSrc.includes('pinRowHtml')
+    // the pin must never bypass the §16 cap client-side (same rule as S54.8)
+    && apiSrc54.includes('Unknown warehouse');        // server validates the name
+  if (pin1) {
+    pass('S54.11 PIN-1: register column + validated endpoint + chips, one resolution point');
+  } else {
+    fail('S54.11', 'PIN-1 wiring incomplete');
+  }
 }
 
 function runS53() {

@@ -81,6 +81,11 @@ tfoot .zero{color:var(--warn)}
 .mdl td{min-width:54px}
 td.free.pos{color:var(--pos)}
 td.free.zero,td.free.neg{color:var(--warn)}
+/* PIN-1 — the warehouse-pin chips at the top of a person's sheet. */
+.pinrow{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:10px 12px;border-bottom:1px solid var(--bd2);font-size:12px;color:var(--mut)}
+.pinrow .pin{background:var(--hdr);border:1px solid var(--bd);border-radius:3px;color:var(--mut);font:600 11.5px/1 inherit;padding:8px 11px;cursor:pointer;min-height:36px}
+.pinrow .pin:hover{border-color:var(--gold);color:var(--tx)}
+.pinrow .pin.on{background:var(--gold);border-color:var(--gold);color:#14161e}
 tr.drill{cursor:pointer}
 tr.drill:hover td{background:#17171b}
 td.chev{color:var(--mut);font-weight:700;min-width:34px}
@@ -350,12 +355,49 @@ function renderShades() {
   if (OPEND) renderDesignEditor(p); else renderPersonSheet(p);
 }
 
+/* PIN-1 — the pin chips: Auto (last purchase) + one chip per warehouse
+ * holding stock. The lit chip is the rule in force; tapping writes the
+ * register cell and reloads, so the §16 cap, the scope groups and supply
+ * routing all move together. */
+function pinRowHtml(p) {
+  if (p.kind === 'role-marketer') return ''; // staff marketers: global by design
+  var cur = String(p.pinnedWarehouse || '');
+  var whs = Object.keys((DATA && DATA.availability) || {}).sort();
+  var h = ['<div class="pinrow">📍',
+    '<button class="pin' + (cur ? '' : ' on') + '" data-pin="">Auto'
+      + (!cur && p.warehouse ? ' · ' + esc(p.warehouse) : '') + '</button>'];
+  whs.forEach(function (w) {
+    h.push('<button class="pin' + (cur === w ? ' on' : '') + '" data-pin="' + esc(w) + '">' + esc(w) + '</button>');
+  });
+  h.push('</div>');
+  return h.join('');
+}
+
+function setPin(btn, warehouse) {
+  btn.disabled = true;
+  fetch('/api/ops/pin', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ personId: OPENP, warehouse: warehouse })
+  }).then(function (r) {
+    return r.text().then(function (t) { try { return JSON.parse(t); } catch (_) { return null; } });
+  }).then(function (j) {
+    btn.disabled = false;
+    if (!j) { signedOut(); return; }
+    if (!j.ok) { refuse(btn, j.error || 'Refused.'); return; }
+    load(); // the fresh payload re-derives warehouse, scope groups and caps
+  }).catch(function () {
+    btn.disabled = false;
+    refuse(btn, 'Could not reach the server — nothing was saved.');
+  });
+}
+
 /* Level 1 — the person's designs, read-only rows that drill down. */
 function renderPersonSheet(p) {
   var scope = designScopeFor(p);
   el('mtitle').textContent = 'Allocation — '
     + (p.kind === 'linked-customer' ? 'CUST' : 'MKT') + ' · ' + p.name
-    + (p.warehouse ? ' · ' + p.warehouse : '');
+    + (p.warehouse ? ' · ' + p.warehouse + (p.pinnedWarehouse ? ' 📍' : ' (auto)') : '');
   if (!scope.inScope.length && !scope.out.length) {
     el('mbody').innerHTML = '<div class="empty">No designs with live stock to allocate right now.</div>';
     return;
@@ -388,7 +430,7 @@ function renderPersonSheet(p) {
   }
   var foot = '<td class="pc">Total</td><td class="gt">' + fmtB(personTotal(p))
     + '</td><td class="dim">' + (scope.out.length ? '* elsewhere' : '') + '</td><td class="dim"></td><td class="rt"></td>';
-  el('mbody').innerHTML = '<table><thead><tr>' + h + '</tr></thead><tbody>'
+  el('mbody').innerHTML = pinRowHtml(p) + '<table><thead><tr>' + h + '</tr></thead><tbody>'
     + body.join('') + '</tbody><tfoot><tr>' + foot + '</tr></tfoot></table>';
 }
 
@@ -501,6 +543,9 @@ document.addEventListener('click', function (e) {
   if (msg && !e.target.closest('#refmsg')) { msg.remove(); msg = null; }
   var open = e.target.closest('a.pl[data-open]');
   if (open) { e.preventDefault(); openShades(open.getAttribute('data-open')); return; }
+  // PIN-1 — a pin chip writes the register cell (Auto = clear).
+  var pinBtn = e.target.closest('button.pin[data-pin]');
+  if (pinBtn && OPENP && !pinBtn.disabled) { setPin(pinBtn, pinBtn.getAttribute('data-pin')); return; }
   // ALC-2 — level 1 → level 2: a design row opens its shade editor.
   var drill = e.target.closest('tr.drill[data-opend]');
   if (drill) { OPEND = drill.getAttribute('data-opend'); renderShades(); return; }

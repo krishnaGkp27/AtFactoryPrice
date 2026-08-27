@@ -31,6 +31,8 @@ async function _load() {
     if (status === 'linked' && (type === 'customer' || type === 'marketer') && r.telegram_id) {
       map.set(String(r.telegram_id), {
         type, linkId: String(r.link_id || ''), linkName: String(r.link_name || ''),
+        // PIN-1 — carried so warehouse resolution needs no extra register read.
+        pinnedWarehouse: String(r.pinned_warehouse || ''),
       });
     }
   }

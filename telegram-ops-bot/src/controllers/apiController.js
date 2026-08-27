@@ -832,7 +832,11 @@ async function getOpsAllocations(req, res) {
     ]);
 
     const people = [
-      ...linked.map((l) => ({ id: l.telegramId, name: l.linkName || l.telegramId, kind: `linked-${l.type}` })),
+      ...linked.map((l) => ({
+        id: l.telegramId, name: l.linkName || l.telegramId, kind: `linked-${l.type}`,
+        // PIN-1 — the admin override, so the page can show 📍 vs auto.
+        pinnedWarehouse: l.pinnedWarehouse || '',
+      })),
       ...users.filter((u) => String(u.role || '').toLowerCase() === 'marketer'
           && String(u.status || 'active').trim().toLowerCase() === 'active')
         .map((u) => ({ id: String(u.user_id), name: u.name || String(u.user_id), kind: 'role-marketer' })),
@@ -846,6 +850,7 @@ async function getOpsAllocations(req, res) {
       if (p.kind.startsWith('linked-')) {
         p.warehouse = await myProductsService.sourceWarehouseFor({
           telegramId: p.id, type: p.kind.slice(7), linkName: p.name,
+          pinnedWarehouse: p.pinnedWarehouse, // PIN-1 — no extra register read
         }).catch(() => null);
       } else {
         p.warehouse = null; // role marketers: Users.warehouses scope, cap global
@@ -987,6 +992,51 @@ async function getOpsTasks(req, res) {
   }
 }
 
+/**
+ * PIN-1 — set/clear a linked person's warehouse pin (§15c: a non-approval
+ * admin toggle may be operated behind the magic-link session). The pin is
+ * one register cell; everything that reads a warehouse (the §16 cap,
+ * supply routing, the matrix payload) resolves it on its next read.
+ */
+async function postOpsPin(req, res) {
+  const webSessionService = require('../services/webSessionService');
+  const identity = await webSessionService.identityFromRequest(req);
+  if (!identity || identity.role !== 'admin') {
+    return res.status(403).json({ ok: false, error: 'Sign in via the bot (📊 Dashboard) — admin only (§15c).' });
+  }
+  try {
+    const b = req.body || {};
+    const personId = String(b.personId || '').trim();
+    const warehouse = String(b.warehouse || '').trim();
+    if (!personId) return res.status(422).json({ ok: false, error: 'personId is required.' });
+    const linkedAccessService = require('../services/linkedAccessService');
+    const info = await linkedAccessService.infoFor(personId);
+    if (!info) return res.status(422).json({ ok: false, error: 'Only linked customers/marketers can be pinned.' });
+    if (warehouse) {
+      // A pin must name a warehouse that actually exists in live inventory —
+      // a typo here would silently zero the person's §16 cap.
+      const inventoryRepository = require('../repositories/inventoryRepository');
+      const rows = await inventoryRepository.getAll();
+      const known = new Set(rows.map((r) => String(r.warehouse || '').trim()).filter(Boolean));
+      if (!known.has(warehouse)) {
+        return res.status(422).json({ ok: false, error: `Unknown warehouse "${warehouse}" — pick one that holds stock.` });
+      }
+    }
+    const pendingUsersRepo = require('../repositories/pendingUsersRepository');
+    const done = await pendingUsersRepo.setPinnedWarehouse(personId, warehouse);
+    if (!done) return res.status(422).json({ ok: false, error: 'No identity-register row for that person.' });
+    linkedAccessService.invalidate();
+    try {
+      await require('../repositories/auditLogRepository').append('warehouse_pinned',
+        { telegram_id: personId, warehouse: warehouse || '(auto)' }, `web:${identity.userId || 'admin'}`);
+    } catch (_) { /* best-effort */ }
+    res.json({ ok: true });
+  } catch (e) {
+    logApiError('POST /api/ops/pin', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
 async function postOpsAllocation(req, res) {
   const webSessionService = require('../services/webSessionService');
   const identity = await webSessionService.identityFromRequest(req);
@@ -1012,7 +1062,7 @@ module.exports = {
   getSettings, updateSettings, getAnalyticsSummary, getAnalyticsFeature, getShareAnalytics, getContactsGraph,
   getOpsOverview, getOpsApprovals, getOpsApprovalDetail, getOpsAttendance, getOpsStockTakes,
   postExtOtpRequest, postExtOtpVerify, getExtLedger, getOpsUsage,
-  getOpsAllocations, postOpsAllocation,
+  getOpsAllocations, postOpsAllocation, postOpsPin, // PIN-1
   getOpsTasks, // GNT-1 — the employee Gantt feed
   // SUP-1 — customer Supply Record (goods only)
   getExtSupply, getExtSupplyDay, getExtSupplyDoc, getExtDesignPhoto,

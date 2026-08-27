@@ -68,7 +68,11 @@ async function buildFor(info) {
     supByShade.get(key).add(r.packageNo);
     if (!latest || r.soldDate > latest.soldDate) latest = r;
   }
-  const warehouse = latest ? latest.warehouse : null;
+  // PIN-1 — the admin's pin overrides the derived purchase warehouse here
+  // too, so the routing/cap warehouse this view reports matches what the
+  // allocation cap will actually enforce.
+  const pin = await _pinFor(info);
+  const warehouse = pin || (latest ? latest.warehouse : null);
 
   // Allocation rows for this person; '*' legacy mode rows are ignored.
   const myRows = (allocRows || []).filter((a) => String(a.marketer_id) === String(info.telegramId)
@@ -121,8 +125,31 @@ async function availableForDesign(design, warehouse, shade) {
   return set.size;
 }
 
-/** The person's source warehouse (most recent purchase), or null. */
+/**
+ * PIN-1 — the admin's warehouse override for this person, or '' when none.
+ * An info that came through linkedAccessService already carries it; a
+ * hand-built info (bare telegramId) costs one register read. Never throws.
+ */
+async function _pinFor(info) {
+  if (!info) return '';
+  if (info.pinnedWarehouse !== undefined) return String(info.pinnedWarehouse || '').trim();
+  if (!info.telegramId) return '';
+  try {
+    const row = await require('../repositories/pendingUsersRepository')
+      .findByTelegramId(info.telegramId);
+    return String((row && row.pinned_warehouse) || '').trim();
+  } catch (_) { return ''; }
+}
+
+/**
+ * The person's source warehouse: the admin's PIN when one is set (PIN-1),
+ * else derived from their most recent purchase, else null. Every consumer
+ * (the §16 allocation cap, supply-request routing, the matrix payload)
+ * resolves through here, so the pin moves all of them together.
+ */
 async function sourceWarehouseFor(info) {
+  const pin = await _pinFor(info);
+  if (pin) return pin;
   const inventoryRepository = require('../repositories/inventoryRepository');
   const sold = await inventoryRepository.getSoldRows();
   const aliases = await aliasSetFor(info);
@@ -133,4 +160,4 @@ async function sourceWarehouseFor(info) {
   return latest ? latest.warehouse : null;
 }
 
-module.exports = { buildFor, availableForDesign, sourceWarehouseFor, _internals: { aliasSetFor } };
+module.exports = { buildFor, availableForDesign, sourceWarehouseFor, _internals: { aliasSetFor, _pinFor } };

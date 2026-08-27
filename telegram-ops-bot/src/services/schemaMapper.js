@@ -286,6 +286,7 @@ const REQUIRED_SHEETS = {
       'arrived_at', 'status', 'last_notified_msg_id',
       'handled_by', 'handled_at',
       'link_type', 'link_id', 'link_name', 'linked_by', 'linked_at',
+      'pinned_warehouse', // PIN-1 — admin warehouse override; blank = auto
     ],
   },
   // ATT-C1 — daily attendance log. One row per (date, telegram_id).

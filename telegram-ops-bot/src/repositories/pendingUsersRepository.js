@@ -35,6 +35,10 @@
  *   L: link_name              (the human name at link time — the row reads without a lookup)
  *   M: linked_by              (admin who bound it)
  *   N: linked_at              (Lagos wall-clock, 'YYYY-MM-DD HH:MM')
+ *   --- PIN-1 ---
+ *   O: pinned_warehouse       (admin override of the person's allocation /
+ *                              supply warehouse; blank = auto, i.e. derived
+ *                              from their most recent purchase at read time)
  */
 
 'use strict';
@@ -48,6 +52,10 @@ const HEADERS = [
   'handled_by', 'handled_at',
   // IDR-1 — what this Telegram account IS in the business.
   'link_type', 'link_id', 'link_name', 'linked_by', 'linked_at',
+  // PIN-1 (owner, 27-Aug-2026) — column O: admin override of the person's
+  // allocation/supply warehouse. Blank = auto (their most recent purchase,
+  // derived at read time as before). Set/cleared from the allocation sheet.
+  'pinned_warehouse',
 ];
 
 /** IDR-1 — the domains a Telegram account can be bound to. */
@@ -77,6 +85,7 @@ function parse(r, rowIndex) {
     link_name: str(r[11]),
     linked_by: str(r[12]),
     linked_at: str(r[13]),
+    pinned_warehouse: str(r[14]), // PIN-1
   };
 }
 
@@ -88,16 +97,16 @@ async function ensureHeader() {
   // append/write paid an extra read (and, where ensureHeader also calls
   // getSheetNames, a whole-spreadsheet metadata call) first.
   if (_headerReady) return;
-  const rows = await sheets.readRange(SHEET, 'A1:N1');
+  const rows = await sheets.readRange(SHEET, 'A1:O1');
   if (!rows.length || rows[0].length < HEADERS.length) {
-    await sheets.updateRange(SHEET, 'A1:N1', [HEADERS]);
+    await sheets.updateRange(SHEET, 'A1:O1', [HEADERS]);
   }
   _headerReady = true;
 }
 
 async function getAll() {
   try {
-    const rows = await sheets.readRange(SHEET, 'A2:N');
+    const rows = await sheets.readRange(SHEET, 'A2:O');
     return rows.map((r, i) => parse(r, i + 2)).filter((u) => u.telegram_id);
   } catch (_) {
     return [];
@@ -181,6 +190,19 @@ async function updateLastNotifiedMsgId(telegramId, msgId) {
   return true;
 }
 
+/**
+ * PIN-1 — set or clear (pass '') the admin warehouse override. Writes ONLY
+ * column O; validation of the warehouse name is the caller's job (the API
+ * checks it against live inventory warehouses).
+ */
+async function setPinnedWarehouse(telegramId, warehouse) {
+  const u = await findByTelegramId(telegramId);
+  if (!u) return false;
+  await ensureHeader();
+  await sheets.updateRange(SHEET, `O${u.rowIndex}`, [[str(warehouse)]]);
+  return true;
+}
+
 module.exports = {
   getAll,
   findByTelegramId,
@@ -188,6 +210,7 @@ module.exports = {
   updateStatus,
   updateLastNotifiedMsgId,
   setLink,
+  setPinnedWarehouse,
   SHEET,
   HEADERS,
   LINK_TYPES,

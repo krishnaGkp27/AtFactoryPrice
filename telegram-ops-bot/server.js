@@ -147,6 +147,7 @@ app.get('/api/ops/usage', apiController.getOpsUsage);
 app.get('/api/ops/tasks', apiController.getOpsTasks);                   // GNT-1 employee gantt (read-only)
 app.get('/api/ops/allocations', apiController.getOpsAllocations); // MYP-1
 app.post('/api/ops/allocations', apiController.postOpsAllocation);      // MYP-1 §15c session-only write
+app.post('/api/ops/pin', apiController.postOpsPin);                      // PIN-1 §15c warehouse pin
 
 app.get('/api/ops/overview', apiController.getOpsOverview);
 app.get('/api/ops/approvals', apiController.getOpsApprovals);
