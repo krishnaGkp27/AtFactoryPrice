@@ -10240,16 +10240,31 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
           warehouses: (u && u.warehouses) || [],
         };
         const linkTo = (page) => `${config.baseUrl}/auth?t=${webSessionService.mintLoginToken(identity)}&to=${encodeURIComponent(page)}`;
-        await bot.sendMessage(chatId,
-          `📊 *Your dashboard login*\n\nPick a report. Each link works ONCE and expires in 5 minutes — once you're in, the top bar switches between all of them for 12 hours. Don't forward these.`,
-          {
-            parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: [
-              [{ text: '📊 Overview', url: linkTo('/ops') }],
-              [{ text: '🧮 Allocation Matrix', url: linkTo('/allocations') }],
-              [{ text: '📅 Employee Work Plan', url: linkTo('/gantt') }],
-            ] },
-          });
+        const cardText = `📊 *Your dashboard login*\n\nPick a report. Each link works ONCE and expires in 5 minutes — once you're in, the top bar switches between all of them for 12 hours. Don't forward these.`;
+        // LNK-1 (owner, 27-Aug-2026) — login_url buttons open the browser
+        // DIRECTLY: no "Open Link?" popup, just Telegram's one-time per-user
+        // login consent, then instant forever. Telegram only accepts them
+        // when the bot's domain is registered (@BotFather → /setdomain →
+        // the BASE_URL host); until then the send is rejected with
+        // BOT_DOMAIN_INVALID and we fall back to plain url buttons — same
+        // links, popup and all. Each attempt mints FRESH single-use tokens,
+        // so a rejected send never burns the ones that were delivered.
+        const cardOpts = (direct) => ({
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [
+            ['📊 Overview', '/ops'], ['🧮 Allocation Matrix', '/allocations'], ['📅 Employee Work Plan', '/gantt'],
+          ].map(([label, page]) => [direct
+            ? { text: label, login_url: { url: linkTo(page) } }
+            : { text: label, url: linkTo(page) }]) },
+        });
+        try {
+          await bot.sendMessage(chatId, cardText, cardOpts(true));
+        } catch (e) {
+          if (/BOT_DOMAIN_INVALID|LOGIN_URL/i.test(e.message || '')) {
+            logger.warn('web_dashboard: login_url rejected — register the domain via @BotFather /setdomain; falling back to url buttons');
+            await bot.sendMessage(chatId, cardText, cardOpts(false));
+          } else { throw e; }
+        }
         break;
       }
       case 'reminder_controls': {

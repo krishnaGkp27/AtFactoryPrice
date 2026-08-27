@@ -82,13 +82,38 @@ test('bot tile: manager gets a one-time /auth link; employee is refused', async 
   await controller.handleCallbackQuery(bot, cb('act:web_dashboard', '4242'));
   const msg = bot.calls.find((c) => c.method === 'sendMessage' && /dashboard login/i.test(c.args.text));
   assert.ok(msg, 'link message sent');
+  // LNK-1 — login_url buttons (no "Open Link?" popup); same /auth token URL.
   const btn = msg.args.opts.reply_markup.inline_keyboard.flat()[0];
-  assert.match(btn.url, /^https:\/\/ops\.example\.test\/auth\?t=.+/, 'URL button carries the token');
+  assert.ok(btn.login_url && !btn.url, 'button is a login_url, not a plain url');
+  assert.match(btn.login_url.url, /^https:\/\/ops\.example\.test\/auth\?t=.+/, 'and carries the token');
   assert.match(msg.args.text, /works ONCE and expires in 5 minutes/);
 
   const bot2 = createFakeBot();
   await controller.handleCallbackQuery(bot2, cb('act:web_dashboard', '5555'));
   assert.match(bot2.allText(), /for admins and managers/, 'employee refused');
+});
+
+test('LNK-1: an unregistered bot domain falls back to plain url buttons, fresh tokens', async () => {
+  webSessionService._resetForTests();
+  const bot = createFakeBot();
+  const realSend = bot.sendMessage.bind(bot);
+  let rejected = 0;
+  // Telegram rejects login_url buttons until @BotFather /setdomain is done.
+  bot.sendMessage = async (chatId, text, opts) => {
+    const flat = ((opts && opts.reply_markup && opts.reply_markup.inline_keyboard) || []).flat();
+    if (flat.some((b) => b.login_url)) { rejected += 1; throw new Error('ETELEGRAM: 400 Bad Request: BOT_DOMAIN_INVALID'); }
+    return realSend(chatId, text, opts);
+  };
+  await controller.handleCallbackQuery(bot, cb('act:web_dashboard', '4242'));
+  assert.equal(rejected, 1, 'login_url attempted first');
+  const msg = bot.calls.find((c) => c.method === 'sendMessage' && /dashboard login/i.test(c.args.text));
+  assert.ok(msg, 'fallback card delivered');
+  const btns = msg.args.opts.reply_markup.inline_keyboard.flat();
+  assert.equal(btns.length, 3);
+  for (const b of btns) {
+    assert.ok(b.url && !b.login_url, 'plain url buttons on the fallback');
+    assert.match(b.url, /\/auth\?t=.+/, 'each still carries its own token');
+  }
 });
 
 test('manager session is dept/region scoped on the ops API; approvals stay admin-only', async () => {
