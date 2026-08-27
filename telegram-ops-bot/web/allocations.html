@@ -123,7 +123,7 @@ tfoot tr.av td{bottom:45px}
 </section>
 <div id="ov" hidden><div class="mdl" role="dialog" aria-modal="true" aria-labelledby="mtitle"><div class="mhd"><button class="bk" type="button" id="mback" aria-label="Back" hidden>&#8249;</button><span id="mtitle">Allocation</span><button class="x" type="button" id="mclose" aria-label="Close">&#10005;</button></div>
 <div class="wrap" id="mbody"></div>
-<p class="mnote">STOCK is live bales. FREE is stock minus what is already promised to everyone — a red figure means promised beyond stock. The server still decides every write (§16); this page only shows the reference.</p></div></div>
+<p class="mnote">STOCK is live bales in this person's own warehouse — their §16 cap. FREE is what is unpromised across ALL warehouses — red means over-promised. Dimmed designs (*) have stock only elsewhere: transfer it into their warehouse and they become allocatable. The server still decides every write (§16); this page only shows the reference.</p></div></div>
 <p class="note">Every write is validated against live stock (§16) and logged. This page live-mirrors the Telegram bot every 15s — edits made in the bot appear here and vice versa.</p>
 </div>
 <div id="out" hidden data-screen-label="Signed out">
@@ -205,16 +205,22 @@ function availShade(p, design, shade) {
   return n;
 }
 
+/** The design list both surfaces share: live stock anywhere, or held by
+ *  anyone. ALC-3 — the person sheet MUST show the same list as the matrix
+ *  columns; hiding a design (the CJE/9006 report) reads as data loss. */
+function matrixDesigns() {
+  var people = (DATA && DATA.people) || [];
+  return ((DATA && DATA.designs) || []).map(function (d) { return d.design; })
+    .filter(function (d) {
+      if (availAll(d) > 0) return true;
+      return people.some(function (p) { return allocFor(p, d) > 0; });
+    });
+}
+
 /* -- Matrix (read-only) -------------------------------------------------- */
 function renderMatrix() {
   var people = (DATA && DATA.people) || [];
-  var designs = ((DATA && DATA.designs) || []).map(function (d) { return d.design; });
-  // Only designs somebody holds or that have live stock — the whole Inventory
-  // design list would be hundreds of empty columns.
-  designs = designs.filter(function (d) {
-    if (availAll(d) > 0) return true;
-    return people.some(function (p) { return allocFor(p, d) > 0; });
-  });
+  var designs = matrixDesigns();
   el('mxempty').hidden = people.length > 0;
 
   var h = ['<th class="pc">Person</th>'];
@@ -279,13 +285,37 @@ function shadesFor(p, designs) {
     return a.localeCompare(b, undefined, { numeric: true });
   });
 }
-function designsForPerson(p) {
-  return ((DATA && DATA.designs) || []).map(function (d) { return d.design; })
-    .filter(function (d) {
-      if (allocFor(p, d) > 0) return true;
-      if (p.warehouse) return Number(((DATA.availability || {})[p.warehouse] || {})[d]) > 0;
-      return availAll(d) > 0;
-    });
+/**
+ * ALC-3 — a pinned person's sheet no longer HIDES designs their source
+ * warehouse doesn't stock (the CJE/9006 report): every matrix design shows,
+ * split into what CAN be written (§16: stock in their warehouse, or already
+ * held) and what cannot until stock moves there. Unpinned people scope
+ * globally, so their `out` list is always empty.
+ */
+function designScopeFor(p) {
+  var inScope = [], out = [];
+  matrixDesigns().forEach(function (d) {
+    var writable = allocFor(p, d) > 0
+      || (p.warehouse ? Number(((DATA.availability || {})[p.warehouse] || {})[d]) > 0
+        : availAll(d) > 0);
+    (writable ? inScope : out).push(d);
+  });
+  return { inScope: inScope, out: out };
+}
+function designsForPerson(p) { return designScopeFor(p).inScope; }
+
+/* ALC-3 — FREE is a GLOBAL fact (stock anywhere minus promised to anyone).
+ * Mixing warehouse-scoped stock with global allocations produced figures
+ * like "-10B" that meant nothing; every FREE now uses one scope. */
+var GLOBAL_SCOPE = {}; // a person with no warehouse — availShade goes global
+function freeAll(d, sh) {
+  // The no-shade row's FREE uses the DESIGN grain on purpose: the server
+  // caps a blank-shade give against the whole design (availableForDesign
+  // with no shade filter), so that row's reference must match its own cap
+  // basis — netting blank allocations against blank-only bales overstated
+  // the over-promise (a "-6B" beside a reconciling 0B total).
+  if (sh === undefined || sh === NO_SHADE) return availAll(d) - allocEveryone(d);
+  return availShade(GLOBAL_SCOPE, d, sh) - allocEveryone(d, sh);
 }
 /* ALC-2 (owner, 27-Aug-2026) — two levels, words in the header ONCE.
  *
@@ -322,28 +352,42 @@ function renderShades() {
 
 /* Level 1 — the person's designs, read-only rows that drill down. */
 function renderPersonSheet(p) {
-  var designs = designsForPerson(p);
+  var scope = designScopeFor(p);
   el('mtitle').textContent = 'Allocation — '
     + (p.kind === 'linked-customer' ? 'CUST' : 'MKT') + ' · ' + p.name
     + (p.warehouse ? ' · ' + p.warehouse : '');
-  if (!designs.length) {
+  if (!scope.inScope.length && !scope.out.length) {
     el('mbody').innerHTML = '<div class="empty">No designs with live stock to allocate right now.</div>';
     return;
   }
   var h = '<th class="pc">Design</th><th>Given</th><th>Stock</th><th>Free</th><th></th>';
-  var body = designs.map(function (d) {
+  var body = scope.inScope.map(function (d) {
     var given = allocFor(p, d);
     var stock = availShade(p, d, NO_SHADE);
-    var free = stock - allocEveryone(d);
     return '<tr class="drill" data-opend="' + esc(d) + '">'
       + '<td class="pc"><span class="who"><span class="nm">' + esc(d) + '</span></span></td>'
       + '<td class="' + (given ? 'ro' : 'dim') + '">' + fmtB(given) + '</td>'
       + '<td class="' + (stock ? 'ro' : 'dim') + '">' + fmtB(stock) + '</td>'
-      + freeTd(free)
+      + freeTd(freeAll(d))
       + '<td class="chev rt">&#8250;</td></tr>';
   });
+  // ALC-3 — the designs §16 will not let this person take yet: visible,
+  // dimmed, not drillable. STOCK here is the OTHER warehouses' stock — it
+  // becomes allocatable the moment a transfer lands it in theirs.
+  if (scope.out.length) {
+    body.push('<tr><td class="pc dim" colspan="5" style="text-align:left">Not in '
+      + esc(p.warehouse) + ' — transfer stock there to allocate (§16):</td></tr>');
+    scope.out.forEach(function (d) {
+      body.push('<tr class="dim">'
+        + '<td class="pc"><span class="who"><span class="nm dim">' + esc(d) + '</span></span></td>'
+        + '<td class="dim">—</td>'
+        + '<td class="dim">' + fmtB(availAll(d)) + '*</td>'
+        + freeTd(freeAll(d))
+        + '<td class="rt dim"></td></tr>');
+    });
+  }
   var foot = '<td class="pc">Total</td><td class="gt">' + fmtB(personTotal(p))
-    + '</td><td class="dim"></td><td class="dim"></td><td class="rt"></td>';
+    + '</td><td class="dim">' + (scope.out.length ? '* elsewhere' : '') + '</td><td class="dim"></td><td class="rt"></td>';
   el('mbody').innerHTML = '<table><thead><tr>' + h + '</tr></thead><tbody>'
     + body.join('') + '</tbody><tfoot><tr>' + foot + '</tr></tfoot></table>';
 }
@@ -357,7 +401,7 @@ function renderDesignEditor(p) {
   var h = '<th class="pc">Shade</th><th>Stock</th><th>Free</th><th>Give</th>';
   var body = rows.map(function (sh) {
     var stock = sh === NO_SHADE ? stockBlank(p, d, shades) : availShade(p, d, sh);
-    var free = stock - allocEveryone(d, sh);
+    var free = freeAll(d, sh); // global — one scope for FREE everywhere (ALC-3)
     var given = allocFor(p, d, sh);
     return '<tr><td class="pc"><span class="who"><span class="nm">'
       + (sh === NO_SHADE ? '—' : esc(sh)) + '</span></span></td>'
@@ -368,7 +412,7 @@ function renderDesignEditor(p) {
   });
   var stockAll = availShade(p, d, NO_SHADE);
   var foot = '<td class="pc">Total</td><td>' + fmtB(stockAll) + '</td>'
-    + freeTd(stockAll - allocEveryone(d))
+    + freeTd(freeAll(d))
     + '<td class="gt rt">' + fmtB(allocFor(p, d)) + '</td>';
   el('mbody').innerHTML = '<table><thead><tr>' + h + '</tr></thead><tbody>'
     + body.join('') + '</tbody><tfoot><tr>' + foot + '</tr></tfoot></table>';
