@@ -85,11 +85,21 @@ async function renderMkrStep(bot, chatId, userId, session) {
       [{ text: '◀️ Back', callback_data: 'mkr:back:phone' }, { text: '❌ Cancel', callback_data: 'mkr:cancel' }],
     ] };
   } else if (step === 'person_photo') {
-    text = `📝 *Register New Marketer*\n✓ Name: ${session.marketerName}\n✓ Phone: ${session.marketerPhone || '—'}\n✓ Area: ${session.marketerArea || '—'}\n\n📸 Send a photo of the marketer:`;
-    kb = { inline_keyboard: [[{ text: '◀️ Back', callback_data: 'mkr:back:area' }, { text: '❌ Cancel', callback_data: 'mkr:cancel' }]] };
+    // MKR-3 (owner, 27-Aug-2026) — photos are OPTIONAL, like phone and
+    // area: in the field the marketer is often registered before anyone
+    // has a picture of them. Skip leaves the columns empty; approval and
+    // linking are unaffected.
+    text = `📝 *Register New Marketer*\n✓ Name: ${session.marketerName}\n✓ Phone: ${session.marketerPhone || '—'}\n✓ Area: ${session.marketerArea || '—'}\n\n📸 Send a photo of the marketer (or Skip):`;
+    kb = { inline_keyboard: [
+      [{ text: '⏭ Skip', callback_data: 'mkr:skip_person' }],
+      [{ text: '◀️ Back', callback_data: 'mkr:back:area' }, { text: '❌ Cancel', callback_data: 'mkr:cancel' }],
+    ] };
   } else if (step === 'catalog_photo') {
-    text = `📝 *Register New Marketer*\n✓ Name: ${session.marketerName}\n✓ Phone: ${session.marketerPhone || '—'}\n✓ Area: ${session.marketerArea || '—'}\n✓ Person photo: ✅\n\n📸 Send a photo of the catalogs:`;
-    kb = { inline_keyboard: [[{ text: '◀️ Back', callback_data: 'mkr:back:person_photo' }, { text: '❌ Cancel', callback_data: 'mkr:cancel' }]] };
+    text = `📝 *Register New Marketer*\n✓ Name: ${session.marketerName}\n✓ Phone: ${session.marketerPhone || '—'}\n✓ Area: ${session.marketerArea || '—'}\n✓ Person photo: ${session.personPhotoFileId ? '✅' : '—'}\n\n📸 Send a photo of the catalogs (or Skip):`;
+    kb = { inline_keyboard: [
+      [{ text: '⏭ Skip', callback_data: 'mkr:skip_catalog' }],
+      [{ text: '◀️ Back', callback_data: 'mkr:back:person_photo' }, { text: '❌ Cancel', callback_data: 'mkr:cancel' }],
+    ] };
   } else { return; }
 
   const msg = await editOrSend(bot, chatId, session.flowMessageId, text, { parse_mode: 'Markdown', reply_markup: kb });
@@ -114,11 +124,14 @@ async function renderMkrReview(bot, chatId, userId, session) {
     `👤 Name: *${session.marketerName}*\n` +
     `📞 Phone: ${session.marketerPhone || '—'}\n` +
     `📍 Area: ${session.marketerArea || '—'}\n` +
-    '📸 Person photo: ✅\n📸 Catalog photo: ✅\n\nReview and submit:';
+    `📸 Person photo: ${session.personPhotoFileId ? '✅' : '— (skipped)'}\n` +
+    `📸 Catalog photo: ${session.catalogPhotoFileId ? '✅' : '— (skipped)'}\n\nReview and submit:`;
   const kb = { inline_keyboard: [
     [{ text: '✅ Submit for Approval', callback_data: 'mkr:submit' }],
-    [{ text: '✏️ Edit Name', callback_data: 'mkr:edit_name' }, { text: '📸 Retake Person', callback_data: 'mkr:retake_person' }],
-    [{ text: '📸 Retake Catalog', callback_data: 'mkr:retake_catalog' }, { text: '❌ Cancel', callback_data: 'mkr:cancel' }],
+    [{ text: '✏️ Edit Name', callback_data: 'mkr:edit_name' },
+      { text: session.personPhotoFileId ? '📸 Retake Person' : '📸 Add Person photo', callback_data: 'mkr:retake_person' }],
+    [{ text: session.catalogPhotoFileId ? '📸 Retake Catalog' : '📸 Add Catalog photo', callback_data: 'mkr:retake_catalog' },
+      { text: '❌ Cancel', callback_data: 'mkr:cancel' }],
   ] };
   const msg = await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', reply_markup: kb });
   trackMsg(session, msg);
@@ -271,6 +284,10 @@ async function handleMkrCallback(bot, callbackQuery) {
 
   if (data === 'mkr:skip_phone')    { session.marketerPhone = ''; session.step = 'area';         await renderMkrStep(bot, chatId, userId, session); return true; }
   if (data === 'mkr:skip_area')     { session.marketerArea = '';  session.step = 'person_photo';  await renderMkrStep(bot, chatId, userId, session); return true; }
+  // MKR-3 — both photos skippable; Skip also clears a photo taken before
+  // a Back, so what the review shows is what will be stored.
+  if (data === 'mkr:skip_person')   { session.personPhotoFileId = '';  session.step = 'catalog_photo'; await renderMkrStep(bot, chatId, userId, session); return true; }
+  if (data === 'mkr:skip_catalog')  { session.catalogPhotoFileId = ''; await renderMkrReview(bot, chatId, userId, session); return true; }
   if (data === 'mkr:edit_name')     { session.step = 'name';          await renderMkrStep(bot, chatId, userId, session); return true; }
   if (data === 'mkr:retake_person') { session.step = 'person_photo';  await renderMkrStep(bot, chatId, userId, session); return true; }
   if (data === 'mkr:retake_catalog'){ session.step = 'catalog_photo'; await renderMkrStep(bot, chatId, userId, session); return true; }
