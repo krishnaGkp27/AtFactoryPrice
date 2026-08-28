@@ -130,7 +130,8 @@ test('marketer with no allocations sees the ask-your-admin empty state', async (
   sessionStore.clear('mkt1');
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('act:my_products', 'mkt1'));
-  assert.match(bot.allText(), /No products have been allocated to you yet/);
+  assert.match(bot.allText(), /Musa Marketer’s Collection/); // MYP-3 — greeted by name
+  assert.match(bot.allText(), /Nothing has been allocated to you yet/);
   marketerAllocationsRepository.listForMarketer = restore;
   sessionStore.clear('mkt1');
 });
@@ -139,7 +140,7 @@ test('salesman keeps the classic warehouse catalog (price-visible path unchanged
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('act:my_products', 'sal1'));
   const text = bot.allText();
-  assert.match(text, /My Products — Lagos/);
+  assert.match(text, /My Collection — Lagos/); // MYP-3
   assert.ok(!/Pick a category/.test(text), 'no category screen for salesman');
 });
 

@@ -93,7 +93,10 @@ const ACTIVITIES = [
   { code: 'check_stock',           label: 'Check Stock',               icon: '📦', callback: 'act:check_stock',        hub: 'inventory' },
   // MKT-1 — warehouse-scoped read-only catalog for marketer/salesman roles.
   // Standalone (hub: null); surfaced only to field roles by the greeting menu.
-  { code: 'my_products',           label: 'My Products',               icon: '📦', callback: 'act:my_products',        hub: null },
+  // MYP-3 (owner, 27-Aug-2026) — "My Products" read cold; the tile is their
+  // collection (the VIEW behind it greets them by name). Code stays
+  // my_products: it is wired through Departments CSVs and usage rollups.
+  { code: 'my_products',           label: 'My Collection',             icon: '🧵', callback: 'act:my_products',        hub: null },
   { code: 'list_packages',         label: 'List Packages',             icon: '📋', callback: 'act:list_packages',      hub: 'inventory' },
   { code: 'inventory_details',     label: 'Inventory Details',         icon: '🏭', callback: 'act:inventory_details',  hub: 'inventory' },
   // PRICE-VIS — admin-only stock value (selling × yards); Phase 2 widens via permissions.

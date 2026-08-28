@@ -171,6 +171,20 @@ function mdEscape(s) {
 }
 
 /**
+ * MYP-3 (owner, 27-Aug-2026) — the person-facing title of the allocated-
+ * products view: "🧵 Goku's Collection", never "My Products" and never a
+ * warehouse name (§16 — no warehouse fact reaches their world). Possessive
+ * follows English: a name already ending in s takes a bare apostrophe.
+ * Falls back to "Your Collection" when no name is known. Markdown-escaped —
+ * safe inside a *bold* title.
+ */
+function collectionTitle(name) {
+  const n = String(name == null ? '' : name).trim();
+  if (!n) return '🧵 Your Collection';
+  return `🧵 ${mdEscape(n)}${/s$/i.test(n) ? '’' : '’s'} Collection`;
+}
+
+/**
  * SUB-1 — single-flight guard for a flow's SUBMIT step.
  *
  * The incident: one Kano sale queued five times, five request ids, five
@@ -206,4 +220,4 @@ function endSubmit(session, userId) {
   sessionStore.set(userId, session);
 }
 
-module.exports = { makeRenderer, rowsFor, guardSession, chunk, mdEscape, trackAux, disposeAux, beginSubmit, endSubmit };
+module.exports = { makeRenderer, rowsFor, guardSession, chunk, mdEscape, collectionTitle, trackAux, disposeAux, beginSubmit, endSubmit };

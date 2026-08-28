@@ -31,7 +31,7 @@
 
 const sessionStore = require('../utils/sessionStore');
 const logger = require('../utils/logger');
-const { mdEscape } = require('../utils/flowKit');
+const { mdEscape, collectionTitle } = require('../utils/flowKit');
 const { editOrSend } = require('../utils/telegramUI');
 
 const SESSION_TYPE = 'my_products_flow';
@@ -45,13 +45,14 @@ async function start(bot, chatId, userId, info, messageId = null) {
     view = await require('../services/myProductsService').buildFor({ ...info, telegramId: userId });
   } catch (e) {
     logger.error(`myProducts.start: ${e.message}`);
-    await editOrSend(bot, chatId, messageId, '⚠️ Could not load your products just now — try again in a moment.',
+    await editOrSend(bot, chatId, messageId, '⚠️ Could not load your collection just now — try again in a moment.',
       { reply_markup: { inline_keyboard: [menuRow()] } });
     return;
   }
   if (!view.items.length) {
     await editOrSend(bot, chatId, messageId,
-      '📦 *My Products*\n\nNothing here yet. Your admin sets up your products.',
+      // MYP-3 — their own name on their own shelf, never "My Products".
+      `*${collectionTitle(info && info.linkName)}*\n\nNothing here yet. Your admin sets up your collection.`,
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [menuRow()] } });
     return;
   }
@@ -68,7 +69,7 @@ async function start(bot, chatId, userId, info, messageId = null) {
   }]));
   rows.push(menuRow());
   const sent = await editOrSend(bot, chatId, messageId,
-    '📦 *My Products*\n_(supplied / allocated to you)_', {
+    `*${collectionTitle(info && info.linkName)}*\n_(supplied / allocated to you)_`, {
       parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows },
     });
   const s = sessionStore.get(userId);
@@ -177,7 +178,7 @@ async function requestSupply(bot, chatId, userId, idx, shadeIdx) {
     ? `${it.design}${lines[0].shade ? ` · ${lines[0].shade}` : ''} · ${lines[0].quantity}B`
     : `${it.design} · ${lines.length} shades · ${total}B`;
   const text = `✅ *Request sent.*\n\n${mdEscape(what)}\nYour admin will confirm supply.`;
-  const kb = { inline_keyboard: [[{ text: '⬅️ Back to My Products', callback_data: 'myp:back' }], menuRow()] };
+  const kb = { inline_keyboard: [[{ text: '⬅️ Back to my collection', callback_data: 'myp:back' }], menuRow()] };
   if (session.photoMessageId) {
     try {
       await bot.editMessageCaption(text, {

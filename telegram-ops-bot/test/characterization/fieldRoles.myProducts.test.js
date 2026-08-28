@@ -131,7 +131,7 @@ test('marketer is view-only: free-text commands do not trigger actions', async (
   await controller.handleMessage(bot, message(MARKETER_ID, 'Sell 5801 to Ibrahim cash'));
   const out = bot.allText();
   // No sell flow / confirmation; just the view-only nudge + their menu tile.
-  assert.match(out, /My Products/);
+  assert.match(out, /My Collection/); // MYP-3 — the tile nudge
   assert.doesNotMatch(out, /[Ss]ell|[Cc]onfirm|[Ii]brahim/);
   assert.equal(intentCalls, 0, 'field-role text must never reach the intent parser');
   installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));

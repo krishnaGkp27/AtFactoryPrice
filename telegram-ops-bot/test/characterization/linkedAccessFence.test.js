@@ -70,7 +70,7 @@ test('linked text → the one chip; no capture, no intent parsing', async () => 
   await controller.handleMessage(bot, msgFrom(LINKED, 'sell bale 100 to somebody'));
   const sent = bot.callsTo('sendMessage');
   assert.equal(sent.length, 1);
-  assert.match(sent[0].args.text, /My Products|products/i);
+  assert.match(sent[0].args.text, /collection/i); // MYP-3 — the personalized shelf
   const kb = sent[0].args.opts.reply_markup.inline_keyboard.flat();
   assert.deepEqual(kb.map((b) => b.callback_data), ['act:my_products']);
   assert.equal(captured, 0, 'a linked person is never re-captured as a stranger');
@@ -92,6 +92,10 @@ test('act:my_products renders THEIR chips in the sdg grammar; isAllowed still re
   // available in the fixture) must never appear.
   assert.match(chip.text, /^📦 9037 \(1B \/ 94B\)$/, 'supplied / allocated pair');
   assert.ok(!/2B/.test(chip.text), 'the live availability number must not leak');
+  // MYP-3 (owner, 27-Aug-2026) — greeted by THEIR name, and no warehouse
+  // word anywhere in their world (§16 stands through the rename).
+  assert.match(last.args.text || last.args[0] || '', /Owaibula’s Collection/, 'the title carries their name');
+  assert.ok(!/Kano/.test(last.args.text || ''), 'no warehouse name in their view');
   assert.equal(auth.isAllowed(LINKED), false, 'the fence is a pre-gate, not an allow-set hole');
 });
 

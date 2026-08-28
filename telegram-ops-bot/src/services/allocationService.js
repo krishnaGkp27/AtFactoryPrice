@@ -56,8 +56,8 @@ async function setAllocation(p) {
     const shown = p.label || p.design;
     try {
       await p.bot.sendMessage(String(p.personId), qty > 0
-        ? `📦 *Products update*\n\nYou've been allocated *${qty} bale${qty === 1 ? '' : 's'}* of design *${shown}*.\nOpen 📦 My Products to see it.`
-        : `📦 *Products update*\n\nDesign *${shown}* has been removed from your allocation.`,
+        ? `🧵 *Collection update*\n\nYou've been allocated *${qty} bale${qty === 1 ? '' : 's'}* of design *${shown}*.\nOpen 🧵 My Collection to see it.`
+        : `🧵 *Collection update*\n\nDesign *${shown}* has been removed from your collection.`,
       { parse_mode: 'Markdown' });
     } catch (e) { logger.info(`allocationService: DM to ${p.personId} skipped (${e.message})`); }
   }

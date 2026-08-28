@@ -61,10 +61,18 @@ async function showCategories(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== SESSION_TYPE) return;
 
+  // MYP-3 — their own name on their own shelf (staff marketers too).
+  let myName = '';
+  try {
+    const me = await require('../repositories/usersRepository').findByUserId(userId);
+    myName = (me && me.name) || '';
+  } catch { /* fall back to the neutral title */ }
+  const { collectionTitle } = require('../utils/flowKit');
+
   const grouped = await allocationsByCategory(userId);
   if (!grouped.size) {
     await render(bot, chatId, userId,
-      '📦 *My Products*\n\n🛈 No products have been allocated to you yet.\nAsk your admin to allocate designs to you.',
+      `*${collectionTitle(myName)}*\n\n🛈 Nothing has been allocated to you yet.\nAsk your admin to allocate designs to you.`,
       [menuRow()]);
     return;
   }
@@ -92,7 +100,7 @@ async function showCategories(bot, chatId, userId) {
   const rows = chunk(chips, 2);
   rows.push(menuRow());
   await render(bot, chatId, userId,
-    '📦 *My Products*\n\nPick a category to see your allocated designs:',
+    `*${collectionTitle(myName)}*\n\nPick a category to see your allocated designs:`,
     rows);
 }
 

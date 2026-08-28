@@ -3691,7 +3691,7 @@ async function handleFileMessage(bot, msg) {
     try {
       const linked = await require('../services/linkedAccessService').infoFor(userId);
       if (linked) {
-        await bot.sendMessage(chatId, '📦 Your access is view-only — tap 📦 My Products to see your designs.');
+        await bot.sendMessage(chatId, '🧵 Your access is view-only — tap 🧵 My Collection to see your designs.');
         return;
       }
     } catch (_) { /* fall through to the refusal */ }
@@ -3898,8 +3898,8 @@ async function handleMessage(bot, msg) {
       const linked = await require('../services/linkedAccessService').infoFor(userId);
       if (linked) {
         await bot.sendMessage(chatId,
-          `👋 Hello${linked.linkName ? ` ${linked.linkName}` : ''}! Tap below to see your products.`,
-          { reply_markup: { inline_keyboard: [[{ text: '📦 My Products', callback_data: 'act:my_products' }]] } });
+          `👋 Hello${linked.linkName ? ` ${linked.linkName}` : ''}! Tap below to open your collection.`,
+          { reply_markup: { inline_keyboard: [[{ text: '🧵 My Collection', callback_data: 'act:my_products' }]] } });
         return;
       }
     } catch (e) {
@@ -3944,7 +3944,7 @@ async function handleMessage(bot, msg) {
     if (fieldUser
       && !config.access.adminIds.includes(userId)
       && fieldRoles.isFieldRole(fieldUser.role)) {
-      await bot.sendMessage(chatId, '👋 Tap *📦 My Products* to see the designs and quantities available in your warehouse.', { parse_mode: 'Markdown' });
+      await bot.sendMessage(chatId, '👋 Tap *🧵 My Collection* to see the designs and quantities available in your warehouse.', { parse_mode: 'Markdown' });
       await buildGreetingMenu(bot, chatId, userId);
       return;
     }

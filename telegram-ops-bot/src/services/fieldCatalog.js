@@ -33,7 +33,7 @@ function buildCatalog(items, warehouses, opts = {}) {
   const whSet = new Set(whList.map(normWh));
   const whLabel = whList.join(', ') || '—';
 
-  let header = `📦 *My Products — ${whLabel}*\n`;
+  let header = `🧵 *My Collection — ${whLabel}*\n`; // MYP-3 — staff view keeps its warehouse label
   // STK-PRIV (owner, 23-Aug-2026): stock counts are admin-only everywhere.
   header += showPrice ? '_Designs · shades · price_\n' : '_Designs · shades_\n';
 

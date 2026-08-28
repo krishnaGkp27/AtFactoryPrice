@@ -1518,7 +1518,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       const linked = await _linkPendingAccount(aj.pendingTelegramId,
         { type: 'marketer', id: row.marketer_id, name: row.name || aj.name }, approvedBy);
       customMessage = `✅ Marketer ${row.name || aj.name} approved and active.`
-        + (linked ? ' Telegram account linked — 📦 My Products is live for them.'
+        + (linked ? ' Telegram account linked — their 🧵 collection is live.'
           : ' ⚠️ Telegram link failed — link them from 👋 Pending Users.');
     }
     // BR-OPS C1 — pointer for the branch daily roll-up.
