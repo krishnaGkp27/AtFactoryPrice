@@ -87,6 +87,17 @@ test('the roster key separates containers, so a re-used number stays whole', () 
     'the Jul26 bale is whole even though Mar26 shares its number');
 });
 
+/* ── CARD-5: formatCounts — already-decided counts, same grammar ────── */
+
+test('formatCounts renders decided counts in the one grammar', () => {
+  assert.equal(svc.formatCounts({ bales: 7, thans: 0 }), '7B');
+  assert.equal(svc.formatCounts({ bales: 0, thans: 28 }), '28t');
+  assert.equal(svc.formatCounts({ bales: 4, thans: 8 }), '4B + 8t');
+  assert.equal(svc.formatCounts({}), '', 'both zero → empty by default');
+  assert.equal(svc.formatCounts({ bales: 0, thans: 0, empty: '0B' }), '0B');
+  assert.equal(svc.formatCounts({ bales: 'x', thans: NaN }), '', 'junk counts as 0');
+});
+
 test('createQtyLabeller resolves the than-set once and returns a sync labeller', async () => {
   const orig = svc.getThanVisibilityWarehouses;
   svc.getThanVisibilityWarehouses = async () => THAN_WH;

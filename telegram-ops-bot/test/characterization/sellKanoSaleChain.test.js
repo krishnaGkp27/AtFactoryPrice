@@ -179,9 +179,12 @@ test('the bill submits the sale, carrying the picked seller and tapped date', as
     .map((c) => c.args.text).join('\n').replace(/\\/g, '');
   assert.match(adminText, /🧾 Sale · Kano office/);
   assert.match(adminText, /🧑 Abdul/);
-  assert.match(adminText, /🧵 77014 — 1 than · 30 yd/);
+  // CARD-5 (this exact card was the owner's complaint) — a Kano than sale
+  // tallies in thans only; the bale is already open, so no bale figure.
+  assert.match(adminText, /🧵 77014 — 1t · 30 yd/);
   assert.match(adminText, /#11 → 1100\/1/);
-  assert.match(adminText, /Σ 2 than · 60 yd · 2 bale/);
+  assert.match(adminText, /Σ 2t · 60 yd/);
+  assert.ok(!/\d+ bale/.test(adminText.slice(adminText.indexOf('Σ'))), 'no bale count after Σ');
   assert.match(adminText, /Sent for approval/, 'no "requires admin approval" boilerplate');
   const photos = bot.calls.filter((c) => c.method === 'sendPhoto' && String(c.args.chatId) === '777');
   assert.equal(photos.length, 1, 'the bill follows the card');

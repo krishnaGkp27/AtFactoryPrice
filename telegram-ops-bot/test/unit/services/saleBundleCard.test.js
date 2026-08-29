@@ -49,9 +49,11 @@ test('a bare bale number becomes design, shade, warehouse and quantities', async
   assert.match(text, /👤 set at approval/);
   assert.match(text, /🧑 Abdul/);
   assert.match(text, /🧾 Sale · IDUMOTA/, 'one store rides the header, not every line');
-  assert.match(text, /🧵 9060-A — 3 than · 150 yd/);
+  // CARD-5 — a whole-bale item tallies as its printed number: 1B, not
+  // "3 than · 1 bale"; its internal than count stays in the ×3 token.
+  assert.match(text, /🧵 9060-A — 1B · 150 yd/);
   assert.match(text, /#01 → 516 ×3/);
-  assert.match(text, /Σ 3 than · 150 yd · 1 bale/);
+  assert.match(text, /Σ 1B · 150 yd/);
   assert.match(text, /📎 Sales bill/);
   assert.ok(!text.includes('see below'), 'the stale pointer is gone');
 });
@@ -79,8 +81,51 @@ test('a single-than sale names its than', async () => {
     action: 'sale_bundle', items: [{ type: 'than', packageNo: '516', thanNo: 2 }],
   });
   // CARD-3 — the than rides the bale in the grammar Abdul already types.
-  assert.match(text, /🧵 9060-A — 1 than · 50 yd/);
+  // CARD-5 — and a than item tallies in thans: 1t, never "1 bale".
+  assert.match(text, /🧵 9060-A — 1t · 50 yd/);
   assert.match(text, /#01 → 516\/2/);
+  assert.match(text, /Σ 1t · 50 yd/);
+});
+
+test('CARD-5: the tally speaks each item’s packaging — t, B, and B + t', async () => {
+  seed([
+    row('516', '9060-A', '01', 'IDUMOTA', 1),
+    row('516', '9060-A', '01', 'IDUMOTA', 2),
+    row('700', '77014', '11', 'Kano office', 1),
+    row('700', '77014', '11', 'Kano office', 2),
+    row('700', '77014', '11', 'Kano office', 3),
+  ]);
+  // Than-only (the Kano case behind CARD-5): thans, and NO bale figure.
+  const thanOnly = await approvalCards.buildSaleBundleCard({
+    action: 'sale_bundle',
+    items: [
+      { type: 'than', packageNo: '700', thanNo: 1 },
+      { type: 'than', packageNo: '700', thanNo: 2 },
+    ],
+  });
+  assert.match(thanOnly, /🧵 77014 — 2t · 100 yd/);
+  assert.match(thanOnly, /Σ 2t · 100 yd/);
+  assert.ok(!/\d+ bale/.test(thanOnly), 'no "· N bale" tail on a than sale');
+  // Whole-bale: distinct printed numbers as B.
+  const wholeBale = await approvalCards.buildSaleBundleCard({
+    action: 'sale_bundle',
+    items: [
+      { type: 'package', packageNo: '516' },
+      { type: 'package', packageNo: '700' },
+    ],
+  });
+  assert.match(wholeBale, /Σ 2B · 250 yd/);
+  // Mixed: both units, each speaking its own goods.
+  const mixed = await approvalCards.buildSaleBundleCard({
+    action: 'sale_bundle',
+    items: [
+      { type: 'package', packageNo: '516' },
+      { type: 'than', packageNo: '700', thanNo: 3 },
+    ],
+  });
+  assert.match(mixed, /🧵 9060-A — 1B · 100 yd/);
+  assert.match(mixed, /🧵 77014 — 1t · 50 yd/);
+  assert.match(mixed, /Σ 1B \+ 1t · 150 yd/);
 });
 
 test('an Inventory outage degrades to the bare list — the card never fails', async () => {

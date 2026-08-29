@@ -83,9 +83,10 @@ test('DSP-1: photo → match card with OCR read-back → straight to Submit, NO 
   // CARD-3 — the gold-standard card, in the compact grammar.
   assert.match(adminMsgs, /🧾 Sale · Snap · IDUMOTA/, 'gold-standard headline + store');
   assert.match(adminMsgs, /🧑 Yarima/);
-  assert.match(adminMsgs, /🧵 77016 — 2 than · 60 yd/, 'full item line');
+  // CARD-5 — a whole-bale sale tallies as 1B; its 2 thans stay in the token.
+  assert.match(adminMsgs, /🧵 77016 — 1B · 60 yd/, 'full item line');
   assert.match(adminMsgs, /#5 → 896 ×2/);
-  assert.match(adminMsgs, /Σ 2 than · 60 yd · 1 bale/);
+  assert.match(adminMsgs, /Σ 1B · 60 yd/);
   assert.match(adminMsgs, /📎 Sales bill \(label photo\)/);
   const adminPhotos = bot.calls.filter((c) => c.method === 'sendPhoto' && String(c.args.chatId) === '777');
   assert.equal(adminPhotos.length, 1, 'label photo forwarded to the admin');
@@ -145,7 +146,7 @@ test('SNAP-3 + DSP-1: PDF batch → review card → ONE sale_bundle, no customer
   // Admin side: full card + the PDF forwarded as a document.
   const adminMsgs = bot.calls.filter((c) => c.method === 'sendMessage' && String(c.args.chatId) === '777').map((c) => c.args.text).join('\n').replace(/\\/g, '');
   assert.match(adminMsgs, /🧾 Sale · Snap PDF/);
-  assert.match(adminMsgs, /🧵 77016 — 3 than · 115 yd/);
+  assert.match(adminMsgs, /🧵 77016 — 2B · 115 yd/);
   assert.match(adminMsgs, /#5 → 896 ×2/);
   assert.match(adminMsgs, /Skipped from the PDF \(1\): 999 11111/);
   const adminDocs = bot.calls.filter((c) => c.method === 'sendDocument' && String(c.args.chatId) === '777');

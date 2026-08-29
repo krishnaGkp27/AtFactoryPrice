@@ -148,14 +148,23 @@ function sortSaleItems(items) {
  *   🧑 Abdul · 📅 09-Aug-2026
  *   📎 Sales bill
  *
- *   🧵 77014 · Cashmere — 3 · 90 yd
+ *   🧵 77014 · Cashmere — 3t · 90 yd
  *     #11 → 1100/1 · 1091/2
  *     #14 → 1082/1
- *   🧵 77020 — 2 · 60 yd
+ *   🧵 77020 — 2t · 60 yd
  *     #03 → 1122/1 · 1113/1
  *
- *   Σ 5 than · 150 yd · 5 bale
+ *   Σ 5t · 150 yd
  *   (bale/than · #shade)
+ *
+ * CARD-5 (owner, 29-Aug-2026: a Kano than sale read "Σ 28 than · 842 yd ·
+ * 7 bale" — "it doesn't make sense here since the bale gets already open
+ * and we supply in thans") — the tallies speak each item's OWN packaging,
+ * in the rule-6c grammar (unitDisplayService.formatCounts): a than item
+ * counts thans, a whole-bale item counts its printed number as one B.
+ * "Σ 28t · 842 yd" than-only · "Σ 7B · 1,470 yd" whole-bale ·
+ * "Σ 4B + 8t · 962 yd" mixed. A whole bale's internal than count is the
+ * bale's business, not the tally's; bale NUMBERS stay in the shade lines.
  *
  * Nothing is dropped: every fact the SAB-1/APF-1/CARD-2 card carried is
  * still here (design, category, shade, bale, than, yards, warehouse,
@@ -196,8 +205,16 @@ async function buildSaleCard(p) {
   if (p.docAttached) text += `\n📎 ${p.docLabel || 'Sales bill'}`;
   text += '\n';
 
+  const { formatCounts } = require('./unitDisplayService');
+  // CARD-5 — an item's own packaging decides its unit: type 'than' counts
+  // thans (a thin, unenriched than item still counts as 1); anything else
+  // is a whole bale and counts DISTINCT printed numbers, so a five-than
+  // sale out of three bales can never read "5 bale".
+  const thanCount = (arr) => arr.reduce(
+    (s, x) => s + (x.type === 'than' ? (Number(x.thans) || 1) : 0), 0);
+  const baleCount = (arr) => new Set(arr.filter((x) => x.type !== 'than')
+    .map((x) => String(x.packageNo ?? ''))).size;
   let totalYards = 0;
-  let totalThans = 0;
   // APF-1 / §2 — an item with no design heads no design group, and the
   // two causes are DIFFERENT facts that must not share a heading: "no live
   // rows at all" is sold-already / unknown-number (a warning), while "one
@@ -207,7 +224,6 @@ async function buildSaleCard(p) {
   for (const gk of groupKeys) {
     const dKey = gk.startsWith('d:') ? gk.slice(2) : '';
     const group = items.filter((x) => groupKey(x) === gk);
-    const gThans = group.reduce((s, x) => s + (Number(x.thans) || 0), 0);
     const gYards = group.reduce((s, x) => s + (Number(x.yards) || 0), 0);
     let cat = '';
     if (dKey) {
@@ -218,8 +234,8 @@ async function buildSaleCard(p) {
       : (gk === 'gone'
         ? '⚠️ no available stock (sold already, or unknown number)'
         : '🧵 not resolved — this number lives under more than one design');
-    const qty = [gThans ? `${gThans} than` : '', gYards ? `${fmtQty(gYards)} yd` : '']
-      .filter(Boolean).join(' · ');
+    const qty = [formatCounts({ bales: baleCount(group), thans: thanCount(group) }),
+      gYards ? `${fmtQty(gYards)} yd` : ''].filter(Boolean).join(' · ');
     text += `\n${head}${qty ? ` — ${qty}` : ''}`;
     const shades = [...new Set(group.map((x) => String(x.shade ?? '')))];
     for (const sh of shades) {
@@ -227,14 +243,14 @@ async function buildSaleCard(p) {
       const toks = line.map((it) => itemToken(it, !oneStore)).join(' · ');
       text += `\n  ${sh ? `#${sh} → ` : ''}${toks}`;
     }
-    totalThans += gThans;
     totalYards += gYards;
   }
 
-  // Distinct printed numbers, not item rows: a five-than sale out of three
-  // bales is "3 bale", never "5 bale".
-  const n = new Set(items.map((it) => String(it.packageNo ?? ''))).size;
-  text += `\n\nΣ ${totalThans ? `${totalThans} than · ` : ''}${fmtQty(totalYards)} yd · ${n} bale`;
+  // CARD-5 — one packaging tally in the rule-6c grammar: "28t", "7B",
+  // "4B + 8t". Thans of a still-sealed bale ride inside its B; only sold
+  // thans are counted as t.
+  const pkgLabel = formatCounts({ bales: baleCount(items), thans: thanCount(items) });
+  text += `\n\nΣ ${pkgLabel ? `${pkgLabel} · ` : ''}${fmtQty(totalYards)} yd`;
   text += '\n(bale/than · #shade)';
   const noStock = items.filter((it) => it.noStock).length;
   if (noStock && noStock === items.length) {

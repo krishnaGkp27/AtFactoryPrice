@@ -270,10 +270,25 @@ function formatQty(rows, opts = {}) {
     if (taken >= total) bales += 1;                  // the whole bale
     else thans += taken;                             // a broken bale
   }
+  return formatCounts({ bales, thans, empty: opts.empty || '0B' });
+}
+
+/**
+ * CARD-5 (owner, 29-Aug-2026) — render ALREADY-DECIDED counts in the one
+ * grammar: "7B", "28t", "4B + 8t". For surfaces whose items carry their
+ * packaging as a fact (a sale card's queued items are typed than vs whole
+ * bale) rather than needing formatQty's warehouse/roster inference. Same
+ * output shape as formatQty, one join in one place.
+ * @param {{bales:number|*, thans:number|*, empty?:string}} counts
+ * @returns {string} "7B" · "28t" · "4B + 8t" · `empty` when both are 0
+ */
+function formatCounts({ bales, thans, empty = '' } = {}) {
+  const b = Number.isFinite(Number(bales)) ? Number(bales) : 0;
+  const t = Number.isFinite(Number(thans)) ? Number(thans) : 0;
   const parts = [];
-  if (bales) parts.push(`${bales}B`);
-  if (thans) parts.push(`${thans}t`);
-  return parts.length ? parts.join(' + ') : (opts.empty || '0B');
+  if (b) parts.push(`${b}B`);
+  if (t) parts.push(`${t}t`);
+  return parts.length ? parts.join(' + ') : empty;
 }
 
 /**
@@ -300,8 +315,9 @@ module.exports = {
   isThanVisibilityWarehouse,
   setWarehouseMode,
   invalidateCache,
-  // TV-8
+  // TV-8 / CARD-5
   formatQty,
+  formatCounts,
   buildBaleRoster,
   createQtyLabeller,
   _internals: { rosterKey },

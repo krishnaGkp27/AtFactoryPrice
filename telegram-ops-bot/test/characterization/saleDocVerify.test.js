@@ -221,17 +221,19 @@ test('CARD-3: designs grouped, shades folded, each noun said once', async () => 
       { packageNo: '881', design: '77016', shade: '2', thans: 5, yards: 150, warehouse: 'IDUMOTA' },
     ],
   });
-  assert.match(card, /🧵 77014 — 10 than · 300 yd/);
-  assert.match(card, /🧵 77016 — 10 than · 300 yd/);
+  // CARD-5 — whole-bale items tally as B (distinct printed numbers).
+  assert.match(card, /🧵 77014 — 2B · 300 yd/);
+  assert.match(card, /🧵 77016 — 2B · 300 yd/);
   assert.ok(card.indexOf('🧵 77014') < card.indexOf('836'), 'header precedes its group');
   assert.ok(card.indexOf('836') < card.indexOf('844'), 'shade 1 before shade 2');
   assert.ok(card.indexOf('844') < card.indexOf('🧵 77016'), '77014 closes before 77016 opens');
   assert.ok(card.indexOf('879') < card.indexOf('881'), '77016 sorted by shade');
-  assert.match(card, /Σ 20 than · 600 yd · 4 bale/, 'one totals line');
+  assert.match(card, /Σ 4B · 600 yd/, 'one totals line');
   assert.match(card, /🧾 Sale · IDUMOTA/, 'one store, stated once in the header');
-  // The point of CARD-3: the three nouns appear ONCE, in the key line.
-  assert.equal((card.match(/\bbale\b/gi) || []).length, 2, `"bale" said twice (total + key), got: ${card}`);
-  assert.equal((card.match(/\bthan\b/gi) || []).length, 4, 'than: 2 group heads + total + key');
+  // The point of CARD-3 (tightened by CARD-5's B/t grammar): the three
+  // nouns appear ONCE each — in the key line only.
+  assert.equal((card.match(/\bbale\b/gi) || []).length, 1, `"bale" said once (the key), got: ${card}`);
+  assert.equal((card.match(/\bthan\b/gi) || []).length, 1, 'than: the key line only');
   assert.equal((card.match(/\bshade\b/gi) || []).length, 1, 'shade: the key line only');
 
   // A single-design sale needs no design header repeated per line either.
@@ -242,7 +244,7 @@ test('CARD-3: designs grouped, shades folded, each noun said once', async () => 
       { packageNo: '896', design: '77016', shade: '5', thans: 2, yards: 60 },
     ],
   });
-  assert.match(single, /🧵 77016 — 3 than · 115 yd/, 'one design head');
+  assert.match(single, /🧵 77016 — 2B · 115 yd/, 'one design head');
   assert.ok(single.indexOf('#2 → 897') < single.indexOf('#5 → 896 ×2'), 'still sorted by shade');
 });
 
