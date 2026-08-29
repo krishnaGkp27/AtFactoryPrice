@@ -57,6 +57,11 @@ const PENDING = [
   { requestId: 'U-1', user: '8700676816', status: 'pending', createdAt: daysAgo(9), actionJSON: { action: 'add_user', name: 'Musa' } },
   { requestId: 'C-1', user: '8700676816', status: 'pending', createdAt: daysAgo(2), actionJSON: { action: 'add_contact', name: 'ACME' } },
   { requestId: 'TR-20260724-001', user: '7430648262', status: 'pending', createdAt: daysAgo(2), actionJSON: { action: 'transfer_stock', from: 'Lagos', to: 'Kano office', stage: 'requested', lines: [] } },
+  // TRM-1 review: a free-text field carrying stray Markdown. Before the fix
+  // this card could not be opened at all — editMessageText AND its
+  // sendMessage fallback both 400'd on "can't parse entities", the spinner
+  // cleared, and the approval could be neither granted nor refused.
+  { requestId: 'TRM-1', user: '8700676816', status: 'pending', createdAt: daysAgo(1), actionJSON: { action: 'task_reminder_enable', task_id: 'T9', title: 'Chase Musa_s invoice *urgent*', doer_name: 'Musa Bello' } },
 ];
 approvalQueueRepository.getAllPending = async () => PENDING;
 
@@ -76,7 +81,7 @@ test('APX-1: categories carry counts and the oldest item\'s age', async () => {
   await flow.start(bot, ADMIN, ADMIN, null);
   const kb = lastKb(bot);
 
-  assert.match(lastText(bot), /5 pending/, 'header counts the whole queue');
+  assert.match(lastText(bot), /6 pending/, 'header counts the whole queue');
   const sales = kb.find((b) => b.callback_data === 'abx:cat:sales');
   assert.match(sales.text, /💰 Sales — 2 .*🔴11d/, `sales group shows count + oldest age, got: ${sales.text}`);
   const people = kb.find((b) => b.callback_data === 'abx:cat:people');
@@ -395,4 +400,25 @@ test('APX-2: a queue with no duplicates shows no duplicates group at all', async
   assert.ok(!lastKb(bot).some((b) => b.callback_data === 'abx:cat:dupes'),
     'the group is hidden when there is nothing to warn about');
   sessionStore.clear(ADMIN);
+});
+
+test('a Markdown-hostile free-text field cannot break an approval card', async () => {
+  // Drive the REAL card render for the hostile row and assert on what a
+  // Telegram parse would see: no unbalanced legacy-Markdown delimiter.
+  const bot = createFakeBot();
+  sessionStore.clear(ADMIN);
+  await flow.start(bot, ADMIN, ADMIN);
+  await flow.handleCallback(bot, cb('abx:cat:config', ADMIN));
+  const items = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
+  assert.ok(items.length, 'the arming request is filed under a real category, not ❓ Other');
+
+  await flow.handleCallback(bot, cb(items[0].callback_data, ADMIN));
+  const text = lastText(bot);
+  assert.match(text, /arm task reminders/, 'the card opened');
+  assert.match(text, /Chase Musa/, 'and names the task, so nobody signs blind');
+
+  const unbalanced = (t, ch) => t.split('').filter((c, i) => c === ch && t[i - 1] !== '\\').length % 2 === 1;
+  assert.equal(unbalanced(text, '_'), false, 'no unbalanced italic marker reaches Telegram');
+  assert.equal(unbalanced(text, '*'), false, 'no unbalanced bold marker reaches Telegram');
+  assert.equal(unbalanced(text, '`'), false, 'no unbalanced code marker reaches Telegram');
 });

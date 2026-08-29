@@ -107,13 +107,17 @@ Fourteen findings survived; all are fixed and pinned by tests:
   demands two taps; chip queues and arms nothing; approval arms and the sweep
   then speaks (+ double-approve idempotency); stop is one tap and tells the
   doer; a non-assigner manager can do neither.
+- `test/characterization/approvalsInboxFlow.test.js` gains a Markdown-hostile
+  title: the arming card must open and stay balanced (the shipped-then-fixed
+  HIGH — the inbox rendered plain-text cards as Markdown, so one stray `_` in
+  any free-text field made a request impossible to approve OR reject).
 - Smoke `S54.12` pins the gate membership, the `auto_remind` door in the
   sweep, one clock, the executor, and that the sweep is actually scheduled.
 
 ## Owner steps after deploy
 
 1. Open a task in 👥 Team Tasks → **🔁 Auto-remind** → have the second admin
-   approve in 🛂 Approvals → 🧪 Samples & marketing.
+   approve in 🛂 Approvals → **⚙️ Config & messaging**.
 2. Watch for the doer's nudge (next sweep, ≤1h) and your mirror line.
 3. **⏹ Stop reminders** on the same card to end them.
 4. Tune `TASK_REMINDER_HOURS` / set `TASK_REMINDER_ENABLED=0` in Settings if

@@ -53,7 +53,7 @@
 const sessionStore = require('../utils/sessionStore');
 const { LAGOS_TZ } = require('../utils/dates');
 const fmtDate = require('../utils/formatDate');
-const { makeRenderer, rowsFor } = require('../utils/flowKit');
+const { makeRenderer, rowsFor, mdEscape } = require('../utils/flowKit');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const approvalCards = require('../services/approvalCards');
 const settingsRepository = require('../repositories/settingsRepository');
@@ -135,6 +135,24 @@ function ageLabel(days) {
 function actionLabel(item) {
   const a = (item && item.actionJSON && item.actionJSON.action) || 'unknown';
   return approvalCards.actionLabel(a);
+}
+
+/**
+ * TRM-1 REVIEW FIX (27-Aug-2026) — approvalCards is contractually a PLAIN
+ * TEXT producer ("PLAIN TEXT ONLY", its module header), and every other
+ * consumer honours that: the DM path MarkdownV2-escapes the summary, the web
+ * API serves JSON. This file alone dropped raw card text into a Markdown
+ * render, so ONE stray `_`, `*`, `[` or backtick in any free-text field —
+ * a bank name, a supplier, a customer, and now a task title — made
+ * editMessageText AND the sendMessage fallback both fail with "can't parse
+ * entities". The tap cleared the spinner and the card simply never opened:
+ * an approval that could not be granted or refused from the inbox.
+ *
+ * Escaping at the consumer fixes every action at once and cannot
+ * double-escape, because no other consumer renders this text as Markdown.
+ */
+function escCard(card) {
+  return mdEscape(String(card || ''));
 }
 
 function shortDate(createdAt) {
@@ -720,7 +738,7 @@ async function renderItem(bot, chatId, userId, idx) {
       let card = '';
       try { card = await approvalCards.buildCardFromActionJSON(live.actionJSON) || ''; } catch (_) { /* bare */ }
       await render(bot, chatId, userId,
-        `${card}\n\n${st === 'approved' ? '✅' : '❌'} _Already ${st}${when} — no action needed._`,
+        `${escCard(card)}\n\n${st === 'approved' ? '✅' : '❌'} _Already ${st}${when} — no action needed._`,
         [backRow('⬅ Back to list'), closeRow()]);
       return;
     }
@@ -803,7 +821,7 @@ async function renderItem(bot, chatId, userId, idx) {
   await render(bot, chatId, userId,
     // SLC-1 — the age traffic-light left the chips, so it leaves the card
     // footer too: one vocabulary, and age is a plain fact here.
-    `${card}\n\n_Requested by ${who} · ${days > 0 ? `${days}d ago` : 'today'} · ${approvalCards.shortRequestRef(item.requestId)}_${dualNote}${dupNote}`,
+    `${escCard(card)}\n\n_Requested by ${mdEscape(who)} · ${days > 0 ? `${days}d ago` : 'today'} · ${approvalCards.shortRequestRef(item.requestId)}_${dualNote}${dupNote}`,
     [
       ...decisionRows,
       ...docRow,
