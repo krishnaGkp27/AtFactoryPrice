@@ -109,6 +109,14 @@ const ALWAYS_APPROVAL_ACTIONS = [
   // container charges + FX rate). Sealing wrong numbers cascades into
   // every margin report + sales decision, so always dual-admin.
   'finalize_landed_cost',
+  // TRM-1 (owner, 27-Aug-2026) — ARMING automatic reminders for one task.
+  // "the last door of reminder will only go through it once gets approved
+  // through two admin gateways". Arming is what the two admins sign: once
+  // armed the task nudges its doer on the Settings cadence until it stops
+  // being their move. Disarming (⏹ Stop reminders) is deliberately NOT
+  // gated — quieting a nudge is always safe, only applying the pressure
+  // needs two signatures.
+  'task_reminder_enable',
   // RMV-1 (owner, 16-Aug-2026) — removing a person, and restoring one.
   // Removal decides who may still be sold to and whose money surfaces
   // stay live; restoring one puts them back. Both always need two admins,
@@ -200,6 +208,10 @@ const DUAL_ADMIN_ACTIONS = [
   // on the customer side would be theatre: one admin could reach the same
   // outcome through the employee door.
   'remove_customer', 'restore_customer', 'deactivate_user',
+  // TRM-1 — listed here as well as in ALWAYS_APPROVAL_ACTIONS: §14 forbids
+  // the PAY-1 shape where a comment claimed two admins and the matrix
+  // returned one. Two DISTINCT admins arm a task's reminders.
+  'task_reminder_enable',
 ];
 
 /**
@@ -284,6 +296,7 @@ function formatAction(action) {
     bulk_receive_goods: 'bulk goods receipt',
     set_forex_rate: 'forex rate update',
     set_design_category: 'design category update',
+    task_reminder_enable: 'task reminder arming', // TRM-1
     notify_wholesaler: 'wholesaler notification',
     broadcast_wholesalers: 'wholesaler broadcast',
     confirm_bank_reconciliation: 'bank reconciliation confirmation',

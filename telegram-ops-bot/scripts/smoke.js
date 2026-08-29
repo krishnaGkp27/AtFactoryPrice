@@ -7901,6 +7901,29 @@ function runS54() {
     fail('S54.10', 'ALC-2 sheet structure or FREE reference missing/gating');
   }
 
+  // ---- S54.12 — TRM-1: armed reminders, and the gate that arms them ----
+  // The feature IS the gate: a sweep that could fire without the dual-admin
+  // flag would be the whole owner mandate defeated, so this pins the three
+  // structural facts a passing unit test cannot (list membership, the flag
+  // read in the sweep, and the scheduler actually wired).
+  const riskSrc = fs.readFileSync(path.join(__dirname, '../src/risk/evaluate.js'), 'utf8');
+  const trmSvc = fs.readFileSync(path.join(__dirname, '../src/services/taskReminderService.js'), 'utf8');
+  const trmRisk = require('../src/risk/evaluate');
+  const trm1 = trmRisk.ALWAYS_APPROVAL_ACTIONS.includes('task_reminder_enable')
+    && trmRisk.DUAL_ADMIN_ACTIONS.includes('task_reminder_enable')
+    && trmRisk.requiredAdminApprovals({ action: 'task_reminder_enable', requesterIsAdmin: false, adminCount: 3 }) === 2
+    && riskSrc.includes('task_reminder_enable')
+    && trmSvc.includes('if (!task.auto_remind) continue;')   // the only door in
+    && trmSvc.includes('lagosDayOf(now)')                     // one clock, testable
+    && srv54.includes('taskReminderService.sweep(bot)')       // actually scheduled
+    && fs.readFileSync(path.join(__dirname, '../src/services/inventoryService.js'), 'utf8')
+      .includes("aj.action === 'task_reminder_enable'");      // and an executor to arm it
+  if (trm1) {
+    pass('S54.12 TRM-1: reminders armed only by two admins, swept on one clock');
+  } else {
+    fail('S54.12', 'TRM-1 gate/sweep/scheduler wiring incomplete');
+  }
+
   // ---- S54.11 — PIN-1: the warehouse pin, one column + one resolution point ----
   const puRepoSrc = fs.readFileSync(path.join(__dirname, '../src/repositories/pendingUsersRepository.js'), 'utf8');
   const mypSrc = fs.readFileSync(path.join(__dirname, '../src/services/myProductsService.js'), 'utf8');

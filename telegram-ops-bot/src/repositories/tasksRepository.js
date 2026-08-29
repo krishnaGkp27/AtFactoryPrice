@@ -48,8 +48,8 @@ const sheets = require('./sheetsClient');
 const idGenerator = require('../utils/idGenerator');
 
 const SHEET = 'Tasks';
-const READ_RANGE = 'A2:U';
-const NUM_COLS = 21; // PTK-1: col U source_file_id (photo the task came from)
+const READ_RANGE = 'A2:V';
+const NUM_COLS = 22; // TRM-1: col V auto_remind (dual-admin armed reminders)
 
 const STATUSES = Object.freeze({
   ASSIGNED: 'assigned',
@@ -103,6 +103,13 @@ function parse(r, rowIndex) {
     approved_at: str(r[18]) || str(r[8]),
     last_event_at: str(r[19]) || createdAt,
     source_file_id: str(r[20]), // PTK-1
+    // TRM-1 — '1' once two admins armed automatic reminders for this task;
+    // blank = silent. Cleared by ⏹ Stop reminders. It is NOT cleared when a
+    // task closes: the flag is the record that two admins armed it, and the
+    // sweep already ignores every non-open status, so a finished task can
+    // never nag (verified by test: 'silence the moment it is not the doer's
+    // move').
+    auto_remind: str(r[21]) === '1',
   };
 }
 
@@ -204,6 +211,7 @@ async function append(task) {
   row[18] = task.approved_at || '';
   row[19] = task.last_event_at || now;
   row[20] = task.source_file_id || ''; // PTK-1 — the note photo's Telegram file id
+  row[21] = task.auto_remind ? '1' : ''; // TRM-1 — never armed at creation
 
   await sheets.appendRows(SHEET, [row]);
   return { ...task, task_id: taskId, status, track, last_event_at: row[19] };
@@ -225,6 +233,7 @@ const COLUMN_BY_FIELD = Object.freeze({
   approved_at: 'S',
   last_event_at: 'T',
   source_file_id: 'U', // PTK-1
+  auto_remind: 'V',    // TRM-1
 });
 
 /**

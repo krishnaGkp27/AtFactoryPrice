@@ -1803,6 +1803,16 @@ async function handleCallback(bot, callbackQuery) {
     });
     return true;
   }
+  if (data.startsWith('tsk:rmon:')) {
+    const p = data.slice('tsk:rmon:'.length).split(':');
+    await requestAutoRemind(bot, callbackQuery, parseListCtx(p.slice(0, 3).join(':')), p.slice(3).join(':'));
+    return true;
+  }
+  if (data.startsWith('tsk:rmoff:')) {
+    const p = data.slice('tsk:rmoff:'.length).split(':');
+    await stopAutoRemind(bot, callbackQuery, parseListCtx(p.slice(0, 3).join(':')), p.slice(3).join(':'));
+    return true;
+  }
   if (data.startsWith('tsk:rmd:')) {
     const p = data.slice('tsk:rmd:'.length).split(':');
     await handleRemind(bot, callbackQuery, parseListCtx(p.slice(0, 3).join(':')), p.slice(3).join(':'));
@@ -2814,6 +2824,12 @@ async function renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx, 
     `👤 ${escapeMd(doerName)} · assigned by ${escapeMd(assignerLabel)} ${fmtDateShort(task.assigned_at || task.created_at)}`
       + descLine(task.description),
   ];
+  // The flag is a permanent record that two admins armed this task; the
+  // banner is about what is happening NOW, so a closed task never claims to
+  // be reminding anyone (the sweep ignores closed tasks too).
+  if (task.auto_remind && OPEN_STATUSES.has(task.status)) {
+    lines.push('', '🔁 _Automatic reminders are ON for this task (two admins armed them)._');
+  }
   if (opts.note) lines.push('', opts.note);
 
   const datePassed = task.proposed_deadline
@@ -2860,6 +2876,19 @@ async function renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx, 
           rows.push([{ text: `🔔 Remind ${doerFirst}`, callback_data: `tsk:rmd:${cs}:${task.task_id}` }]);
         }
     }
+    // TRM-1 — automatic reminders. Arming asks two admins (the chip queues
+    // an approval); stopping is one tap, because quieting a nudge is always
+    // safe. Only offered while the task can still be waiting on the doer.
+    // REVIEW FIX: the chip used to be hidden entirely on the assigner-move
+    // statuses, so a task armed just before the doer marked it done became
+    // UNSTOPPABLE from its own card. Stop is offered whenever reminders are
+    // on; arming is offered only where a nudge could ever apply.
+    if (task.auto_remind) {
+      rows.push([{ text: '⏹ Stop reminders', callback_data: `tsk:rmoff:${cs}:${task.task_id}` }]);
+    } else if (task.status !== 'submitted' && task.status !== 'awaiting_timeline_ack'
+        && task.status !== 'awaiting_incentive') {
+      rows.push([{ text: '🔁 Auto-remind', callback_data: `tsk:rmon:${cs}:${task.task_id}` }]);
+    }
     // Drop stays hidden on 'submitted' — delivered work is approved or
     // rejected, never silently dropped (long-standing rule).
     if (task.status !== 'submitted') {
@@ -2876,12 +2905,147 @@ async function renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx, 
 }
 
 /**
- * 🔔 Remind — one polite DM to the worker, at most once per task per Lagos
- * day. The dedupe ledger is in-memory ON PURPOSE: it is operational state,
- * not a business record (§10 — no new log sheets), and the worst case after
- * a restart is one extra polite reminder.
+ * TRM-1 — 🔁 Auto-remind: ask the SECOND admin to arm this task's automatic
+ * reminders. Nothing changes here; the executor flips the flag only after
+ * the dual-admin gate is satisfied (risk/evaluate: task_reminder_enable is
+ * in ALWAYS_APPROVAL_ACTIONS *and* DUAL_ADMIN_ACTIONS).
  */
-const _remindedOn = new Map(); // task_id → Lagos day it was last reminded
+async function requestAutoRemind(bot, callbackQuery, ctx, taskId) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const task = await tasksRepository.getById(taskId);
+  if (!task) { await renderTeamList(bot, chatId, userId, messageId, ctx); return; }
+  if (!(await _guardAssignerOrAdmin(bot, callbackQuery, task))) return;
+  if (task.auto_remind) {
+    await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx,
+      { note: '🔁 _Reminders are already armed for this task._' });
+    return;
+  }
+  if (!OPEN_STATUSES.has(task.status)) {
+    await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx,
+      { note: 'ℹ️ _This task is closed — there is nothing left to remind about._' });
+    return;
+  }
+
+  const idGenerator = require('../utils/idGenerator');
+  const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+  // REVIEW FIX: two taps used to queue two armings. The second could then be
+  // approved AFTER an ⏹ Stop and silently switch the nudges back on.
+  try {
+    const pending = await approvalQueueRepository.getAllPending();
+    if (pending.some((r) => r.actionJSON && r.actionJSON.action === 'task_reminder_enable'
+        && String(r.actionJSON.task_id) === String(taskId))) {
+      await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx,
+        { note: '🔁 _Already waiting on a second admin — one request per task._' });
+      return;
+    }
+  } catch (e) { logger.warn(`taskFlow.requestAutoRemind: pending check failed: ${e.message}`); }
+  const approvalEvents = require('../events/approvalEvents');
+  const riskEvaluate = require('../risk/evaluate');
+  const requestId = idGenerator.requestId();
+  const doerName = (await usersRepository.findByUserId(task.assigned_to).catch(() => null))?.name
+    || task.assigned_to;
+  try {
+    const risk = await riskEvaluate.evaluate({ action: 'task_reminder_enable', userId });
+    await approvalQueueRepository.append({
+      requestId,
+      user: String(userId),
+      actionJSON: { action: 'task_reminder_enable', task_id: taskId, title: task.title, doer_name: doerName },
+      riskReason: risk.reason || 'dual_admin_required',
+      status: 'pending',
+    });
+    await approvalEvents.notifyAdminsApprovalRequest(
+      bot, requestId, (await usersRepository.findByUserId(userId).catch(() => null))?.name || userId,
+      // Plain text on purpose: notifyAdminsApprovalRequest escapes the
+      // summary (Markdown-v2 esc), so any *bold*/_italic_ here would reach
+      // the approving admin as literal backslashed punctuation.
+      `Arm automatic reminders\n📋 ${task.title}\n👤 ${doerName}\n`
+      + 'Once armed the bot nudges them until the task is no longer their move, and the assigner is copied on every nudge.',
+      risk.reason || 'dual_admin_required',
+      isAdmin(userId) ? String(userId) : undefined,
+    );
+  } catch (e) {
+    logger.error(`taskFlow.requestAutoRemind: ${e.message}`);
+    await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx,
+      { note: `⚠️ _Could not raise the request: ${escapeMd(e.message)}_` });
+    return;
+  }
+  await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx,
+    { note: '🔁 _Sent for approval — reminders start once a second admin signs it._' });
+}
+
+/**
+ * TRM-1 — ⏹ Stop reminders. Deliberately NOT approval-gated: quieting a
+ * nudge is always safe, and a reminder nobody can stop is the reason people
+ * mute bots. Open to the ASSIGNER (who may be a non-admin manager — it is
+ * their own task's nudge, and their own chat receiving the mirror) or any
+ * admin, exactly like 🔝 Priority and 🚫 Drop on the same card. Audited.
+ */
+async function stopAutoRemind(bot, callbackQuery, ctx, taskId) {
+  const userId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const task = await tasksRepository.getById(taskId);
+  if (!task) { await renderTeamList(bot, chatId, userId, messageId, ctx); return; }
+  if (!(await _guardAssignerOrAdmin(bot, callbackQuery, task))) return;
+  if (!task.auto_remind) {
+    await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx,
+      { note: 'ℹ️ _Automatic reminders were not on for this task._' });
+    return;
+  }
+  try {
+    await tasksRepository.updateFields(taskId, { auto_remind: '' });
+  } catch (e) {
+    logger.error(`taskFlow.stopAutoRemind: ${e.message}`);
+    await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx,
+      { note: `⚠️ _Could not stop them: ${escapeMd(e.message)}_` });
+    return;
+  }
+  // REVIEW FIX: an arming still sitting in the queue would re-arm this task
+  // the moment some admin got round to approving it — days later, after the
+  // owner had deliberately stopped it. Stop means stop, so the pending
+  // request is withdrawn in the same breath.
+  let withdrawn = 0;
+  try {
+    const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+    const pending = await approvalQueueRepository.getAllPending();
+    for (const r of pending) {
+      if (!r.actionJSON || r.actionJSON.action !== 'task_reminder_enable') continue;
+      if (String(r.actionJSON.task_id) !== String(taskId)) continue;
+      await approvalQueueRepository.updateStatus(r.requestId, 'rejected', new Date().toISOString());
+      withdrawn += 1;
+    }
+  } catch (e) { logger.warn(`taskFlow.stopAutoRemind: could not withdraw pending armings: ${e.message}`); }
+  try {
+    await taskEventsRepository.append({
+      task_id: taskId, event_type: 'auto_remind_stopped',
+      from_status: task.status, to_status: task.status,
+      actor_user_id: userId, meta: { withdrawn_pending: withdrawn },
+    });
+  } catch (e) { logger.warn(`taskFlow.stopAutoRemind: audit failed: ${e.message}`); }
+  // The doer is told the pressure is off — the same courtesy the nudge got.
+  try {
+    await bot.sendMessage(task.assigned_to,
+      `⏹ *Reminders stopped*\n\n${escapeMd(task.title)}\n_You will no longer be nudged about this task._`,
+      { parse_mode: 'Markdown', disable_notification: true });
+  } catch (e) { logger.info(`taskFlow.stopAutoRemind: doer DM skipped (${e.message})`); }
+  await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx,
+    { note: withdrawn
+      ? `⏹ _Automatic reminders stopped, and ${withdrawn} pending arming request${withdrawn === 1 ? '' : 's'} withdrawn._`
+      : '⏹ _Automatic reminders stopped._' });
+}
+
+/**
+ * 🔔 Remind — one polite DM to the worker, at most once per task per Lagos
+ * day.
+ *
+ * TRM-1 REVIEW FIX (27-Aug): this door used to keep its own in-memory day
+ * ledger, so the automatic sweep and a manual tap could both fire on the
+ * same task the same day — and a redeploy reset it. Both doors now share
+ * ONE durable record (taskReminderService, TaskEvents `reminder_sent`), so
+ * "once a day" holds across doors and across restarts.
+ */
 
 async function handleRemind(bot, callbackQuery, ctx, taskId) {
   const userId = String(callbackQuery.from.id);
@@ -2898,8 +3062,9 @@ async function handleRemind(bot, callbackQuery, ctx, taskId) {
       { note: 'ℹ️ _This task is no longer waiting on him — no reminder needed._' });
     return;
   }
-  const day = todayInLagos();
-  if (_remindedOn.get(taskId) === day) {
+  const reminders = require('../services/taskReminderService');
+  const history = await reminders.lastRemindedDays(Date.now());
+  if (reminders.remindedToday(taskId, history, Date.now())) {
     await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx,
       { note: '🔔 _Already reminded today — one nudge per day is enough._' });
     return;
@@ -2918,7 +3083,7 @@ async function handleRemind(bot, callbackQuery, ctx, taskId) {
       `🔔 *Reminder from ${escapeMd(assigner?.name || 'your assigner')}*\n\n`
       + `${pm.icon} *${escapeMd(task.title)}*${descLine(task.description)}\n\n${ask}\nID: \`${taskId}\``,
       { parse_mode: 'Markdown', reply_markup: act ? { inline_keyboard: [act] } : undefined });
-    _remindedOn.set(taskId, day);
+    await reminders.noteReminded(taskId, userId, { via: 'manual' });
     await renderAdminTaskCard(bot, chatId, userId, taskId, messageId, ctx,
       { note: `🔔 _Reminder sent to ${escapeMd(doerFirst)} just now._` });
   } catch (e) {
@@ -3146,6 +3311,11 @@ module.exports = {
     fmtDate,
     decodeLegacyDescription,
     getPriority,
+    // TRM-1 — the reminder sweep renders the doer's own card grammar, so
+    // the automatic nudge and the manual 🔔 can never drift apart.
+    PRIORITY_META,
+    descLine,
+    buttonsForMyTask,
     // TSK-V3
     parseListCtx,
     teamChipFact,

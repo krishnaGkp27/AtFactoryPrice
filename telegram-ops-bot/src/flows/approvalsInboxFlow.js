@@ -85,7 +85,10 @@ const CATEGORIES = [
   { key: 'people', label: '👥 People & access', actions: ['add_user', 'deactivate_user', 'promote_admin'], dual: true },
   { key: 'warehouse', label: '🏭 Warehouse & labels', actions: ['add_warehouse', 'rename_warehouse', 'set_unit_display', 'set_design_category'], dual: true },
   { key: 'samples', label: '🧪 Samples & marketing', actions: ['give_sample', 'catalog_loan', 'catalog_return', 'register_marketer', 'design_asset_upload'] },
-  { key: 'config', label: '⚙️ Config & messaging', actions: ['set_reminder_config', 'notify_wholesaler', 'broadcast_wholesalers'] },
+  // TRM-1 — arming a task's automatic reminders is a reminder-config
+  // decision; without this it fell into ❓ Other, where the dual-admin
+  // badge the category carries is not shown either.
+  { key: 'config', label: '⚙️ Config & messaging', actions: ['set_reminder_config', 'notify_wholesaler', 'broadcast_wholesalers', 'task_reminder_enable'], dual: true },
 ];
 
 /**

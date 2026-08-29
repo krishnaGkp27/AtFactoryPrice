@@ -52,6 +52,9 @@ const NAME_CACHE_TTL_MS = 10 * 60 * 1000;
  * sweep, the morning digest, the dual-admin notice) must come through here.
  */
 const ACTION_LABELS = {
+  // TRM-1 — the card must say what is being signed: arming a task's
+  // automatic reminders, not "task reminder enable".
+  task_reminder_enable: '🔁 arm task reminders',
   sale_bundle: 'sale bale',
   revert_sale_bundle: 'revert sale bale',
   sell_package: 'sell bale',
@@ -714,6 +717,10 @@ async function buildCardFromActionJSON(aj) {
     ['warehouse', 'Warehouse'], ['toWarehouse', 'To'], ['arrivalBatch', 'Container'],
     ['price', 'Price'], ['amount', 'Amount'], ['bank_name', 'Bank'],
     ['phone', 'Phone'], ['grnId', 'GRN'], ['supplier', 'Supplier'],
+    // TRM-1 — without these the arming card said only "🔁 arm task
+    // reminders", so a second admin arming two people's tasks the same day
+    // saw two identical chips and signed blind.
+    ['title', 'Task'], ['doer_name', 'Doer'],
   ];
   const seen = new Set();
   for (const [key, label] of fields) {

@@ -62,6 +62,8 @@ const REQUIRED_SHEETS = {
       'timeline_agreed_at', 'started_at', 'approved_at', 'last_event_at',
       // PTK-1 — Snap Task: the note photo the task was read from.
       'source_file_id',
+      // TRM-1 — dual-admin armed automatic reminders ('1' = armed).
+      'auto_remind',
     ],
   },
   // Money-side of the Tasks workflow. Kept in its own sheet so admin /
@@ -592,11 +594,13 @@ async function initialize() {
   // the sheet already existed with the legacy 9-column header.
   if (existing.includes('Tasks')) {
     try {
-      const TASK_NEW_COLS = [
-        'track', 'priority', 'assigned_at', 'accepted_at',
-        'proposed_hours', 'proposed_deadline', 'negotiation_rounds',
-        'timeline_agreed_at', 'started_at', 'approved_at', 'last_event_at',
-      ];
+      // TRM-1 (27-Aug-2026) — this list used to be the TG-7.5 columns
+      // hardcoded, so every column added AFTER that (PTK-1 source_file_id,
+      // TRM-1 auto_remind) landed on an existing sheet under a BLANK header
+      // cell: exactly the AUD-X2 bug called out on StockTakes above. Deriving
+      // it from the declared header means the next column is labelled too,
+      // without anyone remembering to edit this line.
+      const TASK_NEW_COLS = REQUIRED_SHEETS.Tasks.headers.slice();
       const taskHeader = await sheets.readRange('Tasks', 'A1:Z1');
       const h = taskHeader[0] || [];
       const missing = TASK_NEW_COLS.filter((c) => !h.includes(c));
@@ -604,7 +608,7 @@ async function initialize() {
         const startCol = colLetter(h.length + 1);
         const endCol = colLetter(h.length + missing.length);
         await sheets.updateRange('Tasks', `${startCol}1:${endCol}1`, [missing]);
-        logger.info(`SchemaMapper: extended Tasks with ${missing.length} TG-7.5 columns (${missing.join(', ')})`);
+        logger.info(`SchemaMapper: extended Tasks with ${missing.length} column(s) (${missing.join(', ')})`);
       }
     } catch (e) {
       logger.warn('SchemaMapper: could not extend Tasks —', e.message);

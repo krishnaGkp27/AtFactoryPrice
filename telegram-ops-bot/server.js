@@ -615,6 +615,13 @@ const server = app.listen(PORT, async () => {
     // SEN-1 — nightly read-only cross-sheet consistency checks (Data
     // Health). SENTINEL_ENABLED / SENTINEL_HOUR in Settings, no deploy.
     require('./src/services/consistencySentinel').startScheduler(bot);
+    // TRM-1 — automatic task reminders for tasks TWO ADMINS armed. Same
+    // shape as the approval sweep: one pass shortly after boot, then hourly;
+    // the service itself decides whether a pass is due (TASK_REMINDER_HOURS)
+    // and never nudges one task twice in a Lagos day.
+    const taskReminderService = require('./src/services/taskReminderService');
+    setTimeout(() => taskReminderService.sweep(bot), 90 * 1000);
+    setInterval(() => taskReminderService.sweep(bot), 60 * 60 * 1000);
     // ATT-C3 — 09:00 attendance nudge to department members who haven't
     // marked yet (report-by 09:30, owner 19-Jul). ATTENDANCE_* Settings.
     require('./src/services/attendanceReminder').start(bot);

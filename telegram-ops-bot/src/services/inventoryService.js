@@ -1104,6 +1104,43 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // approval-events handler if/when we want it. For now the
     // requester + approver both get direct messages via the existing
     // approval pipeline, which is sufficient signal.
+  } else if (aj.action === 'task_reminder_enable') {
+    // TRM-1 — the second admin's signature is what arms a task's automatic
+    // reminders (owner: "the last door of reminder will only go through it
+    // once it gets approved through two admin gateways"). Everything else
+    // about the task is untouched: this flips one flag, and the sweep is
+    // what actually speaks.
+    const tasksRepo = require('../repositories/tasksRepository');
+    const taskId = String(aj.task_id || '').trim();
+    if (!taskId) return { ok: false, message: 'task_reminder_enable: task_id missing.' };
+    const task = await tasksRepo.getById(taskId);
+    if (!task) return { ok: false, message: `task_reminder_enable: ${taskId} not found.` };
+    if (task.auto_remind) {
+      // Idempotent: a double-approve must not report a second arming.
+      customMessage = `🔁 Reminders were already armed for "${task.title}".`;
+    } else {
+      const openStatuses = ['assigned', 'awaiting_timeline_ack', 'awaiting_incentive',
+        'awaiting_final_ack', 'active', 'submitted'];
+      if (!openStatuses.includes(task.status)) {
+        return { ok: false, message: `task_reminder_enable: "${task.title}" is ${task.status} — nothing left to remind about.` };
+      }
+      await tasksRepo.updateFields(taskId, { auto_remind: '1' });
+      try {
+        await require('../repositories/taskEventsRepository').append({
+          task_id: taskId, event_type: 'auto_remind_armed',
+          from_status: task.status, to_status: task.status,
+          actor_user_id: approvedBy, meta: { requested_by: item.user },
+        });
+      } catch (e) { logger.warn(`task_reminder_enable audit failed: ${e.message}`); }
+      // NOTE (TRM-1, verified 27-Aug-2026): `customMessage` is NOT rendered
+      // on the approve-success path — both callers in approvalEvents write
+      // their own generic "approved. Changes applied." line. That is a
+      // repo-wide gap, not this feature's, and closing it means editing
+      // approvalEvents (owner sign-off required). So TRM-1 never depends on
+      // it: the doer learns from the next sweep, the assigner from the
+      // mirror line, and the task card itself says reminders are ON.
+      customMessage = `🔁 Automatic reminders armed for "${task.title}" — ${aj.doer_name || 'the doer'} will be nudged until it is no longer their move, and you are copied on every nudge.`;
+    }
   } else if (aj.action === 'set_design_category') {
     // DCAT-1 — dual-admin design-category mapping (ALWAYS_APPROVAL_ACTIONS).
     // Stamps the Inventory `design_category` column (W) on every row of the

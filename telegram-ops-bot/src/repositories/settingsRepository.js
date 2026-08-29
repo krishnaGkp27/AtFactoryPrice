@@ -102,6 +102,13 @@ const DEFAULTS = {
   ATTENDANCE_REMINDER_ENABLED: 1,
   // SNAP-3 spend guard: max metered vision (OCR) calls per day.
   OCR_DAILY_CAP: 100,
+  // TRM-1 (owner, 27-Aug-2026) — automatic task reminders. Master switch
+  // (0 silences every task nudge in one cell, no deploy) and the cadence
+  // in hours between nudges for ONE armed task. Arming is still per task
+  // behind dual-admin approval; this only decides how often an armed task
+  // speaks, and the sweep never sends twice in one Lagos day regardless.
+  TASK_REMINDER_ENABLED: 1,
+  TASK_REMINDER_HOURS: 24,
   // TSK-V3 (owner, 26-Aug-2026) — days a task may sit waiting on the worker
   // (assigned / awaiting final OK) before the Team Tasks list flags it ⚠️
   // stalled instead of 📨 waiting. Strictly greater-than: day 7 is still 📨.
