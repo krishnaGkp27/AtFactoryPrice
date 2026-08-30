@@ -50,7 +50,9 @@ test('valid token renders the statement; owner content rules hold', async () => 
   const html = res.body;
   assert.match(html, /OKESON.*— ACCOUNT/s, 'customer-account header');
   assert.ok(!/atfactoryprice/i.test(html.replace(/\/i\/tok_[^"]*/g, '')), 'no business name anywhere');
-  assert.match(html, /Design 77016 · Shade 5 · 1 bale/, 'line description');
+  // CARD-5 — a line frozen before the packaging fields cannot claim a word:
+  // "bale" was a guess (the ABBA statement called 28 thans "28 bales").
+  assert.match(html, /Design 77016 · Shade 5 · 1 item/, 'line description stays neutral on legacy lines');
   assert.match(html, /60 yds/);
   assert.match(html, /Payment received — Penta \(Transfer\)/, 'payment shows receiving account');
   assert.match(html, /DEBIT BALANCE/, 'unpaid remainder labelled DEBIT BALANCE');
@@ -85,4 +87,25 @@ test('fully paid invoice shows PAID and no DEBIT label', async () => {
   await controller.viewInvoice({ params: { token: paid.token } }, res);
   assert.match(res.body, />PAID</);
   assert.ok(!/DEBIT BALANCE/.test(res.body));
+});
+
+test('CARD-5: the statement speaks the packaging, and legacy lines never claim bales', async () => {
+  const CARD5 = { ...INV,
+    token: 'tok_card5card5card5card5card',
+    lines: [
+      { design: '77014', yards: 829, qty: 28, bales: 0, thans: 28, shades: ['1'], rate: 3900, amount: 3233100 },
+      { design: '9032', yards: 300, qty: 5, bales: 4, thans: 8, shades: null, rate: 1400, amount: 420000 },
+      { design: '201', yards: 55, qty: 3, shades: null, rate: 1000, amount: 55000 }, // frozen pre-CARD-5
+    ],
+  };
+  const orig = invoicesRepository.getByToken;
+  invoicesRepository.getByToken = async (t) => (t === CARD5.token ? CARD5 : null);
+  const res = fakeRes();
+  await controller.viewInvoice({ params: { token: CARD5.token } }, res);
+  invoicesRepository.getByToken = orig;
+
+  assert.match(res.body, /28 thans/, 'a than sale says thans');
+  assert.ok(!/28 bales/.test(res.body), 'and never the packaging the customer did not take');
+  assert.match(res.body, /4 bales \+ 8 thans/, 'mixed lines carry both words');
+  assert.match(res.body, /3 items/, 'a line frozen before the fields stays neutral');
 });

@@ -54,7 +54,12 @@ function renderHtml(inv) {
   const lineRows = (inv.lines || []).map((l) => {
     const descBits = [l.design ? `Design ${l.design}` : 'Goods'];
     if (l.shades && l.shades.length) descBits.push(`Shade${l.shades.length > 1 ? 's' : ''} ${l.shades.join(', ')}`);
-    if (l.qty) descBits.push(`${l.qty} bale${l.qty > 1 ? 's' : ''}`);
+    // CARD-5 — this line used to hardcode "bales" for every item, so a
+    // 28-than statement read "28 bales": packaging the customer never took.
+    // New invoices carry the counts; frozen older ones say a neutral word.
+    const pkg = require('../services/invoiceService').packagingWords(l);
+    if (pkg) descBits.push(pkg);
+    else if (l.qty) descBits.push(`${l.qty} item${l.qty > 1 ? 's' : ''}`);
     return `
       <tr>
         <td>${esc(descBits.join(' · '))}</td>

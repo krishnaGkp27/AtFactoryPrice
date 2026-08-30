@@ -38,6 +38,20 @@ const MUTED = '#8a8578';
 // TIME-1 — the invoice's issue date is a business fact shown to the customer.
 function todayIso() { return todayInLagos(); }
 
+/**
+ * CARD-5 — a line's packaging in customer words: "28 thans", "4 bales +
+ * 8 thans", '' when the line predates the packaging fields. Shared by the
+ * PDF and the web statement so the two can never disagree.
+ */
+function packagingWords(l) {
+  const bits = [];
+  const b = Number(l && l.bales);
+  const t = Number(l && l.thans);
+  if (Number.isFinite(b) && b > 0) bits.push(`${b} bale${b === 1 ? '' : 's'}`);
+  if (Number.isFinite(t) && t > 0) bits.push(`${t} than${t === 1 ? '' : 's'}`);
+  return bits.join(' + ');
+}
+
 /** "Paid to GTBank" / "GTBank transfer" → "GTBank"; plain modes → ''. */
 function bankFromPaymentMode(paymentMode) {
   const m = /paid to (.+)/i.exec(paymentMode || '');
@@ -64,13 +78,24 @@ function buildLines(aj, enrichment) {
     const agg = new Map();
     for (const it of aj.items) {
       const d = it.design || aj.design || '';
-      if (!agg.has(d)) agg.set(d, { design: d, yards: 0, count: 0, shades: new Set() });
+      if (!agg.has(d)) agg.set(d, { design: d, yards: 0, count: 0, shades: new Set(), thans: 0, balePkgs: new Set() });
       const g = agg.get(d);
       g.yards += Number(it.yards) || 0;
       g.count += 1;
       if (it.shade !== undefined && it.shade !== '') g.shades.add(String(it.shade));
+      // CARD-5 grammar (owner, 29-Aug-2026) — the item's OWN packaging:
+      // a than item counts thans, anything else is a whole bale counted by
+      // its DISTINCT printed number (five thans out of three bales must
+      // never read "5 bales" — and 28 thans must never read "28 bales",
+      // which is exactly what the ABBA statement did).
+      if (it.type === 'than') g.thans += Number(it.thans) || 1;
+      else g.balePkgs.add(String(it.packageNo ?? ''));
     }
-    perDesign = [...agg.values()].map((g) => ({ design: g.design, yards: g.yards, count: g.count, shades: [...g.shades].sort((a, b) => Number(a) - Number(b)) }));
+    perDesign = [...agg.values()].map((g) => ({
+      design: g.design, yards: g.yards, count: g.count,
+      shades: [...g.shades].sort((a, b) => Number(a) - Number(b)),
+      bales: g.balePkgs.size, thans: g.thans,
+    }));
   } else {
     perDesign = [{ design: aj.design || '', yards: Number(aj.yards) || 0, count: null, shades: aj.shade ? [String(aj.shade)] : null }];
   }
@@ -81,6 +106,10 @@ function buildLines(aj, enrichment) {
       design: l.design,
       yards: l.yards,
       qty: l.count,
+      // CARD-5 — packaging frozen at issue; older invoices lack these and
+      // every renderer must fall back to a neutral word, never guess "bales".
+      bales: Number.isFinite(l.bales) ? l.bales : null,
+      thans: Number.isFinite(l.thans) ? l.thans : null,
       shades: l.shades && l.shades.length ? l.shades : null,
       rate,
       amount: Math.round(l.yards * rate),
@@ -220,7 +249,14 @@ function renderPdf(invoice) {
     for (const l of invoice.lines) {
       const descBits = [];
       if (l.shades) descBits.push(`Shades ${l.shades.join(', ')}`);
-      if (l.qty) descBits.push(`${l.qty} ${l.qty === 1 ? 'bale/than' : 'items'}`);
+      // CARD-5 — the item's own packaging on every sale surface. Customer
+      // documents spell the words out ("28 thans", "4 bales + 8 thans");
+      // the compact B/t form stays on the internal Telegram cards. Lines
+      // frozen before the packaging fields existed say a neutral "items"
+      // rather than guessing a word that may be wrong.
+      const pkg = packagingWords(l);
+      if (pkg) descBits.push(pkg);
+      else if (l.qty) descBits.push(`${l.qty} item${l.qty === 1 ? '' : 's'}`);
       descBits.push(`${fmtMoney(l.yards)} yds${l.rate ? ` @ ${NGN}${fmtMoney(l.rate)}/yd` : ''}`);
       doc.font(FONT_BOLD).fontSize(9.5).fillColor(INK).text(`Design ${l.design}`, M, y);
       doc.font(FONT).fontSize(9.5).fillColor(INK)
@@ -280,4 +316,7 @@ async function deliver(bot, invoice, chatIds) {
   }
 }
 
-module.exports = { createForSale, buildLines, mintInvoiceNo, renderPdf, deliver, bankFromPaymentMode };
+module.exports = {
+  packagingWords, // CARD-5 — shared with the web statement renderer
+  createForSale, buildLines, mintInvoiceNo, renderPdf, deliver, bankFromPaymentMode,
+};

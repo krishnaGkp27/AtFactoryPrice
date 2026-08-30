@@ -95,3 +95,25 @@ test('createForSale persists a complete row and renderPdf produces a PDF', async
   assert.ok(Buffer.isBuffer(pdf) && pdf.length > 2000, 'non-trivial PDF buffer');
   assert.equal(pdf.subarray(0, 5).toString(), '%PDF-', 'valid PDF header');
 });
+
+test('CARD-5: lines carry the item packaging, and words never guess', () => {
+  // 2 than items (3 thans total) + 1 whole bale of the same design.
+  const aj = { items: [
+    { design: '77014', shade: '1', yards: 30, type: 'than', thans: 1, packageNo: '900' },
+    { design: '77014', shade: '2', yards: 30, type: 'than', thans: 2, packageNo: '900' },
+    { design: '77014', shade: '3', yards: 120, packageNo: '901' },
+  ] };
+  const [l] = invoiceService.buildLines(aj, { ratePerUnitByDesign: { 77014: 3900 } });
+  assert.equal(l.bales, 1, 'whole bales counted by DISTINCT printed number');
+  assert.equal(l.thans, 3, 'than items counted by their thans');
+  assert.equal(invoiceService.packagingWords(l), '1 bale + 3 thans');
+
+  // The ABBA shape: 28 than items must never be worded as bales.
+  const thans = Array.from({ length: 28 }, (_, i) => (
+    { design: '77014', shade: String(1 + (i % 7)), yards: 29.6, type: 'than', thans: 1, packageNo: `P${i}` }));
+  const [only] = invoiceService.buildLines({ items: thans }, { ratePerUnitByDesign: { 77014: 3900 } });
+  assert.equal(invoiceService.packagingWords(only), '28 thans');
+
+  // A line frozen before the packaging fields → no word is guessed.
+  assert.equal(invoiceService.packagingWords({ qty: 28 }), '', 'legacy lines fall back to neutral wording at the renderer');
+});
