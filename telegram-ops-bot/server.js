@@ -155,6 +155,7 @@ app.get('/api/ops/approvals', apiController.getOpsApprovals);
 app.get('/api/ops/approvals/:requestId', apiController.getOpsApprovalDetail);
 app.get('/api/ops/attendance', apiController.getOpsAttendance);
 app.get('/api/ops/stocktakes', apiController.getOpsStockTakes);
+app.get('/api/ops/design-movement', apiController.getOpsDesignMovement); // DML-1
 /**
  * WEB-1 — the pages this server serves behind a magic-link session, and the
  * ONLY destinations /auth will redirect to.
@@ -168,6 +169,7 @@ const SESSION_PAGES = {
   '/ops': 'ops.html',
   '/allocations': 'allocations.html', // MYP-1 §15c — the allocation matrix
   '/gantt': 'gantt.html',             // GNT-1 — the employee work plan
+  '/movement': 'movement.html',       // DML-1 — the design movement ledger
 };
 for (const [route, file] of Object.entries(SESSION_PAGES)) {
   // GNT-2 — the session pages live INSIDE the bot directory. They used to sit

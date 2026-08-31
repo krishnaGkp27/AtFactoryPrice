@@ -86,17 +86,26 @@ Everything derives at read time (storage rule 5b) — no new sheets:
 
 | Field | Source |
 |---|---|
-| IN · goods receipt | `GoodsReceipts` (`grn_id, warehouse, supplier, received_at, total_bales, total_yards, status`) |
-| IN/OUT · transfers | `Transfers` repo + `Inventory.status='in_transit'` |
+| IN · goods receipt | `Inventory` rows WHERE `grn_id` = G AND design = D, grouped by `packageNo` — the GRN header spans every design in the container and its `total_bales` counts THANS on a manual receipt, so only the header's supplier / ref / warehouse are used |
+| IN/OUT · transfers | `BaleMovements` (kinds `dispatch`/`receive`/`reject`) — **there is no `Transfers` sheet and no `transfersRepository`**: a transfer is an ApprovalQueue row, and dispatch rewrites the Inventory row's warehouse to the destination |
 | OUT · sale, customer named | `Inventory` sold rows (`soldTo, soldDate, packageNo, thanNo, shade, yards, warehouse`) — same source as Customer Supplies (SBL) |
 | IN · returns | `Inventory` return flips (RET-2 refs) |
-| CHECKPOINT | `StockTakes` (`auditor, audited_at, sheet_bales, sheet_bundles, counted_bales, counted_bundles, result`) |
+| CHECKPOINT | `StockTakes` — note `sheet_bundles`/`counted_bundles` are MISNAMED: they hold LOOSE THAN counts (`warehouseAuditFlow` writes `sheet_bundles: d.looseThans`). There is **no `counted_yards`** |
 | `hints` | `ApprovalQueue` pending rows + movements dated after the count |
 | `opening` | computed: carried balance at range start, else earliest GRN |
 | unit formatting | `unitDisplayService.formatCounts` (rule 6c) |
 | auth | `afp_session` cookie + `SESSION_PAGES` rewrite, exactly as `/ops` `/allocations` `/gantt` (LNK-1/GNT-2) |
 
 ### The hints are the analytical core — get their direction right
+
+> **Amended in build (31-Aug-2026), owner ruling pending.** The gap is measured at the COUNT,
+> from the two figures the audit itself stored (`sheet_*` vs `counted_*`), not against the book at
+> range-end — otherwise every sale since the audit is folded into the "gap" and the auditor is
+> blamed for goods that legitimately left afterwards. And because `StockTakes` has no
+> `counted_yards` and the count is blind (two integers, never which bales), `gap_yards` is exact
+> only for a reconciled row (0); for a mismatch it is `null` and the exact delta rides in
+> `gap_packaging {bales, thans}`. The locked rule "settle the gap in yards" is kept by refusing to
+> invent a yard figure, never by faking one. See `src/services/designMovementService.js` header.
 
 `gap_yards = book.yards − count.yards`. A **positive** gap means the shelf holds less than the
 ledger says, so a
@@ -125,7 +134,7 @@ the error class this page exists to catch.)
 - Closing strip: book · last count · gap. Gap red when non-zero, green "None" when zero.
 - Hints panel collapsible, open by default when a gap exists.
 - Long ranges: month separator rows, with earlier months collapsed to one tappable summary line
-  each (`▸ April 2026 · 11 movements · closed 14B+20bd`).
+  each (`▸ April 2026 · 11 movements · closed 14B + 20t`).
 - Loading skeleton and the empty-range card are both in the design — use them; never a blank grid.
 
 ### Quantity grammar — hard business rule, do not restyle

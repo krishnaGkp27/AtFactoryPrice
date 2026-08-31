@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Design Movement Ledger — AtFactoryPrice</title>
+<style>
+:root{--navy:#0e2a47;--blue:#1d6fa5;--teal:#2e9e77;--gold:#c9a24b;--red:#a3232a;--bg:#f4f7fa;--line:#dfe6ee;--ink:#1a2332;--mut:#6b7a8c}
+*{box-sizing:border-box;margin:0}
+body{font-family:"Segoe UI",Arial,sans-serif;color:var(--ink);background:var(--bg)}
+a{color:var(--blue);text-decoration:none}
+
+.hd{background:linear-gradient(135deg,var(--navy),var(--blue));color:#fff;padding:14px 16px}
+.hd .top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.hd .dn{font-size:26px;font-weight:700;letter-spacing:.5px;line-height:1}
+.hd .cat{font-size:12px;color:#b9d3e8;font-weight:600;letter-spacing:.3px}
+.hd .sub{font-size:11.5px;color:#c8dcec;margin-top:5px;letter-spacing:.2px}
+.hd .hgap{margin-left:auto;text-align:right;display:none}
+.hd .hgap .l{font-size:10.5px;letter-spacing:1px;color:#b9d3e8;font-weight:700;text-transform:uppercase}
+.hd .hgap .v{font-size:22px;font-weight:700;color:#ffb3ad;margin-top:3px}
+
+/* GNT-2 — the reporting selection: one strip, the same links on every
+   session page, current page lit. Kept byte-identical to ops/allocations/
+   gantt so the four pages read as one shell. */
+.repnav{display:flex;gap:6px;flex-wrap:wrap;align-items:center;background:var(--navy);padding:10px 16px}
+.repnav a{display:inline-block;background:#1c1c22;border:1px solid #2c2c33;border-radius:3px;
+  color:#8b8b93;font-size:12px;font-weight:600;letter-spacing:.4px;padding:9px 13px;
+  text-decoration:none;min-height:38px;line-height:1.4}
+.repnav a:hover{border-color:#d4af5f;color:#f2f2f2}
+.repnav a.here{background:#d4af5f;border-color:#d4af5f;color:#14161e}
+
+.scope{background:#fff;border-bottom:1px solid var(--line);padding:11px 12px;display:flex;flex-direction:column;gap:9px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.cklab{font-size:11px;letter-spacing:.5px;color:var(--mut);font-weight:700;text-transform:uppercase;margin-right:2px}
+.chip{border:1px solid var(--line);background:#fff;border-radius:16px;padding:8px 12px;font:600 12px/1 inherit;color:var(--mut);min-height:44px;display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap}
+.chip.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.chip.pick{color:var(--ink)}
+.chip.pick b{color:var(--navy)}
+.chip .cv{color:#9fb0c0;font-weight:400}
+.rangeNote{font-size:11px;color:#9fb0c0}
+
+.body{padding:12px;max-width:1100px;margin:0 auto}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;margin-bottom:10px}
+.ob{padding:13px 14px;border-left:4px solid var(--navy)}
+.ob .l{font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--mut);font-weight:700}
+.ob .v{font-size:23px;font-weight:700;letter-spacing:.3px;margin-top:4px;font-variant-numeric:tabular-nums}
+.ob .v small{font-size:13px;font-weight:600;color:var(--mut)}
+.ob .m{font-size:11.5px;color:var(--mut);margin-top:4px}
+.sh{font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--navy);font-weight:700;border-bottom:2px solid var(--navy);padding:0 0 6px;margin:14px 2px 8px;display:flex;align-items:baseline;gap:8px}
+.sh span{margin-left:auto;color:var(--mut);font-weight:600;letter-spacing:.4px}
+
+.mv{border-bottom:1px solid var(--line);cursor:pointer;position:relative}
+.mv:last-child{border-bottom:0}
+.mv .rw{display:grid;grid-template-columns:44px 1fr auto;gap:9px;padding:11px 12px 11px 10px;align-items:start;min-height:44px;border-left:3px solid transparent}
+.mv.in .rw{border-left-color:var(--teal)}
+.mv.out .rw{border-left-color:var(--blue)}
+.mv.ck .rw{border-left-color:var(--gold);background:#fdfaf2}
+.mv.ck.bad .rw{background:#fdf4f4}
+.dt{font-size:10.5px;font-weight:700;letter-spacing:.4px;color:var(--mut);line-height:1.35;text-transform:uppercase;padding-top:2px}
+.dt i{display:block;font-style:normal;font-size:14px;color:var(--ink);letter-spacing:0}
+.mid .t1{font-size:13px;font-weight:600;letter-spacing:.2px;display:flex;align-items:baseline;gap:6px}
+.t1n{flex:1 1 0;min-width:0;line-height:1.35}
+.mid .t2{font-size:11.5px;color:var(--mut);margin-top:3px;line-height:1.45}
+.pill{font-size:9.5px;font-weight:700;letter-spacing:.7px;padding:3px 6px;border-radius:3px;text-transform:uppercase;white-space:nowrap}
+.pill.i{background:#e4f4ed;color:#1f7a58}
+.pill.o{background:#e6eef6;color:#155a86}
+.pill.c{background:#f7eeda;color:#8a6a12}
+.pill.g{background:#e4f4ed;color:#1f7a58}
+.pill.w{background:#f7e5e5;color:var(--red)}
+/* The chevron sits in this reserved gutter; without it the glyph lands on
+   the last unit character of every figure. Quantities NEVER get a
+   text-transform — a than is 't', never 'T'. */
+.qt{text-align:right;white-space:nowrap;padding-top:1px;padding-right:14px;text-transform:none}
+.qt .q{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:.2px}
+.mv.in .qt .q{color:var(--teal)}
+.mv.out .qt .q{color:var(--blue)}
+.qt .y{font-size:11px;color:var(--mut);margin-top:2px;font-variant-numeric:tabular-nums}
+.qt .b{font-size:11px;color:var(--mut);margin-top:3px;font-variant-numeric:tabular-nums}
+.qt .b b{color:var(--ink);font-weight:600}
+.ex{display:none;padding:0 12px 13px 57px;font-size:12px;color:var(--mut);line-height:1.6}
+.mv.open .ex{display:block}
+.mv.open .rw{padding-bottom:6px}
+.ex .kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px}
+.ex .kv b{font-weight:600;color:#4a5a6c;white-space:nowrap}
+/* Bale numbers are printed identities: monospace, selectable, never
+   truncated and never uppercased. */
+.bn{font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink);letter-spacing:.2px;
+  user-select:text;-webkit-user-select:text;white-space:normal;overflow-wrap:anywhere;text-transform:none}
+.cvr{position:absolute;right:12px;top:13px;color:#c2ccd6;font-size:11px}
+.mv.open .cvr{transform:rotate(90deg)}
+
+.msep{display:flex;align-items:center;gap:9px;padding:9px 12px;background:#eef2f7;border-bottom:1px solid var(--line);font-size:10.5px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#5d6f82}
+.msep span{margin-left:auto;font-weight:600;letter-spacing:.3px;text-transform:none;color:var(--mut)}
+.mcol{display:flex;align-items:center;gap:9px;padding:12px;border-bottom:1px solid var(--line);cursor:pointer;font-size:12.5px;color:var(--navy);font-weight:600;min-height:44px}
+.mcol .c{color:#b6c2ce;font-size:11px}
+.mcol span{margin-left:auto;font-weight:400;color:var(--mut);font-size:11.5px;font-variant-numeric:tabular-nums;text-transform:none}
+
+.strip{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:12px}
+.strip>div{background:#fff;padding:12px 13px}
+.strip .gap{grid-column:1/-1;background:#fbf0ef;border-top:2px solid var(--red)}
+.strip .gap.ok{background:#eef8f3;border-top-color:var(--teal)}
+.strip .l{font-size:10px;letter-spacing:.9px;text-transform:uppercase;color:var(--mut);font-weight:700}
+.strip .v{font-size:19px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums;letter-spacing:.2px;text-transform:none}
+.strip .v small{font-size:12px;color:var(--mut);font-weight:600}
+.strip .gap .v{color:var(--red);font-size:23px}
+.strip .gap.ok .v{color:var(--teal)}
+.strip .m{font-size:11px;color:var(--mut);margin-top:3px}
+.strip .pk{font-size:11.5px;color:var(--mut);margin-top:5px;font-variant-numeric:tabular-nums;text-transform:none}
+.strip .pk b{color:var(--ink);font-weight:600}
+
+.rec{margin-top:10px;border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}
+.rec>summary{list-style:none;padding:12px 13px;font-size:12.5px;font-weight:600;color:var(--navy);cursor:pointer;display:flex;align-items:center;gap:8px;min-height:44px}
+.rec>summary::-webkit-details-marker{display:none}
+.rec>summary::after{content:'▾';margin-left:auto;color:#b6c2ce}
+.rec[open]>summary::after{content:'▴'}
+.rec .rl{display:flex;gap:10px;padding:11px 13px;border-top:1px solid var(--line);font-size:12px;line-height:1.5;min-height:44px;align-items:flex-start}
+.rec .rl .n{font-weight:700;color:var(--red);white-space:nowrap;font-variant-numeric:tabular-nums;min-width:56px;text-transform:none}
+.rec .rl .d{color:var(--mut)}
+.rec .rl .d b{color:var(--ink);font-weight:600;display:block;margin-bottom:1px}
+
+.foot{padding:10px 4px 20px;font-size:11px;color:var(--mut);line-height:1.6}
+.note{background:#fffdf5;border:1px solid #ecdfbe;border-radius:8px;padding:10px 12px;font-size:11.5px;color:#6d5b32;line-height:1.6;margin-top:10px}
+.void{padding:44px 22px;text-align:center;background:#fff;border:1px solid var(--line);border-radius:10px}
+.void .t{font-size:14px;font-weight:600}
+.void p{font-size:12.5px;color:var(--mut);margin-top:7px;line-height:1.6}
+.sk{background:linear-gradient(90deg,#e9eef4 25%,#f2f6fa 50%,#e9eef4 75%);background-size:400% 100%;animation:sh 1.4s ease infinite;border-radius:4px}
+@keyframes sh{0%{background-position:100% 0}100%{background-position:0 0}}
+
+.sheet{position:fixed;inset:0;background:rgba(14,42,71,.45);display:none;align-items:flex-end;z-index:20}
+.sheet.on{display:flex}
+.sheet .pane{background:#fff;width:100%;max-height:82vh;border-radius:14px 14px 0 0;display:flex;flex-direction:column}
+.sheet .ph{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+.sheet .ph b{font-size:14px}
+.sheet .ph button{margin-left:auto;border:1px solid var(--line);background:#fff;border-radius:8px;min-height:44px;padding:0 14px;font:600 12px/1 inherit;color:var(--mut);cursor:pointer}
+.sheet input{width:100%;border:1px solid var(--line);border-radius:8px;padding:12px;font:14px/1 inherit;min-height:44px}
+.sheet .list{overflow:auto;padding:6px 0}
+.sheet .it{padding:13px 16px;border-bottom:1px solid var(--line);cursor:pointer;min-height:44px;display:flex;align-items:center;gap:8px;font-size:13px}
+.sheet .it b{font-weight:700}
+.sheet .it span{margin-left:auto;color:var(--mut);font-size:11.5px}
+
+table.dt2{width:100%;border-collapse:collapse;font-size:13px}
+table.dt2 th{font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--navy);font-weight:700;text-align:left;padding:9px 12px;border-bottom:2px solid var(--navy);white-space:nowrap}
+table.dt2 th.r{text-align:right}
+table.dt2 td{padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+table.dt2 td.r{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;text-transform:none}
+table.dt2 tr.in td:first-child{box-shadow:inset 3px 0 0 var(--teal)}
+table.dt2 tr.out td:first-child{box-shadow:inset 3px 0 0 var(--blue)}
+table.dt2 tr.ck td{background:#fdf4f4}
+table.dt2 tr.ck td:first-child{box-shadow:inset 3px 0 0 var(--gold)}
+table.dt2 .q{font-weight:700}
+table.dt2 tr.in .q{color:var(--teal)}
+table.dt2 tr.out .q{color:var(--blue)}
+
+#deskWrap{display:none}
+@media (min-width:900px){
+  .hd .hgap{display:block}
+  .scope{flex-direction:row;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 22px}
+  .grid{display:grid;grid-template-columns:1fr 2fr;gap:14px;align-items:start}
+  #mobWrap{display:none}
+  #deskWrap{display:block}
+}
+</style>
+</head>
+<body>
+
+<div class="hd">
+  <div class="top">
+    <span class="dn" id="hDesign">—</span>
+    <span class="cat" id="hCat"></span>
+    <div class="hgap" id="hGapWrap"><div class="l">Unexplained gap</div><div class="v" id="hGap">—</div></div>
+  </div>
+  <div class="sub" id="hSub">movement ledger</div>
+</div>
+<nav class="repnav">
+  <a href="/ops">📊 Overview</a><a href="/allocations">🧮 Allocations</a>
+  <a href="/gantt">📅 Work plan</a><a href="/movement" class="here">📗 Movement</a>
+</nav>
+
+<div class="scope">
+  <div class="chips" id="whChips"><span class="cklab">Store</span></div>
+  <div class="chips" id="rgChips"><span class="cklab">Range</span></div>
+  <div class="chips">
+    <button class="chip pick" id="dgBtn">Design <b id="dgLabel">—</b> <span class="cv">▾</span></button>
+    <span class="rangeNote" id="rangeNote"></span>
+  </div>
+</div>
+
+<div class="body">
+  <div id="skeleton">
+    <div class="card ob"><div class="l">Opening balance</div>
+      <div class="sk" style="height:26px;width:62%;margin:7px 0 6px"></div>
+      <div class="sk" style="height:11px;width:80%"></div></div>
+    <div class="sh">Movements</div>
+    <div class="card" style="padding:4px 0" id="skRows"></div>
+    <div class="strip">
+      <div><div class="l">Book balance</div><div class="sk" style="height:20px;width:70%;margin-top:6px"></div></div>
+      <div><div class="l">Last count</div><div class="sk" style="height:20px;width:70%;margin-top:6px"></div></div>
+      <div class="gap" style="background:#fff;border-top-color:var(--line)"><div class="l">Unexplained gap</div>
+        <div class="sk" style="height:22px;width:44%;margin-top:6px"></div></div>
+    </div>
+  </div>
+  <div id="screen" style="display:none"></div>
+</div>
+
+<div class="sheet" id="pickSheet">
+  <div class="pane">
+    <div class="ph"><b>Pick a design</b><button id="pickClose">Close</button></div>
+    <div style="padding:12px 16px"><input id="pickFilter" placeholder="Filter designs…" autocomplete="off"></div>
+    <div class="list" id="pickList"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+var RANGES=[['since_audit','Since last audit'],['this_month','This month'],['30_days','30 days'],['all_time','All time']];
+var MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+var state={design:'',warehouse:'',range:'since_audit',data:null,openMonths:{}};
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function yd(n){return n==null?'—':Number(n).toLocaleString('en-NG',{maximumFractionDigits:0})+' yd';}
+function dayParts(d){var p=String(d||'').split('-');
+  return p.length===3?{m:MONTHS[Number(p[1])-1]||'',d:p[2]}:{m:'',d:String(d||'')};}
+
+function readUrl(){
+  var q=new URLSearchParams(location.search);
+  // The scope also survives in the hash, which the magic link never strips.
+  if(!q.get('design')&&location.hash.length>1){
+    try{q=new URLSearchParams(location.hash.slice(1));}catch(e){}
+  }
+  state.design=q.get('design')||'';
+  state.warehouse=q.get('warehouse')||'';
+  var r=q.get('range')||'since_audit';
+  state.range=RANGES.some(function(x){return x[0]===r;})?r:'since_audit';
+}
+function writeUrl(){
+  var q=new URLSearchParams();
+  if(state.design)q.set('design',state.design);
+  if(state.warehouse)q.set('warehouse',state.warehouse);
+  q.set('range',state.range);
+  history.replaceState(null,'','/movement?'+q.toString());
+}
+
+function skeleton(on){
+  document.getElementById('skeleton').style.display=on?'block':'none';
+  document.getElementById('screen').style.display=on?'none':'block';
+  if(on&&!document.getElementById('skRows').children.length){
+    var h='';
+    for(var i=0;i<4;i++){
+      h+='<div style="display:grid;grid-template-columns:44px 1fr 84px;gap:10px;padding:12px;'
+        +(i<3?'border-bottom:1px solid var(--line)':'')+'">'
+        +'<div class="sk" style="height:30px"></div><div>'
+        +'<div class="sk" style="height:13px;width:70%"></div>'
+        +'<div class="sk" style="height:11px;width:45%;margin-top:6px"></div></div><div>'
+        +'<div class="sk" style="height:14px"></div>'
+        +'<div class="sk" style="height:11px;margin-top:6px"></div></div></div>';
+    }
+    document.getElementById('skRows').innerHTML=h;
+  }
+}
+
+function chips(){
+  var wh=document.getElementById('whChips');
+  var rg=document.getElementById('rgChips');
+  var list=(state.data&&state.data.pickers&&state.data.pickers.warehouses)||[];
+  wh.innerHTML='<span class="cklab">Store</span>'+list.map(function(w){
+    return '<button class="chip'+(w.toLowerCase()===state.warehouse.toLowerCase()?' on':'')
+      +'" data-wh="'+esc(w)+'">'+esc(w)+'</button>';}).join('');
+  rg.innerHTML='<span class="cklab">Range</span>'+RANGES.map(function(r){
+    return '<button class="chip'+(r[0]===state.range?' on':'')+'" data-rg="'+r[0]+'">'+esc(r[1])+'</button>';}).join('');
+  document.getElementById('dgLabel').textContent=state.design||'—';
+}
+
+function movementRow(m){
+  var fam=m.family==='checkpoint'?'ck':m.family;
+  var d=dayParts(m.date);
+  var bad=m.family==='checkpoint'&&m.checkpoint&&m.checkpoint.gap_packaging
+    &&(m.checkpoint.gap_packaging.bales||m.checkpoint.gap_packaging.thans);
+  var pill,title,sub,q,y,bal;
+  if(m.family==='checkpoint'){
+    var c=m.checkpoint;
+    pill='<span class="pill c">📋 Audit</span>';
+    title='counted by '+esc(c.auditor||'—');
+    sub='book '+esc(c.book.label)+(c.count?' · counted '+esc(c.count.label):' · not counted');
+    q=bad?'<span style="color:var(--red)">'+esc(gapText(c))+'</span>':'<span style="color:var(--teal)">✓ agreed</span>';
+    y=bad?'short':'signed off';
+    bal='';
+  }else{
+    var isIn=m.family==='in';
+    pill='<span class="pill '+(isIn?'i':'o')+'">'+esc(typeLabel(m.type))+'</span>';
+    title=esc(m.counterparty||'—');
+    var det=m.detail||{whole_bales:[],loose:[]};
+    var bits=[];
+    if(det.whole_bales.length)bits.push(det.whole_bales.length+' whole bale'+(det.whole_bales.length>1?'s':''));
+    if(det.loose.length)bits.push(det.loose.reduce(function(s,l){return s+l.count;},0)+' loose than(s)');
+    sub=esc(m.ref||bits.join(' + ')||'');
+    q=(isIn?'+':'−')+esc(m.qty.label);
+    y=yd(m.qty.yards)+(m.qty.yards_exact===false?' *':'');
+    bal='<div class="b">bal <b>'+esc(m.running.label)+'</b></div>';
+  }
+  var ex=expandBody(m);
+  return '<div class="mv '+fam+(bad?' bad':'')+'" data-id="'+esc(m.id)+'">'
+    +'<div class="rw"><div class="dt">'+esc(d.m)+'<i>'+esc(d.d)+'</i></div>'
+    +'<div class="mid"><div class="t1">'+pill+'<span class="t1n">'+title+'</span></div>'
+    +(sub?'<div class="t2">'+sub+'</div>':'')+'</div>'
+    +'<div class="qt"><div class="q">'+q+'</div><div class="y">'+esc(y)+'</div>'+bal+'</div></div>'
+    +(ex?'<span class="cvr">›</span><div class="ex">'+ex+'</div>':'')+'</div>';
+}
+function typeLabel(t){
+  return {receipt:'Receipt',sale:'Sale',return:'Return',correction:'Correction',
+    transfer_in:'Transfer in',transfer_out:'Transfer out',audit:'Audit'}[t]||t;
+}
+function gapText(c){
+  if(c.gap_yards===0)return '0 yd';
+  if(!c.gap_packaging)return '—';
+  var g=c.gap_packaging,parts=[];
+  if(g.bales)parts.push(Math.abs(g.bales)+'B');
+  if(g.thans)parts.push(Math.abs(g.thans)+'t');
+  var s=parts.join(' + ')||'0';
+  return (g.bales<0||g.thans<0?'+':'−')+s;
+}
+function expandBody(m){
+  var kv=[];
+  if(m.family==='checkpoint'){
+    var c=m.checkpoint;
+    kv.push(['Sheet','<span class="bn">'+esc(m.ref)+'</span>']);
+    kv.push(['Book at count',esc(c.book.label)+' · '+yd(c.book.yards)]);
+    kv.push(['Counted',c.count?esc(c.count.label)+(c.count.yards!=null?' · '+yd(c.count.yards):''):'not counted']);
+    kv.push(['Result',esc(c.result)]);
+    if(c.gap_yards===null&&c.gap_packaging&&(c.gap_packaging.bales||c.gap_packaging.thans)){
+      kv.push(['Reading','A blind count records how many bales and loose thans were seen, never which '
+        +'ones — so this gap is stated in packaging, not yards.']);
+    }
+    if(c.note)kv.push(['Note',esc(c.note)]);
+  }else{
+    var det=m.detail||{whole_bales:[],loose:[],shades:[]};
+    if(det.whole_bales.length){
+      kv.push(['Whole bales','<span class="bn">'+det.whole_bales.map(function(b){return esc(b.bale_no);}).join(' · ')+'</span>']);
+      kv.push(['Rosters',det.whole_bales.map(function(b){return b.thans;}).join(' · ')+' thans — '
+        +det.whole_bales.reduce(function(s,b){return s+b.thans;},0)+' thans, '
+        +yd(det.whole_bales.reduce(function(s,b){return s+b.yards;},0))]);
+    }
+    if(det.loose.length){
+      kv.push(['Loose thans','<span class="bn">'+det.loose.map(function(l){
+        return l.count+' than(s) from '+esc(l.from_bale)+' · '+yd(l.yards);}).join('<br>')+'</span>']);
+    }
+    if(det.shades&&det.shades.length)kv.push(['Shades',esc(det.shades.join(' · '))]);
+    if(m.ref)kv.push(['Reference','<span class="bn">'+esc(m.ref)+'</span>']);
+    if(m.qty&&m.qty.yards_exact===false){
+      kv.push(['Yards','* taken from this bale’s own mean than — transfer and return records store a '
+        +'than count but no yardage. The packaging count is exact.']);
+    }
+  }
+  if(!kv.length)return '';
+  return '<div class="kv">'+kv.map(function(p){return '<b>'+p[0]+'</b><span>'+p[1]+'</span>';}).join('')+'</div>';
+}
+
+function monthKey(d){return String(d||'').slice(0,7);}
+function monthName(k){var p=k.split('-');return (MONTHS[Number(p[1])-1]||'')+' '+p[0];}
+
+function listHtml(ms){
+  if(!ms.length){
+    return '<div class="void"><div class="t">No movements in this range</div>'
+      +'<p>Nothing came in or went out of '+esc(state.warehouse)+' for '+esc(state.design)
+      +' in this window.<br>Try <b>All time</b> to see its full history.</p></div>';
+  }
+  var keys=[];var byMonth={};
+  ms.forEach(function(m){var k=monthKey(m.date);if(!byMonth[k]){byMonth[k]=[];keys.push(k);}byMonth[k].push(m);});
+  // Long ranges: only the newest month stays open; earlier months collapse to
+  // one tappable summary line each, so a phone still scrolls in one thumb.
+  var collapse=keys.length>2;
+  var h='<div class="card">';
+  keys.forEach(function(k,i){
+    var rows=byMonth[k];
+    var newest=i===keys.length-1;
+    var open=newest||state.openMonths[k]||!collapse;
+    if(collapse&&!newest){
+      var closed=rows[rows.length-1].running?rows[rows.length-1].running.label:'';
+      h+='<div class="mcol" data-month="'+k+'"><span class="c">'+(open?'▾':'▸')+'</span>'
+        +esc(monthName(k))+'<span>'+rows.length+' movements'+(closed?' · closed '+esc(closed):'')+'</span></div>';
+      if(open)h+=rows.map(movementRow).join('');
+    }else{
+      if(keys.length>1)h+='<div class="msep">'+esc(monthName(k))+'<span>'+rows.length+' movements</span></div>';
+      h+=rows.map(movementRow).join('');
+    }
+  });
+  return h+'</div>';
+}
+
+function deskTable(ms){
+  var body=ms.map(function(m){
+    var fam=m.family==='checkpoint'?'ck':m.family;
+    var q,yv,bal;
+    if(m.family==='checkpoint'){
+      q=gapText(m.checkpoint);yv=m.checkpoint.count?yd(m.checkpoint.count.yards):'—';
+      bal=m.checkpoint.count?esc(m.checkpoint.count.label):'—';
+    }else{
+      q=(m.family==='in'?'+':'−')+esc(m.qty.label);
+      yv=yd(m.qty.yards);bal=esc(m.running.label);
+    }
+    return '<tr class="'+fam+'"><td>'+esc(m.date)+'</td><td><span class="pill '
+      +(fam==='in'?'i':fam==='out'?'o':'c')+'">'+esc(typeLabel(m.type))+'</span> '+esc(m.ref||'')
+      +'</td><td>'+esc(m.counterparty||'')+'</td><td class="r q">'+q+'</td><td class="r">'+yv
+      +'</td><td class="r">'+bal+'</td></tr>';
+  }).join('');
+  return '<div class="card" style="margin:0;overflow:hidden"><table class="dt2">'
+    +'<thead><tr><th>Date</th><th>Movement</th><th>Counterparty</th><th class="r">Quantity</th>'
+    +'<th class="r">Yards</th><th class="r">Balance</th></tr></thead><tbody>'+body+'</tbody></table>'
+    +'<p class="foot" style="padding:11px 12px 14px">Quantities speak each movement’s own packaging. '
+    +'Read-only.</p></div>';
+}
+
+function stripHtml(c){
+  var gapPresent=c.gap_packaging&&(c.gap_packaging.bales||c.gap_packaging.thans);
+  var gapVal,gapNote;
+  if(!c.count){gapVal='No count yet';gapNote='This design has not been audited in this range.';}
+  else if(!gapPresent){gapVal='None';gapNote='Book and count agree.';}
+  else if(c.gap_yards===null){
+    gapVal=gapText({gap_yards:null,gap_packaging:c.gap_packaging});
+    gapNote='Stated in packaging: the count records how many bales and loose thans were seen, never '
+      +'which ones, so no yard figure can be derived without inventing one.';
+  }else{gapVal=yd(c.gap_yards);gapNote='';}
+  var ok=!gapPresent&&c.count;
+  return '<div class="strip">'
+    +'<div><div class="l">Book balance</div><div class="v">'+yd(c.book.yards)
+      +'</div><div class="pk">packaging <b>'+esc(c.book.label)+'</b> · today</div></div>'
+    +'<div><div class="l">Last count</div><div class="v">'
+      +(c.count?(c.count.yards!=null?yd(c.count.yards):'—'):'—')
+      +'</div><div class="pk">'+(c.count?'packaging <b>'+esc(c.count.label)+'</b> · '
+        +esc(c.count.auditor)+', '+esc(c.count.at):'no audit in range')+'</div></div>'
+    +'<div class="gap'+(ok?' ok':'')+'"><div class="l">Unexplained gap</div>'
+    +'<div class="v">'+esc(gapVal)+'</div>'+(gapNote?'<div class="m">'+esc(gapNote)+'</div>':'')+'</div></div>';
+}
+
+function hintsHtml(d){
+  var gapPresent=d.closing.gap_packaging&&(d.closing.gap_packaging.bales||d.closing.gap_packaging.thans);
+  if(!gapPresent)return '';
+  if(!d.hints.length){
+    return '<div class="note">No candidate explains this shortage — nothing is queued for approval and '
+      +'nothing was logged after the count. The gap stands unexplained; recount before adjusting anything.</div>';
+  }
+  var sum=d.hints.reduce(function(s,h){return s+(h.yards||0);},0);
+  var anyNull=d.hints.some(function(h){return h.yards==null;});
+  return '<details class="rec" open><summary>Possible explanations'
+    +' <span class="pill '+(anyNull?'w':'g')+'" style="margin-left:2px">'+d.hints.length+' candidate'
+    +(d.hints.length>1?'s':'')+'</span></summary>'
+    +d.hints.map(function(h){
+      return '<div class="rl"><span class="n">'+(h.yards==null?'? yd':'−'+yd(h.yards))+'</span>'
+        +'<span class="d"><b>'+esc(h.title)+'</b>'+esc(h.detail)+'</span></div>';}).join('')
+    +'<div class="rl" style="background:#f8fafc"><span class="n" style="color:var(--teal)">'
+    +(anyNull?'?':'= '+Math.round(sum))+'</span><span class="d">'
+    +(anyNull
+      ? 'Some candidates carry no yardage of their own, so these cannot be summed against the gap. '
+        +'Confirm each one against the shelf.'
+      : 'Confirm each candidate, then re-run the count. The gap itself is measured in packaging, so '
+        +'this total is a guide, not a subtraction.')
+    +'</span></div></details>';
+}
+
+function render(){
+  var d=state.data;
+  document.getElementById('hDesign').textContent=d.design.code||'—';
+  document.getElementById('hCat').textContent=d.design.category||'';
+  document.getElementById('hSub').textContent=d.warehouse+' · movement ledger';
+  document.getElementById('rangeNote').textContent=(d.range.from||'start')+' – '+d.range.to;
+  var gapPresent=d.closing.gap_packaging&&(d.closing.gap_packaging.bales||d.closing.gap_packaging.thans);
+  document.getElementById('hGapWrap').style.display=gapPresent?'block':'none';
+  document.getElementById('hGap').textContent=gapPresent
+    ?gapText({gap_yards:d.closing.gap_yards,gap_packaging:d.closing.gap_packaging}):'';
+  chips();
+
+  var opening='<div class="card ob"><div class="l">Opening balance · '+esc(d.opening.at||'')+'</div>'
+    +'<div class="v">'+esc(d.opening.label)+' <small>· '+yd(d.opening.yards)+'</small></div>'
+    +'<div class="m">'+(d.opening.source==='carried'
+      ?'Balance carried forward from the last audit':'First goods receipt in range')
+    +(d.opening.yards_exact===false?' · yards partly derived from bale means':'')+'</div></div>';
+  var head='<div class="sh">Movements <span>'+d.movements.length+' row'
+    +(d.movements.length===1?'':'s')+'</span></div>';
+  var notes=(d.notes||[]).map(function(n){return '<div class="note">'+esc(n)+'</div>';}).join('');
+
+  document.getElementById('screen').innerHTML=
+    '<div class="grid"><div>'+opening+'<div id="mobHead">'+head+'</div>'
+    +'<div id="mobWrap">'+listHtml(d.movements)+'</div>'
+    +stripHtml(d.closing)+hintsHtml(d)+notes
+    +'<p class="foot">The gap is measured at the moment of the count, from the two figures the audit '
+    +'itself recorded. Read-only: every figure derives from goods receipts, transfers, sales and stock '
+    +'takes at read time.</p></div>'
+    +'<div id="deskWrap">'+deskTable(d.movements)+'</div></div>';
+}
+
+function signIn(msg){
+  skeleton(false);
+  document.getElementById('screen').innerHTML='<div class="void"><div class="t">Session expired</div>'
+    +'<p>'+esc(msg||'Open the bot and tap 📊 Dashboard for a fresh link.')+'</p></div>';
+}
+function needDesign(payload){
+  state.data={pickers:payload.pickers,design:{code:'',category:''},warehouse:state.warehouse,
+    range:{from:'',to:''},closing:{gap_packaging:null}};
+  chips();
+  skeleton(false);
+  document.getElementById('screen').innerHTML='<div class="void"><div class="t">Pick a design</div>'
+    +'<p>Choose a store and a design to see its movement ledger.</p></div>';
+  if(!state.warehouse&&payload.pickers.warehouses.length===1){
+    state.warehouse=payload.pickers.warehouses[0];load();
+  }
+}
+
+function load(){
+  writeUrl();
+  skeleton(true);
+  var q=new URLSearchParams({design:state.design,warehouse:state.warehouse,range:state.range});
+  fetch('/api/ops/design-movement?'+q.toString(),{credentials:'same-origin'})
+    .then(function(r){
+      if(r.status===401||r.status===403)return r.json().then(function(b){throw new Error(b.error||'Signed out');});
+      return r.json();
+    })
+    .then(function(b){
+      if(!b.ok)throw new Error(b.error||'Could not load');
+      if(b.needs_design){needDesign(b);return;}
+      state.data=b;skeleton(false);render();
+    })
+    .catch(function(e){signIn(e.message);});
+}
+
+/* ── events ─────────────────────────────────────────────────────────── */
+document.addEventListener('click',function(e){
+  var wh=e.target.closest('[data-wh]');
+  if(wh){state.warehouse=wh.getAttribute('data-wh');load();return;}
+  var rg=e.target.closest('[data-rg]');
+  if(rg){state.range=rg.getAttribute('data-rg');load();return;}
+  var mc=e.target.closest('.mcol');
+  if(mc){var k=mc.getAttribute('data-month');state.openMonths[k]=!state.openMonths[k];render();return;}
+  var mv=e.target.closest('.mv');
+  if(mv&&mv.querySelector('.ex')){mv.classList.toggle('open');return;}
+});
+document.getElementById('dgBtn').onclick=function(){openPicker();};
+document.getElementById('pickClose').onclick=function(){
+  document.getElementById('pickSheet').classList.remove('on');};
+document.getElementById('pickSheet').onclick=function(e){
+  if(e.target===this)this.classList.remove('on');};
+document.getElementById('pickFilter').oninput=function(){paintPicker(this.value);};
+
+function openPicker(){
+  document.getElementById('pickSheet').classList.add('on');
+  document.getElementById('pickFilter').value='';
+  paintPicker('');
+}
+function paintPicker(filter){
+  var all=(state.data&&state.data.pickers&&state.data.pickers.designs)||[];
+  var f=String(filter||'').trim().toLowerCase();
+  var rows=all.filter(function(d){
+    return !f||d.code.toLowerCase().indexOf(f)>=0||(d.category||'').toLowerCase().indexOf(f)>=0;});
+  document.getElementById('pickList').innerHTML=rows.length
+    ? rows.map(function(d){return '<div class="it" data-dg="'+esc(d.code)+'"><b>'+esc(d.code)+'</b>'
+        +'<span>'+esc(d.category||'')+'</span></div>';}).join('')
+    : '<div class="it" style="color:var(--mut)">No design matches that filter.</div>';
+  Array.prototype.forEach.call(document.querySelectorAll('#pickList .it[data-dg]'),function(el){
+    el.onclick=function(){
+      state.design=el.getAttribute('data-dg');
+      document.getElementById('pickSheet').classList.remove('on');
+      load();
+    };
+  });
+}
+
+readUrl();
+load();
+})();
+</script>
+</body>
+</html>

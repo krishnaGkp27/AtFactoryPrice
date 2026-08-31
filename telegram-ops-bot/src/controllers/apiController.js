@@ -491,6 +491,58 @@ async function getOpsStockTakes(req, res) {
   }
 }
 
+/**
+ * DML-1 — GET /api/ops/design-movement?design=&warehouse=&range=
+ *
+ * The per-design stock statement that explains a physical-count mismatch.
+ * Read-only and money-free: goods, packaging and yards, nothing else.
+ *
+ * Access mirrors the stock-takes feed rather than the admin-only allocation
+ * and Gantt pages: this ledger is built from the very StockTakes and
+ * Inventory rows a warehouse manager is already trusted to see, and it is
+ * the screen that makes their own recount actionable. A manager is held to
+ * their own warehouses; asking for another one is refused, not silently
+ * re-scoped, so a deep link can never mislead about whose shelf it shows.
+ */
+async function getOpsDesignMovement(req, res) {
+  const identity = await gate(req, res);
+  if (!identity) return;
+  try {
+    const design = String((req.query && req.query.design) || '').trim();
+    const warehouse = String((req.query && req.query.warehouse) || '').trim();
+    if (identity.role !== 'admin' && warehouse) {
+      const mine = new Set((identity.warehouses || []).map((w) => String(w).toLowerCase()));
+      if (!mine.has(warehouse.toLowerCase())) {
+        return res.status(403).json({ ok: false, error: `${warehouse} is not one of your warehouses.` });
+      }
+    }
+    const service = require('../services/designMovementService');
+    // No design yet (the page opened without a deep link): answer with the
+    // tappable lists alone, so the scope bar can be built without a second
+    // endpoint and without ever offering a free-text box.
+    if (!design || !warehouse) {
+      const lists = await service.pickers({ warehouse });
+      const warehouses = identity.role === 'admin'
+        ? lists.warehouses
+        : lists.warehouses.filter((w) => (identity.warehouses || [])
+          .some((mine) => String(mine).toLowerCase() === String(w).toLowerCase()));
+      return res.json({ ok: true, needs_design: true, warehouse, pickers: { ...lists, warehouses } });
+    }
+    const payload = await service.build({
+      design, warehouse, range: (req.query && req.query.range) || '',
+    });
+    if (identity.role !== 'admin') {
+      payload.pickers.warehouses = payload.pickers.warehouses.filter((w) => (identity.warehouses || [])
+        .some((mine) => String(mine).toLowerCase() === String(w).toLowerCase()));
+    }
+    res.json({ ok: true, ...payload });
+  } catch (e) {
+    if (e && e.code === 'BAD_REQUEST') return res.status(400).json({ ok: false, error: e.message });
+    logApiError('GET /api/ops/design-movement', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // EXT-1 — customer-facing ledger API (owner 22-Jul): OTP over WhatsApp/SMS →
 // customer-scoped bearer token → the customer's OWN ledger. Public-facing,
@@ -1064,6 +1116,7 @@ module.exports = {
   postExtOtpRequest, postExtOtpVerify, getExtLedger, getOpsUsage,
   getOpsAllocations, postOpsAllocation, postOpsPin, // PIN-1
   getOpsTasks, // GNT-1 — the employee Gantt feed
+  getOpsDesignMovement, // DML-1 — the per-design movement ledger
   // SUP-1 — customer Supply Record (goods only)
   getExtSupply, getExtSupplyDay, getExtSupplyDoc, getExtDesignPhoto,
   _internals: { supplyHasDesign, SUPPLY_DAY_RE, DESIGN_CODE_RE },

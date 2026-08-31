@@ -7873,9 +7873,10 @@ function runS54() {
     && fs.existsSync(path.join(__dirname, '../web/allocations.html'))
     && fs.existsSync(path.join(__dirname, '../web/gantt.html'))
     && srvGantt.includes("join(__dirname, 'web', file)");
-  const navEverywhere = ['ops', 'allocations', 'gantt'].every((pg) => {
+  const navEverywhere = ['ops', 'allocations', 'gantt', 'movement'].every((pg) => {
     const src = fs.readFileSync(path.join(__dirname, `../web/${pg}.html`), 'utf8');
-    return src.includes('href="/ops"') && src.includes('href="/allocations"') && src.includes('href="/gantt"');
+    return src.includes('href="/ops"') && src.includes('href="/allocations"')
+      && src.includes('href="/gantt"') && src.includes('href="/movement"');
   });
   if (gWired && gReadOnly && gRoute && gMoneyFree && inContainer && navEverywhere) {
     pass('S54.9 GNT-1/2: gantt wired + pages in-container + nav on every session page');
@@ -7939,6 +7940,40 @@ function runS54() {
     pass('S54.11 PIN-1: register column + validated endpoint + chips, one resolution point');
   } else {
     fail('S54.11', 'PIN-1 wiring incomplete');
+  }
+
+
+  // ---- S54.13 — DML-1: the movement ledger reads, and never invents a yard ----
+  // The page exists to explain a physical-count mismatch, so the two things
+  // that must never rot are: it writes nothing, and it refuses to state a gap
+  // in yards that the blind count cannot support (StockTakes has no
+  // counted_yards, and no conversion factor exists — see the service header).
+  const dmlPage = fs.readFileSync(path.join(__dirname, '../web/movement.html'), 'utf8');
+  const dmlSrv = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
+  const dmlSvc = fs.readFileSync(path.join(__dirname, '../src/services/designMovementService.js'), 'utf8');
+  const dmlRoute = dmlSrv.includes("'/movement': 'movement.html'")
+    && dmlSrv.includes("app.get('/api/ops/design-movement'");
+  const dmlReadOnly = !/method:\s*'POST'/i.test(dmlPage) && !/fetch\([^)]*\{[^}]*POST/i.test(dmlPage);
+  // v1 is a goods page: no naira, no rate, no value anywhere on it.
+  const dmlMoneyFree = !/₦/.test(dmlPage) && !/pricePerYard|amountPaid/.test(dmlPage)
+    && !/₦/.test(dmlSvc) && !/pricePerYard|amountPaid/.test(dmlSvc);
+  // Rule 2: no conversion factor may ever appear — a bale's totals sum from
+  // its own roster rows. And the §6c grammar comes from the shared engine.
+  const dmlNoFactor = !/yardsPerThan|THANS_PER_BALE|BUNDLE|\bbd\b/.test(dmlSvc)
+    && dmlSvc.includes("require('./unitDisplayService')")
+    && dmlSvc.includes('formatCounts(');
+  // The gap is nullable by design; a future refactor that hardcodes a number
+  // here would silently re-introduce the invented figure.
+  const dmlHonestGap = dmlSvc.includes('gap_yards: gapYards')
+    && dmlSvc.includes('gapYards = reconciled ? 0 : null')
+    && dmlSvc.includes('gap_packaging');
+  // An already-deducted transfer can never explain a shortage at the source.
+  const dmlHintRule = dmlSvc.includes('can NEVER qualify')
+    && dmlSvc.includes("m.loggedAt > countedAt");
+  if (dmlRoute && dmlReadOnly && dmlMoneyFree && dmlNoFactor && dmlHonestGap && dmlHintRule) {
+    pass('S54.13 DML-1: movement ledger wired, read-only, money-free, no invented gap');
+  } else {
+    fail('S54.13', JSON.stringify({ dmlRoute, dmlReadOnly, dmlMoneyFree, dmlNoFactor, dmlHonestGap, dmlHintRule }));
   }
 }
 
