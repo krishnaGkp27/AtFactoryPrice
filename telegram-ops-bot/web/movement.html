@@ -100,6 +100,8 @@ a{color:var(--blue);text-decoration:none}
 .strip>div{background:#fff;padding:12px 13px}
 .strip .gap{grid-column:1/-1;background:#fbf0ef;border-top:2px solid var(--red)}
 .strip .gap.ok{background:#eef8f3;border-top-color:var(--teal)}
+.strip .gap.none{background:#f7f9fc;border-top-color:var(--line)}
+.strip .gap.none .v{color:var(--ink)}
 .strip .l{font-size:10px;letter-spacing:.9px;text-transform:uppercase;color:var(--mut);font-weight:700}
 .strip .v{font-size:19px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums;letter-spacing:.2px;text-transform:none}
 .strip .v small{font-size:12px;color:var(--mut);font-weight:600}
@@ -216,7 +218,7 @@ table.dt2 tr.out .q{color:var(--blue)}
 'use strict';
 var RANGES=[['since_audit','Since last audit'],['this_month','This month'],['30_days','30 days'],['all_time','All time']];
 var MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-var state={design:'',warehouse:'',range:'since_audit',data:null,openMonths:{}};
+var state={design:'',warehouse:'',range:'since_audit',data:null,openMonths:{},seq:0};
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -276,16 +278,23 @@ function chips(){
 function movementRow(m){
   var fam=m.family==='checkpoint'?'ck':m.family;
   var d=dayParts(m.date);
-  var bad=m.family==='checkpoint'&&m.checkpoint&&m.checkpoint.gap_packaging
-    &&(m.checkpoint.gap_packaging.bales||m.checkpoint.gap_packaging.thans);
+  var bad=m.family==='checkpoint'&&isAlarm(m.checkpoint);
   var pill,title,sub,q,y,bal;
   if(m.family==='checkpoint'){
     var c=m.checkpoint;
     pill='<span class="pill c">📋 Audit</span>';
-    title='counted by '+esc(c.auditor||'—');
-    sub='book '+esc(c.book.label)+(c.count?' · counted '+esc(c.count.label):' · not counted');
-    q=bad?'<span style="color:var(--red)">'+esc(gapText(c))+'</span>':'<span style="color:var(--teal)">✓ agreed</span>';
-    y=bad?'short':'signed off';
+    title=c.counted?('counted by '+esc(c.auditor||'—')):(esc(c.result||'audit')+' · '+esc(c.auditor||'—'));
+    sub='book '+esc(c.book.label)+(c.count?' · counted '+esc(c.count.label):' · no count on this row');
+    if(!c.counted){
+      q='<span style="color:var(--mut)">—</span>';y='not counted';
+    }else if(bad){
+      q='<span style="color:var(--red)">'+esc(gapText(c))+'</span>';
+      y=c.gap_direction==='unreconciled'?'did not reconcile':'short';
+    }else if(c.gap_direction==='over'){
+      q='<span style="color:var(--mut)">'+esc(gapText(c))+'</span>';y='over';
+    }else{
+      q='<span style="color:var(--teal)">✓ agreed</span>';y='signed off';
+    }
     bal='';
   }else{
     var isIn=m.family==='in';
@@ -312,14 +321,18 @@ function typeLabel(t){
   return {receipt:'Receipt',sale:'Sale',return:'Return',correction:'Correction',
     transfer_in:'Transfer in',transfer_out:'Transfer out',audit:'Audit'}[t]||t;
 }
+/* The gap label is built by the service (signed per unit, §6c grammar from
+   formatCounts) — the page must never re-derive it: one glyph for a pair that
+   can point both ways reads a shortage as a surplus. */
 function gapText(c){
-  if(c.gap_yards===0)return '0 yd';
-  if(!c.gap_packaging)return '—';
-  var g=c.gap_packaging,parts=[];
-  if(g.bales)parts.push(Math.abs(g.bales)+'B');
-  if(g.thans)parts.push(Math.abs(g.thans)+'t');
-  var s=parts.join(' + ')||'0';
-  return (g.bales<0||g.thans<0?'+':'−')+s;
+  if(!c)return '—';
+  if(c.gap_direction==='none'||c.gap_yards===0)return 'None';
+  return c.gap_label||'—';
+}
+/* True only when goods are actually missing or the packaging did not
+   reconcile. A surplus is not an alarm, and neither is "no count yet". */
+function isAlarm(c){
+  return !!c&&(c.gap_direction==='short'||c.gap_direction==='unreconciled');
 }
 function expandBody(m){
   var kv=[];
@@ -390,6 +403,7 @@ function listHtml(ms){
 }
 
 function deskTable(ms){
+  if(!ms.length)return listHtml(ms);
   var body=ms.map(function(m){
     var fam=m.family==='checkpoint'?'ck':m.family;
     var q,yv,bal;
@@ -413,16 +427,27 @@ function deskTable(ms){
 }
 
 function stripHtml(c){
-  var gapPresent=c.gap_packaging&&(c.gap_packaging.bales||c.gap_packaging.thans);
-  var gapVal,gapNote;
-  if(!c.count){gapVal='No count yet';gapNote='This design has not been audited in this range.';}
-  else if(!gapPresent){gapVal='None';gapNote='Book and count agree.';}
-  else if(c.gap_yards===null){
-    gapVal=gapText({gap_yards:null,gap_packaging:c.gap_packaging});
-    gapNote='Stated in packaging: the count records how many bales and loose thans were seen, never '
-      +'which ones, so no yard figure can be derived without inventing one.';
-  }else{gapVal=yd(c.gap_yards);gapNote='';}
-  var ok=!gapPresent&&c.count;
+  var alarm=isAlarm(c);
+  var gapVal,gapNote,cls;
+  if(!c.count){
+    gapVal='No count yet';
+    gapNote='This design has not been audited in this window.';
+    cls=' none';
+  }else if(c.gap_direction==='none'){
+    gapVal='None';gapNote='Book and count agree.';cls=' ok';
+  }else if(c.gap_direction==='over'){
+    gapVal=gapText(c);
+    gapNote='The shelf holds MORE than the book — goods came back or arrived without being booked in.';
+    cls=' none';
+  }else{
+    gapVal=gapText(c);
+    gapNote=(c.gap_direction==='unreconciled'
+      ?'The packaging did not reconcile: a bale was opened AND the pieces do not add up. '
+      :'')
+      +'Stated in packaging: the count records how many bales and loose thans were seen, never which '
+      +'ones, so no yard figure can be derived without inventing one.';
+    cls='';
+  }
   return '<div class="strip">'
     +'<div><div class="l">Book balance</div><div class="v">'+yd(c.book.yards)
       +'</div><div class="pk">packaging <b>'+esc(c.book.label)+'</b> · today</div></div>'
@@ -430,17 +455,15 @@ function stripHtml(c){
       +(c.count?(c.count.yards!=null?yd(c.count.yards):'—'):'—')
       +'</div><div class="pk">'+(c.count?'packaging <b>'+esc(c.count.label)+'</b> · '
         +esc(c.count.auditor)+', '+esc(c.count.at):'no audit in range')+'</div></div>'
-    +'<div class="gap'+(ok?' ok':'')+'"><div class="l">Unexplained gap</div>'
+    +'<div class="gap'+cls+'"><div class="l">'+(alarm?'Unexplained gap':'Gap')+'</div>'
     +'<div class="v">'+esc(gapVal)+'</div>'+(gapNote?'<div class="m">'+esc(gapNote)+'</div>':'')+'</div></div>';
 }
 
 function hintsHtml(d){
-  var gapPresent=d.closing.gap_packaging&&(d.closing.gap_packaging.bales||d.closing.gap_packaging.thans);
-  if(!gapPresent)return '';
-  if(!d.hints.length){
-    return '<div class="note">No candidate explains this shortage — nothing is queued for approval and '
-      +'nothing was logged after the count. The gap stands unexplained; recount before adjusting anything.</div>';
-  }
+  if(!isAlarm(d.closing))return '';
+  // The service already emits the "nothing explains this" sentence into
+  // notes[]; repeating it here printed it twice.
+  if(!d.hints.length)return '';
   var sum=d.hints.reduce(function(s,h){return s+(h.yards||0);},0);
   var anyNull=d.hints.some(function(h){return h.yards==null;});
   return '<details class="rec" open><summary>Possible explanations'
@@ -450,7 +473,7 @@ function hintsHtml(d){
       return '<div class="rl"><span class="n">'+(h.yards==null?'? yd':'−'+yd(h.yards))+'</span>'
         +'<span class="d"><b>'+esc(h.title)+'</b>'+esc(h.detail)+'</span></div>';}).join('')
     +'<div class="rl" style="background:#f8fafc"><span class="n" style="color:var(--teal)">'
-    +(anyNull?'?':'= '+Math.round(sum))+'</span><span class="d">'
+    +(anyNull?'?':'= '+yd(Math.round(sum)))+'</span><span class="d">'
     +(anyNull
       ? 'Some candidates carry no yardage of their own, so these cannot be summed against the gap. '
         +'Confirm each one against the shelf.'
@@ -465,10 +488,9 @@ function render(){
   document.getElementById('hCat').textContent=d.design.category||'';
   document.getElementById('hSub').textContent=d.warehouse+' · movement ledger';
   document.getElementById('rangeNote').textContent=(d.range.from||'start')+' – '+d.range.to;
-  var gapPresent=d.closing.gap_packaging&&(d.closing.gap_packaging.bales||d.closing.gap_packaging.thans);
-  document.getElementById('hGapWrap').style.display=gapPresent?'block':'none';
-  document.getElementById('hGap').textContent=gapPresent
-    ?gapText({gap_yards:d.closing.gap_yards,gap_packaging:d.closing.gap_packaging}):'';
+  var alarm=isAlarm(d.closing);
+  document.getElementById('hGapWrap').style.display=alarm?'block':'none';
+  document.getElementById('hGap').textContent=alarm?gapText(d.closing):'';
   chips();
 
   var opening='<div class="card ob"><div class="l">Opening balance · '+esc(d.opening.at||'')+'</div>'
@@ -495,6 +517,17 @@ function signIn(msg){
   document.getElementById('screen').innerHTML='<div class="void"><div class="t">Session expired</div>'
     +'<p>'+esc(msg||'Open the bot and tap 📊 Dashboard for a fresh link.')+'</p></div>';
 }
+/* A dropped connection or a 500 is NOT an expired session: telling the owner
+   to fetch a fresh magic link burns a single-use token and hides the real
+   fault. Anything that is not a 401/403 lands here, with a way to retry. */
+function loadError(msg){
+  skeleton(false);
+  document.getElementById('screen').innerHTML='<div class="void"><div class="t">Couldn’t load this ledger</div>'
+    +'<p>'+esc(msg||'Something went wrong.')+'</p>'
+    +'<p><button class="chip" id="retryBtn" style="display:inline-flex">↻ Try again</button></p></div>';
+  var b=document.getElementById('retryBtn');
+  if(b)b.onclick=function(){load();};
+}
 function needDesign(payload){
   state.data={pickers:payload.pickers,design:{code:'',category:''},warehouse:state.warehouse,
     range:{from:'',to:''},closing:{gap_packaging:null}};
@@ -510,18 +543,27 @@ function needDesign(payload){
 function load(){
   writeUrl();
   skeleton(true);
+  // Tap Kano then Lagos and Kano's slower reply must not repaint the page
+  // under a lit Lagos chip: only the newest request may render.
+  var seq=++state.seq;
   var q=new URLSearchParams({design:state.design,warehouse:state.warehouse,range:state.range});
   fetch('/api/ops/design-movement?'+q.toString(),{credentials:'same-origin'})
     .then(function(r){
-      if(r.status===401||r.status===403)return r.json().then(function(b){throw new Error(b.error||'Signed out');});
+      if(r.status===401||r.status===403){
+        return r.json().then(function(b){var e=new Error(b.error||'Signed out');e.authed=true;throw e;});
+      }
       return r.json();
     })
     .then(function(b){
+      if(seq!==state.seq)return;
       if(!b.ok)throw new Error(b.error||'Could not load');
       if(b.needs_design){needDesign(b);return;}
       state.data=b;skeleton(false);render();
     })
-    .catch(function(e){signIn(e.message);});
+    .catch(function(e){
+      if(seq!==state.seq)return;
+      if(e&&e.authed)signIn(e.message);else loadError(e.message);
+    });
 }
 
 /* ── events ─────────────────────────────────────────────────────────── */

@@ -121,7 +121,8 @@ test('a blind mismatch states the gap in packaging and refuses to invent yards',
   // The audit stored both sides of its own comparison: book 0B+1t vs counted 0B+0t.
   assert.deepEqual(out.closing.gap_packaging, { bales: 0, thans: 1 });
   assert.equal(out.closing.gap_yards, null, 'no counted yards exist — never guess one');
-  assert.equal(out.closing.gap_label, '1t');
+  assert.equal(out.closing.gap_label, '−1t', 'a shortage prints with its own sign');
+  assert.equal(out.closing.gap_direction, 'short');
   assert.equal(out.closing.count.result, 'mismatch');
   assert.equal(out.closing.count.yards, null);
   assert.deepEqual(
@@ -237,4 +238,175 @@ test('design and warehouse are required', async () => {
   stubAll();
   await assert.rejects(() => designMovementService.build({ design: '', warehouse: WH }),
     /design and warehouse are required/);
+});
+
+
+/* ── the defects the adversarial review found, each pinned ───────────────── */
+
+test('a dispatched bale keeps its yardage: no zero row, no negative opening', async () => {
+  // The bale's rows now read the DESTINATION warehouse — a roster counted
+  // from "rows still here" would price the whole bale at nothing.
+  const gone = [1, 2, 3, 4].map((n) => than('D3', n, { warehouse: 'Lagos', status: 'available' }));
+  stubAll({
+    inv: BASE_INV.concat(gone),
+    moves: [{
+      rowIndex: 5, timestamp: '2026-08-12T10:00:00.000Z', movedOn: '2026-08-12',
+      baleNo: 'D3', design: DESIGN, shade: '2', container: 'Aug26', thans: 4,
+      fromState: `available @ ${WH}`, toState: 'in_transit @ Lagos',
+      kind: 'dispatch', ref: 'TRF-1', user: '777',
+    }],
+  });
+  const out = await designMovementService.build({
+    design: DESIGN, warehouse: WH, range: 'all_time', today: '2026-08-31',
+  });
+  const trf = out.movements.find((m) => m.type === 'transfer_out');
+  assert.equal(trf.qty.yards, 120, '4 thans × 30 yd, summed from the bale\'s own rows');
+  assert.equal(trf.qty.yards_exact, true, 'a whole roster sums exactly — not a mean');
+  assert.equal(trf.qty.label, '1B', 'the whole roster moved, so it is one bale');
+  assert.ok(out.opening.yards >= 0, 'an opening balance can never be negative');
+  // D3 arrived on the same GRN inside this window, so the window still opens
+  // empty — the point is that its 120 yd is carried by the rows, not dropped.
+  assert.equal(out.opening.yards, 0);
+  const receipt = out.movements.find((m) => m.type === 'receipt');
+  assert.equal(receipt.qty.yards, 270, 'A 90 + B 60 + D3 120 — the dispatched bale still counts in');
+  assert.equal(out.closing.book.yards, 30, 'and the walk lands exactly on today\'s shelf');
+});
+
+test('a part-bale sale stays loose thans even after the rest is transferred away', async () => {
+  // Roster must be the BALE's, not "what is still in this warehouse".
+  const rest = [2, 3, 4].map((n) => than('A', n, { warehouse: 'Lagos', status: 'available' }));
+  stubAll({ inv: [than('A', 1, SOLD)].concat(rest) });
+  const out = await designMovementService.build({
+    design: DESIGN, warehouse: WH, range: 'all_time', today: '2026-08-31',
+  });
+  const sale = out.movements.find((m) => m.type === 'sale');
+  assert.equal(sale.qty.label, '1t', 'one than of a four-than bale is loose, never a whole bale');
+  assert.deepEqual(sale.detail.loose, [{ count: 1, yards: 30, from_bale: 'A' }]);
+});
+
+test('a sale that was later returned still shows its OUT leg', async () => {
+  // An approved return clears soldTo/soldDate, erasing the sale from
+  // Inventory; BaleMovements keeps it, so the ledger must not lose the leg.
+  const returned = [1, 2].map((n) => than('R1', n));   // back on the shelf, no sale on file
+  stubAll({
+    inv: returned,
+    moves: [
+      { rowIndex: 3, timestamp: '2026-08-05T09:00:00.000Z', movedOn: '2026-08-05',
+        baleNo: 'R1', design: DESIGN, shade: '2', container: 'Aug26', thans: 2,
+        fromState: `available @ ${WH}`, toState: `sold @ ${WH}`,
+        kind: 'sale', ref: 'OKESON STORES', user: '777' },
+      { rowIndex: 4, timestamp: '2026-08-10T09:00:00.000Z', movedOn: '2026-08-10',
+        baleNo: 'R1', design: DESIGN, shade: '2', container: 'Aug26', thans: 2,
+        fromState: `sold @ ${WH}`, toState: `available @ ${WH}`,
+        kind: 'return', ref: 'OKESON STORES', user: '777' },
+    ],
+  });
+  const out = await designMovementService.build({
+    design: DESIGN, warehouse: WH, range: 'all_time', today: '2026-08-31',
+  });
+  const types = out.movements.map((m) => m.type);
+  assert.ok(types.includes('sale'), 'the erased sale is recovered from the movement log');
+  assert.ok(types.includes('return'));
+  assert.ok(out.opening.yards >= 0, 'the two legs balance, so nothing goes negative');
+  // Received, sold and returned all inside the window: it opens empty and
+  // closes on the returned bale — which only balances because the OUT leg
+  // was recovered from the movement log.
+  assert.equal(out.opening.yards, 0);
+  assert.equal(out.closing.book.yards, 60);
+  const sale = out.movements.find((m) => m.type === 'sale');
+  assert.equal(sale.qty.yards, 60, 'the recovered leg carries the bale\'s own yardage');
+});
+
+test('an opened bale the audit itself reconciled is not a gap and gets no hints', async () => {
+  // book 1B + 0t vs counted 0B + 2t: the flow proved the re-label, so the
+  // page must read agreed, not a red "1B + 2t short".
+  stubAll({
+    takes: [{
+      ...AUDIT_MISMATCH, result: 'reconciled',
+      sheet_bales: 1, sheet_bundles: 0, counted_bales: 0, counted_bundles: 2,
+      note: 'opened-bale match: 1 bale(s) counted as pieces, all present',
+    }],
+  });
+  const out = await designMovementService.build({
+    design: DESIGN, warehouse: WH, range: 'all_time', today: '2026-08-31',
+  });
+  assert.equal(out.closing.gap_direction, 'none', 'the audit judged it square');
+  assert.equal(out.closing.gap_label, null);
+  assert.equal(out.closing.gap_yards, 0);
+  assert.equal(out.hints.length, 0);
+  assert.ok(!out.notes.join(' ').includes('recount'), 'never tell the owner to recount a clean audit');
+});
+
+test('a mixed-sign gap is unreconciled, and each unit carries its own sign', async () => {
+  // book 6B + 0t vs counted 5B + 4t — a bale was opened AND a piece is gone.
+  stubAll({
+    takes: [{
+      ...AUDIT_MISMATCH, sheet_bales: 6, sheet_bundles: 0,
+      counted_bales: 5, counted_bundles: 4, result: 'mismatch',
+    }],
+  });
+  const out = await designMovementService.build({
+    design: DESIGN, warehouse: WH, range: 'all_time', today: '2026-08-31',
+  });
+  assert.equal(out.closing.gap_direction, 'unreconciled');
+  assert.equal(out.closing.gap_label, '−1B +4t', 'one bale short, four thans over — never a sum');
+});
+
+test('a surplus is an over, not a shortage, and hunts no candidates', async () => {
+  stubAll({
+    takes: [{ ...AUDIT_MISMATCH, sheet_bales: 0, sheet_bundles: 1, counted_bales: 0, counted_bundles: 3 }],
+    pending: [{
+      requestId: 'R-9', user: '555', status: 'pending', createdAt: '2026-08-01T08:00:00.000Z',
+      actionJSON: { action: 'sale_bundle', customer: 'X',
+        items: [{ type: 'than', packageNo: 'B', warehouse: WH, design: DESIGN, yards: 30 }] },
+    }],
+  });
+  const out = await designMovementService.build({
+    design: DESIGN, warehouse: WH, range: 'all_time', today: '2026-08-31',
+  });
+  assert.equal(out.closing.gap_direction, 'over');
+  assert.equal(out.closing.gap_label, '+2t');
+  assert.equal(out.hints.length, 0, 'a surplus needs no explanation for missing goods');
+});
+
+test('a queued sale of another design, or queued after the count, is never a candidate', async () => {
+  stubAll({
+    takes: [AUDIT_MISMATCH],
+    pending: [
+      { requestId: 'R-OTHER', user: '555', status: 'pending', createdAt: '2026-08-01T08:00:00.000Z',
+        actionJSON: { action: 'sale_bundle', customer: 'Someone',
+          items: [{ type: 'package', packageNo: 'Q9', warehouse: WH, design: '8802-A' }] } },
+      { requestId: 'R-LATE', user: '555', status: 'pending', createdAt: '2026-08-28T08:00:00.000Z',
+        actionJSON: { action: 'sale_bundle', customer: 'Later',
+          items: [{ type: 'than', packageNo: 'B', warehouse: WH, design: DESIGN, yards: 30 }] } },
+      { requestId: 'R-UNPINNABLE', user: '555', status: 'pending', createdAt: '2026-08-01T08:00:00.000Z',
+        actionJSON: { action: 'sale_bundle', customer: 'Ghost', items: [{ type: 'package' }] } },
+    ],
+  });
+  const out = await designMovementService.build({
+    design: DESIGN, warehouse: WH, range: 'all_time', today: '2026-08-31',
+  });
+  assert.equal(out.hints.length, 0,
+    'another design, a sale queued after the count, and an unpinnable item are all excluded');
+  assert.match(out.notes.join(' '), /No candidate explains this shortage/);
+});
+
+test('a late-logged sale outside the displayed range is still found', async () => {
+  // Business day before the count, written after it — the audit never saw it.
+  stubAll({
+    takes: [AUDIT_MISMATCH],
+    moves: [{
+      rowIndex: 7, timestamp: '2026-08-12T09:00:00.000Z', movedOn: '2026-08-01',
+      baleNo: 'B', design: DESIGN, shade: '2', container: 'Aug26', thans: 1,
+      fromState: `available @ ${WH}`, toState: 'in_transit @ Lagos',
+      kind: 'dispatch', ref: 'TRF-9', user: '777',
+    }],
+  });
+  const out = await designMovementService.build({
+    design: DESIGN, warehouse: WH, range: 'since_audit', today: '2026-08-31',
+  });
+  assert.ok(out.movements.every((m) => m.type !== 'transfer_out'),
+    'the transfer is outside the displayed window');
+  assert.ok(out.hints.some((h) => /Logged after the count/.test(h.title)),
+    'but the count-bounded scan still finds it, so the page never claims nothing was late');
 });

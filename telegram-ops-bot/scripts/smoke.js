@@ -7964,16 +7964,29 @@ function runS54() {
     && dmlSvc.includes('formatCounts(');
   // The gap is nullable by design; a future refactor that hardcodes a number
   // here would silently re-introduce the invented figure.
-  const dmlHonestGap = dmlSvc.includes('gap_yards: gapYards')
-    && dmlSvc.includes('gapYards = reconciled ? 0 : null')
+  const dmlHonestGap = dmlSvc.includes('function gapOf(take)')
+    && dmlSvc.includes("direction = 'unreconciled'")
+    && dmlSvc.includes('gap_direction')
     && dmlSvc.includes('gap_packaging');
+  // The page must consume the server's signed label, never re-derive one: a
+  // single glyph for a pair that can point both ways reads a shortage as a
+  // surplus (found in review). No hand-rolled B/t may appear on the page.
+  const dmlNoClientGrammar = !/\+\s*'B'|\+\s*'t'/.test(dmlPage)
+    && dmlPage.includes('c.gap_label')
+    && dmlPage.includes('function isAlarm(');
   // An already-deducted transfer can never explain a shortage at the source.
   const dmlHintRule = dmlSvc.includes('can NEVER qualify')
-    && dmlSvc.includes("m.loggedAt > countedAt");
-  if (dmlRoute && dmlReadOnly && dmlMoneyFree && dmlNoFactor && dmlHonestGap && dmlHintRule) {
+    && dmlSvc.includes('m.loggedAt > countedAt')
+    // and a candidate must be pinned to THIS design and store, and predate
+    // the count — absence of evidence is never a match.
+    && dmlSvc.includes('if (!dg || !wh) return null;')
+    && dmlSvc.includes('queuedDay > countDay');
+  if (dmlRoute && dmlReadOnly && dmlMoneyFree && dmlNoFactor && dmlHonestGap && dmlHintRule
+      && dmlNoClientGrammar) {
     pass('S54.13 DML-1: movement ledger wired, read-only, money-free, no invented gap');
   } else {
-    fail('S54.13', JSON.stringify({ dmlRoute, dmlReadOnly, dmlMoneyFree, dmlNoFactor, dmlHonestGap, dmlHintRule }));
+    fail('S54.13', JSON.stringify({ dmlRoute, dmlReadOnly, dmlMoneyFree, dmlNoFactor, dmlHonestGap,
+      dmlHintRule, dmlNoClientGrammar }));
   }
 }
 

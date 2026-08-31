@@ -52,15 +52,30 @@
  *    unitDisplayService.formatCounts — the shared §6c grammar engine —
  *    never a hand-rolled `${n}B`.
  *
+ * 5. THE GAP IS A PAIR, AND A PAIR DOES NOT SUBTRACT.
+ *    Opening a sealed bale turns 1B into N loose thans, so a square shelf can
+ *    read {bales:+1, thans:-N}. `gapOf` therefore publishes a DIRECTION —
+ *    none / short / over / unreconciled — and a label signed per unit, and
+ *    treats the audit's own `reconciled` verdict as final (the flow already
+ *    proved the re-label with `openedBaleEquivalence`). Candidates are hunted
+ *    only for a shortage or an unreconciled pair, never for a surplus.
+ *
  * Known data limits, surfaced in `notes` rather than papered over:
  *   • a return is dated the Lagos day it was APPROVED (the return flow asks
  *     for no date), so its row is the recorded date, not the day the cloth
  *     came back;
  *   • BaleMovements carries a than count but no yardage, so returns and
  *     transfers take their yards from the bale's own rows — exact when the
- *     bale is still on file, estimated at the bale's mean than otherwise;
- *   • a than that was sold, returned and sold again shows only its LATEST
- *     sale, because Inventory keeps one row per than.
+ *     movement covers the whole roster, the bale's mean than when it does not
+ *     (which thans moved is never recorded), and unknown when the bale has no
+ *     rows on file at all;
+ *   • an approved return CLEARS soldTo/soldDate, erasing that sale from
+ *     Inventory, so sales are merged with the append-only BaleMovements
+ *     `sale` rows (larger than-count per bale wins) — otherwise the return's
+ *     IN leg would arrive with no OUT leg and drag every earlier balance
+ *     below reality;
+ *   • a than sold, returned and sold again shows only its LATEST sale in
+ *     Inventory; the earlier one survives in the movement log.
  */
 
 const inventoryRepository = require('../repositories/inventoryRepository');
@@ -111,6 +126,40 @@ function packagingOf(shelf, roster) {
     if (count >= total) bales += 1; else thans += count;
   }
   return { bales, thans };
+}
+
+/**
+ * The gap on one stock take, as the audit itself recorded it.
+ *
+ * The two sides are packaging PAIRS, and a pair does not subtract
+ * component-wise: opening a sealed bale turns 1B into N loose thans, so a
+ * perfectly square shelf reads {bales:+1, thans:-N}. Three consequences are
+ * encoded here, each of which the page used to get wrong:
+ *   • a row the audit itself judged `reconciled` has NO gap — the flow already
+ *     proved the packaging re-label with `openedBaleEquivalence`;
+ *   • a mixed-sign pair is `unreconciled` (packaging changed AND it did not
+ *     balance), never a shortage of the sum of its absolutes;
+ *   • the label carries a sign PER COMPONENT, built from formatCounts so the
+ *     §6c grammar still comes from the one engine.
+ * `direction` is what decides red vs green and whether candidates are hunted.
+ */
+function gapOf(take) {
+  const reconciled = lower(take.result) === 'reconciled';
+  const bales = num(take.sheet_bales) - num(take.counted_bales);
+  const thans = num(take.sheet_bundles) - num(take.counted_bundles);
+  if (reconciled || (bales === 0 && thans === 0)) {
+    return { bales: 0, thans: 0, direction: 'none', label: null, yards: reconciled ? 0 : null };
+  }
+  let direction;
+  if (bales >= 0 && thans >= 0) direction = 'short';
+  else if (bales <= 0 && thans <= 0) direction = 'over';
+  else direction = 'unreconciled';
+  // A positive delta means the book held MORE than was counted, i.e. the
+  // shelf is short — so it prints with a minus.
+  const parts = [];
+  if (bales) parts.push((bales > 0 ? '−' : '+') + formatCounts({ bales: Math.abs(bales), thans: 0 }));
+  if (thans) parts.push((thans > 0 ? '−' : '+') + formatCounts({ bales: 0, thans: Math.abs(thans) }));
+  return { bales, thans, direction, label: parts.join(' ') || null, yards: null };
 }
 
 /** A payload quantity block: numbers for arithmetic, one §6c label for the page. */
@@ -188,30 +237,38 @@ async function build(q) {
   const designRows = (inv || []).filter((r) => upper(r.design) === D);
   const hereRows = designRows.filter((r) => lower(r.warehouse) === W);
 
-  // Roster = every than the bale holds in THIS warehouse, all statuses —
-  // the same denominator the stock audit judges "sealed" against, so the
-  // page and the checkpoint it subtracts from cannot disagree.
+  // A bale's ROSTER is a property of the bale, not of where its thans sit
+  // today (rule 6c: judged against the bale's full than roster, all
+  // statuses). Counting only the rows still in this warehouse would call a
+  // 5-of-20 sale a whole bale the moment the other 15 were transferred out,
+  // and would price a dispatched bale at nothing — so the roster and the
+  // yardage are read from every row of the design, wherever it sits now.
+  // Only `shelfNow` below stays warehouse-scoped: that is a question about
+  // this shelf.
   const roster = new Map();
   const baleMeta = new Map();
-  for (const r of hereRows) {
+  const baleYards = new Map();
+  for (const r of designRows) {
     const k = baleKeyOf(r.design, r.packageNo, r.arrivalBatch);
     roster.set(k, (roster.get(k) || 0) + 1);
     if (!baleMeta.has(k)) {
       baleMeta.set(k, { bale_no: str(r.packageNo), container: str(r.arrivalBatch), shade: str(r.shade) });
     }
-  }
-  // Mean than yardage per bale — the only defensible yards for a movement
-  // that names a than count but no yardage (BaleMovements never stores one).
-  const baleYards = new Map();
-  for (const r of hereRows) {
-    const k = baleKeyOf(r.design, r.packageNo, r.arrivalBatch);
     const e = baleYards.get(k) || { yards: 0, rows: 0 };
     e.yards += num(r.yards); e.rows += 1;
     baleYards.set(k, e);
   }
-  const meanThanYards = (key) => {
+  /**
+   * Yards for a movement that names a than count but no yardage — every
+   * BaleMovements row is one. Exact when the count covers the bale's whole
+   * roster (the sum IS the bale); a mean otherwise, because WHICH thans
+   * moved is not recorded; unknown when the bale has no rows on file at all.
+   */
+  const yardsForThans = (key, thans) => {
     const e = baleYards.get(key);
-    return e && e.rows ? e.yards / e.rows : 0;
+    if (!e || !e.rows) return { yards: 0, exact: false, unknown: true };
+    if (thans >= e.rows) return { yards: e.yards, exact: true, unknown: false };
+    return { yards: (e.yards / e.rows) * thans, exact: false, unknown: false };
   };
 
   const category = str((designRows.find((r) => str(r.designCategory)) || {}).designCategory);
@@ -255,26 +312,66 @@ async function build(q) {
   // OUT · sales, customer named. One movement per (day, customer) — the only
   // grouping key that exists, and the one Customer Supplies already uses:
   // an Inventory row carries no sale reference id.
+  //
+  // Inventory carries the exact yardage, so it leads. But an approved RETURN
+  // clears soldTo and soldDate on the row (RET-2), which erases the original
+  // sale from Inventory altogether — leaving the return's IN leg with no OUT
+  // leg, goods appearing from nowhere and every earlier balance dragged below
+  // reality. BaleMovements keeps that sale forever (append-only, kind
+  // 'sale'), so the two sources are merged per bale and the LARGER than count
+  // wins: a returned sale still shows its OUT leg, and a sale still on file
+  // is never counted twice.
   const soldHere = hereRows.filter((r) => r.status === 'sold' && str(r.soldTo) && str(r.soldDate));
-  const bySale = new Map();
+  const saleGroups = new Map();
+  const groupFor = (day, customer) => {
+    const k = `${day}|${lower(customer)}`;
+    if (!saleGroups.has(k)) saleGroups.set(k, { key: k, day, customer: str(customer) || '—', byBale: new Map() });
+    return saleGroups.get(k);
+  };
   for (const r of soldHere) {
     const day = normDay(r.soldDate);
     if (!day) continue;
-    const k = `${day}|${lower(r.soldTo)}`;
-    if (!bySale.has(k)) bySale.set(k, { day, customer: str(r.soldTo), rows: [] });
-    bySale.get(k).rows.push(r);
+    const g = groupFor(day, r.soldTo);
+    const key = baleKeyOf(r.design, r.packageNo, r.arrivalBatch);
+    const e = g.byBale.get(key) || {
+      key, thans: 0, yards: 0, shades: new Set(), exact: true, unknown: false,
+      meta: baleMeta.get(key) || { bale_no: str(r.packageNo), container: str(r.arrivalBatch), shade: str(r.shade) },
+    };
+    e.thans += 1; e.yards += num(r.yards);
+    if (str(r.shade)) e.shades.add(str(r.shade));
+    g.byBale.set(key, e);
   }
-  for (const [k, e] of bySale) {
+  for (const m of (moves || [])) {
+    if (upper(m.design) !== D || lower(m.kind) !== 'sale') continue;
+    const fromS = parseState(m.fromState);
+    if (!(fromS.status === 'available' && lower(fromS.warehouse) === W)) continue;
+    const day = normDay(m.movedOn);
+    if (!day) continue;
+    const key = baleKeyOf(m.design, m.baleNo, m.container);
+    const thans = num(m.thans) || 1;
+    const g = groupFor(day, m.ref);
+    const have = g.byBale.get(key);
+    if (have && have.thans >= thans) continue;   // Inventory already has it, exactly
+    const y = yardsForThans(key, thans);
+    g.byBale.set(key, {
+      key, thans, yards: y.yards, exact: y.exact, unknown: y.unknown,
+      shades: new Set(str(m.shade) ? [str(m.shade)] : []),
+      meta: baleMeta.get(key) || { bale_no: str(m.baleNo), container: str(m.container), shade: str(m.shade) },
+    });
+  }
+  for (const g of saleGroups.values()) {
+    const foot = [...g.byBale.values()];
     movements.push({
-      id: `sale:${k}`,
-      date: e.day,
-      sortAt: e.day,
+      id: `sale:${g.key}`,
+      date: g.day,
+      sortAt: g.day,
       family: 'out',
       type: 'sale',
-      counterparty: e.customer,
+      counterparty: g.customer,
       ref: '',
-      rows: e.rows,
-      yardsExact: true,
+      synthetic: foot,
+      yardsExact: foot.every((f) => f.exact !== false),
+      yardsUnknown: foot.some((f) => f.unknown),
     });
   }
 
@@ -292,7 +389,7 @@ async function build(q) {
     if (!landsHere && !leavesHere) continue;
     const key = baleKeyOf(m.design, m.baleNo, m.container);
     const thans = num(m.thans) || 1;
-    const known = baleYards.has(key);
+    const y = yardsForThans(key, thans);
     const kind = lower(m.kind);
     const type = kind === 'return' || kind === 'correction' ? kind
       : (landsHere ? 'transfer_in' : 'transfer_out');
@@ -304,9 +401,10 @@ async function build(q) {
       type,
       counterparty: str(m.ref) || (landsHere ? str(from.warehouse) : str(to.warehouse)) || '—',
       ref: '',
-      synthetic: [{ key, thans, yards: meanThanYards(key) * thans, meta: baleMeta.get(key)
+      synthetic: [{ key, thans, yards: y.yards, meta: baleMeta.get(key)
         || { bale_no: str(m.baleNo), container: str(m.container), shade: str(m.shade) } }],
-      yardsExact: known,
+      yardsExact: y.exact,
+      yardsUnknown: y.unknown,
       loggedAt: str(m.timestamp),
     });
   }
@@ -355,7 +453,9 @@ async function build(q) {
   const bookNow = { ...packagingOf(shelfNow, roster), yards: yardsNow };
 
   // Each movement's own footprint: which bales, how many thans, what yards.
-  for (const m of inRange) {
+  // Computed for EVERY movement, because the hint scan looks outside the
+  // displayed range.
+  for (const m of movements) {
     if (m.family === 'checkpoint') { m.foot = []; m.thans = 0; m.yards = 0; continue; }
     if (m.synthetic) {
       m.foot = m.synthetic;
@@ -383,6 +483,7 @@ async function build(q) {
   const shelf = new Map(shelfNow);
   let yards = yardsNow;
   let anyEstimate = false;
+  let anyUnknown = false;
   for (let i = inRange.length - 1; i >= 0; i -= 1) {
     const m = inRange[i];
     m.after = { ...packagingOf(shelf, roster), yards };
@@ -394,12 +495,24 @@ async function build(q) {
     }
     yards += sign * m.yards;
     if (!m.yardsExact) anyEstimate = true;
+    if (m.yardsUnknown) anyUnknown = true;
   }
   const openingPack = packagingOf(shelf, roster);
+  // A negative opening is arithmetically impossible on a real shelf: it means
+  // a movement in this window carried yardage we could not recover. Publish
+  // null and say so, rather than printing a figure the owner cannot act on.
+  const openingYards = yards < -0.5 ? null : Math.max(0, yards);
+  if (openingYards === null) {
+    notes.push('The opening yardage cannot be reconstructed for this window: a movement in it carries '
+      + 'no yardage on file. The packaging counts and every later balance are still exact.');
+  }
   const opening = {
-    ...qtyBlock({ bales: openingPack.bales, thans: openingPack.thans, yards, yardsExact: !anyEstimate, empty: '0' }),
+    ...qtyBlock({ bales: openingPack.bales, thans: openingPack.thans, yards: openingYards, yardsExact: !anyEstimate, empty: '0' }),
     at: range.from || (inRange.length ? inRange[0].date : range.to),
-    source: range.preset === 'since_audit' && lastAudit ? 'carried' : 'first_grn',
+    // Only a window that genuinely opens on the design's first receipt shows
+    // "first goods receipt"; everything else is a balance carried in.
+    source: (inRange.length && inRange[0].family === 'in' && inRange[0].type === 'receipt'
+      && openingPack.bales === 0 && openingPack.thans === 0) ? 'first_grn' : 'carried',
   };
 
   // ── closing: book now, the last real count, and the gap at that count ──
@@ -409,9 +522,10 @@ async function build(q) {
     .sort((a, b) => (str(a.audited_at) < str(b.audited_at) ? -1 : 1));
   const lastCount = counts.length ? counts[counts.length - 1] : null;
 
-  let count = null; let gapYards = null; let gapPackaging = null; let movementsSinceCount = 0;
+  let count = null; let gap = null; let movementsSinceCount = 0;
   if (lastCount) {
     const reconciled = lower(lastCount.result) === 'reconciled';
+    gap = gapOf(lastCount);
     count = {
       ...qtyBlock({
         bales: num(lastCount.counted_bales),
@@ -432,12 +546,7 @@ async function build(q) {
         empty: '0',
       }),
     };
-    gapPackaging = {
-      bales: num(lastCount.sheet_bales) - num(lastCount.counted_bales),
-      thans: num(lastCount.sheet_bundles) - num(lastCount.counted_bundles),
-    };
-    gapYards = reconciled ? 0 : null;
-    if (gapYards === null) {
+    if (gap.yards === null && gap.direction !== 'none') {
       notes.push('The gap is stated in packaging, not yards: a blind count records how many '
         + 'bales and loose thans were seen, never which ones, and per-bale yardage varies — so no '
         + 'yard figure can be derived without inventing one.');
@@ -449,24 +558,33 @@ async function build(q) {
   const closing = {
     book: qtyBlock({ bales: bookNow.bales, thans: bookNow.thans, yards: bookNow.yards, empty: '0' }),
     count,
-    gap_yards: gapYards,
-    gap_packaging: gapPackaging,
-    gap_label: gapPackaging && (gapPackaging.bales || gapPackaging.thans)
-      ? formatCounts({ bales: Math.abs(gapPackaging.bales), thans: Math.abs(gapPackaging.thans), empty: '0' })
-      : null,
+    // `direction` is the field to branch on: 'none' | 'short' | 'over' |
+    // 'unreconciled'. gap_yards is a number only when it is exactly knowable.
+    gap_yards: gap ? gap.yards : null,
+    gap_packaging: gap ? { bales: gap.bales, thans: gap.thans } : null,
+    gap_direction: gap ? gap.direction : null,
+    gap_label: gap ? gap.label : null,
     movements_since_count: movementsSinceCount,
   };
   if (movementsSinceCount > 0) {
     notes.push(`The book has moved ${movementsSinceCount} time(s) since the count, so the book balance `
       + 'above is today\'s shelf, while the gap is measured at the moment of the count.');
   }
-  if (anyEstimate) {
+  if (anyEstimate && !anyUnknown) {
     notes.push('Some yard figures come from a bale\'s own mean than, because transfer and return '
-      + 'records store a than count but no yardage. The packaging counts are exact.');
+      + 'records store a than count but no yardage and never say WHICH thans moved. The packaging '
+      + 'counts are exact.');
+  }
+  if (anyUnknown) {
+    notes.push('One or more movements name a bale with no rows left on file, so their yardage could '
+      + 'not be recovered at all. Their packaging is exact; treat the yard column as incomplete.');
   }
 
-  const hints = lastCount
-    ? await buildHints({ take: lastCount, D, W, inRange, baleYards, meanThanYards, notes })
+  // Candidates are hunted only when goods are actually missing. A surplus
+  // is not a shortage, and a reconciled re-label is not a discrepancy at all.
+  const hints = (lastCount && gap && (gap.direction === 'short' || gap.direction === 'unreconciled'))
+    ? await buildHints({ take: lastCount, D, W, movements, countDay: normDay(lastCount.audited_at) || '',
+      baleYards, roster, notes, inv })
     : [];
 
   const whList = [...new Set((inv || []).map((r) => str(r.warehouse)).filter(Boolean))]
@@ -512,18 +630,22 @@ function renderMovement(m, roster) {
   if (m.family === 'checkpoint') {
     const t = m.take;
     const reconciled = lower(t.result) === 'reconciled';
+    const g = m.counted ? gapOf(t) : null;
     out.qty = null;
     out.checkpoint = {
       result: str(t.result) || 'reconciled',
       auditor: str(t.auditor),
+      // A flag-clear carries no count of its own; saying "counted by" would
+      // dress an unresolved mismatch up as a fresh clean count.
+      counted: !!m.counted,
       book: qtyBlock({ bales: num(t.sheet_bales), thans: num(t.sheet_bundles), yards: num(t.sheet_yards), empty: '0' }),
       count: m.counted
         ? qtyBlock({ bales: m.counted.bales, thans: m.counted.thans, yards: reconciled ? num(t.sheet_yards) : null, yardsExact: reconciled, empty: '0' })
         : null,
-      gap_yards: reconciled ? 0 : null,
-      gap_packaging: m.counted
-        ? { bales: num(t.sheet_bales) - m.counted.bales, thans: num(t.sheet_bundles) - m.counted.thans }
-        : null,
+      gap_yards: g ? g.yards : null,
+      gap_packaging: g ? { bales: g.bales, thans: g.thans } : null,
+      gap_direction: g ? g.direction : null,
+      gap_label: g ? g.label : null,
       note: str(t.note),
     };
   } else {
@@ -573,46 +695,70 @@ function renderMovement(m, roster) {
  * excluded it, so it cannot explain the book EXCEEDING the count. Listing it
  * would double-count the same bale — the exact error this page exists to catch.
  */
-async function buildHints({ take, D, W, inRange, baleYards, meanThanYards, notes }) {
-  const shortBales = num(take.sheet_bales) - num(take.counted_bales);
-  const shortThans = num(take.sheet_bundles) - num(take.counted_bundles);
-  if (shortBales <= 0 && shortThans <= 0) return [];   // surplus or square: nothing to explain
+async function buildHints({ take, D, W, movements, countDay, baleYards, roster, notes, inv }) {
   const countedAt = str(take.audited_at);
-  const countDay = normDay(take.audited_at) || '';
   const hints = [];
 
-  // 1. Sales still sitting in the approval queue.
+  // Resolve a queued item to a design + warehouse. A sale door may omit
+  // either (the thin package items carry only a bale number), so the bale is
+  // looked up in Inventory. An item that still cannot be pinned is DROPPED:
+  // absence of evidence is not a match, and offering it would be the padding
+  // this function exists to refuse.
+  const byPkg = new Map();
+  for (const r of (inv || [])) {
+    const k = `${lower(r.warehouse)}|${upper(r.packageNo)}`;
+    if (!byPkg.has(k)) byPkg.set(k, r);
+  }
+  const resolveItem = (it, aj) => {
+    const wh = str(it.warehouse || aj.warehouse);
+    let dg = str(it.design || aj.design);
+    if (!dg && Array.isArray(Object.keys(aj.yardsByDesign || {})) && Object.keys(aj.yardsByDesign || {}).length === 1) {
+      dg = Object.keys(aj.yardsByDesign)[0];
+    }
+    if ((!dg || !wh) && str(it.packageNo)) {
+      const hit = byPkg.get(`${lower(wh || W)}|${upper(it.packageNo)}`);
+      if (hit) { dg = dg || str(hit.design); }
+    }
+    if (!dg || !wh) return null;
+    return { design: upper(dg), warehouse: lower(wh) };
+  };
+
+  // 1. Sales still sitting in the approval queue — goods handed over, the
+  //    book not yet deducted. Only those queued at or before the count can
+  //    explain a gap measured AT the count; anything later left afterwards
+  //    and belongs to `movements_since_count`, not to this list.
   try {
     const pending = await approvalQueueRepository.getAllPending();
     for (const p of (pending || [])) {
       const aj = p.actionJSON || {};
       const action = str(aj.action);
       if (!['sale_bundle', 'sell_package', 'sell_than', 'sell_batch'].includes(action)) continue;
+      const queuedDay = normDay(aj.salesDate) || normDay(p.createdAt) || '';
+      if (!queuedDay || (countDay && queuedDay > countDay)) continue;
       const items = action === 'sale_bundle'
         ? (Array.isArray(aj.items) ? aj.items : [])
         : [{ packageNo: aj.packageNo, warehouse: aj.warehouse, design: aj.design, yards: aj.yards, thans: aj.thans }];
       const mine = items.filter((it) => {
-        const wh = lower(it.warehouse || aj.warehouse);
-        const dg = upper(it.design || aj.design);
-        return (!wh || wh === W) && (!dg || dg === D);
+        const r = resolveItem(it, aj);
+        return r && r.design === D && r.warehouse === W;
       });
       if (!mine.length) continue;
-      // Yards: the thin sale doors carry no per-item yardage, so fall back to
-      // the bale's own mean than rather than pretending to a figure.
       let yards = 0; let exact = true;
       for (const it of mine) {
         if (num(it.yards) > 0) { yards += num(it.yards); continue; }
-        exact = false;
-        const key = baleKeyOf(it.design || aj.design || D, it.packageNo, it.arrivalBatch);
-        const per = meanThanYards(key);
-        yards += per * (num(it.thans) || 1);
+        const key = baleKeyOf(D, it.packageNo, it.arrivalBatch);
+        const e = baleYards.get(key);
+        const thans = num(it.thans) || 1;
+        if (!e || !e.rows) { exact = false; continue; }
+        if (thans >= e.rows) { yards += e.yards; continue; }
+        yards += (e.yards / e.rows) * thans; exact = false;
       }
       hints.push({
         yards: yards > 0 ? Math.round(yards * 100) / 100 : null,
-        yards_exact: exact,
+        yards_exact: exact && yards > 0,
         title: 'Goods gone, approval still pending',
-        detail: `${str(aj.customer) || 'A buyer'} · ${mine.length} item(s) queued since `
-          + `${normDay(p.createdAt) || 'earlier'} — the book has not deducted them yet`,
+        detail: `${str(aj.customer) || 'A buyer'} · ${mine.length} item(s) queued ${queuedDay} — `
+          + 'the book has not deducted them yet',
         ref: str(p.requestId),
       });
     }
@@ -620,11 +766,15 @@ async function buildHints({ take, D, W, inRange, baleYards, meanThanYards, notes
     logger?.warn?.(`designMovement: pending-sale hints unavailable (${e.message})`);
   }
 
-  // 2. OUT movements dated on/before the count but written to the sheet after it.
-  for (const m of inRange) {
+  // 2. OUT movements whose business day is on or before the count but which
+  //    reached the sheet AFTER it — the audit's book never saw them. Scanned
+  //    over EVERY movement, not just the displayed range: the count instant
+  //    already bounds it, and a narrow range would otherwise let the page
+  //    claim nothing was logged late when something was.
+  for (const m of movements) {
     if (m.family !== 'out') continue;
     if (!m.loggedAt || !countedAt) continue;
-    if (!(m.date <= countDay && m.loggedAt > countedAt)) continue;
+    if (!(m.date && countDay && m.date <= countDay && m.loggedAt > countedAt)) continue;
     hints.push({
       yards: m.yards > 0 ? Math.round(m.yards * 100) / 100 : null,
       yards_exact: !!m.yardsExact,
@@ -636,8 +786,8 @@ async function buildHints({ take, D, W, inRange, baleYards, meanThanYards, notes
   }
 
   if (!hints.length) {
-    notes.push('No candidate explains this shortage: nothing is queued for approval and nothing was '
-      + 'logged after the count. The gap stands unexplained — recount before adjusting anything.');
+    notes.push('No candidate explains this shortage: nothing was queued for approval before the count '
+      + 'and nothing was logged after it. The gap stands unexplained — recount before adjusting anything.');
   }
   return hints;
 }
