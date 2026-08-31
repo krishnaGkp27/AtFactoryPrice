@@ -24,6 +24,7 @@ const cartFormat = require('../utils/cartFormat');
 const { shortRequestRef } = require('../services/approvalCards');
 // ANL-1 — usage analytics capture (fire-and-forget; no-op until enabled).
 const usageTracker = require('../services/usageTracker');
+const menuAnchor = require('../services/menuAnchor');
 
 const SALE_ACTIONS = ['sell_than', 'sell_package', 'sale_bundle'];
 const DEFAULT_SALE_UNIT = 'yard';
@@ -521,6 +522,22 @@ const TYPED_NOTE = '\n✍️ _A typed reply goes to the request you touched last
 async function renderWizard(bot, chatId, state, text, rows) {
   const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
   const anchorChat = state.anchorChatId || chatId;
+  // ANCH-1 — a BURIED card is moved, never edited in place. Telegram cannot
+  // reorder messages, so once newer bot cards (inbox lists, digests,
+  // reminders) or the admin's own typed reply sit below the anchor, editing
+  // it happens far above the keyboard — the admin types at the bottom while
+  // the question sits off-screen. Delete + re-send is the only way down; the
+  // card is fully rebuilt from state, so nothing is lost. Burial is read
+  // from the MNU-1 send watermark (every bot send is tracked in server.js);
+  // `bumpNext` covers the one burial the watermark cannot see — the admin's
+  // own typed reply (set in applyEnrichmentText).
+  const buried = state.anchorMessageId
+    && (state.bumpNext || menuAnchor.latestMessageId(anchorChat) > Number(state.anchorMessageId));
+  if (buried) {
+    await menuAnchor.retire(bot, anchorChat, state.anchorMessageId);
+    state.anchorMessageId = null;
+  }
+  state.bumpNext = false;
   if (state.anchorMessageId) {
     try {
       await bot.editMessageText(text, { chat_id: anchorChat, message_id: state.anchorMessageId, ...opts });
@@ -529,7 +546,12 @@ async function renderWizard(bot, chatId, state, text, rows) {
   }
   try {
     const m = await bot.sendMessage(anchorChat, text, opts);
-    if (m && m.message_id) { state.anchorMessageId = m.message_id; state.anchorChatId = anchorChat; }
+    if (m && m.message_id) {
+      state.anchorMessageId = m.message_id; state.anchorChatId = anchorChat;
+      // The production bot is wrapped (server.js) so this send is already
+      // watermarked; recording here too keeps the fake-bot tests honest.
+      menuAnchor.noteMessage(anchorChat, m.message_id);
+    }
   } catch (_) { /* best-effort */ }
 }
 
@@ -892,6 +914,9 @@ async function handleEnrichmentMessage(bot, chatId, adminId, text) {
 /** APC-1 — apply one typed reply to ONE resolved wizard state. */
 async function applyEnrichmentText(bot, chatId, adminId, state, text) {
   const t = String(text).trim();
+  // ANCH-1 — the reply the admin just typed now sits BELOW the card; the
+  // next render must bring the card back down beside the keyboard.
+  state.bumpNext = true;
   const CURRENCY = config.currency || 'NGN';
   const fmt = (n) => `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
 
@@ -2684,7 +2709,7 @@ module.exports = {
     // must never reach executeApprovedAction.
     runApprovedSaleWithEnrichment, updateRequesterCard, sendCustomerStep,
     // APC-1 — per-request wizard mechanics, exposed for the concurrency tests.
-    wizardsOf, activeWizard, wizKey, lastTouchedWizard, heldEnrichmentText,
+    wizardsOf, activeWizard, wizKey, lastTouchedWizard, heldEnrichmentText, renderWizard,
     pendingReason, armReasonPrompt,
   },
 };
