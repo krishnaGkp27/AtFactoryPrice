@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="design_doc_mode" content="canvas">
+<title>DML-1 — Design Movement Ledger</title>
+<style>
+:root{--navy:#0e2a47;--blue:#1d6fa5;--teal:#2e9e77;--gold:#c9a24b;--red:#a3232a;--bg:#f4f7fa;--line:#dfe6ee;--ink:#1a2332;--mut:#6b7a8c}
+*{box-sizing:border-box;margin:0}
+body{font-family:"Segoe UI",Arial,sans-serif;color:var(--ink)}
+.fr{position:absolute}
+.lb{font:600 12px/1 "Segoe UI",Arial,sans-serif;letter-spacing:.6px;color:#8a97a6;margin-bottom:8px;text-transform:uppercase}
+.ph{background:var(--bg);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+a{color:var(--blue);text-decoration:none}a:hover{color:var(--navy)}
+.hd{background:linear-gradient(135deg,var(--navy),var(--blue));color:#fff;padding:14px 16px}
+.hd .top{display:flex;align-items:baseline;gap:8px}
+.hd .dn{font-size:26px;font-weight:700;letter-spacing:.5px;line-height:1}
+.hd .cat{font-size:12px;color:#b9d3e8;font-weight:600;letter-spacing:.3px}
+.hd .sub{font-size:11.5px;color:#c8dcec;margin-top:5px;letter-spacing:.2px}
+.nav{display:flex;gap:2px;background:var(--navy);padding:0 8px;border-bottom:2px solid var(--gold);overflow:auto}
+.nav a{color:#a9c2d8;font-size:11.5px;font-weight:600;letter-spacing:.3px;padding:10px 7px;white-space:nowrap;min-height:40px;display:flex;align-items:center}
+.nav a.on{color:var(--gold);box-shadow:inset 0 -2px 0 var(--gold)}
+.scope{background:#fff;border-bottom:1px solid var(--line);padding:11px 12px;display:flex;flex-direction:column;gap:9px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.cklab{font-size:11px;letter-spacing:.5px;color:var(--mut);font-weight:700;text-transform:uppercase;margin-right:2px}
+.chip{border:1px solid var(--line);background:#fff;border-radius:16px;padding:8px 12px;font:600 12px/1 inherit;color:var(--mut);min-height:36px;display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap}
+.chip.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.chip.pick{border-style:solid;color:var(--ink)}
+.chip.pick b{color:var(--navy)}
+.chip .cv{color:#9fb0c0;font-weight:400}
+.body{padding:12px}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;margin-bottom:10px}
+.ob{padding:13px 14px;border-left:4px solid var(--navy)}
+.ob .l{font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--mut);font-weight:700}
+.ob .v{font-size:23px;font-weight:700;letter-spacing:.3px;margin-top:4px;font-variant-numeric:tabular-nums}
+.ob .v small{font-size:13px;font-weight:600;color:var(--mut)}
+.ob .m{font-size:11.5px;color:var(--mut);margin-top:4px}
+.sh{font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--navy);font-weight:700;border-bottom:2px solid var(--navy);padding:0 0 6px;margin:14px 2px 8px;display:flex;align-items:baseline;gap:8px}
+.sh span{margin-left:auto;color:var(--mut);font-weight:600;letter-spacing:.4px;border:0}
+.mv{border-bottom:1px solid var(--line);cursor:pointer;position:relative}
+.mv:last-child{border-bottom:0}
+.mv .rw{display:grid;grid-template-columns:44px 1fr auto;gap:9px;padding:11px 12px 11px 10px;align-items:start;min-height:44px;border-left:3px solid transparent}
+.mv.in .rw{border-left-color:var(--teal)}
+.mv.out .rw{border-left-color:var(--blue)}
+.mv.ck .rw{border-left-color:var(--gold);background:#fdfaf2}
+.mv.ck.bad .rw{background:#fdf4f4}
+.dt{font-size:10.5px;font-weight:700;letter-spacing:.4px;color:var(--mut);line-height:1.35;text-transform:uppercase;padding-top:2px}
+.dt i{display:block;font-style:normal;font-size:14px;color:var(--ink);letter-spacing:0}
+.mid .t1{font-size:13px;font-weight:600;letter-spacing:.2px;display:flex;align-items:baseline;gap:6px}
+.t1n{flex:1 1 0;min-width:0;line-height:1.35}
+.mid .t2{font-size:11.5px;color:var(--mut);margin-top:3px;line-height:1.45}
+.pill{font-size:9.5px;font-weight:700;letter-spacing:.7px;padding:3px 6px;border-radius:3px;text-transform:uppercase}
+.pill.i{background:#e4f4ed;color:#1f7a58}
+.pill.o{background:#e6eef6;color:#155a86}
+.pill.c{background:#f7eeda;color:#8a6a12}
+.pill.w{background:#f7e5e5;color:var(--red)}
+.pill.g{background:#e4f4ed;color:#1f7a58}
+.qt{text-align:right;white-space:nowrap;padding-top:1px;padding-right:14px}
+.qt .q{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:.2px}
+.mv.in .qt .q{color:var(--teal)}
+.mv.out .qt .q{color:var(--blue)}
+.qt .y{font-size:11px;color:var(--mut);margin-top:2px;font-variant-numeric:tabular-nums}
+.qt .b{font-size:11px;color:var(--mut);margin-top:3px;font-variant-numeric:tabular-nums}
+.qt .b b{color:var(--ink);font-weight:600}
+.ex{display:none;padding:0 12px 13px 57px;font-size:12px;color:var(--mut);line-height:1.6}
+.mv.open .ex{display:block}
+.mv.open .rw{padding-bottom:6px}
+.ex .kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px}
+.ex .kv b{font-weight:600;color:#4a5a6c;white-space:nowrap}
+.bn{font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink);letter-spacing:.2px}
+.cvr{position:absolute;right:12px;top:13px;color:#c2ccd6;font-size:11px}
+.mv.open .cvr{transform:rotate(90deg)}
+.strip{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:12px}
+.strip>div{background:#fff;padding:12px 13px}
+.strip .gap{grid-column:1/-1;background:#fbf0ef;border-top:2px solid var(--red)}
+.strip .gap.ok{background:#eef8f3;border-top-color:var(--teal)}
+.strip .l{font-size:10px;letter-spacing:.9px;text-transform:uppercase;color:var(--mut);font-weight:700}
+.strip .v{font-size:19px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums;letter-spacing:.2px}
+.strip .v small{font-size:12px;color:var(--mut);font-weight:600}
+.strip .gap .v{color:var(--red);font-size:23px}
+.strip .gap.ok .v{color:var(--teal)}
+.strip .m{font-size:11px;color:var(--mut);margin-top:3px}
+.strip .pk{font-size:11.5px;color:var(--mut);margin-top:5px;font-variant-numeric:tabular-nums}
+.strip .pk b{color:var(--ink);font-weight:600}
+.rec{margin-top:10px;border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}
+.rec>summary{list-style:none;padding:12px 13px;font-size:12.5px;font-weight:600;color:var(--navy);cursor:pointer;display:flex;align-items:center;gap:8px;min-height:44px}
+.rec>summary::-webkit-details-marker{display:none}
+.rec>summary::after{content:'▾';margin-left:auto;color:#b6c2ce}
+.rec[open]>summary::after{content:'▴'}
+.rec .rl{display:flex;gap:10px;padding:11px 13px;border-top:1px solid var(--line);font-size:12px;line-height:1.5;cursor:pointer;min-height:44px;align-items:flex-start}
+.rec .rl:hover{background:#f8fafc}
+.rec .rl .n{font-weight:700;color:var(--red);white-space:nowrap;font-variant-numeric:tabular-nums;min-width:56px}
+.rec .rl .d{color:var(--mut)}
+.rec .rl .d b{color:var(--ink);font-weight:600;display:block;margin-bottom:1px}
+.foot{padding:10px 14px 16px;font-size:11px;color:var(--mut);line-height:1.6}
+.void{padding:44px 22px;text-align:center;background:#fff;border:1px solid var(--line);border-radius:10px}
+.void .t{font-size:14px;font-weight:600}
+.void p{font-size:12.5px;color:var(--mut);margin-top:7px;line-height:1.6}
+.sk{background:linear-gradient(90deg,#e9eef4 25%,#f2f6fa 50%,#e9eef4 75%);background-size:400% 100%;animation:sh 1.4s ease infinite;border-radius:4px}
+@keyframes sh{0%{background-position:100% 0}100%{background-position:0 0}}
+.msep{display:flex;align-items:center;gap:9px;padding:9px 12px;background:#eef2f7;border-bottom:1px solid var(--line);font-size:10.5px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#5d6f82}
+.msep span{margin-left:auto;font-weight:600;letter-spacing:.3px;text-transform:none;color:var(--mut)}
+.mcol{display:flex;align-items:center;gap:9px;padding:12px;border-bottom:1px solid var(--line);cursor:pointer;font-size:12.5px;color:var(--navy);font-weight:600;min-height:44px}
+.mcol .c{color:#b6c2ce;font-size:11px}
+.mcol span{margin-left:auto;font-weight:400;color:var(--mut);font-size:11.5px;font-variant-numeric:tabular-nums}
+table.dt2{width:100%;border-collapse:collapse;font-size:13px}
+table.dt2 th{font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--navy);font-weight:700;text-align:left;padding:9px 12px;border-bottom:2px solid var(--navy);white-space:nowrap}
+table.dt2 th.r{text-align:right}
+table.dt2 td{padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+table.dt2 td.r{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+table.dt2 tr.in td:first-child{box-shadow:inset 3px 0 0 var(--teal)}
+table.dt2 tr.out td:first-child{box-shadow:inset 3px 0 0 var(--blue)}
+table.dt2 tr.ck td{background:#fdf4f4}
+table.dt2 tr.ck td:first-child{box-shadow:inset 3px 0 0 var(--gold)}
+table.dt2 .q{font-weight:700}
+table.dt2 tr.in .q{color:var(--teal)}
+table.dt2 tr.out .q{color:var(--blue)}
+.cs{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px}
+.cs h3{font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--navy);border-bottom:2px solid var(--navy);padding-bottom:6px;margin:0 0 12px}
+.csr{margin-top:18px}
+.csg{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.cslab{font-size:10.5px;letter-spacing:.7px;text-transform:uppercase;color:var(--mut);font-weight:700;margin-bottom:6px}
+.wrapm{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff}
+.gram{font-size:12px;line-height:1.75;color:var(--mut)}
+.gram b{color:var(--ink)}
+.gram .no{color:var(--red);font-weight:600}
+</style>
+</head>
+<body>
+
+<div class="fr" style="left:0;top:0;width:390px">
+<div class="lb">Mobile 390 · statement with a gap (default)</div>
+<div class="ph">
+<div class="hd"><div class="top"><span class="dn">9043-B</span><span class="cat">CASHMERE</span></div><div class="sub">Kano office · movement ledger</div></div>
+<nav class="nav"><a href="#">📊 Overview</a><a href="#">🧮 Allocations</a><a href="#">📅 Plan</a><a href="#" class="on">📗 Movement</a></nav>
+<div class="scope">
+<div class="chips"><span class="cklab">Store</span><button class="chip on">Kano office</button><button class="chip">IDUMOTA</button><button class="chip">Lagos</button></div>
+<div class="chips"><span class="cklab">Range</span><button class="chip on">Since last audit</button><button class="chip">This month</button><button class="chip">30 days</button><button class="chip">All time</button></div>
+<div class="chips"><button class="chip pick">Design <b>9043-B</b> <span class="cv">▾</span></button><span style="font-size:11px;color:#9fb0c0">01 Aug – 26 Aug 2026</span></div>
+</div>
+<div class="body">
+<div class="card ob"><div class="l">Opening balance · 01 Aug</div><div class="v">12B <small>· 2,024 yd</small></div><div class="m">Balance carried forward from audit of 31 Jul</div></div>
+<div class="sh">Movements <span>7 rows</span></div>
+<div class="card" id="mvl">
+<div class="mv in"><div class="rw"><div class="dt">Aug<i>03</i></div><div class="mid"><div class="t1"><span class="pill i">Receipt</span><span class="t1n">GRN KAN-0142</span></div><div class="t2">Wuse Textiles</div></div><div class="qt"><div class="q">+5B</div><div class="y">848 yd</div><div class="b">bal <b>17B</b></div></div></div><span class="cvr">›</span>
+<div class="ex"><div class="kv"><b>Bales</b><span class="bn">1100/1 · 1100/2 · 1100/3 · 1100/4 · 1100/5</span><b>Rosters</b><span>6 · 6 · 5 · 7 · 6 thans — 30 thans, 848 yd</span><b>Shades</b><span>Shade 2 and Shade 4 mixed within 1100/3 and 1100/5</span><b>Reference</b><span class="bn">GRN KAN-0142 · received 03-Aug 09:20</span></div></div></div>
+<div class="mv out"><div class="rw"><div class="dt">Aug<i>07</i></div><div class="mid"><div class="t1"><span class="pill o">Sale</span><span class="t1n">OKESON STORES</span></div><div class="t2">2 whole bales + 4 loose thans</div></div><div class="qt"><div class="q">−2B + 4t</div><div class="y">448 yd</div><div class="b">bal <b>14B + 2t</b></div></div></div><span class="cvr">›</span>
+<div class="ex"><div class="kv"><b>Whole bales</b><span class="bn">1091/2 · 1091/3</span><span></span><span>12 thans · 340 yd</span><b>Loose thans</b><span class="bn">4 thans opened from 1100/5 · 108 yd</span><b>Left behind</b><span>2 thans of 1100/5 stay on the shelf</span><b>Shades</b><span>Shade 2 · Shade 4</span></div></div></div>
+<div class="mv in"><div class="rw"><div class="dt">Aug<i>11</i></div><div class="mid"><div class="t1"><span class="pill i">Transfer in</span><span class="t1n">← IDUMOTA</span></div><div class="t2">TRF-0081</div></div><div class="qt"><div class="q">+2B</div><div class="y">331 yd</div><div class="b">bal <b>16B + 2t</b></div></div></div><span class="cvr">›</span>
+<div class="ex"><div class="kv"><b>Bales</b><span class="bn">9043/11 · 9043/12</span><b>Rosters</b><span>6 · 6 thans — 12 thans, 331 yd</span><b>Shades</b><span>Shade 4</span><b>Reference</b><span class="bn">TRF-0081 · arrived 11-Aug 16:05</span></div></div></div>
+<div class="mv out"><div class="rw"><div class="dt">Aug<i>14</i></div><div class="mid"><div class="t1"><span class="pill o">Sale</span><span class="t1n">ALHAJI MUSA</span></div><div class="t2">4 whole bales + the 2 loose thans</div></div><div class="qt"><div class="q">−4B + 2t</div><div class="y">730 yd</div><div class="b">bal <b>12B</b></div></div></div><span class="cvr">›</span>
+<div class="ex"><div class="kv"><b>Whole bales</b><span class="bn">1100/1 · 1100/2 · 9043/11 · 9043/12</span><span></span><span>24 thans · 674 yd</span><b>Loose thans</b><span class="bn">2 remaining thans of 1100/5 · 56 yd</span><b>Shades</b><span>Shade 2 · Shade 4</span></div></div></div>
+<div class="mv in"><div class="rw"><div class="dt">Aug<i>18</i></div><div class="mid"><div class="t1"><span class="pill i">Return</span><span class="t1n">← ALHAJI MUSA</span></div><div class="t2">RET-0019</div></div><div class="qt"><div class="q">+3t</div><div class="y">84 yd</div><div class="b">bal <b>12B + 3t</b></div></div></div><span class="cvr">›</span>
+<div class="ex"><div class="kv"><b>Loose thans</b><span class="bn">3 thans · 27 + 29 + 28 yd</span><b>From</b><span>Sale of 14-Aug · bale 9043/12</span><b>Shades</b><span>Shade 4</span><b>Reference</b><span class="bn">RET-0019 · logged 18-Aug 10:40</span></div></div></div>
+<div class="mv out"><div class="rw"><div class="dt">Aug<i>21</i></div><div class="mid"><div class="t1"><span class="pill o">Transfer out</span><span class="t1n">→ Lagos</span></div><div class="t2">TRF-0088 · in transit</div></div><div class="qt"><div class="q">−1B</div><div class="y">170 yd</div><div class="b">bal <b>11B + 3t</b></div></div></div><span class="cvr">›</span>
+<div class="ex"><div class="kv"><b>Bale</b><span class="bn">1100/3</span><b>Roster</b><span>5 thans · 170 yd</span><b>Shades</b><span>Shade 2 · Shade 4</span><b>Reference</b><span class="bn">TRF-0088 · dispatched 21-Aug · not yet received</span></div></div></div>
+<div class="mv out"><div class="rw"><div class="dt">Aug<i>24</i></div><div class="mid"><div class="t1"><span class="pill o">Sale</span><span class="t1n">HAJIYA ZAINAB</span></div><div class="t2">2 whole bales + 3 loose thans</div></div><div class="qt"><div class="q">−2B + 3t</div><div class="y">423 yd</div><div class="b">bal <b>9B</b></div></div></div><span class="cvr">›</span>
+<div class="ex"><div class="kv"><b>Whole bales</b><span class="bn">1100/4 · 1091/4</span><span></span><span>12 thans · 339 yd</span><b>Loose thans</b><span class="bn">the 3 returned thans · 84 yd</span><b>Shades</b><span>Shade 2</span></div></div></div>
+<div class="mv ck bad"><div class="rw"><div class="dt">Aug<i>26</i></div><div class="mid"><div class="t1"><span class="pill c">📋 Audit</span><span class="t1n">counted by Muhammad</span></div><div class="t2">book 9B · counted 8B + 2t</div></div><div class="qt"><div class="q" style="color:var(--red)">−112 yd</div><div class="y">short</div><div class="b">recount asked</div></div></div><span class="cvr">›</span>
+<div class="ex"><div class="kv"><b>Sheet</b><span class="bn">STK-0261 · 26-Aug 07:15</span><b>Book</b><span>9 whole bales · 1,516 yd</span><b>Counted</b><span>8 whole bales + 2 loose thans · 1,404 yd</span><b>Reading</b><span>One bale has been opened and 4 thans are gone — 112 yd</span><b>Result</b><span>Mismatch — recount requested same day</span></div></div></div>
+</div>
+<div class="strip">
+<div><div class="l">Book balance</div><div class="v">1,516 <small>yd</small></div><div class="pk">packaging <b>9B</b></div></div>
+<div><div class="l">Last count</div><div class="v">1,404 <small>yd</small></div><div class="pk">packaging <b>8B + 2t</b></div></div>
+<div class="gap"><div class="l">Unexplained gap</div><div class="v">−112 yd</div><div class="m">Muhammad · 26 Aug · one bale opened, 4 thans short</div></div>
+</div>
+<details class="rec" open><summary>Possible explanations <span class="pill g" style="margin-left:2px">fully explained</span></summary>
+<div class="rl"><span class="n">−56 yd</span><span class="d"><b>Goods gone, approval still pending</b>OKESON STORES · 2 thans handed over 25 Aug, sale still queued — book has not deducted them yet</span></div>
+<div class="rl"><span class="n">−56 yd</span><span class="d"><b>Logged after the count</b>Sale → ALHAJI MUSA · 2 thans left the floor 25 Aug, logged 28 Aug — two days after the audit</span></div>
+<div class="rl" style="background:#f8fafc"><span class="n" style="color:var(--teal)">= 112</span><span class="d">Together these explain the whole <b style="display:inline">−112 yd</b>. Confirm both, then re-run the count.</span></div>
+</details>
+<p class="foot">Gap arithmetic is in yards — the only measure that adds across mixed bale and than records. Read-only: every figure derives from goods receipts, transfers, sales and stock takes at read time.</p>
+</div>
+</div>
+</div>
+
+<div class="fr" style="left:450px;top:0;width:390px">
+<div class="lb">Mobile · clean design (gap = 0)</div>
+<div class="ph">
+<div class="hd"><div class="top"><span class="dn">8802-A</span><span class="cat">COTTON LACE</span></div><div class="sub">Kano office · movement ledger</div></div>
+<nav class="nav"><a href="#">📊 Overview</a><a href="#">🧮 Allocations</a><a href="#">📅 Plan</a><a href="#" class="on">📗 Movement</a></nav>
+<div class="scope"><div class="chips"><span class="cklab">Store</span><button class="chip on">Kano office</button><button class="chip">IDUMOTA</button></div>
+<div class="chips"><span class="cklab">Range</span><button class="chip on">Since last audit</button><button class="chip">This month</button><button class="chip">30 days</button></div></div>
+<div class="body">
+<div class="card ob"><div class="l">Opening balance · 05 Aug</div><div class="v">0B</div><div class="m">First goods receipt in range</div></div>
+<div class="sh">Movements <span>3 rows</span></div>
+<div class="card">
+<div class="mv in"><div class="rw"><div class="dt">Aug<i>05</i></div><div class="mid"><div class="t1"><span class="pill i">Receipt</span><span class="t1n">GRN KAN-0151</span></div><div class="t2">Wuse Textiles</div></div><div class="qt"><div class="q">+6B</div><div class="y">1,036 yd</div><div class="b">bal <b>6B</b></div></div></div><span class="cvr">›</span>
+<div class="ex"><div class="kv"><b>Bales</b><span class="bn">5810 · 5811 · 5814 · 5820 · 5822 · 5827</span><b>Rosters</b><span>6 thans each — 36 thans, 1,036 yd</span><b>Shades</b><span>Shade 2</span></div></div></div>
+<div class="mv out"><div class="rw"><div class="dt">Aug<i>16</i></div><div class="mid"><div class="t1"><span class="pill o">Sale</span><span class="t1n">OKESON STORES</span></div><div class="t2">2 whole bales</div></div><div class="qt"><div class="q">−2B</div><div class="y">347 yd</div><div class="b">bal <b>4B</b></div></div></div><span class="cvr">›</span>
+<div class="ex"><div class="kv"><b>Whole bales</b><span class="bn">5810 · 5811</span><b>Rosters</b><span>6 · 6 thans — 12 thans, 347 yd</span><b>Shades</b><span>Shade 2</span></div></div></div>
+<div class="mv ck"><div class="rw"><div class="dt">Aug<i>26</i></div><div class="mid"><div class="t1"><span class="pill c">📋 Audit</span><span class="t1n">counted by Muhammad</span></div><div class="t2">book 4B · counted 4B</div></div><div class="qt"><div class="q" style="color:var(--teal)">✓ 0 yd</div><div class="y">agreed</div><div class="b">signed off</div></div></div></div>
+</div>
+<div class="strip">
+<div><div class="l">Book balance</div><div class="v">689 <small>yd</small></div><div class="pk">packaging <b>4B</b></div></div>
+<div><div class="l">Last count</div><div class="v">689 <small>yd</small></div><div class="pk">packaging <b>4B</b></div></div>
+<div class="gap ok"><div class="l">Unexplained gap</div><div class="v">None</div><div class="m">Book and count agree to the yard</div></div>
+</div>
+<p class="foot">Read-only. Derived at read time from receipts, transfers, sales and stock takes.</p>
+</div>
+</div>
+</div>
+
+<div class="fr" style="left:900px;top:0;width:390px">
+<div class="lb">Mobile · empty range</div>
+<div class="ph">
+<div class="hd"><div class="top"><span class="dn">9031-C</span><span class="cat">VOILE</span></div><div class="sub">IDUMOTA · movement ledger</div></div>
+<nav class="nav"><a href="#">📊 Overview</a><a href="#">🧮 Allocations</a><a href="#">📅 Plan</a><a href="#" class="on">📗 Movement</a></nav>
+<div class="scope"><div class="chips"><span class="cklab">Store</span><button class="chip">Kano office</button><button class="chip on">IDUMOTA</button><button class="chip">Lagos</button></div>
+<div class="chips"><span class="cklab">Range</span><button class="chip on">Since last audit</button><button class="chip">This month</button><button class="chip">30 days</button></div></div>
+<div class="body">
+<div class="card ob"><div class="l">Opening balance · 01 Aug</div><div class="v">3B <small>· 512 yd</small></div><div class="m">Balance carried forward · unchanged since</div></div>
+<div class="void"><div class="t">No movements in this range</div><p>Nothing came in or went out of IDUMOTA for 9031-C since the last audit.<br>Try <b>All time</b> to see its full history.</p></div>
+<div class="strip"><div><div class="l">Book balance</div><div class="v">512 <small>yd</small></div><div class="pk">packaging <b>3B</b></div></div>
+<div><div class="l">Last count</div><div class="v">512 <small>yd</small></div><div class="pk">packaging <b>3B</b></div></div>
+<div class="gap ok"><div class="l">Unexplained gap</div><div class="v">None</div><div class="m">Muhammad · 31 Jul · book and count agree</div></div></div>
+</div>
+</div>
+</div>
+
+<div class="fr" style="left:900px;top:820px;width:390px">
+<div class="lb">Mobile · loading</div>
+<div class="ph">
+<div class="hd"><div class="top"><span class="dn">9043-B</span><span class="cat">CASHMERE</span></div><div class="sub">Kano office · movement ledger</div></div>
+<nav class="nav"><a href="#">📊 Overview</a><a href="#">🧮 Allocations</a><a href="#">📅 Plan</a><a href="#" class="on">📗 Movement</a></nav>
+<div class="scope"><div class="chips"><span class="cklab">Store</span><button class="chip on">Kano office</button><button class="chip">IDUMOTA</button><button class="chip">Lagos</button></div>
+<div class="chips"><span class="cklab">Range</span><button class="chip on">Since last audit</button><button class="chip">This month</button><button class="chip">30 days</button></div></div>
+<div class="body">
+<div class="card ob"><div class="l">Opening balance</div><div class="sk" style="height:26px;width:62%;margin:7px 0 6px"></div><div class="sk" style="height:11px;width:80%"></div></div>
+<div class="sh">Movements</div>
+<div class="card" style="padding:4px 0">
+<div style="display:grid;grid-template-columns:44px 1fr 84px;gap:10px;padding:12px;border-bottom:1px solid var(--line)"><div class="sk" style="height:30px"></div><div><div class="sk" style="height:13px;width:70%"></div><div class="sk" style="height:11px;width:45%;margin-top:6px"></div></div><div><div class="sk" style="height:14px"></div><div class="sk" style="height:11px;margin-top:6px"></div></div></div>
+<div style="display:grid;grid-template-columns:44px 1fr 84px;gap:10px;padding:12px;border-bottom:1px solid var(--line)"><div class="sk" style="height:30px"></div><div><div class="sk" style="height:13px;width:55%"></div><div class="sk" style="height:11px;width:62%;margin-top:6px"></div></div><div><div class="sk" style="height:14px"></div><div class="sk" style="height:11px;margin-top:6px"></div></div></div>
+<div style="display:grid;grid-template-columns:44px 1fr 84px;gap:10px;padding:12px;border-bottom:1px solid var(--line)"><div class="sk" style="height:30px"></div><div><div class="sk" style="height:13px;width:78%"></div><div class="sk" style="height:11px;width:40%;margin-top:6px"></div></div><div><div class="sk" style="height:14px"></div><div class="sk" style="height:11px;margin-top:6px"></div></div></div>
+<div style="display:grid;grid-template-columns:44px 1fr 84px;gap:10px;padding:12px"><div class="sk" style="height:30px"></div><div><div class="sk" style="height:13px;width:60%"></div><div class="sk" style="height:11px;width:52%;margin-top:6px"></div></div><div><div class="sk" style="height:14px"></div><div class="sk" style="height:11px;margin-top:6px"></div></div></div>
+</div>
+<div class="strip"><div><div class="l">Book balance</div><div class="sk" style="height:20px;width:70%;margin-top:6px"></div></div>
+<div><div class="l">Last count</div><div class="sk" style="height:20px;width:70%;margin-top:6px"></div></div>
+<div class="gap" style="background:#fff;border-top-color:var(--line)"><div class="l">Unexplained gap</div><div class="sk" style="height:22px;width:44%;margin-top:6px"></div></div></div>
+</div>
+</div>
+</div>
+
+<div class="fr" style="left:1350px;top:0;width:390px">
+<div class="lb">Mobile · long range (all time, 54 movements)</div>
+<div class="ph">
+<div class="hd"><div class="top"><span class="dn">9043-B</span><span class="cat">CASHMERE</span></div><div class="sub">Kano office · movement ledger</div></div>
+<nav class="nav"><a href="#">📊 Overview</a><a href="#">🧮 Allocations</a><a href="#">📅 Plan</a><a href="#" class="on">📗 Movement</a></nav>
+<div class="scope"><div class="chips"><span class="cklab">Store</span><button class="chip on">Kano office</button><button class="chip">IDUMOTA</button><button class="chip">Lagos</button></div>
+<div class="chips"><span class="cklab">Range</span><button class="chip">Since last audit</button><button class="chip">This month</button><button class="chip">30 days</button><button class="chip on">All time</button></div></div>
+<div class="body">
+<div class="card ob"><div class="l">Opening balance · 12 Mar</div><div class="v">0B</div><div class="m">First goods receipt — design opened in Kano</div></div>
+<div class="sh">Movements <span>54 rows · 6 months</span></div>
+<div class="card">
+<div class="mcol"><span class="c">▸</span>March 2026<span>7 movements · closed 9B</span></div>
+<div class="mcol"><span class="c">▸</span>April 2026<span>11 movements · closed 14B + 3t</span></div>
+<div class="mcol"><span class="c">▸</span>May 2026<span>9 movements · closed 6B + 1t</span></div>
+<div class="mcol"><span class="c">▸</span>June 2026<span>13 movements · closed 15B</span></div>
+<div class="msep">July 2026 <span>7 movements</span></div>
+<div class="mv in"><div class="rw"><div class="dt">Jul<i>04</i></div><div class="mid"><div class="t1"><span class="pill i">Receipt</span><span class="t1n">GRN KAN-0126</span></div><div class="t2">Wuse Textiles</div></div><div class="qt"><div class="q">+8B</div><div class="y">1,352 yd</div><div class="b">bal <b>23B</b></div></div></div><span class="cvr">›</span><div class="ex"><div class="kv"><b>Bales</b><span class="bn">1074/1 · 1074/2 · 1074/3 · 1074/4 · 1074/5 · 1074/6 · 1074/7 · 1074/8</span><b>Rosters</b><span>48 thans · 1,352 yd</span><b>Shades</b><span>Shade 2 · Shade 4</span></div></div></div>
+<div class="mv out"><div class="rw"><div class="dt">Jul<i>19</i></div><div class="mid"><div class="t1"><span class="pill o">Sale</span><span class="t1n">HAJIYA ZAINAB</span></div><div class="t2">11 whole bales</div></div><div class="qt"><div class="q">−11B</div><div class="y">1,859 yd</div><div class="b">bal <b>12B</b></div></div></div><span class="cvr">›</span><div class="ex"><div class="kv"><b>Whole bales</b><span class="bn">1074/1 · 1074/2 · 1074/3 · 1074/4 · 1063/1 · 1063/2 · 1063/3 · 1063/4 · 1063/5 · 1063/6 · 1063/7</span><b>Rosters</b><span>66 thans · 1,859 yd</span><b>Shades</b><span>Shade 4</span></div></div></div>
+<div class="mv ck"><div class="rw"><div class="dt">Jul<i>31</i></div><div class="mid"><div class="t1"><span class="pill c">📋 Audit</span><span class="t1n">counted by Muhammad</span></div><div class="t2">book 12B · counted 12B</div></div><div class="qt"><div class="q" style="color:var(--teal)">✓ 0 yd</div><div class="y">agreed</div><div class="b">signed off</div></div></div></div>
+<div class="msep">August 2026 <span>7 movements</span></div>
+<div class="mv in"><div class="rw"><div class="dt">Aug<i>03</i></div><div class="mid"><div class="t1"><span class="pill i">Receipt</span><span class="t1n">GRN KAN-0142</span></div><div class="t2">Wuse Textiles</div></div><div class="qt"><div class="q">+5B</div><div class="y">848 yd</div><div class="b">bal <b>17B</b></div></div></div><span class="cvr">›</span><div class="ex"><div class="kv"><b>Bales</b><span class="bn">1100/1 · 1100/2 · 1100/3 · 1100/4 · 1100/5</span><b>Rosters</b><span>30 thans · 848 yd</span><b>Shades</b><span>Shade 2 · Shade 4</span></div></div></div>
+<div class="mv out"><div class="rw"><div class="dt">Aug<i>24</i></div><div class="mid"><div class="t1"><span class="pill o">Sale</span><span class="t1n">HAJIYA ZAINAB</span></div><div class="t2">2 whole bales + 3 loose thans</div></div><div class="qt"><div class="q">−2B + 3t</div><div class="y">423 yd</div><div class="b">bal <b>9B</b></div></div></div><span class="cvr">›</span><div class="ex"><div class="kv"><b>Whole bales</b><span class="bn">1100/4 · 1091/4</span><b>Loose thans</b><span class="bn">3 returned thans · 84 yd</span><b>Shades</b><span>Shade 2</span></div></div></div>
+<div class="mv ck bad"><div class="rw"><div class="dt">Aug<i>26</i></div><div class="mid"><div class="t1"><span class="pill c">📋 Audit</span><span class="t1n">counted by Muhammad</span></div><div class="t2">book 9B · counted 8B + 2t</div></div><div class="qt"><div class="q" style="color:var(--red)">−112 yd</div><div class="y">short</div><div class="b">recount asked</div></div></div></div>
+</div>
+<div class="strip"><div><div class="l">Book balance</div><div class="v">1,516 <small>yd</small></div><div class="pk">packaging <b>9B</b></div></div>
+<div><div class="l">Last count</div><div class="v">1,404 <small>yd</small></div><div class="pk">packaging <b>8B + 2t</b></div></div>
+<div class="gap"><div class="l">Unexplained gap</div><div class="v">−112 yd</div><div class="m">one bale opened, 4 thans short</div></div></div>
+</div>
+</div>
+</div>
+
+<div class="fr" style="left:1800px;top:0;width:1000px">
+<div class="lb">Desktop 1000 · statement with a gap</div>
+<div class="ph">
+<div class="hd" style="display:flex;align-items:center;gap:16px;padding:16px 22px"><div><div class="top"><span class="dn">9043-B</span><span class="cat">CASHMERE</span></div><div class="sub">Kano office · movement ledger · 01 Aug – 26 Aug 2026</div></div>
+<div style="margin-left:auto;text-align:right"><div style="font-size:10.5px;letter-spacing:1px;color:#b9d3e8;font-weight:700;text-transform:uppercase">Unexplained gap</div><div style="font-size:24px;font-weight:700;color:#ffb3ad;margin-top:3px">−112 yd</div></div></div>
+<nav class="nav" style="padding:0 14px"><a href="#">📊 Overview</a><a href="#">🧮 Allocations</a><a href="#">📅 Plan</a><a href="#" class="on">📗 Movement</a></nav>
+<div class="scope" style="flex-direction:row;align-items:center;gap:14px;padding:12px 22px;flex-wrap:wrap">
+<div class="chips"><span class="cklab">Store</span><button class="chip on">Kano office</button><button class="chip">IDUMOTA</button><button class="chip">Lagos</button></div>
+<div class="chips"><span class="cklab">Range</span><button class="chip on">Since last audit</button><button class="chip">This month</button><button class="chip">30 days</button><button class="chip">All time</button></div>
+<div class="chips" style="margin-left:auto"><button class="chip pick">Design <b>9043-B</b> <span class="cv">▾</span></button></div>
+</div>
+<div class="body" style="padding:16px 22px 22px">
+<div style="display:grid;grid-template-columns:1fr 2fr;gap:14px;align-items:start">
+<div>
+<div class="card ob" style="margin-bottom:14px"><div class="l">Opening balance · 01 Aug</div><div class="v">2,024 <small>yd</small></div><div class="m">packaging 12B · carried forward from audit of 31 Jul</div></div>
+<div class="strip" style="grid-template-columns:1fr;margin-top:0">
+<div><div class="l">Book balance</div><div class="v">1,516 <small>yd</small></div><div class="pk">packaging <b>9B</b> · as of 26 Aug</div></div>
+<div><div class="l">Last count</div><div class="v">1,404 <small>yd</small></div><div class="pk">packaging <b>8B + 2t</b> · Muhammad, 26 Aug</div></div>
+<div class="gap"><div class="l">Unexplained gap</div><div class="v">−112 yd</div><div class="m">One bale opened, 4 thans short · recount asked</div></div>
+</div>
+<details class="rec" open><summary>Possible explanations <span class="pill g">fully explained</span></summary>
+<div class="rl"><span class="n">−56 yd</span><span class="d"><b>Goods gone, approval pending</b>OKESON STORES · 2 thans handed over 25 Aug, still queued</span></div>
+<div class="rl"><span class="n">−56 yd</span><span class="d"><b>Logged after the count</b>Sale → ALHAJI MUSA · 2 thans, logged 28 Aug</span></div>
+<div class="rl" style="background:#f8fafc"><span class="n" style="color:var(--teal)">= 112</span><span class="d">Explains the whole <b style="display:inline">−112 yd</b></span></div>
+</details>
+</div>
+<div class="card" style="margin:0;overflow:hidden">
+<table class="dt2">
+<thead><tr><th>Date</th><th>Movement</th><th>Counterparty</th><th class="r">Quantity</th><th class="r">Yards</th><th class="r">Balance</th></tr></thead>
+<tbody>
+<tr class="in"><td>03 Aug</td><td><span class="pill i">Receipt</span> GRN KAN-0142</td><td>Wuse Textiles</td><td class="r q">+5B</td><td class="r">848</td><td class="r">17B</td></tr>
+<tr class="out"><td>07 Aug</td><td><span class="pill o">Sale</span></td><td>OKESON STORES</td><td class="r q">−2B + 4t</td><td class="r">448</td><td class="r">14B + 2t</td></tr>
+<tr class="in"><td>11 Aug</td><td><span class="pill i">Transfer in</span> TRF-0081</td><td>← IDUMOTA</td><td class="r q">+2B</td><td class="r">331</td><td class="r">16B + 2t</td></tr>
+<tr class="out"><td>14 Aug</td><td><span class="pill o">Sale</span></td><td>ALHAJI MUSA</td><td class="r q">−4B + 2t</td><td class="r">730</td><td class="r">12B</td></tr>
+<tr class="in"><td>18 Aug</td><td><span class="pill i">Return</span> RET-0019</td><td>← ALHAJI MUSA</td><td class="r q">+3t</td><td class="r">84</td><td class="r">12B + 3t</td></tr>
+<tr class="out"><td>21 Aug</td><td><span class="pill o">Transfer out</span> TRF-0088</td><td>→ Lagos</td><td class="r q">−1B</td><td class="r">170</td><td class="r">11B + 3t</td></tr>
+<tr class="out"><td>24 Aug</td><td><span class="pill o">Sale</span></td><td>HAJIYA ZAINAB</td><td class="r q">−2B + 3t</td><td class="r">423</td><td class="r">9B</td></tr>
+<tr class="ck"><td>26 Aug</td><td><span class="pill c">📋 Audit</span> STK-0261</td><td>counted by Muhammad</td><td class="r q" style="color:var(--red)">−112 yd</td><td class="r">1,404</td><td class="r">8B + 2t</td></tr>
+</tbody>
+</table>
+<p class="foot" style="padding:11px 12px 14px">Click any row for its bale numbers, rosters and shades. Quantities speak each movement's own packaging; yards are the measure the gap is settled in. Read-only.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="fr" style="left:1800px;top:1140px;width:1000px">
+<div class="lb">Component sheet</div>
+<div class="cs">
+<h3>Movement row — collapsed / expanded</h3>
+<div class="csg">
+<div><div class="cslab">IN · collapsed</div><div class="wrapm"><div class="mv in"><div class="rw"><div class="dt">Aug<i>03</i></div><div class="mid"><div class="t1"><span class="pill i">Receipt</span><span class="t1n">GRN KAN-0142</span></div><div class="t2">Wuse Textiles</div></div><div class="qt"><div class="q">+5B</div><div class="y">848 yd</div><div class="b">bal <b>17B</b></div></div></div><span class="cvr">›</span></div></div></div>
+<div><div class="cslab">IN · expanded</div><div class="wrapm"><div class="mv in open"><div class="rw"><div class="dt">Aug<i>03</i></div><div class="mid"><div class="t1"><span class="pill i">Receipt</span><span class="t1n">GRN KAN-0142</span></div><div class="t2">Wuse Textiles</div></div><div class="qt"><div class="q">+5B</div><div class="y">848 yd</div><div class="b">bal <b>17B</b></div></div></div><span class="cvr">›</span><div class="ex"><div class="kv"><b>Bales</b><span class="bn">1100/1 · 1100/2 · 1100/3 · 1100/4 · 1100/5</span><b>Rosters</b><span>6 · 6 · 5 · 7 · 6 thans — 30 thans, 848 yd</span><b>Shades</b><span>Shade 2 and Shade 4 mixed within one bale</span></div></div></div></div></div>
+<div><div class="cslab">OUT · collapsed · mixed packaging</div><div class="wrapm"><div class="mv out"><div class="rw"><div class="dt">Aug<i>24</i></div><div class="mid"><div class="t1"><span class="pill o">Sale</span><span class="t1n">HAJIYA ZAINAB</span></div><div class="t2">2 whole bales + 3 loose thans</div></div><div class="qt"><div class="q">−2B + 3t</div><div class="y">423 yd</div><div class="b">bal <b>9B</b></div></div></div><span class="cvr">›</span></div></div></div>
+<div><div class="cslab">OUT · expanded</div><div class="wrapm"><div class="mv out open"><div class="rw"><div class="dt">Aug<i>24</i></div><div class="mid"><div class="t1"><span class="pill o">Sale</span><span class="t1n">HAJIYA ZAINAB</span></div><div class="t2">2 whole bales + 3 loose thans</div></div><div class="qt"><div class="q">−2B + 3t</div><div class="y">423 yd</div><div class="b">bal <b>9B</b></div></div></div><span class="cvr">›</span><div class="ex"><div class="kv"><b>Whole bales</b><span class="bn">1100/4 · 1091/4</span><span></span><span>12 thans · 339 yd</span><b>Loose thans</b><span class="bn">3 thans · 84 yd</span><b>Shades</b><span>Shade 2</span></div></div></div></div></div>
+<div><div class="cslab">CHECKPOINT · mismatch</div><div class="wrapm"><div class="mv ck bad"><div class="rw"><div class="dt">Aug<i>26</i></div><div class="mid"><div class="t1"><span class="pill c">📋 Audit</span><span class="t1n">counted by Muhammad</span></div><div class="t2">book 9B · counted 8B + 2t</div></div><div class="qt"><div class="q" style="color:var(--red)">−112 yd</div><div class="y">short</div><div class="b">recount asked</div></div></div><span class="cvr">›</span></div></div></div>
+<div><div class="cslab">CHECKPOINT · clean</div><div class="wrapm"><div class="mv ck"><div class="rw"><div class="dt">Jul<i>31</i></div><div class="mid"><div class="t1"><span class="pill c">📋 Audit</span><span class="t1n">counted by Muhammad</span></div><div class="t2">book 12B · counted 12B</div></div><div class="qt"><div class="q" style="color:var(--teal)">✓ 0 yd</div><div class="y">agreed</div><div class="b">signed off</div></div></div></div></div></div>
+</div>
+<div class="csr"><h3>Closing strip</h3>
+<div class="csg">
+<div><div class="cslab">Gap present</div><div class="strip" style="margin-top:0"><div><div class="l">Book balance</div><div class="v">1,516 <small>yd</small></div><div class="pk">packaging <b>9B</b></div></div><div><div class="l">Last count</div><div class="v">1,404 <small>yd</small></div><div class="pk">packaging <b>8B + 2t</b></div></div><div class="gap"><div class="l">Unexplained gap</div><div class="v">−112 yd</div><div class="m">one bale opened, 4 thans short</div></div></div></div>
+<div><div class="cslab">Reconciled</div><div class="strip" style="margin-top:0"><div><div class="l">Book balance</div><div class="v">689 <small>yd</small></div><div class="pk">packaging <b>4B</b></div></div><div><div class="l">Last count</div><div class="v">689 <small>yd</small></div><div class="pk">packaging <b>4B</b></div></div><div class="gap ok"><div class="l">Unexplained gap</div><div class="v">None</div><div class="m">Book and count agree to the yard</div></div></div></div>
+</div></div>
+<div class="csr"><h3>Filter chips &amp; pills</h3>
+<div class="chips" style="margin-bottom:10px"><span class="cklab">Store</span><button class="chip on">Kano office</button><button class="chip">IDUMOTA</button><button class="chip">Lagos</button><button class="chip pick">Design <b>9043-B</b> <span class="cv">▾</span></button></div>
+<div class="chips"><span class="pill i">Receipt</span><span class="pill i">Transfer in</span><span class="pill i">Return</span><span class="pill o">Sale</span><span class="pill o">Transfer out</span><span class="pill c">📋 Audit</span><span class="pill w">Mismatch</span><span class="pill g">Signed off</span></div>
+</div>
+<div class="csr"><h3>Quantity grammar</h3>
+<p class="gram">Two packaging units and one measure. <b>Than</b> — the atomic roll, one inventory row, carrying its own yardage. <b>Bale</b> — a container of thans under one printed bale number; the roster count varies, and one bale may hold several shades. <b>Yards</b> — the continuous measure.<br>
+Every line speaks the item's <b>own</b> packaging: a movement that took the whole roster counts in bales, anything less counts in thans. <b>6B</b> · <b>250t</b> · <b>4B + 21t</b>. Yards print alongside.<br>
+<span class="no">Never both units for the same goods.</span> "2B · 4 thans" restates one delivery twice — banned. A bale's than count and yardage come only from its own roster, never from a conversion factor.<br>
+Gap arithmetic is settled in <b>yards</b> — the only universally additive number across mixed bale and than records. Packaging shows beside it for recognition, never as the subtraction.</p>
+</div>
+</div>
+</div>
+
+<script>
+document.addEventListener('click',function(e){
+var r=e.target.closest('.mv');
+if(!r||!r.querySelector('.ex')||e.target.closest('.cs'))return;
+r.classList.toggle('open');
+});
+document.querySelectorAll('.chips').forEach(function(g){
+g.querySelectorAll('.chip:not(.pick)').forEach(function(c){
+c.onclick=function(){g.querySelectorAll('.chip:not(.pick)').forEach(function(x){x.classList.remove('on')});c.classList.add('on')};
+});
+});
+document.querySelectorAll('.mcol').forEach(function(m){m.onclick=function(){m.querySelector('.c').textContent=m.querySelector('.c').textContent==='▸'?'▾':'▸'}});
+</script>
+</body>
+</html>
