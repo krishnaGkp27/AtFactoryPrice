@@ -17,7 +17,6 @@ const auditLogRepository = require('../../../src/repositories/auditLogRepository
 const inventoryRepository = require('../../../src/repositories/inventoryRepository');
 const transactionsRepository = require('../../../src/repositories/transactionsRepository');
 const accountingService = require('../../../src/services/accountingService');
-const stockLedgerService = require('../../../src/services/stockLedgerService');
 const auditService = require('../../../src/services/auditService');
 const invoiceService = require('../../../src/services/invoiceService');
 
@@ -26,7 +25,6 @@ const invoiceService = require('../../../src/services/invoiceService');
 invoiceService.createForSale = async () => null;
 accountingService.recordSale = async () => true;
 accountingService.recordReturn = async () => true;
-stockLedgerService.recordSaleOut = async () => true;
 auditService.log = async () => true;
 
 function harness(item) {

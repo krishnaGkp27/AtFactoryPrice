@@ -151,9 +151,15 @@ session arrays, `cbSafe()` from `src/utils/telegramUI.js`).
 `Inventory`, `Transactions`, `Customers`, `Users`, `Departments`, `Orders`,
 `Samples`, `ApprovalQueue`, `Tasks`, `Contacts`, `ProductTypes`, `Settings`,
 `Receipts`, `AuditLog`, `DesignAssets`, `CatalogStock`, `CatalogLedger`,
-`Marketers`, `MarketerAllocations`, `UserPrefs`, `LedgerTransactions`,
+`Marketers`, `MarketerAllocations`, `LedgerTransactions`,
 `PaymentAccounts`, `PaymentRequests`,
 `LedgerBalanceCache`, `Transfers`, `GoodsReceipts`, `PendingUsers`, `Locations`.
+
+**Retired 31-Aug-2026 (SHT-1) — do not re-add:** `Stock_Ledger`, `UserPrefs`,
+`ShipmentEvents`, `BankFeed`. Each had no live reader; two had no writer either.
+They are absent from `schemaMapper` so the bootstrap cannot recreate the tabs.
+The storage split that produced this (which sheets move to Railway Postgres and
+which stay) is recorded in `telegram-ops-bot/docs/SHEET_STORAGE_SPLIT.md`.
 
 Inventory column W = `design_category` (Cashmere / Chinos / Gaberdine /
 Senator / TR / …), stamped per DESIGN by the dual-admin Set Design Category

@@ -11,7 +11,8 @@
  *   fetchTransactions(opts) → { transactions:[{txnId, postedAt, amount, currency, direction, counterparty, narration, reference}] }
  *   getEstimatedCost(payload)
  *
- * Persistence happens via `bankFeedRepository.upsert()` — keyed by
+ * SHT-1: the BankFeed sheet was retired (no reader, no live writer). A
+ * future banking rollout persists to Postgres, keyed by
  * `txn_id` so re-fetching the same window is idempotent.
  *
  * The matcher / reconciler (`src/services/bankReconciler.js`) is a

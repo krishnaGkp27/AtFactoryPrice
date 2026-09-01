@@ -734,7 +734,6 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // server-generated bale_uid + addedAt are stamped per row, then drop a
     // Stock_Ledger line per bale for the audit trail.
     const goodsReceiptsRepo = require('../repositories/goodsReceiptsRepository');
-    const stockLedgerRepo = require('../repositories/stockLedgerRepository');
     const balesIn = Array.isArray(aj.bales) ? aj.bales : [];
     // TRF-INT3 (owner rule 1) — an incoming bale number colliding with a
     // LIVE bale (available / in_transit) in this warehouse is refused: no
@@ -777,19 +776,6 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       arrivalBatch: aj.arrivalBatch || '',
     }));
     const persisted = await stockEngine.intakeBale(baleRows, { event: 'intake', approvalId: requestId, adminId: approvedBy });
-    try {
-      const idGen = require('../utils/idGenerator');
-      const today = todayInLagos();  // TIME-1 — Lagos day
-      for (const b of persisted) {
-        await stockLedgerRepo.append({
-          entry_id: idGen.stockLedger(),
-          date: today,
-          item_id: b.baleUid, package_no: b.packageNo, branch: b.warehouse,
-          type: 'received', qty_in: b.yards, qty_out: 0,
-          reference_id: grn.grn_id,
-        });
-      }
-    } catch (_) { /* non-fatal: GRN + Inventory persisted; ledger is supplementary */ }
     await transactionsRepository.append({
       user: item.user, action: 'receive_goods', design: aj.design, color: aj.shade,
       qty: totalYards, before: '', after: aj.warehouse, status: 'approved',
@@ -833,7 +819,6 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     //   4. Drop Stock_Ledger rows.
     //   5. If po_id is set, push to procurementOrdersRepo and recompute.
     const goodsReceiptsRepo = require('../repositories/goodsReceiptsRepository');
-    const stockLedgerRepo = require('../repositories/stockLedgerRepository');
 
     const fileHash = String(aj.fileHash || '').trim();
     if (fileHash) {
@@ -957,19 +942,6 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       try { require('fs').unlinkSync(aj.balesStagedPath); } catch (_) { /* best-effort */ }
     }
 
-    try {
-      const idGen = require('../utils/idGenerator');
-      const today = todayInLagos();  // TIME-1 — Lagos day
-      for (const b of persisted) {
-        await stockLedgerRepo.append({
-          entry_id: idGen.stockLedger(),
-          date: today,
-          item_id: b.baleUid, package_no: b.packageNo, branch: b.warehouse,
-          type: 'received', qty_in: b.yards, qty_out: 0,
-          reference_id: grn.grn_id,
-        });
-      }
-    } catch (_) { /* non-fatal: GRN + Inventory persisted; ledger is supplementary */ }
 
     await transactionsRepository.append({
       user: item.user, action: 'bulk_receive_goods',

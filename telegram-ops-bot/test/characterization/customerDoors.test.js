@@ -137,11 +137,9 @@ test('the CRM door respects the CUSTOMER_CREATION_ENABLED freeze', async () => {
 
 test('a sale for an unknown customer POSTS but alerts the admins — never creates', async () => {
   const accountingService = require(path.join(SRC, 'services/accountingService'));
-  const stockLedgerService = require(path.join(SRC, 'services/stockLedgerService'));
   const auditService = require(path.join(SRC, 'services/auditService'));
   let salePosted = false;
   accountingService.recordSale = async () => { salePosted = true; };
-  stockLedgerService.recordSaleOut = async () => {};
   auditService.log = async () => {};
   appended.length = 0;
 

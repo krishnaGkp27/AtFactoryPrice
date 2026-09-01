@@ -49,7 +49,6 @@ async function alertIfUnknownCustomer(name) {
 const handlers = {
   async sale(data) {
     const accountingService = require('../services/accountingService');
-    const stockLedgerService = require('../services/stockLedgerService');
     const auditService = require('../services/auditService');
     // CUS-1 door #1 (owner, 29-Jul): a sale must NEVER invent a customer.
     // This call used to findOrCreate — the silent factory most typo
@@ -57,21 +56,18 @@ const handlers = {
     // would be worse); an unknown name now alerts the admins instead.
     await alertIfUnknownCustomer(data.customer);
     await accountingService.recordSale(data);
-    await stockLedgerService.recordSaleOut(data);
     await auditService.log(data.userId, 'sale', 'inventory', data.txnId);
   },
   async return(data) {
     const accountingService = require('../services/accountingService');
-    const stockLedgerService = require('../services/stockLedgerService');
     const auditService = require('../services/auditService');
     await accountingService.recordReturn(data);
-    await stockLedgerService.recordReturnIn(data);
     await auditService.log(data.userId, 'return', 'inventory', data.txnId);
   },
   async stock_in(data) {
-    const stockLedgerService = require('../services/stockLedgerService');
+    // SHT-1 — the Stock_Ledger write is gone with the sheet. Movement history
+    // lives in BaleMovements (owner ruling BMV-1) and the stock_events shadow.
     const auditService = require('../services/auditService');
-    await stockLedgerService.recordPurchaseIn(data);
     await auditService.log(data.userId, 'stock_in', 'inventory', data.txnId);
   },
   async payment_received(data) {

@@ -37,7 +37,6 @@ const driveClient = require('../repositories/driveClient');
 const departmentsRepo = require('../repositories/departmentsRepository');
 const activityRegistry = require('../services/activityRegistry');
 const customersRepo = require('../repositories/customersRepository');
-const userPrefsRepo = require('../repositories/userPrefsRepository');
 const designAssetsRepo = require('../repositories/designAssetsRepository');
 const designAssetsService = require('../services/designAssetsService');
 const pricingService = require('../services/pricingService');
@@ -5483,7 +5482,11 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
     };
   }
 
-  const counts = await userPrefsRepo.getCountsForUser(userId);
+  // SHT-1 — the per-user usage counts are gone with the UserPrefs sheet.
+  // MNU-1 / audit D-3 froze this grid to registry order, so every read of
+  // those counts was already being discarded; `count` stays on the entries
+  // only because the shared shapes below still carry the field.
+  const counts = {};
   const { hubs, standalone } = activityRegistry.groupByHub(allowed);
 
   // Build a unified list of entries (hub OR standalone activity),
@@ -5730,8 +5733,8 @@ async function renderHubSubmenu(bot, chatId, messageId, userId, hubId, callbackQ
     return;
   }
 
-  const counts = await userPrefsRepo.getCountsForUser(userId);
-  // Unified, usage-sorted entry list: sub-hub tiles + direct actions.
+  const counts = {};   // SHT-1 — see the greeting grid: order is frozen, counts unused
+  // Unified entry list: sub-hub tiles + direct actions, in registry order.
   const entries = [];
   for (const ch of childHubs) {
     const agg = allowed
@@ -9932,12 +9935,6 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     // Any other tap ends the menu lifecycle → wipe the keyboard so the
     // stale message can't be tapped again.
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
-
-    // Normalize count key to the activity's canonical `code` (some
-    // callbacks differ from their code, e.g. act:mark_delivered ↔ mark_order_delivered).
-    const tappedActivity = activityRegistry.getByCallback(`act:${actCode}`);
-    const countKey = tappedActivity ? tappedActivity.code : actCode;
-    userPrefsRepo.incrementActivity(uid, countKey).catch(() => {});
 
     switch (actCode) {
       case 'supply_request': await startSupplyRequestFlow(bot, chatId, uid); break;

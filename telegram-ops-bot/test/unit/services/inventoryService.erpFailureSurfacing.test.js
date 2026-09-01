@@ -19,7 +19,6 @@ const inventoryRepository = require('../../../src/repositories/inventoryReposito
 const transactionsRepository = require('../../../src/repositories/transactionsRepository');
 const crmService = require('../../../src/services/crmService');
 const accountingService = require('../../../src/services/accountingService');
-const stockLedgerService = require('../../../src/services/stockLedgerService');
 const auditService = require('../../../src/services/auditService');
 const invoiceService = require('../../../src/services/invoiceService');
 
@@ -69,7 +68,6 @@ test('H6: ledger hook failure is returned, audited, and does NOT block the appro
 test('H6: healthy hooks return an empty erpFailures array', async () => {
   const calls = harness(sellThanItem('H6B'));
   accountingService.recordSale = async () => true;
-  stockLedgerService.recordSaleOut = async () => true;
   auditService.log = async () => true;
 
   const res = await inventoryService.executeApprovedAction('H6B', 'admin1');

@@ -17,8 +17,6 @@
  * controller wiring happens in a future commit.
  */
 
-const bankFeedRepository = require('../repositories/bankFeedRepository');
-
 function normaliseName(s) {
   return String(s || '').toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -51,15 +49,8 @@ function suggestMatches(txn, candidates) {
   return out.sort((a, b) => b.confidence - a.confidence);
 }
 
-/**
- * Persist a confirmed match. Wired by the controller's
- * `confirm_bank_reconciliation` action (dual-admin gate enforced by
- * `risk/evaluate.js`).
- */
-async function confirmMatch({ txnId, ledgerEntryId, confirmedBy }) {
-  if (!txnId || !ledgerEntryId) throw new Error('txnId and ledgerEntryId are required');
-  await bankFeedRepository.markReconciled(txnId, ledgerEntryId);
-  return { ok: true, txnId, ledgerEntryId, confirmedBy: confirmedBy || null };
-}
-
-module.exports = { suggestMatches, confirmMatch, _internals: { normaliseName } };
+// SHT-1 — `confirmMatch()` went with the BankFeed sheet: it had no caller,
+// and the sheet it wrote never held a row. The matcher below is a pure
+// function with no storage of its own, so it survives untouched and is
+// ready for whichever store the banking work eventually lands on.
+module.exports = { suggestMatches, _internals: { normaliseName } };

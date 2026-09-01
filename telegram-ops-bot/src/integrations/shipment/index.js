@@ -37,23 +37,10 @@ async function track(trackingNumber, opts = {}) {
     () => provider.track(String(trackingNumber).trim(), opts),
   );
 
-  // Persist events for the audit trail unless caller opts out.
-  if (opts.persistEvents !== false && result && Array.isArray(result.events) && result.events.length) {
-    try {
-      const shipmentEventsRepository = require('../../repositories/shipmentEventsRepository');
-      await shipmentEventsRepository.recordEvents({
-        trackingNumber,
-        carrier: result.carrier || providerName,
-        referenceId: opts.referenceId || '',
-        events: result.events,
-        rawJson: result._raw ? JSON.stringify(result._raw).slice(0, 4000) : '',
-      });
-    } catch (e) {
-      // Persistence failure must not break the user-facing tracking.
-      require('../../utils/logger').warn(`[shipment] event-persist failed: ${e.message}`);
-    }
-  }
-
+  // SHT-1 — the ShipmentEvents sheet is retired: it had no reader, and this
+  // was its only writer (never reached, since track() has no production
+  // caller). The audit trail it duplicated is already kept: wrapOutbound
+  // above writes an `integration_call` row for every shipment lookup.
   return result;
 }
 

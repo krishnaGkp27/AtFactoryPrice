@@ -23,7 +23,7 @@ Each transaction:
 ## Reconciler (sibling service, not part of this folder)
 
 The matching logic lives in `src/services/bankReconciler.js` — it
-reads `BankFeed` (written by `bankFeedRepository.upsert()`) and the
+reads fetched transactions (SHT-1: the BankFeed sheet was retired; a future rollout stores them in Postgres) and the
 ledger sheets, suggests matches, and gates confirmation behind the
 `confirm_bank_reconciliation` action (dual-admin approval).
 

@@ -1650,7 +1650,6 @@ async function runS14c() {
   delete require.cache[require.resolve('../src/repositories/sheetsClient')];
   delete require.cache[require.resolve('../src/repositories/inventoryRepository')];
   delete require.cache[require.resolve('../src/repositories/goodsReceiptsRepository')];
-  delete require.cache[require.resolve('../src/repositories/stockLedgerRepository')];
   delete require.cache[require.resolve('../src/repositories/transactionsRepository')];
   delete require.cache[require.resolve('../src/repositories/approvalQueueRepository')];
   delete require.cache[require.resolve('../src/repositories/auditLogRepository')];
@@ -1712,9 +1711,6 @@ async function runS14c() {
     append: async () => {},
   });
   stubModule(require.resolve('../src/repositories/transactionsRepository'), {
-    append: async () => {},
-  });
-  stubModule(require.resolve('../src/repositories/stockLedgerRepository'), {
     append: async () => {},
   });
 
@@ -4083,7 +4079,6 @@ async function runS24() {
   // Also stub the side-effect repositories so adapter index.js doesn't
   // explode when it tries to record events / log outbound.
   for (const repo of [
-    '../src/repositories/shipmentEventsRepository',
     '../src/repositories/whatsappOutboundRepository',
   ]) {
     const p = require.resolve(repo);
@@ -4172,7 +4167,6 @@ async function runS24() {
   // Clean stubbed repos so later tests get real ones.
   delete require.cache[auditRepoPath];
   for (const repo of [
-    '../src/repositories/shipmentEventsRepository',
     '../src/repositories/whatsappOutboundRepository',
   ]) {
     delete require.cache[require.resolve(repo)];
@@ -4220,13 +4214,21 @@ function runS25() {
 // S26 — Schema + policy wiring for the new integration sheets / actions
 // ---------------------------------------------------------------------------
 function runS26() {
-  // S26.1 schemaMapper declares all 5 new sheets
+  // S26.1 schemaMapper declares the integration sheets that are still live.
+  // SHT-1 (owner, 31-Aug-2026): ShipmentEvents and BankFeed were RETIRED —
+  // neither had a reader, and neither had a live writer — so they must NOT be
+  // declared. Asserting their ABSENCE is what stops the bootstrap quietly
+  // recreating the tabs the owner just deleted from the workbook.
   const schemaSrc = fs.readFileSync(path.join(__dirname, '../src/services/schemaMapper.js'), 'utf8');
-  const required = ['ForexRates', 'ShipmentEvents', 'BankFeed', 'WhatsAppTemplates', 'WhatsAppOutbound'];
-  const missing = required.filter((s) => !new RegExp(`^\\s*${s}\\s*:\\s*\\{`, 'm').test(schemaSrc));
-  if (missing.length === 0) {
-    pass(`S26.1 schemaMapper: all 5 new sheets declared (${required.join(', ')})`);
-  } else fail('S26.1 schemaMapper missing', missing.join(', '));
+  const declared = (s) => new RegExp(`^\\s*${s}\\s*:\\s*\\{`, 'm').test(schemaSrc);
+  const required = ['ForexRates', 'WhatsAppTemplates', 'WhatsAppOutbound'];
+  const retired = ['ShipmentEvents', 'BankFeed', 'Stock_Ledger', 'UserPrefs'];
+  const missing = required.filter((s) => !declared(s));
+  const resurrected = retired.filter((s) => declared(s));
+  if (missing.length === 0 && resurrected.length === 0) {
+    pass(`S26.1 schemaMapper: ${required.length} live integration sheets declared, `
+      + `${retired.length} retired sheets stay unregistered`);
+  } else fail('S26.1 schemaMapper', JSON.stringify({ missing, resurrected }));
 
   // S26.2 evaluate.js has the new actions in the right buckets. Strip
   // line + block comments first — apostrophes in human-written comments

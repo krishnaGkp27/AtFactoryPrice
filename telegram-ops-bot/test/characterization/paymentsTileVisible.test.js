@@ -34,7 +34,6 @@ const controller = loadController();
 
 const usersRepository = require(path.join(SRC, 'repositories/usersRepository'));
 const departmentsRepo = require(path.join(SRC, 'repositories/departmentsRepository'));
-const userPrefsRepo = require(path.join(SRC, 'repositories/userPrefsRepository'));
 
 const ABDUL = '7430648262';
 
@@ -48,7 +47,6 @@ departmentsRepo.findByName = async (name) => ({
   Sales: { dept_id: 'DEPT-001', dept_name: 'Sales', status: 'active', allowed_activities: ['supply_request', 'my_orders'] },
   Dispatch: { dept_id: 'DEPT-002', dept_name: 'Dispatch', status: 'active', allowed_activities: ['my_orders'] },
 }[name] || null);
-userPrefsRepo.getCountsForUser = async () => ({});
 
 /** Every callback_data the bot offered this user, across all messages. */
 function offeredTo(bot) {

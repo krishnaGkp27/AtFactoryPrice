@@ -25,9 +25,13 @@ const REQUIRED_SHEETS = {
     // the narration keeps the human-readable name. End column per rules.
     headers: ['entry_id', 'txn_id', 'date', 'account_code', 'ledger_name', 'debit', 'credit', 'narration', 'created_by', 'created_at', 'customer_id'],
   },
-  Stock_Ledger: {
-    headers: ['entry_id', 'date', 'item_id', 'package_no', 'branch', 'type', 'qty_in', 'qty_out', 'reference_id', 'created_at'],
-  },
+  // SHT-1 (owner, 31-Aug-2026) — Stock_Ledger, UserPrefs, ShipmentEvents and
+  // BankFeed were RETIRED, not migrated: each had no live reader, and two had
+  // no writer either. They are deliberately absent from this registry so the
+  // bootstrap stops recreating the tabs after the owner deletes them. Do not
+  // re-add them; the facts they claimed to hold live elsewhere (movement
+  // history in BaleMovements + stock_events, usage in the PG analytics
+  // tables, integration calls in AuditLog).
   Customers: {
     // CUS-1 — `aliases` (JSON array string) holds former/typo spellings that
     // resolve to this customer after a merge. New column at END per rule 4.
@@ -168,9 +172,6 @@ const REQUIRED_SHEETS = {
       ['garment', 'Garments', 'Box', 'box', 'Piece', 'pcs', 'yes', 'active'],
       ['innerwear', 'Innerwear', 'Carton', 'ctn', 'Dozen', 'pcs', 'yes', 'active'],
     ],
-  },
-  UserPrefs: {
-    headers: ['user_id', 'activity_counts', 'updated_at'],
   },
   CatalogStock: {
     headers: ['Design', 'CatalogSize', 'Warehouse', 'TotalQty', 'InOfficeQty', 'WithCustomersQty', 'WithMarketersQty', 'UpdatedAt'],
@@ -314,21 +315,8 @@ const REQUIRED_SHEETS = {
   },
   // TG-INT 1.3 — courier tracking events. One row per status update.
   // Multiple rows per tracking_number form a chronological trail.
-  ShipmentEvents: {
-    headers: [
-      'event_id', 'tracking_number', 'carrier', 'status', 'description',
-      'location', 'event_time', 'fetched_at', 'reference_id', 'raw_json',
-    ],
-  },
   // TG-INT 1.2 — raw bank-feed transactions before reconciliation.
   // Reconciler reads here, writes the match into Ledger_Entries.
-  BankFeed: {
-    headers: [
-      'txn_id', 'account_id', 'posted_at', 'amount', 'currency',
-      'direction', 'counterparty', 'narration', 'reference',
-      'fetched_at', 'matched_ledger_entry_id', 'reconciliation_status',
-    ],
-  },
   // TG-INT 1.1 — WhatsApp message templates registered with the
   // provider. Admin maintains this; bot uses it to know which template
   // names + variables are available for outbound.
