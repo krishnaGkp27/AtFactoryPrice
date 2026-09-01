@@ -161,9 +161,49 @@ logged bales 867/842/873/863 while the truck carried 869/843/874/864.
 - Container labels match case-insensitively; unlabelled rows bucket under
   `(unlabelled)` rather than disappearing.
 
+## 6b · The words: than, bale, bundle, container
+
+**Recorded 31-Aug-2026** at the owner's request ("making it clear would have a
+consistent meaning all across the business dependencies"), from how the code
+actually stores goods.
+
+- **Than** — the atom. One Inventory row = one than: a physical roll with its
+  OWN yardage (typically 25–30 yd, it varies per than). Everything the bot
+  knows is derived by grouping than rows at read time.
+- **Bale** — a grouping, not a stored object: the set of than rows sharing one
+  printed bale number (plus warehouse and `bale_uid`, since printed numbers
+  recycle across arrivals). Hard invariant: one bale = one **design** (rule
+  1b, enforced). One bale = one **shade** is only a Lagos convention — Kano
+  poly-colour bales carry ~6 shades, one per than row.
+- **Bundle** — NOT a unit. Never a column, never a quantity. It exists in two
+  code senses only: `sale_bundle`, the action code for "a cart of items
+  approved as one sale" (whole bales or loose thans), and the name of the Kano
+  than-picking tile. `StockTakes.*_bundles` columns are MISNAMED and hold
+  loose-than counts.
+- **Container** — the arrival batch (`arrival_batch`, e.g. "Mar25"): the
+  shipment goods came in on. Not a quantity word. (`ProductTypes.container_label`
+  is the packaging word — "Bale" for fabric — and is the only other legitimate
+  use; a card saying "N container(s)" for bales is a bug.)
+- **Yards** — the continuous measure. Every than carries yards; all money is
+  Naira per yard. Yards are the only universally additive figure across mixed
+  bale/than records, so any gap or reconciliation arithmetic settles in yards.
+
 ## 6c · One quantity grammar: B, t, or "..B + ..t"
 
 **Locked 02-Aug-2026 (TV-8).** Supersedes the per-screen unit choices.
+
+**Amended 31-Aug-2026 — packaging wins.** The two reasons below collided on one
+case: a whole, unopened bale sold from a than-visibility store read "1B" on the
+approval card (CARD-5, item's own packaging) and "8t" in the sold-history
+drills (reason 1, store-based). The owner ruled for the item's own packaging —
+the same ruling he locked for the DML-1 movement ledger ("each line speaks the
+item's OWN packaging; a movement that took the whole roster counts in bales,
+anything less in thans"). Reason (1) is therefore demoted to what it started
+as: a **stock-listing display preference** for than-visibility stores. A
+SALE or MOVEMENT line is typed on whether the customer took the whole roster,
+never on which store it left. Engine alignment (`formatQty`'s than-visibility
+branch in the sold-goods drills) is a pending follow-up; the approval card,
+invoice and movement ledger already obey the amended rule.
 
 > "Only the customer taking the goods from an allowed store (Kano office,
 > Lagos office) will be showing thans. Remaining will be showing bales with
@@ -593,5 +633,9 @@ but this goes as our company rules for now").
 | 07-Aug-2026 | `/revert_packages` logged admin corrections as customer returns, all stamped with the first row's buyer | §6d (RET-2) |
 | 19-Aug-2026 | One Kano sale queued FIVE times with five refs — the sales-bill photo fires submit (an album fires it per photo), the button stayed live through the slow work, and the queue append was blind | SUB-1 (single-flight + render-minted id + appendOnce + card-level duplicate flag) |
 | 15-Aug-2026 | ➕ Add Customer queued a card with no triage chips: which card an admin saw depended on which of two doors the requester used, and an approved customer could exist with no network node | §12b (CON-1) |
+| 31-Aug-2026 | A whole bale sold from Kano read "1B" on the sale card and "8t" in the sold-history drills — two locked rules (CARD-5, TV-8 reason 1) answering one case differently; the vocabulary (than/bale/bundle/container) had never been written down | §6b, §6c amendment (packaging wins) |
+| 31-Aug-2026 | The DML-1 movement ledger cannot state a blind count's gap in yards — StockTakes has no counted_yards and the count never records WHICH bales — so the gap is stated in packaging and never invented; measured at the count, not against today's book | DML-1 (`specs/DML-1_BUILD_SPEC.md`) |
+| 01-Sep-2026 | Who approved a request survived only in the JSON blob or AuditLog; a dual approval recorded admin #1 and lost admin #2, an admin-raised dual action recorded neither, `new_customer` recorded nobody anywhere; a naive column would have named the RECEIVER (transfers) or the DISPATCH HAND (supply) as the signing authority | APR-1 (ApprovalQueue col H `Approver`, `approverStamp`) |
+| 01-Sep-2026 | The workbook had ~51 tabs; four registered sheets had no live reader and two no writer; `BranchOpsLog` is the office CASH LEDGER despite its name and stays; operational state also hides as columns inside business sheets | SHT-1 (`docs/SHEET_STORAGE_SPLIT.md`) |
 
 When an incident spawns a new rule: fix, spec, then add the rule HERE.
