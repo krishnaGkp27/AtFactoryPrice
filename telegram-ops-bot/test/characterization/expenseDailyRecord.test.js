@@ -45,6 +45,13 @@ const flow = require(path.join(SRC, 'flows/officeExpenseFlow'));
 const eveningReport = require(path.join(SRC, 'services/eveningExpenseReport'));
 
 const TODAY = branchOpsService.todayInTz();
+// A filer counts as "recent" only inside branchOpsService.activeExpenseBranches'
+// 30-day window, so the fixture that makes one active must be RELATIVE. It was
+// pinned to '2026-08-01' and passed until the calendar rolled past 31-Aug, at
+// which point both reminder tests failed on a clean tree with nothing changed.
+const DAYS_AGO = (n) => new Date(Date.parse(`${TODAY}T00:00:00Z`) - n * 86400000)
+  .toISOString().slice(0, 10);
+const RECENTLY = DAYS_AGO(1);
 
 auditLogRepository.append = async () => {};
 usersRepository.findByUserId = async (id) => ({ user_id: String(id), name: String(id) === 'abdul' ? 'Abdul' : 'Yarima', warehouses: ['Idumota'] });
@@ -188,7 +195,7 @@ test('nothing filed: recent filers get the two-chip reminder, admins get the ⚠
   // Yesterday's activity makes the branch (and Abdul as filer) active;
   // today is empty.
   logRows = [
-    { branch: 'Idumota', date: '2026-08-01', kind: 'expense', subject: 'Fuel', amount: 500, status: 'approved', manager_id: 'abdul' },
+    { branch: 'Idumota', date: RECENTLY, kind: 'expense', subject: 'Fuel', amount: 500, status: 'approved', manager_id: 'abdul' },
   ];
   const bot = createFakeBot();
   const { reports, reminders } = await eveningReport.sendReports(bot);
@@ -214,7 +221,7 @@ test('EXP-1b: a dated zero-day chip tapped after its day refuses; report claims 
 
   // No reachable filer → the admins' card must NOT claim a reminder went out.
   logRows = [
-    { branch: 'Idumota', date: '2026-08-01', kind: 'expense', subject: 'Fuel', amount: 500, status: 'approved', manager_id: 'gone' },
+    { branch: 'Idumota', date: RECENTLY, kind: 'expense', subject: 'Fuel', amount: 500, status: 'approved', manager_id: 'gone' },
   ];
   const bot2 = createFakeBot();
   const { reminders } = await eveningReport.sendReports(bot2);
