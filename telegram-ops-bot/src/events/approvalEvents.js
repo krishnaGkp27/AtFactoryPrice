@@ -1483,7 +1483,10 @@ async function handleReasonReply(bot, msg) {
       stage: 'rejected_by_dispatch',
       dispatchRejection: { user_id: userId, name: actorName, ts, reason },
     });
-    await approvalQueueRepository.updateStatus(state.requestId, 'rejected', ts);
+    // APR-1 — at this stage no admin is involved; the dispatcher is the
+    // decider, so the column names them rather than staying blank.
+    await approvalQueueRepository.updateStatus(state.requestId, 'rejected', ts,
+      await require('../services/approverStamp').labelFor({ actorId: userId, bot }));
 
     await bot.sendMessage(state.chatId,
       `❌ Rejected. Request \`${state.requestId}\` will not proceed.\n\nReason recorded: _${reason}_`,
@@ -1780,13 +1783,20 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
               message_id: callbackQuery.message.message_id,
             });
           } catch (_) { /* stale card; not fatal */ }
+          // APR-1 — name the signature so the second admin knows whose they
+          // are joining, and the requester knows who has acted.
+          let signerLabel = '';
+          try {
+            signerLabel = await require('../services/approverStamp').labelFor({ actorId: adminId, bot });
+          } catch (_) { /* naming must never cost the sign-off */ }
+          const signedBy = signerLabel ? ` — signed by ${signerLabel}` : '';
           try {
             await bot.sendMessage(callbackQuery.message.chat.id,
               `🔏 Request ${requestId}: your approval is recorded (1 of ${required}). Waiting for a second admin.`);
           } catch (_) { /* chat unreachable */ }
           try {
             await notifyEmployee(bot, requestingUser, requestId,
-              `🔏 Your request (${requestId}) has 1 of ${required} admin approvals. One more to go.`);
+              `🔏 Your request (${requestId}) has 1 of ${required} admin approvals${signedBy}. One more to go.`);
           } catch (_) { /* best-effort */ }
           // Ping the remaining env admins so the request doesn't stall
           // silently (sheet-cache admins still have live cards; best-effort).
@@ -1830,7 +1840,7 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
 
       const isNewCustomer = item && item.actionJSON && item.actionJSON.action === 'new_customer';
       if (isNewCustomer) {
-        await handleNewCustomerApproval(bot, chatIdCb, requestId, item, requestingUser, true);
+        await handleNewCustomerApproval(bot, chatIdCb, requestId, item, requestingUser, true, adminId);
         return;
       }
 
@@ -1877,7 +1887,10 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
       if (result.ok) {
         // H6 — surface "applied but books failed" instead of a clean ✅.
         const erpFails = Array.isArray(result.erpFailures) ? result.erpFailures : [];
-        let approvedMsg = `✅ Request ${requestId} approved. Changes applied.`;
+        // APR-1 — the requester is told WHO released it, not just that it
+        // was released. `result.approver` rides back from the executor.
+        const by = result && result.approver ? ` by ${result.approver}` : '';
+        let approvedMsg = `✅ Request ${requestId} approved${by}. Changes applied.`;
         if (erpFails.length) {
           const failLines = erpFails.map((f) => `  • ${f.stage}: ${f.error}`).join('\n');
           approvedMsg = `⚠️ Request ${requestId} approved — changes applied, but these ledger/book entries FAILED:\n${failLines}\nCheck AuditLog (erp_hook_failed) and re-post manually.`;
@@ -1972,7 +1985,7 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
 
       const isNewCustReject = item && item.actionJSON && item.actionJSON.action === 'new_customer';
       if (isNewCustReject) {
-        await handleNewCustomerApproval(bot, chatIdCb, requestId, item, requestingUser, false);
+        await handleNewCustomerApproval(bot, chatIdCb, requestId, item, requestingUser, false, adminId);
         return;
       }
 
@@ -2128,7 +2141,7 @@ async function handleSupplyAssign(bot, callbackQuery) {
     `✅ Your supply request \`${requestId}\` was approved and assigned to *${assigneeName}*.\n\n⏳ Waiting for ${assigneeName} to *Accept* the dispatch.`);
 }
 
-async function handleNewCustomerApproval(bot, chatId, requestId, item, requestingUser, approved) {
+async function handleNewCustomerApproval(bot, chatId, requestId, item, requestingUser, approved, adminId) {
   const aj = item.actionJSON || {};
   const custName = aj.customer_name || 'Unknown';
   const custId = aj.customer_id;
@@ -2143,7 +2156,18 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
     return;
   }
 
-  await approvalQueueRepository.updateStatus(requestId, approved ? 'approved' : 'rejected', new Date().toISOString());
+  // APR-1 — this path used to record the decider nowhere at all: no column,
+  // no ActionJSON stamp, and no AuditLog row in the whole function.
+  const approverLabel = await require('../services/approverStamp')
+    .labelFor({ actionJSON: aj, actorId: adminId, bot });
+  await approvalQueueRepository.updateStatus(requestId, approved ? 'approved' : 'rejected',
+    new Date().toISOString(), approverLabel);
+  try {
+    await require('../repositories/auditLogRepository').append(
+      approved ? 'approval_approved' : 'approval_rejected',
+      { requestId, action: 'new_customer', approvedBy: adminId ? String(adminId) : '', approver: approverLabel },
+      adminId ? String(adminId) : '');
+  } catch (_) { /* the decision matters more than its breadcrumb */ }
 
   if (approved) {
     // CUS-2 — activation recheck: between request and approval another
@@ -2389,7 +2413,11 @@ async function handleSupplyAccept(bot, callbackQuery) {
   await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
 
   const ts = new Date().toISOString();
-  await approvalQueueRepository.updateStatus(requestId, 'approved', ts);
+  // APR-1 — `userId` here is the assigned dispatch hand accepting the job.
+  // labelFor reads the approving admin off `approvedByAdmin` instead, so the
+  // column never names a warehouse hand as the signing authority.
+  await approvalQueueRepository.updateStatus(requestId, 'approved', ts,
+    await require('../services/approverStamp').labelFor({ actionJSON: aj0, actorId: null, bot }));
   await approvalQueueRepository.updateActionJSON(requestId, {
     stage: 'completed',
     acceptedByDispatch: { user_id: userId, ts },
@@ -2497,7 +2525,8 @@ async function handleMarkDone(bot, callbackQuery) {
     } catch (_) { /* stale card */ }
     return true;
   }
-  await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString());
+  await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString(),
+    await require('../services/approverStamp').labelFor({ actorId: adminId, bot }));
   try {
     const auditLogRepository = require('../repositories/auditLogRepository');
     await auditLogRepository.append('approval_marked_done_no_exec',

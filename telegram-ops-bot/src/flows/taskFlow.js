@@ -3013,7 +3013,11 @@ async function stopAutoRemind(bot, callbackQuery, ctx, taskId) {
     for (const r of pending) {
       if (!r.actionJSON || r.actionJSON.action !== 'task_reminder_enable') continue;
       if (String(r.actionJSON.task_id) !== String(taskId)) continue;
-      await approvalQueueRepository.updateStatus(r.requestId, 'rejected', new Date().toISOString());
+      // APR-1 — the admin stopping reminders is the one withdrawing this
+      // pending arming; without the stamp the withdrawal named nobody
+      // anywhere that could be joined back to the request.
+      await approvalQueueRepository.updateStatus(r.requestId, 'rejected', new Date().toISOString(),
+        await require('../services/approverStamp').labelFor({ actorId: userId }));
       withdrawn += 1;
     }
   } catch (e) { logger.warn(`taskFlow.stopAutoRemind: could not withdraw pending armings: ${e.message}`); }

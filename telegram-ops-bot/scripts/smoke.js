@@ -7945,6 +7945,42 @@ function runS54() {
   }
 
 
+  // ---- S54.14 — APR-1: the approver column, and nobody mis-credited ----
+  // Two silent failure modes this guards. (1) A read left at 'A2:G' returns a
+  // 7-wide row from an 8-wide sheet, so the approver is undefined on that
+  // surface only — and test/helpers/fakeSheets ignores column bounds, so no
+  // unit test can catch it. A source lint is the only guard that works.
+  // (2) The Approver column must never be filled from "whoever flipped the
+  // Status cell": a transfer is flipped by the destination RECEIVER and a
+  // supply request by the assigned DISPATCH hand, and naming either as the
+  // signing authority would manufacture a false audit trail.
+  const aprRepo = fs.readFileSync(path.join(__dirname, '../src/repositories/approvalQueueRepository.js'), 'utf8');
+  const aprStamp = fs.readFileSync(path.join(__dirname, '../src/services/approverStamp.js'), 'utf8');
+  const aprNoNarrowReads = !/'A2:G'/.test(aprRepo);
+  const aprHeader = aprRepo.includes("'Approver'")
+    && aprRepo.includes('HEADERS.length')          // never a hardcoded `< 7`
+    && !/A1:G1/.test(aprRepo);
+  const aprKeepsCreatedAt = !/E\$\{rowIndex\}:G\$\{rowIndex\}/.test(aprRepo);
+  const aprRoles = aprStamp.includes("action === 'transfer_stock'")
+    && aprStamp.includes("action === 'supply_request'")
+    && aprStamp.includes('aj.approvals');          // the dual pair is merged
+  // Every file that resolves a request must also name who did it — either
+  // through approverStamp or, for the boot sweep, an explicit system label.
+  // (A per-call-site parse was tried and is too brittle: several calls wrap
+  // across lines. File-level coupling is the honest, stable assertion.)
+  const aprAllStamped = ['src/services/inventoryService.js', 'src/services/transferService.js',
+    'src/services/legacyCleanup.js', 'src/flows/taskFlow.js', 'src/events/approvalEvents.js']
+    .every((f) => {
+      const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+      if (!src.includes('updateStatus(')) return true;
+      return src.includes('approverStamp') || src.includes('System (boot sweep)');
+    });
+  if (aprNoNarrowReads && aprHeader && aprKeepsCreatedAt && aprRoles && aprAllStamped) {
+    pass('S54.14 APR-1: approver column widened, header healed, roles resolved, every path stamps');
+  } else {
+    fail('S54.14', JSON.stringify({ aprNoNarrowReads, aprHeader, aprKeepsCreatedAt, aprRoles, aprAllStamped }));
+  }
+
   // ---- S54.13 — DML-1: the movement ledger reads, and never invents a yard ----
   // The page exists to explain a physical-count mismatch, so the two things
   // that must never rot are: it writes nothing, and it refuses to state a gap

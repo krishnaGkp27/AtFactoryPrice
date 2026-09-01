@@ -1617,10 +1617,14 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     } catch (e) { await recordErpFailure('invoice issue', e); }
   }
 
-  await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString());
-  await auditLogRepository.append('approval_approved', { requestId, approvedBy }, approvedBy);
+  // APR-1 — the final tap is the deciding signature; labelFor merges it with
+  // any first signature parked in ActionJSON, so a dual approval names BOTH.
+  const approverLabel = await require('./approverStamp')
+    .labelFor({ actionJSON: aj, actorId: approvedBy });
+  await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString(), approverLabel);
+  await auditLogRepository.append('approval_approved', { requestId, approvedBy, approver: approverLabel }, approvedBy);
   // H6 — erpFailures non-empty means stock moved but books did not.
-  return { ok: true, bundleReport, message: customMessage, erpFailures, invoice };
+  return { ok: true, bundleReport, message: customMessage, erpFailures, invoice, approver: approverLabel };
 }
 
 async function rejectApproval(requestId, rejectedBy) {
@@ -1671,8 +1675,10 @@ async function rejectApprovalInner(requestId, rejectedBy) {
       logger.warn(`finalize_landed_cost reject: failed to clear GRN ${aj.grn_id} pending state: ${e.message}`);
     }
   }
-  await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString());
-  await auditLogRepository.append('approval_rejected', { requestId, rejectedBy }, rejectedBy);
+  const rejecterLabel = await require('./approverStamp')
+    .labelFor({ actionJSON: aj, actorId: rejectedBy });
+  await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString(), rejecterLabel);
+  await auditLogRepository.append('approval_rejected', { requestId, rejectedBy, approver: rejecterLabel }, rejectedBy);
   return { ok: true };
 }
 

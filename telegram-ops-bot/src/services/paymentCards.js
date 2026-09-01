@@ -36,7 +36,10 @@ function buildFinanceCard(pay, head) {
   const amount = `💰 *${paymentService.fmtNaira(pay.amount_ngn)}*`;
   lines.push(pay.above_threshold ? `${amount}    ⚠️ large payment` : amount);
   if (pay.bill_file_id) lines.push('📎 Bill attached');
-  if (pay.approved_by) lines.push(`✅ Approved: ${mdEscape(pay.approved_by)}`);
+  // APR-1 — a name, never a raw Telegram id (LBL-1). `approved_by_name` is
+  // resolved by the caller; the id remains the fallback so an unresolvable
+  // approver still shows something rather than vanishing.
+  if (pay.approved_by) lines.push(`✅ Approved: ${mdEscape(pay.approved_by_name || pay.approved_by)}`);
   lines.push(`_Raised by ${mdEscape(pay.raised_by_name || pay.raised_by)} · ${mdEscape(fmtDate.withTime(pay.raised_at))}_`);
   lines.push(`\`${mdEscape(pay.payment_id)}\``);
   const warn = head ? paymentService.financeWarning(head) : '';
@@ -116,6 +119,11 @@ async function sendFinanceCard(bot, paymentId) {
     return { sent: 0, failed: 0 };
   }
   const { ids, head } = await paymentService.paymentRecipients();
+  if (pay.approved_by && !pay.approved_by_name) {
+    try {
+      pay.approved_by_name = await require('./approverStamp').labelFor({ actorId: pay.approved_by, bot });
+    } catch (_) { /* the card matters more than the name on it */ }
+  }
   const text = buildFinanceCard(pay, head);
   const opts = { parse_mode: 'Markdown', reply_markup: financeKeyboard(pay.payment_id) };
   let sent = 0;

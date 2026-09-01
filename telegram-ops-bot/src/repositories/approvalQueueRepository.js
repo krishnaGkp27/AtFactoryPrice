@@ -1,13 +1,27 @@
 /**
  * Data access for ApprovalQueue sheet.
- * Columns: RequestID | User | ActionJSON | RiskReason | Status | CreatedAt | ResolvedAt
+ * Columns: RequestID | User | ActionJSON | RiskReason | Status | CreatedAt | ResolvedAt | Approver
+ *
+ * APR-1 (owner, 01-Sep-2026) — column H `Approver` records WHO released the
+ * request, readably, in the sheet itself. Before it, the decider survived
+ * only inside the opaque ActionJSON blob or in AuditLog, and AuditLog is on
+ * its way to Postgres; on several paths it was recorded nowhere at all.
+ *
+ * Two things this column is deliberately NOT:
+ *   • it is not "whoever flipped the Status cell". A transfer is flipped to
+ *     approved by the destination RECEIVER and a supply request by the
+ *     assigned DISPATCH hand — naming either as the approver would
+ *     manufacture a false audit trail on exactly the rows that matter most.
+ *     `approverStamp.labelFor()` resolves the real approver per action.
+ *   • it is not a gate. Nothing reads it back to decide anything; approval
+ *     policy stays entirely in risk/evaluate.js.
  */
 
 const sheets = require('./sheetsClient');
 const mutex = require('../utils/asyncMutex');
 
 const SHEET = 'ApprovalQueue';
-const HEADERS = ['RequestID', 'User', 'ActionJSON', 'RiskReason', 'Status', 'CreatedAt', 'ResolvedAt'];
+const HEADERS = ['RequestID', 'User', 'ActionJSON', 'RiskReason', 'Status', 'CreatedAt', 'ResolvedAt', 'Approver'];
 
 let _headerReady = false;
 
@@ -17,9 +31,14 @@ async function ensureHeader() {
   // append/write paid an extra read (and, where ensureHeader also calls
   // getSheetNames, a whole-spreadsheet metadata call) first.
   if (_headerReady) return;
-  const rows = await sheets.readRange(SHEET, 'A1:G1');
-  if (!rows.length || rows[0].length < 7) {
-    await sheets.updateRange(SHEET, 'A1:G1', [HEADERS]);
+  // APR-1 — both bounds are derived from HEADERS, never literals: the live
+  // sheet already had 7 columns, so a hardcoded `< 7` would have found the
+  // header "complete" and left the new column permanently unnamed (the
+  // unlabelled-column drift the 14-Aug sheet audit found on AuditLog).
+  const lastCol = String.fromCharCode('A'.charCodeAt(0) + HEADERS.length - 1);
+  const rows = await sheets.readRange(SHEET, `A1:${lastCol}1`);
+  if (!rows.length || rows[0].length < HEADERS.length) {
+    await sheets.updateRange(SHEET, `A1:${lastCol}1`, [HEADERS]);
   }
   _headerReady = true;
 }
@@ -52,7 +71,7 @@ async function append(record) {
 }
 
 async function getAllPending() {
-  const rows = await sheets.readRange(SHEET, 'A2:G');
+  const rows = await sheets.readRange(SHEET, 'A2:H');
   return rows
     .filter((r) => (r[4] || '').toString().toLowerCase() === 'pending')
     .map((r) => ({
@@ -63,27 +82,49 @@ async function getAllPending() {
       status: r[4],
       createdAt: r[5],
       resolvedAt: r[6],
+      approver: r[7] || '',
     }));
 }
 
-async function updateStatus(requestId, status, resolvedAt) {
-  const rows = await sheets.readRange(SHEET, 'A2:G');
+/**
+ * Resolve a request: Status (E), ResolvedAt (G) and, when known, the
+ * Approver (H).
+ *
+ * The write is two disjoint ranges rather than one E:H span so CreatedAt (F)
+ * is never touched. The old code spanned E:G and had to re-read F and write
+ * it back — a round-trip that reads a FORMATTED value and writes it back as
+ * USER_ENTERED, quietly rewriting the cell's type. Not copying that forward.
+ *
+ * @param {string} requestId
+ * @param {string} status 'approved' | 'rejected'
+ * @param {string} [resolvedAt] ISO instant
+ * @param {string} [approver] already-resolved display label — see
+ *   `approverStamp.labelFor()`. Omitted leaves H untouched, never blanked.
+ */
+async function updateStatus(requestId, status, resolvedAt, approver) {
+  const rows = await sheets.readRange(SHEET, 'A2:H');
   const idx = rows.findIndex((r) => String(r[0]) === String(requestId));
   if (idx === -1) return false;
   const rowIndex = idx + 2;
-  const createdAt = rows[idx][5] || '';
-  await sheets.updateRange(SHEET, `E${rowIndex}:G${rowIndex}`, [[status, createdAt, resolvedAt || new Date().toISOString()]]);
+  const updates = [{ range: `E${rowIndex}`, values: [[status]] }];
+  const stamp = resolvedAt || new Date().toISOString();
+  if (approver) {
+    updates.push({ range: `G${rowIndex}:H${rowIndex}`, values: [[stamp, String(approver)]] });
+  } else {
+    updates.push({ range: `G${rowIndex}`, values: [[stamp]] });
+  }
+  await sheets.batchUpdateRanges(SHEET, updates);
   return true;
 }
 
 /** RPT-2 — resolved (non-pending) rows, for the Supplies browser. */
 async function getResolved() {
-  const rows = await sheets.readRange(SHEET, 'A2:G');
+  const rows = await sheets.readRange(SHEET, 'A2:H');
   return rows
     .filter((r) => (r[4] || '').toString().toLowerCase() !== 'pending')
     .map((r) => ({
       requestId: r[0], user: r[1], actionJSON: safeParse(r[2]),
-      riskReason: r[3], status: r[4], createdAt: r[5], resolvedAt: r[6],
+      riskReason: r[3], status: r[4], createdAt: r[5], resolvedAt: r[6], approver: r[7] || '',
     }));
 }
 
@@ -118,7 +159,7 @@ async function appendOnce(record) {
 
 /** Get one approval queue row by requestId (any status). */
 async function getByRequestId(requestId) {
-  const rows = await sheets.readRange(SHEET, 'A2:G');
+  const rows = await sheets.readRange(SHEET, 'A2:H');
   const r = rows.find((row) => String(row[0]) === String(requestId));
   if (!r) return null;
   return {
@@ -129,6 +170,7 @@ async function getByRequestId(requestId) {
     status: r[4],
     createdAt: r[5],
     resolvedAt: r[6],
+    approver: r[7] || '',
   };
 }
 
@@ -136,11 +178,11 @@ async function getByRequestId(requestId) {
  *  While duplicate requestIds exist, all id-keyed updates are ambiguous —
  *  repairs must address the physical row. */
 async function getAllWithRowIndex() {
-  const rows = await sheets.readRange(SHEET, 'A2:G');
+  const rows = await sheets.readRange(SHEET, 'A2:H');
   return rows.map((r, i) => ({
     rowIndex: i + 2,
     requestId: r[0], user: r[1], actionJSON: safeParse(r[2]),
-    riskReason: r[3], status: r[4], createdAt: r[5], resolvedAt: r[6],
+    riskReason: r[3], status: r[4], createdAt: r[5], resolvedAt: r[6], approver: r[7] || '',
   }));
 }
 
@@ -181,7 +223,7 @@ function safeParse(str) {
  * @returns {Promise<boolean>}
  */
 async function updateActionJSON(requestId, patch) {
-  const rows = await sheets.readRange(SHEET, 'A2:G');
+  const rows = await sheets.readRange(SHEET, 'A2:H');
   const idx = rows.findIndex((r) => String(r[0]) === String(requestId));
   if (idx === -1) return false;
   const rowIndex = idx + 2;

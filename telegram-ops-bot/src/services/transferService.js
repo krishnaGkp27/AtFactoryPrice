@@ -423,7 +423,11 @@ async function confirmReceiptInner(requestId, byUserId) {
   if (mismatch) {
     await auditLogRepository.append('transfer.receive_mismatch', { requestId, ...mismatch }, String(byUserId || ''));
   }
-  await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString());
+  // APR-1 — `byUserId` here is the destination RECEIVER, not an approver.
+  // labelFor reads the admin who released the transfer off the record.
+  const approverLabel = await require('./approverStamp')
+    .labelFor({ actionJSON: aj, actorId: null });
+  await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString(), approverLabel);
   const totalSent = (aj.dispatched || []).reduce((s, d) => s + d.sent, 0) || (aj.bales || []).length;
   await transactionsRepository.append({
     user: String(byUserId || ''), action: ACTION,
@@ -473,7 +477,9 @@ async function abortInner(requestId, byUserId) {
       await auditLogRepository.append('transfer.reject_mismatch', { requestId, ...mismatch }, String(byUserId || ''));
     }
   }
-  await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString());
+  const approverLabel = await require('./approverStamp')
+    .labelFor({ actionJSON: aj, actorId: byUserId });
+  await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString(), approverLabel);
   await auditLogRepository.append(`transfer.${kind}`, { requestId }, String(byUserId || ''));
   return { ok: true, aj, kind, mismatch };
 }

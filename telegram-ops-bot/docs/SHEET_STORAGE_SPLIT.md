@@ -88,13 +88,18 @@ business record.
 1. **Retire the four dead tabs** — done in this change. The bot no longer
    registers them, so the bootstrap cannot recreate them; the owner deletes
    the tabs from the workbook.
-2. `AuditLog` → Postgres. Heaviest tab, no readers to break, and it removes a
+2. **APR-1 — the Approver column (done, 01-Sep-2026).** A prerequisite for
+   step 3, not an aside: AuditLog held the only record of who approved most
+   requests, and on several paths — `new_customer` above all — the decider was
+   recorded nowhere at all. ApprovalQueue column H now names them readably,
+   before the trail it depended on moves stores.
+3. `AuditLog` → Postgres. Heaviest tab, no readers to break, and it removes a
    Sheets write from the hot path of every inbound message.
-3. `TaskEvents`, `LedgerBalanceCache`, `WhatsAppOutbound` — small, bot-only.
-4. `Attendance` — mechanical; hold it if a human may want to eyeball it.
-5. `ApprovalQueue` last, on its own, with the bill-evidence check above.
+4. `TaskEvents`, `LedgerBalanceCache`, `WhatsAppOutbound` — small, bot-only.
+5. `Attendance` — mechanical; hold it if a human may want to eyeball it.
+6. `ApprovalQueue` last, on its own, with the bill-evidence check above.
 
-**Before step 2:** Emin's BKP-1 backup copies the whole spreadsheet. Anything
+**Before step 3:** Emin's BKP-1 backup copies the whole spreadsheet. Anything
 moved to Postgres leaves that net, so Railway's backup story has to be
 confirmed first.
 

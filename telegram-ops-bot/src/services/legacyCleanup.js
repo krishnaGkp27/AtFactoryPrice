@@ -35,7 +35,10 @@ async function rejectStaleLegacyTransfers() {
       && LEGACY_TRANSFER_ACTIONS.includes(p.actionJSON.action));
     for (const row of targets) {
       try {
-        await approvalQueueRepository.updateStatus(row.requestId, 'rejected', new Date().toISOString());
+        // APR-1 — no human decided this; say so rather than leaving a blank cell
+    // in a column whose emptiness would read as "nobody approved it".
+    await approvalQueueRepository.updateStatus(row.requestId, 'rejected', new Date().toISOString(),
+      'System (boot sweep)');
         await auditLogRepository.append('legacy_transfer_rejected',
           { requestId: row.requestId, action: row.actionJSON.action, reason: 'retired by TRF-5 — use Transfer Stock' },
           'system');
