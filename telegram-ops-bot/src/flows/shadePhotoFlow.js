@@ -227,7 +227,24 @@ async function promptPhoto(bot, chatId, userId, idx) {
  */
 async function handleFile(bot, chatId, userId, msg) {
   const session = sessionStore.get(userId);
-  if (!session || session.type !== SESSION_TYPE || session.step !== 'photo') return false;
+  if (!session || session.type !== SESSION_TYPE) return false;
+  // Single-flight: native-resolution work is heavy, and two pictures from a
+  // media group must never race into one _pending slot.
+  if (session.step === 'processing') {
+    await bot.sendMessage(chatId, '⏳ One picture at a time — the previous one is still being processed.', { disable_notification: true });
+    return true;
+  }
+  // A new picture while the preview is up = a retake of that same shade.
+  if (session.step === 'confirm' && session._pending) {
+    const p = session._pending;
+    takeBuffer(userId, p.idx);
+    await freezePreview(bot, chatId, p.previewMessageId, '🔁 replaced');
+    session._pending = null;
+    session.shadeIdx = p.idx;
+    session.step = 'photo';
+    sessionStore.set(userId, session);
+  }
+  if (session.step !== 'photo') return false;
   const idx = session.shadeIdx;
   const s = (session._shades || [])[idx];
   if (!s) return false;
@@ -246,6 +263,8 @@ async function handleFile(bot, chatId, userId, msg) {
     return false;
   }
 
+  session.step = 'processing';
+  sessionStore.set(userId, session);
   await render(bot, chatId, userId, `⏳ Processing *${mdEscape(session.design)} · #${s.number}* — stamping at full resolution…`, [cancelRow()]);
   let dl;
   try {
@@ -320,9 +339,21 @@ async function freezePreview(bot, chatId, messageId, label) {
   } catch (_) { /* gone */ }
 }
 
-async function useIt(bot, chatId, userId, idx) {
+/** Only the LIVE preview's own buttons may decide; a stale preview's chips are inert. */
+function pendingMatches(session, idx, fromMessageId) {
+  const p = session && session._pending;
+  if (!p || p.idx !== idx) return false;
+  return !fromMessageId || !p.previewMessageId || p.previewMessageId === fromMessageId;
+}
+
+async function staleTap(bot, chatId) {
+  await bot.sendMessage(chatId, 'ℹ️ That picture is no longer the one being decided — use the buttons on the latest preview.', { disable_notification: true });
+}
+
+async function useIt(bot, chatId, userId, idx, fromMessageId) {
   const session = sessionStore.get(userId);
-  if (!session || !session._pending || session._pending.idx !== idx) return;
+  if (!session) return;
+  if (!pendingMatches(session, idx, fromMessageId)) { await staleTap(bot, chatId); return; }
   const p = session._pending;
   const staged = p.staged;
   const s = (session._shades || [])[idx];
@@ -349,23 +380,30 @@ async function useIt(bot, chatId, userId, idx) {
   await advance(bot, chatId, userId);
 }
 
-async function retake(bot, chatId, userId, idx) {
+async function retake(bot, chatId, userId, idx, fromMessageId) {
   const session = sessionStore.get(userId);
   if (!session) return;
+  if (!pendingMatches(session, idx, fromMessageId)) { await staleTap(bot, chatId); return; }
   const p = session._pending;
   takeBuffer(userId, idx);
-  if (p && p.idx === idx) { await freezePreview(bot, chatId, p.previewMessageId, '🔁 replaced'); session._pending = null; }
+  await freezePreview(bot, chatId, p.previewMessageId, '🔁 replaced');
+  session._pending = null;
   delete session._staged[idx];
   sessionStore.set(userId, session);
   await promptPhoto(bot, chatId, userId, idx);
 }
 
-async function skip(bot, chatId, userId, idx) {
+async function skip(bot, chatId, userId, idx, fromMessageId) {
   const session = sessionStore.get(userId);
   if (!session) return;
+  // ⏭ lives on two cards: the prompt (no pending — the flow's own anchor)
+  // and the live preview. Any other card's ⏭ is stale and inert.
+  const fromPrompt = !session._pending && session.step === 'photo' && session.shadeIdx === idx
+    && (!fromMessageId || fromMessageId === session.flowMessageId);
+  if (!fromPrompt && !pendingMatches(session, idx, fromMessageId)) { await staleTap(bot, chatId); return; }
   const p = session._pending;
   takeBuffer(userId, idx);
-  if (p && p.idx === idx) { await freezePreview(bot, chatId, p.previewMessageId, '⏭ skipped'); session._pending = null; }
+  if (p) { await freezePreview(bot, chatId, p.previewMessageId, '⏭ skipped'); session._pending = null; }
   delete session._staged[idx];
   session._skipped[idx] = true;
   sessionStore.set(userId, session);
@@ -387,29 +425,47 @@ async function advance(bot, chatId, userId) {
 async function submit(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
+  // Single-flight (the SUB-1 pattern): a double tap or a redelivered
+  // callback must never mint a second batch. The request id is fixed the
+  // first time Done is tapped and reused by every retry; appendOnce makes
+  // the queue row idempotent on it.
+  if (session._submitting) return;
   const list = Object.keys(session._staged || {}).map((k) => session._staged[k]).filter(Boolean)
     .sort((a, b) => cmpNum(a.shadeNo, b.shadeNo));
   if (!list.length) { await showShades(bot, chatId, userId, 'Nothing added yet.'); return; }
-  const requestId = require('crypto').randomUUID();
-  try {
-    await shadeAssets.persistPending(list, requestId);
-  } catch (e) {
-    logger.error(`shadePhotoFlow.submit: persistPending failed — ${e.message}`);
-    await render(bot, chatId, userId, `⚠️ Could not save the shade photos: ${mdEscape(e.message)}`, [[{ text: '🔁 Try again', callback_data: 'shp:done' }], cancelRow()]);
-    return;
+  session._submitting = true;
+  if (!session._submitRequestId) session._submitRequestId = require('crypto').randomUUID();
+  const requestId = session._submitRequestId;
+  sessionStore.set(userId, session);
+  await render(bot, chatId, userId, '⏳ Sending for approval…', []);
+
+  const fail = async (what, e) => {
+    logger.error(`shadePhotoFlow.submit: ${what} failed — ${e.message}`);
+    const s = sessionStore.get(userId);
+    if (s) { s._submitting = false; sessionStore.set(userId, s); }
+    await render(bot, chatId, userId, `⚠️ Could not ${what}: ${mdEscape(e.message)}`, [[{ text: '🔁 Try again', callback_data: 'shp:done' }], cancelRow()]);
+  };
+  if (!session._persisted) {
+    try {
+      await shadeAssets.persistPending(list, requestId);
+      const s = sessionStore.get(userId);
+      if (s) { s._persisted = true; sessionStore.set(userId, s); }
+    } catch (e) { await fail('save the shade photos', e); return; }
   }
   const shades = list.map((s) => ({ number: s.shadeNo, name: s.shadeName }));
   const approvalQueueRepository = require('../repositories/approvalQueueRepository');
-  await approvalQueueRepository.append({
-    requestId, user: userId,
-    actionJSON: {
-      action: 'design_asset_upload', kind: 'shade',
-      design: session.design, arrivalBatch: session.arrivalBatch || '',
-      shadeCount: shades.length, shades, uploaderUserId: userId,
-    },
-    riskReason: 'Shade photos must be approved before they appear to customers, marketers and sales.',
-    status: 'pending',
-  });
+  try {
+    await approvalQueueRepository.appendOnce({
+      requestId, user: userId,
+      actionJSON: {
+        action: 'design_asset_upload', kind: 'shade',
+        design: session.design, arrivalBatch: session.arrivalBatch || '',
+        shadeCount: shades.length, shades, uploaderUserId: userId,
+      },
+      riskReason: 'Shade photos must be approved before they appear to customers, marketers and sales.',
+      status: 'pending',
+    });
+  } catch (e) { await fail('queue the approval', e); return; }
   try {
     await require('../repositories/auditLogRepository').append('approval_queued',
       { requestId, action: 'design_asset_upload', kind: 'shade', design: session.design, shades: shades.length }, userId);
@@ -460,7 +516,14 @@ async function handleCallback(bot, query) {
   if (rest === 'back') {
     if (session.step === 'photo' || session.step === 'confirm' || session.step === 'shades') {
       if (session.step === 'shades' || session.step === 'batch') { await showDesigns(bot, chatId, userId); return true; }
-      if (session._pending) { takeBuffer(userId, session._pending.idx); session._pending = null; sessionStore.set(userId, session); }
+      if (session._pending) {
+        // The abandoned preview's chips go inert, so a later tap on it can
+        // never drop a shade that was properly staged afterwards.
+        takeBuffer(userId, session._pending.idx);
+        await freezePreview(bot, chatId, session._pending.previewMessageId, '⬅ back');
+        session._pending = null;
+        sessionStore.set(userId, session);
+      }
       await showShades(bot, chatId, userId);
       return true;
     }
@@ -483,9 +546,10 @@ async function handleCallback(bot, query) {
     else await promptPhoto(bot, chatId, userId, n);
     return true;
   }
-  if (rest.startsWith('use:')) { await useIt(bot, chatId, userId, parseInt(rest.slice(4), 10)); return true; }
-  if (rest.startsWith('retake:')) { await retake(bot, chatId, userId, parseInt(rest.slice(7), 10)); return true; }
-  if (rest.startsWith('skip:')) { await skip(bot, chatId, userId, parseInt(rest.slice(5), 10)); return true; }
+  const fromMid = query.message && query.message.message_id;
+  if (rest.startsWith('use:')) { await useIt(bot, chatId, userId, parseInt(rest.slice(4), 10), fromMid); return true; }
+  if (rest.startsWith('retake:')) { await retake(bot, chatId, userId, parseInt(rest.slice(7), 10), fromMid); return true; }
+  if (rest.startsWith('skip:')) { await skip(bot, chatId, userId, parseInt(rest.slice(5), 10), fromMid); return true; }
   if (rest === 'done') { await submit(bot, chatId, userId); return true; }
   return true;
 }

@@ -84,6 +84,11 @@ function seedStock() {
 const flat = (kb) => (kb ? kb.inline_keyboard.flat() : []);
 const last = (bot, method) => bot.calls.filter((c) => c.method === method).pop();
 const lastCard = (bot) => bot.calls.filter((c) => c.method === 'sendMessage' || c.method === 'editMessageText').pop();
+/** Queue rows for shade batches, read from the fake sheet (appendOnce is idempotent on requestId). */
+const queuedShadeBatches = () => (sheets._store.get('ApprovalQueue') || []).slice(1)
+  .filter((r) => /"kind":"shade"/.test(String(r[2])))
+  .map((r) => ({ requestId: r[0], actionJSON: JSON.parse(r[2]) }));
+const previewId = () => sessionStore.get(UID)._pending.previewMessageId;
 
 test('Orders: the shade tap morphs the swatch page into the shade’s garment photo, in place', async () => {
   seedStock();
@@ -148,12 +153,17 @@ test('Orders: SHADE_PHOTOS_ENABLED=0 restores the pre-SHP-1 behaviour exactly', 
     seedShadeRows([{ shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' }]);
     const bot = createFakeBot();
     await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+    const comboId = sessionStore.get(UID).previewMessageId;
     await controller.handleCallbackQuery(bot, cb('srf_sh:9037|1|3'));
-    const morph = last(bot, 'editMessageMedia');
-    assert.equal(morph, undefined, 'no picture morph when the knob is off');
-    const cap = last(bot, 'editMessageCaption');
-    assert.ok(cap, 'the in-place caption edit still applies (one message)');
-    assert.ok(!flat(cap.args.opts.reply_markup).some((b) => /Full-quality/.test(b.text)));
+    assert.equal(last(bot, 'editMessageMedia'), undefined, 'no picture morph when the knob is off');
+    assert.equal(last(bot, 'editMessageCaption'), undefined, 'no caption morph either');
+    assert.ok(bot.calls.some((c) => c.method === 'deleteMessage' && c.args.messageId === comboId), 'the combo is dropped at the tap, as before');
+    const qty = last(bot, 'sendMessage');
+    assert.match(qty.args.text, /How many bales to supply\?/, 'the old text quantity card');
+    assert.ok(!flat(qty.args.opts.reply_markup).some((b) => /Full-quality/.test(b.text)));
+    await controller.handleCallbackQuery(bot, cb('srf_back:shade'));
+    assert.equal(last(bot, 'editMessageMedia'), undefined, 'Back sends a fresh combo, never morphs');
+    assert.ok(bot.calls.filter((c) => c.method === 'sendPhoto').length >= 2);
   } finally { settingsRepository.getAll = saved; }
 });
 
@@ -163,9 +173,7 @@ test('🎨 Shade Photos: file → native-resolution preview → Use it → Done 
   telegramFiles.downloadTelegramFile = async () => ({ buffer: original, mimeType: 'image/jpeg' });
   seedShadeRows([{ shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' }]);
   sessionStore.clear(UID);
-  const queued = [];
-  const savedAppend = approvalQueueRepository.append;
-  approvalQueueRepository.append = async (r) => { queued.push(r); return savedAppend(r); };
+  sheets._store.set('ApprovalQueue', [['requestId', 'user', 'actionJSON', 'riskReason', 'status', 'createdAt', 'resolvedAt']]);
   try {
     const bot = createFakeBot();
     await controller.handleCallbackQuery(bot, cb('act:shade_photos'));
@@ -194,7 +202,7 @@ test('🎨 Shade Photos: file → native-resolution preview → Use it → Done 
     kb = flat(preview.args.opts.reply_markup).map((b) => b.text);
     assert.deepEqual(kb, ['✅ Use it', '🔁 Retake', '⏭ Skip this shade']);
 
-    await controller.handleCallbackQuery(bot, cb('shp:use:1'));
+    await controller.handleCallbackQuery(bot, cb('shp:use:1', UID, previewId()));
     const copy = last(bot, 'sendDocument');
     assert.ok(copy && Buffer.isBuffer(copy.args.doc), 'full-quality copy kept as a document');
     assert.equal(copy.args.fileOptions.filename, '9037_shade_2.jpg');
@@ -204,6 +212,7 @@ test('🎨 Shade Photos: file → native-resolution preview → Use it → Done 
     assert.ok(kb.includes('🆕 2 - Dark Brown'));
 
     await controller.handleCallbackQuery(bot, cb('shp:done'));
+    const queued = queuedShadeBatches();
     assert.equal(queued.length, 1, 'ONE approval for the batch');
     const aj = queued[0].actionJSON;
     assert.equal(aj.action, 'design_asset_upload', 'rides the existing photo gate — no new action code');
@@ -230,7 +239,7 @@ test('🎨 Shade Photos: file → native-resolution preview → Use it → Done 
     const live = await shadeAssets.getShadePhotoForSend('9037', '2');
     assert.ok(live, 'shade 2 now resolves');
     assert.equal(live.photoSource, 'telegram_file_id');
-  } finally { approvalQueueRepository.append = savedAppend; }
+  } finally { /* nothing to restore */ }
 });
 
 test('🎨 Shade Photos: a compressed photo is accepted but told apart; wrong file type refused', async () => {
@@ -248,7 +257,7 @@ test('🎨 Shade Photos: a compressed photo is accepted but told apart; wrong fi
   await controller.handleFileMessage(bot, { from: { id: UID }, chat: { id: UID }, photo: [{ file_id: 'P_small' }, { file_id: 'P_large' }] });
   const preview = last(bot, 'sendPhoto');
   assert.match(preview.args.opts.caption, /sent as photo — Telegram compressed it/);
-  await controller.handleCallbackQuery(bot, cb('shp:retake:0'));
+  await controller.handleCallbackQuery(bot, cb('shp:retake:0', UID, previewId()));
   assert.match(lastCard(bot).args.text, /shade 1 - White/, 'retake re-prompts the same shade');
   await controller.handleCallbackQuery(bot, cb('shp:cancel'));
   assert.ok(!sessionStore.get(UID));
@@ -298,4 +307,135 @@ test('Marketer: the shade tap shows the garment photo (pair grammar only) and as
   const back = last(bot, 'editMessageMedia');
   assert.equal(back.args.media.media, 'PAGE_FID');
   assert.ok(flat(back.args.opts.reply_markup).some((b) => /Take ALL 2 shades/.test(b.text)));
+});
+
+/* ── Adversarial-review regressions (02-Sep-2026) ───────────────────── */
+
+test('REGRESSION: a sold-out shade tap morphs the caption in place — no "Sold out" card stacks under live chips', async () => {
+  seedStock();
+  seedShadeRows([{ shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' }]);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+  const comboId = sessionStore.get(UID).previewMessageId;
+  const before = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb('srf_sh:9037|2|0'));
+  const cap = last(bot, 'editMessageCaption');
+  assert.ok(cap && /Sold out/.test(cap.args.caption), 'sold-out note rides the combo');
+  assert.equal(cap.args.opts.message_id, comboId);
+  assert.equal(bot.calls.slice(before).filter((c) => c.method === 'sendMessage').length, 0, 'no separate card');
+  await controller.handleCallbackQuery(bot, cb('srf_sh:9037|1|3'));
+  assert.equal(last(bot, 'editMessageMedia').args.opts.message_id, comboId, 'the next shade still morphs the same message');
+  assert.equal(bot.calls.slice(before).filter((c) => c.method === 'sendMessage').length, 0, 'nothing stranded');
+});
+
+test('REGRESSION: choosing a quantity detaches the morphed photo — Cart → Add more → same design never morphs a stale bubble', async () => {
+  seedStock();
+  seedShadeRows([{ shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' }]);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+  const comboId = sessionStore.get(UID).previewMessageId;
+  await controller.handleCallbackQuery(bot, cb('srf_sh:9037|1|3'));
+  await controller.handleCallbackQuery(bot, cb('srf_qty:2', UID, comboId));
+  const rec = bot.calls.filter((c) => c.method === 'editMessageCaption').pop();
+  assert.match(rec.args.caption, /× 2 added to cart/, 'the photo becomes a record of what was added');
+  assert.equal(rec.args.opts.message_id, comboId);
+  const s = sessionStore.get(UID);
+  assert.equal(s.previewMessageId, null, 'detached');
+  assert.equal(s.previewIsPhoto, false);
+  assert.equal(s.cart.length, 1);
+  const mark = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb('srf_cart:add'));
+  await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+  const after = bot.calls.slice(mark);
+  assert.ok(after.some((c) => c.method === 'sendPhoto'), 'a FRESH combo for the second visit');
+  assert.ok(!after.some((c) => c.method === 'editMessageMedia' && c.args.opts.message_id === comboId), 'the old bubble is never morphed');
+});
+
+test('REGRESSION: marketer — a failed morph shows a fresh photo card and NEVER raises the request', async () => {
+  const myProductsFlow = require(path.join(SRC, 'flows/myProductsFlow'));
+  const linkedAccessService = require(path.join(SRC, 'services/linkedAccessService'));
+  const linkedSupplyService = require(path.join(SRC, 'services/linkedSupplyService'));
+  linkedAccessService.infoFor = async () => ({ type: 'marketer', linkId: 'MKT-1', linkName: 'Musa', pinnedWarehouse: 'IDUMOTA' });
+  const raised = [];
+  linkedSupplyService.raise = async (bot, info, lines) => { raised.push(lines); return { ok: true }; };
+  seedShadeRows([{ shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' }]);
+  const MK = '9010';
+  const items = [{ design: '9037', suppliedB: 1, allocatedB: 3, shades: [{ shade: '1', suppliedB: 1, allocatedB: 3 }] }];
+  sessionStore.set(MK, { type: 'my_products_flow', step: 'shades', photoMessageId: 321, _design: 0, _items: items });
+  const bot = createFakeBot();
+  bot.editMessageMedia = async () => { throw new Error('ETELEGRAM: 400 Bad Request: message to edit not found'); };
+  await myProductsFlow.handleCallback(bot, cb('myp:s:0:0', MK));
+  assert.equal(raised.length, 0, 'a display failure raises nothing');
+  const fresh = last(bot, 'sendPhoto');
+  assert.ok(fresh && fresh.args.photo === 'SHADE1_FID', 'the photo goes up as a fresh card');
+  const texts = flat(fresh.args.opts.reply_markup).map((b) => b.text);
+  assert.deepEqual(texts, ['✅ Request this shade (2B)', '🔍 Full-quality picture', '⬅️ Back']);
+  assert.equal(sessionStore.get(MK).photoMessageId, fresh.args.opts && sessionStore.get(MK).photoMessageId, 'anchor moved to the new card');
+
+  // Text-fallback design card (no photoMessageId) with a shade photo: same — show, do not raise.
+  sessionStore.set(MK, { type: 'my_products_flow', step: 'shades', photoMessageId: null, flowMessageId: 5, _design: 0, _items: items });
+  const bot2 = createFakeBot();
+  await myProductsFlow.handleCallback(bot2, cb('myp:s:0:0', MK));
+  assert.equal(raised.length, 0);
+  assert.equal(last(bot2, 'sendPhoto').args.photo, 'SHADE1_FID');
+  await myProductsFlow.handleCallback(bot2, cb('myp:sc:0:0', MK));
+  assert.equal(raised.length, 1, 'only ✅ raises');
+});
+
+test('REGRESSION: upload door — one picture at a time, stale previews are inert, Done is single-flight, huge files refused', async () => {
+  const sharp = require('sharp');
+  const img = await sharp({ create: { width: 1600, height: 1200, channels: 3, background: '#553311' } }).jpeg().toBuffer();
+  telegramFiles.downloadTelegramFile = async () => ({ buffer: img, mimeType: 'image/jpeg' });
+  seedShadeRows([]);
+  sessionStore.clear(UID);
+  sheets._store.set('ApprovalQueue', [['requestId', 'user', 'actionJSON', 'riskReason', 'status', 'createdAt', 'resolvedAt']]);
+  const settingsRepository = require(path.join(SRC, 'repositories/settingsRepository'));
+  const savedSettings = settingsRepository.getAll;
+  try {
+    const bot = createFakeBot();
+    const file = (id) => ({ from: { id: UID }, chat: { id: UID }, document: { file_id: id, mime_type: 'image/jpeg' } });
+    await controller.handleCallbackQuery(bot, cb('act:shade_photos'));
+    await controller.handleCallbackQuery(bot, cb('shp:d:0'));
+    await controller.handleCallbackQuery(bot, cb('shp:s:0'));
+
+    // Two pictures at once (a media group): one preview, the other refused.
+    await Promise.all([controller.handleFileMessage(bot, file('A')), controller.handleFileMessage(bot, file('B'))]);
+    assert.equal(bot.calls.filter((c) => c.method === 'sendPhoto').length, 1, 'exactly one preview');
+    assert.ok(bot.calls.some((c) => c.method === 'sendMessage' && /One picture at a time/.test(c.args.text)));
+    const previewId = last(bot, 'sendPhoto') && sessionStore.get(UID)._pending.previewMessageId;
+
+    // ⬅ Shades abandons the preview: its chips are frozen and later taps on it are inert.
+    await controller.handleCallbackQuery(bot, cb('shp:back'));
+    const frozen = last(bot, 'editMessageReplyMarkup');
+    assert.equal(frozen.args.opts.message_id, previewId);
+    assert.match(flat(frozen.args.replyMarkup)[0].text, /back/);
+    await controller.handleCallbackQuery(bot, cb('shp:s:0'));
+    await controller.handleFileMessage(bot, file('C'));
+    await controller.handleCallbackQuery(bot, cb('shp:use:0', UID, sessionStore.get(UID)._pending.previewMessageId));
+    assert.ok(sessionStore.get(UID)._staged[0], 'shade 1 staged properly');
+    await controller.handleCallbackQuery(bot, cb('shp:skip:0', UID, previewId)); // the STALE preview's ⏭
+    assert.ok(sessionStore.get(UID)._staged[0], 'a stale ⏭ cannot drop the staged shade');
+    assert.ok(!sessionStore.get(UID)._skipped[0]);
+    assert.ok(bot.calls.some((c) => c.method === 'sendMessage' && /no longer the one being decided/.test(c.args.text)));
+
+    // Done twice at once → ONE batch, ONE queue row, ONE set of rows.
+    await controller.handleCallbackQuery(bot, cb('shp:skip:1', UID, sessionStore.get(UID).flowMessageId)); // finish shade 2's prompt
+    await Promise.all([controller.handleCallbackQuery(bot, cb('shp:done')), controller.handleCallbackQuery(bot, cb('shp:done'))]);
+    assert.equal(queuedShadeBatches().length, 1, 'one approval row');
+    assert.equal((await shadeRepo.getAll()).filter((r) => r.status === 'pending').length, 1, 'one pending shade row');
+
+    // Too big for the native stamp → refused with the size, prompt stays.
+    settingsRepository.getAll = async () => ({ SHADE_PHOTO_MAX_MP: 0.5 });
+    sessionStore.clear(UID);
+    const bot2 = createFakeBot();
+    await controller.handleCallbackQuery(bot2, cb('act:shade_photos'));
+    await controller.handleCallbackQuery(bot2, cb('shp:d:0'));
+    await controller.handleCallbackQuery(bot2, cb('shp:s:0'));
+    await controller.handleFileMessage(bot2, file('BIG'));
+    assert.equal(bot2.calls.filter((c) => c.method === 'sendPhoto').length, 0, 'no preview for a refused file');
+    assert.ok(bot2.calls.some((c) => c.method === 'sendMessage' && /1600×1200 .*MP limit/.test(c.args.text)), 'told the size and the limit');
+    assert.equal(sessionStore.get(UID).step, 'photo', 'prompt is back');
+  } finally {
+    settingsRepository.getAll = savedSettings;
+  }
 });

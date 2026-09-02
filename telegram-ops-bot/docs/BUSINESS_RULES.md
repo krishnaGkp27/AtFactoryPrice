@@ -610,7 +610,12 @@ but this goes as our company rules for now").
   not product surfaces and keep their numbers.
 - **A linked person's tap RAISES a real supply request** — the exact
   srf_ pipeline shape (dispatch feasibility → admin approval →
-  warehouse-boy), quantity = remaining allocation, never typed. The
+  warehouse-boy), quantity = remaining allocation, never typed.
+  *SHP-1 (02-Sep-2026, PENDING the owner's ruling — proposed as D5 in
+  specs/SHP-1_SHADE_PHOTOS.md and built on "build this"):* where the shade
+  has a garment photo the tap SHOWS it first and ✅ Request this shade
+  raises; a shade with no photo keeps the one-tap raise. Settings
+  `SHADE_PHOTOS_ENABLED = 0` restores one-tap everywhere. The
   admin decides; nothing moves on the tap (§15 unchanged). One open
   request per (person, design, shade).
 - **Allocation is governed from the admin's dashboard matrix**

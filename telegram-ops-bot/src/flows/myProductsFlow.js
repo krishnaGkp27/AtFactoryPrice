@@ -175,7 +175,8 @@ async function showShadePhoto(bot, chatId, userId, idx, shadeIdx) {
   const presenter = require('../services/shadePhotoPresenter');
   let asset = null;
   try { asset = await presenter.resolveShadePhoto(it.design, sh.shade, ''); } catch (_) { asset = null; }
-  if (!asset || !session.photoMessageId) {
+  if (!asset) {
+    // No garment photo → exactly the MYP-2 one-tap request.
     await requestSupply(bot, chatId, userId, idx, shadeIdx);
     return;
   }
@@ -190,11 +191,37 @@ async function showShadePhoto(bot, chatId, userId, idx, shadeIdx) {
     [{ text: `✅ Request this shade (${Math.max(0, sh.allocatedB - sh.suppliedB)}B)`, callback_data: `myp:sc:${idx}:${shadeIdx}` }],
     [{ text: '⬅️ Back', callback_data: `myp:sb:${idx}` }],
   ];
-  const morphed = await presenter.morphToShade(bot, chatId, session.photoMessageId, {
-    design: it.design, shadeNo: sh.shade, arrivalBatch: '', caption, rows,
-    fullQualityRow: [presenter.fullQualityButton(`myp:sf:${idx}:${shadeIdx}`)],
-  });
-  if (!morphed) await requestSupply(bot, chatId, userId, idx, shadeIdx);
+  const fullQualityRow = [presenter.fullQualityButton(`myp:sf:${idx}:${shadeIdx}`)];
+  if (session.photoMessageId) {
+    const morphed = await presenter.morphToShade(bot, chatId, session.photoMessageId, {
+      design: it.design, shadeNo: sh.shade, arrivalBatch: '', caption, rows, fullQualityRow,
+    });
+    if (morphed) return;
+  }
+  // No morphable card (text fallback, or the edit failed): the photo goes up
+  // as a fresh card with the same ✅ / 🔍 / ⬅ chips. A display failure must
+  // NEVER raise a request the person only asked to look at.
+  try {
+    const sent = await bot.sendPhoto(chatId, asset.photo, {
+      caption, parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: presenter.withRowBeforeLast(rows, fullQualityRow) },
+    });
+    if (asset.photoSource !== 'telegram_file_id' && sent && sent.photo && sent.photo.length) {
+      require('../services/designShadeAssetsService')
+        .cachePhotoFileId(asset.row.rowIndex, sent.photo[sent.photo.length - 1].file_id).catch(() => {});
+    }
+    const s2 = sessionStore.get(userId);
+    if (s2 && sent && sent.message_id) {
+      if (s2.photoMessageId && s2.photoMessageId !== sent.message_id) {
+        try { await bot.deleteMessage(chatId, s2.photoMessageId); } catch (_) { /* gone */ }
+      }
+      s2.photoMessageId = sent.message_id;
+      sessionStore.set(userId, s2);
+    }
+  } catch (e) {
+    logger.warn(`myProducts.showShadePhoto(${it.design}#${sh.shade}): ${e.message}`);
+    await bot.sendMessage(chatId, '⚠️ Could not show that shade’s picture just now — tap it again in a moment.', { disable_notification: true });
+  }
 }
 
 /** Raise the remaining allocation as a real supply request. */
@@ -292,7 +319,7 @@ async function handleCallback(bot, query) {
     const sh = it && it.shades[j];
     if (it && sh) {
       await require('../services/shadePhotoPresenter').sendFullQuality(bot, chatId,
-        { design: it.design, shadeNo: sh.shade, shadeName: '', arrivalBatch: '' });
+        { design: it.design, shadeNo: sh.shade, shadeName: '', arrivalBatch: '', viewOnly: true });
     }
     return true;
   }

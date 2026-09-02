@@ -3712,7 +3712,9 @@ async function handleFileMessage(bot, msg) {
   }
 
   // SHP-1 — Shade Photos: a photo OR an image document (the full-quality path).
-  if (session && session.type === 'shade_photo_flow' && session.step === 'photo') {
+  if (session && session.type === 'shade_photo_flow') {
+    // The flow decides by step (a second picture mid-processing is refused,
+    // one during the preview is a retake).
     const handled = await require('../flows/shadePhotoFlow').handleFile(bot, chatId, userId, msg);
     if (handled) return;
   }
@@ -4249,6 +4251,7 @@ async function handleMessage(bot, msg) {
       }
       addToCart(srfSession, srfSession.currentDesign, srfSession.currentShade, qty);
       sessionStore.set(userId, srfSession);
+      await detachShadePhotoAfterQuantity(bot, chatId, userId, qty); // SHP-1
       await showCartSummary(bot, chatId, userId);
       return;
     }
@@ -6464,7 +6467,8 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   // stale once we render a new shade picker. SHP-1 — except when coming
   // BACK from a morphed shade photo of this same design: that combo is kept
   // so Path A can morph it back to the swatch page (one message).
-  const keepForMorph = !!(session && session.previewMessageId && session.previewIsPhoto
+  const shpOn = await require('../services/shadePhotoPresenter').isEnabled();
+  const keepForMorph = !!(shpOn && session && session.previewMessageId && session.previewIsPhoto
     && session.currentDesign === design);
   if (!keepForMorph) await clearDesignPreview(bot, chatId, userId);
 
@@ -6641,13 +6645,14 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
         // SHP-1 — Back from a morphed shade photo: the SAME message becomes
         // the swatch page + shade chips again. Falls back to a fresh combo
         // when the page photo is not yet a file_id (first send from Drive).
-        if (session.previewMessageId && session.previewIsPhoto) {
+        if (keepForMorph && session.previewMessageId && session.previewIsPhoto) {
           const back = await require('../services/shadePhotoPresenter').morphToPage(bot, chatId, session.previewMessageId, {
             photo: photoAsset.photo,
             caption: `📷 *${design}* — *${warehouse}*${soldOutNote}${overflowNote}`,
             rows,
           });
           if (back) {
+            if (session.flowMessageId) await bot.deleteMessage(chatId, session.flowMessageId).catch(() => {});
             session.flowMessageId = null;
             sessionStore.set(userId, session);
             return;
@@ -6710,12 +6715,30 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
   // warehouses) has nothing addable: show a note + back instead of qty
   // chips. Also blocks the Custom Quantity dead-end at 0 available, so a
   // 0-available selection can never produce an addable cart line.
+  // SHP-1 — the knob is real: off = every path below is the pre-SHP-1 one
+  // (no morph, no shade photo, no 🔍 chip; the combo is dropped at the tap).
+  const shadePresenter = require('../services/shadePhotoPresenter');
+  const shpOn = await shadePresenter.isEnabled();
   if (!(Number(availPkgs) > 0)) {
     const backBtn = (session && session.singleShadeDesign)
       ? { text: '⬅️ Back to designs', callback_data: 'srf_back:design' }
       : { text: '⬅️ Back to shades', callback_data: 'srf_back:shade' };
-    await editOrSendAnchored(bot, chatId, userId,
-      `📦 *${design}* │ Shade: *${shadeRef}* │ 🏭 *${warehouse}*\n\n_Sold out — nothing available to add._`, {
+    const soldText = `📦 *${design}* │ Shade: *${shadeRef}* │ 🏭 *${warehouse}*\n\n_Sold out — nothing available to add._`;
+    // SHP-1 — a sold-out info tap morphs the combo's caption in place, so
+    // the combo's live chips and a 'Sold out' card never stack up.
+    if (shpOn && session && session.previewMessageId && session.previewIsPhoto) {
+      const ok = await shadePresenter.morphToShade(bot, chatId, session.previewMessageId, {
+        design, shadeNo: shade, arrivalBatch: session.arrivalBatch, caption: soldText, rows: [[backBtn]], fullQualityRow: null,
+      });
+      if (ok) {
+        if (session.flowMessageId) await bot.deleteMessage(chatId, session.flowMessageId).catch(() => {});
+        session.flowMessageId = null;
+        sessionStore.set(userId, session);
+        return;
+      }
+    }
+    if (session) await clearDesignPreview(bot, chatId, userId);
+    await editOrSendAnchored(bot, chatId, userId, soldText, {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: [[backBtn]] },
     });
@@ -6751,8 +6774,7 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
   // (specs/SHP-1_SHADE_PHOTOS.md). Resolved once; a 🔍 Full-quality chip
   // joins the card whenever a photo exists (Telegram recompresses photos,
   // never documents).
-  const shadePresenter = require('../services/shadePhotoPresenter');
-  const shadeAsset = await shadePresenter.resolveShadePhoto(design, shade, session && session.arrivalBatch);
+  const shadeAsset = shpOn ? await shadePresenter.resolveShadePhoto(design, shade, session && session.arrivalBatch) : null;
   const fullQualityRow = shadeAsset ? [shadePresenter.fullQualityButton('srf_shpfull')] : null;
   const qRows = shadePresenter.withRowBeforeLast(rows, fullQualityRow);
 
@@ -6761,11 +6783,14 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
   // quantity question, the chips become quantities. One message, no
   // scrolling. With no shade photo the picture stays and only the words
   // change — still one message, still better than the old second card.
-  if (!singleShade && session && session.previewMessageId && session.previewIsPhoto) {
+  if (shpOn && !singleShade && session && session.previewMessageId && session.previewIsPhoto) {
     const morphed = await shadePresenter.morphToShade(bot, chatId, session.previewMessageId, {
       design, shadeNo: shade, arrivalBatch: session.arrivalBatch, caption, rows, fullQualityRow,
     });
     if (morphed) {
+      // A text card from an earlier step (a sold-out note, a custom-quantity
+      // prompt) must not linger under the morphed photo.
+      if (session.flowMessageId) await bot.deleteMessage(chatId, session.flowMessageId).catch(() => {});
       session.flowMessageId = null;
       sessionStore.set(userId, session);
       return;
@@ -10997,6 +11022,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
     addToCart(session, session.currentDesign, session.currentShade, qty);
     sessionStore.set(uid, session);
+    await detachShadePhotoAfterQuantity(bot, chatId, uid, qty); // SHP-1
     await showCartSummary(bot, chatId, uid);
 
   /* ─── SUPPLY REQUEST FLOW: CART ACTIONS ─── */
@@ -12728,6 +12754,26 @@ async function showPendingUserLinkPicker(bot, chatId, adminId, pu, kind) {
     `🔗 *Link ${mdEscape(who)}*\n🆔 \`${pu.telegram_id}\`\n\n`
     + `Which ${kind} is this?${records.length > 24 ? `\n\n_Showing the first 24 of ${records.length}._` : ''}`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
+/**
+ * SHP-1 — once a quantity is chosen the morphed shade photo is finished
+ * with: its caption becomes a one-line record of what was added and it is
+ * DETACHED from the session, so a later visit to the same design (Cart →
+ * Add more) can never morph a stale bubble above the cart. Best-effort.
+ */
+async function detachShadePhotoAfterQuantity(bot, chatId, userId, qty) {
+  const session = sessionStore.get(userId);
+  if (!session || !session.previewMessageId || !session.previewIsPhoto) return;
+  const mid = session.previewMessageId;
+  session.previewMessageId = null;
+  session.previewIsPhoto = false;
+  sessionStore.set(userId, session);
+  try {
+    await bot.editMessageCaption(
+      `✅ *${session.currentDesign}* · Shade *${formatShadeRef(session.currentShade, session.currentShadeName)}* × ${qty} added to cart`,
+      { chat_id: chatId, message_id: mid, parse_mode: 'Markdown', reply_markup: { inline_keyboard: [] } });
+  } catch (_) { /* the picture stays as it is */ }
 }
 
 async function clearDesignPreview(bot, chatId, userId) {

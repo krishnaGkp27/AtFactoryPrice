@@ -122,6 +122,11 @@ const DEFAULTS = {
   // SHP-1 — per-shade garment photos. 0 = every shade tap behaves exactly
   // as before SHP-1 (no photo morph, no 🔍 chip); the upload door stays.
   SHADE_PHOTOS_ENABLED: 1,
+  // SHP-1 — largest picture the native-resolution stamp will decode, in
+  // megapixels. A raster is decoded whole (≈4 bytes/pixel) on the single
+  // bot instance, so this is a memory ceiling, not a quality one: 40 MP is
+  // above any phone's normal output. Bigger files are refused with the size.
+  SHADE_PHOTO_MAX_MP: 40,
   // APX-3d/3e — hours a RECEIVED (✅) transfer stays in the inbox list.
   // 0 = keep forever (owner 31-Jul: nothing visible may vanish until a
   // complete backup regime exists — see BKP-1). Set e.g. 48 via a

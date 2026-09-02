@@ -39,7 +39,28 @@ function extFor(mime, fallback) {
  * send; `labeledBuffer` is for that send only and must not be kept in a
  * session.
  */
-async function stage({ design, shadeNo, shadeName, arrivalBatch, sourceBuffer, sourceFileId, sourceKind, sourceMime, uploadedBy }) {
+/* Native-resolution stamping is memory-heavy (a 40 MP raster is ~160 MB of
+ * pixels plus sharp's working set), so stagings are serialised process-wide:
+ * two uploaders never decode two big rasters at once. */
+let _stageChain = Promise.resolve();
+function serialised(fn) {
+  const run = _stageChain.then(fn, fn);
+  _stageChain = run.catch(() => {});
+  return run;
+}
+
+async function maxPixels() {
+  try {
+    const s = await require('../repositories/settingsRepository').getAll();
+    const mp = Number(s.SHADE_PHOTO_MAX_MP);
+    if (Number.isFinite(mp) && mp > 0) return Math.round(mp * 1000 * 1000);
+  } catch (_) { /* default */ }
+  return imageOverlay.DEFAULT_MAX_PIXELS;
+}
+
+async function stage(params) { return serialised(() => stageInner(params)); }
+
+async function stageInner({ design, shadeNo, shadeName, arrivalBatch, sourceBuffer, sourceFileId, sourceKind, sourceMime, uploadedBy }) {
   if (!design) throw new Error('design is required');
   if (shadeNo === undefined || shadeNo === null || String(shadeNo).trim() === '') throw new Error('shadeNo is required');
   if (!Buffer.isBuffer(sourceBuffer) || !sourceBuffer.length) throw new Error('sourceBuffer is required');
@@ -47,8 +68,11 @@ async function stage({ design, shadeNo, shadeName, arrivalBatch, sourceBuffer, s
   const label = `${String(design).trim()} · #${String(shadeNo).trim()}`;
   let stamped = null;
   try {
-    stamped = await imageOverlay.stampNative(sourceBuffer, label);
+    stamped = await imageOverlay.stampNative(sourceBuffer, label, { maxPixels: await maxPixels() });
   } catch (e) {
+    // Too big is a refusal the uploader must see; anything else (an odd
+    // format sharp cannot decode) degrades to the original bytes.
+    if (e && e.code === 'IMAGE_TOO_LARGE') throw e;
     logger.warn(`shadeAssets.stage(${design}#${shadeNo}): stampNative failed — ${e.message}; using the original as-is`);
   }
   let width = stamped ? stamped.width : 0;

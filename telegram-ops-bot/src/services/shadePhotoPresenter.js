@@ -137,7 +137,7 @@ async function morphToPage(bot, chatId, messageId, { photo, caption, rows, parse
  * is unreachable).
  * @returns {Promise<boolean>}
  */
-async function sendFullQuality(bot, chatId, { design, shadeNo, shadeName, arrivalBatch }) {
+async function sendFullQuality(bot, chatId, { design, shadeNo, shadeName, arrivalBatch, viewOnly = false }) {
   let asset = null;
   try {
     if (await isEnabled()) asset = await shadeAssets.getFullQualityForSend(design, shadeNo, { arrivalBatch });
@@ -145,9 +145,11 @@ async function sendFullQuality(bot, chatId, { design, shadeNo, shadeName, arriva
     logger.warn(`shadePhotoPresenter.sendFullQuality(${design}#${shadeNo}): ${e.message}`);
   }
   if (!asset) {
-    await bot.sendMessage(chatId,
-      `🔍 No full-quality copy for *${design}* shade *${shadeNo}* yet — upload it again as a *File* (📎 → File) so the original bytes are kept.`,
-      { parse_mode: 'Markdown' });
+    // A linked (view-only) person cannot upload — no instruction they cannot follow.
+    await bot.sendMessage(chatId, viewOnly
+      ? `🔍 The full-quality picture for *${design}* shade *${shadeNo}* is not available yet.`
+      : `🔍 No full-quality copy for *${design}* shade *${shadeNo}* yet — upload it again as a *File* (📎 → File) so the original bytes are kept.`,
+    { parse_mode: 'Markdown' });
     return false;
   }
   const r = asset.row;

@@ -291,3 +291,36 @@ share page swapping the big image, served at native resolution through the
 existing image proxy (with the Telegram-bytes fallback while BKP-1 is open), a
 `shade` beacon in share analytics, and `design.html` on the site given the same
 chips once the owner says so (repo-root file, outside the bot's default scope).
+
+### After the adversarial review (same day)
+
+Three lenses (security / correctness / locked rules), 19 findings, 15
+confirmed and fixed before deploy:
+
+- **Never write on a display failure** — a marketer's shade tap whose morph
+  fails now shows the photo as a fresh card; only ✅ raises the request. A
+  text-fallback design card gets the same.
+- **Memory ceiling** — native stamping decodes the whole raster, so it is
+  bounded: `SHADE_PHOTO_MAX_MP` (default 40) refuses bigger files with their
+  size, sharp is given the same pixel limit, and stagings are serialised
+  process-wide.
+- **Upload door hygiene** — one picture at a time (a second file mid-
+  processing is refused; a file during the preview is a retake), a stale
+  preview's chips are inert, ⬅ freezes an abandoned preview, and ✅ Done is
+  single-flight with a fixed request id + `appendOnce` (the SUB-1 pattern).
+- **Orders bookkeeping** — a sold-out tap morphs the caption in place; a
+  chosen quantity turns the photo into a one-line record (`✅ 9037 · Shade
+  1 - White × 2 added to cart`) and detaches it, so Cart → Add more → the
+  same design gets a fresh combo; stale text cards are deleted on morph.
+- **The knob is real** — `SHADE_PHOTOS_ENABLED = 0` restores the pre-SHP-1
+  paths exactly (combo dropped at the tap, text quantity card, fresh combo
+  on Back). Pinned by test.
+- **Wrong-audience copy** — a view-only marketer is never told to upload.
+
+Two items need the owner:
+1. **D5 ruling** — BUSINESS_RULES §16 carries the two-tap change as PENDING.
+2. **Approver hook** — `approvalEvents` still treats a shade batch like a
+   page upload and sends the approver the swatch PAGE captioned "photo
+   activated … visible in Update Price and Stock pickers". The executor's
+   own message is correct; the extra photo is wrong. The fix is a one-line
+   `kind !== 'shade'` guard in a file that needs the owner's go.

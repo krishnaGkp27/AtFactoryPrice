@@ -141,17 +141,39 @@ async function normalizePhoto(rawBuffer) {
  * @param {string} label   e.g. "202/201 · #2"
  * @returns {Promise<{buffer:Buffer,width:number,height:number,format:'png'|'jpeg',mime:string}>}
  */
-async function stampNative(rawBuffer, label) {
+/**
+ * Native-resolution work decodes the WHOLE raster (a 64 MP photo is ~1 GB
+ * of pixels on the single bot instance), so every native call carries a
+ * pixel ceiling: sharp refuses to decode above it, and the caller gets a
+ * plain ImageTooLargeError to show the user. Default 40 MP — above any
+ * phone's normal output; the Settings knob SHADE_PHOTO_MAX_MP moves it.
+ */
+const DEFAULT_MAX_PIXELS = 40 * 1000 * 1000;
+
+class ImageTooLargeError extends Error {
+  constructor(width, height, maxPixels) {
+    super(`Image is ${width}×${height} (${(width * height / 1e6).toFixed(1)} MP) — above the ${Math.round(maxPixels / 1e6)} MP limit. Export a smaller copy and send that.`);
+    this.name = 'ImageTooLargeError';
+    this.code = 'IMAGE_TOO_LARGE';
+    this.width = width; this.height = height; this.maxPixels = maxPixels;
+  }
+}
+
+async function stampNative(rawBuffer, label, opts = {}) {
   const sharp = loadSharp();
   if (!Buffer.isBuffer(rawBuffer)) throw new Error('rawBuffer must be a Buffer');
-  const meta = await sharp(rawBuffer).metadata();
+  const maxPixels = Number(opts.maxPixels) > 0 ? Number(opts.maxPixels) : DEFAULT_MAX_PIXELS;
+  // metadata() reads the header only — cheap even for a huge file.
+  const meta = await sharp(rawBuffer, { limitInputPixels: false }).metadata();
   let w = meta.width || 0;
   let h = meta.height || 0;
   if (!w || !h) throw new Error('Could not read image dimensions; corrupt or unsupported format.');
+  if (w * h > maxPixels) throw new ImageTooLargeError(w, h, maxPixels);
   // Orientations 5-8 rotate by 90°, so the composited canvas is transposed.
   if (meta.orientation && meta.orientation >= 5) [w, h] = [h, w];
   const svg = buildLabelSvg(w, h, label);
-  const composed = sharp(rawBuffer).rotate().composite([{ input: Buffer.from(svg), top: 0, left: 0 }]);
+  const composed = sharp(rawBuffer, { limitInputPixels: maxPixels }).rotate()
+    .composite([{ input: Buffer.from(svg), top: 0, left: 0 }]);
   const isPng = meta.format === 'png';
   const buffer = isPng
     ? await composed.png({ compressionLevel: 9 }).toBuffer()
@@ -162,11 +184,11 @@ async function stampNative(rawBuffer, label) {
 /** Dimensions + format of an image buffer (orientation-corrected). */
 async function readImageMeta(rawBuffer) {
   const sharp = loadSharp();
-  const meta = await sharp(rawBuffer).metadata();
+  const meta = await sharp(rawBuffer, { limitInputPixels: false }).metadata();
   let w = meta.width || 0;
   let h = meta.height || 0;
   if (meta.orientation && meta.orientation >= 5) [w, h] = [h, w];
   return { width: w, height: h, format: meta.format || '' };
 }
 
-module.exports = { stampDesignNumber, normalizePhoto, stampNative, readImageMeta };
+module.exports = { stampDesignNumber, normalizePhoto, stampNative, readImageMeta, ImageTooLargeError, DEFAULT_MAX_PIXELS };
