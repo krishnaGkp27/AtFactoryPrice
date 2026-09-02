@@ -265,6 +265,12 @@ inventory sheet. but you can add in different sheet."*
   `correction` means an admin un-did a mis-entered sale (`/revert_packages`)
   — no approval, no goods moved — and erases that sale from BOTH sides of
   the ledger instead of showing the customer a return they never made.
+- **An approved `return` credits the buyer at the booked rate (RET-3,
+  02-Sep-2026).** The rate is the request's own `pricePerYard` if the return
+  card set one, else the sold row's price (the sale executor stamped the
+  enriched rate there). No rate on record → the stock still comes back and
+  the missing credit is reported on the approve reply and in AuditLog —
+  never a silent ₦0. A request's `returnedOn` dates the movement.
 - Price, category, bin and container edits are not movements and write
   nothing.
 - A failed movement write never undoes or blocks a physical stock move.
@@ -642,5 +648,6 @@ but this goes as our company rules for now").
 | 31-Aug-2026 | The DML-1 movement ledger cannot state a blind count's gap in yards — StockTakes has no counted_yards and the count never records WHICH bales — so the gap is stated in packaging and never invented; measured at the count, not against today's book | DML-1 (`specs/DML-1_BUILD_SPEC.md`) |
 | 01-Sep-2026 | Who approved a request survived only in the JSON blob or AuditLog; a dual approval recorded admin #1 and lost admin #2, an admin-raised dual action recorded neither, `new_customer` recorded nobody anywhere; a naive column would have named the RECEIVER (transfers) or the DISPATCH HAND (supply) as the signing authority | APR-1 (ApprovalQueue col H `Approver`, `approverStamp`) |
 | 01-Sep-2026 | The workbook had ~51 tabs; four registered sheets had no live reader and two no writer; `BranchOpsLog` is the office CASH LEDGER despite its name and stays; operational state also hides as columns inside business sheets | SHT-1 (`docs/SHEET_STORAGE_SPLIT.md`) |
+| 02-Sep-2026 | Every return approved since returns moved behind approval credited the customer ₦0: the executors emitted the ledger event without a rate and `recordReturn` skips a zero amount; the only in-bot "fix" (Record Payment) would corrupt the cash book | RET-3 (`specs/RET-3_RETURN_CREDIT.md`) |
 
 When an incident spawns a new rule: fix, spec, then add the rule HERE.

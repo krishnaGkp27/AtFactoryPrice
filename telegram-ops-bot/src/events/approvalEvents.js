@@ -1895,8 +1895,10 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
           const failLines = erpFails.map((f) => `  • ${f.stage}: ${f.error}`).join('\n');
           approvedMsg = `⚠️ Request ${requestId} approved — changes applied, but these ledger/book entries FAILED:\n${failLines}\nCheck AuditLog (erp_hook_failed) and re-post manually.`;
         }
-        await bot.sendMessage(chatIdCb, approvedMsg);
-        await notifyEmployee(bot, requestingUser, requestId, `✅ Your request ${shortRequestRef(requestId)} has been approved by admin. Changes applied.`);
+        // RET-3 — a return says what it credited, on both sides.
+        const creditTail = result.creditNote ? `\n${result.creditNote}` : '';
+        await bot.sendMessage(chatIdCb, approvedMsg + creditTail);
+        await notifyEmployee(bot, requestingUser, requestId, `✅ Your request ${shortRequestRef(requestId)} has been approved by admin. Changes applied.${creditTail}`);
 
         // CAT-C1 — a container landed with designs lacking fresh catalogue
         // photos (shades differ per shipment): ONE checklist card to every

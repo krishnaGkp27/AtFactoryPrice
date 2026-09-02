@@ -7981,6 +7981,37 @@ function runS54() {
     fail('S54.14', JSON.stringify({ aprNoNarrowReads, aprHeader, aprKeepsCreatedAt, aprRoles, aprAllStamped }));
   }
 
+  // ---- S54.15 — RET-3: an approved return credits the buyer at a real rate ----
+  {
+    const invSrc = fs.readFileSync(path.join(__dirname, '../src/services/inventoryService.js'), 'utf8');
+    const aeSrc = fs.readFileSync(path.join(__dirname, '../src/events/approvalEvents.js'), 'utf8');
+    const execStart = invSrc.indexOf('async function executeApprovedAction');
+    const execBody = invSrc.slice(execStart);
+    const retEmits = execBody.match(/erpEmitAsync\('return', \{[^\n]*\}\)/g) || [];
+    // Both approved-return executors post through the propagating emitter and carry a rate.
+    const retAsync = retEmits.length === 2 && retEmits.every((e) => /pricePerYard: credit\.rate/.test(e));
+    // No approved return still fires the fire-and-forget emit (the ₦0 path).
+    const retNoSilent = !/erpBus\.emit\('return'/.test(execBody);
+    // Zero rate is reported, never swallowed.
+    const retZeroLoud = /no rate on record for Bale/.test(execBody);
+    // The credit is stated on the approve reply.
+    const retNoteShown = /result\.creditNote/.test(aeSrc);
+    // The date slot reaches the movement row.
+    const retDated = (execBody.match(/on: aj\.returnedOn \|\| undefined/g) || []).length === 2;
+    const inv = require('../src/services/inventoryService');
+    const rc = inv._internals && inv._internals.returnCreditFor;
+    const rcMixed = rc && rc({}, [{ yards: 30, pricePerYard: 2500 }, { yards: 20, pricePerYard: 3000 }]);
+    const rcOverride = rc && rc({ pricePerYard: 4000 }, [{ yards: 10, pricePerYard: 2500 }]);
+    const rcNone = rc && rc({}, [{ yards: 10 }]);
+    const retMath = !!rcMixed && rcMixed.amount === 135000 && Math.abs(rcMixed.rate * rcMixed.yards - 135000) < 1e-6
+      && rcOverride.amount === 40000 && rcNone.amount === 0 && rcNone.rate === 0;
+    if (retAsync && retNoSilent && retZeroLoud && retNoteShown && retDated && retMath) {
+      pass('S54.15 RET-3: approved returns credit at a real rate, loudly when none, dated when told');
+    } else {
+      fail('S54.15', JSON.stringify({ retAsync, retNoSilent, retZeroLoud, retNoteShown, retDated, retMath, retEmits: retEmits.length }));
+    }
+  }
+
   // ---- S54.13 — DML-1: the movement ledger reads, and never invents a yard ----
   // The page exists to explain a physical-count mismatch, so the two things
   // that must never rot are: it writes nothing, and it refuses to state a gap

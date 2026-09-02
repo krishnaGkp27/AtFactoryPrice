@@ -35,6 +35,8 @@ written for the *outbound* case and never revisited for goods coming back.
 
 ## 1 · An approved return credits ₦0 — VERIFIED (five scenarios independently), re-checked by hand
 
+> **Fixed 02-Sep-2026 (RET-3).** Rate on both emits, propagating post, loud zero case, credit note on the reply, read-only backfill listing. See `specs/RET-3_RETURN_CREDIT.md`.
+
 **Story.** ABBA owes ₦300,000 for 4 thans at ₦2,500/yd. He returns 2. Abdul
 raises two returns; two admins tap four times; every card says *"the return
 credits this account"*. ABBA's statement the next week: still ₦300,000. ABBA
@@ -320,7 +322,7 @@ own pending ask.
 
 ## What I would do, in order
 
-1. **Fix the ₦0 credit** — a defect, not a design question: the rate on two
+1. ~~**Fix the ₦0 credit**~~ SHIPPED 02-Sep (RET-3) — a defect, not a design question: the rate on two
    emits, async posting, a test that asserts the credit amount. Then list
    every past return (BaleMovements kind `return`) so the owner can decide
    whether to backfill credits.

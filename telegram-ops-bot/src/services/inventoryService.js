@@ -24,6 +24,28 @@ const CURRENCY = config.currency || 'NGN';
  * ledger reversal stamping. Falls back to the raw spelling (walk-ins,
  * pre-CUS-1 rows) with an empty id — never throws.
  */
+/**
+ * RET-3 — the rate an approved return is credited at.
+ *
+ * Order: an explicit `pricePerYard` on the request (the slot the return
+ * card fills once it asks for one) → the sold Inventory row's own price
+ * (the sale executor stamps the enriched sale rate onto the row, so this
+ * IS the booked rate unless a price edit followed the sale) → 0.
+ * Transactions cannot be the source: it has no bale column to look up by.
+ *
+ * Returns the total credit and the weighted rate that reproduces it, so a
+ * whole-bale return of thans priced differently still credits the exact sum.
+ */
+function returnCreditFor(aj, rows) {
+  const list = (Array.isArray(rows) ? rows : [rows]).filter(Boolean);
+  const override = Number(aj && aj.pricePerYard) > 0 ? Number(aj.pricePerYard) : 0;
+  const yards = list.reduce((s, t) => s + (Number(t.yards) || 0), 0);
+  const amount = list.reduce((s, t) => s + (Number(t.yards) || 0) * (override || Number(t.pricePerYard) || 0), 0);
+  return { yards, amount, rate: yards > 0 && amount > 0 ? amount / yards : 0 };
+}
+
+function fmtNgn(n) { return `₦${Math.round(Number(n) || 0).toLocaleString('en-NG')}`; }
+
 async function resolveReturnCustomer(soldTo) {
   const raw = String(soldTo || '').trim();
   if (!raw) return { name: '', id: '' };
@@ -380,6 +402,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   // marked approved + audited (previously it stayed 'pending' and could be
   // re-approved). Null for branches that have no custom message.
   let customMessage = null;
+  let creditNote = null; // RET-3 — what a return credited, shown on the approve reply
   // H6 — ERP/ledger hook failures on money paths. Inventory mutations are
   // already applied when these run, so a failure here means BOOKS ≠ STOCK.
   // Collected (not thrown) and returned so approvalEvents can warn the
@@ -452,27 +475,48 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const soldRow = await inventoryRepository.findThan(aj.packageNo, aj.thanNo, { warehouse: aj.warehouse }).catch(() => null);
     const returnCust = await resolveReturnCustomer(soldRow ? soldRow.soldTo : '');
     // TRF-INT4 — return only in the request's warehouse (see sell_than note).
-    const result = await stockEngine.returnThan(aj.packageNo, aj.thanNo, { warehouse: aj.warehouse }, { event: 'return', approvalId: requestId, adminId: approvedBy });
+    // RET-3 — `on` lets a request carry the day the goods actually came
+    // back (the return card's date step); absent, the movement is dated today.
+    const result = await stockEngine.returnThan(aj.packageNo, aj.thanNo, { warehouse: aj.warehouse, on: aj.returnedOn || undefined }, { event: 'return', approvalId: requestId, adminId: approvedBy });
     if (!result) return { ok: false, message: 'Than not found or already available.' };
+    const credit = returnCreditFor(aj, result);
     await transactionsRepository.append({
       user: item.user, action: 'return_than', design: result.design, color: result.shade,
       qty: result.yards, before: 'sold', after: 'available', status: 'approved',
+      warehouse: aj.warehouse || result.warehouse || '', customerName: returnCust.name, customerId: returnCust.id,
+      saleRefId: requestId, pricePerYard: credit.rate || '',
     });
-    try { erpBus.emit('return', { type: 'return_than', packageNo: aj.packageNo, thanNo: aj.thanNo, yards: result.yards, design: result.design, shade: result.shade, userId: item.user, txnId: `RT-${aj.packageNo}-${aj.thanNo}`, customer: returnCust.name, customerId: returnCust.id }); } catch (_) {}
+    // RET-3 — the credit rides the SAME propagating emitter as the sale
+    // debit it undoes: a failed ledger write is reported on the card, and a
+    // return with no rate on record is reported the same way instead of
+    // silently crediting ₦0.
+    try {
+      await erpEmitAsync('return', { type: 'return_than', packageNo: aj.packageNo, thanNo: aj.thanNo, yards: result.yards, pricePerYard: credit.rate, design: result.design, shade: result.shade, warehouse: aj.warehouse || result.warehouse, userId: item.user, txnId: `RT-${aj.packageNo}-${aj.thanNo}`, customer: returnCust.name, customerId: returnCust.id });
+      if (credit.amount > 0) creditNote = `↩️ Credited ${fmtNgn(credit.amount)} to ${returnCust.name || 'the buyer'} (${result.yards} yds × ${fmtNgn(credit.rate)}/yd).`;
+      else await recordErpFailure('return credit (return_than)', new Error(`no rate on record for Bale ${aj.packageNo} Than ${aj.thanNo} — stock returned, credit NOT posted; post it manually`));
+    } catch (e) { await recordErpFailure('return credit (return_than)', e); }
   } else if (aj.action === 'return_package') {
     // CUS-2 — capture the buyer before the flip clears soldTo.
     const soldRows = await inventoryRepository.findByPackage(aj.packageNo, { warehouse: aj.warehouse }).catch(() => []);
     const soldToPrior = (soldRows.find((t) => t.status === 'sold' && t.soldTo) || {}).soldTo || '';
     const returnCust = await resolveReturnCustomer(soldToPrior);
     // TRF-INT4 — return only in the request's warehouse (see sell_than note).
-    const results = await stockEngine.returnPackage(aj.packageNo, { warehouse: aj.warehouse }, { event: 'return', approvalId: requestId, adminId: approvedBy });
+    const results = await stockEngine.returnPackage(aj.packageNo, { warehouse: aj.warehouse, on: aj.returnedOn || undefined }, { event: 'return', approvalId: requestId, adminId: approvedBy });
     if (!results.length) return { ok: false, message: 'No sold thans to return.' };
     const totalYards = results.reduce((s, t) => s + t.yards, 0);
+    const credit = returnCreditFor(aj, results);
     await transactionsRepository.append({
       user: item.user, action: 'return_package', design: results[0]?.design, color: results[0]?.shade,
       qty: totalYards, before: 'sold', after: 'available', status: 'approved',
+      warehouse: aj.warehouse || results[0]?.warehouse || '', customerName: returnCust.name, customerId: returnCust.id,
+      saleRefId: requestId, pricePerYard: credit.rate || '',
     });
-    try { erpBus.emit('return', { type: 'return_package', packageNo: aj.packageNo, yards: totalYards, design: results[0]?.design, shade: results[0]?.shade, userId: item.user, txnId: `RP-${aj.packageNo}`, customer: returnCust.name, customerId: returnCust.id }); } catch (_) {}
+    // RET-3 — see return_than above.
+    try {
+      await erpEmitAsync('return', { type: 'return_package', packageNo: aj.packageNo, yards: totalYards, pricePerYard: credit.rate, design: results[0]?.design, shade: results[0]?.shade, warehouse: aj.warehouse || results[0]?.warehouse, userId: item.user, txnId: `RP-${aj.packageNo}`, customer: returnCust.name, customerId: returnCust.id });
+      if (credit.amount > 0) creditNote = `↩️ Credited ${fmtNgn(credit.amount)} to ${returnCust.name || 'the buyer'} (${results.length} than${results.length === 1 ? '' : 's'}, ${totalYards} yds).`;
+      else await recordErpFailure('return credit (return_package)', new Error(`no rate on record for Bale ${aj.packageNo} — stock returned, credit NOT posted; post it manually`));
+    } catch (e) { await recordErpFailure('return credit (return_package)', e); }
   } else if (aj.action === 'revert_sale_bundle') {
     // Two-admin-approved revert of a previously-approved sale_bundle.
     // Marks every Bale/than in the original sale available again and
@@ -1633,7 +1677,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString(), approverLabel);
   await auditLogRepository.append('approval_approved', { requestId, approvedBy, approver: approverLabel }, approvedBy);
   // H6 — erpFailures non-empty means stock moved but books did not.
-  return { ok: true, bundleReport, message: customMessage, erpFailures, invoice, approver: approverLabel };
+  return { ok: true, bundleReport, message: customMessage, erpFailures, invoice, approver: approverLabel, creditNote };
 }
 
 async function rejectApproval(requestId, rejectedBy) {
@@ -1753,6 +1797,7 @@ async function getWarehouses() {
 }
 
 module.exports = {
+  _internals: { returnCreditFor }, // RET-3 — pure helper, pinned by smoke S54.15
   checkStock,
   getPackageSummary,
   listPackages,
