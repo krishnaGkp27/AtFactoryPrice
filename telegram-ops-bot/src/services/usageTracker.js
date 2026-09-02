@@ -59,6 +59,7 @@ const PREFIX_FEATURES = {
   'ctr:': 'catalog_tracker', 'mal:': 'allocate_marketer', 'mkp:': 'my_products',
   'dab:': 'design_assets', 'das:': 'design_assets', 'dat:': 'design_assets',
   'dap:': 'design_assets', 'dam:': 'design_assets', 'dav:': 'design_assets',
+  'shp:': 'shade_photos', // SHP-1 — per-shade garment photos upload door
   'dcat:': 'set_design_category',
   // ANL-1b (26-Jul) — namespaces shipped after the map was first written.
   // Feature-level counts were never affected (act: tiles are classified

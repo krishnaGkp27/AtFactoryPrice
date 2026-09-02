@@ -700,6 +700,19 @@ function buildRemoveCustomerCard(aj) {
   return text;
 }
 
+/**
+ * SHP-1 — a batch of per-shade garment photos. Without this the reminder
+ * sweep and the inbox rebuilt it as the bare generic "design photo upload"
+ * card and two batches for two designs read identically (the D-4 danger).
+ */
+function buildShadePhotoCard(aj) {
+  const shades = Array.isArray(aj.shades) ? aj.shades : [];
+  let text = `🎨 Shade photos — ${aj.design || '?'}${aj.arrivalBatch ? ` · ${aj.arrivalBatch}` : ''}`;
+  text += `\n${shades.length} shade(s): ${shades.map((s) => `#${s.number}${s.name ? ` ${s.name}` : ''}`).join(' · ') || '—'}`;
+  text += '\nEach replaces the earlier photo for the same shade on approval.';
+  return text;
+}
+
 async function buildCardFromActionJSON(aj) {
   if (!aj || typeof aj !== 'object') return 'pending action';
   try {
@@ -709,6 +722,7 @@ async function buildCardFromActionJSON(aj) {
     if (aj.action === 'add_contact') return buildAddContactCard(aj);
     if (aj.action === 'remove_customer' || aj.action === 'restore_customer') return buildRemoveCustomerCard(aj);
     if (aj.action === 'add_warehouse') return await buildAddWarehouseCard(aj);
+    if (aj.action === 'design_asset_upload' && aj.kind === 'shade') return buildShadePhotoCard(aj);
   } catch (_) { /* fall through to generic */ }
   const parts = [actionLabel(aj.action)];
   const fields = [

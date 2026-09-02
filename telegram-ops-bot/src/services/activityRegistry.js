@@ -81,6 +81,9 @@ const ACTIVITIES = [
   // ── Sales & Marketing › Designs (photo catalog) ──────────────────────
   { code: 'upload_design_photo',   label: 'Upload Product Photo',      icon: '📷', callback: 'act:upload_design_photo',  hub: 'designs' },
   { code: 'manage_design_photos',  label: 'Manage Product Photos',     icon: '🖼️', callback: 'act:manage_design_photos', hub: 'designs' },
+  // SHP-1 — one garment photo per shade tab; shown on the shade tap in
+  // Orders / My Collection. Same single-admin photo approval as pages.
+  { code: 'shade_photos',          label: 'Shade Photos',              icon: '🎨', callback: 'act:shade_photos',         hub: 'designs' },
   { code: 'browse_catalog',        label: 'Browse Catalog',            icon: '📖', callback: 'act:browse_catalog',       hub: 'designs' },
   { code: 'search_design_photo',   label: 'Search Design Photo',       icon: '🔎', callback: 'act:search_design_photo',  hub: 'designs' },
   { code: 'catalog_stats',         label: 'Catalog Stats',             icon: '📊', callback: 'act:catalog_stats',        hub: 'designs' },

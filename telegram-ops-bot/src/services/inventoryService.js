@@ -1436,6 +1436,15 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       const paymentService = require('./paymentService');
       customMessage = `✅ Payment of ${paymentService.fmtNaira(pay.amount_ngn)} to *${pay.payee_name}* approved — now with finance to pay.`;
     }
+  } else if (aj.action === 'design_asset_upload' && aj.kind === 'shade') {
+    // SHP-1 — a batch of per-shade garment photos rides the same action
+    // code as catalogue pages; each shade supersedes the earlier active
+    // photo for the SAME (design, shade, container) and goes live.
+    const shadeAssets = require('./designShadeAssetsService');
+    const r = await shadeAssets.activateByApprovalRequestId(requestId, approvedBy);
+    if (!r.ok) return { ok: false, message: r.message || 'Could not activate the shade photos.' };
+    const names = (r.shades || []).map((s) => `#${s.number}${s.name ? ` ${s.name}` : ''}`).join(' · ');
+    customMessage = `✅ ${r.count} shade photo(s) for *${r.design}* now live — ${names}. They show the moment that shade is picked in Orders and My Collection.`;
   } else if (aj.action === 'design_asset_upload') {
     // Activate the staged DesignAssets row keyed by this requestId. Any
     // older active asset for the same design is automatically marked
@@ -1638,7 +1647,11 @@ async function rejectApprovalInner(requestId, rejectedBy) {
   if (!item) return { ok: false, message: 'Request not found or already resolved.' };
   // Type-specific cleanup before marking rejected.
   const aj = item.actionJSON || {};
-  if (aj.action === 'design_asset_upload') {
+  if (aj.action === 'design_asset_upload' && aj.kind === 'shade') {
+    try {
+      await require('./designShadeAssetsService').rejectByApprovalRequestId(requestId, rejectedBy);
+    } catch (_) { /* non-fatal: rows stay pending */ }
+  } else if (aj.action === 'design_asset_upload') {
     try {
       const designAssetsService = require('./designAssetsService');
       await designAssetsService.rejectByApprovalRequestId(requestId, rejectedBy);

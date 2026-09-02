@@ -23,10 +23,19 @@
  *
  * Callback namespace: `myp:`
  *   myp:d:<i>      open design i's photo card
- *   myp:s:<i>:<j>  request shade j of design i (remaining allocation)
+ *   myp:s:<i>:<j>  shade j of design i: shows its garment photo (SHP-1)
+ *                  when one exists, else requests the remaining allocation
+ *   myp:sc:<i>:<j> request shade j (the ✅ under the garment photo)
+ *   myp:sf:<i>:<j> the shade's full-quality picture as a document
+ *   myp:sb:<i>     back from the garment photo to the design card
  *   myp:all:<i>    request every shade's remainder of design i
  *   myp:back       back to the design chips
  *   myp:noop       page indicator
+ *
+ * SHP-1 (owner, 02-Sep-2026) — a shade tap first SHOWS the shade (the
+ * design card morphs into that shade's garment photo, caption in the same
+ * pair grammar, no warehouse fact) and asks for ✅ before the request is
+ * raised. A shade with no photo keeps the MYP-2 one-tap request.
  */
 
 const sessionStore = require('../utils/sessionStore');
@@ -77,7 +86,7 @@ async function start(bot, chatId, userId, info, messageId = null) {
 }
 
 /** The catalogue photo card with per-shade pair chips — the orders shape. */
-async function showDesign(bot, chatId, userId, idx) {
+async function showDesign(bot, chatId, userId, idx, opts = {}) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== SESSION_TYPE) return;
   const it = (session._items || [])[idx];
@@ -85,6 +94,7 @@ async function showDesign(bot, chatId, userId, idx) {
   session.step = 'shades';
   session._design = idx;
   sessionStore.set(userId, session);
+  const captionText = `📷 *${mdEscape(it.design)}*`;
 
   const rows = [];
   if (it.shades.length) {
@@ -110,9 +120,20 @@ async function showDesign(bot, chatId, userId, idx) {
   try {
     const designAssetsService = require('../services/designAssetsService');
     const photoAsset = await designAssetsService.getPhotoForSend(it.design);
+    // SHP-1 — Back from a garment photo: the SAME message becomes the design
+    // card again (no new bubble). Only a file_id / URL can be edited in.
+    if (opts.morph && session.photoMessageId && photoAsset && typeof photoAsset.photo === 'string') {
+      const ok = await require('../services/shadePhotoPresenter').morphToPage(bot, chatId, session.photoMessageId,
+        { photo: photoAsset.photo, caption: captionText, rows });
+      if (ok) return;
+    }
     if (photoAsset && photoAsset.photo) {
+      if (session.photoMessageId) {
+        try { await bot.deleteMessage(chatId, session.photoMessageId); } catch (_) { /* gone */ }
+        session.photoMessageId = null; sessionStore.set(userId, session);
+      }
       sent = await bot.sendPhoto(chatId, photoAsset.photo, {
-        caption: `📷 *${mdEscape(it.design)}*`,
+        caption: captionText,
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: rows },
       });
@@ -137,6 +158,43 @@ async function showDesign(bot, chatId, userId, idx) {
   await editOrSend(bot, chatId, session.flowMessageId, `📦 *${mdEscape(it.design)}*\n\nPick a shade:`, {
     parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows },
   });
+}
+
+/**
+ * SHP-1 — the shade tap. With a garment photo: the design card morphs into
+ * it, pair grammar only (their supplied / allocated for that shade — never
+ * a warehouse fact, §16), and asks ✅ before the request goes. Without one:
+ * exactly the MYP-2 one-tap request.
+ */
+async function showShadePhoto(bot, chatId, userId, idx, shadeIdx) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== SESSION_TYPE) return;
+  const it = (session._items || [])[idx];
+  const sh = it && it.shades[shadeIdx];
+  if (!it || !sh) return;
+  const presenter = require('../services/shadePhotoPresenter');
+  let asset = null;
+  try { asset = await presenter.resolveShadePhoto(it.design, sh.shade, ''); } catch (_) { asset = null; }
+  if (!asset || !session.photoMessageId) {
+    await requestSupply(bot, chatId, userId, idx, shadeIdx);
+    return;
+  }
+  let name = '';
+  try {
+    const { buildShadeNameMap } = require('../utils/shadeButtons');
+    const designAsset = await require('../repositories/designAssetsRepository').findActive(it.design);
+    name = buildShadeNameMap(designAsset).get(String(sh.shade)) || '';
+  } catch (_) { name = ''; }
+  const caption = `🧵 *${mdEscape(it.design)}* · Shade *${mdEscape(String(sh.shade))}${name ? ` - ${mdEscape(name)}` : ''}*\n_(${sh.suppliedB}B / ${sh.allocatedB}B — supplied / allocated to you)_`;
+  const rows = [
+    [{ text: `✅ Request this shade (${Math.max(0, sh.allocatedB - sh.suppliedB)}B)`, callback_data: `myp:sc:${idx}:${shadeIdx}` }],
+    [{ text: '⬅️ Back', callback_data: `myp:sb:${idx}` }],
+  ];
+  const morphed = await presenter.morphToShade(bot, chatId, session.photoMessageId, {
+    design: it.design, shadeNo: sh.shade, arrivalBatch: '', caption, rows,
+    fullQualityRow: [presenter.fullQualityButton(`myp:sf:${idx}:${shadeIdx}`)],
+  });
+  if (!morphed) await requestSupply(bot, chatId, userId, idx, shadeIdx);
 }
 
 /** Raise the remaining allocation as a real supply request. */
@@ -220,7 +278,26 @@ async function handleCallback(bot, query) {
   }
   if (rest.startsWith('s:')) {
     const [i, j] = rest.slice(2).split(':').map((n) => parseInt(n, 10));
+    await showShadePhoto(bot, chatId, userId, i, j);
+    return true;
+  }
+  if (rest.startsWith('sc:')) {
+    const [i, j] = rest.slice(3).split(':').map((n) => parseInt(n, 10));
     await requestSupply(bot, chatId, userId, i, j);
+    return true;
+  }
+  if (rest.startsWith('sf:')) {
+    const [i, j] = rest.slice(3).split(':').map((n) => parseInt(n, 10));
+    const it = (session._items || [])[i];
+    const sh = it && it.shades[j];
+    if (it && sh) {
+      await require('../services/shadePhotoPresenter').sendFullQuality(bot, chatId,
+        { design: it.design, shadeNo: sh.shade, shadeName: '', arrivalBatch: '' });
+    }
+    return true;
+  }
+  if (rest.startsWith('sb:')) {
+    await showDesign(bot, chatId, userId, parseInt(rest.slice(3), 10), { morph: true });
     return true;
   }
   if (rest.startsWith('all:')) {

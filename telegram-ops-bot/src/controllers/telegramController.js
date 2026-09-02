@@ -3711,6 +3711,12 @@ async function handleFileMessage(bot, msg) {
     if (handled) return;
   }
 
+  // SHP-1 — Shade Photos: a photo OR an image document (the full-quality path).
+  if (session && session.type === 'shade_photo_flow' && session.step === 'photo') {
+    const handled = await require('../flows/shadePhotoFlow').handleFile(bot, chatId, userId, msg);
+    if (handled) return;
+  }
+
   if (session && session.type === 'marketer_reg_flow' && (session.step === 'person_photo' || session.step === 'catalog_photo')) {
     const handled = await catalogFlows.handleCatalogFlowPhotoStep(bot, chatId, userId, msg);
     if (handled) return;
@@ -6455,8 +6461,12 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   const labels = await productTypesRepo.getLabels(session?.productType || 'fabric');
 
   // Always start fresh: any prior preview/combo from another design is
-  // stale once we render a new shade picker.
-  await clearDesignPreview(bot, chatId, userId);
+  // stale once we render a new shade picker. SHP-1 — except when coming
+  // BACK from a morphed shade photo of this same design: that combo is kept
+  // so Path A can morph it back to the swatch page (one message).
+  const keepForMorph = !!(session && session.previewMessageId && session.previewIsPhoto
+    && session.currentDesign === design);
+  if (!keepForMorph) await clearDesignPreview(bot, chatId, userId);
 
   // TV-1/TV-3/TV-4/TV-5 — shade availability renders in the warehouse's own
   // display unit. TV-6 (GRN-anchored): the "remaining / opening" pair
@@ -6600,6 +6610,9 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
       // message. A single-page design keeps the tighter photo+buttons combo.
       const pages = await designAssetsService.getPhotosForSend(design);
       if (pages.length > 1) {
+        // SHP-1 — a shade photo combo may still be on screen (Back from the
+        // quantity step); an album cannot morph, so clear before re-sending.
+        await clearDesignPreview(bot, chatId, userId);
         const albumIds = await designAssetsService.sendDesignAlbum({
           bot, chatId, photos: pages,
           caption: `📷 *${design}* — *${warehouse}* · ${pages.length} pages`,
@@ -6615,6 +6628,7 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
             });
           if (picker && picker.message_id) {
             session.previewMessageId = picker.message_id;
+            session.previewIsPhoto = false;
             session.flowMessageId = null;
             sessionStore.set(userId, session);
           }
@@ -6624,6 +6638,22 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
       }
       const photoAsset = pages.length ? pages[0] : await designAssetsService.getPhotoForSend(design);
       if (photoAsset && photoAsset.photo) {
+        // SHP-1 — Back from a morphed shade photo: the SAME message becomes
+        // the swatch page + shade chips again. Falls back to a fresh combo
+        // when the page photo is not yet a file_id (first send from Drive).
+        if (session.previewMessageId && session.previewIsPhoto) {
+          const back = await require('../services/shadePhotoPresenter').morphToPage(bot, chatId, session.previewMessageId, {
+            photo: photoAsset.photo,
+            caption: `📷 *${design}* — *${warehouse}*${soldOutNote}${overflowNote}`,
+            rows,
+          });
+          if (back) {
+            session.flowMessageId = null;
+            sessionStore.set(userId, session);
+            return;
+          }
+          await clearDesignPreview(bot, chatId, userId);
+        }
         comboSent = await bot.sendPhoto(chatId, photoAsset.photo, {
           caption: `📷 *${design}* — *${warehouse}*${soldOutNote}${overflowNote}`,
           parse_mode: 'Markdown',
@@ -6644,10 +6674,15 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
 
   if (comboSent && comboSent.message_id) {
     session.previewMessageId = comboSent.message_id;
+    session.previewIsPhoto = true; // SHP-1 — morphable on the shade tap
     session.flowMessageId = null;
     sessionStore.set(userId, session);
     return;
   }
+
+  // SHP-1 — a kept combo that Path A could not morph must not linger above
+  // the text picker.
+  if (keepForMorph) await clearDesignPreview(bot, chatId, userId);
 
   // ── Path B: no catalog photo (or send failed) → text-only shade picker
   // edited in place, exactly as before (TV-4: sold-out designs swap the
@@ -6712,6 +6747,57 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
 
   const caption = `📦 *${design}* │ Shade: *${shadeRef}* │ 🏭 *${warehouse}*\n${availPkgs} ${containerPlural} available\n\nHow many ${containerPlural} to supply?`;
 
+  // SHP-1 (owner, 02-Sep-2026) — the shade's own GARMENT photo
+  // (specs/SHP-1_SHADE_PHOTOS.md). Resolved once; a 🔍 Full-quality chip
+  // joins the card whenever a photo exists (Telegram recompresses photos,
+  // never documents).
+  const shadePresenter = require('../services/shadePhotoPresenter');
+  const shadeAsset = await shadePresenter.resolveShadePhoto(design, shade, session && session.arrivalBatch);
+  const fullQualityRow = shadeAsset ? [shadePresenter.fullQualityButton('srf_shpfull')] : null;
+  const qRows = shadePresenter.withRowBeforeLast(rows, fullQualityRow);
+
+  // Multi-shade: the shade tap MORPHS the photo combo in place — the swatch
+  // page becomes this shade's garment photo, the caption becomes the
+  // quantity question, the chips become quantities. One message, no
+  // scrolling. With no shade photo the picture stays and only the words
+  // change — still one message, still better than the old second card.
+  if (!singleShade && session && session.previewMessageId && session.previewIsPhoto) {
+    const morphed = await shadePresenter.morphToShade(bot, chatId, session.previewMessageId, {
+      design, shadeNo: shade, arrivalBatch: session.arrivalBatch, caption, rows, fullQualityRow,
+    });
+    if (morphed) {
+      session.flowMessageId = null;
+      sessionStore.set(userId, session);
+      return;
+    }
+  }
+  if (!singleShade && session) {
+    // No morphable combo (album picker, text picker, or the edit failed):
+    // drop what is on screen — the pre-SHP-1 behaviour — and, when a shade
+    // photo exists, show it as a fresh photo+buttons combo.
+    await clearDesignPreview(bot, chatId, userId);
+    if (shadeAsset && shadeAsset.photo) {
+      try {
+        const sent = await bot.sendPhoto(chatId, shadeAsset.photo, {
+          caption, parse_mode: 'Markdown', reply_markup: { inline_keyboard: qRows },
+        });
+        if (shadeAsset.photoSource !== 'telegram_file_id' && sent && sent.photo && sent.photo.length) {
+          require('../services/designShadeAssetsService')
+            .cachePhotoFileId(shadeAsset.row.rowIndex, sent.photo[sent.photo.length - 1].file_id).catch(() => {});
+        }
+        if (sent && sent.message_id) {
+          session.previewMessageId = sent.message_id;
+          session.previewIsPhoto = true;
+          session.flowMessageId = null;
+          sessionStore.set(userId, session);
+          return;
+        }
+      } catch (e) {
+        logger.warn(`showQuantityPicker(${design}): shade photo combo failed, text fallback — ${e.message}`);
+      }
+    }
+  }
+
   // SINGLE-SHADE PHOTO PARITY: multi-shade designs show the catalog photo on
   // the shade picker (Path A in showShadesForDesign), but single-shade designs
   // skip that step and land straight here — leaving them photo-less. For a
@@ -6731,10 +6817,11 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
         if (albumIds.length) {
           session._auxMsgIds = [...(session._auxMsgIds || []), ...albumIds];
           const picker = await bot.sendMessage(chatId, caption, {
-            parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows },
+            parse_mode: 'Markdown', reply_markup: { inline_keyboard: qRows },
           });
           if (picker && picker.message_id) {
             session.previewMessageId = picker.message_id;
+            session.previewIsPhoto = false;
             session.flowMessageId = null;
             sessionStore.set(userId, session);
             return;
@@ -6742,19 +6829,28 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
         }
       }
       const photoAsset = pages.length ? pages[0] : await designAssetsService.getPhotoForSend(design);
-      if (photoAsset && photoAsset.photo) {
+      // SHP-1 — the single shade's own garment photo wins over the page.
+      const pick = (shadeAsset && shadeAsset.photo)
+        ? { photo: shadeAsset.photo, isShade: true }
+        : ((photoAsset && photoAsset.photo) ? { photo: photoAsset.photo, isShade: false } : null);
+      if (pick) {
         await clearDesignPreview(bot, chatId, userId);
-        const sent = await bot.sendPhoto(chatId, photoAsset.photo, {
+        const sent = await bot.sendPhoto(chatId, pick.photo, {
           caption,
           parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: rows },
+          reply_markup: { inline_keyboard: qRows },
         });
-        if (photoAsset.photoSource !== 'telegram_file_id' && sent && sent.photo && sent.photo.length) {
+        if (sent && sent.photo && sent.photo.length) {
           const fid = sent.photo[sent.photo.length - 1].file_id;
-          designAssetsService.cacheTelegramFileId(photoAsset.rowIndex, fid).catch(() => {});
+          if (pick.isShade && shadeAsset.photoSource !== 'telegram_file_id') {
+            require('../services/designShadeAssetsService').cachePhotoFileId(shadeAsset.row.rowIndex, fid).catch(() => {});
+          } else if (!pick.isShade && photoAsset.photoSource !== 'telegram_file_id') {
+            designAssetsService.cacheTelegramFileId(photoAsset.rowIndex, fid).catch(() => {});
+          }
         }
         if (sent && sent.message_id) {
           session.previewMessageId = sent.message_id;
+          session.previewIsPhoto = true;
           session.flowMessageId = null;
           sessionStore.set(userId, session);
           return;
@@ -7351,6 +7447,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['sb:'], handle: (bot, cq) => require('../flows/sellBaleFlow').handleCallback(bot, cq) },
   // PTK-1 — Snap Task (photo → task).
   { prefixes: ['ptk:'], handle: (bot, cq) => require('../flows/snapTaskFlow').handleCallback(bot, cq) },
+  // SHP-1 — Shade Photos upload door (one garment photo per shade tab).
+  { prefixes: ['shp:'], handle: (bot, cq) => require('../flows/shadePhotoFlow').handleCallback(bot, cq) },
   // MYP-1 — linked-person My Products (their taps route via the fence;
   // this line only keeps a stray card in a staff chat from going dead).
   { prefixes: ['myp:'], handle: (bot, cq) => require('../flows/myProductsFlow').handleCallback(bot, cq) },
@@ -10417,6 +10515,10 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       case 'manage_design_photos':
         await startManageDesignPhotos(bot, chatId, uid, messageId);
         break;
+      case 'shade_photos':
+        // SHP-1 — per-shade garment photos (flow module; same approval as pages).
+        await require('../flows/shadePhotoFlow').start(bot, chatId, uid, messageId);
+        break;
       case 'browse_catalog':
         await startBrowseCatalog(bot, chatId, uid, messageId);
         break;
@@ -10840,11 +10942,23 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     }
     session.step = 'quantity';
     sessionStore.set(uid, session);
-    // The shade picker was a photo-and-buttons combo (or a text-only
-    // fallback). Either way, drop it so the next text-only step is the
-    // only "live" message in the flow.
-    await clearDesignPreview(bot, chatId, uid);
+    // SHP-1 — the photo combo is no longer dropped here: showQuantityPicker
+    // morphs it in place into the shade's garment photo (or just its caption)
+    // and only clears it when no in-place edit is possible.
     await showQuantityPicker(bot, chatId, uid, design, shade, session.warehouse, availPkgs);
+
+  } else if (data === 'srf_shpfull') {
+    // SHP-1 — the shade's stored bytes as a DOCUMENT (Telegram recompresses
+    // photos; it never touches a document).
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'supply_req_flow' || !session.currentDesign) return;
+    await require('../services/shadePhotoPresenter').sendFullQuality(bot, chatId, {
+      design: session.currentDesign, shadeNo: session.currentShade,
+      shadeName: session.currentShadeName, arrivalBatch: session.arrivalBatch,
+    });
 
   /* ─── SUPPLY REQUEST FLOW: QUANTITY SELECTION ─── */
   } else if (data.startsWith('srf_qty:')) {
@@ -12624,6 +12738,7 @@ async function clearDesignPreview(bot, chatId, userId) {
   if (session.previewMessageId) {
     await bot.deleteMessage(chatId, session.previewMessageId).catch(() => {});
     session.previewMessageId = null;
+    session.previewIsPhoto = false;
     touched = true;
   }
   // CAT-P1 — a multi-page design leaves an ALBUM above the picker. It is a

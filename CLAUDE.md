@@ -27,6 +27,7 @@ ask for their status instead of starting new features; help execute them if aske
 | **1 — SUPERSEDED, owner go needed** | BKP-1 → **offsite backup job** (owner's idea 01-Sep, extended): one scheduled job, two attachments — the workbook as `.xlsx` built in-process (no Drive, no quota — the Drive *copy* that killed BKP-1 is what is avoided) plus a Postgres dump — delivered over Telegram first (zero new credentials, 50 MB cap), email as a deliberate second hop. ⚠️ **No automated backup runs today at all** (`SHEET_BACKUP_ENABLED` 0, Apps Script never installed). Owner: also confirm Railway PG snapshots are ON. Must ship BEFORE AuditLog leaves the workbook. | **Owner go → agent** | `telegram-ops-bot/docs/SHEET_STORAGE_SPLIT.md` §Order of work |
 | **0 — OWNER STEP** | SHT-1 SHIPPED 01-Sep-2026: four dead sheets retired in code (Stock_Ledger, UserPrefs, ShipmentEvents, BankFeed — bootstrap no longer recreates them). **Owner: delete those four tabs from the workbook.** Then storage split continues: backup job (row above) → AuditLog → Postgres → TaskEvents/LedgerBalanceCache/WhatsAppOutbound → Attendance → ApprovalQueue last (bill-evidence check). APR-1 (Approver column H) SHIPPED 01-Sep as the prerequisite. | **Owner, then agent** | `telegram-ops-bot/docs/SHEET_STORAGE_SPLIT.md` |
 | **0 — OWNER TEST** | DML-1 Design Movement Ledger SHIPPED 31-Aug-2026 at `/movement` (+ 📗 Movement in the nav strip). Owner: open one clean design and one with a known audit discrepancy on LIVE data; check the hints point the right way. Rulings recorded in BUSINESS_RULES §6b/§6c and the spec. Follow-up needing owner go: a return is dated the day it was APPROVED (the return flow asks no date). | **Owner** | `telegram-ops-bot/specs/DML-1_BUILD_SPEC.md` |
+| **0 — OWNER TEST** | SHP-1 shade photos SHIPPED 02-Sep-2026 (Telegram). Owner: Designs → 🎨 **Shade Photos** → 202/201 → send each shade's garment picture **as a File** (📎 → File — a Telegram "photo" is compressed before the bot sees it) → ✅ Use it → ✅ Done → second admin approves → Orders → 202/201 → tap a shade: the swatch page morphs into the garment photo in place; 🔍 Full-quality picture delivers the stored bytes as a document. Then decide the website half (§7 of the spec: customers see native resolution + shade-view reports there). | **Owner** | `telegram-ops-bot/specs/SHP-1_SHADE_PHOTOS.md` §7 |
 | 1 (for owner) | TRF-5 manual live test — transfer queue + single-flow retirement (commit `28d9121f`) | **Owner** | `telegram-ops-bot/specs/TRF-5_TEST_STEPS.md` |
 | **0 — OWNER STEP** | MNU-1 SHIPPED DARK 17-Aug-2026. Owner: run `npm run set-webhook` once (registers /menu + Menu button + descriptions), then set Settings `MENU_ANCHOR_ENABLED=1` and run the 9 acceptance checks (navigation-only taps). Rollback = same cell to 0, live in ≤30s, no deploy. | **Owner** | `telegram-ops-bot/specs/MNU-1_MENU_ANCHOR.md` §Acceptance |
 | 2 (agent) | Resume security remediation H6 + P3–P7 (audit fix plan) | **fresh session** | `telegram-ops-bot/docs/CODE_AUDIT_2026-07-07.md` |
@@ -116,7 +117,9 @@ Major namespaces already taken:
   session-free) `pu:` (pending-user triage — IDR-2 adds
   `pu:cust|net|link|linkcancel`) `cms:` `shr:` (share links) `oq/oc/od*` (orders) `rc*` (receipts)
 - Catalog: `csf:` `clf:` `crf:` `mkr:` `ctr:` `dab:` `das:` `dat:` `dap:` (incl.
-  `dap:page:add|replace` — CAT-P1 add-a-page vs replace) `dam:` `dav:`
+  `dap:page:add|replace` — CAT-P1 add-a-page vs replace) `dam:` `dav:` `shp:`
+  (SHP-1 shade photos upload door; `srf_shpfull` + `myp:sc|sf|sb` are the
+  shade-photo chips on the Orders / My Collection cards)
 - Approvals: `approve:` `reject:` `ctg:` (contact triage) `srf_acc/ack/dec/assign:` `smc:` `confirm_sale:` `cancel_sale:`
 - Reports: `cks:` `lpk:` `svr:` `inv:` `sr:`/`srg:` `mdo:`
 
@@ -155,7 +158,10 @@ session arrays, `cbSafe()` from `src/utils/telegramUI.js`).
 `Receipts`, `AuditLog`, `DesignAssets`, `CatalogStock`, `CatalogLedger`,
 `Marketers`, `MarketerAllocations`, `LedgerTransactions`,
 `PaymentAccounts`, `PaymentRequests`,
-`LedgerBalanceCache`, `Transfers`, `GoodsReceipts`, `PendingUsers`, `Locations`.
+`LedgerBalanceCache`, `Transfers`, `GoodsReceipts`, `PendingUsers`, `Locations`,
+`DesignShadeAssets` (SHP-1 — one garment photo per design+shade tab[+container];
+originals untouched in Drive, stamped copy at native resolution, two Telegram
+file_id caches: photo form + full-quality document form).
 
 **Retired 31-Aug-2026 (SHT-1) — do not re-add:** `Stock_Ledger`, `UserPrefs`,
 `ShipmentEvents`, `BankFeed`. Each had no live reader; two had no writer either.
@@ -177,6 +183,7 @@ flow (DCAT-1) — owner chose an Inventory column over a separate mapping sheet.
 | `SALE_CALENDAR_MAX_DAYS_BACK` | 180 | how far back the sale-date calendars reach (BKD-1; Sell Bale + Kano than sale) |
 | `PAYMENT_THRESHOLD_NGN` | 50000 | PAY-1 large-payment badge line (badges, never gates) |
 | `FLOW_CLEANUP_HEAVY_TYPES` | CSV | session types counted as heavy |
+| `SHADE_PHOTOS_ENABLED` | 1 | SHP-1 — 0 = shade taps behave exactly as before (no photo morph, no 🔍 chip); the 🎨 upload door stays |
 
 New defaults live in `settingsRepository.DEFAULTS`; a sheet row of the same key overrides.
 

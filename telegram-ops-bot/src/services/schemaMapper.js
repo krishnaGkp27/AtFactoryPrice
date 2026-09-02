@@ -206,6 +206,13 @@ const REQUIRED_SHEETS = {
   Locations: {
     headers: ['name', 'location', 'kind', 'status', 'notes', 'updated_by', 'updated_at'],
   },
+  // SHP-1 — one GARMENT photo per (design, shade tab[, container]). Its own
+  // master (not a DesignAssets column) so shade photos replace one at a time
+  // and survive a page being replaced. Bytes live in Drive; the two Telegram
+  // file_id columns are the send cache (same pattern as DesignAssets col I).
+  DesignShadeAssets: {
+    headers: require('../repositories/designShadeAssetsRepository').HEADERS,
+  },
   Marketers: {
     headers: ['MarketerId', 'Name', 'Phone', 'Area', 'PersonPhotoFileId', 'PersonPhotoDriveId', 'CatalogPhotoFileId', 'CatalogPhotoDriveId', 'Status', 'ApprovedBy', 'ApprovalRequestId', 'Notes', 'CreatedAt'],
   },

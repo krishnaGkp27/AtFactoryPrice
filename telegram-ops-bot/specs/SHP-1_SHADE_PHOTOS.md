@@ -1,10 +1,14 @@
 # SHP-1 — Shade photos: the garment picture behind every shade chip
 
-**Status:** layout proposal, awaiting the owner's go. No implementation.
+**Status:** Telegram half SHIPPED 02-Sep-2026 (see §7 — what shipped, how to
+test, and the Telegram-vs-website analysis for the customer half).
 **Owner's ask (02-Sep-2026):** "image 3 [a kaftan sewn from the shade] should be
 shown when the customer, marketer, or salesperson selects that colour shade from
 image 1 [the swatch-book page with numbered tabs]. I will provide the images of
-all the colours available in the colour sachet."
+all the colours available in the colour sachet." Then: "use this image, Phillip
+Scott branded stand, exactly as it is, with a very high-quality image renderer.
+No compromise with the quality at all, at any place. For now build this so that
+I can see the changes in Telegram."
 
 ---
 
@@ -121,8 +125,9 @@ Share + Download. Nothing tappable.
 
 ## 2. The owner's upload door (tap-first)
 
-Designs hub → 🖼️ **Manage Product Photos** → pick design → new chip
-**🎨 Shade photos**:
+Designs hub → its own tile **🎨 Shade Photos** (shipped as a tile beside
+🖼️ Manage Product Photos, so the whole door lives in a flow module and the
+parked controller gets one `act:` case) → pick design:
 
 ```
 🎨 202/201 — shade photos
@@ -229,3 +234,60 @@ Three cautions before relying on it for a catalogue:
    #1?") before it goes to approval, and captioning. That can sit behind a
    "🪄 Generate preview" chip in the upload door later — optional, since you
    said you will supply the photos.
+
+---
+
+## 7. Shipped 02-Sep-2026 — the Telegram half
+
+### What shipped
+
+| Surface | Behaviour |
+|---|---|
+| 🎨 **Shade Photos** tile (Designs hub, `shp:`) | design (✓ = has shade photos) → container (only if the design has more than one) → shade list (✓ has photo · 🆕 added now) → *"send the picture as a File"* → preview stamped `202/201 · #2` at native resolution with `📐 4000×6000 · 8.2 MB · ✅ full quality (sent as file)` → ✅ Use it / 🔁 Retake / ⏭ Skip → auto-advances → ✅ Done = ONE approval card. |
+| Approval | Rides `design_asset_upload` with `kind:'shade'` — same single-admin gate as catalogue pages, uploader excluded from approving their own. Executor activates every shade in the batch, superseding only the same (design, shade, container). Card: `🎨 Shade photos — 202/201 · 2 shade(s): #1 White · #2 Dark Brown`. |
+| Orders (`srf_`) | The shade tap **morphs the photo combo in place** (`editMessageMedia`): picture → the shade's garment photo, caption → the quantity question, chips → quantities + **🔍 Full-quality picture**. Back morphs it back to the swatch page. No shade photo → picture stays, caption changes (still one message). Album designs (CAT-P1) get a fresh shade-photo combo instead (an album picker cannot morph). |
+| My Collection (`myp:`) | Shade tap with a photo: the design card morphs into the garment photo, caption `🧵 202/201 · Shade 1 - White (7B / 13B — supplied / allocated to you)`, chips **✅ Request this shade (6B)** / 🔍 / ⬅. The request is raised on ✅. A shade with no photo keeps the MYP-2 one-tap request. No warehouse fact reaches a linked person. |
+| Storage | New master sheet `DesignShadeAssets` (registered in schemaMapper): originals untouched in Drive, stamped copy at native resolution (JPEG q95 4:4:4 / PNG lossless), photo file_id + **document file_id** cached so the full-quality form is instant and survives Drive being down (BKP-1). |
+| Knob | `SHADE_PHOTOS_ENABLED` (default 1). |
+
+### Quality, honestly
+
+- A Telegram **photo** is recompressed by Telegram (≈1280 px, JPEG) — on both
+  the way in and the way out. That is Telegram, not the bot. So:
+  - the upload prompt asks for a **File** (📎 → File): the bot then receives the
+    original bytes and stores them untouched;
+  - every card that shows a shade photo carries **🔍 Full-quality picture**, which
+    sends the stored bytes as a **document** — Telegram never touches those.
+- A picture uploaded as a "photo" is accepted but labelled *"⚠️ sent as photo —
+  Telegram compressed it"* on the preview, so the owner knows to resend as a file.
+- Formats: JPG / PNG / WEBP. Bot download cap is Telegram's own 20 MB.
+
+### Owner test steps (5 minutes)
+
+1. Menu → Sales & Marketing → Designs → 🎨 **Shade Photos** → `202/201`.
+2. Tap `1 - White` → send the white-kaftan picture **as a File** → preview shows
+   its real dimensions and *full quality (sent as file)* → ✅ Use it → the bot
+   also sends back a *full-quality copy kept* document.
+3. Let it auto-advance through the other shades (or ⏭ Skip) → ✅ Done.
+4. Second admin: approve the card *🎨 Shade photos — 202/201 · N shade(s)*.
+5. Orders → IDUMOTA → `202/201` → tap `1 - White`: the swatch page **becomes the
+   white kaftan** in the same bubble; quantity chips underneath; tap 🔍 to get the
+   original as a file; ⬅ Back to shades brings the swatch page back.
+6. A linked marketer: 🧵 My Collection → `202/201` → tap `1`: the garment photo,
+   then ✅ Request this shade.
+
+Rollback: Settings `SHADE_PHOTOS_ENABLED = 0` — live in ≤60 s, no deploy.
+
+### Telegram vs website — where each activity belongs
+
+| Activity | Telegram | Website (atfactoryprice.live / bot-served share page) | Verdict |
+|---|---|---|---|
+| **Showing** the shade to a customer | Inline picture is Telegram-compressed; full quality only as a file card (tap to open). Works with zero setup, inside the chat they already use. | Native-resolution image inline, pinch-zoom, one WhatsApp-able link per design, all shades one tap apart. Costs data (an 8 MB image per shade on mobile — needs a responsive size ladder, full-res on demand). | **Website** for "no compromise" viewing by customers; Telegram is right for the salesperson working the order. |
+| **Operating** (upload, approve, request, order) | Tap-first upload door, approval pipeline, request raised on ✅ — all built. | No write path, and by rule none should exist (§15 *the web displays, Telegram decides*). | **Telegram** — done. |
+| **Reporting** | Usage taps per feature (ANL) — staff-side counts. | Share analytics already exist (opens / shares / downloads per link, per customer, in `share_events` Postgres + admin-analytics.html). Adding a `shade` event gives *which shades each customer looked at* — the metric the owner asked for. | **Website** — the engagement data lives there. |
+
+**Recommended next step (owner's go):** the customer half — shade chips on the
+share page swapping the big image, served at native resolution through the
+existing image proxy (with the Telegram-bytes fallback while BKP-1 is open), a
+`shade` beacon in share analytics, and `design.html` on the site given the same
+chips once the owner says so (repo-root file, outside the bot's default scope).

@@ -128,4 +128,45 @@ async function normalizePhoto(rawBuffer) {
     .toBuffer();
 }
 
-module.exports = { stampDesignNumber, normalizePhoto };
+/**
+ * SHP-1 — stamp a label at NATIVE resolution. No downscale, no
+ * re-encode to a "Telegram-friendly" size: the owner's rule for shade
+ * garment photos is "no compromise with the quality at all, at any place".
+ * EXIF orientation is applied (a lossless rotate), then the label is
+ * composited at the image's own size. PNG stays PNG (lossless); anything
+ * else is written as JPEG q95 with full-resolution chroma (4:4:4), which
+ * is visually lossless at catalogue viewing sizes.
+ *
+ * @param {Buffer} rawBuffer
+ * @param {string} label   e.g. "202/201 · #2"
+ * @returns {Promise<{buffer:Buffer,width:number,height:number,format:'png'|'jpeg',mime:string}>}
+ */
+async function stampNative(rawBuffer, label) {
+  const sharp = loadSharp();
+  if (!Buffer.isBuffer(rawBuffer)) throw new Error('rawBuffer must be a Buffer');
+  const meta = await sharp(rawBuffer).metadata();
+  let w = meta.width || 0;
+  let h = meta.height || 0;
+  if (!w || !h) throw new Error('Could not read image dimensions; corrupt or unsupported format.');
+  // Orientations 5-8 rotate by 90°, so the composited canvas is transposed.
+  if (meta.orientation && meta.orientation >= 5) [w, h] = [h, w];
+  const svg = buildLabelSvg(w, h, label);
+  const composed = sharp(rawBuffer).rotate().composite([{ input: Buffer.from(svg), top: 0, left: 0 }]);
+  const isPng = meta.format === 'png';
+  const buffer = isPng
+    ? await composed.png({ compressionLevel: 9 }).toBuffer()
+    : await composed.jpeg({ quality: 95, chromaSubsampling: '4:4:4', progressive: true }).toBuffer();
+  return { buffer, width: w, height: h, format: isPng ? 'png' : 'jpeg', mime: isPng ? 'image/png' : 'image/jpeg' };
+}
+
+/** Dimensions + format of an image buffer (orientation-corrected). */
+async function readImageMeta(rawBuffer) {
+  const sharp = loadSharp();
+  const meta = await sharp(rawBuffer).metadata();
+  let w = meta.width || 0;
+  let h = meta.height || 0;
+  if (meta.orientation && meta.orientation >= 5) [w, h] = [h, w];
+  return { width: w, height: h, format: meta.format || '' };
+}
+
+module.exports = { stampDesignNumber, normalizePhoto, stampNative, readImageMeta };

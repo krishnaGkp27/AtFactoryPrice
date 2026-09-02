@@ -32,6 +32,18 @@ function createFakeBot() {
       record('editMessageText', { text, opts });
       return { message_id: (opts && opts.message_id) || (messageId += 1), text };
     },
+    /** SHP-1 — a photo message morphing its picture in place; answers like a sent photo. */
+    async editMessageMedia(media, opts) {
+      record('editMessageMedia', { media, opts });
+      return {
+        message_id: opts && opts.message_id, chat: { id: opts && opts.chat_id },
+        photo: [{ file_id: 'morph_small' }, { file_id: 'morph_large' }],
+      };
+    },
+    async editMessageCaption(caption, opts) {
+      record('editMessageCaption', { caption, opts });
+      return true;
+    },
     async editMessageReplyMarkup(replyMarkup, opts) {
       record('editMessageReplyMarkup', { replyMarkup, opts });
       return { message_id: (opts && opts.message_id) || (messageId += 1) };
@@ -42,7 +54,10 @@ function createFakeBot() {
     },
     async sendPhoto(chatId, photo, opts) {
       record('sendPhoto', { chatId, photo, opts });
-      return sent(chatId);
+      // Like the real API: the sent message carries its photo sizes, whose
+      // largest file_id callers cache (SHP-1 reads it for the preview).
+      const m = sent(chatId);
+      return { ...m, photo: [{ file_id: `sent_${m.message_id}_small` }, { file_id: `sent_${m.message_id}_large` }] };
     },
     /**
      * CAT-P1 — albums. The real client answers with one message PER item,
@@ -57,9 +72,10 @@ function createFakeBot() {
         photo: [{ file_id: `album_${i}_small` }, { file_id: `album_${i}_large` }],
       }));
     },
-    async sendDocument(chatId, doc, opts) {
-      record('sendDocument', { chatId, doc, opts });
-      return sent(chatId);
+    async sendDocument(chatId, doc, opts, fileOptions) {
+      record('sendDocument', { chatId, doc, opts, fileOptions });
+      const m = sent(chatId);
+      return { ...m, document: { file_id: `doc_${m.message_id}` } };
     },
     async sendChatAction(chatId, action) {
       record('sendChatAction', { chatId, action });

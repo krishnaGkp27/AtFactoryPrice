@@ -119,6 +119,9 @@ const DEFAULTS = {
   // empty = the bot's own BASE_URL, which serves the same page at /d/<token>.
   SHARE_LINKS_ENABLED: 1,
   SHARE_PAGE_BASE_URL: '',
+  // SHP-1 — per-shade garment photos. 0 = every shade tap behaves exactly
+  // as before SHP-1 (no photo morph, no 🔍 chip); the upload door stays.
+  SHADE_PHOTOS_ENABLED: 1,
   // APX-3d/3e — hours a RECEIVED (✅) transfer stays in the inbox list.
   // 0 = keep forever (owner 31-Jul: nothing visible may vanish until a
   // complete backup regime exists — see BKP-1). Set e.g. 48 via a
