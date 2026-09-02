@@ -9,3 +9,6 @@ credentials.json
 data/uploads/
 data/ocr/
 
+
+# SHP-1 guide is generated from scripts/build-shade-photos-guide.py
+docs/SHP-1_SHADE_PHOTOS_GUIDE.html
