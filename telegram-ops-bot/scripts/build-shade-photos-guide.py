@@ -77,7 +77,7 @@ def step(n, title, lead, right, tip=None, warn=None):
 TITLE = "🎨 *Shade Photos*\n\n"   # makeRenderer titlePrefix — on EVERY text card
 
 S_DESIGNS = TITLE + "Pick the design. One garment picture per shade — it shows the moment a shade is selected.\n_(✓ = already has shade photos)_"
-B_DESIGNS = [["202/201", "9037", "✓ 77014"], ["77016", "9043-B", "80045"], ["🏠 Back to menu"]]
+B_DESIGNS = [["202/201", "9037", "✓ 77014"], ["77016", "9043-B", "80045"], ["⬅", "1/2", "➡"], ["🏠 Back to menu"]]
 
 S_SHADES = TITLE + "*202/201*\nTap a shade to add its garment picture.\n_(✓ = has a photo · 🆕 = added now, waiting for ✅ Done)_"
 B_SHADES = [["1 - White"], ["2 - Dark Brown"], ["3 - Navy Blue"], ["4 - Royal Blue"], ["5 - Taupe Grey"],
@@ -140,8 +140,8 @@ TROUBLE = [
   "The picture has too many pixels for the bot to open.",
   "Export a smaller copy (about 4000 across is plenty) and send that."),
  ("⏳ One picture at a time — the previous one is still being processed.",
-  "You sent a second picture while the first was still being stamped.",
-  "Wait for the preview, then decide on it."),
+  "A second picture arrived before the first had finished. The bot did NOT keep it.",
+  "Wait for the preview, decide on it, then send that picture again."),
  ("ℹ️ That picture is no longer the one being decided — use the buttons on the latest preview.",
   "You scrolled up and tapped an old preview's buttons.",
   "Scroll down to the newest preview and use its buttons."),
@@ -171,14 +171,14 @@ P.append(f"""
   <div class="brand">AtFactoryPrice · Operator Guide</div>
   <h1>🎨 Shade Photos</h1>
   <div class="sub">How to send the garment picture for every shade</div>
-  <div class="for">For: <b>Abdul</b> &nbsp;·&nbsp; Telegram: <b>Black Panther_Bot</b> &nbsp;·&nbsp; About 5 minutes for 5 colours</div>
+  <div class="for">For: <b>Abdul</b> &nbsp;·&nbsp; Telegram: <b>Black Panther_Bot</b> &nbsp;·&nbsp; About 1 minute per colour</div>
 
   <div class="golden">
     <div class="gtitle">THE ONE RULE</div>
     <div class="gbody">Send every picture as a <b>FILE</b>, not as a photo.<br>
     <span class="gsteps">📎 &nbsp;→&nbsp; <b>File</b> &nbsp;→&nbsp; pick the picture &nbsp;→&nbsp; Send</span></div>
     <div class="gwhy">If you send it the normal way (as a photo), Telegram makes it small and blurry before the bot ever sees it.
-    The customer then sees a poor picture. As a <b>File</b>, the picture stays exactly as it was taken.</div>
+    Whoever is choosing the colour then sees a poor picture. As a <b>File</b>, the picture stays exactly as it was taken.</div>
   </div>
 
   <div class="two">
@@ -219,10 +219,10 @@ P.append(f"""
 <section class="page">
   <div class="ph">Step 1 – 2 &nbsp;·&nbsp; Open the tile and pick the design</div>
   {step(1, "Open 🎨 Shade Photos",
-        "Say <b>Hi</b> to the bot, then tap through the menu:"
+        "Say <b>Hi</b> to the bot. First look for <b>🎨 Shade Photos</b> right on that first screen — if it is the only design job you are allowed, the bot puts it there.<br>Otherwise tap through:"
         "<div class='path'><span>🛒 Sales &amp; Marketing</span><span>→</span><span>🎨 Designs</span><span>→</span><span>🎨 Shade Photos</span></div>",
         card(S_DESIGNS, B_DESIGNS),
-        tip="A design with a <b>✓</b> already has some shade pictures. You can still add the missing colours.",
+        tip="A design with a <b>✓</b> already has some shade pictures — you can still add the missing colours.<br>The list shows <b>24 designs at a time</b>. If yours is not on the screen, use the arrow row underneath (<b>⬅ &nbsp; 1/2 &nbsp; ➡</b>).",
         warn="<b>No 🛒 Sales &amp; Marketing button?</b> Look under <b>📋 More Options</b> — the menu only shows what your department is allowed.<br><b>Still no 🎨 Shade Photos?</b> Tell the admin to add <b>shade_photos</b> to your department. You cannot fix that from the phone.")}
   {step(2, "Tap the design number",
         "Tap the design you are working on — here <b>202/201</b>.<br>The bot goes straight to the colour list.",
@@ -241,7 +241,7 @@ P.append(f"""
   {step(4, "Send it as a FILE",
         "In Telegram: tap <b>📎</b> (paperclip) → <b>File</b> → choose the picture → Send."
         "<div class='path'><span>📎</span><span>→</span><span>File</span><span>→</span><span>picture</span><span>→</span><span>Send</span></div>"
-        "The bot shows this while it works — a few seconds:",
+        "The bot shows this while it works. On a big picture or a slow line it can take a minute — <b>wait</b>, do not send it again:",
         card(S_PROC, B_PROC),
         warn="Do <b>not</b> use the Gallery / Photo button. That is the compressed way.<br>Send <b>one picture at a time</b> — and only when the bot asks for one.")}
 </section>""")
@@ -272,15 +272,25 @@ P.append(f"""
   The bot treats it as a replacement for <i>the same colour</i> — the picture you were looking at is thrown away, and the new one is filed under the old colour.
   Always tap <b>✅ Use it</b> (or <b>🔁 Retake</b>) first, and wait for the bot to ask for the next colour.</div>
 
+</section>
+
+<section class="page">
+  <div class="ph">Step 5b &nbsp;·&nbsp; After you tap ✅ Use it — and where the next question appears</div>
   <div class="afterbox">
     <div class="atext">
-      <div class="btitle">After you tap ✅ Use it</div>
-      <p>Two things happen. The preview's buttons turn into one green label — <b>✅ 1 - White</b> — so you can see at a glance which colours are already kept.</p>
-      <p>Then the bot sends the picture back once more as a file. That is the bot <b>keeping the full-quality copy</b> — you do not need to do anything with it. Leave it in the chat.</p>
-      <p>Then the bot moves you straight to the next colour that has no picture. Keep going: <b>send → ✅ Use it → send → ✅ Use it</b>.</p>
+      <div class="btitle">Three things happen</div>
+      <p><b>1.</b> The preview's three buttons collapse into <b>one grey label</b> recording what you did — <b>✅ 1 - White</b> (kept), <b>🔁 replaced</b>, <b>⏭ skipped</b> or <b>⬅ back</b>. It is a label, not a button: tapping it does nothing. Always work on the <i>newest</i> preview.</p>
+      <p><b>2.</b> The bot sends the picture back once more as a file. That is the bot <b>keeping the full-quality copy</b> — you do not need to do anything with it. Leave it in the chat.</p>
+      <p><b>3. Now scroll UP.</b> The bot does not send a new question — it changes the same <b>🎨 Shade Photos</b> card you have been using all along, and that card is now <b>above</b> your two pictures. It is already asking for the next colour. Do not send anything until you can see it asking.</p>
+      <p>That card asks for the next colour that has no picture. Keep going: <b>send → ✅ Use it → scroll up → send</b>.</p>
     </div>
-    <div class="acard">{card(C_KEPT, kind="document", photo="202_201_shade_1.jpg")}</div>
+    <div class="acard">{card(C_KEPT, kind="document", photo="202_201_shade_1.jpg")}
+    {card(C_PREV_OK, B_FROZEN, kind="photo", photo=PIC_GARMENT)}
+    <div class="cardnote">The preview you decided on, now closed: one grey label, not a button.</div></div>
   </div>
+  <div class="warnwide">🔎 <b>The question moves up, not down.</b> The bot never sends a new question — it rewrites the one
+  <b>🎨 Shade Photos</b> card you started with. Every picture you send pushes that card further up the chat.
+  After each <b>✅ Use it</b>, scroll <b>up</b> past your pictures to find it. It is already asking for the next colour.</div>
 </section>""")
 
 # PAGE 5 — steps 6-7
@@ -297,7 +307,7 @@ P.append(f"""
         "When the colours you have are all <b>🆕</b>, tap <b>✅ Done — send N for approval</b>.<br>"
         "All of them go to the admin as <b>one</b> request.",
         card(S_ALLDONE, B_ALLDONE),
-        warn="Tap <b>✅ Done</b> once. One tap is enough — tapping again does not send it twice, so just wait for the confirmation.")}
+        warn="Tap <b>✅ Done</b> once. Tapping again cannot send it twice.<br>If a second tap answers <i>“The Shade Photos session expired”</i>, ignore it — your pictures were already sent. Look above for the green <b>✅ Sent for approval</b>.")}
 </section>""")
 
 # PAGE 6 — after
@@ -319,7 +329,7 @@ P.append(f"""
     <div>
       <div class="gtitle2">3. The bot tells you</div>
       {card(S_APPROVED)}
-      <div class="cnote">When this arrives, your pictures are <b>live</b> for everybody: sales, marketers, customers.<br><br>
+      <div class="cnote">When this arrives, your pictures are <b>live</b> for the people selling: sales and marketers.<br><br>
       If it says <b>❌ rejected</b>, ask the admin what was wrong and send a better picture the same way.</div>
     </div>
   </div>
@@ -330,7 +340,7 @@ P.append(f"""
 P.append(f"""
 <section class="page">
   <div class="ph">Why it matters &nbsp;·&nbsp; What your picture does in the shop</div>
-  <p class="lead">This is what a salesperson (or a marketer, or a customer) sees once your picture is approved.
+  <p class="lead">This is what a salesperson or a marketer sees once your picture is approved.
   <b>The same message changes its picture</b> — your garment appears where the shade book was.</p>
   <div class="compare">
     <div class="col">
