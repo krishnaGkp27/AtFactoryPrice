@@ -105,6 +105,11 @@ const ALWAYS_APPROVAL_ACTIONS = [
   // Owner mandated 2-admin sign-off (Jul 2026): the label shows on every
   // sales/stock screen, so a wrong label misleads the whole team.
   'set_design_category',
+  // EDB-1 (owner, 02-Sep-2026) — the bale card edited in place to match
+  // the physical goods (design / shade / indent / yards per than / an
+  // extra than). Rewrites rows the sheet already holds — some of them
+  // sold — so two admins sign against the label photo.
+  'edit_bale',
   // LANDED-COST C1 — finalize a GRN's landed cost (USD cost-per-yard +
   // container charges + FX rate). Sealing wrong numbers cascades into
   // every margin report + sales decision, so always dual-admin.
@@ -212,6 +217,8 @@ const DUAL_ADMIN_ACTIONS = [
   // the PAY-1 shape where a comment claimed two admins and the matrix
   // returned one. Two DISTINCT admins arm a task's reminders.
   'task_reminder_enable',
+  // EDB-1 — the owner's ruling: "dual admin approval for the above correction".
+  'edit_bale',
 ];
 
 /**

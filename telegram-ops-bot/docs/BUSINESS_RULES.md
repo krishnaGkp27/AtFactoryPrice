@@ -82,6 +82,30 @@ what, why (incident), where enforced.
   paymentFlow.js` (door), `services/inventoryService.js`
   (`register_payment_account` executor), `services/paymentCards.js` (card).
 
+## 1d · A bale's physical attributes are corrected on the card, dual-admin, never by a silent rewrite
+
+**Locked 02-Sep-2026 (owner, the 6061 case — a 60-yd than that was two 30-yd pieces).**
+
+> "The small quantum of change … a bale's details having the difference of
+> physical attributes coming from the sheet. Edit the Telegram card of the
+> bale in place, gated through dual admin approvals; upon the changes it
+> creates the CRUD operation on my main inventory sheet."
+
+- **One door:** ✏️ Edit Bale (`edit_bale`, dual-admin, label photo as
+  evidence per rule 3). Editable there: design, shade, indent, yards per
+  than, adding a than. **Never** there: status, customer, sale date, price
+  (sales / returns / finance doors), warehouse (transfers).
+- The executor re-reads the bale and **refuses if any row moved** since the
+  edit was proposed; new thans take the next free number and a generated
+  uid, **appended at the bottom** — than numbers are never renumbered.
+- The Inventory sheet stays the single source of truth and the owner may
+  edit it by hand: identity is `design | number | container`, not the uid;
+  append, never insert; leave in-transit rows alone.
+- Deferred by the owner: removing a than (shape undecided); money effects of
+  a shrunk sold than (financial reconciliation later).
+- Enforced: `flows/editBaleFlow.js`, `services/baleEditService.js`,
+  `risk/evaluate.js` (ALWAYS + DUAL). Spec: `specs/EDB-1_EDIT_BALE.md`.
+
 ## 2 · The bot NEVER selects physical stock
 
 **Locked 02-Aug-2026 (TRF-15), after transfer 02Aug·01** — FIFO pre-ticks

@@ -713,6 +713,29 @@ function buildShadePhotoCard(aj) {
   return text;
 }
 
+/**
+ * EDB-1 — a bale edit: before → after, row by row, from the SAME plan the
+ * executor will apply. Two edits of two bales can never read identically
+ * (D-4), and the approver sees exactly what the sheet will become.
+ */
+function buildEditBaleCard(aj) {
+  const baleEdit = require('./baleEditService');
+  const plan = baleEdit.buildPlan(aj.snapshot || [], aj.edits || {});
+  let text = `✏️ Edit bale ${aj.packageNo || '?'} · ${aj.design || '?'}${aj.shade ? ` · #${aj.shade}` : ''} · ${aj.warehouse || '?'}`;
+  if (aj.arrivalBatch) text += ` · 📦 ${aj.arrivalBatch}`;
+  const first = (aj.snapshot || [])[0] || {};
+  for (const [f, v] of Object.entries(plan.header)) text += `\n${f}: ${first[f] || '—'} → ${v}`;
+  for (const c of plan.yardChanges) {
+    text += `\n#${c.thanNo}: ${c.from} → ${c.to} yd${c.status === 'sold' ? ` (sold → ${c.soldTo || '?'}${c.soldDate ? ` ${fmtDate(c.soldDate)}` : ''})` : ''}`;
+  }
+  for (const a of plan.adds) text += `\n🆕 #${a.thanNo}: ${a.yards} yd (new, available)`;
+  text += `\n${plan.before.thans} thans · ${fmtQty(plan.before.yards)} yd → ${plan.after.thans} thans · ${fmtQty(plan.after.yards)} yd`;
+  text += aj.label_file_id ? '\n📎 Label photo attached' : '\n⚠️ No label photo';
+  if (plan.soldYardsChanged) text += '\n⚠️ Sold yardage changes — customer billed for the old figure; reconcile later (not part of this approval).';
+  text += '\nRe-checked against the live sheet at approval; refused if the bale moved.';
+  return text;
+}
+
 async function buildCardFromActionJSON(aj) {
   if (!aj || typeof aj !== 'object') return 'pending action';
   try {
@@ -723,6 +746,7 @@ async function buildCardFromActionJSON(aj) {
     if (aj.action === 'remove_customer' || aj.action === 'restore_customer') return buildRemoveCustomerCard(aj);
     if (aj.action === 'add_warehouse') return await buildAddWarehouseCard(aj);
     if (aj.action === 'design_asset_upload' && aj.kind === 'shade') return buildShadePhotoCard(aj);
+    if (aj.action === 'edit_bale') return buildEditBaleCard(aj);
   } catch (_) { /* fall through to generic */ }
   const parts = [actionLabel(aj.action)];
   const fields = [

@@ -1480,6 +1480,20 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       const paymentService = require('./paymentService');
       customMessage = `✅ Payment of ${paymentService.fmtNaira(pay.amount_ngn)} to *${pay.payee_name}* approved — now with finance to pay.`;
     }
+  } else if (aj.action === 'edit_bale') {
+    // EDB-1 — the bale card edited in place, applied as CRUD on the sheet.
+    // The service re-reads the bale and refuses if anything moved since the
+    // edit was proposed (APC-1), so two admins never sign onto stale rows.
+    const r = await require('./baleEditService').apply(aj, approvedBy);
+    if (!r.ok) return { ok: false, message: r.message };
+    const { fmtQty } = require('../utils/format');
+    customMessage = `✅ Bale ${aj.packageNo} corrected — ${r.updated} row(s) updated, ${r.appended} than(s) added. `
+      + `Now ${r.plan.after.thans} thans · ${fmtQty(r.plan.after.yards)} yd on the sheet.`
+      + (r.plan.soldYardsChanged ? '\n⚠️ A sold than changed yards — the customer was billed for the old figure; reconcile it in finance.' : '');
+    // The approve reply prints only the generic "approved" line plus the
+    // RET-3 tail; that tail is the one channel that reaches approver AND
+    // requester, so the edit says what it changed through it.
+    creditNote = customMessage;
   } else if (aj.action === 'design_asset_upload' && aj.kind === 'shade') {
     // SHP-1 — a batch of per-shade garment photos rides the same action
     // code as catalogue pages; each shade supersedes the earlier active

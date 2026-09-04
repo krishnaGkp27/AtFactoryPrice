@@ -60,6 +60,7 @@ const PREFIX_FEATURES = {
   'dab:': 'design_assets', 'das:': 'design_assets', 'dat:': 'design_assets',
   'dap:': 'design_assets', 'dam:': 'design_assets', 'dav:': 'design_assets',
   'shp:': 'shade_photos', // SHP-1 — per-shade garment photos upload door
+  'edb:': 'edit_bale', // EDB-1 — the bale card edited in place
   'dcat:': 'set_design_category',
   // ANL-1b (26-Jul) — namespaces shipped after the map was first written.
   // Feature-level counts were never affected (act: tiles are classified

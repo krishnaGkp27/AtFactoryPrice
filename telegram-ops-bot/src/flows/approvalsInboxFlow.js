@@ -79,7 +79,7 @@ const STALE_DAYS = 14;
 const CATEGORIES = [
   { key: 'sales', label: '💰 Sales', actions: ['sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell', 'sale_bundle', 'supply_request'] },
   { key: 'crm', label: '👤 Customers & contacts', actions: ['add_customer', 'add_contact', 'add_contact_link', 'update_contact_info'] },
-  { key: 'intake', label: '📦 Stock intake', actions: ['receive_goods', 'bulk_receive_goods', 'add', 'add_stock'], dual: true },
+  { key: 'intake', label: '📦 Stock intake', actions: ['receive_goods', 'bulk_receive_goods', 'add', 'add_stock', 'edit_bale'], dual: true },
   { key: 'finance', label: '💵 Finance', actions: ['record_payment', 'update_price', 'finalize_landed_cost', 'record_office_expense', 'add_bank', 'remove_bank', 'confirm_bank_reconciliation', 'set_forex_rate'], dual: true },
   { key: 'returns', label: '↩️ Returns & reversals', actions: ['return_than', 'return_package', 'revert_sale_bundle'], dual: true },
   { key: 'people', label: '👥 People & access', actions: ['add_user', 'deactivate_user', 'promote_admin'], dual: true },

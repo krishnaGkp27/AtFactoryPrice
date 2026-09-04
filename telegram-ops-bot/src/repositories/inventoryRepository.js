@@ -301,6 +301,32 @@ async function appendThans(thanRows) {
 }
 
 /**
+ * EDB-1 — apply an approved bale edit: cell updates on existing rows
+ * (header fields stamped per row, per-than yards, UpdatedAt) and appended
+ * rows for new thans. Column letters live HERE and nowhere else.
+ * @param {{updates?:Array<{rowIndex:number, cells:object}>, appends?:Array<object>}} edit
+ */
+async function applyBaleEdit({ updates = [], appends = [] } = {}) {
+  const COL = { indent: 'B', design: 'D', shade: 'E', yards: 'G', updatedAt: 'P' };
+  const ranges = [];
+  for (const u of updates) {
+    if (!u || !u.rowIndex) continue;
+    for (const [field, value] of Object.entries(u.cells || {})) {
+      const col = COL[field];
+      if (!col) continue;
+      ranges.push({ range: `${col}${u.rowIndex}`, values: [[value]] });
+    }
+  }
+  if (ranges.length) await sheets.batchUpdateRanges(SHEET, ranges);
+  if (appends.length) {
+    await ensureHeader();
+    await sheets.appendRows(SHEET, appends.map(toRow));
+  }
+  invalidateCache();
+  return { updatedCells: ranges.length, appended: appends.length };
+}
+
+/**
  * Append one or more bales with server-generated bale_uid + addedAt.
  *
  * Each input bale may omit `baleUid` and `addedAt`; they will be generated
@@ -849,6 +875,7 @@ async function groupByBaleAndShade(design, warehouse = null, opts = {}) {
 module.exports = {
   HEADERS,
   getAll,
+  applyBaleEdit, // EDB-1
   getSoldRows,
   findByDesign,
   findByPackage,

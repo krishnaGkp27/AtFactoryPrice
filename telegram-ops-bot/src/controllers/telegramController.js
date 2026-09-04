@@ -3719,6 +3719,12 @@ async function handleFileMessage(bot, msg) {
     if (handled) return;
   }
 
+  // EDB-1 — the label photo that evidences a bale edit.
+  if (session && session.type === 'edit_bale_flow' && session.step === 'photo') {
+    const handled = await require('../flows/editBaleFlow').handleFile(bot, chatId, userId, msg);
+    if (handled) return;
+  }
+
   if (session && session.type === 'marketer_reg_flow' && (session.step === 'person_photo' || session.step === 'catalog_photo')) {
     const handled = await catalogFlows.handleCatalogFlowPhotoStep(bot, chatId, userId, msg);
     if (handled) return;
@@ -4008,6 +4014,11 @@ async function handleMessage(bot, msg) {
     // AUD-X1 — extra design numbers typed for the audit count sheet.
     if (brSession && brSession.type === 'wh_audit_flow') {
       const handled = await require('../flows/warehouseAuditFlow').handleText(bot, msg);
+      if (handled) return;
+    }
+    // EDB-1 — the bale number, a typed yards figure, or a header value.
+    if (brSession && brSession.type === 'edit_bale_flow') {
+      const handled = await require('../flows/editBaleFlow').handleText(bot, msg);
       if (handled) return;
     }
     // DSP-1 — the snap flow no longer takes typed input: the dispatcher
@@ -7474,6 +7485,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['ptk:'], handle: (bot, cq) => require('../flows/snapTaskFlow').handleCallback(bot, cq) },
   // SHP-1 — Shade Photos upload door (one garment photo per shade tab).
   { prefixes: ['shp:'], handle: (bot, cq) => require('../flows/shadePhotoFlow').handleCallback(bot, cq) },
+  // EDB-1 — the bale card edited in place (dual-admin CRUD on Inventory).
+  { prefixes: ['edb:'], handle: (bot, cq) => require('../flows/editBaleFlow').handleCallback(bot, cq) },
   // MYP-1 — linked-person My Products (their taps route via the fence;
   // this line only keeps a stray card in a staff chat from going dead).
   { prefixes: ['myp:'], handle: (bot, cq) => require('../flows/myProductsFlow').handleCallback(bot, cq) },
@@ -10163,6 +10176,10 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         break;
       case 'check_stock':
         await showDesignPickerForReport(bot, chatId, 'cks');
+        break;
+      case 'edit_bale':
+        // EDB-1 — flow module; admin-gated inside.
+        await require('../flows/editBaleFlow').start(bot, chatId, uid, messageId);
         break;
       case 'list_packages':
         await showDesignPickerForReport(bot, chatId, 'lpk');

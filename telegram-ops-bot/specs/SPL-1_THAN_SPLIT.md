@@ -1,6 +1,6 @@
 # SPL-1 — A than that is really two: the correction, and the door so it never needs a hand-edit again
 
-**Status:** plan agreed in principle 02-Sep-2026; awaiting the owner's sheet for Part A, owner's go for Part B.
+**Status:** SUPERSEDED 02-Sep-2026 by `EDB-1_EDIT_BALE.md` — the owner generalised the split into "edit the bale card in place"; Part A (6061) is done through that door, Part B is that door.
 **Case:** bale 6061 · design 9043-A · shade 6 · Kano office. Label: 6 pcs / 166. Sheet: 5 rows / 166 —
 than 1 recorded as 60 yd and sold to Qaribullah (18-Aug); physically two 30-yd pieces, of which he took ONE.
 The other 30 yd is still in the bale, unrecorded.

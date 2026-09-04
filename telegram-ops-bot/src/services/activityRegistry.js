@@ -94,6 +94,9 @@ const ACTIVITIES = [
 
   // ── Inventory (stock lookups — shallow, high-frequency) ──────────────
   { code: 'check_stock',           label: 'Check Stock',               icon: '📦', callback: 'act:check_stock',        hub: 'inventory' },
+  // EDB-1 — the bale card edited in place to match the physical goods;
+  // dual-admin; the flow gates admin itself.
+  { code: 'edit_bale',             label: 'Edit Bale',                 icon: '✏️', callback: 'act:edit_bale',          hub: 'inventory' },
   // MKT-1 — warehouse-scoped read-only catalog for marketer/salesman roles.
   // Standalone (hub: null); surfaced only to field roles by the greeting menu.
   // MYP-3 (owner, 27-Aug-2026) — "My Products" read cold; the tile is their

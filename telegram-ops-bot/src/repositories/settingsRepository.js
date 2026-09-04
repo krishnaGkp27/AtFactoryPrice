@@ -127,6 +127,9 @@ const DEFAULTS = {
   // bot instance, so this is a memory ceiling, not a quality one: 40 MP is
   // above any phone's normal output. Bigger files are refused with the size.
   SHADE_PHOTO_MAX_MP: 40,
+  // EDB-1 — 1 = an edit cannot be sent for approval without the label
+  // photo (rule 3: image → operator → approval). 0 = photo optional.
+  EDIT_BALE_PHOTO_REQUIRED: 1,
   // APX-3d/3e — hours a RECEIVED (✅) transfer stays in the inbox list.
   // 0 = keep forever (owner 31-Jul: nothing visible may vanish until a
   // complete backup regime exists — see BKP-1). Set e.g. 48 via a
