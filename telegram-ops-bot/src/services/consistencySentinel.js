@@ -141,7 +141,11 @@ function checkReturnsAreApproved({ movements, resolved, now }) {
     if (String(q.status || '').toLowerCase() !== 'approved') continue;
     const aj = q.actionJSON || {};
     const day = isIsoDay(normDay(q.resolvedAt)) ? normDay(q.resolvedAt) : '';
-    if (aj.action === 'return_than' || aj.action === 'return_package') {
+    // RET-4 — `return_thans` is an approved return too. Without it every
+    // movement the multi-than card writes would be accused on every sweep
+    // once it aged past the recency window.
+    if (aj.action === 'return_than' || aj.action === 'return_package'
+        || aj.action === 'return_thans') {
       note(aj.packageNo, day);
     } else if (aj.action === 'revert_sale_bundle') {
       if (Array.isArray(aj.items)) for (const it of aj.items) note(it.packageNo, day);

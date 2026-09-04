@@ -7773,7 +7773,7 @@ function runS52() {
  * forgetting one rule. This lint makes a 20th door impossible to add by
  * accident: any src/ file (outside the repository that defines them and
  * the engine that guards them) mentioning a writer name fails smoke. */
-function runS54() {
+async function runS54() {
   // ---- S54 MYP-1: linked people, one product view, the governed cap ----
   // Source-read, not require: earlier smoke sections stubModule() this repo.
   const puSrc54 = fs.readFileSync(path.join(__dirname, '../src/repositories/pendingUsersRepository.js'), 'utf8');
@@ -7989,7 +7989,8 @@ function runS54() {
     const execBody = invSrc.slice(execStart);
     const retEmits = execBody.match(/erpEmitAsync\('return', \{[^\n]*\}\)/g) || [];
     // Both approved-return executors post through the propagating emitter and carry a rate.
-    const retAsync = retEmits.length === 2 && retEmits.every((e) => /pricePerYard: credit\.rate/.test(e));
+    // RET-4 — a THIRD return executor (`return_thans`, the multi-than card).
+    const retAsync = retEmits.length === 3 && retEmits.every((e) => /pricePerYard: credit\.rate/.test(e));
     // No approved return still fires the fire-and-forget emit (the ₦0 path).
     const retNoSilent = !/erpBus\.emit\('return'/.test(execBody);
     // Zero rate is reported, never swallowed.
@@ -7997,7 +7998,7 @@ function runS54() {
     // The credit is stated on the approve reply.
     const retNoteShown = /result\.creditNote/.test(aeSrc);
     // The date slot reaches the movement row.
-    const retDated = (execBody.match(/on: aj\.returnedOn \|\| undefined/g) || []).length === 2;
+    const retDated = (execBody.match(/on: aj\.returnedOn \|\| undefined/g) || []).length === 3;
     const inv = require('../src/services/inventoryService');
     const rc = inv._internals && inv._internals.returnCreditFor;
     const rcMixed = rc && rc({}, [{ yards: 30, pricePerYard: 2500 }, { yards: 20, pricePerYard: 3000 }]);
@@ -8009,6 +8010,110 @@ function runS54() {
       pass('S54.15 RET-3: approved returns credit at a real rate, loudly when none, dated when told');
     } else {
       fail('S54.15', JSON.stringify({ retAsync, retNoSilent, retZeroLoud, retNoteShown, retDated, retMath, retEmits: retEmits.length }));
+    }
+  }
+
+  // ---- S54.16 — RET-4: the ↩️ Return goods card is wired end to end ----
+  // Source coupling, not behaviour: the flow module is unreachable unless the
+  // controller routes `rn:`, the tile opens it and the photo guard exists;
+  // the request is unexecutable unless the policy lists and the executor
+  // branch both name `return_thans`; and the card must render the credit,
+  // the condition and the date wherever it is rebuilt from the queue row.
+  {
+    const ctl = fs.readFileSync(path.join(__dirname, '../src/controllers/telegramController.js'), 'utf8');
+    const rnRoute = /prefixes: \['rn:'\]/.test(ctl) && /flows\/returnFlow'\)\.handleCallback/.test(ctl);
+    // The `act:` tile case (bare, no brace) — NOT the typed-intent case,
+    // which is `case 'return_than': {` and still runs the legacy preview.
+    const tileAt = ctl.indexOf("case 'return_than':\n");
+    const tileCase = tileAt < 0 ? '' : ctl.slice(tileAt, tileAt + 500);
+    const rnTile = /flows\/returnFlow'\)\.start/.test(tileCase) && !/startReturnThanFlow/.test(tileCase);
+    const rnPhoto = /session\.type === 'return_flow' && session\.step === 'photo'/.test(ctl)
+      && /flows\/returnFlow'\)\.handlePhoto/.test(ctl);
+    const rnText = /rnSession\.type === 'return_flow'/.test(ctl)
+      && /flows\/returnFlow'\)\.handleText/.test(ctl);
+
+    const ev = require('../src/risk/evaluate');
+    const rnPolicy = ev.WRITE_ACTIONS.includes('return_thans')
+      && ev.ALWAYS_APPROVAL_ACTIONS.includes('return_thans')
+      && ev.DUAL_ADMIN_ACTIONS.includes('return_thans');
+    // Tap-flow-only: `return_thans` must stay OUT of the parser enum (S4
+    // lints enum -> policy, never the reverse).
+    const ipSrc = fs.readFileSync(path.join(__dirname, '../src/ai/intentParser.js'), 'utf8');
+    const rnNotInEnum = !/return_thans/.test(ipSrc);
+
+    const invSrc = fs.readFileSync(path.join(__dirname, '../src/services/inventoryService.js'), 'utf8');
+    const rnExecBody = invSrc.slice(invSrc.indexOf("aj.action === 'return_thans'"));
+    const rnExec = invSrc.includes("aj.action === 'return_thans'")
+      && /erpEmitAsync\('return', \{[^\n]*pricePerYard: credit\.rate[^\n]*\}\)/.test(rnExecBody)
+      && /txnId: `RN-/.test(rnExecBody);
+    // The card's `pricePerYard` is the yards-WEIGHTED average of the ticked
+    // set — a display figure. returnCreditFor treats a request rate as a
+    // UNIFORM override, so passing `aj` here would credit the survivors of a
+    // partial apply (a than re-sold while the request waited) at the set's
+    // average, and would pay an unpriced survivor instead of raising the
+    // RET-3 loud zero. Each surviving row's own booked rate is the truth.
+    const rnRate = /const credit = returnCreditFor\(\{\}, results\);/.test(rnExecBody)
+      && !/returnCreditFor\(aj, results\)/.test(rnExecBody);
+    // §5 — one printed number can sit in two containers of one store and the
+    // request cannot yet say which (spec Q1 open). The executor groups the
+    // candidate rows BY THAN NUMBER so a neighbour's same-numbered row is
+    // never flipped as a second copy, nor reported "skipped" for a than that
+    // WAS flipped.
+    const rnDupGuard = /const byThan = new Map\(\);/.test(rnExecBody)
+      && /owned\.length > 1/.test(rnExecBody);
+    // Telegram refuses to re-send a file as a different type: a picture sent
+    // as a File has a DOCUMENT file_id. Every forward of the return photo
+    // must pick its sender from the recorded type (sale_doc_type precedent).
+    const rnFlowSrc = fs.readFileSync(path.join(__dirname, '../src/flows/returnFlow.js'), 'utf8');
+    const remSrc = fs.readFileSync(path.join(__dirname, '../src/services/approvalReminder.js'), 'utf8');
+    const inbSrc = fs.readFileSync(path.join(__dirname, '../src/flows/approvalsInboxFlow.js'), 'utf8');
+    const rnPhotoKind = /return_photo_type:/.test(rnFlowSrc)
+      && /return_photo_type === 'document'/.test(rnFlowSrc)
+      && /return_photo_type === 'document'/.test(remSrc)
+      && /return_photo_type !== 'document'/.test(inbSrc);
+
+    const cardSrc = fs.readFileSync(path.join(__dirname, '../src/services/approvalCards.js'), 'utf8');
+    const approvalCards = require('../src/services/approvalCards');
+    const rnCard = typeof approvalCards.buildReturnThansCard === 'function'
+      && /aj\.action === 'return_thans'/.test(cardSrc)
+      && /Credits/.test(cardSrc) && /formatCounts/.test(cardSrc) && /Dual-admin return/.test(cardSrc);
+
+    const lucSrc = fs.readFileSync(path.join(__dirname, '../scripts/list-uncredited-returns.js'), 'utf8');
+    const rnScript = /RN-/.test(lucSrc);
+
+    const csSrc = fs.readFileSync(path.join(__dirname, '../src/services/consistencySentinel.js'), 'utf8');
+    const csC2 = csSrc.slice(csSrc.indexOf('checkReturnsAreApproved'));
+    const rnSentinel = /return_thans/.test(csC2);
+
+    // Exercise the builder itself, the way S54.15 exercises returnCreditFor:
+    // the money, the condition and the date must survive a rebuild from the
+    // queued ActionJSON alone (the inbox and the reminder both do this).
+    let rnCardText = false;
+    // An earlier check leaves a PARTIAL unitDisplayService in require.cache
+    // (it has no formatCounts). Restore the real module for this assertion
+    // and put the stub back, so neither side is disturbed.
+    const udsPath = require.resolve('../src/services/unitDisplayService');
+    const udsStub = require.cache[udsPath];
+    delete require.cache[udsPath];
+    require('../src/services/unitDisplayService');
+    try {
+      const txt = await approvalCards.buildReturnThansCard({
+        action: 'return_thans', packageNo: '9037', warehouse: 'Kano office',
+        thanNos: [1, 4], customer: 'ABBA', customerId: 'CUS-ABBA',
+        returnedOn: '2026-08-28', condition: 'damaged', conditionNote: '6 yd cut off',
+        return_photo_file_id: 'ph-1', pricePerYard: 2500, yards: 60,
+        design: 'Cashmere', shade: 'Blue',
+      });
+      rnCardText = /Credits ABBA/.test(txt) && /Damaged/.test(txt) && /6 yd cut off/.test(txt)
+        && /28-Aug-2026/.test(txt) && /9037\/1/.test(txt) && /Photo attached/.test(txt);
+    } catch (_) { rnCardText = false; }
+    if (udsStub) require.cache[udsPath] = udsStub;
+
+    const rnFlags = { rnRoute, rnTile, rnPhoto, rnText, rnPolicy, rnNotInEnum, rnExec, rnRate, rnDupGuard, rnPhotoKind, rnCard, rnScript, rnSentinel, rnCardText };
+    if (Object.values(rnFlags).every(Boolean)) {
+      pass('S54.16 RET-4: return card wired — route, tile, photo, policy, executor, card, sentinel');
+    } else {
+      fail('S54.16', JSON.stringify(rnFlags));
     }
   }
 
@@ -8189,7 +8294,7 @@ function runS51() {
   try { runS51(); } catch (e) { fail('S51 unexpected error', e.message); }
   try { runS52(); } catch (e) { fail('S52 unexpected error', e.message); }
   try { runS53(); } catch (e) { fail('S53 unexpected error', e.message); }
-  try { runS54(); } catch (e) { fail('S54 unexpected error', e.message); }
+  try { await runS54(); } catch (e) { fail('S54 unexpected error', e.message); }
 
   const total  = results.length;
   const passed = results.filter((r) => r.ok).length;

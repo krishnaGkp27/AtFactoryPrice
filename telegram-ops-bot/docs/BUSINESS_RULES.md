@@ -295,6 +295,26 @@ inventory sheet. but you can add in different sheet."*
   enriched rate there). No rate on record → the stock still comes back and
   the missing credit is reported on the approve reply and in AuditLog —
   never a silent ₦0. A request's `returnedOn` dates the movement.
+- **A return is raised per SET of thans, with a date, a condition and an
+  optional photo (RET-4, 04-Sep-2026).** One request (`return_thans`) lists
+  the ticked thans of ONE bale in the warehouse it was SOLD from (§6 /
+  TRF-INT4); both admins sign that one request, so every than in it still
+  carries two signatures (DUAL-1). `returnedOn` dates the movement and the
+  Transactions row; the ledger credit keeps its posting day (TIME-1).
+  Condition (`good` / `damaged` / `cut` / `other`, plus a note) is recorded on
+  the request and in AuditLog and shown on both cards — it does **not** change
+  the stock status; the than goes back to `available` like any return. A
+  held-out-of-sale status is a separate ruling and a separate door. The photo
+  is optional, exactly one, forwarded to both admins. Cross-warehouse returns
+  stay out until §6 is re-ruled; the card is built so a "returned to" step
+  slots between the thans and the date. A ticked than that has been RE-SOLD to
+  someone else by the time the second admin signs is **skipped and named on
+  the approve reply** — never flipped, never credited to the first buyer: the
+  request is only good for the thans that still belong to the customer it
+  names. And, until the typed door is re-ruled, a **typed** return ("Return
+  than 2 from Bale 5801") still raises the older dateless `return_than`
+  request — the date, condition and photo exist on the ↩️ Return goods card
+  only.
 - Price, category, bin and container edits are not movements and write
   nothing.
 - A failed movement write never undoes or blocks a physical stock move.
@@ -673,5 +693,6 @@ but this goes as our company rules for now").
 | 01-Sep-2026 | Who approved a request survived only in the JSON blob or AuditLog; a dual approval recorded admin #1 and lost admin #2, an admin-raised dual action recorded neither, `new_customer` recorded nobody anywhere; a naive column would have named the RECEIVER (transfers) or the DISPATCH HAND (supply) as the signing authority | APR-1 (ApprovalQueue col H `Approver`, `approverStamp`) |
 | 01-Sep-2026 | The workbook had ~51 tabs; four registered sheets had no live reader and two no writer; `BranchOpsLog` is the office CASH LEDGER despite its name and stays; operational state also hides as columns inside business sheets | SHT-1 (`docs/SHEET_STORAGE_SPLIT.md`) |
 | 02-Sep-2026 | Every return approved since returns moved behind approval credited the customer ₦0: the executors emitted the ledger event without a rate and `recordReturn` skips a zero amount; the only in-bot "fix" (Record Payment) would corrupt the cash book | RET-3 (`specs/RET-3_RETURN_CREDIT.md`) |
+| 02-Sep-2026 | A return could not say WHEN the goods came back, what shape they were in, or show them; and each than needed its own dual-admin request | RET-4 (`specs/RET-3_RETURN_CREDIT.md` Part B) |
 
 When an incident spawns a new rule: fix, spec, then add the rule HERE.

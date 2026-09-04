@@ -115,6 +115,16 @@ async function sweep(bot, { now = Date.now() } = {}) {
           await approvalCards.forwardAttachmentsToAdmins(bot, q.requestId,
             [{ fileId: q.actionJSON.sale_doc_file_id, kind, caption: `📎 Sales bill for request ${q.requestId}` }], excludeId);
         }
+        // RET-4 — a return card's photo of the goods survives a scrolled-away
+        // chat the same way the sales bill does.
+        if (q.actionJSON && q.actionJSON.return_photo_file_id) {
+          // A picture sent as a File carries a DOCUMENT file_id; sendPhoto
+          // rejects it, so the recorded kind decides the sender (sale_doc_type
+          // does the same two lines up).
+          const rKind = q.actionJSON.return_photo_type === 'document' ? 'document' : 'photo';
+          await approvalCards.forwardAttachmentsToAdmins(bot, q.requestId,
+            [{ fileId: q.actionJSON.return_photo_file_id, kind: rKind, caption: `📷 Returned goods for request ${q.requestId}` }], excludeId);
+        }
         _remindedAt.set(q.requestId, now);
         sent += 1;
       } catch (e) {

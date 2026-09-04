@@ -517,6 +517,148 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       if (credit.amount > 0) creditNote = `↩️ Credited ${fmtNgn(credit.amount)} to ${returnCust.name || 'the buyer'} (${results.length} than${results.length === 1 ? '' : 's'}, ${totalYards} yds).`;
       else await recordErpFailure('return credit (return_package)', new Error(`no rate on record for Bale ${aj.packageNo} — stock returned, credit NOT posted; post it manually`));
     } catch (e) { await recordErpFailure('return credit (return_package)', e); }
+  } else if (aj.action === 'return_thans') {
+    // RET-4 — one request, several ticked thans of ONE bale in ONE warehouse
+    // (TRF-INT4). Both admins sign the whole set, so every than in it still
+    // carries two signatures (DUAL-1). BUSINESS_RULES §6d: the condition is
+    // recorded on the request and in AuditLog and shown on the card; it never
+    // changes the stock status — the than goes back to `available` like any
+    // other return.
+    const thanNos = (Array.isArray(aj.thanNos) ? aj.thanNos : []).map(String);
+    if (!thanNos.length) return { ok: false, message: 'No thans on this return request.' };
+    // OWNERSHIP RE-CHECK — the reason this is not a copy of return_package.
+    // A dual-admin request can sit pending for days (the reminder sweep
+    // re-sends it). In that window a ticked than can be returned through
+    // another door and RE-SOLD to someone else. Trusting "the first sold row
+    // names the buyer" would then flip the NEW buyer's than and post the whole
+    // credit to the OLD buyer's statement, at the OLD rate (aj.pricePerYard is
+    // a uniform override in returnCreditFor). So: read once, keep only the
+    // rows that STILL belong to this request's customer, flip only those, and
+    // name every skipped than on the approve reply.
+    const { norm: normName } = require('./customerEntity')._internals;
+    const wantId = String(aj.customerId || '').trim();
+    const wantName = normName(aj.customer || '');
+    const priorRows = await inventoryRepository
+      .findByPackage(aj.packageNo, { warehouse: aj.warehouse }).catch(() => []);
+    // §5 — one printed number can sit in TWO containers of one store, and
+    // findByPackage does not separate them (the request carries no container:
+    // spec Q1 is open). So group the candidate rows BY THAN NUMBER first. One
+    // than number is one thing to the admin who signed the card; two rows
+    // carrying it are a collision, never two copies of the same than.
+    const mine = [];
+    const skipped = []; // [{ thanNo, why }]
+    const idCache = new Map(); // one customerEntity.resolve per distinct spelling
+    const byThan = new Map();
+    for (const t of priorRows) {
+      if (!thanNos.includes(String(t.thanNo))) continue;
+      if (t.status !== 'sold') continue; // reported below as "not sold"
+      // Container scope — §5 duplicate guard. A no-op when the payload carries
+      // no arrivalBatch (today it never does; the grouping below is what keeps
+      // a same-numbered neighbour out of the flip).
+      if (aj.arrivalBatch && String(t.arrivalBatch || '') !== String(aj.arrivalBatch)) continue;
+      const key = String(t.thanNo);
+      if (!byThan.has(key)) byThan.set(key, []);
+      byThan.get(key).push(t);
+    }
+    for (const [thanNo, candidates] of byThan) {
+      const owned = [];
+      const others = [];
+      for (const t of candidates) {
+        const spelling = String(t.soldTo || '');
+        let isMine = normName(spelling) === wantName;
+        if (wantId && !isMine) {
+          if (!idCache.has(spelling)) {
+            try {
+              // eslint-disable-next-line no-await-in-loop
+              const c = await require('./customerEntity').resolve({ name: spelling });
+              idCache.set(spelling, c ? String(c.customer_id) : '');
+            } catch (_) { idCache.set(spelling, ''); }
+          }
+          isMine = idCache.get(spelling) === wantId;
+        }
+        if (isMine) owned.push(t); else others.push(spelling || 'someone else');
+      }
+      if (owned.length > 1) {
+        // The customer holds this than number TWICE — two containers of the
+        // same printed number. Flipping both would return (and credit) twice
+        // what the card promised, so neither moves until the container is on
+        // the request.
+        skipped.push({ thanNo, why: 'this bale number sits in two containers here — the container is not on the request' });
+      } else if (owned.length === 1) {
+        mine.push(owned[0]);
+      } else {
+        // Only a neighbour's row carries this number. It is NOT this request's
+        // than, and it is only reported once — never alongside a flip of the
+        // same number, which used to read "nothing flipped" for a than that was.
+        skipped.push({ thanNo, why: `now sold to ${others[0]}` });
+      }
+    }
+    for (const n of thanNos) if (!byThan.has(n)) skipped.push({ thanNo: n, why: 'not sold — nothing flipped' });
+    // CUS-2 — resolve the buyer from the SOLD rows just verified, before the
+    // flip blanks soldTo. `mine[0]` is safe here: every row in `mine` carries
+    // the same buyer by construction.
+    const returnCust = await resolveReturnCustomer((mine[0] && mine[0].soldTo) || aj.customer || '');
+    const results = [];
+    for (const row of mine) {
+      // RET-3 — `on` carries the day the goods actually came back. `baleUid`
+      // pins the exact physical row so findThan cannot pick a same-numbered
+      // live duplicate (§5); it is optional and ignored when absent.
+      // eslint-disable-next-line no-await-in-loop
+      const r = await stockEngine.returnThan(aj.packageNo, row.thanNo,
+        { warehouse: aj.warehouse, on: aj.returnedOn || undefined, baleUid: row.baleUid },
+        { event: 'return', approvalId: requestId, adminId: approvedBy });
+      // markThanAvailable hands back soldToPrior per than. Assert it still
+      // matches before this than's yards enter the credit — a mismatch means
+      // the row moved between the read and the flip.
+      if (r && normName(r.soldToPrior || '') === normName(row.soldTo || '')) results.push(r);
+      else skipped.push({ thanNo: String(row.thanNo), why: r ? 'buyer changed mid-flight' : 'not sold — nothing flipped' });
+    }
+    if (!results.length) {
+      return {
+        ok: false,
+        message: `No thans of Bale ${aj.packageNo} are still sold to ${returnCust.name || aj.customer || 'that customer'}`
+          + `${skipped.length ? ` (${skipped.map((sk) => `#${sk.thanNo}: ${sk.why}`).join('; ')})` : ''}.`,
+      };
+    }
+    const totalYards = results.reduce((sum, t) => sum + (Number(t.yards) || 0), 0);
+    // RET-3 rate order, deliberately WITHOUT the request override. The return
+    // card never asks for a rate: `aj.pricePerYard` is the yards-weighted
+    // average of the ticked set, computed for the card's ₦ line. As an
+    // override returnCreditFor would apply it UNIFORMLY to whatever survives
+    // the ownership re-check above — so a partial apply of a mixed-rate set
+    // would credit the survivors at the set's average (over- or under-credit),
+    // and a survivor with NO rate on record would be paid the average instead
+    // of triggering the loud zero. Each surviving row's own booked rate is the
+    // truth; for a set that applies in full the two agree exactly.
+    const credit = returnCreditFor({}, results);
+    await transactionsRepository.append({
+      user: item.user, action: 'return_thans', design: results[0]?.design, color: results[0]?.shade,
+      qty: totalYards, before: 'sold', after: 'available', status: 'approved',
+      warehouse: aj.warehouse || results[0]?.warehouse || '', customerName: returnCust.name, customerId: returnCust.id,
+      // RET-3/TIME-1 — returnedOn is the BUSINESS date of the movement and of
+      // this row; the ledger credit still posts on the posting day.
+      saleRefId: requestId, pricePerYard: credit.rate || '', salesDate: aj.returnedOn || '',
+    });
+    // RET-3 — ONE credit for the whole set, on the propagating emitter (see
+    // return_than above). The request id makes two returns of the same bale
+    // distinct, which `RT-`/`RP-` could not.
+    try {
+      await erpEmitAsync('return', { type: 'return_thans', packageNo: aj.packageNo, thanNos, yards: totalYards, pricePerYard: credit.rate, design: results[0]?.design, shade: results[0]?.shade, warehouse: aj.warehouse || results[0]?.warehouse, userId: item.user, txnId: `RN-${aj.packageNo}-${requestId}`, customer: returnCust.name, customerId: returnCust.id });
+      if (credit.amount > 0) creditNote = `↩️ Credited ${fmtNgn(credit.amount)} to ${returnCust.name || 'the buyer'} (${results.length} than${results.length === 1 ? '' : 's'}, ${totalYards} yds × ${fmtNgn(credit.rate)}/yd).`;
+      else await recordErpFailure('return credit (return_thans)', new Error(`no rate on record for Bale ${aj.packageNo} thans ${thanNos.join(', ')} — stock returned, credit NOT posted; post it manually`));
+    } catch (e) { await recordErpFailure('return credit (return_thans)', e); }
+    if (skipped.length) {
+      creditNote = `${creditNote ? `${creditNote}\n` : ''}⚠️ Skipped: `
+        + `${skipped.map((sk) => `#${sk.thanNo} (${sk.why})`).join(', ')} — nothing flipped, nothing credited for them.`;
+    }
+    await auditLogRepository.append('return_thans', {
+      requestId, packageNo: aj.packageNo, warehouse: aj.warehouse, thanNos,
+      arrivalBatch: aj.arrivalBatch || '',
+      returned: results.map((r) => r.thanNo), skipped, yards: totalYards,
+      rate: credit.rate, condition: aj.condition || '', conditionNote: aj.conditionNote || '',
+      returnedOn: aj.returnedOn || '', photo: !!aj.return_photo_file_id,
+      customer: returnCust.name, customerId: returnCust.id,
+    }, approvedBy);
   } else if (aj.action === 'revert_sale_bundle') {
     // Two-admin-approved revert of a previously-approved sale_bundle.
     // Marks every Bale/than in the original sale available again and

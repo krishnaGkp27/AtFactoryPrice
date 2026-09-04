@@ -82,6 +82,28 @@ test('C2 flags an unapproved return; an approved one (and a correction) is clean
   assert.deepEqual(corr, []);
 });
 
+test('C2: RET-4 — an approved return_thans is an approved return, not a wolf', () => {
+  // Every RET-4 movement is written by markThanAvailable with kind 'return'.
+  // Without return_thans in C2's approved-return set, the sentinel would
+  // accuse every single multi-than return once it aged past the recency
+  // window — crying wolf on the door RET-4 just shipped.
+  const ret = move({ kind: 'return' });
+  const clean = checkReturnsAreApproved({
+    movements: [ret],
+    resolved: [{ requestId: 'R4', status: 'approved', actionJSON: { action: 'return_thans', packageNo: '869', thanNos: [1, 4] } }],
+  });
+  assert.deepEqual(clean, []);
+  // The negative still holds: the same movement with no approved row is drift.
+  const drift = checkReturnsAreApproved({ movements: [ret], resolved: [] });
+  assert.equal(drift.length, 1);
+  // And a PENDING return_thans row does not whitelist anything.
+  const pending = checkReturnsAreApproved({
+    movements: [ret],
+    resolved: [{ requestId: 'R4', status: 'pending', actionJSON: { action: 'return_thans', packageNo: '869' } }],
+  });
+  assert.equal(pending.length, 1);
+});
+
 /* ── C3 ── */
 test('C3 flags stranded in-transit rows and transfers claiming landed bales', () => {
   const transit = invRow({ status: 'in_transit', warehouse: 'Kano office', soldTo: '', soldDate: '' });

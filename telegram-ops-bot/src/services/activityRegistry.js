@@ -133,7 +133,10 @@ const ACTIVITIES = [
   // controller now redirects both codes to Transfer Stock.
   { code: 'transfer_package',      label: 'Transfer Package',          icon: '🚚', callback: 'act:transfer_package',   hub: '_hidden' },
   { code: 'transfer_than',         label: 'Transfer Than',             icon: '↔️', callback: 'act:transfer_than',      hub: '_hidden' },
-  { code: 'return_than',           label: 'Return Than',               icon: '↩️', callback: 'act:return_than',        hub: 'stock_move' },
+  // RET-4 — the tile now opens the customer-first multi-than return card
+  // (returnFlow, `rn:`). The `code` and `callback` are unchanged so hub
+  // membership, the greeting menu and every existing pin survive.
+  { code: 'return_than',           label: 'Return goods',              icon: '↩️', callback: 'act:return_than',        hub: 'stock_move' },
 
   // ── Inventory › Warehouses (admin org assets) ────────────────────────
   // WH-C1 — add_warehouse (dual-admin gated, ALWAYS_APPROVAL_ACTIONS).

@@ -8,7 +8,8 @@
  * without a rate, so `recordReturn` skipped the row: stock came back, the
  * customer's debt stayed. This script pairs each BaleMovements `return`
  * row with the LedgerTransactions credit that should carry its txn id
- * (`RT-<bale>-<than>` / `RP-<bale>`) and prints the ones with no credit,
+ * (`RT-<bale>-<than>` / `RP-<bale>`, and `RN-<bale>-<requestId>` for a RET-4
+ * multi-than return card) and prints the ones with no credit,
  * with the rate the bale holds today and the credit that would have been
  * posted — so the owner can decide about a backfill with the numbers in
  * front of him.
@@ -35,7 +36,8 @@ function ngn(n) { return `₦${Math.round(Number(n) || 0).toLocaleString('en-NG'
  */
 function findUncredited({ movements, ledger, inventory }) {
   const creditedRefs = new Set(ledger
-    .filter((e) => Number(e.credit) > 0 && /^R[TP]-/.test(e.txn_id))
+    // RET-4 adds RN-<bale>-<requestId> to the RT-/RP- return txn shapes.
+    .filter((e) => Number(e.credit) > 0 && /^R[TPN]-/.test(e.txn_id))
     .map((e) => e.txn_id));
   const rateByBale = new Map();
   for (const r of inventory) {
@@ -58,11 +60,14 @@ function findUncredited({ movements, ledger, inventory }) {
     if (m.kind !== 'return') continue;
     const wh = (m.toState.split('@')[1] || '').trim();
     const key = `${m.baleNo}|${wh}`;
-    // A whole-bale return is RP-<bale>; a single than RT-<bale>-<than>. The
-    // movement row does not record WHICH than, so any RT- credit for the
-    // bale on or after the movement day counts as credited.
+    // A whole-bale return is RP-<bale>; a single than RT-<bale>-<than>; a
+    // RET-4 set of ticked thans RN-<bale>-<requestId>. The movement row does
+    // not record WHICH than, so any RT-/RN- credit for the bale counts as
+    // credited (RET-4 writes one movement row per than but ONE credit for
+    // the whole set, so the credit cannot be matched than by than).
     const rp = creditedRefs.has(`RP-${m.baleNo}`);
-    const rt = [...creditedRefs].some((ref) => ref.startsWith(`RT-${m.baleNo}-`));
+    const rt = [...creditedRefs].some((ref) => ref.startsWith(`RT-${m.baleNo}-`)
+      || ref.startsWith(`RN-${m.baleNo}-`));
     if (rp || rt) continue;
     const priced = rateByBale.get(key);
     const rate = priced && priced.yards > 0 ? priced.amount / priced.yards : 0;

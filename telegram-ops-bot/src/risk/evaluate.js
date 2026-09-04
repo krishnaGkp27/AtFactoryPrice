@@ -15,7 +15,10 @@ const WRITE_ACTIONS = [
   // CUS-1 Phase E — merging moves ledger identity (owner sign-off 29-Jul).
   'merge_customers',
   'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell',
-  'return_than', 'return_package', 'revert_sale_bundle',
+  // RET-4 — `return_thans` is the multi-than return card (one request,
+  // several ticked thans of one bale). Tap-flow only: it is deliberately
+  // absent from the intentParser enum (smoke S4 lints enum -> policy).
+  'return_than', 'return_package', 'return_thans', 'revert_sale_bundle',
   'update_price',
   'add', 'add_stock',
   'record_payment',
@@ -72,7 +75,8 @@ const WRITE_ACTIONS = [
 const ALWAYS_APPROVAL_ACTIONS = [
   'merge_customers',
   'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell',
-  'return_than', 'return_package', 'revert_sale_bundle',
+  // RET-4 — the multi-than return card (one request, several thans).
+  'return_than', 'return_package', 'return_thans', 'revert_sale_bundle',
   'record_payment', 'update_price', 'supply_request',
   // P2 — dual-admin gate for warehouse structural changes.
   'add_warehouse', 'rename_warehouse',
@@ -187,7 +191,8 @@ const DUAL_ADMIN_ACTIONS = [
   // ALWAYS_APPROVAL_ACTIONS, so one non-requester admin still signs off.
   // Returns/reverts stay dual (they roll back approved sales).
   'give_sample',
-  'return_than', 'return_package', 'revert_sale_bundle',
+  // RET-4 — the multi-than return card (one request, several thans).
+  'return_than', 'return_package', 'return_thans', 'revert_sale_bundle',
   'add', 'add_stock',
   'transfer_than', 'transfer_package', 'transfer_batch',
   'receive_goods', 'bulk_receive_goods',
@@ -295,7 +300,7 @@ async function evaluate(params) {
 function formatAction(action) {
   const map = {
     sell_than: 'sale', sell_package: 'sale', sell_batch: 'sale', sell_mixed: 'sale', sell: 'sale',
-    return_than: 'return', return_package: 'return', revert_sale_bundle: 'sale revert',
+    return_than: 'return', return_package: 'return', return_thans: 'return', revert_sale_bundle: 'sale revert',
     update_price: 'price update', add: 'stock addition', add_stock: 'stock addition',
     record_payment: 'payment', add_customer: 'customer creation', add_contact: 'contact creation',
     transfer_than: 'transfer', transfer_package: 'transfer', transfer_batch: 'transfer',

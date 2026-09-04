@@ -173,3 +173,39 @@ test('evaluate() — non-write actions are safe for everyone', async (t) => {
     });
   });
 });
+
+// ── RET-4 — the multi-than return card's action code ───────────────────────
+// Owner sign-off 02-Sep-2026: `return_thans` is a dual-admin write, gated
+// exactly like the return family it joins. Tap-flow only, so it is
+// deliberately absent from the intentParser enum (smoke S4 lints enum →
+// policy, never the reverse).
+
+test('RET-4 — return_thans is gated like the rest of the return family', async (t) => {
+  await t.test('it is in all three policy tables', () => {
+    assert.ok(risk.WRITE_ACTIONS.includes('return_thans'));
+    assert.ok(risk.ALWAYS_APPROVAL_ACTIONS.includes('return_thans'));
+    assert.ok(risk.DUAL_ADMIN_ACTIONS.includes('return_thans'));
+  });
+
+  await t.test('an employee request reads as two-admin', async () => {
+    await asAdmin(false, async () => {
+      const r = await risk.evaluate({ action: 'return_thans', userId: '555' });
+      assert.equal(r.risk, 'approval_required');
+      assert.match(r.reason, /require two-admin approval/);
+      assert.match(r.reason, /All return operations/, 'formatAction says "return", not "return thans"');
+    });
+  });
+
+  await t.test('an admin requester is the first signature, so the card asks for a 2nd', async () => {
+    await asAdmin(true, async () => {
+      const r = await risk.evaluate({ action: 'return_thans', userId: '777' });
+      assert.equal(r.risk, 'approval_required');
+      assert.match(r.reason, /2nd admin/);
+    });
+  });
+
+  await t.test('an employee-raised return needs two distinct admin taps', () => {
+    assert.equal(risk.requiredAdminApprovals({ action: 'return_thans', requesterIsAdmin: false, adminCount: 2 }), 2);
+    assert.equal(risk.requiredAdminApprovals({ action: 'return_thans', requesterIsAdmin: true, adminCount: 2 }), 1);
+  });
+});

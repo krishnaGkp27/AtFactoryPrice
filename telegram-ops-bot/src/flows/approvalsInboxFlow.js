@@ -81,7 +81,9 @@ const CATEGORIES = [
   { key: 'crm', label: '👤 Customers & contacts', actions: ['add_customer', 'add_contact', 'add_contact_link', 'update_contact_info'] },
   { key: 'intake', label: '📦 Stock intake', actions: ['receive_goods', 'bulk_receive_goods', 'add', 'add_stock', 'edit_bale'], dual: true },
   { key: 'finance', label: '💵 Finance', actions: ['record_payment', 'update_price', 'finalize_landed_cost', 'record_office_expense', 'add_bank', 'remove_bank', 'confirm_bank_reconciliation', 'set_forex_rate'], dual: true },
-  { key: 'returns', label: '↩️ Returns & reversals', actions: ['return_than', 'return_package', 'revert_sale_bundle'], dual: true },
+  // RET-4 — `return_thans` (the multi-than return card) belongs here, not in
+  // ❓ Other, and it is dual-admin like the rest of the family.
+  { key: 'returns', label: '↩️ Returns & reversals', actions: ['return_than', 'return_package', 'return_thans', 'revert_sale_bundle'], dual: true },
   { key: 'people', label: '👥 People & access', actions: ['add_user', 'deactivate_user', 'promote_admin'], dual: true },
   { key: 'warehouse', label: '🏭 Warehouse & labels', actions: ['add_warehouse', 'rename_warehouse', 'set_unit_display', 'set_design_category'], dual: true },
   { key: 'samples', label: '🧪 Samples & marketing', actions: ['give_sample', 'catalog_loan', 'catalog_return', 'register_marketer', 'design_asset_upload'] },
@@ -793,8 +795,11 @@ async function renderItem(bot, chatId, userId, idx) {
   // on this card: the forwarded bill sat next to the REQUEST-time DM, which
   // may have scrolled away days before the admin opens the inbox. The chip
   // delivers it right here, as an ephemeral view swept on the next tap.
-  const docRow = item.actionJSON && item.actionJSON.sale_doc_file_id
-    ? [[{ text: '📄 Sales bill', callback_data: `abx:doc:${idx}` }]]
+  // RET-4 — the return card's photo of the goods that came back rides the
+  // same chip as the sales bill; only the words change.
+  const docAj = item.actionJSON || {};
+  const docRow = (docAj.sale_doc_file_id || docAj.return_photo_file_id)
+    ? [[{ text: docAj.sale_doc_file_id ? '📄 Sales bill' : '📎 Returned goods', callback_data: `abx:doc:${idx}` }]]
     : [];
   // APF-2 (owner, 08-Aug-2026): a pending sale whose stock is ALL gone gets
   // the two REAL choices — plain Approve could only walk the wizard into a
@@ -932,22 +937,30 @@ async function handleCallback(bot, query) {
     const idx = parseInt(data.slice('abx:doc:'.length), 10);
     const item = session0 && Array.isArray(session0._items) ? session0._items[idx] : null;
     const aj = item && item.actionJSON;
-    if (!aj || !aj.sale_doc_file_id) {
+    // RET-4 — the same chip delivers the return card's photo of the goods.
+    const docFile = aj && (aj.sale_doc_file_id || aj.return_photo_file_id);
+    if (!docFile) {
       try { await bot.answerCallbackQuery(query.id, { text: 'No bill attached to this request.', show_alert: true }); } catch (_) { /* answered above */ }
       return true;
     }
-    const caption = `📄 Sales bill — ${approvalCards.shortRequestRef(item.requestId)}`;
+    const isReturnPhoto = !aj.sale_doc_file_id;
+    const caption = `${isReturnPhoto ? '📎 Returned goods' : '📄 Sales bill'} — ${approvalCards.shortRequestRef(item.requestId)}`;
+    // A return photo sent as a File has a DOCUMENT file_id — its recorded
+    // type decides the sender, exactly like the sales bill's.
+    const asPhoto = isReturnPhoto
+      ? aj.return_photo_type !== 'document'
+      : aj.sale_doc_type === 'photo';
     let sent = null;
     try {
-      sent = aj.sale_doc_type === 'photo'
-        ? await bot.sendPhoto(cid, aj.sale_doc_file_id, { caption })
-        : await bot.sendDocument(cid, aj.sale_doc_file_id, { caption });
+      sent = asPhoto
+        ? await bot.sendPhoto(cid, docFile, { caption })
+        : await bot.sendDocument(cid, docFile, { caption });
     } catch (_) {
       // Stored kind can be wrong for old rows — the other sender is the fallback.
       try {
-        sent = aj.sale_doc_type === 'photo'
-          ? await bot.sendDocument(cid, aj.sale_doc_file_id, { caption })
-          : await bot.sendPhoto(cid, aj.sale_doc_file_id, { caption });
+        sent = asPhoto
+          ? await bot.sendDocument(cid, docFile, { caption })
+          : await bot.sendPhoto(cid, docFile, { caption });
       } catch (e2) { logger.warn(`approvalsInbox: bill send failed for ${item.requestId}: ${e2.message}`); }
     }
     if (sent && sent.message_id) {

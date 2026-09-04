@@ -38,3 +38,18 @@ test('with no ledger credits at all, every return is listed with an estimated cr
   assert.equal(two.rate, 2500);
   assert.equal(two.credit, 150000);
 });
+
+test('RET-4: an RN-<bale>-<requestId> credit counts as credited, like RT-/RP-', () => {
+  // The multi-than return card posts ONE credit for the whole ticked set,
+  // keyed by the request id (two returns of one bale must stay distinct).
+  // Without RN- in the credited shapes every new return would be listed here.
+  const ledger = [{ txn_id: 'RN-9037-REQ-1', credit: 150000 }];
+  const rows = findUncredited({ movements, ledger, inventory });
+  assert.deepEqual(rows.map((r) => r.baleNo), ['9040'], 'bale 9037 is credited by the RN- txn');
+});
+
+test('RET-4: an RN- row with no credit amount does not count as credited', () => {
+  const ledger = [{ txn_id: 'RN-9037-REQ-1', credit: 0 }];
+  const rows = findUncredited({ movements, ledger, inventory });
+  assert.deepEqual(rows.map((r) => r.baleNo), ['9037', '9037', '9040']);
+});

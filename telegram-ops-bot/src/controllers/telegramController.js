@@ -3810,6 +3810,13 @@ async function handleFileMessage(bot, msg) {
     if (handled) return;
   }
 
+  // RET-4 — the return card's optional photo of the goods that came back.
+  if (session && session.type === 'return_flow' && session.step === 'photo'
+      && (msg.photo || (msg.document && /^image\//i.test(msg.document.mime_type || '')))) {
+    const handled = await require('../flows/returnFlow').handlePhoto(bot, msg);
+    if (handled) return;
+  }
+
   // SELL-K1 — the Kano than sale now requires a sales bill before it queues;
   // route the photo/PDF to the flow while it is armed.
   if (session && session.type === 'bundle_sale_flow' && session.step === 'await_doc'
@@ -4106,6 +4113,16 @@ async function handleMessage(bot, msg) {
     const paySession = sessionStore.get(userId);
     if (paySession && paySession.type === 'payment_flow') {
       const handled = await require('../flows/paymentFlow').handleText(bot, chatId, userId, text);
+      if (handled) return;
+    }
+  }
+
+  // RET-4 — typed customer search, the 'other' condition note, and a typed
+  // date (which only highlights the calendar; the tap stays the commit).
+  {
+    const rnSession = sessionStore.get(userId);
+    if (rnSession && rnSession.type === 'return_flow') {
+      const handled = await require('../flows/returnFlow').handleText(bot, msg);
       if (handled) return;
     }
   }
@@ -7552,6 +7569,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['rmd:'], handle: (bot, cq) => require('../flows/morningDigestFlow').handleCallback(bot, cq) },
   // SNAP-1 — photo-to-sale (bale label OCR).
   { prefixes: ['sns:'], handle: (bot, cq) => require('../flows/snapSaleFlow').handleCallback(bot, cq) },
+  // RET-4 — ↩️ Return goods (customer → bale → thans → date → condition → photo).
+  { prefixes: ['rn:'], handle: (bot, cq) => require('../flows/returnFlow').handleCallback(bot, cq) },
   // APR-2 — ⏰ reminder controls (per-dept toggles behind approval).
   { prefixes: ['rmn:'], handle: (bot, cq) => require('../flows/reminderConfigFlow').handleCallback(bot, cq) },
   // RPT-2 — 📈 sales/supplies browser (read-only drill-down).
@@ -10516,7 +10535,10 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
           });
         break;
       case 'return_than':
-        await startReturnThanFlow(bot, chatId, uid, messageId);
+        // RET-4 — the tile now opens the customer-first multi-than return
+        // card (returnFlow, `rn:`). The legacy tap picker and its rt*
+        // handlers stay in place, dead, until the removal ticket.
+        await require('../flows/returnFlow').start(bot, chatId, uid, messageId);
         break;
       case 'supply_ledger': {
         // SLG-1 — owner's goods-only per-customer ledger.

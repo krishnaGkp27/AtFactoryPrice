@@ -234,8 +234,16 @@ async function findThan(packageNo, thanNo, opts = {}) {
   const t = num(thanNo);
   // TRF-INT4 — optional warehouse scope (see findByPackage).
   const wh = opts.warehouse ? upper(opts.warehouse) : null;
+  // RET-4 — optional container scope. BUSINESS_RULES §5 lets a SOLD 9037 sit
+  // beside a LIVE 9037 in one store (printed numbers recycle across
+  // arrivals), and sheet order decides which one this finder hits first. A
+  // caller that already knows the exact physical row (the return card
+  // pre-selects the sold rows) pins it by bale_uid. Additive and optional:
+  // every existing caller passes none and behaves exactly as before.
+  const uid = opts.baleUid ? str(opts.baleUid) : null;
   return all.find((r) => r.packageNo === p && r.thanNo === t
-    && (!wh || upper(r.warehouse) === wh)) || null;
+    && (!wh || upper(r.warehouse) === wh)
+    && (!uid || str(r.baleUid) === uid)) || null;
 }
 
 async function markThanSold(packageNo, thanNo, customer, soldDateOverride, opts = {}) {

@@ -126,6 +126,8 @@ test('LBL-1: the chip speaks the owner\'s vocabulary — "sale bale", never "sal
     assert.doesNotMatch(it.text, /bundle/, `no "bundle" on a chip, got: ${it.text}`);
   }
   // Non-sales chips keep the dated format: dot · date · action · name.
+  // The en-GB short month is 3 letters for most months and 4 for September
+  // ("Sept"), so this pin must accept both or it fails every September.
   assert.match(items[0].text, /^🟢 \d{2} \w{3,4} · add contact · John$/, `got: ${items[0].text}`);
   sessionStore.clear(ADMIN);
 });
@@ -248,6 +250,89 @@ test('APX-6: transfer chips are dot+route+bales on one newest-first timeline', a
   } finally {
     approvalQueueRepository.getAllPending = orig;
     approvalQueueRepository.getResolved = origResolved;
+    sessionStore.clear(ADMIN);
+  }
+});
+
+/* RET-4 — the multi-than return card in the inbox. */
+test('RET-4: a return_thans row lands under Returns & reversals with its photo chip', async () => {
+  const orig = approvalQueueRepository.getAllPending;
+  approvalQueueRepository.getAllPending = async () => [
+    {
+      requestId: 'RN-1', user: '8700676816', status: 'pending', createdAt: daysAgo(1),
+      actionJSON: {
+        action: 'return_thans', packageNo: '9037', warehouse: 'Kano office',
+        thanNos: [1, 4], customer: 'ABBA', customerId: 'CUS-ABBA',
+        returnedOn: '2026-08-28', condition: 'damaged', conditionNote: '6 yd cut off',
+        return_photo_file_id: 'ret-photo-1', pricePerYard: 2500, yards: 60,
+        design: 'Cashmere', shade: 'Blue',
+      },
+    },
+  ];
+  try {
+    const bot = createFakeBot();
+    await flow.start(bot, ADMIN, ADMIN, null);
+    // Without the CATEGORIES entry the row falls into ❓ Other with no dual badge.
+    const cat = lastKb(bot).find((b) => b.callback_data === 'abx:cat:returns');
+    assert.ok(cat, `the returns group exists, got: ${lastKb(bot).map((b) => b.callback_data)}`);
+    assert.match(cat.text, /⚠️/, 'returns are dual-admin, and the group says so');
+
+    await flow.handleCallback(bot, cb('abx:cat:returns', ADMIN));
+    const items = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
+    assert.equal(items.length, 1, 'the return_thans row is here, not in ❓ Other');
+
+    await flow.handleCallback(bot, cb(items[0].callback_data, ADMIN));
+    // The rebuilt card is the RET-4 card, not the generic field list.
+    assert.match(lastText(bot), /9037\/1/, `than tokens on the rebuilt card, got: ${lastText(bot)}`);
+    assert.match(lastText(bot), /Damaged/, 'the condition survives the rebuild');
+    const doc = lastKb(bot).find((b) => /abx:doc:/.test(b.callback_data));
+    assert.ok(doc, 'the photo chip is offered');
+    assert.equal(doc.text, '📎 Returned goods', 'it says goods, not sales bill');
+
+    await flow.handleCallback(bot, cb(doc.callback_data, ADMIN));
+    const photo = bot.calls.filter((c) => c.method === 'sendPhoto').pop();
+    assert.ok(photo, 'the goods photo is delivered');
+    assert.equal(photo.args.fileId || photo.args.photo, 'ret-photo-1');
+  } finally {
+    approvalQueueRepository.getAllPending = orig;
+    sessionStore.clear(ADMIN);
+  }
+});
+
+/* RET-4 — a picture the employee sent as a FILE (📎 → File, the SHP-1 habit)
+ * has a DOCUMENT file_id: sendPhoto refuses it, so the recorded type decides
+ * the sender. */
+test('RET-4: a File-sent return photo is delivered with sendDocument', async () => {
+  const orig = approvalQueueRepository.getAllPending;
+  approvalQueueRepository.getAllPending = async () => [
+    {
+      requestId: 'RN-2', user: '8700676816', status: 'pending', createdAt: daysAgo(1),
+      actionJSON: {
+        action: 'return_thans', packageNo: '9037', warehouse: 'Kano office',
+        thanNos: [1], customer: 'ABBA', customerId: 'CUS-ABBA',
+        returnedOn: '2026-08-28', condition: 'good', conditionNote: '',
+        return_photo_file_id: 'ret-file-1', return_photo_type: 'document',
+        pricePerYard: 2500, yards: 30, design: 'Cashmere', shade: 'Blue',
+      },
+    },
+  ];
+  try {
+    const bot = createFakeBot();
+    await flow.start(bot, ADMIN, ADMIN, null);
+    await flow.handleCallback(bot, cb('abx:cat:returns', ADMIN));
+    const items = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
+    await flow.handleCallback(bot, cb(items[0].callback_data, ADMIN));
+    const doc = lastKb(bot).find((b) => /abx:doc:/.test(b.callback_data));
+    assert.ok(doc, 'the photo chip is offered');
+
+    await flow.handleCallback(bot, cb(doc.callback_data, ADMIN));
+    const sentDoc = bot.calls.filter((c) => c.method === 'sendDocument').pop();
+    assert.ok(sentDoc, 'delivered as a document, first try');
+    assert.equal(sentDoc.args.doc, 'ret-file-1');
+    assert.equal(bot.calls.filter((c) => c.method === 'sendPhoto').length, 0,
+      'no refused sendPhoto attempt at all');
+  } finally {
+    approvalQueueRepository.getAllPending = orig;
     sessionStore.clear(ADMIN);
   }
 });

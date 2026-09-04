@@ -59,6 +59,8 @@ const ACTION_LABELS = {
   revert_sale_bundle: 'revert sale bale',
   sell_package: 'sell bale',
   return_package: 'return bale',
+  // RET-4 — the multi-than return card; the tile says ↩️ Return goods.
+  return_thans: 'return goods',
   transfer_package: 'transfer bale',
 };
 
@@ -403,6 +405,81 @@ async function buildReturnCard({ packageNo, thanNo, warehouse }) {
 }
 
 /**
+ * RET-4 — the multi-than return card (`return_thans`).
+ *
+ * Built entirely from the queued actionJSON, so the request-time DM, the
+ * reminder sweep and the approvals inbox all rebuild the SAME card from the
+ * sheet row alone (CARD-3). Plain text: notifyAdminsApprovalRequest
+ * MarkdownV2-escapes the whole summary and adds the frame + buttons.
+ *
+ * @param {object} aj queued actionJSON (specs/RET-3_RETURN_CREDIT.md Part B)
+ * @returns {Promise<string>}
+ */
+async function buildReturnThansCard(aj) {
+  const { formatCounts } = require('./unitDisplayService');
+  const thans = (Array.isArray(aj.thanNos) ? aj.thanNos : []).map(String);
+  const yards = Number(aj.yards) || 0;
+  let whole = false;
+  let roster = 0;
+  try {
+    // §6c — packaging wins: a whole bale reads "1B", never "8t".
+    let rows = await require('../repositories/inventoryRepository')
+      .findByPackage(aj.packageNo, { warehouse: aj.warehouse, includeSold: true });
+    // §5 — a SOLD 9037 may sit beside a LIVE 9037 in one store and
+    // findByPackage does not separate containers. Scope the roster when the
+    // payload carries the container; without it the count is best-effort and
+    // can only OVER-count, which merely makes `whole` false — the safe
+    // direction (counted in thans, never a wrong "1B").
+    if (aj.arrivalBatch) rows = rows.filter((r) => String(r.arrivalBatch || '') === String(aj.arrivalBatch));
+    roster = rows.length;
+    whole = roster > 0 && thans.length === roster;
+  } catch (_) { /* count in thans */ }
+  const counts = formatCounts({ bales: whole ? 1 : 0, thans: whole ? 0 : thans.length });
+  let text = `↩️ Return${aj.warehouse ? ` · ${aj.warehouse}` : ''}`;
+  text += `\n👤 ${aj.customer || '(no customer recorded)'}`;
+  if (aj.returnedOn) text += `\n📅 ${fmtDate(aj.returnedOn)}`;
+  if (aj.return_photo_file_id) text += '\n📎 Photo attached';
+  text += '\n';
+  let cat = '';
+  try { cat = require('../repositories/designCategoriesRepository').categoryOfSync(aj.design) || ''; } catch (_) { /* bare */ }
+  text += `\n🧵 ${aj.packageNo}${aj.design ? ` · ${aj.design}` : ''}${cat ? ` · ${cat}` : ''} — ${counts} · ${fmtQty(yards)} yd`;
+  const toks = whole ? `${aj.packageNo} ×${roster}` : thans.map((t) => `${aj.packageNo}/${t}`).join(' · ');
+  text += `\n  ${aj.shade ? `#${aj.shade} → ` : ''}${toks}`;
+  text += `\n\nΣ ${counts} · ${fmtQty(yards)} yd`;
+  text += '\n(bale/than · #shade)';
+  const rate = Number(aj.pricePerYard) || 0;
+  if (rate > 0 && yards > 0) {
+    const amount = Math.round(rate * yards);
+    text += `\n💰 Credits ${aj.customer || 'the buyer'} ₦${amount.toLocaleString('en-NG')}`
+      + ` (${fmtQty(yards)} yd × ₦${Math.round(rate).toLocaleString('en-NG')}/yd)`;
+    try {
+      const { outstandingAsOfToday } = await require('./accountingService').getCustomerLedger(aj.customer);
+      const now = Number(outstandingAsOfToday);
+      // Omitted rather than degraded when the ledger read fails or hands back
+      // nothing usable — never a fabricated number on a money card.
+      if (Number.isFinite(now)) {
+        text += `\nOutstanding ₦${now.toLocaleString('en-NG')} → ₦${(now - amount).toLocaleString('en-NG')}`;
+      }
+    } catch (_) { /* the line is omitted, never guessed */ }
+  } else {
+    text += '\n⚠️ No rate on record — the stock comes back, but NO credit will post.';
+  }
+  // §6d — the condition is SHOWN; it never changes the stock status. `good`
+  // prints nothing: silence means normal (CARD-3).
+  const COND = { damaged: '⚠️ Damaged', cut: '⚠️ Cut / short', other: '⚠️ Condition noted' };
+  if (aj.condition && aj.condition !== 'good') {
+    text += `\n${COND[aj.condition] || '⚠️ Condition noted'}${aj.conditionNote ? ` — ${aj.conditionNote}` : ''}`;
+  }
+  // No "of 2": requiredAdminApprovals returns 1 when the requester is an
+  // admin, so a static "two admins sign this" would be a lie on exactly the
+  // cards an admin raises. Print only what the row can be counted for.
+  const signed = Array.isArray(aj.approvals) ? aj.approvals.length : 0;
+  text += `\n🔏 Dual-admin return — ${signed} signed so far.`;
+  text += '\n⚠️ Reverses a completed sale — verify the goods physically came back.';
+  return text;
+}
+
+/**
  * Card for a payment approval (dual-admin finance action) — shows the
  * customer's live outstanding balance and the before→after picture so the
  * signing admins have monetary context, not just the amount.
@@ -740,6 +817,9 @@ async function buildCardFromActionJSON(aj) {
   if (!aj || typeof aj !== 'object') return 'pending action';
   try {
     if (aj.action === 'sell_package') return await buildSellPackageCard(aj);
+    // RET-4 — the second signer's inbox and the reminder sweep rebuild the
+    // SAME card from the sheet row, than numbers and buyer included.
+    if (aj.action === 'return_thans') return await buildReturnThansCard(aj);
     if (aj.action === 'sale_bundle') return await buildSaleBundleCard(aj);
     if (aj.action === 'supply_request') return buildSupplyRequestCard(aj);
     if (aj.action === 'add_contact') return buildAddContactCard(aj);
@@ -810,12 +890,23 @@ async function forwardAttachmentsToAdmins(bot, requestId, attachments, excludeId
     const caption = att.caption || `📷 Sales bill for request ${requestId}`;
     for (const adminId of config.access.adminIds) {
       if (excludeId && String(adminId) === String(excludeId)) continue;
+      const asDoc = att.kind === 'document';
       try {
-        if (att.kind === 'document') await bot.sendDocument(adminId, att.fileId, { caption });
+        if (asDoc) await bot.sendDocument(adminId, att.fileId, { caption });
         else await bot.sendPhoto(adminId, att.fileId, { caption });
         sent += 1;
       } catch (e) {
-        logger.warn(`approvalCards: attachment to admin ${adminId} failed for ${requestId}: ${e.message}`);
+        // Telegram will not re-send a file as a different type, and a stored
+        // kind can be wrong (old rows, a picture sent as a File). The other
+        // sender is the fallback — the same swap the approvals inbox does,
+        // without which a File-sent photo reaches no admin at all.
+        try {
+          if (asDoc) await bot.sendPhoto(adminId, att.fileId, { caption });
+          else await bot.sendDocument(adminId, att.fileId, { caption });
+          sent += 1;
+        } catch (e2) {
+          logger.warn(`approvalCards: attachment to admin ${adminId} failed for ${requestId}: ${e.message} / ${e2.message}`);
+        }
       }
     }
   }
@@ -836,6 +927,7 @@ module.exports = {
   buildSaleCard,
   buildSellPackageCard,
   buildReturnCard,
+  buildReturnThansCard,
   buildSaleBundleCard,
   buildAddContactCard,
   buildRemoveCustomerCard,

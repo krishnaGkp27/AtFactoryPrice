@@ -121,6 +121,13 @@ first:** `ApprovalQueue` has `CreatedAt` and `ResolvedAt` on every row —
 median hours-to-resolve per action, split single vs dual, is one sheet formula
 away and should decide this.
 
+**RET-4 (04-Sep-2026):** fix direction (a) SHIPPED — ↩️ Return goods is the
+customer-first, multi-than door (pick the customer, tick her sold thans, one
+`return_thans` request, one approval chain). Two thans back is now one request
+and one pair of signatures instead of two full flows. The GATE itself is
+untouched: (b) is still an open owner re-ruling, exactly as this audit
+recommended.
+
 ## 4 · A return has no date, no photo, no condition — the "doesn't look good" problem has nowhere to be recorded — VERIFIED
 
 **Story.** ABBA's than #6 comes back with 6 yd cut off, creased and
@@ -144,6 +151,16 @@ the sale pickers exclude: **a new status value or a write-off event, which is
 a new action code — owner sign-off under §11**; §6d forbids new Inventory
 columns, so condition lives in status or BaleMovements/Postgres.
 
+**RET-4 (04-Sep-2026):** the date, the condition and the photo now exist on
+the request. `returnedOn` dates the movement and the Transactions row (so the
+ledger no longer shows the goods leaving before they came back), the condition
+chip (`good` / `damaged` / `cut` / `other` + a typed note) rides the
+ActionJSON and the AuditLog payload and is printed on both cards, and one
+optional photo is forwarded to both admins. What is still NOT built is a
+non-saleable STATUS: BUSINESS_RULES §6d's ruling stands — the condition is
+recorded and shown, and the than still goes back to `available`. Holding
+damaged goods out of sale remains a separate ruling and a separate door.
+
 ## 5 · The people signing a return are signing blind — VERIFIED
 
 The tile path sends a thin summary (`Return Than / Bale / Than / Design /
@@ -161,6 +178,18 @@ receipt says "admin approval" when two are needed.
 🧵 9043-B · Cashmere — 2t · 60 yd / #B → 1234/1 · 1234/2 / sold 20-Aug ref …`),
 add a return branch to `buildCardFromActionJSON` and the reminder, and make
 the requester text state the real gate. No collision.
+
+**RET-4 (04-Sep-2026):** done for the new door. One CARD-3-shaped builder
+(`approvalCards.buildReturnThansCard`) serves the request-time DM, the
+reminder sweep, the approvals inbox and the web API through the
+`buildCardFromActionJSON` branch, so all four rebuild the SAME card — customer,
+bale, store, than tokens, date, condition, the credit and the outstanding
+before/after — from the queue row alone. The photo rides with it. The
+requester's receipt now names the real gate ("two admins to sign" for an
+employee, "a 2nd admin's approval" for an admin), read from `auth.isAdmin`
+rather than the env-only admin list. What remains here is the pre-CARD-3
+`buildReturnCard` still used by the legacy `return_than` / `return_package`
+paths; it stays until those paths are removed.
 
 ## 6 · After a return, the history lies — VERIFIED (six findings)
 
