@@ -126,7 +126,7 @@ test('LBL-1: the chip speaks the owner\'s vocabulary — "sale bale", never "sal
     assert.doesNotMatch(it.text, /bundle/, `no "bundle" on a chip, got: ${it.text}`);
   }
   // Non-sales chips keep the dated format: dot · date · action · name.
-  assert.match(items[0].text, /^🟢 \d{2} \w{3} · add contact · John$/, `got: ${items[0].text}`);
+  assert.match(items[0].text, /^🟢 \d{2} \w{3,4} · add contact · John$/, `got: ${items[0].text}`);
   sessionStore.clear(ADMIN);
 });
 
