@@ -706,6 +706,19 @@ what value will fit in (I think we have a Railway variable)."*
   The unit is management's to decide through the Railway environment
   variable (`CURRENCY`, read in `src/config/index.js`, default `NGN` today),
   never hardcoded.
+- **Amended 08-Sep-2026 (owner, after the CUR-1 research):** *"Make a
+  two-variable currency. If I want to give the invoice to the customer
+  directly, I will put the second multiplier on the rate which I provided,
+  and that will fill the remaining fields dependent on it, using that
+  multiplier with the rate (but without currency symbol). Freeze the label
+  per invoice later with a new column. I am not working on the landed cost
+  but I will make changes in those fields also as per the first value of
+  currency, without the second variable and without currency symbol."*
+  Variable 1 = `CURRENCY`, the accounting unit rates are entered and booked
+  in; variable 2 = a multiplier on the entered rate for the customer copy of
+  an invoice, every dependent field refilled from the multiplied rate, no
+  symbol. Landed cost follows variable 1 only, bare. Per-invoice freeze
+  comes later as a trailing column. Doubts D1–D6 in `specs/CUR-1_CURRENCY_DISPLAY.md`.
 - **Open until CUR-1 reports:** the exact surface list on each side; what a
   blank `CURRENCY` means (no symbol vs a separate knob); which side the
   customer statement (SLED-1) and the return / payment approval cards fall
