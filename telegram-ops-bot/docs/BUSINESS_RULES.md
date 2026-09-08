@@ -404,6 +404,16 @@ everywhere in the business rules.").**
   warehouse is still checked, and an unregistered place is treated as a
   warehouse: the check is never lost to a missing row or an unreachable
   sheet.
+- **The bill check NAMES the bales it flags** (VRF-4, owner 08-Sep-2026,
+  on a card reading `2 differ · 1 missing · 1 extra`: *"I cannot precisely
+  see the exact bill number where I need to find the ambiguity"*). A count
+  tells the approver how much to doubt; a bale number tells them where to
+  look. The flagged numbers ride the approval card itself, under the 🔬
+  summary, with the checker's one-word reason (`4412 (qty)`, `847 (bill
+  reads 2522)`); confirmed bales stay a count because they need no eye.
+  The full verdict is one chip away in the inbox, rebuilt from what the
+  check already persisted — **never a second OCR read**. Spec:
+  `specs/VRF-4_BILL_CHECK_NAMES_THE_BALES.md`.
 
 ## 6e · Places have a city and a kind
 
