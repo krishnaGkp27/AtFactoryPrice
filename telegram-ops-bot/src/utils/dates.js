@@ -157,6 +157,53 @@ function normalizeSalesDate(input) {
   return null;
 }
 
+// ─── salvaging a word-prefixed sale date (ISC-1 §2a) ─────────────────────
+//
+// 105 sold Inventory rows hold `cashmere 12-February-2026` / `cashmere
+// 2026-07-27` in SoldDate: a product word typed into the date cell by hand.
+// normalizeSalesDate returns null for them, so those sales fall outside
+// every date window. The date is right there — only the stray words hide
+// it. `salvageSalesDate` peels letters-only tokens off the ENDS of the
+// string (never a month word, never the relative words the normaliser
+// accepts, never a token carrying a digit, never anything in the middle)
+// and hands the remainder to the normaliser. It only READS; the ISC-1
+// one-off (scripts/repair-inventory-sold-dates.js) decides what to write.
+
+const RELATIVE_WORDS = new Set(['today', 'yesterday']);
+
+/** A whitespace-separated token that is letters only and not a date word. */
+function _isStrayWord(token) {
+  if (!/^\p{L}+$/u.test(token)) return false;
+  const lower = token.toLowerCase();
+  return !MONTHS[lower] && !RELATIVE_WORDS.has(lower);
+}
+
+/**
+ * Strip stray leading/trailing words from a sale-date cell and normalise
+ * what is left.
+ *
+ *   'cashmere 12-February-2026' → { iso: '2026-02-12', stripped: '12-February-2026' }
+ *   'cashmere 2026-07-27'       → { iso: '2026-07-27', stripped: '2026-07-27' }
+ *   '12 February 2026'          → untouched (February is a month word)
+ *   'sometime soon'             → { iso: null, stripped: '' }
+ *
+ * Whitespace is trimmed and collapsed; only tokens made of letters alone
+ * are removed, and only from the ends. Tokens are never reordered and
+ * digits are never touched. Never throws.
+ *
+ * @param {*} raw cell value
+ * @returns {{iso: (string|null), stripped: string}} the ISO day when the
+ *   remainder parses (null otherwise) and the remainder itself
+ */
+function salvageSalesDate(raw) {
+  if (raw == null) return { iso: null, stripped: '' };
+  const tokens = String(raw).trim().split(/\s+/).filter(Boolean);
+  while (tokens.length && _isStrayWord(tokens[0])) tokens.shift();
+  while (tokens.length && _isStrayWord(tokens[tokens.length - 1])) tokens.pop();
+  const stripped = tokens.join(' ');
+  return { iso: stripped ? normalizeSalesDate(stripped) : null, stripped };
+}
+
 /**
  * Normalise a date cell read back from Google Sheets to ISO YYYY-MM-DD.
  *
@@ -190,4 +237,6 @@ function normDay(raw) {
   return s;
 }
 
-module.exports = { todayInLagos, lagosDayPlus, compareWithToday, daysBeforeToday, normalizeSalesDate, normDay, LAGOS_TZ };
+module.exports = {
+  todayInLagos, lagosDayPlus, compareWithToday, daysBeforeToday, normalizeSalesDate, salvageSalesDate, normDay, LAGOS_TZ,
+};

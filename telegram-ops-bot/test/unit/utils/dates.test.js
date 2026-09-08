@@ -91,3 +91,57 @@ test('normalizeSalesDate()', async (t) => {
     assert.equal(dates.normalizeSalesDate('sometime soon'), null);
   });
 });
+
+test('salvageSalesDate() — ISC-1 §2a word-prefixed sale dates', async (t) => {
+  await t.test('strips a leading product word (the 75 madam oshodi rows)', () => {
+    assert.deepEqual(dates.salvageSalesDate('cashmere 12-February-2026'),
+      { iso: '2026-02-12', stripped: '12-February-2026' });
+  });
+
+  await t.test('strips a leading word off an ISO tail (the 30 Madam motunrayo rows)', () => {
+    assert.deepEqual(dates.salvageSalesDate('cashmere 2026-07-27'),
+      { iso: '2026-07-27', stripped: '2026-07-27' });
+  });
+
+  await t.test('plain ISO passes through untouched', () => {
+    assert.deepEqual(dates.salvageSalesDate('2026-04-07'), { iso: '2026-04-07', stripped: '2026-04-07' });
+  });
+
+  await t.test('garbage → iso null, nothing invented', () => {
+    assert.equal(dates.salvageSalesDate('sometime soon').iso, null);
+    assert.equal(dates.salvageSalesDate('cashmere').iso, null);
+    assert.deepEqual(dates.salvageSalesDate(''), { iso: null, stripped: '' });
+    assert.deepEqual(dates.salvageSalesDate(null), { iso: null, stripped: '' });
+  });
+
+  await t.test('a month word is never stripped', () => {
+    assert.deepEqual(dates.salvageSalesDate('12 February 2026'),
+      { iso: '2026-02-12', stripped: '12 February 2026' });
+    assert.deepEqual(dates.salvageSalesDate('April 7, 2026'),
+      { iso: '2026-04-07', stripped: 'April 7, 2026' });
+  });
+
+  await t.test('a trailing word is stripped', () => {
+    assert.deepEqual(dates.salvageSalesDate('12-February-2026 cashmere'),
+      { iso: '2026-02-12', stripped: '12-February-2026' });
+  });
+
+  await t.test('tokens are never reordered and digits never touched', () => {
+    assert.deepEqual(dates.salvageSalesDate('cashmere 12 February 2026 sale'),
+      { iso: '2026-02-12', stripped: '12 February 2026' });
+    // A word in the MIDDLE is not an end token: left alone, so still unparseable.
+    assert.equal(dates.salvageSalesDate('12 cashmere February 2026').iso, null);
+    // A token carrying a digit is not a stray word.
+    assert.equal(dates.salvageSalesDate('lot2 12-February-2026').iso, null);
+  });
+
+  await t.test('whitespace is trimmed and collapsed', () => {
+    assert.deepEqual(dates.salvageSalesDate('  cashmere   12-February-2026  '),
+      { iso: '2026-02-12', stripped: '12-February-2026' });
+  });
+
+  await t.test('the relative words the normaliser accepts are kept', () => {
+    assert.equal(dates.salvageSalesDate('today').iso, dates.todayInLagos());
+    assert.equal(dates.salvageSalesDate('cashmere today').stripped, 'today');
+  });
+});
