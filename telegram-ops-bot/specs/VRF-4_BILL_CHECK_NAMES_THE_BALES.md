@@ -1,6 +1,6 @@
 # VRF-4 — the bill check names the bales it flags
 
-**Status: locked with the owner 08-Sep-2026; building.** Spec first, then
+**Status: SHIPPED 08-Sep-2026.** Spec locked with the owner first, then
 built to it exactly.
 
 ## The owner's ruling (08-Sep-2026, with screenshot)

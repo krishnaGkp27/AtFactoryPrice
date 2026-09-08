@@ -507,3 +507,113 @@ test('a Markdown-hostile free-text field cannot break an approval card', async (
   assert.equal(unbalanced(text, '*'), false, 'no unbalanced bold marker reaches Telegram');
   assert.equal(unbalanced(text, '`'), false, 'no unbalanced code marker reaches Telegram');
 });
+
+/* VRF-4 (owner 08-Sep-2026, on a card reading "2 differ · 1 missing · 1
+ * extra": "I cannot precisely see the exact bill number where I need to find
+ * the ambiguity") — the inbox card NAMES the flagged bales, and a 🔬 chip
+ * replays the full verdict as an ephemeral peek beside the bill. */
+test('VRF-4: the inbox card names the flagged bales; 🔬 Bill check replays the verdict and is swept on the next tap', async () => {
+  const orig = approvalQueueRepository.getAllPending;
+  const ephemeral = require(path.join(SRC, 'services/ephemeralDocs'));
+  ephemeral._internals._resetForTests();
+  approvalQueueRepository.getAllPending = async () => [
+    {
+      requestId: 'VRF4-WITH-ROWS', user: '7430648262', status: 'pending', createdAt: daysAgo(1),
+      actionJSON: {
+        action: 'sale_bundle', customer: 'CJE', sale_doc_file_id: 'bill-77', sale_doc_type: 'document',
+        items: [{ type: 'package', packageNo: '4412' }, { type: 'package', packageNo: '4421' }, { type: 'package', packageNo: '4401' }],
+        docVerify: {
+          ok: 1, differs: 1, missing: 1, extra: 1, thanUnchecked: 0, at: '2026-09-08T10:00:00.000Z',
+          okNos: ['4401'], okNoted: [],
+          differRows: [{ no: '4412', diffs: ['qty: bill ~150 yds, request 120 yds'], notes: [] }],
+          missingNos: ['4421'],
+          extraRows: [{ no: '4430', design: '77016', shade: '5' }],
+          truncated: false,
+        },
+      },
+    },
+    {
+      // Checked before VRF-4: counts only. The line renders as it always did; no chip.
+      requestId: 'VRF4-COUNTS-ONLY', user: '7430648262', status: 'pending', createdAt: daysAgo(2),
+      actionJSON: {
+        action: 'sale_bundle', customer: 'Ketu madam', sale_doc_file_id: 'bill-78', sale_doc_type: 'document',
+        items: [{ type: 'package', packageNo: '516' }],
+        docVerify: { ok: 0, differs: 2, missing: 1, extra: 1, at: '2026-09-01T10:00:00.000Z' },
+      },
+    },
+  ];
+  // Live stock for the bales, so APF-2 keeps the plain Approve/Reject pair
+  // and the card enriches — the test is about the 🔬 lines, not stock-gone.
+  const inventoryRepository = require(path.join(SRC, 'repositories/inventoryRepository'));
+  const origInv = inventoryRepository.getAll;
+  inventoryRepository.getAll = async () => ['4412', '4421', '4401', '516'].map((pkg) => ({
+    packageNo: pkg, design: '77016', shade: '1', warehouse: 'IDUMOTA', thanNo: 1,
+    status: 'available', yards: 50, pricePerYard: 0,
+  }));
+  try {
+    const bot = createFakeBot();
+    await flow.start(bot, ADMIN, ADMIN, null);
+    await flow.handleCallback(bot, cb('abx:cat:sales', ADMIN));
+    const items = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
+    assert.equal(items.length, 2, `two sales listed, got: ${lastKb(bot).map((b) => b.text)}`);
+
+    // Newest first → the row WITH detail opens first.
+    await flow.handleCallback(bot, cb(items[0].callback_data, ADMIN));
+    const card = lastText(bot).replace(/\\/g, ''); // MarkdownV2 escapes stripped
+    assert.match(card, /🔬 Bill check: 1 confirmed · 1 differ · 1 missing · 1 extra ⚠️/, card);
+    assert.match(card, /⚠️ 4412 \(qty\)/, 'the differing bale is NAMED, with the kind');
+    assert.match(card, /❌ 4421 not on bill/, 'the missing bale is NAMED');
+    assert.match(card, /➕ 4430 on bill, not in request/, 'the extra bill row is NAMED');
+    const kb = lastKb(bot);
+    const billChip = kb.find((b) => /^abx:doc:/.test(b.callback_data));
+    const chkChip = kb.find((b) => /^abx:chk:/.test(b.callback_data));
+    assert.ok(billChip, 'the bill chip is still there');
+    assert.ok(chkChip, '🔬 Bill check chip offered when the row carries detail');
+    assert.equal(chkChip.text, '🔬 Bill check');
+    assert.ok(kb.find((b) => b.callback_data === 'abx:ok:VRF4-WITH-ROWS'), 'Approve unchanged');
+    assert.ok(kb.find((b) => b.callback_data === 'abx:no:VRF4-WITH-ROWS'), 'Reject unchanged');
+
+    // Tap → the full verdict, plain text, headed by the SHORT ref (APX-4), never the raw id.
+    const before = bot.calls.length;
+    await flow.handleCallback(bot, cb(chkChip.callback_data, ADMIN));
+    const sent = bot.calls.slice(before).filter((c) => c.method === 'sendMessage');
+    assert.equal(sent.length, 1, 'exactly one replay message');
+    const replay = sent[0].args.text;
+    assert.match(replay, /^🔬 Bill check — request R-VRF4/, replay);
+    assert.doesNotMatch(replay, /VRF4-WITH-ROWS/, 'raw request id never reaches the screen');
+    assert.match(replay, /✅ Bale 4401 — on the bill/);
+    assert.match(replay, /⚠️ Bale 4412 — qty: bill ~150 yds, request 120 yds/, 'full reason text behind the chip');
+    assert.match(replay, /❌ Bale 4421 — NOT found on the bill/);
+    assert.match(replay, /➕ On the bill but NOT in the request: 4430 \(77016 5\)/);
+    assert.match(replay, /Verdict: 1 confirmed · 1 differ · 1 missing · 1 extra/);
+    assert.match(replay, /Open the attached bill and compare before approving/);
+    assert.equal(sent[0].args.opts && sent[0].args.opts.parse_mode, undefined, 'plain text — no Markdown to break on a bill string');
+    assert.equal(bot.calls.filter((c) => c.method === 'sendDocument' || c.method === 'sendPhoto').length, 0,
+      'the chip replays text — it does not re-send the bill, and it never calls the OCR');
+
+    // SAB-1 contract: the replay is tracked as a peek and swept on the next inbox tap.
+    const tracked = ephemeral._internals._byUser.get(ADMIN) || [];
+    assert.equal(tracked.length, 1, 'the replay is registered as an ephemeral view');
+    const replayId = tracked[0].messageId;
+    assert.equal(bot.calls.filter((c) => c.method === 'deleteMessage').length, 0, 'nothing swept yet');
+    await flow.handleCallback(bot, cb('abx:back', ADMIN));
+    const deleted = bot.calls.filter((c) => c.method === 'deleteMessage').map((c) => c.args.messageId);
+    assert.deepEqual(deleted, [replayId], 'the replay — and only the replay — is swept');
+    assert.equal((ephemeral._internals._byUser.get(ADMIN) || []).length, 0, 'registry emptied');
+
+    // The counts-only row: SAB-1 line exactly as before, nothing under it, no chip.
+    const list = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
+    await flow.handleCallback(bot, cb(list[1].callback_data, ADMIN));
+    const oldCard = lastText(bot).replace(/\\/g, '');
+    assert.match(oldCard, /🔬 Bill check: 0 confirmed · 2 differ · 1 missing · 1 extra ⚠️/, oldCard);
+    assert.doesNotMatch(oldCard, /not on bill|on bill, not in request/, 'no rows to name → no line pretends to');
+    assert.ok(lastKb(bot).find((b) => /^abx:doc:/.test(b.callback_data)), 'the bill chip stands');
+    assert.equal(lastKb(bot).find((b) => /^abx:chk:/.test(b.callback_data)), undefined,
+      'no 🔬 chip when it could only repeat the card');
+  } finally {
+    approvalQueueRepository.getAllPending = orig;
+    inventoryRepository.getAll = origInv;
+    ephemeral._internals._resetForTests();
+    sessionStore.clear(ADMIN);
+  }
+});

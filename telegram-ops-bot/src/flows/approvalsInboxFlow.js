@@ -798,9 +798,18 @@ async function renderItem(bot, chatId, userId, idx) {
   // RET-4 — the return card's photo of the goods that came back rides the
   // same chip as the sales bill; only the words change.
   const docAj = item.actionJSON || {};
-  const docRow = (docAj.sale_doc_file_id || docAj.return_photo_file_id)
-    ? [[{ text: docAj.sale_doc_file_id ? '📄 Sales bill' : '📎 Returned goods', callback_data: `abx:doc:${idx}` }]]
-    : [];
+  const peekRow = [];
+  if (docAj.sale_doc_file_id || docAj.return_photo_file_id) {
+    peekRow.push({ text: docAj.sale_doc_file_id ? '📄 Sales bill' : '📎 Returned goods', callback_data: `abx:doc:${idx}` });
+  }
+  // VRF-4 — the full bill-check verdict on demand, beside the bill it
+  // judged. Offered only when the row carries per-bale detail: a check that
+  // ran before VRF-4 persisted counts alone, and a chip that could only
+  // repeat the card's own line would teach the thumb to skip it.
+  if (require('../services/saleDocVerifyService').recordHasRows(docAj.docVerify)) {
+    peekRow.push({ text: '🔬 Bill check', callback_data: `abx:chk:${idx}` });
+  }
+  const docRow = peekRow.length ? [peekRow] : [];
   // APF-2 (owner, 08-Aug-2026): a pending sale whose stock is ALL gone gets
   // the two REAL choices — plain Approve could only walk the wizard into a
   // dead end. Same shared judgement as the ⚠️ chips and Sentinel C8; if the
@@ -963,6 +972,34 @@ async function handleCallback(bot, query) {
           : await bot.sendPhoto(cid, docFile, { caption });
       } catch (e2) { logger.warn(`approvalsInbox: bill send failed for ${item.requestId}: ${e2.message}`); }
     }
+    if (sent && sent.message_id) {
+      require('../services/ephemeralDocs').track(bot, userId, cid, sent.message_id);
+    }
+    return true;
+  }
+
+  // VRF-4 — replay the bill-check verdict for the card being viewed: every
+  // flagged bale with its full reason, rebuilt from the persisted record by
+  // the same builder that wrote the original (no second OCR read). Same
+  // ephemeral contract as the bill: a peek, swept on the next inbox tap.
+  if (data.startsWith('abx:chk:')) {
+    const session0 = sessionStore.get(userId);
+    const idx = parseInt(data.slice('abx:chk:'.length), 10);
+    const item = session0 && Array.isArray(session0._items) ? session0._items[idx] : null;
+    const aj = item && item.actionJSON;
+    // APX-4 — the short ref heads the replay; the raw UUID never reaches the screen.
+    const msg = aj ? require('../services/saleDocVerifyService')
+      .verdictMessageFromRecord(approvalCards.shortRequestRef(item.requestId), aj.docVerify) : '';
+    if (!msg) {
+      try { await bot.answerCallbackQuery(query.id, { text: 'No bill-check detail on this request.', show_alert: true }); } catch (_) { /* answered above */ }
+      return true;
+    }
+    // Telegram caps a message at 4096 chars; a pathological bill could pass it.
+    const safe = msg.length > 4000 ? `${msg.slice(0, 3990)}\n…` : msg;
+    let sent = null;
+    try {
+      sent = await bot.sendMessage(cid, safe);
+    } catch (e) { logger.warn(`approvalsInbox: bill-check replay failed for ${item.requestId}: ${e.message}`); }
     if (sent && sent.message_id) {
       require('../services/ephemeralDocs').track(bot, userId, cid, sent.message_id);
     }

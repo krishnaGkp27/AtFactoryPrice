@@ -347,7 +347,7 @@ function keyboardForRequest(requestId, aj) {
 
 /** Card for a queued snap-sale sell_package actionJSON. */
 async function buildSellPackageCard(aj) {
-  return buildSaleCard({
+  let text = await buildSaleCard({
     headline: aj.source === 'snap_sale' ? 'Sale · Snap' : 'Sale',
     customer: aj.customer,
     salesPerson: aj.salesPerson,
@@ -356,6 +356,11 @@ async function buildSellPackageCard(aj) {
     docAttached: !!aj.sale_doc_file_id,
     docLabel: aj.source === 'snap_sale' ? 'Sales bill (label photo)' : 'Sales bill',
   });
+  // VRF-4 — this door's bill IS checked (SALE_ACTIONS) and its verdict
+  // persisted, yet only the bundle card ever showed the 🔬 line. Same line,
+  // same place, so a single-bale sale reads like every other sale.
+  text += docVerifyLine(aj);
+  return text;
 }
 
 /**
@@ -574,7 +579,49 @@ async function enrichBundleItems(rawItems) {
   });
 }
 
-/** The persisted bill-check verdict as one card line (SAB-1). */
+// VRF-4 — how many bale numbers one flagged-row line names before "+N more".
+// Eight fits a phone width at the card's font; the chip carries the rest.
+const VERIFY_LINE_CAP = 8;
+
+/** "qty: bill ~150 yds, request 120 yds" → "qty". */
+function diffKind(s) {
+  const m = /^([a-z][a-z ]*?)\s*:/i.exec(String(s || ''));
+  return m ? m[1].trim() : '';
+}
+
+/** VRF-4 — a matched-by-details row: the bill carries the OTHER number. */
+const BILL_READS = /^bale no: bill reads "([^"]*)"/;
+
+/** One flagged bale as a token: `4412 (qty)`, `847 (bill reads 2522)`. */
+function differToken(r) {
+  const kinds = [];
+  for (const d of (r && Array.isArray(r.diffs)) ? r.diffs : []) {
+    const m = BILL_READS.exec(d);
+    if (m) kinds.push(`bill reads ${m[1] || '?'}`);
+    else { const k = diffKind(d); if (k) kinds.push(k); }
+  }
+  const uniq = [...new Set(kinds)];
+  return uniq.length ? `${r.no} (${uniq.join(', ')})` : String(r.no);
+}
+
+function capTokens(tokens) {
+  const shown = tokens.slice(0, VERIFY_LINE_CAP);
+  const more = tokens.length - shown.length;
+  return shown.join(' · ') + (more > 0 ? ` +${more} more` : '');
+}
+
+/**
+ * The persisted bill-check verdict as card lines (SAB-1, VRF-3, VRF-4).
+ *
+ * VRF-4 (owner 08-Sep-2026, on a card reading "2 differ · 1 missing · 1
+ * extra": "I cannot precisely see the exact bill number where I need to
+ * find the ambiguity"). The counts said HOW MANY; the bale numbers lived in
+ * a follow-up message that had scrolled away. The flagged rows now ride the
+ * card itself — number plus the one-word reason the checker already names —
+ * so the approver goes straight to the right bill row. Confirmed bales stay
+ * a count: they need no eye. A row checked before VRF-4 carries counts and
+ * no rows, and renders exactly as it always did.
+ */
 function docVerifyLine(aj) {
   const v = aj && aj.docVerify;
   if (!v) return '';
@@ -585,9 +632,18 @@ function docVerifyLine(aj) {
   // false ❌s this feature removed: the approver reads it as "all good".
   const unchecked = Number(v.thanUnchecked) || 0;
   const tail = unchecked ? ` · ${unchecked} than not checked` : '';
-  return `\n🔬 Bill check: ${v.ok || 0} confirmed · ${v.differs || 0} differ · `
+  let text = `\n🔬 Bill check: ${v.ok || 0} confirmed · ${v.differs || 0} differ · `
     + `${v.missing || 0} missing · ${v.extra || 0} extra${tail}`
     + `${bad ? ' ⚠️' : (unchecked ? ' ◍' : ' ✅')}`;
+  const differRows = Array.isArray(v.differRows) ? v.differRows : [];
+  const missingNos = Array.isArray(v.missingNos) ? v.missingNos : [];
+  const extraRows = Array.isArray(v.extraRows) ? v.extraRows : [];
+  if (differRows.length) text += `\n  ⚠️ ${capTokens(differRows.map(differToken))}`;
+  if (missingNos.length) text += `\n  ❌ ${capTokens(missingNos.map(String))} not on bill`;
+  if (extraRows.length) {
+    text += `\n  ➕ ${capTokens(extraRows.map((e) => (e && e.no) || '(no number)'))} on bill, not in request`;
+  }
+  return text;
 }
 
 /** Card for a queued classic sale_bundle actionJSON. SAB-1: enriched from

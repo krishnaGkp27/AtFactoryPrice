@@ -439,6 +439,93 @@ function buildVerdictMessage(requestId, results, extras, opts = {}) {
   return lines.join('\n');
 }
 
+/* ── VRF-4 — the verdict's bale numbers outlive the chat scroll ── */
+
+// Bounds on what one verdict may leave on the queue row. Real sales run to
+// a few dozen bales; the caps exist so a pathological OCR read cannot bloat
+// a Sheets cell, and a cap that bites is RECORDED (truncated), never silent.
+const RECORD_ROW_CAP = 200;
+const RECORD_TEXT_CAP = 160;
+
+function capStrings(arr) {
+  return (Array.isArray(arr) ? arr : []).map((s) => String(s).slice(0, RECORD_TEXT_CAP));
+}
+
+/**
+ * VRF-4 (owner 08-Sep-2026: "I cannot precisely see the exact bill number
+ * where I need to find the ambiguity") — the persisted shape of one verdict.
+ *
+ * VRF-1 kept the four COUNTS, so every later view of the card could say how
+ * many bales differed and not which; the numbers lived in a follow-up
+ * message that had scrolled away by the time the admin opened the inbox.
+ * The counts stay exactly as they were; beside them ride the rows the
+ * verdict message itself prints — confirmed numbers, and for each flagged
+ * row its number plus the checker's own reason strings — so the card can
+ * NAME the bales and the inbox chip can replay the verdict without a
+ * second OCR read.
+ *
+ * Only what the message prints is kept. Never a spread of a label or an
+ * item: a bill row carries nothing the card should not show today, but the
+ * whitelist is the lock against tomorrow.
+ */
+function docVerifyRecord(results, extras, opts = {}) {
+  const ok = results.filter((r) => r.status === 'ok');
+  const okPlain = ok.filter((r) => !(r.notes && r.notes.length));
+  const okNoted = ok.filter((r) => r.notes && r.notes.length);
+  const differs = results.filter((r) => r.status === 'differs');
+  const missing = results.filter((r) => r.status === 'missing');
+  const no = (r) => String(r.item && r.item.packageNo != null ? r.item.packageNo : '?');
+  const truncated = [okPlain, okNoted, differs, missing, extras].some((l) => l.length > RECORD_ROW_CAP);
+  return {
+    ok: ok.length,
+    differs: differs.length,
+    missing: missing.length,
+    extra: extras.length,
+    // VRF-3 — carried so the approval card cannot render a clean ✅ for a
+    // request whose than items were never compared.
+    thanUnchecked: Number(opts.thanExcluded) || 0,
+    at: new Date().toISOString(),
+    okNos: okPlain.slice(0, RECORD_ROW_CAP).map(no),
+    okNoted: okNoted.slice(0, RECORD_ROW_CAP).map((r) => ({ no: no(r), notes: capStrings(r.notes) })),
+    differRows: differs.slice(0, RECORD_ROW_CAP)
+      .map((r) => ({ no: no(r), diffs: capStrings(r.diffs), notes: capStrings(r.notes) })),
+    missingNos: missing.slice(0, RECORD_ROW_CAP).map(no),
+    extraRows: extras.slice(0, RECORD_ROW_CAP).map((l) => ({
+      no: l.packageNo != null ? String(l.packageNo) : '',
+      design: l.design ? String(l.design) : '',
+      shade: l.shade ? String(l.shade) : '',
+    })),
+    truncated,
+  };
+}
+
+/** A record written by VRF-4 (rows present), as opposed to counts alone. */
+function recordHasRows(v) {
+  return !!(v && Array.isArray(v.differRows));
+}
+
+/**
+ * VRF-4 — rebuild the verdict message from a persisted record, through the
+ * SAME builder that wrote the original, so the inbox chip can never tell a
+ * different story from the message the admins received at OCR time.
+ * Returns '' for a pre-VRF-4 record (counts only), which has nothing to
+ * replay beyond the card's own line.
+ */
+function verdictMessageFromRecord(requestRef, v) {
+  if (!recordHasRows(v)) return '';
+  const results = [];
+  for (const n of v.okNos || []) results.push({ item: { packageNo: n }, status: 'ok', diffs: [], notes: [] });
+  for (const r of v.okNoted || []) results.push({ item: { packageNo: r.no }, status: 'ok', diffs: [], notes: r.notes || [] });
+  for (const r of v.differRows) results.push({ item: { packageNo: r.no }, status: 'differs', diffs: r.diffs || [], notes: r.notes || [] });
+  for (const n of v.missingNos || []) results.push({ item: { packageNo: n }, status: 'missing' });
+  const extras = (v.extraRows || []).map((e) => ({ packageNo: e.no, design: e.design, shade: e.shade }));
+  let msg = buildVerdictMessage(requestRef, results, extras, { thanExcluded: v.thanUnchecked });
+  if (v.truncated) {
+    msg += '\n⚠️ A very long bill — not every row was kept. The counts on the card are complete; the list above is not.';
+  }
+  return msg;
+}
+
 /**
  * DesignAssets shade catalogs for the request's designs — lets the compare
  * translate a numeric COLOUR NO. on the bill ("1") into the request's
@@ -584,18 +671,12 @@ async function maybeVerify(bot, requestId, opts = {}) {
     const msg = buildVerdictMessage(requestId, results, extras,
       { thanExcluded: baleItems.length ? thanItems.length : 0 });
     // Persist the verdict on the queue row so pending views can surface it.
+    // VRF-4 — counts AND the flagged rows: the card names the bales, the
+    // inbox chip replays the verdict, and neither needs the OCR again.
     try {
       await approvalQueueRepository.updateActionJSON(requestId, {
-        docVerify: {
-          ok: results.filter((r) => r.status === 'ok').length,
-          differs: results.filter((r) => r.status === 'differs').length,
-          missing: results.filter((r) => r.status === 'missing').length,
-          extra: extras.length,
-          // VRF-3 — carried so the approval card cannot render a clean ✅
-          // for a request whose than items were never compared.
-          thanUnchecked: baleItems.length ? thanItems.length : 0,
-          at: new Date().toISOString(),
-        },
+        docVerify: docVerifyRecord(results, extras,
+          { thanExcluded: baleItems.length ? thanItems.length : 0 }),
       });
     } catch (e) { logger.warn(`saleDocVerify persist ${requestId}: ${e.message}`); }
     for (const a of admins) { try { await bot.sendMessage(a, msg); } catch (_) { /* best-effort */ } }
@@ -608,9 +689,14 @@ async function maybeVerify(bot, requestId, opts = {}) {
 
 module.exports = {
   maybeVerify,
+  // VRF-4 — the inbox chip's replay, and the card's "does this row carry
+  // detail" question, without reaching into _internals.
+  verdictMessageFromRecord,
+  recordHasRows,
   _internals: {
     compareItemsToLabels, itemsFromActionJSON, enrichItems, buildVerdictMessage, SALE_ACTIONS,
     itemIsThan, dropLabelsFor, completeBalesAmongThans,
     compareShades, normShade, designPrefixMisread, editDistance, loadShadeCatalog,
+    docVerifyRecord, RECORD_ROW_CAP,
   },
 };

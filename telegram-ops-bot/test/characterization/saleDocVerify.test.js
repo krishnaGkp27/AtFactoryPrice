@@ -178,6 +178,15 @@ test('maybeVerify: documented hand-entered sale → OCR runs, verdict reaches ad
   assert.equal(patches.length, 1);
   assert.deepEqual({ ok: patches[0].p.docVerify.ok, missing: patches[0].p.docVerify.missing },
     { ok: 1, missing: 0 }, 'verdict persisted on the queue row');
+  // VRF-4 — the rows ride beside the counts, so the card can NAME bales and
+  // the inbox chip can replay the verdict without a second read.
+  assert.deepEqual(
+    { okNos: patches[0].p.docVerify.okNos, differRows: patches[0].p.docVerify.differRows,
+      missingNos: patches[0].p.docVerify.missingNos, extraRows: patches[0].p.docVerify.extraRows,
+      truncated: patches[0].p.docVerify.truncated },
+    { okNos: ['879'], differRows: [], missingNos: [], extraRows: [], truncated: false },
+    'VRF-4 rows persisted with the counts');
+  assert.equal(svc.recordHasRows(patches[0].p.docVerify), true);
 
   // Owner cost rule: snap-sourced request → NO second OCR read.
   rows.set('R2', { requestId: 'R2', user: '4242', status: 'pending', actionJSON: {
@@ -271,4 +280,76 @@ test('VRF-1b: a bill showing FEWER pieces than the request claims still flags', 
   );
   assert.equal(results[0].status, 'differs',
     'claiming MORE than the paper shows is the real discrepancy the check exists for');
+});
+
+/* VRF-4 (owner 08-Sep-2026) — the verdict's bale numbers outlive the chat
+ * scroll: persisted as rows beside the counts, replayed through the SAME
+ * builder, so the inbox chip can never tell a different story from the
+ * message the admins got at OCR time. */
+test('VRF-4: record ↔ replay parity — the replayed verdict is the live verdict, line for line', () => {
+  const { docVerifyRecord } = svc._internals;
+  const items = [
+    { packageNo: '879', design: '77016', shade: '1', thans: 5, yards: 150 },
+    { packageNo: '889', design: '77016', shade: '3', thans: 5, yards: 300 },
+    { packageNo: '862', design: '77014', shade: '6', thans: 5, yards: 150 },
+    { packageNo: '847', design: '77014', shade: '3', thans: 5, yards: 150 },
+    { packageNo: '4420', design: '44200', shade: 'BLACK', thans: 5, yards: 150 },
+  ];
+  const labels = [
+    { packageNo: 'P879', design: '77016', shade: '1', thanNo: 5, yards: 155 },
+    { packageNo: '889', design: '77016', shade: '3', thanNo: 5, yards: 164 },
+    { packageNo: '2522', design: '77014-3', shade: '3', thanNo: 5, yards: 150 },
+    { packageNo: '873', design: '77016', shade: '5', thanNo: 5, yards: 150 },
+    { packageNo: '4420', design: '4420', shade: 'BK', thanNo: 5, yards: 150 }, // ok WITH a note
+  ];
+  const { results, extras } = compareItemsToLabels(items, labels);
+  const live = buildVerdictMessage('REQ1', results, extras, { thanExcluded: 2 });
+  const rec = docVerifyRecord(results, extras, { thanExcluded: 2 });
+
+  assert.deepEqual(
+    { ok: rec.ok, differs: rec.differs, missing: rec.missing, extra: rec.extra, thanUnchecked: rec.thanUnchecked },
+    { ok: 2, differs: 2, missing: 1, extra: 1, thanUnchecked: 2 }, 'VRF-1/3 counts unchanged');
+  assert.deepEqual(rec.okNos, ['879']);
+  assert.equal(rec.okNoted.length, 1);
+  assert.equal(rec.okNoted[0].no, '4420');
+  assert.match(rec.okNoted[0].notes.join(' '), /leading digits match 44200/);
+  assert.deepEqual(rec.differRows.map((r) => r.no), ['889', '847']);
+  assert.match(rec.differRows[0].diffs.join(' '), /^qty: bill ~164 yds, request 300 yds$/);
+  assert.match(rec.differRows[1].diffs.join(' '), /bale no: bill reads "2522"/);
+  assert.deepEqual(rec.missingNos, ['862']);
+  assert.deepEqual(rec.extraRows, [{ no: '873', design: '77016', shade: '5' }]);
+  assert.equal(rec.truncated, false);
+  assert.ok(typeof rec.at === 'string' && rec.at.length > 10);
+  // The whitelist is the lock: nothing from the label or the item rides along.
+  assert.deepEqual(Object.keys(rec).sort(), ['at', 'differRows', 'differs', 'extra', 'extraRows', 'missing',
+    'missingNos', 'ok', 'okNos', 'okNoted', 'thanUnchecked', 'truncated']);
+  for (const e of rec.extraRows) assert.deepEqual(Object.keys(e).sort(), ['design', 'no', 'shade']);
+
+  // Same requestId in → identical text out. Not "similar": identical.
+  const replay = svc.verdictMessageFromRecord('REQ1', JSON.parse(JSON.stringify(rec)));
+  assert.equal(replay, live);
+  assert.match(replay, /ℹ️ 2 than item\(s\) not machine-checked/);
+  assert.match(replay, /✅ Bale 4420 — on the bill \(⚠️ design: bill reads "4420"/);
+
+  // A pre-VRF-4 record has nothing to replay beyond the card's own line.
+  assert.equal(svc.recordHasRows({ ok: 3, differs: 1, missing: 0, extra: 0 }), false);
+  assert.equal(svc.verdictMessageFromRecord('REQ1', { ok: 3, differs: 1, missing: 0, extra: 0 }), '');
+  assert.equal(svc.verdictMessageFromRecord('REQ1', null), '');
+});
+
+test('VRF-4: a cap that bites is recorded and the replay says so — never a shortened list passed off as whole', () => {
+  const { docVerifyRecord, RECORD_ROW_CAP } = svc._internals;
+  const results = Array.from({ length: RECORD_ROW_CAP + 5 }, (_, i) => ({
+    item: { packageNo: String(10000 + i) }, status: 'missing',
+  }));
+  const rec = docVerifyRecord(results, []);
+  assert.equal(rec.missing, RECORD_ROW_CAP + 5, 'the COUNT is the truth');
+  assert.equal(rec.missingNos.length, RECORD_ROW_CAP, 'the list is bounded');
+  assert.equal(rec.truncated, true);
+  const replay = svc.verdictMessageFromRecord('REQX', rec);
+  assert.match(replay, /not every row was kept/);
+  // Reason strings are bounded too — a runaway OCR string cannot bloat the cell.
+  const long = docVerifyRecord([{ item: { packageNo: '1' }, status: 'differs', diffs: ['qty: ' + 'x'.repeat(500)], notes: [] }], []);
+  assert.ok(long.differRows[0].diffs[0].length <= 160);
+  assert.equal(long.truncated, false, 'string caps are not row caps');
 });
