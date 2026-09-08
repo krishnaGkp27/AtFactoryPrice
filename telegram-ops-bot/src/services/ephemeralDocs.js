@@ -25,7 +25,7 @@ const MAX_PER_USER = 10;
 const TICK_MS = 60 * 1000;
 const DEFAULT_MINUTES = 15;
 
-const _byUser = new Map(); // userId -> [{chatId, messageId, at}]
+const _byUser = new Map(); // userId -> [{chatId, messageId, at, kind?}]
 let _timer = null;
 
 function _arm(bot) {
@@ -36,24 +36,44 @@ function _arm(bot) {
   if (_timer.unref) _timer.unref();
 }
 
-/** Remember one delivered doc-view message for later disposal. */
-function track(bot, userId, chatId, messageId) {
+/**
+ * Remember one delivered doc-view message for later disposal.
+ * @param {string} [kind] VRF-4 — an optional label ('doc', 'chk', …) so a
+ *        re-fetch of the SAME kind can replace its predecessor while a
+ *        view of another kind stays: the bill and the verdict that judged
+ *        it are meant to be read side by side. Untagged views behave as
+ *        before.
+ */
+function track(bot, userId, chatId, messageId, kind) {
   if (!messageId) return;
   const k = String(userId);
   if (!_byUser.has(k)) _byUser.set(k, []);
   const list = _byUser.get(k);
-  list.push({ chatId, messageId, at: Date.now() });
+  list.push({ chatId, messageId, at: Date.now(), kind: kind || undefined });
   if (list.length > MAX_PER_USER) list.splice(0, list.length - MAX_PER_USER);
   _arm(bot);
 }
 
-/** Delete every tracked doc view for this user (best-effort). */
-async function sweep(bot, userId) {
+/**
+ * Delete tracked doc views for this user (best-effort).
+ * @param {object} [opts]
+ * @param {string} [opts.kind] delete only views tracked with this kind;
+ *        omit to sweep every view (the navigation-tap contract).
+ */
+async function sweep(bot, userId, opts = {}) {
   const k = String(userId);
   const list = _byUser.get(k);
   if (!list || !list.length) return 0;
-  const items = list.splice(0);
-  _byUser.delete(k);
+  let items;
+  if (opts && opts.kind) {
+    items = list.filter((it) => it.kind === opts.kind);
+    const keep = list.filter((it) => it.kind !== opts.kind);
+    list.splice(0, list.length, ...keep);
+    if (!list.length) _byUser.delete(k);
+  } else {
+    items = list.splice(0);
+    _byUser.delete(k);
+  }
   let n = 0;
   for (const it of items) {
     try { await bot.deleteMessage(it.chatId, it.messageId); n += 1; } catch (_) { /* already gone */ }

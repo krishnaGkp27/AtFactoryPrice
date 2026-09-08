@@ -446,9 +446,19 @@ function buildVerdictMessage(requestId, results, extras, opts = {}) {
 // a Sheets cell, and a cap that bites is RECORDED (truncated), never silent.
 const RECORD_ROW_CAP = 200;
 const RECORD_TEXT_CAP = 160;
+// The whole record, serialised, must stay a small fraction of a Sheets cell
+// (50,000 chars) beside the actionJSON it rides in — otherwise a bloated
+// record could make the write fail and lose the COUNTS too, which the
+// counts-only persist before VRF-4 never risked.
+const RECORD_BYTES_CAP = 12000;
 
-function capStrings(arr) {
-  return (Array.isArray(arr) ? arr : []).map((s) => String(s).slice(0, RECORD_TEXT_CAP));
+/** Cap each string; reports through `flag.cut` whether anything was lost. */
+function capStrings(arr, flag) {
+  return (Array.isArray(arr) ? arr : []).map((s) => {
+    const str = String(s);
+    if (str.length > RECORD_TEXT_CAP && flag) flag.cut = true;
+    return str.slice(0, RECORD_TEXT_CAP);
+  });
 }
 
 /**
@@ -475,8 +485,8 @@ function docVerifyRecord(results, extras, opts = {}) {
   const differs = results.filter((r) => r.status === 'differs');
   const missing = results.filter((r) => r.status === 'missing');
   const no = (r) => String(r.item && r.item.packageNo != null ? r.item.packageNo : '?');
-  const truncated = [okPlain, okNoted, differs, missing, extras].some((l) => l.length > RECORD_ROW_CAP);
-  return {
+  const flag = { cut: false };
+  const rec = {
     ok: ok.length,
     differs: differs.length,
     missing: missing.length,
@@ -486,17 +496,31 @@ function docVerifyRecord(results, extras, opts = {}) {
     thanUnchecked: Number(opts.thanExcluded) || 0,
     at: new Date().toISOString(),
     okNos: okPlain.slice(0, RECORD_ROW_CAP).map(no),
-    okNoted: okNoted.slice(0, RECORD_ROW_CAP).map((r) => ({ no: no(r), notes: capStrings(r.notes) })),
+    okNoted: okNoted.slice(0, RECORD_ROW_CAP).map((r) => ({ no: no(r), notes: capStrings(r.notes, flag) })),
     differRows: differs.slice(0, RECORD_ROW_CAP)
-      .map((r) => ({ no: no(r), diffs: capStrings(r.diffs), notes: capStrings(r.notes) })),
+      .map((r) => ({ no: no(r), diffs: capStrings(r.diffs, flag), notes: capStrings(r.notes, flag) })),
     missingNos: missing.slice(0, RECORD_ROW_CAP).map(no),
     extraRows: extras.slice(0, RECORD_ROW_CAP).map((l) => ({
       no: l.packageNo != null ? String(l.packageNo) : '',
       design: l.design ? String(l.design) : '',
       shade: l.shade ? String(l.shade) : '',
     })),
-    truncated,
+    truncated: flag.cut
+      || [okPlain, okNoted, differs, missing, extras].some((l) => l.length > RECORD_ROW_CAP),
   };
+  // Byte budget: shed the least useful rows first (plain confirmed numbers,
+  // then noted ones, then extras), then the differ rows — they carry the
+  // reason strings, so halving them is what actually frees bytes — and the
+  // bare missing numbers last. One list halved per pass until the record
+  // fits. The counts are never touched.
+  const SHED_ORDER = ['okNos', 'okNoted', 'extraRows', 'differRows', 'missingNos'];
+  while (JSON.stringify(rec).length > RECORD_BYTES_CAP) {
+    const key = SHED_ORDER.find((k) => rec[k].length);
+    if (!key) break;
+    rec[key] = rec[key].slice(0, Math.floor(rec[key].length / 2));
+    rec.truncated = true;
+  }
+  return rec;
 }
 
 /** A record written by VRF-4 (rows present), as opposed to counts alone. */
@@ -510,8 +534,15 @@ function recordHasRows(v) {
  * different story from the message the admins received at OCR time.
  * Returns '' for a pre-VRF-4 record (counts only), which has nothing to
  * replay beyond the card's own line.
+ *
+ * @param {object} [opts]
+ * @param {number} [opts.maxChars] Telegram's message cap, minus margin. When
+ *        the replay would pass it, body rows are dropped from the TOP (the
+ *        confirmed lines come first; the flagged rows sit below them) and a
+ *        marker says how many. The header and the Verdict footer always
+ *        stay — cutting the tail would drop the one line that sums it up.
  */
-function verdictMessageFromRecord(requestRef, v) {
+function verdictMessageFromRecord(requestRef, v, opts = {}) {
   if (!recordHasRows(v)) return '';
   const results = [];
   for (const n of v.okNos || []) results.push({ item: { packageNo: n }, status: 'ok', diffs: [], notes: [] });
@@ -521,7 +552,33 @@ function verdictMessageFromRecord(requestRef, v) {
   const extras = (v.extraRows || []).map((e) => ({ packageNo: e.no, design: e.design, shade: e.shade }));
   let msg = buildVerdictMessage(requestRef, results, extras, { thanExcluded: v.thanUnchecked });
   if (v.truncated) {
-    msg += '\n⚠️ A very long bill — not every row was kept. The counts on the card are complete; the list above is not.';
+    // The rebuilt rows are fewer than the bales checked, so the builder's
+    // own tally would under-count: the persisted counts are the truth.
+    msg = msg.replace(/^Verdict: .*$/m,
+      `Verdict: ${v.ok || 0} confirmed · ${v.differs || 0} differ · ${v.missing || 0} missing · ${v.extra || 0} extra`);
+    msg += '\n⚠️ A very long bill — not every row was kept. The counts are complete; the list above is not.';
+  }
+  const max = Number(opts.maxChars) || 0;
+  if (max && msg.length > max) {
+    const lines = msg.split('\n');
+    // The footer begins at the blank line the builder always emits before
+    // its ℹ️ / Verdict / advice lines.
+    let footAt = lines.lastIndexOf('');
+    if (footAt < 1) footAt = lines.length;
+    const head = lines[0];
+    const foot = lines.slice(footAt);
+    const body = lines.slice(1, footAt);
+    const marker = (n) => `… ${n} line(s) not shown — tap 📄 Sales bill and compare the flagged rows above.`;
+    const fixed = head.length + 1 + foot.join('\n').length + 1 + marker(body.length).length + 1;
+    const kept = [];
+    let used = fixed;
+    for (let i = body.length - 1; i >= 0; i -= 1) {
+      if (used + body[i].length + 1 > max) break;
+      used += body[i].length + 1;
+      kept.unshift(body[i]);
+    }
+    const dropped = body.length - kept.length;
+    msg = [head, marker(dropped), ...kept, ...foot].join('\n');
   }
   return msg;
 }

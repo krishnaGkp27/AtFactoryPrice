@@ -65,3 +65,24 @@ test('DOC_VIEW_MINUTES=0 turns the backstop off (navigation sweeps still work)',
   assert.equal(bot.callsTo('deleteMessage').length, 0, 'timer disabled');
   assert.equal(await ephemeralDocs.sweep(bot, 'u6'), 1, 'manual sweep unaffected');
 });
+
+/* VRF-4 — a peek can carry a kind. A same-kind sweep replaces only its own
+ * predecessor (📄 after 📄, 🔬 after 🔬) so the bill and the verdict that
+ * judged it can stay up together; a plain sweep still clears everything. */
+test('VRF-4: a kind-scoped sweep deletes only that kind; a plain sweep still clears all', async () => {
+  const bot = createFakeBot();
+  ephemeralDocs.track(bot, 'u4', 500, 41, 'doc');
+  ephemeralDocs.track(bot, 'u4', 500, 42, 'chk');
+  ephemeralDocs.track(bot, 'u4', 500, 43);          // untagged (a transfer doc view)
+  assert.equal(await ephemeralDocs.sweep(bot, 'u4', { kind: 'chk' }), 1);
+  assert.deepEqual(bot.callsTo('deleteMessage').map((c) => c.args.messageId), [42], 'only the verdict went');
+  assert.deepEqual(ephemeralDocs._internals._byUser.get('u4').map((v) => v.messageId), [41, 43], 'bill and untagged view stay');
+  assert.equal(await ephemeralDocs.sweep(bot, 'u4', { kind: 'nothing-tagged-so' }), 0, 'unknown kind deletes nothing');
+  assert.equal(await ephemeralDocs.sweep(bot, 'u4', {}), 2, 'empty opts = the navigation sweep');
+  assert.equal(ephemeralDocs._internals._byUser.has('u4'), false, 'user forgotten once empty');
+  // Re-fetching the same kind replaces its predecessor, as TRF-9b promised for docs.
+  ephemeralDocs.track(bot, 'u5', 500, 51, 'doc');
+  await ephemeralDocs.sweep(bot, 'u5', { kind: 'doc' });
+  ephemeralDocs.track(bot, 'u5', 500, 52, 'doc');
+  assert.deepEqual(ephemeralDocs._internals._byUser.get('u5').map((v) => v.messageId), [52]);
+});

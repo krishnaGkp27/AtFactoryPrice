@@ -938,7 +938,14 @@ async function handleCallback(bot, query) {
   }
   // SAB-1 — bills delivered by 📄 are peeks, not chat residents: any next
   // inbox tap sweeps them (same contract as the transfer doc views).
-  try { await require('../services/ephemeralDocs').sweep(bot, userId); } catch (_) { /* best-effort */ }
+  // VRF-4 — a peek tap sweeps only its OWN kind: tapping 📄 again replaces
+  // the earlier bill, tapping 🔬 replaces the earlier verdict, and the two
+  // stay up together — the verdict names the bill rows to look at, so the
+  // bill must still be on screen. Every other tap sweeps everything.
+  const peekKind = data.startsWith('abx:doc:') ? 'doc' : (data.startsWith('abx:chk:') ? 'chk' : null);
+  try {
+    await require('../services/ephemeralDocs').sweep(bot, userId, peekKind ? { kind: peekKind } : {});
+  } catch (_) { /* best-effort */ }
 
   // SAB-1 — deliver the sales bill for the card being viewed.
   if (data.startsWith('abx:doc:')) {
@@ -973,7 +980,7 @@ async function handleCallback(bot, query) {
       } catch (e2) { logger.warn(`approvalsInbox: bill send failed for ${item.requestId}: ${e2.message}`); }
     }
     if (sent && sent.message_id) {
-      require('../services/ephemeralDocs').track(bot, userId, cid, sent.message_id);
+      require('../services/ephemeralDocs').track(bot, userId, cid, sent.message_id, 'doc');
     }
     return true;
   }
@@ -987,21 +994,21 @@ async function handleCallback(bot, query) {
     const idx = parseInt(data.slice('abx:chk:'.length), 10);
     const item = session0 && Array.isArray(session0._items) ? session0._items[idx] : null;
     const aj = item && item.actionJSON;
-    // APX-4 — the short ref heads the replay; the raw UUID never reaches the screen.
+    // APX-4 — the short ref heads the replay; the raw UUID never reaches the
+    // screen. maxChars keeps a pathological bill under Telegram's 4096 by
+    // dropping middle rows, never the header or the Verdict footer.
     const msg = aj ? require('../services/saleDocVerifyService')
-      .verdictMessageFromRecord(approvalCards.shortRequestRef(item.requestId), aj.docVerify) : '';
+      .verdictMessageFromRecord(approvalCards.shortRequestRef(item.requestId), aj.docVerify, { maxChars: 4000 }) : '';
     if (!msg) {
       try { await bot.answerCallbackQuery(query.id, { text: 'No bill-check detail on this request.', show_alert: true }); } catch (_) { /* answered above */ }
       return true;
     }
-    // Telegram caps a message at 4096 chars; a pathological bill could pass it.
-    const safe = msg.length > 4000 ? `${msg.slice(0, 3990)}\n…` : msg;
     let sent = null;
     try {
-      sent = await bot.sendMessage(cid, safe);
+      sent = await bot.sendMessage(cid, msg);
     } catch (e) { logger.warn(`approvalsInbox: bill-check replay failed for ${item.requestId}: ${e.message}`); }
     if (sent && sent.message_id) {
-      require('../services/ephemeralDocs').track(bot, userId, cid, sent.message_id);
+      require('../services/ephemeralDocs').track(bot, userId, cid, sent.message_id, 'chk');
     }
     return true;
   }

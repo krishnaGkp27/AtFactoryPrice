@@ -80,8 +80,15 @@ VRF-4 detail. Tapping it sends the full verdict — every flagged bale with
 its complete reason text — rebuilt from the persisted record by the SAME
 `buildVerdictMessage` that wrote the original, so the two can never
 disagree. The header uses the APX-4 short ref (`R-1B57`), never the raw
-UUID. The message is an ephemeral peek under the SAB-1 contract: swept on
-the next inbox tap, and by the minutely TTL backstop.
+UUID. The message is an ephemeral peek under the SAB-1 contract, with one
+refinement: **the bill and the verdict stay up together.** The verdict
+names the bill rows to look at, so tapping 🔬 must not sweep the 📄 just
+opened (nor the reverse). A peek tap replaces only its own kind; every
+other inbox tap sweeps both, and the minutely TTL backstop still applies.
+(`ephemeralDocs.track/sweep` gained an optional `kind`; untagged callers
+behave exactly as before.) If a replay would pass Telegram's 4096-char
+cap, confirmed rows are dropped from the top with a marker — the header
+and the Verdict footer are never cut.
 
 The chip is not offered for a pre-VRF-4 row: it could only repeat the
 card's own line, and a chip that says nothing new teaches the thumb to
@@ -93,9 +100,13 @@ skip it.
   paid for.
 - **No new sheet, no new column.** The rows live inside the existing
   `actionJSON` cell on the ApprovalQueue row, a few hundred bytes for a
-  typical sale. Lists cap at 200 entries and reason strings at 160 chars;
-  a cap sets `truncated`, and the replay says so rather than passing a
-  shortened list off as the whole.
+  typical sale. Lists cap at 200 entries, reason strings at 160 chars, and
+  the whole record at 12,000 serialised chars (rows are shed least-useful
+  first — confirmed numbers, then extras, then differ rows, missing numbers
+  last — so a bloated record can never cost the counts). Any cap that
+  bites sets `truncated`; the replay says so and prints the persisted
+  counts on its Verdict line, and the card's "+N more" counts what the
+  check found, not what the list kept.
 - **No controller edit, no new callback namespace.** `abx:chk:` rides the
   inbox flow's existing `abx:` prefix and is routed inside the flow module.
 - **No approval semantics touched.** The check stays advisory; approve and

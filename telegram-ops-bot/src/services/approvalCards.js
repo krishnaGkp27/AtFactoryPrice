@@ -604,9 +604,16 @@ function differToken(r) {
   return uniq.length ? `${r.no} (${uniq.join(', ')})` : String(r.no);
 }
 
-function capTokens(tokens) {
+/**
+ * @param {number} [total] the persisted COUNT for this kind. The row list
+ *        can be shorter than the count (the record sheds rows to fit its
+ *        cell budget), and "+N more" must state what the check found, not
+ *        what the row list happened to keep.
+ */
+function capTokens(tokens, total) {
   const shown = tokens.slice(0, VERIFY_LINE_CAP);
-  const more = tokens.length - shown.length;
+  const all = Math.max(Number(total) || 0, tokens.length);
+  const more = all - shown.length;
   return shown.join(' · ') + (more > 0 ? ` +${more} more` : '');
 }
 
@@ -638,10 +645,10 @@ function docVerifyLine(aj) {
   const differRows = Array.isArray(v.differRows) ? v.differRows : [];
   const missingNos = Array.isArray(v.missingNos) ? v.missingNos : [];
   const extraRows = Array.isArray(v.extraRows) ? v.extraRows : [];
-  if (differRows.length) text += `\n  ⚠️ ${capTokens(differRows.map(differToken))}`;
-  if (missingNos.length) text += `\n  ❌ ${capTokens(missingNos.map(String))} not on bill`;
+  if (differRows.length) text += `\n  ⚠️ ${capTokens(differRows.map(differToken), v.differs)}`;
+  if (missingNos.length) text += `\n  ❌ ${capTokens(missingNos.map(String), v.missing)} not on bill`;
   if (extraRows.length) {
-    text += `\n  ➕ ${capTokens(extraRows.map((e) => (e && e.no) || '(no number)'))} on bill, not in request`;
+    text += `\n  ➕ ${capTokens(extraRows.map((e) => (e && e.no) || '(no number)'), v.extra)} on bill, not in request`;
   }
   return text;
 }

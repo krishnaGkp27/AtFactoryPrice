@@ -191,7 +191,7 @@ test('VRF-4: each flagged line caps at 8 numbers then "+N more"; a counts-only r
   });
   assert.match(capped, /\n {2}❌ 9001 · 9002 · 9003 · 9004 · 9005 · 9006 · 9007 · 9008 \+3 more not on bill/, capped);
   assert.doesNotMatch(capped, /9009/, 'the ninth number waits behind the chip');
-  assert.doesNotMatch(capped, /\n {2}[⚠️➕]/, 'no empty differ / extra lines');
+  assert.doesNotMatch(capped, /\n {2}(?:⚠️|➕)/, 'no empty differ / extra lines');
 
   // A row checked before VRF-4: counts, no rows. Exactly the SAB-1 line, nothing under it.
   const old = await approvalCards.buildSaleBundleCard({
@@ -214,4 +214,21 @@ test('VRF-4: the single-bale (sell_package) card carries the same 🔬 line and 
   assert.match(checked, /🔬 Bill check: 0 confirmed · 0 differ · 1 missing · 0 extra ⚠️\n {2}❌ 516 not on bill/, checked);
   // The line sits AFTER the goods and the Σ tally, like the bundle card.
   assert.ok(checked.indexOf('Σ ') < checked.indexOf('🔬'), 'verdict follows the tally');
+});
+
+test('VRF-4: "+N more" states the persisted COUNT, not the length of a shed row list', async () => {
+  seed([row('516', '9060-A', '01', 'IDUMOTA', 1)]);
+  // The record kept only 3 of 12 differ rows (byte budget) — the card must still say 12.
+  const card = await approvalCards.buildSaleBundleCard({
+    action: 'sale_bundle', items: [{ type: 'package', packageNo: '516' }],
+    docVerify: {
+      ok: 0, differs: 12, missing: 2, extra: 0, okNos: [], okNoted: [],
+      differRows: [
+        { no: '4412', diffs: ['qty: x'], notes: [] }, { no: '4413', diffs: ['qty: x'], notes: [] }, { no: '4414', diffs: ['qty: x'], notes: [] },
+      ],
+      missingNos: ['4421', '4422'], extraRows: [], truncated: true,
+    },
+  });
+  assert.match(card, /\n {2}⚠️ 4412 \(qty\) · 4413 \(qty\) · 4414 \(qty\) \+9 more/, card);
+  assert.match(card, /\n {2}❌ 4421 · 4422 not on bill/, 'a complete list gets no "+more"');
 });

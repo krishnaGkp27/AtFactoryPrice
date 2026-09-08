@@ -570,6 +570,11 @@ test('VRF-4: the inbox card names the flagged bales; 🔬 Bill check replays the
     assert.ok(billChip, 'the bill chip is still there');
     assert.ok(chkChip, '🔬 Bill check chip offered when the row carries detail');
     assert.equal(chkChip.text, '🔬 Bill check');
+    // Same ROW as the bill chip — one peek row, not an extra line of buttons.
+    const rows = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method)
+      && c.args.opts && c.args.opts.reply_markup).pop().args.opts.reply_markup.inline_keyboard;
+    const peekRow = rows.find((r) => r.some((b) => /^abx:doc:/.test(b.callback_data)));
+    assert.deepEqual(peekRow.map((b) => b.callback_data.split(':')[1]), ['doc', 'chk'], 'bill and verdict chips share a row, bill first');
     assert.ok(kb.find((b) => b.callback_data === 'abx:ok:VRF4-WITH-ROWS'), 'Approve unchanged');
     assert.ok(kb.find((b) => b.callback_data === 'abx:no:VRF4-WITH-ROWS'), 'Reject unchanged');
 
@@ -591,15 +596,29 @@ test('VRF-4: the inbox card names the flagged bales; 🔬 Bill check replays the
     assert.equal(bot.calls.filter((c) => c.method === 'sendDocument' || c.method === 'sendPhoto').length, 0,
       'the chip replays text — it does not re-send the bill, and it never calls the OCR');
 
-    // SAB-1 contract: the replay is tracked as a peek and swept on the next inbox tap.
-    const tracked = ephemeral._internals._byUser.get(ADMIN) || [];
-    assert.equal(tracked.length, 1, 'the replay is registered as an ephemeral view');
-    const replayId = tracked[0].messageId;
-    assert.equal(bot.calls.filter((c) => c.method === 'deleteMessage').length, 0, 'nothing swept yet');
-    await flow.handleCallback(bot, cb('abx:back', ADMIN));
-    const deleted = bot.calls.filter((c) => c.method === 'deleteMessage').map((c) => c.args.messageId);
-    assert.deepEqual(deleted, [replayId], 'the replay — and only the replay — is swept');
-    assert.equal((ephemeral._internals._byUser.get(ADMIN) || []).length, 0, 'registry emptied');
+    // SAB-1 contract, VRF-4 refinement: the replay is a peek. The bill and
+    // the verdict COEXIST (the verdict names the bill rows to look at), a
+    // re-tap replaces only its own kind, and any other inbox tap sweeps all.
+    const tracked = () => ephemeral._internals._byUser.get(ADMIN) || [];
+    const deleted = () => bot.calls.filter((c) => c.method === 'deleteMessage').map((c) => c.args.messageId);
+    assert.equal(tracked().length, 1, 'the replay is registered as an ephemeral view');
+    const replay1 = tracked()[0].messageId;
+    assert.equal(deleted().length, 0, 'nothing swept yet');
+
+    await flow.handleCallback(bot, cb(billChip.callback_data, ADMIN)); // open the bill beside it
+    assert.equal(deleted().length, 0, 'opening the bill does NOT sweep the verdict');
+    assert.deepEqual(tracked().map((t) => t.kind), ['chk', 'doc'], 'both peeks stand');
+    const bill1 = tracked()[1].messageId;
+
+    await flow.handleCallback(bot, cb(chkChip.callback_data, ADMIN)); // tap 🔬 again
+    assert.deepEqual(deleted(), [replay1], 'a second 🔬 replaces only the first verdict; the bill stays');
+    assert.deepEqual(tracked().map((t) => t.kind), ['doc', 'chk']);
+    assert.ok(tracked().some((t) => t.messageId === bill1), 'the bill peek is untouched');
+    const replay2 = tracked().find((t) => t.kind === 'chk').messageId;
+
+    await flow.handleCallback(bot, cb('abx:back', ADMIN)); // navigation → everything goes
+    assert.deepEqual(deleted().slice(1).sort(), [bill1, replay2].sort(), 'Back sweeps the bill AND the verdict');
+    assert.equal(tracked().length, 0, 'registry emptied');
 
     // The counts-only row: SAB-1 line exactly as before, nothing under it, no chip.
     const list = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
@@ -614,6 +633,43 @@ test('VRF-4: the inbox card names the flagged bales; 🔬 Bill check replays the
     approvalQueueRepository.getAllPending = orig;
     inventoryRepository.getAll = origInv;
     ephemeral._internals._resetForTests();
+    sessionStore.clear(ADMIN);
+  }
+});
+
+/* VRF-4 — a stale 🔬 tap (a card re-rendered from an older list, or a row
+ * that only ever had counts) answers with a toast and sends nothing. */
+test('VRF-4: a 🔬 tap on a counts-only row is a toast, not a message', async () => {
+  const orig = approvalQueueRepository.getAllPending;
+  approvalQueueRepository.getAllPending = async () => [
+    {
+      requestId: 'VRF4-STALE', user: '7430648262', status: 'pending', createdAt: daysAgo(1),
+      actionJSON: {
+        action: 'sale_bundle', customer: 'CJE', sale_doc_file_id: 'bill-79', sale_doc_type: 'document',
+        items: [{ type: 'package', packageNo: '516' }],
+        docVerify: { ok: 1, differs: 0, missing: 0, extra: 0 },
+      },
+    },
+  ];
+  try {
+    const bot = createFakeBot();
+    await flow.start(bot, ADMIN, ADMIN, null);
+    await flow.handleCallback(bot, cb('abx:cat:sales', ADMIN));
+    const items = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
+    await flow.handleCallback(bot, cb(items[0].callback_data, ADMIN));
+    assert.equal(lastKb(bot).find((b) => /^abx:chk:/.test(b.callback_data)), undefined, 'no chip offered');
+    const before = bot.calls.length;
+    await flow.handleCallback(bot, cb('abx:chk:0', ADMIN)); // a chip from an older render
+    const after = bot.calls.slice(before);
+    assert.equal(after.filter((c) => c.method === 'sendMessage').length, 0, 'nothing sent');
+    const toast = after.filter((c) => c.method === 'answerCallbackQuery').pop();
+    assert.match((toast && toast.args.opts && toast.args.opts.text) || '', /No bill-check detail/, 'the tap is answered with a toast');
+    // An index pointing past the list is equally quiet.
+    const before2 = bot.calls.length;
+    await flow.handleCallback(bot, cb('abx:chk:42', ADMIN));
+    assert.equal(bot.calls.slice(before2).filter((c) => c.method === 'sendMessage').length, 0);
+  } finally {
+    approvalQueueRepository.getAllPending = orig;
     sessionStore.clear(ADMIN);
   }
 });

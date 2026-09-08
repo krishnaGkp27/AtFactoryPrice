@@ -348,8 +348,60 @@ test('VRF-4: a cap that bites is recorded and the replay says so — never a sho
   assert.equal(rec.truncated, true);
   const replay = svc.verdictMessageFromRecord('REQX', rec);
   assert.match(replay, /not every row was kept/);
+  assert.match(replay, new RegExp(`\\nVerdict: 0 confirmed · 0 differ · ${RECORD_ROW_CAP + 5} missing · 0 extra\\n`),
+    'the replayed Verdict line carries the PERSISTED count, not the capped list length');
+  assert.equal((replay.match(/❌ Bale \d+ — NOT found/g) || []).length, RECORD_ROW_CAP, 'rows shown = rows kept');
   // Reason strings are bounded too — a runaway OCR string cannot bloat the cell.
   const long = docVerifyRecord([{ item: { packageNo: '1' }, status: 'differs', diffs: ['qty: ' + 'x'.repeat(500)], notes: [] }], []);
   assert.ok(long.differRows[0].diffs[0].length <= 160);
-  assert.equal(long.truncated, false, 'string caps are not row caps');
+  assert.equal(long.truncated, true, 'a cut reason string is a loss too — flagged, never silent');
+});
+
+test('VRF-4: a replay that would pass Telegram\'s cap drops confirmed rows from the top, never the header or the Verdict footer', () => {
+  const { docVerifyRecord } = svc._internals;
+  // 12 confirmed (under the 15-collapse, so each prints a line), 2 differ, 1 missing.
+  const results = [
+    ...Array.from({ length: 12 }, (_, i) => ({ item: { packageNo: String(7000 + i) }, status: 'ok', diffs: [], notes: [] })),
+    { item: { packageNo: '8001' }, status: 'differs', diffs: ['qty: bill ~150 yds, request 120 yds'], notes: [] },
+    { item: { packageNo: '8002' }, status: 'differs', diffs: ['shade: bill says BK, request says NAVY'], notes: [] },
+    { item: { packageNo: '8003' }, status: 'missing' },
+  ];
+  const rec = docVerifyRecord(results, []);
+  const full = svc.verdictMessageFromRecord('R-TEST', rec);
+  const max = full.length - 120; // force roughly four lines out
+  const cut = svc.verdictMessageFromRecord('R-TEST', rec, { maxChars: max });
+  assert.ok(cut.length <= max, `fits: ${cut.length} <= ${max}`);
+  assert.match(cut, /^🔬 Bill check — request R-TEST\n… \d+ line\(s\) not shown/, 'header kept, marker right under it');
+  assert.match(cut, /⚠️ Bale 8001 — qty/, 'flagged rows survive');
+  assert.match(cut, /⚠️ Bale 8002 — shade/, 'flagged rows survive');
+  assert.match(cut, /❌ Bale 8003 — NOT found/, 'flagged rows survive');
+  assert.match(cut, /\nVerdict: 12 confirmed · 2 differ · 1 missing · 0 extra\n⚠️ Open the attached bill/, 'footer intact');
+  assert.doesNotMatch(cut, /Bale 7000 — on the bill/, 'the first confirmed rows are what went');
+  assert.equal(svc.verdictMessageFromRecord('R-TEST', rec, { maxChars: 100000 }), full, 'a generous cap changes nothing');
+  assert.equal(svc.verdictMessageFromRecord('R-TEST', rec, {}), full, 'no cap by default');
+});
+
+test('VRF-4: a record too large for its cell budget sheds confirmed rows first and keeps the counts', () => {
+  const { docVerifyRecord } = svc._internals;
+  // 200 differ rows with long reasons blow the byte budget; the shed order
+  // takes confirmed numbers first, flagged rows last.
+  const results = [
+    ...Array.from({ length: 150 }, (_, i) => ({ item: { packageNo: String(20000 + i) }, status: 'ok', diffs: [], notes: [] })),
+    ...Array.from({ length: 200 }, (_, i) => ({
+      item: { packageNo: String(30000 + i) }, status: 'differs',
+      diffs: ['qty: bill ~150 yds, request 120 yds', 'shade: bill says BK, request says NAVY', 'design: bill says 4420, request says 44200'], notes: [],
+    })),
+    { item: { packageNo: '99999' }, status: 'missing' },
+  ];
+  const rec = docVerifyRecord(results, []);
+  assert.ok(JSON.stringify(rec).length <= 12000, `fits the cell budget: ${JSON.stringify(rec).length}`);
+  assert.deepEqual({ ok: rec.ok, differs: rec.differs, missing: rec.missing }, { ok: 150, differs: 200, missing: 1 }, 'counts untouched');
+  assert.equal(rec.truncated, true);
+  assert.equal(rec.okNos.length, 0, 'plain confirmed numbers were shed first');
+  assert.deepEqual(rec.missingNos, ['99999'], 'the missing bale is still named');
+  assert.ok(rec.differRows.length > 0, 'flagged rows are shed last, and some survive');
+  // The replay's Verdict line reports the PERSISTED counts, not the surviving rows.
+  const replay = svc.verdictMessageFromRecord('R-BIG', rec);
+  assert.match(replay, /\nVerdict: 150 confirmed · 200 differ · 1 missing · 0 extra\n/);
+  assert.match(replay, /not every row was kept/);
 });
