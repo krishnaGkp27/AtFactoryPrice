@@ -693,6 +693,13 @@ never half-changed in a way the owner can see.
 
 ## 10 · Open rulings for the owner
 
+> **Closed 08-Sep-2026 — owner: "Go with as recommended"** for R1–R18 and
+> D1–D6, plus the clarification recorded in BUSINESS_RULES §17: no
+> multiplier → unconverted variable-1 value, bare; multiplier fulfilled
+> (Settings) or supplied during approval → local-currency value, bare.
+> The invoice and wizard layouts go to the owner first: `specs/CUR-2_INVOICE_MULTIPLIER.md`.
+
+
 Each has the recommended answer; "as recommended" closes them all.
 
 | # | Ruling | Recommended |

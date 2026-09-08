@@ -719,6 +719,15 @@ what value will fit in (I think we have a Railway variable)."*
   an invoice, every dependent field refilled from the multiplied rate, no
   symbol. Landed cost follows variable 1 only, bare. Per-invoice freeze
   comes later as a trailing column. Doubts D1–D6 in `specs/CUR-1_CURRENCY_DISPLAY.md`.
+- **Closed 08-Sep-2026 (owner): "Go with as recommended"** on every CUR-1
+  ruling R1–R18 and doubt D1–D6, with this clarification in his words:
+  *"if there is no multiplier or variable, it doesn't get converted into the
+  local currency (Nigeria). In all the places where the second variable is
+  fulfilled or supplied during approval, it will show the value in local
+  currency but without the currency symbol."* So: no multiplier → the
+  entered variable-1 value, unconverted, bare; multiplier set globally
+  (Settings) or supplied by the approving admin → the local-currency value,
+  bare. Layouts to be approved before implementation: `specs/CUR-2_INVOICE_MULTIPLIER.md`.
 - **Open until CUR-1 reports:** the exact surface list on each side; what a
   blank `CURRENCY` means (no symbol vs a separate knob); which side the
   customer statement (SLED-1) and the return / payment approval cards fall
