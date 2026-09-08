@@ -677,6 +677,30 @@ but this goes as our company rules for now").
   magic-link login (the allocation matrix is the first). Approvals and
   every two-admin action stay Telegram-only (§15 unchanged).
 
+## 17 · Currency display: expenses carry ₦; sale invoices and Inventory-changing outputs carry a bare number
+
+**Ruled 08-Sep-2026 (owner). Implementation pending the CUR-1 research —
+this section records the decision, not the surface list.** Owner's words:
+*"keep the expenses in naira, with the symbol of naira intact at all the
+places. But whatever invoices we are generating through our sale, or any
+updation in sheet which changes our inventory sheet, must be without the
+currency symbol or unit. Hence, this will be upon management to decide
+what value will fit in (I think we have a Railway variable)."*
+
+- **Expenses side** — the office cash book (EXP-1), PAY-1 payment requests,
+  the evening and daily expense reports and their drill-downs: amounts in
+  naira with the ₦ symbol intact everywhere.
+- **Sales / inventory side** — invoices generated from a sale, and every
+  output of an update that changes the Inventory sheet (rates, stock values
+  on cards and reports): money printed as a bare number, no symbol, no unit.
+  The unit is management's to decide through the Railway environment
+  variable (`CURRENCY`, read in `src/config/index.js`, default `NGN` today),
+  never hardcoded.
+- **Open until CUR-1 reports:** the exact surface list on each side; what a
+  blank `CURRENCY` means (no symbol vs a separate knob); which side the
+  customer statement (SLED-1) and the return / payment approval cards fall
+  on; whether the Transactions and Ledger narrations keep the unit.
+
 ## Incident log (why these rules exist)
 
 | Date | Incident | Rule born |
@@ -694,5 +718,6 @@ but this goes as our company rules for now").
 | 01-Sep-2026 | The workbook had ~51 tabs; four registered sheets had no live reader and two no writer; `BranchOpsLog` is the office CASH LEDGER despite its name and stays; operational state also hides as columns inside business sheets | SHT-1 (`docs/SHEET_STORAGE_SPLIT.md`) |
 | 02-Sep-2026 | Every return approved since returns moved behind approval credited the customer ₦0: the executors emitted the ledger event without a rate and `recordReturn` skips a zero amount; the only in-bot "fix" (Record Payment) would corrupt the cash book | RET-3 (`specs/RET-3_RETURN_CREDIT.md`) |
 | 02-Sep-2026 | A return could not say WHEN the goods came back, what shape they were in, or show them; and each than needed its own dual-admin request | RET-4 (`specs/RET-3_RETURN_CREDIT.md` Part B) |
+| 08-Sep-2026 | Expenses and sale invoices printed money the same way — ₦ inline at dozens of sites; the owner separated the two sides: expenses keep ₦, sale invoices and Inventory-changing outputs show a bare number with the unit set by management through the env | §17 (CUR-1 research pending) |
 
 When an incident spawns a new rule: fix, spec, then add the rule HERE.
