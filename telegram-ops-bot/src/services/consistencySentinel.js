@@ -6,12 +6,12 @@
  * READ-ONLY cross-sheet invariant checker. The 07-Aug audit found that
  * every existing repair was written reactively AFTER a corruption was
  * noticed, and that nothing at runtime ever cross-reads the sheets. This
- * service asks the seven questions nothing asked, on a schedule and on
+ * service asks the questions nothing asked, on a schedule and on
  * demand — and only ever REPORTS. It never fixes, never writes a sheet
  * row (AuditLog run-summary aside), so a Sentinel bug can annoy but
  * never corrupt.
  *
- * The seven checks:
+ * The checks:
  *   C1 every sold Inventory row (from the BMV-1 cutoff) has a `sale`
  *      movement row — a swallowed movement append is otherwise invisible;
  *   C2 every `return` movement traces to an APPROVED return/revert in the
@@ -26,7 +26,12 @@
  *   C6 duplicate LIVE printed numbers per warehouse — reuses
  *      baleAuditReport's own computeDuplicates (one implementation);
  *   C7 requestId uniqueness across ALL approval families — the
- *      restart-counter collision class beyond TR-* ids.
+ *      restart-counter collision class beyond TR-* ids;
+ *   C8 pending SALE requests whose stock is already gone (APF-1);
+ *   C9 every sold row's SoldDate normalises — ISC-1 §2a, the hand-edit
+ *      alarm (AGGREGATED: a total plus a few examples, never per row);
+ *   C10 every real bale_uid sits on exactly one row — ISC-1 §2e;
+ *   C11 one spelling per shade inside a design — ISC-1 §2c (`4-5` vs `4-5.`).
  *
  * A CHECKER MUST NOT ACCUSE LEGITIMATE STATES (SEN-1b adversarial
  * review, 07-Aug-2026 — 17 confirmed findings fixed before deploy):
@@ -55,6 +60,7 @@ const baleMovementsRepository = require('../repositories/baleMovementsRepository
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const settingsRepository = require('../repositories/settingsRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
+const inventoryAudit = require('./inventoryAudit');
 const { normDay } = require('../utils/dates');
 const fmtDate = require('../utils/formatDate');
 const config = require('../config');
@@ -315,19 +321,103 @@ function checkRequestIdUniqueness({ queueRows }) {
   return findings;
 }
 
+/* ── ISC-1 Phase 1b (specs/ISC-1_INVENTORY_SHEET_CLEANUP.md §4, 1b) — the
+ * hand-edit alarm. The 04-Sep-2026 census found a `cashmere 2026-07-27`
+ * SoldDate typed by hand AFTER the bot started writing ISO, one bale_uid on
+ * two thans, and `4-5` vs `4-5.` inside one design — and nothing at runtime
+ * reported any of it. These three read the same parsed snapshot through
+ * inventoryAudit: one implementation, shared with the read-only audit
+ * script, so the daily DM and the census can never disagree. */
+
+/** C9 — example lines printed under the aggregated total line. */
+const C9_EXAMPLES = 5;
+
+/**
+ * C9 — sold rows whose SoldDate the bot cannot read: they fall outside
+ * every date window and sort after every real day. AGGREGATED: one total
+ * line plus up to C9_EXAMPLES example lines, never one line per row (105
+ * such rows exist today). Because the lines are aggregated, the check also
+ * returns the ROW count — `count` — and every surface that reports a number
+ * for a check (DM header and per-check line, 🩺 tile, totalFindings, the
+ * AuditLog `sentinel_run` row) reads it through checkCount, so C9 says 105,
+ * not "6 lines", and the run-history trend moves as the 2a one-off repairs
+ * rows. A BLANK date is not this finding, and junk on an available row is
+ * out of scope — inventoryAudit draws both lines.
+ *
+ * @returns {{count: number, findings: string[]}}
+ */
+function checkSoldDatesReadable({ inventory }) {
+  const bad = inventoryAudit.unparseableSoldDates(inventory);
+  if (!bad.length) return { count: 0, findings: [] };
+  const shown = bad.slice(0, C9_EXAMPLES);
+  const tail = bad.length > shown.length
+    ? ` (first ${shown.length} below; scripts/audit-inventory-sheet.js lists them all)` : '';
+  const findings = [`${bad.length} sold row(s) carry a SoldDate the bot cannot read — they fall outside every date window${tail}`];
+  for (const b of shown) findings.push(`row ${b.rowIndex} · ${b.design}/${b.packageNo} #${b.thanNo} · "${b.soldDate}"`);
+  return { count: bad.length, findings };
+}
+
+/**
+ * How many things a check found. Most checks print one line per finding,
+ * so the line count IS the count; an aggregated check (C9) carries the true
+ * row count in `count` because its lines are a total plus a few examples.
+ * Every number the sentinel reports for a check goes through here.
+ *
+ * @param {{findings: string[], count?: number}} check
+ * @returns {number}
+ */
+function checkCount(check) {
+  return Number.isInteger(check.count) && check.count >= 0 ? check.count : check.findings.length;
+}
+
+/**
+ * C10 — a real bale_uid on more than one row: uid-scoped operations
+ * (transfer pinning, the Postgres mirror, cart keys) treat two thans as
+ * one. Synthetic `BAL-LEGACY-<row>` stand-ins are never duplicates — they
+ * mean "column R is blank", which is a backfill job, not drift.
+ */
+function checkUidsUnique({ inventory }) {
+  const byRow = new Map(inventory.map((r) => [r.rowIndex, r]));
+  return inventoryAudit.duplicateUids(inventory).map((d) => {
+    const first = byRow.get(d.rows[0]);
+    const thans = d.rows.map((ri) => (byRow.get(ri) ? `#${byRow.get(ri).thanNo}` : '?')).join(', ');
+    const bale = first ? ` — ${first.design}/${first.packageNo} thans ${thans}` : '';
+    return `bale_uid ${d.baleUid} sits on ${d.rows.length} rows (${d.rows.join(', ')})${bale}`;
+  });
+}
+
+/**
+ * C11 — two spellings of one shade inside a design (`4-5` vs `4-5.`): one
+ * shade shows as two chips. Compared per design, case-insensitively, with
+ * trailing dots stripped; two genuinely different shades never match, and
+ * the same spelling in two designs is two designs' business.
+ */
+function checkShadeSpellings({ inventory }) {
+  const byDesign = new Map();
+  for (const v of inventoryAudit.shadeSpellingVariants(inventory)) {
+    if (!byDesign.has(v.design)) byDesign.set(v.design, []);
+    byDesign.get(v.design).push(v.variants
+      .map((x) => `"${x.shade}" (${x.rows.length} row${x.rows.length === 1 ? '' : 's'})`).join(' vs '));
+  }
+  return [...byDesign].map(([design, groups]) => `${design}: one shade spelled two ways — ${groups.join('; ')}`);
+}
+
 /* ───────────────────────────── orchestration ───────────────────────────── */
 
 let _inflight = null;
 
 /**
- * Run all seven checks against ONE snapshot of each sheet.
+ * Run every check against ONE snapshot of each sheet.
  *
  * A failed read THROWS — it must never masquerade as an empty sheet,
  * because "sheet empty" is indistinguishable from "everything is drift".
  * Concurrent calls (a double-tapped 🔁) share one in-flight run instead
  * of stacking cache-bypassing reads toward the Sheets quota.
  *
- * @returns {Promise<{checks: Array<{id, title, findings: string[]}>, totalFindings: number}>}
+ * Each check is `{id, title, findings}`; an aggregated check (C9) adds
+ * `count`, the true number behind its few lines — read it via checkCount.
+ *
+ * @returns {Promise<{checks: Array<{id, title, findings: string[], count?: number}>, totalFindings: number}>}
  */
 async function runAll() {
   if (_inflight) return _inflight;
@@ -350,8 +440,11 @@ async function runAll() {
       { id: 'C6', title: 'One live bale per printed number per store', findings: await checkDuplicateLiveNumbers(ctx) },
       { id: 'C7', title: 'Request ids are unique', findings: checkRequestIdUniqueness(ctx) },
       { id: 'C8', title: 'No pending sale sits on sold stock', findings: checkPendingSalesAlreadySold(ctx) },
+      { id: 'C9', title: 'Every sale carries a readable date', ...checkSoldDatesReadable(ctx) },
+      { id: 'C10', title: 'Every bale_uid is unique', findings: checkUidsUnique(ctx) },
+      { id: 'C11', title: 'One spelling per shade inside a design', findings: checkShadeSpellings(ctx) },
     ];
-    return { checks, totalFindings: checks.reduce((n, c) => n + c.findings.length, 0) };
+    return { checks, totalFindings: checks.reduce((n, c) => n + checkCount(c), 0) };
   })();
   try {
     return await _inflight;
@@ -367,7 +460,7 @@ function buildReport(result) {
   let text = `🩺 Data Health — ${result.totalFindings ? `${result.totalFindings} issue(s) found` : 'all clean'}\n`;
   for (const c of result.checks) {
     if (!c.findings.length) { text += `\n✅ ${c.id} ${c.title}`; continue; }
-    text += `\n⚠️ ${c.id} ${c.title} — ${c.findings.length}:`;
+    text += `\n⚠️ ${c.id} ${c.title} — ${checkCount(c)}:`;
     for (const f of c.findings.slice(0, DM_LINES_PER_CHECK)) text += `\n   • ${f}`;
     if (c.findings.length > DM_LINES_PER_CHECK) {
       text += `\n   …and ${c.findings.length - DM_LINES_PER_CHECK} more — open 🩺 Data Health`;
@@ -389,7 +482,7 @@ async function sweep(bot) {
     const result = await runAll();
     try {
       await auditLogRepository.append('sentinel_run',
-        Object.fromEntries(result.checks.map((c) => [c.id, c.findings.length])), 'system');
+        Object.fromEntries(result.checks.map((c) => [c.id, checkCount(c)])), 'system');
     } catch (_) { /* the run matters more than its log row */ }
     if (result.totalFindings && bot) {
       const { sendLong } = require('../utils/telegramUI');
@@ -400,7 +493,7 @@ async function sweep(bot) {
         }
       }
     }
-    logger.info(`sentinel: ${result.totalFindings} finding(s) across 7 checks`);
+    logger.info(`sentinel: ${result.totalFindings} finding(s) across ${result.checks.length} checks`);
     return { ok: true, totalFindings: result.totalFindings };
   } catch (e) {
     logger.warn(`sentinel: sweep failed (no report sent): ${e.message}`);
@@ -443,11 +536,12 @@ function startScheduler(bot) {
 }
 
 module.exports = {
-  runAll, sweep, buildReport, startScheduler,
+  runAll, sweep, buildReport, startScheduler, checkCount,
   _internals: {
     checkSoldHaveSaleMovements, checkReturnsAreApproved, checkInTransit,
     checkCurrentFlags, checkSoldToResolves, checkDuplicateLiveNumbers,
     checkRequestIdUniqueness, checkPendingSalesAlreadySold, baleKey, isIsoDay, isRecent,
-    BMV_CUTOFF, DM_LINES_PER_CHECK, GRACE_MS,
+    checkSoldDatesReadable, checkUidsUnique, checkShadeSpellings, checkCount, // ISC-1 C9–C11
+    BMV_CUTOFF, DM_LINES_PER_CHECK, GRACE_MS, C9_EXAMPLES,
   },
 };

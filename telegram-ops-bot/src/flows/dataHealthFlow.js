@@ -61,9 +61,12 @@ async function runAndRender(bot, chatId, userId) {
     + '_Read-only checks; fixes go through the normal repair paths._\n';
   const rows = [];
   result.checks.forEach((c, i) => {
-    body += `\n${c.findings.length ? '⚠️' : '✅'} ${c.id} ${c.title}${c.findings.length ? ` — ${c.findings.length}` : ''}`;
-    if (c.findings.length) {
-      rows.push([{ text: `⚠️ ${c.id} — ${c.findings.length} finding(s)`, callback_data: `snt:c:${i}` }]);
+    // checkCount, not findings.length: an aggregated check (C9) prints a
+    // total plus a few example lines and carries the true row count.
+    const n = consistencySentinel.checkCount(c);
+    body += `\n${n ? '⚠️' : '✅'} ${c.id} ${c.title}${n ? ` — ${n}` : ''}`;
+    if (n) {
+      rows.push([{ text: `⚠️ ${c.id} — ${n} finding(s)`, callback_data: `snt:c:${i}` }]);
     }
   });
   rows.push([{ text: '🔁 Re-run checks', callback_data: 'snt:run' }]);
@@ -100,7 +103,7 @@ async function renderFindings(bot, chatId, userId) {
   const slice = lines.slice(from, to);
   session.step = 'findings';
   sessionStore.set(userId, session);
-  const body = `⚠️ *${c.id} — ${mdEscape(c.title)}*\n${c.findings.length} finding(s)`
+  const body = `⚠️ *${c.id} — ${mdEscape(c.title)}*\n${consistencySentinel.checkCount(c)} finding(s)`
     + `${pages > 1 ? ` · page ${page + 1}/${pages}` : ''}\n\n`
     + slice.join('\n');
   const rows = [];

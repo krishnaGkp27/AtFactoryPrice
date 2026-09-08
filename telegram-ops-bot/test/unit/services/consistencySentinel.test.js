@@ -325,3 +325,162 @@ test('C8 flags an old pending sale whose stock is gone; fresh or live ones are c
   });
   assert.deepEqual(other, []);
 });
+
+/* ── ISC-1 Phase 1b: C9 / C10 / C11, the hand-edit alarm ── */
+
+test('C9 aggregates unreadable sold dates: one total line plus examples, never one line per row', () => {
+  const { checkSoldDatesReadable, C9_EXAMPLES } = sentinel._internals;
+  const junk = invRow({ rowIndex: 4012, soldDate: 'cashmere 12-February-2026', soldTo: 'madam oshodi' });
+  const one = checkSoldDatesReadable({ inventory: [junk, invRow({ rowIndex: 5, packageNo: '870' })] });
+  assert.equal(one.count, 1, 'the ROW count rides beside the lines');
+  assert.equal(one.findings.length, 2, 'total line + one example');
+  assert.match(one.findings[0], /^1 sold row\(s\) carry a SoldDate the bot cannot read/);
+  assert.equal(one.findings[1], 'row 4012 · 9060-A/869 #1 · "cashmere 12-February-2026"');
+  // 105 junk rows (today's count) → 1 + 5 lines, not 105 — but count says 105.
+  const many = Array.from({ length: 105 }, (_, i) => invRow({
+    rowIndex: 100 + i, soldDate: `cashmere 2026-07-${String((i % 28) + 1).padStart(2, '0')}`,
+  }));
+  const agg = checkSoldDatesReadable({ inventory: many });
+  assert.equal(agg.findings.length, 1 + C9_EXAMPLES);
+  assert.equal(agg.count, 105);
+  assert.match(agg.findings[0], /^105 sold row\(s\)/);
+  assert.match(agg.findings[0], /first 5 below/);
+  assert.match(agg.findings[1], /^row 100 · /);
+});
+
+test('checkCount: an aggregated check reports its row count; every other check its line count', () => {
+  const { checkCount } = sentinel._internals;
+  assert.equal(checkCount({ findings: ['a', 'b', 'c'] }), 3, 'no count → lines');
+  assert.equal(checkCount({ findings: ['total', 'e1', 'e2'], count: 105 }), 105);
+  assert.equal(checkCount({ findings: [], count: 0 }), 0);
+  assert.equal(checkCount({ findings: ['x'], count: -1 }), 1, 'a nonsense count falls back to the lines');
+  assert.equal(sentinel.checkCount, checkCount, 'exported for the 🩺 tile');
+});
+
+test('C9 never accuses a readable date in any of the four shapes, a blank date, or junk on an available row', () => {
+  const { checkSoldDatesReadable } = sentinel._internals;
+  const clean = [
+    invRow({ soldDate: '2026-08-05' }), invRow({ soldDate: '22-April-2026' }),
+    invRow({ soldDate: '07 April 2026' }), invRow({ soldDate: '13-04-2026' }),
+    invRow({ soldDate: '' }),
+    invRow({ status: 'available', soldTo: '', soldDate: 'TBD' }),
+  ];
+  assert.deepEqual(checkSoldDatesReadable({ inventory: clean }), { count: 0, findings: [] });
+});
+
+test('C9 count reaches every surface: DM header and line, totalFindings, and the AuditLog sentinel_run row', async () => {
+  const origs = {
+    inv: inventoryRepository.getAll, mov: baleMovementsRepository.getAllStrict,
+    rows: approvalQueueRepository.getAllWithRowIndex, set: settingsRepository.getAll,
+    audit: auditLogRepository.append, resolve: customerEntity.resolve,
+  };
+  // 105 junk-dated sold thans of one bale, each its own real uid (C10 clean),
+  // one shade (C11 clean); a junk day is outside C1's window by design.
+  inventoryRepository.getAll = async () => Array.from({ length: 105 }, (_, i) => invRow({
+    rowIndex: 100 + i, thanNo: i + 1, baleUid: `BAL-869-${i + 1}`,
+    soldDate: `cashmere 2026-07-${String((i % 28) + 1).padStart(2, '0')}`,
+  }));
+  baleMovementsRepository.getAllStrict = async () => [];
+  approvalQueueRepository.getAllWithRowIndex = async () => [];
+  settingsRepository.getAll = async () => ({});
+  const audits = [];
+  auditLogRepository.append = async (type, data) => { audits.push({ type, data }); };
+  customerEntity.resolve = async () => ({ name: 'OKSON' });
+  try {
+    const sent = [];
+    const bot = { sendMessage: async (to, text) => { sent.push({ to: String(to), text }); } };
+    const out = await sentinel.sweep(bot);
+    assert.equal(out.ok, true);
+    assert.equal(out.totalFindings, 105, 'rows, not lines');
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].text, /🩺 Data Health — 105 issue\(s\) found/);
+    assert.match(sent[0].text, /⚠️ C9 Every sale carries a readable date — 105:/);
+    const c9Lines = sent[0].text.split('\n').filter((l) => /^ {3}• /.test(l));
+    assert.equal(c9Lines.length, 1 + sentinel._internals.C9_EXAMPLES, 'still a total plus five examples, never 105 lines');
+    assert.ok(!/…and \d+ more — open 🩺 Data Health/.test(sent[0].text), 'six lines fit under the DM cap — no "more" tail');
+    assert.equal(audits[0].type, 'sentinel_run');
+    assert.equal(audits[0].data.C9, 105, 'the run-history row carries the row count');
+    assert.equal(audits[0].data.C10, 0);
+  } finally {
+    inventoryRepository.getAll = origs.inv;
+    baleMovementsRepository.getAllStrict = origs.mov;
+    approvalQueueRepository.getAllWithRowIndex = origs.rows;
+    settingsRepository.getAll = origs.set;
+    auditLogRepository.append = origs.audit;
+    customerEntity.resolve = origs.resolve;
+  }
+});
+
+test('C10 flags one real uid on two rows; synthetic legacy uids and distinct uids are clean', () => {
+  const { checkUidsUnique } = sentinel._internals;
+  const dup = [
+    invRow({ rowIndex: 5201, packageNo: '864', design: '77014', thanNo: 4, baleUid: 'BAL-20260713-864-bjwg' }),
+    invRow({ rowIndex: 5202, packageNo: '864', design: '77014', thanNo: 5, baleUid: 'BAL-20260713-864-bjwg' }),
+    invRow({ rowIndex: 5203, packageNo: '864', design: '77014', thanNo: 3, baleUid: 'BAL-20260713-864-k2m9' }),
+  ];
+  const drift = checkUidsUnique({ inventory: dup });
+  assert.equal(drift.length, 1);
+  assert.equal(drift[0], 'bale_uid BAL-20260713-864-bjwg sits on 2 rows (5201, 5202) — 77014/864 thans #4, #5');
+  // The parser's positional stand-in on two legacy rows is a backfill job, not drift.
+  const legacy = [
+    invRow({ rowIndex: 30, baleUid: 'BAL-LEGACY-30', _legacy: true }),
+    invRow({ rowIndex: 31, baleUid: 'BAL-LEGACY-30', _legacy: true }),
+  ];
+  assert.deepEqual(checkUidsUnique({ inventory: legacy }), []);
+  assert.deepEqual(checkUidsUnique({ inventory: [dup[0], dup[2]] }), []);
+});
+
+test("C11 flags '4-5' vs '4-5.' inside one design; '4-5' vs '4-6', and one shade across two designs, are clean", () => {
+  const { checkShadeSpellings } = sentinel._internals;
+  const drift = checkShadeSpellings({
+    inventory: [
+      invRow({ rowIndex: 40, design: '75142', shade: '4-5' }),
+      invRow({ rowIndex: 41, design: '75142', shade: '4-5.' }),
+      invRow({ rowIndex: 42, design: '75142', shade: '4-5.' }),
+    ],
+  });
+  assert.equal(drift.length, 1);
+  assert.equal(drift[0], '75142: one shade spelled two ways — "4-5" (1 row) vs "4-5." (2 rows)');
+  const clean = checkShadeSpellings({
+    inventory: [
+      invRow({ rowIndex: 40, design: '75142', shade: '4-5' }),
+      invRow({ rowIndex: 43, design: '75142', shade: '4-6' }),
+      invRow({ rowIndex: 44, design: '77018', shade: '4-5.' }),
+      invRow({ rowIndex: 45, design: '9037-D', shade: '' }),
+    ],
+  });
+  assert.deepEqual(clean, []);
+});
+
+test('runAll carries C9–C11 on the same snapshot, after C8, and they tick when clean', async () => {
+  const origs = {
+    inv: inventoryRepository.getAll, mov: baleMovementsRepository.getAllStrict,
+    rows: approvalQueueRepository.getAllWithRowIndex, resolve: customerEntity.resolve,
+  };
+  inventoryRepository.getAll = async () => [
+    invRow({ rowIndex: 2 }),
+    invRow({ rowIndex: 3, packageNo: '870', baleUid: 'BAL-870-1', soldDate: 'cashmere 12-February-2026' }),
+  ];
+  baleMovementsRepository.getAllStrict = async () => [move(), move({ baleNo: '870', current: true })];
+  approvalQueueRepository.getAllWithRowIndex = async () => [];
+  customerEntity.resolve = async () => ({ name: 'OKSON' });
+  try {
+    const out = await sentinel.runAll();
+    const ids = out.checks.map((c) => c.id);
+    assert.deepEqual(ids.slice(-3), ['C9', 'C10', 'C11']);
+    assert.equal(ids.indexOf('C9'), ids.indexOf('C8') + 1);
+    const byId = Object.fromEntries(out.checks.map((c) => [c.id, c]));
+    assert.equal(byId.C9.findings.length, 2, 'total line + one example for the one junk date');
+    assert.equal(byId.C9.count, 1, 'one junk row — the count the report shows');
+    assert.deepEqual(byId.C10.findings, []);
+    assert.deepEqual(byId.C11.findings, []);
+    assert.equal(out.totalFindings, 1, 'C9 counts one row, not two lines');
+    assert.match(sentinel.buildReport(out), /⚠️ C9 Every sale carries a readable date — 1:/);
+    assert.match(sentinel.buildReport(out), /✅ C10 Every bale_uid is unique/);
+  } finally {
+    inventoryRepository.getAll = origs.inv;
+    baleMovementsRepository.getAllStrict = origs.mov;
+    approvalQueueRepository.getAllWithRowIndex = origs.rows;
+    customerEntity.resolve = origs.resolve;
+  }
+});

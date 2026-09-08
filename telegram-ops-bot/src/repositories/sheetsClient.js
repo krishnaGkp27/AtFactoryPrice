@@ -127,6 +127,28 @@ async function readRange(sheetName, range) {
 }
 
 /**
+ * ISC-1 (Phase 1a) — the same read with valueRenderOption 'UNFORMATTED_VALUE'.
+ *
+ * readRange hands back what a cell DISPLAYS, so a real date cell and a text
+ * cell holding the same characters look identical: the text-vs-date TYPE
+ * of a cell cannot be seen in a formatted read. Unformatted, a date cell
+ * returns its serial NUMBER and a text cell a string — which is what the
+ * Inventory audit needs before any date cell is rewritten. Same retry as
+ * readRange; a read, so nothing to sanitise. readRange itself is unchanged.
+ */
+async function readRangeUnformatted(sheetName, range) {
+  const s = await getSheets();
+  return withRetry(async () => {
+    const res = await s.spreadsheets.values.get({
+      spreadsheetId: spreadsheetId(),
+      range: `${sheetName}!${range}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    return res.data.values || [];
+  }, `readRangeUnformatted(${sheetName})`);
+}
+
+/**
  * SHEET-FIX-1 (owner audit, 14-Aug-2026) — append anchored at A1.
  *
  * `values.append` does not append "after the last row": it DETECTS a table
@@ -227,6 +249,7 @@ module.exports = {
   getSheets,
   spreadsheetId,
   readRange,
+  readRangeUnformatted,
   appendRows,
   updateRange,
   findRowIndex,

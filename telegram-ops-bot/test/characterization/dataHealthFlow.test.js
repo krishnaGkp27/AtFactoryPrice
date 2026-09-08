@@ -28,10 +28,12 @@ const ADMIN = '777';
 const EMPLOYEE = '888';
 
 consistencySentinel.runAll = async () => ({
-  totalFindings: 2,
+  totalFindings: 107,
   checks: [
     { id: 'C1', title: 'Sold rows have sale movements', findings: [] },
     { id: 'C4', title: 'One Current flag per bale', findings: ['Bale 869 (9060-A · Jul26) has 2 Current rows (should be exactly 1)', 'Bale 843 (9060-A · Jul26) has NO Current row (crash between flag-clear and append?)'] },
+    // Aggregated (ISC-1 C9): two lines, but the true count is 105 rows.
+    { id: 'C9', title: 'Every sale carries a readable date', count: 105, findings: ['105 sold row(s) carry a SoldDate the bot cannot read', 'row 4012 · 9060-A/869 #1 · "cashmere 12-February-2026"'] },
   ],
 });
 
@@ -54,12 +56,14 @@ test('summary card: ticks for clean checks, drill buttons for failing ones', asy
   const bot = createFakeBot();
   await flow.start(bot, ADMIN, ADMIN, null);
   const { text, kb } = lastMsg(bot);
-  assert.match(text, /2 issue\(s\)/);
+  assert.match(text, /107 issue\(s\)/);
   assert.match(text, /✅ C1/);
   assert.match(text, /⚠️ C4 .*— 2/);
+  assert.match(text, /⚠️ C9 .*— 105/, 'an aggregated check shows its row count, not its line count');
   const flat = kb.flat();
   assert.ok(!flat.some((b) => b.callback_data === 'snt:c:0'), 'clean check gets no drill button');
   assert.ok(flat.some((b) => b.callback_data === 'snt:c:1'), 'failing check is tappable');
+  assert.ok(flat.some((b) => b.callback_data === 'snt:c:2' && /C9 — 105 finding\(s\)/.test(b.text)), 'drill button carries the row count');
   assert.ok(flat.some((b) => b.callback_data === 'snt:run'), 're-run offered');
   sessionStore.clear(ADMIN);
 });
@@ -74,5 +78,12 @@ test('drilling a check lists every finding and comes back', async () => {
   assert.match(text, /Bale 843/);
   await flow.handleCallback(bot, cb('snt:back', ADMIN));
   assert.equal(sessionStore.get(ADMIN).step, 'summary');
+  // The aggregated check's page heads with its row count over its two lines.
+  await flow.handleCallback(bot, cb('snt:c:2', ADMIN));
+  const c9 = lastMsg(bot).text;
+  assert.match(c9, /C9 — Every sale carries a readable date/);
+  assert.match(c9, /105 finding\(s\)/);
+  assert.match(c9, /cashmere 12\\-February\\-2026|cashmere 12-February-2026/);
+  await flow.handleCallback(bot, cb('snt:back', ADMIN));
   sessionStore.clear(ADMIN);
 });
