@@ -119,7 +119,7 @@ to the canonical spelling (§4, 2b) and keep the alias for history.
 
 ### 2d · Quantities and money
 
-- **Yards (G).** 5,585 of 6,153 rows are 30. **46 rows are 40 yd or more**
+- **Yards (G).** 5,585 of 6,153 rows are 30. **64 rows are 40 yd or more**
   (38 at exactly 60) across 20 designs — the 6061 pattern, two 30-yd
   thans booked as one. Each is an EDB-1 Edit Bale job with the label photo.
 - **PricePerYard (J).** 2,618 rows (42.5%) hold 0: almost the whole Jul26
@@ -172,7 +172,7 @@ to the canonical spelling (§4, 2b) and keep the alias for history.
 4. The 374 sold rows at ₦0 are a data fact on THIS sheet even though the
    money side is deferred by ruling — statements built from J will be wrong
    for those.
-5. The 46 oversize thans are a physical audit list, not just data.
+5. The 64 oversize thans are a physical audit list, not just data.
 
 ---
 
@@ -240,7 +240,7 @@ skipped and reported, never guessed.
   smoke S10.6 pin update.
 - 2d. Shade spellings per R4; the three blank `9043-A` shades from you.
 - 2e. Bale 6497 (`SAMPLE`) per R5 — only AFTER 2c if it is a row delete.
-- 2f. The 46 oversize thans through EDB-1 Edit Bale, each with its label
+- 2f. The 64 oversize thans through EDB-1 Edit Bale, each with its label
   photo (dual-admin, already shipped) — no script, this is the door.
 
 **Phase 3 — code so it stays clean**
