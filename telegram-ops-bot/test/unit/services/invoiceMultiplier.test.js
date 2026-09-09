@@ -155,31 +155,36 @@ test('§4b web copy: converted cells, dated payment row × 1,250', async () => {
   assert.ok(!/₦|1,250/.test(html), 'no symbol, no factor note');
 });
 
-test('§4b caption is a STAFF message: booked figures + one Customer copy line', async () => {
+test('§4b caption is a STAFF message: booked figures and NO factor (owner ruling 09-Sep)', async () => {
   const inv = await issue(ENRICH, '1250');
   const prevBase = config.baseUrl;
   config.baseUrl = '';
   try {
     assert.equal(invoiceService.caption(inv),
-      `🧾 INV-${YEAR}-0001 — Soldier Madam\nTotal 1,344 · Paid 400 · Balance 944\nCustomer copy × 1,250\nForward this PDF (or the link) to the customer on WhatsApp.`);
+      `🧾 INV-${YEAR}-0001 — Soldier Madam\nTotal 1,344 · Paid 400 · Balance 944\nForward this PDF (or the link) to the customer on WhatsApp.`);
+  assert.ok(!/×|Customer copy|1,250/.test(invoiceService.caption(inv)), 'the factor never reaches the caption');
   } finally { config.baseUrl = prevBase; }
 });
 
-test('§4b caption names the frozen factor at its own precision — never a fixed 2 dp', () => {
+test('factorText names the frozen factor at its own precision — ENTRY card only, never the caption', () => {
   const prevBase = config.baseUrl;
   config.baseUrl = '';
   try {
-    const base = { invoiceNo: 'INV-2026-0091', customerName: 'ABBA', saleDate: '2026-09-09', lines: [{ design: '202', yards: 10, rate: 100.1, amount: 1001 }], total: 1001, amountPaidAtIssue: 1000 };
-    const line = (m) => invoiceService.caption({ ...base, rateMultiplier: m }).split('\n')[2];
-    // Rule 17 allows a factor below 1; a sub-0.005 factor must not read "× 0.00".
-    assert.equal(line(0.0004), 'Customer copy × 0.0004');
-    assert.equal(line(0.5), 'Customer copy × 0.5');
-    assert.equal(line(1.5), 'Customer copy × 1.5');
+    const { factorText } = invoiceService;
+    // Rule 17 allows a factor below 1; a sub-0.005 factor must not read "0.00".
+    assert.equal(factorText(0.0004), '0.0004');
+    assert.equal(factorText(0.5), '0.5');
+    assert.equal(factorText(1.5), '1.5');
     // A 3-dp factor is named exactly, not rounded to "1,250.13".
-    assert.equal(line(1250.125), 'Customer copy × 1,250.125');
-    assert.equal(line(1250), 'Customer copy × 1,250');
-    // What the caption names is what column W froze and docFigures used.
-    assert.equal(invoiceService.docFigures({ ...base, rateMultiplier: 0.0004 }).multiplier, 0.0004);
+    assert.equal(factorText(1250.125), '1,250.125');
+    assert.equal(factorText(1250), '1,250');
+    // Owner ruling 09-Sep-2026: the factor is internal — the caption never names it.
+    const base = { invoiceNo: 'INV-2026-0091', customerName: 'ABBA', saleDate: '2026-09-09', lines: [{ design: '202', yards: 10, rate: 100.1, amount: 1001 }], total: 1001, amountPaidAtIssue: 1000 };
+    for (const m of [0.0004, 0.5, 1250.125, 1250]) {
+      const cap = invoiceService.caption({ ...base, rateMultiplier: m });
+      assert.ok(!/×|Customer copy|0\.0004|1,250/.test(cap), `caption must not name the factor ${m}: ${cap}`);
+      assert.equal(invoiceService.docFigures({ ...base, rateMultiplier: m }).multiplier, m, 'column W still drives the document');
+    }
   } finally { config.baseUrl = prevBase; }
 });
 
@@ -191,7 +196,8 @@ test('deliver sends the PDF with that caption to each chat once', async () => {
   assert.equal(sent.length, 2, 'deduplicated recipients');
   assert.ok(sent.every((s) => s.isPdf));
   assert.equal(sent[0].file.filename, `INV-${YEAR}-0001.pdf`);
-  assert.match(sent[0].opts.caption, /Total 1,344 · Paid 400 · Balance 944\nCustomer copy × 1,250/);
+  assert.match(sent[0].opts.caption, /Total 1,344 · Paid 400 · Balance 944\nForward/);
+  assert.ok(!/×|Customer copy/.test(sent[0].opts.caption), 'no factor on the delivered caption');
 });
 
 // ---------------------------------------------------------------------------
@@ -352,7 +358,7 @@ test('rule 12: rate unresolved → RATE NOT RECORDED, dashes, payment still in t
   assert.match(html, /<td class="num"><\/td>\s*<td class="num">—<\/td>/, 'blank rate, dashed cost');
   assert.match(html, /− 500,000/);
   assert.match(html, /DEBIT BALANCE<\/span>\s*<span>—<\/span>/);
-  assert.match(invoiceService.caption(inv), /Total — · Paid 400 · Balance —\nCustomer copy × 1,250/);
+  assert.match(invoiceService.caption(inv), /Total — · Paid 400 · Balance —\nForward/);
 
   // Same state, no multiplier: the payment prints booked.
   const plain = await issue({ paymentMode: 'Cash', amountPaid: 400 }, undefined);

@@ -57,6 +57,13 @@ appears on the sales side at all (R12b/R13/R14).
 
 ---
 
+> **Amended 09-Sep-2026 (owner, after release A):** the factor is INTERNAL.
+> It is shown only on the Step 5 card while being entered, stored in column
+> W and the AuditLog payload, and never printed anywhere else: not on the
+> document, not on the caption, not on the approved reply or the requester's
+> card, not on the sealed wizard card. Every "Customer copy × 1,250" line
+> drawn in §3b (sealed card), §4b (caption) and §5 below is WITHDRAWN.
+
 ## 1 · The two variables
 
 | | Variable 1 — the accounting unit | Variable 2 — the customer-copy multiplier |

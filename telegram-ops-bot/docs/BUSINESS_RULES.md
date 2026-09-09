@@ -799,6 +799,15 @@ what value will fit in (I think we have a Railway variable)."*
   release-B session inserts the owner's yes/no, not its own wording; the
   Column-W half is already true (release A), the wizard half is release B.
 
+- **Ruled 09-Sep-2026 (owner), after release A:** *"There must not be any
+  invoice showing the factor (multiplier). It is the internal process of
+  entering the details which has to be shown internally if required, not
+  to the other Telegram user or customers."* The factor appears only on the
+  wizard card while the approving admin enters it, in `Invoices.rate_multiplier`
+  and in the AuditLog payload. It is never printed on the invoice document,
+  the invoice caption, the approved reply, the requester's card, the sealed
+  wizard card, or any message to another Telegram user.
+
 ## Incident log (why these rules exist)
 
 | Date | Incident | Rule born |

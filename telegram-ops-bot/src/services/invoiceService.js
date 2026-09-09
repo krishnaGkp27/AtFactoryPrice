@@ -353,8 +353,10 @@ function caption(invoice) {
   const balTxt = fig.rateUnresolved ? DASH : money.sale(Math.max(total - paid, 0));
   const base = config.baseUrl || '';
   const webLine = base && invoice.token ? `\n🔗 Live copy: ${base}/i/${invoice.token}` : '';
-  const multLine = fig.converted ? `\nCustomer copy × ${factorText(fig.multiplier)}` : '';
-  return `🧾 ${invoice.invoiceNo} — ${invoice.customerName}\nTotal ${totalTxt} · Paid ${money.sale(paid)} · Balance ${balTxt}${multLine}${webLine}\nForward this PDF (or the link) to the customer on WhatsApp.`;
+  // Owner ruling 09-Sep-2026: the factor is INTERNAL — never printed on the
+  // caption, the document, or any message to another Telegram user. It lives
+  // only in column W and the AuditLog payload.
+  return `🧾 ${invoice.invoiceNo} — ${invoice.customerName}\nTotal ${totalTxt} · Paid ${money.sale(paid)} · Balance ${balTxt}${webLine}\nForward this PDF (or the link) to the customer on WhatsApp.`;
 }
 
 /**
@@ -487,8 +489,8 @@ function renderText(invoice) {
 async function deliver(bot, invoice, chatIds) {
   const pdf = await renderPdf(invoice);
   // INV-1b: the caption carries the live web copy link when a public base
-  // URL is configured (BASE_URL env); CUR-2: booked figures + the
-  // `Customer copy × m` line — see caption().
+  // URL is configured (BASE_URL env); CUR-2: booked figures only — the
+  // factor is never printed (owner ruling 09-Sep-2026), see caption().
   const text = caption(invoice);
   const seen = new Set();
   for (const chatId of chatIds.filter(Boolean)) {
@@ -506,6 +508,7 @@ module.exports = {
   packagingWords, // CARD-5 — shared with the web statement renderer
   docFigures,     // CUR-2 — the one source of the document's printed numbers
   caption,        // CUR-2 — the staff caption on the delivered PDF
+  factorText,     // CUR-2 — the factor at its own precision (`1,250`, `0.0004`); for the wizard's ENTRY card only — never printed after entry
   createForSale, buildLines, mintInvoiceNo, renderPdf, deliver, bankFromPaymentMode,
   _internals: { renderText, resolveRateMultiplier, DASH },
 };
