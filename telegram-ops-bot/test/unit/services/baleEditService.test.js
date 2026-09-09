@@ -94,6 +94,10 @@ test('apply: cells updated on the changed rows, a new than appended with uid + c
   assert.equal(than6[3], '9043-A'); assert.equal(than6[4], '6'); assert.equal(than6[1], 'ST/1321');
   assert.equal(than6[8], 'Kano office'); assert.equal(String(than6[9]), '3500');
   assert.equal(than6[19], 'GRN-7'); assert.equal(than6[21], 'Feb26'); assert.equal(than6[22], 'Senator');
+  // ISC-1 R9 — Q (ProductType) and U (bin_location) are retired: the new than
+  // does NOT copy the bale-mates' 'fabric' / 'A3'; the cells stay blank.
+  assert.equal(than6[16], '', 'Q ProductType never written');
+  assert.equal(than6[20], '', 'U bin_location never written');
   assert.match(than6[17], /^BAL-\d{8}-6061-/, 'a generated uid in the bot’s own format');
   assert.equal(sheet.indexOf(than6), sheet.length - 1, 'appended, never inserted');
   const after = await bale();

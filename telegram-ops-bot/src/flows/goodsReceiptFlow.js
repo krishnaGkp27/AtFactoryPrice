@@ -460,7 +460,9 @@ async function submit(bot, chatId, userId, msgOrNull) {
     shade,
     bales: session.bales || [],
     dateReceived: todayInLagos()  /* TIME-1 — Lagos day, not the UTC clock */,
-    productType: 'fabric',
+    // ISC-1 R9 — Inventory column Q is retired; the executor stamps nothing.
+    // Approval-card unit labels fall back to the 'fabric' ProductTypes row.
+    productType: '',
     // P4 linkage — when the GRN was started from a PO context (via
     // "📥 Receive against this PO" in the Procurement Plan), the po_id
     // travels with the actionJSON so the service handler can update the

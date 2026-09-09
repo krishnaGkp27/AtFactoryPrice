@@ -951,9 +951,11 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       thanNo: b.thanNo || 1, yards: parseFloat(b.yards) || 0,
       warehouse: aj.warehouse, pricePerYard: b.pricePerYard || 0,
       dateReceived: aj.dateReceived || todayInLagos(),  // TIME-1 — Lagos day
-      productType: aj.productType || 'fabric',
+      // ISC-1 R9 — Inventory columns Q / U are retired: the fields stay in
+      // the row shape for readers, the cells are never written.
+      productType: '',
       grnId: grn.grn_id,
-      binLocation: b.binLocation || aj.binLocation || '',
+      binLocation: '',
       // ARRIVAL-BATCH C1 — operator-chosen container label (e.g. "July26").
       arrivalBatch: aj.arrivalBatch || '',
     }));
@@ -1109,7 +1111,8 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       warehouse: aj.warehouse,
       pricePerYard: 0,
       dateReceived: aj.dateReceived || todayInLagos(),  // TIME-1 — Lagos day
-      productType: aj.productType || 'fabric',
+      // ISC-1 R9 — Inventory column Q is retired: field kept, cell never written.
+      productType: '',
       grnId: grn.grn_id,
       // ARRIVAL-BATCH C1 — operator-chosen container label (e.g. "July26").
       arrivalBatch: aj.arrivalBatch || '',

@@ -178,9 +178,11 @@ async function apply(aj, approvedBy) {
     thanNo: a.thanNo, yards: a.yards, status: 'available',
     warehouse: tpl.warehouse, pricePerYard: tpl.pricePerYard, dateReceived: tpl.dateReceived,
     soldTo: '', soldDate: '', netMtrs: '', netWeight: '', updatedAt: now,
-    productType: tpl.productType || 'fabric',
+    // ISC-1 R9 — Q (ProductType) and U (bin_location) are retired: the new
+    // than never copies the bale-mates' cells; readers default at parse time.
+    productType: '',
     baleUid: idGenerator.baleUid(tpl.packageNo), addedAt: now,
-    grnId: tpl.grnId || '', binLocation: tpl.binLocation || '', arrivalBatch: tpl.arrivalBatch || '',
+    grnId: tpl.grnId || '', binLocation: '', arrivalBatch: tpl.arrivalBatch || '',
     designCategory: tpl.designCategory || '',
   }));
   await inventoryRepository.applyBaleEdit({ updates, appends });

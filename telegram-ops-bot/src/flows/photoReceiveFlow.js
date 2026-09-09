@@ -960,7 +960,9 @@ async function submit(bot, chatId, userId) {
       idx: r.idx, fields: r.editedFields.slice(),
     })),
     dateReceived: todayInLagos()  /* TIME-1 — Lagos day, not the UTC clock */,
-    productType: 'fabric',
+    // ISC-1 R9 — Inventory column Q is retired; the executor stamps nothing.
+    // Approval-card unit labels fall back to the 'fabric' ProductTypes row.
+    productType: '',
   };
 
   const risk = await riskEvaluate.evaluate({ action: 'bulk_receive_goods', userId });

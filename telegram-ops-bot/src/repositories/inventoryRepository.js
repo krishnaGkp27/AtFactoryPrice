@@ -3,6 +3,10 @@
  *
  * Columns A-Q (legacy): PackageNo | Indent | CSNo | Design | Shade | ThanNo | Yards | Status |
  *                       Warehouse | PricePerYard | DateReceived | SoldTo | SoldDate | NetMtrs | NetWeight | UpdatedAt | ProductType
+ *   Q = ProductType  RETIRED 08-Sep-2026 (ISC-1 R9): never written; read with
+ *                  default; delete only in a coordinated letter-map pass.
+ *                  The live sheet held ONE value ('fabric') on 3,224 rows and
+ *                  blank elsewhere (ISC-1 §2e); parseRow already defaulted it.
  * Columns R-T (P1 — composite key foundation):
  *   R = bale_uid   internal-only unambiguous ID; format BAL-YYYYMMDD-{pkg}-{rand4}.
  *                  PackageNo (column A) is the human-printed bale number and may
@@ -13,6 +17,17 @@
  *                  from DateReceived, which is the supplier-stated date).
  *   T = grn_id     foreign key to GoodsReceipts header (optional; empty for
  *                  legacy rows and for non-GRN intake paths).
+ * Columns U-W:
+ *   U = bin_location  RETIRED 08-Sep-2026 (ISC-1 R9): never written; read with
+ *                  default; delete only in a coordinated letter-map pass.
+ *                  100% blank on the live sheet (ISC-1 §2e); only the Postgres
+ *                  mirror ever copied it.
+ *   V = arrival_batch    container label (ARRIVAL-BATCH C1, see HEADERS).
+ *   W = design_category  per-design category (DCAT-1, see HEADERS).
+ *
+ * Deleting a retired column is a schema change, not a tidy-up: every writer
+ * addresses cells by letter, so Q and U stay in place (blank) until ONE
+ * coordinated pass updates the letter map, the mirror and the fixtures.
  *
  * Legacy rows (created before P1) get synthetic bale_uid='BAL-LEGACY-{rowIndex}'
  * and addedAt=DateReceived||'' injected at read time. They are persisted on
@@ -33,6 +48,7 @@ const HEADERS = [
   'ProductType', 'bale_uid', 'addedAt', 'grn_id',
   // BUNDLE-SALE C1 — optional shelf / bin reference rendered next to the
   // bale header in the bundle picker. Empty for rows that don't track it.
+  // RETIRED 08-Sep-2026 (ISC-1 R9): never written; see the docblock above.
   'bin_location',
   // ARRIVAL-BATCH C1 — operator-facing shipment/arrival label (e.g. "Mar26",
   // "July26") chosen at intake. Drives the "Select Container" step in the
@@ -126,8 +142,11 @@ function toRow(o) {
     o.thanNo ?? '', o.yards ?? 0, o.status ?? 'available',
     o.warehouse ?? '', o.pricePerYard ?? 0, o.dateReceived ?? '',
     o.soldTo ?? '', o.soldDate ?? '', o.netMtrs ?? '', o.netWeight ?? '',
-    o.updatedAt ?? '', o.productType ?? 'fabric',
-    o.baleUid ?? '', o.addedAt ?? '', o.grnId ?? '', o.binLocation ?? '',
+    // ISC-1 R9 (08-Sep-2026) — Q (ProductType) and U (bin_location) are
+    // RETIRED: the bot never writes them, whatever the object carries. Every
+    // reader still sees productType 'fabric' through parseRow's default.
+    o.updatedAt ?? '', '' /* Q ProductType — retired */,
+    o.baleUid ?? '', o.addedAt ?? '', o.grnId ?? '', '' /* U bin_location — retired */,
     o.arrivalBatch ?? '', o.designCategory ?? '',
   ];
 }
@@ -357,10 +376,11 @@ async function appendBale(bales) {
   const prepared = bales.map((b) => {
     const baleUid = b.baleUid || idGenerator.baleUid(b.packageNo);
     const addedAt = b.addedAt || nowIso;
+    // ISC-1 R9 — productType is no longer stamped here: column Q is retired
+    // and toRow writes it blank; readers default to 'fabric' in parseRow.
     return {
       ...b,
       status: b.status || 'available',
-      productType: b.productType || 'fabric',
       updatedAt: b.updatedAt || nowIso,
       baleUid,
       addedAt,

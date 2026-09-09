@@ -474,7 +474,9 @@ async function submit(bot, chatId, userId) {
     sourceFilename: session.sourceFilename || '',
     driveFileId: session.driveFileId || '',
     dateReceived: todayInLagos()  /* TIME-1 — Lagos day, not the UTC clock */,
-    productType: 'fabric',
+    // ISC-1 R9 — Inventory column Q is retired; the executor stamps nothing.
+    // Approval-card unit labels fall back to the 'fabric' ProductTypes row.
+    productType: '',
     // ARRIVAL-BATCH C1 — container label stamped on every appended bale row.
     arrivalBatch: session.arrivalBatch || '',
   };
