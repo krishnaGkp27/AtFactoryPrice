@@ -19,7 +19,7 @@
  * bale_uid on two thans and 2,853 legacy rows keyed by row position (§2e);
  * `4-5` vs `4-5.` shade spellings inside one design and 188 blank shades
  * (§2c); three customer spelling clusters behind seven alias-blind SoldTo
- * readers (§2b); 46 thans of 40 yards or more (§2d); 374 SOLD rows at ₦0
+ * readers (§2b); 64 thans of 40 yards or more (§2d); 374 SOLD rows at ₦0
  * (§2d). A PDF cannot show a cell's TYPE and a census cannot re-run itself,
  * so those questions are asked HERE, by code that the read-only audit
  * script (scripts/audit-inventory-sheet.js) and the daily sentinel
