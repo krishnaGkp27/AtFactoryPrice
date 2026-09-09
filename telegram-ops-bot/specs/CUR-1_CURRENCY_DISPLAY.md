@@ -1,4 +1,4 @@
-# CUR-1 — Currency display: release A SHIPPED 09-Sep-2026, release B pending owner go
+# CUR-1 — Currency display: releases A and B SHIPPED 09-Sep-2026 (build steps 1–9)
 
 > **Status (09-Sep-2026).** Rulings R1–R18 and doubts D1–D6 closed by the
 > owner "as recommended" (08-Sep); the 09-Sep integrity amendment
@@ -33,6 +33,14 @@ answered here as rulings R5–R7), `docs/BUSINESS_RULES.md` §6b, §12 (SLG-1
 Option B), §13 (PAY-1), §15b, §17.
 
 ---
+
+> **Release B shipped 09-Sep-2026 (steps 6, 7, 9):** `approvalEvents.js`
+> chips / acks / Outstanding lines bare; the controller's 60 money sites on
+> `money.sale` / `money.saleRate` (`test/characterization/controllerMoney.cur1.test.js`);
+> the daybook and trial balance kept on `fmtMoney` (R5a); `fmtMoneyShort`,
+> `currencySymbol`, `DEFAULT_CURRENCY` deleted from `format.js`; S-CUR in
+> **fail** mode. Still open: the §17 closing sentence awaiting the owner's
+> verbatim yes; three input prompts still say `(NGN)` by R18.
 
 ## 1 · Verdict
 

@@ -1,4 +1,4 @@
-# CUR-2 — Invoice rate multiplier: release A SHIPPED 09-Sep-2026 (Settings-fulfilled path), release B pending owner go
+# CUR-2 — Invoice rate multiplier: releases A and B SHIPPED 09-Sep-2026 (Settings path + wizard Step 5; the factor is internal)
 
 **Status (09-Sep-2026).** The owner approved the drawings and closed Q1–Q6
 and D7 "as recommended", adding the integrity ruling now in
@@ -63,6 +63,13 @@ appears on the sales side at all (R12b/R13/R14).
 > document, not on the caption, not on the approved reply or the requester's
 > card, not on the sealed wizard card. Every "Customer copy × 1,250" line
 > drawn in §3b (sealed card), §4b (caption) and §5 below is WITHDRAWN.
+
+> **Release B shipped 09-Sep-2026:** wizard Step 5 (`sendMultiplierStep`,
+> chips `No multiplier` · `Settings: <m>` · type; `INVOICE_MULTIPLIER_ASK`
+> knob, default 1), `rateMultiplier` on the enrichment (1 = none, present),
+> `approval_approved` AuditLog payload carries the factor; the wizard's rate
+> chips, acks, Outstanding lines and prompts print no unit. Tests:
+> `test/unit/events/approvalEvents.multiplierStep.test.js`.
 
 ## 1 · The two variables
 
