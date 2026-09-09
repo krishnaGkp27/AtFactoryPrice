@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PAY-2 — Payment request lifecycle: cards and flow</title>
+<style>
+  @page { size: A4; margin: 14mm 12mm 16mm 12mm; }
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  html, body { margin: 0; padding: 0; background: #fff; color: #1a1a1a;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px; line-height: 1.45; }
+  body { max-width: 760px; margin: 0 auto; padding: 18px 14px 40px; }
+  h1 { font-size: 22px; margin: 0 0 4px; line-height: 1.2; }
+  h2 { font-size: 17px; margin: 30px 0 8px; padding-bottom: 4px; border-bottom: 2px solid #1a1a1a; }
+  h3 { font-size: 14px; margin: 18px 0 4px; }
+  p { margin: 6px 0; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px;
+    background: #f1f1f1; padding: 0 3px; border-radius: 3px; }
+  .sub { color: #444; margin: 0 0 2px; }
+  .date { color: #666; font-size: 12px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 12px 0 4px; font-size: 12px; align-items: center; }
+  .legend .sw { display: inline-block; width: 22px; height: 12px; vertical-align: middle; margin-right: 5px; border-radius: 3px; }
+  .sw.today { background: #1f2a38; border: 1px solid #1f2a38; }
+  .sw.new { background: #fff3b0; border: 1px dashed #b8860b; }
+  .tag { display: inline-block; font-style: normal; font-weight: 700; font-size: 9px; letter-spacing: .04em;
+    text-transform: uppercase; background: #f5c542; color: #2a1e00; border-radius: 3px; padding: 0 4px; margin-left: 5px; vertical-align: 1px; }
+  .note { font-size: 12px; color: #444; margin: 4px 0 0; }
+  .warn { background: #fff4e5; border-left: 4px solid #e8891d; padding: 6px 10px; margin: 8px 0; font-size: 12.5px; }
+  .fact { background: #eef4ff; border-left: 4px solid #3b6fd6; padding: 6px 10px; margin: 8px 0; font-size: 12.5px; }
+
+  /* Telegram-looking card */
+  .card { margin: 14px 0 0; break-inside: avoid; page-break-inside: avoid; }
+  .chead { font-weight: 700; font-size: 14px; margin: 0 0 2px; }
+  .chead .num { display: inline-block; min-width: 22px; height: 22px; line-height: 22px; text-align: center;
+    background: #1a1a1a; color: #fff; border-radius: 50%; font-size: 12px; margin-right: 6px; }
+  .chead .st { font-weight: 400; font-size: 11px; color: #fff; background: #555; border-radius: 3px; padding: 1px 6px; margin-left: 6px; vertical-align: 1px; }
+  .chead .st.new { background: #b8860b; }
+  .chead .st.mixed { background: #6b5d1f; }
+  .meta { font-size: 11.5px; color: #555; margin: 0 0 6px; }
+  .tg { background: #1f2a38; color: #f4f6f8; border-radius: 14px; padding: 10px 14px; max-width: 440px;
+    white-space: pre-wrap; word-wrap: break-word; font-size: 13px; line-height: 1.42; margin: 0; }
+  .tg b { font-weight: 700; color: #fff; }
+  .tg i { font-style: italic; color: #d7dde5; }
+  .tg code { background: #33404f; color: #ffe9a8; font-size: 12px; }
+  .tg .new { background: #fff3b0; color: #2a1e00; border-left: 3px solid #b8860b; padding: 0 4px; margin-left: -4px; border-radius: 2px; }
+  .tg .new b { color: #2a1e00; }
+  .tg .new i { color: #4a3b00; }
+  .tg .new code { background: #ffe58a; color: #2a1e00; }
+  .tg.newcard { border: 2px dashed #b8860b; }
+  .tg .dim { color: #9aa6b5; font-size: 11.5px; }
+  .toast { display: inline-block; background: #e9edf2; color: #1a1a1a; border-radius: 8px; padding: 4px 10px; font-size: 12px; margin: 4px 0; }
+  .kb { max-width: 440px; margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 4px; }
+  .kb .row { display: flex; gap: 4px; width: 100%; }
+  .btn { flex: 1; background: #2f3f52; color: #fff; text-align: center; border-radius: 8px; padding: 6px 8px; font-size: 12.5px; }
+  .btn.new { background: #fff3b0; color: #2a1e00; border: 1px dashed #b8860b; }
+  .btn small { display: block; color: #bcc7d4; font-size: 9.5px; font-family: ui-monospace, Menlo, monospace; }
+  .btn.new small { color: #6b5d1f; }
+  .who { font-size: 11.5px; color: #333; margin: 2px 0 6px; }
+  .who b { color: #000; }
+  .grp { margin: 8px 0 0; }
+  .grp .lbl { font-size: 11.5px; font-weight: 700; color: #333; margin: 8px 0 2px; }
+
+  /* tables */
+  table { border-collapse: collapse; width: 100%; font-size: 11.5px; margin: 8px 0; }
+  th, td { border: 1px solid #cfcfcf; padding: 5px 6px; vertical-align: top; text-align: left; }
+  th { background: #efefef; }
+  td.prop { background: #fff8d6; }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+  ol.q { padding-left: 22px; }
+  ol.q li { margin: 6px 0; }
+  ol.q li b { color: #000; }
+
+  /* flowchart */
+  .flow { break-inside: avoid; page-break-inside: avoid; }
+  .flow svg { width: 100%; height: auto; display: block; }
+  .pb { page-break-before: always; break-before: page; }
+  @media print {
+    body { padding: 0; max-width: none; }
+    a { color: inherit; text-decoration: none; }
+  }
+  @media (max-width: 520px) { body { padding: 12px 8px; } .tg { max-width: 100%; } .kb { max-width: 100%; } }
+</style>
+</head>
+<body>
+
+<h1>PAY-2 — Payment request lifecycle: cards and flow</h1>
+<p class="sub">Every card as it prints in Telegram today, with the owner's 09-Sep lifecycle drawn over it — reason line, finance seat, "Paid" reflected back to everyone who approved.</p>
+<p class="date">09-Sep-2026 · drawn from a verified read of <code>telegram-ops-bot</code> at that date · worked example: <b>Abdul</b> asks for <b>₦4,000</b> into <b>OPAY 7048940378</b>, reason <b>"Transport to Idumota"</b>; admins <b>Ajeet</b> and <b>John</b>; finance = the <b>Office phone</b>.</p>
+
+<div class="legend">
+  <span><span class="sw today"></span>Dark card / plain row = <b>today</b> (verified in code, file:line given)</span>
+  <span><span class="sw new"></span>Yellow line or dashed box <i class="tag">new</i> = <b>PROPOSED</b> — does not exist yet</span>
+  <span><svg width="26" height="10" style="vertical-align:middle;margin-right:5px"><line x1="0" y1="5" x2="26" y2="5" stroke="#1a1a1a" stroke-width="1.4" stroke-dasharray="4 3"/></svg>Dashed arrow = <b>proposed</b> delivery (a solid arrow into a dashed box = a message that exists today, with proposed wording)</span>
+</div>
+
+<div class="fact"><b>The owner's lifecycle, in one line:</b> admin pool receives the request → approved → a detailed card naming the approvers reaches the finance account (the Railway finance ID) → finance opens the bank app and pays by hand → finance marks it done → "done" is reflected back to everyone who was in the approval queue. Every request now carries a typed <b>reason</b> (3–120 chars, after the amount; chips and an index later; stored in Postgres — <code>specs/PAY-2_PAYMENT_REASON.md</code>).</div>
+
+<div class="warn"><b>Known fact to rule on:</b> today the finance card is routed by <code>paymentService.financeHead()</code> = the single Users-sheet row whose <code>department</code> is <b>Finance</b> (if there is none, or more than one, it goes to <b>all env admins</b> with a warning line). The Railway variable <code>FINANCE_IDS</code> (<code>config.access.financeIds</code>, FIN-V1) is used <b>only for read-only gates</b> (balance, container values, Payouts/Incentives, Manage Users summary) and never for the payment card — so the finance ID the owner marked in Railway does <b>not</b> receive it today. See Q1.</div>
+
+<!-- ============================================================ -->
+<h2 class="pb">1 · The flowchart</h2>
+<p class="note">Four lanes. Boxes with a dashed border and a <i class="tag">new</i> pill are proposed; the "(today: …)" line inside a box states what happens now. Read top to bottom.</p>
+
+<div class="flow">
+<svg viewBox="0 0 800 890" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="11">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a"/>
+    </marker>
+  </defs>
+  <!-- lanes -->
+  <rect x="0" y="0" width="200" height="890" fill="#f7f7f7"/>
+  <rect x="200" y="0" width="200" height="890" fill="#ffffff"/>
+  <rect x="400" y="0" width="200" height="890" fill="#f7f7f7"/>
+  <rect x="600" y="0" width="200" height="890" fill="#ffffff"/>
+  <line x1="200" y1="0" x2="200" y2="890" stroke="#c9c9c9"/>
+  <line x1="400" y1="0" x2="400" y2="890" stroke="#c9c9c9"/>
+  <line x1="600" y1="0" x2="600" y2="890" stroke="#c9c9c9"/>
+  <!-- lane titles -->
+  <rect x="0" y="0" width="800" height="40" fill="#1a1a1a"/>
+  <text x="100" y="18" fill="#fff" text-anchor="middle" font-weight="700">Requester</text>
+  <text x="100" y="32" fill="#cfcfcf" text-anchor="middle" font-size="10">Abdul</text>
+  <text x="300" y="18" fill="#fff" text-anchor="middle" font-weight="700">Admin pool (2 signatures)</text>
+  <text x="300" y="32" fill="#cfcfcf" text-anchor="middle" font-size="10">Ajeet · John · other env admins</text>
+  <text x="500" y="18" fill="#fff" text-anchor="middle" font-weight="700">Finance</text>
+  <text x="500" y="32" fill="#cfcfcf" text-anchor="middle" font-size="10">Users-sheet Finance row (today) · FINANCE_IDS (proposed)</text>
+  <text x="700" y="18" fill="#fff" text-anchor="middle" font-weight="700">The bot / records</text>
+  <text x="700" y="32" fill="#cfcfcf" text-anchor="middle" font-size="10">Sheets · Postgres · inbox</text>
+
+  <!-- ① Raise -->
+  <rect x="14" y="60" width="172" height="72" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2"/>
+  <text x="100" y="76" text-anchor="middle" font-weight="700">① Raise request</text>
+  <text x="100" y="91" text-anchor="middle">💸 account → amount →</text>
+  <text x="100" y="105" text-anchor="middle">📝 reason → bill → confirm</text>
+  <text x="100" y="121" text-anchor="middle" fill="#555" font-size="9.5">(today: no reason step)</text>
+  <rect x="120" y="52" width="70" height="14" rx="3" fill="#f5c542" stroke="#b8860b" stroke-dasharray="2 2"/>
+  <text x="155" y="62.5" text-anchor="middle" font-size="8.5" font-weight="700">NEW: reason</text>
+
+  <!-- ② Records -->
+  <rect x="614" y="60" width="172" height="72" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2"/>
+  <text x="700" y="76" text-anchor="middle" font-weight="700">② Records written</text>
+  <text x="700" y="91" text-anchor="middle">ApprovalQueue row +</text>
+  <text x="700" y="105" text-anchor="middle">PaymentRequests (pending)</text>
+  <text x="700" y="121" text-anchor="middle">+ Postgres payment_reasons row</text>
+  <rect x="716" y="52" width="74" height="14" rx="3" fill="#f5c542" stroke="#b8860b" stroke-dasharray="2 2"/>
+  <text x="753" y="62.5" text-anchor="middle" font-size="8.5" font-weight="700">NEW: PG row</text>
+  <line x1="186" y1="96" x2="612" y2="96" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah)"/>
+  <text x="400" y="91" text-anchor="middle" font-size="9.5" fill="#333">✅ Submit for approval</text>
+
+  <!-- ③ Approval card -->
+  <polyline points="700,132 700,146 300,146 300,158" fill="none" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah)"/>
+  <rect x="214" y="160" width="172" height="72" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2"/>
+  <text x="300" y="176" text-anchor="middle" font-weight="700">③ 🔔 Approval card (DM)</text>
+  <text x="300" y="191" text-anchor="middle">to every env admin</text>
+  <text x="300" y="205" text-anchor="middle">(requester excluded if admin)</text>
+  <text x="300" y="221" text-anchor="middle">"Reason: Transport to Idumota"</text>
+  <rect x="312" y="152" width="78" height="14" rx="3" fill="#f5c542" stroke="#b8860b" stroke-dasharray="2 2"/>
+  <text x="351" y="162.5" text-anchor="middle" font-size="8.5" font-weight="700">NEW: reason line</text>
+
+  <!-- ④ First signature -->
+  <line x1="300" y1="232" x2="300" y2="258" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah)"/>
+  <rect x="214" y="260" width="172" height="72" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2"/>
+  <text x="300" y="276" text-anchor="middle" font-weight="700">④ First signature</text>
+  <text x="300" y="291" text-anchor="middle">Ajeet taps ✅ Approve</text>
+  <text x="300" y="305" text-anchor="middle">his card loses its buttons;</text>
+  <text x="300" y="320" text-anchor="middle" fill="#555" font-size="9.5">other admins: text pointer only</text>
+  <line x1="214" y1="296" x2="188" y2="296" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah)"/>
+  <rect x="14" y="260" width="172" height="72" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2"/>
+  <text x="100" y="276" text-anchor="middle" font-weight="700">🔏 "1 of 2 approvals"</text>
+  <text x="100" y="291" text-anchor="middle">— signed by Ajeet.</text>
+  <text x="100" y="305" text-anchor="middle">One more to go.</text>
+  <text x="100" y="321" text-anchor="middle" fill="#555" font-size="9.5">(today, plain text)</text>
+
+  <!-- ⑤ Second signature -->
+  <line x1="300" y1="332" x2="300" y2="358" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah)"/>
+  <rect x="214" y="360" width="172" height="72" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2"/>
+  <text x="300" y="376" text-anchor="middle" font-weight="700">⑤ Second signature</text>
+  <text x="300" y="391" text-anchor="middle">John taps ✅ (a different admin)</text>
+  <text x="300" y="405" text-anchor="middle">→ executor request_payment</text>
+  <text x="300" y="421" text-anchor="middle" fill="#555" font-size="9.5">Ajeet hears nothing (today)</text>
+  <!-- ⑥ approved row -->
+  <line x1="386" y1="396" x2="612" y2="396" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah)"/>
+  <rect x="614" y="360" width="172" height="72" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="700" y="376" text-anchor="middle" font-weight="700">⑥ Payment row → approved</text>
+  <text x="700" y="391" text-anchor="middle">approved_by = Ajeet ‖ John</text>
+  <text x="700" y="405" text-anchor="middle">queue col H: "Ajeet + John"</text>
+  <text x="700" y="421" text-anchor="middle" fill="#555" font-size="9.5">(today: approved_by = John's raw id)</text>
+  <rect x="726" y="352" width="64" height="14" rx="3" fill="#f5c542" stroke="#b8860b" stroke-dasharray="2 2"/>
+  <text x="758" y="362.5" text-anchor="middle" font-size="8.5" font-weight="700">NEW: the pair</text>
+  <!-- requester approved notice -->
+  <line x1="214" y1="396" x2="188" y2="396" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah)"/>
+  <rect x="14" y="360" width="172" height="72" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="100" y="376" text-anchor="middle" font-weight="700">✅ Approved by Ajeet ‖ John</text>
+  <text x="100" y="391" text-anchor="middle">— now with finance to pay</text>
+  <text x="100" y="405" text-anchor="middle">(Ajeet gets the same notice)</text>
+  <text x="100" y="421" text-anchor="middle" fill="#555" font-size="9.5">(today: "approved by admin", no names)</text>
+  <rect x="126" y="352" width="64" height="14" rx="3" fill="#f5c542" stroke="#b8860b" stroke-dasharray="2 2"/>
+  <text x="158" y="362.5" text-anchor="middle" font-size="8.5" font-weight="700">NEW: names</text>
+
+  <!-- ⑦ Finance card -->
+  <polyline points="700,432 700,446 500,446 500,458" fill="none" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah)"/>
+  <rect x="414" y="460" width="172" height="96" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="500" y="476" text-anchor="middle" font-weight="700">⑦ 💳 Finance card</text>
+  <text x="500" y="491" text-anchor="middle">→ the Railway FINANCE_IDS ids</text>
+  <text x="500" y="505" text-anchor="middle">✅ Approved: Ajeet ‖ John</text>
+  <text x="500" y="519" text-anchor="middle">📝 reason · Raised by Abdul</text>
+  <text x="500" y="534" text-anchor="middle" fill="#555" font-size="9.5">(today: Users 'Finance' dept row,</text>
+  <text x="500" y="546" text-anchor="middle" fill="#555" font-size="9.5">else ALL admins + warning; one name)</text>
+  <rect x="516" y="452" width="74" height="14" rx="3" fill="#f5c542" stroke="#b8860b" stroke-dasharray="2 2"/>
+  <text x="553" y="462.5" text-anchor="middle" font-size="8.5" font-weight="700">NEW: routing</text>
+
+  <!-- ⑧ Manual payment -->
+  <line x1="500" y1="556" x2="500" y2="588" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah)"/>
+  <rect x="414" y="590" width="172" height="44" rx="6" fill="#e9edf2" stroke="#1a1a1a" stroke-width="1.2"/>
+  <text x="500" y="608" text-anchor="middle" font-weight="700">⑧ Manual bank payment</text>
+  <text x="500" y="623" text-anchor="middle" fill="#555" font-size="9.5">(by a person, outside the bot)</text>
+
+  <!-- ⑨ Mark Done -->
+  <line x1="500" y1="634" x2="500" y2="662" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah)"/>
+  <rect x="414" y="664" width="172" height="60" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2"/>
+  <text x="500" y="681" text-anchor="middle" font-weight="700">⑨ ✔ Mark Done</text>
+  <text x="500" y="696" text-anchor="middle">+ optional proof photo / skip</text>
+  <text x="500" y="712" text-anchor="middle" fill="#555" font-size="9.5">(today: no proof prompt)</text>
+  <rect x="520" y="656" width="70" height="14" rx="3" fill="#f5c542" stroke="#b8860b" stroke-dasharray="2 2"/>
+  <text x="555" y="666.5" text-anchor="middle" font-size="8.5" font-weight="700">NEW: proof</text>
+
+  <!-- ⑩ done row -->
+  <line x1="586" y1="694" x2="612" y2="694" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah)"/>
+  <rect x="614" y="664" width="172" height="60" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2"/>
+  <text x="700" y="681" text-anchor="middle" font-weight="700">⑩ status done</text>
+  <text x="700" y="696" text-anchor="middle">done_by · done_at · proof</text>
+  <text x="700" y="712" text-anchor="middle" fill="#555" font-size="9.5">(today: col O proof never written)</text>
+  <rect x="710" y="656" width="80" height="14" rx="3" fill="#f5c542" stroke="#b8860b" stroke-dasharray="2 2"/>
+  <text x="750" y="666.5" text-anchor="middle" font-size="8.5" font-weight="700">NEW: proof col</text>
+
+  <!-- ⑪ bus -->
+  <polyline points="700,724 700,760 100,760" fill="none" stroke="#1a1a1a" stroke-width="1.2"/>
+  <line x1="100" y1="760" x2="100" y2="778" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah)"/>
+  <line x1="300" y1="760" x2="300" y2="778" stroke="#1a1a1a" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ah)"/>
+  <line x1="500" y1="760" x2="500" y2="778" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah)"/>
+  <line x1="700" y1="760" x2="700" y2="778" stroke="#1a1a1a" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ah)"/>
+  <text x="400" y="754" text-anchor="middle" font-size="9.5" fill="#333">⑪ "Paid" reflected back</text>
+
+  <rect x="14" y="780" width="172" height="84" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="100" y="796" text-anchor="middle" font-weight="700">💸 Paid — to Abdul</text>
+  <text x="100" y="811" text-anchor="middle">payee · amount · reason</text>
+  <text x="100" y="825" text-anchor="middle">paid by Office · when · ref</text>
+  <text x="100" y="841" text-anchor="middle" fill="#555" font-size="9.5">(today: "✅ Paid" — amount + bank,</text>
+  <text x="100" y="853" text-anchor="middle" fill="#555" font-size="9.5">requester only)</text>
+  <rect x="126" y="772" width="64" height="14" rx="3" fill="#f5c542" stroke="#b8860b" stroke-dasharray="2 2"/>
+  <text x="158" y="782.5" text-anchor="middle" font-size="8.5" font-weight="700">NEW: text</text>
+
+  <rect x="214" y="780" width="172" height="84" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="300" y="796" text-anchor="middle" font-weight="700">💸 Paid — to Ajeet + John</text>
+  <text x="300" y="811" text-anchor="middle">same notice as the requester</text>
+  <text x="300" y="825" text-anchor="middle">(the two who signed)</text>
+  <text x="300" y="841" text-anchor="middle" fill="#555" font-size="9.5">(today: approvers hear nothing)</text>
+  <rect x="340" y="772" width="50" height="14" rx="3" fill="#f5c542" stroke="#b8860b" stroke-dasharray="2 2"/>
+  <text x="365" y="782.5" text-anchor="middle" font-size="8.5" font-weight="700">NEW</text>
+
+  <rect x="414" y="780" width="172" height="84" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2"/>
+  <text x="500" y="796" text-anchor="middle" font-weight="700">✅ Paid — ₦4,000 to Abdul</text>
+  <text x="500" y="811" text-anchor="middle">confirmation in the finance chat</text>
+  <text x="500" y="825" text-anchor="middle">"Recorded 09-Sep-2026, 15:10."</text>
+  <text x="500" y="841" text-anchor="middle" fill="#555" font-size="9.5">(today; the ✔/✖ buttons on the</text>
+  <text x="500" y="853" text-anchor="middle" fill="#555" font-size="9.5">finance card stay live — see Q4)</text>
+
+  <rect x="614" y="780" width="172" height="84" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="700" y="796" text-anchor="middle" font-weight="700">🛂 Inbox record</text>
+  <text x="700" y="811" text-anchor="middle">shows Done · by Office · when</text>
+  <text x="700" y="825" text-anchor="middle">finance card buttons wiped</text>
+  <text x="700" y="841" text-anchor="middle" fill="#555" font-size="9.5">(today: inbox shows only</text>
+  <text x="700" y="853" text-anchor="middle" fill="#555" font-size="9.5">"Already approved · date")</text>
+  <rect x="740" y="772" width="50" height="14" rx="3" fill="#f5c542" stroke="#b8860b" stroke-dasharray="2 2"/>
+  <text x="765" y="782.5" text-anchor="middle" font-size="8.5" font-weight="700">NEW</text>
+</svg>
+</div>
+
+<h3>The two exits</h3>
+<div class="flow">
+<svg viewBox="0 0 800 270" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="11">
+  <defs>
+    <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="200" height="270" fill="#f7f7f7"/>
+  <rect x="400" y="0" width="200" height="270" fill="#f7f7f7"/>
+  <line x1="200" y1="0" x2="200" y2="270" stroke="#c9c9c9"/>
+  <line x1="400" y1="0" x2="400" y2="270" stroke="#c9c9c9"/>
+  <line x1="600" y1="0" x2="600" y2="270" stroke="#c9c9c9"/>
+  <rect x="0" y="0" width="800" height="24" fill="#1a1a1a"/>
+  <text x="100" y="16" fill="#fff" text-anchor="middle" font-weight="700">Requester</text>
+  <text x="300" y="16" fill="#fff" text-anchor="middle" font-weight="700">Admin pool</text>
+  <text x="500" y="16" fill="#fff" text-anchor="middle" font-weight="700">Finance</text>
+  <text x="700" y="16" fill="#fff" text-anchor="middle" font-weight="700">The bot / records</text>
+
+  <!-- Reject -->
+  <rect x="214" y="40" width="172" height="72" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2"/>
+  <text x="300" y="56" text-anchor="middle" font-weight="700">✖ Reject (exit A)</text>
+  <text x="300" y="71" text-anchor="middle">any ONE admin, at any stage</text>
+  <text x="300" y="85" text-anchor="middle">❌ Reject on the card / inbox</text>
+  <text x="300" y="101" text-anchor="middle" fill="#555" font-size="9.5">(today)</text>
+  <line x1="214" y1="76" x2="188" y2="76" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah2)"/>
+  <rect x="14" y="40" width="172" height="72" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2"/>
+  <text x="100" y="56" text-anchor="middle" font-weight="700">❌ "Your request R-9DDC</text>
+  <text x="100" y="71" text-anchor="middle">has been rejected by admin."</text>
+  <text x="100" y="87" text-anchor="middle" fill="#555" font-size="9.5">(today, plain text, no reason)</text>
+  <line x1="386" y1="76" x2="612" y2="76" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah2)"/>
+  <rect x="614" y="40" width="172" height="72" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="700" y="56" text-anchor="middle" font-weight="700">Queue row → rejected (today)</text>
+  <text x="700" y="71" text-anchor="middle">PaymentRequests → rejected</text>
+  <text x="700" y="87" text-anchor="middle" fill="#555" font-size="9.5">(today: the row stays</text>
+  <text x="700" y="99" text-anchor="middle" fill="#555" font-size="9.5">pending_approval forever)</text>
+  <rect x="716" y="32" width="74" height="14" rx="3" fill="#f5c542" stroke="#b8860b" stroke-dasharray="2 2"/>
+  <text x="753" y="42.5" text-anchor="middle" font-size="8.5" font-weight="700">NEW: row flip</text>
+
+  <!-- Decline -->
+  <rect x="414" y="150" width="172" height="72" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2"/>
+  <text x="500" y="166" text-anchor="middle" font-weight="700">✖ Decline (exit B)</text>
+  <text x="500" y="181" text-anchor="middle">finance, after approval</text>
+  <text x="500" y="195" text-anchor="middle">types a reason (≥3 chars)</text>
+  <text x="500" y="211" text-anchor="middle" fill="#555" font-size="9.5">(today)</text>
+  <line x1="586" y1="186" x2="612" y2="186" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah2)"/>
+  <rect x="614" y="150" width="172" height="72" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2"/>
+  <text x="700" y="166" text-anchor="middle" font-weight="700">status declined</text>
+  <text x="700" y="181" text-anchor="middle">done_by · done_at · reason</text>
+  <text x="700" y="197" text-anchor="middle" fill="#555" font-size="9.5">(today)</text>
+  <line x1="414" y1="186" x2="388" y2="186" stroke="#1a1a1a" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ah2)"/>
+  <rect x="214" y="150" width="172" height="72" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="300" y="166" text-anchor="middle" font-weight="700">✖ Declined — to Ajeet + John</text>
+  <text x="300" y="181" text-anchor="middle">with the reason</text>
+  <text x="300" y="197" text-anchor="middle" fill="#555" font-size="9.5">(today: nothing; PAY-1 spec</text>
+  <text x="300" y="209" text-anchor="middle" fill="#555" font-size="9.5">§Decline promised it)</text>
+  <rect x="340" y="142" width="50" height="14" rx="3" fill="#f5c542" stroke="#b8860b" stroke-dasharray="2 2"/>
+  <text x="365" y="152.5" text-anchor="middle" font-size="8.5" font-weight="700">NEW</text>
+  <polyline points="470,222 470,236 100,236 100,224" fill="none" stroke="#1a1a1a" stroke-width="1.2" marker-end="url(#ah2)"/>
+  <text x="285" y="246" text-anchor="middle" font-size="9" fill="#555">straight from finance's applyDecline (today)</text>
+  <rect x="14" y="150" width="172" height="72" rx="6" fill="#fff" stroke="#1a1a1a" stroke-width="1.2"/>
+  <text x="100" y="166" text-anchor="middle" font-weight="700">✖ "Payment declined"</text>
+  <text x="100" y="181" text-anchor="middle">₦4,000 to Abdul was not paid.</text>
+  <text x="100" y="195" text-anchor="middle">+ the reason</text>
+  <text x="100" y="211" text-anchor="middle" fill="#555" font-size="9.5">(today)</text>
+  <text x="400" y="262" text-anchor="middle" font-size="9.5" fill="#333">Reject before the money is approved · Decline after approval, before the money moves</text>
+</svg>
+</div>
+
+<!-- ============================================================ -->
+<h2 class="pb">2 · The cards, in lifecycle order</h2>
+<p class="note">Each bubble is the exact text Telegram shows (bold and italic as rendered; <code>code</code> spans as rendered). Buttons are drawn as chips with their callback under them. Yellow lines carry a <i class="tag">new</i> pill — they are PROPOSED and do not print today. Everything else is verified against the file:line in the grey line under each title.</p>
+
+<!-- 1 reason step -->
+<div class="card">
+  <div class="chead"><span class="num">1</span>📝 The reason step <span class="st new">whole card PROPOSED</span></div>
+  <div class="meta">To: <b>Abdul</b> (requester) · when: right after a valid amount, before the bill step · today the bot goes straight from the amount to the "📎 Any paperwork?" bill card (<code>paymentFlow.js:326-334</code>). Proposed step name <code>req_reason</code> (spec §2).</div>
+  <div class="tg newcard"><span class="new">💸 <b>Abdul</b><i class="tag">new</i></span>
+<span class="new">🏦 OPAY 7048940378 · ₦4,000</span>
+
+<span class="new">📝 <b>What is this payment for?</b></span>
+<span class="new">Type a short reason — e.g. transport to Idumota, loading at the warehouse.</span></div>
+  <div class="kb"><div class="row"><span class="btn new">⬅ Back<small>pay:back</small></span><span class="btn new">❌ Cancel<small>pay:cancel</small></span></div></div>
+  <p class="note">Abdul types <b>Transport to Idumota</b>. Anything shorter than 3 or longer than 120 characters re-renders the same card with one line on top: <span class="new" style="background:#fff3b0;padding:0 4px">⚠️ Give a reason of 3 to 120 characters.</span> No skip chip — the owner's rule is that every payment <b>must</b> be tagged.</p>
+</div>
+
+<!-- 2 confirm -->
+<div class="card">
+  <div class="chead"><span class="num">2</span>Confirm card <span class="st mixed">today + one new line</span></div>
+  <div class="meta">To: <b>Abdul</b> · when: after the bill is sent or skipped (<code>pay:bill:skip</code>) → <code>showRequestConfirm</code> (<code>src/flows/paymentFlow.js:336-351</code>; ₦ via <code>money.expense</code>, <code>paymentService.js:44-47</code>). The ⚠️ badge suffix prints only when the amount is ≥ Settings <code>PAYMENT_THRESHOLD_NGN</code> (default 50,000) — not for ₦4,000.</div>
+  <div class="tg">💸 <b>Send this for approval?</b>
+
+👤 Abdul · employee
+🏦 OPAY 7048940378
+💰 <b>₦4,000</b>
+<span class="new">📝 Transport to Idumota<i class="tag">new</i></span>
+📎 Bill attached  <span class="dim">← only when a photo/PDF was sent</span>
+
+<i>Two admins approve, then finance pays.</i></div>
+  <div class="kb"><div class="row"><span class="btn">✅ Submit for approval<small>pay:submit</small></span></div><div class="row"><span class="btn">⬅ Back<small>pay:back</small></span><span class="btn">❌ Cancel<small>pay:cancel</small></span></div></div>
+</div>
+
+<!-- 3 receipt -->
+<div class="card">
+  <div class="chead"><span class="num">3</span>Requester receipt — "⏳ Sent for approval" <span class="st">today</span></div>
+  <div class="meta">To: <b>Abdul</b>, edited in place on the flow card, session cleared · when: <code>pay:submit</code> → <code>submitRequest</code> appends the PaymentRequests row (status <code>pending_approval</code>, <code>bill_file_id</code>), the ApprovalQueue row (action <code>request_payment</code>), AuditLog <code>approval_queued</code>, then DMs the admins (<code>paymentFlow.js:353-415</code>; receipt <code>:406-410</code>). <span class="new" style="background:#fff3b0;padding:0 3px">Proposed: the same submit also writes the Postgres <code>payment_reasons</code> row (fail-open) and the <code>reason</code> key on the ActionJSON<i class="tag">new</i></span>.</div>
+  <div class="tg">⏳ <b>Sent for approval</b>
+
+💰 ₦4,000 → Abdul
+<code>PAY-20260909-3F9A2C1E</code>
+
+<i>Two admins sign, then finance pays and marks it done.</i></div>
+  <div class="kb"><div class="row"><span class="btn">🏠 Back to menu<small>act:__back__</small></span></div></div>
+  <p class="note">On a failure the card reads <code>⚠️ Could not submit: &lt;error&gt;</code> with the same button.</p>
+</div>
+
+<!-- 4 admin approval card -->
+<div class="card">
+  <div class="chead"><span class="num">4</span>Admin approval card (DM) <span class="st mixed">today + Reason line</span></div>
+  <div class="meta">To: <b>Ajeet</b>, <b>John</b> and every other id in env <code>ADMIN_IDS</code> (<code>config.access.adminIds</code>; sheet-promoted admins get no DM and must use the 🛂 inbox); an admin requester is excluded from his own card (<code>paymentFlow.js:403</code>) · when: immediately at submit (<code>paymentFlow.js:395-404</code> → <code>approvalEvents.notifyAdminsApprovalRequest</code> <code>:1657-1736</code>; body <code>paymentCards.buildApprovalSummary</code> <code>:63-72</code>; risk sentence <code>risk/evaluate.js:275-284</code>). Sent as MarkdownV2 with a plain-text fallback of the same core lines (no duplicate flag, no reminder prefix — <code>:1718</code>). <b>The bill is NOT forwarded with this card</b> — admins read "Bill: attached" without the file (finance does get it, card 7).</div>
+  <div class="tg">🔔 <b>Approval required</b>
+
+Ref: <code>9ddc4b7e-2f1a-4c58-9e0b-7a1d3c5f2b84</code>
+From: Abdul
+
+Payment request: ₦4,000
+Payee: Abdul (employee)
+Account: 7048940378 · OPAY
+<span class="new">Reason: Transport to Idumota<i class="tag">new</i></span>
+⚠️ LARGE PAYMENT — above the threshold  <span class="dim">← only when ≥ ₦50,000</span>
+Bill: attached  <span class="dim">← only when a bill was sent</span>
+
+<i>All request payment operations require two-admin approval.</i>
+
+Use buttons below to approve or reject.</div>
+  <div class="kb"><div class="row"><span class="btn">✅ Approve<small>approve:9ddc4b7e-…</small></span><span class="btn">❌ Reject<small>reject:9ddc4b7e-…</small></span></div></div>
+  <p class="note">Variants seen today: a first line <b>⚠️ Possible duplicate</b> — same request also pending as <code>xxxxxxxx…</code> — when an identical request was queued minutes earlier; the <b>⏰ Reminder — this approval is still waiting</b> re-send every <code>REMINDER_HOURS_ADMIN</code> / <code>APPROVAL_REMINDER_HOURS</code> hours (Settings; default 6; 0 = off — <code>reminderPolicy.js:36-42</code>, <code>approvalReminder.js:73-78, :98-112</code>; only while the queue row is pending, ≥10 min old; never for an approved-but-unpaid payment) — rebuilt from the ActionJSON, so it carries <b>no Bill line</b>; the 🛂 inbox copy under <b>❓ Other</b> (payments are in no inbox category, <code>approvalsInboxFlow.js:78-93</code>) with buttons <code>abx:ok</code> / <code>abx:no</code> — the <b>bare three-line summary</b> only (no 🔔 header, Ref, From or risk sentence) plus a <i>Requested by Abdul · today · R-9DDC</i> footer while pending (<code>:838</code>); the Bill line does not ride the ActionJSON (<code>paymentFlow.js:376-388</code>), so it never prints on the inbox or reminder copies. The Reason line rides all three automatically because the inbox and the reminder rebuild the card from the queue row's ActionJSON.</p>
+</div>
+
+<!-- 5 first signature -->
+<div class="card">
+  <div class="chead"><span class="num">5</span>First signature — Ajeet taps ✅ (DUAL-1) <span class="st">today</span></div>
+  <div class="meta">When: the first ✅ Approve on an employee-raised request while ≥2 other admins exist (<code>risk/evaluate.js:242-247</code>; <code>approvalEvents.js:1846-1934</code>). An admin requester counts as the first signature himself, so one other tap goes straight to card 6. Only Ajeet's own card loses its buttons; John's card is <b>not</b> edited (no signer name on it) and no fresh card is sent.</div>
+  <div class="who">(a) <b>Ajeet</b> — toast on the tap, then a DM:</div>
+  <span class="toast">🔏 Approval 1 of 2 recorded.</span>
+  <div class="tg">🔏 Request 9ddc4b7e-2f1a-4c58-9e0b-7a1d3c5f2b84: your approval is recorded (1 of 2). Waiting for a second admin.</div>
+  <div class="who" style="margin-top:8px">(b) <b>Abdul</b> — plain-text DM:</div>
+  <div class="tg">🔏 Your request (9ddc4b7e-2f1a-4c58-9e0b-7a1d3c5f2b84) has 1 of 2 admin approvals — signed by Ajeet. One more to go.</div>
+  <div class="who" style="margin-top:8px">(c) <b>John</b> and every other env admin (minus signer, minus requester) — text pointer only, their card untouched:</div>
+  <div class="tg">🔔 Request 9ddc4b7e-2f1a-4c58-9e0b-7a1d3c5f2b84 (request payment) has its first admin approval and needs a SECOND. Use the approval card in your chat.</div>
+  <p class="note">Guards (alerts, no message): Ajeet taps again → <i>🔏 You already gave the first approval — a different admin must give the second.</i> · Abdul taps his own card → <i>🔒 You cannot approve your own request — a second admin must review it.</i></p>
+</div>
+
+<!-- 6 final approval -->
+<div class="card">
+  <div class="chead"><span class="num">6</span>Final approval — John taps ✅ <span class="st mixed">today + proposed wording</span></div>
+  <div class="meta">When: the second ✅ → <code>inventoryService.executeApprovedAction</code> branch <code>request_payment</code> (<code>:1613-1626</code>) sets PaymentRequests status <code>approved</code>, <code>approved_by</code> = John's raw id only (<code>:1623</code>); ApprovalQueue Status approved, Approver col H "Ajeet + John" (<code>approverStamp.js:85-101</code>); AuditLog <code>approval_approved</code>. Messages: <code>approvalEvents.js:2006-2021</code>. John's card loses its buttons; other admins' cards stay live — a later tap toasts "Already approved — nothing to do.", wipes that card's buttons and sends <i>ℹ️ Request &lt;id&gt; was already approved on &lt;date&gt; — no change made.</i> into that admin's chat (<code>approvalEvents.js:1759-1771</code>).</div>
+  <div class="who">(a) <b>John</b> (deciding admin) — toast <span class="toast">Approving...</span> then:</div>
+  <div class="tg">✅ Request 9ddc4b7e-2f1a-4c58-9e0b-7a1d3c5f2b84 approved by Ajeet + John. Changes applied.</div>
+  <div class="who" style="margin-top:8px">(b) <b>Abdul</b> — today, plain text (no amount, no names, no hint it is now with finance):</div>
+  <div class="tg">✅ Your request R-9DDC has been approved by admin. Changes applied.</div>
+  <div class="who" style="margin-top:8px">(b′) <b>Abdul</b> — PROPOSED replacement (the executor already builds a "now with finance to pay" line at <code>inventoryService.js:1625</code> that is never delivered):</div>
+  <div class="tg newcard"><span class="new">✅ <b>Approved by Ajeet ‖ John</b><i class="tag">new</i></span>
+
+<span class="new">₦4,000 → Abdul · OPAY 7048940378</span>
+<span class="new">📝 Transport to Idumota</span>
+<span class="new"><code>PAY-20260909-3F9A2C1E</code></span>
+
+<span class="new"><i>Now with finance to pay. You will be told when it is paid.</i></span></div>
+  <div class="who" style="margin-top:8px">(c) <b>Ajeet</b> (first signer) — today: <b>nothing</b>. PROPOSED: the same notice as (b′) so he knows the request he signed is closed and with finance.</div>
+  <p class="note">Failure path today: John gets <i>⚠️ Approved but execution failed: &lt;message&gt;</i>; Abdul gets <i>⚠️ Your request (…) was approved but could not be completed. Admin has been notified. Please follow up.</i></p>
+</div>
+
+<!-- 7 finance card -->
+<div class="card">
+  <div class="chead"><span class="num">7</span>💳 Finance card <span class="st mixed">today + proposed routing, pair, reason, name</span></div>
+  <div class="meta">To (today): <code>paymentService.paymentRecipients()</code> (<code>:125-129</code>) = the ONE active Users row whose department includes <b>Finance</b> (<code>financeHead</code> <code>:63-90</code>); zero or 2+ such rows, or Users unreadable → every id in env <code>ADMIN_IDS</code>, each copy carrying a warning line. <b>Railway <code>FINANCE_IDS</code> is not consulted.</b> <span class="new" style="background:#fff3b0;padding:0 3px">Proposed: every id in <code>FINANCE_IDS</code> first (the Office phone); else the Users Finance row; else all admins + warning<i class="tag">new</i></span>. When: fire-and-forget right after card 6 succeeds (<code>approvalEvents.js:2080-2086</code> → <code>paymentCards.sendFinanceCard</code> <code>:115-149</code>; text <code>buildFinanceCard</code> <code>:29-48</code>). Sent as the bill photo/document's <b>caption</b> when a bill exists, else as text.</div>
+  <div class="tg">💳 <b>Payment</b> — Abdul · employee
+🏦 7048940378 · OPAY
+💰 <b>₦4,000</b>  <span class="dim">(+ "⚠️ large payment" when ≥ ₦50,000)</span>
+<span class="new">📝 Transport to Idumota<i class="tag">new</i></span>
+📎 Bill attached  <span class="dim">← only when a bill was sent</span>
+<span class="new">✅ Approved: Ajeet ‖ John<i class="tag">new</i></span>  <span class="dim">← today: "✅ Approved: John" (final tapper only)</span>
+<span class="new"><i>Raised by Abdul · 09-Sep-2026, 14:32</i><i class="tag">new</i></span>  <span class="dim">← today: the raw Telegram id, not the name</span>
+<code>PAY-20260909-3F9A2C1E</code></div>
+  <div class="kb"><div class="row"><span class="btn">✔ Mark Done<small>pay:done:PAY-20260909-3F9A2C1E</small></span><span class="btn">✖ Decline<small>pay:dec:PAY-20260909-3F9A2C1E</small></span></div></div>
+  <p class="note">Fallback line appended today when no single finance person is found (one of): <i>⚠️ No one is in the Finance department yet — this is with all admins until the Users sheet names exactly one finance person.</i> / <i>⚠️ &lt;n&gt; people are in the Finance department. One finance ID makes payments — fix the Users sheet; meanwhile this is with all admins.</i> / <i>⚠️ The Users sheet could not be read, so the finance person is unknown — this is with all admins.</i> The buttons are session-free and are <b>never wiped</b> after a decision today.</p>
+</div>
+
+<!-- 8 mark done + proof -->
+<div class="card">
+  <div class="chead"><span class="num">8</span>✔ Mark Done — the finance confirmation and the proof prompt <span class="st mixed">today + proposed proof step</span></div>
+  <div class="meta">Who may tap (today): <code>paymentService.canExecute</code> (<code>:112-122</code>) — the finance head when the sheet names exactly one, else any env <code>ADMIN_IDS</code> id; <code>FINANCE_IDS</code> holders and sheet-promoted admins are refused ("Only the finance person marks a payment done."). <span class="new" style="background:#fff3b0;padding:0 3px">Proposed: honoured from any id the card was sent to (Q1)<i class="tag">new</i></span>. When: <code>pay:done:&lt;PAY id&gt;</code> → <code>markDone</code> (<code>paymentFlow.js:445-470</code>): row → status <code>done</code>, <code>done_by</code>, <code>done_at</code> (Lagos wall-clock); AuditLog <code>payment_done</code>. Column O <code>proof_file_id</code> is never written — there is no proof prompt today (file header <code>:36</code> mentions <code>pay:proof:skip</code>; <code>handleFile :604</code> accepts files only at the bill step).</div>
+  <div class="who">(a) PROPOSED — <b>Office phone</b>, right after the tap. The row is written first (as today), then this prompt is offered, so a slow photo never blocks the record:</div>
+  <div class="tg newcard"><span class="new">📎 <b>Proof of transfer?</b><i class="tag">new</i></span>
+
+<span class="new">Send a screenshot of the bank transfer, or skip.</span>
+<span class="new">₦4,000 → Abdul · <code>PAY-20260909-3F9A2C1E</code></span></div>
+  <div class="kb"><div class="row"><span class="btn new">⏭ Skip — no proof<small>pay:proof:skip</small></span></div></div>
+  <div class="who" style="margin-top:8px">(b) <b>Office phone</b> — today's fresh confirmation in the finance chat (the original finance card keeps its live ✔/✖ buttons; a second tap only toasts "Already marked done."):</div>
+  <span class="toast">Marked done.</span>
+  <div class="tg">✅ <b>Paid</b> — ₦4,000 to Abdul
+<code>PAY-20260909-3F9A2C1E</code>
+
+<i>Recorded 09-Sep-2026, 15:10.</i>
+<span class="new">📎 Proof attached<i class="tag">new</i></span>  <span class="dim">← only when a proof was sent</span></div>
+  <p class="note">Other toasts today: <i>That payment was not found.</i> · <i>That payment is pending approval — it cannot be paid.</i> <span class="new" style="background:#fff3b0;padding:0 3px">Proposed: after Done the finance card's own keyboard is wiped and, in the all-admins fallback, every other copy too<i class="tag">new</i></span> (today they stay live forever).</p>
+</div>
+
+<!-- 9 paid notice -->
+<div class="card">
+  <div class="chead"><span class="num">9</span>💸 "Paid" — reflected to the requester and both approvers <span class="st new">PROPOSED text (replaces today's requester-only DM)</span></div>
+  <div class="meta">Today: <code>markDone</code> DMs <b>only Abdul</b> (<code>paymentFlow.js:464-465</code> via <code>notifyRaiser :525-530</code>, Markdown with unescaped payee/bank — a name with <code>_ * ` [</code> makes Telegram reject the send and Abdul is silently not told). Ajeet, John, the other admins, the admin cards and the inbox hear <b>nothing</b>. The owner's "reflected back to all the people who were there in the approval queue" does not exist. Proposed audience: <b>Abdul + Ajeet + John</b> (the requester and the two who signed — Q2); one message, plain text or escaped Markdown so no name can break it.</div>
+  <div class="who">Today — <b>Abdul</b> only:</div>
+  <div class="tg">✅ <b>Paid</b>
+
+₦4,000 was sent to OPAY 7048940378.</div>
+  <div class="who" style="margin-top:8px">PROPOSED — <b>Abdul</b>, <b>Ajeet</b> and <b>John</b>, the same text to each:</div>
+  <div class="tg newcard"><span class="new">💸 <b>Paid</b> — ₦4,000 to Abdul<i class="tag">new</i></span>
+
+<span class="new">🏦 OPAY 7048940378</span>
+<span class="new">📝 Transport to Idumota</span>
+<span class="new">✅ Approved by Ajeet ‖ John</span>
+<span class="new">💳 Paid by Office · 09-Sep-2026, 15:10</span>
+<span class="new">📎 Proof attached</span>  <span class="dim">← only when finance sent one (Q3: attach the photo itself?)</span>
+<span class="new"><code>PAY-20260909-3F9A2C1E</code> · R-9DDC</span></div>
+  <p class="note">Suggested one-line difference per reader: Abdul's copy is exactly the above; the approvers' copy adds a first line <i>The payment you approved is done.</i> so it reads as a closure of their own signature, not a stray receipt.</p>
+</div>
+
+<!-- 10 inbox record -->
+<div class="card">
+  <div class="chead"><span class="num">10</span>🛂 Inbox record after Done <span class="st mixed">today + proposed lines</span></div>
+  <div class="meta">Today (<code>approvalsInboxFlow.js:722-847</code>; resolved view <code>:737-745</code>): the resolved card re-reads the ApprovalQueue row live and prints the bare three-line summary (<code>approvalCards.js:912-913</code> → <code>paymentCards.buildApprovalSummary</code>; no 🔔 header, Ref, From, risk sentence or "Requested by" footer — those belong to the DM card and the pending inbox render only) plus <i>✅ Already approved · date</i>. It never reads PaymentRequests, so it cannot tell "approved, unpaid" from "paid" or "declined" today. <span class="new" style="background:#fff3b0;padding:0 3px">Proposed: for <code>request_payment</code> the resolved view also reads the PaymentRequests row and adds one status line (Q4)<i class="tag">new</i></span>.</div>
+  <div class="tg">Payment request: ₦4,000
+Payee: Abdul (employee)
+Account: 7048940378 · OPAY
+<span class="new">Reason: Transport to Idumota<i class="tag">new</i></span>
+
+✅ <i>Already approved · 09-Sep-2026 — no action needed.</i>
+<span class="new">💸 <i>Paid by Office · 09-Sep-2026, 15:10 · PAY-20260909-3F9A2C1E</i><i class="tag">new</i></span>  <span class="dim">or: 🏦 With finance to pay · ✖ Declined by Office · reason</span></div>
+  <div class="kb"><div class="row"><span class="btn">⬅ Back to list<small>abx:back</small></span><span class="btn">❌ Close<small>abx:close</small></span></div></div>
+  <p class="note">List chip today: <code>🟢 09 Sept · request payment · Abdul</code> (day-space-month, <code>en-GB</code> short month — <code>approvalsInboxFlow.js:160-167, :683</code>) under the <b>❓ Other</b> category (no dual-admin ⚠️ badge, no 📄 bill chip). <span class="new" style="background:#fff3b0;padding:0 3px">Proposed: a 💳 Payments category of its own, with the ⚠️ dual badge<i class="tag">new</i></span>.</p>
+</div>
+
+<!-- 11 reject -->
+<div class="card">
+  <div class="chead"><span class="num">11</span>✖ Exit A — an admin rejects <span class="st mixed">today + proposed row flip</span></div>
+  <div class="meta">When: ❌ Reject on card 4 (DM, reminder or inbox) by any one admin at any stage (<code>approvalEvents.js:2103-2120</code>). Today <code>inventoryService.rejectApproval</code> (<code>:1849-1906</code>) has no <code>request_payment</code> branch: only the ApprovalQueue row flips to rejected; the <b>PaymentRequests row stays <code>pending_approval</code> forever</b>, so 📋 My requests keeps showing "⏳ waiting for approval". The tapped card's buttons are wiped; no reason is asked.</div>
+  <div class="who">(a) The rejecting admin — toast <span class="toast">Rejecting...</span> then:</div>
+  <div class="tg">❌ Request 9ddc4b7e-2f1a-4c58-9e0b-7a1d3c5f2b84 rejected.</div>
+  <div class="who" style="margin-top:8px">(b) <b>Abdul</b> — plain text:</div>
+  <div class="tg">❌ Your request R-9DDC has been rejected by admin.</div>
+  <div class="who" style="margin-top:8px">(c) PROPOSED — the record and the list:</div>
+  <div class="tg newcard"><span class="new">📋 <b>My requests</b><i class="tag">new</i></span>
+
+<span class="new">❌ ₦4,000 — rejected · 📝 Transport to Idumota</span>
+<span class="new">   <i>09-Sep-26</i></span></div>
+  <p class="note">The line above needs the PaymentRequests row flipped to <code>rejected</code> at reject time (one branch in <code>rejectApproval</code>); the word "rejected" already exists in <code>STATUS_WORD</code> (<code>paymentFlow.js:422</code>) but is unreachable today. Failure today: <i>⚠️ Rejection failed: &lt;message&gt;</i>.</p>
+</div>
+
+<!-- 12 decline -->
+<div class="card">
+  <div class="chead"><span class="num">12</span>✖ Exit B — finance declines <span class="st mixed">today + proposed approver notice</span></div>
+  <div class="meta">When: <code>pay:dec:&lt;PAY id&gt;</code> → <code>startDecline</code> (<code>paymentFlow.js:472-491</code>) → typed reason (≥3 chars, cut at 200; <code>:589-593</code>) → <code>applyDecline</code> (<code>:493-510</code>): row → status <code>declined</code>, <code>done_by</code>, <code>done_at</code>, <code>decline_reason</code>; AuditLog <code>payment_declined</code>. Same gate as Mark Done. Today only <b>Abdul</b> and the tapper's own card are told; PAY-1 spec §Decline promised "requester + both approvers DM'd with the reason" — not built.</div>
+  <div class="who">(a) <b>Office phone</b> — the prompt (the flow card, edited):</div>
+  <div class="tg">✖ <b>Decline ₦4,000 to Abdul</b>
+
+Why? The person who asked will see this, so say what would make it payable.</div>
+  <div class="kb"><div class="row"><span class="btn">❌ Cancel<small>pay:cancel</small></span></div></div>
+  <p class="note">Too short → <i>⚠️ Give a reason — the requester needs to know what to fix.</i> Office types: <b>Account name does not match — send the OPAY name.</b></p>
+  <div class="who">(b) <b>Office phone</b> — the card edited in place:</div>
+  <div class="tg">✖ <b>Declined</b> — ₦4,000 to Abdul
+
+<i>Account name does not match — send the OPAY name.</i>
+
+The requester has been told.</div>
+  <div class="kb"><div class="row"><span class="btn">🏠 Back to menu<small>act:__back__</small></span></div></div>
+  <div class="who" style="margin-top:8px">(c) <b>Abdul</b> — DM (Markdown, unescaped today — same parse risk as the Paid DM):</div>
+  <div class="tg">✖ <b>Payment declined</b>
+
+₦4,000 to Abdul was not paid.
+
+<i>Account name does not match — send the OPAY name.</i></div>
+  <div class="who" style="margin-top:8px">(d) PROPOSED — <b>Ajeet</b> and <b>John</b>:</div>
+  <div class="tg newcard"><span class="new">✖ <b>Declined by finance</b> — ₦4,000 to Abdul<i class="tag">new</i></span>
+
+<span class="new">📝 Transport to Idumota</span>
+<span class="new">✅ You approved this with Ajeet ‖ John</span>
+<span class="new">💳 Declined by Office · 09-Sep-2026, 15:10</span>
+<span class="new"><i>Account name does not match — send the OPAY name.</i></span>
+<span class="new"><code>PAY-20260909-3F9A2C1E</code> · R-9DDC</span></div>
+</div>
+
+<!-- 13 my requests -->
+<div class="card">
+  <div class="chead"><span class="num">13</span>📋 My requests <span class="st mixed">today + reason on each line</span></div>
+  <div class="meta">To: the requester, own rows only, newest first, 12 shown (<code>paymentFlow.js:419-443</code>). Spec §2 says the list shows the reason after the amount.</div>
+  <div class="tg">📋 <b>My requests</b>
+
+⏳ ₦4,000 — waiting for approval<span class="new"> · 📝 Transport to Idumota<i class="tag">new</i></span>
+   <i>09-Sep-26</i>
+🏦 ₦12,000 — with finance to pay<span class="new"> · 📝 Loading at the warehouse<i class="tag">new</i></span>
+   <i>08-Sep-26</i>
+✅ ₦3,500 — paid<span class="new"> · 📝 Airtime<i class="tag">new</i></span>
+   <i>05-Sep-26</i>
+✖ ₦9,000 — declined by finance<span class="new"> · 📝 Fuel<i class="tag">new</i></span>
+   <i>02-Sep-26</i> · Account name does not match
+
+<i>…and 3 older.</i></div>
+  <div class="kb"><div class="row"><span class="btn">🏠 Back to menu<small>act:__back__</small></span></div></div>
+</div>
+
+<!-- ============================================================ -->
+<h2 class="pb">3 · Routing table — who receives what</h2>
+<p class="note">Yellow cells are proposed. "env admins" = the ids in Railway <code>ADMIN_IDS</code>; sheet-promoted admins are never DM'd today and see payments only through the 🛂 inbox.</p>
+<table>
+  <thead><tr><th style="width:15%">Step</th><th style="width:22%">Who receives (today)</th><th style="width:31%">Today — file:line</th><th style="width:32%">Proposed change</th></tr></thead>
+  <tbody>
+    <tr><td>Reason step</td><td>—</td><td>Does not exist. Wizard goes amount → bill (<code>paymentFlow.js:315-334</code>).</td><td class="prop">New step <code>req_reason</code> after the amount: 3–120 chars, no skip. Reason on the ActionJSON, on the three cards, on My requests; Postgres <code>payment_reasons</code> row at submit (migration 002), optional mirror column S on PaymentRequests (spec Q1).</td></tr>
+    <tr><td>Submit → admin card (4)</td><td>Every env admin minus an admin requester</td><td><code>paymentFlow.js:395-404</code> → <code>approvalEvents.js:1700-1729</code>; duplicate flag on top. Bill not forwarded (<code>sale_doc_file_id: undefined</code>).</td><td class="prop">Add the <code>Reason:</code> line. Forward the bill with the card, as sale docs are (Q5).</td></tr>
+    <tr><td>Reminder</td><td>Same set, every <code>REMINDER_HOURS_ADMIN</code> / <code>APPROVAL_REMINDER_HOURS</code> hours (Settings; default 6; 0 = off) while the queue row is pending</td><td><code>approvalReminder.js:80-112</code>; an approved-but-unpaid payment is never reminded.</td><td class="prop">Unchanged for approval. A separate "waiting for finance" reminder to the finance seat after N hours (Q5).</td></tr>
+    <tr><td>First signature (5)</td><td>Signer (toast + DM); requester (DM with signer's name); every other env admin (text pointer, card untouched)</td><td><code>approvalEvents.js:1897-1930</code></td><td>Unchanged.</td></tr>
+    <tr><td>Final approval (6)</td><td>Deciding admin ("approved by A + B"); requester (generic). First signer: nothing.</td><td><code>approvalEvents.js:2020-2021</code>; <code>PaymentRequests.approved_by</code> = final tapper's raw id (<code>inventoryService.js:1623</code>); pair only in ApprovalQueue col H (<code>approverStamp.js:85-101</code>).</td><td class="prop">Requester and BOTH approvers get the named notice (card 6 b′); <code>approved_by</code> stores "Ajeet ‖ John" (the header at <code>paymentRequestsRepository.js:23</code> already documents that shape).</td></tr>
+    <tr><td>Finance card (7)</td><td>The ONE active Users row in department Finance; else ALL env admins + warning</td><td><code>paymentCards.js:121</code> → <code>paymentService.js:125-129</code> (<code>financeHead :63-90</code>). <code>FINANCE_IDS</code> never consulted.</td><td class="prop"><b>Recommended rule:</b> the card goes to every id in Railway <code>FINANCE_IDS</code>; if that is empty, the Users 'Finance' department row; if both are empty, all admins with the warning line. Card names both approvers, the reason, and the requester by name.</td></tr>
+    <tr><td>Who may Mark Done / Decline</td><td>Finance head when the sheet names one; else any env admin. <code>FINANCE_IDS</code> holders refused.</td><td><code>paymentService.js:112-122</code>; <code>paymentFlow.js:446-449, 473-476</code></td><td class="prop">Honoured from any id the card was sent to under the rule above (so the Railway finance ID can mark done).</td></tr>
+    <tr><td>Mark Done (8, 9)</td><td>Requester only (DM); fresh confirmation in the tapper's chat. Approvers, other admins, original cards: nothing.</td><td><code>paymentFlow.js:459-469</code> (<code>notifyRaiser :525-530</code>); proof col O never written.</td><td class="prop">Optional proof prompt (<code>pay:proof:skip</code>) writing col O; the 💸 Paid notice to requester + both approvers; finance card keyboard(s) wiped; inbox record shows Done.</td></tr>
+    <tr><td>Decline (12)</td><td>Requester only; tapper's card edited</td><td><code>paymentFlow.js:504-509</code></td><td class="prop">Both approvers DM'd with the reason (as PAY-1 spec §Decline promised); finance card keyboard(s) wiped.</td></tr>
+    <tr><td>Reject (11)</td><td>Rejecting admin + requester</td><td><code>approvalEvents.js:2116-2117</code>; PaymentRequests row untouched (<code>rejectApproval</code> has no payment branch).</td><td class="prop">Flip the PaymentRequests row to <code>rejected</code> so My requests stops saying "waiting".</td></tr>
+    <tr><td>Where <code>FINANCE_IDS</code> is used today</td><td>Read-only gates only</td><td>Typed <code>check_balance</code> (<code>telegramController.js:4809</code>), container values (<code>:6044</code>), Payouts/Incentives visibility (<code>taskFlow.js:135, :3113</code>; <code>incentivesRepository.js:6</code>); Manage Users summary (<code>userManageFlow.js:62</code>). Defaults to <code>ADMIN_IDS</code> when blank (<code>config/index.js:73, :293-295</code>).</td><td class="prop">Becomes the first source of the finance seat for the card and for Mark Done / Decline.</td></tr>
+    <tr><td>Sheet row lifecycle (PaymentRequests A–R)</td><td>—</td><td>append <code>pending_approval</code> + bill (<code>paymentFlow.js:359-372</code>) → <code>approved</code> + one id (<code>inventoryService.js:1623</code>) → <code>done</code> + done_by/done_at (<code>paymentFlow.js:459-461</code>) | <code>declined</code> + reason (<code>:497-500</code>). Never written: proof (O), <code>rejected</code>, a two-name approved_by.</td><td class="prop">All three gaps written; new trailing column S <code>reason</code> (mirror of the Postgres row) if the owner takes spec Q1.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>4 · Questions for the owner</h2>
+<p class="note">One line each; the recommended answer comes first.</p>
+<ol class="q">
+  <li><b>Q1 — Finance recipient rule.</b> Recommended: the card goes to every id in Railway <code>FINANCE_IDS</code>; if that is empty, the Users 'Finance' department row; if both are empty, all admins with the warning line — and ✔ Mark Done / ✖ Decline are honoured from any of those ids. Alternative: keep the Users sheet as the only source and add <code>Finance</code> to the Office phone's department cell yourself (the two mechanisms are unrelated today).</li>
+  <li><b>Q2 — "Reflected back to all".</b> Recommended: the 💸 Paid / ✖ Declined notice goes to the requester + the two admins who signed (Ajeet and John) only; every other admin sees the outcome in the 🛂 inbox record. Alternative: every admin in the pool gets the notice too (more noise on every payment).</li>
+  <li><b>Q3 — Proof on the Paid notice.</b> Recommended: yes — when finance attached a transfer screenshot, the Paid notice is sent as that photo with the text as caption (requester and approvers); without proof, plain text. Alternative: text only, proof kept on the row for the record.</li>
+  <li><b>Q4 — Inbox record after Done.</b> Recommended: yes — the resolved inbox view for a payment reads the PaymentRequests row and adds one line: <i>💸 Paid by Office · when · PAY-…</i> / <i>🏦 With finance to pay</i> / <i>✖ Declined by Office · reason</i>; and the finance card's buttons are wiped once Done or Declined. Alternative: leave the inbox at "Already approved" and rely on the DMs.</li>
+  <li><b>Q5 — Bill on the admin card.</b> Recommended: forward the bill photo/PDF with the admin approval card and give the inbox card a 📄 chip, as sale documents already have; today admins read "Bill: attached" without the file (only finance gets it).</li>
+  <li><b>Q6 — Reject flips the row.</b> Recommended: an admin Reject also flips the PaymentRequests row to <code>rejected</code> (today it stays <code>pending_approval</code> forever and My requests keeps saying "waiting"); and Reject asks a one-line reason like Decline does. Alternative: flip only, no reason.</li>
+  <li><b>Q7 — Finance reminder and queue.</b> Recommended: an approved-but-unpaid payment re-sends the finance card after <code>PAYMENT_FINANCE_REMINDER_HOURS</code> (Settings, default 4) and the Payments hub gains a "💳 Waiting for me to pay" list for the finance seat (<code>awaitingPayment()</code> exists with no caller); today a missed finance card is never re-sent.</li>
+  <li><b>Q8 — Small fixes to ride along.</b> Recommended: escape or send plain the Paid / Declined DMs (a payee or bank name with <code>_ * ` [</code> silently loses the message today); store <code>approved_by</code> as the pair; show the requester's name, not the raw id, on the finance card; put payments in their own 🛂 inbox category with the dual-admin badge. Say if any of these should wait.</li>
+</ol>
+
+<p class="note" style="margin-top:24px">Sources: <code>src/flows/paymentFlow.js</code>, <code>src/services/paymentService.js</code>, <code>src/services/paymentCards.js</code>, <code>src/events/approvalEvents.js</code>, <code>src/services/inventoryService.js</code>, <code>src/services/approvalReminder.js</code>, <code>src/flows/approvalsInboxFlow.js</code>, <code>src/repositories/paymentRequestsRepository.js</code>, <code>src/config/index.js</code>; specs <code>PAY-1_PAYMENT_REQUESTS.md</code>, <code>PAY-2_PAYMENT_REASON.md</code>; BUSINESS_RULES §13, §17. Nothing in this document is implemented; every yellow item waits for the owner's go.</p>
+
+</body>
+</html>
