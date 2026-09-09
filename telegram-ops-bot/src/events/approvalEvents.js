@@ -1672,9 +1672,11 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
   // and never saw it. Flag loudly, never suppress — a silent drop could eat
   // a genuine repeat order, and that is a worse failure than a warning line.
   let dupeLine = '';
+  let queueRow = null; // PAY-2 — the row being notified, from the read below
   try {
     const { duplicateIndex } = require('../utils/duplicateApprovals');
     const pending = await approvalQueueRepository.getAllPending();
+    queueRow = pending.find((r) => String(r.requestId) === String(requestId)) || null;
     const index = duplicateIndex(pending);
     const group = index.get(String(requestId)) || [];
     const others = group.filter((r) => String(r.requestId) !== String(requestId));
@@ -1724,6 +1726,21 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
       }
     }
   }
+  // PAY-2 §2 G — a payment request's bill rides with the admin card (the
+  // sale flows forward theirs at submit; the payment payload carries
+  // `bill_file_id`, and this is the one place every payment card — submit
+  // and reminder — is built). Photo first, document as the fallback. Reads
+  // the pending list already fetched above — no extra Sheets call.
+  try {
+    const aj = queueRow && queueRow.actionJSON;
+    if (aj && aj.action === 'request_payment' && aj.bill_file_id) {
+      await require('../services/approvalCards').forwardAttachmentsToAdmins(bot, requestId, [{
+        fileId: aj.bill_file_id,
+        kind: aj.bill_file_type === 'document' ? 'document' : 'photo',
+        caption: `📎 Bill for payment request ${requestId}`,
+      }], excludeUserId);
+    }
+  } catch (e) { logger.warn(`PAY-2 bill forward for ${requestId}: ${e.message}`); }
   // VRF-1 (owner 22-Jul) — fire-and-forget bill-vs-request check for
   // documented sales: the card above is never delayed by OCR; the 🔬
   // verdict follows as its own message. The service itself filters to
@@ -2017,8 +2034,11 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
         }
         // RET-3 — a return says what it credited, on both sides.
         const creditTail = result.creditNote ? `\n${result.creditNote}` : '';
-        await bot.sendMessage(chatIdCb, approvedMsg + creditTail);
-        await notifyEmployee(bot, requestingUser, requestId, `✅ Your request ${shortRequestRef(requestId)} has been approved by admin. Changes applied.${creditTail}`);
+        // PAY-2 §2 C — the executor's own closing line (which pair approved a
+        // payment, and that it is now with finance) rides the same way.
+        const noteTail = result.note ? `\n${result.note}` : '';
+        await bot.sendMessage(chatIdCb, approvedMsg + creditTail + noteTail);
+        await notifyEmployee(bot, requestingUser, requestId, `✅ Your request ${shortRequestRef(requestId)} has been approved by admin. Changes applied.${creditTail}${noteTail}`);
 
         // CAT-C1 — a container landed with designs lacking fresh catalogue
         // photos (shades differ per shipment): ONE checklist card to every

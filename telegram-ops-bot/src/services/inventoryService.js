@@ -399,6 +399,10 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   // re-approved). Null for branches that have no custom message.
   let customMessage = null;
   let creditNote = null; // RET-3 — what a return credited, shown on the approve reply
+  // PAY-2 §2 C — the payment executor's own closing line ("approved by
+  // Ajeet ‖ John — now with finance to pay"), delivered by approvalEvents
+  // the way the RET-3 credit note is. Null for every other action.
+  let paymentNote = null;
   // H6 — ERP/ledger hook failures on money paths. Inventory mutations are
   // already applied when these run, so a failure here means BOOKS ≠ STOCK.
   // Collected (not thrown) and returned so approvalEvents can warn the
@@ -1620,9 +1624,22 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     if (pay.status !== 'pending_approval') {
       customMessage = `ℹ️ Payment ${pay.payment_id} is already ${pay.status} — nothing changed.`;
     } else {
-      await paymentRequestsRepo.update(pay.payment_id, { status: 'approved', approved_by: approvedBy });
+      // PAY-2 §2 C — `approved_by` stores the PAIR ("Ajeet ‖ John"): the
+      // first signature parked on the queue payload plus this deciding tap,
+      // named by approverStamp exactly as APR-1 names them in column H.
+      const stamp = require('./approverStamp');
+      const pairLabel = await paymentApproverPair(aj, approvedBy);
+      await paymentRequestsRepo.update(pay.payment_id, { status: 'approved', approved_by: pairLabel });
+      // The trail row rides AFTER the sheet write and fails open (§1).
+      await recordPaymentEvent({
+        paymentId: pay.payment_id, approvalRequestId: requestId, kind: 'approved',
+        actorId: approvedBy, actorName: pairLabel,
+        detail: { approverIds: stamp.approverIds(aj, approvedBy), approverLabel: pairLabel },
+      });
       const paymentService = require('./paymentService');
-      customMessage = `✅ Payment of ${paymentService.fmtNaira(pay.amount_ngn)} to *${pay.payee_name}* approved — now with finance to pay.`;
+      // Plain text — it is appended to plain-text replies on both sides (§2 I).
+      paymentNote = `✅ Payment of ${paymentService.fmtNaira(pay.amount_ngn)} to ${pay.payee_name} approved by ${pairLabel} — now with finance to pay.`;
+      customMessage = paymentNote;
     }
   } else if (aj.action === 'edit_bale') {
     // EDB-1 — the bale card edited in place, applied as CRUD on the sheet.
@@ -1843,7 +1860,34 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   }
   await auditLogRepository.append('approval_approved', auditPayload, approvedBy);
   // H6 — erpFailures non-empty means stock moved but books did not.
-  return { ok: true, bundleReport, message: customMessage, erpFailures, invoice, approver: approverLabel, creditNote };
+  return { ok: true, bundleReport, message: customMessage, erpFailures, invoice, approver: approverLabel, creditNote, note: paymentNote };
+}
+
+/**
+ * PAY-2 §2 C — the approving pair for a payment row: approverStamp names
+ * the signatures (first tap from the payload, deciding tap from the
+ * caller); the PaymentRequests cell joins them with ‖ (column L's contract
+ * since PAY-1) where the queue's column H uses +. Never throws.
+ */
+async function paymentApproverPair(aj, actorId) {
+  try {
+    const label = await require('./approverStamp').labelFor({ actionJSON: aj, actorId });
+    return String(label || '').split(' + ').filter(Boolean).join(' ‖ ') || String(actorId || '');
+  } catch (_) {
+    return String(actorId || '');
+  }
+}
+
+/**
+ * PAY-2 §1 — one `payment_events` trail row, fail-open: Postgres off, the
+ * module absent or a query error costs a log line, never the approval.
+ */
+async function recordPaymentEvent(args) {
+  try {
+    await require('../repositories/paymentEventsRepository').record(args);
+  } catch (e) {
+    logger.warn(`payment_events ${args && args.kind} for ${args && args.paymentId} not recorded: ${e.message}`);
+  }
 }
 
 async function rejectApproval(requestId, rejectedBy) {
@@ -1900,6 +1944,26 @@ async function rejectApprovalInner(requestId, rejectedBy) {
   }
   const rejecterLabel = await require('./approverStamp')
     .labelFor({ actionJSON: aj, actorId: rejectedBy });
+  if (aj.action === 'request_payment') {
+    // PAY-2 §2 F — the PaymentRequests row follows the queue row to
+    // `rejected`, so 📋 My requests stops saying "waiting for approval".
+    // The standard reject prompt asks no reason today, so decline_reason
+    // is written blank (the column is finance's, for a decline). Non-fatal
+    // like the other branches: the queue row is still marked rejected.
+    try {
+      const paymentRequestsRepo = require('../repositories/paymentRequestsRepository');
+      const pay = await paymentRequestsRepo.findByApprovalRequestId(requestId);
+      if (pay && pay.status === 'pending_approval') {
+        await paymentRequestsRepo.update(pay.payment_id, { status: 'rejected', decline_reason: '' });
+        await recordPaymentEvent({
+          paymentId: pay.payment_id, approvalRequestId: requestId, kind: 'rejected',
+          actorId: rejectedBy, actorName: await paymentApproverPair({}, rejectedBy),
+        });
+      }
+    } catch (e) {
+      logger.error(`request_payment reject cleanup FAILED for ${requestId}: ${e.message} — the PaymentRequests row still reads pending_approval`);
+    }
+  }
   await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString(), rejecterLabel);
   await auditLogRepository.append('approval_rejected', { requestId, rejectedBy, approver: rejecterLabel }, rejectedBy);
   return { ok: true };

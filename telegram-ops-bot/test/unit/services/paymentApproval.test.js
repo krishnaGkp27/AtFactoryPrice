@@ -71,8 +71,18 @@ test('PAY-1: both money actions are ALWAYS dual-admin, whatever the amount', () 
 // payable when its linked Telegram ID is an ACTIVE Users-sheet employee, so
 // these fixtures carry the identity a real row carries.
 const usersRepository = require(path.join(SRC, 'repositories/usersRepository'));
-usersRepository.findByUserId = async (id) => (String(id) === '4242'
-  ? { user_id: '4242', name: 'Abdul', status: 'active' } : null);
+// PAY-2 — the two admins, so the pair stamp resolves NAMES, never ids.
+const USERS = {
+  4242: { user_id: '4242', name: 'Abdul', status: 'active' },
+  777: { user_id: '777', name: 'Ajeet', status: 'active', role: 'admin' },
+  888: { user_id: '888', name: 'John', status: 'active', role: 'admin' },
+};
+usersRepository.findByUserId = async (id) => USERS[String(id)] || null;
+
+// PAY-2 §1 — the Postgres trail, stubbed: what the executor records.
+const paymentEventsRepo = require(path.join(SRC, 'repositories/paymentEventsRepository'));
+let events = [];
+paymentEventsRepo.record = async (args) => { events.push(args); return events.length; };
 
 test('PAY-1: approving a registration makes the account payable', async () => {
   const rows = [{ account_id: 'PAC-1', owner_name: 'Abdul', owner_type: 'employee', owner_telegram_id: '4242', bank: 'GTBank', account_number: '0123456789', status: 'pending' }];
@@ -109,16 +119,100 @@ test('PAY-1: approving a payment AUTHORISES it — it does not pay it', async ()
     payment_id: 'PAY-1', payee_name: 'Abdul', amount_ngn: 45000, status: 'pending_approval',
   };
   const patches = [];
+  events = [];
   requestsRepo.findByApprovalRequestId = async () => row;
   requestsRepo.update = async (id, patch) => { patches.push({ id, patch }); Object.assign(row, patch); return row; };
 
-  const res = await execute('request_payment', 'R2', { payment_id: 'PAY-1' });
+  // PAY-2 §2 C — Ajeet signed first (parked on the payload); John decides.
+  approvalQueueRepository.getAllPending = async () => ([{
+    requestId: 'R2', user: '4242', status: 'pending',
+    actionJSON: { action: 'request_payment', payment_id: 'PAY-1', approvals: ['777'] },
+  }]);
+  const res = await inventoryService.executeApprovedAction('R2', '888');
   assert.equal(patches.length, 1);
-  assert.deepEqual(patches[0].patch, { status: 'approved', approved_by: 'Ajeet ‖ John' });
+  assert.deepEqual(patches[0].patch, { status: 'approved', approved_by: 'Ajeet ‖ John' },
+    'approved_by stores the PAIR, names not ids, ‖-joined as column L promises');
   assert.equal(row.status, 'approved', 'approved — NOT done');
   assert.ok(!row.done_by, 'nobody has moved money yet');
-  assert.match(res.message || '', /now with finance to pay/,
-    'the message says what still has to happen');
+  const line = '✅ Payment of ₦45,000 to Abdul approved by Ajeet ‖ John — now with finance to pay.';
+  assert.equal(res.message, line, 'the message says who approved and what still has to happen');
+  assert.equal(res.note, line, 'and rides back as `note` for approvalEvents to deliver on both sides');
+  assert.ok(!/\*/.test(res.note), 'plain text — it is appended to plain-text replies');
+  // The trail row: after the sheet write, carrying ids AND the label.
+  assert.equal(events.length, 1);
+  assert.equal(events[0].kind, 'approved');
+  assert.equal(events[0].paymentId, 'PAY-1');
+  assert.equal(events[0].approvalRequestId, 'R2');
+  assert.equal(events[0].actorId, '888');
+  assert.deepEqual(events[0].detail, { approverIds: ['777', '888'], approverLabel: 'Ajeet ‖ John' });
+});
+
+test('PAY-2: a failing trail write never costs the approval (fail-open)', async () => {
+  const row = { payment_id: 'PAY-2', payee_name: 'Abdul', amount_ngn: 4000, status: 'pending_approval' };
+  requestsRepo.findByApprovalRequestId = async () => row;
+  requestsRepo.update = async (id, patch) => { Object.assign(row, patch); return row; };
+  const orig = paymentEventsRepo.record;
+  paymentEventsRepo.record = async () => { throw new Error('pg down'); };
+  try {
+    const res = await execute('request_payment', 'R2b', { payment_id: 'PAY-2' });
+    assert.notEqual(res.ok, false);
+    assert.equal(row.status, 'approved');
+    assert.match(res.note || '', /now with finance to pay/);
+  } finally { paymentEventsRepo.record = orig; }
+});
+
+test('PAY-2: `note` is null for every other action', async () => {
+  accountsRepo.findByApprovalRequestId = async () => ({
+    account_id: 'PAC-N', owner_name: 'Abdul', owner_type: 'employee', owner_telegram_id: '4242',
+    bank: 'GTBank', account_number: '0123456789', status: 'pending',
+  });
+  accountsRepo.setStatus = async () => {};
+  const res = await execute('register_payment_account', 'R-N');
+  assert.notEqual(res.ok, false);
+  assert.equal(res.note, null);
+});
+
+// PAY-2 §2 F — an admin's Reject flips the PaymentRequests row too, so
+// 📋 My requests stops saying "waiting for approval".
+async function reject(requestId, aj, rejectedBy = '777') {
+  approvalQueueRepository.getAllPending = async () => ([{
+    requestId, user: '4242', status: 'pending', actionJSON: { action: 'request_payment', ...aj },
+  }]);
+  return inventoryService.rejectApproval(requestId, rejectedBy);
+}
+
+test('PAY-2: rejecting a payment request flips its row to rejected and logs who', async () => {
+  const row = { payment_id: 'PAY-3', payee_name: 'Abdul', amount_ngn: 4000, status: 'pending_approval' };
+  const patches = [];
+  events = [];
+  requestsRepo.findByApprovalRequestId = async (id) => (id === 'R3' ? row : null);
+  requestsRepo.update = async (id, patch) => { patches.push({ id, patch }); Object.assign(row, patch); return row; };
+  const res = await reject('R3', { payment_id: 'PAY-3' });
+  assert.equal(res.ok, true);
+  assert.deepEqual(patches, [{ id: 'PAY-3', patch: { status: 'rejected', decline_reason: '' } }],
+    'the standard reject prompt asks no reason, so the column stays blank');
+  assert.ok(requestsRepo.STATUSES.includes('rejected'), 'the repository knows the status');
+  assert.equal(events.length, 1);
+  assert.equal(events[0].kind, 'rejected');
+  assert.equal(events[0].paymentId, 'PAY-3');
+  assert.equal(events[0].actorId, '777');
+  assert.equal(events[0].actorName, 'Ajeet', 'the rejecting admin, by name');
+});
+
+test('PAY-2: a reject never reopens a payment that is past approval', async () => {
+  const row = { payment_id: 'PAY-4', payee_name: 'Abdul', amount_ngn: 4000, status: 'done' };
+  let wrote = false;
+  requestsRepo.findByApprovalRequestId = async () => row;
+  requestsRepo.update = async () => { wrote = true; };
+  const res = await reject('R4', { payment_id: 'PAY-4' });
+  assert.equal(res.ok, true, 'the queue row is still rejected');
+  assert.equal(wrote, false, 'a paid payment is not rewritten by a late reject');
+});
+
+test('PAY-2: a failing PaymentRequests write does not block the reject itself', async () => {
+  requestsRepo.findByApprovalRequestId = async () => { throw new Error('sheet down'); };
+  const res = await reject('R5', { payment_id: 'PAY-5' });
+  assert.equal(res.ok, true);
 });
 
 test('PAY-1: a payment already past approval is not re-approved', async () => {

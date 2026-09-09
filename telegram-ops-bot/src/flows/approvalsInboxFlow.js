@@ -81,6 +81,9 @@ const CATEGORIES = [
   { key: 'crm', label: '👤 Customers & contacts', actions: ['add_customer', 'add_contact', 'add_contact_link', 'update_contact_info'] },
   { key: 'intake', label: '📦 Stock intake', actions: ['receive_goods', 'bulk_receive_goods', 'add', 'add_stock', 'edit_bale'], dual: true },
   { key: 'finance', label: '💵 Finance', actions: ['record_payment', 'update_price', 'finalize_landed_cost', 'record_office_expense', 'add_bank', 'remove_bank', 'confirm_bank_reconciliation', 'set_forex_rate'], dual: true },
+  // PAY-2 §2 G — money LEAVING the office gets its own group: the payment
+  // request and the payee-account door it depends on, both dual-admin.
+  { key: 'payments', label: '💳 Payments', actions: ['request_payment', 'register_payment_account'], dual: true },
   // RET-4 — `return_thans` (the multi-than return card) belongs here, not in
   // ❓ Other, and it is dual-admin like the rest of the family.
   { key: 'returns', label: '↩️ Returns & reversals', actions: ['return_than', 'return_package', 'return_thans', 'revert_sale_bundle'], dual: true },
@@ -719,6 +722,56 @@ async function renderItems(bot, chatId, userId, opts = {}) {
 
 /* ───────────────────────── level 3: one item ───────────────────────── */
 
+/**
+ * The one attachment a request card can show on demand, whichever flow
+ * attached it: the sales bill (SAB-1), the returned-goods photo (RET-4) or
+ * the payment bill (PAY-2). `asPhoto` is the recorded kind — a picture sent
+ * as a File carries a DOCUMENT file_id and needs the other sender.
+ * @returns {{fileId:string, label:string, asPhoto:boolean}|null}
+ */
+function docPeek(aj) {
+  if (!aj) return null;
+  if (aj.sale_doc_file_id) return { fileId: aj.sale_doc_file_id, label: '📄 Sales bill', asPhoto: aj.sale_doc_type === 'photo' };
+  if (aj.return_photo_file_id) return { fileId: aj.return_photo_file_id, label: '📎 Returned goods', asPhoto: aj.return_photo_type !== 'document' };
+  if (aj.bill_file_id) return { fileId: aj.bill_file_id, label: '📄 Bill', asPhoto: aj.bill_file_type !== 'document' };
+  return null;
+}
+
+/**
+ * PAY-2 §2 G — one line on a resolved payment's record saying where the
+ * money stands, from the PaymentRequests row (names via approverStamp,
+ * never raw ids). '' for every other action, and on any read failure.
+ */
+async function paymentStatusLine(live, bot) {
+  const aj = (live && live.actionJSON) || {};
+  if (aj.action !== 'request_payment') return '';
+  const nameOf = async (id) => {
+    try {
+      return (await require('../services/approverStamp').labelFor({ actorId: id, bot })) || String(id || '');
+    } catch (_) { return String(id || ''); }
+  };
+  try {
+    const pay = await require('../repositories/paymentRequestsRepository').findByApprovalRequestId(live.requestId);
+    const queueStatus = String(live.status || '').toLowerCase();
+    let line = '';
+    if (queueStatus === 'rejected' || (pay && pay.status === 'rejected')) {
+      line = `❌ Rejected by ${live.approver || 'admin'}`;
+    } else if (!pay) {
+      line = '';
+    } else if (pay.status === 'done') {
+      line = `💸 Paid by ${await nameOf(pay.done_by)}${pay.done_at ? ` · ${pay.done_at}` : ''}${pay.payment_id ? ` · ${pay.payment_id}` : ''}`;
+    } else if (pay.status === 'declined') {
+      line = `✖ Declined by ${await nameOf(pay.done_by)}${pay.decline_reason ? ` · ${pay.decline_reason}` : ''}`;
+    } else if (pay.status === 'approved') {
+      line = '🏦 With finance to pay';
+    }
+    return line ? `\n${mdEscape(line)}` : '';
+  } catch (e) {
+    logger.warn(`approvalsInbox: payment status for ${live && live.requestId} unavailable: ${e.message}`);
+    return '';
+  }
+}
+
 async function renderItem(bot, chatId, userId, idx) {
   const session = sessionStore.get(userId);
   if (!session) return;
@@ -739,9 +792,16 @@ async function renderItem(bot, chatId, userId, idx) {
       const when = live.resolvedAt ? ` · ${fmtDate(live.resolvedAt)}` : '';  // TIME-1
       let card = '';
       try { card = await approvalCards.buildCardFromActionJSON(live.actionJSON) || ''; } catch (_) { /* bare */ }
+      // PAY-2 §2 G — an approved payment is not a paid one: the record says
+      // where the money stands, read from the PaymentRequests row.
+      const payLine = await paymentStatusLine(live, bot);
+      const peek = docPeek(live.actionJSON || {});
       await render(bot, chatId, userId,
-        `${escCard(card)}\n\n${st === 'approved' ? '✅' : '❌'} _Already ${st}${when} — no action needed._`,
-        [backRow('⬅ Back to list'), closeRow()]);
+        `${escCard(card)}\n\n${st === 'approved' ? '✅' : '❌'} _Already ${st}${when} — no action needed._${payLine}`,
+        [
+          ...(peek ? [[{ text: peek.label, callback_data: `abx:doc:${idx}` }]] : []),
+          backRow('⬅ Back to list'), closeRow(),
+        ]);
       return;
     }
   } catch (e) {
@@ -797,11 +857,12 @@ async function renderItem(bot, chatId, userId, idx) {
   // delivers it right here, as an ephemeral view swept on the next tap.
   // RET-4 — the return card's photo of the goods that came back rides the
   // same chip as the sales bill; only the words change.
+  // PAY-2 — a payment request's bill (payload `bill_file_id`) rides the
+  // same chip too.
   const docAj = item.actionJSON || {};
   const peekRow = [];
-  if (docAj.sale_doc_file_id || docAj.return_photo_file_id) {
-    peekRow.push({ text: docAj.sale_doc_file_id ? '📄 Sales bill' : '📎 Returned goods', callback_data: `abx:doc:${idx}` });
-  }
+  const peek = docPeek(docAj);
+  if (peek) peekRow.push({ text: peek.label, callback_data: `abx:doc:${idx}` });
   // VRF-4 — the full bill-check verdict on demand, beside the bill it
   // judged. Offered only when the row carries per-bale detail: a check that
   // ran before VRF-4 persisted counts alone, and a chip that could only
@@ -952,20 +1013,18 @@ async function handleCallback(bot, query) {
     const session0 = sessionStore.get(userId);
     const idx = parseInt(data.slice('abx:doc:'.length), 10);
     const item = session0 && Array.isArray(session0._items) ? session0._items[idx] : null;
-    const aj = item && item.actionJSON;
-    // RET-4 — the same chip delivers the return card's photo of the goods.
-    const docFile = aj && (aj.sale_doc_file_id || aj.return_photo_file_id);
-    if (!docFile) {
+    // RET-4 — the same chip delivers the return card's photo of the goods;
+    // PAY-2 — and a payment request's bill.
+    const peek = item ? docPeek(item.actionJSON || {}) : null;
+    if (!peek) {
       try { await bot.answerCallbackQuery(query.id, { text: 'No bill attached to this request.', show_alert: true }); } catch (_) { /* answered above */ }
       return true;
     }
-    const isReturnPhoto = !aj.sale_doc_file_id;
-    const caption = `${isReturnPhoto ? '📎 Returned goods' : '📄 Sales bill'} — ${approvalCards.shortRequestRef(item.requestId)}`;
-    // A return photo sent as a File has a DOCUMENT file_id — its recorded
-    // type decides the sender, exactly like the sales bill's.
-    const asPhoto = isReturnPhoto
-      ? aj.return_photo_type !== 'document'
-      : aj.sale_doc_type === 'photo';
+    const docFile = peek.fileId;
+    const caption = `${peek.label} — ${approvalCards.shortRequestRef(item.requestId)}`;
+    // A picture sent as a File has a DOCUMENT file_id — its recorded type
+    // decides the sender, exactly like the sales bill's.
+    const { asPhoto } = peek;
     let sent = null;
     try {
       sent = asPhoto

@@ -673,3 +673,115 @@ test('VRF-4: a 🔬 tap on a counts-only row is a toast, not a message', async (
     sessionStore.clear(ADMIN);
   }
 });
+
+/* PAY-2 §2 G — payments in the inbox: their own 💳 group with the dual
+ * badge, the bill as a 📄 chip, and a resolved record that says where the
+ * money stands (read from PaymentRequests, names never ids). */
+const paymentRequestsRepo = require(path.join(SRC, 'repositories/paymentRequestsRepository'));
+const PAYMENTS = [
+  { requestId: 'P-BILL', user: '7430648262', status: 'pending', createdAt: daysAgo(1), actionJSON: { action: 'request_payment', payment_id: 'PAY-1', payee_name: 'Abdul', payee_type: 'employee', amount_ngn: 4000, account_number: '7048940378', bank: 'OPAY', bill_file_id: 'bill-7' } },
+  { requestId: 'P-ACCT', user: '8700676816', status: 'pending', createdAt: daysAgo(2), actionJSON: { action: 'register_payment_account', owner_name: 'Musa', owner_type: 'contractor', bank: 'GTB', account_number: '0123456789' } },
+];
+NAMES[999] = 'Office';
+NAMES[777] = 'Ajeet';
+
+async function openPayment(bot) {
+  await flow.start(bot, ADMIN, ADMIN, null);
+  await flow.handleCallback(bot, cb('abx:cat:payments', ADMIN));
+  const items = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
+  await flow.handleCallback(bot, cb(items[0].callback_data, ADMIN));
+}
+
+test('PAY-2: 💳 Payments is its own group, dual-badged, and holds both payment doors', async () => {
+  const orig = approvalQueueRepository.getAllPending;
+  approvalQueueRepository.getAllPending = async () => [...PENDING, ...PAYMENTS];
+  try {
+    const bot = createFakeBot();
+    await flow.start(bot, ADMIN, ADMIN, null);
+    const kb = lastKb(bot);
+    const pays = kb.find((b) => b.callback_data === 'abx:cat:payments');
+    assert.ok(pays, 'a Payments category');
+    assert.match(pays.text, /💳 Payments — 2 ⚠️/, `count + dual badge, got: ${pays.text}`);
+    const other = kb.find((b) => b.callback_data === 'abx:cat:other');
+    assert.equal(other, undefined, 'nothing left in ❓ Other');
+    assert.equal(flow._internals.categoryOf(PAYMENTS[0]), 'payments');
+    assert.equal(flow._internals.categoryOf(PAYMENTS[1]), 'payments');
+  } finally {
+    approvalQueueRepository.getAllPending = orig;
+    sessionStore.clear(ADMIN);
+  }
+});
+
+test('PAY-2: the pending payment card offers the bill as a 📄 chip, delivered as a photo', async () => {
+  const orig = approvalQueueRepository.getAllPending;
+  approvalQueueRepository.getAllPending = async () => PAYMENTS;
+  try {
+    const bot = createFakeBot();
+    await openPayment(bot);
+    assert.match(lastText(bot).replace(/\\/g, ''), /Payment request: ₦4,000/);
+    const chip = lastKb(bot).find((b) => /^abx:doc:/.test(b.callback_data));
+    assert.ok(chip, 'a 📄 chip');
+    assert.equal(chip.text, '📄 Bill');
+    assert.ok(lastKb(bot).some((b) => b.callback_data === 'abx:ok:P-BILL'), 'still a decision');
+    await flow.handleCallback(bot, cb(chip.callback_data, ADMIN));
+    const photo = bot.calls.filter((c) => c.method === 'sendPhoto').pop();
+    assert.ok(photo, 'the bill is sent');
+    assert.equal(photo.args.photo, 'bill-7');
+    assert.match(photo.args.opts.caption, /^📄 Bill — /);
+  } finally {
+    approvalQueueRepository.getAllPending = orig;
+    sessionStore.clear(ADMIN);
+  }
+});
+
+test('PAY-2: a resolved payment record says where the money stands', async () => {
+  const orig = approvalQueueRepository.getAllPending;
+  const origLive = approvalQueueRepository.getByRequestId;
+  const origFind = paymentRequestsRepo.findByApprovalRequestId;
+  approvalQueueRepository.getAllPending = async () => PAYMENTS;
+  let live = { ...PAYMENTS[0], status: 'approved', resolvedAt: '2026-09-09T14:00:00Z', approver: 'Ajeet + John' };
+  approvalQueueRepository.getByRequestId = async () => live;
+  let payRow = null;
+  paymentRequestsRepo.findByApprovalRequestId = async (id) => (id === 'P-BILL' ? payRow : null);
+  const record = async () => {
+    const bot = createFakeBot();
+    await openPayment(bot);
+    sessionStore.clear(ADMIN);
+    return { text: lastText(bot).replace(/\\/g, ''), kb: lastKb(bot) };
+  };
+  try {
+    payRow = { payment_id: 'PAY-1', status: 'done', done_by: '999', done_at: '09-Sep-2026, 15:10' };
+    let r = await record();
+    assert.match(r.text, /Already approved/);
+    assert.match(r.text, /💸 Paid by Office · 09-Sep-2026, 15:10 · PAY-1/, r.text);
+    assert.ok(!/999/.test(r.text), 'a name, never the raw id');
+    assert.ok(r.kb.some((b) => b.text === '📄 Bill'), 'the bill chip survives on the record');
+    assert.ok(!r.kb.some((b) => /^abx:ok:/.test(b.callback_data)), 'no decision on a record');
+
+    payRow = { payment_id: 'PAY-1', status: 'approved' };
+    r = await record();
+    assert.match(r.text, /🏦 With finance to pay/, r.text);
+
+    payRow = { payment_id: 'PAY-1', status: 'declined', done_by: '999', decline_reason: 'Account name does not match' };
+    r = await record();
+    assert.match(r.text, /✖ Declined by Office · Account name does not match/, r.text);
+
+    live = { ...live, status: 'rejected', approver: 'Ajeet' };
+    payRow = { payment_id: 'PAY-1', status: 'rejected' };
+    r = await record();
+    assert.match(r.text, /Already rejected/);
+    assert.match(r.text, /❌ Rejected by Ajeet/, r.text);
+
+    // No PaymentRequests row (or a read failure) → the record still renders.
+    live = { ...live, status: 'approved' };
+    paymentRequestsRepo.findByApprovalRequestId = async () => { throw new Error('sheet down'); };
+    r = await record();
+    assert.match(r.text, /Already approved/);
+    assert.ok(!/With finance|Paid by/.test(r.text));
+  } finally {
+    approvalQueueRepository.getAllPending = orig;
+    approvalQueueRepository.getByRequestId = origLive;
+    paymentRequestsRepo.findByApprovalRequestId = origFind;
+    sessionStore.clear(ADMIN);
+  }
+});

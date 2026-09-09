@@ -33,6 +33,10 @@ const MAX_CARDS_PER_SWEEP = 10;
 // requestId → epoch-ms of the last reminder sent by THIS process.
 const _remindedAt = new Map();
 let _lastSweepMs = 0;
+// PAY-2 §2 H — payment_id → epoch-ms of the last finance reminder sent by
+// THIS process. The durable clock is the `payment_events` trail; this is
+// the floor that keeps a Postgres-less deploy from nudging every hour.
+const _financeRemindedAt = new Map();
 
 /**
  * APU-1 3.3: rows whose next step is NOT a standard approve:/reject: tap
@@ -61,10 +65,19 @@ function summarize(aj) {
 }
 
 /**
- * One reminder pass. Returns the number of cards sent (0 when disabled,
- * not yet due, or nothing qualifies). Never throws.
+ * One reminder pass: the pending-approval cards, then the PAY-2 finance
+ * nudge on the same tick. Returns the number of APPROVAL cards sent (0
+ * when disabled, not yet due, or nothing qualifies) — the finance count is
+ * `sweepFinance`'s own. Never throws.
  */
-async function sweep(bot, { now = Date.now() } = {}) {
+async function sweep(bot, opts = {}) {
+  const sent = await sweepPending(bot, opts);
+  await sweepFinance(bot, opts);
+  return sent;
+}
+
+/** The APR-1 pass: stale pending approvals get their admin card again. */
+async function sweepPending(bot, { now = Date.now() } = {}) {
   try {
     // APR-2: cadence comes from the reminder policy (REMINDER_HOURS_ADMIN,
     // falling back to the legacy APPROVAL_REMINDER_HOURS), and a max-age
@@ -139,7 +152,83 @@ async function sweep(bot, { now = Date.now() } = {}) {
   }
 }
 
-/** Test hook — reset per-process reminder memory. */
-function _resetForTests() { _remindedAt.clear(); _lastSweepMs = 0; }
+/**
+ * PAY-2 §2 H — the knob: hours of silence before an approved-but-unpaid
+ * payment re-sends its finance card. Settings-tunable; 0 = off. A missing
+ * or unreadable cell falls back to the in-code default, never to "on
+ * every hour".
+ */
+async function financeReminderHours() {
+  const dflt = Number(settingsRepository.DEFAULTS.PAYMENT_FINANCE_REMINDER_HOURS) || 0;
+  try {
+    const all = await settingsRepository.getAll();
+    const raw = all && all.PAYMENT_FINANCE_REMINDER_HOURS;
+    if (raw === undefined || raw === null || String(raw).trim() === '') return dflt;
+    const v = Number(raw);
+    return Number.isFinite(v) && v >= 0 ? v : dflt;
+  } catch (_) {
+    return dflt;
+  }
+}
 
-module.exports = { sweep, summarize, isStandardApprovable, MIN_AGE_MS, MAX_CARDS_PER_SWEEP, _resetForTests };
+/**
+ * PAY-2 §2 H — the finance nudge. For every payment the sheet says is
+ * approved but not paid, if `PAYMENT_FINANCE_REMINDER_HOURS` have passed
+ * since the LATER of the approval and the last finance card / reminder
+ * (the `payment_events` trail), the finance card is sent again through
+ * paymentCards.sendFinanceCard, which logs it as `reminder_sent`. Without
+ * a trail (Postgres off, or a payment approved before PAY-2) the queue
+ * row's resolve stamp is the approval time, and this process remembers
+ * what it sent. Returns the number of cards re-sent. Never throws.
+ */
+async function sweepFinance(bot, { now = Date.now() } = {}) {
+  try {
+    const hours = await financeReminderHours();
+    if (!hours || hours <= 0) return 0;
+    const windowMs = hours * 60 * 60 * 1000;
+    const paymentRequestsRepo = require('../repositories/paymentRequestsRepository');
+    const paymentEventsRepo = require('../repositories/paymentEventsRepository');
+    const paymentCards = require('./paymentCards');
+    const waiting = await paymentRequestsRepo.awaitingPayment();
+    let sent = 0;
+    for (const pay of waiting || []) {
+      if (sent >= MAX_CARDS_PER_SWEEP) break;
+      if (!pay || !pay.payment_id || pay.status !== 'approved') continue;
+      try {
+        const stamps = [_financeRemindedAt.get(pay.payment_id) || 0];
+        for (const kind of ['approved', 'finance_card_sent', 'reminder_sent']) {
+          const at = await paymentEventsRepo.lastKindAt(pay.payment_id, kind);
+          const ms = Date.parse(at || '') || 0;
+          if (ms) stamps.push(ms);
+        }
+        let since = Math.max(...stamps);
+        if (!since && pay.approval_request_id) {
+          const row = await approvalQueueRepository.getByRequestId(pay.approval_request_id);
+          since = Date.parse((row && row.resolvedAt) || '') || 0;
+        }
+        if (!since) since = Date.parse(pay.raised_at || '') || 0;
+        if (!since || now - since < windowMs) continue;
+        const r = await paymentCards.sendFinanceCard(bot, pay.payment_id, { kind: 'reminder_sent' });
+        if (r && r.sent) {
+          _financeRemindedAt.set(pay.payment_id, now);
+          sent += 1;
+        }
+      } catch (e) {
+        logger.warn(`approvalReminder: finance reminder for ${pay.payment_id} failed: ${e.message}`);
+      }
+    }
+    if (sent) logger.info(`approvalReminder: re-sent ${sent}/${(waiting || []).length} finance card(s) awaiting payment`);
+    return sent;
+  } catch (e) {
+    logger.error('approvalReminder finance sweep failed:', e.message);
+    return 0;
+  }
+}
+
+/** Test hook — reset per-process reminder memory. */
+function _resetForTests() { _remindedAt.clear(); _financeRemindedAt.clear(); _lastSweepMs = 0; }
+
+module.exports = {
+  sweep, sweepPending, sweepFinance, financeReminderHours,
+  summarize, isStandardApprovable, MIN_AGE_MS, MAX_CARDS_PER_SWEEP, _resetForTests,
+};

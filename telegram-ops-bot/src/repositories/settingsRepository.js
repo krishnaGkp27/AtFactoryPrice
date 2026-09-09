@@ -97,6 +97,10 @@ const DEFAULTS = {
   // APR-1 — hours between pending-approval reminder cards (0 disables).
   // Covers approvals queued outside the bot process too (Drive imports).
   APPROVAL_REMINDER_HOURS: 6,
+  // PAY-2 §2 H — hours after an approval (or the last finance card /
+  // reminder) before an approved-but-unpaid payment re-sends the finance
+  // card to the finance seat. 0 disables the nudge.
+  PAYMENT_FINANCE_REMINDER_HOURS: 4,
   // MORN-1 — 09:15 admin morning digest (owner, 17-Jul-2026). Time is
   // HH:MM Nigeria local; category toggles editable in-bot (⏰ Morning
   // Digest tile). Launch state: customer notes ON, everything else OFF.
