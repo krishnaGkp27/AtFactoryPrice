@@ -1,6 +1,8 @@
 # PAY-1 — payment requests: registered accounts, dual-admin, one finance hand
 
 **Status: SHIPPED 14-Aug-2026.** The spec was locked with the owner
+
+> **Amended by PAY-2 (09-Sep-2026):** the request flow gains a typed *reason* step after the amount; the approval and finance cards print it; the finance card names both approvers and the requester by name and goes to the Railway `FINANCE_IDS` ids first; Mark Done asks for a proof and the Paid / Declined notices reach the requester and both signers; the reason and the event trail live in Railway Postgres, never in a sheet column. See `specs/PAY-2_PAYMENT_REASON.md`.
 first and then built to exactly; every decision below is his ruling from
 the 14-Aug discussion (his hand-drawn system-design card + Q&A), kept
 here as the record of why each piece is shaped the way it is.

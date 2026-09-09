@@ -1,4 +1,14 @@
-# PAY-2 — Every payment request carries a reason, and the payment lifecycle is closed end to end (BUILD SPEC — owner go 09-Sep-2026)
+# PAY-2 — Every payment request carries a reason, and the payment lifecycle is closed end to end (SHIPPED 09-Sep-2026)
+
+> **Shipped 09-Sep-2026** in four commits (Postgres step 1; executor / inbox /
+> reminder steps 3–5; flow / cards / finance seat steps 2 and 4; docs).
+> Gate: 2,106 tests, smoke 609, lint 0 errors. Two flags for the owner:
+> (1) the Paid notice goes out AFTER the proof step — if finance abandons the
+> proof prompt the row is `done` but nobody is told; say if the notice should
+> go first. (2) `FINANCE_IDS` is read from the env directly (config
+> substitutes the admin list when the env is blank, which would have hidden
+> the Users-row tier). Phase 2 (chips) and phase 3 (reason codes) wait for
+> the owner's word; both are queries over the rows now being written.
 
 Owner, 09-Sep-2026, on the PAY-1 approval card: *"There is no purpose defined
 in this card. All these expenses for the person must be tagged to a reason.
