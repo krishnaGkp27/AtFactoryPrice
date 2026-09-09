@@ -171,7 +171,6 @@ function cartRow(yards, thans) {
   }];
 }
 function fmtQty(n)   { return (Math.round((n || 0) * 100) / 100).toLocaleString('en-NG'); }
-function fmtNgn(n)   { return `₦${Math.round(n || 0).toLocaleString('en-NG')}`; }
 /**
  * Every card in this flow is sent with `parse_mode: 'Markdown'` (v1), but
  * this used to escape the MarkdownV2 set — so v1 printed the backslashes

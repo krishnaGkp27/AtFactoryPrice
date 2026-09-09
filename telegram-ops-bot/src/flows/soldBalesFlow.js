@@ -18,7 +18,7 @@
  * aggregated totals, so it is intentionally NOT used here. No writes.
  *
  * Sale price + value are gated behind pricingService.canSeeSalePrice; other
- * roles see quantities (thans/yards) without ₦ figures.
+ * roles see quantities (thans/yards) without value figures.
  *
  * Callback namespace `sbl:*`:
  *   sbl:close            end the flow → menu
@@ -33,7 +33,7 @@
  *
  * SBL-2 (owner, 02-Aug): pick_date now lands on a COMPACT supply card in
  * the transfer-card grammar (design → "Shade X ×N (bale numbers)"), with
- * the in-depth thans/yards/₦ view demoted behind 🔎 Full details. The 🧮
+ * the in-depth thans/yards/value view demoted behind 🔎 Full details. The 🧮
  * chip reads the sale doc(s) via vision OCR and re-renders the SAME card
  * with a 🟢 in front of every bale number the document contains —
  * digit-exact matches only, never a guessed near-miss. Unmatched card
@@ -44,6 +44,7 @@
 
 const sessionStore        = require('../utils/sessionStore');
 const { makeRenderer, rowsFor } = require('../utils/flowKit');
+const money = require('../utils/money');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const designAssetsRepository = require('../repositories/designAssetsRepository');
 const designCategoriesRepository = require('../repositories/designCategoriesRepository');
@@ -64,7 +65,6 @@ const DATES_PER_PAGE = 8;    // CSUP-1 approved layout: 8 day-tiles per page
 /* ───────────────────────────── helpers ───────────────────────────── */
 
 function fmtQty(n) { return (Math.round((n || 0) * 100) / 100).toLocaleString('en-NG'); }
-function fmtNgn(n) { return `₦${Math.round(n || 0).toLocaleString('en-NG')}`; }
 const { closeRow, backRow } = rowsFor('sbl');
 
 function chunkButtons(buttons, perRow) {
@@ -505,7 +505,7 @@ async function renderDetail(bot, chatId, userId) {
       + `   ${g.thans.length} than (${thanNos}) · ${fmtQty(g.yards)} yd`;
     if (showMoney) {
       const uniform = g.prices.size === 1 ? [...g.prices][0] : null;
-      line += uniform ? ` @ ${fmtNgn(uniform)} = ${fmtNgn(g.amount)}` : ` = ${fmtNgn(g.amount)}`;
+      line += uniform ? ` @ ${money.saleRate(uniform)} = ${money.sale(g.amount)}` : ` = ${money.sale(g.amount)}`;
     }
     body += line + '\n';
   }
@@ -513,7 +513,7 @@ async function renderDetail(bot, chatId, userId) {
     body += `\n_…and ${groupList.length - MAX_DETAIL_BALES} more bale(s) not shown._\n`;
   }
   body += `\n──────────\n*Total:* ${dayQty} · ${fmtQty(totYards)} yd`;
-  if (showMoney) body += ` · *${fmtNgn(totAmount)}*`;
+  if (showMoney) body += ` · *${money.sale(totAmount)}*`;
 
   await render(bot, chatId, userId, body, [backRow('⬅ Summary'), closeRow()]);
 }

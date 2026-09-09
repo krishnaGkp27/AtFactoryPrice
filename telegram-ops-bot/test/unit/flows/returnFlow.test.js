@@ -547,11 +547,13 @@ test('RET-4 · the confirm card shows the booked-rate credit, the date and the c
   assert.ok(text.includes(`📅 Returned: *${fmtDate(iso)}*`), `date on the card, got: ${text}`);
   assert.match(text, /⚠️ Damaged — 6 yd cut off/);
   assert.match(text, /📎 Photo attached/);
-  assert.match(text, /💰 Credits ABBA \*₦150,000\* \(60 yds × ₦2,500\/yd\)/);
+  // CUR-1 C3→B: the credit at the booked rate is bare — no ₦ (BUSINESS_RULES §17).
+  assert.match(text, /💰 Credits ABBA \*150,000\* \(60 yds × 2,500\/yd\)/);
+  assert.ok(!/₦|NGN/.test(text), 'return credit line carries no symbol or code');
   assert.match(text, /Queues dual-admin approval/);
 });
 
-test('RET-4 · no rate on record says so instead of promising a ₦0 credit', async () => {
+test('RET-4 · no rate on record says so instead of promising a zero credit', async () => {
   reset();
   rows = ROWS.map((r) => (r.packageNo === '9037' ? { ...r, pricePerYard: 0 } : r));
   const bot = makeBot();

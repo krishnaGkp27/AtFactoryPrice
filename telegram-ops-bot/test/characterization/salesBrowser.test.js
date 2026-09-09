@@ -134,7 +134,9 @@ test('day list: one tappable row per sale, short summary, ⚠️BD marker', asyn
     .pop().args.opts.reply_markup.inline_keyboard.flat();
   const itemBtns = kb.filter((b) => b.callback_data.startsWith('sbr:itm:'));
   assert.equal(itemBtns.length, 2, 'one row per SaleRefId group');
-  assert.match(itemBtns[0].text, /ALHAJI MUSA — 2 items · 55 yds · ₦55,000 ⚠️BD/);
+  // CUR-1 side B: the value is bare — no ₦, no unit (BUSINESS_RULES §17).
+  assert.match(itemBtns[0].text, /ALHAJI MUSA — 2 items · 55 yds · 55,000 ⚠️BD/);
+  assert.ok(!/₦|NGN/.test(itemBtns[0].text), 'sale value carries no symbol or code');
   assert.match(itemBtns[1].text, /MAMA K — 1 item · 20 yds/);
   assert.ok(!itemBtns[1].text.includes('⚠️BD'), 'normal sale has no marker');
 });
@@ -146,7 +148,8 @@ test('detail: per-bale lines, totals, payment, backdated stamp, approval + invoi
   assert.match(text, /Sale — ALHAJI MUSA/);
   assert.match(text, /512 sh 3 — 25 yds \(Kano office\)/);
   assert.match(text, /618 — 30 yds/);
-  assert.match(text, /Total: \*55 yds\* · \*₦55,000\*/);
+  assert.match(text, /Total: \*55 yds\* · \*55,000\*/);
+  assert.ok(!/₦/.test(text), 'CUR-1: no ₦ on the sale detail card');
   assert.match(text, /Payment: ZENITH — AFP LTD/);
   assert.match(text, /BACKDATED-5d/, 'backdated stamp surfaced to the admin');
   assert.match(text, /Approval: approved/);
@@ -215,7 +218,7 @@ test('customer → designs: real design chips, distinct physical bales, biggest 
   assert.match(chips[1].text, /🧵 618 — 1 bale \(30 yds\)/);
 });
 
-test('design → dates (mixed formats merge, newest first) → card with bale numbers + ₦', async () => {
+test('design → dates (mixed formats merge, newest first) → card with bale numbers + bare value', async () => {
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('sbr:dg:0'));
   const dateChips = lastKb(bot).filter((b) => b.callback_data.startsWith('sbr:cd:'));
@@ -226,10 +229,11 @@ test('design → dates (mixed formats merge, newest first) → card with bale nu
   const text = plain(bot);
   assert.match(text, new RegExp(`ALHAJI MUSA\\* — 🧵 \\*512\\* — \\*${TODAY_PRETTY}`));
   assert.match(text, /Bales \(yards\):\n824 \(150\), 831 \(300\)/, 'real bale numbers, per-bale than sums');
-  assert.match(text, /Day total: 2 bales · 450 yds · ₦450,000/);
+  assert.match(text, /Day total: 2 bales · 450 yds · 450,000/);
+  assert.ok(!/₦/.test(text), 'CUR-1: day total is bare');
 });
 
-test('unprinted bale falls back to baleUid tail; ₦ omitted without rates', async () => {
+test('unprinted bale falls back to baleUid tail; value omitted without rates', async () => {
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('sbr:tab:customer'));
   await controller.handleCallbackQuery(bot, cb('sbr:cu:1')); // MAMA K
@@ -244,7 +248,10 @@ test('unprinted bale falls back to baleUid tail; ₦ omitted without rates', asy
   const text = plain(bot);
   assert.match(text, /Bales \(yards\):\n7 \(20\), 77 \(40\)/, 'BAL-LEGACY-7 → tail label 7');
   assert.match(text, /Day total: 2 bales · 60 yds/);
-  assert.ok(!text.includes('₦'), 'no ₦ line when the day has no rates');
+  // CUR-1 §6: side B prints no ₦ for anyone, so the negative is pinned on
+  // the value SUFFIX — nothing may follow the yards when the day has no rates.
+  assert.match(text, /^Day total: 2 bales · 60 yds$/m, `nothing follows the yards when the day has no rates, got: ${text}`);
+  assert.ok(!/\d{1,3}(,\d{3})+/.test(text), 'no grouped money figure without rates');
 });
 
 test('back-chain: card → dates → designs → customers → tab screen', async () => {

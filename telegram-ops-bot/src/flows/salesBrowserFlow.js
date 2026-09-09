@@ -5,7 +5,7 @@
  *   Screen 1  tabs 💰 Sales | 📦 Supplies → day chips with mini-summaries
  *             (+ 📆 month calendar up to 90 days back)
  *   Screen 2  the day's list — ONE tappable row per sale/supply, short
- *             summary (customer · bales · yds · ₦ · ⚠️BD marker)
+ *             summary (customer · bales · yds · value · ⚠️BD marker)
  *   Screen 3  full detail: per-bale lines, rate, amount, receiving
  *             account, backdated stamp, approver, invoice number + link
  *
@@ -40,6 +40,7 @@ const approvalQueueRepository = require('../repositories/approvalQueueRepository
 const inventoryRepository = require('../repositories/inventoryRepository');
 const config = require('../config');
 const { makeRenderer, rowsFor, chunk } = require('../utils/flowKit');
+const money = require('../utils/money');
 const { aggregateDesigns, baleGroupKey } = require('../utils/inventoryPickers');
 const fmtDate = require('../utils/formatDate');
 const logger = require('../utils/logger');
@@ -60,7 +61,6 @@ function lagosISO(daysBack = 0) {
   return new Date(Date.now() - daysBack * 86400000).toLocaleDateString('en-CA', { timeZone: LAGOS_TZ });
 }
 function esc(s) { return String(s == null ? '' : s).replace(/[*_`[\]]/g, ''); }
-function ngn(n) { return `₦${Number(n || 0).toLocaleString('en-NG', { maximumFractionDigits: 0 })}`; }
 const { closeRow } = rowsFor('sbr');
 
 /* ── data assembly (read-time, raw sheets) ── */
@@ -170,7 +170,7 @@ async function start(bot, chatId, userId, messageId = null) {
     type: SESSION_TYPE, step: 'days', tab: 'sales',
     flowMessageId: messageId || null, startedAt: Date.now(), _items: [],
     // Money is gated per-session by capability (mirrors soldBalesFlow), so
-    // ₦ figures stay behind see_sale_price even if this flow's admin-only
+    // value figures stay behind see_sale_price even if this flow's admin-only
     // entry gate is ever widened to departments.
     showMoney: pricingService.canSeeSalePrice(String(userId)),
   });
@@ -267,7 +267,7 @@ async function showDay(bot, chatId, userId, dayIso, page = 0) {
   const rows = items.slice(p * ITEMS_PER_PAGE, (p + 1) * ITEMS_PER_PAGE).map((g, i) => {
     const idx = p * ITEMS_PER_PAGE + i;
     const label = g.kind === 'sale'
-      ? `${esc(g.customer || '—')} — ${g.lines.length} item${g.lines.length > 1 ? 's' : ''} · ${Math.round(g.yards)} yds${g.amount && session.showMoney ? ` · ${ngn(g.amount)}` : ''}${g.backdated ? ' ⚠️BD' : ''}`
+      ? `${esc(g.customer || '—')} — ${g.lines.length} item${g.lines.length > 1 ? 's' : ''} · ${Math.round(g.yards)} yds${g.amount && session.showMoney ? ` · ${money.sale(g.amount)}` : ''}${g.backdated ? ' ⚠️BD' : ''}`
       : `${esc(g.customer)} — ${g.totalQty} bale(s) · ${esc(g.warehouse)} · ${esc(g.status)}`;
     return [{ text: label, callback_data: `${NS}itm:${idx}` }];
   });
@@ -279,7 +279,7 @@ async function showDay(bot, chatId, userId, dayIso, page = 0) {
   const totalYds = tab === 'sales' ? items.reduce((s, g) => s + g.yards, 0) : 0;
   const totalAmt = tab === 'sales' ? items.reduce((s, g) => s + g.amount, 0) : 0;
   const head = tab === 'sales'
-    ? `💰 *${fmtDate(dayIso)}* — ${items.length} sale${items.length > 1 ? 's' : ''} · ${Math.round(totalYds)} yds${totalAmt && session.showMoney ? ` · ${ngn(totalAmt)}` : ''}`
+    ? `💰 *${fmtDate(dayIso)}* — ${items.length} sale${items.length > 1 ? 's' : ''} · ${Math.round(totalYds)} yds${totalAmt && session.showMoney ? ` · ${money.sale(totalAmt)}` : ''}`
     : `📦 *${fmtDate(dayIso)}* — ${items.length} suppl${items.length > 1 ? 'ies' : 'y'}`;
   await render(bot, chatId, userId, `${head}\n\nTap an entry for full details:`, rows);
 }
@@ -300,7 +300,7 @@ async function showDetail(bot, chatId, userId, idx) {
       + `📅 Sale date: ${fmtDate(g.salesDate)}${g.backdated ? `  ⚠️ *${esc(g.backdated)}*` : ''}\n`
       + (g.salesPerson ? `🧑 Salesperson: ${esc(g.salesPerson)}\n` : '')
       + `\n${lines.join('\n')}\n\n`
-      + `Total: *${Math.round(g.yards)} yds*${g.amount && session.showMoney ? ` · *${ngn(g.amount)}*` : ''}\n`
+      + `Total: *${Math.round(g.yards)} yds*${g.amount && session.showMoney ? ` · *${money.sale(g.amount)}*` : ''}\n`
       + (g.paymentMode ? `💳 Payment: ${esc(g.paymentMode)}\n` : '');
     // Approval + invoice enrichment (best-effort lookups).
     if (g.saleRefId) {
@@ -455,7 +455,7 @@ async function showCustCard(bot, chatId, userId, idx) {
   const text = `📈 *${esc(session.customer)}* — 🧵 *${esc(design)}* — *${fmtDate(day)}*\n\n`
     + `Bales (yards):\n${list}\n\n`
     + `Day total: ${bales.length} bale${bales.length === 1 ? '' : 's'} · ${Math.round(yds)} yds`
-    + (amount && session.showMoney ? ` · ${ngn(amount)}` : '');
+    + (amount && session.showMoney ? ` · ${money.sale(amount)}` : '');
   await render(bot, chatId, userId, text, [
     [{ text: '⬅ Dates', callback_data: `${NS}dg:${session.designIdx}` }],
     [{ text: '⬅ Customers', callback_data: `${NS}tab:customer` }],

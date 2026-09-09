@@ -39,7 +39,7 @@ unitDisplayService.getThanVisibilityWarehouses = async () => new Set(['kano offi
 function soldRow(pkg, design, shade, thanNo, opts = {}) {
   return {
     packageNo: String(pkg), design, shade: String(shade), thanNo,
-    yards: opts.yards ?? 30, pricePerYard: opts.price ?? 0,
+    yards: opts.yards ?? 30, pricePerYard: opts.price ?? 1250,
     status: opts.status || 'sold', soldTo: opts.customer ?? 'OKESON',
     soldDate: opts.date ?? '2026-07-22', warehouse: opts.wh ?? 'IDUMOTA',
     baleUid: `U-${pkg}`,
@@ -106,6 +106,9 @@ test('date pick lands on the compact supply card in transfer-card grammar', asyn
   assert.match(text, / • Shade 3 ×1B \(1062\)/);
   assert.match(text, /🧵 \*77014\*/);
   assert.ok(!/yd|₦|#1/.test(text), 'no thans/yards/money on the compact card');
+  // CUR-1 §6: side B prints no ₦ anywhere, so the money negative is pinned on
+  // the digits the card must not carry (rate 1,250 · 60 yds → 75,000 · 37,500).
+  assert.ok(!/1,250|75,000|37,500/.test(text), `no money digits on the compact card, got: ${text}`);
   assert.ok(!/999|555/.test(text), 'other customers/days never leak in');
   const kb = lastKbTexts(bot);
   assert.ok(kb.some((b) => b === '📄 Sale doc|sbl:doc'), 'doc chip present');
@@ -176,6 +179,10 @@ test('🔎 full details opens the deep view; back returns to the card, dots inta
     const detail = lastText(bot);
     assert.match(detail, /Bale 1057/);
     assert.match(detail, /than/i, 'deep view carries than detail');
+    // CUR-1 side B: admin's deep view shows rate and amount bare (no ₦, no unit).
+    assert.match(detail, /60 yd @ 1,250\/yd = 75,000/, 'bale line: bare rate and amount');
+    assert.match(detail, /\*Total:\* 3B · 120 yd · \*150,000\*/, 'day total bare');
+    assert.ok(!/₦|NGN/.test(detail), 'no symbol or code on the deep view');
     await flow.handleCallback(bot, q('sbl:back', '777'));
     const back = lastText(bot);
     assert.match(back, /\(🟢1057\)/, 'dots survive the round trip');

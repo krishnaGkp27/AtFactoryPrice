@@ -68,7 +68,9 @@ test('return_than credits yards × the sold row price to the resolved buyer', as
   assert.equal(c.customerId, 'CUS-ABBA');
   assert.equal(c.customer, 'ABBA');
   assert.equal(c.txnId, 'RT-9037-1');
-  assert.match(res.creditNote, /Credited ₦75,000 to ABBA/);
+  // CUR-1 — a return credit is side B: bare figures, never ₦ (BUSINESS_RULES §17).
+  assert.match(res.creditNote, /Credited 75,000 to ABBA \(30 yds × 2,500\/yd\)/);
+  assert.doesNotMatch(res.creditNote, /₦|NGN/);
   // The Transactions row now carries the rate and the customer too.
   assert.equal(calls.txn[0].pricePerYard, 2500);
   assert.equal(calls.txn[0].customerId, 'CUS-ABBA');
@@ -78,7 +80,8 @@ test('an explicit rate on the request wins over the row price', async () => {
   const calls = harness({ aj: { action: 'return_than', packageNo: '9037', thanNo: 1, warehouse: 'Kano office', pricePerYard: 3000 }, thanRows: [THAN] });
   const res = await inventoryService.executeApprovedAction('REQ-RET', '777');
   assert.equal(calls.recordReturn[0].pricePerYard, 3000);
-  assert.match(res.creditNote, /₦90,000/);
+  assert.match(res.creditNote, /Credited 90,000 to ABBA/);
+  assert.doesNotMatch(res.creditNote, /₦/);
 });
 
 test('return_package with mixed than prices credits the exact sum', async () => {
@@ -89,7 +92,8 @@ test('return_package with mixed than prices credits the exact sum', async () => 
   const c = calls.recordReturn[0];
   assert.equal(c.yards, 50);
   assert.ok(Math.abs(c.yards * c.pricePerYard - 135000) < 1e-6, 'weighted rate reproduces 30×2500 + 20×3000');
-  assert.match(res.creditNote, /₦135,000/);
+  assert.match(res.creditNote, /Credited 135,000 to ABBA/);
+  assert.doesNotMatch(res.creditNote, /₦/);
 });
 
 test('no rate on record: stock returns, the missing credit is reported, never a silent ₦0', async () => {

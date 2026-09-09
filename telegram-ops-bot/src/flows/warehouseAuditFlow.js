@@ -31,6 +31,7 @@
 const sessionStore        = require('../utils/sessionStore');
 const { todayInLagos, normDay } = require('../utils/dates');
 const { makeRenderer, rowsFor } = require('../utils/flowKit');
+const money = require('../utils/money');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const inventoryService    = require('../services/inventoryService');
 const shadesRepository    = require('../repositories/shadesRepository');
@@ -1166,7 +1167,7 @@ async function renderThanCard(bot, chatId, userId) {
   const header =
     `📦 Bale ${summary.packageNo} — ${summary.design} · ${summary.shade}\n`
     + `Indent: ${summary.indent || '—'} · ${summary.warehouse}\n`
-    + (summary.pricePerYard ? `Price: ₦${fmtQty(summary.pricePerYard)}/yard\n` : '')
+    + (summary.pricePerYard ? `Price: ${money.saleRate(summary.pricePerYard)}\n` : '')
     + '\nTap a than: ⬜ → ✅ present → ❌ missing\n'
     + `Available: ${summary.availableThans} thans · ${fmtQty(summary.availableYards)} yds\n`
     + `Verified — ✅ ${present} · ❌ ${missing} · ⬜ ${unmarked} unchecked`;

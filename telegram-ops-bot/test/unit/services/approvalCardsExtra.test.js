@@ -18,9 +18,11 @@ test('payment card shows outstanding, after-payment figure, and an over-payment 
   accountingService.getCustomerLedger = async () => ({ outstandingAsOfToday: 200000 });
   let card = await approvalCards.buildPaymentCard({ customer: 'OKESON', amount: 50000, method: 'bank' });
   assert.match(card, /Customer: OKESON/);
-  assert.match(card, /Amount: ₦50,000/);
-  assert.match(card, /Outstanding today: ₦200,000/);
-  assert.match(card, /After this payment: ₦150,000/);
+  // CUR-1 C2 (R6): a customer payment IN is side B — bare, no symbol.
+  assert.match(card, /Amount: 50,000/);
+  assert.match(card, /Outstanding today: 200,000/);
+  assert.match(card, /After this payment: 150,000/);
+  assert.doesNotMatch(card, /₦/, 'no naira symbol on a sales-side card (BUSINESS_RULES §17)');
   assert.ok(!/EXCEEDS/.test(card));
 
   card = await approvalCards.buildPaymentCard({ customer: 'OKESON', amount: 250000, method: 'cash' });

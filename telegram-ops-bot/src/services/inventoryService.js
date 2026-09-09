@@ -16,8 +16,10 @@ const config = require('../config');
 const logger = require('../utils/logger');
 const mutex = require('../utils/asyncMutex');
 const { bus: erpBus, emitAsync: erpEmitAsync } = require('../events/erpEventBus');
-
-const CURRENCY = config.currency || 'NGN';
+// CUR-1 — every printed figure states its side: money.sale/saleRate for the
+// Inventory-changing replies (bare, BUSINESS_RULES §17), money.expense for
+// the one office-expense reply this executor writes.
+const money = require('../utils/money');
 
 /**
  * CUS-2 — canonicalize an Inventory soldTo spelling into {name, id} for
@@ -44,8 +46,6 @@ function returnCreditFor(aj, rows) {
   return { yards, amount, rate: yards > 0 && amount > 0 ? amount / yards : 0 };
 }
 
-function fmtNgn(n) { return `₦${Math.round(Number(n) || 0).toLocaleString('en-NG')}`; }
-
 async function resolveReturnCustomer(soldTo) {
   const raw = String(soldTo || '').trim();
   if (!raw) return { name: '', id: '' };
@@ -59,10 +59,6 @@ async function resolveReturnCustomer(soldTo) {
 function generateId() {
   try { return require('crypto').randomUUID(); }
   catch { return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`; }
-}
-
-function formatMoney(v) {
-  return `${CURRENCY} ${Number(v).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
 }
 
 /**
@@ -492,7 +488,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // silently crediting ₦0.
     try {
       await erpEmitAsync('return', { type: 'return_than', packageNo: aj.packageNo, thanNo: aj.thanNo, yards: result.yards, pricePerYard: credit.rate, design: result.design, shade: result.shade, warehouse: aj.warehouse || result.warehouse, userId: item.user, txnId: `RT-${aj.packageNo}-${aj.thanNo}`, customer: returnCust.name, customerId: returnCust.id });
-      if (credit.amount > 0) creditNote = `↩️ Credited ${fmtNgn(credit.amount)} to ${returnCust.name || 'the buyer'} (${result.yards} yds × ${fmtNgn(credit.rate)}/yd).`;
+      if (credit.amount > 0) creditNote = `↩️ Credited ${money.sale(credit.amount)} to ${returnCust.name || 'the buyer'} (${result.yards} yds × ${money.saleRate(credit.rate)}).`;
       else await recordErpFailure('return credit (return_than)', new Error(`no rate on record for Bale ${aj.packageNo} Than ${aj.thanNo} — stock returned, credit NOT posted; post it manually`));
     } catch (e) { await recordErpFailure('return credit (return_than)', e); }
   } else if (aj.action === 'return_package') {
@@ -514,7 +510,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // RET-3 — see return_than above.
     try {
       await erpEmitAsync('return', { type: 'return_package', packageNo: aj.packageNo, yards: totalYards, pricePerYard: credit.rate, design: results[0]?.design, shade: results[0]?.shade, warehouse: aj.warehouse || results[0]?.warehouse, userId: item.user, txnId: `RP-${aj.packageNo}`, customer: returnCust.name, customerId: returnCust.id });
-      if (credit.amount > 0) creditNote = `↩️ Credited ${fmtNgn(credit.amount)} to ${returnCust.name || 'the buyer'} (${results.length} than${results.length === 1 ? '' : 's'}, ${totalYards} yds).`;
+      if (credit.amount > 0) creditNote = `↩️ Credited ${money.sale(credit.amount)} to ${returnCust.name || 'the buyer'} (${results.length} than${results.length === 1 ? '' : 's'}, ${totalYards} yds).`;
       else await recordErpFailure('return credit (return_package)', new Error(`no rate on record for Bale ${aj.packageNo} — stock returned, credit NOT posted; post it manually`));
     } catch (e) { await recordErpFailure('return credit (return_package)', e); }
   } else if (aj.action === 'return_thans') {
@@ -644,7 +640,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // distinct, which `RT-`/`RP-` could not.
     try {
       await erpEmitAsync('return', { type: 'return_thans', packageNo: aj.packageNo, thanNos, yards: totalYards, pricePerYard: credit.rate, design: results[0]?.design, shade: results[0]?.shade, warehouse: aj.warehouse || results[0]?.warehouse, userId: item.user, txnId: `RN-${aj.packageNo}-${requestId}`, customer: returnCust.name, customerId: returnCust.id });
-      if (credit.amount > 0) creditNote = `↩️ Credited ${fmtNgn(credit.amount)} to ${returnCust.name || 'the buyer'} (${results.length} than${results.length === 1 ? '' : 's'}, ${totalYards} yds × ${fmtNgn(credit.rate)}/yd).`;
+      if (credit.amount > 0) creditNote = `↩️ Credited ${money.sale(credit.amount)} to ${returnCust.name || 'the buyer'} (${results.length} than${results.length === 1 ? '' : 's'}, ${totalYards} yds × ${money.saleRate(credit.rate)}).`;
       else await recordErpFailure('return credit (return_thans)', new Error(`no rate on record for Bale ${aj.packageNo} thans ${thanNos.join(', ')} — stock returned, credit NOT posted; post it manually`));
     } catch (e) { await recordErpFailure('return credit (return_thans)', e); }
     if (skipped.length) {
@@ -1204,7 +1200,10 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       if (!res.ok) return { ok: false, message: res.message || 'Could not apply expense batch.' };
       // SEC-P2 (H7): fall through to the footer (marks the queue row approved
       // + writes the approval_approved audit) instead of returning early.
-      customMessage = `Approved ${res.count} item(s) for ${res.branch}: total ₦${(res.total || 0).toLocaleString()}.`;
+      // CUR-1 §4.3 — side A keeps the kobo the cash book carries: the same
+      // formatter as the requester card and the evening report (fmtNgn),
+      // never a fixed 0-dp render that would round a batch total here alone.
+      customMessage = `Approved ${res.count} item(s) for ${res.branch}: total ${branchOpsService.fmtNgn(res.total || 0)}.`;
     } catch (e) {
       logger.error(`record_office_expense apply failed: ${e.message}`);
       return { ok: false, message: e.message || 'Failed to apply expense batch.' };
@@ -1220,7 +1219,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
         aj, approvedBy, requestId,
       });
       // SEC-P2 (H7): fall through to the footer (see record_office_expense).
-      customMessage = `Landed cost finalized for ${result.grnId} at ₦${result.allocation.ngnLandedPerYard.toFixed(2)}/yd.`;
+      customMessage = `Landed cost finalized for ${result.grnId} at ${money.saleRate(result.allocation.ngnLandedPerYard, { fraction: 2 })}.`;
     } catch (e) {
       logger.error(`finalize_landed_cost apply failed: ${e.message}`);
       return { ok: false, message: e.message || 'Failed to finalize landed cost.' };
@@ -1966,5 +1965,4 @@ module.exports = {
   rejectApproval,
   revertSaleBundle,
   getWarehouses,
-  formatMoney,
 };

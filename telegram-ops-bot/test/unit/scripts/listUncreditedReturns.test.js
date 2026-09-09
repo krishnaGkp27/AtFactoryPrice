@@ -4,7 +4,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { findUncredited } = require('../../../scripts/list-uncredited-returns');
+const { findUncredited, renderReport } = require('../../../scripts/list-uncredited-returns');
 
 const inventory = [
   { packageNo: '9037', warehouse: 'Kano office', yards: 30, pricePerYard: 2500 },
@@ -52,4 +52,15 @@ test('RET-4: an RN- row with no credit amount does not count as credited', () =>
   const ledger = [{ txn_id: 'RN-9037-REQ-1', credit: 0 }];
   const rows = findUncredited({ movements, ledger, inventory });
   assert.deepEqual(rows.map((r) => r.baleNo), ['9037', '9037', '9040']);
+});
+
+test('CUR-1: the human listing prints the estimated credit BARE (side B), never ₦', () => {
+  const rows = findUncredited({ movements, ledger: [], inventory });
+  const text = renderReport(rows).join('\n');
+  assert.match(text, /approved return\(s\) with NO customer credit/);
+  assert.match(text, /rate today: 2,500\/yd/);
+  assert.match(text, /would credit: 150,000/);
+  assert.match(text, /Total credit never posted .*: [\d,]+$/m);
+  assert.doesNotMatch(text, /₦|NGN/);
+  assert.deepEqual(renderReport([]), ['Every approved return has a ledger credit. Nothing to backfill.']);
 });

@@ -52,6 +52,7 @@
 
 const sessionStore               = require('../utils/sessionStore');
 const { makeRenderer, rowsFor } = require('../utils/flowKit');
+const money = require('../utils/money');
 const goodsReceiptsRepository    = require('../repositories/goodsReceiptsRepository');
 const landedCostTypesRepository  = require('../repositories/landedCostTypesRepository');
 const landedCostService          = require('../services/landedCostService');
@@ -330,16 +331,16 @@ async function submit(bot, chatId, userId) {
 
     const isAdm = auth.isAdmin(userId);
     const excludeId = isAdm ? userId : undefined;
-    // APU-1: the 2nd admin previously saw only GRN id + ₦/yd — now the full
+    // APU-1: the 2nd admin previously saw only GRN id + landed/yd — now the full
     // costing they are sealing: USD/yd, per-charge lines, FX, total yards.
     const fmt = landedCostService._internals.fmt;
     const chargeLines = (session.charges || []).map((c) => `  • ${c.type_name || 'charge'}: $${fmt(c.amount_usd)}`).join('\n');
     const card = `💵 Finalize Landed Cost Request\nGRN: ${session.grnId}`
       + `\nUSD cost/yard: $${fmt(session.usdPerYard)}`
-      + `\nFX rate: ₦${fmt(session.fxRate)}/$`
+      + `\nFX rate: ${money.saleRate(session.fxRate, { fraction: 2, per: '$' })}`
       + (chargeLines ? `\nCharges:\n${chargeLines}` : '\nCharges: none')
       + `\nTotal yards: ${fmt(allocation.totalYards)}`
-      + `\nNGN landed/yard (sealed on approval): ₦${fmt(allocation.ngnLandedPerYard)}`;
+      + `\n${money.code()} landed/yard (sealed on approval): ${money.saleRate(allocation.ngnLandedPerYard, { fraction: 2 })}`;
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId,
       await require('../services/approvalCards').resolveUserLabel(userId), card,
       'All landed cost finalization operations require 2nd admin approval.', excludeId);
@@ -348,7 +349,7 @@ async function submit(bot, chatId, userId) {
       '⏳ *Submitted for approval*\n\n'
       + `• GRN: \`${session.grnId}\`\n`
       + `• Request: \`${requestId}\`\n`
-      + `• NGN / yard (preview): *₦${landedCostService._internals.fmt(allocation.ngnLandedPerYard)}*\n`
+      + `• ${money.code()} / yard (preview): *${money.saleRate(allocation.ngnLandedPerYard, { fraction: 2 })}*\n`
       + '• Approver: 2nd admin (you cannot self-approve)\n\n'
       + '_Once approved the numbers are sealed onto the GRN row. Sales / margin reports will read them automatically._',
       [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]],

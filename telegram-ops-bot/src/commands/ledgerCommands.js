@@ -10,7 +10,19 @@ const transactionService = require('../services/transactionService');
 const ledgerCustomersRepository = require('../repositories/ledgerCustomersRepository');
 const idGen = require('../utils/idGenerator');
 const auth = require('../middlewares/auth');
-const { fmtMoney } = require('../utils/format');
+// CUR-1 R5 — /ledger, /balance, /payment replies are side B: bare figures
+// (money.sale) with ONE legend line per reply, omitted while saleLegend() is ''.
+const money = require('../utils/money');
+
+const COL_W = 8;
+const cell = (n) => money.sale(n).padStart(COL_W);
+const dash = '—'.padStart(COL_W);
+
+/** The one optional legend line of a side-B reply ('' today). */
+function legendLine() {
+  const l = money.saleLegend();
+  return l ? `\n_${l}_` : '';
+}
 
 const LEDGER_PAGE_SIZE = 20;
 
@@ -38,7 +50,7 @@ async function handleLedger(bot, chatId, userId, args) {
 
   const { customer, rows } = result;
   const header = `📒 Ledger: ${customer.customer_name} (${customer.customer_id})\n\nDate       | Description        | Debit    | Credit   | Balance`;
-  const line = (r) => `${r.date} | ${(r.description || '').slice(0, 18).padEnd(18)} | ${r.debit ? fmtMoney(r.debit) : '—'.padEnd(8)} | ${r.credit ? fmtMoney(r.credit) : '—'.padEnd(8)} | ${fmtMoney(r.balance)}`;
+  const line = (r) => `${r.date} | ${(r.description || '').slice(0, 18).padEnd(18)} | ${r.debit ? cell(r.debit) : dash} | ${r.credit ? cell(r.credit) : dash} | ${money.sale(r.balance)}`;
 
   if (!rows.length) {
     await bot.sendMessage(chatId, `${header}\n\nNo transactions yet.`);
@@ -48,7 +60,7 @@ async function handleLedger(bot, chatId, userId, args) {
   for (let i = 0; i < rows.length; i += LEDGER_PAGE_SIZE) {
     const page = rows.slice(i, i + LEDGER_PAGE_SIZE);
     const body = page.map(line).join('\n');
-    const text = i === 0 ? `${header}\n${body}` : body;
+    const text = i === 0 ? `${header}\n${body}${legendLine()}` : body;
     const footer = i + page.length < rows.length ? `\n_(page ${Math.floor(i / LEDGER_PAGE_SIZE) + 1}, next ${Math.min(LEDGER_PAGE_SIZE, rows.length - i - page.length)} entries)_` : '';
     await bot.sendMessage(chatId, text + footer, { parse_mode: 'Markdown' });
   }
@@ -74,7 +86,7 @@ async function handleBalance(bot, chatId, userId, args) {
     return;
   }
 
-  await bot.sendMessage(chatId, `💰 *${result.customer_name}* (${customerId})\nBalance: ${fmtMoney(result.balance)}`, { parse_mode: 'Markdown' });
+  await bot.sendMessage(chatId, `💰 *${result.customer_name}* (${customerId})\nBalance: ${money.sale(result.balance)}${legendLine()}`, { parse_mode: 'Markdown' });
 }
 
 /**
@@ -115,7 +127,7 @@ async function handlePayment(bot, chatId, userId, args) {
     return;
   }
 
-  await bot.sendMessage(chatId, `✅ Payment recorded. New balance: ${fmtMoney(result.balance)}`);
+  await bot.sendMessage(chatId, `✅ Payment recorded. New balance: ${money.sale(result.balance)}${legendLine()}`);
 }
 
 /**

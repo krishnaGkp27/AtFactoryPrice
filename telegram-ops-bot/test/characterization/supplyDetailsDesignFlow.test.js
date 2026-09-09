@@ -14,7 +14,8 @@
  *  - a design with nothing left anywhere carries ✅;
  *  - bales are counted as distinct PHYSICAL bales (a bale sold as loose
  *    thans counts once, not once per than);
- *  - ₦ appears for env admins only — the same gate the flat report used.
+ *  - the value (bare, CUR-1 side B) appears for env admins only — the same
+ *    gate the flat report used; the employee negative is pinned on the DIGITS.
  */
 
 process.env.ADMIN_IDS = '777';
@@ -146,13 +147,19 @@ test('SDG-1: drills design → date → customer → bale numbers, and back agai
   sessionStore.clear(EMPLOYEE);
 });
 
-test('SDG-1: ₦ is admin-only — an employee never sees value', async () => {
+test('SDG-1: value is admin-only — an employee never sees it (digits pinned)', async () => {
   const empBot = createFakeBot();
   await flow.start(empBot, EMPLOYEE, EMPLOYEE, null);
   await flow.handleCallback(empBot, cb('sdg:ct:0', EMPLOYEE));
   await flow.handleCallback(empBot, cb('sdg:d:0', EMPLOYEE));
   await flow.handleCallback(empBot, cb('sdg:t:0', EMPLOYEE));
-  assert.ok(!/₦/.test(lastText(empBot)), `employee must not see money, got: ${lastText(empBot)}`);
+  // Rows are 30 yds × 100 → every day total is a grouped figure (3,000 / 6,000 /
+  // 12,000). CUR-1 prints no ₦ on side B for ANYONE, so `!/₦/` would pass for
+  // the wrong reason — pin the absence on the digits instead.
+  const empText = lastText(empBot);
+  assert.match(empText, /Day total:/, 'employee still gets the day card');
+  assert.ok(!/\d{1,3}(,\d{3})+/.test(empText), `employee must not see money, got: ${empText}`);
+  assert.ok(!/₦/.test(empText), 'and certainly no symbol');
   sessionStore.clear(EMPLOYEE);
 
   const admBot = createFakeBot();
@@ -160,7 +167,9 @@ test('SDG-1: ₦ is admin-only — an employee never sees value', async () => {
   await flow.handleCallback(admBot, cb('sdg:ct:0', ADMIN));
   await flow.handleCallback(admBot, cb('sdg:d:0', ADMIN));
   await flow.handleCallback(admBot, cb('sdg:t:0', ADMIN));
-  assert.match(lastText(admBot), /₦/, 'admin sees the day total in naira');
+  const admText = lastText(admBot);
+  assert.match(admText, /Day total: .* · \d{1,3}(,\d{3})+/, 'admin sees the day total as a bare grouped figure');
+  assert.ok(!/₦|NGN/.test(admText), 'CUR-1: the admin figure carries no symbol or code');
   sessionStore.clear(ADMIN);
 });
 

@@ -9,7 +9,7 @@ const customersRepo = require('../repositories/customersRepository');
 const usersRepo = require('../repositories/usersRepository');
 const settingsRepo = require('../repositories/settingsRepository');
 const inventoryService = require('./inventoryService');
-const { fmtMoney, fmtQty: fmtQtyBase } = require('../utils/format');
+const { fmtQty: fmtQtyBase } = require('../utils/format');
 
 /**
  * Fields the REQUESTER is asked for.
@@ -195,5 +195,4 @@ module.exports = {
   buildSummary,
   getSaleDetails,
   SALE_FIELDS,
-  fmtMoney,
 };

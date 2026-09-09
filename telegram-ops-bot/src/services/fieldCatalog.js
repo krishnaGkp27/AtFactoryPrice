@@ -13,7 +13,7 @@
  * price resolver. No Sheets, no Telegram, no credentials — unit-testable.
  */
 
-const { fmtMoneyShort } = require('../utils/format');
+const money = require('../utils/money');  // CUR-1 — selling price prints bare (side B)
 const pricing = require('./pricingService');
 
 /** @param {string} w */
@@ -70,7 +70,7 @@ function buildCatalog(items, warehouses, opts = {}) {
       let line = `   Shade ${shade}: ✅ in stock`;
       if (showPrice) {
         const sp = pricing.resolveSalePrice(items, design, shade);
-        if (sp.price > 0) line += ` · ${fmtMoneyShort(sp.price)}/yd${sp.mixed ? ' (varies)' : ''}`;
+        if (sp.price > 0) line += ` · ${money.saleRate(sp.price)}${sp.mixed ? ' (varies)' : ''}`;
       }
       text += `${line}\n`;
     }

@@ -37,7 +37,8 @@ const approvalQueueRepository = require('../repositories/approvalQueueRepository
 const auditLogRepository = require('../repositories/auditLogRepository');
 const idGenerator = require('../utils/idGenerator');
 const { cbSafe, safeDelete } = require('../utils/telegramUI');
-const { fmtQty, fmtMoneyShort } = require('../utils/format');
+const { fmtQty } = require('../utils/format');
+const money = require('../utils/money');
 const fmtDate = require('../utils/formatDate');
 const logger = require('../utils/logger');
 
@@ -517,8 +518,8 @@ async function showConfirm(bot, chatId, userId, opts = {}) {
   }
   if (session.photoFileId) lines.push('📎 Photo attached');
   if (credit.rate > 0 && credit.yards > 0) {
-    lines.push(`💰 Credits ${mdEscape(session.customer)} *${fmtMoneyShort(credit.amount)}* `
-      + `(${fmtQty(credit.yards)} yds × ${fmtMoneyShort(credit.rate)}/yd)`);
+    lines.push(`💰 Credits ${mdEscape(session.customer)} *${money.sale(credit.amount)}* `
+      + `(${fmtQty(credit.yards)} yds × ${money.saleRate(credit.rate)})`);
   } else {
     lines.push('⚠️ No rate on record for these thans — the stock comes back, but NO credit '
       + 'posts until a rate exists.');

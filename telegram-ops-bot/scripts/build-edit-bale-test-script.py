@@ -134,7 +134,7 @@ C_APPROVED = ("✅ Request 4f2c8a91-7d3e-4b62-9a08-1c5e7f0d3b44 approved by Muha
               "\n✅ Bale 6061 corrected — 1 row(s) updated, 1 than(s) added. Now 6 thans · 166 yd on the sheet."
               "\n⚠️ A sold than changed yards — the customer was billed for the old figure; reconcile it in finance.")
 
-C_DETAIL = ("📦 Bale 6061\nDesign: 9043-A | Shade: 6\nIndent: ST/1321 | Warehouse: Kano office\nPrice: NGN 3,500/yard\n\n"
+C_DETAIL = ("📦 Bale 6061\nDesign: 9043-A | Shade: 6\nIndent: ST/1321 | Warehouse: Kano office\nPrice: 3,500/yard\n\n"  # CUR-1: bare price (BUSINESS_RULES §17)
             "Thans (3/6 available):\n"
             "🔴 Than 1: 30 yds → Qaribullah (18-Aug-2026)\n"
             "🔴 Than 2: 30 yds → Ahmad (Mai Glass) (27-Feb-2026)\n"

@@ -7,9 +7,11 @@ const ledgerRepo = require('../repositories/ledgerRepository');
 const { todayInLagos } = require('../utils/dates');
 const chartRepo = require('../repositories/chartOfAccountsRepository');
 const idGen = require('../utils/idGenerator');
-const config = require('../config');
+// CUR-1 R7 — narrations keep the accounting CODE (`NGN 5000`), forward-only;
+// money.code() is the one source of it. Never a display symbol here.
+const money = require('../utils/money');
 
-const CURRENCY = config.currency || 'NGN';
+const CURRENCY = money.code();
 const RECEIVABLE_CODE = '1100';
 const REVENUE_CODE = '3001';
 

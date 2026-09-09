@@ -66,7 +66,9 @@ test('the card discloses the debt and the history, and never claims to erase eit
     reason: 'Shop closed',
   });
   assert.match(card, /Remove customer — Mr femi/);
-  assert.match(card, /Owes ₦250,000/, 'the debt is on the card the admins decide from');
+  // CUR-1 C6: a customer-master balance on a sales-side card is side B — bare.
+  assert.match(card, /Owes 250,000/, 'the debt is on the card the admins decide from');
+  assert.doesNotMatch(card, /₦/, 'no naira symbol on the removal card (BUSINESS_RULES §17)');
   assert.match(card, /does not clear it/, 'and it is explicit that removal settles nothing');
   assert.match(card, /12 supply records/);
   assert.match(card, /History is never rewritten/);

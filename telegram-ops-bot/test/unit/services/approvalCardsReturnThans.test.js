@@ -53,14 +53,16 @@ test('the card names the buyer, the bale, the store, the thans, the date and the
 
 test('the money line states the credit and the before → after balance', async () => {
   const text = await approvalCards.buildReturnThansCard(AJ);
-  assert.match(text, /💰 Credits ABBA ₦150,000 \(60 yd × ₦2,500\/yd\)/);
-  assert.match(text, /Outstanding ₦300,000 → ₦150,000/);
+  // CUR-1 C3: a sale reversed at the booked Inventory rate is side B — bare.
+  assert.match(text, /💰 Credits ABBA 150,000 \(60 yd × 2,500\/yd\)/);
+  assert.match(text, /Outstanding 300,000 → 150,000/);
+  assert.doesNotMatch(text, /₦/, 'no naira symbol on the return card (BUSINESS_RULES §17)');
 });
 
 test('a failed ledger read omits the outstanding line rather than guessing at it', async () => {
   accountingService.getCustomerLedger = async () => { throw new Error('sheet quota'); };
   const text = await approvalCards.buildReturnThansCard(AJ);
-  assert.match(text, /💰 Credits ABBA ₦150,000/, 'the credit itself still shows');
+  assert.match(text, /💰 Credits ABBA 150,000/, 'the credit itself still shows');
   assert.doesNotMatch(text, /Outstanding/, 'no fabricated number, no apologetic noise');
 });
 

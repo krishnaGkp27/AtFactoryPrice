@@ -40,14 +40,19 @@ test('buildCatalog() price visibility', async (t) => {
   await t.test('marketer view (showPrice=false) has no price', () => {
     const { text } = buildCatalog(ITEMS, ['Lagos'], { showPrice: false });
     assert.doesNotMatch(text, /\/yd/);
+    // CUR-1 — side B prints no ₦ for anyone, so the hide-from-marketer
+    // negative is pinned on the DIGITS the role must not see.
+    assert.doesNotMatch(text, /1,500|1,600|2,000/);
     assert.doesNotMatch(text, /₦/);
   });
 
   await t.test('salesman view (showPrice=true) appends selling price per shade', () => {
     const { text } = buildCatalog(ITEMS, ['Lagos'], { showPrice: true });
-    assert.match(text, /₦1,500\/yd/);
-    assert.match(text, /₦1,600\/yd/);
-    assert.match(text, /₦2,000\/yd/);
+    // CUR-1 — selling price is side B: bare rate, no symbol (BUSINESS_RULES §17).
+    assert.match(text, /· 1,500\/yd/);
+    assert.match(text, /· 1,600\/yd/);
+    assert.match(text, /· 2,000\/yd/);
+    assert.doesNotMatch(text, /₦|NGN/);
   });
 });
 

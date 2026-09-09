@@ -92,8 +92,10 @@ test('salesman My Products shows designs + selling price (Lagos only)', async ()
   const out = bot.allText();
   assert.match(out, /44200/);
   assert.match(out, /9006/);
-  assert.match(out, /₦1,500\/yd/);
-  assert.match(out, /₦2,000\/yd/);
+  // CUR-1 — side B: bare selling rate, no symbol.
+  assert.match(out, /1,500\/yd/);
+  assert.match(out, /2,000\/yd/);
+  assert.doesNotMatch(out, /₦/);
   assert.doesNotMatch(out, /9901/); // Kano bale excluded
 });
 
@@ -121,6 +123,8 @@ test('marketer My Products = allocation-scoped category chips, then designs, no 
   assert.ok(!/In stock|Out of stock|Available now/.test(out), 'no availability reference at all');
   assert.match(out, /Allocated to you:/);
   assert.doesNotMatch(out, /\/yd/);
+  // CUR-1 — re-pinned on the digits (no side-B output prints ₦ any more).
+  assert.doesNotMatch(out, /1,500|2,000/);
   assert.doesNotMatch(out, /₦/);
 });
 

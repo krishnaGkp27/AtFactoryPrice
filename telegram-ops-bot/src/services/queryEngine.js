@@ -10,7 +10,18 @@ const inventoryRepository = require('../repositories/inventoryRepository');
 const customersRepo = require('../repositories/customersRepository');
 const analytics = require('../ai/analytics');
 const config = require('../config');
-const { fmtMoney, fmtQty, CURRENCY } = require('../utils/format');
+const { fmtQty } = require('../utils/format');
+// CUR-1 — side B: every printed value is bare (money.sale / saleRate); a
+// report carries at most ONE legend line, and none when saleLegend() is ''.
+// The AI data context keeps its per-number code prefixes (R18 — model
+// input, not a printed output); the code comes from money.code().
+const money = require('../utils/money');
+
+/** The one optional legend line of a side-B report ('' today). */
+function legendLine() {
+  const l = money.saleLegend();
+  return l ? `\n_${l}_` : '';
+}
 const pricingService = require('./pricingService');
 
 const openai = config.openai.apiKey ? new OpenAI({ apiKey: config.openai.apiKey }) : null;
@@ -29,7 +40,7 @@ async function stockSummary(userId = null) {
     if (canSelling) {
       const sp = pricingService.resolveSalePrice(allRows, d.design, d.shade);
       sellingTail = sp.price
-        ? ` · Selling: ${fmtMoney(sp.price)}/yd${sp.mixed ? ' ·varies' : ''}`
+        ? ` · Selling: ${money.saleRate(sp.price)}${sp.mixed ? ' ·varies' : ''}`
         : ' · Selling: not set';
     }
     text += `${d.design} ${d.shade}: ${d.availPkgs} pkgs (${d.available} thans), ${fmtQty(d.availableYards)} yds${sellingTail}\n`;
@@ -37,7 +48,7 @@ async function stockSummary(userId = null) {
   });
   text += `\n*Total: ${totalPkgs} packages (${totalThans} thans), ${fmtQty(totalYards)} yards*`;
   text += '\n_For stock value totals use Reports → Stock Value._';
-  return text;
+  return text + (canSelling ? legendLine() : '');
 }
 
 async function stockValuation() {
@@ -46,7 +57,7 @@ async function stockValuation() {
   const pkgs = new Set(available.map((r) => r.packageNo)).size;
   const yards = available.reduce((s, r) => s + r.yards, 0);
   const value = available.reduce((s, r) => s + r.yards * r.pricePerYard, 0);
-  return `💰 *Stock Valuation*\n\n${pkgs} packages (${available.length} thans), ${fmtQty(yards)} yards\nTotal value: ${fmtMoney(value)}`;
+  return `💰 *Stock Valuation*\n\n${pkgs} packages (${available.length} thans), ${fmtQty(yards)} yards\nTotal value: ${money.sale(value)}${legendLine()}`;
 }
 
 async function salesReport(period) {
@@ -80,9 +91,9 @@ async function salesReport(period) {
 
   let text = `📊 *Sales Report — ${label}*\n\n`;
   text += `Sold: ${pkgs} packages (${filtered.length} thans), ${fmtQty(yards)} yards\n`;
-  text += `Revenue: ${fmtMoney(value)}\n`;
+  text += `Revenue: ${money.sale(value)}\n`;
   if (topBuyer) text += `Top buyer: ${topBuyer[0]} (${topBuyer[1].thans} thans, ${fmtQty(topBuyer[1].yards)} yds)`;
-  return text;
+  return text + legendLine();
 }
 
 async function customerReport() {
@@ -90,10 +101,10 @@ async function customerReport() {
   customers.sort((a, b) => b.yards - a.yards);
   let text = `👥 *Customer Report*\n\n`;
   customers.forEach((c) => {
-    text += `${c.customer}: ${c.pkgs} pkgs (${c.thans} thans), ${fmtQty(c.yards)} yds, ${fmtMoney(c.value)}\n`;
+    text += `${c.customer}: ${c.pkgs} pkgs (${c.thans} thans), ${fmtQty(c.yards)} yds, ${money.sale(c.value)}\n`;
   });
   if (!customers.length) text += 'No sales recorded yet.';
-  return text;
+  return text + legendLine();
 }
 
 /** Supply (sold) by customer for a specific design. Totals computed in code only. */
@@ -118,10 +129,10 @@ async function warehouseSummary() {
   const warehouses = await analytics.stockByWarehouse();
   let text = `🏭 *Warehouse Summary*\n\n`;
   warehouses.forEach((w) => {
-    text += `${w.warehouse || 'Unassigned'}: ${w.availPkgs} pkgs (${w.available} thans), ${fmtQty(w.availableYards)} yds — ${fmtMoney(w.value)}\n`;
+    text += `${w.warehouse || 'Unassigned'}: ${w.availPkgs} pkgs (${w.available} thans), ${fmtQty(w.availableYards)} yds — ${money.sale(w.value)}\n`;
   });
   if (!warehouses.length) text += 'No warehouse data.';
-  return text;
+  return text + legendLine();
 }
 
 async function fastMovingReport() {
@@ -138,10 +149,10 @@ async function deadStockReport() {
   const dead = await analytics.deadStock();
   let text = `⚠️ *Dead Stock (no sales)*\n\n`;
   dead.forEach((d) => {
-    text += `${d.design} ${d.shade}: ${d.availPkgs} pkgs (${d.available} thans), ${fmtQty(d.availableYards)} yds — ${fmtMoney(d.value)}\n`;
+    text += `${d.design} ${d.shade}: ${d.availPkgs} pkgs (${d.available} thans), ${fmtQty(d.availableYards)} yds — ${money.sale(d.value)}\n`;
   });
   if (!dead.length) text += 'All designs have sales — no dead stock.';
-  return text;
+  return text + legendLine();
 }
 
 async function indentStatus(indent) {
@@ -237,7 +248,7 @@ async function soldReport(warehouse, customer, period) {
   const sub = parts.length ? ` (${parts.join(', ')} — ${label})` : ` — ${label}`;
   let text = `📤 *Sold Report${sub}*\n\n`;
   text += `Sold: ${pkgs} packages (${thans} thans), ${fmtQty(yards)} yards\n`;
-  text += `Value: ${fmtMoney(value)}`;
+  text += `Value: ${money.sale(value)}${legendLine()}`;
   return text;
 }
 
@@ -278,6 +289,7 @@ async function freeFormQuery(userQuestion) {
     else if (ib === stockBuckets.SOLD) ig.sold++;
   });
 
+  const CURRENCY = money.code();  // R18 — the model's data context keeps the code
   const designSummary = Array.from(byDesign.values()).map((d) => `${d.design} ${d.shade}: ${d.availPkgs.size} pkgs avail (${d.availThans} thans, ${d.availYards} yds, ${CURRENCY}${d.value}), ${d.soldPkgs.size} pkgs sold (${d.soldThans} thans, ${d.soldYards} yds), buyers: ${Array.from(d.customers).join(', ') || 'none'}`).join('\n');
   const whSummary = Array.from(byWarehouse.entries()).map(([w, g]) => `${w || 'Unassigned'}: ${g.availPkgs.size} pkgs (${g.availThans} thans, ${g.availYards} yds, ${CURRENCY}${g.value})`).join('\n');
   const custSummary = Array.from(byCustomer.entries()).map(([c, g]) => `${c}: ${g.pkgs.size} pkgs (${g.thans} thans, ${g.yards} yds, ${CURRENCY}${g.value}), designs: ${Array.from(g.designs).join(', ')}`).join('\n');

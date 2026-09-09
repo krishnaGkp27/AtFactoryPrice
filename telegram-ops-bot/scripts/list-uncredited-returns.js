@@ -26,9 +26,9 @@ const baleMovementsRepository = require('../src/repositories/baleMovementsReposi
 const ledgerRepository = require('../src/repositories/ledgerRepository');
 const inventoryRepository = require('../src/repositories/inventoryRepository');
 
-const CSV = process.argv.includes('--csv');
+const money = require('../src/utils/money');
 
-function ngn(n) { return `₦${Math.round(Number(n) || 0).toLocaleString('en-NG')}`; }
+const CSV = process.argv.includes('--csv');
 
 /**
  * Pair movements with ledger credits and price the uncredited ones.
@@ -94,18 +94,28 @@ async function main() {
     for (const r of rows) console.log([r.movedOn, r.baleNo, r.design, r.shade, r.warehouse, r.thans, JSON.stringify(r.buyer), r.yards, r.rate, r.credit, r.user].join(','));
     return;
   }
-  if (!rows.length) { console.log('Every approved return has a ledger credit. Nothing to backfill.'); return; }
-  console.log(`${rows.length} approved return(s) with NO customer credit (read-only listing):\n`);
-  for (const r of rows) {
-    console.log(`${r.movedOn}  Bale ${r.baleNo} ${r.design} ${r.shade}  @ ${r.warehouse || '?'}  ${r.thans} than(s) ≈ ${r.yards} yds`
-      + `\n    buyer: ${r.buyer || '(none recorded)'}   rate today: ${r.rate ? ngn(r.rate) + '/yd' : 'none'}   would credit: ${r.credit ? ngn(r.credit) : '—'}   by ${r.user}`);
-  }
-  const total = rows.reduce((s, r) => s + r.credit, 0);
-  console.log(`\nTotal credit never posted (at today's rates, yards estimated per than): ${ngn(total)}`);
-  console.log('Yards are the bale average × thans returned — the movement row does not name the than. No sheet was written.');
+  for (const line of renderReport(rows)) console.log(line);
 }
 
-module.exports = { findUncredited };
+/**
+ * The human listing, one entry per line. Pure — exported so the money shape
+ * is pinned without a sheet. CUR-1: a return credit is side B (bare figures,
+ * BUSINESS_RULES §17) — the same shape the approval reply prints.
+ */
+function renderReport(rows) {
+  if (!rows.length) return ['Every approved return has a ledger credit. Nothing to backfill.'];
+  const out = [`${rows.length} approved return(s) with NO customer credit (read-only listing):\n`];
+  for (const r of rows) {
+    out.push(`${r.movedOn}  Bale ${r.baleNo} ${r.design} ${r.shade}  @ ${r.warehouse || '?'}  ${r.thans} than(s) ≈ ${r.yards} yds`
+      + `\n    buyer: ${r.buyer || '(none recorded)'}   rate today: ${r.rate ? money.saleRate(r.rate) : 'none'}   would credit: ${r.credit ? money.sale(r.credit) : '—'}   by ${r.user}`);
+  }
+  const total = rows.reduce((s, r) => s + r.credit, 0);
+  out.push(`\nTotal credit never posted (at today's rates, yards estimated per than): ${money.sale(total)}`);
+  out.push('Yards are the bale average × thans returned — the movement row does not name the than. No sheet was written.');
+  return out;
+}
+
+module.exports = { findUncredited, renderReport };
 
 if (require.main === module) {
   main().catch((e) => { console.error(e.message); process.exit(1); });

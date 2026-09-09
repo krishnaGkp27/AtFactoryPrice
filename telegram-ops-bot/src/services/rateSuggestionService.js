@@ -28,6 +28,7 @@
 
 const inventoryRepository = require('../repositories/inventoryRepository');
 const goodsReceiptsRepository = require('../repositories/goodsReceiptsRepository');
+const money = require('../utils/money');
 
 let _sheetsClient = null;
 function sheets() {
@@ -183,11 +184,11 @@ async function suggestFor({ design, customer = '', warehouse = null }) {
 function formatSuggestionLines(s) {
   if (!s) return '';
   const lines = [];
-  const fmt = (n) => `₦${Math.round(n).toLocaleString('en-NG')}`;
-  if (s.lastCustomerRate) lines.push(`• Last to this customer: ${fmt(s.lastCustomerRate)}/yd`);
-  if (s.lastAnyRate && !s.lastCustomerRate) lines.push(`• Last sale (any customer): ${fmt(s.lastAnyRate)}/yd`);
-  if (s.median30dRate) lines.push(`• 30-day median: ${fmt(s.median30dRate)}/yd (${s.median30dCount} sales)`);
-  if (s.floorRate) lines.push(`• Floor (landed cost): ${fmt(s.floorRate)}/yd`);
+  const fmt = (n) => money.saleRate(n);  // CUR-1 — bare, side B
+  if (s.lastCustomerRate) lines.push(`• Last to this customer: ${fmt(s.lastCustomerRate)}`);
+  if (s.lastAnyRate && !s.lastCustomerRate) lines.push(`• Last sale (any customer): ${fmt(s.lastAnyRate)}`);
+  if (s.median30dRate) lines.push(`• 30-day median: ${fmt(s.median30dRate)} (${s.median30dCount} sales)`);
+  if (s.floorRate) lines.push(`• Floor (landed cost): ${fmt(s.floorRate)}`);
   else lines.push('• Floor: _set landed cost first_');
   return lines.join('\n');
 }

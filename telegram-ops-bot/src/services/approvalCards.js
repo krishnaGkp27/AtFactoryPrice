@@ -25,6 +25,13 @@ const logger = require('../utils/logger');
 const usersRepository = require('../repositories/usersRepository');
 const { fmtQty } = require('../utils/format');
 const fmtDate = require('../utils/formatDate');
+// CUR-1 — every money figure on a card states its side (BUSINESS_RULES §17).
+// This file is SIDE B throughout: the sale, return-credit, customer-payment-IN,
+// credit-limit and "Owes" lines are the printed output of approvals that
+// write the Inventory sheet or the customer ledger — bare, no symbol. The
+// one side-A row that reaches this file (PAY-1 `request_payment`, money
+// LEAVING the office) is delegated to paymentCards, which prints its own ₦.
+const money = require('../utils/money');
 
 /**
  * Resolve a Telegram user id to a human-readable display name.
@@ -302,7 +309,7 @@ function buildAddContactCard(aj) {
   const trade = [];
   if (aj.category) trade.push(`🏷 ${aj.category}`);
   if (aj.credit_limit !== undefined && aj.credit_limit !== null && aj.credit_limit !== '') {
-    trade.push(`💳 limit ${Number(aj.credit_limit).toLocaleString('en-NG')}`);
+    trade.push(`💳 limit ${money.sale(aj.credit_limit)}`);
   }
   if (aj.payment_terms) trade.push(`📄 ${aj.payment_terms}`);
   if (trade.length) text += `\n${trade.join(' · ')}`;
@@ -455,15 +462,16 @@ async function buildReturnThansCard(aj) {
   const rate = Number(aj.pricePerYard) || 0;
   if (rate > 0 && yards > 0) {
     const amount = Math.round(rate * yards);
-    text += `\n💰 Credits ${aj.customer || 'the buyer'} ₦${amount.toLocaleString('en-NG')}`
-      + ` (${fmtQty(yards)} yd × ₦${Math.round(rate).toLocaleString('en-NG')}/yd)`;
+    // CUR-1 C3 — a sale reversed at the booked Inventory rate: side B, bare.
+    text += `\n💰 Credits ${aj.customer || 'the buyer'} ${money.sale(amount)}`
+      + ` (${fmtQty(yards)} yd × ${money.saleRate(Math.round(rate))})`;
     try {
       const { outstandingAsOfToday } = await require('./accountingService').getCustomerLedger(aj.customer);
       const now = Number(outstandingAsOfToday);
       // Omitted rather than degraded when the ledger read fails or hands back
       // nothing usable — never a fabricated number on a money card.
       if (Number.isFinite(now)) {
-        text += `\nOutstanding ₦${now.toLocaleString('en-NG')} → ₦${(now - amount).toLocaleString('en-NG')}`;
+        text += `\nOutstanding ${money.sale(now)} → ${money.sale(now - amount)}`;
       }
     } catch (_) { /* the line is omitted, never guessed */ }
   } else {
@@ -488,15 +496,20 @@ async function buildReturnThansCard(aj) {
  * Card for a payment approval (dual-admin finance action) — shows the
  * customer's live outstanding balance and the before→after picture so the
  * signing admins have monetary context, not just the amount.
+ *
+ * CUR-1 C2 (R6 as recommended) — a customer payment IN credits the same
+ * ledger the invoice feeds and moves no cash book: side B, bare. PAY-1's
+ * outgoing `request_payment` card is a different feature (side A, ₦) and
+ * lives in paymentCards.js.
  */
 async function buildPaymentCard({ customer, amount, method }) {
-  let text = `Record Payment Request\nCustomer: ${customer}\nAmount: ₦${Number(amount || 0).toLocaleString('en-NG')}\nMethod: ${method || '—'}\nDate: ${fmtDate(require('../utils/dates').todayInLagos())  /* TIME-1 */}`;
+  let text = `Record Payment Request\nCustomer: ${customer}\nAmount: ${money.sale(amount || 0)}\nMethod: ${method || '—'}\nDate: ${fmtDate(require('../utils/dates').todayInLagos())  /* TIME-1 */}`;
   try {
     const accountingService = require('./accountingService');
     const { outstandingAsOfToday } = await accountingService.getCustomerLedger(customer);
     const after = Number(outstandingAsOfToday) - Number(amount || 0);
-    text += `\nOutstanding today: ₦${Number(outstandingAsOfToday).toLocaleString('en-NG')}`
-      + `\nAfter this payment: ₦${after.toLocaleString('en-NG')}`;
+    text += `\nOutstanding today: ${money.sale(outstandingAsOfToday)}`
+      + `\nAfter this payment: ${money.sale(after)}`;
     if (after < 0) text += `\n⚠️ Payment EXCEEDS the outstanding balance.`;
   } catch (_) { text += '\n(Outstanding balance unavailable right now.)'; }
   return text;
@@ -820,7 +833,8 @@ function buildRemoveCustomerCard(aj) {
 
   const owed = Number(aj.outstanding_balance || 0);
   if (owed > 0) {
-    text += `\n\n⚠️ *Owes ₦${owed.toLocaleString('en-NG')}* — removing them does not clear it, and their ledger stays on record.`;
+    // CUR-1 C6 — a customer-master balance on a sales-side card: side B, bare.
+    text += `\n\n⚠️ *Owes ${money.sale(owed)}* — removing them does not clear it, and their ledger stays on record.`;
   }
 
   if (aj.supply_count) {
@@ -890,8 +904,21 @@ async function buildCardFromActionJSON(aj) {
     if (aj.action === 'add_warehouse') return await buildAddWarehouseCard(aj);
     if (aj.action === 'design_asset_upload' && aj.kind === 'shade') return buildShadePhotoCard(aj);
     if (aj.action === 'edit_bale') return buildEditBaleCard(aj);
+    // CUR-1 S-CUR rule 5 — PAY-1 money LEAVING the office is SIDE A. The
+    // inbox and the reminder sweep rebuild it from the queue row through the
+    // side-A builder (₦ printed there, never here), instead of the generic
+    // field list below, which knows no `amount_ngn` and used to print the
+    // bare action label — two payment requests read identically (D-4).
+    if (aj.action === 'request_payment') {
+      return require('./paymentCards').buildApprovalSummary({ ...aj, payee_type: aj.payee_type || '?' });
+    }
   } catch (_) { /* fall through to generic */ }
   const parts = [actionLabel(aj.action)];
+  // CUR-1 S-CUR rule 5 — `price` / `amount` print RAW (bare) here, which is
+  // right for every side-B row (price updates, sale figures). Never add a
+  // side-A money key (`amount_ngn`, an expense amount) to this list: an
+  // outgoing payment must reach a side-A builder, as `request_payment` does
+  // above.
   const fields = [
     ['customer', 'Customer'], ['customer_name', 'Customer'], ['name', 'Name'],
     ['design', 'Design'], ['shade', 'Shade'], ['packageNo', 'Bale'],

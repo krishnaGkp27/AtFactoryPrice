@@ -4,7 +4,15 @@
 
 const inventoryRepository = require('../repositories/inventoryRepository');
 const stockBuckets = require('../utils/stockBuckets');
-const { fmtMoney, fmtQty } = require('../utils/format');
+const { fmtQty } = require('../utils/format');
+// CUR-1 — side B: values print bare via money.sale; one legend line at most,
+// and none while saleLegend() is ''.
+const money = require('../utils/money');
+
+function legendLine() {
+  const l = money.saleLegend();
+  return l ? `\n_${l}_` : '';
+}
 
 /** Stock summary grouped by design+shade. */
 async function stockByDesign() {
@@ -93,8 +101,8 @@ async function getAnalysisSummary(design, shade) {
 
   let text = `📊 *Inventory Analysis*\n\n`;
   text += `*Total:* ${totalPkgs} packages (${fmtQty(totalThans)} thans), ${fmtQty(totalAvailYards + totalSoldYards)} yards\n`;
-  text += `*Available:* ${availPkgs} packages (${fmtQty(available.length)} thans), ${fmtQty(totalAvailYards)} yards (${fmtMoney(stockValue)})\n`;
-  text += `*Sold:* ${soldPkgs} packages (${fmtQty(sold.length)} thans), ${fmtQty(totalSoldYards)} yards (${fmtMoney(salesValue)})\n\n`;
+  text += `*Available:* ${availPkgs} packages (${fmtQty(available.length)} thans), ${fmtQty(totalAvailYards)} yards (${money.sale(stockValue)})\n`;
+  text += `*Sold:* ${soldPkgs} packages (${fmtQty(sold.length)} thans), ${fmtQty(totalSoldYards)} yards (${money.sale(salesValue)})\n\n`;
 
   text += `*By Design (top 5):*\n`;
   designs.sort((a, b) => b.availableYards - a.availableYards);
@@ -105,7 +113,7 @@ async function getAnalysisSummary(design, shade) {
   if (warehouses.length > 1) {
     text += `\n*By Warehouse:*\n`;
     warehouses.forEach((w) => {
-      text += `  ${w.warehouse || 'Unassigned'}: ${w.availPkgs} pkgs (${w.available} thans), ${fmtQty(w.availableYards)} yds (${fmtMoney(w.value)})\n`;
+      text += `  ${w.warehouse || 'Unassigned'}: ${w.availPkgs} pkgs (${w.available} thans), ${fmtQty(w.availableYards)} yds (${money.sale(w.value)})\n`;
     });
   }
 
@@ -114,11 +122,11 @@ async function getAnalysisSummary(design, shade) {
     text += `\n*Top Buyers${design ? ' for ' + design : ''}:*\n`;
     topCustomers.sort((a, b) => b.yards - a.yards);
     topCustomers.slice(0, 5).forEach((c) => {
-      text += `  ${c.customer}: ${c.pkgs} pkgs (${c.thans} thans), ${fmtQty(c.yards)} yds, ${fmtMoney(c.value)}\n`;
+      text += `  ${c.customer}: ${c.pkgs} pkgs (${c.thans} thans), ${fmtQty(c.yards)} yds, ${money.sale(c.value)}\n`;
     });
   }
 
-  return text;
+  return text + legendLine();
 }
 
 module.exports = {
@@ -128,5 +136,4 @@ module.exports = {
   fastMoving,
   deadStock,
   getAnalysisSummary,
-  fmtMoney,
 };

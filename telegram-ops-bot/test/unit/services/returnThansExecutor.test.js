@@ -131,7 +131,9 @@ test('ONE ledger credit for the set, txn RN-<bale>-<requestId>', async () => {
   assert.equal(c.customer, 'ABBA');
   assert.equal(c.customerId, 'CUS-ABBA');
   assert.deepEqual(res.erpFailures, []);
-  assert.match(res.creditNote, /Credited ₦150,000 to ABBA \(2 thans, 60 yds × ₦2,500\/yd\)/);
+  // CUR-1 — side B: bare figures, never ₦.
+  assert.match(res.creditNote, /Credited 150,000 to ABBA \(2 thans, 60 yds × 2,500\/yd\)/);
+  assert.doesNotMatch(res.creditNote, /₦|NGN/);
 });
 
 test('the buyer is resolved from the SOLD rows, not the request spelling', async () => {
@@ -313,7 +315,7 @@ test('a mixed-rate set credits the SURVIVORS at their own booked rate, never the
   assert.equal(calls.recordReturn[0].yards, 30);
   assert.equal(calls.recordReturn[0].pricePerYard, 2000, "than #1's own booked rate");
   assert.equal(calls.txn[0].pricePerYard, 2000, 'the Transactions row carries the same rate');
-  assert.match(res.creditNote, /Credited ₦60,000 to ABBA/);
+  assert.match(res.creditNote, /Credited 60,000 to ABBA/);
   assert.match(res.creditNote, /#4 \(now sold to CHIMA\)/);
 });
 
@@ -327,7 +329,7 @@ test('a mixed-rate set that applies in FULL credits the exact booked total', asy
   assert.equal(res.ok, true);
   assert.equal(calls.recordReturn[0].yards, 60);
   assert.equal(calls.recordReturn[0].pricePerYard, 2500, 'the weighted rate reproduces ₦150,000');
-  assert.match(res.creditNote, /Credited ₦150,000 to ABBA/);
+  assert.match(res.creditNote, /Credited 150,000 to ABBA/);
   assert.deepEqual(res.erpFailures, []);
 });
 

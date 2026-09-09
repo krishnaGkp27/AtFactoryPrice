@@ -32,7 +32,7 @@
  * Bale counting uses inventoryPickers.baleGroupKey throughout, so a bale
  * sold as loose thans counts ONCE, not once per than.
  *
- * MONEY: ₦ figures render only for env admins — the same gate the flat
+ * MONEY: value figures render only for env admins — the same gate the flat
  * report used (config.access.adminIds), deliberately unchanged so this
  * rewrite cannot widen who sees value.
  *
@@ -69,6 +69,7 @@
 
 const sessionStore = require('../utils/sessionStore');
 const { makeRenderer, rowsFor } = require('../utils/flowKit');
+const money = require('../utils/money');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const { baleGroupKey } = require('../utils/inventoryPickers');
 const config = require('../config');
@@ -118,19 +119,15 @@ function fmtQty(n) {
   return (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('en-NG');
 }
 
-function fmtMoney(n) {
-  return `₦${Math.round(Number(n) || 0).toLocaleString('en-NG')}`;
-}
-
 /** Value of a row slice (yards × price), used only behind the admin gate. */
 function valueOf(rows) {
   return rows.reduce((s, r) => s + (Number(r.yards) || 0) * (Number(r.pricePerYard) || 0), 0);
 }
 
-/** Money suffix — empty string for non-admins, so nothing leaks. */
-function money(rows, showMoney) {
+/** Value suffix (bare, CUR-1 side B) — empty string for non-admins, so nothing leaks. */
+function moneySuffix(rows, showMoney) {
   if (!showMoney) return '';
-  return ` · ${fmtMoney(valueOf(rows))}`;
+  return ` · ${money.sale(valueOf(rows))}`;
 }
 
 /* ── SDG-2 container scoping ─────────────────────────────────────── */
@@ -391,7 +388,7 @@ async function renderCustomers(bot, chatId, userId) {
 
   await render(bot, chatId, userId,
     `${containerTag(session)}📦 *${session.design}* · 📅 *${prettyDate(session.day)}*\n\n_Who was supplied:_\n\n`
-    + `Day total: ${label(mine)}${money(mine, session.showMoney)}`,
+    + `Day total: ${label(mine)}${moneySuffix(mine, session.showMoney)}`,
     rows);
 }
 
@@ -436,7 +433,7 @@ async function renderDetail(bot, chatId, userId, opts = {}) {
   const shadeBlocks = byShadeOf(mine).map(([sh, e]) => {
     const yards = e.rows.reduce((s, r) => s + (Number(r.yards) || 0), 0);
     const nums = e.bales.length ? ` (${saleDocReconcile.dotted(e.bales, session._verified)})` : '';
-    return ` • Shade ${sh} ×${label(e.rows)}${nums}\n   ${fmtQty(yards)} yds${money(e.rows, session.showMoney)}`;
+    return ` • Shade ${sh} ×${label(e.rows)}${nums}\n   ${fmtQty(yards)} yds${moneySuffix(e.rows, session.showMoney)}`;
   });
 
   if (!session._docsLoaded) {
@@ -471,7 +468,7 @@ async function renderDetail(bot, chatId, userId, opts = {}) {
     `${containerTag(session)}📦 *${session.design}* · 📅 *${prettyDate(session.day)}*\n👤 *${session.customer}*\n`
     + status
     + `\n${shadeBlocks.join('\n')}\n\n`
-    + `*Total: ${label(mine)} · ${fmtQty(yards)} yds${money(mine, session.showMoney)}*`,
+    + `*Total: ${label(mine)} · ${fmtQty(yards)} yds${moneySuffix(mine, session.showMoney)}*`,
     rows);
 }
 

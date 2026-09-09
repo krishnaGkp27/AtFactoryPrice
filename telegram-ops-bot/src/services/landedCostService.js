@@ -41,6 +41,7 @@ const idGenerator                = require('../utils/idGenerator');
 const riskEvaluate               = require('../risk/evaluate');
 const auth                       = require('../middlewares/auth');
 const logger                     = require('../utils/logger');
+const money                      = require('../utils/money');
 const forex                      = require('../integrations/forex');
 
 /**
@@ -121,8 +122,10 @@ function buildPreviewText({ grn, usdPerYard, charges, allocation }) {
   lines.push(`• Charges / yard:  $${fmt(allocation.usdChargesPerYard)}`);
   lines.push('');
   lines.push(`• USD landed / yd: *$${fmt(allocation.usdLandedPerYard)}*`);
-  lines.push(`• FX (USD→NGN):    ${fmt(allocation.fxRate)}`);
-  lines.push(`• *NGN landed / yd: ₦${fmt(allocation.ngnLandedPerYard)}*`);
+  // CUR-1 R8 — the sealed rate is side B: variable 1 only, bare, 2 dp; the
+  // pair's quote leg is named by the accounting code, never printed as a unit.
+  lines.push(`• FX (USD→${money.code()}):    ${fmt(allocation.fxRate)}`);
+  lines.push(`• *${money.code()} landed / yd: ${money.saleRate(allocation.ngnLandedPerYard, { fraction: 2 })}*`);
   lines.push('');
   lines.push('_2nd-admin approval required. Once approved the numbers are sealed onto the GRN row._');
   return lines.join('\n');

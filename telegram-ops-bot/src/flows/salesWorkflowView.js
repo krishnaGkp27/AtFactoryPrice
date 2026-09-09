@@ -33,7 +33,7 @@ const ledgerCache = require('../repositories/ledgerBalanceCacheRepository');
 const auth = require('../middlewares/auth');
 const logger = require('../utils/logger');
 const { editOrSend, sendLong } = require('../utils/telegramUI');
-const { fmtMoneyShort: fmtMoney } = require('../utils/format');
+const money = require('../utils/money');
 
 const RECENT_DELIVERED_LIMIT = 5;
 
@@ -235,7 +235,7 @@ async function showSalesWorkflow(bot, chatId, userId, messageId) {
       const days = pendingDays(o.created_at);
       const ageHint = days != null ? ` · ${days}d waiting` : '';
       lines.push(`• \`${o.order_id}\` · ${escapeMd(o.design)}${o.shade ? ' / ' + escapeMd(o.shade) : ''} · ${escapeMd(o.quantity)}`);
-      lines.push(`   👤 ${escapeMd(o.customer)}${cust ? ' · ' + escapeMd(cust.category || 'Standard') : ''}${bal != null ? ' · ' + fmtMoney(bal) + ' cr' : ''}`);
+      lines.push(`   👤 ${escapeMd(o.customer)}${cust ? ' · ' + escapeMd(cust.category || 'Standard') : ''}${bal != null ? ' · ' + money.sale(bal) + ' cr' : ''}`);
       lines.push(`   📅 ${fmtDate(o.scheduled_date)} · 💵 ${escapeMd(o.payment_status)} · 👷 ${escapeMd(o.salesperson_name)}${ageHint}`);
       rows.push([{
         text: `📋 ${truncate(o.order_id + ' · ' + o.customer, 38)}`,
@@ -254,7 +254,7 @@ async function showSalesWorkflow(bot, chatId, userId, messageId) {
       const cust = await findCustomerByOrderName(o.customer, customers);
       const bal = await lookupLedgerBalance(cust, balanceCache);
       lines.push(`• \`${o.order_id}\` · ${escapeMd(o.design)}${o.shade ? ' / ' + escapeMd(o.shade) : ''} · ${escapeMd(o.quantity)}`);
-      lines.push(`   👤 ${escapeMd(o.customer)}${cust ? ' · ' + escapeMd(cust.category || 'Standard') : ''}${bal != null ? ' · ' + fmtMoney(bal) + ' cr' : ''}`);
+      lines.push(`   👤 ${escapeMd(o.customer)}${cust ? ' · ' + escapeMd(cust.category || 'Standard') : ''}${bal != null ? ' · ' + money.sale(bal) + ' cr' : ''}`);
       lines.push(`   📅 ${fmtDate(o.scheduled_date)} · ✅ accepted ${fmtDate(o.accepted_at)} · 👷 ${escapeMd(o.salesperson_name)}`);
       rows.push([{
         text: `📋 ${truncate(o.order_id + ' · ' + o.customer, 38)}`,
@@ -369,8 +369,8 @@ async function showOrderDetail(bot, chatId, userId, messageId, orderId) {
   ];
   if (cust) {
     if (cust.phone) lines.push(`   📞 ${escapeMd(cust.phone)}`);
-    lines.push(`   🏷 Tier: *${escapeMd(tier)}*${cust.credit_limit ? ' · Credit limit: ' + fmtMoney(cust.credit_limit) : ''}`);
-    if (bal != null) lines.push(`   💰 Ledger: *${fmtMoney(bal)}* ${bal >= 0 ? 'credit' : 'debit'}`);
+    lines.push(`   🏷 Tier: *${escapeMd(tier)}*${cust.credit_limit ? ' · Credit limit: ' + money.sale(cust.credit_limit) : ''}`);
+    if (bal != null) lines.push(`   💰 Ledger: *${money.sale(bal)}* ${bal >= 0 ? 'credit' : 'debit'}`);
     if (cust.payment_terms) lines.push(`   📝 Terms: ${escapeMd(cust.payment_terms)}`);
   } else {
     lines.push('   _Not yet in the Customers sheet — add via Add Customer._');

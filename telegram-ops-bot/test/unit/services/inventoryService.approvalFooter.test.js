@@ -42,6 +42,19 @@ test('H7: record_office_expense marks the queue row approved + audits', async ()
   assert.ok(calls.audits.includes('approval_approved'), 'approval_approved audit written');
 });
 
+test('CUR-1 §4.3: the expense approval reply keeps the kobo the cash book carries (side A)', async () => {
+  const item = { requestId: 'OE3', user: 'mgr1', status: 'pending', actionJSON: { action: 'record_office_expense', branch: 'Kano' } };
+  harness(item);
+  branchOpsService.applyExpenseBatch = async () => ({ ok: true, count: 3, branch: 'Kano', total: 12345.5 });
+
+  const res = await inventoryService.executeApprovedAction('OE3', 'admin1');
+  assert.equal(res.ok, true);
+  // Same formatter as the requester card and the evening report — a batch
+  // total with kobo is never silently rounded on the approver's reply alone.
+  assert.equal(res.message, `Approved 3 item(s) for Kano: total ${branchOpsService.fmtNgn(12345.5)}.`);
+  assert.match(res.message, /total ₦12,345\.5\.$/);
+});
+
 test('H7: a failed expense apply leaves the row pending (no approved-mark)', async () => {
   const item = { requestId: 'OE2', user: 'mgr1', status: 'pending', actionJSON: { action: 'record_office_expense', branch: 'Lagos' } };
   const calls = harness(item);
@@ -61,6 +74,9 @@ test('H7: finalize_landed_cost marks the queue row approved + audits', async () 
   const res = await inventoryService.executeApprovedAction('LC1', 'admin1');
   assert.equal(res.ok, true);
   assert.match(res.message, /Landed cost finalized/);
+  // CUR-1 R8 — the sealed rate is side B: bare, 2 dp, no symbol.
+  assert.match(res.message, /at 12\.34\/yd\./);
+  assert.doesNotMatch(res.message, /₦|NGN/);
   assert.deepEqual(calls.statusUpdates, [{ id: 'LC1', status: 'approved' }]);
   assert.ok(calls.audits.includes('approval_approved'));
 });

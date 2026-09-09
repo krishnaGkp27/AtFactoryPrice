@@ -5,7 +5,6 @@
 const customersRepo = require('../repositories/customersRepository');
 const accountingService = require('../services/accountingService');
 const idGen = require('../utils/idGenerator');
-const { fmtMoney } = require('../utils/format');
 
 // CUS-2 — findOrCreateCustomer is GONE. It was a zero-gate silent-creation
 // door (no approval, no CUSTOMER_CREATION_ENABLED check, auto-Active) with
@@ -62,4 +61,4 @@ async function addToOutstanding(customerName, amount) {
   await customersRepo.updateOutstanding(cust.customer_id, newBalance);
 }
 
-module.exports = { addCustomer, getCustomer, searchCustomers, listCustomers, recordPayment, addToOutstanding, fmtMoney };
+module.exports = { addCustomer, getCustomer, searchCustomers, listCustomers, recordPayment, addToOutstanding };
