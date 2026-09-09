@@ -13,6 +13,7 @@ const SRC = path.join(__dirname, '../../../src');
 const invoicesRepository = require(path.join(SRC, 'repositories/invoicesRepository'));
 const customersRepository = require(path.join(SRC, 'repositories/customersRepository'));
 const accountingService = require(path.join(SRC, 'services/accountingService'));
+const settingsRepository = require(path.join(SRC, 'repositories/settingsRepository'));
 const invoiceService = require(path.join(SRC, 'services/invoiceService'));
 
 let stored = [];
@@ -28,6 +29,9 @@ customersRepository.getAll = async () => [
   { customer_id: 'CUST-20260601-002', name: 'Alabi J.', status: 'Merged', aliases: [] },
 ];
 accountingService.getCustomerLedger = async () => ({ outstandingAsOfToday: 209000 });
+// CUR-2 — createForSale reads the INVOICE_RATE_MULTIPLIER cell when the
+// enrichment carries no key; no cell here = no multiplier.
+settingsRepository.getAll = async () => ({});
 
 const YEAR = new Date().getFullYear();
 
@@ -88,12 +92,22 @@ test('createForSale persists a complete row and renderPdf produces a PDF', async
   assert.equal(inv.amountPaidAtIssue, 400000);
   assert.equal(inv.balanceAfterIssue, 209000);
   assert.equal(inv.bank, 'GTBank');
+  assert.equal(inv.rateMultiplier, null, 'no Settings cell → no multiplier frozen');
   assert.ok(inv.token.length >= 12, 'unguessable token minted');
   assert.equal(stored.length, 1, 'row persisted');
 
   const pdf = await invoiceService.renderPdf(inv);
   assert.ok(Buffer.isBuffer(pdf) && pdf.length > 2000, 'non-trivial PDF buffer');
   assert.equal(pdf.subarray(0, 5).toString(), '%PDF-', 'valid PDF header');
+
+  // CUR-1 §6 — the strings the PDF draws (same code path as renderPdf):
+  // bare headers, bare cells, the divisor named, no symbol anywhere.
+  const txt = invoiceService._internals.renderText(inv);
+  assert.ok(txt.includes('COST') && txt.includes('PAYMENTS'), 'column headers carry no unit');
+  assert.ok(txt.includes('PART-PAID · 400,000 received of 609,000'), 'status strip bare');
+  assert.ok(txt.includes('Shades 1, 2, 3, 4, 6, 7, 8 · 7 thans · 420 yds @ 1,450/yd'), 'integer rate prints as entered');
+  assert.ok(txt.includes('609,000') && txt.includes('400,000') && txt.includes('209,000'), 'total, payment and DEBIT BALANCE bare');
+  assert.ok(!txt.join('\n').includes('₦'), 'no symbol on the paper');
 });
 
 test('CARD-5: lines carry the item packaging, and words never guess', () => {

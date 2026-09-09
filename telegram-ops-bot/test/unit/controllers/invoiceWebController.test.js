@@ -54,9 +54,14 @@ test('valid token renders the statement; owner content rules hold', async () => 
   // "bale" was a guess (the ABBA statement called 28 thans "28 bales").
   assert.match(html, /Design 77016 · Shade 5 · 1 item/, 'line description stays neutral on legacy lines');
   assert.match(html, /60 yds/);
-  assert.match(html, /Payment received — Penta \(Transfer\)/, 'payment shows receiving account');
+  // CUR-2 §4a — the web payment row is dated like the PDF's.
+  assert.match(html, /Payment received 18-Jul-2026 — Penta \(Transfer\)/, 'payment shows date + receiving account');
   assert.match(html, /DEBIT BALANCE/, 'unpaid remainder labelled DEBIT BALANCE');
-  assert.match(html, /₦82,000/, 'balance = 132000 - 50000');
+  // CUR-1 R10/R12b — bare integers, no symbol, no unit; the rate names its divisor.
+  assert.match(html, /<span>82,000<\/span>/, 'balance = 132000 - 50000');
+  assert.match(html, /1,500\/yd/, 'rate as entered with the divisor');
+  assert.match(html, /<th class="num">Rate<\/th><th class="num">Cost<\/th>/, 'headers bare');
+  assert.ok(!html.includes('₦'), 'no symbol anywhere on a sale document');
   assert.match(html, /PART-PAID/);
   assert.match(html, new RegExp(`/i/${INV.token}\\.pdf`), 'PDF download link');
   assert.match(html, /noindex/, 'kept out of search engines');

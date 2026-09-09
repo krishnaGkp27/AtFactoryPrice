@@ -18,6 +18,13 @@
  *   payments in red with the receiving account, DEBIT BALANCE footer.
  * Rendering is a self-contained string template — no template engine, no
  * external assets, so the page works from any phone browser instantly.
+ *
+ * CUR-1 / CUR-2 (BUSINESS_RULES §17): a sale document is side B — every
+ * money cell is bare (no symbol, no unit) and integers (R10), the rate to
+ * 2 dp when the row froze a customer-copy multiplier. All printed numbers
+ * come from invoiceService.docFigures(inv) — stored lines × the STORED
+ * factor — so the web copy and the PDF cannot disagree, and a later
+ * Settings change never touches an issued invoice.
  */
 
 'use strict';
@@ -25,7 +32,7 @@
 const invoicesRepository = require('../repositories/invoicesRepository');
 const invoiceService = require('../services/invoiceService');
 const logger = require('../utils/logger');
-const { fmtQty } = require('../utils/format');
+const money = require('../utils/money');
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{16,128}$/;
 
@@ -33,10 +40,6 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
-}
-
-function fmtMoney(n) {
-  return `₦${fmtQty(n, { maxFraction: 2 })}`;
 }
 
 function fmtDate(iso) {
@@ -47,11 +50,14 @@ function fmtDate(iso) {
 }
 
 function renderHtml(inv) {
-  const paid = inv.amountPaidAtIssue || 0;
-  const balance = inv.total - paid;
-  const status = balance <= 0 ? 'PAID' : (paid > 0 ? 'PART-PAID' : 'UNPAID');
-  const statusColor = balance <= 0 ? '#1e7d32' : (paid > 0 ? '#b26a00' : '#b3261e');
-  const lineRows = (inv.lines || []).map((l) => {
+  const fig = invoiceService.docFigures(inv);
+  const { status } = fig;
+  const statusColor = status === 'PAID' ? '#1e7d32' : (status === 'PART-PAID' ? '#b26a00' : '#b3261e');
+  // A debt is a BOOKED fact (rule 17): the label follows the booked balance
+  // even when a factor < 1 rounds the printed balance to 0.
+  const bookedBalance = (Number(inv.total) || 0) - (Number(inv.amountPaidAtIssue) || 0);
+  const owing = fig.rateUnresolved || bookedBalance > 0;
+  const lineRows = fig.lines.map((l) => {
     const descBits = [l.design ? `Design ${l.design}` : 'Goods'];
     if (l.shades && l.shades.length) descBits.push(`Shade${l.shades.length > 1 ? 's' : ''} ${l.shades.join(', ')}`);
     // CARD-5 — this line used to hardcode "bales" for every item, so a
@@ -63,16 +69,18 @@ function renderHtml(inv) {
     return `
       <tr>
         <td>${esc(descBits.join(' · '))}</td>
-        <td class="num">${l.yards ? `${esc(l.yards)} yds` : ''}</td>
-        <td class="num">${l.rate ? `${fmtMoney(l.rate)}/yd` : ''}</td>
-        <td class="num">${fmtMoney(l.amount || 0)}</td>
+        <td class="num">${l.yards ? `${money.sale(l.yards)} yds` : ''}</td>
+        <td class="num">${esc(l.docRateText)}</td>
+        <td class="num">${esc(l.docAmountText)}</td>
       </tr>`;
   }).join('');
-  const paymentRow = paid > 0 ? `
+  // The payment row is dated like the PDF's (CUR-2 §4a) and prints in the
+  // document's unit (D2: the same factor as every other cell).
+  const paymentRow = fig.paid > 0 ? `
       <tr class="payment">
-        <td>Payment received${inv.bank ? ` — ${esc(inv.bank)}` : ''}${inv.paymentMode ? ` (${esc(inv.paymentMode)})` : ''}</td>
+        <td>Payment received ${fmtDate(inv.saleDate || inv.issueDate)}${inv.bank ? ` — ${esc(inv.bank)}` : ''}${inv.paymentMode ? ` (${esc(inv.paymentMode)})` : ''}</td>
         <td class="num"></td><td class="num"></td>
-        <td class="num">− ${fmtMoney(paid)}</td>
+        <td class="num">− ${esc(fig.paidText)}</td>
       </tr>` : '';
   return `<!doctype html>
 <html lang="en"><head>
@@ -119,15 +127,15 @@ function renderHtml(inv) {
   </header>
   <main>
     <table>
-      <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Cost</th></tr></thead>
+      <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">${esc(money.saleHeader('Rate'))}</th><th class="num">${esc(money.saleHeader('Cost'))}</th></tr></thead>
       <tbody>${lineRows}${paymentRow}</tbody>
     </table>
     <div class="totals">
-      <div class="row"><span>Total cost</span><span>${fmtMoney(inv.total)}</span></div>
-      <div class="row" style="color:var(--red)"><span>Payments</span><span>− ${fmtMoney(paid)}</span></div>
-      <div class="row grand ${balance > 0 ? 'debit' : ''}">
-        <span class="label">${balance > 0 ? 'DEBIT BALANCE' : 'BALANCE'}</span>
-        <span>${fmtMoney(Math.max(balance, 0))}</span>
+      <div class="row"><span>Total cost</span><span>${esc(fig.totalText)}</span></div>
+      <div class="row" style="color:var(--red)"><span>Payments</span><span>− ${esc(fig.paidText)}</span></div>
+      <div class="row grand ${owing ? 'debit' : ''}">
+        <span class="label">${owing ? 'DEBIT BALANCE' : 'BALANCE'}</span>
+        <span>${esc(fig.balanceText)}</span>
       </div>
     </div>
   </main>
