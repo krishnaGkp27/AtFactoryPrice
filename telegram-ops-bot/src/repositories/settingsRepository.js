@@ -25,6 +25,15 @@ const DEFAULTS = {
   // cell later never changes an issued invoice. Boot value comes from the
   // env INVOICE_RATE_MULTIPLIER; a sheet row of the same key overrides.
   INVOICE_RATE_MULTIPLIER: (config && config.invoiceRateMultiplier) || '',
+  // CUR-2 release B (owner, 09-Sep-2026, Q3 "as recommended") — ask the
+  // approving admin for the customer-copy multiplier as Step 5 of the sale
+  // wizard on every sale approval (1, default). 0 skips the step: the wizard
+  // finishes as before and the invoice takes INVOICE_RATE_MULTIPLIER above
+  // (the Settings-fulfilled path — the enrichment key stays absent). One
+  // cell, live in <=30 s, no deploy: DUAL-1a made sales single-admin because
+  // approval latency was blocking live sales, so an extra tap must be
+  // switchable from the sheet.
+  INVOICE_MULTIPLIER_ASK: 1,
   // BKD-1 (owner, 13-Aug-2026) — how far back the SALE date calendars reach
   // (Sell Bale + the Kano than sale). Raised from the hardcoded 90 so Abdul
   // can backfill Kano sales from before May; sheet row overrides, no deploy.

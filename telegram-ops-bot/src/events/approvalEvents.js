@@ -1,6 +1,8 @@
 /**
  * Event handlers for approval workflow: notify admins, handle approve/reject.
- * For sale approvals: admin must enter rate (Naira per unit), payment mode, and amount paid (if paid).
+ * For sale approvals: admin must enter rate (per unit, variable 1 — no currency is named on the sales side,
+ * BUSINESS_RULES §17), payment mode, amount paid (if paid) and, while INVOICE_MULTIPLIER_ASK is 1, the
+ * customer-copy multiplier (CUR-2 Step 5).
  * Unit foundation: 'yard' for now; structure ready for other units (metre, piece) later.
  */
 
@@ -25,6 +27,10 @@ const { shortRequestRef } = require('../services/approvalCards');
 // ANL-1 — usage analytics capture (fire-and-forget; no-op until enabled).
 const usageTracker = require('../services/usageTracker');
 const menuAnchor = require('../services/menuAnchor');
+// CUR-1 — sale-side figures print bare (money.sale / money.saleRate); this
+// file never spells a currency symbol or unit on a sale card.
+const money = require('../utils/money');
+const { normaliseRateMultiplier } = require('../repositories/invoicesRepository');
 
 const SALE_ACTIONS = ['sell_than', 'sell_package', 'sale_bundle'];
 const DEFAULT_SALE_UNIT = 'yard';
@@ -306,7 +312,7 @@ async function sendCustomerStep(bot, chatId, state, note) {
   // and the previous rate for that design"). For a single-design sale the
   // top chips are buyers of THIS design, newest first, each carrying the
   // rate they LAST paid for it — the reminder and an identity check in one:
-  // if the admin expects CJE around ₦1,500 and the chip says ₦900, either
+  // if the admin expects CJE around 1,500 and the chip says 900, either
   // memory or the books are wrong, and that is worth noticing BEFORE the
   // tap. Multi-design bundles have no single "the rate", so their chips
   // stay unannotated (general recency) — Step 2 handles per-design rates.
@@ -356,7 +362,7 @@ async function sendCustomerStep(bot, chatId, state, note) {
   // Design buyers first, one per row — the rate needs the width.
   designBuyers.forEach((b, i) => {
     const rate = Number.isFinite(b.rate) && b.rate > 0
-      ? ` — ₦${Number(b.rate).toLocaleString('en-NG')}/yd` : '';
+      ? ` — ${rateText(b.rate)}` : '';
     rows.push([{ text: `👤 ${b.name.slice(0, 24)}${rate}`, callback_data: wizCb(state, `cust:r:${i}`) }]);
   });
   for (let i = designBuyers.length; i < names.length; i += 2) {
@@ -514,6 +520,56 @@ function wizHeader(state) {
 const TYPED_NOTE = '\n✍️ _A typed reply goes to the request you touched last._';
 
 /**
+ * CUR-1 — a rate on a wizard chip / ack, bare: `1,500/yd`; a fractional
+ * entered rate keeps its decimals (`3.20/yd`), never truncated to `3/yd`.
+ */
+function rateText(n) {
+  const v = Number(n) || 0;
+  return money.saleRate(v, { fraction: Number.isInteger(v) ? 0 : 2 });
+}
+
+/** CUR-2 — the factor at its own precision (`1,250`), shared with the invoice. */
+function factorText(m) {
+  return require('../services/invoiceService').factorText(m);
+}
+
+/**
+ * CUR-2 §3b — the two Settings cells Step 5 depends on, read together and
+ * best-effort: `ask` (INVOICE_MULTIPLIER_ASK, default 1 — a blank / absent
+ * cell asks, only an explicit 0 skips) and `settingsFactor` (the usable
+ * INVOICE_RATE_MULTIPLIER, or null when blank / 0 / 1 / unparsable — no
+ * chip). A Settings outage asks with no Settings chip: the admin can still
+ * answer "No multiplier" or type one, and the sale is never blocked.
+ */
+async function multiplierStepConfig() {
+  let ask = true;
+  let settingsFactor = null;
+  try {
+    const settingsRepository = require('../repositories/settingsRepository');
+    const s = await settingsRepository.getAll();
+    const v = s.INVOICE_MULTIPLIER_ASK;
+    if (!(v === undefined || v === null || v === '')) ask = Number(v) !== 0;
+    settingsFactor = normaliseRateMultiplier(s.INVOICE_RATE_MULTIPLIER);
+  } catch (e) {
+    logger.warn(`CUR-2: Settings read failed for Step 5 (asking, no Settings chip): ${e.message}`);
+  }
+  return { ask, settingsFactor };
+}
+
+/**
+ * CUR-2 §3b rule 2 — a typed multiplier: commas ignored, decimals allowed,
+ * `0 < m <= 1,000,000`. Returns the number, or null when refused.
+ */
+function parseTypedMultiplier(text) {
+  const t = String(text || '').trim();
+  if (!/^\d[\d,]*(\.\d+)?$/.test(t)) return null;
+  const m = Number(t.replace(/,/g, ''));
+  if (!Number.isFinite(m) || m <= 0 || m > 1_000_000) return null;
+  return m;
+}
+const MULTIPLIER_REFUSAL = 'Please enter a positive number for the multiplier, e.g. 1250 — or tap No multiplier.';
+
+/**
  * APC-1 — the wizard lives IN the approval card: every step edits the same
  * anchored message (per request), so processing three sales is three cards,
  * not an interleaved stack of step messages. A failed edit (old card, chat
@@ -624,7 +680,7 @@ async function sendRateStep(bot, chatId, state) {
     const last = await getLastPaidRate(customer, designs[0]);
     if (last) {
       state.lastPaidRate = last;
-      rows.push([{ text: `₦${Number(last).toLocaleString('en-NG')}/yd — last paid by ${String(customer).slice(0, 24)}`, callback_data: wizCb(state, 'rate:v') }]);
+      rows.push([{ text: `${rateText(last)} — last paid by ${String(customer).slice(0, 24)}`, callback_data: wizCb(state, 'rate:v') }]);
     }
   }
   rows.push([{ text: '✏️ Type a custom rate', callback_data: wizCb(state, 'rate:custom') }]);
@@ -643,7 +699,7 @@ async function sendRateStep(bot, chatId, state) {
       const accountingService = require('../services/accountingService');
       const { outstandingAsOfToday } = await accountingService.getCustomerLedger(customer);
       if (Number.isFinite(outstandingAsOfToday)) {
-        outstandingLine = `\n📒 Outstanding: ₦${Number(outstandingAsOfToday).toLocaleString('en-NG')}`;
+        outstandingLine = `\n📒 Outstanding: ${money.sale(outstandingAsOfToday)}`;
       }
     }
   } catch (e) {
@@ -651,7 +707,7 @@ async function sendRateStep(bot, chatId, state) {
   }
 
   await renderWizard(bot, chatId, state,
-    `${wizHeader(state)}\n\nCustomer: *${customer || '—'}*${outstandingLine}\nDesign(s): ${designList}\nUnit: ${unit} (Naira per ${unit})\n\n*Step 2 — Rate:* tap below, or reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\`${TYPED_NOTE}`,
+    `${wizHeader(state)}\n\nCustomer: *${customer || '—'}*${outstandingLine}\nDesign(s): ${designList}\nUnit: ${unit}\n\n*Step 2 — Rate:* tap below, or reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\`${TYPED_NOTE}`,
     rows);
 }
 
@@ -692,12 +748,72 @@ async function sendAmountStep(bot, chatId, state) {
   state.fullAmount = full > 0 ? Math.round(full) : null;
   const rows = [];
   if (state.fullAmount) {
-    rows.push([{ text: `✅ Paid in full — ₦${state.fullAmount.toLocaleString('en-NG')}`, callback_data: wizCb(state, 'amt:full') }]);
+    rows.push([{ text: `✅ Paid in full — ${money.sale(state.fullAmount)}`, callback_data: wizCb(state, 'amt:full') }]);
   }
   rows.push([{ text: '✏️ Type the amount', callback_data: wizCb(state, 'amt:custom') }]);
   await renderWizard(bot, chatId, state,
-    `${wizHeader(state)}\n👤 ${state.customer || '—'} · ${state.paymentMode || ''}\n\n*Step 4 — Amount paid:* tap below, or reply with the amount received (Naira), e.g. 50000${TYPED_NOTE}`,
+    `${wizHeader(state)}\n👤 ${state.customer || '—'} · ${state.paymentMode || ''}\n\n*Step 4 — Amount paid:* tap below, or reply with the amount received, e.g. 50000${TYPED_NOTE}`,
     rows);
+}
+
+/**
+ * CUR-2 §3b — Step 5 (OPTIONAL, INVOICE_MULTIPLIER_ASK): the number the
+ * entered rate is multiplied by on the CUSTOMER COPY of the invoice. Drawn
+ * exactly as the spec prints it. Chips: [No multiplier] always; [Settings:
+ * <n>] only when the Settings cell normalises to a usable factor; [✏️ Type a
+ * number] always. No unit anywhere on this card (R13). The answer is shown
+ * ONLY here (owner, 09-Sep-2026): the factor is internal after this card —
+ * it lives in the enrichment key, Invoices column W and the AuditLog payload.
+ */
+async function sendMultiplierStep(bot, chatId, state) {
+  state.step = 'multiplier';
+  const first = [{ text: 'No multiplier', callback_data: wizCb(state, 'mult:none') }];
+  if (state.settingsMultiplier) {
+    first.push({ text: `Settings: ${factorText(state.settingsMultiplier)}`, callback_data: wizCb(state, 'mult:def') });
+  }
+  const rows = [first, [{ text: '✏️ Type a number', callback_data: wizCb(state, 'mult:custom') }]];
+  const rates = Object.values(state.ratePerUnitByDesign || {}).filter((r) => Number.isFinite(r) && r > 0);
+  const eg = rates.length === 1 ? ` (${money.saleRate(rates[0], { fraction: 2 })})` : '';
+  await renderWizard(bot, chatId, state,
+    `${wizHeader(state)}\n👤 ${state.customer || '—'} · ${state.paymentMode || ''} · ${money.sale(state.amountPaid)}\n\n`
+    + `*Step 5 — Customer-copy multiplier:* tap below, or reply with the number the entered rate is multiplied by on the customer's invoice.\n`
+    + `_No multiplier = the invoice prints the rate exactly as entered${eg}._${TYPED_NOTE}`,
+    rows);
+}
+
+/**
+ * CUR-2 §3b rule 4 — the one finish behind every route (Paid-in-full chip,
+ * typed amount, both amount-0 shortcuts, and the Step 5 answers). Holds the
+ * amount on state, asks Step 5 first when the knob says so and it has not
+ * been answered, then seals the card and executes. `rateMultiplier` is on
+ * the enrichment exactly when Step 5 ran (`1` = "No multiplier"); absent
+ * otherwise — the presence of the key IS the "wizard ran" flag, and the
+ * resume chain / persistEnrichDraft are untouched (rule 5).
+ */
+async function finishWizard(bot, chatId, adminId, state, amountPaid) {
+  state.amountPaid = amountPaid;
+  if (state.rateMultiplier === undefined) {
+    const { ask, settingsFactor } = await multiplierStepConfig();
+    if (ask) {
+      state.settingsMultiplier = settingsFactor;
+      await sendMultiplierStep(bot, chatId, state);
+      return;
+    }
+  }
+  state.step = null;
+  pendingEnrichment.delete(wizKey(adminId, state.requestId));
+  // Seal this wizard's card before executing so its chips die with it. The
+  // factor is NOT echoed here (owner, 09-Sep-2026: internal after entry).
+  await renderWizard(bot, chatId, state,
+    `${wizHeader(state)}\n👤 ${state.customer || '—'} · ${state.paymentMode || ''} · ${money.sale(amountPaid)}\n⏳ Applying…`, []);
+  const enrichment = {
+    unit: state.unit,
+    ratePerUnitByDesign: state.ratePerUnitByDesign,
+    paymentMode: state.paymentMode,
+    amountPaid,
+  };
+  if (state.rateMultiplier !== undefined) enrichment.rateMultiplier = state.rateMultiplier;
+  await runApprovedSaleWithEnrichment(bot, chatId, adminId, state.requestId, state.item, state.requestingUser, enrichment);
 }
 
 /**
@@ -750,24 +866,8 @@ async function handleEnrichmentCallback(bot, callbackQuery) {
     state = open[0];
   }
   touchWizard(state);
-  const CURRENCY = config.currency || 'NGN';
-  const fmt = (n) => `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
 
-  const finish = async (amountPaid) => {
-    state.amountPaid = amountPaid;
-    state.step = null;
-    pendingEnrichment.delete(wizKey(adminId, state.requestId));
-    // Seal this wizard's card before executing so its chips die with it.
-    await renderWizard(bot, chatId, state,
-      `${wizHeader(state)}\n⏳ Applying…`, []);
-    const enrichment = {
-      unit: state.unit,
-      ratePerUnitByDesign: state.ratePerUnitByDesign,
-      paymentMode: state.paymentMode,
-      amountPaid,
-    };
-    await runApprovedSaleWithEnrichment(bot, chatId, adminId, state.requestId, state.item, state.requestingUser, enrichment, fmt);
-  };
+  const finish = (amountPaid) => finishWizard(bot, chatId, adminId, state, amountPaid);
 
   // APC-1 — "which request?" pick for a typed reply that was parked because
   // several wizards were open and none was touched recently.
@@ -835,7 +935,7 @@ async function handleEnrichmentCallback(bot, callbackQuery) {
     const rateByDesign = {};
     state.designs.forEach((d) => { rateByDesign[d] = state.lastPaidRate; });
     state.ratePerUnitByDesign = rateByDesign;
-    await ack(`Rate: ₦${state.lastPaidRate}/yd`);
+    await ack(`Rate: ${rateText(state.lastPaidRate)}`);
     await persistEnrichDraft(state);
     await sendPaymentStep(bot, chatId, state);
     return true;
@@ -873,13 +973,32 @@ async function handleEnrichmentCallback(bot, callbackQuery) {
     return true;
   }
   if (data === 'enr:amt:full' && state.step === 'amount_paid' && state.fullAmount) {
-    await ack(`₦${state.fullAmount.toLocaleString('en-NG')}`);
+    await ack(money.sale(state.fullAmount));
     await finish(state.fullAmount);
     return true;
   }
   if (data === 'enr:amt:custom') {
     await ack();
-    try { await bot.sendMessage(chatId, 'Reply with the amount received (Naira), e.g. 50000.'); } catch (_) {}
+    try { await bot.sendMessage(chatId, 'Reply with the amount received, e.g. 50000.'); } catch (_) {}
+    return true;
+  }
+  // CUR-2 §3b — Step 5 chips (wire form enr:q:<rid>:mult:none|def|custom).
+  if (data === 'enr:mult:none' && state.step === 'multiplier') {
+    state.rateMultiplier = 1; // present = the wizard ran; 1 = none (rule 3)
+    await ack('No multiplier');
+    await finish(state.amountPaid);
+    return true;
+  }
+  if (data === 'enr:mult:def' && state.step === 'multiplier') {
+    if (!state.settingsMultiplier) { await ack('Expired — pick again.'); await sendMultiplierStep(bot, chatId, state); return true; }
+    state.rateMultiplier = state.settingsMultiplier;
+    await ack(`× ${factorText(state.settingsMultiplier)}`);
+    await finish(state.amountPaid);
+    return true;
+  }
+  if (data === 'enr:mult:custom') {
+    await ack();
+    try { await bot.sendMessage(chatId, 'Reply with the number the entered rate is multiplied by on the customer\'s invoice, e.g. 1250.'); } catch (_) {}
     return true;
   }
   await ack();
@@ -917,8 +1036,6 @@ async function applyEnrichmentText(bot, chatId, adminId, state, text) {
   // ANCH-1 — the reply the admin just typed now sits BELOW the card; the
   // next render must bring the card back down beside the keyboard.
   state.bumpNext = true;
-  const CURRENCY = config.currency || 'NGN';
-  const fmt = (n) => `${CURRENCY} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
 
   // CUS-1 — Step 1 typed: SEARCH ONLY over the official list, alias-aware.
   // The "add as new" escape is gone (owner, 29-Jul): a typed string can
@@ -957,7 +1074,7 @@ async function applyEnrichmentText(bot, chatId, adminId, state, text) {
     if (/^\d+(\.\d+)?$/.test(t)) {
       const single = parseFloat(t);
       if (isNaN(single) || single < 0) {
-        await bot.sendMessage(chatId, 'Please enter a valid number for rate (Naira per yard).');
+        await bot.sendMessage(chatId, 'Please enter a valid number for the rate per yard.');
         return true;
       }
       state.designs.forEach((d) => { rateByDesign[d] = single; });
@@ -982,19 +1099,7 @@ async function applyEnrichmentText(bot, chatId, adminId, state, text) {
 
   // APC-1 — typed finishes seal this wizard's own card and delete ITS state
   // (never another request's), exactly like the chip finishes.
-  const finishTyped = async (amountPaid) => {
-    state.amountPaid = amountPaid;
-    state.step = null;
-    pendingEnrichment.delete(wizKey(adminId, state.requestId));
-    await renderWizard(bot, chatId, state, `${wizHeader(state)}\n⏳ Applying…`, []);
-    const enrichment = {
-      unit: state.unit,
-      ratePerUnitByDesign: state.ratePerUnitByDesign,
-      paymentMode: state.paymentMode,
-      amountPaid,
-    };
-    await runApprovedSaleWithEnrichment(bot, chatId, adminId, state.requestId, state.item, state.requestingUser, enrichment, fmt);
-  };
+  const finishTyped = (amountPaid) => finishWizard(bot, chatId, adminId, state, amountPaid);
 
   if (state.step === 'payment') {
     const mode = t;
@@ -1013,10 +1118,24 @@ async function applyEnrichmentText(bot, chatId, adminId, state, text) {
   if (state.step === 'amount_paid') {
     const amount = parseFloat(t.replace(/[,]/g, ''));
     if (isNaN(amount) || amount < 0) {
-      await bot.sendMessage(chatId, 'Please enter a valid amount (Naira), e.g. 50000');
+      await bot.sendMessage(chatId, 'Please enter a valid amount, e.g. 50000');
       return true;
     }
     await finishTyped(amount);
+    return true;
+  }
+
+  // CUR-2 §3b rule 2 — a typed multiplier; a refusal keeps the card on
+  // Step 5 (re-rendered below the admin's own reply, ANCH-1).
+  if (state.step === 'multiplier') {
+    const m = parseTypedMultiplier(t);
+    if (m === null) {
+      try { await bot.sendMessage(chatId, MULTIPLIER_REFUSAL); } catch (_) { /* best-effort */ }
+      await sendMultiplierStep(bot, chatId, state);
+      return true;
+    }
+    state.rateMultiplier = m;
+    await finishTyped(state.amountPaid);
     return true;
   }
 
@@ -1049,7 +1168,7 @@ async function uploadSaleDocToDrive(bot, item, requestId) {
   }
 }
 
-async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, item, requestingUser, enrichment, fmt) {
+async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, item, requestingUser, enrichment) {
   // DSP-1 fail-closed. The customer name is the ledger key: it stamps the
   // Inventory row, the Transactions row, the customer ledger and the
   // invoice. A sale applied without one is an untraceable stock movement
@@ -1116,7 +1235,8 @@ async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, it
         try {
           const accountingService = require('../services/accountingService');
           const { outstandingAsOfToday } = await accountingService.getCustomerLedger(customer);
-          await bot.sendMessage(chatId, `📒 *${customer}* — Outstanding as of today: ${fmt(outstandingAsOfToday)}`);
+          // CUR-1 R12b — a ledger figure on a sale card is bare (variable 1).
+          await bot.sendMessage(chatId, `📒 *${customer}* — Outstanding as of today: ${money.sale(outstandingAsOfToday)}`);
         } catch (_) {}
       }
       // INV-1a — deliver the issued invoice PDF to approver + requester
@@ -1971,8 +2091,8 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
           try {
             const accountingService = require('../services/accountingService');
             const { outstandingAsOfToday } = await accountingService.getCustomerLedger(customer);
-            const fmt = (n) => `${config.currency || 'NGN'} ${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
-            await bot.sendMessage(chatIdCb, `📒 *${customer}* — Outstanding as of today: ${fmt(outstandingAsOfToday)}`);
+            // CUR-1 R12b — bare, like the wizard's own outstanding line.
+            await bot.sendMessage(chatIdCb, `📒 *${customer}* — Outstanding as of today: ${money.sale(outstandingAsOfToday)}`);
           } catch (_) {}
         }
       } else {
@@ -2742,5 +2862,7 @@ module.exports = {
     // APC-1 — per-request wizard mechanics, exposed for the concurrency tests.
     wizardsOf, activeWizard, wizKey, lastTouchedWizard, heldEnrichmentText, renderWizard,
     pendingReason, armReasonPrompt,
+    // CUR-2 — Step 5 mechanics, exposed for the multiplier-step tests.
+    sendMultiplierStep, finishWizard, parseTypedMultiplier, multiplierStepConfig, MULTIPLIER_REFUSAL,
   },
 };

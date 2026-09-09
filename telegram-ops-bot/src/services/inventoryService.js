@@ -1830,7 +1830,15 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   const approverLabel = await require('./approverStamp')
     .labelFor({ actionJSON: aj, actorId: approvedBy });
   await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString(), approverLabel);
-  await auditLogRepository.append('approval_approved', { requestId, approvedBy, approver: approverLabel }, approvedBy);
+  // CUR-2 §7 — the who-chose-it trail: the customer-copy multiplier the
+  // approving admin answered at the wizard's Step 5 rides on the existing
+  // event (Invoices column W stays the durable record). Additive key only;
+  // absent when Step 5 never ran (Settings-fulfilled path, old rows).
+  const auditPayload = { requestId, approvedBy, approver: approverLabel };
+  if (enrichment && enrichment.rateMultiplier !== undefined && enrichment.rateMultiplier !== null) {
+    auditPayload.rateMultiplier = enrichment.rateMultiplier;
+  }
+  await auditLogRepository.append('approval_approved', auditPayload, approvedBy);
   // H6 — erpFailures non-empty means stock moved but books did not.
   return { ok: true, bundleReport, message: customMessage, erpFailures, invoice, approver: approverLabel, creditNote };
 }

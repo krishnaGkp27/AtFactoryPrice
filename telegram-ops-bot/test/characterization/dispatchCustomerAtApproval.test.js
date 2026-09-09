@@ -259,8 +259,9 @@ test('CUS-1 D: design buyers rank first, each chip carrying their LAST rate for 
     const bot = createFakeBot();
     await approvalEvents.startApprovalEnrichment(bot, ADMIN, ADMIN, 'R-1', saleItem(''), '4242');
     const chips = kbOf(bot).filter((b) => /^enr:q:R-1:cust:r:/.test(b.callback_data));
-    assert.match(chips[0].text, /CJE — ₦1,500\/yd/, `newest buyer of the design first, with the rate: ${chips[0].text}`);
-    assert.match(chips[1].text, /Ketu madam — ₦1,450\/yd/);
+    assert.match(chips[0].text, /CJE — 1,500\/yd/, `newest buyer of the design first, with the rate: ${chips[0].text}`);
+    assert.match(chips[1].text, /Ketu madam — 1,450\/yd/);
+    assert.ok(!/₦|NGN/.test(chips.map((c) => c.text).join(' ')), 'CUR-1: no unit on a sale chip');
     assert.equal(chips.filter((c) => /CJE/.test(c.text)).length, 1, 'the alias sale deduped onto the canonical entity');
     assert.ok(!chips.some((c) => /GHOST TYPO/.test(c.text)), 'history typos are never suggested (decision 8)');
     assert.match(texts(bot), /Who is buying 77016/, 'the header names the design');
@@ -277,7 +278,8 @@ test('CUS-1 D: Step 2 shows the outstanding balance for the assigned customer', 
   try {
     const bot = createFakeBot();
     await approvalEvents.startApprovalEnrichment(bot, ADMIN, ADMIN, 'R-1', saleItem('CJE'), '4242');
-    assert.match(texts(bot), /📒 Outstanding: ₦240,000/, 'credit exposure at the moment more stock is assigned');
+    assert.match(texts(bot), /📒 Outstanding: 240,000/, 'credit exposure at the moment more stock is assigned');
+    assert.ok(!/Outstanding: (₦|NGN)/.test(texts(bot)), 'CUR-1 R12b: the ledger figure is bare on a sale card');
   } finally {
     accountingService.getCustomerLedger = origLedger;
   }
