@@ -23,14 +23,33 @@ function startRowIndex(range) {
   return m ? Math.max(0, parseInt(m[0], 10) - 1) : 0;
 }
 
-/** Zero-based {row, col} of the top-left cell of an A1 range like "W3:W3". */
-function startCell(range) {
-  const left = String(range || '').split(':')[0];
-  const m = left.match(/^([A-Za-z]*)(\d*)$/) || [];
+/** Zero-based {row, col} of one A1 cell reference like "W3" / "W" / "3". */
+function parseCell(ref) {
+  const m = String(ref || '').match(/^([A-Za-z]*)(\d*)$/) || [];
   let col = 0;
   for (const ch of (m[1] || '').toUpperCase()) col = col * 26 + (ch.charCodeAt(0) - 64);
   const row = m[2] ? parseInt(m[2], 10) : 1;
-  return { row: Math.max(0, row - 1), col: Math.max(0, col - 1) };
+  return { row: Math.max(0, row - 1), col: m[1] ? Math.max(0, col - 1) : null };
+}
+
+/** Zero-based {row, col} of the top-left cell of an A1 range like "W3:W3". */
+function startCell(range) {
+  const { row, col } = parseCell(String(range || '').split(':')[0]);
+  return { row, col: col == null ? 0 : col };
+}
+
+/**
+ * Zero-based column window [from, to] of an A1 range, `to` null when the
+ * range names no end column ("A1", "A2:Z" → 0..25, "L2:L" → 11..11).
+ * The real API returns only the cells inside the requested columns, so a
+ * reader of "L2:L" sees column L at index 0 — the fake must agree, or a
+ * guard that re-reads one column before writing would compare column A.
+ */
+function columnWindow(range) {
+  const [left, right] = String(range || '').split(':');
+  const from = startCell(range).col;
+  const to = right ? parseCell(right).col : (parseCell(left).col == null ? null : from);
+  return { from, to };
 }
 
 /**
@@ -55,7 +74,8 @@ function createFakeSheets(initial = {}) {
     async readRange(sheetName, range) {
       const rows = store.get(sheetName);
       if (!rows) return [];
-      return rows.slice(startRowIndex(range)).map((r) => [...r]);
+      const { from, to } = columnWindow(range);
+      return rows.slice(startRowIndex(range)).map((r) => r.slice(from, to == null ? undefined : to + 1));
     },
 
     async appendRows(sheetName, rows) {
