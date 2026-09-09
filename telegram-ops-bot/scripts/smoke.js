@@ -322,7 +322,7 @@ function runS4() {
 // list. Comments are stripped before scanning — `//` lines, `/* */` blocks
 // and `^\s*\*` JSDoc continuation lines — so a comment may still say ₦.
 // ---------------------------------------------------------------------------
-const SCUR_MODE = 'warn'; // 'warn' | 'fail'
+const SCUR_MODE = 'fail'; // 'warn' | 'fail' — flipped at CUR-1 step 9 (09-Sep-2026)
 
 /** The one file that may spell the symbol on the sales side. */
 const SCUR_MONEY_MODULE = 'src/utils/money.js';

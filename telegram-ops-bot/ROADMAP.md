@@ -139,7 +139,7 @@ When in doubt about *where* something belongs, ask: is this a status (§2), a re
 |---|---|---|
 | TG-8 | Split `telegramController.js` by domain | ⏸ Deferred |
 | TG-9 | Split `approvalEvents.js` | ⏸ Deferred |
-| TG-10 | Centralize repeated helpers (`fmtMoney`, `genId`, `editOrSend`) | ⏸ Deferred |
+| TG-10 | Centralize repeated helpers (`fmtMoney`, `genId`, `editOrSend`) | 🟡 Partial — money done (CUR-1, 09-Sep-2026: `src/utils/money.js`; `fmtMoney` survives for the two R5a reports only); `genId` / `editOrSend` still deferred |
 | TG-11 | Standardize repository caching (`_cachedReader.js`) | ⏸ Deferred |
 | TG-12 | Replace `console.log` with `pino` | ⏸ Deferred |
 | TG-13 | Replace 4 reminder loops with generic scheduler | ⏸ Deferred |
