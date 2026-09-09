@@ -48,6 +48,8 @@ const PAYMENT_ROW = {
   actionJSON: {
     action: 'request_payment', payment_id: 'P-0001', payee_name: 'Musa Bello',
     amount_ngn: 45000, account_number: '0123456789', bank: 'GTB', above_threshold: false,
+    // PAY-2 — the reason rides the payload so every rebuild prints it.
+    reason: 'Transport to Idumota',
   },
 };
 
@@ -78,6 +80,7 @@ test('S-CUR rule 5: the inbox rebuild of a request_payment row still shows ₦ (
     assert.match(text, /₦45,000/, `the outgoing amount keeps the naira symbol, got: ${text}`);
     assert.match(text, /Musa Bello/, 'the payee is named — two payment requests never read identically');
     assert.match(text, /0123456789/, 'the account the money leaves to');
+    assert.match(text, /Reason: Transport to Idumota/, 'PAY-2 — the reason rides the inbox rebuild');
   } finally {
     approvalQueueRepository.getAllPending = orig;
     sessionStore.clear(ADMIN);
@@ -89,10 +92,14 @@ test('S-CUR rule 5: the request_payment rebuild is the side-A builder\'s text, n
   const card = await approvalCards.buildCardFromActionJSON(PAYMENT_ROW.actionJSON);
   assert.equal(card, paymentCards.buildApprovalSummary({ ...PAYMENT_ROW.actionJSON, payee_type: '?' }));
   assert.match(card, /Payment request: ₦45,000/);
+  // PAY-2 — the Reason line sits after Account, before the badge / bill lines.
+  assert.match(card, /Account: 0123456789 · GTB\nReason: Transport to Idumota/);
+  const noReason = await approvalCards.buildCardFromActionJSON({ ...PAYMENT_ROW.actionJSON, reason: undefined });
+  assert.doesNotMatch(noReason, /Reason:/, 'a pre-PAY-2 row prints no empty Reason line');
   // A large one carries the badge the notify-time card carries.
   const big = await approvalCards.buildCardFromActionJSON({ ...PAYMENT_ROW.actionJSON, amount_ngn: 250000, above_threshold: true });
   assert.match(big, /₦250,000/);
-  assert.match(big, /LARGE PAYMENT/);
+  assert.match(big, /Reason: Transport to Idumota\n⚠️ LARGE PAYMENT/);
 });
 
 test('S-CUR rule 5: the generic field list prints price / amount RAW — bare, never via a side-A formatter', async () => {

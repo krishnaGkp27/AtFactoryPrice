@@ -10,14 +10,24 @@
  *                         account number, typed TWICE → bank → confirm.
  *                         Dual-admin. Nothing may be paid to an account
  *                         that has not been through this.
- *   💸 Request payment    pick a REGISTERED account → amount → optional
- *                         bill → confirm. Dual-admin, whatever the size.
+ *   💸 Request payment    pick a REGISTERED account → amount → typed
+ *                         REASON (PAY-2) → optional bill → confirm.
+ *                         Dual-admin, whatever the size.
  *   📋 My requests        what happened to what I asked for.
+ *   💳 Waiting for me to pay   (finance seat only) approved, unpaid rows —
+ *                         tap one to get its finance card again (PAY-2 §2 H).
  *
- * After the second admin approves, the request goes to the ONE finance
- * Telegram id, who transfers the money at the bank and taps ✔ Mark Done
- * (or ✖ Decline with a reason — finance can still refuse to execute
- * something already approved: wrong account, no funds, a duplicate).
+ * After the second admin approves, the request goes to the finance seat
+ * (Railway FINANCE_IDS, else the one Users Finance row, else the admins —
+ * PAY-2 §2 B), who transfers the money at the bank and taps ✔ Mark Done
+ * (proof screenshot or skip, then the Paid notice to the requester and
+ * both signers — PAY-2 §2 D) or ✖ Decline with a reason — finance can
+ * still refuse to execute something already approved: wrong account, no
+ * funds, a duplicate (Declined notice to the same three — §2 E).
+ *
+ * PAY-2 §1 storage rule: the reason and the event trail go to Postgres
+ * (`payment_reasons`, `payment_events`, fail-open); the sheet row only
+ * ever flips its EXISTING lifecycle columns.
  *
  * Why the account number is typed twice: it is the only field in this
  * whole feature that cannot be checked against anything. A wrong design
@@ -27,13 +37,16 @@
  * Session (type 'payment_flow'):
  *   { step, flowMessageId, mode: 'register'|'request',
  *     reg: { owner_type, owner_name, owner_telegram_id, number, confirm, bank },
- *     req: { accounts[], account, amount, bill_file_id },
- *     dec: { payment_id } }            // decline-reason capture
+ *     req: { accounts[], account, amount, reason, bill_file_id },
+ *     dec: { payment_id },             // decline-reason capture
+ *     done: { payment_id, card_message_id },   // PAY-2 proof capture
+ *     wait: { ids[] } }                // PAY-2 finance queue
  *
  * Callback namespace `pay:` —
- *   pay:start:reg|req|mine   pay:type:emp|con    pay:bank:<i>
+ *   pay:start:reg|req|mine|wait   pay:type:emp|con    pay:bank:<i>
  *   pay:acct:<i>             pay:bill:skip       pay:submit
  *   pay:done:<id>            pay:dec:<id>        pay:proof:skip
+ *   pay:wait:<i>             (re-send the finance card of queue item i)
  *   pay:back                 pay:cancel
  */
 
@@ -47,6 +60,9 @@ const settingsRepository = require('../repositories/settingsRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const approvalEvents = require('../events/approvalEvents');
+const paymentReasonsRepository = require('../repositories/paymentReasonsRepository');
+const paymentEventsRepository = require('../repositories/paymentEventsRepository');
+const approverStamp = require('../services/approverStamp');
 const riskEvaluate = require('../risk/evaluate');
 const idGenerator = require('../utils/idGenerator');
 const fmtDate = require('../utils/formatDate');
@@ -57,7 +73,7 @@ const logger = require('../utils/logger');
 const SESSION_TYPE = 'payment_flow';
 const NS = 'pay';
 const render = makeRenderer();
-const { backAndCancelRow, cancelRow, menuRow } = rowsFor(NS);
+const { backAndCancelRow, backRow, cancelRow, menuRow } = rowsFor(NS);
 
 const FLOW_TTL_MS = 20 * 60 * 1000;
 
@@ -80,7 +96,7 @@ async function start(bot, chatId, userId, messageId) {
 
 async function showHub(bot, chatId, userId) {
   const isAdmin = auth.isAdmin(userId);
-  const head = await paymentService.financeHead();
+  const recipients = await paymentService.paymentRecipients();
   const mine = await paymentAccountsRepo.activeForTelegramId(userId);
 
   const lines = ['💳 *Payments*', ''];
@@ -88,17 +104,27 @@ async function showHub(bot, chatId, userId) {
     ? `You have *${mine.length}* registered account${mine.length === 1 ? '' : 's'}.`
     : '_You have no registered account yet — register one before requesting a payment._');
   if (isAdmin) {
-    lines.push(head.ok
-      ? `Finance: *${mdEscape(head.name)}* pays and marks done.`
-      : mdEscape(paymentService.financeWarning(head)));
+    if (recipients.head.ok) {
+      const names = recipients.head.name
+        ? [recipients.head.name]
+        : await Promise.all(recipients.ids.map((id) => resolveName(id)));
+      lines.push(`Finance: *${mdEscape(names.join(' · '))}* pays and marks done.`);
+    } else {
+      lines.push(mdEscape(paymentService.financeWarning(recipients.head)));
+    }
   }
 
   const rows = [
     [{ text: '🏦 Register account', callback_data: 'pay:start:reg' }],
     [{ text: '💸 Request payment', callback_data: 'pay:start:req' }],
     [{ text: '📋 My requests', callback_data: 'pay:start:mine' }],
-    menuRow(),
   ];
+  // PAY-2 §2 H — the finance seat sees its own queue: approved, unpaid.
+  if (recipients.ids.includes(String(userId))) {
+    const waiting = await paymentRequestsRepo.awaitingPayment();
+    rows.push([{ text: `💳 Waiting for me to pay (${waiting.length})`, callback_data: 'pay:start:wait' }]);
+  }
+  rows.push(menuRow());
   await render(bot, chatId, userId, lines.join('\n'), rows);
 }
 
@@ -323,6 +349,24 @@ async function askAmount(bot, chatId, userId) {
     [backAndCancelRow()]);
 }
 
+/**
+ * PAY-2 §2 A — the reason step, after the amount and before the bill.
+ * @param {string} [warn] the one-line refusal printed on top on a bad entry
+ */
+async function askReason(bot, chatId, userId, warn) {
+  const session = sessionStore.get(userId);
+  const a = session.req.account;
+  session.step = 'req_reason';
+  sessionStore.set(userId, session);
+  await render(bot, chatId, userId,
+    `${warn ? `⚠️ ${mdEscape(warn)}\n\n` : ''}`
+    + `💸 *${mdEscape(a.owner_name)}*\n`
+    + `🏦 ${mdEscape(a.bank)} ${mdEscape(a.account_number)} · ${mdEscape(paymentService.fmtNaira(session.req.amount))}\n\n`
+    + '📝 *What is this payment for?*\n'
+    + 'Type a short reason — e.g. transport to Idumota, loading at the warehouse.',
+    [backAndCancelRow()]);
+}
+
 async function askBill(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   session.step = 'req_bill';
@@ -345,6 +389,7 @@ async function showRequestConfirm(bot, chatId, userId) {
     + `👤 ${mdEscape(r.account.owner_name)} · ${mdEscape(r.account.owner_type)}\n`
     + `🏦 ${mdEscape(r.account.bank)} ${mdEscape(r.account.account_number)}\n`
     + `💰 *${mdEscape(paymentService.fmtNaira(r.amount))}*${above ? '    ⚠️ large payment' : ''}\n`
+    + `${r.reason ? `📝 ${mdEscape(r.reason)}\n` : ''}`
     + `${r.bill_file_id ? '📎 Bill attached\n' : ''}`
     + '\n_Two admins approve, then finance pays._',
     [[{ text: '✅ Submit for approval', callback_data: 'pay:submit' }], backAndCancelRow()]);
@@ -384,6 +429,10 @@ async function submitRequest(bot, chatId, userId) {
         account_number: r.account.account_number,
         bank: r.account.bank,
         above_threshold: !!r.above,
+        // PAY-2 §1 — the reason and the bill ride the payload: every card
+        // rebuild reads it, and approvalEvents forwards the bill to admins.
+        reason: r.reason || '',
+        bill_file_id: r.bill_file_id || '',
         sale_doc_file_id: undefined,
       },
       riskReason: risk.reason || 'dual_admin_required',
@@ -393,12 +442,26 @@ async function submitRequest(bot, chatId, userId) {
       { requestId, action: 'request_payment', payment_id: saved.payment_id, amount: r.amount }, userId);
 
     const label = await resolveName(userId);
+    // PAY-2 §1 — Postgres AFTER the sheet writes, fail-open: a hiccup here
+    // never blocks a request, and the payload copy is the fallback.
+    await pgSafe(() => paymentReasonsRepository.record({
+      paymentId: saved.payment_id, approvalRequestId: requestId,
+      requesterId: String(userId), requesterName: label,
+      payeeName: r.account.owner_name, payeeType: r.account.owner_type,
+      amountNgn: r.amount, reasonText: r.reason || '',
+    }));
+    await pgSafe(() => paymentEventsRepository.record({
+      paymentId: saved.payment_id, approvalRequestId: requestId, kind: 'raised',
+      actorId: String(userId), actorName: label, chatId: String(chatId),
+      messageId: String(session.flowMessageId || ''),
+      detail: { amount_ngn: r.amount, payee: r.account.owner_name },
+    }));
     await approvalEvents.notifyAdminsApprovalRequest(
       bot, requestId, label,
       paymentCards.buildApprovalSummary({
         ...saved, payee_name: r.account.owner_name, payee_type: r.account.owner_type,
         account_number: r.account.account_number, bank: r.account.bank,
-        amount_ngn: r.amount, above_threshold: r.above,
+        amount_ngn: r.amount, above_threshold: r.above, reason: r.reason || '',
       }),
       risk.reason, auth.isAdmin(userId) ? String(userId) : undefined,
     );
@@ -431,9 +494,13 @@ async function showMine(bot, chatId, userId) {
     await render(bot, chatId, userId, '📋 *My requests*\n\n_You have not asked for a payment yet._', [menuRow()]);
     return;
   }
+  const shown = rows.slice(0, 12);
+  const reasons = await paymentService.reasonsFor(shown);
   const lines = ['📋 *My requests*', ''];
-  for (const p of rows.slice(0, 12)) {
-    lines.push(`${STATUS_ICON[p.status] || '•'} ${mdEscape(paymentService.fmtNaira(p.amount_ngn))} — ${mdEscape(STATUS_WORD[p.status] || p.status)}`);
+  for (const p of shown) {
+    const reason = reasons.get(String(p.payment_id)) || '';
+    lines.push(`${STATUS_ICON[p.status] || '•'} ${mdEscape(paymentService.fmtNaira(p.amount_ngn))} — ${mdEscape(STATUS_WORD[p.status] || p.status)}`
+      + (reason ? ` · 📝 ${mdEscape(reason)}` : ''));
     lines.push(`   _${mdEscape(fmtDate.short ? fmtDate.short(p.raised_at) : p.raised_at)}_${p.decline_reason ? ` · ${mdEscape(p.decline_reason)}` : ''}`);
   }
   if (rows.length > 12) lines.push(`\n_…and ${rows.length - 12} older._`);
@@ -442,7 +509,7 @@ async function showMine(bot, chatId, userId) {
 
 /* ── execution: Mark Done / Decline ──────────────────────────────────── */
 
-async function markDone(bot, chatId, userId, paymentId, cbId) {
+async function markDone(bot, chatId, userId, paymentId, cbId, cardMessageId) {
   const gate = await paymentService.canExecute(userId);
   if (!gate.ok) {
     await answer(bot, cbId, 'Only the finance person marks a payment done.', true);
@@ -456,20 +523,77 @@ async function markDone(bot, chatId, userId, paymentId, cbId) {
     return;
   }
   await answer(bot, cbId, 'Marked done.');
-  await paymentRequestsRepo.update(paymentId, {
-    status: 'done', done_by: String(userId), done_at: fmtDate.withTime(new Date().toISOString()),
-  });
+  // The row is written FIRST, then the proof is offered — a slow photo
+  // never blocks the record of the money having moved.
+  const doneAt = fmtDate.withTime(new Date().toISOString());
+  await paymentRequestsRepo.update(paymentId, { status: 'done', done_by: String(userId), done_at: doneAt });
   await auditLogRepository.append('payment_done',
     { payment_id: paymentId, amount: pay.amount_ngn, payee: pay.payee_name }, userId).catch(() => {});
-  await notifyRaiser(bot, pay,
-    `✅ *Paid*\n\n${paymentService.fmtNaira(pay.amount_ngn)} was sent to ${pay.bank} ${pay.account_number}.`);
+  const doneBy = await resolveName(userId);
+  await pgSafe(() => paymentEventsRepository.record({
+    paymentId, approvalRequestId: pay.approval_request_id || '', kind: 'done',
+    actorId: String(userId), actorName: doneBy, chatId: String(chatId),
+    messageId: String(cardMessageId || ''), detail: { done_at: doneAt },
+  }));
+  // PAY-2 §2 D — the proof step. A fresh flow card (the finance card that
+  // carried the tap is a photo/caption when a bill exists, so it cannot
+  // be edited into a text prompt).
+  const session = newSession({
+    step: 'done_proof',
+    done: { payment_id: paymentId, card_message_id: cardMessageId || null },
+  });
+  sessionStore.set(userId, session);
   await render(bot, chatId, userId,
-    `✅ *Paid* — ${mdEscape(paymentService.fmtNaira(pay.amount_ngn))} to ${mdEscape(pay.payee_name)}\n`
-    + `\`${mdEscape(paymentId)}\`\n\n_Recorded ${mdEscape(fmtDate.withTime(new Date().toISOString()))}._`,
-    []);
+    '📎 *Proof of transfer?*\n\n'
+    + 'Send a screenshot of the bank transfer, or skip.\n'
+    + `${mdEscape(paymentService.fmtNaira(pay.amount_ngn))} → ${mdEscape(pay.payee_name)} · \`${mdEscape(paymentId)}\``,
+    [[{ text: '⏭ Skip — no proof', callback_data: 'pay:proof:skip' }]]);
 }
 
-async function startDecline(bot, chatId, userId, paymentId, cbId) {
+/**
+ * PAY-2 §2 D — after the proof (or the skip): the proof id onto the row's
+ * EXISTING column O, the Paid notice to the requester and both signers,
+ * the finance-card buttons wiped, the trail written.
+ *
+ * @param {{file_id:string, kind:'photo'|'document'}|null} proof
+ */
+async function finishDone(bot, chatId, userId, proof) {
+  const session = sessionStore.get(userId);
+  if (!session || !session.done) return;
+  const paymentId = session.done.payment_id;
+  const pay = await paymentRequestsRepo.findById(paymentId);
+  if (!pay) { sessionStore.clear(userId); return; }
+  if (proof && proof.file_id) {
+    await paymentRequestsRepo.update(paymentId, { proof_file_id: proof.file_id });
+    pay.proof_file_id = proof.file_id;
+  }
+  sessionStore.clear(userId, 'completed');
+  await render(bot, chatId, userId,
+    `✅ *Paid* — ${mdEscape(paymentService.fmtNaira(pay.amount_ngn))} to ${mdEscape(pay.payee_name)}\n`
+    + `\`${mdEscape(paymentId)}\`\n\n_Recorded ${mdEscape(pay.done_at || fmtDate.withTime(new Date().toISOString()))}._`
+    + (proof && proof.file_id ? '\n📎 Proof attached' : ''),
+    []);
+
+  const reason = await paymentService.reasonFor(pay);
+  const paidBy = await resolveName(pay.done_by || userId);
+  const notice = [
+    `💸 Paid — ${paymentService.fmtNaira(pay.amount_ngn)} to ${pay.payee_name}${pay.payee_type ? ` (${pay.payee_type})` : ''}`,
+    reason ? `📝 ${reason}` : '',
+    `🏦 ${[pay.bank, pay.account_number].filter(Boolean).join(' ')}`,
+    `Paid by ${paidBy} · ${pay.done_at || fmtDate.withTime(new Date().toISOString())}`,
+    `Ref ${pay.payment_id}${pay.approved_by ? ` · approved by ${pay.approved_by}` : ''}`,
+  ].filter(Boolean).join('\n');
+  const to = await noticeAudience(pay);
+  const delivered = await sendNotice(bot, to, notice, proof);
+  await wipeFinanceCards(bot, pay, session.done.card_message_id, chatId);
+  await pgSafe(() => paymentEventsRepository.record({
+    paymentId, approvalRequestId: pay.approval_request_id || '', kind: 'notified',
+    actorId: String(userId), actorName: paidBy, chatId: String(chatId), messageId: '',
+    detail: { notice: 'paid', to: delivered, proof: !!(proof && proof.file_id) },
+  }));
+}
+
+async function startDecline(bot, chatId, userId, paymentId, cbId, cardMessageId) {
   const gate = await paymentService.canExecute(userId);
   if (!gate.ok) {
     await answer(bot, cbId, 'Only the finance person can decline a payment.', true);
@@ -482,7 +606,7 @@ async function startDecline(bot, chatId, userId, paymentId, cbId) {
     return;
   }
   await answer(bot, cbId);
-  const session = newSession({ step: 'dec_reason', dec: { payment_id: paymentId } });
+  const session = newSession({ step: 'dec_reason', dec: { payment_id: paymentId, card_message_id: cardMessageId || null } });
   sessionStore.set(userId, session);
   await render(bot, chatId, userId,
     `✖ *Decline ${mdEscape(paymentService.fmtNaira(pay.amount_ngn))} to ${mdEscape(pay.payee_name)}*\n\n`
@@ -495,18 +619,83 @@ async function applyDecline(bot, chatId, userId, reason) {
   if (!session || !session.dec) return;
   const pay = await paymentRequestsRepo.findById(session.dec.payment_id);
   if (!pay) { sessionStore.clear(userId); return; }
+  const doneAt = fmtDate.withTime(new Date().toISOString());
   await paymentRequestsRepo.update(pay.payment_id, {
-    status: 'declined', done_by: String(userId),
-    done_at: fmtDate.withTime(new Date().toISOString()), decline_reason: reason,
+    status: 'declined', done_by: String(userId), done_at: doneAt, decline_reason: reason,
   });
   await auditLogRepository.append('payment_declined',
     { payment_id: pay.payment_id, reason }, userId).catch(() => {});
-  await notifyRaiser(bot, pay,
-    `✖ *Payment declined*\n\n${paymentService.fmtNaira(pay.amount_ngn)} to ${pay.payee_name} was not paid.\n\n_${reason}_`);
+  const declinedBy = await resolveName(userId);
+  await pgSafe(() => paymentEventsRepository.record({
+    paymentId: pay.payment_id, approvalRequestId: pay.approval_request_id || '', kind: 'declined',
+    actorId: String(userId), actorName: declinedBy, chatId: String(chatId),
+    messageId: String(session.dec.card_message_id || ''), detail: { reason },
+  }));
   sessionStore.clear(userId, 'completed');
   await render(bot, chatId, userId,
     `✖ *Declined* — ${mdEscape(paymentService.fmtNaira(pay.amount_ngn))} to ${mdEscape(pay.payee_name)}\n\n`
     + `_${mdEscape(reason)}_\n\nThe requester has been told.`, [menuRow()]);
+
+  // PAY-2 §2 E — the requester AND both signers, plain text (§2 I).
+  const why = await paymentService.reasonFor(pay);
+  const notice = [
+    `✖ Payment declined — ${paymentService.fmtNaira(pay.amount_ngn)} to ${pay.payee_name}${pay.payee_type ? ` (${pay.payee_type})` : ''} was not paid.`,
+    why ? `📝 ${why}` : '',
+    `🏦 ${[pay.bank, pay.account_number].filter(Boolean).join(' ')}`,
+    `Declined by ${declinedBy} · ${doneAt}`,
+    reason,
+    `Ref ${pay.payment_id}${pay.approved_by ? ` · approved by ${pay.approved_by}` : ''}`,
+  ].filter(Boolean).join('\n');
+  const to = await noticeAudience(pay);
+  const delivered = await sendNotice(bot, to, notice, null);
+  await wipeFinanceCards(bot, pay, session.dec.card_message_id, chatId);
+  await pgSafe(() => paymentEventsRepository.record({
+    paymentId: pay.payment_id, approvalRequestId: pay.approval_request_id || '', kind: 'notified',
+    actorId: String(userId), actorName: declinedBy, chatId: String(chatId), messageId: '',
+    detail: { notice: 'declined', to: delivered },
+  }));
+}
+
+/* ── the finance queue (PAY-2 §2 H) ──────────────────────────────────── */
+
+async function showWaiting(bot, chatId, userId) {
+  const gate = await paymentService.canExecute(userId);
+  if (!gate.ok) {
+    await render(bot, chatId, userId, '_That list is for the finance seat._', [menuRow()]);
+    return;
+  }
+  const rows = await paymentRequestsRepo.awaitingPayment();
+  const session = sessionStore.get(userId) || newSession();
+  session.step = 'wait';
+  session.wait = { ids: rows.slice(0, 20).map((p) => p.payment_id) };
+  sessionStore.set(userId, session);
+  if (!rows.length) {
+    await render(bot, chatId, userId,
+      '💳 *Waiting for me to pay*\n\n_Nothing approved is waiting — every approved payment has been paid or declined._',
+      [backRow(), menuRow()]);
+    return;
+  }
+  const reasons = await paymentService.reasonsFor(rows.slice(0, 20));
+  const lines = ['💳 *Waiting for me to pay*', '', '_Tap one to get its card again._'];
+  const kb = rows.slice(0, 20).map((p, i) => {
+    const reason = reasons.get(String(p.payment_id)) || '';
+    return [{
+      text: `${paymentService.fmtNaira(p.amount_ngn)} → ${p.payee_name} · ${fmtDate.short(p.raised_at)}${reason ? ` · ${reason}` : ''}`.slice(0, 60),
+      callback_data: `pay:wait:${i}`,
+    }];
+  });
+  if (rows.length > 20) lines.push(`\n_…and ${rows.length - 20} more._`);
+  kb.push(backRow(), menuRow());
+  await render(bot, chatId, userId, lines.join('\n'), kb);
+}
+
+async function reopenWaiting(bot, chatId, userId, index) {
+  const session = sessionStore.get(userId);
+  const paymentId = session && session.wait && session.wait.ids[index];
+  if (!paymentId) { await render(bot, chatId, userId, '_That list expired._', [menuRow()]); return; }
+  const gate = await paymentService.canExecute(userId);
+  if (!gate.ok) { await render(bot, chatId, userId, '_That list is for the finance seat._', [menuRow()]); return; }
+  await paymentCards.sendFinanceCard(bot, paymentId, { kind: 'finance_card_sent', to: [String(chatId)] });
 }
 
 /* ── plumbing ────────────────────────────────────────────────────────── */
@@ -522,10 +711,90 @@ async function answer(bot, cbId, text, alert) {
   try { await bot.answerCallbackQuery(cbId, text ? { text, show_alert: !!alert } : undefined); } catch (_) { /* stale */ }
 }
 
-async function notifyRaiser(bot, pay, text) {
-  if (!pay.raised_by) return;
-  try { await bot.sendMessage(pay.raised_by, text, { parse_mode: 'Markdown' }); } catch (e) {
-    logger.info(`PAY-1: could not DM raiser ${pay.raised_by}: ${e.message}`);
+/** A fail-open Postgres write: never throws, never blocks the sheet path. */
+async function pgSafe(fn) {
+  try { return await fn(); } catch (e) {
+    logger.warn(`PAY-2: postgres write skipped — ${e.message}`);
+    return null;
+  }
+}
+
+/**
+ * PAY-2 §2 D/E — who hears the outcome: the requester AND the two admins
+ * who signed. Signers come from the 'approved' event's detail.approverIds
+ * (written by the executor); when Postgres has no such row, the queue
+ * row's own record (approverStamp.approverIds) is the fallback.
+ *
+ * @returns {Promise<string[]>} de-duplicated Telegram ids
+ */
+async function noticeAudience(pay) {
+  const ids = [];
+  const push = (v) => { const id = String(v || '').trim(); if (id && !ids.includes(id)) ids.push(id); };
+  push(pay.raised_by);
+  let signers = [];
+  try {
+    const events = await paymentEventsRepository.forPayment(pay.payment_id);
+    const approved = (events || []).filter((e) => e.kind === 'approved').pop();
+    const d = approved && approved.detail;
+    if (d && Array.isArray(d.approverIds)) signers = d.approverIds;
+  } catch (_) { /* fail-open */ }
+  if (!signers.length && pay.approval_request_id) {
+    try {
+      const row = await approvalQueueRepository.getByRequestId(pay.approval_request_id);
+      if (row) signers = approverStamp.approverIds(row.actionJSON, null);
+    } catch (_) { /* the requester still hears */ }
+  }
+  signers.forEach(push);
+  return ids;
+}
+
+/**
+ * PAY-2 §2 I — plain text, no parse_mode: a payee or bank name with `_`
+ * or `*` must never cost the message. With a proof the text rides as the
+ * proof's caption (photo or document); without one, a plain message.
+ *
+ * @returns {Promise<string[]>} the ids that were actually reached
+ */
+async function sendNotice(bot, ids, text, proof) {
+  const delivered = [];
+  for (const id of ids) {
+    try {
+      if (proof && proof.file_id && proof.kind === 'document') {
+        await bot.sendDocument(id, proof.file_id, { caption: text });
+      } else if (proof && proof.file_id) {
+        await bot.sendPhoto(id, proof.file_id, { caption: text }).catch(() => bot.sendDocument(id, proof.file_id, { caption: text }));
+      } else {
+        await bot.sendMessage(id, text);
+      }
+      delivered.push(id);
+    } catch (e) {
+      logger.info(`PAY-2: could not DM ${id}: ${e.message}`);
+    }
+  }
+  return delivered;
+}
+
+/**
+ * PAY-2 §2 D/E — every finance-card copy loses its ✔ / ✖ buttons: the
+ * ones the trail knows (chat + message id per delivered copy) and the
+ * one that was just tapped. Best-effort; a stale or deleted card is fine.
+ */
+async function wipeFinanceCards(bot, pay, tappedMessageId, tappedChatId) {
+  const targets = [];
+  try {
+    const rows = await paymentEventsRepository.financeCardsFor(pay.payment_id);
+    for (const r of rows || []) {
+      if (r && r.chat_id && r.message_id) targets.push({ chat_id: String(r.chat_id), message_id: String(r.message_id) });
+    }
+  } catch (_) { /* fail-open */ }
+  if (tappedMessageId && tappedChatId) {
+    const t = { chat_id: String(tappedChatId), message_id: String(tappedMessageId) };
+    if (!targets.some((x) => x.chat_id === t.chat_id && x.message_id === t.message_id)) targets.push(t);
+  }
+  for (const t of targets) {
+    try {
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: t.chat_id, message_id: Number(t.message_id) || t.message_id });
+    } catch (_) { /* already wiped, deleted, or too old to edit */ }
   }
 }
 
@@ -582,6 +851,18 @@ async function handleText(bot, chatId, userId, text) {
     }
     session.req.amount = v.value;
     sessionStore.set(userId, session);
+    await askReason(bot, chatId, userId);
+    return true;
+  }
+
+  if (session.step === 'req_reason') {
+    const v = paymentService.validateReason(value);
+    if (!v.ok) {
+      await askReason(bot, chatId, userId, v.reason);
+      return true;
+    }
+    session.req.reason = v.value;
+    sessionStore.set(userId, session);
     await askBill(bot, chatId, userId);
     return true;
   }
@@ -601,11 +882,17 @@ async function handleText(bot, chatId, userId, text) {
 async function handleFile(bot, chatId, userId, msg) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== SESSION_TYPE) return false;
-  if (session.step !== 'req_bill') return false;
-  const fileId = msg.photo && msg.photo.length
+  if (session.step !== 'req_bill' && session.step !== 'done_proof') return false;
+  const isPhoto = !!(msg.photo && msg.photo.length);
+  const fileId = isPhoto
     ? msg.photo[msg.photo.length - 1].file_id
     : (msg.document && msg.document.file_id);
   if (!fileId) return false;
+  if (session.step === 'done_proof') {
+    // PAY-2 §2 D — the transfer screenshot or PDF, onto column O.
+    await finishDone(bot, chatId, userId, { file_id: fileId, kind: isPhoto ? 'photo' : 'document' });
+    return true;
+  }
   session.req.bill_file_id = fileId;
   sessionStore.set(userId, session);
   await showRequestConfirm(bot, chatId, userId);
@@ -622,8 +909,9 @@ async function handleCallback(bot, callbackQuery) {
 
   // Execution chips are SESSION-FREE: the finance head taps them on a
   // card that arrived hours ago, long after any flow session expired.
-  if (rest.startsWith('done:')) { await markDone(bot, chatId, userId, rest.slice(5), cbId); return true; }
-  if (rest.startsWith('dec:')) { await startDecline(bot, chatId, userId, rest.slice(4), cbId); return true; }
+  const cardMessageId = callbackQuery.message && callbackQuery.message.message_id;
+  if (rest.startsWith('done:')) { await markDone(bot, chatId, userId, rest.slice(5), cbId, cardMessageId); return true; }
+  if (rest.startsWith('dec:')) { await startDecline(bot, chatId, userId, rest.slice(4), cbId, cardMessageId); return true; }
 
   if (rest === 'cancel') {
     sessionStore.clear(userId, 'cancelled');
@@ -638,6 +926,7 @@ async function handleCallback(bot, callbackQuery) {
     if (which === 'reg') { await startRegister(bot, chatId, userId); return true; }
     if (which === 'req') { await startRequest(bot, chatId, userId); return true; }
     if (which === 'mine') { await showMine(bot, chatId, userId); return true; }
+    if (which === 'wait') { await showWaiting(bot, chatId, userId); return true; }
   }
 
   const session = sessionStore.get(userId);
@@ -668,6 +957,8 @@ async function handleCallback(bot, callbackQuery) {
   }
 
   if (rest === 'bill:skip') { await showRequestConfirm(bot, chatId, userId); return true; }
+  if (rest === 'proof:skip') { await finishDone(bot, chatId, userId, null); return true; }
+  if (rest.startsWith('wait:')) { await reopenWaiting(bot, chatId, userId, parseInt(rest.slice(5), 10)); return true; }
 
   if (rest === 'submit') {
     if (session.mode === 'register') await submitRegister(bot, chatId, userId);

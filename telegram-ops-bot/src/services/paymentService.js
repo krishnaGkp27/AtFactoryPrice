@@ -22,6 +22,8 @@
 const usersRepository = require('../repositories/usersRepository');
 const settingsRepository = require('../repositories/settingsRepository');
 const paymentAccountsRepo = require('../repositories/paymentAccountsRepository');
+const approvalQueueRepository = require('../repositories/approvalQueueRepository');
+const paymentReasonsRepository = require('../repositories/paymentReasonsRepository');
 const config = require('../config');
 const logger = require('../utils/logger');
 const money = require('../utils/money');
@@ -36,6 +38,10 @@ const FINANCE_DEPARTMENT = 'Finance';
 
 /** Sanity ceiling on a single payment request (a typo guard, not a policy). */
 const MAX_PAYMENT_NGN = 100_000_000;
+
+/** PAY-2 §2 A — the typed reason: 3–120 characters, no skip. */
+const REASON_MIN = 3;
+const REASON_MAX = 120;
 
 /**
  * Nigerian naira, grouped: 45000 → "₦45,000". PAY-1 rounds to the naira.
@@ -102,30 +108,70 @@ function financeWarning(head) {
 }
 
 /**
+ * PAY-2 §2 B — the ids Railway names as the finance seat (env FINANCE_IDS,
+ * the list `config.access.financeIds` is parsed from).
+ *
+ * Read from the env itself, with config's own comma rule, because
+ * `config.access.financeIds` DEFAULTS to the admin list when the env var
+ * is blank (the FIN-V1 read-only gates depend on that) — and a blank seat
+ * must fall through to the Users sheet, exactly as before PAY-2, not to
+ * every admin without a warning.
+ *
+ * @returns {string[]} de-duplicated, in env order; [] when FINANCE_IDS is unset
+ */
+function financeSeatIds() {
+  const raw = process.env.FINANCE_IDS;
+  if (!raw || typeof raw !== 'string') return [];
+  return [...new Set(raw.split(',').map((v) => v.trim()).filter(Boolean))];
+}
+
+/**
+ * Who a payment card should go to — PAY-2 §2 B, the owner's Q1 ruling
+ * (09-Sep-2026), resolved in this order:
+ *
+ *   1. every id in Railway `FINANCE_IDS`            → source 'finance_ids'
+ *   2. else the single Users row in department Finance → source 'users_finance'
+ *   3. else every env admin, with the warning line   → source 'admins'
+ *
+ * `head` keeps the financeHead() shape so cards can print the warning
+ * (only ever in case 3 — the seat and the sheet row are both "ok").
+ *
+ * @returns {Promise<{ids:string[], head:object, source:string}>}
+ */
+async function paymentRecipients() {
+  const seat = financeSeatIds();
+  if (seat.length) {
+    return {
+      ids: seat,
+      head: { ok: true, telegramId: seat[0], name: '', reason: '', members: seat.length },
+      source: 'finance_ids',
+    };
+  }
+  const head = await financeHead();
+  if (head.ok) return { ids: [head.telegramId], head, source: 'users_finance' };
+  return { ids: [...config.access.adminIds], head, source: 'admins' };
+}
+
+/**
  * May this Telegram id execute a payment (Mark Done / Decline)?
  *
- * The one finance id when the sheet names one. When it does not, the
- * power falls back to ADMINS rather than to nobody: an unfinished sheet
- * must not strand approved money, and an admin acting is on the record
- * exactly like the finance head would be.
+ * PAY-2 §2 B — honoured from any id the finance card was sent to, under
+ * the SAME resolution as paymentRecipients(): the Railway finance seat,
+ * else the one Users finance row, else the admins. The fallback to admins
+ * rather than to nobody stands: an unfinished sheet must not strand
+ * approved money, and an admin acting is on the record exactly like the
+ * finance head would be.
  */
 async function canExecute(telegramId) {
   const id = String(telegramId || '');
   if (!id) return { ok: false, reason: 'no_user' };
-  const head = await financeHead();
-  if (head.ok) {
-    if (id === head.telegramId) return { ok: true, head };
-    return { ok: false, reason: 'not_finance', head };
+  const { ids, head, source } = await paymentRecipients();
+  if (ids.includes(id)) {
+    const out = { ok: true, head, source };
+    if (source === 'admins') out.viaAdminFallback = true;
+    return out;
   }
-  if (config.access.adminIds.includes(id)) return { ok: true, head, viaAdminFallback: true };
-  return { ok: false, reason: 'not_finance', head };
-}
-
-/** Who a payment card should go to: the finance head, else every admin. */
-async function paymentRecipients() {
-  const head = await financeHead();
-  if (head.ok) return { ids: [head.telegramId], head };
-  return { ids: [...config.access.adminIds], head };
+  return { ok: false, reason: 'not_finance', head, source };
 }
 
 /** The badge line, ₦50,000 by default, Settings-overridable, no deploy. */
@@ -174,6 +220,77 @@ function validateAccountNumber(raw) {
   return { ok: true, value: digits };
 }
 
+/**
+ * PAY-2 §2 A — the reason is typed, 3–120 characters, trimmed. No skip:
+ * the owner's rule is that every payment must be tagged.
+ */
+function validateReason(raw) {
+  const value = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  if (value.length < REASON_MIN || value.length > REASON_MAX) {
+    return { ok: false, reason: `Give a reason of ${REASON_MIN} to ${REASON_MAX} characters.` };
+  }
+  return { ok: true, value };
+}
+
+/**
+ * PAY-2 §1 — the reason for ONE payment: the ApprovalQueue payload (the
+ * existing raw record) first, then the Postgres `payment_reasons` row.
+ * Never throws; '' when neither knows.
+ *
+ * @param {object} pay a PaymentRequests row (needs approval_request_id / payment_id)
+ * @returns {Promise<string>}
+ */
+async function reasonFor(pay) {
+  if (!pay) return '';
+  if (pay.reason) return String(pay.reason);
+  if (pay.approval_request_id) {
+    try {
+      const row = await approvalQueueRepository.getByRequestId(pay.approval_request_id);
+      const r = row && row.actionJSON && row.actionJSON.reason;
+      if (r) return String(r);
+    } catch (e) {
+      logger.warn(`paymentService.reasonFor: queue read failed — ${e.message}`);
+    }
+  }
+  try {
+    const pg = await paymentReasonsRepository.forPayment(pay.payment_id);
+    if (pg && pg.reason_text) return String(pg.reason_text);
+  } catch (_) { /* fail-open: the payload is the record of truth */ }
+  return '';
+}
+
+/**
+ * The reasons for MANY rows (📋 My requests, the finance queue): one
+ * ApprovalQueue read indexed by request id, Postgres for the leftovers.
+ *
+ * @param {object[]} pays PaymentRequests rows
+ * @returns {Promise<Map<string,string>>} payment_id → reason ('' when unknown)
+ */
+async function reasonsFor(pays) {
+  const out = new Map();
+  const list = (pays || []).filter(Boolean);
+  if (!list.length) return out;
+  let byRequest = new Map();
+  try {
+    const rows = await approvalQueueRepository.getAllWithRowIndex();
+    byRequest = new Map((rows || []).map((r) => [String(r.requestId), r.actionJSON || {}]));
+  } catch (e) {
+    logger.warn(`paymentService.reasonsFor: queue read failed — ${e.message}`);
+  }
+  for (const p of list) {
+    const aj = byRequest.get(String(p.approval_request_id || ''));
+    let reason = p.reason ? String(p.reason) : (aj && aj.reason ? String(aj.reason) : '');
+    if (!reason) {
+      try {
+        const pg = await paymentReasonsRepository.forPayment(p.payment_id);
+        if (pg && pg.reason_text) reason = String(pg.reason_text);
+      } catch (_) { /* fail-open */ }
+    }
+    out.set(String(p.payment_id), reason);
+  }
+  return out;
+}
+
 /** Amounts are whole naira, positive, and sane enough to be a payment. */
 function validateAmount(raw) {
   const cleaned = String(raw ?? '').replace(/[₦,\s]/g, '');
@@ -186,8 +303,11 @@ function validateAmount(raw) {
 
 module.exports = {
   FINANCE_DEPARTMENT,
+  REASON_MIN,
+  REASON_MAX,
   fmtNaira,
   financeHead,
+  financeSeatIds,
   financeWarning,
   canExecute,
   paymentRecipients,
@@ -196,4 +316,7 @@ module.exports = {
   payableAccountsFor,
   validateAccountNumber,
   validateAmount,
+  validateReason,
+  reasonFor,
+  reasonsFor,
 };
