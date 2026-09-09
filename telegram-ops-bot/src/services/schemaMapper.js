@@ -148,14 +148,11 @@ const REQUIRED_SHEETS = {
   },
   // INV-1a — one row per issued customer invoice (statement-style; line
   // items frozen as JSON at issue; token gates the /i/<token> web copy).
+  // CUR-2 — the header list lives in invoicesRepository.HEADERS (its last
+  // entry is the trailing `rate_multiplier` column W) so this bootstrap and
+  // the repo's own ensureHeader can never disagree on the column count.
   Invoices: {
-    headers: [
-      'invoice_no', 'token', 'request_id', 'customer_id', 'customer_name',
-      'issue_date', 'sale_date', 'lines_json', 'subtotal', 'vat_rate',
-      'vat_amount', 'total', 'amount_paid_at_issue', 'balance_after_issue',
-      'payment_mode', 'bank', 'salesperson', 'warehouse', 'status',
-      'pdf_drive_id', 'created_by', 'created_at',
-    ],
+    headers: require('../repositories/invoicesRepository').HEADERS,
   },
   Receipts: {
     headers: [

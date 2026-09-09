@@ -17,16 +17,48 @@
 const sheets = require('./sheetsClient');
 
 const SHEET = 'Invoices';
+// CUR-2 — `rate_multiplier` (column W) is the LAST entry and must stay last:
+// the factor the customer copy of this invoice multiplies the booked rate
+// by, frozen at issue. Blank = no multiplier (never `1`); old rows read
+// blank → unconverted. Every other cell on the row (lines_json, subtotal,
+// total, amount_paid_at_issue, balance_after_issue) is the BOOKED variable-1
+// figure — never multiplied on the sheet. Rule 4: trailing column, nothing
+// renamed or reordered.
 const HEADERS = [
   'invoice_no', 'token', 'request_id', 'customer_id', 'customer_name',
   'issue_date', 'sale_date', 'lines_json', 'subtotal', 'vat_rate',
   'vat_amount', 'total', 'amount_paid_at_issue', 'balance_after_issue',
   'payment_mode', 'bank', 'salesperson', 'warehouse', 'status',
   'pdf_drive_id', 'created_by', 'created_at',
+  'rate_multiplier',
 ];
+const RATE_MULTIPLIER_COL = HEADERS.indexOf('rate_multiplier'); // 22 → W
+
+/** Column letter (A-based) for a zero-based index within the 26-column range. */
+function colLetter(i) { return String.fromCharCode('A'.charCodeAt(0) + i); }
+const LAST_COL = colLetter(HEADERS.length - 1);
 
 function str(v) { return (v ?? '').toString().trim(); }
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
+
+/**
+ * CUR-2 §8 rule 11 — the ONE range check for a rate multiplier, shared by
+ * the sheet (both directions) and the issue path: a finite number, > 0,
+ * ≤ 1,000,000 and ≠ 1 is a multiplier; anything else (blank, `1`, 0,
+ * negative, text, absurd) means NONE and returns null. `1` is "no
+ * multiplier" by definition, so it is never stored — a blank cell is.
+ */
+function normaliseRateMultiplier(v) {
+  if (v === '' || v === null || v === undefined) return null;
+  // Sheets are read as FORMATTED_VALUE: a cell the owner typed as `1,250`
+  // (the way every CUR-2 drawing spells the factor) comes back with its
+  // grouping comma. Commas are ignored — the same rule the wizard applies
+  // to a typed factor (§3b rule 2) — so a display format can never turn a
+  // frozen factor into "none". Anything else non-numeric still means none.
+  const m = Number(typeof v === 'string' ? v.replace(/,/g, '').trim() : v);
+  if (!Number.isFinite(m) || m <= 0 || m > 1_000_000 || m === 1) return null;
+  return m;
+}
 
 function fromRow(r, rowIndex) {
   let lines = [];
@@ -42,6 +74,9 @@ function fromRow(r, rowIndex) {
     paymentMode: str(r[14]), bank: str(r[15]), salesperson: str(r[16]), warehouse: str(r[17]),
     status: str(r[18]) || 'issued', pdfDriveId: str(r[19]),
     createdBy: str(r[20]), createdAt: str(r[21]),
+    // CUR-2 — null on old / blank rows: render unconverted, never consult
+    // Settings at read time (the freeze rule, D3).
+    rateMultiplier: normaliseRateMultiplier(r[RATE_MULTIPLIER_COL]),
   };
 }
 
@@ -53,21 +88,35 @@ function toRow(o) {
     o.amountPaidAtIssue || 0, o.balanceAfterIssue ?? '',
     o.paymentMode || '', o.bank || '', o.salesperson || '', o.warehouse || '',
     o.status || 'issued', o.pdfDriveId || '', o.createdBy || '', o.createdAt,
+    // CUR-2 — blank when none; the figures before it are booked (variable 1).
+    normaliseRateMultiplier(o.rateMultiplier) ?? '',
   ];
 }
 
 let _headerReady = false;
 async function ensureHeader() {
   if (_headerReady) return;
-  const rows = await sheets.readRange(SHEET, 'A1:V1');
-  if (!rows.length || !str(rows[0][0])) {
-    await sheets.updateRange(SHEET, 'A1', [HEADERS]);
+  // Both bounds derive from HEADERS (the APR-1 lesson): a live sheet that
+  // already carries the 22 INV-1a columns must be WIDENED to name column W,
+  // not judged complete. Only the header row (row 1) is ever written here,
+  // and only the cells that are missing — existing header cells and every
+  // data row are untouched.
+  const rows = await sheets.readRange(SHEET, `A1:${LAST_COL}1`);
+  const head = rows.length ? rows[0] : [];
+  // Width = position of the last NAMED header cell + 1 (the API trims
+  // trailing blanks; a blank cell inside the range still counts as width).
+  let have = 0;
+  head.forEach((c, i) => { if (str(c)) have = i + 1; });
+  if (!have) {
+    await sheets.updateRange(SHEET, `A1:${LAST_COL}1`, [HEADERS]);
+  } else if (have < HEADERS.length) {
+    await sheets.updateRange(SHEET, `${colLetter(have)}1:${LAST_COL}1`, [HEADERS.slice(have)]);
   }
   _headerReady = true;
 }
 
 async function getAll() {
-  const rows = await sheets.readRange(SHEET, 'A2:V');
+  const rows = await sheets.readRange(SHEET, `A2:${LAST_COL}`);
   // Map BEFORE filtering so `i` indexes the SHEET, not the filtered array —
   // otherwise every rowIndex is short by the number of blank rows above it,
   // and a write aimed at that rowIndex would land on the wrong invoice. This
@@ -113,4 +162,9 @@ async function setPdfDriveId(rowIndex, driveId) {
   await sheets.updateRange(SHEET, `T${rowIndex}`, [[driveId]]);
 }
 
-module.exports = { SHEET, HEADERS, ensureHeader, getAll, append, getByToken, getByRequestId, maxSeqForYear, updateStatus, setPdfDriveId };
+module.exports = {
+  SHEET, HEADERS, ensureHeader, getAll, append, getByToken, getByRequestId,
+  maxSeqForYear, updateStatus, setPdfDriveId, normaliseRateMultiplier,
+  /** @internal test seam — the header guard is per-process. */
+  _resetHeaderGuard: () => { _headerReady = false; },
+};

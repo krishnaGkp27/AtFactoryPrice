@@ -7,6 +7,7 @@
  *   S2  Repo parse — departmentsRepository reads parent_department
  *   S3  Repo parse — usersRepository reads manages
  *   S4  Intent-parser action enum vs risk/evaluate.js policy (TG-7 lint)
+ *   S-CUR Currency-side lint — ₦ only in money.js + the side-A files (CUR-1)
  *   S5  Repo parse — tasksRepository extended schema (TG-7.5 Phase C)
  *   S6  Repo parse — incentivesRepository row shape
  *   S7  Repo parse — taskEventsRepository row shape + meta JSON
@@ -43,6 +44,16 @@ function pass(label) {
 function fail(label, detail) {
   results.push({ label, ok: false, detail });
   console.log(`FAIL ${label}${detail ? ': ' + detail : ''}`);
+}
+
+/**
+ * A finding that is reported but does NOT fail the run. Used by lint
+ * sections that ship in WARN mode while a sweep is in progress (S-CUR);
+ * the section flips each rule to fail() when its sweep lands.
+ */
+function warn(label, detail) {
+  results.push({ label, ok: true, warned: true, detail });
+  console.log(`warn ${label}${detail ? ': ' + detail : ''}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -291,6 +302,180 @@ function runS4() {
 
   if (gaps === 0) {
     pass(`S4 summary: all ${enumActions.length} intent actions have policy coverage`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// S-CUR — currency-side lint (CUR-1 §6, BUSINESS_RULES §17)
+//
+// Two sides of the books, one money module. Side A (money leaving the
+// office) prints a literal ₦ through money.expense(); side B (sale documents
+// and Inventory-changing outputs) prints a bare number through money.sale()
+// / money.saleRate() and never a unit. The lint proves the sides cannot
+// drift: rule 1 — the ₦ glyph lives in money.js and the side-A files only;
+// rule 2 — a side-A file never imports the sale helpers or the env code, so
+// a change to CURRENCY cannot move an expense figure; rule 3 — a side-B file
+// never prints ₦ or reaches for an expense helper.
+//
+// WARN mode (CUR-1 §8 step 2): every finding is reported, none fails the
+// run. Flip `SCUR_MODE` to 'fail' at step 9, once the sweep has emptied the
+// list. Comments are stripped before scanning — `//` lines, `/* */` blocks
+// and `^\s*\*` JSDoc continuation lines — so a comment may still say ₦.
+// ---------------------------------------------------------------------------
+const SCUR_MODE = 'warn'; // 'warn' | 'fail'
+
+/** The one file that may spell the symbol on the sales side. */
+const SCUR_MONEY_MODULE = 'src/utils/money.js';
+
+/** Side A — expense side; ₦ allowed (money.expense or, until swept, inline). */
+const SCUR_SIDE_A = [
+  'src/flows/officeExpenseFlow.js',
+  'src/flows/dailyBranchOpsFlow.js',
+  'src/services/branchOpsService.js',
+  'src/services/eveningExpenseReport.js',
+  'src/services/paymentService.js',
+  'src/flows/paymentFlow.js',
+  'src/services/paymentCards.js',
+  'src/flows/taskFlow.js',
+  'src/repositories/incentivesRepository.js',
+  'src/services/approvalReminder.js',
+];
+
+/** Side B — pure sales / inventory files; bare figures only. */
+const SCUR_SIDE_B = [
+  'src/services/invoiceService.js',
+  'src/controllers/invoiceWebController.js',
+  'src/repositories/invoicesRepository.js',
+  'src/flows/salesBrowserFlow.js',
+  'src/flows/soldBalesFlow.js',
+  'src/flows/supplyDetailsDesignFlow.js',
+  'src/flows/warehouseAuditFlow.js',
+  'src/flows/bundleSaleFlow.js',
+  'src/flows/landedCostFlow.js',
+  'src/flows/returnFlow.js',
+  'src/flows/salesWorkflowView.js',
+  'src/services/landedCostService.js',
+  'src/services/rateSuggestionService.js',
+  'src/services/fieldCatalog.js',
+  'src/services/queryEngine.js',
+  'src/services/accountingService.js',
+  'src/commands/ledgerCommands.js',
+];
+
+// Strip line comments, block comments and JSDoc continuation lines.
+function scurStripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => !/^\s*\*/.test(line))
+    .map((line) => line.replace(/\/\/.*$/, ''))
+    .join('\n');
+}
+
+function scurListSrcFiles(dir, out = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) scurListSrcFiles(full, out);
+    else if (entry.isFile() && entry.name.endsWith('.js')) out.push(full);
+  }
+  return out;
+}
+
+function runSCUR() {
+  const root = path.join(__dirname, '..');
+  const rel = (f) => path.relative(root, f).split(path.sep).join('/');
+  const report = SCUR_MODE === 'fail' ? fail : warn;
+  const sideA = new Set(SCUR_SIDE_A);
+  const sideB = new Set(SCUR_SIDE_B);
+  const files = scurListSrcFiles(path.join(root, 'src'));
+  let findings = 0;
+
+  // Sanity: the allowlists name real files (a renamed file must not silently
+  // drop out of its side).
+  for (const f of [...SCUR_SIDE_A, ...SCUR_SIDE_B, SCUR_MONEY_MODULE]) {
+    if (!fs.existsSync(path.join(root, f))) fail(`S-CUR setup: ${f}`, 'listed file does not exist');
+  }
+  if (sideA.size + sideB.size !== SCUR_SIDE_A.length + SCUR_SIDE_B.length
+      || [...sideA].some((f) => sideB.has(f))) {
+    fail('S-CUR setup', 'a file is listed on both sides');
+  }
+
+  // Rule 1 — no inline ₦ outside money.js and side A (comments stripped).
+  const rule1 = [];
+  for (const f of files) {
+    const r = rel(f);
+    if (r === SCUR_MONEY_MODULE || sideA.has(r)) continue;
+    const code = scurStripComments(fs.readFileSync(f, 'utf8'));
+    const lines = code.split('\n');
+    const hits = [];
+    lines.forEach((line, i) => { if (line.includes('₦')) hits.push(i + 1); });
+    if (hits.length) rule1.push(`${r} (${hits.length}: L${hits.slice(0, 6).join(',')}${hits.length > 6 ? ',…' : ''})`);
+  }
+  if (rule1.length) {
+    findings += rule1.length;
+    rule1.forEach((d) => report('S-CUR rule 1: inline ₦ outside money.js + side A', d));
+  } else {
+    pass('S-CUR rule 1: ₦ appears only in money.js and the side-A files');
+  }
+
+  // Rule 2 — side-A files never import the sale helpers or the env code.
+  // Tokens, not import shapes: `money.sale(` and a destructured `{ sale }`
+  // both surface as the bare identifier once comments are stripped.
+  const SALE_REACH = [
+    /\bmoney\.sale\b/, /\bsaleRate\b/, /\bsaleHeader\b/, /\bsaleLegend\b/,
+    /\bconfig\.currency\b/, /\bDEFAULT_CURRENCY\b/, /\bCURRENCY\b/,
+  ];
+  const rule2 = [];
+  for (const r of SCUR_SIDE_A) {
+    const f = path.join(root, r);
+    if (!fs.existsSync(f)) continue;
+    const code = scurStripComments(fs.readFileSync(f, 'utf8'));
+    const bad = SALE_REACH.filter((re) => re.test(code)).map((re) => re.source);
+    if (bad.length) rule2.push(`${r} → ${bad.join(' | ')}`);
+  }
+  if (rule2.length) {
+    findings += rule2.length;
+    rule2.forEach((d) => report('S-CUR rule 2: side-A file reaches the sale side / env code', d));
+  } else {
+    pass('S-CUR rule 2: no side-A file imports money.sale* or the env code');
+  }
+
+  // Rule 3 — side-B files never print ₦ or reach for an expense helper.
+  const EXPENSE_REACH = [
+    /₦/, /\bmoney\.expense\b/, /\bfmtNaira\b/, /\bfmtMoneyShort\b/, /\bNaira\b/, /\bcurrencySymbol\b/,
+  ];
+  const rule3 = [];
+  for (const r of SCUR_SIDE_B) {
+    const f = path.join(root, r);
+    if (!fs.existsSync(f)) continue;
+    const code = scurStripComments(fs.readFileSync(f, 'utf8'));
+    const bad = EXPENSE_REACH.filter((re) => re.test(code)).map((re) => re.source);
+    if (bad.length) rule3.push(`${r} → ${bad.join(' | ')}`);
+  }
+  if (rule3.length) {
+    findings += rule3.length;
+    rule3.forEach((d) => report('S-CUR rule 3: side-B file prints ₦ / uses an expense helper', d));
+  } else {
+    pass('S-CUR rule 3: no side-B file prints ₦ or uses an expense helper');
+  }
+
+  // Money module itself: must exist and expose the CUR-1 contract.
+  try {
+    const money = require('../src/utils/money');
+    const shape = ['expense', 'sale', 'saleRate', 'saleHeader', 'saleLegend', 'code']
+      .every((k) => typeof money[k] === 'function');
+    if (shape && money.expense(12345) === '₦12,345' && money.sale(12345) === '12,345'
+        && money.saleRate(1450) === '1,450/yd' && money.saleLegend() === '' && money.saleHeader('COST') === 'COST') {
+      pass('S-CUR money.js: expense ₦12,345 · sale 12,345 · saleRate 1,450/yd · no unit on side B');
+    } else fail('S-CUR money.js', 'contract mismatch');
+  } catch (e) {
+    fail('S-CUR money.js', e.message);
+  }
+
+  if (SCUR_MODE === 'warn') {
+    pass(`S-CUR summary: WARN mode — ${findings} finding(s) reported, none failing (flip SCUR_MODE at CUR-1 step 9)`);
+  } else if (findings === 0) {
+    pass('S-CUR summary: rules 1–3 clean');
   }
 }
 
@@ -7152,14 +7337,16 @@ async function runS41() {
     pass('S41.4 back navigation: detail → summary → dates → customers');
   } else fail('S41.4', JSON.stringify({ backToSummary, backToDates, backToCusts }));
 
-  // ---- S41.5 — non-price role sees quantities but NO ₦ figures ----
+  // ---- S41.5 — non-price role sees quantities but NO money figures ----
+  // CUR-1 §6: side B prints no ₦ for anyone now, so the pin is on the digits
+  // S41.3 shows the price role (60,000 / 88,750) — they must be ABSENT here.
   await flow.start(bot, 1, 'emp', null);
   await flow.handleCallback(bot, cbq('emp', 'sbl:c:0'));
   await flow.handleCallback(bot, cbq('emp', 'sbl:d:0'));
   await flow.handleCallback(bot, cbq('emp', 'sbl:full'));
   const te = captured.text;
-  if (/Bale 6534/.test(te) && /75 yd/.test(te) && !/₦/.test(te)) {
-    pass('S41.5 detail (non-price role): quantities shown, ₦ figures hidden');
+  if (/Bale 6534/.test(te) && /75 yd/.test(te) && !/60,000/.test(te) && !/88,750/.test(te)) {
+    pass('S41.5 detail (non-price role): quantities shown, money figures hidden');
   } else fail('S41.5', JSON.stringify(te));
 
   // ---- Cleanup ----
@@ -8240,6 +8427,7 @@ function runS51() {
   try { runS2(); } catch (e) { fail('S2 unexpected error', e.message); }
   try { runS3(); } catch (e) { fail('S3 unexpected error', e.message); }
   try { runS4(); } catch (e) { fail('S4 unexpected error', e.message); }
+  try { runSCUR(); } catch (e) { fail('S-CUR unexpected error', e.message); }
   try { runS5(); } catch (e) { fail('S5 unexpected error', e.message); }
   try { runS6(); } catch (e) { fail('S6 unexpected error', e.message); }
   try { runS7(); } catch (e) { fail('S7 unexpected error', e.message); }
@@ -8297,10 +8485,11 @@ function runS51() {
   try { await runS54(); } catch (e) { fail('S54 unexpected error', e.message); }
 
   const total  = results.length;
-  const passed = results.filter((r) => r.ok).length;
-  const failed = total - passed;
+  const warned = results.filter((r) => r.warned).length;
+  const passed = results.filter((r) => r.ok && !r.warned).length;
+  const failed = total - passed - warned;
 
-  console.log(`\nsmoke: ${passed} ok, ${failed} failed`);
+  console.log(`\nsmoke: ${passed} ok, ${failed} failed${warned ? ` (${warned} warning${warned === 1 ? '' : 's'} — see 'warn' lines)` : ''}`);
 
   if (failed > 0) {
     console.log('\nFailed checks:');

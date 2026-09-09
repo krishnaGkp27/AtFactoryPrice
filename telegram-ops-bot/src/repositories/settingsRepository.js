@@ -7,11 +7,24 @@
 const sheets = require('./sheetsClient');
 const { runExclusive } = require('../utils/asyncMutex');
 const logger = require('../utils/logger');
+// CUR-2 — the env seeds ONE default below (INVOICE_RATE_MULTIPLIER). No
+// require cycle: config/index.js requires only fs/path, never a repository.
+const config = require('../config');
 
 const SHEET = 'Settings';
 const HEADERS = ['Key', 'Value', 'UpdatedAt'];
 
 const DEFAULTS = {
+  // CUR-2 (owner, 09-Sep-2026) — global rate multiplier for the CUSTOMER
+  // COPY of a sale invoice: the entered (variable-1) rate × this factor
+  // fills every dependent figure on the document, bare (no symbol). Blank,
+  // 0 or 1 = none: the invoice prints the entered figures unconverted. The
+  // sheet's internal figures (lines_json, subtotal, total, ledger) are NEVER
+  // multiplied — only the rendered document is. The factor in force is
+  // frozen on the Invoices row at issue (rate_multiplier), so editing this
+  // cell later never changes an issued invoice. Boot value comes from the
+  // env INVOICE_RATE_MULTIPLIER; a sheet row of the same key overrides.
+  INVOICE_RATE_MULTIPLIER: (config && config.invoiceRateMultiplier) || '',
   // BKD-1 (owner, 13-Aug-2026) — how far back the SALE date calendars reach
   // (Sell Bale + the Kano than sale). Raised from the hardcoded 90 so Abdul
   // can backfill Kano sales from before May; sheet row overrides, no deploy.

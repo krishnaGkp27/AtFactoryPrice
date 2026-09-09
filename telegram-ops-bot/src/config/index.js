@@ -91,6 +91,22 @@ const config = {
   currency: process.env.CURRENCY || 'NGN',
 
   /**
+   * CUR-2 — boot default for the Settings cell `INVOICE_RATE_MULTIPLIER`:
+   * the factor the customer copy of a sale invoice multiplies the entered
+   * (variable-1) rate by. Blank / unset / not a positive number → null =
+   * no multiplier (the invoice prints the entered figures, unconverted).
+   * The Settings sheet row of the same key overrides this without a deploy;
+   * a multiplier is frozen per invoice at issue (Invoices.rate_multiplier),
+   * so changing either later never touches an issued document.
+   */
+  invoiceRateMultiplier: (() => {
+    const raw = String(process.env.INVOICE_RATE_MULTIPLIER ?? '').trim();
+    if (!raw) return null;
+    const m = Number(raw);
+    return Number.isFinite(m) && m > 0 ? m : null;
+  })(),
+
+  /**
    * PG-1 — Postgres mirror (Inventory sheet → Postgres). Reads still come
    * from Sheets until PG-2. Set DATABASE_URL (Railway Postgres reference)
    * + INVENTORY_MIRROR_ENABLED=1 to activate the background sync.
