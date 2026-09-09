@@ -104,8 +104,10 @@ one Back row. Sales and Outstanding rows are bare numbers with **no unit
 anywhere** — the sketch draws none, and the face prints raw naira integers
 (en-NG grouping, `fmtQty`) so a ₦400 day reads `400`, never `0`. Expense chips
 carry ₦, as drawn. The only liberty: the house formatter puts ₦ before the
-digits (`₦5,512`, `fmtMoneyShort`), the sketch after (`5512₦`) — ruling R1.
-A ÷1000 "₦ thousands" face is offered as an opt-in knob in §5, not a default.
+digits (`₦5,512`, `money.expense` — `fmtMoneyShort` is a deprecated shim
+since CUR-1), the sketch after (`5512₦`) — ruling R1. A ÷1000 `thousands`
+face is offered as an opt-in knob in §5, not a default; its header carries
+no `₦` (CUR-1 C8, §5 note).
 
 A tapped expense chip edits the same message into the EXP-1 day record,
 `formatBranchReport(rep)` (:70-102). Two things about that reuse are NOT free:
@@ -257,7 +259,7 @@ that happens to agree today; the card never relies on either default. "City"
 
 | Key | Default | Meaning |
 |---|---|---|
-| `DAILY_CARD_UNIT` | `naira` | Face numbers on Sales/Outstanding rows: `naira` (raw integers, en-NG grouping, no unit line — as drawn) or `thousands` (÷1000, rounded, header line "₦ thousands"; a refinement — note a ₦400 day then rounds to `0`, so the knob also switches on a `<1` marker). Drill-downs always print full ₦. R1. |
+| `DAILY_CARD_UNIT` | `naira` | Face numbers on Sales/Outstanding rows: `naira` (raw integers, en-NG grouping, no unit line — as drawn) or `thousands` (÷1000, rounded, header line **`thousands`** — NOT "₦ thousands": the Sales/Outstanding rows are a sales surface and carry no symbol or unit under BUSINESS_RULES §17 / CUR-1 C8; print the header through `money.saleHeader('thousands')` so the one seam decides, and the face figures through `money.sale`; a refinement — note a 400 day then rounds to `0`, so the knob also switches on a `<1` marker). Drill-downs and the expense chips always print full `₦` through `money.expense` (side A). R1. |
 | `DAILY_CARD_CASH_SOURCE` | `sale` | `sale` = Σ `AmountPaid` on the day's sale rows (has a city). `ledger` = Σ Cash/Bank debits POSTED that day (no city — rendered as ONE business-wide "All money in (ledger)" line that REPLACES the per-city first number, never sits beside it): it counts every payment posted, sale-time cash included (§3 row 1a), so the two values are alternative readings, not addends. No "Other payments" line in v1. R2. |
 | `DAILY_CARD_CITIES` | `` (empty) | Optional CSV to fix the row order / restrict rows (`Kano,Lagos`). Empty = every Locations `location` that has any figure, alphabetical, `Unassigned` last, `House` after the cities. |
 | `DAILY_CARD_OUTSTANDING` | `0` | `1` renders block (3) in the bot. Stays 0 until R6; the web page honours it too (§4 Web row). |
@@ -370,7 +372,7 @@ column; step 3 is the only executor edit; step 5 is the only rule change.
 
 | # | Question | Recommended |
 |---|---|---|
-| R1 | Face numbers: raw naira as drawn (no unit anywhere), or ₦ thousands with a one-line header note (refinement)? And is `₦5,512` (symbol first, house style) acceptable on the expense chips instead of the sketch's `5512₦`? | Raw naira, as drawn; ₦ first on chips. |
+| R1 | Face numbers: raw naira as drawn (no unit anywhere), or thousands with a one-line header note (refinement)? And is `₦5,512` (symbol first, house style) acceptable on the expense chips instead of the sketch's `5512₦`? *CUR-1 (shipped 09-Sep-2026) fixes the shape either way: Sales/Outstanding faces are side B — bare, `money.sale`, and a `thousands` header reads `thousands`, never `₦ thousands`; expense chips are side A — `money.expense`, `₦` first.* | Raw naira, as drawn; ₦ first on chips. |
 | R2 | "Total cash collected" = cash entered at sale approval (per city, `Transactions.AmountPaid`), or every Cash/Bank debit posted that day (ledger, no city, and it CONTAINS the sale-time cash again — §3 row 1a)? If standalone payments matter on this card, accept the posting-day subtraction as an approximation, or wait for the `record payment` door to carry a city? A mixed-warehouse bundle's cash: `unplaced` line, or split pro-rata by yards? | Sale-time cash per city; no "Other payments" line in v1; mixed bundles to `unplaced`. |
 | R3 | "From goods supplied" = value of the day's supplied (sold) rows — the house meaning (§12) — at the rate booked at approval (Transactions.PricePerYard), history-preserving the SLG-1 way (a later return does not erase the day). Should goods dispatched under a supply request but not yet booked as a sale appear as a quantity-only line? | Yes to the definition; no supply-request line in v1 (no money exists for it; SLED-1/SLG-1 print none). |
 | R4 | What is **House**: a branch (`Users.branch = House` — needs `House` in `BRANCH_LIST`, gets its own nightly 🌇 card, reminder, Open Branch expectation and float), or a category inside a city's cash book (title keyword / `person_allowance` target, summed into a third chip, no new branch)? "House" is already an attendance place in the owner's vocabulary. | Owner's call with those consequences visible; category is the smaller change. |

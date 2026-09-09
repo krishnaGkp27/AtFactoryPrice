@@ -1,4 +1,20 @@
-# CUR-1 — PROPOSAL, no implementation; awaiting owner rulings
+# CUR-1 — Currency display: release A SHIPPED 09-Sep-2026, release B pending owner go
+
+> **Status (09-Sep-2026).** Rulings R1–R18 and doubts D1–D6 closed by the
+> owner "as recommended" (08-Sep); the 09-Sep integrity amendment
+> (`docs/BUSINESS_RULES.md` §17) added that the sheet holds BASE figures
+> only and the multiplier is stored separately. **Release A — build steps
+> 1–5 of §8 — is shipped**, together with the CUR-2 multiplier on the
+> Settings-fulfilled path. **Release B — steps 6, 7 and 9 (the wizard's
+> Step 5 in `approvalEvents.js`, the `telegramController.js` sweep, deleting
+> the `format.js` shims, S-CUR in fail mode) — waits for the owner's live
+> check below and his go.** What release A ships and how to check it live:
+> §11. One correction to the plan text below, kept as written for the
+> record: there is NO label variable (`SALE_UNIT_LABEL` / `saleUnit()` /
+> "a unit printed once" — R14) — that reading was superseded by the
+> multiplier ruling (R2b, R12b). `money.saleHeader(word)` returns the bare
+> word and `money.saleLegend()` returns `''`; they are kept only as the one
+> seam a label could ever come back through.
 
 Owner, 08-Sep-2026 (recorded as `docs/BUSINESS_RULES.md` §17): *"keep the
 expenses in naira, with the symbol of naira intact at all the places. But
@@ -637,19 +653,26 @@ CLAUDE.md scope rule 2 and the ask-first list.
 
 | # | Step | Files | Gate | Ask-first? |
 |---|---|---|---|---|
-| 1 | **Docs first — only what R1 covers.** Amend INV-2 rule 3 and field notes, INV-1 decision 9 supersession note, refresh the three mockups (R1 names them); CPD §7 gets a cross-link only | `specs/INV-2_*`, `specs/INV-1_*`, `specs/inv1-mockups/*.html`, `docs/CUSTOMER_PAYMENT_DOOR_*` (link only) | none (docs) | no — but R1 must be answered first |
-| 2 | **`src/utils/money.js`** + `test/unit/utils/money.test.js` + `config.saleUnitLabel` + `.env.example` + S-CUR lint in **warn** mode. `format.js` exports become shims | `src/utils/money.js`, `src/utils/format.js`, `src/config/index.js`, `scripts/smoke.js`, `.env.example` | tests green; every existing test still passes because the shims are behaviour-identical | no |
-| 3 | **Pin side A.** `taskFlow` + `incentivesRepository` → `money.expense` and the literal `'NGN'` for stored currency (R11); `fmtNaira` body → `money.expense`; optional swaps in the EXP-1 files; locale fixes | `src/flows/taskFlow.js`, `src/repositories/incentivesRepository.js`, `src/services/paymentService.js`, `src/flows/officeExpenseFlow.js`, `src/flows/dailyBranchOpsFlow.js`, `src/services/branchOpsService.js`, `src/services/eveningExpenseReport.js` | side-A tests unchanged and green; S-CUR rule 3 clean | no |
-| 4 | **The invoice** — PDF, web, caption, renderer seam and its new pins; `apiController` `saleUnitLabel` | `src/services/invoiceService.js`, `src/controllers/invoiceWebController.js`, `src/controllers/apiController.js:59`, both invoice tests | new PDF text pins; `invoiceWebController.test.js:59` re-pinned | no |
-| 5 | **Flow modules and services on side B** (and C families ruled B by R4–R9): sales browser, sold bales, supply details design, field catalog, rate suggestions, warehouse audit, sales workflow view, queryEngine, analytics, landed cost, inventoryService (`fmtNgn`, `formatMoney`, `:1207`, `:1223`, credit notes), returnFlow, ledgerCommands, accountingService `code()`, dead re-exports, backfill script, EDB-1 generator | the files named in §5 outside the two ask-first files | ≈20 assertions re-pinned; negatives re-pinned on digits | no |
-| 6 | **Approval cards and the enrichment wizard** — `approvalCards.js` (not ask-first) and `approvalEvents.js` (ask-first): chips, prompts, acks, the three closures, outstanding lines, receipt prompt | `src/services/approvalCards.js`, `src/events/approvalEvents.js` | `dispatchCustomerAtApproval`, `approvalCardsExtra`, `approvalCardsReturnThans`, `personRemoval` re-pinned | **yes — approvalEvents** |
-| 7 | **Controller sweep** — imports, `buildReportLegend`, `valStr*`, every `fmtMoney`/`fmtMoneyShort` line, the ten receipt literals, `CURRENCY_SYMBOL` deletion | `src/controllers/telegramController.js` | characterization tests green; `supplyDetailsReport` unchanged | **yes — controller** |
-| 8 | **Docs/generators follow-through**: TESTING.md expectations, SETUP.md, codebase_overview, regenerate `docs/EDB-1_TEST_SCRIPT.pdf`; **and the rulings-gated doc edits** — §17 open bullets filled (after R2a/R2b, R4–R9), CPD Q13 marked answered (after R5–R7), §6b reworded (only if R16 = yes), DDC-1 thousands-header note | docs, `scripts/build-edit-bale-test-script.py`, `docs/BUSINESS_RULES.md`, `docs/CUSTOMER_PAYMENT_DOOR_*`, `specs/DDC-1_*` | PDF regenerated; each doc edit cites the ruling that closed it | §6b only on R16 |
-| 9 | **Cleanup — resumes the deferred TG-10 money half (owner go)**: delete `fmtMoney`, `fmtMoneyShort`, `currencySymbol`, `SYMBOLS` from `format.js`; S-CUR to **fail** mode; ROADMAP TG-10 row updated (`fmtMoney` done; `genId` / `editOrSend` still deferred) | `src/utils/format.js`, `scripts/smoke.js`, `ROADMAP.md` | S-CUR rules 1–5 at 0 | yes — a deferred roadmap item, not housekeeping |
+| 1 ✅ A | **Docs first — only what R1 covers.** Amend INV-2 rule 3 and field notes, INV-1 decision 9 supersession note, refresh the three mockups (R1 names them); CPD §7 gets a cross-link only | `specs/INV-2_*`, `specs/INV-1_*`, `specs/inv1-mockups/*.html`, `docs/CUSTOMER_PAYMENT_DOOR_*` (link only) | none (docs) | no — but R1 must be answered first |
+| 2 ✅ A | **`src/utils/money.js`** + `test/unit/utils/money.test.js` + `config.saleUnitLabel` + `.env.example` + S-CUR lint in **warn** mode. `format.js` exports become shims | `src/utils/money.js`, `src/utils/format.js`, `src/config/index.js`, `scripts/smoke.js`, `.env.example` | tests green; every existing test still passes because the shims are behaviour-identical | no |
+| 3 ✅ A | **Pin side A.** `taskFlow` + `incentivesRepository` → `money.expense` and the literal `'NGN'` for stored currency (R11); `fmtNaira` body → `money.expense`; optional swaps in the EXP-1 files; locale fixes | `src/flows/taskFlow.js`, `src/repositories/incentivesRepository.js`, `src/services/paymentService.js`, `src/flows/officeExpenseFlow.js`, `src/flows/dailyBranchOpsFlow.js`, `src/services/branchOpsService.js`, `src/services/eveningExpenseReport.js` | side-A tests unchanged and green; S-CUR rule 3 clean | no |
+| 4 ✅ A | **The invoice** — PDF, web, caption, renderer seam and its new pins; `apiController` `saleUnitLabel` | `src/services/invoiceService.js`, `src/controllers/invoiceWebController.js`, `src/controllers/apiController.js:59`, both invoice tests | new PDF text pins; `invoiceWebController.test.js:59` re-pinned | no |
+| 5 ✅ A | **Flow modules and services on side B** (and C families ruled B by R4–R9): sales browser, sold bales, supply details design, field catalog, rate suggestions, warehouse audit, sales workflow view, queryEngine, analytics, landed cost, inventoryService (`fmtNgn`, `formatMoney`, `:1207`, `:1223`, credit notes), returnFlow, ledgerCommands, accountingService `code()`, dead re-exports, backfill script, EDB-1 generator | the files named in §5 outside the two ask-first files | ≈20 assertions re-pinned; negatives re-pinned on digits | no |
+| 6 ⏳ B | **Approval cards and the enrichment wizard** — `approvalCards.js` (not ask-first) and `approvalEvents.js` (ask-first): chips, prompts, acks, the three closures, outstanding lines, receipt prompt | `src/services/approvalCards.js`, `src/events/approvalEvents.js` | `dispatchCustomerAtApproval`, `approvalCardsExtra`, `approvalCardsReturnThans`, `personRemoval` re-pinned | **yes — approvalEvents** |
+| 7 ⏳ B | **Controller sweep** — imports, `buildReportLegend`, `valStr*`, every `fmtMoney`/`fmtMoneyShort` line, the ten receipt literals, `CURRENCY_SYMBOL` deletion | `src/controllers/telegramController.js` | characterization tests green; `supplyDetailsReport` unchanged | **yes — controller** |
+| 8 ✅ A (docs) | **Docs/generators follow-through**: TESTING.md expectations, SETUP.md, codebase_overview, regenerate `docs/EDB-1_TEST_SCRIPT.pdf`; **and the rulings-gated doc edits** — §17 open bullets filled (after R2a/R2b, R4–R9), CPD Q13 marked answered (after R5–R7), §6b reworded (only if R16 = yes), DDC-1 thousands-header note | docs, `scripts/build-edit-bale-test-script.py`, `docs/BUSINESS_RULES.md`, `docs/CUSTOMER_PAYMENT_DOOR_*`, `specs/DDC-1_*` | PDF regenerated; each doc edit cites the ruling that closed it | §6b only on R16 |
+| 9 ⏳ B | **Cleanup — resumes the deferred TG-10 money half (owner go)**: delete `fmtMoney`, `fmtMoneyShort`, `currencySymbol`, `SYMBOLS` from `format.js`; S-CUR to **fail** mode; ROADMAP TG-10 row updated (`fmtMoney` done; `genId` / `editOrSend` still deferred) | `src/utils/format.js`, `scripts/smoke.js`, `ROADMAP.md` | S-CUR rules 1–5 at 0 | yes — a deferred roadmap item, not housekeeping |
 
 Steps 4 and 5 can ship and be tested live before 6 and 7 are approved; the
 shims keep the un-swept surfaces exactly as they are today, so the bot is
 never half-changed in a way the owner can see.
+
+**Release split (09-Sep-2026).** ✅ A = shipped in release A; ⏳ B = release
+B, after the owner's live check (§11) and go. `approvalCards.js` (step 6's
+non-ask-first half — return credit, payment card, Owes, Outstanding→after)
+shipped in release A; only the `approvalEvents.js` half of step 6 waits. The S-CUR lint stays in warn mode until step 9; its
+findings are the release-B backlog (`npm run smoke` lists them as `warn`
+lines).
 
 ---
 
@@ -736,3 +759,81 @@ Each has the recommended answer; "as recommended" closes them all.
 | D4 | Where the multiplier lives: Railway env (restart to change; applies to every invoice after) — or a Settings-sheet cell (change at will, no deploy) — or chosen per invoice at generation (a chip: office copy × customer copy)? "If I want to give the invoice to the customer directly" sounds occasional. | Settings cell `INVOICE_RATE_MULTIPLIER` (default 1) with the env as the boot default; per-invoice chip only if you say so |
 | D5 | Rounding when the multiplier is not 1: rate to 2 decimals, line amounts and totals to integers? | Rate 2 dp, amounts and totals integers |
 | D6 | Variable-1 value: `CURRENCY` stays `NGN` for accounting narrations and stored rows; blank still means `NGN`. Confirm nothing about variable 1 changes. | Confirm |
+
+---
+
+## 11 · Release A — what shipped (09-Sep-2026) and the owner's live check
+
+### What release A ships
+
+| Piece | Where | Behaviour |
+|---|---|---|
+| The money module | `src/utils/money.js` (+ `test/unit/utils/money.test.js`) | `expense(n)` → `₦12,345` (side A, literal symbol, never the env); `sale(n)` → `12,345`; `saleRate(n)` → `1,450/yd`; `fraction: 2` prints exactly two decimals (`4,000.00/yd`); `code()` → `CURRENCY` (blank = `NGN`) for narrations / FX pair / incentive rows only. `saleHeader()` / `saleLegend()` print no unit |
+| `format.js` shims | `src/utils/format.js` | `fmtMoney` / `fmtMoneyShort` / `currencySymbol` are `@deprecated` shims over `money.js`, behaviour-identical for numbers (garbage now renders `0`, not `NaN`). Deleted in release B (step 9) |
+| Side A pinned | `taskFlow`, `incentivesRepository`, `paymentService.fmtNaira`, the EXP-1 files | every expense figure prints through `money.expense`; the stored `Incentives.currency` is the literal `NGN` (R11) — a `CURRENCY` change cannot move an expense figure |
+| The invoice | `src/services/invoiceService.js`, `src/controllers/invoiceWebController.js` | bare in both states (§4a / §4b of CUR-2): status strip, `COST` / `PAYMENTS` headers, `@ 3.20/yd`, DEBIT BALANCE, the web copy's `Rate` / `Cost`. `docFigures(invoice)` is the one source of the document's numbers — stored base lines × the STORED multiplier; rate 2 dp when a factor applies, amounts / totals / payments / balance integers, each line `round(yards × rate × m)`, totals summed from the document's lines; PAID / PART-PAID / UNPAID from the BOOKED figures; `RATE NOT RECORDED` when a rate never resolved. The Telegram caption is a staff message: booked figures plus one `Customer copy × 1,250` line when a factor applies |
+| The freeze column | `Invoices.rate_multiplier` — column W, trailing, after `created_at` | written by `createForSale` from the factor in force at issue; blank = none (never `1`); `ensureHeader` widens a live 22-column sheet by the one header cell and touches no data row; old rows read blank → unconverted |
+| The knob | Settings `INVOICE_RATE_MULTIPLIER`; env of the same name is its boot default (`settingsRepository.DEFAULTS`) | blank / 0 / 1 = none; a number > 0 and ≠ 1 (≤ 1,000,000) converts every invoice issued while it is set. Read once at issue; a later change never touches an issued invoice |
+| Side B swept | sales browser, sold bales, supply details design, field catalogue, rate suggestions, warehouse audit, sales workflow view, queryEngine, analytics, landed cost, `inventoryService` credit notes, `returnFlow`, `ledgerCommands`, `accountingService` (`code()`), `approvalCards` (return credit, payment card, Owes, Outstanding→after), the dead re-exports | inline `₦`, `fmtMoney`, `fmtMoneyShort` and private `NGN` constants replaced by `money.sale` / `money.saleRate`; input prompts and the AI data context untouched (R18) |
+| The lint | `scripts/smoke.js` S-CUR, `SCUR_MODE = 'warn'` | rule 1 (₦ only in `money.js` + side A), rule 2 (side A never reaches the env), rule 3 (side B never prints ₦ / uses an expense helper); findings are `warn` lines, the summary counts them separately |
+
+**Integrity, as tested** (`test/unit/services/invoiceMultiplier.test.js`,
+`test/unit/repositories/invoicesRepository.test.js`): the sheet row never
+carries a multiplied figure and the factor sits alone in W; the base
+figures reproduce the ledger / Transactions numbers; flipping the Settings
+cell AFTER issue never changes a re-render, while a NEW invoice takes the new
+cell; key present as `1` beats a Settings 1,250; an out-of-range key means
+none and still never falls through to Settings; a Settings read failure
+means none, never a failed sale.
+
+**Not in release A (release B, owner go):** the wizard's Step 5
+(`approvalEvents.js` — the supplied-during-approval door and the
+`INVOICE_MULTIPLIER_ASK` knob), the `approvalEvents.js` chip, ack and
+outstanding-line sweep (the `approvalCards.js` half of step 6 — return
+credit, payment card, Owes — already shipped bare in A), the
+`telegramController.js` sweep (Stock
+Value, Check Stock, price update, customer 360, receipts, `/balance`
+replies through the controller), the deletion of the `format.js` shims, and
+S-CUR in fail mode. Until then those surfaces print exactly as before —
+the "📒 Outstanding" line under an approved sale still shows `NGN …`, a
+buyer chip still shows `₦…/yd`.
+
+### The owner's live check (do this before the release-B go)
+
+1. **Settings sheet:** add the row `INVOICE_RATE_MULTIPLIER` | `1250` (any
+   factor > 0 and ≠ 1; live in ≤ 30 s, no deploy).
+2. **Approve one small sale** through the wizard exactly as today (rate,
+   payment mode, amount paid). The wizard asks nothing new — Step 5 is
+   release B.
+3. **Read the approval reply** in the admin chat: the "Outstanding as of
+   today" line and the sale card are BASE figures (variable 1). Then the
+   invoice caption under the PDF: `Total <base> · Paid <base> · Balance
+   <base>` plus one `Customer copy × 1,250` line.
+4. **Open the invoice link** (`/i/<token>`) and the **PDF**: every figure is
+   the base × 1,250 — rate with two decimals (`4,000.00/yd`), integer
+   amounts, the red payment row and DEBIT BALANCE converted at the same
+   factor, the strip status (PAID / PART-PAID / UNPAID) unchanged from what
+   the base figures say, no `₦`, no `NGN`, no "× 1,250" anywhere on the
+   paper.
+5. **Compare with the statement**: `/ledger` / the SLED-1 statement / the
+   customer's OTP ledger move by the BASE amount only; the Invoices row
+   (`subtotal`, `total`, `amount_paid_at_issue`, `lines_json`) holds the base
+   figures and column W holds `1250`.
+6. **Blank the Settings cell** (or set it to `1`), wait 30 s, **re-open the
+   same link and re-download the PDF**: the issued invoice does not change —
+   still × 1,250. Approve a second small sale: its invoice is unconverted
+   (base figures, `3.20/yd`), its column W is blank.
+7. **Side A, every time:** file one expense (`₦` on every line), read the
+   20:00 report (`₦`), raise one PAY-1 request (`₦45,000` on the request,
+   finance and approval cards), set one task incentive (`₦5,000` on the
+   card and in the payout queue). If any of these lost the symbol, the
+   side-A pin failed — roll back.
+8. **Side B, quick pass:** 💰 Stock Value rows bare, 📂 Check Stock
+   `Selling: 1,500/yd`, a marketer's catalogue line `· 1,500/yd`, a ↩️ Return
+   goods confirm card `💰 Credits ABBA 150,000 (60 yds × 2,500/yd)`,
+   `/balance` bare.
+
+Then say **go** for release B, or amend. Rollback = redeploy the previous
+commit; the Settings cell and column W are inert to old code (an old build
+ignores W and never reads the cell).
+

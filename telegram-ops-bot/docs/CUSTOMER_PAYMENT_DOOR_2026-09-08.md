@@ -440,8 +440,14 @@ door: which side the **payment approval card**, the **receipt flow** and the
 **persisted ledger narrations** fall on — a customer payment is sale-side
 money but changes no Inventory row.
 
-The deep research that produces the surface list, the blank-`CURRENCY`
-semantics and the narration decision (CUR-1) comes in the next turn.
+The deep research that produced the surface list, the blank-`CURRENCY`
+semantics and the narration decision is `specs/CUR-1_CURRENCY_DISPLAY.md`
+(§2 decision table, §5 site table, §10 rulings — closed 08/09-Sep-2026);
+the customer-copy multiplier it led to is `specs/CUR-2_INVOICE_MULTIPLIER.md`;
+the rulings are recorded in `docs/BUSINESS_RULES.md` §17. Release A of both
+shipped 09-Sep-2026; the sites in the table above that live in
+`approvalCards.js`, `approvalEvents.js` and `telegramController.js` move in
+release B. Q13 below carries the answer for this door's own surfaces.
 
 ---
 
@@ -482,8 +488,19 @@ semantics and the narration decision (CUR-1) comes in the next turn.
     department (e.g. Accounts), in `FINANCE_IDS` for balance reads, **not** in
     the Finance department (that seat is PAY-1's one hand for the Office phone).
 13. **Which side of §17 do the payment card, receipt flow and ledger
-    narrations fall on?** Deferred to CUR-1; the recommendation will come with
-    the surface list.
+    narrations fall on?** **Answered 08/09-Sep-2026 (CUR-1 R5–R7, owner "as
+    recommended"):** the payment card, the receipt flow's rendered figures
+    and the payment-recorded replies are side B — bare, variable 1
+    (`money.sale`); the receipt PROMPT still names the unit the admin types
+    (R18). The ledger narrations keep the stored code (`… NGN 60000`),
+    forward-only, no rewrite of history (R7). The customer statement and
+    `/balance` are side B too (R5); trial balance and daybook stay as today
+    (R5a). The Record Payment card (`approvalCards.js`) and the
+    `ledgerCommands` replies shipped bare in release A; the receipt-flow
+    echoes and payment-recorded replies that live in
+    `telegramController.js` move in release B (the controller sweep). See
+    `specs/CUR-1_CURRENCY_DISPLAY.md` §5 "Sale approval cards" and §11;
+    `docs/BUSINESS_RULES.md` §17.
 14. **Is a Telegram `file_id` acceptable evidence storage until the Drive
     quota (BKP-1) is solved?** Recommended: yes for now — the Receipts sheet
     already keeps it, and the Drive copy stays best-effort.

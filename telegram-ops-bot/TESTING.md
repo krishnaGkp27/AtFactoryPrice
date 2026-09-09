@@ -14,7 +14,8 @@ This guide covers end-to-end testing for the bot: **slash commands** (ledger arc
 - **ADMIN_IDS** — Comma-separated Telegram user IDs (e.g. `8021605452`)  
 - **EMPLOYEE_IDS** — Comma-separated Telegram user IDs for employees (non-admin)  
 - **OPENAI_API_KEY** (optional) — For AI intent parsing; if missing, fallback keyword parsing is used  
-- **CURRENCY** (optional) — Default `NGN`  
+- **CURRENCY** (optional) — Default `NGN`. The accounting CODE only (ledger narrations, the FX pair's quote leg, incentive rows); it is never a display unit. Expenses always print `₦`; sale invoices and inventory outputs print a bare number (BUSINESS_RULES §17, CUR-1). Blank = `NGN`  
+- **INVOICE_RATE_MULTIPLIER** (optional) — Boot default for the Settings cell of the same name (CUR-2): the factor the customer copy of a sale invoice multiplies the entered rate by. Blank = no multiplier. The Settings row overrides it without a deploy  
 
 ### 1.2 Access
 
@@ -56,7 +57,7 @@ These are handled **before** the AI layer. Only **admins** can use them.
 
 | Test | Input | Expected |
 |------|--------|----------|
-| Valid | `/balance CUST-20260221-001` | "💰 **Acme Ltd** (CUST-…) Balance: NGN 0" (or current balance) |
+| Valid | `/balance CUST-20260221-001` | "💰 **Acme Ltd** (CUST-…) Balance: 0" (or current balance — bare, no unit: CUR-1 side B) |
 | Unknown customer | `/balance CUST-99999999-999` | "Customer not found: CUST-99999999-999." |
 | Missing id | `/balance` | "Usage: /balance <customer_id> …" |
 | As employee | Same | "This command is for admins only." |
@@ -71,7 +72,7 @@ These are handled **before** the AI layer. Only **admins** can use them.
 
 | Test | Input | Expected |
 |------|--------|----------|
-| Valid | `/payment CUST-20260221-001 50000` | "✅ Payment recorded. New balance: NGN …" |
+| Valid | `/payment CUST-20260221-001 50000` | "✅ Payment recorded. New balance: …" (bare figure, CUR-1 side B) |
 | Invalid amount | `/payment CUST-20260221-001 abc` | "Please enter a valid positive amount." |
 | Unknown customer | `/payment CUST-99999999-999 1000` | "Customer not found: …" |
 | Missing args | `/payment CUST-001` | "Usage: /payment <customer_id> <amount> …" |
@@ -123,9 +124,28 @@ Messages that are **not** slash commands go to the **intent parser** (OpenAI or 
 2. Reply with rate → Bot asks **payment mode**.  
 3. Reply **Not yet paid** (or Cash / Credit / Paid to Bank).  
 4. If Cash or Paid to bank → Bot asks **amount paid**; else flow ends.  
-5. Bot: "✅ Request … approved. Sale and ledger updated." and "📒 **testD** — Outstanding as of today: NGN …" (non-zero after fix).
+5. Bot: "✅ Request … approved. Sale and ledger updated." and "📒 **testD** — Outstanding as of today: NGN …" (non-zero after fix). *This line still carries `NGN` until CUR-1 release B sweeps `approvalEvents.js`; it then reads bare (`Outstanding as of today: …`).*
+6. Then the invoice PDF with its caption `🧾 INV-… — testD` / `Total … · Paid … · Balance …` — bare figures; plus one line `Customer copy × <m>` when the Settings cell `INVOICE_RATE_MULTIPLIER` holds a factor (see §3.2a).
 
 **Verify:** **Ledger_Entries** (existing accounting): one Customer Receivable debit row with narration including payment status. **Transactions** sheet: new row. Customer outstanding in bot reply = sale amount (or previous + sale − payments).
+
+### 3.2a Currency display and the invoice multiplier (CUR-1 / CUR-2, release A)
+
+Two rules to regress every time money prints (BUSINESS_RULES §17):
+
+- **Side A — expenses keep `₦`:** file one office expense, read the 20:00 report, raise one PAY-1 request, set one task incentive → `₦` on every figure, whatever `CURRENCY` says.
+- **Side B — sale / inventory figures are bare:** the invoice PDF and `/i/<token>`, 💰 Stock Value, 📂 Check Stock (`Selling: 1,500/yd`), a catalogue line (`· 1,500/yd`), a ↩️ Return goods card (`💰 Credits ABBA 150,000 (60 yds × 2,500/yd)`), `/balance`, `/ledger` → no `₦`, no `NGN`. *Release B pending:* the sale wizard's chips, the "📒 Outstanding" line and the controller's reports (Stock Value subtitle legend, price update, customer 360, receipts) still print their old symbols until `approvalEvents.js` / `telegramController.js` are swept.
+
+**Multiplier — the owner's live check (Settings-fulfilled path):**
+
+1. Settings sheet: `INVOICE_RATE_MULTIPLIER` | `1250` (live in ≤ 30 s).
+2. Approve one small sale as today (no new wizard step — Step 5 is release B).
+3. Approval reply and the "Outstanding" line: BASE figures. Invoice caption: `Total <base> · Paid <base> · Balance <base>` + `Customer copy × 1,250`.
+4. Open `/i/<token>` and the PDF: every figure × 1,250 — rate with two decimals (`4,000.00/yd`), integer amounts, the red payment row and DEBIT BALANCE at the same factor, status unchanged from the base figures, no symbol, no unit, no "× 1,250" on the paper.
+5. Statement / `/ledger` / the customer's OTP ledger move by the BASE amount; the Invoices row holds base figures and column W (`rate_multiplier`) holds `1250`.
+6. Blank the cell (or set `1`), wait 30 s, re-open the same link and re-download the PDF: unchanged (still × 1,250). A second sale approved now is unconverted (`3.20/yd`), its column W blank.
+
+Offline pins for the same rules: `test/unit/utils/money.test.js`, `test/unit/services/invoiceMultiplier.test.js`, `test/unit/repositories/invoicesRepository.test.js`; the S-CUR section of `npm run smoke` (warn mode until release B step 9).
 
 ### 3.3 Inventory — Returns, transfers, price
 

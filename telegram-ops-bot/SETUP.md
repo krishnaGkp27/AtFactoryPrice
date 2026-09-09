@@ -60,7 +60,7 @@ Use one workbook with these sheets (create tabs if missing):
 | **Settings**     | Risk thresholds (optional)     | Key \| Value \| UpdatedAt |
 
 - **Inventory**: Warehouses are dynamic (any value in the Warehouse column). Add rows as needed.
-- **Settings**: Optional. Add rows e.g. `RISK_THRESHOLD` / `300` and `LOW_STOCK_THRESHOLD` / `100` to override env defaults.
+- **Settings**: Optional. Add rows e.g. `RISK_THRESHOLD` / `300` and `LOW_STOCK_THRESHOLD` / `100` to override env defaults. `INVOICE_RATE_MULTIPLIER` / `1250` converts the customer copy of every invoice issued while the row holds a factor (CUR-2); blank / 0 / 1 = none. The full owner-editable list is in the repo-root `CLAUDE.md` "Settings-sheet toggles".
 
 ---
 
@@ -80,8 +80,12 @@ LOW_STOCK_THRESHOLD=100
 PORT=3000
 BASE_URL=https://your-deployed-url.com
 CURRENCY=NGN
+INVOICE_RATE_MULTIPLIER=
 BOT_API_KEY=<optional; for admin page to update settings>
 ```
+
+- **`CURRENCY`** — the accounting CODE the books are kept in (ledger narrations, the FX pair's quote leg, incentive rows). It is **not** a display unit: expenses always print `₦`, sale invoices and inventory outputs print a bare number with no symbol or unit (BUSINESS_RULES §17, CUR-1). Blank = `NGN`. Restart-only.
+- **`INVOICE_RATE_MULTIPLIER`** — boot default for the Settings-sheet cell of the same name (CUR-2): the factor the CUSTOMER COPY of a sale invoice multiplies the entered rate by (`1250` turns an entered `3.20/yd` into `4,000.00/yd` on the document). Blank = no multiplier. The Settings row overrides it without a deploy (blank / 0 / 1 = none); the factor in force is frozen per invoice at issue in `Invoices.rate_multiplier`, and the sheet's own figures (lines, totals, ledger, Transactions) are never multiplied.
 
 ---
 

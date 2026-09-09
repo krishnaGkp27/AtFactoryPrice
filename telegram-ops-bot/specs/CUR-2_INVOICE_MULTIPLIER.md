@@ -1,10 +1,35 @@
-# CUR-2 — Invoice rate multiplier: layouts for the owner's go (PROPOSAL, no implementation)
+# CUR-2 — Invoice rate multiplier: release A SHIPPED 09-Sep-2026 (Settings-fulfilled path), release B pending owner go
 
-**Status: PROPOSAL, 08-Sep-2026. Nothing in this document is built.** It draws
-the cards and the invoice exactly as they will print, so the owner can say
-"go" (or amend) before a line of code changes. It closes the layout gate that
-`docs/BUSINESS_RULES.md` §17 and `specs/CUR-1_CURRENCY_DISPLAY.md` §10 left
-open. Every code reference below was re-read today against `origin/main`.
+**Status (09-Sep-2026).** The owner approved the drawings and closed Q1–Q6
+and D7 "as recommended", adding the integrity ruling now in
+`docs/BUSINESS_RULES.md` §17: *the sheet's internal calculation happens
+WITHOUT the multiplier; the base figures and the factor are recorded and
+stored separately.* **Release A — §9 steps 0–3 — is shipped:** `Invoices`
+column W `rate_multiplier`, the `INVOICE_RATE_MULTIPLIER` knob (Settings cell,
+env boot default), the document rendered bare in both states from
+`docFigures(invoice)` = stored base lines × stored factor, the staff caption
+with its `Customer copy × <m>` line, rules 8–18 as tests. **Release B — §9
+step 4 (the wizard's Step 5 in `approvalEvents.js`, `INVOICE_MULTIPLIER_ASK`)
+and step 5 (the §17 closing sentence, which the owner approves verbatim) —
+waits for the owner's live check (`specs/CUR-1_CURRENCY_DISPLAY.md` §11) and
+his go.** Until then the multiplier has ONE door — the Settings cell — and
+`resolveRateMultiplier` already reads the enrichment key `rateMultiplier`
+when present, so release B plugs in without touching the freeze rule.
+
+Release-A deviations from the text below, recorded so the record stays
+honest: `config.invoiceRateMultiplier` is `null` (not `1`) when the env is
+blank or invalid — `1` and blank both mean none downstream, so nothing
+changes; `settingsRepository.DEFAULTS.INVOICE_RATE_MULTIPLIER` is the env
+value or `''`; the 2-dp rate helper is `money.saleRate(n, { fraction: 2 })`
+from `src/utils/money.js`, not a `fmtRate2` in `format.js`; the sale date on
+the web copy's payment row landed with step 3 as drawn. The drawings and
+rules below are otherwise what shipped.
+
+The original proposal text follows. It draws the cards and the invoice
+exactly as they print, so the owner could say "go" (or amend) before a line
+of code changed. It closes the layout gate that `docs/BUSINESS_RULES.md` §17
+and `specs/CUR-1_CURRENCY_DISPLAY.md` §10 left open. Every code reference
+below was re-read on 08-Sep against `origin/main`.
 
 Owner, 08-Sep-2026, after the CUR-1 research (his words, verbatim):
 
@@ -567,12 +592,18 @@ D7); step 4 adds the **supplied-during-approval** door.
 
 | # | Commit | Files | Gate | Ask-first? |
 |---|---|---|---|---|
-| 0 | `docs: INV-2 rule 3 + INV-1 decision 9 + mockups follow CUR-1 R1` | `specs/INV-2_INVOICE_DESIGN_PROMPT.md` rule 3 (`:50` "all money is **₦ per yard**" → "money is bare; the customer copy may be rate × multiplier, 2 dp rate, integer amounts"), `specs/INV-1_CUSTOMER_INVOICES.md` decision 9 (`:26` `Description \| Cost ₦ \| Payments ₦` → `Description \| Cost \| Payments`, with a supersession note), the three `specs/inv1-mockups/*.html` (19 `₦` literals stripped) | none (docs) — the brief being finalised then matches what step 3 renders | no |
-| 1 | `INV: Invoices column W rate_multiplier (blank = none)` | `invoicesRepository.js` (HEADERS, fromRow, toRow, A1:W1 / A2:W), `schemaMapper.js:151-158` | new unit test: round-trip a row with and without the column; existing invoice tests untouched; smoke repo-parse check | **Schema change** — owner signed off D3 on 08-Sep; this spec's go re-confirms it |
-| 2 | `CUR-2: INVOICE_RATE_MULTIPLIER knob (Settings + env boot default)` | `config/index.js` (`invoiceRateMultiplier: parseFloat(process.env.INVOICE_RATE_MULTIPLIER) \|\| 1` beside `currency` `:91`); `settingsRepository.js` **gains `require('../config')`** and sets `DEFAULTS.INVOICE_RATE_MULTIPLIER = config.invoiceRateMultiplier` (no cycle — config requires no repository); repo-root `CLAUDE.md` toggles table | unit test: sheet blank / 0 / 1 / '1250' / 'abc' → effective none / none / none / 1250 / none; env set / env blank / sheet-overrides-env; and the resolver's two entry shapes — key absent → Settings, key present `1` → none even with Settings 1,250 | no — root file, but covered by the feature recipe's toggles-table convention ("anything tunable goes in the Settings sheet … CLAUDE.md toggles table") |
-| 3 | `CUR-2: invoice document renders bare; × multiplier when frozen` | `invoiceService.js` (createForSale stamps W from the presence-based freeze rule with the full range guard, rule 11; `docFigures` numbers only, status from booked as at `:211-213`; `fmtRate2` at `:260`; NGN const removed; strip ×4, headers, description, DEBIT BALANCE; `deliver` caption = booked figures + `Customer copy × <m>` line), `invoiceWebController.js` (`fmtMoney` → bare integers, rate 2 dp via `fmtRate2`; sale date on the payment row), `format.js` (`fmtRate2`) | text()-call tracer tests for §4a and §4b verbatim (both states, PDF + HTML + caption); a **non-integer entered rate** (`3.2` → `3.20/yd` on the PDF, never `3`); key present `1` with Settings 1,250 → unconverted; key absent with Settings 1,250 → converted; rule-12 state with the payment row `500,000`; multiplier < 1 rounding a balance to 0 still `PART-PAID`; old row with blank W | no (not a parked file) — **but does not ship before the owner rules D7** |
-| 4 | `CUR-2: Step 5 customer-copy multiplier in the sale wizard` | `approvalEvents.js` — exactly the six touch points of §3b rule 7 (sendMultiplierStep + chips; `enr:mult:*` handler; typed `multiplier` handler; `finish`/`finishTyped`; approved line + `updateRequesterCard` line; the two prompt strings and two chip `₦`s) — `persistEnrichDraft` and the resume chain are NOT touched; `settingsRepository.DEFAULTS` `INVOICE_MULTIPLIER_ASK: 1` + CLAUDE.md toggles row; `inventoryService.js:1834` audit key | extend `approvalEvents.enrichmentChips.test.js`: chip route (`enr:q:<rid>:mult:def` wire form, ≤ 64 bytes), typed route, 'Not yet paid' route, `[No multiplier]` → enrichment carries `rateMultiplier: 1`, refused input keeps the card on Step 5, Settings chip hidden when blank, `INVOICE_MULTIPLIER_ASK=0` skips the step and the enrichment carries no key, redeploy between Step 4 and Step 5 re-asks Step 4; `renderWizard` anchored edit (`session.flowMessageId` / the wizard's anchor message id) unchanged — Step 5 edits the same card, never sends a new one; prompts print no unit | **Yes — `approvalEvents.js`** |
-| 5 | `docs: CUR-2 shipped — §17 closed, R18 superseded for the sale wizard` | `docs/BUSINESS_RULES.md` §17 — the locked sentence is the owner's to reword (R16 precedent), so this step inserts ONLY the closing sentence the owner approves verbatim; proposed for his yes/no, not a session's wording: *"Shipped <date>: the multiplier is frozen per invoice in Invoices column W; the sale wizard's prompts name no unit — R18 is superseded for the sale wizard because the amendment made 'Naira' factually wrong there; the customer's OTP ledger stays in variable 1 (D7)."* — plus this spec's status line. (INV-2 / INV-1 / mockups moved to step 0.) | none (docs) | no — the §17 sentence itself is approved verbatim by the owner |
+| 0 ✅ A | `docs: INV-2 rule 3 + INV-1 decision 9 + mockups follow CUR-1 R1` | `specs/INV-2_INVOICE_DESIGN_PROMPT.md` rule 3 (`:50` "all money is **₦ per yard**" → "money is bare; the customer copy may be rate × multiplier, 2 dp rate, integer amounts"), `specs/INV-1_CUSTOMER_INVOICES.md` decision 9 (`:26` `Description \| Cost ₦ \| Payments ₦` → `Description \| Cost \| Payments`, with a supersession note), the three `specs/inv1-mockups/*.html` (19 `₦` literals stripped) | none (docs) — the brief being finalised then matches what step 3 renders | no |
+| 1 ✅ A | `INV: Invoices column W rate_multiplier (blank = none)` | `invoicesRepository.js` (HEADERS, fromRow, toRow, A1:W1 / A2:W), `schemaMapper.js:151-158` | new unit test: round-trip a row with and without the column; existing invoice tests untouched; smoke repo-parse check | **Schema change** — owner signed off D3 on 08-Sep; this spec's go re-confirms it |
+| 2 ✅ A | `CUR-2: INVOICE_RATE_MULTIPLIER knob (Settings + env boot default)` | `config/index.js` (`invoiceRateMultiplier: parseFloat(process.env.INVOICE_RATE_MULTIPLIER) \|\| 1` beside `currency` `:91`); `settingsRepository.js` **gains `require('../config')`** and sets `DEFAULTS.INVOICE_RATE_MULTIPLIER = config.invoiceRateMultiplier` (no cycle — config requires no repository); repo-root `CLAUDE.md` toggles table | unit test: sheet blank / 0 / 1 / '1250' / 'abc' → effective none / none / none / 1250 / none; env set / env blank / sheet-overrides-env; and the resolver's two entry shapes — key absent → Settings, key present `1` → none even with Settings 1,250 | no — root file, but covered by the feature recipe's toggles-table convention ("anything tunable goes in the Settings sheet … CLAUDE.md toggles table") |
+| 3 ✅ A | `CUR-2: invoice document renders bare; × multiplier when frozen` | `invoiceService.js` (createForSale stamps W from the presence-based freeze rule with the full range guard, rule 11; `docFigures` numbers only, status from booked as at `:211-213`; `fmtRate2` at `:260`; NGN const removed; strip ×4, headers, description, DEBIT BALANCE; `deliver` caption = booked figures + `Customer copy × <m>` line), `invoiceWebController.js` (`fmtMoney` → bare integers, rate 2 dp via `fmtRate2`; sale date on the payment row), `format.js` (`fmtRate2`) | text()-call tracer tests for §4a and §4b verbatim (both states, PDF + HTML + caption); a **non-integer entered rate** (`3.2` → `3.20/yd` on the PDF, never `3`); key present `1` with Settings 1,250 → unconverted; key absent with Settings 1,250 → converted; rule-12 state with the payment row `500,000`; multiplier < 1 rounding a balance to 0 still `PART-PAID`; old row with blank W | no (not a parked file) — **but does not ship before the owner rules D7** |
+| 4 ⏳ B | `CUR-2: Step 5 customer-copy multiplier in the sale wizard` | `approvalEvents.js` — exactly the six touch points of §3b rule 7 (sendMultiplierStep + chips; `enr:mult:*` handler; typed `multiplier` handler; `finish`/`finishTyped`; approved line + `updateRequesterCard` line; the two prompt strings and two chip `₦`s) — `persistEnrichDraft` and the resume chain are NOT touched; `settingsRepository.DEFAULTS` `INVOICE_MULTIPLIER_ASK: 1` + CLAUDE.md toggles row; `inventoryService.js:1834` audit key | extend `approvalEvents.enrichmentChips.test.js`: chip route (`enr:q:<rid>:mult:def` wire form, ≤ 64 bytes), typed route, 'Not yet paid' route, `[No multiplier]` → enrichment carries `rateMultiplier: 1`, refused input keeps the card on Step 5, Settings chip hidden when blank, `INVOICE_MULTIPLIER_ASK=0` skips the step and the enrichment carries no key, redeploy between Step 4 and Step 5 re-asks Step 4; `renderWizard` anchored edit (`session.flowMessageId` / the wizard's anchor message id) unchanged — Step 5 edits the same card, never sends a new one; prompts print no unit | **Yes — `approvalEvents.js`** |
+| 5 ⏳ B | `docs: CUR-2 shipped — §17 closed, R18 superseded for the sale wizard` | `docs/BUSINESS_RULES.md` §17 — the locked sentence is the owner's to reword (R16 precedent), so this step inserts ONLY the closing sentence the owner approves verbatim; proposed for his yes/no, not a session's wording: *"Shipped <date>: the multiplier is frozen per invoice in Invoices column W; the sale wizard's prompts name no unit — R18 is superseded for the sale wizard because the amendment made 'Naira' factually wrong there; the customer's OTP ledger stays in variable 1 (D7)."* — plus this spec's status line. (INV-2 / INV-1 / mockups moved to step 0.) | none (docs) | no — the §17 sentence itself is approved verbatim by the owner |
+
+**Release split (09-Sep-2026).** ✅ A = shipped in release A (steps 0–3 —
+D7 was ruled (a) as recommended, so step 3 shipped); ⏳ B = release B, after
+the owner's live check and go. The step-5 sentence for §17 is already
+recorded in `docs/BUSINESS_RULES.md` §17 marked **PENDING OWNER APPROVAL**;
+release B replaces the marker with the owner's yes.
 
 Not in this spec: the CUR-1 mechanical sweep that strips `₦` from the
 `📒 Outstanding` line and the other ≈210 sale-side sites — that is CUR-1's
@@ -583,6 +614,13 @@ exception, carried here in step 4 (§3 intro, rule 7).
 ---
 
 ## 10 · Questions for the owner (only where the ruling leaves a gap)
+
+> **Closed 09-Sep-2026 — owner: "as recommended"** on Q1–Q6 and D7 (Q2 was
+> withdrawn). Q1: always 2 dp. Q3: ask Step 5 on every approval, knob
+> `INVOICE_MULTIPLIER_ASK` ships with it (release B). Q4: `No multiplier`
+> wins over the Settings cell. Q5: recompute each line from the rate. Q6:
+> `RATE NOT RECORDED` shipped in step 3. D7: (a) — the OTP ledger stays in
+> variable 1; the invoice is the only local-currency paper.
 
 Each has a recommended answer; "as recommended" closes them all.
 

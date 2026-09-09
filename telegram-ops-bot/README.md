@@ -13,6 +13,11 @@ AI-powered textile inventory control via Telegram: natural-language commands, Go
 
 Copy `.env.example` to `.env`. Required: `TELEGRAM_TOKEN`, `OPENAI_API_KEY`, `GOOGLE_SHEET_ID`, `GOOGLE_CREDENTIALS_JSON`, `ADMIN_IDS`, `EMPLOYEE_IDS`. Optional: `RISK_THRESHOLD`, `LOW_STOCK_THRESHOLD`, `BOT_API_KEY` (for admin page), `BASE_URL` (for webhook).
 
+| Variable | Default | Meaning |
+|---|---|---|
+| `CURRENCY` | `NGN` | The accounting CODE only (ledger narrations, FX pair, incentive rows) — never a display unit. Expenses always print `₦`; sale invoices and inventory outputs print a bare number (BUSINESS_RULES §17, CUR-1). Blank = `NGN`. |
+| `INVOICE_RATE_MULTIPLIER` | blank = none | Boot default for the Settings cell of the same name (CUR-2): the factor the customer copy of a sale invoice multiplies the entered rate by. The Settings row overrides it without a deploy; the factor is frozen per invoice at issue (`Invoices.rate_multiplier`), and the sheet's own figures are never multiplied. |
+
 ## Endpoints
 
 - `POST /webhook` — Telegram sends updates here (set via `npm run set-webhook`).

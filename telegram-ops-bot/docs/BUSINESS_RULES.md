@@ -209,8 +209,10 @@ actually stores goods.
   is the packaging word — "Bale" for fabric — and is the only other legitimate
   use; a card saying "N container(s)" for bales is a bug.)
 - **Yards** — the continuous measure. Every than carries yards; all money is
-  Naira per yard. Yards are the only universally additive figure across mixed
-  bale/than records, so any gap or reconciliation arithmetic settles in yards.
+  per yard — the unit is management's (§17; reworded 09-Sep-2026 on the
+  owner's CUR-1 ruling R16, from *"all money is Naira per yard"*). Yards are
+  the only universally additive figure across mixed bale/than records, so any
+  gap or reconciliation arithmetic settles in yards.
 
 ## 6c · One quantity grammar: B, t, or "..B + ..t"
 
@@ -689,8 +691,10 @@ but this goes as our company rules for now").
 
 ## 17 · Currency display: expenses carry ₦; sale invoices and Inventory-changing outputs carry a bare number
 
-**Ruled 08-Sep-2026 (owner). Implementation pending the CUR-1 research —
-this section records the decision, not the surface list.** Owner's words:
+**Ruled 08-Sep-2026 (owner); rulings closed 08/09-Sep; release A shipped
+09-Sep-2026, release B pending the owner's live check (see the last bullets).
+The surface list itself lives in `specs/CUR-1_CURRENCY_DISPLAY.md` §5.**
+Owner's words:
 *"keep the expenses in naira, with the symbol of naira intact at all the
 places. But whatever invoices we are generating through our sale, or any
 updation in sheet which changes our inventory sheet, must be without the
@@ -728,10 +732,72 @@ what value will fit in (I think we have a Railway variable)."*
   entered variable-1 value, unconverted, bare; multiplier set globally
   (Settings) or supplied by the approving admin → the local-currency value,
   bare. Layouts to be approved before implementation: `specs/CUR-2_INVOICE_MULTIPLIER.md`.
-- **Open until CUR-1 reports:** the exact surface list on each side; what a
-  blank `CURRENCY` means (no symbol vs a separate knob); which side the
-  customer statement (SLED-1) and the return / payment approval cards fall
-  on; whether the Transactions and Ledger narrations keep the unit.
+- **Amended 09-Sep-2026 (owner, the integrity ruling — his words):** *"Whenever
+  the multiplier is provided it will get reflected in the invoice, but in my
+  sheet whatever internal calculation happens will happen only WITHOUT the
+  multiplier, with both recorded and stored separately, making it consistent
+  over the ledger and transaction. Make an arrangement for having these two
+  fields handled separately with integrity."* So the Invoices row holds
+  BASE figures only (`lines_json`, `subtotal`, `total`, `amount_paid_at_issue`,
+  `balance_after_issue` — variable 1, never multiplied) and the factor sits
+  alone in the one trailing column `rate_multiplier` (blank = none, never
+  `1`); the document is re-rendered from stored base × stored factor; the
+  ledger, Transactions and the statement move by the base figures only.
+- **Closed 09-Sep-2026 — the four bullets that were "open until CUR-1
+  reports" (CUR-1 R1–R18, D1–D6 and CUR-2 Q1–Q6 + D7, each "as
+  recommended"):**
+  - *Surface list.* Side A (`₦`, always): the EXP-1 cash book, 🌅 Open
+    Branch, the 20:00 finance report, PAY-1 payment requests, task
+    incentives (R11 — a payout; the stored `Incentives.currency` is the
+    literal `NGN`, never the env), the approval reminder's expense/payment
+    lines. Side B (bare): the sale invoice (PDF, `/i/<token>`, Telegram
+    caption), the sale wizard's chips and acks, price update, Edit Bale,
+    Check Stock, Stock Value, container/allocation values, supply reports,
+    rankings, purchase pattern, customer 360, the reports engine and
+    analytics (R17), catalogue price badges (R9), landed cost — sealed rate
+    2 dp, `$` inputs kept, FX pair hardcoded (R8), the return credit line
+    (R4), the customer statement / `/balance` / `/ledger` / the
+    "Outstanding as of today" line (R5), customer payment IN — Record
+    Payment card, receipt flow, payment-recorded replies (R6; closes
+    `docs/CUSTOMER_PAYMENT_DOOR_2026-09-08.md` Q13), credit limit and
+    "Owes …" (R12). Trial balance and daybook stay exactly as today until
+    the finance portal takes them (R5a). Input prompts still NAME the unit
+    the admin must type, and the AI data context keeps its per-number code
+    (R18). The full site table: `specs/CUR-1_CURRENCY_DISPLAY.md` §5.
+  - *Blank `CURRENCY`.* Means `NGN` (D6) — variable 1 is the accounting
+    CODE only (ledger narrations, the FX pair's quote leg, incentive rows),
+    never a display unit. There is NO label variable: the once-printed
+    header label of CUR-1 R14 was superseded by the multiplier ruling
+    (R2b/R12b) — a customer copy is converted, never labelled. The second
+    variable is `INVOICE_RATE_MULTIPLIER` (Settings cell; env of the same
+    name is its boot default; blank / 0 / 1 = none).
+  - *Statement and cards.* SLED-1 statement, the OTP ledger, the return and
+    payment approval cards: side B, bare, variable 1. The invoice is the ONLY
+    local-currency paper; the customer's own ledger stays in variable 1
+    (D7 — a per-customer ledger cannot be multiplied because each invoice
+    may freeze a different factor).
+  - *Transactions and narrations.* Transactions carries no unit column
+    (`PricePerYard`, `AmountPaid` are bare) — nothing to change. Ledger
+    narrations keep the stored code (`… Cash NGN 5000`), forward-only, no
+    rewrite of history (R7).
+- **Shipped 09-Sep-2026 — release A** (CUR-1 build steps 1–5 + the CUR-2
+  multiplier on the Settings-fulfilled path): `src/utils/money.js` is the
+  one money module (`expense` / `sale` / `saleRate` / `code`); the invoice
+  prints bare in both states; `Invoices.rate_multiplier` (col W) freezes the
+  factor at issue; the S-CUR smoke lint runs in warn mode. **Release B
+  (pending the owner's live check and go):** the wizard's Step 5 in
+  `approvalEvents.js` (supplied-during-approval door, `INVOICE_MULTIPLIER_ASK`),
+  the `telegramController.js` sweep, deletion of the `format.js` shims,
+  S-CUR in fail mode. Until release B ships, the surfaces those two files
+  print still carry their old symbols — the shims keep them exactly as
+  today.
+- **PENDING OWNER APPROVAL (verbatim, CUR-2 step 5 — not yet in force):**
+  *"Shipped <date>: the multiplier is frozen per invoice in Invoices column
+  W; the sale wizard's prompts name no unit — R18 is superseded for the sale
+  wizard because the amendment made 'Naira' factually wrong there; the
+  customer's OTP ledger stays in variable 1 (D7)."* Recorded here so the
+  release-B session inserts the owner's yes/no, not its own wording; the
+  Column-W half is already true (release A), the wizard half is release B.
 
 ## Incident log (why these rules exist)
 
@@ -751,5 +817,6 @@ what value will fit in (I think we have a Railway variable)."*
 | 02-Sep-2026 | Every return approved since returns moved behind approval credited the customer ₦0: the executors emitted the ledger event without a rate and `recordReturn` skips a zero amount; the only in-bot "fix" (Record Payment) would corrupt the cash book | RET-3 (`specs/RET-3_RETURN_CREDIT.md`) |
 | 02-Sep-2026 | A return could not say WHEN the goods came back, what shape they were in, or show them; and each than needed its own dual-admin request | RET-4 (`specs/RET-3_RETURN_CREDIT.md` Part B) |
 | 08-Sep-2026 | Expenses and sale invoices printed money the same way — ₦ inline at dozens of sites; the owner separated the two sides: expenses keep ₦, sale invoices and Inventory-changing outputs show a bare number with the unit set by management through the env | §17 (CUR-1 research pending) |
+| 09-Sep-2026 | A customer copy of an invoice may be converted by a rate multiplier; had the factor been applied at read time from a Settings cell, every past invoice would re-price when the cell changed, and a multiplied figure written into the Invoices row would have put the sheet at odds with the ledger and Transactions | §17 amendments (CUR-1 release A, CUR-2 §7 freeze rule: base figures on the row, the factor alone in `Invoices.rate_multiplier`, document = stored base × stored factor) |
 
 When an incident spawns a new rule: fix, spec, then add the rule HERE.
