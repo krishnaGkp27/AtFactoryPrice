@@ -52,6 +52,38 @@ const MIGRATIONS = [
         ON stock_events (event);
     `,
   },
+  {
+    // PAY-2 — the reason behind every payment request, the payment event
+    // trail and the (empty until seeded) phase-3 reason-code index. SQL is
+    // the spec text verbatim (specs/PAY-2_PAYMENT_REASON.md §3). The owner's
+    // storage ruling: this trail lives in Postgres, never on a sheet.
+    id: '002_payment_reasons',
+    sql: `
+      CREATE TABLE IF NOT EXISTS payment_reason_codes (
+        id SERIAL PRIMARY KEY, code TEXT NOT NULL UNIQUE, label TEXT NOT NULL,
+        active BOOLEAN NOT NULL DEFAULT true, created_by TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+      CREATE TABLE IF NOT EXISTS payment_reasons (
+        id BIGSERIAL PRIMARY KEY, payment_id TEXT NOT NULL,
+        approval_request_id TEXT NOT NULL DEFAULT '',
+        requester_id TEXT NOT NULL, requester_name TEXT NOT NULL DEFAULT '',
+        payee_name TEXT NOT NULL DEFAULT '', payee_type TEXT NOT NULL DEFAULT '',
+        amount_ngn NUMERIC(14,2) NOT NULL,
+        reason_text TEXT NOT NULL, reason_key TEXT NOT NULL,
+        reason_code_id INTEGER REFERENCES payment_reason_codes(id),
+        raised_at TIMESTAMPTZ NOT NULL DEFAULT now());
+      CREATE INDEX IF NOT EXISTS payment_reasons_requester_idx ON payment_reasons (requester_id, reason_key);
+      CREATE INDEX IF NOT EXISTS payment_reasons_payment_idx   ON payment_reasons (payment_id);
+      CREATE TABLE IF NOT EXISTS payment_events (
+        id BIGSERIAL PRIMARY KEY, at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        payment_id TEXT NOT NULL, approval_request_id TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL CHECK (kind IN ('raised','signed','approved','finance_card_sent','reminder_sent','done','declined','rejected','notified')),
+        actor_id TEXT NOT NULL DEFAULT '', actor_name TEXT NOT NULL DEFAULT '',
+        chat_id TEXT NOT NULL DEFAULT '', message_id TEXT NOT NULL DEFAULT '',
+        detail JSONB NOT NULL DEFAULT '{}');
+      CREATE INDEX IF NOT EXISTS payment_events_payment_idx ON payment_events (payment_id, kind);
+    `,
+  },
 ];
 
 /**
