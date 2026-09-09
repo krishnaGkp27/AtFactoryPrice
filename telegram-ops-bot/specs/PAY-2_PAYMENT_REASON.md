@@ -2,13 +2,19 @@
 
 > **Shipped 09-Sep-2026** in four commits (Postgres step 1; executor / inbox /
 > reminder steps 3–5; flow / cards / finance seat steps 2 and 4; docs).
-> Gate: 2,106 tests, smoke 609, lint 0 errors. Two flags for the owner:
-> (1) the Paid notice goes out AFTER the proof step — if finance abandons the
-> proof prompt the row is `done` but nobody is told; say if the notice should
-> go first. (2) `FINANCE_IDS` is read from the env directly (config
-> substitutes the admin list when the env is blank, which would have hidden
-> the Users-row tier). Phase 2 (chips) and phase 3 (reason codes) wait for
-> the owner's word; both are queries over the rows now being written.
+> Gate: 2,106 tests, smoke 609, lint 0 errors. **Paid-notice timing decided
+> 09-Sep-2026 (owner asked for the reasoning and a decision):** the Paid
+> notice goes out the moment finance taps ✔ Mark Done — row flipped, buttons
+> wiped, requester and both signers told — and the proof prompt follows; a
+> proof, when attached, reaches the same three people as a short follow-up
+> ("📎 Proof of transfer — PAY-…"); a skipped or abandoned prompt leaves
+> nobody uninformed. Reasoning: the notice is the record of the event, the
+> screenshot is evidence attached to it; chaining the record's announcement
+> to a photo step created a silent gap. `FINANCE_IDS` is read from the env
+> directly (config substitutes the admin list when the env is blank, which
+> would have hidden the Users-row tier). Phase 2 (chips) and phase 3 (reason
+> codes) wait for the owner's word; both are queries over the rows now
+> being written.
 
 Owner, 09-Sep-2026, on the PAY-1 approval card: *"There is no purpose defined
 in this card. All these expenses for the person must be tagged to a reason.
@@ -73,9 +79,12 @@ pay* (the executor's message finally delivered: `approvalEvents` appends
 `result.note` the way it appends the RET-3 credit note — a two-line surgical
 edit in an ask-first file, covered by this go).
 
-**D · Mark Done** — finance taps ✔ Mark Done → *📎 Attach the transfer
-screenshot or PDF, or skip* → status `done`, `done_by`, `done_at`,
-`proof_file_id` → **Paid notice** to the requester AND both signers:
+**D · Mark Done** — finance taps ✔ Mark Done → status `done`, `done_by`,
+`done_at`, every finance-card copy's buttons wiped, and the **Paid notice**
+to the requester AND both signers at once; THEN *📎 Attach the transfer
+screenshot or PDF, or skip* → `proof_file_id` and the proof forwarded to the
+same three people as a follow-up (*📎 Proof of transfer — PAY-…*); skip or
+abandon = nothing more:
 
 ```
 💸 Paid — ₦4,000 to Abdul (employee)
@@ -84,9 +93,9 @@ screenshot or PDF, or skip* → status `done`, `done_by`, `done_at`,
 Paid by Office · 09-Sep-2026, 15:10
 Ref PAY-… · approved by Ajeet ‖ John
 ```
-sent as the proof photo's caption when a proof exists, plain text otherwise;
-every finance-card copy has its buttons wiped (message ids from
-`payment_events`); `payment_events` rows `done` + `notified`.
+plain text; the proof, when one arrives, follows as its own photo or
+document; `payment_events` rows `done` + `notified` (+ `notified` with
+`{ proof: true }` when the proof is forwarded).
 
 **E · Decline** — finance ✖ Decline + reason → status `declined` →
 *✖ Payment declined — ₦4,000 to Abdul · reason* to the requester AND both

@@ -7,9 +7,9 @@
  *
  *   register an account (dual-admin) → raise a payment against it
  *   (amount → REASON → bill → confirm; dual-admin) → the finance seat
- *   pays at the bank → Mark Done → proof or skip → the Paid notice reaches
- *   the requester AND both signers; every finance-card copy loses its
- *   buttons.
+ *   pays at the bank → Mark Done: the Paid notice reaches the requester AND
+ *   both signers and every finance-card copy loses its buttons, at the tap
+ *   → proof (follows as a captioned picture to the same three) or skip.
  *
  * Pinned, in the order the risks actually bite:
  *  - a payment can only ever name an APPROVED account (the register is
@@ -418,48 +418,30 @@ test('PAY-1: only the one finance id may Mark Done — an ADMIN cannot', async (
   assert.equal(REQUESTS[0].status, 'approved', 'nothing moved');
 });
 
-test('PAY-2: Mark Done writes the row FIRST, then asks for the proof — nobody is told yet', async () => {
+const PAID_NOTICE = (doneAt) => [
+  '💸 Paid — ₦4,000 to Abdul (employee)',
+  '📝 Transport to Idumota',
+  '🏦 OPAY 7048940378',
+  `Paid by Office · ${doneAt}`,
+  'Ref PAY-9 · approved by Ajeet ‖ John',
+].join('\n');
+
+test('PAY-2: at the ✔ tap — row done, buttons wiped, Paid notice to the three, events — THEN the proof prompt', async () => {
   reset();
   seedApproved();
   seedApprovedEvent();
+  // Two finance-card copies the trail knows about (one is the tapped one).
+  EVENTS.push({ paymentId: 'PAY-9', kind: 'finance_card_sent', chatId: OFFICE, messageId: '4321' });
+  EVENTS.push({ paymentId: 'PAY-9', kind: 'reminder_sent', chatId: OFFICE, messageId: '4400' });
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('pay:done:PAY-9', OFFICE, 4321));
 
   assert.equal(REQUESTS[0].status, 'done');
   assert.equal(REQUESTS[0].done_by, OFFICE, 'the hand that moved the money is on the record');
   assert.ok(REQUESTS[0].done_at, 'and when');
-  assert.match(lastText(bot), /📎 \*Proof of transfer\?\*/);
-  assert.match(lastText(bot), /Send a screenshot of the bank transfer, or skip\./);
-  assert.match(lastText(bot), /₦4,000 → Abdul · `PAY-9`/);
-  const kb = bot.calls.filter((c) => c.args.opts && c.args.opts.reply_markup).pop().args.opts.reply_markup.inline_keyboard.flat();
-  assert.deepEqual(kb.map((b) => b.callback_data), ['pay:proof:skip']);
-  assert.equal(sessionStore.get(OFFICE).step, 'done_proof');
-  assert.equal(dmsTo(bot, ABDUL).length, 0, 'the Paid notice waits for the proof step');
-  assert.equal(EVENTS.filter((e) => e.kind === 'done').length, 1, 'the done event is written with the row');
-});
 
-test('PAY-2: Skip → the Paid notice, plain text, to the requester AND both signers; buttons wiped', async () => {
-  reset();
-  seedApproved();
-  seedApprovedEvent();
-  // Two finance-card copies the trail knows about (one on each of two chats).
-  EVENTS.push({ paymentId: 'PAY-9', kind: 'finance_card_sent', chatId: OFFICE, messageId: '4321' });
-  EVENTS.push({ paymentId: 'PAY-9', kind: 'reminder_sent', chatId: OFFICE, messageId: '4400' });
-  const bot = createFakeBot();
-  await controller.handleCallbackQuery(bot, cb('pay:done:PAY-9', OFFICE, 4321));
-  await controller.handleCallbackQuery(bot, cb('pay:proof:skip', OFFICE));
-
-  assert.equal(REQUESTS[0].proof_file_id, undefined, 'no proof written when skipped');
-  assert.match(lastTo(bot, OFFICE), /✅ \*Paid\* — ₦4,000 to Abdul/, 'the finance chat confirmation');
-  assert.doesNotMatch(lastTo(bot, OFFICE), /Proof attached/);
-
-  const expected = [
-    '💸 Paid — ₦4,000 to Abdul (employee)',
-    '📝 Transport to Idumota',
-    '🏦 OPAY 7048940378',
-    `Paid by Office · ${REQUESTS[0].done_at}`,
-    'Ref PAY-9 · approved by Ajeet ‖ John',
-  ].join('\n');
+  // The Paid notice, plain text, to the requester AND both signers — already.
+  const expected = PAID_NOTICE(REQUESTS[0].done_at);
   for (const id of [ABDUL, AJEET, JOHN]) {
     const dms = dmsTo(bot, id);
     assert.equal(dms.length, 1, `exactly one notice to ${id}`);
@@ -468,44 +450,87 @@ test('PAY-2: Skip → the Paid notice, plain text, to the requester AND both sig
   }
   assert.equal(dmsTo(bot, OFFICE).filter((c) => /💸 Paid/.test(c.args.text)).length, 0, 'finance is not DM\'d its own notice');
 
+  // Every finance-card copy the trail knows loses its buttons (the tapped one once).
   const wipes = bot.callsTo('editMessageReplyMarkup');
   assert.deepEqual(
     wipes.map((w) => `${w.args.opts.chat_id}:${w.args.opts.message_id}`).sort(),
     [`${OFFICE}:4321`, `${OFFICE}:4400`].sort(),
-    'every finance-card copy the trail knows loses its buttons (the tapped one once)',
   );
   assert.ok(wipes.every((w) => w.args.replyMarkup.inline_keyboard.length === 0));
 
+  // Order: wipes and notices before the prompt.
+  const idx = (pred) => bot.calls.findIndex(pred);
+  const promptAt = idx((c) => c.method === 'sendMessage' && /Proof of transfer\?/.test(c.args.text));
+  assert.ok(promptAt > 0, 'the prompt was shown');
+  assert.ok(idx((c) => c.method === 'editMessageReplyMarkup') < promptAt, 'wiped before the prompt');
+  assert.ok(idx((c) => c.method === 'sendMessage' && String(c.args.chatId) === JOHN) < promptAt, 'told before the prompt');
+
+  // The trail: done + notified, both before the prompt is answered.
+  assert.deepEqual(EVENTS.filter((e) => e.kind === 'done' || e.kind === 'notified').map((e) => e.kind), ['done', 'notified']);
   const notified = EVENTS.find((e) => e.kind === 'notified');
-  assert.ok(notified);
-  assert.equal(notified.detail.notice, 'paid');
-  assert.deepEqual(notified.detail.to, [ABDUL, AJEET, JOHN]);
-  assert.equal(notified.detail.proof, false);
-  assert.equal(sessionStore.get(OFFICE), null, 'the flow is over');
+  assert.deepEqual(notified.detail, { notice: 'paid', to: [ABDUL, AJEET, JOHN], proof: false });
+
+  // Then the proof prompt, exactly as before.
+  assert.match(lastTo(bot, OFFICE), /📎 \*Proof of transfer\?\*/);
+  assert.match(lastTo(bot, OFFICE), /Send a screenshot of the bank transfer, or skip\./);
+  assert.match(lastTo(bot, OFFICE), /₦4,000 → Abdul · `PAY-9`/);
+  const kb = bot.calls.filter((c) => c.args.opts && c.args.opts.reply_markup).pop().args.opts.reply_markup.inline_keyboard.flat();
+  assert.deepEqual(kb.map((b) => b.callback_data), ['pay:proof:skip']);
+  assert.equal(sessionStore.get(OFFICE).step, 'done_proof');
 });
 
-test('PAY-2: a proof photo lands on column O and carries the Paid notice as its caption', async () => {
+test('PAY-2: Skip → nothing more — exactly one message each, no proof written', async () => {
   reset();
   seedApproved();
   seedApprovedEvent();
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('pay:done:PAY-9', OFFICE, 4321));
+  const before = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb('pay:proof:skip', OFFICE));
+
+  assert.equal(REQUESTS[0].proof_file_id, undefined, 'no proof written when skipped');
+  assert.match(lastTo(bot, OFFICE), /✅ \*Paid\* — ₦4,000 to Abdul/, 'the finance chat confirmation closes the prompt');
+  assert.doesNotMatch(lastTo(bot, OFFICE), /Proof attached/);
+  for (const id of [ABDUL, AJEET, JOHN]) {
+    assert.equal(dmsTo(bot, id).length, 1, `still exactly one message to ${id}`);
+  }
+  assert.equal(bot.callsTo('sendPhoto').length, 0);
+  assert.equal(bot.callsTo('sendDocument').length, 0);
+  assert.equal(bot.calls.slice(before).filter((c) => c.method === 'editMessageReplyMarkup').length, 0, 'wipes happened at the tap, not now');
+  assert.equal(EVENTS.filter((e) => e.kind === 'notified').length, 1, 'no second notified event');
+  assert.equal(sessionStore.get(OFFICE), null, 'the flow is over');
+});
+
+test('PAY-2: a proof photo lands on column O and FOLLOWS the Paid notice to the same three people', async () => {
+  reset();
+  seedApproved();
+  seedApprovedEvent();
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('pay:done:PAY-9', OFFICE, 4321));
+  const noticeAt = bot.calls.findIndex((c) => c.method === 'sendMessage' && String(c.args.chatId) === ABDUL);
   await controller.handleFileMessage(bot, photoMsg(OFFICE, 'PROOF-1'));
 
   assert.equal(REQUESTS[0].proof_file_id, 'PROOF-1', 'the existing column O, written for the first time');
   assert.match(lastTo(bot, OFFICE), /📎 Proof attached/);
   const photos = bot.callsTo('sendPhoto');
-  assert.deepEqual(photos.map((p) => String(p.args.chatId)).sort(), [ABDUL, AJEET, JOHN].sort());
+  assert.deepEqual(photos.map((p) => String(p.args.chatId)).sort(), [ABDUL, AJEET, JOHN].sort(), 'the same three');
   for (const p of photos) {
     assert.equal(p.args.photo, 'PROOF-1');
-    assert.match(p.args.opts.caption, /^💸 Paid — ₦4,000 to Abdul \(employee\)\n📝 Transport to Idumota/);
+    assert.equal(p.args.opts.caption, '📎 Proof of transfer — PAY-9 · ₦4,000 to Abdul (employee)');
     assert.equal(p.args.opts.parse_mode, undefined, 'plain caption');
   }
-  assert.equal(dmsTo(bot, ABDUL).length, 0, 'no second, text-only copy');
-  assert.equal(EVENTS.find((e) => e.kind === 'notified').detail.proof, true);
+  assert.ok(bot.calls.findIndex((c) => c.method === 'sendPhoto') > noticeAt, 'the Paid notice reached them before any proof');
+  for (const id of [ABDUL, AJEET, JOHN]) {
+    assert.equal(dmsTo(bot, id).length, 1, 'the text notice went once, at the tap');
+    assert.equal(dmsTo(bot, id)[0].args.text, PAID_NOTICE(REQUESTS[0].done_at));
+  }
+  const notified = EVENTS.filter((e) => e.kind === 'notified');
+  assert.equal(notified.length, 2);
+  assert.deepEqual(notified[0].detail, { notice: 'paid', to: [ABDUL, AJEET, JOHN], proof: false });
+  assert.deepEqual(notified[1].detail, { notice: 'proof', to: [ABDUL, AJEET, JOHN], proof: true });
 });
 
-test('PAY-2: a PDF proof goes out as a document', async () => {
+test('PAY-2: a PDF proof follows as a document', async () => {
   reset();
   seedApproved();
   seedApprovedEvent();
@@ -516,6 +541,7 @@ test('PAY-2: a PDF proof goes out as a document', async () => {
   const docs = bot.callsTo('sendDocument');
   assert.deepEqual(docs.map((d) => String(d.args.chatId)).sort(), [ABDUL, AJEET, JOHN].sort());
   assert.equal(docs[0].args.doc, 'PDF-1');
+  assert.equal(docs[0].args.opts.caption, '📎 Proof of transfer — PAY-9 · ₦4,000 to Abdul (employee)');
   assert.equal(bot.callsTo('sendPhoto').length, 0);
 });
 
@@ -524,8 +550,7 @@ test('PAY-2: without an approved event the signers come from the queue row itsel
   seedApproved();            // no seedApprovedEvent(): Postgres knows nothing
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('pay:done:PAY-9', OFFICE, 4321));
-  await controller.handleCallbackQuery(bot, cb('pay:proof:skip', OFFICE));
-  assert.equal(dmsTo(bot, ABDUL).length, 1, 'the requester always hears');
+  assert.equal(dmsTo(bot, ABDUL).length, 1, 'the requester always hears — at the tap');
   assert.equal(dmsTo(bot, AJEET).length, 1, 'the first signature parked on actionJSON.approvals');
   assert.match(dmsTo(bot, ABDUL)[0].args.text, /📝 Transport to Idumota/, 'the reason read from the payload');
 });

@@ -20,8 +20,9 @@
  * After the second admin approves, the request goes to the finance seat
  * (Railway FINANCE_IDS, else the one Users Finance row, else the admins —
  * PAY-2 §2 B), who transfers the money at the bank and taps ✔ Mark Done
- * (proof screenshot or skip, then the Paid notice to the requester and
- * both signers — PAY-2 §2 D) or ✖ Decline with a reason — finance can
+ * (the Paid notice to the requester and both signers AT the tap, then a
+ * proof screenshot or skip that follows as a captioned picture — PAY-2
+ * §2 D, owner 09-Sep) or ✖ Decline with a reason — finance can
  * still refuse to execute something already approved: wrong account, no
  * funds, a duplicate (Declined notice to the same three — §2 E).
  *
@@ -39,7 +40,7 @@
  *     reg: { owner_type, owner_name, owner_telegram_id, number, confirm, bank },
  *     req: { accounts[], account, amount, reason, bill_file_id },
  *     dec: { payment_id },             // decline-reason capture
- *     done: { payment_id, card_message_id },   // PAY-2 proof capture
+ *     done: { payment_id, card_message_id, to[] },   // PAY-2 proof capture
  *     wait: { ids[] } }                // PAY-2 finance queue
  *
  * Callback namespace `pay:` —
@@ -523,10 +524,13 @@ async function markDone(bot, chatId, userId, paymentId, cbId, cardMessageId) {
     return;
   }
   await answer(bot, cbId, 'Marked done.');
-  // The row is written FIRST, then the proof is offered — a slow photo
-  // never blocks the record of the money having moved.
+  // PAY-2 §2 D (owner, 09-Sep-2026): everything that matters happens AT
+  // the tap — the row flips, every finance-card copy loses its buttons,
+  // the requester and both signers hear "Paid", the trail is written.
+  // The proof prompt comes after, so abandoning it costs nothing.
   const doneAt = fmtDate.withTime(new Date().toISOString());
   await paymentRequestsRepo.update(paymentId, { status: 'done', done_by: String(userId), done_at: doneAt });
+  pay.status = 'done'; pay.done_by = String(userId); pay.done_at = doneAt;
   await auditLogRepository.append('payment_done',
     { payment_id: paymentId, amount: pay.amount_ngn, payee: pay.payee_name }, userId).catch(() => {});
   const doneBy = await resolveName(userId);
@@ -535,12 +539,31 @@ async function markDone(bot, chatId, userId, paymentId, cbId, cardMessageId) {
     actorId: String(userId), actorName: doneBy, chatId: String(chatId),
     messageId: String(cardMessageId || ''), detail: { done_at: doneAt },
   }));
-  // PAY-2 §2 D — the proof step. A fresh flow card (the finance card that
-  // carried the tap is a photo/caption when a bill exists, so it cannot
-  // be edited into a text prompt).
+  await wipeFinanceCards(bot, pay, cardMessageId, chatId);
+
+  const reason = await paymentService.reasonFor(pay);
+  const notice = [
+    `💸 Paid — ${paymentService.fmtNaira(pay.amount_ngn)} to ${pay.payee_name}${pay.payee_type ? ` (${pay.payee_type})` : ''}`,
+    reason ? `📝 ${reason}` : '',
+    `🏦 ${[pay.bank, pay.account_number].filter(Boolean).join(' ')}`,
+    `Paid by ${doneBy} · ${doneAt}`,
+    `Ref ${pay.payment_id}${pay.approved_by ? ` · approved by ${pay.approved_by}` : ''}`,
+  ].filter(Boolean).join('\n');
+  const to = await noticeAudience(pay);
+  const delivered = await sendNotice(bot, to, notice, null);
+  await pgSafe(() => paymentEventsRepository.record({
+    paymentId, approvalRequestId: pay.approval_request_id || '', kind: 'notified',
+    actorId: String(userId), actorName: doneBy, chatId: String(chatId), messageId: '',
+    detail: { notice: 'paid', to: delivered, proof: false },
+  }));
+
+  // The proof step — a fresh flow card (the finance card that carried the
+  // tap is a photo/caption when a bill exists, so it cannot be edited
+  // into a text prompt). The audience is kept so the proof follows the
+  // notice to exactly the same people.
   const session = newSession({
     step: 'done_proof',
-    done: { payment_id: paymentId, card_message_id: cardMessageId || null },
+    done: { payment_id: paymentId, card_message_id: cardMessageId || null, to },
   });
   sessionStore.set(userId, session);
   await render(bot, chatId, userId,
@@ -551,9 +574,10 @@ async function markDone(bot, chatId, userId, paymentId, cbId, cardMessageId) {
 }
 
 /**
- * PAY-2 §2 D — after the proof (or the skip): the proof id onto the row's
- * EXISTING column O, the Paid notice to the requester and both signers,
- * the finance-card buttons wiped, the trail written.
+ * PAY-2 §2 D — after the proof (or the skip). With a proof: column O
+ * (existing) is written and the picture follows the Paid notice to the
+ * same three people as a captioned photo / document. On skip: nothing
+ * more — the notice already went out at Mark Done.
  *
  * @param {{file_id:string, kind:'photo'|'document'}|null} proof
  */
@@ -563,7 +587,8 @@ async function finishDone(bot, chatId, userId, proof) {
   const paymentId = session.done.payment_id;
   const pay = await paymentRequestsRepo.findById(paymentId);
   if (!pay) { sessionStore.clear(userId); return; }
-  if (proof && proof.file_id) {
+  const hasProof = !!(proof && proof.file_id);
+  if (hasProof) {
     await paymentRequestsRepo.update(paymentId, { proof_file_id: proof.file_id });
     pay.proof_file_id = proof.file_id;
   }
@@ -571,25 +596,18 @@ async function finishDone(bot, chatId, userId, proof) {
   await render(bot, chatId, userId,
     `✅ *Paid* — ${mdEscape(paymentService.fmtNaira(pay.amount_ngn))} to ${mdEscape(pay.payee_name)}\n`
     + `\`${mdEscape(paymentId)}\`\n\n_Recorded ${mdEscape(pay.done_at || fmtDate.withTime(new Date().toISOString()))}._`
-    + (proof && proof.file_id ? '\n📎 Proof attached' : ''),
+    + (hasProof ? '\n📎 Proof attached' : ''),
     []);
+  if (!hasProof) return;
 
-  const reason = await paymentService.reasonFor(pay);
-  const paidBy = await resolveName(pay.done_by || userId);
-  const notice = [
-    `💸 Paid — ${paymentService.fmtNaira(pay.amount_ngn)} to ${pay.payee_name}${pay.payee_type ? ` (${pay.payee_type})` : ''}`,
-    reason ? `📝 ${reason}` : '',
-    `🏦 ${[pay.bank, pay.account_number].filter(Boolean).join(' ')}`,
-    `Paid by ${paidBy} · ${pay.done_at || fmtDate.withTime(new Date().toISOString())}`,
-    `Ref ${pay.payment_id}${pay.approved_by ? ` · approved by ${pay.approved_by}` : ''}`,
-  ].filter(Boolean).join('\n');
-  const to = await noticeAudience(pay);
-  const delivered = await sendNotice(bot, to, notice, proof);
-  await wipeFinanceCards(bot, pay, session.done.card_message_id, chatId);
+  const caption = `📎 Proof of transfer — ${pay.payment_id} · ${paymentService.fmtNaira(pay.amount_ngn)} to ${pay.payee_name}${pay.payee_type ? ` (${pay.payee_type})` : ''}`;
+  const to = Array.isArray(session.done.to) && session.done.to.length ? session.done.to : await noticeAudience(pay);
+  const delivered = await sendNotice(bot, to, caption, proof);
+  const doneBy = await resolveName(userId);
   await pgSafe(() => paymentEventsRepository.record({
     paymentId, approvalRequestId: pay.approval_request_id || '', kind: 'notified',
-    actorId: String(userId), actorName: paidBy, chatId: String(chatId), messageId: '',
-    detail: { notice: 'paid', to: delivered, proof: !!(proof && proof.file_id) },
+    actorId: String(userId), actorName: doneBy, chatId: String(chatId), messageId: '',
+    detail: { notice: 'proof', to: delivered, proof: true },
   }));
 }
 
