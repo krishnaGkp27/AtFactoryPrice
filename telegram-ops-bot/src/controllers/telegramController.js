@@ -175,7 +175,7 @@ async function handleRecordPaymentPickCallback(bot, callbackQuery) {
   if (queued) return true;
   const payRes = await crmService.recordPayment({ customer: pick.name, amount: rpAmount, method: rpMethod, userId });
   if (payRes.status === 'completed') {
-    await bot.sendMessage(chatId, `✅ Payment recorded: ${fmtMoney(payRes.paid)} from ${payRes.customer}.\nBalance: ${fmtMoney(payRes.previousBalance)} → ${fmtMoney(payRes.newBalance)}`);
+    await bot.sendMessage(chatId, `✅ Payment recorded: ${money.sale(payRes.paid)} from ${payRes.customer}.\nBalance: ${money.sale(payRes.previousBalance)} → ${money.sale(payRes.newBalance)}${saleLegendLine()}`);
   } else {
     await bot.sendMessage(chatId, `⚠️ ${payRes.message || 'Payment failed.'}`);
   }
@@ -240,17 +240,18 @@ async function requireApproval(bot, chatId, msg, userId, action, actionJSON, sum
   return true;
 }
 
-// Currency + formatting are centralized in src/utils/format.js; this controller
-// keeps `fmtQty` as a thin wrapper because inventory/sales reports here show
+// Formatting is centralized in src/utils/format.js; this controller keeps
+// `fmtQty` as a thin wrapper because inventory/sales reports here show
 // fractional yards (2 decimals) while format.js defaults to integer quantities.
+// CUR-1 (BUSINESS_RULES §17): money on this controller's sales / inventory
+// surfaces prints bare through `money.sale` / `money.saleRate`. `fmtMoney`
+// stays imported for ONE reason — the daybook and trial balance keep it
+// exactly as today (CUR-1 R5a) until the finance portal takes them.
 const {
-  CURRENCY,
-  currencySymbol: _currencySymbol,
   fmtMoney,
-  fmtMoneyShort,
   fmtQty: fmtQtyBase,
 } = require('../utils/format');
-const CURRENCY_SYMBOL = _currencySymbol(CURRENCY);
+const money = require('../utils/money');
 const supplyDetailsReport = require('../services/supplyDetailsReport');
 // MG-1 — Marketing Group Catalog overlay (spec:
 // telegram-ops-bot/specs/marketing-group-catalog.md). Only consumed by
@@ -285,8 +286,10 @@ function renderTopNWithRest(items, n, formatItemFn, restLabel = 'item') {
 
 /**
  * One-line legend that appears once at the top of a report so the
- * data rows can drop their unit labels. Currency line is appended
- * automatically when `hasMoney` is true.
+ * data rows can drop their unit labels. The money fragment is
+ * `money.saleLegend()` (CUR-1: '' today — side B carries no unit), appended
+ * only when `hasMoney` is true AND it is non-empty; a legend line that
+ * would be empty is omitted.
  *
  * @param {string[]} parts Comma-joined into a single italic legend line.
  * @param {boolean} hasMoney
@@ -294,8 +297,21 @@ function renderTopNWithRest(items, n, formatItemFn, restLabel = 'item') {
  */
 function buildReportLegend(parts, hasMoney) {
   const xs = parts.slice();
-  if (hasMoney) xs.push(`amounts in ${CURRENCY}`);
+  if (hasMoney) {
+    const l = money.saleLegend();
+    if (l) xs.push(l);
+  }
+  if (!xs.length) return '';
   return `_${xs.join(' · ')}_\n`;
+}
+
+/**
+ * CUR-1 R5 — the one optional legend line of a side-B reply (statement,
+ * check_customer, check_balance, Stock Value). '' while `saleLegend()` is ''.
+ */
+function saleLegendLine() {
+  const l = money.saleLegend();
+  return l ? `\n_${l}_` : '';
 }
 
 const getMaterialInfo = productTypesRepo.getMaterialInfo;
@@ -328,11 +344,11 @@ function nextWeekday(dayOfWeek) {
 // ─── Supply Details Reports ─────────────────────────────────────────────────
 
 function valStr(value, isAdmin) {
-  return isAdmin ? ` — ${fmtMoney(value)}` : '';
+  return isAdmin ? ` — ${money.sale(value)}` : '';
 }
-/** Compact admin-only value tail using short currency symbol. */
+/** Compact admin-only value tail (bare figure, CUR-1 side B). */
 function valStrShort(value, isAdmin) {
-  return isAdmin ? ` · ${fmtMoneyShort(value)}` : '';
+  return isAdmin ? ` · ${money.sale(value)}` : '';
 }
 /**
  * Per-ROW money tail for supply reports. Hidden by default to keep
@@ -342,7 +358,7 @@ function valStrShort(value, isAdmin) {
  * "💰 Show prices per row" toggle button (sets showRowMoney=true).
  */
 function valStrRow(value, isAdmin, showRowMoney) {
-  return (isAdmin && showRowMoney) ? ` · ${fmtMoneyShort(value)}` : '';
+  return (isAdmin && showRowMoney) ? ` · ${money.sale(value)}` : '';
 }
 /**
  * Per-group inner formatter used by both Customer-wise and Warehouse-
@@ -568,7 +584,7 @@ async function buildInventoryDesignReport(allItems, opts = {}) {
     if (canBase) {
       const bp = baseByDesign.get(String(design).toUpperCase());
       baseTail = bp
-        ? ` · Base: ${fmtMoney(bp.lcNgn)}/yd`
+        ? ` · Base: ${money.saleRate(bp.lcNgn)}`
         : ' · Base: pending';
     }
     text += `📦 *${design}* — ${_invSummaryLine(summary)}${baseTail}\n`;
@@ -629,9 +645,9 @@ function buildSalesDesignReport(sold, periodLabel, opts = {}) {
   for (let i = 0; i < limit; i++) {
     const ds = sorted[i];
     if (ds.design === prevDesign) {
-      text += `   ${i + 1}. Shade ${ds.shade} — ${ds.pkgs.size} Bales · ${ds.thans} thans · ${fmtQty(ds.yards)} yds · ${fmtMoneyShort(ds.value)}\n`;
+      text += `   ${i + 1}. Shade ${ds.shade} — ${ds.pkgs.size} Bales · ${ds.thans} thans · ${fmtQty(ds.yards)} yds · ${money.sale(ds.value)}\n`;
     } else {
-      text += `${i + 1}. *${ds.design}* Shade ${ds.shade} — ${ds.pkgs.size} Bales · ${ds.thans} thans · ${fmtQty(ds.yards)} yds · ${fmtMoneyShort(ds.value)}\n`;
+      text += `${i + 1}. *${ds.design}* Shade ${ds.shade} — ${ds.pkgs.size} Bales · ${ds.thans} thans · ${fmtQty(ds.yards)} yds · ${money.sale(ds.value)}\n`;
     }
     prevDesign = ds.design;
   }
@@ -641,7 +657,7 @@ function buildSalesDesignReport(sold, periodLabel, opts = {}) {
     text += `\n_… and ${restCount} more design${restCount > 1 ? 's' : ''}_\n`;
     buttons.push([{ text: `🔍 Show all (${sorted.length})`, callback_data: `rxw:sales_d:${opts.periodKey || ''}` }]);
   }
-  text += `\n🧮 *Grand Total: ${gPkgs.size} Bales · ${gThans} thans · ${fmtQty(gYards)} yds · ${fmtMoneyShort(gValue)}*`;
+  text += `\n🧮 *Grand Total: ${gPkgs.size} Bales · ${gThans} thans · ${fmtQty(gYards)} yds · ${money.sale(gValue)}*`;
   return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
@@ -667,7 +683,7 @@ function buildSalesCustomerReport(sold, periodLabel, opts = {}) {
   let rank = 0;
   for (const [customer, cg] of sorted) {
     rank++;
-    text += `${rank}. 👤 *${customer}* — ${cg.pkgs.size} Bales · ${cg.thans} thans · ${fmtQty(cg.yards)} yds · ${fmtMoneyShort(cg.value)}\n`;
+    text += `${rank}. 👤 *${customer}* — ${cg.pkgs.size} Bales · ${cg.thans} thans · ${fmtQty(cg.yards)} yds · ${money.sale(cg.value)}\n`;
     const expandThis = expandKey === customer.toLowerCase();
     // Sales reports always show money per row — money IS the focus
     // here, unlike Supply reports where it's secondary context.
@@ -681,7 +697,7 @@ function buildSalesCustomerReport(sold, periodLabel, opts = {}) {
     for (const p of cg.pkgs) gPkgs.add(p);
     gThans += cg.thans; gYards += cg.yards; gValue += cg.value;
   }
-  text += `🧮 *Grand Total: ${gPkgs.size} Bales · ${gThans} thans · ${fmtQty(gYards)} yds · ${fmtMoneyShort(gValue)}*`;
+  text += `🧮 *Grand Total: ${gPkgs.size} Bales · ${gThans} thans · ${fmtQty(gYards)} yds · ${money.sale(gValue)}*`;
   return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
@@ -695,7 +711,7 @@ async function buildCustomerTimeline(customerName) {
   const events = [];
 
   for (const r of sold) {
-    events.push({ date: r.soldDate || r.updatedAt?.slice(0, 10) || '', type: 'Sale', detail: `${r.design} Shade ${r.shade || '-'} | Bale ${r.packageNo} | ${fmtQty(r.yards)} yds — ${fmtMoney(r.yards * r.pricePerYard)}` });
+    events.push({ date: r.soldDate || r.updatedAt?.slice(0, 10) || '', type: 'Sale', detail: `${r.design} Shade ${r.shade || '-'} | Bale ${r.packageNo} | ${fmtQty(r.yards)} yds — ${money.sale(r.yards * r.pricePerYard)}` });
   }
 
   try {
@@ -721,7 +737,7 @@ async function buildCustomerTimeline(customerName) {
     const ledgerRows = await ledgerRepo.getAll();
     for (const e of ledgerRows) {
       if (e.ledger_name && e.ledger_name.toLowerCase() === customerName.toLowerCase() && e.credit > 0) {
-        events.push({ date: e.date || '', type: 'Payment', detail: `${fmtMoney(e.credit)} — ${e.narration || ''}` });
+        events.push({ date: e.date || '', type: 'Payment', detail: `${money.sale(e.credit)} — ${e.narration || ''}` });
       }
     }
   } catch (_) {}
@@ -994,7 +1010,7 @@ async function handleAddCustomerFlowText(bot, chatId, userId, text) {
       return true;
     }
     sessionStore.clear(userId);
-    const summary = `✅ *Customer added*\nName: *${cust.name}*${cust.phone ? '\nPhone: ' + cust.phone : ''}${cust.address ? '\nAddress: ' + cust.address : ''}\n_Defaults: category=Standard · credit=₦0 · terms=COD · status=active. Edit later from Customer Details._`;
+    const summary = `✅ *Customer added*\nName: *${cust.name}*${cust.phone ? '\nPhone: ' + cust.phone : ''}${cust.address ? '\nAddress: ' + cust.address : ''}\n_Defaults: category=Standard · credit=0 · terms=COD · status=active. Edit later from Customer Details._`;
     if (session.flowMessageId) {
       await bot.editMessageText(summary, {
         chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown',
@@ -1298,10 +1314,10 @@ async function sendCustomerHistoryReport(bot, chatId, customerName, opts = {}) {
     out += `🗓 Active: ${fmtDate(firstSoldDate)} → ${fmtDate(lastSoldDate)}\n`;
   }
   out += `💰 Lifetime: ${totalPkgs} Bales, ${fmtQty(totalYards)} yds`;
-  out += totalValue > 0 ? ` — ${fmtMoney(totalValue)}\n` : `\n`;
+  out += totalValue > 0 ? ` — ${money.sale(totalValue)}\n` : `\n`;
   if (recentSold.length > 0) {
     out += `📈 Last 30d: ${recentTrips} trip${recentTrips > 1 ? 's' : ''}, ${fmtQty(recentYards)} yds`;
-    out += recentValue > 0 ? ` — ${fmtMoney(recentValue)}\n` : `\n`;
+    out += recentValue > 0 ? ` — ${money.sale(recentValue)}\n` : `\n`;
   }
   out += `⏰ Last activity: ${lastAgo}\n\n`;
 
@@ -1319,7 +1335,7 @@ async function sendCustomerHistoryReport(bot, chatId, customerName, opts = {}) {
   }
   const collapsedSales = [...soldByKey.values()].map((g) => {
     const pkgTxt = `${g.pkgs.size} Bale${g.pkgs.size > 1 ? 's' : ''}`;
-    const valueTxt = g.value > 0 ? ` — ${fmtMoney(g.value)}` : '';
+    const valueTxt = g.value > 0 ? ` — ${money.sale(g.value)}` : '';
     return {
       date: g.date,
       kind: 'sale',
@@ -1435,7 +1451,7 @@ async function sendCustomerPatternReport(bot, chatId, customerName, opts = {}) {
   out += '\n';
   out += `📅 ${fmtDate(pattern.firstDate) || pattern.firstDate} → ${fmtDate(pattern.lastDate) || pattern.lastDate}\n`;
   out += `📊 Lifetime: ${pattern.totalPkgs} · ${pattern.totalThans} thans · ${fmtQty(pattern.totalYards)} yds`;
-  out += hasPrices ? ` · ${fmtMoneyShort(pattern.totalValue)}\n\n` : `\n_(no price data)_\n\n`;
+  out += hasPrices ? ` · ${money.sale(pattern.totalValue)}\n\n` : `\n_(no price data)_\n\n`;
   out += hasPrices ? `*Preferred items (by value):*\n` : `*Preferred items (by volume):*\n`;
 
   // Compact view: top 5 designs + roll up remainder into "Other (N)"
@@ -1445,7 +1461,7 @@ async function sendCustomerPatternReport(bot, chatId, customerName, opts = {}) {
     const ds = sortedItems[i];
     const thisMetric = hasPrices ? ds.value : ds.yards;
     const pct = rankBasis > 0 ? Math.round((thisMetric / rankBasis) * 100) : 0;
-    const valueStr = hasPrices ? ` · ${fmtMoneyShort(ds.value)}` : '';
+    const valueStr = hasPrices ? ` · ${money.sale(ds.value)}` : '';
     out += `${i + 1}. ${ds.design} Shade ${ds.shade}: ${ds.pkgs.size} · ${fmtQty(ds.yards)} yds${valueStr} (${pct}%)\n`;
   }
   const restItems = sortedItems.slice(limit);
@@ -1461,7 +1477,7 @@ async function sendCustomerPatternReport(bot, chatId, customerName, opts = {}) {
     }
     const otherMetric = hasPrices ? restAgg.value : restAgg.yards;
     const otherPct = rankBasis > 0 ? Math.round((otherMetric / rankBasis) * 100) : 0;
-    const valueStr = hasPrices ? ` · ${fmtMoneyShort(restAgg.value)}` : '';
+    const valueStr = hasPrices ? ` · ${money.sale(restAgg.value)}` : '';
     out += `…  Other (${restItems.length} more): ${restAgg.pkgs.size} · ${fmtQty(restAgg.yards)} yds${valueStr} (${otherPct}%)\n`;
     buttons.push([{ text: `🔍 Show all ${sortedItems.length}`, callback_data: `rxw:pat:${customerName.slice(0, 50)}` }]);
   }
@@ -1544,7 +1560,7 @@ async function sendCustomerRankingReport(bot, chatId, opts = {}) {
   let out = page === 0
     ? `🏆 *Customer Ranking — Top ${PAGE_SIZE} by Value*\n`
     : `🏆 *Customer Ranking — #${start + 1}-${start + slice.length} by Value*\n`;
-  out += `_Bar = % of #1 buyer (${fmtMoneyShort(topValue)})_\n\n`;
+  out += `_Bar = % of #1 buyer (${money.sale(topValue)})_\n\n`;
   const medals = ['🥇', '🥈', '🥉'];
   let rank = start;
   for (const [name, c] of slice) {
@@ -1553,12 +1569,12 @@ async function sendCustomerRankingReport(bot, chatId, opts = {}) {
     const daysAgo = Number.isFinite(lastMs)
       ? `${Math.floor((Date.now() - lastMs) / 86400000)}d ago`
       : (c.lastDate ? fmtDate(c.lastDate) : '—');
-    out += `${medal} *${name}* — ${c.pkgs.size} · ${c.thans} thans · ${fmtQty(c.yards)} yds · ${fmtMoneyShort(c.value)} · ${daysAgo}\n`;
+    out += `${medal} *${name}* — ${c.pkgs.size} · ${c.thans} thans · ${fmtQty(c.yards)} yds · ${money.sale(c.value)} · ${daysAgo}\n`;
     out += `   ${fmtBar(c.value, topValue, 'of #1')}\n\n`;
     rank++;
   }
   const grandValue = ranked.reduce((s, [, c]) => s + c.value, 0);
-  out += `*Total: ${ranked.length} customers · ${fmtMoneyShort(grandValue)}*`;
+  out += `*Total: ${ranked.length} customers · ${money.sale(grandValue)}*`;
 
   const buttons = [];
   const navRow = [];
@@ -1890,7 +1906,7 @@ function _acHeader(session) {
   if (session.address === '') lines.push(`✓ Address: _skipped_`);
   if (session.category) lines.push(`✓ Category: *${session.category}*`);
   if (session.credit_limit !== undefined && session.credit_limit !== null) {
-    lines.push(`✓ Credit limit: *${fmtMoney(session.credit_limit)}*`);
+    lines.push(`✓ Credit limit: *${money.sale(session.credit_limit)}*`);
   }
   if (session.payment_terms) lines.push(`✓ Payment terms: *${session.payment_terms}*`);
   if (session.notes) lines.push(`✓ Notes: *${session.notes}*`);
@@ -2045,7 +2061,7 @@ async function showAddCustomerCreditPicker(bot, chatId, userId) {
   const rows = [];
   // 3-per-row grid: 0 / 50k / 100k, 200k / 500k / Custom
   const cells = [
-    ...CREDIT_PRESETS.map((v) => ({ text: v === 0 ? '₦ 0' : `₦ ${(v / 1000).toFixed(0)}k`, callback_data: `accred:${v}` })),
+    ...CREDIT_PRESETS.map((v) => ({ text: v === 0 ? '0' : `${(v / 1000).toFixed(0)}k`, callback_data: `accred:${v}` })),
     { text: '✏️ Custom', callback_data: 'accred:__custom__' },
   ];
   for (let i = 0; i < cells.length; i += 3) {
@@ -2239,7 +2255,7 @@ async function showUpdatePriceNudgePicker(bot, chatId, userId) {
   ];
   const shadeLabel = session.shade === '__all__' ? 'All shades' : session.shade;
   const text = `💲 *Update Price*\n\n✓ Design: *${session.design}*\n✓ Shade: *${shadeLabel}*\n` +
-               `💰 Current price: *${currentPrice ? fmtMoney(currentPrice) : '—'}/yard*\n\nPick a nudge or enter custom:`;
+               `💰 Current price: *${currentPrice ? money.saleRate(currentPrice) : '—/yd'}*\n\nPick a nudge or enter custom:`;
   await editOrSend(bot, chatId, session.flowMessageId, text,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
 }
@@ -2285,8 +2301,8 @@ async function showUpdatePriceConfirm(bot, chatId, userId) {
 
   const text = `💲 *Confirm Price Update*\n\nDesign: *${session.design}*\nShade: *${shadeLabel}*\n` +
                `${sampleLine}\n${stockLine}` +
-               `Before: *${session.currentPrice ? fmtMoney(session.currentPrice) : '—'}/yard*\n` +
-               `After:  *${fmtMoney(session.newPrice)}/yard*\n\n_Will be queued for 2-admin approval._`;
+               `Before: *${session.currentPrice ? money.saleRate(session.currentPrice) : '—/yd'}*\n` +
+               `After:  *${money.saleRate(session.newPrice)}*\n\n_Will be queued for 2-admin approval._`;
   await editOrSend(bot, chatId, session.flowMessageId, text, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [
@@ -3063,7 +3079,7 @@ async function sendListPackagesReport(bot, chatId, design, shade = null) {
 /** Design-level selling price line for Check Stock (quoted price, not sold price). */
 function fmtSellingHeaderLine({ price, mixed }) {
   if (!price) return 'Selling: not set\n';
-  return `Selling: ${fmtMoney(price)}/yd${mixed ? ' ·varies' : ''}\n`;
+  return `Selling: ${money.saleRate(price)}${mixed ? ' ·varies' : ''}\n`;
 }
 
 /** Reusable Check Stock report — qty breakdown only; value totals live in Stock Value report. */
@@ -3169,24 +3185,24 @@ async function renderStockValueList(bot, chatId, userId, page) {
   const slice = summaries.slice(safePage * STOCK_VALUE_PAGE_SIZE, (safePage + 1) * STOCK_VALUE_PAGE_SIZE);
 
   let text = '💰 *Stock Value*\n';
-  text += '_Selling × available yards. Tap a design to drill into shade detail._\n\n';
+  text += `_Selling × available yards. Tap a design to drill into shade detail._${saleLegendLine()}\n\n`;
 
   for (const s of slice) {
     const hasPhoto = activeDesigns.has(String(s.design).toUpperCase());
     const icon = hasPhoto ? '🖼 ' : '';
     const sellStr = s.priceSet
-      ? `${fmtMoney(s.dominantSelling)}/yd${s.varies ? ' ·varies' : ''}`
+      ? `${money.saleRate(s.dominantSelling)}${s.varies ? ' ·varies' : ''}`
       : 'price not set';
-    text += `${icon}*${s.design}* — ${fmtMoney(s.value)} (${fmtQty(s.availYards)} yds · ${sellStr})\n`;
+    text += `${icon}*${s.design}* — ${money.sale(s.value)} (${fmtQty(s.availYards)} yds · ${sellStr})\n`;
   }
 
   if (totalPages > 1) {
     text += `\n_Page ${safePage + 1} of ${totalPages}_\n`;
   }
-  text += `\n🧮 *Grand Total:* ${fmtMoney(grandValue)} · ${fmtQty(grandYards)} yds · ${designCount} design${designCount === 1 ? '' : 's'}`;
+  text += `\n🧮 *Grand Total:* ${money.sale(grandValue)} · ${fmtQty(grandYards)} yds · ${designCount} design${designCount === 1 ? '' : 's'}`;
 
   const rows = slice.map((s) => ([{
-    text: `${s.design} · ${fmtMoneyShort(s.value)}`,
+    text: `${s.design} · ${money.sale(s.value)}`,
     callback_data: `svr:dg:${s.design.slice(0, 50)}`,
   }]));
 
@@ -3225,21 +3241,21 @@ async function showStockValueDesign(bot, chatId, userId, design) {
 
   let text = `💰 *Stock Value — Design ${bd.design}*\n\n`;
   if (bd.dominantSelling > 0) {
-    text += `Selling: ${fmtMoney(bd.dominantSelling)}/yd${bd.varies ? ' ·varies' : ''}\n`;
+    text += `Selling: ${money.saleRate(bd.dominantSelling)}${bd.varies ? ' ·varies' : ''}\n`;
   } else {
     text += 'Selling: not set\n';
   }
-  text += `Available: ${bd.availPkgs} Bales · ${fmtQty(bd.availYards)} yds · ${fmtMoney(bd.designTotal)}\n\n`;
+  text += `Available: ${bd.availPkgs} Bales · ${fmtQty(bd.availYards)} yds · ${money.sale(bd.designTotal)}\n\n`;
   text += '*By shade (value-ranked):*\n';
 
   for (const row of bd.rows) {
-    let line = `  Shade ${row.shade}: ${row.pkgs} Bales · ${fmtQty(row.yards)} yds · ${fmtMoney(row.value)}`;
+    let line = `  Shade ${row.shade}: ${row.pkgs} Bales · ${fmtQty(row.yards)} yds · ${money.sale(row.value)}`;
     if (row.differsFromDominant && row.sellingPrice > 0) {
-      line += ` _(Selling: ${fmtMoney(row.sellingPrice)}/yd)_`;
+      line += ` _(Selling: ${money.saleRate(row.sellingPrice)})_`;
     }
     text += `${line}\n`;
   }
-  text += `\n🧮 *Design Total:* ${fmtMoney(bd.designTotal)}`;
+  text += `\n🧮 *Design Total:* ${money.sale(bd.designTotal)}`;
 
   await editOrSend(bot, chatId, session.flowMessageId, text, {
     parse_mode: 'Markdown',
@@ -3624,7 +3640,7 @@ async function handleReceiptFlowText(bot, chatId, userId, text) {
       }
       bankRows.push(row);
     }
-    await bot.sendMessage(chatId, `Amount: *NGN ${fmtQty(amount)}*\n\nPayment received in which account?`, {
+    await bot.sendMessage(chatId, `Amount: *${money.sale(amount)}*\n\nPayment received in which account?`, {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: bankRows },
     });
@@ -3643,7 +3659,7 @@ function showReceiptSummary(bot, chatId, userId, session) {
   const fileLabel = session.file_type === 'document' ? '📄 PDF attached' : '📷 Photo attached';
   const summary = `🧾 *Payment Receipt Summary*\n\n` +
     `👤 Customer: *${session.customer}*\n` +
-    `💰 Amount: *NGN ${fmtQty(session.amount)}*\n` +
+    `💰 Amount: *${money.sale(session.amount)}*\n` +
     `🏦 Account: *${session.bank_account}*\n` +
     `📎 File: ${fileLabel}\n` +
     `👷 Uploaded by: ${session.uploaded_by_name} (${session.uploaded_by_id})\n` +
@@ -4551,7 +4567,7 @@ async function handleMessage(bot, msg) {
         reply += `Design: ${summary.design}${pkgCat ? ` · ${pkgCat}` : ''} | Shade: ${summary.shade}\n`;
         reply += `Indent: ${summary.indent} | Warehouse: ${summary.warehouse}\n`;
         if (pricingService.canSeeSalePrice(userId)) {
-          reply += `Price: ${fmtMoney(summary.pricePerYard)}/yard\n\n`;
+          reply += `Price: ${money.saleRate(summary.pricePerYard)}\n\n`;
         }
         reply += `Thans (${summary.availableThans}/${summary.totalThans} available):\n`;
         summary.thans.forEach((t) => {
@@ -4643,7 +4659,7 @@ async function handleMessage(bot, msg) {
         if (!otherAdmins.length) {
           const priceResult = await inventoryService.updatePrice(filters, intent.price, userId);
           if (priceResult.status === 'completed') {
-            await bot.sendMessage(chatId, `✅ Updated price for ${priceResult.label}: ${fmtMoney(priceResult.newPrice)}/yard (${priceResult.updated} rows). (Only 1 admin configured — auto-approved)`);
+            await bot.sendMessage(chatId, `✅ Updated price for ${priceResult.label}: ${money.saleRate(priceResult.newPrice)} (${priceResult.updated} rows). (Only 1 admin configured — auto-approved)`);
           } else {
             await bot.sendMessage(chatId, priceResult.message || 'Could not update price.');
           }
@@ -4657,9 +4673,9 @@ async function handleMessage(bot, msg) {
         });
         await auditLogRepository.append('approval_queued', { requestId, reason: 'price_update_approval' }, userId);
         const userLabel = await getRequesterDisplayName(userId, msg);
-        const summary = `Price Update Request\n${label}\nNew price: ${fmtMoney(intent.price)}/yard`;
+        const summary = `Price Update Request\n${label}\nNew price: ${money.saleRate(intent.price)}`;
         await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, '2nd admin approval required', userId);
-        await bot.sendMessage(chatId, `⏳ Price update for ${label} to ${fmtMoney(intent.price)}/yard submitted for 2nd admin approval.\nRef: ${shortRequestRef(requestId)}`);
+        await bot.sendMessage(chatId, `⏳ Price update for ${label} to ${money.saleRate(intent.price)} submitted for 2nd admin approval.\nRef: ${shortRequestRef(requestId)}`);
         return;
       }
 
@@ -4778,9 +4794,9 @@ async function handleMessage(bot, msg) {
         r += `Category: ${cust.category} | Status: ${cust.status}\n`;
         if (cust.phone) r += `Phone: ${cust.phone}\n`;
         if (cust.address) r += `Address: ${cust.address}\n`;
-        r += `Credit limit: ${fmtMoney(cust.credit_limit)}\n`;
-        r += `Outstanding: ${fmtMoney(cust.outstanding_balance)}\n`;
-        r += `Terms: ${cust.payment_terms}`;
+        r += `Credit limit: ${money.sale(cust.credit_limit)}\n`;
+        r += `Outstanding: ${money.sale(cust.outstanding_balance)}\n`;
+        r += `Terms: ${cust.payment_terms}${saleLegendLine()}`;
         await bot.sendMessage(chatId, r, { parse_mode: 'Markdown' });
         return;
       }
@@ -4797,7 +4813,7 @@ async function handleMessage(bot, msg) {
         if (!intent.customer) { await bot.sendMessage(chatId, 'Which customer?'); return; }
         const cb = await crmService.getCustomer(intent.customer);
         if (!cb) { await bot.sendMessage(chatId, `Customer "${intent.customer}" not found.`); return; }
-        await bot.sendMessage(chatId, `💰 ${cb.name}: Outstanding balance ${fmtMoney(cb.outstanding_balance)} (limit: ${fmtMoney(cb.credit_limit)})`);
+        await bot.sendMessage(chatId, `💰 ${cb.name}: Outstanding balance ${money.sale(cb.outstanding_balance)} (limit: ${money.sale(cb.credit_limit)})${saleLegendLine()}`);
         return;
       }
 
@@ -4828,7 +4844,7 @@ async function handleMessage(bot, msg) {
               _custPick: hits.map((c) => ({ id: c.customer_id, name: c.name })),
               rpAmount: amt, rpMethod: payMethod,
             });
-            await bot.sendMessage(chatId, `Which customer paid ${fmtMoney(amt)}? Tap one:`, {
+            await bot.sendMessage(chatId, `Which customer paid ${money.sale(amt)}? Tap one:`, {
               reply_markup: { inline_keyboard: hits.map((c, i2) => ([{ text: `👤 ${customerEntity.labelFor(c, hits)}`, callback_data: `rpk:${i2}` }])) },
             });
             return;
@@ -4840,7 +4856,7 @@ async function handleMessage(bot, msg) {
         if (rpQueued2) return;
         const payRes = await crmService.recordPayment({ customer: intent.customer, amount: amt, method: payMethod, userId });
         if (payRes.status === 'completed') {
-          await bot.sendMessage(chatId, `✅ Payment recorded: ${fmtMoney(payRes.paid)} from ${payRes.customer}.\nBalance: ${fmtMoney(payRes.previousBalance)} → ${fmtMoney(payRes.newBalance)}`);
+          await bot.sendMessage(chatId, `✅ Payment recorded: ${money.sale(payRes.paid)} from ${payRes.customer}.\nBalance: ${money.sale(payRes.previousBalance)} → ${money.sale(payRes.newBalance)}${saleLegendLine()}`);
         } else {
           await bot.sendMessage(chatId, payRes.message || 'Could not record payment.');
         }
@@ -4867,12 +4883,12 @@ async function handleMessage(bot, msg) {
           const rangeLabel = fromDate && toDate ? ` (${fromDate} to ${toDate})` : '';
           let ledgerText = `📒 *Ledger for ${custName}${rangeLabel}*\n\n`;
           custEntries.forEach((e) => {
-            const dr = e.debit ? `DR ${fmtMoney(e.debit)}` : '';
-            const cr = e.credit ? `CR ${fmtMoney(e.credit)}` : '';
-            ledgerText += `${e.date} | ${dr}${cr} | Bal ${fmtMoney(e.running)}\n  ${e.narration}\n`;
+            const dr = e.debit ? `DR ${money.sale(e.debit)}` : '';
+            const cr = e.credit ? `CR ${money.sale(e.credit)}` : '';
+            ledgerText += `${e.date} | ${dr}${cr} | Bal ${money.sale(e.running)}\n  ${e.narration}\n`;
           });
-          ledgerText += `\n*Total DR: ${fmtMoney(totalDebit)} | Total CR: ${fmtMoney(totalCredit)} | Outstanding (${fromDate && toDate ? 'end of range' : 'total'}): ${fmtMoney(outstanding)}*`;
-          ledgerText += `\n*Outstanding as of today: ${fmtMoney(outstandingAsOfToday)}*`;
+          ledgerText += `\n*Total DR: ${money.sale(totalDebit)} | Total CR: ${money.sale(totalCredit)} | Outstanding (${fromDate && toDate ? 'end of range' : 'total'}): ${money.sale(outstanding)}*`;
+          ledgerText += `\n*Outstanding as of today: ${money.sale(outstandingAsOfToday)}*${saleLegendLine()}`;
           await sendLong(bot, chatId, ledgerText, { parse_mode: 'Markdown' });
           return;
         }
@@ -6061,8 +6077,8 @@ async function showContainerPicker(bot, chatId, userId, containers = null, messa
   if (canSeeContainerValues(userId)) {
     const sumYards = list.reduce((s, c) => s + (c.yards || 0), 0);
     const sumValue = list.reduce((s, c) => s + (c.value || 0), 0);
-    cvBlock = `💰 *Total: ${fmtQty(sumYards)} yds · ${fmtMoney(sumValue)}*\n\n`
-      + list.map((c) => `· ${c.label}: ${fmtQty(c.yards || 0)} yds · ${fmtMoney(c.value || 0)}`).join('\n')
+    cvBlock = `💰 *Total: ${fmtQty(sumYards)} yds · ${money.sale(sumValue)}*\n\n`
+      + list.map((c) => `· ${c.label}: ${fmtQty(c.yards || 0)} yds · ${money.sale(c.value || 0)}`).join('\n')
       + '\n\n';
   }
   const sent = await editOrSend(bot, chatId, resolvedMsgId,
@@ -6184,8 +6200,8 @@ async function showSupplyCategoryPicker(bot, chatId, userId, cats = null) {
   const totValue = list.reduce((s, c) => s + (c.value || 0), 0);
   let totalsBlock;
   if (canSeeContainerValues(userId)) {
-    totalsBlock = `💰 *Total: ${totBales} bls · ${fmtQty(totYards)} yds · ${fmtMoney(totValue)}*\n\n`
-      + list.map((c) => `· ${c.label}: ${fmtQty(c.yards || 0)} yds · ${fmtMoney(c.value || 0)}`).join('\n')
+    totalsBlock = `💰 *Total: ${totBales} bls · ${fmtQty(totYards)} yds · ${money.sale(totValue)}*\n\n`
+      + list.map((c) => `· ${c.label}: ${fmtQty(c.yards || 0)} yds · ${money.sale(c.value || 0)}`).join('\n')
       + '\n';
   } else {
     totalsBlock = `Total: ${totBales} bls · ${fmtQty(totYards)} yds\n`;
@@ -6429,7 +6445,7 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   }
   if (config.access.adminIds.includes(String(userId))) {
     const totalValue = avail.reduce((s, a) => s + (a.availValue || 0), 0);
-    summaryNote += ` · 💰 ${fmtMoneyShort(totalValue)}`;
+    summaryNote += ` · 💰 ${money.sale(totalValue)}`;
   }
   const resolvedMsgId = messageId || (session && session.flowMessageId) || null;
   // SRF-CAT — surface the active category filter in the header so the user
@@ -8358,7 +8374,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       // printed only for a customer (CARD-3: a line when it has something
       // to say). A worker's card is not padded with "Credit limit: ₦0".
       + (isCust
-        ? `Category: ${custData.category}\nCredit limit: ${fmtMoney(custData.credit_limit)}\n`
+        ? `Category: ${custData.category}\nCredit limit: ${money.sale(custData.credit_limit)}\n`
           + `Payment terms: ${custData.payment_terms}\n`
         : '')
       + `Notes: ${custData.notes || '—'}`
@@ -8557,13 +8573,13 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     const shadeLabel = session.shade === '__all__' ? 'All shades' : session.shade;
     if (session.flowMessageId) {
       await bot.editMessageText(
-        `💲 *Update Price — submitted*\n\nDesign: *${session.design}*\nShade: *${shadeLabel}*\nNew: *${fmtMoney(session.newPrice)}/yard*\n\n⏳ Waiting for 2nd-admin approval.\nRequest: \`${requestId}\``,
+        `💲 *Update Price — submitted*\n\nDesign: *${session.design}*\nShade: *${shadeLabel}*\nNew: *${money.saleRate(session.newPrice)}*\n\n⏳ Waiting for 2nd-admin approval.\nRequest: \`${requestId}\``,
         { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: [menuNav.hubAndMenuFooterRow('finance', 'Finance')] } },
       ).catch(() => {});
     }
     const userLabel = await getRequesterDisplayName(uid, null);
-    const summary = `Price Update Request\n${session.design}${session.shade !== '__all__' ? ' Shade ' + session.shade : ''}\nNew price: ${fmtMoney(session.newPrice)}/yard\nRequested by: ${userLabel}`;
+    const summary = `Price Update Request\n${session.design}${session.shade !== '__all__' ? ' Shade ' + session.shade : ''}\nNew price: ${money.saleRate(session.newPrice)}\nRequested by: ${userLabel}`;
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, '2nd admin approval required');
     sessionStore.clear(uid);
 
@@ -9558,7 +9574,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       await branchOpsService.logPointer({
         kind: 'receipt_logged', userId: uid,
         ref_id: receiptId,
-        subject: `Receipt: ${session.customer} · ₦${(Number(session.amount) || 0).toLocaleString()}`,
+        subject: `Receipt: ${session.customer} · ${money.sale(session.amount)}`,
         amount: Number(session.amount) || 0,
         notes: session.bank_account || '',
       });
@@ -9566,7 +9582,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
 
     const isAdmin = config.access.adminIds.includes(uid);
     const otherAdmins = config.access.adminIds.filter((id) => id !== uid);
-    const summary = `🧾 Receipt Approval Pending: ${receiptId}\n\nCustomer: ${session.customer}\nAmount: NGN ${fmtQty(session.amount)}\nAccount: ${session.bank_account}\nUploaded by: ${session.uploaded_by_name} (${session.uploaded_by_id})`;
+    const summary = `🧾 Receipt Approval Pending: ${receiptId}\n\nCustomer: ${session.customer}\nAmount: ${money.sale(session.amount)}\nAccount: ${session.bank_account}\nUploaded by: ${session.uploaded_by_name} (${session.uploaded_by_id})`;
 
     if (isAdmin && otherAdmins.length) {
       const keyboard = { inline_keyboard: [[
@@ -9639,12 +9655,12 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       await auditLogRepository.append('receipt_approved', { receiptId, customer: receipt.customer, amount: receipt.amount }, adminId);
 
       await bot.sendMessage(callbackQuery.message.chat.id,
-        `✅ Receipt ${receiptId} approved.\n\n👤 ${receipt.customer}\n💰 NGN ${fmtQty(receipt.amount)}\n🏦 ${receipt.bank_account}\n📎 [View Receipt](${webViewLink})`,
+        `✅ Receipt ${receiptId} approved.\n\n👤 ${receipt.customer}\n💰 ${money.sale(receipt.amount)}\n🏦 ${receipt.bank_account}\n📎 [View Receipt](${webViewLink})`,
         { parse_mode: 'Markdown', disable_web_page_preview: true });
 
       try {
         await bot.sendMessage(receipt.uploaded_by_id,
-          `✅ Your receipt (${receiptId}) for ${receipt.customer} — NGN ${fmtQty(receipt.amount)} has been approved.`);
+          `✅ Your receipt (${receiptId}) for ${receipt.customer} — ${money.sale(receipt.amount)} has been approved.`);
       } catch (e) { logger.error(`Failed to notify employee ${receipt.uploaded_by_id} about receipt ${receiptId}`, e.message); }
     } catch (e) {
       logger.error(`Receipt approval error for ${receiptId}`, e);
@@ -9680,7 +9696,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     const receipt = await receiptsRepo.getById(receiptId);
     if (receipt) {
       try {
-        await bot.sendMessage(receipt.uploaded_by_id, `❌ Your receipt (${receiptId}) for ${receipt.customer} — NGN ${fmtQty(receipt.amount)} has been rejected by admin.`);
+        await bot.sendMessage(receipt.uploaded_by_id, `❌ Your receipt (${receiptId}) for ${receipt.customer} — ${money.sale(receipt.amount)} has been rejected by admin.`);
       } catch (e) { logger.error(`Failed to notify employee ${receipt.uploaded_by_id} about receipt ${receiptId} rejection`, e.message); }
     }
 
