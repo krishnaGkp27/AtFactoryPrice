@@ -523,6 +523,15 @@ everywhere in the business rules.").**
 - Anything tunable is a Settings-sheet key with an in-code default —
   business knobs are never hardcoded.
 
+- **Ruled 09-Sep-2026 (owner, PAY-2):** *"all the logging activities shall
+  not be populated in the Google Sheet but can use the PostgreSQL database
+  on Railway."* Applied: the payment reason, the payment event trail (raised
+  / signed / approved / finance card sent / reminder / done / declined /
+  rejected / notified) and the future reason-code index live in Railway
+  Postgres (`payment_reasons`, `payment_events`, `payment_reason_codes`).
+  The `PaymentRequests` sheet keeps only what it already held, in its
+  existing columns; no new sheet column is added for any of this.
+
 ## 11 · Approvals gate every write
 
 - Write actions ride the approval pipeline (`approvalQueueRepository` →
@@ -591,6 +600,23 @@ added through railway variables."*
 
 ---
 
+- **Every payment request carries a reason (PAY-2, 09-Sep-2026).** Typed,
+  3–120 characters, asked after the amount, never skippable; printed on the
+  confirm, approval and finance cards. Repeating reasons become the
+  requester's own chips (phase 2) and bind to a code index (phase 3) —
+  both queries over the Postgres rows, never a sheet column.
+- **The finance seat is the Railway `FINANCE_IDS` id first (PAY-2).** The
+  finance card goes to every id in `FINANCE_IDS`; if that is empty, to the
+  single Users row in department Finance; if both are empty, to all env
+  admins with the warning line. Mark Done / Decline are honoured from any
+  of those ids.
+- **Done and Decline are reflected back (PAY-2).** The requester and the
+  two admins who signed receive the Paid (with the proof screenshot when
+  one was attached) or Declined notice; every copy of the finance card
+  loses its buttons; the inbox record shows who paid or declined and when.
+  An admin's Reject flips the PaymentRequests row to `rejected`.
+- **The finance card names the pair** (`✅ Approved: A ‖ B`) and the
+  requester by name, never a raw id.
 ## 14 · Removing a person is a status flip, never a deletion
 
 **Locked 16-Aug-2026** (owner, after the removal impact analysis): *"I can
