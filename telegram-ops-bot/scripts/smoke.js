@@ -1112,15 +1112,21 @@ async function runS10() {
     fail('S10.5 findByBaleUid', JSON.stringify(byUid));
   }
 
-  // S10.6 — backfillLegacyBales writes synthetic ids for empty-uid rows
+  // S10.6 — ISC-1 2c: backfillLegacyBales writes a REAL, position-free id
+  // into column R ONLY for the empty-uid row (the pre-ISC-1 pin was the
+  // synthetic `BAL-LEGACY-<row>-<pkg>` over `R2:S2`; both halves changed —
+  // the id must carry no row position, and S (addedAt) is no longer written).
   invRepo.invalidateCache();
   updateLog.length = 0;
   const filled = await invRepo.backfillLegacyBales();
-  const wroteR2 = updateLog.some((u) => /^R2:S2$/.test(u.range));
-  if (filled === 1 && wroteR2) {
-    pass('S10.6 backfillLegacyBales: persists synthetic id for legacy row in batch update');
+  const r2 = updateLog.find((u) => /^R2$/.test(u.range));
+  const r2Uid = r2 && r2.values && r2.values[0] ? String(r2.values[0][0]) : '';
+  const touchedS = updateLog.some((u) => /S/.test(u.range));
+  if (filled && filled.matched === 1 && filled.written === 1 && r2
+      && /^BAL-\d{8}-5801-/.test(r2Uid) && !/LEGACY/.test(r2Uid) && !touchedS) {
+    pass('S10.6 backfillLegacyBales: legacy row gets a real BAL-<date>-<pkg>- id, column R only, no row position in it');
   } else {
-    fail('S10.6 backfillLegacyBales', `filled=${filled} log=${JSON.stringify(updateLog)}`);
+    fail('S10.6 backfillLegacyBales', `filled=${JSON.stringify(filled)} log=${JSON.stringify(updateLog)}`);
   }
 }
 

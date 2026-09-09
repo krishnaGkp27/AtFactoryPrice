@@ -16,7 +16,8 @@
  *
  * Legacy rows (created before P1) get synthetic bale_uid='BAL-LEGACY-{rowIndex}'
  * and addedAt=DateReceived||'' injected at read time. They are persisted on
- * next mutation (transfer / sale / price update) or via backfillLegacyBales().
+ * next mutation (transfer / sale / price update) or via backfillLegacyBales(),
+ * which since ISC-1 2c mints the same position-free id appendBale uses.
  */
 
 const sheets = require('./sheetsClient');
@@ -430,39 +431,217 @@ async function liveBaleConflicts(packageNos, warehouse) {
 }
 
 /**
- * Back-fill legacy Inventory rows (those without bale_uid in column R) with
- * generated bale_uid + addedAt values. Safe to run repeatedly — only touches
- * rows where column R is empty. Returns the count of rows back-filled.
- *
- * Trade-off: this is opt-in (not run automatically on every read) because the
- * back-fill takes one batch-update API call. In typical operation the legacy
- * row count is small (< 1000) and a single run during a maintenance window
- * suffices.
+ * ISC-1 Phase 2c (spec §2e, ruling R8) — the uid one-offs read three cells
+ * per row: A (PackageNo), F (ThanNo) and R (bale_uid). One range serves the
+ * plan read, the pre-write guard and the census, so all three see the
+ * sheet the same way.
  */
-async function backfillLegacyBales() {
-  // BUNDLE-SALE C1 — read range bumped to A2:V (bin_location + arrival_batch),
-  // but the back-fill itself only writes to R:S (bale_uid + addedAt), so the
-  // extra columns are harmless if absent.
-  const rows = await sheets.readRange(SHEET, 'A2:V');
-  const updates = [];
-  let count = 0;
-  rows.forEach((r, i) => {
+const UID_SCAN_RANGE = 'A2:R';
+/** The read-time synthetic prefix — a cell literally carrying it is never a "real" uid. */
+const LEGACY_UID_PREFIX = 'BAL-LEGACY-';
+
+/**
+ * One raw pass over A2:R → the cells the uid one-offs care about, keyed by
+ * rowIndex. `live` mirrors getAll's own filter (a row with neither a
+ * PackageNo nor a Design is a spacer and never gets an id minted).
+ * @returns {Promise<Map<number, {rowIndex:number, packageNo:string, thanNo:string, uid:string, live:boolean}>>}
+ */
+async function scanUidCells() {
+  const rows = await sheets.readRange(SHEET, UID_SCAN_RANGE);
+  const out = new Map();
+  (rows || []).forEach((r, i) => {
+    const row = r || [];
     const rowIndex = i + 2;
-    const packageNo = str(r[0]);
-    if (!packageNo) return;
-    const hasUid = str(r[17]);
-    if (hasUid) return;
-    const dateReceived = str(r[10]);
-    const synthUid = `BAL-LEGACY-${rowIndex}-${(packageNo || 'X').toString().slice(0, 8)}`;
-    const synthAddedAt = dateReceived || '1970-01-01T00:00:00.000Z';
-    updates.push({ range: `R${rowIndex}:S${rowIndex}`, values: [[synthUid, synthAddedAt]] });
-    count += 1;
+    out.set(rowIndex, {
+      rowIndex,
+      packageNo: str(row[0]),
+      thanNo: str(row[5]),
+      uid: str(row[17]),
+      live: !!(str(row[0]) || str(row[3])),
+    });
   });
-  if (updates.length) {
-    await sheets.batchUpdateRanges(SHEET, updates);
-    invalidateCache();
+  return out;
+}
+
+/**
+ * Mint a bale_uid that sits on no row and was not minted earlier in this
+ * run. The generator's 4-char random tail is not collision-proof across
+ * ~2,900 mints on one day (five thans share a bale number, and Mar26
+ * numbers recycle), so uniqueness is enforced here rather than hoped for.
+ * @param {string} packageNo
+ * @param {Set<string>} taken every uid already on the sheet or minted so far (mutated)
+ * @returns {string}
+ */
+function mintUniqueUid(packageNo, taken) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const uid = idGenerator.baleUid(packageNo);
+    if (!taken.has(uid)) { taken.add(uid); return uid; }
   }
-  return count;
+  throw new Error(`inventoryRepository: could not mint a unique bale_uid for bale ${packageNo}`);
+}
+
+/** The re-read row still holds the than the plan was built from. */
+function sameThan(cur, planned) {
+  return !!cur && cur.packageNo === planned.packageNo && cur.thanNo === planned.thanNo;
+}
+
+/**
+ * Shared write discipline for backfillLegacyBales / dedupeBaleUids (the
+ * CUS-ID1 guard, see customerIdRepair): hand the full plan to `onPlan`,
+ * then — unless dryRun — re-read column R for every planned row and write
+ * ONLY the rows whose cells still match what the plan was built from. A
+ * row that changed in between is skipped and reported, never guessed.
+ * Each write is the single cell `R<row>`; column S is never addressed.
+ *
+ * @param {Array<{rowIndex:number, packageNo:string, thanNo:string, currentUid:string, baleUid:string}>} plan
+ * @param {{dryRun?: boolean, onPlan?: function}} opts
+ * @param {(cur: object|undefined, planned: object) => string} mismatch returns
+ *        a reason to skip, or '' when the row may be written
+ * @returns {Promise<{matched:number, written:number,
+ *   skipped:Array<{rowIndex:number, packageNo:string, why:string}>,
+ *   sample:Array<{rowIndex:number, packageNo:string, currentUid:string, baleUid:string}>}>}
+ */
+async function applyUidPlan(plan, opts, mismatch) {
+  const dryRun = !!opts.dryRun;
+  if (typeof opts.onPlan === 'function') await opts.onPlan(plan);
+  const skipped = [];
+  let toWrite = plan;
+  if (!dryRun && plan.length) {
+    const live = await scanUidCells();
+    toWrite = [];
+    for (const p of plan) {
+      const why = mismatch(live.get(p.rowIndex), p);
+      if (why) skipped.push({ rowIndex: p.rowIndex, packageNo: p.packageNo, why });
+      else toWrite.push(p);
+    }
+    if (toWrite.length) {
+      await sheets.batchUpdateRanges(SHEET, toWrite.map((p) => ({ range: `R${p.rowIndex}`, values: [[p.baleUid]] })));
+      invalidateCache();
+    }
+  }
+  return {
+    matched: plan.length,
+    written: dryRun ? 0 : toWrite.length,
+    skipped,
+    sample: toWrite.slice(0, 5).map((p) => ({
+      rowIndex: p.rowIndex, packageNo: p.packageNo, currentUid: p.currentUid, baleUid: p.baleUid,
+    })),
+  };
+}
+
+/**
+ * ISC-1 Phase 2c (spec §2e, ruling R8) — persist a REAL uid on every legacy
+ * row (blank column R).
+ *
+ * A legacy row is identified at read time as `BAL-LEGACY-<rowIndex>` — its
+ * POSITION. Sorting the sheet or inserting a row silently re-keys 2,853
+ * thans: transfer pinning (`aj.baleUids`), the Postgres mirror's bale_uid
+ * column and the bundle-sale cart keys all carry the uid. The previous
+ * back-fill minted `BAL-LEGACY-<rowIndex>-<pkg>` (still position-bearing)
+ * and a fake 1970 addedAt. This one mints the id appendBale uses
+ * (`BAL-<yyyymmdd>-<pkg>-<rand4>`, idGenerator.baleUid — no row number in
+ * it) and writes column R ONLY. Column S (addedAt) is left untouched:
+ * parseRow already falls back to DateReceived and the column is slated for
+ * retirement (§3). Idempotent — a row carrying ANY uid is never touched.
+ *
+ * @param {{dryRun?: boolean, onPlan?: (plan: Array<object>) => (void|Promise<void>)}} [opts]
+ *   dryRun: plan only, write nothing. onPlan: receives the full plan
+ *   ({rowIndex, packageNo, thanNo, currentUid, baleUid}) before any write.
+ * @returns {Promise<{matched:number, written:number,
+ *   skipped:Array<{rowIndex:number, packageNo:string, why:string}>,
+ *   sample:Array<{rowIndex:number, packageNo:string, currentUid:string, baleUid:string}>}>}
+ *   sample = the first 5 rows written (planned, on a dry-run).
+ */
+async function backfillLegacyBales(opts = {}) {
+  const cells = await scanUidCells();
+  const taken = new Set();
+  for (const c of cells.values()) if (c.uid) taken.add(c.uid);
+  const plan = [];
+  for (const c of cells.values()) {
+    if (!c.live || c.uid) continue;
+    plan.push({
+      rowIndex: c.rowIndex, packageNo: c.packageNo, thanNo: c.thanNo,
+      currentUid: '', baleUid: mintUniqueUid(c.packageNo, taken),
+    });
+  }
+  return applyUidPlan(plan, opts, (cur, p) => {
+    if (!sameThan(cur, p)) return 'row no longer holds the planned than (sheet re-ordered?)';
+    if (cur.uid) return `column R is no longer blank (now ${cur.uid})`;
+    return '';
+  });
+}
+
+/**
+ * ISC-1 Phase 2c (spec §2e) — split a real uid that sits on more than one
+ * row. The 04-Sep census found `BAL-20260713-864-bjwg` on 77014/864 thans
+ * #4 AND #5, so every uid-scoped operation treated two thans as one. The
+ * lowest rowIndex keeps the original; every later row gets a fresh
+ * position-free uid, with the same write discipline as backfillLegacyBales
+ * (column R only, re-read guard, skips reported). Blank cells and cells
+ * literally carrying the read-time `BAL-LEGACY-` prefix are not "real"
+ * uids and are never counted as duplicates.
+ *
+ * @param {{dryRun?: boolean, onPlan?: (plan: Array<object>) => (void|Promise<void>)}} [opts]
+ * @returns {Promise<{matched:number, written:number,
+ *   skipped:Array<{rowIndex:number, packageNo:string, why:string}>,
+ *   sample:Array<{rowIndex:number, packageNo:string, currentUid:string, baleUid:string}>}>}
+ *   sample entries carry the duplicate they replaced as `currentUid`.
+ */
+async function dedupeBaleUids(opts = {}) {
+  const cells = await scanUidCells();
+  const taken = new Set();
+  const byUid = new Map();
+  for (const c of cells.values()) {
+    if (!c.uid) continue;
+    taken.add(c.uid);
+    if (c.uid.startsWith(LEGACY_UID_PREFIX)) continue;
+    if (!byUid.has(c.uid)) byUid.set(c.uid, []);
+    byUid.get(c.uid).push(c);
+  }
+  const plan = [];
+  for (const [uid, rows] of byUid) {
+    if (rows.length < 2) continue;
+    rows.sort((a, b) => a.rowIndex - b.rowIndex);
+    for (const c of rows.slice(1)) {
+      plan.push({
+        rowIndex: c.rowIndex, packageNo: c.packageNo, thanNo: c.thanNo,
+        currentUid: uid, baleUid: mintUniqueUid(c.packageNo, taken),
+      });
+    }
+  }
+  plan.sort((a, b) => a.rowIndex - b.rowIndex);
+  return applyUidPlan(plan, opts, (cur, p) => {
+    if (!sameThan(cur, p)) return 'row no longer holds the planned than (sheet re-ordered?)';
+    if (cur.uid !== p.currentUid) return `column R no longer carries the duplicate (now ${cur.uid || 'blank'})`;
+    return '';
+  });
+}
+
+/**
+ * ISC-1 Phase 2c — read-only census of column R: how many live rows still
+ * have no uid, and which real uids sit on more than one row. The one-off
+ * script prints it after `--commit` (both expected 0) and exits non-zero
+ * otherwise. Derived at read time; nothing is persisted.
+ * @returns {Promise<{rows:number, blank:number, duplicates:Array<{uid:string, rowIndexes:number[]}>}>}
+ */
+async function baleUidCensus() {
+  const cells = await scanUidCells();
+  const byUid = new Map();
+  let rows = 0;
+  let blank = 0;
+  for (const c of cells.values()) {
+    if (!c.live) continue;
+    rows += 1;
+    if (!c.uid) { blank += 1; continue; }
+    if (c.uid.startsWith(LEGACY_UID_PREFIX)) continue;
+    if (!byUid.has(c.uid)) byUid.set(c.uid, []);
+    byUid.get(c.uid).push(c.rowIndex);
+  }
+  const duplicates = [];
+  for (const [uid, rowIndexes] of byUid) {
+    if (rowIndexes.length > 1) duplicates.push({ uid, rowIndexes: [...rowIndexes].sort((a, b) => a - b) });
+  }
+  return { rows, blank, duplicates };
 }
 
 /**
@@ -902,7 +1081,9 @@ module.exports = {
   liveBaleConflicts,
   appendThans,
   appendBale,
-  backfillLegacyBales,
+  backfillLegacyBales, // ISC-1 2c
+  dedupeBaleUids, // ISC-1 2c
+  baleUidCensus, // ISC-1 2c
   backfillArrivalBatch,
   getWarehouses,
   getArrivalBatches,
