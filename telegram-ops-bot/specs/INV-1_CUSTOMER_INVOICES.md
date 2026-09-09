@@ -23,9 +23,16 @@ from §6a. Grounded in a 4-reader code audit — findings in §7.
 9. **No business name / registration details on the invoice** (owner,
    14-Jul, with sample images): the document is styled as the CUSTOMER's
    account statement — header `<CUSTOMER> — ACCOUNT`, columns
-   `Description | Cost ₦ | Payments ₦`, payment rows in RED with date and
+   `Description | Cost | Payments`, payment rows in RED with date and
    the receiving account named (e.g. "15/7/2026 paid to GTBank account"),
    bottom line **DEBIT BALANCE**. No "Pay to" box, no company footer.
+   *Superseded in part 08/09-Sep-2026 (BUSINESS_RULES §17, CUR-1 R1/R12b,
+   CUR-2): the column headers were `Cost ₦ | Payments ₦`; a sale invoice
+   now carries no currency symbol or unit anywhere — the words are bare,
+   every cell is a bare number, and the customer copy may be refilled from
+   `rate × rate_multiplier` (frozen per invoice in Invoices column W). The
+   three-column structure, the red dated payment row and DEBIT BALANCE are
+   unchanged. Layouts: `specs/CUR-2_INVOICE_MULTIPLIER.md` §4.*
    Template reference: specs/inv1-mockups/template-final-hybrid.html
    (band structure + serif/gold elegance kept from the earlier pick).
    Owner will polish the website view after integration.
@@ -99,7 +106,7 @@ Every supply/sale the bot executes (and posts to the ledger) produces an
 public at `https://<app>.up.railway.app`, healthchecked, CORS'd):
 
 - `GET /i/<token>` — mobile-first HTML invoice (behind OTP, §2a). Status strip (UNPAID /
-  PART-PAID ₦x of ₦y / PAID), line items, payments received so far, balance.
+  PART-PAID x of y / PAID — bare figures since CUR-1 R12b), line items, payments received so far, balance.
   Recomputed per request → this is the "dynamic copy".
 - `GET /i/<token>.pdf` — branded PDF (snapshot at issue; regenerated on
   demand), `Content-Disposition: attachment` → direct download for WhatsApp.

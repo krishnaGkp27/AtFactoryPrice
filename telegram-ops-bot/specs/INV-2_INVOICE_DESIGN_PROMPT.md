@@ -46,8 +46,20 @@ has to handle them honestly:
    ("15/7/2026 paid to GTBank account"). The bottom line reads **DEBIT BALANCE** when
    money is owed.
 3. Goods are described in the customer's words: `Design 77019 · Shades 1, 3 ·
-   4 bales + 8 thans · 420 yds @ ₦1,450/yd`. Never "bales" for loose thans, never both
-   units for the same goods, yards always alongside — all money is **₦ per yard**.
+   4 bales + 8 thans · 420 yds @ 1,450/yd`. Never "bales" for loose thans, never both
+   units for the same goods, yards always alongside — **money is bare**: no currency
+   symbol, no unit word, anywhere on the document (BUSINESS_RULES §17, CUR-1 R1/R12b,
+   amended 08/09-Sep-2026). `/yd` names the divisor, nothing names the unit. The
+   customer copy may be refilled from `rate × multiplier` (CUR-2, frozen per invoice
+   in Invoices column `rate_multiplier`): the rate then prints to exactly 2 dp
+   (`4,000.00/yd`), line amounts / total / payments / balance are integers, each line
+   is `round(yards × rate × m)` and the total is the sum of the document's lines. With
+   no multiplier the entered figures print unconverted (`3.20/yd`, a fractional rate
+   keeps 2 dp, an integer rate prints as entered). The PAID / PART-PAID / UNPAID word
+   comes from the BOOKED figures; a line whose rate never resolved puts the document
+   in the **RATE NOT RECORDED** state (strip says so; cost, total and balance print
+   `—`; the payment still prints in the document's unit). Never print the
+   multiplier or a "× 1,250" note on the customer copy.
 4. Invoice number format `INV-2026-0064` (yearly series). The sale date and the issue
    date are **both** to be shown when they differ (backdated sales) — today only one
    prints.
@@ -71,7 +83,7 @@ has to handle them honestly:
 | `salesperson` | Abdul | display name only |
 | `warehouse` | Kano office | on the PDF, **not** on the web page |
 | `lines[]` | one per **design** | see B |
-| `subtotal` / `total` | 609000 | ₦, integers |
+| `subtotal` / `total` | 609000 | booked unit (variable 1), integers — never multiplied on the sheet |
 | `vat_rate` / `vat_amount` | 0 / 0 | VAT off; no toggle exists yet |
 | `amount_paid_at_issue` | 400000 | what the admin recorded **at approval** |
 | `payment_mode` | Cash · Not yet paid · Paid to GTBank · (typed) | |
@@ -79,12 +91,14 @@ has to handle them honestly:
 | `balance_after_issue` | 209000 | the customer's **account-level** outstanding at issue — stored, **not shown** |
 | `status` | issued | never "void" today |
 | `token` | 16 chars | the private link |
+| `rate_multiplier` | 1250 · blank | CUR-2 — the customer-copy factor frozen at issue; blank = none (old rows) |
 
 **B. Per line (one line per design)**
 
 `design` · `yards` · `qty` (item count) · `bales` (distinct bale numbers) · `thans`
-(loose pieces) · `shades[]` (tab numbers, e.g. `["1","3"]`) · `rate` (₦/yd, **0 when
-unrecorded**) · `amount` (= yards × rate). **Not** on a line today: bale numbers, than
+(loose pieces) · `shades[]` (tab numbers, e.g. `["1","3"]`) · `rate` (per yard in the
+booked unit, **0 when unrecorded**) · `amount` (= yards × rate, booked). The document
+prints `rate × rate_multiplier` when one is frozen. **Not** on a line today: bale numbers, than
 numbers, shade *names*, container, per-line warehouse.
 
 **C. Available at read time — the "other details" you can integrate**
@@ -105,7 +119,7 @@ numbers, shade *names*, container, per-line warehouse.
 **D. Not available — do not design around it**
 
 - **Payments per invoice.** Every payment is customer-level; no receipt references an
-  invoice number. "Paid ₦400,000 against INV-0064" is honest only for the amount
+  invoice number. "Paid 400,000 against INV-0064" is honest only for the amount
   recorded at approval; anything later is account-level.
 - **Live status.** The page is a frozen snapshot; a payment made next week does not
   change it. (A live account block is buildable — see integration notes.)
