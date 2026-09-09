@@ -1,4 +1,4 @@
-<!doctype html><html><head><meta charset='utf-8'><title>Payments live test — Worker guide</title><style>
+<!doctype html><html><head><meta charset='utf-8'><title>Payments live test — Operations Officer guide</title><style>
 @page { size: A4; margin: 12mm 11mm; }
 * { box-sizing: border-box; }
 body { margin:0; font-family:"DejaVu Sans","Segoe UI",Arial,sans-serif; color:#16202a; font-size:10.6pt; line-height:1.42; }
@@ -88,17 +88,17 @@ h1 { font-size:28pt; margin:2mm 0 1mm; letter-spacing:-.5px; }
 </style></head><body>
 <section class="page cover">
   <div class="brand">AtFactoryPrice · Live test guide</div>
-  <h1>Payments live test — Worker guide</h1>
-  <div class="sub">For the two workers who ask for money: each of you does every step of this guide on your own phone, with your own account and your own request.</div>
+  <h1>Payments live test — Operations Officer guide</h1>
+  <div class="sub">For the two Operations Officers who raise payment requests: each of you does every step of this guide on your own phone, with your own account and your own request.</div>
   <div class="for">Date: <b>09-Sep-2026</b> &nbsp;·&nbsp; Telegram: <b>Black Panther_Bot</b> &nbsp;·&nbsp; About 10 minutes of tapping, then waiting</div>
 
   <div class="two">
     <div class="box">
       <div class="btitle">The one payment everyone is testing</div>
-      <p><b>Abdul</b> (a worker) asks for <b>₦4,000</b> into <b>OPAY 7048940378</b>, reason <b>Transport to Idumota</b>, with a photo of the bill.</p>
+      <p><b>Mr. Abdul</b> (Operations Officer) asks for <b>₦4,000</b> into <b>OPAY 7048940378</b>, reason <b>Transport to Idumota</b>, with a photo of the bill.</p>
       <p><b>The Owner</b> signs first, <b>Admin 2</b> signs second. A payment needs two <i>different</i> admins when two are set up; if the Owner is the only admin, his one approval completes it. The person who asked can never sign his own.</p>
       <p><b>The Office phone</b> (finance) pays by hand in the bank app, taps <b>✔ Mark Done</b>, then sends the screenshot.</p>
-      <p class="small">In this guide the worker is called <b>Abdul</b>. Read your own name wherever it says Abdul.</p>
+      <p class="small">In this guide the Operations Officer is called <b>Mr. Abdul</b>. Read your own name wherever it says Abdul.</p>
     </div>
     <div class="box">
       <div class="btitle">Before you start</div>
@@ -145,10 +145,10 @@ h1 { font-size:28pt; margin:2mm 0 1mm; letter-spacing:-.5px; }
   <div class="step"><div class="sleft"><div class="snum wait">B</div><div class="stitle">Declined by finance (after approval, before the money moved)</div><div class="slead"><span class="waitlbl">Nothing to do</span> — you will receive one plain message with finance's typed reason on it. The two admins who signed get the same message.</div><div class="recv"><b>You receive:</b> ✖ “Payment declined — ₦4,000 to Abdul (employee) was not paid.” with the reason line — and 📋 My requests shows ✖ <b>declined by finance</b> with the reason after the date, on the same line (only the date is in grey).</div><div class="tip">A decline is not the end: fix what the reason says and raise the request again.</div><div class="tick">☐ &nbsp;matches</div></div><div class="sright"><div class="who">the bot, when finance declines</div><div class="tg"><div class="bubble"><div class="txt">✖ Payment declined — ₦4,000 to Abdul (employee) was not paid.<br>📝 Transport to Idumota<br>🏦 OPAY 7048940378<br>Declined by Office · 09-Sep-2026, 15:10<br>Account name does not match — send the OPAY name.<br>Ref PAY-20260909-3F9A2C1E · approved by Owner ‖ Admin 2</div><div class="time">15:10</div></div></div><div class="who">📋 My requests afterwards</div><div class="tg"><div class="bubble"><div class="txt">📋 <b>My requests</b><br><br>✖ ₦4,000 — declined by finance · 📝 Transport to Idumota<br>   <i class=dim>09-Sep-26</i> · Account name does not match — send the OPAY name.</div><div class="time">14:32</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div>
 </section>
 <section class="page">
-  <div class="ph">Checklist &nbsp;·&nbsp; every message the worker should see, in order</div>
+  <div class="ph">Checklist &nbsp;·&nbsp; every message the Operations Officer should see, in order</div>
   <p class="lead">Tick each one as it arrives. The order matters — it is part of what is being tested.</p>
   <table class="ck"><thead><tr><th></th><th>When</th><th>What arrives</th></tr></thead><tbody><tr><td class="cb">☐</td><td class="cwhen">Step 1</td><td class="cmsg">💳 Payments card — <i>no registered account yet</i></td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 2</td><td class="cmsg">🏦 Account for Abdul — asks for 10 digits</td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 3</td><td class="cmsg">🔁 Type it once more → 🏦 7048940378 Which bank? (🏛 OPAY chip present)</td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 4</td><td class="cmsg">🏦 Register this account? → a new card ⏳ Sent for approval (the old card stays, its button dead)</td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 5</td><td class="cmsg">🔏 Your request (…) has 1 of 2 admin approvals — signed by Owner. One more to go.</td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 5</td><td class="cmsg">✅ Your request R-… has been approved by admin. Changes applied.</td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 6</td><td class="cmsg">💳 Payments now says <i>You have 1 registered account</i> → 💸 Pay into which account? with your chip</td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 7</td><td class="cmsg">💸 Abdul / 🏦 OPAY 7048940378 / How much, in naira?</td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 8</td><td class="cmsg">📝 What is this payment for?</td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 9</td><td class="cmsg">📎 Any paperwork?</td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 10</td><td class="cmsg">💸 Send this for approval? — ₦4,000 · Transport to Idumota · Bill attached</td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 11</td><td class="cmsg">a new card ⏳ Sent for approval — ₦4,000 → Abdul · PAY-… (the old card stays, its button dead)</td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 12</td><td class="cmsg">🔏 1 of 2 admin approvals — signed by Owner</td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 13</td><td class="cmsg">ONE message, two lines: ✅ Your request R-… has been approved by admin. Changes applied. ⏎ ✅ Payment of ₦4,000 to Abdul approved by Owner ‖ Admin 2 — now with finance to pay.</td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 14</td><td class="cmsg">💸 Paid — ₦4,000 to Abdul (employee) … Paid by Office · date, time … approved by Owner ‖ Admin 2</td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 15</td><td class="cmsg">📎 Proof of transfer — PAY-… (photo) — only if finance sent one; it comes AFTER the Paid notice</td></tr><tr><td class="cb">☐</td><td class="cwhen">Step 16</td><td class="cmsg">📋 My requests: ✅ ₦4,000 — paid · 📝 Transport to Idumota</td></tr><tr><td class="cb">☐</td><td class="cwhen">Exit A</td><td class="cmsg">❌ Your request R-… has been rejected by admin. · My requests: ❌ rejected</td></tr><tr><td class="cb">☐</td><td class="cwhen">Exit B</td><td class="cmsg">✖ Payment declined — … was not paid. + reason · My requests: ✖ declined by finance · reason</td></tr></tbody></table>
   <div class="golden"><div class="gbody">If anything differs, screenshot it and send it to the owner.</div>
   <div class="gwhy">Include the whole card — the time on it and the buttons under it. A wrong word, a missing line or a message that arrives in the wrong order all count.</div></div>
-  <div class="foot">AtFactoryPrice · Payments live test · worker guide · version 09-Sep-2026</div>
+  <div class="foot">AtFactoryPrice · Payments live test · Operations Officer guide · version 09-Sep-2026</div>
 </section></body></html>

@@ -2,13 +2,13 @@
 """PAY-2 — build the three role guides for the live payment test.
 
 Writes:
-    docs/PAY-2_GUIDE_WORKER.html    the two requesters (each raises his own request)
+    docs/PAY-2_GUIDE_OFFICER.html   the two Operations Officers (each raises his own request)
     docs/PAY-2_GUIDE_ADMIN.html     the two admins (first signer AND second signer)
     docs/PAY-2_GUIDE_FINANCE.html   the Office phone (the Railway FINANCE_IDS seat)
 
 Usage (regenerate after any wording change in the flow):
     python3 scripts/build-pay2-guides.py
-    for r in WORKER ADMIN FINANCE; do
+    for r in OFFICER ADMIN FINANCE; do
       /opt/pw-browsers/chromium-1194/chrome-linux/chrome --headless=new --disable-gpu \
         --no-sandbox --no-pdf-header-footer \
         --print-to-pdf=docs/PAY-2_GUIDE_$r.pdf docs/PAY-2_GUIDE_$r.html
@@ -22,7 +22,7 @@ resolved the way Telegram renders it (*x* -> bold, _x_ -> dim italic,
 `x` -> mono).  Lifecycle per specs/PAY-2_PAYMENT_REASON.md §2 and §5 and
 docs/PAY-2_CARDS_AND_FLOW.html.
 
-Worked example used throughout: worker Abdul asks for ₦4,000 into OPAY
+Worked example used throughout: Mr. Abdul (Operations Officer) asks for ₦4,000 into OPAY
 7048940378, reason "Transport to Idumota", bill photo attached; admins =
 the Owner (first signer) and Admin 2 (second signer); finance = the Office
 phone.  The Paid notice goes out AT the ✔ Mark Done tap (row flipped,
@@ -159,7 +159,7 @@ def cover(title, forwho, intro, prereqs, cast_note, steps_map):
   <div class="two">
     <div class="box">
       <div class="btitle">The one payment everyone is testing</div>
-      <p><b>Abdul</b> (a worker) asks for <b>₦4,000</b> into <b>OPAY 7048940378</b>, reason <b>Transport to Idumota</b>, with a photo of the bill.</p>
+      <p><b>Mr. Abdul</b> (Operations Officer) asks for <b>₦4,000</b> into <b>OPAY 7048940378</b>, reason <b>Transport to Idumota</b>, with a photo of the bill.</p>
       <p><b>The Owner</b> signs first, <b>Admin 2</b> signs second. A payment needs two <i>different</i> admins when two are set up; if the Owner is the only admin, his one approval completes it. The person who asked can never sign his own.</p>
       <p><b>The Office phone</b> (finance) pays by hand in the bank app, taps <b>✔ Mark Done</b>, then sends the screenshot.</p>
       <p class="small">{cast_note}</p>
@@ -353,8 +353,8 @@ def bubble_list(*cards):
 def build_worker():
     P = []
     P.append(cover(
-        "Payments live test — Worker guide",
-        "For the two workers who ask for money: each of you does every step of this guide on your own phone, with your own account and your own request.",
+        "Payments live test — Operations Officer guide",
+        "For the two Operations Officers who raise payment requests: each of you does every step of this guide on your own phone, with your own account and your own request.",
         "About 10 minutes of tapping, then waiting",
         [
             "The owner has put you on the Users list as an <b>active employee</b>. You are <b>not</b> an admin — if you were, you could not be a requester in this test.",
@@ -364,7 +364,7 @@ def build_worker():
             "Know your account number by heart — the bot asks for it <b>twice</b> and compares.",
             "If you already have an approved account in the bot, skip steps 2–5 and start at step 6.",
         ],
-        "In this guide the worker is called <b>Abdul</b>. Read your own name wherever it says Abdul.",
+        "In this guide the Operations Officer is called <b>Mr. Abdul</b>. Read your own name wherever it says Abdul.",
         ["Open 💳 Payments", "🏦 Register account", "Two admins sign it", "💸 Request payment", "Two admins sign", "Wait for 💸 Paid", "📋 My requests"],
     ))
 
@@ -516,7 +516,7 @@ def build_worker():
         ("Step 16", "📋 My requests: ✅ ₦4,000 — paid · 📝 Transport to Idumota"),
         ("Exit A", "❌ Your request R-… has been rejected by admin. · My requests: ❌ rejected"),
         ("Exit B", "✖ Payment declined — … was not paid. + reason · My requests: ✖ declined by finance · reason"),
-    ], "worker"))
+    ], "Operations Officer"))
     return P
 
 
@@ -534,7 +534,7 @@ def build_admin():
             "Both of you have sent <b>/start</b> to the bot.",
             "The finance seat is set: open 💳 Payments and check the last line reads <b>Finance: Office pays and marks done.</b> If it shows a ⚠️ warning instead, stop — see step 1.",
             "Neither of you raises the test request — an admin who asks counts as his own first signature and is left off his own card.",
-            "The bot's bank list includes <b>OPAY</b> (the owner adds it), or the worker cannot register the example account.",
+            "The bot's bank list includes <b>OPAY</b> (the owner adds it), or the Operations Officer cannot register the example account.",
             "Agree who is the first signer. The second signer must wait for the pointer message (step 6) before tapping.",
         ],
         "In this guide the first signer is the <b>Owner</b> and the second is <b>Admin 2</b>. Swap the names if you decide the other way round.",
@@ -543,7 +543,7 @@ def build_admin():
 
     P.append(f"""
 <section class="flow">
-  {h2("Part A &nbsp;·&nbsp; Check the seat, then approve the worker's account")}
+  {h2("Part A &nbsp;·&nbsp; Check the seat, then approve the Operations Officer's account")}
   {step(1, "Open 💳 Payments and read the Finance line",
         "send <b>/menu</b> and tap <b>💳 Payments</b>. An admin's card has one extra line at the bottom naming the finance seat.",
         card(HUB_ADMIN_NOACC, B_HUB, who="the bot, on an admin's phone"),
@@ -559,7 +559,7 @@ def build_admin():
         card(ADM_ACC_DONE, who="the bot, on the SECOND signer's phone", time="14:22"),
         receive="✅ “Request … approved by Owner + Admin 2. Changes applied.” — <b>only that line</b>. The bot does not add an “Account registered for Abdul” line; that is known and not a fault. The first signer hears nothing at this moment.",
         waits=True,
-        variants=[f"<i>{html.escape(ADM_ACC_FAIL)}</i> — the worker is not an active employee on the Users list. Fix the Users list, ask him to register again."])}
+        variants=[f"<i>{html.escape(ADM_ACC_FAIL)}</i> — the Operations Officer is not on the Users list as active staff. Fix the Users list, ask him to register again."])}
 </section>""")
 
     P.append(f"""
@@ -581,7 +581,7 @@ def build_admin():
   {step(6, "First signature — the Owner taps ✅ Approve",
         "<b>first signer only:</b> tap <b>✅ Approve</b> once. Your card's buttons disappear; a small grey pop-up shows for a moment; a plain message follows.",
         card(DM_1OF2(UUID), who="the bot, on the FIRST signer's phone", toast=TOAST_1OF2, time="14:40"),
-        receive="a small grey pop-up <b>🔏 Approval 1 of 2 recorded.</b>, then the message “🔏 Request …: your approval is recorded (1 of 2). Waiting for a second admin.” At the same moment the worker is told <i>signed by Owner</i>.",
+        receive="a small grey pop-up <b>🔏 Approval 1 of 2 recorded.</b>, then the message “🔏 Request …: your approval is recorded (1 of 2). Waiting for a second admin.” At the same moment the Operations Officer is told <i>signed by Owner</i>.",
         variants=[f"alert <i>{html.escape(ALERT_REPEAT)}</i> — you tapped a second time (or a copy in the inbox). Harmless.",
                   f"alert <i>{html.escape(ALERT_SELF)}</i> — this is your own request; the other admin must sign.",
                   f"alert <i>{html.escape(ALERT_NONADMIN)}</i> — the phone tapping is not an admin."])}
@@ -593,7 +593,7 @@ def build_admin():
   {step(8, "Second signature — Admin 2 taps ✅ Approve (one message, two lines)",
         "<b>second signer only:</b> tap <b>✅ Approve</b>. A small grey pop-up <i>Approving...</i>, your buttons vanish, and <b>one</b> message with <b>two lines</b> follows.",
         card(ADM_APPROVED_FULL, who="the bot, on the SECOND signer's phone", toast=TOAST_APPROVING, time="14:45"),
-        receive="one message. Line 1: “✅ Request … approved by Owner + Admin 2. Changes applied.” Line 2: “✅ Payment of ₦4,000 to Abdul approved by Owner ‖ Admin 2 — now with finance to pay.” The worker gets the same two lines in one message; the Office phone gets the finance card.",
+        receive="one message. Line 1: “✅ Request … approved by Owner + Admin 2. Changes applied.” Line 2: “✅ Payment of ₦4,000 to Abdul approved by Owner ‖ Admin 2 — now with finance to pay.” The Operations Officer gets the same two lines in one message; the Office phone gets the finance card.",
         variants=[f"<i>{html.escape(ADM_EXEC_FAIL)}</i> — signed, but the record could not be written. Tell the owner."])}
   {step(9, "The first signer at this moment",
         "the Owner receives <b>nothing</b> at the second signature — that is how it is built. He hears the outcome at 💸 Paid (step 10) or at a decline (exit B). If he taps his old card anyway:",
@@ -606,8 +606,8 @@ def build_admin():
 <section class="flow">
   {h2("Part C &nbsp;·&nbsp; Both signers wait for finance")}
   {step(10, "💸 Paid — when the Office phone taps ✔ Mark Done",
-        "<b>both signers</b> receive the Paid notice at the moment finance marks the payment done — <b>before</b> any screenshot. It is the same plain text the worker gets.",
-        card(PAID_NOTICE, who="the bot, on BOTH signers' phones and the worker's", time="15:10"),
+        "<b>both signers</b> receive the Paid notice at the moment finance marks the payment done — <b>before</b> any screenshot. It is the same plain text the Operations Officer gets.",
+        card(PAID_NOTICE, who="the bot, on BOTH signers' phones and the Operations Officer's", time="15:10"),
         receive="💸 Paid — amount, reason, account, <b>Paid by Office · date, time</b>, the PAY number and <b>approved by Owner ‖ Admin 2</b>.",
         waits=True)}
   {step(11, "📎 Proof of transfer — only if finance sends one",
@@ -626,14 +626,14 @@ def build_admin():
 <section class="flow">
   {h2("The two exits &nbsp;·&nbsp; run one of each after the first payment")}
   {step("A", "❌ Reject — any ONE admin, before approval",
-        "on a fresh request (the worker raises one), <b>one admin</b> taps <b>❌ Reject</b> on the card in your chat with the bot or in the inbox. The bot asks for no reason. <b>For this test, reject before either admin has signed</b> — that keeps the record line below exactly as printed.",
+        "on a fresh request (the Operations Officer raises one), <b>one admin</b> taps <b>❌ Reject</b> on the card in your chat with the bot or in the inbox. The bot asks for no reason. <b>For this test, reject before either admin has signed</b> — that keeps the record line below exactly as printed.",
         card(ADM_REJECTED, who="the bot, on the REJECTING admin's phone", toast=TOAST_REJECTING),
-        receive="a small grey pop-up <b>Rejecting...</b>, your card's buttons vanish, then “❌ Request … rejected.” The worker gets “❌ Your request R-… has been rejected by admin.” <b>The other admin is not told</b> — even if he gave the first signature — and finance gets nothing (no finance card ever existed). The inbox record reads ❌ Rejected by Owner.",
+        receive="a small grey pop-up <b>Rejecting...</b>, your card's buttons vanish, then “❌ Request … rejected.” The Operations Officer gets “❌ Your request R-… has been rejected by admin.” <b>The other admin is not told</b> — even if he gave the first signature — and finance gets nothing (no finance card ever existed). The inbox record reads ❌ Rejected by Owner.",
         tip="If the reject follows the other admin's first signature, the record names both: <b>❌ Rejected by Owner + Admin 2</b> (first signer + rejecter). That is why the test rejects before any signature.",
         variants=[f"<i>{html.escape(ADM_REJECT_FAIL)}</i> — tell the owner."])}
   {step("B", "✖ Decline — by finance, after both signatures",
-        "on another fresh request, both of you sign as in Part B; then the Office phone taps <b>✖ Decline</b> and types a reason. <b>Both signers</b> receive the decline notice — the same text as the worker.",
-        bubble_list(card(DEC_NOTICE, who="the bot, on BOTH signers' phones and the worker's", time="15:10"),
+        "on another fresh request, both of you sign as in Part B; then the Office phone taps <b>✖ Decline</b> and types a reason. <b>Both signers</b> receive the decline notice — the same text as the Operations Officer.",
+        bubble_list(card(DEC_NOTICE, who="the bot, on BOTH signers' phones and the Operations Officer's", time="15:10"),
                     card(INBOX_REC_DEC, B_INBOX_REC, who="the inbox record afterwards")),
         receive="✖ “Payment declined — ₦4,000 to Abdul (employee) was not paid.” with the reason line and <b>Declined by Office · date, time</b>; the inbox record ends <b>✖ Declined by Office · reason</b>.",
         waits=True)}
@@ -710,7 +710,7 @@ def build_finance():
         warn="<b>The order matters and is part of the test.</b> At the moment you tap ✔ Mark Done — before you send anything — Abdul, the Owner and Admin 2 each receive the plain-text <b>💸 Paid</b> notice (drawn in step 5). The proof you send next is a separate follow-up. Ask them to confirm the Paid notice came in before the screenshot.",
         variants=[f"alert <i>{g}</i>" for g in GUARDS_DONE])}
   {step(5, "What the other three receive at your tap",
-        "nothing for you to do. This is the notice the worker and both admins get at the same moment, so you know what they are checking.",
+        "nothing for you to do. This is the notice the Operations Officer and both admins get at the same moment, so you know what they are checking.",
         card(PAID_NOTICE, who="the bot, on Abdul's, the Owner's and Admin 2's phones", time="15:10"),
         receive="nothing on this phone — the Office phone does not get its own Paid notice; your record is the ✅ Paid card in step 6.",
         waits=True)}
@@ -876,6 +876,6 @@ def write(name, title, parts):
 
 
 if __name__ == "__main__":
-    write("PAY-2_GUIDE_WORKER.html", "Payments live test — Worker guide", build_worker())
+    write("PAY-2_GUIDE_OFFICER.html", "Payments live test — Operations Officer guide", build_worker())
     write("PAY-2_GUIDE_ADMIN.html", "Payments live test — Admin guide", build_admin())
     write("PAY-2_GUIDE_FINANCE.html", "Payments live test — Finance guide", build_finance())
