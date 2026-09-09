@@ -76,7 +76,6 @@ const branchOpsService = require('../services/branchOpsService');
 const approvalEvents = require('../events/approvalEvents');
 const auth = require('../middlewares/auth');
 const logger = require('../utils/logger');
-const { fmtQty } = require('../utils/format');
 
 const MAX_ITEMS = 20;
 const MAX_CARD_ITEMS = 15;  // cap item lines shown on the admin approval card
@@ -100,7 +99,9 @@ async function renderError(bot, chatId, userId, msg) {
   ]);
 }
 
-function fmtNgn(n) { return fmtQty(n, { maxFraction: 2 }); }
+// CUR-1 (side A): the one cash-book formatter — `₦` from money.expense, kobo
+// only when present. Shared with dailyBranchOpsFlow and the evening report.
+const { fmtNgn } = branchOpsService;
 
 // ---------------------------------------------------------------------------
 // Entry
@@ -137,10 +138,10 @@ function batchLines(session) {
   if (session.items.length) {
     lines.push(`*Batch so far (${session.items.length} item${session.items.length === 1 ? '' : 's'}):*`);
     for (const it of session.items) {
-      lines.push(`  ${KIND_ICON[it.kind] || '🧾'} ${escapeMd(it.title)} — ₦${fmtNgn(it.amount)}`);
+      lines.push(`  ${KIND_ICON[it.kind] || '🧾'} ${escapeMd(it.title)} — ${fmtNgn(it.amount)}`);
     }
     const total = session.items.reduce((s, it) => s + it.amount, 0);
-    lines.push(`  *Total: ₦${fmtNgn(total)}*`);
+    lines.push(`  *Total: ${fmtNgn(total)}*`);
   }
   return lines;
 }
@@ -160,8 +161,8 @@ async function renderCategoryPicker(bot, chatId, userId) {
       const branch = await branchOpsService.resolveBranch(userId);
       const rep = await branchOpsService.getExpenseDayReport({ branch });
       todayLine = rep.filed
-        ? `Recorded today: spent ₦${fmtNgn(rep.spent)} · balance ₦${fmtNgn(rep.balance)}`
-        : `Recorded today: nothing yet · balance ₦${fmtNgn(rep.balance)}`;
+        ? `Recorded today: spent ${fmtNgn(rep.spent)} · balance ${fmtNgn(rep.balance)}`
+        : `Recorded today: nothing yet · balance ${fmtNgn(rep.balance)}`;
       session._todayLine = todayLine;
       session._todayLineAt = Date.now();
       sessionStore.set(userId, session);
@@ -307,10 +308,10 @@ async function renderTitlePicker(bot, chatId, userId) {
   if (session.items.length) {
     lines.push(`*Batch so far (${session.items.length} item${session.items.length === 1 ? '' : 's'}):*`);
     for (const it of session.items) {
-      lines.push(`  • ${escapeMd(it.title)} — ₦${fmtNgn(it.amount)}`);
+      lines.push(`  • ${escapeMd(it.title)} — ${fmtNgn(it.amount)}`);
     }
     const total = session.items.reduce((s, it) => s + it.amount, 0);
-    lines.push(`  *Total: ₦${fmtNgn(total)}*`);
+    lines.push(`  *Total: ${fmtNgn(total)}*`);
     lines.push('');
     lines.push('Add another expense — pick a routine title or type a new one:');
   } else if (picks.length) {
@@ -439,7 +440,7 @@ async function renderAmountStep(bot, chatId, userId) {
   const rows = [];
   const suggest = session.pendingAmount;
   if (suggest != null && suggest > 0) {
-    rows.push([{ text: `✓ ₦${fmtNgn(suggest)} (last time)`, callback_data: 'ofex:useamt' }]);
+    rows.push([{ text: `✓ ${fmtNgn(suggest)} (last time)`, callback_data: 'ofex:useamt' }]);
   }
   rows.push(backRow());
   rows.push(cancelRow());
@@ -504,7 +505,7 @@ async function handleText(bot, msg) {
       session.step = 'pick_cat';
       sessionStore.set(userId, session);
       await render(bot, chatId, userId,
-        `➕ *Cash received — recorded*\n\n₦${fmtNgn(res.amount)} added (${escapeMd(res.branch)}).\nBalance in hand: *₦${fmtNgn(res.balance)}*`,
+        `➕ *Cash received — recorded*\n\n${fmtNgn(res.amount)} added (${escapeMd(res.branch)}).\nBalance in hand: *${fmtNgn(res.balance)}*`,
         [backRow(), menuRow()]);
     } catch (e) {
       await renderError(bot, chatId, userId, e.message);
@@ -515,7 +516,7 @@ async function handleText(bot, msg) {
   if (session.step === 'amount') {
     const v = parseFloat(raw.replace(/,/g, ''));
     if (!isFinite(v) || v <= 0 || v > branchOpsService.MAX_EXPENSE_AMOUNT) {
-      await renderError(bot, chatId, userId, `Amount must be > 0 and ≤ ₦${branchOpsService.MAX_EXPENSE_AMOUNT.toLocaleString()}.`);
+      await renderError(bot, chatId, userId, `Amount must be > 0 and ≤ ${fmtNgn(branchOpsService.MAX_EXPENSE_AMOUNT)}.`);
       return true;
     }
     await commitItem(bot, chatId, userId, +v.toFixed(2));
@@ -574,8 +575,8 @@ async function renderReview(bot, chatId, userId) {
     '',
     `Batch (${session.items.length} items, max reached):`,
   ];
-  for (const it of session.items) lines.push(`  ${KIND_ICON[it.kind] || '🧾'} ${escapeMd(it.title)} — ₦${fmtNgn(it.amount)}`);
-  lines.push(`  *Total: ₦${fmtNgn(total)}*`);
+  for (const it of session.items) lines.push(`  ${KIND_ICON[it.kind] || '🧾'} ${escapeMd(it.title)} — ${fmtNgn(it.amount)}`);
+  lines.push(`  *Total: ${fmtNgn(total)}*`);
   await render(bot, chatId, userId, lines.join('\n'), [
     [{ text: '✅ Submit batch', callback_data: 'ofex:submit' }],
     [{ text: '↩ Undo last',   callback_data: 'ofex:undo' }],
@@ -603,11 +604,11 @@ async function submit(bot, chatId, userId) {
     // Itemise the admin card so a spelling mistake is visible: the admin
     // can correct the title/amount on the BranchOpsLog sheet before
     // approving (approval only flips status, never rewrites the cells).
-    const itemLines = (items || session.items).map((it) => `${KIND_ICON[it.kind] || '🧾'} ${it.title} — ₦${fmtNgn(it.amount)}`);
+    const itemLines = (items || session.items).map((it) => `${KIND_ICON[it.kind] || '🧾'} ${it.title} — ${fmtNgn(it.amount)}`);
     const shown = itemLines.length > MAX_CARD_ITEMS
       ? itemLines.slice(0, MAX_CARD_ITEMS).concat([`…and ${itemLines.length - MAX_CARD_ITEMS} more`])
       : itemLines;
-    const cardSummary = `💸 Office expenses (${branch}) — ${itemLines.length} item(s), ₦${fmtNgn(total)}\n`
+    const cardSummary = `💸 Office expenses (${branch}) — ${itemLines.length} item(s), ${fmtNgn(total)}\n`
       + `${shown.join('\n')}`;
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId,
       await require('../services/approvalCards').resolveUserLabel(userId, bot),
@@ -618,7 +619,7 @@ async function submit(bot, chatId, userId) {
       '⏳ *Submitted for sign-off*\n\n'
       + `• Branch: *${branch}*\n`
       + `• Items: *${session.items.length}*\n`
-      + `• Total: *₦${fmtNgn(total)}*\n`
+      + `• Total: *${fmtNgn(total)}*\n`
       + `• Request: \`${requestId}\`\n\n`
       + '_Pending rows are visible in your branch panel under "Today\'s expenses → Pending". They flip to Approved once the admin signs off._',
       [

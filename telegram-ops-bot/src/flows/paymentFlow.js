@@ -377,6 +377,9 @@ async function submitRequest(bot, chatId, userId) {
         action: 'request_payment',
         payment_id: saved.payment_id,
         payee_name: r.account.owner_name,
+        // Carried on the queue row so the inbox / reminder rebuild
+        // (approvalCards → paymentCards) prints the same card as notify time.
+        payee_type: r.account.owner_type,
         amount_ngn: r.amount,
         account_number: r.account.account_number,
         bank: r.account.bank,

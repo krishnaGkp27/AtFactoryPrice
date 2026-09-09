@@ -195,6 +195,8 @@ test('PAY-1: a payment picks a registered account, then queues for dual admin', 
   await controller.handleCallbackQuery(bot, cb('pay:submit', ABDUL));
   assert.equal(QUEUED.length, 1);
   assert.equal(QUEUED[0].actionJSON.action, 'request_payment');
+  assert.equal(QUEUED[0].actionJSON.payee_type, 'employee',
+    'the queue row carries the payee kind so the inbox rebuild prints the notify-time card, not "(?)"');
   assert.equal(REQUESTS[0].status, 'pending_approval');
   assert.equal(REQUESTS[0].amount_ngn, 45000);
   assert.equal(REQUESTS[0].account_number, '0123456789',

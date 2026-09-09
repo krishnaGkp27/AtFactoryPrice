@@ -52,7 +52,6 @@ const { makeRenderer, rowsFor } = require('../utils/flowKit');
 const branchOpsService = require('../services/branchOpsService');
 const branchOpsLogRepository = require('../repositories/branchOpsLogRepository');
 const logger = require('../utils/logger');
-const { fmtQty } = require('../utils/format');
 
 // ---------------------------------------------------------------------------
 // Rendering helpers
@@ -76,7 +75,9 @@ async function renderError(bot, chatId, userId, msg) {
   ]);
 }
 
-function fmtNgn(n) { return fmtQty(n, { maxFraction: 2 }); }
+// CUR-1 (side A): the one cash-book formatter — `₦` from money.expense, kobo
+// only when present. Shared with officeExpenseFlow and the evening report.
+const { fmtNgn } = branchOpsService;
 
 // ---------------------------------------------------------------------------
 // Entry — resolves branch, checks if already open, then either renders
@@ -194,7 +195,7 @@ async function renderSummaryStep(bot, chatId, userId) {
     `🌅 *Open Branch — ${session.branch}*`,
     '',
     `• Camera: ${session.cameraOk ? '✅ Working' : '⚠️ Issue' + (session.cameraNote ? ` (${session.cameraNote})` : '')}`,
-    `• Opening cash: ${session.openingCash == null ? '_skipped_' : `₦${fmtNgn(session.openingCash)}`}`,
+    `• Opening cash: ${session.openingCash == null ? '_skipped_' : `${fmtNgn(session.openingCash)}`}`,
     '',
     'Step 3 of 3 — *Yesterday\'s carry-over*',
   ];
@@ -202,7 +203,7 @@ async function renderSummaryStep(bot, chatId, userId) {
     lines.push(`• Samples issued: ${ySum.pointers.samples_issued}`);
     lines.push(`• Receipts logged: ${ySum.pointers.receipts_logged}`);
     if (ySum.expenses.pending.count > 0) {
-      lines.push(`• Expenses still pending sign-off: *${ySum.expenses.pending.count}* (₦${fmtNgn(ySum.expenses.pending.total)})`);
+      lines.push(`• Expenses still pending sign-off: *${ySum.expenses.pending.count}* (${fmtNgn(ySum.expenses.pending.total)})`);
     }
   } else {
     lines.push('_No data from yesterday._');
@@ -255,16 +256,16 @@ async function renderStatusPanel(bot, chatId, userId) {
   lines.push(`🟢 *${session.branch} — open*`);
   lines.push('');
   lines.push(`• Date: ${today}`);
-  lines.push(`• Opening cash: ${summary.openingCash > 0 ? `₦${fmtNgn(summary.openingCash)}` : '_not logged_'}`);
+  lines.push(`• Opening cash: ${summary.openingCash > 0 ? `${fmtNgn(summary.openingCash)}` : '_not logged_'}`);
   if (summary.camera) {
     lines.push(`• Camera: ${summary.camera.ok ? '✅ OK' : '⚠️ Issue' + (summary.camera.notes ? ` — ${summary.camera.notes}` : '')}`);
   }
   lines.push('');
   if (summary.expenses.approved.count + summary.expenses.pending.count > 0) {
     lines.push('*Today\'s expenses*');
-    if (summary.expenses.approved.count) lines.push(`  • Approved: ${summary.expenses.approved.count} (₦${fmtNgn(summary.expenses.approved.total)})`);
-    if (summary.expenses.pending.count)  lines.push(`  • Pending:  ${summary.expenses.pending.count} (₦${fmtNgn(summary.expenses.pending.total)})`);
-    if (summary.expenses.rejected.count) lines.push(`  • Rejected: ${summary.expenses.rejected.count} (₦${fmtNgn(summary.expenses.rejected.total)})`);
+    if (summary.expenses.approved.count) lines.push(`  • Approved: ${summary.expenses.approved.count} (${fmtNgn(summary.expenses.approved.total)})`);
+    if (summary.expenses.pending.count)  lines.push(`  • Pending:  ${summary.expenses.pending.count} (${fmtNgn(summary.expenses.pending.total)})`);
+    if (summary.expenses.rejected.count) lines.push(`  • Rejected: ${summary.expenses.rejected.count} (${fmtNgn(summary.expenses.rejected.total)})`);
     lines.push('');
   }
   if (summary.pointers.samples_issued + summary.pointers.receipts_logged

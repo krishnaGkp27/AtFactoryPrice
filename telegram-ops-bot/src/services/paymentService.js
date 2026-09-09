@@ -24,6 +24,7 @@ const settingsRepository = require('../repositories/settingsRepository');
 const paymentAccountsRepo = require('../repositories/paymentAccountsRepository');
 const config = require('../config');
 const logger = require('../utils/logger');
+const money = require('../utils/money');
 
 /**
  * The department that owns payment execution. The owner maintains
@@ -33,10 +34,16 @@ const logger = require('../utils/logger');
  */
 const FINANCE_DEPARTMENT = 'Finance';
 
-/** Nigerian naira, grouped: 45000 → "₦45,000". */
+/** Sanity ceiling on a single payment request (a typo guard, not a policy). */
+const MAX_PAYMENT_NGN = 100_000_000;
+
+/**
+ * Nigerian naira, grouped: 45000 → "₦45,000". PAY-1 rounds to the naira.
+ * CUR-1 (side A): the symbol comes from `money.expense`, never the env.
+ */
 function fmtNaira(amount) {
   const n = Math.round(Number(amount) || 0);
-  return `₦${n.toLocaleString('en-NG')}`;
+  return money.expense(n);
 }
 
 /**
@@ -173,7 +180,7 @@ function validateAmount(raw) {
   if (!/^\d+(\.\d+)?$/.test(cleaned)) return { ok: false, reason: 'Enter the amount in figures, e.g. 45000.' };
   const n = Math.round(Number(cleaned));
   if (!n) return { ok: false, reason: 'The amount must be more than zero.' };
-  if (n > 100000000) return { ok: false, reason: 'That is over ₦100,000,000 — check the figure.' };
+  if (n > MAX_PAYMENT_NGN) return { ok: false, reason: `That is over ${money.expense(MAX_PAYMENT_NGN)} — check the figure.` };
   return { ok: true, value: n };
 }
 

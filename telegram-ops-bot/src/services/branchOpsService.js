@@ -39,6 +39,7 @@ const usersRepository = require('../repositories/usersRepository');
 const idGenerator = require('../utils/idGenerator');
 const riskEvaluate = require('../risk/evaluate');
 const logger = require('../utils/logger');
+const money = require('../utils/money');
 const { LAGOS_TZ } = require('../utils/dates');
 
 const MAX_EXPENSE_AMOUNT = 5_000_000;       // ₦5M sanity ceiling per single line
@@ -96,6 +97,22 @@ async function resolveBranch(userId) {
     logger.warn(`resolveBranch(${userId}) failed: ${e.message} — defaulting to HQ`);
     return 'HQ';
   }
+}
+
+/**
+ * EXP-1 cash-book figure (CUR-1 side A): `₦` via `money.expense`, kobo shown
+ * only when present — 800 → `₦800`, 1512.5 → `₦1,512.5`, 1512.25 →
+ * `₦1,512.25`. Every amount this service stores is already rounded to
+ * 2 dp (`toFixed(2)`), so "up to two decimals" is the whole domain;
+ * garbage renders `₦0`. Shared by the office-expense and daily-ops flows
+ * and the evening report so the three cannot drift.
+ */
+function fmtNgn(n) {
+  const v = Number(n);
+  const safe = Number.isFinite(v) ? v : 0;
+  const kobo = Math.round(Math.abs(safe) * 100) % 100;
+  const fraction = kobo === 0 ? 0 : (kobo % 10 === 0 ? 1 : 2);
+  return money.expense(safe, { fraction });
 }
 
 async function _resolveManager(userId) {
@@ -426,7 +443,7 @@ async function getExpenseQuickPicks(userId, opts = {}) {
 async function recordCashIn({ userId, amount, source }) {
   const v = Number(amount);
   if (!isFinite(v) || v <= 0 || v > MAX_OPENING_CASH) {
-    const err = new Error(`Cash amount must be > 0 and ≤ ₦${MAX_OPENING_CASH.toLocaleString()}.`);
+    const err = new Error(`Cash amount must be > 0 and ≤ ${money.expense(MAX_OPENING_CASH)}.`);
     err.code = 'BOPS_BAD_CASH';
     throw err;
   }
@@ -613,6 +630,7 @@ async function getDailySummary({ branch, date }) {
 }
 
 module.exports = {
+  fmtNgn,
   resolveBranch,
   openDay,
   submitExpenseBatch,

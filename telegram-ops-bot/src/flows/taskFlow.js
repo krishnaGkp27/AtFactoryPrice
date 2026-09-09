@@ -45,10 +45,12 @@ const auth = require('../middlewares/auth');
 const config = require('../config');
 const logger = require('../utils/logger');
 const adminFeed = require('../services/adminFeed');
-// taskFlow renders incentives in DMs/inline rows where the symbol form
-// ("₦5,000") reads better than the long form. Centralized helpers live in
-// utils/format and utils/telegramUI.
-const { fmtMoneyShort: fmtMoney } = require('../utils/format');
+// CUR-1 R11 — an incentive is money LEAVING the office (side A): the symbol
+// is pinned to ₦ by money.expense and the stored code is the literal NGN
+// from incentivesRepository, never the sales-side CURRENCY env.
+const money = require('../utils/money');
+const { INCENTIVE_CURRENCY } = incentivesRepository;
+function fmtIncentive(n) { return money.expense(n); }
 const { editOrSend, isNotModified } = require('../utils/telegramUI');
 
 const PAGE_SIZE = 8;
@@ -1015,7 +1017,7 @@ async function renderProposalCardForAssigner(bot, taskId, opts = {}) {
       const inc = await incentivesRepository.getByTaskId(taskId);
       if (inc) {
         incentiveSet = true;
-        incentiveLine = `\n💰 Incentive: *${fmtMoney(inc.amount, inc.currency)}*`;
+        incentiveLine = `\n💰 Incentive: *${fmtIncentive(inc.amount)}*`;
       } else {
         incentiveLine = `\n💰 Incentive: _not set yet_`;
       }
@@ -1326,7 +1328,7 @@ async function finalizeIncentive(bot, chatId, userId, amount) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== 'task_incentive_flow') return;
   const t = session.data;
-  const currency = config.currency || 'NGN';
+  const currency = INCENTIVE_CURRENCY;
   try {
     await incentivesRepository.setAmount({
       task_id: t.taskId,
@@ -1355,7 +1357,7 @@ async function finalizeIncentive(bot, chatId, userId, amount) {
   }
   // Legacy path (no card to return to) — just confirm and DM the doer.
   await editOrSend(bot, chatId, cardMsgId,
-    `💰 *Incentive saved*\n\n${escapeMd(t.taskTitle)}\nAmount: ${fmtMoney(amount, currency)}\n\n_Waiting on the doer\'s final OK._`,
+    `💰 *Incentive saved*\n\n${escapeMd(t.taskTitle)}\nAmount: ${fmtIncentive(amount)}\n\n_Waiting on the doer\'s final OK._`,
     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
   await dmDoerFinalAck(bot, t.taskId);
 }
@@ -1618,7 +1620,7 @@ async function dmDoerFinalAck(bot, taskId) {
       try {
         const inc = await incentivesRepository.getByTaskId(taskId);
         const amount = inc ? Number(inc.amount) : 0;
-        incentiveLine = `\n💰 *Incentive:* ${fmtMoney(amount, inc?.currency || config.currency || 'NGN')}`;
+        incentiveLine = `\n💰 *Incentive:* ${fmtIncentive(amount)}`;
       } catch (e) {
         logger.warn(`taskFlow.dmDoerFinalAck: incentive lookup failed: ${e.message}`);
       }
@@ -2302,7 +2304,7 @@ async function handleSignOff(bot, callbackQuery, taskId, approve, opts = {}) {
       } catch (e) { logger.warn(`taskFlow.handleSignOff(approve): incentive lifecycle: ${e.message}`); }
     }
     const assignerIncentiveLine = incentiveInfo
-      ? `\n💰 Incentive: ${fmtMoney(incentiveInfo.amount, incentiveInfo.currency)} — *queued for payout*`
+      ? `\n💰 Incentive: ${fmtIncentive(incentiveInfo.amount)} — *queued for payout*`
       : '';
     if (opts.afterRender) {
       // TSK-V3 — approving from the admin card re-renders the LIST with
@@ -2315,7 +2317,7 @@ async function handleSignOff(bot, callbackQuery, taskId, approve, opts = {}) {
     }
     try {
       const doerIncentiveLine = incentiveInfo
-        ? `\n💰 *Incentive earned:* ${fmtMoney(incentiveInfo.amount, incentiveInfo.currency)}  _(pending payout)_`
+        ? `\n💰 *Incentive earned:* ${fmtIncentive(incentiveInfo.amount)}  _(pending payout)_`
         : '';
       await bot.sendMessage(task.assigned_to,
         `✅ *Task completed*\n\n${escapeMd(task.title)}${doerIncentiveLine}`,
@@ -3140,12 +3142,9 @@ async function showPayouts(bot, chatId, userId, messageId) {
   if (!queue.length) {
     lines.push('_No incentives are awaiting payout._', '');
   } else {
-    const totalByCcy = new Map();
-    for (const i of queue) {
-      const c = i.currency || 'NGN';
-      totalByCcy.set(c, (totalByCcy.get(c) || 0) + (Number(i.amount) || 0));
-    }
-    const totals = [...totalByCcy.entries()].map(([c, n]) => fmtMoney(n, c)).join(' · ');
+    // R11: every row is naira (the currency column is a constant), so the
+    // queue has ONE total.
+    const totals = fmtIncentive(queue.reduce((s, i) => s + (Number(i.amount) || 0), 0));
     lines.push(`📊 *${queue.length} incentive${queue.length === 1 ? '' : 's'}* awaiting · ${totals}`, '');
   }
 
@@ -3161,7 +3160,7 @@ async function showPayouts(bot, chatId, userId, messageId) {
         if (doer) doerName = doer.name || task.assigned_to;
       }
     } catch (_) { /* keep fallbacks */ }
-    const amt = fmtMoney(inc.amount, inc.currency);
+    const amt = fmtIncentive(inc.amount);
     lines.push(`• ${escapeMd(title)} → ${escapeMd(doerName)} · *${amt}*  \`${inc.task_id}\``);
     rows.push([
       { text: `✅ Mark paid — ${truncate(title, 22)} (${amt})`, callback_data: `tsk:py:p:${inc.task_id}` },
@@ -3176,7 +3175,7 @@ async function showPayouts(bot, chatId, userId, messageId) {
         const task = await tasksRepository.getById(inc.task_id);
         if (task) title = task.title || inc.task_id;
       } catch (_) { /* fallback */ }
-      const amt = fmtMoney(inc.paid_amount != null ? inc.paid_amount : inc.amount, inc.currency);
+      const amt = fmtIncentive(inc.paid_amount != null ? inc.paid_amount : inc.amount);
       const when = inc.paid_at ? fmtDate(inc.paid_at) : '';
       lines.push(`  ${escapeMd(title)} · *${amt}*${when ? ' · ' + when : ''}`);
     }
@@ -3220,7 +3219,7 @@ async function handleMarkPaid(bot, callbackQuery, taskId) {
 
   if (incentive.paid_status === 'paid') {
     await editOrSend(bot, chatId, messageId,
-      `ℹ️ ${fmtMoney(incentive.amount, incentive.currency)} for \`${taskId}\` is already marked paid.`,
+      `ℹ️ ${fmtIncentive(incentive.amount)} for \`${taskId}\` is already marked paid.`,
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [navFooterRow()] } });
     return;
   }
@@ -3277,7 +3276,7 @@ async function handleMarkPaid(bot, callbackQuery, taskId) {
   if (doerId) {
     try {
       await bot.sendMessage(doerId,
-        `💰 *Incentive paid*\n\n${escapeMd(taskTitle)}\nAmount: *${fmtMoney(incentive.amount, incentive.currency)}*\n\n_Thank you for the work._`,
+        `💰 *Incentive paid*\n\n${escapeMd(taskTitle)}\nAmount: *${fmtIncentive(incentive.amount)}*\n\n_Thank you for the work._`,
         { parse_mode: 'Markdown' });
     } catch (e) {
       logger.warn(`taskFlow.handleMarkPaid: DM doer failed: ${e.message}`);
@@ -3287,7 +3286,7 @@ async function handleMarkPaid(bot, callbackQuery, taskId) {
   // T2: feed event for opted-in admins (default ON, finance group).
   try {
     await adminFeed.notify(bot, 'payout.paid',
-      `💰 *Payout disbursed*\n\n${escapeMd(taskTitle)}\nAmount: *${fmtMoney(incentive.amount, incentive.currency)}*\nID: \`${taskId}\``,
+      `💰 *Payout disbursed*\n\n${escapeMd(taskTitle)}\nAmount: *${fmtIncentive(incentive.amount)}*\nID: \`${taskId}\``,
       { parse_mode: 'Markdown' }, { excludeUserId: userId });
   } catch (e) {
     logger.warn(`taskFlow.handleMarkPaid: adminFeed payout.paid: ${e.message}`);

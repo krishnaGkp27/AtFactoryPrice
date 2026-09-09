@@ -58,7 +58,9 @@ function normalizeTime(raw, fallback) {
   if (/^\d{3,4}$/.test(s)) return `${s.slice(0, -2).padStart(2, '0')}:${s.slice(-2)}`;
   return fallback;
 }
-const ngn = (n) => `₦${Number(n || 0).toLocaleString('en-NG')}`;
+// CUR-1 (side A): `₦` from money.expense via the shared cash-book formatter;
+// every figure here is a 2-dp sheet value, so the output is unchanged.
+const ngn = branchOpsService.fmtNgn;
 
 /**
  * One branch's 🌇 report text (pure formatting over the report shape).

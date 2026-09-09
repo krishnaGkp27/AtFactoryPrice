@@ -8,7 +8,7 @@
  * Schema (10 columns, A..J):
  *   A  task_id
  *   B  amount               (numeric, in `currency`)
- *   C  currency             (default 'NGN')
+ *   C  currency             (always the literal 'NGN' — CUR-1 R11)
  *   D  set_by               (user_id who attached the incentive)
  *   E  set_at               (ISO timestamp)
  *   F  doer_confirmed_at    (ISO timestamp; when doer final-acked)
@@ -19,9 +19,17 @@
  */
 
 const sheets = require('./sheetsClient');
-const config = require('../config');
 
 const SHEET = 'Incentives';
+
+/**
+ * CUR-1 R11 (owner, 08-Sep-2026): task incentives are money LEAVING the
+ * office (side A). The `currency` column is the literal `NGN` — never the
+ * sales-side `CURRENCY` env — so a sales-side env change can neither relabel
+ * a payout nor write a mixed-currency row. The symbol on every incentive
+ * surface is pinned to `₦` by `money.expense` in taskFlow.
+ */
+const INCENTIVE_CURRENCY = 'NGN';
 const READ_RANGE = 'A2:J';
 const NUM_COLS = 10;
 
@@ -33,7 +41,7 @@ function parse(r, rowIndex) {
     rowIndex,
     task_id: str(r[0]),
     amount: floatOr(r[1], 0),
-    currency: str(r[2]) || (config.currency || 'NGN'),
+    currency: str(r[2]) || INCENTIVE_CURRENCY,
     set_by: str(r[3]),
     set_at: str(r[4]),
     doer_confirmed_at: str(r[5]),
@@ -58,12 +66,16 @@ async function getByTaskId(taskId) {
 /**
  * Upsert (one row per task). If a row for `task_id` already exists,
  * update its amount/currency/set_by/set_at; otherwise append a fresh row.
+ *
+ * The `currency` argument is accepted for call-site compatibility but the
+ * cell written is ALWAYS `INCENTIVE_CURRENCY` (R11) — the sheet can never
+ * hold a second code.
  */
-async function setAmount({ task_id, amount, currency, set_by, set_at, notes }) {
+async function setAmount({ task_id, amount, set_by, set_at, notes }) {
   if (!task_id) throw new Error('incentivesRepository.setAmount: task_id required');
   const existing = await getByTaskId(task_id);
   const now = set_at || new Date().toISOString();
-  const cur = currency || config.currency || 'NGN';
+  const cur = INCENTIVE_CURRENCY;
   if (existing) {
     await sheets.updateRange(SHEET, `B${existing.rowIndex}:E${existing.rowIndex}`,
       [[String(amount ?? 0), cur, String(set_by || ''), now]]);
@@ -123,6 +135,7 @@ async function cancel(taskId, notes) {
 
 module.exports = {
   SHEET,
+  INCENTIVE_CURRENCY,
   getAll,
   getByTaskId,
   setAmount,
