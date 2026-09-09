@@ -1,6 +1,8 @@
 # ISC-1 — Inventory sheet cleanup: analysis and correction plan
 
-**Status: ANALYSIS + PLAN, no code (08-Sep-2026).** Source: the owner's
+**Status: Phases 1, 2a–2d and 3a–3b SHIPPED 09-Sep-2026** (six code commits on
+top of the 08-Sep analysis; the `--commit` runs and Phase 0 are the owner's —
+§7 has the run order). Source: the owner's
 `Inventory_Sept4_1.pdf` (33 pages, the bot-managed `Inventory` tab as of
 04-Sep-2026), parsed offline row by row. Nothing here touched the live
 sheet. Owner rulings R1–R11 (§5) unlock the guarded one-offs in §4.
@@ -216,39 +218,40 @@ skipped and reported, never guessed.
 - 0c. Rule R1–R11 (§5).
 
 **Phase 1 — agent, read-only, can start now**
-- 1a. `scripts/audit-inventory-sheet.js` — this census against the LIVE
+- 1a. **SHIPPED `c592df88`** — `scripts/audit-inventory-sheet.js` — this census against the LIVE
   sheet, reading cells UNFORMATTED so text-vs-date is known for certain,
   emitting the row lists each one-off consumes (and re-runnable after each
   to confirm zero remaining).
-- 1b. Sentinel checks **C9** (sold row whose `SoldDate` does not
+- 1b. **SHIPPED `c592df88`** — Sentinel checks **C9** (sold row whose `SoldDate` does not
   normalise), **C10** (duplicate `bale_uid`), **C11** (two spellings of
   one shade inside a design, e.g. `4-5` vs `4-5.`). Read-only, daily,
   admin DM — the hand-edit alarm that does not exist today.
 
 **Phase 2 — agent, guarded one-offs (dry-run → `--commit`)**
-- 2a. `repair-inventory-sold-dates.js` — the 105 word-prefixed M cells →
+- 2a. **SHIPPED `00730bfc`** — `repair-inventory-sold-dates.js` — the 105 word-prefixed M cells →
   ISO (the normaliser must agree on the day both sides); also any M cell
   stored as TEXT but parseable, rewritten so Sheets stores a real date.
-- 2b. `canonicalise-sold-to.js` — for each cluster ruled in R1–R3: run
+- 2b. **SHIPPED `4ff74790`** — `canonicalise-sold-to.js` — for each cluster ruled in R1–R3: run
   Merge Customers in-bot (aliases keep history resolvable), then rewrite
   column L to the canonical spelling; guard: the cell must equal one of
   the ruled variants exactly.
-- 2c. Legacy uid backfill — change `backfillLegacyBales` to mint real ids
+- 2c. **SHIPPED `d28c9c06`** (`scripts/backfill-legacy-uids.js`) — Legacy uid backfill — change `backfillLegacyBales` to mint real ids
   (`BAL-<yyyymmdd>-<pkg>-<rand4>`) instead of the position-bearing
   `BAL-LEGACY-<row>-<pkg>`, run it once (2,853 rows), and re-mint the
   duplicate on 864 #5. After this, sorting is safe. Code change +
   smoke S10.6 pin update.
-- 2d. Shade spellings per R4; the three blank `9043-A` shades from you.
-- 2e. Bale 6497 (`SAMPLE`) per R5 — only AFTER 2c if it is a row delete.
-- 2f. The 64 oversize thans through EDB-1 Edit Bale, each with its label
+- 2d. **SHIPPED `408255d2`** (`scripts/repair-shade-spellings.js`) — Shade spellings per R4; the three blank `9043-A` shades from you.
+- 2e. **OWNER, by hand** — Bale 6497 (`SAMPLE`) per R5 — only AFTER 2c if it is a row delete.
+- 2f. **OWNER** — The 64 oversize thans through EDB-1 Edit Bale, each with its label
   photo (dual-admin, already shipped) — no script, this is the door.
 
 **Phase 3 — code so it stays clean**
-- 3a. Retire U and Q (§3) — stop reading/writing, mirror skips them.
-- 3b. BUSINESS_RULES: a short "hand edits to Inventory" rule (dates ISO,
+- 3a. **SHIPPED `cf8e6b18`** — Retire U and Q (§3): never written again, read with
+  the old defaults; the mirror is untouched (nulls are fine).
+- 3b. **SHIPPED with this docs pass (BUSINESS_RULES §1e)** — a short "hand edits to Inventory" rule (dates ISO,
   buyer spelled as in Customers, no sorting, shade spelling matches the
   design's existing chips) — needs your go, it is a rule.
-- 3c. Design category: seed the 33 uncategorised designs through the
+- 3c. **OWNER** — Design category: seed the 33 uncategorised designs through the
   DCAT-1 door (dual-admin) or a one-off list from you.
 
 ---
@@ -284,3 +287,43 @@ Parsed with `pdftotext -layout`, header positions per page, one token per
 cell, 6,153 rows recovered with zero unparseable yardage. Counts are exact
 for the PDF; text-vs-date cell TYPE cannot be seen in a PDF, which is why
 Phase 1a reads the live sheet unformatted before any one-off writes.
+
+---
+
+## 7 · Status and owner run order (09-Sep-2026)
+
+Six commits landed on 09-Sep: `c592df88` (audit module + script + sentinel
+C9–C11), `00730bfc` (2a), `4ff74790` (2b), `408255d2` (2d), `d28c9c06` (2c),
+`cf8e6b18` (3a). Every script is dry-run by default, prints its full plan,
+re-reads each cell right before writing, skips and reports anything that
+drifted, and exits non-zero on a hard failure. None has touched the live
+sheet: the owner runs them, in this order, each dry-run first:
+
+| # | Command | Expect (from the 04-Sep census) |
+|---|---|---|
+| 0 | `node scripts/format-date-columns.js --commit` | K and M display one way (pending since 14-Aug; 2a assumes it ran) |
+| 1 | `node scripts/audit-inventory-sheet.js --out /tmp/isc1` | read-only; counts should match §2 (105 unreadable sale dates, 2,853 legacy rows, 1 duplicate uid, 64 oversize thans, 374 sold at ₦0); `/tmp/isc1/*.json` lists every row |
+| 2 | `node scripts/repair-inventory-sold-dates.js` → `--design 44200` rehearsal → `--commit` | 105 rows planned (reason a) plus any text-typed date cells (reason b); after the write it re-reads M and verifies each cell became a date cell reading the same day |
+| 3 | In-bot 🔀 Merge Customers (dual-admin): `Awurawu` → `Awunawu`; `madam oshodi`, `oshodi madam`, `Oshodi alaja` → the `Alhaja oshodi` row. Then `node scripts/canonicalise-sold-to.js` → `--commit` | until the merges exist every cluster prints BLOCKED — run Merge Customers first and writes nothing; per-spelling counts to cross-check: 205/30/15 and 75/25/20/50 |
+| 4 | `node scripts/repair-shade-spellings.js --design 75142` → `--commit` | 15 rows: `2-6.`/`4-5.`/`7-3.` lose the dot; blank-shade rows are listed, never filled |
+| 5 | `node scripts/backfill-legacy-uids.js` → `--commit` | backfill matched 2,853, dedupe matched 1 (77014/864 than #5); ends with blank-R rows 0 and duplicate uids 0. **Do not sort or insert rows before this.** Check the approval inbox first: a pending ✏️ Edit Bale on a Mar26 bale carries the old position id and will refuse after the run — approve it before, or re-raise after |
+| 6 | Bale 6497 `SAMPLE / SHIPMENT` — delete the row by hand (R5), only after step 5 | the sheet loses one 11-yd placeholder |
+| 7 | The 64 oversize thans through ✏️ Edit Bale, label photo each (`docs/ISC-1_ROW_LISTS_2026-09-04.md` §A) | dual-admin each |
+| 8 | `node scripts/audit-inventory-sheet.js` again | C9/C10/C11 sections empty |
+
+What changed in the bot itself (already live once deployed):
+
+- The nightly sentinel now runs C9 (unreadable sale date, aggregated: total
+  + 5 examples), C10 (duplicate uid) and C11 (two spellings of one shade in
+  a design). Expect a C9 DM naming 105 rows and a C10 DM for 864 on the
+  first sweep, until steps 2 and 5 run.
+- New Inventory rows from every door (receive goods, bulk receive, Edit
+  Bale's added than, the CLI import) leave column Q blank instead of
+  `fabric`; readers still see `fabric` through the parser default. Column U
+  was already never written.
+- `backfillLegacyBales` now mints the same position-free ids as intake and
+  writes column R only (S stays blank; the parser falls back to K).
+
+Still open for the owner: R3 (Ketu — the default map does not touch it),
+R6 (suffix designs with blank shade), R7 (₦0 sales, deferred), R10, R11,
+and 3c (the category list for 33 designs).

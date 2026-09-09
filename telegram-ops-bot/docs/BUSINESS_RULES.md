@@ -106,6 +106,39 @@ what, why (incident), where enforced.
 - Enforced: `flows/editBaleFlow.js`, `services/baleEditService.js`,
   `risk/evaluate.js` (ALWAYS + DUAL). Spec: `specs/EDB-1_EDIT_BALE.md`.
 
+## 1e · Hand edits to the Inventory sheet keep the bot's grammar
+
+**Locked 08-Sep-2026 (owner: "Go with your plan in phases", ISC-1).**
+
+The Inventory sheet is the single source of truth and the owner edits it
+by hand (rule 1d). The 04-Sep export showed what a free hand does over
+six months: 105 sold rows dated `cashmere 12-February-2026` (unreadable
+to every date window), one shade spelled `4-5.` beside `4-5`, one buyer
+under four spellings, and 2,853 rows whose identity was their row
+position. A hand edit is welcome; it must speak the bot's grammar:
+
+- **Dates** (DateReceived K, SoldDate M): one date per cell, nothing else
+  in the cell — type `2026-02-12` (or any shape the normaliser reads:
+  `12-February-2026`, `12/02/2026`); never a word in front of it. The
+  cell's DISPLAY is a column format, not something typed per row.
+- **Buyer** (SoldTo L): spelled exactly as the Customers row — copy it,
+  do not retype it. A new spelling is a new person to seven readers.
+- **Shade** (E): match the spelling the design already uses (the chips in
+  the shade picker are the reference); no trailing dots, no free words.
+- **Never sort or insert rows** while any row has a blank `bale_uid` (R);
+  after ISC-1's backfill every row carries a permanent id and sorting is
+  safe. Append at the bottom, never insert (rule 1d).
+- **Never reformat column V** (`arrival_batch`) or write a container label
+  in a new shape (audit F3): a text label beside date-typed cells splits
+  one container into two.
+- **Price** (J) is a number or blank — never text, never a symbol.
+- The sentinel now reads the sheet nightly for exactly these slips
+  (C9 unreadable sale date, C10 duplicate uid, C11 two spellings of one
+  shade) and DMs the admins; the audit script lists every row on demand.
+- Enforced: `services/inventoryAudit.js`, `services/consistencySentinel.js`
+  (C9–C11), `scripts/audit-inventory-sheet.js`. Spec:
+  `specs/ISC-1_INVENTORY_SHEET_CLEANUP.md`.
+
 ## 2 · The bot NEVER selects physical stock
 
 **Locked 02-Aug-2026 (TRF-15), after transfer 02Aug·01** — FIFO pre-ticks
@@ -828,4 +861,5 @@ what value will fit in (I think we have a Railway variable)."*
 | 08-Sep-2026 | Expenses and sale invoices printed money the same way — ₦ inline at dozens of sites; the owner separated the two sides: expenses keep ₦, sale invoices and Inventory-changing outputs show a bare number with the unit set by management through the env | §17 (CUR-1 research pending) |
 | 09-Sep-2026 | A customer copy of an invoice may be converted by a rate multiplier; had the factor been applied at read time from a Settings cell, every past invoice would re-price when the cell changed, and a multiplied figure written into the Invoices row would have put the sheet at odds with the ledger and Transactions | §17 amendments (CUR-1 release A, CUR-2 §7 freeze rule: base figures on the row, the factor alone in `Invoices.rate_multiplier`, document = stored base × stored factor) |
 
+| 08-Sep-2026 | The Inventory export showed five SoldDate shapes (105 cells with a word in front of the date, unreadable to every window), one buyer under four spellings, `4-5.` beside `4-5`, 2,853 rows identified only by row position, one duplicate uid, 374 sold rows at zero price — all hand edits nothing reported | §1e (ISC-1: audit module, sentinel C9–C11, guarded one-offs) |
 When an incident spawns a new rule: fix, spec, then add the rule HERE.

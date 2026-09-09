@@ -124,7 +124,7 @@ money semantics — and a decision about the rows already written.
 | **Approval reminder** — re-sends the original card, "still waiting", live buttons. **Covers pending payment approvals.** | every ~6 h | all admins except the requester | `REMINDER_HOURS_ADMIN`, else `APPROVAL_REMINDER_HOURS` = **6** |
 | **Morning digest** | 10:00 Lagos | all admins | `DIGEST_ENABLED` = 1, but **no money category exists**; `DIGEST_APPROVALS` = **0 OFF** |
 | **Order reminder** (mentions `Payment: PAID/UNPAID`) | hourly sweep | the order's salesperson | needs `REMINDER_HOURS.<Dept>` — **absent = OFF** |
-| **Consistency Sentinel** | 20:00 Lagos | all admins | `SENTINEL_ENABLED` = 1 — **all eight checks are stock/queue; none touch money** |
+| **Consistency Sentinel** | 20:00 Lagos | all admins | `SENTINEL_ENABLED` = 1 — **all eleven checks (C9–C11 added 09-Sep-2026 by ISC-1) are stock/queue; none touch money** |
 
 ### Event-driven (a human tap is always the trigger)
 

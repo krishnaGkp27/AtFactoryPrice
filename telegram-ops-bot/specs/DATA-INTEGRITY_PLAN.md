@@ -133,6 +133,9 @@ repair path.
 | C5 | every Inventory `soldTo` resolves via customerEntity (canonical + aliases) | phantom-customer forks, at fork time not invoice time |
 | C6 | duplicate LIVE printed numbers per warehouse | folds boot-time `baleAuditReport` into the same report |
 | C7 | requestId uniqueness across ALL approval families | restart-counter collisions beyond TR-* |
+| C9 | (ISC-1, 09-Sep-2026) every sold row's `SoldDate` normalises to an ISO day — aggregated, total + 5 examples | hand-typed dates with a word in front (`cashmere 12-February-2026`) that fall out of every window |
+| C10 | (ISC-1) every real `bale_uid` sits on exactly one row | uid collisions that make two thans one to uid-scoped doors |
+| C11 | (ISC-1) one spelling per shade inside a design (`4-5` vs `4-5.`) | duplicate chips in every shade picker |
 
 **Delivery:** nightly scheduled run + **🩺 Data Health** admin tile
 (flow module `snt:` namespace, activityRegistry entry, one `act:` case +
