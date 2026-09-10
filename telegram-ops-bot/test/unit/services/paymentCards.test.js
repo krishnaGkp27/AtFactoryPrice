@@ -131,6 +131,27 @@ test('PAY-2: sendFinanceCard resolves the reason and the requester\'s name, and 
   assert.deepEqual(ev.detail, { source: 'users_finance' });
 });
 
+test('PAY-2/S: sendFinanceCard prefers the row\'s own reason cell over the payload and Postgres', async () => {
+  seed({ reason: 'From column S' });
+  const origPg = reasonsRepo.forPayment;
+  reasonsRepo.forPayment = async () => ({ reason_text: 'From Postgres' });
+  try {
+    const bot = createFakeBot();
+    await paymentCards.sendFinanceCard(bot, ROW.payment_id);
+    const text = bot.callsTo('sendMessage')[0].args.text;
+    assert.match(text, /📝 From column S/, 'the sheet row is the complete record (owner, 10-Sep-2026)');
+    assert.doesNotMatch(text, /From Postgres|Transport to Idumota/);
+
+    // No cell on the row → Postgres before the payload.
+    seed();
+    const bot2 = createFakeBot();
+    await paymentCards.sendFinanceCard(bot2, ROW.payment_id);
+    assert.match(bot2.callsTo('sendMessage')[0].args.text, /📝 From Postgres/, 'the buffer when the sheet has none');
+  } finally {
+    reasonsRepo.forPayment = origPg;
+  }
+});
+
 test('PAY-2: the reminder sweep logs its re-send as reminder_sent; a queue re-open goes to one chat only', async () => {
   seed();
   process.env.FINANCE_IDS = '555,666';

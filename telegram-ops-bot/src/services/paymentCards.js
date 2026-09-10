@@ -31,8 +31,9 @@ function accountLine(pay) {
  * @param {object} pay a PaymentRequests row (+ optional approved_by_name,
  *   raised_by_name resolved by the caller)
  * @param {object} [head] paymentRecipients().head, to render its warning
- * @param {{reason?:string}} [extra] the reason, read from the queue payload
- *   or `payment_reasons` by the caller; falls back to `pay.reason`
+ * @param {{reason?:string}} [extra] the reason as resolved by the caller
+ *   (`paymentService.reasonFor`: the row's own `reason` cell → Postgres
+ *   `payment_reasons` → the queue payload); falls back to `pay.reason`
  */
 function buildFinanceCard(pay, head, extra = {}) {
   const reason = extra.reason !== undefined ? extra.reason : pay.reason;

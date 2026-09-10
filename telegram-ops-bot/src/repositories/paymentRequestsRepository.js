@@ -27,6 +27,13 @@
  *   O proof_file_id        optional transfer proof attached at Mark Done
  *   P done_by              Q done_at (Lagos wall-clock)
  *   R decline_reason       required text when finance declines
+ *   S reason               PAY-2 — what the payment is for, as typed
+ *                          (owner ruling 10-Sep-2026: the sheet row is the
+ *                          COMPLETE record of an approved / paid request;
+ *                          Postgres `payment_reasons` stays as the in-flight
+ *                          buffer and analysis index). Trailing column,
+ *                          written at raise; backfilled at approval from the
+ *                          queue payload for rows raised before it existed.
  */
 
 const sheets = require('./sheetsClient');
@@ -41,7 +48,13 @@ const HEADERS = [
   'approval_request_id', 'approved_by', 'status',
   'bill_file_id', 'proof_file_id',
   'done_by', 'done_at', 'decline_reason',
+  // PAY-2 (10-Sep-2026) — the ONE trailing column added after the sheet
+  // went live. Append-only: nothing before it may move or be renamed.
+  'reason',
 ];
+
+function colLetter(i) { return String.fromCharCode('A'.charCodeAt(0) + i); }
+const LAST_COL = colLetter(HEADERS.length - 1);
 
 const STATUSES = ['pending_approval', 'approved', 'done', 'declined', 'rejected'];
 
@@ -77,15 +90,29 @@ function parse(r, rowIndex) {
     done_by: str(r[15]),
     done_at: str(r[16]),
     decline_reason: str(r[17]),
+    // A legacy 18-cell row (raised before column S existed) reads ''.
+    reason: str(r[18]),
   };
 }
 
 let _headerReady = false;
 async function ensureHeader() {
   if (_headerReady) return;
-  const rows = await sheets.readRange(SHEET, 'A1:R1');
-  if (!rows.length || (rows[0] || []).length < HEADERS.length) {
-    await sheets.updateRange(SHEET, 'A1:R1', [HEADERS]);
+  // Both bounds derive from HEADERS (the invoicesRepository pattern): a
+  // live sheet that already carries the 18 PAY-1 columns is WIDENED to
+  // name column S, not judged complete. Only the header row is ever
+  // written here, and only the cells that are missing — existing header
+  // cells and every data row are untouched.
+  const rows = await sheets.readRange(SHEET, `A1:${LAST_COL}1`);
+  const head = rows.length ? rows[0] : [];
+  // Width = position of the last NAMED header cell + 1 (the API trims
+  // trailing blanks; a blank cell inside the range still counts as width).
+  let have = 0;
+  head.forEach((c, i) => { if (str(c)) have = i + 1; });
+  if (!have) {
+    await sheets.updateRange(SHEET, `A1:${LAST_COL}1`, [HEADERS]);
+  } else if (have < HEADERS.length) {
+    await sheets.updateRange(SHEET, `${colLetter(have)}1:${LAST_COL}1`, [HEADERS.slice(have)]);
   }
   _headerReady = true;
 }
@@ -95,7 +122,7 @@ async function getAll() {
   if (_cache && now - _cacheTs < CACHE_TTL_MS) return [..._cache];
   let rows;
   try {
-    rows = await sheets.readRange(SHEET, 'A2:R');
+    rows = await sheets.readRange(SHEET, `A2:${LAST_COL}`);
   } catch (_) {
     return [];
   }
@@ -154,6 +181,7 @@ async function append(entry) {
     str(entry.done_by),
     str(entry.done_at),
     str(entry.decline_reason),
+    str(entry.reason),
   ]]);
   invalidateCache();
   return { ...entry, payment_id: paymentId, raised_at: now };
@@ -164,7 +192,12 @@ async function append(entry) {
  * written; the raise-time snapshot (A–J) is never touched here, so no
  * later step can rewrite what was asked for or who asked.
  *
- * @param {object} patch {status, approved_by, proof_file_id, done_by, done_at, decline_reason}
+ * `reason` (column S) is written ONLY when the patch names it — the
+ * approval-time backfill for rows raised before the column existed. It
+ * gets its own single-cell range so the L–M and O–R writes stay exactly
+ * as they were.
+ *
+ * @param {object} patch {status, approved_by, proof_file_id, done_by, done_at, decline_reason, reason}
  */
 async function update(paymentId, patch = {}) {
   const row = await findById(paymentId);
@@ -183,6 +216,9 @@ async function update(paymentId, patch = {}) {
         str(merged.done_at), str(merged.decline_reason),
       ]],
     },
+    ...(patch.reason !== undefined
+      ? [{ range: `S${row.rowIndex}`, values: [[str(merged.reason)]] }]
+      : []),
   ]);
   invalidateCache();
   return merged;
@@ -201,4 +237,6 @@ module.exports = {
   update,
   ensureHeader,
   invalidateCache,
+  /** @internal test seam — the header guard is per-process. */
+  _resetHeaderGuard: () => { _headerReady = false; },
 };

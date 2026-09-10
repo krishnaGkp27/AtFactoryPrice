@@ -1629,7 +1629,13 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       // named by approverStamp exactly as APR-1 names them in column H.
       const stamp = require('./approverStamp');
       const pairLabel = await paymentApproverPair(aj, approvedBy);
-      await paymentRequestsRepo.update(pay.payment_id, { status: 'approved', approved_by: pairLabel });
+      // Owner ruling 10-Sep-2026: the sheet row is the complete record of
+      // an approved request. A row raised before column S existed has no
+      // reason cell — backfill it from the queue payload in the same
+      // write. A row that already carries one is left exactly as raised.
+      const patch = { status: 'approved', approved_by: pairLabel };
+      if (!pay.reason && aj.reason) patch.reason = String(aj.reason);
+      await paymentRequestsRepo.update(pay.payment_id, patch);
       // The trail row rides AFTER the sheet write and fails open (§1).
       await recordPaymentEvent({
         paymentId: pay.payment_id, approvalRequestId: requestId, kind: 'approved',

@@ -233,9 +233,11 @@ function validateReason(raw) {
 }
 
 /**
- * PAY-2 §1 — the reason for ONE payment: the ApprovalQueue payload (the
- * existing raw record) first, then the Postgres `payment_reasons` row.
- * Never throws; '' when neither knows.
+ * PAY-2 — the reason for ONE payment, in the owner's order (10-Sep-2026):
+ * the PaymentRequests row's own `reason` cell (column S — the sheet is
+ * the complete record of an approved / paid request), then the Postgres
+ * `payment_reasons` buffer, then the ApprovalQueue payload for rows that
+ * predate both. Never throws; '' when nobody knows.
  *
  * @param {object} pay a PaymentRequests row (needs approval_request_id / payment_id)
  * @returns {Promise<string>}
@@ -243,6 +245,10 @@ function validateReason(raw) {
 async function reasonFor(pay) {
   if (!pay) return '';
   if (pay.reason) return String(pay.reason);
+  try {
+    const pg = await paymentReasonsRepository.forPayment(pay.payment_id);
+    if (pg && pg.reason_text) return String(pg.reason_text);
+  } catch (_) { /* fail-open: the payload copy is still there */ }
   if (pay.approval_request_id) {
     try {
       const row = await approvalQueueRepository.getByRequestId(pay.approval_request_id);
@@ -252,16 +258,14 @@ async function reasonFor(pay) {
       logger.warn(`paymentService.reasonFor: queue read failed — ${e.message}`);
     }
   }
-  try {
-    const pg = await paymentReasonsRepository.forPayment(pay.payment_id);
-    if (pg && pg.reason_text) return String(pg.reason_text);
-  } catch (_) { /* fail-open: the payload is the record of truth */ }
   return '';
 }
 
 /**
- * The reasons for MANY rows (📋 My requests, the finance queue): one
- * ApprovalQueue read indexed by request id, Postgres for the leftovers.
+ * The reasons for MANY rows (📋 My requests, the finance queue), in the
+ * same order as `reasonFor`: the row's own cell first (no read at all
+ * for a row raised after column S), Postgres next, and ONE ApprovalQueue
+ * read — taken only when some row still needs it — for the leftovers.
  *
  * @param {object[]} pays PaymentRequests rows
  * @returns {Promise<Map<string,string>>} payment_id → reason ('' when unknown)
@@ -270,16 +274,9 @@ async function reasonsFor(pays) {
   const out = new Map();
   const list = (pays || []).filter(Boolean);
   if (!list.length) return out;
-  let byRequest = new Map();
-  try {
-    const rows = await approvalQueueRepository.getAllWithRowIndex();
-    byRequest = new Map((rows || []).map((r) => [String(r.requestId), r.actionJSON || {}]));
-  } catch (e) {
-    logger.warn(`paymentService.reasonsFor: queue read failed — ${e.message}`);
-  }
+  const pending = [];
   for (const p of list) {
-    const aj = byRequest.get(String(p.approval_request_id || ''));
-    let reason = p.reason ? String(p.reason) : (aj && aj.reason ? String(aj.reason) : '');
+    let reason = p.reason ? String(p.reason) : '';
     if (!reason) {
       try {
         const pg = await paymentReasonsRepository.forPayment(p.payment_id);
@@ -287,6 +284,19 @@ async function reasonsFor(pays) {
       } catch (_) { /* fail-open */ }
     }
     out.set(String(p.payment_id), reason);
+    if (!reason) pending.push(p);
+  }
+  if (!pending.length) return out;
+  let byRequest = new Map();
+  try {
+    const rows = await approvalQueueRepository.getAllWithRowIndex();
+    byRequest = new Map((rows || []).map((r) => [String(r.requestId), r.actionJSON || {}]));
+  } catch (e) {
+    logger.warn(`paymentService.reasonsFor: queue read failed — ${e.message}`);
+  }
+  for (const p of pending) {
+    const aj = byRequest.get(String(p.approval_request_id || ''));
+    if (aj && aj.reason) out.set(String(p.payment_id), String(aj.reason));
   }
   return out;
 }

@@ -26,9 +26,12 @@
  * still refuse to execute something already approved: wrong account, no
  * funds, a duplicate (Declined notice to the same three — §2 E).
  *
- * PAY-2 §1 storage rule: the reason and the event trail go to Postgres
- * (`payment_reasons`, `payment_events`, fail-open); the sheet row only
- * ever flips its EXISTING lifecycle columns.
+ * PAY-2 §1 storage rule, amended by the owner 10-Sep-2026: the sheet row
+ * is the COMPLETE record of an approved / paid request, so the reason is
+ * written to `PaymentRequests.reason` (trailing column S) at raise; the
+ * event trail and the in-flight buffer copy of the reason stay in Postgres
+ * (`payment_reasons`, `payment_events`, fail-open). Readers take the row's
+ * cell first, then Postgres, then the queue payload (paymentService).
  *
  * Why the account number is typed twice: it is the only field in this
  * whole feature that cannot be checked against anything. A wrong design
@@ -414,6 +417,10 @@ async function submitRequest(bot, chatId, userId) {
       approval_request_id: requestId,
       status: 'pending_approval',
       bill_file_id: r.bill_file_id || '',
+      // Owner ruling 10-Sep-2026: the sheet row is the complete record of
+      // an approved / paid request, so the reason lands in column S at
+      // raise. Postgres keeps its buffer + trail copy below, unchanged.
+      reason: r.reason || '',
     });
     const risk = await riskEvaluate.evaluate({ action: 'request_payment', userId, quantity: r.amount });
     await approvalQueueRepository.append({

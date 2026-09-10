@@ -147,6 +147,54 @@ test('PAY-1: approving a payment AUTHORISES it — it does not pay it', async ()
   assert.deepEqual(events[0].detail, { approverIds: ['777', '888'], approverLabel: 'Ajeet ‖ John' });
 });
 
+// Owner ruling 10-Sep-2026: the sheet row is the complete record of an
+// approved request. A row raised before column S existed gets its reason
+// backfilled from the queue payload in the approval write; a row that
+// already carries one is left as raised.
+test('PAY-2/S: approval backfills a BLANK reason cell from the payload — in the same write', async () => {
+  const row = { payment_id: 'PAY-5', payee_name: 'Abdul', amount_ngn: 4000, status: 'pending_approval', reason: '' };
+  const patches = [];
+  events = [];
+  requestsRepo.findByApprovalRequestId = async () => row;
+  requestsRepo.update = async (id, patch) => { patches.push({ id, patch }); Object.assign(row, patch); return row; };
+  approvalQueueRepository.getAllPending = async () => ([{
+    requestId: 'R5', user: '4242', status: 'pending',
+    actionJSON: { action: 'request_payment', payment_id: 'PAY-5', approvals: ['777'], reason: 'Transport to Idumota' },
+  }]);
+  const res = await inventoryService.executeApprovedAction('R5', '888');
+  assert.equal(res.ok, true);
+  assert.equal(patches.length, 1, 'ONE write — the backfill rides the approval patch');
+  assert.deepEqual(patches[0].patch, { status: 'approved', approved_by: 'Ajeet ‖ John', reason: 'Transport to Idumota' });
+  assert.equal(row.reason, 'Transport to Idumota');
+});
+
+test('PAY-2/S: a row that already carries its reason is not rewritten at approval', async () => {
+  const row = { payment_id: 'PAY-6', payee_name: 'Abdul', amount_ngn: 4000, status: 'pending_approval', reason: 'As raised' };
+  const patches = [];
+  events = [];
+  requestsRepo.findByApprovalRequestId = async () => row;
+  requestsRepo.update = async (id, patch) => { patches.push({ id, patch }); Object.assign(row, patch); return row; };
+  approvalQueueRepository.getAllPending = async () => ([{
+    requestId: 'R6', user: '4242', status: 'pending',
+    actionJSON: { action: 'request_payment', payment_id: 'PAY-6', approvals: ['777'], reason: 'Payload says otherwise' },
+  }]);
+  await inventoryService.executeApprovedAction('R6', '888');
+  assert.equal(patches.length, 1);
+  assert.ok(!('reason' in patches[0].patch), 'no reason in the patch — the raise-time cell stands');
+  assert.equal(row.reason, 'As raised');
+
+  // And a payload with no reason (pre-PAY-2 request) backfills nothing.
+  const bare = { payment_id: 'PAY-7', payee_name: 'Abdul', amount_ngn: 4000, status: 'pending_approval', reason: '' };
+  patches.length = 0;
+  requestsRepo.findByApprovalRequestId = async () => bare;
+  approvalQueueRepository.getAllPending = async () => ([{
+    requestId: 'R7', user: '4242', status: 'pending',
+    actionJSON: { action: 'request_payment', payment_id: 'PAY-7', approvals: ['777'] },
+  }]);
+  await inventoryService.executeApprovedAction('R7', '888');
+  assert.deepEqual(patches[0].patch, { status: 'approved', approved_by: 'Ajeet ‖ John' }, 'nothing to backfill from');
+});
+
 test('PAY-2: a failing trail write never costs the approval (fail-open)', async () => {
   const row = { payment_id: 'PAY-2', payee_name: 'Abdul', amount_ngn: 4000, status: 'pending_approval' };
   requestsRepo.findByApprovalRequestId = async () => row;

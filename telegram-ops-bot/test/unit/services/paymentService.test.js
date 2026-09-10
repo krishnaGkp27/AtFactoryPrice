@@ -193,7 +193,11 @@ test('PAY-2: a reason is 3 to 120 characters, trimmed, inner whitespace collapse
   assert.equal(paymentService.REASON_MAX, 120);
 });
 
-test('PAY-2: reasonFor reads the queue payload first, Postgres second, and never throws', async () => {
+// Owner ruling 10-Sep-2026: the sheet row is the complete record, so the
+// row's own `reason` cell (column S) is read first; Postgres is the
+// in-flight buffer; the queue payload is the last resort for rows that
+// predate both.
+test('PAY-2: reasonFor reads the sheet row first, Postgres second, the payload last, and never throws', async () => {
   const origGet = approvalQueueRepository.getByRequestId;
   const origPg = reasonsRepo.forPayment;
   try {
@@ -201,10 +205,11 @@ test('PAY-2: reasonFor reads the queue payload first, Postgres second, and never
       ? { requestId: 'R1', actionJSON: { action: 'request_payment', reason: 'Transport to Idumota' } } : null);
     reasonsRepo.forPayment = async (id) => (id === 'PAY-2' ? { reason_text: 'Fuel' } : null);
 
-    assert.equal(await paymentService.reasonFor({ payment_id: 'PAY-1', approval_request_id: 'R1' }), 'Transport to Idumota');
-    assert.equal(await paymentService.reasonFor({ payment_id: 'PAY-2', approval_request_id: 'R9' }), 'Fuel', 'the Postgres row when the payload has none');
+    assert.equal(await paymentService.reasonFor({ payment_id: 'PAY-1', approval_request_id: 'R1' }), 'Transport to Idumota', 'the payload when neither the row nor Postgres knows');
+    assert.equal(await paymentService.reasonFor({ payment_id: 'PAY-2', approval_request_id: 'R9' }), 'Fuel', 'the Postgres row when the sheet has none');
+    assert.equal(await paymentService.reasonFor({ payment_id: 'PAY-2', approval_request_id: 'R1' }), 'Fuel', 'Postgres beats the payload');
     assert.equal(await paymentService.reasonFor({ payment_id: 'PAY-3', approval_request_id: 'R9' }), '', 'unknown is empty, not a crash');
-    assert.equal(await paymentService.reasonFor({ payment_id: 'PAY-1', reason: 'Already here' }), 'Already here', 'a row that carries it needs no read');
+    assert.equal(await paymentService.reasonFor({ payment_id: 'PAY-2', approval_request_id: 'R1', reason: 'Already here' }), 'Already here', 'the row\'s own cell wins over both, with no read at all');
     assert.equal(await paymentService.reasonFor(null), '');
 
     approvalQueueRepository.getByRequestId = async () => { throw new Error('sheet down'); };
@@ -216,7 +221,7 @@ test('PAY-2: reasonFor reads the queue payload first, Postgres second, and never
   }
 });
 
-test('PAY-2: reasonsFor maps many rows with ONE queue read', async () => {
+test('PAY-2: reasonsFor maps many rows — sheet cell, then Postgres, then ONE queue read for the leftovers', async () => {
   const origAll = approvalQueueRepository.getAllWithRowIndex;
   const origPg = reasonsRepo.forPayment;
   let reads = 0;
@@ -226,18 +231,32 @@ test('PAY-2: reasonsFor maps many rows with ONE queue read', async () => {
       return [
         { requestId: 'R1', actionJSON: { reason: 'Airtime' } },
         { requestId: 'R2', actionJSON: { reason: '' } },
+        { requestId: 'R4', actionJSON: { reason: 'Stale payload copy' } },
+        // R6: the payload AND Postgres both know, and disagree — pins the
+        // Postgres-before-payload step (the sheet-first step alone would
+        // pass under the old payload-first order for every other row).
+        { requestId: 'R6', actionJSON: { reason: 'Stale payload copy' } },
       ];
     };
-    reasonsRepo.forPayment = async (id) => (id === 'P2' ? { reason_text: 'Fuel' } : null);
+    const PG = { P2: 'Fuel', P6: 'Buffered in Postgres' };
+    reasonsRepo.forPayment = async (id) => (PG[id] ? { reason_text: PG[id] } : null);
     const map = await paymentService.reasonsFor([
       { payment_id: 'P1', approval_request_id: 'R1' },
       { payment_id: 'P2', approval_request_id: 'R2' },
       { payment_id: 'P3', approval_request_id: 'R3' },
+      { payment_id: 'P4', approval_request_id: 'R4', reason: 'On the row' },
+      { payment_id: 'P6', approval_request_id: 'R6' },
     ]);
     assert.equal(reads, 1);
-    assert.deepEqual([...map.entries()], [['P1', 'Airtime'], ['P2', 'Fuel'], ['P3', '']]);
+    assert.deepEqual([...map.entries()], [
+      ['P1', 'Airtime'], ['P2', 'Fuel'], ['P3', ''], ['P4', 'On the row'],
+      ['P6', 'Buffered in Postgres'],
+    ]);
     assert.equal((await paymentService.reasonsFor([])).size, 0, 'nothing to read for nothing');
     assert.equal(reads, 1);
+    // Every row carrying its own cell → the queue is never opened.
+    await paymentService.reasonsFor([{ payment_id: 'P5', approval_request_id: 'R5', reason: 'Diesel' }]);
+    assert.equal(reads, 1, 'no queue read when the sheet already answers');
   } finally {
     approvalQueueRepository.getAllWithRowIndex = origAll;
     reasonsRepo.forPayment = origPg;

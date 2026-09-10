@@ -523,6 +523,16 @@ everywhere in the business rules.").**
 - Anything tunable is a Settings-sheet key with an in-code default —
   business knobs are never hardcoded.
 
+- **Refined 10-Sep-2026 (owner):** *"Make sure all the approved request /
+  fulfilled resides in the Google Sheet. But during the phase it is in
+  process it can buffer itself in the SQL database in Postgres on Railway."*
+  Applied: the `PaymentRequests` sheet row is the complete record of an
+  approved or paid request — payee, account, amount, **reason** (one trailing
+  column, added 10-Sep), both approvers, who paid and when, proof id, decline
+  reason. Postgres keeps the in-process buffer and the trail
+  (`payment_events`, `payment_reasons`, the future codes). The general rule
+  stands: a finished business record lives on its sheet; logging and
+  in-flight state live in Postgres.
 - **Ruled 09-Sep-2026 (owner, PAY-2):** *"all the logging activities shall
   not be populated in the Google Sheet but can use the PostgreSQL database
   on Railway."* Applied: the payment reason, the payment event trail (raised

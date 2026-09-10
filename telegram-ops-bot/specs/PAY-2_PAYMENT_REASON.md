@@ -38,14 +38,18 @@ in the Google Sheet but can use the PostgreSQL database on Railway."*
 Cards and flowchart as approved: `docs/PAY-2_CARDS_AND_FLOW.pdf`. Every
 question in that PDF (Q1–Q8) and in the earlier proposal (reason step,
 required, order, visibility, own-history chips, no retro-tagging) is taken
-**as recommended**, with one change forced by the storage ruling: **no mirror
-column on `PaymentRequests`** (old Q1 → no).
+**as recommended**. The 09-Sep storage ruling first meant no sheet column for
+the reason; the owner refined it on 10-Sep — *the approved / fulfilled record
+resides in the Google Sheet; the in-process phase may buffer in Postgres* —
+so the reason now also lives in one trailing `PaymentRequests` column S,
+written at raise and backfilled at approval for older requests; the event
+trail stays in Postgres only.
 
 ## 1 · The storage rule for this feature (locked)
 
-| Goes to **Postgres** (new, this build) | Stays on the **existing** `PaymentRequests` sheet (existing columns only) | Never |
+| Goes to **Postgres** (new, this build) | Stays on the **existing** `PaymentRequests` sheet (existing columns + the one trailing `reason` column S, 10-Sep) | Never |
 |---|---|---|
-| `payment_reasons` — the reason as typed, the chip key, who / payee / amount / when, the code (later) | one row per request: status flips `pending_approval → approved → done / declined / rejected`, `approved_by` (now the PAIR), `done_by`, `done_at`, `proof_file_id` (existing column O, written for the first time), `decline_reason` | a new sheet column |
+| `payment_reasons` — the reason as typed, the chip key, who / payee / amount / when, the code (later) | one row per request: status flips `pending_approval → approved → done / declined / rejected`, `approved_by` (now the PAIR), `done_by`, `done_at`, `proof_file_id` (existing column O, written for the first time), `decline_reason`, **and since 10-Sep the `reason` itself in one trailing column S** (owner: the approved / fulfilled record resides on the sheet; Postgres is the in-process buffer and trail) | any other new sheet column |
 | `payment_events` — the trail: raised, signed, approved, finance_card_sent (with chat + message id), reminder_sent, done, declined, rejected, notified (who) | | a new sheet |
 | `payment_reason_codes` — the phase-3 index, empty until seeded | | sheet-side logging of any kind |
 
@@ -195,5 +199,5 @@ pays, taps ✔ Mark Done, attaches the screenshot → Abdul, Ajeet and John each
 receive the Paid notice with the screenshot; the finance card's buttons are
 gone; 🛂 inbox record shows *Paid by Office*. Then one decline and one
 reject. Then check the Google Sheet: PaymentRequests has status, the pair,
-done_by, done_at and proof id in its existing columns — and no new column
-anywhere.
+done_by, done_at and proof id in its existing columns, plus the typed reason
+in the one trailing column S — nothing else new, nothing renamed or moved.

@@ -185,14 +185,11 @@ const REQUIRED_SHEETS = {
       'account_number', 'bank', 'status', 'registered_by',
       'approval_request_id', 'approved_by', 'created_at', 'notes'],
   },
+  // PAY-2 (10-Sep-2026) — one source of truth for the column list (the
+  // trailing entry is `reason`, column S) so this bootstrap and the repo's
+  // own ensureHeader can never disagree on the column count.
   PaymentRequests: {
-    headers: ['payment_id', 'payee_name', 'payee_type',
-      'account_id', 'account_number', 'bank',
-      'amount_ngn', 'above_threshold',
-      'raised_by', 'raised_at',
-      'approval_request_id', 'approved_by', 'status',
-      'bill_file_id', 'proof_file_id',
-      'done_by', 'done_at', 'decline_reason'],
+    headers: require('../repositories/paymentRequestsRepository').HEADERS,
   },
   // LOC-1 (owner, 14-Aug-2026) — the register of PHYSICAL PLACES and the
   // city each sits in. Until now a warehouse was only a name on Inventory

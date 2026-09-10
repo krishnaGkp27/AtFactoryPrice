@@ -303,7 +303,8 @@ test('PAY-1/2: a payment picks a registered account, carries its reason, then qu
   assert.equal(REQUESTS[0].amount_ngn, 45000);
   assert.equal(REQUESTS[0].account_number, '0123456789',
     'the account is SNAPSHOT, so a later edit cannot rewrite what was paid');
-  assert.ok(!('reason' in REQUESTS[0]), 'no reason cell on the sheet row — Postgres holds it (§1)');
+  assert.equal(REQUESTS[0].reason, 'Transport to Idumota',
+    'the reason lands in the sheet row at raise (column S — owner ruling 10-Sep-2026: the sheet is the complete record)');
 
   // Postgres, after the sheet writes (fail-open).
   assert.equal(REASONS.length, 1);
@@ -617,19 +618,23 @@ test('PAY-1/2: Decline needs a reason; the reason reaches the requester AND both
 
 test('PAY-1/2: My requests reports each one in plain words, with its reason', async () => {
   reset();
-  REQUESTS.push({ payment_id: 'P1', amount_ngn: 45000, status: 'done', raised_by: ABDUL, raised_at: '2026-08-14T10:00:00.000Z', approval_request_id: 'R1' });
+  // Three provenances: P1 carries its reason on the SHEET ROW (column S —
+  // preferred, even over a differing payload), P2 only on the queue
+  // payload (raised before column S), P3 only in Postgres.
+  REQUESTS.push({ payment_id: 'P1', amount_ngn: 45000, status: 'done', raised_by: ABDUL, raised_at: '2026-08-14T10:00:00.000Z', approval_request_id: 'R1', reason: 'Airtime' });
   REQUESTS.push({ payment_id: 'P2', amount_ngn: 12000, status: 'pending_approval', raised_by: ABDUL, raised_at: '2026-08-14T11:00:00.000Z', approval_request_id: 'R2' });
   REQUESTS.push({ payment_id: 'P3', amount_ngn: 9000, status: 'declined', raised_by: ABDUL, raised_at: '2026-08-13T11:00:00.000Z', approval_request_id: 'R3', decline_reason: 'Account name does not match' });
-  QUEUED.push({ requestId: 'R1', actionJSON: { action: 'request_payment', reason: 'Airtime' } });
+  QUEUED.push({ requestId: 'R1', actionJSON: { action: 'request_payment', reason: 'Stale payload copy' } });
   QUEUED.push({ requestId: 'R2', actionJSON: { action: 'request_payment', reason: 'Transport to Idumota' } });
   REASONS.push({ paymentId: 'P3', reasonText: 'Fuel' });   // only Postgres knows this one
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('act:payments', ABDUL));
   await controller.handleCallbackQuery(bot, cb('pay:start:mine', ABDUL));
   const t = lastText(bot);
-  assert.match(t, /✅ ₦45,000 — paid · 📝 Airtime/);
-  assert.match(t, /⏳ ₦12,000 — waiting for approval · 📝 Transport to Idumota/);
-  assert.match(t, /✖ ₦9,000 — declined by finance · 📝 Fuel/, 'the Postgres row when the payload has none');
+  assert.match(t, /✅ ₦45,000 — paid · 📝 Airtime/, 'the sheet row\'s own cell wins');
+  assert.doesNotMatch(t, /Stale payload copy/);
+  assert.match(t, /⏳ ₦12,000 — waiting for approval · 📝 Transport to Idumota/, 'the payload for a row with no cell');
+  assert.match(t, /✖ ₦9,000 — declined by finance · 📝 Fuel/, 'the Postgres row when the sheet has none');
   assert.match(t, /Account name does not match/);
 });
 
