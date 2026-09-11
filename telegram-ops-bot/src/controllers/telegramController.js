@@ -3067,12 +3067,13 @@ async function sendListPackagesReport(bot, chatId, design, shade = null) {
       { reply_markup: navFooter });
     return;
   }
-    let reply = `📋 *Bales for ${design}${shade ? ' ' + shade : ''}:*\n\n`;
+  // UX-2 (item 8) — one bullet per bale, the Σ tally in rule-6c grammar.
+  let reply = `📋 *Bales · ${design}${shade ? ` · shade ${shade}` : ''}*\n\n`;
   packages.forEach((p) => {
-    reply += `Bale ${p.packageNo} (${p.warehouse}): ${p.available}/${p.total} thans avail, ${fmtQty(p.availableYards)} yds\n`;
+    reply += `  • ${p.packageNo} · ${p.warehouse} · ${p.available}/${p.total}t · ${fmtQty(p.availableYards)} yds\n`;
   });
   const totalAvail = packages.reduce((s, p) => s + p.availableYards, 0);
-  reply += `\n*Total: ${packages.length} Bale${packages.length === 1 ? '' : 's'}, ${fmtQty(totalAvail)} yards*`;
+  reply += `\nΣ ${unitDisplayService.formatCounts({ bales: packages.length })} · ${fmtQty(totalAvail)} yds`;
   await sendLong(bot, chatId, reply, { parse_mode: 'Markdown', reply_markup: navFooter });
 }
 
@@ -3098,47 +3099,52 @@ async function sendCheckStockReport(bot, chatId, design, userId = null) {
   const canSelling = userId ? pricingService.canSeeSalePrice(userId) : false;
   // DCAT-1: show the admin-approved category next to the design number.
   const stockCat = await designCategoriesRepo.categoryOf(design);
-  let reply = `📦 *Stock — Design ${design}${stockCat ? ` · ${stockCat}` : ''}*\n`;
   const allInv = await inventoryRepository.getAll();
+  // UX-2 (item 7) — ONE quantity grammar (rule 6c, OPEN_ITEMS 12f): the
+  // labeller prints "7B" on bale warehouses, "28t" where thans are visible,
+  // "4B + 8t" for a mix — never both units for the same stock.
+  const qty = await unitDisplayService.createQtyLabeller(allInv);
+  const avail = allInv.filter((r) => r.status === 'available' && r.design === design);
+  let nameMap = new Map();
+  try { nameMap = buildShadeNameMap(await designAssetsRepo.findActive(design)); } catch (_) { /* no catalog: bare shade numbers */ }
+
+  let reply = `📦 *Stock · ${design}${stockCat ? ` · ${stockCat}` : ''}*\n`;
   if (canSelling) {
     const sp = pricingService.resolveSalePrice(allInv, design);
     reply += fmtSellingHeaderLine(sp);
   }
-  const labels = await productTypesRepo.getLabels('fabric');
-  reply += `Available: ${stock.totalPackages} ${productTypesRepo.pluralize(labels.container_label, stock.totalPackages).toLowerCase()} `;
-  reply += `(${stock.totalThans} ${productTypesRepo.pluralize(labels.subunit_label, stock.totalThans).toLowerCase()}), `;
-  reply += `${fmtQty(stock.totalYards)} ${labels.measure_unit}\n`;
+  reply += `Available Σ ${qty(avail)} · ${fmtQty(stock.totalYards)} yds\n`;
 
-  // TRF-2 — bales mid-transfer sit at the destination as in_transit:
-  // visible here so the receiving team can see what's coming, but not
-  // sellable until the receiver confirms.
-  const inTransit = allInv.filter((r) => r.status === 'in_transit' && r.design === design);
-  if (inTransit.length) {
-    const byDest = new Map();
-    for (const r of inTransit) {
-      if (!byDest.has(r.warehouse)) byDest.set(r.warehouse, new Set());
-      byDest.get(r.warehouse).add(r.packageNo);
-    }
-    const parts = [...byDest.entries()].map(([w, pkgs]) => `${pkgs.size} bale${pkgs.size === 1 ? '' : 's'} → ${w}`);
-    reply += `🚚 In transit (not yet sellable): ${parts.join(', ')}\n`;
-  }
-
-  const avail = allInv.filter((r) => r.status === 'available' && r.design === design);
   if (avail.length) {
     const byShade = new Map();
     for (const r of avail) {
       const sh = r.shade || '-';
-      if (!byShade.has(sh)) byShade.set(sh, { pkgs: new Set(), yards: 0, warehouses: new Map() });
+      if (!byShade.has(sh)) byShade.set(sh, { rows: [], yards: 0, warehouses: new Set() });
       const s = byShade.get(sh);
-      s.pkgs.add(r.packageNo);
+      s.rows.push(r);
       s.yards += r.yards || 0;
-      s.warehouses.set(r.warehouse, (s.warehouses.get(r.warehouse) || 0) + 1);
+      s.warehouses.add(r.warehouse);
     }
-    reply += `\n*By shade:*\n`;
+    reply += `\n*By shade*\n`;
     for (const [sh, s] of [...byShade.entries()].sort((a, b) => b[1].yards - a[1].yards)) {
-      const whList = [...s.warehouses.keys()].join(', ');
-      reply += `  Shade ${sh}: ${s.pkgs.size} Bales, ${fmtQty(s.yards)} yds (${whList})\n`;
+      const whList = [...s.warehouses].join(', ');
+      reply += `  • ${formatShadeRef(sh, nameMap.get(String(sh)))} · ${qty(s.rows)} · ${fmtQty(s.yards)} yds · ${whList}\n`;
     }
+  }
+
+  // TRF-2 — bales mid-transfer sit at the destination as in_transit:
+  // visible here so the receiving team can see what's coming, but not
+  // sellable until the receiver confirms. Counted as travelling bales
+  // whatever the destination's display unit.
+  const inTransit = allInv.filter((r) => r.status === 'in_transit' && r.design === design);
+  if (inTransit.length) {
+    const byDest = new Map();
+    for (const r of inTransit) {
+      if (!byDest.has(r.warehouse)) byDest.set(r.warehouse, []);
+      byDest.get(r.warehouse).push(r);
+    }
+    const parts = [...byDest.entries()].map(([w, rows]) => `${qty(rows, { thanWarehouses: new Set() })} → ${w}`);
+    reply += `🚚 In transit ${parts.join(' · ')}\n`;
   }
   await sendLong(bot, chatId, reply, { parse_mode: 'Markdown', reply_markup: navFooter });
 }

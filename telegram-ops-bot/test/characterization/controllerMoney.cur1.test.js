@@ -170,7 +170,7 @@ test('Check Stock: the selling header prints `Selling: 3,500/yd` to an admin and
   const emp = createFakeBot();
   await controller.handleCallbackQuery(emp, cb('cks:9043-A', '4242'));
   const et = emp.allText();
-  assert.match(et, /Stock — Design 9043-A/);
+  assert.match(et, /Stock · 9043-A/);
   assert.doesNotMatch(et, /Selling/);
   assert.doesNotMatch(et, /3,500/);
 });
