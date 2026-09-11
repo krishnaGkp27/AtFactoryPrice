@@ -116,7 +116,7 @@ test('picking Cashmere filters downstream: single warehouse auto-skip, design li
 
   // Cashmere lives only in Lagos → warehouse step auto-skips to designs.
   const text = bot.allText();
-  assert.match(text, /Warehouse: Lagos/, `got: ${text}`);
+  assert.match(text, /🏭 \*Lagos\*/, `got: ${text}`);
   assert.match(text, /Cashmere/, `category missing from header: ${text}`);
   const buttons = lastKeyboard(bot);
   assert.ok(buttons.some((t) => /44200/.test(t)), `44200 missing: ${buttons}`);
@@ -149,7 +149,7 @@ test('single-category container auto-skips the category step', async () => {
 
   const text = bot.allText();
   assert.ok(!/Select category:/.test(text), `category step should be skipped: ${text}`);
-  assert.match(text, /Warehouse: Lagos/, `should land on designs: ${text}`);
+  assert.match(text, /🏭 \*Lagos\*/, `should land on designs: ${text}`);
   const s = sessionStore.get('777');
   assert.equal(s.category, 'Cashmere');
   assert.equal(s.categoryStepShown, false);

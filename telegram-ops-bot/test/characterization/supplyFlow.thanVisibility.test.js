@@ -166,8 +166,8 @@ test('Kano office: design list shows remaining / opening, legend, 🚚 button, a
   assert.equal(kbRows[0][0].text, '🚚 In transit (2t)', `than-visible transit label, got: ${kbRows[0][0].text}`);
   // Header + legend (opening excludes the in_transit bale: 15t).
   const text = lastText(bot);
-  assert.match(text, /Total: 9t \/ 15t/, `header Total is remaining / opening minus transit, got: ${text}`);
-  assert.match(text, /_\(remaining \/ opening\)_/, `legend under Select design:, got: ${text}`);
+  assert.match(text, /📊 9t \/ 15t/, `header Total is remaining / opening minus transit, got: ${text}`);
+  assert.match(text, /_\(remaining \/ opening\)_/, `legend on the 📊 line, got: ${text}`);
 });
 
 test('Kano office: 🚚 tap renders the incoming-transit card with a back button (TV-6)', async () => {
@@ -233,7 +233,7 @@ test('Kano office: tapping a sold-out shade lands on the sold-out guard — no q
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_sh:9006|black|0'));
   const text = lastText(bot);
-  assert.match(text, /Sold out — nothing available to add/, `guard note shown, got: ${text}`);
+  assert.match(text, /Sold out\n\n_Nothing available to add\._/, `guard note shown, got: ${text}`);
   const cbs = lastKeyboardCallbacks(bot);
   assert.ok(!cbs.some((c) => c && c.startsWith('srf_qty:')), `no qty chips (incl. Custom) offered at 0 available, got: ${cbs}`);
   assert.ok(cbs.includes('srf_back:shade'), 'back to shades offered');
@@ -280,7 +280,7 @@ test('Lagos (bales-only, TV-5): design list shows bales pair, legend, 🚚 butto
   assert.equal(kbRows[0][0].text, '🚚 In transit (1B)', `bales-only transit label, got: ${kbRows[0][0].text}`);
   // Header + legend, bales-only pair (opening excludes the transit bale).
   const text = lastText(bot);
-  assert.match(text, /Total: 3B \/ 5B/, `header Total is remaining / opening in bales, got: ${text}`);
+  assert.match(text, /📊 3B \/ 5B/, `header Total is remaining / opening in bales, got: ${text}`);
   assert.match(text, /_\(remaining \/ opening\)_/, `legend shown on bales-only warehouse, got: ${text}`);
 });
 
@@ -336,7 +336,7 @@ test('Lagos (bales-only, TV-5): sold-out design → info shade screen, sold-out 
   seed('Lagos');
   const bot2 = createFakeBot();
   await controller.handleCallbackQuery(bot2, cb('srf_sh:9006|black|0'));
-  assert.match(lastText(bot2), /Sold out — nothing available to add/, `guard note shown, got: ${lastText(bot2)}`);
+  assert.match(lastText(bot2), /Sold out\n\n_Nothing available to add\._/, `guard note shown, got: ${lastText(bot2)}`);
   const cbs2 = lastKeyboardCallbacks(bot2);
   assert.ok(!cbs2.some((c) => c && c.startsWith('srf_qty:')), `no qty chips (incl. Custom) at 0 available, got: ${cbs2}`);
   assert.ok(cbs2.includes('srf_back:shade'), 'back to shades offered');
@@ -372,7 +372,7 @@ test('TV-6: transfer-fed warehouse (all stock GRN-received elsewhere) lists rema
     const texts = lastKeyboardTexts(bot);
     assert.ok(texts.some((t) => t === '7001 (2B)'), `remaining-only bales tag (no fabricated opening), got: ${texts}`);
     const text = lastText(bot);
-    assert.match(text, /Total: 2B/, `header Total is remaining-only, got: ${text}`);
+    assert.match(text, /📊 2B/, `header Total is remaining-only, got: ${text}`);
     assert.ok(!text.includes('/'), `no pair anywhere in a transfer-fed header, got: ${text}`);
     assert.ok(!/remaining \/ opening/.test(text), `no legend without a pair, got: ${text}`);
     // Shade screen mirrors it: remaining-only shade tags, no pairs.
@@ -402,7 +402,7 @@ test('TV-6: intake warehouse keeps transferred-away bales in its opening (sold-o
     assert.ok(texts.some((t) => t.includes('7001 (0t / 5t)')), `transferred-away design stays in source opening, got: ${texts}`);
     assert.ok(lastKeyboardCallbacks(bot).includes('srf_dg:7001'), 'transferred-away design stays tappable');
     const text = lastText(bot);
-    assert.match(text, /Total: 2t \/ 7t/, `header opening counts intake incl. transferred-away bales, got: ${text}`);
+    assert.match(text, /📊 2t \/ 7t/, `header opening counts intake incl. transferred-away bales, got: ${text}`);
     assert.match(text, /_\(remaining \/ opening\)_/, `legend shown where the pair shows, got: ${text}`);
   } finally {
     goodsReceiptsRepository.getAll = async () => [];

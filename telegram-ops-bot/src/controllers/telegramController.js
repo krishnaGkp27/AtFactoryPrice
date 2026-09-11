@@ -1393,7 +1393,7 @@ async function sendCustomerHistoryReport(bot, chatId, customerName, opts = {}) {
       const [y, m] = mk.split('-');
       label = `${MONTHS[parseInt(m, 10) - 1]} ${y}`;
     }
-    out += `━━━ *${label}* ━━━\n`;
+    out += `*${label}*\n`;
     for (const item of items) {
       if (shown >= MAX_ITEMS) break;
       const icon = item.kind === 'sale' ? '💰'
@@ -6438,7 +6438,7 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   }
   backRow.push({ text: '❌ Cancel', callback_data: 'srf_cart:cancel' });
   rows.push(backRow);
-  const cartNote = cart.length ? `\n🛒 Cart: ${cart.length} item(s)` : '';
+  const cartNote = cart.length ? `\n🛒 ${cart.length} in cart` : '';
   const pageNote = designs.length > MAX_VISIBLE ? ` (${start + 1}–${Math.min(start + MAX_VISIBLE, designs.length)} of ${designs.length})` : '';
   // WH-SUM — warehouse totals under the header: unit total for everyone.
   // TV-6: intake warehouses (any GRN-attributed or legacy opening) keep the
@@ -6449,35 +6449,34 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   const totalBalesAll = avail.reduce((s, a) => s + a.availPkgs, 0);
   const totalThansAll = avail.reduce((s, a) => s + (a.availThans || 0), 0);
   const remTotals = { bales: totalBalesAll, thans: totalThansAll };
+  // UX-2 (item 4) — one fact per line: the pair carries its own legend
+  // (TV-4/TV-5, only where a pair shows), the value sits on its own line
+  // and only when there is one (a bare "💰 0" said nothing).
   let summaryNote;
   if (model.hasOpening) {
     summaryNote = useThans
-      ? `\n📊 Total: ${unitDisplayService.formatRemainingOpening(remTotals, opening.totals)}`
-      : `\n📊 Total: ${unitDisplayService.formatRemainingOpeningBales(remTotals, opening.totals)}`;
+      ? `\n📊 ${unitDisplayService.formatRemainingOpening(remTotals, opening.totals)}`
+      : `\n📊 ${unitDisplayService.formatRemainingOpeningBales(remTotals, opening.totals)}`;
+    summaryNote += ' _(remaining / opening)_';
   } else {
     summaryNote = useThans
-      ? `\n📊 Total: ${unitDisplayService.formatBalesThans(remTotals)}`
-      : `\n📊 Total: ${remTotals.bales}B`;
+      ? `\n📊 ${unitDisplayService.formatBalesThans(remTotals)}`
+      : `\n📊 ${remTotals.bales}B`;
   }
   if (config.access.adminIds.includes(String(userId))) {
     const totalValue = avail.reduce((s, a) => s + (a.availValue || 0), 0);
-    summaryNote += ` · 💰 ${money.sale(totalValue)}`;
+    if (totalValue > 0) summaryNote += `\n💰 ${money.sale(totalValue)}`;
   }
   const resolvedMsgId = messageId || (session && session.flowMessageId) || null;
   // SRF-CAT — surface the active category filter in the header so the user
   // always knows which slice of the warehouse they are browsing.
   const catLabel = supplyCategoryLabel(session && session.category);
-  const catNote = catLabel
-    ? ` · ${session.category === SUPPLY_OTHERS_CATEGORY ? '📦' : designCategoriesRepo.iconFor(catLabel)} ${catLabel.replace(/[*_`[\]]/g, '\\$&')}`
-    : '';
-  // TV-4/TV-5 — legend under "Select design:" explaining the paired counts;
-  // TV-6: only where a pair shows (intake warehouses). TV-4b: overflowing
-  // labels park their pair here in the body (wraps, never truncates), one
-  // line per design.
-  const legendNote = model.hasOpening ? '\n_(remaining / opening)_' : '';
+  const catNote = catLabel ? ` · ${catLabel.replace(/[*_`[\]]/g, '\\$&')}` : '';
+  // TV-4b: overflowing labels park their pair here in the body (wraps,
+  // never truncates), one line per design, under the prompt.
   const overflowNote = overflowLines.length ? `\n${overflowLines.join('\n')}` : '';
   const sent = await editOrSend(bot, chatId, resolvedMsgId,
-    `📦 *Warehouse: ${warehouse}*${catNote}${summaryNote}${cartNote}\n\nSelect design:${pageNote}${legendNote}${overflowNote}`, {
+    `🏭 *${warehouse}*${catNote}${summaryNote}${cartNote}\n\nSelect design${pageNote}:${overflowNote}`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
@@ -6767,7 +6766,9 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
 
 async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse, availPkgs, labelsOverride, opts = {}) {
   const labels = labelsOverride || await productTypesRepo.getLabels('fabric');
-  const containerPlural = productTypesRepo.pluralize(labels.container_label, availPkgs).toLowerCase();
+  // UX-2 (item 5) — the count prints in rule-6c grammar ("4B"); the
+  // question names the unit in the plural whatever the count.
+  const askPlural = productTypesRepo.pluralize(labels.container_label, 2).toLowerCase();
   const session = sessionStore.get(userId);
   // Look the name up by shade key on the active session — set when the
   // user tapped the shade combo (or when single-shade auto-pick fired
@@ -6787,7 +6788,7 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
     const backBtn = (session && session.singleShadeDesign)
       ? { text: '⬅️ Back to designs', callback_data: 'srf_back:design' }
       : { text: '⬅️ Back to shades', callback_data: 'srf_back:shade' };
-    const soldText = `📦 *${design}* │ Shade: *${shadeRef}* │ 🏭 *${warehouse}*\n\n_Sold out — nothing available to add._`;
+    const soldText = `🧵 *${design}* · *${shadeRef}*\n🏭 ${warehouse} · Sold out\n\n_Nothing available to add._`;
     // SHP-1 — a sold-out info tap morphs the combo's caption in place, so
     // the combo's live chips and a 'Sold out' card never stack up.
     if (shpOn && session && session.previewMessageId && session.previewIsPhoto) {
@@ -6832,7 +6833,7 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
     ? { text: '⬅️ Back to designs', callback_data: 'srf_back:design' }
     : { text: '⬅️ Back to shades', callback_data: 'srf_back:shade' }]);
 
-  const caption = `📦 *${design}* │ Shade: *${shadeRef}* │ 🏭 *${warehouse}*\n${availPkgs} ${containerPlural} available\n\nHow many ${containerPlural} to supply?`;
+  const caption = `🧵 *${design}* · *${shadeRef}*\n🏭 ${warehouse} · ${unitDisplayService.formatCounts({ bales: availPkgs })} available\n\nHow many ${askPlural}?`;
 
   // SHP-1 (owner, 02-Sep-2026) — the shade's own GARMENT photo
   // (specs/SHP-1_SHADE_PHOTOS.md). Resolved once; a 🔍 Full-quality chip
@@ -6976,16 +6977,27 @@ function addToCart(session, design, shade, quantity) {
   }
 }
 
+/**
+ * UX-2 — supply-cart lines in the shape utils/cartFormat draws (icon,
+ * design, category name, shade ref, quantity). Every supply card builds
+ * its block from this one map so the six cards can never drift.
+ * @param {Array<object>} cart supply_req_flow session cart
+ * @returns {Array<object>}
+ */
+function supplyCartRows(cart) {
+  return (cart || []).map((c) => {
+    const m = getMaterialInfo(c.design);
+    return { icon: m.icon, design: c.design, name: m.name, shadeRef: formatShadeRef(c.shade, c.shadeName), quantity: c.quantity };
+  });
+}
+
 async function buildCartText(session) {
   const cart = session.cart || [];
   if (!cart.length) return '🛒 Cart is empty.';
   // UX-2 — the shared cart block (utils/cartFormat): design header, shade
   // bullets in rule-6c counts, one Σ tally; no category on the requester's
   // own card (owner, 11-Sep-2026).
-  const block = cartFormat.formatCart(cart.map((c) => {
-    const m = getMaterialInfo(c.design);
-    return { icon: m.icon, design: c.design, name: m.name, shadeRef: formatShadeRef(c.shade, c.shadeName), quantity: c.quantity };
-  }), { showCategory: false });
+  const block = cartFormat.formatCart(supplyCartRows(cart), { showCategory: false });
   return `🛒 *Supply Cart* · 🏭 ${session.warehouse}\n\n${block}`;
 }
 
@@ -7086,7 +7098,7 @@ async function showSupplyCustomerPicker(bot, chatId, userId) {
   const rows = [];
   if (suggested.length) {
     const designLabel = cartDesigns.length <= 3 ? cartDesigns.join(', ') : `${cartDesigns.length} designs`;
-    const headerText = `👤 Select customer:\n━━━━━━━━━━━━━━━━━━━━━━\n⭐ *Top buyers of ${designLabel}:*`;
+    const headerText = `👤 Select customer:\n\n⭐ *Top buyers of ${designLabel}:*`;
     for (let i = 0; i < suggested.length; i += 2) {
       const row = [{ text: `⭐ ${suggested[i]}`, callback_data: `srf_cu:${suggested[i]}` }];
       if (suggested[i + 1]) row.push({ text: `⭐ ${suggested[i + 1]}`, callback_data: `srf_cu:${suggested[i + 1]}` });
@@ -7175,14 +7187,15 @@ async function showSupplyConfirmation(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== 'supply_req_flow') return;
 
-  const cartText = await buildCartText(session);
-  let text = `📦 *Supply Request Summary*\n\n`;
-  text += `${cartText}\n\n`;
-  text += `👤 Customer: *${session.customer}*\n`;
-  text += `🧑 Salesperson: *${session.salesperson}*\n`;
-  text += `💳 Payment: *${session.paymentMode}*\n`;
-  text += `📅 Date: *${fmtDate(session.supplyDate)}*\n\n`;
-  text += `📎 If payment was already received, send the *receipt photo or PDF*.\nOtherwise tap Skip.`;
+  // UX-2 (item 3) — label-less, the same shape as the submitted receipt:
+  // header · cart block · the four facts · one-line ask.
+  const block = cartFormat.formatCart(supplyCartRows(session.cart), { showCategory: false });
+  let text = `📦 *Supply request* · 🏭 ${session.warehouse}\n\n${block}\n`;
+  text += `👤 ${session.customer}\n`;
+  text += `🧑 ${session.salesperson}\n`;
+  text += `💳 ${session.paymentMode}\n`;
+  text += `📅 ${fmtDate(session.supplyDate)}\n\n`;
+  text += `📎 Receipt photo or PDF, or Skip.`;
 
   session.step = 'document';
   session.awaitingDocument = true;
@@ -7205,9 +7218,8 @@ async function finalizeSupplyRequest(bot, chatId, userId) {
   session.awaitingDocument = false;
   sessionStore.set(userId, session);
 
-  const cartText = await buildCartText(session);
-  let text = `✅ *Confirm Supply Request*\n\n`;
-  text += `${cartText}\n\n`;
+  const block = cartFormat.formatCart(supplyCartRows(session.cart), { showCategory: false });
+  let text = `✅ *Confirm supply request* · 🏭 ${session.warehouse}\n\n${block}\n`;
   text += `👤 ${session.customer}\n`;
   text += `🧑 ${session.salesperson}\n`;
   text += `💳 ${session.paymentMode}\n`;
@@ -11476,10 +11488,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     const userLabel = await getRequesterDisplayName(uid, null);
     // UX-2 — the shared cart block: the admin's copy keeps the category,
     // the requester's receipt drops it (owner, 11-Sep-2026).
-    const cartRows = cart.map((c) => {
-      const m = getMaterialInfo(c.design);
-      return { icon: m.icon, design: c.design, name: m.name, shadeRef: formatShadeRef(c.shade, c.shadeName), quantity: c.quantity };
-    });
+    const cartRows = supplyCartRows(cart);
     const cartAdmin = cartFormat.formatCart(cartRows);
     const cartPlain = cartFormat.formatCart(cartRows, { showCategory: false });
 
@@ -12905,7 +12914,7 @@ async function detachShadePhotoAfterQuantity(bot, chatId, userId, qty) {
   sessionStore.set(userId, session);
   try {
     await bot.editMessageCaption(
-      `✅ *${session.currentDesign}* · Shade *${formatShadeRef(session.currentShade, session.currentShadeName)}* × ${qty} added to cart`,
+      `✅ *${session.currentDesign}* · *${formatShadeRef(session.currentShade, session.currentShadeName)}* · ${unitDisplayService.formatCounts({ bales: qty })} in cart`,
       { chat_id: chatId, message_id: mid, parse_mode: 'Markdown', reply_markup: { inline_keyboard: [] } });
   } catch (_) { /* the picture stays as it is */ }
 }
