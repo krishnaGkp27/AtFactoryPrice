@@ -14,6 +14,10 @@
  * Duplicate protection: one OPEN request per (person, design, shade) — a
  * second tap answers "already requested" instead of a second row (SUB-1
  * posture at the business level, plus appendOnce underneath).
+ *
+ * Salesperson: the linked person raised it themselves, so the request is
+ * stamped `Customer direct` (SRF-SP, owner 11-Sep-2026) — the same value the
+ * picker's 👤 Customer direct chip stores — never blank.
  */
 
 const crypto = require('crypto');
@@ -66,7 +70,8 @@ async function raise(bot, info, lines) {
     cart,
     customer: info.linkName || telegramId,
     customerId: info.type === 'customer' ? (info.linkId || '') : '',
-    salesperson: '',
+    // SRF-SP — they came on their own; the picker's 👤 Customer direct value.
+    salesperson: require('./salespersonChips').CUSTOMER_DIRECT,
     paymentMode: '',
     salesDate: new Date().toISOString().slice(0, 10),
     sale_doc_file_id: null,

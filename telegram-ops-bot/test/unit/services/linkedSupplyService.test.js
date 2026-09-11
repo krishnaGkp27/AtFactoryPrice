@@ -42,6 +42,8 @@ test('raise: srf-shaped record, dispatch-first with admin fallback, provenance s
   assert.equal(aj.warehouse, 'Kano office', 'routed by their source warehouse, never shown to them');
   assert.deepEqual(aj.cart, [{ design: '9037', shade: '1', shadeName: '1', quantity: 11 }]);
   assert.equal(aj.customer, 'Owaibula');
+  // SRF-SP — they raised it themselves: the picker's 👤 Customer direct value, never blank.
+  assert.equal(aj.salesperson, 'Customer direct');
   assert.equal(aj.raisedByLinked.telegramId, '900');
   assert.equal(appended[0].user, '900', 'the requester is the linked person');
   assert.equal(dispatchNotified, 1);

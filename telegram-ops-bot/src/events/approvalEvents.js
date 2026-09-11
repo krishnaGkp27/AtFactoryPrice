@@ -2351,17 +2351,20 @@ async function handleNewCustomerApproval(bot, chatId, requestId, item, requestin
 
       try {
         await bot.sendMessage(requesterUserId,
-          `✅ Customer "*${custName}*" has been approved\\!\n\nContinuing your supply request\\.\\.\\. Select salesperson:`,
+          `✅ Customer "*${custName}*" has been approved\\!\n\nContinuing your supply request\\.\\.\\.`,
           { parse_mode: 'MarkdownV2' },
         );
+        // SRF-SP (owner, 11-Sep-2026) — the same chip set as the controller's
+        // salesperson picker (🙋 Me · 👤 Customer direct · the Sales list
+        // without the submitter), built by one helper so the two cards
+        // cannot drift; this card used to list EVERY Users row by hand.
+        const salespersonChips = require('../services/salespersonChips');
         const telegramUsers = await usersRepository.getAll();
-        const rows = [];
-        for (let i = 0; i < telegramUsers.length; i += 2) {
-          const row = [{ text: `🧑 ${telegramUsers[i].name || telegramUsers[i].user_id}`, callback_data: `srf_sp:${telegramUsers[i].name || telegramUsers[i].user_id}` }];
-          if (telegramUsers[i + 1]) row.push({ text: `🧑 ${telegramUsers[i + 1].name || telegramUsers[i + 1].user_id}`, callback_data: `srf_sp:${telegramUsers[i + 1].name || telegramUsers[i + 1].user_id}` });
-          rows.push(row);
-        }
-        await bot.sendMessage(requesterUserId, '🧑 Select salesperson:', { reply_markup: { inline_keyboard: rows } });
+        const rows = salespersonChips.buildSalespersonRows({
+          submitterId: requesterUserId, users: telegramUsers, adminIds: config.access.adminIds || [], showAll: false, callbackPrefix: 'srf_sp:',
+        });
+        rows.push([{ text: '⬅️ Back to customer', callback_data: 'srf_back:customer' }]);
+        await bot.sendMessage(requesterUserId, salespersonChips.HEADER, { reply_markup: { inline_keyboard: rows } });
       } catch (e) {
         logger.error('Failed to resume supply flow for user after customer approval', e);
       }

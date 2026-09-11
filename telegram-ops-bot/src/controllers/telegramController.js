@@ -7098,28 +7098,19 @@ async function showSupplyCustomerPicker(bot, chatId, userId) {
 }
 
 async function showSupplySalespersonPicker(bot, chatId, userId, showAll = false) {
+  // SRF-SP (owner, 11-Sep-2026) — one chip set: 🙋 Me first when the
+  // submitter may sell (admin or Sales), 👤 Customer direct second, then
+  // the Sales list without the submitter. Built by salespersonChips so the
+  // new-customer continuation in approvalEvents shows the identical card;
+  // Customer direct is always offered, so the old "no salespersons" dead
+  // end no longer exists.
+  const salespersonChips = require('../services/salespersonChips');
   const allUsers = await usersRepository.getAll();
-  const adminIds = new Set(config.access.adminIds || []);
-  const salesUsers = allUsers.filter((u) => {
-    if (u.status && u.status !== 'active') return false;
-    if (adminIds.has(u.user_id)) return true;
-    return usersRepository.inDepartment(u, 'Sales');
+  const rows = salespersonChips.buildSalespersonRows({
+    submitterId: userId, users: allUsers, adminIds: config.access.adminIds || [], showAll, callbackPrefix: 'srf_sp:',
   });
-  if (!salesUsers.length) {
-    await editOrSendAnchored(bot, chatId, userId, '⚠️ No salespersons found. Please ask admin to assign users to the Sales department.');
-    return;
-  }
-  const MAX_SP = 6;
-  const visible = showAll ? salesUsers : salesUsers.slice(0, MAX_SP);
-  const rows = [];
-  for (let i = 0; i < visible.length; i += 2) {
-    const row = [{ text: `🧑 ${visible[i].name || visible[i].user_id}`, callback_data: `srf_sp:${visible[i].name || visible[i].user_id}` }];
-    if (visible[i + 1]) row.push({ text: `🧑 ${visible[i + 1].name || visible[i + 1].user_id}`, callback_data: `srf_sp:${visible[i + 1].name || visible[i + 1].user_id}` });
-    rows.push(row);
-  }
-  if (!showAll && salesUsers.length > MAX_SP) rows.push([{ text: `📋 See All (${salesUsers.length})`, callback_data: 'srf_sp:__more__' }]);
   rows.push([{ text: '⬅️ Back to customer', callback_data: 'srf_back:customer' }]);
-  await editOrSendAnchored(bot, chatId, userId, '🧑 Select salesperson (order collected by):', {
+  await editOrSendAnchored(bot, chatId, userId, salespersonChips.HEADER, {
     reply_markup: { inline_keyboard: rows },
   });
 }
