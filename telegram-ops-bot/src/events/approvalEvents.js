@@ -1309,9 +1309,10 @@ function buildSupplyDispatchCompactSummary(aj) {
   const cart = Array.isArray(aj && aj.cart) ? aj.cart : [];
   const totalQty = cart.reduce((s, c) => s + (Number(c.quantity) || 0), 0);
   const distinctDesigns = new Set(cart.map((c) => c.design)).size;
-  let s = `📦 *Supply Request — needs Dispatch confirmation*\n\n`;
+  let s = `📦 *Supply request · needs Dispatch*\n\n`;
   s += `🏭 Warehouse: *${(aj && aj.warehouse) || '-'}*\n`;
-  s += `📦 Total: *${totalQty} bales* across *${distinctDesigns} design${distinctDesigns === 1 ? '' : 's'}*\n`;
+  // UX-2 — rule-6c tally, one line.
+  s += `Σ *${require('../services/unitDisplayService').formatCounts({ bales: totalQty, empty: '0B' })}* · ${distinctDesigns} design${distinctDesigns === 1 ? '' : 's'}\n`;
   s += `👤 Customer: *${(aj && aj.customer) || '-'}*\n`;
   s += `📅 Date: *${fmtDate(aj && aj.salesDate)}*`;
   return s;
@@ -1324,23 +1325,16 @@ function buildSupplyDispatchCompactSummary(aj) {
  */
 async function buildSupplyDispatchFullSummary(aj) {
   const productTypesRepo = require('../repositories/productTypesRepository');
-  const labels = await productTypesRepo.getLabels((aj && aj.productType) || 'fabric');
-  const cShort = labels.container_short;
   const cart = Array.isArray(aj && aj.cart) ? aj.cart : [];
-  // SRF-UX: shades of one design fold into a single line.
-  const cartLines = cartFormat.formatCartLines(cart.map((c) => {
+  // UX-2 — the shared cart block (utils/cartFormat); approver cards keep the category.
+  const cartBlock = cartFormat.formatCart(cart.map((c) => {
     const m = productTypesRepo.getMaterialInfo(c.design);
     const shadeName = c.shadeName || '';
     return { icon: m.icon, design: c.design, name: m.name, shadeRef: shadeName ? `${c.shade} - ${shadeName}` : String(c.shade || ''), quantity: c.quantity };
-  }), cShort).join('\n');
-  const totalQty = cart.reduce((s, c) => s + (Number(c.quantity) || 0), 0);
-  const containerPlural = productTypesRepo.pluralize(labels.container_label, totalQty).toLowerCase();
-  let s = `📦 *Supply Request — full details*\n\n`;
-  s += `🏭 Warehouse: *${(aj && aj.warehouse) || '-'}*\n`;
-  s += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-  s += `${cartLines}\n`;
-  s += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-  s += `📦 Total: *${totalQty} ${containerPlural}*\n`;
+  }));
+  let s = `📦 *Supply request · full details*\n`;
+  s += `🏭 *${(aj && aj.warehouse) || '-'}*\n\n`;
+  s += `${cartBlock}\n`;
   s += `👤 Customer: *${(aj && aj.customer) || '-'}*\n`;
   // APU-2: customer phone/address so the approving admin can sanity-check
   // WHO is being supplied (parity with the classic sale card).
@@ -2169,21 +2163,13 @@ async function showWarehouseBoyPicker(bot, chatId, requestId, item, requestingUs
   });
 
   const productTypesRepo = require('../repositories/productTypesRepository');
-  const labels = await productTypesRepo.getLabels(aj.productType || 'fabric');
-  const cShort = labels.container_short;
-  // SRF-UX: shades of one design fold into a single line.
-  const cartLines = cartFormat.formatCartLines((aj.cart || []).map((ci) => {
+  // UX-2 — the shared cart block (utils/cartFormat); approver cards keep the category.
+  const cartBlock = cartFormat.formatCart((aj.cart || []).map((ci) => {
     const m = productTypesRepo.getMaterialInfo(ci.design);
-    return { icon: m.icon, design: ci.design, name: m.name, shadeRef: String(ci.shade), quantity: ci.quantity };
-  }), cShort).join('\n');
-  const totalQty = (aj.cart || []).reduce((s, c) => s + c.quantity, 0);
-  const containerPlural = productTypesRepo.pluralize(labels.container_label, totalQty).toLowerCase();
-  let summary = `✅ Supply request approved.\n\n`;
-  summary += `🏭 Warehouse: ${warehouse}\n`;
-  summary += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-  summary += `${cartLines}\n`;
-  summary += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-  summary += `📦 Total: ${totalQty} ${containerPlural}\n`;
+    const shadeName = ci.shadeName || '';
+    return { icon: m.icon, design: ci.design, name: m.name, shadeRef: shadeName ? `${ci.shade} - ${shadeName}` : String(ci.shade), quantity: ci.quantity };
+  }));
+  let summary = `✅ Supply request approved\n🏭 ${warehouse}\n\n${cartBlock}\n`;
   summary += `👤 Customer: ${aj.customer || '-'}\n`;
   summary += `📅 Date: ${fmtDate(aj.salesDate)}\n\n`;
   summary += `Assign to a warehouse boy:`;
@@ -2248,21 +2234,13 @@ async function handleSupplyAssign(bot, callbackQuery) {
 
   const aj = item.actionJSON || {};
   const productTypesRepo = require('../repositories/productTypesRepository');
-  const labels = await productTypesRepo.getLabels(aj.productType || 'fabric');
-  const cShort = labels.container_short;
-  // SRF-UX: shades of one design fold into a single line.
-  const cartLines = cartFormat.formatCartLines((aj.cart || []).map((ci) => {
+  // UX-2 — the shared cart block (utils/cartFormat); approver cards keep the category.
+  const cartBlock = cartFormat.formatCart((aj.cart || []).map((ci) => {
     const m = productTypesRepo.getMaterialInfo(ci.design);
-    return { icon: m.icon, design: ci.design, name: m.name, shadeRef: String(ci.shade), quantity: ci.quantity };
-  }), cShort).join('\n');
-  const totalQty = (aj.cart || []).reduce((s, c) => s + c.quantity, 0);
-  const containerPlural = productTypesRepo.pluralize(labels.container_label, totalQty).toLowerCase();
-  let intimation = `📦 *New Supply Assignment*\n\n`;
-  intimation += `🏭 Warehouse: *${aj.warehouse || '-'}*\n`;
-  intimation += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-  intimation += `${cartLines}\n`;
-  intimation += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-  intimation += `📦 Total: *${totalQty} ${containerPlural}*\n\n`;
+    const shadeName = ci.shadeName || '';
+    return { icon: m.icon, design: ci.design, name: m.name, shadeRef: shadeName ? `${ci.shade} - ${shadeName}` : String(ci.shade), quantity: ci.quantity };
+  }));
+  let intimation = `📦 *New supply assignment*\n🏭 *${aj.warehouse || '-'}*\n\n${cartBlock}\n\n`;
   intimation += `👤 Customer: *${aj.customer || '-'}*\n`;
   intimation += `🧑 Salesperson: *${aj.salesperson || '-'}*\n`;
   intimation += `💳 Payment: *${aj.paymentMode || '-'}*\n`;

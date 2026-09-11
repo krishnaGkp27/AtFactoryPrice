@@ -700,20 +700,22 @@ async function buildSaleBundleCard(aj) {
  * request without seeing what is being requested.
  */
 function buildSupplyRequestCard(aj) {
-  let text = `Supply Request\nCustomer: ${aj.customer || '—'}\nWarehouse: ${aj.warehouse || '—'}`;
-  if (aj.salesperson) text += `\nSalesperson: ${aj.salesperson}`;
-  if (aj.paymentMode) text += `\nPayment: ${aj.paymentMode}`;
-  if (aj.salesDate) text += `\nDate: ${fmtDate(aj.salesDate)}`;
+  // UX-2 — label-less fact lines and the shared cart block (utils/cartFormat);
+  // the approver keeps the category name. "container(s)" is gone (§6b).
+  const cartFormat = require('../utils/cartFormat');
+  const productTypesRepo = require('../repositories/productTypesRepository');
+  let text = `Supply Request · 🏭 ${aj.warehouse || '—'}\n👤 ${aj.customer || '—'}`;
+  if (aj.salesperson) text += `\n🧑 ${aj.salesperson}`;
+  if (aj.paymentMode) text += `\n💳 ${aj.paymentMode}`;
+  if (aj.salesDate) text += `\n📅 ${fmtDate(aj.salesDate)}`;
   const cart = Array.isArray(aj.cart) ? aj.cart : [];
   if (cart.length) {
-    text += '\n\nItems:';
-    let total = 0;
-    for (const c of cart.slice(0, 15)) {
-      text += `\n  • ${c.design}${c.shade ? ` Shade ${c.shade}` : ''} × ${c.quantity}`;
-      total += Number(c.quantity) || 0;
-    }
-    if (cart.length > 15) text += `\n  …+${cart.length - 15} more lines`;
-    text += `\nTotal: ${total} container(s)`;
+    const rows = cart.map((c) => {
+      const m = productTypesRepo.getMaterialInfo(c.design);
+      const shadeName = c.shadeName || '';
+      return { icon: m.icon, design: c.design, name: m.name, shadeRef: shadeName ? `${c.shade} - ${shadeName}` : String(c.shade || ''), quantity: c.quantity };
+    });
+    text += `\n\n${cartFormat.formatCart(rows)}`;
   }
   if (aj.sale_doc_file_id) text += '\n📎 Bill attached';
   return text;

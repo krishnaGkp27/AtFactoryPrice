@@ -104,8 +104,8 @@ test('APU-1 3.3: lifecycle rows never get standard approve/reject cards', async 
   const sent = await reminder.sweep(bot, { now: NOW });
   assert.equal(sent, 1, 'only the admin_review supply request is reminded');
   assert.match(bot.allText(), /req\-sup\-admin/);
-  // Review fix: the reminder card must show the requested goods (aj.cart).
-  assert.match(bot.allText().replace(/\\/g, ''), /77016 Shade 5 × 3/, 'cart lines rendered');
+  // Review fix: the reminder card must show the requested goods (aj.cart) — UX-2a cart block grammar.
+  assert.match(bot.allText().replace(/\\/g, ''), /🧵 77016\n {2}• 5 · 3B\n\nΣ 3B/, 'cart block rendered');
   assert.ok(!/req\-trf/.test(bot.allText()), 'transfer lifecycle rows skipped');
   assert.ok(!/req\-sup\-stage1/.test(bot.allText()));
 });

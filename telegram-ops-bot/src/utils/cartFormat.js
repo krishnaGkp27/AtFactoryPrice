@@ -1,46 +1,72 @@
 'use strict';
 
 /**
- * SRF-UX — shared cart line rendering for supply-request cards.
+ * UX-2 (owner, 11-Sep-2026) — the cart block every supply card shares.
  *
- * A cart holding many shades of ONE design used to render one full line per
- * shade ("🧵 77019 │ Shade: 1 │ ×1 bls" seven times), so every card in the
- * chain (cart, confirm, submitted, dispatch, admin, assignment) repeated the
- * same design over and over. Group by design instead — one line, shades
- * folded:
+ * The old line put three "│" columns on one row ("🧵 77019 [Chinos] │
+ * Shades: 1×2, 3×1 │ ×3 bls"). Telegram draws cards in a proportional font
+ * about 32 characters wide, so the row wrapped at a random point and
+ * nothing lined up, and "bls" beside "bales" named one unit two ways on
+ * one card. Now the design is a header line, each shade a bullet with its
+ * own rule-6c count (BUSINESS_RULES §6c), and one Σ tally closes the block:
  *
- *   single shade      🧵 77019 [Chinos] │ Shade: 3 - White │ ×2 bls
- *   uniform ×1        🧵 77019 [Chinos] │ Shades: 1, 2, 3, 4 │ ×4 bls
- *   mixed quantities  🧵 77019 │ Shades: 1×2, 3×1, 4×3 │ ×6 bls
+ *   🧵 202/201 · Cashmere
+ *     • 1 - White · 1B
+ *     • 3 - Navy Blue · 2B
+ *   🧵 9037
+ *     • 3 · 1B
+ *
+ *   Σ 4B
  *
  * Callers map their cart rows to {icon, design, name, shadeRef, quantity}
- * first (shadeRef is the display form, possibly "3 - White"; icon/name come
- * from the design's category meta so they are identical within a design) and
- * get back grouped display lines in order of first appearance.
+ * (shadeRef is the display form, e.g. "3 - Navy Blue"; icon/name come from
+ * the design's category meta). `showCategory: false` drops the category on
+ * the requester's own cards — the code is enough there; approver cards keep
+ * it (owner's call). One implementation feeds the cart, the confirmation,
+ * the submitted receipt, the Dispatch full card, the assignment cards and
+ * the approval card, so they cannot drift apart again.
  */
 
-function formatCartLines(rows, containerShort) {
+const { formatCounts } = require('../services/unitDisplayService');
+
+const BULLET = '  • ';
+
+/** Supply carts count whole bales; the rule-6c letter, never a word. */
+function qty(n) { return formatCounts({ bales: Number(n) || 0, empty: '0B' }); }
+
+/**
+ * Header + bullet lines per design, first-appearance order.
+ * @param {Array<{icon?:string, design:string, name?:string, shadeRef:string, quantity:number}>} rows
+ * @param {{showCategory?: boolean}} [opts] default true
+ * @returns {string[]}
+ */
+function formatCartBlock(rows, opts = {}) {
+  const showCategory = opts.showCategory !== false;
   const byDesign = new Map();
   for (const r of rows || []) {
     if (!byDesign.has(r.design)) byDesign.set(r.design, { meta: r, group: [] });
     byDesign.get(r.design).group.push(r);
   }
-
   const lines = [];
   for (const { meta, group } of byDesign.values()) {
-    const label = `${meta.icon} ${meta.design}${meta.name ? ` [${meta.name}]` : ''}`;
-    const total = group.reduce((s, r) => s + (Number(r.quantity) || 0), 0);
-    if (group.length === 1) {
-      lines.push(`${label} │ Shade: ${group[0].shadeRef} │ ×${group[0].quantity} ${containerShort}`);
-      continue;
-    }
-    const uniformSingles = group.every((r) => Number(r.quantity) === 1);
-    const shades = group
-      .map((r) => (uniformSingles ? String(r.shadeRef) : `${r.shadeRef}×${r.quantity}`))
-      .join(', ');
-    lines.push(`${label} │ Shades: ${shades} │ ×${total} ${containerShort}`);
+    const cat = showCategory && meta.name ? ` · ${meta.name}` : '';
+    lines.push(`${meta.icon ? `${meta.icon} ` : ''}${meta.design}${cat}`);
+    for (const r of group) lines.push(`${BULLET}${r.shadeRef} · ${qty(r.quantity)}`);
   }
   return lines;
 }
 
-module.exports = { formatCartLines };
+/** "Σ 4B" — the one tally under the block. */
+function formatCartTally(rows) {
+  const total = (rows || []).reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+  return `Σ ${qty(total)}`;
+}
+
+/** The whole block most cards print: lines, a blank line, the tally. '' for an empty cart. */
+function formatCart(rows, opts = {}) {
+  const lines = formatCartBlock(rows, opts);
+  if (!lines.length) return '';
+  return `${lines.join('\n')}\n\n${formatCartTally(rows)}`;
+}
+
+module.exports = { formatCartBlock, formatCartTally, formatCart };

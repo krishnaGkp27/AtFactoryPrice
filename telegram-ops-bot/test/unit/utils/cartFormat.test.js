@@ -2,34 +2,37 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { formatCartLines } = require('../../../src/utils/cartFormat');
+const { formatCartBlock, formatCartTally, formatCart } = require('../../../src/utils/cartFormat');
 
 const row = (design, shadeRef, quantity, name = '', icon = '🧵') => ({ icon, design, name, shadeRef, quantity });
 
-test('single-shade design keeps the classic one-line form', () => {
-  const lines = formatCartLines([row('9037', '3 - White', 2, 'Chinos')], 'bls');
-  assert.deepEqual(lines, ['🧵 9037 [Chinos] │ Shade: 3 - White │ ×2 bls']);
+test('one design: header line + one bullet per shade in rule-6c counts', () => {
+  assert.deepEqual(formatCartBlock([row('202/201', '1 - White', 1, 'Cashmere'), row('202/201', '3 - Navy Blue', 2, 'Cashmere')]),
+    ['🧵 202/201 · Cashmere', '  • 1 - White · 1B', '  • 3 - Navy Blue · 2B']);
 });
 
-test('many shades ×1 of one design fold into a single Shades line', () => {
-  const lines = formatCartLines(
-    [1, 2, 3, 4, 6, 7, 8].map((s) => row('77019', String(s), 1)), 'bls');
-  assert.deepEqual(lines, ['🧵 77019 │ Shades: 1, 2, 3, 4, 6, 7, 8 │ ×7 bls']);
+test('showCategory:false drops the category on the requester\'s own card', () => {
+  assert.deepEqual(formatCartBlock([row('9037', '3 - White', 2, 'Chinos')], { showCategory: false }),
+    ['🧵 9037', '  • 3 - White · 2B']);
 });
 
-test('mixed quantities annotate each shade and total correctly', () => {
-  const lines = formatCartLines([row('201', '1', 2), row('201', '3', 1), row('201', '4', 3)], 'bls');
-  assert.deepEqual(lines, ['🧵 201 │ Shades: 1×2, 3×1, 4×3 │ ×6 bls']);
+test('several designs keep first-appearance order; bullets stay under their design', () => {
+  const lines = formatCartBlock([row('77019', '1', 1), row('9037', '2', 1), row('77019', '3', 3)]);
+  assert.deepEqual(lines, ['🧵 77019', '  • 1 · 1B', '  • 3 · 3B', '🧵 9037', '  • 2 · 1B']);
 });
 
-test('multiple designs keep first-appearance order, one line each', () => {
-  const lines = formatCartLines(
-    [row('77019', '1', 1), row('9037', '2', 1), row('77019', '3', 1)], 'bls');
-  assert.equal(lines.length, 2);
-  assert.match(lines[0], /^🧵 77019 │ Shades: 1, 3 │ ×2 bls$/);
-  assert.match(lines[1], /^🧵 9037 │ Shade: 2 │ ×1 bls$/);
+test('tally is Σ in the rule-6c grammar; never "bales" / "bls"', () => {
+  assert.equal(formatCartTally([row('201', '1', 2), row('201', '3', 1), row('201', '4', 3)]), 'Σ 6B');
+  assert.equal(formatCartTally([]), 'Σ 0B');
 });
 
-test('empty cart → no lines', () => {
-  assert.deepEqual(formatCartLines([], 'bls'), []);
+test('formatCart joins block, blank line, tally — and no pseudo-columns anywhere', () => {
+  const text = formatCart([row('202/201', '1 - White', 1), row('202/201', '3 - Navy Blue', 1)], { showCategory: false });
+  assert.equal(text, '🧵 202/201\n  • 1 - White · 1B\n  • 3 - Navy Blue · 1B\n\nΣ 2B');
+  assert.ok(!/[│━]|bls|bales/.test(text));
+});
+
+test('empty cart → no lines, empty text', () => {
+  assert.deepEqual(formatCartBlock([]), []);
+  assert.equal(formatCart([]), '');
 });

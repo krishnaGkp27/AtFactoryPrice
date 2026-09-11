@@ -6979,16 +6979,14 @@ function addToCart(session, design, shade, quantity) {
 async function buildCartText(session) {
   const cart = session.cart || [];
   if (!cart.length) return '🛒 Cart is empty.';
-  const labels = await productTypesRepo.getLabels(session.productType || 'fabric');
-  const cShort = labels.container_short;
-  // SRF-UX: shades of one design fold into a single line.
-  const lines = cartFormat.formatCartLines(cart.map((c) => {
+  // UX-2 — the shared cart block (utils/cartFormat): design header, shade
+  // bullets in rule-6c counts, one Σ tally; no category on the requester's
+  // own card (owner, 11-Sep-2026).
+  const block = cartFormat.formatCart(cart.map((c) => {
     const m = getMaterialInfo(c.design);
     return { icon: m.icon, design: c.design, name: m.name, shadeRef: formatShadeRef(c.shade, c.shadeName), quantity: c.quantity };
-  }), cShort);
-  const total = cart.reduce((s, c) => s + c.quantity, 0);
-  const containerPlural = productTypesRepo.pluralize(labels.container_label, total).toLowerCase();
-  return `🛒 *Supply Cart* — 🏭 ${session.warehouse}\n━━━━━━━━━━━━━━━━━━━━━━\n${lines.join('\n')}\n━━━━━━━━━━━━━━━━━━━━━━\n📦 Total: ${total} ${containerPlural}`;
+  }), { showCategory: false });
+  return `🛒 *Supply Cart* · 🏭 ${session.warehouse}\n\n${block}`;
 }
 
 /**
@@ -11476,22 +11474,16 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     await auditLogRepository.append('approval_queued', { requestId, reason: approvalReason }, uid);
 
     const userLabel = await getRequesterDisplayName(uid, null);
-    const labels = await productTypesRepo.getLabels(session.productType || 'fabric');
-    const cShort = labels.container_short;
-    // SRF-UX: shades of one design fold into a single line.
-    const cartLines = cartFormat.formatCartLines(cart.map((c) => {
+    // UX-2 — the shared cart block: the admin's copy keeps the category,
+    // the requester's receipt drops it (owner, 11-Sep-2026).
+    const cartRows = cart.map((c) => {
       const m = getMaterialInfo(c.design);
       return { icon: m.icon, design: c.design, name: m.name, shadeRef: formatShadeRef(c.shade, c.shadeName), quantity: c.quantity };
-    }), cShort).join('\n');
-    const totalPkgs = cart.reduce((s, c) => s + c.quantity, 0);
-    const containerPlural = productTypesRepo.pluralize(labels.container_label, totalPkgs).toLowerCase();
+    });
+    const cartAdmin = cartFormat.formatCart(cartRows);
+    const cartPlain = cartFormat.formatCart(cartRows, { showCategory: false });
 
-    let summary = `Supply Request\n`;
-    summary += `🏭 ${actionJSON.warehouse}\n`;
-    summary += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-    summary += `${cartLines}\n`;
-    summary += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-    summary += `📦 Total: ${totalPkgs} ${containerPlural}\n`;
+    let summary = `Supply Request · 🏭 ${actionJSON.warehouse}\n\n${cartAdmin}\n`;
     summary += `👤 ${actionJSON.customer}\n`;
     summary += `🧑 ${actionJSON.salesperson}\n`;
     summary += `💳 ${actionJSON.paymentMode}\n`;
@@ -11539,7 +11531,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       : 'Dispatch confirmation';
     // SJ-4 — seal the tapped confirm card into the submitted receipt instead
     // of stranding it above a fresh message with stale "Confirm?" text.
-    const submittedText = `✅ Supply request submitted.\n\n🏭 ${actionJSON.warehouse}\n━━━━━━━━━━━━━━━━━━━━━━\n${cartLines}\n━━━━━━━━━━━━━━━━━━━━━━\n📦 Total: ${totalPkgs} ${containerPlural}\n👤 ${actionJSON.customer}\n🧑 ${actionJSON.salesperson}\n💳 ${actionJSON.paymentMode}\n📅 ${fmtDate(actionJSON.salesDate)}\n\n⏳ Waiting for ${waitingFor}.\nRef: ${shortRequestRef(requestId)}`;
+    const submittedText = `✅ Supply request submitted\n🏭 ${actionJSON.warehouse}\n\n${cartPlain}\n👤 ${actionJSON.customer}\n🧑 ${actionJSON.salesperson}\n💳 ${actionJSON.paymentMode}\n📅 ${fmtDate(actionJSON.salesDate)}\n\n⏳ Waiting for ${waitingFor}.\nRef: ${shortRequestRef(requestId)}`;
     try {
       await bot.editMessageText(submittedText, {
         chat_id: chatId, message_id: callbackQuery.message.message_id, parse_mode: 'Markdown',

@@ -114,7 +114,8 @@ test('approve on a queued supply request never opens the sale wizard — the adm
   await controller.handleCallbackQuery(bot, cb(`approve:${queueRow.requestId}`, ADMIN, 9));
 
   const text = bot.allText();
-  assert.match(text, /Supply request approved\./, 'the supply approval summary');
+  assert.match(text, /✅ Supply request approved\n🏭 Lagos/, 'the supply approval summary');
+  assert.match(text, /🧵 202\/201\n {2}• 1 · 2B\n\nΣ 2B/, 'UX-2a cart block: design header, shade bullet, Σ tally');
   assert.match(text, /Assign to a warehouse boy:/, 'the picker, not a wizard');
   assert.ok(!/Step \d — /.test(text), 'no wizard step card of any kind');
   assert.ok(!/Confirm sale/.test(text), 'no wizard header');
