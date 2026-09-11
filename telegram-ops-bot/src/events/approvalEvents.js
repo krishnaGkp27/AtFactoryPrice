@@ -977,7 +977,7 @@ async function handleEnrichmentCallback(bot, callbackQuery) {
   }
   if (data === 'enr:pay:custom') {
     await ack();
-    try { await bot.sendMessage(chatId, 'Reply with the payment mode (e.g. `Paid to GTBank`, `Credit`).', { parse_mode: 'Markdown' }); } catch (_) {}
+    try { await bot.sendMessage(chatId, 'Reply with the payment mode (e.g. `Paid to GTBank`, `Not yet paid`).', { parse_mode: 'Markdown' }); } catch (_) {}
     return true;
   }
   if (data === 'enr:amt:full' && state.step === 'amount_paid' && state.fullAmount) {
