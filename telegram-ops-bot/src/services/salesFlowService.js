@@ -32,9 +32,19 @@ async function getBankList() {
   return raw.split(',').map((b) => b.trim()).filter(Boolean);
 }
 
+/**
+ * The requester's payment-mode vocabulary: Cash, the unpaid case, then the
+ * banks from Settings `BANK_LIST`.
+ *
+ * SRF-PAY (owner, 11-Sep-2026): the unpaid case is the VALUE `Not yet paid`
+ * — the same word the admin's approval wizard uses — never `Credit`. One
+ * concept, one word, so the requester's choice and the admin's decision can
+ * be read side by side on the wizard card. Callers that render chips may
+ * label it "⏳ Not yet paid (credit)"; what they STORE is this value.
+ */
 async function getPaymentOptions() {
   const banks = await getBankList();
-  return ['Cash', 'Credit', ...banks];
+  return ['Cash', 'Not yet paid', ...banks];
 }
 
 function getMissingFields(collected) {

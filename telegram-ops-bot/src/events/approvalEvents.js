@@ -725,8 +725,16 @@ async function sendPaymentStep(bot, chatId, state) {
   // BANK-2 — no dead-end mid-approval: if the receiving account isn't
   // registered yet, one tap opens 🏦 Manage Banks (admin-only anyway).
   rows.push([{ text: '🏦 Manage accounts', callback_data: 'act:manage_banks' }]);
+  // SRF-PAY (owner, 11-Sep-2026) — the typed list reads the same words as
+  // the requester's chips: Cash · Paid to [Bank] · Not yet paid. "Credit" is
+  // no longer offered (no chip anywhere carries that value); a typed
+  // "Credit" is still stored verbatim by the free-text handler. No
+  // requester-mode hint is drawn here: no request that reaches this wizard
+  // carries one — a supply_request never enters it (it goes to the
+  // warehouse-boy picker, and its admin card already prints
+  // "💳 Payment: <mode>"), and every live sale door queues paymentMode ''.
   await renderWizard(bot, chatId, state,
-    `${wizHeader(state)}\n👤 ${state.customer || '—'}\n\n*Step 3 — Payment mode:* tap below, or reply with one of:\n• Cash\n• Credit\n• Paid to [Bank]\n• Not yet paid${TYPED_NOTE}`,
+    `${wizHeader(state)}\n👤 ${state.customer || '—'}\n\n*Step 3 — Payment mode:* tap below, or reply with one of:\n• Cash\n• Paid to [Bank]\n• Not yet paid${TYPED_NOTE}`,
     rows);
 }
 

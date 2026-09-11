@@ -7117,11 +7117,20 @@ async function showSupplySalespersonPicker(bot, chatId, userId, showAll = false)
 
 async function showSupplyPaymentPicker(bot, chatId, userId) {
   const options = await salesFlow.getPaymentOptions();
+  // SRF-PAY (owner, 11-Sep-2026) — the chip LABEL reads the concept
+  // ("⏳ Not yet paid (credit)"); the callback carries and the session stores
+  // the VALUE ('Not yet paid'), the same word the approval wizard uses.
+  // Banks come from Settings BANK_LIST.
+  const label = (o) => {
+    if (o === 'Cash') return '💵 Cash';
+    if (o === 'Not yet paid') return '⏳ Not yet paid (credit)';
+    return `🏦 ${o}`;
+  };
   const rows = [];
   for (let i = 0; i < options.length; i += 3) {
     const row = [];
     for (let j = i; j < Math.min(i + 3, options.length); j++) {
-      row.push({ text: `💳 ${options[j]}`, callback_data: `srf_pm:${options[j]}` });
+      row.push({ text: label(options[j]), callback_data: `srf_pm:${options[j]}` });
     }
     rows.push(row);
   }
