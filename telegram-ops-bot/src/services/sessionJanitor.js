@@ -135,8 +135,10 @@ async function tombstone(bot, entry, cfg) {
   // Transient photo previews + SJ-4 tracked auxiliary messages (catalogue
   // photo cards, interim prompts) are ephemeral by design — delete outright.
   // The sale confirm card joins them: its ✅ Confirm button must not stay
-  // tappable after the session it would act on has expired.
-  for (const mid of [entry.previewMessageId, entry.comboMessageId, entry.confirmMsgId, ...(entry.auxMsgIds || [])]) {
+  // tappable after the session it would act on has expired. SHP-2 —
+  // recordPhotoId is the same photo bubble after a quantity was chosen, so a
+  // flow abandoned right after an add leaves no picture behind either.
+  for (const mid of [entry.previewMessageId, entry.comboMessageId, entry.confirmMsgId, entry.recordPhotoId, ...(entry.auxMsgIds || [])]) {
     if (!mid) continue;
     try { await bot.deleteMessage(chatId, mid); } catch (_) { /* already gone */ }
   }

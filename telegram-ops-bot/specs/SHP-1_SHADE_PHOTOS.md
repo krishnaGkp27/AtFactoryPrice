@@ -324,3 +324,18 @@ Two items need the owner:
    activated … visible in Update Price and Stock pickers". The executor's
    own message is correct; the extra photo is wrong. The fix is a one-line
    `kind !== 'shade'` guard in a file that needs the owner's go.
+
+### Follow-ups
+
+- **SHP-2 · one photo bubble per supply request** (owner, 11-Sep-2026 —
+  shipped). The detach above kept the record on screen but dropped its
+  message id, so ➕ Add More for the same design sent a *second* picture and
+  a long cart stacked one orphan per line. The record's id is now parked on
+  the session (`recordPhotoId` / `recordDesign`): Add More for the SAME
+  design re-attaches it and the existing `keepForMorph` path morphs it back
+  into the swatch page in place, while moving to another design (or
+  cancelling, or letting the flow go stale) deletes it. The detach itself is
+  unchanged — `previewMessageId` still goes null, so nothing but that
+  deliberate re-attach can ever morph the record. This supersedes the
+  "Cart → Add more → the same design gets a fresh combo" sentence in the
+  review notes above. Spec: `specs/SHP-2_ONE_PHOTO_BUBBLE.md`.

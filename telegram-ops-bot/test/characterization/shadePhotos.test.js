@@ -70,11 +70,25 @@ function seedShadeRows(rows) {
   shadeRepo.invalidateCache();
 }
 
-function seedStock() {
+/**
+ * Seeds IDUMOTA stock and a fresh supply-request session.
+ * SHP-2 — `extraDesign` puts a SECOND design in the warehouse so the flow
+ * can move off 9037; `shades` narrows which shades 9037 offers.
+ */
+function seedStock({ shades = ['1', '2'], extraDesign = null } = {}) {
   const rows = [];
-  for (const shade of ['1', '2']) {
+  for (const shade of shades) {
     for (let i = 0; i < 3; i += 1) {
       rows.push({ design: '9037', shade, warehouse: 'IDUMOTA', status: 'available', packageNo: `${shade}${i}`, productType: 'fabric', yards: 30 });
+    }
+  }
+  if (extraDesign) {
+    // Two shades, so the second design renders the normal shade picker
+    // (a single-shade design skips straight to the quantity card).
+    for (const shade of ['1', '2']) {
+      for (let i = 0; i < 3; i += 1) {
+        rows.push({ design: extraDesign, shade, warehouse: 'IDUMOTA', status: 'available', packageNo: `X${shade}${i}`, productType: 'fabric', yards: 30 });
+      }
     }
   }
   inventoryRepository.getAll = async () => rows;
@@ -328,7 +342,7 @@ test('REGRESSION: a sold-out shade tap morphs the caption in place — no "Sold 
   assert.equal(bot.calls.slice(before).filter((c) => c.method === 'sendMessage').length, 0, 'nothing stranded');
 });
 
-test('REGRESSION: choosing a quantity detaches the morphed photo — Cart → Add more → same design never morphs a stale bubble', async () => {
+test('REGRESSION: choosing a quantity detaches the morphed photo — nothing else can morph it while it is a record', async () => {
   seedStock();
   seedShadeRows([{ shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' }]);
   const bot = createFakeBot();
@@ -343,12 +357,82 @@ test('REGRESSION: choosing a quantity detaches the morphed photo — Cart → Ad
   assert.equal(s.previewMessageId, null, 'detached');
   assert.equal(s.previewIsPhoto, false);
   assert.equal(s.cart.length, 1);
+  // SHP-2 — the detach is what stops anything OTHER than the deliberate
+  // same-design re-attach (srf_cart:add) from morphing the record: a shade
+  // tap that arrives late finds no morphable preview and must not touch it.
   const mark = bot.calls.length;
-  await controller.handleCallbackQuery(bot, cb('srf_cart:add'));
-  await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+  await controller.handleCallbackQuery(bot, cb('srf_sh:9037|2|3'));
   const after = bot.calls.slice(mark);
-  assert.ok(after.some((c) => c.method === 'sendPhoto'), 'a FRESH combo for the second visit');
-  assert.ok(!after.some((c) => c.method === 'editMessageMedia' && c.args.opts.message_id === comboId), 'the old bubble is never morphed');
+  assert.ok(!after.some((c) => c.method === 'editMessageMedia' && c.args.opts.message_id === comboId), 'the record is never morphed while detached');
+  // It is not orphaned either: that tap renders a new screen, so the record
+  // goes with the screen it belonged to (SHP-2 clearDesignPreview).
+  assert.ok(after.some((c) => c.method === 'deleteMessage' && c.args.messageId === comboId), 'the record is cleared, not stranded');
+  assert.equal(sessionStore.get(UID).recordPhotoId, undefined);
+});
+
+/* ── SHP-2 (owner, 11-Sep-2026): ONE photo bubble per supply request ──── */
+
+test('SHP-2: ➕ Add More on the same design morphs the "in cart" record back into the shade picker — one picture, never two', async () => {
+  seedStock();
+  seedShadeRows([
+    { shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' },
+    { shadeNo: '2', shadeName: 'Dark Brown', telegramFileId: 'SHADE2_FID' },
+  ]);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+  const comboId = sessionStore.get(UID).previewMessageId;
+
+  await controller.handleCallbackQuery(bot, cb('srf_sh:9037|1|3'));
+  await controller.handleCallbackQuery(bot, cb('srf_qty:1', UID, comboId));
+  assert.equal(sessionStore.get(UID).recordPhotoId, comboId, 'the record keeps the bubble id');
+
+  await controller.handleCallbackQuery(bot, cb('srf_cart:add'));
+  const backToPage = last(bot, 'editMessageMedia');
+  assert.equal(backToPage.args.opts.message_id, comboId, 'the record becomes the swatch page again, in place');
+  assert.equal(backToPage.args.media.media, 'PAGE_FID');
+  assert.ok(flat(backToPage.args.opts.reply_markup).some((b) => /1 - White/.test(b.text)), 'shade chips are back');
+  assert.equal(bot.calls.filter((c) => c.method === 'sendPhoto').length, 1, 'ONE picture for the whole request');
+  const s2 = sessionStore.get(UID);
+  assert.equal(s2.previewMessageId, comboId, 're-attached as the live bubble');
+  assert.equal(s2.previewIsPhoto, true);
+  assert.equal(s2.recordPhotoId, undefined, 'the parked id is consumed by the re-attach');
+
+  // The second line rides the very same bubble: shade photo → record again.
+  await controller.handleCallbackQuery(bot, cb('srf_sh:9037|2|3'));
+  assert.equal(last(bot, 'editMessageMedia').args.media.media, 'SHADE2_FID', 'the second shade morphs the same message');
+  await controller.handleCallbackQuery(bot, cb('srf_qty:1', UID, comboId));
+  const rec2 = last(bot, 'editMessageCaption');
+  assert.equal(rec2.args.opts.message_id, comboId);
+  assert.match(rec2.args.caption, /2 - Dark Brown.*1B in cart/);
+  assert.equal(sessionStore.get(UID).recordPhotoId, comboId, 'still the one bubble, parked again');
+  assert.equal(bot.calls.filter((c) => c.method === 'sendPhoto').length, 1, 'still ONE picture after two added lines');
+  assert.equal(sessionStore.get(UID).cart.length, 2);
+});
+
+test('SHP-2: moving to a DIFFERENT design deletes the record — the new design gets one bubble of its own', async () => {
+  seedStock({ extraDesign: '9006' });
+  seedShadeRows([{ shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' }]);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+  const comboId = sessionStore.get(UID).previewMessageId;
+  await controller.handleCallbackQuery(bot, cb('srf_sh:9037|1|3'));
+  // Take that shade out entirely → only one shade of 9037 is left, so
+  // addMoreDesign declines and ➕ Add More shows the design list instead.
+  await controller.handleCallbackQuery(bot, cb('srf_qty:3', UID, comboId));
+  assert.equal(sessionStore.get(UID).recordPhotoId, comboId);
+
+  await controller.handleCallbackQuery(bot, cb('srf_cart:add'));
+  assert.equal(sessionStore.get(UID).recordPhotoId, comboId, 'the record waits on screen over the design list');
+
+  const mark = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb('srf_dg:9006'));
+  const after = bot.calls.slice(mark);
+  assert.ok(after.some((c) => c.method === 'deleteMessage' && c.args.messageId === comboId), 'the old design\'s record is removed');
+  assert.ok(!after.some((c) => c.method === 'editMessageMedia' && c.args.opts.message_id === comboId), 'and never morphed into the new design');
+  assert.equal(after.filter((c) => c.method === 'sendPhoto').length, 1, 'exactly one bubble for the second design');
+  const s3 = sessionStore.get(UID);
+  assert.equal(s3.recordPhotoId, undefined, 'the record id is gone with the message');
+  assert.equal(s3.recordDesign, undefined);
 });
 
 test('REGRESSION: marketer — a failed morph shows a fresh photo card and NEVER raises the request', async () => {

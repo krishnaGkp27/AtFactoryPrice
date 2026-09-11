@@ -95,6 +95,10 @@ function _snapshotOf(userId, s) {
     flowMessageId: s.flowMessageId || null,
     previewMessageId: s.previewMessageId || null,
     comboMessageId: s.comboMessageId || null,
+    // SHP-2 — the supply request's "in cart" record: the same one photo
+    // bubble, parked under another id once a quantity was chosen. Without it
+    // in the snapshot the janitor's sweep below could never reach it.
+    recordPhotoId: s.recordPhotoId || null,
     // SJ-4 — tracked auxiliary messages (photo cards, interim prompts)
     // ride the snapshot so the janitor can dispose of them too, as does the
     // sale confirm card (its live ✅/❌ buttons must not outlive the session).

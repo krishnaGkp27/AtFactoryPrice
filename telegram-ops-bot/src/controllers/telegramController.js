@@ -11190,6 +11190,17 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
           await bot.deleteMessage(chatId, session.flowMessageId).catch(() => {});
           session.flowMessageId = null;
         }
+        // SHP-2 — the "in cart" record parked by the quantity step IS the
+        // design's photo bubble. Re-attach it so showShadesForDesign takes
+        // its keepForMorph path and edits that same message back into the
+        // swatch page + shade chips, instead of sending a second picture.
+        if (session.recordPhotoId && session.recordDesign === again) {
+          session.previewMessageId = session.recordPhotoId;
+          session.previewIsPhoto = true;
+          session.currentDesign = again;
+          delete session.recordPhotoId;
+          delete session.recordDesign;
+        }
         sessionStore.set(uid, session);
         await showShadesForDesign(bot, chatId, uid, again, session.warehouse);
       } else {
@@ -12910,6 +12921,12 @@ async function showPendingUserLinkPicker(bot, chatId, adminId, pu, kind) {
  * with: its caption becomes a one-line record of what was added and it is
  * DETACHED from the session, so a later visit to the same design (Cart →
  * Add more) can never morph a stale bubble above the cart. Best-effort.
+ *
+ * SHP-2 — detached is not forgotten: the record's id is parked on
+ * recordPhotoId/recordDesign so ➕ Add More for the SAME design can
+ * re-attach it (srf_cart:add) and morph it back into the shade picker,
+ * and clearDesignPreview can delete it when the screen moves elsewhere.
+ * previewMessageId stays null so nothing else can morph a stale bubble.
  */
 async function detachShadePhotoAfterQuantity(bot, chatId, userId, qty) {
   const session = sessionStore.get(userId);
@@ -12917,6 +12934,8 @@ async function detachShadePhotoAfterQuantity(bot, chatId, userId, qty) {
   const mid = session.previewMessageId;
   session.previewMessageId = null;
   session.previewIsPhoto = false;
+  session.recordPhotoId = mid; // SHP-2
+  session.recordDesign = session.currentDesign; // SHP-2
   sessionStore.set(userId, session);
   try {
     await bot.editMessageCaption(
@@ -12944,6 +12963,18 @@ async function clearDesignPreview(bot, chatId, userId) {
       await bot.deleteMessage(chatId, mid).catch(() => {});
     }
     session._auxMsgIds = [];
+    touched = true;
+  }
+  // SHP-2 — the "in cart" record left by detachShadePhotoAfterQuantity is
+  // the same one photo bubble, parked under a different id. Every caller of
+  // this helper is about to render a NEW screen (another design, the design
+  // list, cancel, back), so the record goes with the screen it belonged to.
+  // The same-design ➕ Add More path never gets here: keepForMorph is true
+  // there, and the bubble is morphed back into the shade picker instead.
+  if (session.recordPhotoId) {
+    await bot.deleteMessage(chatId, session.recordPhotoId).catch(() => {});
+    delete session.recordPhotoId;
+    delete session.recordDesign;
     touched = true;
   }
   if (touched) sessionStore.set(userId, session);
