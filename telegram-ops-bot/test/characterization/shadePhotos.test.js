@@ -109,8 +109,8 @@ test('Orders: the shade tap morphs the swatch page into the shade’s garment ph
   assert.equal(morph.args.opts.message_id, comboId);
   assert.equal(morph.args.media.type, 'photo');
   assert.equal(morph.args.media.media, 'SHADE1_FID', 'the picture is now the shade photo');
-  assert.match(morph.args.media.caption, /Shade: \*1 - White\*/);
-  assert.match(morph.args.media.caption, /How many bales to supply\?/);
+  assert.match(morph.args.media.caption, /🧵 \*9037\* · \*1 - White\*/);
+  assert.match(morph.args.media.caption, /How many bales\?/);
   const texts = flat(morph.args.opts.reply_markup).map((b) => b.text);
   assert.ok(texts.includes('All (3)') && texts.includes('1'), `quantity chips ride the photo, got ${texts}`);
   assert.ok(texts.includes('🔍 Full-quality picture'), 'full-quality chip present');
@@ -140,7 +140,7 @@ test('Orders: the shade tap morphs the swatch page into the shade’s garment ph
   await controller.handleCallbackQuery(bot, cb('srf_sh:9037|2|3'));
   const cap = last(bot, 'editMessageCaption');
   assert.ok(cap, 'caption-only morph');
-  assert.match(cap.args.caption, /Shade: \*2 - Dark Brown\*/);
+  assert.match(cap.args.caption, /🧵 \*9037\* · \*2 - Dark Brown\*/);
   assert.ok(!flat(cap.args.opts.reply_markup).some((b) => /Full-quality/.test(b.text)), 'no 🔍 chip without a photo');
 });
 
@@ -159,7 +159,7 @@ test('Orders: SHADE_PHOTOS_ENABLED=0 restores the pre-SHP-1 behaviour exactly', 
     assert.equal(last(bot, 'editMessageCaption'), undefined, 'no caption morph either');
     assert.ok(bot.calls.some((c) => c.method === 'deleteMessage' && c.args.messageId === comboId), 'the combo is dropped at the tap, as before');
     const qty = last(bot, 'sendMessage');
-    assert.match(qty.args.text, /How many bales to supply\?/, 'the old text quantity card');
+    assert.match(qty.args.text, /How many bales\?/, 'the old text quantity card');
     assert.ok(!flat(qty.args.opts.reply_markup).some((b) => /Full-quality/.test(b.text)));
     await controller.handleCallbackQuery(bot, cb('srf_back:shade'));
     assert.equal(last(bot, 'editMessageMedia'), undefined, 'Back sends a fresh combo, never morphs');
@@ -337,7 +337,7 @@ test('REGRESSION: choosing a quantity detaches the morphed photo — Cart → Ad
   await controller.handleCallbackQuery(bot, cb('srf_sh:9037|1|3'));
   await controller.handleCallbackQuery(bot, cb('srf_qty:2', UID, comboId));
   const rec = bot.calls.filter((c) => c.method === 'editMessageCaption').pop();
-  assert.match(rec.args.caption, /× 2 added to cart/, 'the photo becomes a record of what was added');
+  assert.match(rec.args.caption, /· 2B in cart/, 'the photo becomes a record of what was added');
   assert.equal(rec.args.opts.message_id, comboId);
   const s = sessionStore.get(UID);
   assert.equal(s.previewMessageId, null, 'detached');

@@ -3,8 +3,9 @@
 /**
  * WH-SUM — warehouse totals under the Supply Request design-picker header.
  *
- *   📦 Warehouse: Lagos
- *   📊 Total: 3B / 4B · 💰 ₦45,000     ← value part ADMIN-ONLY
+ *   🏭 Lagos
+ *   📊 3B / 4B _(remaining / opening)_
+ *   💰 45,000                          ← value line ADMIN-ONLY, only when > 0
  *
  * - unit total for everyone as the "remaining / opening" pair (TV-4/TV-5):
  *   TV-1 warehouses show THANS ONLY ("9t / 12t", TV-7),
@@ -71,7 +72,7 @@ function seed(uid, warehouse) {
 }
 function headerText(bot) {
   const edits = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method)
-    && /Warehouse:/.test(c.args.text || ''));
+    && /Select design/.test(c.args.text || ''));
   return edits.length ? edits[edits.length - 1].args.text : '';
 }
 
@@ -81,7 +82,7 @@ test('admin on Lagos: header shows bales remaining / opening AND stock value (TV
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_back:design', 777));
   const text = headerText(bot);
-  assert.match(text, /Total: 3B \/ 4B/, `bales-only pair (sold bale counted in opening), got: ${text}`);
+  assert.match(text, /📊 3B \/ 4B/, `bales-only pair (sold bale counted in opening), got: ${text}`);
   assert.match(text, /45,000/, `value shown for admin, got: ${text}`);
 });
 
@@ -91,7 +92,7 @@ test('employee on Lagos: header shows bales remaining / opening, NO value', asyn
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_back:design', 4242));
   const text = headerText(bot);
-  assert.match(text, /Total: 3B \/ 4B/, `got: ${text}`);
+  assert.match(text, /📊 3B \/ 4B/, `got: ${text}`);
   assert.ok(!/45,000|💰/.test(text), `value hidden from employee, got: ${text}`);
 });
 
@@ -101,7 +102,7 @@ test('Kano office (TV-1 warehouse): header total is remaining / opening in thans
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_back:design', 777));
   const text = headerText(bot);
-  assert.match(text, /Total: 9t \/ 12t/, `remaining / opening pair, thans only (TV-7), got: ${text}`);
+  assert.match(text, /📊 9t \/ 12t/, `remaining / opening pair, thans only (TV-7), got: ${text}`);
   assert.match(text, /45,000/, `admin value still shown (available rows only), got: ${text}`);
   assert.match(text, /_\(remaining \/ opening\)_/, `legend shown, got: ${text}`);
 });
@@ -113,7 +114,7 @@ test('Lagos (bales-only): sold bale counts in OPENING only; legend + value stay 
   await controller.handleCallbackQuery(bot, cb('srf_back:design', 777));
   const text = headerText(bot);
   // remaining excludes the sold bale; opening includes it; no than figures.
-  assert.match(text, /Total: 3B \/ 4B/, `remaining excludes sold, opening includes it, got: ${text}`);
+  assert.match(text, /📊 3B \/ 4B/, `remaining excludes sold, opening includes it, got: ${text}`);
   assert.ok(!/=\d+t/.test(text), `no than figures on a bales-only warehouse, got: ${text}`);
   assert.match(text, /_\(remaining \/ opening\)_/, `legend shown on bales-only warehouse too, got: ${text}`);
   assert.match(text, /45,000/, `admin value still computed from AVAILABLE rows only, got: ${text}`);
@@ -132,10 +133,10 @@ test('TV-6: in_transit rows stay out of the header opening; the 🚚 button appe
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_back:design', 777));
   const text = headerText(bot);
-  assert.match(text, /Total: 3B \/ 4B/, `in_transit bale in neither remaining nor opening, got: ${text}`);
+  assert.match(text, /📊 3B \/ 4B/, `in_transit bale in neither remaining nor opening, got: ${text}`);
   assert.match(text, /45,000/, `value unchanged (AVAILABLE rows only), got: ${text}`);
   const kb = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method)
-    && c.args.opts && c.args.opts.reply_markup && /Warehouse:/.test(c.args.text || ''));
+    && c.args.opts && c.args.opts.reply_markup && /Select design/.test(c.args.text || ''));
   const rows = kb[kb.length - 1].args.opts.reply_markup.inline_keyboard;
   assert.equal(rows[0][0].callback_data, 'srf_tl:show', `🚚 button at the top, got: ${rows[0][0].callback_data}`);
   assert.equal(rows[0][0].text, '🚚 In transit (1B)', `bales-only transit label, got: ${rows[0][0].text}`);
@@ -152,8 +153,8 @@ test('TV-6: purely transfer-fed warehouse header is remaining-only — no pair, 
     const bot = createFakeBot();
     await controller.handleCallbackQuery(bot, cb('srf_back:design', 777));
     const text = headerText(bot);
-    assert.match(text, /Total: 3B(?![=\d])/, `remaining-only total, got: ${text}`);
-    assert.ok(!/Total: 3B \//.test(text), `no opening pair on a transfer-fed warehouse, got: ${text}`);
+    assert.match(text, /📊 3B(?![=\d])/, `remaining-only total, got: ${text}`);
+    assert.ok(!/📊 3B \//.test(text), `no opening pair on a transfer-fed warehouse, got: ${text}`);
     assert.ok(!/remaining \/ opening/.test(text), `no legend without a pair, got: ${text}`);
     assert.match(text, /45,000/, `admin value unchanged, got: ${text}`);
   } finally {
