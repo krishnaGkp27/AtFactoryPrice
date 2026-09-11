@@ -3324,22 +3324,38 @@ async function showOrderSalespersonPicker(bot, chatId, userId) {
     if (adminIds.has(u.user_id)) return true;
     return usersRepository.inDepartment(u, 'Sales');
   });
-  if (!active.length) {
+  // SRF-SP2 (owner, 11-Sep-2026) — rule 9b: the submitter is offered first
+  // ("🙋 Me") when they can be a seller (admin or Sales), then "👤 Customer
+  // direct" for the customer who came on their own, then the list without
+  // the submitter. The Me chip reuses the id payload when the submitter has
+  // a Users row; an admin without one taps os:__me__ and the handler
+  // resolves their id and name.
+  const uid = String(userId);
+  const meRow = active.find((u) => String(u.user_id) === uid) || null;
+  const meIsSeller = !!meRow || adminIds.has(uid);
+  const others = active.filter((u) => String(u.user_id) !== uid);
+  if (!active.length && !meIsSeller) {
     await bot.sendMessage(chatId, '⚠️ No salespersons found (Sales dept or admin). Ask admin to assign users.');
     sessionStore.clear(userId);
     return;
   }
   const rows = [];
-  for (let i = 0; i < active.length; i += 2) {
-    const row = [{ text: `🧑 ${active[i].name}`, callback_data: `os:${active[i].user_id}` }];
-    if (active[i + 1]) row.push({ text: `🧑 ${active[i + 1].name}`, callback_data: `os:${active[i + 1].user_id}` });
+  if (meIsSeller) {
+    rows.push([meRow
+      ? { text: meRow.name ? `🙋 Me · ${meRow.name}` : '🙋 Me', callback_data: `os:${uid}` }
+      : { text: '🙋 Me', callback_data: 'os:__me__' }]);
+  }
+  rows.push([{ text: '👤 Customer direct', callback_data: 'os:__direct__' }]);
+  for (let i = 0; i < others.length; i += 2) {
+    const row = [{ text: `🧑 ${others[i].name}`, callback_data: `os:${others[i].user_id}` }];
+    if (others[i + 1]) row.push({ text: `🧑 ${others[i + 1].name}`, callback_data: `os:${others[i + 1].user_id}` });
     rows.push(row);
   }
   rows.push([
     { text: '⬅️ Back', callback_data: 'obb:quantity' },
     { text: '❌ Cancel', callback_data: 'ocanc:1' },
   ]);
-  await bot.sendMessage(chatId, '🧑 *Select salesperson:*', {
+  await bot.sendMessage(chatId, '🧑 *Who sold it?*', {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });
@@ -9253,9 +9269,25 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     if (!session || session.type !== 'order_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
     await bot.answerCallbackQuery(callbackQuery.id);
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
-    const spUser = await usersRepository.findByUserId(spId);
-    session.salesperson_id = spId;
-    session.salesperson_name = spUser ? spUser.name : spId;
+    if (spId === '__direct__') {
+      // SRF-SP2 — no seller: the customer came on their own, or the admin
+      // raised it on their behalf. The NAME is the exact value every sale
+      // door stores. The ID is the submitter's own: an order's whole
+      // lifecycle (the Accept card, oacc:, odel:, the delivery picker, the
+      // day-before reminder) is keyed on salesperson_id, so a blank id would
+      // leave the order pending_accept forever with nobody able to close it
+      // — the one who raised it fulfils it.
+      session.salesperson_id = uid;
+      session.salesperson_name = 'Customer direct';
+    } else if (spId === '__me__') {
+      // SRF-SP2 — an admin without a Users row sold it themselves.
+      session.salesperson_id = uid;
+      session.salesperson_name = await getRequesterDisplayName(uid, callbackQuery);
+    } else {
+      const spUser = await usersRepository.findByUserId(spId);
+      session.salesperson_id = spId;
+      session.salesperson_name = spUser ? spUser.name : spId;
+    }
     session.step = 'payment';
     sessionStore.set(uid, session);
     await bot.sendMessage(callbackQuery.message.chat.id, `Salesperson: *${session.salesperson_name}*\n\nPayment status:`, {

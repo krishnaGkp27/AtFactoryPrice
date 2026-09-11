@@ -9,6 +9,13 @@
  *   container → warehouse → design (+ catalogue photo) → bale multi-select
  *   cart → salesperson → date → review.
  *
+ * SRF-SP2 (owner, 11-Sep-2026): the seller picker offers the submitter
+ * first ("🙋 Me · name", only when they are an admin or in Sales — the
+ * same rule the supply picker lists by), then "👤 Customer direct" for the
+ * sale with no seller (stored as exactly 'Customer direct'), then every
+ * other active user without repeating the submitter. Rule 9b: the seller
+ * is picked, never assumed.
+ *
  * DSP-1 (owner 26-Jul): the customer and payment steps were removed — the
  * admin assigns customer, rate and payment at approval, and the result is
  * written back into the dispatcher's submitted card.
@@ -27,6 +34,7 @@
 const sessionStore = require('../utils/sessionStore');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const usersRepository = require('../repositories/usersRepository');
+const config = require('../config');
 const salesFlow = require('../services/salesFlowService');
 const designAssetsService = require('../services/designAssetsService');
 const { fmtQty } = require('../utils/format');
@@ -356,23 +364,66 @@ async function showBales(bot, chatId, userId) {
 
 
 
-async function showSalespersons(bot, chatId, userId) {
+/** The stored seller value for a sale with no seller — every sale door writes this exact string. */
+const CUSTOMER_DIRECT = 'Customer direct';
+
+/**
+ * SRF-SP2 — the seller chip order, pure (no I/O) so it can be pinned and
+ * later swapped for the shared salesperson-chips helper without touching
+ * the renderer. Rule 9b: the submitter is offered first — but only when
+ * they can BE a seller (an admin by env id, or a Sales-department user —
+ * the same rule the supply picker lists by). Then "Customer direct" for
+ * the sale with no seller, then every other active user; the submitter is
+ * never repeated in the list. `lead` chips render one per row.
+ *
+ * @param {object} p
+ * @param {string} p.submitterId Telegram id of the person driving the flow
+ * @param {Array<object>} p.users Users rows (usersRepository.parse shape)
+ * @param {string[]} p.adminIds env admin ids (config.access.adminIds)
+ * @param {string} [p.fallbackName] Telegram first_name — the Me label when the submitter has no Users row
+ * @returns {Array<{label:string, value:string, lead?:boolean}>} display order; `value` is what the session stores
+ */
+function salespersonChips({ submitterId, users, adminIds, fallbackName = '' }) {
+  const sid = String(submitterId || '');
+  const active = (users || []).filter((u) => (u.status || 'active').toLowerCase() === 'active');
+  const me = active.find((u) => String(u.user_id) === sid) || null;
+  const isAdmin = (adminIds || []).map(String).includes(sid);
+  const canSell = isAdmin || (me ? usersRepository.inDepartment(me, 'Sales') : false);
+  const meName = (me && me.name) || String(fallbackName || '').trim() || (me ? String(me.user_id) : '');
+  const chips = [];
+  if (canSell && meName) chips.push({ label: `🙋 Me · ${meName}`, value: meName, lead: true });
+  chips.push({ label: `👤 ${CUSTOMER_DIRECT}`, value: CUSTOMER_DIRECT, lead: true });
+  for (const u of active) {
+    if (String(u.user_id) === sid) continue;
+    const name = u.name || String(u.user_id);
+    if (!name) continue;
+    chips.push({ label: `🧑 ${name}`, value: name });
+  }
+  return chips;
+}
+
+async function showSalespersons(bot, chatId, userId, from = null) {
   const s = getSession(userId);
   let users = [];
-  try {
-    users = (await usersRepository.getAll())
-      .filter((u) => (u.status || 'active').toLowerCase() === 'active')
-      .map((u) => u.name || String(u.user_id)).filter(Boolean);
-  } catch (_) {}
-  s._salespersons = users.slice(0, MAX_CHIPS * 2); s.step = 'salesperson'; save(userId, s);
+  try { users = await usersRepository.getAll(); } catch (_) {}
+  const chips = salespersonChips({
+    submitterId: userId, users, adminIds: config.access.adminIds || [],
+    fallbackName: from && from.first_name,
+  }).slice(0, MAX_CHIPS * 2);
+  // Index i on the chip resolves to the stored value — the display order IS
+  // the session list, so 'Customer direct' and the Me chip ride the same
+  // sb:sp:<i> mechanism as every listed user.
+  s._salespersons = chips.map((c) => c.value); s.step = 'salesperson'; save(userId, s);
   const rows = [];
-  for (let i = 0; i < s._salespersons.length; i += 2) {
-    const row = [{ text: `🧑 ${s._salespersons[i]}`, callback_data: `sb:sp:${i}` }];
-    if (s._salespersons[i + 1]) row.push({ text: `🧑 ${s._salespersons[i + 1]}`, callback_data: `sb:sp:${i + 1}` });
+  let i = 0;
+  for (; i < chips.length && chips[i].lead; i += 1) rows.push([{ text: chips[i].label, callback_data: `sb:sp:${i}` }]);
+  for (; i < chips.length; i += 2) {
+    const row = [{ text: chips[i].label, callback_data: `sb:sp:${i}` }];
+    if (chips[i + 1]) row.push({ text: chips[i + 1].label, callback_data: `sb:sp:${i + 1}` });
     rows.push(row);
   }
   rows.push(cancelRow());
-  await render(bot, chatId, userId, `${header(s)}\n\nSelect salesperson:`, rows);
+  await render(bot, chatId, userId, `${header(s)}\n\n🧑 Who sold it?`, rows);
 }
 
 
@@ -667,7 +718,7 @@ async function handleCallback(bot, callbackQuery) {
     if (data === 'sb:rev') {
       if (!s.cart.length) { await ack('Cart is empty.'); return true; }
       await ack();
-      await showSalespersons(bot, chatId, userId);
+      await showSalespersons(bot, chatId, userId, callbackQuery.from);
       return true;
     }
     if (data.startsWith('sb:sp:')) {
@@ -743,5 +794,5 @@ async function handleText(bot, msg) {
 
 module.exports = {
   start, startWithBales, handleCallback, handleText, SESSION_TYPE,
-  _internals: { showDates, showCalendar, applyDate },
+  _internals: { showDates, showCalendar, applyDate, salespersonChips, CUSTOMER_DIRECT },
 };

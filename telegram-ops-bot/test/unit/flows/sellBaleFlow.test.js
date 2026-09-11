@@ -72,7 +72,10 @@ test('full chip path lands a complete salesFlow session with no typing', async (
   // payment step. Both are the admin's to set at approval.
   await sellBaleFlow.handleCallback(bot, cbq('sb:rev'));    // → salesperson
   assert.equal(sessionStore.get('555').step, 'salesperson');
-  await sellBaleFlow.handleCallback(bot, cbq('sb:sp:0'));   // Abdulazeez
+  // SRF-SP2 — 555 is neither admin nor Sales, so no Me chip: index 0 is
+  // now "Customer direct" and Abdulazeez sits at index 1.
+  assert.deepEqual(sessionStore.get('555')._salespersons, ['Customer direct', 'Abdulazeez']);
+  await sellBaleFlow.handleCallback(bot, cbq('sb:sp:1'));   // Abdulazeez
   assert.equal(sessionStore.get('555').step, 'date');
   await sellBaleFlow.handleCallback(bot, cbq('sb:dt:0'));   // Today
   assert.equal(sessionStore.get('555').step, 'review');
@@ -116,4 +119,103 @@ test('DSP-1: there is no customer step to type into any more', async () => {
   const handled = await sellBaleFlow.handleText(bot, { from: { id: 555 }, chat: { id: 1 }, text: 'sold' });
   assert.equal(handled, false, 'free text no longer selects a customer');
   sessionStore.clear('555');
+});
+
+// ── SRF-SP2 (owner, 11-Sep-2026) — "Who sold it?": Me first, Customer direct, then the list ──
+
+const { salespersonChips, CUSTOMER_DIRECT } = sellBaleFlow._internals;
+const USERS = [
+  { user_id: '777', name: 'Boss', status: 'active', department: 'Management', departments: ['Management'] },
+  { user_id: '901', name: 'Abdulazeez', status: 'active', department: 'Sales', departments: ['Sales'] },
+  { user_id: '902', name: 'Kabir', status: 'active', department: 'Sales', departments: ['Sales'] },
+  { user_id: '903', name: 'Sani', status: 'active', department: 'Warehouse', departments: ['Warehouse'] },
+  { user_id: '904', name: 'Gone', status: 'inactive', department: 'Sales', departments: ['Sales'] },
+];
+const labels = (chips) => chips.map((c) => c.label);
+const values = (chips) => chips.map((c) => c.value);
+
+test('SRF-SP2 chips: an admin submitter is offered first as Me, then Customer direct, then everyone else once', () => {
+  const chips = salespersonChips({ submitterId: '777', users: USERS, adminIds: ['777'] });
+  assert.deepEqual(labels(chips), ['🙋 Me · Boss', '👤 Customer direct', '🧑 Abdulazeez', '🧑 Kabir', '🧑 Sani']);
+  assert.deepEqual(values(chips), ['Boss', CUSTOMER_DIRECT, 'Abdulazeez', 'Kabir', 'Sani']);
+  assert.equal(CUSTOMER_DIRECT, 'Customer direct', 'the stored no-seller value is exact');
+  assert.equal(values(chips).filter((v) => v === 'Boss').length, 1, 'the submitter is never repeated in the list');
+  assert.ok(!values(chips).includes('Gone'), 'inactive users are not offered');
+  assert.deepEqual(chips.map((c) => !!c.lead), [true, true, false, false, false], 'Me and Customer direct are the lead chips');
+});
+
+test('SRF-SP2 chips: a Sales-department submitter (not admin) also gets the Me chip first', () => {
+  const chips = salespersonChips({ submitterId: '902', users: USERS, adminIds: ['777'] });
+  assert.deepEqual(labels(chips), ['🙋 Me · Kabir', '👤 Customer direct', '🧑 Boss', '🧑 Abdulazeez', '🧑 Sani']);
+});
+
+test('SRF-SP2 chips: a submitter who is neither admin nor Sales gets NO Me chip — Customer direct leads, the list stays whole', () => {
+  const chips = salespersonChips({ submitterId: '903', users: USERS, adminIds: ['777'] });
+  assert.deepEqual(labels(chips), ['👤 Customer direct', '🧑 Boss', '🧑 Abdulazeez', '🧑 Kabir']);
+  assert.ok(!values(chips).includes('Sani'), 'the submitter is not in the list either — a non-seller cannot pick themselves');
+});
+
+test('SRF-SP2 chips: an admin WITHOUT a Users row is Me by their Telegram name; with no name at all the Me chip is dropped', () => {
+  const withName = salespersonChips({ submitterId: '999', users: USERS, adminIds: ['999'], fallbackName: 'Musa' });
+  assert.equal(withName[0].label, '🙋 Me · Musa');
+  assert.equal(withName[0].value, 'Musa', 'the stored seller is the Telegram first name — never a raw id');
+  assert.equal(withName[1].value, CUSTOMER_DIRECT);
+  const noName = salespersonChips({ submitterId: '999', users: USERS, adminIds: ['999'] });
+  assert.equal(noName[0].value, CUSTOMER_DIRECT, 'no name to offer — Customer direct leads');
+  assert.ok(!noName.some((c) => c.label.startsWith('🙋')));
+});
+
+test('SRF-SP2 chips: an employee with no Users row and no admin flag is never Me', () => {
+  const chips = salespersonChips({ submitterId: '555', users: USERS, adminIds: ['777'], fallbackName: 'Stranger' });
+  assert.equal(chips[0].value, CUSTOMER_DIRECT);
+  assert.ok(!values(chips).includes('Stranger'));
+});
+
+test('SRF-SP2 flow: the card asks "Who sold it?", the Me chip stores the submitter\'s name and Customer direct rides the handoff unchanged', async () => {
+  const savedGetAll = usersRepository.getAll;
+  usersRepository.getAll = async () => USERS;
+  try {
+    const seed = () => sessionStore.set('777', {
+      type: 'sell_bale_flow', step: 'bales', arrivalBatch: 'Jul26', warehouse: 'IDUMOTA',
+      cart: [{ packageNo: '552', design: '44200', thans: 2, yards: 60, warehouse: 'IDUMOTA' }],
+    });
+    const adminCbq = (data) => ({ id: 'q', data, from: { id: 777, first_name: 'Boss' }, message: { chat: { id: 1 }, message_id: 3 } });
+
+    // Me chip → the submitter's Users name
+    seed();
+    let bot = createFakeBot();
+    await sellBaleFlow.handleCallback(bot, adminCbq('sb:rev'));
+    const card = bot.calls.filter((c) => (c.method === 'editMessageText' || c.method === 'sendMessage') && c.args.opts && c.args.opts.reply_markup).at(-1);
+    assert.match(card.args.text, /🧑 Who sold it\?/);
+    assert.ok(!/Select salesperson/.test(card.args.text));
+    const kb = card.args.opts.reply_markup.inline_keyboard;
+    assert.deepEqual(kb.slice(0, 2), [
+      [{ text: '🙋 Me · Boss', callback_data: 'sb:sp:0' }],
+      [{ text: '👤 Customer direct', callback_data: 'sb:sp:1' }],
+    ], 'Me and Customer direct lead, one per row');
+    assert.deepEqual(kb[2].map((b) => b.text), ['🧑 Abdulazeez', '🧑 Kabir'], 'the list follows two per row, submitter absent');
+    assert.deepEqual(sessionStore.get('777')._salespersons, ['Boss', 'Customer direct', 'Abdulazeez', 'Kabir', 'Sani']);
+    await sellBaleFlow.handleCallback(bot, adminCbq('sb:sp:0'));
+    assert.equal(sessionStore.get('777').salesperson, 'Boss');
+    assert.equal(sessionStore.get('777').step, 'date');
+    sessionStore.clear('777');
+
+    // Customer direct → review card → salesFlow handoff, the exact string all the way
+    seed();
+    bot = createFakeBot();
+    await sellBaleFlow.handleCallback(bot, adminCbq('sb:rev'));
+    await sellBaleFlow.handleCallback(bot, adminCbq('sb:sp:1'));
+    assert.equal(sessionStore.get('777').salesperson, 'Customer direct');
+    await sellBaleFlow.handleCallback(bot, adminCbq('sb:dt:0'));
+    assert.equal(sessionStore.get('777').step, 'review');
+    assert.match(bot.allText(), /🧑 Salesperson: \*Customer direct\*/, 'the review card prints the no-seller value as picked');
+    await sellBaleFlow.handleCallback(bot, adminCbq('sb:fin'));
+    const sale = salesFlow.getSession('777');
+    assert.ok(sale, 'handoff happened');
+    assert.equal(sale.collected.salesperson, 'Customer direct', 'the queued action carries exactly Customer direct');
+  } finally {
+    usersRepository.getAll = savedGetAll;
+    sessionStore.clear('777');
+    if (typeof salesFlow.clearSession === 'function') salesFlow.clearSession('777');
+  }
 });
