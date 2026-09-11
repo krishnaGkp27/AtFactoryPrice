@@ -409,6 +409,21 @@ everywhere in the business rules.").**
   first but the seller is a chip, because the person typing is not always
   the person who sold. It is stamped on the queue row and written to
   Transactions column M by every sale executor (SLP-1).
+- **Amended 11-Sep-2026 (owner):** the chip order on every sale door
+  (supply request, Sell Bale, Order) is 🙋 *Me* first — only when the
+  submitter is an admin or in Sales — then 👤 *Customer direct* (the
+  customer came on their own, or an admin raised it on their behalf with
+  no seller), then the Sales list. The stored value is exactly
+  `Customer direct`: one label, so direct sales group together in
+  Transactions column M instead of scattering across customer names. A
+  linked customer's own 📦 My Products request is stamped `Customer
+  direct` automatically. Engine: `services/salespersonChips.js`.
+- **Payment word (owner, 11-Sep-2026):** the requester's chip for goods
+  not paid for is ⏳ *Not yet paid (credit)*, stored as `Not yet paid` —
+  the word the admin's sale wizard already uses — so a request and its
+  approval never name one fact two ways. `Credit` is no longer offered
+  as a payment mode anywhere; it survives only as a customer's payment
+  TERMS attribute in CRM (CON-1).
 - **The sale date is TAPPED, never assumed.** Chips + a 90-day calendar;
   no future dates; beyond yesterday is flagged BACKDATED on the approval
   card and stamped on the record (owner rule, 21-Jul).
