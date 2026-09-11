@@ -6631,7 +6631,11 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
       callback_data: `srf_all:${design}`,
     }]);
   }
-  rows.push([{ text: '⬅️ Back to designs', callback_data: 'srf_back:design' }]);
+  const navRow = [{ text: '⬅️ Back to designs', callback_data: 'srf_back:design' }];
+  // SRF-ADD — Add More lands here now, so with items in the cart the cart
+  // is one tap away too (srf_back:cart clears this combo first).
+  if (cart.length) navRow.push({ text: '🛒 Back to cart', callback_data: 'srf_back:cart' });
+  rows.push(navRow);
 
   // TV-4/TV-5 — a fully-sold design (no remaining shades) renders as an
   // info screen on every warehouse: shade buttons show "(0B=0t / NB=Mt)"
@@ -6938,6 +6942,10 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
 
 function addToCart(session, design, shade, quantity) {
   if (!session.cart) session.cart = [];
+  // SRF-ADD — the design "Add More" returns to (see addMoreDesign). Set
+  // here so every add path (quantity chip, typed quantity, Take ALL)
+  // agrees; cleared by "Back to designs".
+  session.lastAddedDesign = design;
   // Capture the shade name (from session.currentShadeName, set when the
   // shade was picked) on every cart line. This is what lets cart text,
   // confirmation summaries, and admin notifications all show the shade
@@ -6993,6 +7001,28 @@ async function buildTransferCartText(session) {
     blocks.push([head, ...bullets].join('\n'));
   }
   return `🚚 *Transfer Cart* · 🏭 ${session.warehouse} · ${total} ${balesPlural}\n\n${blocks.join('\n\n')}`;
+}
+
+/**
+ * SRF-ADD (owner, 11-Sep-2026) — which design "➕ Add More" should re-open.
+ *
+ * The owner's case: after adding 202/201 shade 3, Add More jumped to the
+ * design LIST, so the next shade of the same design was a hunt through
+ * fifteen buttons. Now Add More lands on that design's shade picker (which
+ * already offers "Back to designs"), but only while the design still has
+ * TWO or more shades in stock net of the cart: one remaining shade would
+ * auto-skip to its quantity card (showShadesForDesign's single-shade
+ * branch) and read as a loop, and a design with nothing left has no picker
+ * to show — both keep the design list. Returns the design, or null.
+ * @param {object} session supply_req_flow session
+ * @returns {Promise<string|null>}
+ */
+async function addMoreDesign(session) {
+  const design = session && session.lastAddedDesign;
+  if (!design) return null;
+  const avail = await getAdjustedAvailability(session.warehouse, session.cart || [], session.arrivalBatch, session.category);
+  const left = avail.filter((a) => a.design === design && a.availPkgs > 0);
+  return left.length >= 2 ? design : null;
 }
 
 async function showCartSummary(bot, chatId, userId) {
@@ -10824,6 +10854,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     if (target === 'design') {
       session.step = 'design';
       delete session.currentDesign;
+      delete session.lastAddedDesign; // SRF-ADD — the user left the design
       delete session.currentShade;
       delete session.currentShadeName;
       delete session.currentAvailPkgs;
@@ -10850,6 +10881,10 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       await showShadesForDesign(bot, chatId, uid, session.currentDesign, session.warehouse);
     } else if (target === 'cart') {
       session.step = 'cart';
+      // SRF-ADD — reachable from the shade picker now: its photo combo (or
+      // album) must not stay live above the cart card. A no-op from every
+      // other step (nothing is tracked there).
+      await clearDesignPreview(bot, chatId, uid);
       delete session.customer;
       delete session.salesperson;
       delete session.paymentMode;
@@ -11091,7 +11126,27 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     if (!session || session.type !== 'supply_req_flow') return;
 
     if (action === 'add') {
-      await showDesignsForWarehouse(bot, chatId, uid, session.warehouse);
+      // SRF-ADD — back to the shade picker of the design just added when it
+      // still has shades to offer (see addMoreDesign); else the design list.
+      const again = await addMoreDesign(session);
+      if (again) {
+        session.step = 'shade';
+        delete session.currentShade;
+        delete session.currentShadeName;
+        delete session.currentAvailPkgs;
+        // The cart card is the live flow message and the shade picker is a
+        // fresh photo combo when a catalog asset exists — delete the card
+        // rather than strand it, exactly as srf_back:shade does with the
+        // quantity card.
+        if (session.flowMessageId) {
+          await bot.deleteMessage(chatId, session.flowMessageId).catch(() => {});
+          session.flowMessageId = null;
+        }
+        sessionStore.set(uid, session);
+        await showShadesForDesign(bot, chatId, uid, again, session.warehouse);
+      } else {
+        await showDesignsForWarehouse(bot, chatId, uid, session.warehouse);
+      }
     } else if (action === 'remove') {
       if (!session.cart || !session.cart.length) {
         const nag = await bot.sendMessage(chatId, '🛒 Cart is empty.');
