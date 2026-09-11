@@ -235,7 +235,7 @@ test('Check Stock shows the 🚚 in-transit line at the destination', async () =
   inventoryService.checkStock = async () => ({ totalPackages: 1, totalThans: 1, totalYards: 100 });
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('cks:9006', 777));
-  assert.match(bot.allText(), /🚚 In transit \(not yet sellable\): 2 bales → Kano office/);
+  assert.match(bot.allText(), /🚚 In transit 2B → Kano office/);
 });
 
 /* ── TRF-7 — dispatcher bale-number search ─────────────────────────────── */
