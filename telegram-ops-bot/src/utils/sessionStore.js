@@ -95,6 +95,10 @@ function _snapshotOf(userId, s) {
     flowMessageId: s.flowMessageId || null,
     previewMessageId: s.previewMessageId || null,
     comboMessageId: s.comboMessageId || null,
+    // SHP-2 — the supply flow's "in cart" record photo: detached from the
+    // live preview but still on screen, so an abandoned flow must not
+    // leave it behind either.
+    recordPhotoId: s.recordPhotoId || null,
     // SJ-4 — tracked auxiliary messages (photo cards, interim prompts)
     // ride the snapshot so the janitor can dispose of them too, as does the
     // sale confirm card (its live ✅/❌ buttons must not outlive the session).
@@ -209,7 +213,7 @@ function sweepExpired() {
 /**
  * SJ-1 — hand the accumulated timeout snapshots to the janitor (drains
  * the queue; the caller owns them afterwards).
- * @returns {Array<{userId:string,type:string,step:string|null,flowMessageId:number|null,previewMessageId:number|null,comboMessageId:number|null,auxMsgIds:number[]|null,confirmMsgId:number|null,lastActiveAt:number}>}
+ * @returns {Array<{userId:string,type:string,step:string|null,flowMessageId:number|null,previewMessageId:number|null,comboMessageId:number|null,recordPhotoId:number|null,auxMsgIds:number[]|null,confirmMsgId:number|null,lastActiveAt:number}>}
  */
 function drainExpiredForCleanup() {
   return expiredQueue.splice(0, expiredQueue.length);

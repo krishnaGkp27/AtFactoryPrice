@@ -136,7 +136,11 @@ async function tombstone(bot, entry, cfg) {
   // photo cards, interim prompts) are ephemeral by design — delete outright.
   // The sale confirm card joins them: its ✅ Confirm button must not stay
   // tappable after the session it would act on has expired.
-  for (const mid of [entry.previewMessageId, entry.comboMessageId, entry.confirmMsgId, ...(entry.auxMsgIds || [])]) {
+  // SHP-2 — recordPhotoId joins them: the supply flow's "in cart" record
+  // photo is a live message the user can still see, so an abandoned flow
+  // takes it down with the rest of its screen.
+  for (const mid of [entry.previewMessageId, entry.comboMessageId, entry.recordPhotoId,
+    entry.confirmMsgId, ...(entry.auxMsgIds || [])]) {
     if (!mid) continue;
     try { await bot.deleteMessage(chatId, mid); } catch (_) { /* already gone */ }
   }

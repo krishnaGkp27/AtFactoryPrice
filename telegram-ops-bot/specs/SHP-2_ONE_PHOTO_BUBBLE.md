@@ -1,6 +1,7 @@
 # SHP-2 · One photo bubble per supply request (Add More stacks pictures)
 
-Status: **PLAN — implementation only, no design decisions left open.**
+Status: **SHIPPED 12-Sep-2026.** (Was: plan, 11-Sep-2026.) §8 records what
+was actually built, including the two places the build went beyond the plan.
 Raised by the owner 11-Sep-2026 with a screenshot of the Orders door
 (`📝 Orders` → design 9006 in Lagos). Written for a fresh implementation
 session; every file, function and line referenced is on
@@ -180,3 +181,52 @@ only when the owner asks to test.
 One commit: `SHP-2: one photo bubble per supply request — Add More morphs
 the record back into the shade picker`. Update the CLAUDE.md pending row
 for SRF/SHP with one line, and add "SHP-2" to the SHP-1 spec's follow-ups.
+
+## 8 · What shipped (12-Sep-2026)
+
+Built as §4 described, with two deliberate departures and one correction to
+§5 — recorded here so the spec and the code agree.
+
+**Departure 1 — a third field, `recordShade`.** §4a stored the design only.
+The record caption names a design AND a shade ("✅ 9006 · 2 - Dark Green ·
+1B in cart"), so the shade is needed to tell whether a removed cart line is
+the one the picture describes. All three fields are written and deleted as
+a unit.
+
+**Departure 2 — the 🗑️ Remove path (new, `srf_rm:`).** Keeping one record
+on screen means keeping one *claim* on screen. If the user then removes
+that exact line, the caption states something false. The handler now
+deletes the record photo when the removed line matches `recordDesign` +
+`recordShade`, and leaves it alone for any other line. Without this the fix
+would have traded a pile of orphans for one persistent lie. (Before SHP-2
+the orphan lied too — this is not a regression being patched, it is the
+same honesty applied to the one bubble that survives.)
+
+**Correction to §5.3.** The plan claimed the existing SHP-1 regression test
+would pass unchanged. Only its first half does. Its tail pinned "Cart → Add
+more → same design gets a FRESH combo" — which IS the stacked photo the
+owner reported — so that half was rewritten. The guarantee it was protecting
+(never morph a bubble belonging to a DIFFERENT design) is intact and still
+pinned: `previewMessageId` is still nulled at quantity time, and the
+re-attach in `srf_cart:add` fires only when `recordDesign === again`. The
+test file now carries four cases: the detach + record, same-design Add More
+morphing in place with exactly ONE `sendPhoto` across a two-shade request,
+a different design deleting the record, and the remove case.
+
+**Files touched.** `src/controllers/telegramController.js`
+(`detachShadePhotoAfterQuantity`, the `srf_cart:add` same-design branch,
+`clearDesignPreview`, the `srf_rm:` branch), `src/utils/sessionStore.js`
+(`_snapshotOf` projects `recordPhotoId`), `src/services/sessionJanitor.js`
+(sweeps it), `test/characterization/shadePhotos.test.js`,
+`test/unit/services/sessionJanitor.test.js`.
+
+**Known limit (pre-existing, not introduced here).** Starting a brand-new
+supply request from the menu while an old flow's picture is on screen
+replaces the session wholesale, so that picture is stranded until the
+janitor's sweep — exactly as it always was for `previewMessageId` and the
+CAT-P1 album ids. Every in-flow path is covered.
+
+**Owner live check.** Orders → a design with a catalogue photo → pick a
+shade → a quantity → ➕ Add More → pick a second shade → a quantity →
+Checkout. Exactly ONE picture should be in the chat throughout, morphing as
+you go, with the last caption naming the last line added.
