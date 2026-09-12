@@ -6045,6 +6045,16 @@ async function startSupplyRequestFlow(bot, chatId, userId) {
     return;
   }
 
+  // SHP-2b — the set below writes straight over any live supply session,
+  // and neither set() nor clear() enqueues a janitor snapshot, so a photo
+  // left by the previous request (its live preview, its "in cart" record,
+  // a CAT-P1 album) would sit in the chat for good. Take it down first.
+  // Scoped to a prior SUPPLY flow: another flow's preview is not ours.
+  const priorSession = sessionStore.get(userId);
+  if (priorSession && priorSession.type === 'supply_req_flow') {
+    await clearDesignPreview(bot, chatId, userId);
+    await disposeAux(bot, chatId, userId);
+  }
   sessionStore.set(userId, {
     type: 'supply_req_flow',
     step: 'container',
@@ -11178,6 +11188,14 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       // still has shades to offer (see addMoreDesign); else the design list.
       const again = await addMoreDesign(session);
       if (again) {
+        // SHP-2b — the shade picker used to reach clearDesignPreview on this
+        // path (previewMessageId was null, so keepForMorph was false), and
+        // that call is what swept the SJ-4 tracked prompts. Re-attaching the
+        // record below makes keepForMorph true, so the sweep has to happen
+        // here or a live "Type the number of bales" prompt — which the typed
+        // path never wipes — survives under the reused bubble with working
+        // ⬅️ Back / ❌ Cancel buttons.
+        await disposeAux(bot, chatId, uid);
         session.step = 'shade';
         delete session.currentShade;
         delete session.currentShadeName;
@@ -12936,6 +12954,12 @@ async function showPendingUserLinkPicker(bot, chatId, adminId, pu, kind) {
  * DETACHED from the session (previewMessageId null), so a later visit to
  * the same design can never morph a stale bubble above the cart.
  *
+ * SHP-2b — the caption states the CART LINE's total, not this tap's
+ * delta. addToCart MERGES a repeat of the same design+shade into the
+ * existing line, and re-picking a shade is reachable precisely through
+ * the re-attached Add More path below, so captioning the delta made the
+ * one surviving bubble contradict the cart card right under it.
+ *
  * SHP-2 (owner, 11-Sep-2026) — the message id is REMEMBERED as
  * `recordPhotoId` even so. Detached means "not the live preview any
  * more"; it does not mean orphaned. The flow keeps exactly ONE photo
@@ -12958,9 +12982,15 @@ async function detachShadePhotoAfterQuantity(bot, chatId, userId, qty) {
   session.recordDesign = session.currentDesign;
   session.recordShade = session.currentShade;
   sessionStore.set(userId, session);
+  // SHP-2b — both callers run addToCart before this, so the cart already
+  // holds the merged figure; `qty` is only the fallback if the line cannot
+  // be found.
+  const line = (session.cart || []).find((c) => c.design === session.currentDesign
+    && String(c.shade) === String(session.currentShade));
+  const inCart = line ? line.quantity : qty;
   try {
     await bot.editMessageCaption(
-      `✅ *${session.currentDesign}* · *${formatShadeRef(session.currentShade, session.currentShadeName)}* · ${unitDisplayService.formatCounts({ bales: qty })} in cart`,
+      `✅ *${session.currentDesign}* · *${formatShadeRef(session.currentShade, session.currentShadeName)}* · ${unitDisplayService.formatCounts({ bales: inCart })} in cart`,
       { chat_id: chatId, message_id: mid, parse_mode: 'Markdown', reply_markup: { inline_keyboard: [] } });
   } catch (_) { /* the picture stays as it is */ }
 }
