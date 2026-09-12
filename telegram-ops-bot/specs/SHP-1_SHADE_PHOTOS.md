@@ -309,9 +309,13 @@ confirmed and fixed before deploy:
   preview's chips are inert, ⬅ freezes an abandoned preview, and ✅ Done is
   single-flight with a fixed request id + `appendOnce` (the SUB-1 pattern).
 - **Orders bookkeeping** — a sold-out tap morphs the caption in place; a
-  chosen quantity turns the photo into a one-line record (`✅ 9037 · Shade
-  1 - White × 2 added to cart`) and detaches it, so Cart → Add more → the
-  same design gets a fresh combo; stale text cards are deleted on morph.
+  chosen quantity turns the photo into a one-line record (`✅ 9037 ·
+  1 - White · 2B in cart`) and detaches it from the live preview; stale
+  text cards are deleted on morph. **Amended by SHP-2 (11-Sep-2026):** the
+  detached record is remembered, not orphaned — Cart → ➕ Add More on the
+  same design morphs that same bubble back into the shade picker instead
+  of sending a fresh combo, and every other move deletes it. See
+  `specs/SHP-2_ONE_PHOTO_BUBBLE.md`.
 - **The knob is real** — `SHADE_PHOTOS_ENABLED = 0` restores the pre-SHP-1
   paths exactly (combo dropped at the tap, text quantity card, fresh combo
   on Back). Pinned by test.

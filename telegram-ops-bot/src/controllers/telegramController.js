@@ -11182,6 +11182,20 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         delete session.currentShade;
         delete session.currentShadeName;
         delete session.currentAvailPkgs;
+        // SHP-2 — the picture of the line just added IS this design's
+        // bubble: hand it back to the shade picker as the live preview so
+        // showShadesForDesign's keepForMorph path morphs it into the
+        // swatch page in place. Without this the picker sends a second
+        // photo and the record is stranded above it — one orphan per
+        // added line (owner's screenshot, 11-Sep-2026).
+        if (session.recordPhotoId && session.recordDesign === again) {
+          session.previewMessageId = session.recordPhotoId;
+          session.previewIsPhoto = true;
+          session.currentDesign = again;
+          delete session.recordPhotoId;
+          delete session.recordDesign;
+          delete session.recordShade;
+        }
         // The cart card is the live flow message and the shade picker is a
         // fresh photo combo when a catalog asset exists — delete the card
         // rather than strand it, exactly as srf_back:shade does with the
@@ -11272,6 +11286,17 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
 
     if (session.cart && idx >= 0 && idx < session.cart.length) {
       const removed = session.cart.splice(idx, 1)[0];
+      // SHP-2 — the record photo says "<design> · <shade> · NB in cart".
+      // If THAT line is the one being removed the caption is now false, so
+      // the picture goes with it. A different line leaves it alone.
+      if (session.recordPhotoId
+        && String(session.recordDesign) === String(removed.design)
+        && String(session.recordShade) === String(removed.shade)) {
+        await bot.deleteMessage(chatId, session.recordPhotoId).catch(() => {});
+        delete session.recordPhotoId;
+        delete session.recordDesign;
+        delete session.recordShade;
+      }
       await bot.answerCallbackQuery(callbackQuery.id, { text: `Removed ${removed.design} ${removed.shade}.` });
     } else {
       await bot.answerCallbackQuery(callbackQuery.id);
@@ -12908,8 +12933,18 @@ async function showPendingUserLinkPicker(bot, chatId, adminId, pu, kind) {
 /**
  * SHP-1 — once a quantity is chosen the morphed shade photo is finished
  * with: its caption becomes a one-line record of what was added and it is
- * DETACHED from the session, so a later visit to the same design (Cart →
- * Add more) can never morph a stale bubble above the cart. Best-effort.
+ * DETACHED from the session (previewMessageId null), so a later visit to
+ * the same design can never morph a stale bubble above the cart.
+ *
+ * SHP-2 (owner, 11-Sep-2026) — the message id is REMEMBERED as
+ * `recordPhotoId` even so. Detached means "not the live preview any
+ * more"; it does not mean orphaned. The flow keeps exactly ONE photo
+ * bubble on screen: ➕ Add More on the same design re-attaches this one
+ * and morphs it back into the shade picker (see the `srf_cart:add`
+ * branch), and every other move re-renders through `clearDesignPreview`,
+ * which deletes it. Before SHP-2 the id was simply dropped, so each
+ * added line left its picture stranded and they stacked up.
+ * Best-effort throughout.
  */
 async function detachShadePhotoAfterQuantity(bot, chatId, userId, qty) {
   const session = sessionStore.get(userId);
@@ -12917,6 +12952,11 @@ async function detachShadePhotoAfterQuantity(bot, chatId, userId, qty) {
   const mid = session.previewMessageId;
   session.previewMessageId = null;
   session.previewIsPhoto = false;
+  // SHP-2 — whose picture this is, so only the same design re-attaches it
+  // and only its own cart line can invalidate it.
+  session.recordPhotoId = mid;
+  session.recordDesign = session.currentDesign;
+  session.recordShade = session.currentShade;
   sessionStore.set(userId, session);
   try {
     await bot.editMessageCaption(
@@ -12934,6 +12974,19 @@ async function clearDesignPreview(bot, chatId, userId) {
     await bot.deleteMessage(chatId, session.previewMessageId).catch(() => {});
     session.previewMessageId = null;
     session.previewIsPhoto = false;
+    touched = true;
+  }
+  // SHP-2 — the "· 1B in cart" record of the last added line. It is not
+  // the live preview (detachShadePhotoAfterQuantity let it go), but it is
+  // still this flow's picture: every caller of clearDesignPreview is about
+  // to render a different screen, so the bubble goes with the screen it
+  // belonged to. The one path that keeps it — ➕ Add More on the same
+  // design — re-attaches it as previewMessageId first and never lands here.
+  if (session.recordPhotoId) {
+    await bot.deleteMessage(chatId, session.recordPhotoId).catch(() => {});
+    delete session.recordPhotoId;
+    delete session.recordDesign;
+    delete session.recordShade;
     touched = true;
   }
   // CAT-P1 — a multi-page design leaves an ALBUM above the picker. It is a
