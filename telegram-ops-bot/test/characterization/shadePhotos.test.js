@@ -406,6 +406,39 @@ test('SHP-2: moving to a DIFFERENT design deletes the record — the old picture
   assert.equal(sessionStore.get(UID).recordPhotoId, undefined, 'and is forgotten');
 });
 
+test('SHP-2: when Add More lands on the design LIST, the record waits there and the next design replaces it', async () => {
+  // One shade only, so addMoreDesign() finds nothing left to offer on this
+  // design and Add More falls through to the design picker instead.
+  seedStock();
+  const oneShade = [];
+  for (let i = 0; i < 3; i += 1) {
+    oneShade.push({ design: '9037', shade: '1', warehouse: 'IDUMOTA', status: 'available', packageNo: `1${i}`, productType: 'fabric', yards: 30 });
+  }
+  inventoryRepository.getAll = async () => oneShade;
+  seedShadeRows([{ shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' }]);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+  const comboId = sessionStore.get(UID).previewMessageId;
+  await controller.handleCallbackQuery(bot, cb('srf_qty:1', UID, comboId));
+
+  const mark = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb('srf_cart:add'));
+  const onList = bot.calls.slice(mark);
+  assert.ok(!onList.some((c) => c.method === 'sendPhoto'), 'the design list is a text card — no picture is added');
+  assert.equal(sessionStore.get(UID).recordPhotoId, comboId,
+    'the record of what was just added waits above the list');
+
+  // Picking the next design is the moment it stops being true — it goes.
+  const mark2 = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+  const next = bot.calls.slice(mark2);
+  assert.ok(next.some((c) => c.method === 'deleteMessage' && c.args.messageId === comboId),
+    'the old record is taken down');
+  assert.equal(next.filter((c) => c.method === 'sendPhoto').length, 1,
+    'and exactly one fresh bubble takes its place');
+  assert.equal(sessionStore.get(UID).recordPhotoId, undefined);
+});
+
 test('SHP-2: removing the very line the record describes takes its picture down', async () => {
   seedStock();
   seedShadeRows([{ shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' }]);

@@ -209,9 +209,13 @@ owner reported — so that half was rewritten. The guarantee it was protecting
 (never morph a bubble belonging to a DIFFERENT design) is intact and still
 pinned: `previewMessageId` is still nulled at quantity time, and the
 re-attach in `srf_cart:add` fires only when `recordDesign === again`. The
-test file now carries four cases: the detach + record, same-design Add More
+test file now carries five cases: the detach + record, same-design Add More
 morphing in place with exactly ONE `sendPhoto` across a two-shade request,
-a different design deleting the record, and the remove case.
+a different design deleting the record, the remove case, and the journey
+where Add More finds nothing left on the design and falls through to the
+design LIST — the record waits above the list (it is still true, and the
+list is a text card) and the next design tap takes it down and sends
+exactly one fresh bubble.
 
 **Files touched.** `src/controllers/telegramController.js`
 (`detachShadePhotoAfterQuantity`, the `srf_cart:add` same-design branch,
@@ -222,9 +226,15 @@ a different design deleting the record, and the remove case.
 
 **Known limit (pre-existing, not introduced here).** Starting a brand-new
 supply request from the menu while an old flow's picture is on screen
-replaces the session wholesale, so that picture is stranded until the
+replaces the session wholesale (`startSupplyRequestFlow` calls
+`sessionStore.set` over it), so that picture is stranded until the
 janitor's sweep — exactly as it always was for `previewMessageId` and the
-CAT-P1 album ids. Every in-flow path is covered.
+CAT-P1 album ids. Confirmed by probe, not just by reading: nothing is
+deleted on restart. Every IN-FLOW path is covered, and before SHP-2 the
+record was stranded on every path, so this is not a regression. The fix
+if the owner wants it is one `clearDesignPreview` call at the top of
+`startSupplyRequestFlow`, which would also sweep the old flow's aux ids —
+a separate change, outside the reported bug.
 
 **Owner live check.** Orders → a design with a catalogue photo → pick a
 shade → a quantity → ➕ Add More → pick a second shade → a quantity →
