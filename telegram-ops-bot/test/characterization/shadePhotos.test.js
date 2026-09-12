@@ -439,6 +439,136 @@ test('SHP-2: when Add More lands on the design LIST, the record waits there and 
   assert.equal(sessionStore.get(UID).recordPhotoId, undefined);
 });
 
+test('SHP-2b: the record states the CART LINE, not the last tap — re-adding the same shade', async () => {
+  seedStock();
+  seedShadeRows([{ shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' }]);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+  const comboId = sessionStore.get(UID).previewMessageId;
+  await controller.handleCallbackQuery(bot, cb('srf_sh:9037|1|3'));
+  await controller.handleCallbackQuery(bot, cb('srf_qty:2', UID, comboId));
+  await controller.handleCallbackQuery(bot, cb('srf_cart:add'));
+  // The re-morphed picker still offers shade 1 (one bale left of three).
+  await controller.handleCallbackQuery(bot, cb('srf_sh:9037|1|1'));
+  await controller.handleCallbackQuery(bot, cb('srf_qty:1', UID, comboId));
+
+  // addToCart MERGES the repeat, so the line is 3B — the caption must agree
+  // with the cart card sitting right under it, not report the 1B delta.
+  const cart = sessionStore.get(UID).cart;
+  assert.equal(cart.length, 1, 'one merged line');
+  assert.equal(cart[0].quantity, 3);
+  const rec = bot.calls.filter((c) => c.method === 'editMessageCaption').pop();
+  assert.match(rec.args.caption, /· 3B in cart/, `the bubble must not lie, got: ${rec.args.caption}`);
+});
+
+test('SHP-2b: removing a DIFFERENT cart line leaves the record photo alone', async () => {
+  seedStock();
+  seedShadeRows([{ shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' }]);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+  const comboId = sessionStore.get(UID).previewMessageId;
+  await controller.handleCallbackQuery(bot, cb('srf_sh:9037|1|3'));
+  await controller.handleCallbackQuery(bot, cb('srf_qty:1', UID, comboId));
+  await controller.handleCallbackQuery(bot, cb('srf_cart:add'));
+  await controller.handleCallbackQuery(bot, cb('srf_sh:9037|2|3'));
+  await controller.handleCallbackQuery(bot, cb('srf_qty:1', UID, comboId));
+  const s0 = sessionStore.get(UID);
+  assert.equal(s0.cart.length, 2);
+  assert.equal(s0.recordShade, '2', 'the record describes the SECOND line');
+
+  // Remove line 0 (shade 1) — not the line the caption claims.
+  const mark = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb('srf_rm:0'));
+  const after = bot.calls.slice(mark);
+  assert.ok(!after.some((c) => c.method === 'deleteMessage' && c.args.messageId === comboId),
+    'the record is still true — it must survive an unrelated removal');
+  assert.equal(sessionStore.get(UID).recordPhotoId, comboId);
+});
+
+test('SHP-2b: Add More sweeps the tracked custom-quantity prompt instead of leaving it live under the bubble', async () => {
+  seedStock();
+  seedShadeRows([{ shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' }]);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+  const comboId = sessionStore.get(UID).previewMessageId;
+  await controller.handleCallbackQuery(bot, cb('srf_sh:9037|1|3'));
+  // ✏️ Custom Quantity sends a tracked prompt carrying live Back / Cancel.
+  await controller.handleCallbackQuery(bot, cb('srf_qty:__custom__', UID, comboId));
+  const prompt = bot.calls.filter((c) => c.method === 'sendMessage').pop();
+  const promptId = prompt.result ? prompt.result.message_id : prompt.messageId;
+  assert.ok((sessionStore.get(UID)._auxMsgIds || []).length, 'the prompt is tracked');
+  await controller.handleMessage(bot, { chat: { id: UID }, from: { id: UID }, text: '2' });
+
+  const mark = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb('srf_cart:add'));
+  const after = bot.calls.slice(mark);
+  assert.deepEqual(sessionStore.get(UID)._auxMsgIds || [], [],
+    'nothing tracked is left behind the reused bubble');
+  if (promptId) {
+    assert.ok(after.some((c) => c.method === 'deleteMessage' && c.args.messageId === promptId),
+      'the prompt with the live buttons is deleted');
+  }
+});
+
+test('SHP-2b: starting a NEW supply request takes the previous one’s picture down', async () => {
+  seedStock();
+  seedShadeRows([{ shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' }]);
+  const usersRepository = require(path.join(SRC, 'repositories/usersRepository'));
+  const priorFind = usersRepository.findByUserId;
+  const priorBatches = inventoryRepository.getArrivalBatches;
+  usersRepository.findByUserId = async () => ({ userId: UID, warehouses: ['IDUMOTA'], departments: [], department: '', name: 'Emp' });
+  inventoryRepository.getArrivalBatches = async () => ['Mar26'];
+  try {
+    const bot = createFakeBot();
+    await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+    const comboId = sessionStore.get(UID).previewMessageId;
+    await controller.handleCallbackQuery(bot, cb('srf_sh:9037|1|3'));
+    await controller.handleCallbackQuery(bot, cb('srf_qty:2', UID, comboId));
+    assert.equal(sessionStore.get(UID).recordPhotoId, comboId);
+
+    // Neither sessionStore.set nor clear enqueues a janitor snapshot, so if
+    // the flow restart did not delete this it would stay in the chat for good.
+    const mark = bot.calls.length;
+    await controller.handleCallbackQuery(bot, cb('act:supply_request'));
+    const after = bot.calls.slice(mark);
+    assert.ok(after.some((c) => c.method === 'deleteMessage' && c.args.messageId === comboId),
+      'the old request’s picture goes when a new request starts');
+    assert.equal(sessionStore.get(UID).step, 'container', 'and the fresh flow opens');
+  } finally {
+    usersRepository.findByUserId = priorFind;
+    inventoryRepository.getArrivalBatches = priorBatches;
+  }
+});
+
+test('SHP-1 guard, pinned: a live combo for one design is DELETED, never morphed, when another design is tapped', async () => {
+  // TWO shades per design, so each tap renders the shade PICKER as a photo
+  // combo. A single-shade design auto-picks and jumps to the quantity card,
+  // which never puts the guard under test.
+  const rows = [];
+  for (const design of ['9037', '9038']) {
+    for (const shade of ['1', '2']) {
+      for (let i = 0; i < 3; i += 1) {
+        rows.push({ design, shade, warehouse: 'IDUMOTA', status: 'available', packageNo: `${design}${shade}${i}`, productType: 'fabric', yards: 30 });
+      }
+    }
+  }
+  seedStock();
+  inventoryRepository.getAll = async () => rows;
+  seedShadeRows([{ shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' }]);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+  const comboA = sessionStore.get(UID).previewMessageId;
+  assert.ok(comboA, 'design 9037 has a live photo combo');
+
+  const mark = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb('srf_dg:9038'));
+  const after = bot.calls.slice(mark);
+  assert.ok(after.some((c) => c.method === 'deleteMessage' && c.args.messageId === comboA),
+    'design A’s bubble is taken down');
+  assert.ok(!after.some((c) => c.method === 'editMessageMedia' && c.args.opts.message_id === comboA),
+    'and NEVER morphed into design B — this is what keeps the bubble honest');
+});
+
 test('SHP-2: removing the very line the record describes takes its picture down', async () => {
   seedStock();
   seedShadeRows([{ shadeNo: '1', shadeName: 'White', telegramFileId: 'SHADE1_FID' }]);

@@ -224,17 +224,59 @@ exactly one fresh bubble.
 (sweeps it), `test/characterization/shadePhotos.test.js`,
 `test/unit/services/sessionJanitor.test.js`.
 
-**Known limit (pre-existing, not introduced here).** Starting a brand-new
-supply request from the menu while an old flow's picture is on screen
-replaces the session wholesale (`startSupplyRequestFlow` calls
-`sessionStore.set` over it), so that picture is stranded until the
-janitor's sweep — exactly as it always was for `previewMessageId` and the
-CAT-P1 album ids. Confirmed by probe, not just by reading: nothing is
-deleted on restart. Every IN-FLOW path is covered, and before SHP-2 the
-record was stranded on every path, so this is not a regression. The fix
-if the owner wants it is one `clearDesignPreview` call at the top of
-`startSupplyRequestFlow`, which would also sweep the old flow's aux ids —
-a separate change, outside the reported bug.
+## 9 · SHP-2b — what the adversarial review changed (12-Sep-2026)
+
+Five reviewers (distinct lenses: stranded messages, Telegram failure
+paths, session state, what the user sees, test quality) raised 23
+findings against the first cut. The verify pass refuted all 23, but it
+had been told to default to refuted when uncertain, so the surviving
+count of zero was checked by hand rather than taken at face value.
+Three findings were real, and all three are now fixed. Each fix is
+mutation-proved: reverting it turns a named test red.
+
+**1 · The one bubble was allowed to lie.** `addToCart` MERGES a repeat of
+the same design+shade into the existing cart line, but the caption was
+written from the quantity of the last tap. Re-picking a shade is reachable
+precisely through the new Add More path, so: add 2B, Add More, the same
+shade again, 1B — the cart line read 3B while the picture under it said
+"1B in cart", contradicting the cart card. The caption is now taken from
+the cart line itself, with the tap quantity only as a fallback. Before
+SHP-2 this mismatch hid on a stranded orphan; the moment one bubble
+survives, it is the whole story and has to be true.
+
+**2 · Tracked prompts stopped being swept.** `clearDesignPreview` is what
+sweeps the SJ-4 `_auxMsgIds`, and the old Add More path reached it
+because `keepForMorph` was false. Re-attaching the record makes
+`keepForMorph` true, so that sweep was silently lost — leaving a live
+"Type the number of bales" prompt (which the typed-quantity path never
+wipes) sitting under the reused bubble with working ⬅️ Back and ❌ Cancel
+buttons. The Add More branch now calls `disposeAux` itself, restoring the
+behaviour the morph path bypassed.
+
+**3 · The restart limit was permanent, not temporary.** §8 originally
+called the stranded picture "stranded until the janitor's sweep" and used
+that to defer the fix. Only half of it was true. `sessionStore.set` writes
+over the entry and `clear` deletes it, and NEITHER enqueues a cleanup
+snapshot (`_stashExpired` is reached only by the TTL sweep and an expired
+read), so the janitor never sees that session and the picture would stay
+in the chat for good. `startSupplyRequestFlow` now takes the previous
+SUPPLY flow's pictures and prompts down before writing over its session.
+Scoped to a prior supply flow — another flow's preview is not ours to
+delete.
+
+Two test gaps the reviewers proved by mutation are also closed: an
+unconditional delete in the `srf_rm:` branch used to pass every test (no
+case removed a line the record did NOT describe), and dropping
+`currentDesign === design` from `keepForMorph` used to pass all 627
+characterization tests — the guard that keeps a design-A bubble from being
+morphed into design B was entirely unpinned. Both are now pinned, and the
+second pin was itself rewritten after mutation testing showed the first
+attempt passed for the wrong reason: a single-shade design jumps to the
+quantity card and never renders the shade picker the guard protects.
+
+Six mutations, six caught: caption delta, missing aux sweep, missing
+restart clear, weakened remove guard, weakened morph guard, and the
+re-attach removed (the original bug).
 
 **Owner live check.** Orders → a design with a catalogue photo → pick a
 shade → a quantity → ➕ Add More → pick a second shade → a quantity →
