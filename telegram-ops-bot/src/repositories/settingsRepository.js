@@ -94,6 +94,10 @@ const DEFAULTS = {
   // Only ever flags a card, never rejects. Widen it if submissions are slow
   // to arrive; an identical repeat order outside the window is never flagged.
   DUPLICATE_WINDOW_MINUTES: 10,
+  // DEC-1 — how many days of DECIDED requests the 🛂 Approvals inbox keeps
+  // in its ✅❌ Decided group (0 = every decided row ever, capped in-flow).
+  // The ApprovalQueue sheet keeps the rows regardless; this is display only.
+  APPROVALS_DECIDED_DAYS: 7,
   // APR-1 — hours between pending-approval reminder cards (0 disables).
   // Covers approvals queued outside the bot process too (Drive imports).
   APPROVAL_REMINDER_HOURS: 6,

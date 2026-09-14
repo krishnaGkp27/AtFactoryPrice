@@ -48,6 +48,8 @@
  *   abx:no:<requestId>     rides the chip — a stale list can't misfire;
  *                          legacy numeric payloads resolve via the snapshot)
  *   abx:trf:<idx>        open a transfer's own card
+ *   abx:cat:decided      DEC-1 — the ✅❌ Decided record group (approved and
+ *                        rejected rows from the same sheet, read-only)
  */
 
 const sessionStore = require('../utils/sessionStore');
@@ -69,6 +71,9 @@ const render = makeRenderer();
 const ITEMS_PER_PAGE = 8;
 /** Items older than this land in the 🧹 Stale group as well as their own. */
 const STALE_DAYS = 14;
+// DEC-1 — most decided rows a single Decided list will carry (the sheet
+// keeps every row; this bounds the screen, and the count says when it bit).
+const DECIDED_MAX = 60;
 
 /**
  * Approval actions grouped by business concern. Order here is the order the
@@ -216,12 +221,85 @@ async function recentReceivedTransfers() {
     const settings = await settingsRepository.getAll().catch(() => ({}));
     const hours = Number(settings.TRANSFER_RECEIVED_HOURS ?? 0);
     const cutoff = hours > 0 ? Date.now() - hours * 3600 * 1000 : null;
-    return (await approvalQueueRepository.getResolved())
+    return (await loadResolved())
       .filter((r) => TRANSFER_ACTIONS.includes(String((r.actionJSON || {}).action || ''))
         && String(r.status || '').toLowerCase() === 'approved'
         && (cutoff === null || (r.resolvedAt && new Date(r.resolvedAt).getTime() >= cutoff)))
       .sort((a, b) => String(b.resolvedAt).localeCompare(String(a.resolvedAt)));
   } catch (_) { return []; } // best-effort: greens are informational
+}
+
+/**
+ * DEC-1 (owner, 14-Sep-2026: "If it is rejected can you show me the queue
+ * or the inboxes which holds the rejected request?").
+ *
+ * A decided request left every screen the moment it was decided: the inbox
+ * lists pending rows only, and the web approvals table the same. The row
+ * itself is permanent on the ApprovalQueue sheet — it simply had no door.
+ *
+ * The resolved read is shared with the transfers group (which already
+ * reads the same range on every render) behind a short TTL, so opening the
+ * inbox costs ONE resolved read instead of two. 15s is deliberately short:
+ * an admin who has just rejected something expects to find it immediately.
+ */
+const RESOLVED_TTL_MS = 15 * 1000;
+let _resolvedCache = { at: 0, rows: null };
+
+async function loadResolved() {
+  const now = Date.now();
+  if (_resolvedCache.rows && now - _resolvedCache.at < RESOLVED_TTL_MS) return _resolvedCache.rows;
+  const rows = await approvalQueueRepository.getResolved();
+  _resolvedCache = { at: now, rows };
+  return rows;
+}
+
+/**
+ * Retention window for the Decided group, in days. A business knob, so it
+ * lives in the Settings sheet with an in-code default (0 = every decided
+ * row ever, capped by DECIDED_MAX).
+ * @returns {Promise<number>}
+ */
+async function decidedDays() {
+  const fallback = Number(settingsRepository.DEFAULTS.APPROVALS_DECIDED_DAYS);
+  try {
+    const v = Number((await settingsRepository.getAll()).APPROVALS_DECIDED_DAYS);
+    return isFinite(v) && v >= 0 ? v : fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
+
+/** When a row was decided — resolvedAt, falling back to createdAt. */
+function decidedAt(r) {
+  return (r && (r.resolvedAt || r.createdAt)) || '';
+}
+
+/**
+ * Decided rows (approved OR rejected), newest decision first, inside the
+ * retention window and capped. Best-effort: a read failure hides the group
+ * rather than breaking the inbox.
+ * @returns {Promise<Array<object>>}
+ */
+async function recentDecided() {
+  try {
+    const days = await decidedDays();
+    const cutoff = days > 0 ? Date.now() - days * 86400000 : null;
+    return (await loadResolved())
+      .filter((r) => {
+        const st = String(r.status || '').toLowerCase();
+        if (st !== 'approved' && st !== 'rejected') return false;
+        if (cutoff === null) return true;
+        const ms = Date.parse(decidedAt(r));
+        // An undated decision is kept: losing it entirely is worse than
+        // showing it out of window.
+        return !isFinite(ms) || ms >= cutoff;
+      })
+      .sort((a, b) => String(decidedAt(b)).localeCompare(String(decidedAt(a))))
+      .slice(0, DECIDED_MAX);
+  } catch (e) {
+    logger.warn(`approvalsInbox: decided read failed: ${e.message}`);
+    return [];
+  }
 }
 
 /* ───────────────────────────── entry ───────────────────────────── */
@@ -232,6 +310,10 @@ async function recentReceivedTransfers() {
  * @param {string} userId @param {number|null} messageId anchor to edit
  */
 async function start(bot, chatId, userId, messageId = null) {
+  // DEC-1 — opening the inbox always reads fresh: the TTL below exists to
+  // collapse the category→list→back taps of ONE visit into a single read,
+  // never to serve a stale screen to an admin who just came back.
+  _resolvedCache = { at: 0, rows: null };
   if (!config.access.adminIds.includes(String(userId))) {
     try { await bot.sendMessage(chatId, '🛂 Approvals are admin-only.'); } catch (_) { /* ignore */ }
     return;
@@ -330,6 +412,17 @@ async function renderCategories(bot, chatId, userId) {
   if (stale.length) {
     rows.push([{ text: `🧹 Stale (>${STALE_DAYS}d) — ${stale.length}`, callback_data: 'abx:cat:stale' }]);
   }
+  // DEC-1 — the decisions themselves. Last in the list on purpose: this is
+  // the record, not the work. Hidden at zero like every other group — with
+  // nothing decided in the window there is nothing to come looking for.
+  const decided = await recentDecided();
+  if (decided.length) {
+    const okCount = decided.filter((r) => String(r.status).toLowerCase() === 'approved').length;
+    rows.push([{
+      text: `✅❌ Decided — ${decided.length} (${okCount} ✅ · ${decided.length - okCount} ❌)`,
+      callback_data: 'abx:cat:decided',
+    }]);
+  }
   rows.push(closeRow());
   rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
 
@@ -348,6 +441,7 @@ async function renderCategories(bot, chatId, userId) {
  * @returns {string}
  */
 function titleFor(key) {
+  if (key === 'decided') return '✅❌ Decided';
   if (key === 'stale') return `🧹 Stale (>${STALE_DAYS}d)`;
   if (key === 'dupes') return '⧉ Possible duplicates';
   if (key === 'transfers') return '🚚 Transfers';
@@ -580,6 +674,26 @@ function transferChipLabel(it) {
   return parts.length ? `${dot} ${route} ·${parts.join(', ')}` : `${dot} ${route}`;
 }
 
+/**
+ * DEC-1 — outcome dot. A transfer's 'approved' means RECEIVED (the receiver
+ * flips the row), never "an admin approved it", so it gets its own mark
+ * rather than borrowing the approval tick.
+ */
+function decidedChip(it) {
+  const approved = String(it.status || '').toLowerCase() === 'approved';
+  if (TRANSFER_ACTIONS.includes(String((it.actionJSON || {}).action || ''))) {
+    return approved ? '🚚✅' : '🚚❌';
+  }
+  return approved ? '✅' : '❌';
+}
+
+/** DEC-1 — never let a cap read as "that is all there was". */
+function decidedCapNote(items) {
+  return items.length >= DECIDED_MAX
+    ? `\n_Showing the newest ${DECIDED_MAX} — older decisions live on the ApprovalQueue sheet._`
+    : '';
+}
+
 async function renderItems(bot, chatId, userId, opts = {}) {
   const session = sessionStore.get(userId);
   if (!session) return;
@@ -595,7 +709,9 @@ async function renderItems(bot, chatId, userId, opts = {}) {
     return;
   }
 
-  let items = itemsForCategory(session, pending, dupIdx);
+  let items = session.category === 'decided'
+    ? await recentDecided()
+    : itemsForCategory(session, pending, dupIdx);
   // APX-6 (owner 01-Aug) — ONE strict newest→oldest timeline across open
   // and received transfers: the chip carries no date, so position is the
   // only recency signal and must never lie.
@@ -627,7 +743,9 @@ async function renderItems(bot, chatId, userId, opts = {}) {
 
   if (!items.length) {
     await render(bot, chatId, userId,
-      `${title}\n\n✅ _Nothing left here._`,
+      isDecided
+        ? `${title}\n\n_Nothing decided in this window. Every decision stays on the ApprovalQueue sheet — widen it with Settings \`APPROVALS_DECIDED_DAYS\`._`
+        : `${title}\n\n✅ _Nothing left here._`,
       [backRow('⬅ Categories'), closeRow()]);
     return;
   }
@@ -671,6 +789,7 @@ async function renderItems(bot, chatId, userId, opts = {}) {
   }
 
   const isSales = session.category === 'sales';
+  const isDecided = session.category === 'decided';
   const rows = slice.map((it) => {
     const i = items.indexOf(it);
     const days = ageDays(it.createdAt);
@@ -678,7 +797,11 @@ async function renderItems(bot, chatId, userId, opts = {}) {
     const dupd = dupIdx.has(String(it.requestId));
     const gone = goneByReq.has(String(it.requestId));
     let label;
-    if (isTransfers) label = transferChipLabel(it);
+    // DEC-1 — the verdict IS the chip: outcome, decision date, what it was,
+    // and who asked. Who DECIDED it is on the record card (column H), which
+    // is one tap away and has room for a name.
+    if (isDecided) label = `${decidedChip(it)} ${shortDate(decidedAt(it))} · ${actionLabel(it)} · ${who}`;
+    else if (isTransfers) label = transferChipLabel(it);
     // SLC-1 — sales follow the transfer rule: store + goods + who, icons
     // only for exceptions. Every other category keeps its dated chip.
     else if (isSales) label = saleChipLabel(it, who, { gone, dup: dupd });
@@ -698,7 +821,10 @@ async function renderItems(bot, chatId, userId, opts = {}) {
   rows.push(closeRow());
 
   let note;
-  if (isTransfers) {
+  if (isDecided) {
+    note = '\n✅ approved · ❌ rejected · 🚚 transfer (✅ = received) — newest decision first'
+      + `\n_Record only — nothing here can be approved or undone. Tap one to see who decided it._${decidedCapNote(items)}`;
+  } else if (isTransfers) {
     note = '\n🔴 requested · 🟡 in transit · 🟢 received · B bales · T thans — newest first\n_Not approvals — tap one to open its transfer card._';
   } else if (isSales) {
     // SLC-1 — the legend names only what an icon MEANS; a bare chip is an
@@ -716,7 +842,9 @@ async function renderItems(bot, chatId, userId, opts = {}) {
       const done = items.filter((it) => String(it.status || '').toLowerCase() === 'approved').length;
       return `*${items.length - done}* open${done ? ` · ${done} 🟢` : ''}`;
     })()
-    : `*${items.length}* pending`;
+    : isDecided
+      ? `*${items.length}* decided`
+      : `*${items.length}* pending`;
   await render(bot, chatId, userId, `${title} — ${headCount}${note}`, rows);
 }
 
@@ -796,8 +924,14 @@ async function renderItem(bot, chatId, userId, idx) {
       // where the money stands, read from the PaymentRequests row.
       const payLine = await paymentStatusLine(live, bot);
       const peek = docPeek(live.actionJSON || {});
+      // DEC-1 — a record is only a record if it says WHO decided. Column H
+      // (APR-1) carries the name; a transfer's 'approved' means the receiver
+      // confirmed arrival, so it is worded as received, never as an approval.
+      const isTransfer = TRANSFER_ACTIONS.includes(String((live.actionJSON || {}).action || ''));
+      const verdict = st === 'approved' ? (isTransfer ? 'received' : 'approved') : st;
+      const byWhom = live.approver ? ` by ${mdEscape(String(live.approver))}` : '';
       await render(bot, chatId, userId,
-        `${escCard(card)}\n\n${st === 'approved' ? '✅' : '❌'} _Already ${st}${when} — no action needed._${payLine}`,
+        `${escCard(card)}\n\n${st === 'approved' ? '✅' : '❌'} _Already ${verdict}${byWhom}${when} — no action needed._${payLine}`,
         [
           ...(peek ? [[{ text: peek.label, callback_data: `abx:doc:${idx}` }]] : []),
           backRow('⬅ Back to list'), closeRow(),
@@ -1195,5 +1329,10 @@ module.exports = {
   start,
   handleCallback,
   SESSION_TYPE,
-  _internals: { categoryOf, ageDays, ageDot, CATEGORIES, TRANSFER_ACTIONS, STALE_DAYS },
+  _internals: {
+    categoryOf, ageDays, ageDot, CATEGORIES, TRANSFER_ACTIONS, STALE_DAYS,
+    // DEC-1
+    recentDecided, decidedChip, decidedAt, DECIDED_MAX,
+    _resetResolvedCache: () => { _resolvedCache = { at: 0, rows: null }; },
+  },
 };
