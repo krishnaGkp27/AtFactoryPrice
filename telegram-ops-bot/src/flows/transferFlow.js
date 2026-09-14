@@ -33,6 +33,8 @@
  *   trf:send · trf:back · trf:cancel · trf:list
  *   trf:pl:go                    typed-preload review → continue (TRF-8b)
  *   trf:acc:<id> · trf:dec:<id> · trf:rcv:<id> · trf:rej:<id>
+ *   trf:lcard:<id>               TRF-19 open a card FROM the 📋 list
+ *                                (⬅ Back returns to the list)
  *   trf:nn:<id>                  receiver "not now" on the photo gate
  *   trf:vd:d|r:<id>              TRF-9 view attached dispatch/receipt file
  *   trf:bn:<id>                  TRF-11 bale numbers popup (trf:bl:* is the
@@ -65,6 +67,9 @@ const { shortTransferRef } = require('../services/approvalCards');
 // Accepted upload types for the dispatch / receive load photo (image or PDF).
 const DOC_MIMES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
 const BALE_PREVIEW_MAX = 8;
+// TRF-19 — rows on the 📋 Transfers screen; the rest are counted, never
+// silently dropped.
+const LIST_MAX = 15;
 
 const SESSION_TYPE = 'transfer_flow';
 const STEPS = ['source', 'design', 'shade', 'qty', 'dest', 'dispatcher', 'receiver', 'confirm'];
@@ -273,7 +278,11 @@ async function submit(bot, chatId, userId) {
     });
     // Dispatcher card (best-effort DM).
     try {
-      const card = dispatcherCard(requestId, aj, session.receiver.name);
+      // TRF-19 — the card says whose move it is from the first send, not
+      // only when it is re-opened from a queue.
+      const card = dispatcherCard(requestId, aj, session.receiver.name,
+        waitingLine({ actionJSON: aj, user: userId, createdAt: new Date().toISOString() },
+          { [String(session.dispatcher.user_id)]: session.dispatcher.name, [String(userId)]: 'you' }));
       await bot.sendMessage(session.dispatcher.user_id, card.text,
         { parse_mode: 'Markdown', reply_markup: card.kb });
     } catch (e) { logger.warn(`transferFlow: dispatcher DM failed: ${e.message}`); }
@@ -437,11 +446,14 @@ function totalBales(aj) {
 /**
  * Dispatcher's action card (Accept & dispatch / Decline). Used for the
  * submit-time DM and for re-sends from the My Tasks transfer queue.
+ * TRF-19 — `statusLine` (waitingLine()) names whose move it is; empty
+ * keeps the pre-TRF-19 card exactly as it was.
  * @returns {{text:string, kb:object}}
  */
-function dispatcherCard(requestId, aj, receiverName) {
+function dispatcherCard(requestId, aj, receiverName, statusLine = '') {
+  const status = statusLine ? `${statusLine}\n` : '';
   return {
-    text: `🚚 *Transfer ${shortTransferRef(requestId)} — please dispatch*\n${headOf(aj)}\n${linesBlock(aj.lines)}\nReceiver: ${receiverName}\n\n_Accepting logs the actual bales you send. A load photo/PDF is required to complete the dispatch._`,
+    text: `🚚 *Transfer ${shortTransferRef(requestId)} — please dispatch*\n${status}${headOf(aj)}\n${linesBlock(aj.lines)}\nReceiver: ${receiverName}\n\n_Accepting logs the actual bales you send. A load photo/PDF is required to complete the dispatch._`,
     kb: { inline_keyboard: [[
       { text: '✅ Accept & dispatch', callback_data: `trf:acc:${requestId}` },
       { text: '❌ Decline', callback_data: `trf:dec:${requestId}` },
@@ -858,10 +870,11 @@ async function handleReviewReconcile(bot, query, requestId) {
   return true;
 }
 
-function receiverCard(requestId, aj) {
+function receiverCard(requestId, aj, statusLine = '') {
   const shortNote = aj.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
+  const status = statusLine ? `${statusLine}\n` : '';
   return {
-    text: `📦 *Transfer ${shortTransferRef(requestId)} incoming*\n${headOf(aj)}${departedLine(aj)}\n${dispatchedBlock(aj)}${shortNote}\n\nConfirm when the goods arrive and match — a photo/PDF of the received goods is required:`,
+    text: `📦 *Transfer ${shortTransferRef(requestId)} incoming*\n${status}${headOf(aj)}${departedLine(aj)}\n${dispatchedBlock(aj)}${shortNote}\n\nConfirm when the goods arrive and match — a photo/PDF of the received goods is required:`,
     kb: { inline_keyboard: [[
       { text: '✅ Received', callback_data: `trf:rcv:${requestId}` },
       { text: '⚠️ Reject', callback_data: `trf:rej:${requestId}` },
@@ -879,6 +892,50 @@ function stateLabel(row) {
   const stage = row.actionJSON && row.actionJSON.stage;
   if (stage === 'admin_review') return 'awaiting admin approval 🛂';
   return stage === 'in_transit' ? 'in transit 🚚' : 'awaiting dispatch ⏳';
+}
+
+/**
+ * TRF-19 (owner, 14-Sep-2026: "I am not able to see the exact status of
+ * this transfer. Where is it pending? Under whose approval or
+ * acceptance?").
+ *
+ * Every transfer card was written FOR its actor — "please dispatch" told
+ * the dispatcher what to do but never said WHO the dispatcher was. An
+ * admin may open any actor's card (BUSINESS_RULES §8: "the admin may act
+ * in either seat"), so the owner read a card addressed to someone else
+ * with no way to tell whose move it was.
+ *
+ * One line, on every card and list row: the stage, the person it waits
+ * on, who raised it, and how long it has been sitting.
+ *
+ * @param {object} row live ApprovalQueue row (status, createdAt, user)
+ * @param {object} names id → display name map (nameMap())
+ * @returns {string} one Markdown line, no trailing newline
+ */
+function waitingLine(row, names = {}) {
+  if (!row) return '';
+  const aj = row.actionJSON || {};
+  const nameOf = (id) => names[String(id)] || (id ? String(id) : 'someone');
+  const raised = row.user ? ` · raised by ${nameOf(row.user)}` : '';
+  const age = waitedFor(row.createdAt);
+  if (String(row.status) === 'approved') return `✅ *Received* — complete${raised}`;
+  if (String(row.status) === 'rejected') return `❌ *Closed* — bales went back to ${aj.from || 'the source'}${raised}`;
+  if (aj.stage === 'admin_review') {
+    return `🛂 *Waiting on an admin to approve* · dispatched by ${nameOf(aj.dispatcher)}${raised}${age}`;
+  }
+  if (aj.stage === 'in_transit') {
+    return `🚚 *Waiting on ${nameOf(aj.receiver)} to confirm arrival*${raised}${age}`;
+  }
+  return `⏳ *Waiting on ${nameOf(aj.dispatcher)} to dispatch*${raised}${age}`;
+}
+
+/** " · 3d waiting" / " · today" from a createdAt stamp; '' when unparsable. */
+function waitedFor(createdAt) {
+  const t = Date.parse(String(createdAt || ''));
+  if (!Number.isFinite(t)) return '';
+  const days = Math.floor((Date.now() - t) / 86400000);
+  if (days <= 0) return ' · today';
+  return ` · ${days}d waiting`;
 }
 
 /* ── admin cards: short by default, expand on demand ───────────────────── */
@@ -1909,7 +1966,8 @@ async function showActionCard(bot, query, requestId, opts = {}) {
     await bot.answerCallbackQuery(query.id).catch(() => {});
     // TRF-11 bale chip + TRF-9 docs — a settled transfer keeps its numbers
     // and files one tap away.
-    await editInPlace(`🚚 *${shortTransferRef(requestId)}* — ${stateLabel(row)}\n${compactOf(aj)}`,
+    const settledNames = await nameMap([aj.dispatcher, aj.receiver, row.user]);
+    await editInPlace(`🚚 *${shortTransferRef(requestId)}* — ${stateLabel(row)}\n${waitingLine(row, settledNames)}\n${compactOf(aj)}`,
       { inline_keyboard: [...balesChipRow(requestId, aj), ...docRows(requestId, aj), navRow] });
     return true;
   }
@@ -1922,8 +1980,9 @@ async function showActionCard(bot, query, requestId, opts = {}) {
       const card = await buildAdminReviewCard(requestId, row);
       await editInPlace(card.text, { inline_keyboard: [...card.kb.inline_keyboard, navRow] });
     } else {
+      const names = await nameMap([aj.dispatcher, aj.receiver, row.user]);
       await editInPlace(
-        `🛂 *${shortTransferRef(requestId)} — awaiting admin approval*\n${compactOf(aj)}\n_Nothing moves until an admin approves. You will be told if it is sent back._`,
+        `🛂 *${shortTransferRef(requestId)} — awaiting admin approval*\n${waitingLine(row, names)}\n${compactOf(aj)}\n_Nothing moves until an admin approves. You will be told if it is sent back._`,
         { inline_keyboard: [...balesChipRow(requestId, aj), navRow] });
     }
     return true;
@@ -1936,11 +1995,20 @@ async function showActionCard(bot, query, requestId, opts = {}) {
   }
   await bot.answerCallbackQuery(query.id).catch(() => {});
   let card;
+  // TRF-19 — resolve every party once: the card now names whose move it is,
+  // which is the whole point of opening someone else's card as an admin.
+  const names = await nameMap([aj.dispatcher, aj.receiver, row.user]);
+  // An admin may act in either seat (BUSINESS_RULES §8), so the buttons stay
+  // — but the card must not read as the admin's OWN duty. Saying whose seat
+  // it is turns "please dispatch" from an order into a stand-in.
+  const standIn = String(allowed) !== userId
+    ? `\n👤 _You are acting for ${names[String(allowed)] || 'the assigned person'} — this is their card._`
+    : '';
+  const status = `${waitingLine(row, names)}${standIn}`;
   if (toDispatch) {
-    const names = await nameMap([aj.receiver]);
-    card = dispatcherCard(requestId, aj, names[String(aj.receiver)]);
+    card = dispatcherCard(requestId, aj, names[String(aj.receiver)], status);
   } else {
-    card = receiverCard(requestId, await ensureLineBales(aj)); // TRF-12
+    card = receiverCard(requestId, await ensureLineBales(aj), status); // TRF-12
   }
   await editInPlace(card.text, { inline_keyboard: [...card.kb.inline_keyboard, navRow] });
   return true;
@@ -1952,12 +2020,31 @@ async function showList(bot, chatId, userId, messageId) {
   const open = await transferService.getOpenTransfers();
   let text = '🚚 *Open transfers*\n';
   if (!open.length) text += '\n_None — everything is settled._';
-  for (const t of open.slice(0, 15)) {
-    const badge = t.actionJSON.stage === 'in_transit' ? '🚚 in transit'
-      : t.actionJSON.stage === 'admin_review' ? '🛂 awaiting approval' : '⏳ awaiting dispatch';
-    text += `\n\`${shortTransferRef(t.requestId)}\` ${compactOf(t.actionJSON)} — ${badge}`;
+  const shown = open.slice(0, LIST_MAX);
+  // TRF-19 — one name resolution for the whole page: every row says who the
+  // transfer is waiting on, and every row is tappable (the list used to be
+  // dead text, so seeing a stuck transfer here led nowhere).
+  const names = await nameMap(shown.flatMap((t) => {
+    const aj = t.actionJSON || {};
+    return [aj.dispatcher, aj.receiver, t.user];
+  }));
+  const rows = [];
+  for (const t of shown) {
+    const aj = t.actionJSON || {};
+    const badge = aj.stage === 'in_transit' ? '🚚 in transit'
+      : aj.stage === 'admin_review' ? '🛂 awaiting approval' : '⏳ awaiting dispatch';
+    const holder = aj.stage === 'in_transit' ? names[String(aj.receiver)]
+      : aj.stage === 'admin_review' ? 'an admin' : names[String(aj.dispatcher)];
+    text += `\n\`${shortTransferRef(t.requestId)}\` ${compactOf(aj)} — ${badge}`
+      + `\n   _waiting on ${holder || '—'}${waitedFor(t.createdAt)}_`;
+    rows.push([{
+      text: `${shortTransferRef(t.requestId)} · ${badge} · ${holder || '—'}`.slice(0, 60),
+      callback_data: `trf:lcard:${t.requestId}`,
+    }]);
   }
-  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]] } };
+  if (open.length > LIST_MAX) text += `\n\n_…and ${open.length - LIST_MAX} more._`;
+  rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
+  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
   if (messageId) {
     // "message is not modified" = screen already correct — success, don't
     // fall through to a duplicate send.
@@ -2293,6 +2380,10 @@ async function handleCallback(bot, query) {
   }
   const mCard = data.match(/^trf:card:(.+)$/);
   if (mCard) return showActionCard(bot, query, mCard[1]);
+  // TRF-19 — same card, but ⬅ Back returns to 📋 Transfers (the list the
+  // tap came from) instead of dead-ending at the menu.
+  const mListCard = data.match(/^trf:lcard:(.+)$/);
+  if (mListCard) return showActionCard(bot, query, mListCard[1], { backCb: 'trf:list' });
   if (data === 'trf:list') {
     await bot.answerCallbackQuery(query.id).catch(() => {});
     await showList(bot, chatId, userId, query.message.message_id);
@@ -2494,5 +2585,6 @@ module.exports = {
     handleReviewApprove, handleReviewSendBack, handleReviewReconcile,
     linesBlock, dispatchedBlock, headOf, compactOf, designHead,
     detailCard, shortCard, showActionCard, dispatcherCard, receiverCard, SESSION_TYPE,
+    waitingLine, waitedFor, stateLabel,
   },
 };
