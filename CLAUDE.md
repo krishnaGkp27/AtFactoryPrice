@@ -18,6 +18,7 @@ ask for their status instead of starting new features; help execute them if aske
 | Priority | Task | Owner | Steps doc |
 |---|---|---|---|
 | ~~0~~ ✅ | CON-1 one person-door SHIPPED 16-Aug-2026 — tile is ➕ Add Contact, TYPE asked first, everything queues `add_contact` with chips, plain Approve honours the requested type, Quick Add + the retired executor both stitch CRM row **and** node. Owner: add one person of each kind and confirm a Customer approved with no chip appears in the customer list AND the network. | **shipped** | `telegram-ops-bot/specs/CON-1_SINGLE_PERSON_DOOR.md` |
+| **0 — OWNER LIVE CHECK** | TRF-19 + DEC-1 SHIPPED 14-Sep-2026 (owner: "I am not able to see the exact status of this transfer. Where is it pending? Under whose approval or acceptance?" and "if it is rejected can you show me the queue or the inboxes which holds the rejected request?"). **TRF-19**: every transfer card carries one line — `⏳ Waiting on Musa to dispatch · raised by Krishna · 3d waiting` (also `🛂 Waiting on an admin to approve · dispatched by …`, `🚚 Waiting on Abdul to confirm arrival`, `✅ Received`, `❌ Closed`); an admin opening a card that is not theirs is told `👤 You are acting for Musa — this is their card` (the buttons stay — §8 lets an admin act in either seat); 📋 Transfers rows now name the holder, say how long it has waited, are **tappable** (`trf:lcard:`) and count the overflow instead of dropping it. **DEC-1**: the 🛂 inbox gains a last group `✅❌ Decided — N (x ✅ · y ❌)` (hidden at zero) listing approved AND rejected rows newest-decision-first, read-only, naming the decider from ApprovalQueue column H; a transfer's `approved` is worded **received**; window = Settings `APPROVALS_DECIDED_DAYS` (default 7, `0` = every decided row ever), screen caps at 60 and says so. Owner: open 📋 Transfers → tap the 9006 Kano office→Lagos row (it is at stage `requested`, waiting on its **dispatcher** — no admin approval is involved at that stage) → then 🛂 Approvals → ✅❌ Decided → find the request you rejected and check it names who rejected it. | **Owner** | `telegram-ops-bot/src/flows/transferFlow.js` (`waitingLine`), `src/flows/approvalsInboxFlow.js` (`recentDecided`) |
 | **0a — NEXT UP (owner 27-Aug)** | LNK-2 one-tap reports: (owner, 2 min) @BotFather `/setdomain` → `ops.atfactoryprice.live` — kills the "Open Link?" popup; LNK-1 shipped `ec273167` with auto-fallback to plain url buttons until the domain is set, so nothing breaks meanwhile. (agent) add `WEB_SESSION_HOURS` Settings knob (default 12) so home-screen bookmarks of `/ops` `/allocations` `/gantt` stay signed in for days — owner picks the number in one cell, no deploy; longer session = longer exposure on a lost phone, owner's call. | **Owner + fresh session** | /setdomain steps given in chat 27-Aug; fallback in `telegramController` `web_dashboard` case |
 | **0 — OWNER STEP** | PAY-1 SHIPPED 14-Aug-2026. Owner: add `Finance` to the Office phone's `department` cell in the Users sheet (sole member) — until then payment cards go to ALL admins with a warning instead of to the one finance hand. Then register the first accounts (each employee their own; an admin for contractors), dual-approve, and run one small live payment end to end. | **Owner** | `telegram-ops-bot/specs/PAY-1_PAYMENT_REQUESTS.md` §After shipping |
 | 0b | EXP-1 attach→parse→confirm component (APC-1 Phase E): photo/Excel in → OCR'd figures as confirm chips → file archived as evidence; lands in the expense flow first, then the approval wizards. EXP-1 core SHIPPED 08-Aug-2026 (`d03423e`+`ed009a1`): daily record, running balance, 20:00 finance report + reminder. Owner: seed the float by recording current cash-in-hand once via ➕ Cash received. | **Owner + agent** | `telegram-ops-bot/specs/EXP-1_OFFICE_EXPENSES.md` |
@@ -126,6 +127,10 @@ Major namespaces already taken:
   `pu:cust|net|link|linkcancel`) `cms:` `shr:` (share links) `rn:` (RET-4 ↩️ Return goods —
   `rn:cust|csearch|bale|t|tall|tnext|dd|dm|dq|noop|c|pskip|back|cancel|submit`)
   `oq/oc/od*`/`os:` (orders; `os:__me__` · `os:__direct__` are the 11-Sep salesperson chips) `rc*` (receipts)
+- Transfers `trf:*` — TRF-19 adds `trf:lcard:<id>` (open a card FROM the 📋
+  list; ⬅ Back returns to the list, unlike `trf:card:` from My Tasks)
+- Approvals inbox `abx:*` — DEC-1 adds `abx:cat:decided` (the read-only
+  record group; its rows reuse `abx:i:<idx>`)
 - Catalog: `csf:` `clf:` `crf:` `mkr:` `ctr:` `dab:` `das:` `dat:` `dap:` (incl.
   `dap:page:add|replace` — CAT-P1 add-a-page vs replace) `dam:` `dav:` `shp:`
   (SHP-1 shade photos upload door; `srf_shpfull` + `myp:sc|sf|sb` are the
@@ -153,7 +158,7 @@ session arrays, `cbSafe()` from `src/utils/telegramUI.js`).
 | `src/services/unitDisplayService.js` | TV-1/2 bales⇄thans display modes (Settings-driven) |
 | `src/services/locationService.js` + `src/repositories/locationsRepository.js` | LOC-1 place register: which city a warehouse/store sits in, and which kind it is |
 | `src/services/sessionJanitor.js` | SJ-1/2 stale-flow tombstoning |
-| `src/services/transferService.js` + `src/repositories/transfersRepository.js` | TRF-1 staged warehouse transfers (foundation; UI pending) |
+| `src/services/transferService.js` | TRF-1..19 staged warehouse transfers. **There is NO `transfersRepository.js` and NO `Transfers` sheet** (owner decision): the whole transfer rides ONE `ApprovalQueue` row, with the lifecycle in `actionJSON.stage` (`requested` → `admin_review` → `in_transit`) and column E status (`pending` → `approved` = RECEIVED, or `rejected` = declined OR reverted) |
 | `src/repositories/*.js` | One file per Google Sheet |
 | `src/utils/sessionStore.js` | Per-user flow state (in-memory, TTL, expiry hooks) |
 | `src/utils/menuNav.js`, `telegramUI.js`, `shadeButtons.js` | Shared nav footers / send helpers / shade labels — reuse, don't reinvent |
@@ -168,7 +173,7 @@ session arrays, `cbSafe()` from `src/utils/telegramUI.js`).
 `Receipts`, `AuditLog`, `DesignAssets`, `CatalogStock`, `CatalogLedger`,
 `Marketers`, `MarketerAllocations`, `LedgerTransactions`,
 `PaymentAccounts`, `PaymentRequests`,
-`LedgerBalanceCache`, `Transfers`, `GoodsReceipts`, `PendingUsers`, `Locations`,
+`LedgerBalanceCache`, `GoodsReceipts`, `PendingUsers`, `Locations`,
 `DesignShadeAssets` (SHP-1 — one garment photo per design+shade tab[+container];
 originals untouched in Drive, stamped copy at native resolution, two Telegram
 file_id caches: photo form + full-quality document form).
@@ -220,6 +225,7 @@ to a Google Sheet; new tables go through `src/db/migrations.js` MIGRATIONS[].
 | `EDIT_BALE_PHOTO_REQUIRED` | 1 | EDB-1 — 0 = a bale edit may be sent for approval without the label photo |
 | `INVOICE_RATE_MULTIPLIER` | blank (env `INVOICE_RATE_MULTIPLIER` seeds it) | CUR-2 — the factor the CUSTOMER COPY of a sale invoice multiplies the entered rate by (`1250`: entered `3.20/yd` → `4,000.00/yd` on the PDF / web copy). Blank / 0 / 1 = none — the document prints the entered figures unconverted. Read ONCE at issue and frozen in `Invoices.rate_multiplier`; a later change never touches an issued invoice. The sheet's own figures, the ledger and Transactions are never multiplied (§17). the wizard's Step 5 (`INVOICE_MULTIPLIER_ASK`) can override it per sale |
 | `INVOICE_MULTIPLIER_ASK` | 1 | CUR-2 — 1 = the sale approval wizard asks Step 5 (customer-copy multiplier: No multiplier · Settings value · type); 0 = the step is skipped and the Settings cell alone decides |
+| `APPROVALS_DECIDED_DAYS` | 7 | DEC-1 — days of DECIDED (approved or rejected) requests the 🛂 inbox keeps in its ✅❌ Decided group; `0` = every decided row ever. Display only: the ApprovalQueue sheet keeps every row regardless, and the screen caps at 60 and says when it did |
 | `PAYMENT_FINANCE_REMINDER_HOURS` | 4 | PAY-2 — hours after approval (or the last finance card / reminder) before an approved-but-unpaid payment re-sends its finance card to the finance seat; 0 = off |
 
 New defaults live in `settingsRepository.DEFAULTS`; a sheet row of the same key overrides.
