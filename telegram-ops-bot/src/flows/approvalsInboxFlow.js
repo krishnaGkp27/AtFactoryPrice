@@ -302,6 +302,15 @@ async function recentDecided() {
   }
 }
 
+/** DEC-1 — the category chip, shared by the normal and empty-queue screens. */
+function decidedChipRow(decided) {
+  const ok = decided.filter((r) => String(r.status).toLowerCase() === 'approved').length;
+  return {
+    text: `✅❌ Decided — ${decided.length} (${ok} ✅ · ${decided.length - ok} ❌)`,
+    callback_data: 'abx:cat:decided',
+  };
+}
+
 /* ───────────────────────────── entry ───────────────────────────── */
 
 /**
@@ -349,9 +358,18 @@ async function renderCategories(bot, chatId, userId) {
   }
 
   if (!pending.length) {
+    // DEC-1 — a clear queue is exactly when an admin comes looking for what
+    // they already decided ("I rejected it — where did it go?"). The record
+    // group has to survive this early return, or it is invisible precisely
+    // when it is the only thing left to show.
+    const decidedNow = await recentDecided();
+    const rowsNow = [];
+    if (decidedNow.length) rowsNow.push([decidedChipRow(decidedNow)]);
+    rowsNow.push([{ text: '🏠 Menu', callback_data: 'act:__back__' }]);
     await render(bot, chatId, userId,
-      '🛂 *Approvals*\n\n✅ _Queue is clear — nothing waiting._',
-      [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+      `🛂 *Approvals*\n\n✅ _Queue is clear — nothing waiting._${decidedNow.length
+        ? `\n\n_${decidedNow.length} recent decision${decidedNow.length === 1 ? '' : 's'} below._` : ''}`,
+      rowsNow);
     return;
   }
 
@@ -416,13 +434,7 @@ async function renderCategories(bot, chatId, userId) {
   // the record, not the work. Hidden at zero like every other group — with
   // nothing decided in the window there is nothing to come looking for.
   const decided = await recentDecided();
-  if (decided.length) {
-    const okCount = decided.filter((r) => String(r.status).toLowerCase() === 'approved').length;
-    rows.push([{
-      text: `✅❌ Decided — ${decided.length} (${okCount} ✅ · ${decided.length - okCount} ❌)`,
-      callback_data: 'abx:cat:decided',
-    }]);
-  }
+  if (decided.length) rows.push([decidedChipRow(decided)]);
   rows.push(closeRow());
   rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
 
@@ -755,6 +767,7 @@ async function renderItems(bot, chatId, userId, opts = {}) {
   const slice = items.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
 
   const isTransfers = session.category === 'transfers';
+  const isDecided = session.category === 'decided';
 
   // Names, never raw Telegram ids (owner rule, 19-Jul — the digest and the
   // reminder sweep already do this). Resolved once per DISTINCT requester on
@@ -774,7 +787,10 @@ async function renderItems(bot, chatId, userId, opts = {}) {
   // "unprocessed" when the sale had in fact executed. Those rows carry ⚠️
   // instead, matching the transfer group's rule that the icon tells STATE.
   let goneByReq = new Set();
-  if (slice.some((it) => require('../services/saleStockCheck').SALE_ACTIONS.includes(((it.actionJSON || {}).action) || ''))) {
+  // DEC-1 — the decoration only ever marks PENDING rows (the inner filter
+  // says so), so a decided page must not pay for a whole-Inventory read to
+  // build an empty set.
+  if (!isDecided && slice.some((it) => require('../services/saleStockCheck').SALE_ACTIONS.includes(((it.actionJSON || {}).action) || ''))) {
     try {
       const { allItemsGone, SALE_ACTIONS } = require('../services/saleStockCheck');
       const inv = await require('../repositories/inventoryRepository').getAll();
@@ -789,7 +805,6 @@ async function renderItems(bot, chatId, userId, opts = {}) {
   }
 
   const isSales = session.category === 'sales';
-  const isDecided = session.category === 'decided';
   const rows = slice.map((it) => {
     const i = items.indexOf(it);
     const days = ageDays(it.createdAt);

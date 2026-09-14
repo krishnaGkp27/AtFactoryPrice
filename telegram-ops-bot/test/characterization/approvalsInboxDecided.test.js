@@ -139,3 +139,38 @@ test('DEC-1: the group is admin-only, like the rest of the inbox', async () => {
   assert.equal(lastKb(bot).length, 0, 'no doors for a non-admin');
   sessionStore.clear(EMPLOYEE);
 });
+
+test('DEC-1: a CLEAR queue still shows the Decided group — that is when it is looked for', async () => {
+  const orig = approvalQueueRepository.getAllPending;
+  approvalQueueRepository.getAllPending = async () => [];
+  try {
+    const bot = createFakeBot();
+    await flow.start(bot, ADMIN, ADMIN, null);
+    assert.match(lastText(bot), /Queue is clear/, 'the clear-queue message survives');
+    assert.match(lastText(bot), /3 recent decisions below/, 'and it points at the record');
+    const chip = lastKb(bot).find((b) => b.callback_data === 'abx:cat:decided');
+    assert.ok(chip, 'the Decided group is still reachable with nothing pending');
+    await flow.handleCallback(bot, cb('abx:cat:decided', ADMIN));
+    const chips = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:i:'));
+    assert.equal(chips.length, 3, 'and it opens');
+  } finally {
+    approvalQueueRepository.getAllPending = orig;
+    sessionStore.clear(ADMIN);
+  }
+});
+
+test('DEC-1: a decided page does not read the whole Inventory to decorate nothing', async () => {
+  const inventoryRepository = require(path.join(SRC, 'repositories/inventoryRepository'));
+  const orig = inventoryRepository.getAll;
+  let reads = 0;
+  inventoryRepository.getAll = async () => { reads += 1; return []; };
+  try {
+    const bot = createFakeBot();
+    await flow.start(bot, ADMIN, ADMIN, null);
+    await flow.handleCallback(bot, cb('abx:cat:decided', ADMIN));
+    assert.equal(reads, 0, 'the stock-gone decoration only ever marks PENDING rows');
+  } finally {
+    inventoryRepository.getAll = orig;
+    sessionStore.clear(ADMIN);
+  }
+});
