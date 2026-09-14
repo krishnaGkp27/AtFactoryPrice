@@ -642,6 +642,35 @@ added through railway variables."*
   An admin's Reject flips the PaymentRequests row to `rejected`.
 - **The finance card names the pair** (`✅ Approved: A ‖ B`) and the
   requester by name, never a raw id.
+- **FOUR EYES ON THE MONEY — the hands that approve are never the hands
+  that pay (owner ruling, 14-Sep-2026: "make a rule that the person who is
+  approving shall not be paying from the same Telegram ID. Any time in the
+  future make a workaround this").** A payment is released only by a
+  Telegram id that gave NEITHER of its two approvals. Being the finance
+  seat is not enough; signing forfeits the right to release that one
+  payment, for that id, permanently. Every future payment feature is built
+  around this rule, not through it: there is no Settings knob, no admin
+  override and no "just this once" path, and any flow that moves money out
+  inherits the same check.
+  - **Enforced at the tap**, not only on the screen: `✔ Mark Done` from a
+    signer's id is refused even if an old card, a stale list or a
+    re-sent message still shows the button. The button is also withheld
+    from that id's copy of the card, so the refusal is the backstop and
+    not the first thing the person meets.
+  - **The escape hatch is ✖ Decline, never a bypass.** A signer who is the
+    only finance seat may still DECLINE the payment they approved — that
+    moves no money — and the requester raises it again for different
+    hands. A stuck payment is always resolvable without weakening the
+    rule.
+  - **Said early, not discovered late.** When a payment is approved and
+    every finance seat it would go to has signed it, the approving admins
+    are told at that moment that nobody can release it, rather than
+    finding out when the money is due.
+  - **Consequence the owner accepted:** with only two admins, where one is
+    the office phone that also holds the finance seat, a payment both of
+    them sign cannot be paid by either. The configuration, not the rule,
+    is what has to give: a third admin, or a finance id that never
+    approves.
 ## 14 · Removing a person is a status flip, never a deletion
 
 **Locked 16-Aug-2026** (owner, after the removal impact analysis): *"I can

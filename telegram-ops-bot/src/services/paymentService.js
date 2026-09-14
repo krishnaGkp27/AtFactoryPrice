@@ -162,16 +162,90 @@ async function paymentRecipients() {
  * approved money, and an admin acting is on the record exactly like the
  * finance head would be.
  */
-async function canExecute(telegramId) {
+async function canExecute(telegramId, pay = null) {
   const id = String(telegramId || '');
   if (!id) return { ok: false, reason: 'no_user' };
   const { ids, head, source } = await paymentRecipients();
-  if (ids.includes(id)) {
-    const out = { ok: true, head, source };
-    if (source === 'admins') out.viaAdminFallback = true;
-    return out;
+  if (!ids.includes(id)) return { ok: false, reason: 'not_finance', head, source };
+  // PAY-4 (owner ruling, 14-Sep-2026; BUSINESS_RULES §13 "four eyes on the
+  // money") — being the finance seat is not enough. An id that gave either
+  // approval has forfeited the right to release THIS payment. Checked here,
+  // the one gate every money-moving tap already passes through, so a new
+  // door cannot be built that skips it.
+  if (pay) {
+    const approvers = await approverIdsFor(pay);
+    if (approvers.includes(id)) {
+      return { ok: false, reason: 'approved_it', head, source, approvers };
+    }
   }
-  return { ok: false, reason: 'not_finance', head, source };
+  const out = { ok: true, head, source };
+  if (source === 'admins') out.viaAdminFallback = true;
+  return out;
+}
+
+/**
+ * PAY-4 — the Telegram ids that APPROVED this payment.
+ *
+ * The PaymentRequests `approved_by` cell holds the pair LABEL ("Musa ‖
+ * Abdul"), not ids, so it cannot answer this. The ids live on the
+ * ApprovalQueue row (`actionJSON.approvals`, where DUAL-1 parks the first
+ * signature and the executor adds the second); the Postgres event trail is
+ * the fallback for a row that has since been archived.
+ *
+ * Fails CLOSED on nothing found — an empty list means "nobody is known to
+ * have approved it", which correctly blocks nobody; but a THROW must never
+ * silently open the gate, so every read is caught and the known ids so far
+ * are returned.
+ *
+ * @param {object} pay a PaymentRequests row
+ * @returns {Promise<string[]>} approver Telegram ids, as strings
+ */
+async function approverIdsFor(pay) {
+  const out = [];
+  const push = (v) => {
+    const id = String(v == null ? '' : v).trim();
+    if (id && !out.includes(id)) out.push(id);
+  };
+  const requestId = pay && pay.approval_request_id;
+  if (requestId) {
+    try {
+      const row = await require('../repositories/approvalQueueRepository').getByRequestId(requestId);
+      if (row && row.actionJSON) {
+        require('./approverStamp').approverIds(row.actionJSON).forEach(push);
+      }
+    } catch (e) {
+      logger.warn(`PAY-4 approverIdsFor: queue read failed for ${requestId}: ${e.message}`);
+    }
+  }
+  if (!out.length) {
+    try {
+      const events = await require('../repositories/paymentEventsRepository')
+        .forPayment(pay && pay.payment_id);
+      for (const ev of events || []) {
+        if (String(ev.kind) !== 'approved') continue;
+        const ids = ev.detail && ev.detail.approverIds;
+        if (Array.isArray(ids)) ids.forEach(push);
+        else push(ev.actor_id || ev.actorId);
+      }
+    } catch (e) {
+      logger.warn(`PAY-4 approverIdsFor: event trail unavailable for ${pay && pay.payment_id}: ${e.message}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * PAY-4 — can ANY finance seat release this payment, or did they all sign
+ * it? Used to warn the approving admins at the moment of approval instead
+ * of leaving the payment to be discovered as unpayable later.
+ * @returns {Promise<{payable:boolean, eligible:string[], blocked:string[]}>}
+ */
+async function payableBy(pay) {
+  const { ids } = await paymentRecipients();
+  const approvers = await approverIdsFor(pay);
+  const eligible = ids.map(String).filter((id) => !approvers.includes(id));
+  const blocked = ids.map(String).filter((id) => approvers.includes(id));
+  return { payable: eligible.length > 0, eligible, blocked };
 }
 
 /** The badge line, ₦50,000 by default, Settings-overridable, no deploy. */
@@ -320,6 +394,8 @@ module.exports = {
   financeSeatIds,
   financeWarning,
   canExecute,
+  approverIdsFor,
+  payableBy,
   paymentRecipients,
   threshold,
   isAboveThreshold,

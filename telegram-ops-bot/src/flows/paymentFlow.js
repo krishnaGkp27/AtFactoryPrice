@@ -518,13 +518,20 @@ async function showMine(bot, chatId, userId) {
 /* ── execution: Mark Done / Decline ──────────────────────────────────── */
 
 async function markDone(bot, chatId, userId, paymentId, cbId, cardMessageId) {
-  const gate = await paymentService.canExecute(userId);
-  if (!gate.ok) {
-    await answer(bot, cbId, 'Only the finance person marks a payment done.', true);
-    return;
-  }
+  // PAY-4 — the row is read BEFORE the gate, because the gate now asks who
+  // approved THIS payment (BUSINESS_RULES §13, four eyes on the money).
   const pay = await paymentRequestsRepo.findById(paymentId);
   if (!pay) { await answer(bot, cbId, 'That payment was not found.', true); return; }
+  const gate = await paymentService.canExecute(userId, pay);
+  if (!gate.ok) {
+    // The refusal is the BACKSTOP: a signer's copy of the card carries no
+    // ✔ Mark Done button at all. This catches an old card, a re-sent one,
+    // or a list drawn before the approval landed.
+    await answer(bot, cbId, gate.reason === 'approved_it'
+      ? 'You approved this payment, so you cannot pay it. A different hand must release the money. (You can still ✖ Decline it.)'
+      : 'Only the finance person marks a payment done.', true);
+    return;
+  }
   if (pay.status === 'done') { await answer(bot, cbId, 'Already marked done.', true); return; }
   if (pay.status !== 'approved') {
     await answer(bot, cbId, `That payment is ${pay.status.replace('_', ' ')} — it cannot be paid.`, true);
@@ -619,6 +626,10 @@ async function finishDone(bot, chatId, userId, proof) {
 }
 
 async function startDecline(bot, chatId, userId, paymentId, cbId, cardMessageId) {
+  // PAY-4 — deliberately NOT four-eyes gated: declining moves no money, and
+  // it is the escape hatch for a payment whose only finance seat signed it
+  // (BUSINESS_RULES §13). Decline, then the requester raises it again for
+  // different hands — the rule is never weakened to unstick a payment.
   const gate = await paymentService.canExecute(userId);
   if (!gate.ok) {
     await answer(bot, cbId, 'Only the finance person can decline a payment.', true);
@@ -701,11 +712,24 @@ async function showWaiting(bot, chatId, userId) {
     return;
   }
   const reasons = await paymentService.reasonsFor(rows.slice(0, 20));
+  // PAY-4 (BUSINESS_RULES §13) — a payment this seat APPROVED still shows
+  // here (hiding it would read as "it went away"), but it is marked 🔒 and
+  // its card arrives without ✔ Mark Done.
+  const mine = new Set();
+  for (const p of rows.slice(0, 20)) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const gate = await paymentService.canExecute(userId, p);
+      if (!gate.ok && gate.reason === 'approved_it') mine.add(String(p.payment_id));
+    } catch (_) { /* unknown = not marked; the tap is still refused */ }
+  }
   const lines = ['💳 *Waiting for me to pay*', '', '_Tap one to get its card again._'];
+  if (mine.size) lines.push('_🔒 = you approved it, so a different hand must pay it._');
   const kb = rows.slice(0, 20).map((p, i) => {
     const reason = reasons.get(String(p.payment_id)) || '';
+    const lock = mine.has(String(p.payment_id)) ? '🔒 ' : '';
     return [{
-      text: `${paymentService.fmtNaira(p.amount_ngn)} → ${p.payee_name} · ${fmtDate.short(p.raised_at)}${reason ? ` · ${reason}` : ''}`.slice(0, 60),
+      text: `${lock}${paymentService.fmtNaira(p.amount_ngn)} → ${p.payee_name} · ${fmtDate.short(p.raised_at)}${reason ? ` · ${reason}` : ''}`.slice(0, 60),
       callback_data: `pay:wait:${i}`,
     }];
   });

@@ -56,10 +56,21 @@ function buildFinanceCard(pay, head, extra = {}) {
   lines.push(`\`${mdEscape(pay.payment_id)}\``);
   const warn = head ? paymentService.financeWarning(head) : '';
   if (warn) lines.push(`\n${mdEscape(warn)}`);
+  // PAY-4 — said once, on the copy it applies to, in the reader's own terms.
+  if (extra.approvedIt) {
+    lines.push('\n🔒 _You approved this one, so you cannot pay it — a different hand must release the money._');
+  }
   return lines.join('\n');
 }
 
-function financeKeyboard(paymentId) {
+function financeKeyboard(paymentId, opts = {}) {
+  // PAY-4 (BUSINESS_RULES §13) — an id that approved this payment never
+  // sees ✔ Mark Done. Offering a button whose tap is refused teaches people
+  // to tap and hope; withholding it states the rule without a sentence.
+  // ✖ Decline stays: it moves no money and is the way to unstick the row.
+  if (opts.approvedIt) {
+    return { inline_keyboard: [[{ text: '✖ Decline', callback_data: `pay:dec:${paymentId}` }]] };
+  }
   return {
     inline_keyboard: [[
       { text: '✔ Mark Done', callback_data: `pay:done:${paymentId}` },
@@ -164,11 +175,25 @@ async function sendFinanceCard(bot, paymentId, opts = {}) {
     } catch (_) { /* same */ }
   }
   const reason = await paymentService.reasonFor(pay);
-  const text = buildFinanceCard(pay, head, { reason });
-  const sendOpts = { parse_mode: 'Markdown', reply_markup: financeKeyboard(pay.payment_id) };
+  // PAY-4 (BUSINESS_RULES §13) — the card is now built PER RECIPIENT: the
+  // ids that approved this payment get a copy with no ✔ Mark Done. One
+  // lookup for the whole send, not one per recipient.
+  let approvers = [];
+  try {
+    approvers = await paymentService.approverIdsFor(pay);
+  } catch (e) {
+    logger.warn(`PAY-4 sendFinanceCard: approver lookup failed for ${paymentId}: ${e.message}`);
+  }
+  const plainText = buildFinanceCard(pay, head, { reason });
   let sent = 0;
   let failed = 0;
   for (const id of ids) {
+    const approvedIt = approvers.includes(String(id));
+    const text = approvedIt ? buildFinanceCard(pay, head, { reason, approvedIt }) : plainText;
+    const sendOpts = {
+      parse_mode: 'Markdown',
+      reply_markup: financeKeyboard(pay.payment_id, { approvedIt }),
+    };
     try {
       let msg;
       // The bill rides along when there is one — the person about to move
@@ -193,6 +218,28 @@ async function sendFinanceCard(bot, paymentId, opts = {}) {
       failed += 1;
       logger.warn(`PAY-1 finance card to ${id} failed: ${e.message}`);
     }
+  }
+  // PAY-4 (BUSINESS_RULES §13) — said early, not discovered late. When
+  // EVERY finance seat this payment would go to has signed it, nobody can
+  // release the money. The admins who signed hear it now, with the way
+  // out, instead of finding out when the payment is due. The verdict reads
+  // the real seat list, never `opts.to` (which may be one reopened card).
+  try {
+    const seats = (recipients.ids || []).map(String);
+    const stuck = seats.length > 0 && seats.every((sid) => approvers.includes(sid));
+    if (stuck && approvers.length) {
+      const note = `🔒 *Nobody can pay ${mdEscape(pay.payment_id)} yet*\n`
+        + `${paymentService.fmtNaira(pay.amount_ngn)} to ${mdEscape(pay.payee_name)} is approved, but every finance seat it goes to also approved it.\n\n`
+        + '_Four eyes on the money: the hands that approve are never the hands that pay._\n'
+        + 'Add a finance id that did not sign, or ✖ Decline it and have it raised again for different hands.';
+      for (const approverId of approvers) {
+        try {
+          await bot.sendMessage(approverId, note, { parse_mode: 'Markdown' });
+        } catch (e) { logger.warn(`PAY-4 stuck-payment notice to ${approverId} failed: ${e.message}`); }
+      }
+    }
+  } catch (e) {
+    logger.warn(`PAY-4 stuck-payment check failed for ${paymentId}: ${e.message}`);
   }
   return { sent, failed };
 }

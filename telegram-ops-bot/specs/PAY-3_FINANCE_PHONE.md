@@ -1,6 +1,8 @@
 # PAY-3 — the finance phone: dates, signers, and the two jobs on one handset
 
-**Status:** PROPOSAL. Nothing built. Owner asked for the exact output first.
+**Status:** §4 (four eyes on the money) RULED and SHIPPED as PAY-4,
+14-Sep-2026. §2 (the shorter card) is still a PROPOSAL awaiting the
+owner's go.
 
 **Origin (owner, 14-Sep-2026),** sending the approval card as it looks on the
 office phone:
@@ -183,31 +185,45 @@ carries the date, the approvers and the reason.
 
 ---
 
-## 4 · The ruling this raises
+## 4 · RULED, 14-Sep-2026 — four eyes on the money
 
-**R1 — may the admin who signs also be the one who pays?**
+> "Make a rule that the person who is approving shall not be paying from
+> the same Telegram ID. Any time in the future make a workaround this."
 
-Today, yes. `paymentService.canExecute` checks only that the tapper is the
-finance seat; nothing stops an admin from giving the second signature and
-then paying it from the same handset a minute later. Two signatures were
-required, but on this phone one pair of hands can supply the second and
-then release the money.
+**Locked in BUSINESS_RULES §13 and SHIPPED as PAY-4 the same day.** A
+payment is released only by a Telegram id that gave NEITHER of its two
+approvals. Being the finance seat is not enough: signing forfeits the right
+to release that one payment, for that id, permanently. There is no Settings
+knob, no admin override and no once-only path, and every future flow that
+moves money out inherits the same check.
 
-Options:
+How it behaves:
 
-- **(a) Leave it.** One office phone, a small team, and the first signature
-  still has to come from someone else. *Recommended while the team is four
-  people.*
-- **(b) Bar the payer from signing.** The finance seat can pay but cannot
-  give either approval. Clean separation, but with one finance phone it
-  removes a signer from a small pool and can stall payments.
-- **(c) Bar only the SECOND signature.** The finance seat may give the
-  first signature, never the one that releases the money.
+| Situation | What happens |
+|---|---|
+| Finance seat did **not** sign | Nothing changes. ✔ Mark Done as before. |
+| Finance seat **signed** it | Its copy of the card arrives with **no ✔ Mark Done**, and one line: `🔒 You approved this one, so you cannot pay it — a different hand must release the money.` |
+| It taps ✔ Mark Done anyway (an old card, a re-sent one, a stale list) | Refused at the tap: *"You approved this payment, so you cannot pay it. A different hand must release the money. (You can still ✖ Decline it.)"* |
+| In `💳 Waiting for me to pay` | The row still shows — hiding it would read as "it went away" — marked `🔒`, with a legend. |
+| **Every** finance seat signed it | At approval time each signer is told: `🔒 Nobody can pay PAY-0001 yet` … *"Add a finance id that did not sign, or ✖ Decline it and have it raised again for different hands."* |
 
-This is a business rule, not a screen. It needs the owner's word, and if it
-changes it touches `approvalEvents.js` — an ask-first file.
+**✖ Decline is deliberately NOT gated.** Declining moves no money, and it
+is the escape hatch: a signer who is the only finance seat can decline the
+payment they approved, and the requester raises it again for different
+hands. A stuck payment is always resolvable without weakening the rule.
 
----
+**The consequence to act on.** With two admins where one is the office
+phone that also holds the finance seat, a payment both sign cannot be paid
+by either. The configuration, not the rule, is what gives: add a third
+admin, or give `FINANCE_IDS` an id that never approves.
+
+### Where the approver ids come from
+
+`PaymentRequests.approved_by` holds the pair LABEL (`Krishna ‖ Musa`), not
+ids, so it cannot answer this. The ids are read from the ApprovalQueue
+row's `actionJSON.approvals`, with the Postgres event trail as the fallback
+for an archived row. Both reads are caught: an unknown approver list blocks
+nobody, but a throw never silently opens the gate.
 
 ## 5 · Scope
 
