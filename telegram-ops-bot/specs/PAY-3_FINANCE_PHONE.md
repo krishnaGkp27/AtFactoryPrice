@@ -43,68 +43,125 @@ and it is the one fact missing.
 
 ---
 
-## 2 · What it will say
+## 2 · What it will say — SHORTER, not longer
+
+**Owner, 14-Sep-2026: "I don't want to make this approval too long."**
+Right. The fix adds the date and the signer while REMOVING lines. Nothing
+below is an addition; every one of them is a cut.
 
 ### 2a · The card, when someone ELSE signed first
 
 ```
 Payment request: ₦6,000
-Payee: Abdul (employee)
-Account: 7048940378 · OPAY
+Abdul (employee) · 7048940378 OPAY
 Reason: Total tp
 
-Requested by Abdul · 13-Sep-2026, 11:39 · 1d ago · R-4F72
-
-⚠️ 1 of 2 approvals — signed by Musa.
-   A different admin must give the second.
+Abdul · 13 Sep 11:39 · 1d · R-4F72
+⚠️ 1 of 2 · signed by Musa
 
         [ ✅ Approve ]   [ ❌ Reject ]
-        [ ⬅ Back to list ]  [ ❌ Close ]
 ```
 
-The date is added; the relative age stays beside it, because "1d ago" is
-what tells you it is going stale. The signer is named.
+Three cuts, each one carrying MORE fact in FEWER characters:
+
+| Cut | From | To |
+|---|---|---|
+| **C1** payee + account merge | two lines | one |
+| **C2** the footer | `Requested by Abdul · 1d ago · R-4F72` (36 chars, no date) | `Abdul · 13 Sep 11:39 · 1d · R-4F72` (34 chars, with the date) |
+| **C3** the signature note | `⚠️ 1 of 2 approvals already given — a different admin must give the second.` (74 chars, wraps to three lines on a phone) | `⚠️ 1 of 2 · signed by Musa` (one line) |
+
+C3 drops the sentence "a different admin must give the second" on purpose.
+`1 of 2` already says a second is needed, and the person reading it IS the
+different admin.
+
+**On his phone: about ten rendered lines today, six after.**
 
 ### 2b · The same card, when YOU signed first
 
 ```
-Requested by Abdul · 13-Sep-2026, 11:39 · 1d ago · R-4F72
+Payment request: ₦6,000
+Abdul (employee) · 7048940378 OPAY
+Reason: Total tp
 
-⚠️ 1 of 2 approvals — you signed this one.
-   It is waiting for a DIFFERENT admin. Nothing for you to do here.
+Abdul · 13 Sep 11:39 · 1d · R-4F72
+⚠️ 1 of 2 · you signed
 
-        [ ⬅ Back to list ]  [ ❌ Close ]
+        [ ⬅ Back to list ]   [ ❌ Close ]
 ```
 
-The ✅ Approve chip is **not offered**, because the existing guard would
-refuse the tap anyway. This changes no rule: it stops offering a button
-that cannot work. ❌ Reject stays — rejecting your own pending request is
-already allowed and is sometimes the point.
+No ✅ Approve chip, because the existing guard would refuse that tap. The
+MISSING BUTTON is the message — no sentence needed, and no rule changes.
+❌ Reject stays: rejecting your own pending request is already allowed.
 
-### 2c · The alert that brings you here
+### 2c · The DM version of the same card — the longest one, and the fattest
+
+This is where the raw UUID comes from. Today:
+
+```
+🔔 Approval required
+
+Ref: 4f72be16-982c-4241-b5d6-165b8db23cc6
+From: Abdul
+
+Payment request: ₦6,000
+Payee: Abdul (employee)
+Account: 7048940378 · OPAY
+Reason: Total tp
+
+Sent for approval
+
+Use buttons below to approve or reject.
+```
+
+Two of those lines carry nothing. `Sent for approval` is the filler
+`shortReason` returns when the risk reason is boilerplate, and
+`Use buttons below to approve or reject` describes the two buttons
+directly beneath it. `Ref:` prints the raw id while every other screen
+calls the same request R-4F72. Proposed:
+
+```
+🔔 Approval required · payment · R-4F72
+
+Payment request: ₦6,000
+Abdul (employee) · 7048940378 OPAY
+Reason: Total tp
+
+Abdul · 13 Sep 11:39 · 1d
+⚠️ 1 of 2 · signed by Musa
+```
+
+**Twelve rendered lines today, seven after** — and the UUID is gone.
+
+### 2d · The second-signature alert
 
 ```
 🔔 R-4F72 · payment · ₦6,000 → Abdul
-Signed by Musa — 1 of 2. Your approval is the second.
-Open 🛂 Approvals → 💳 Payments.
+Signed by Musa — 1 of 2. Yours is the second.
 ```
 
-Short ref, the money, the payee, the signer, and where to go. No UUID
-reaches a screen (the house rule already; this path missed it).
+Two lines, replacing two lines. Today's version is the same length and
+says only that "a request" needs a second approval.
 
-### 2d · The list chips
+### 2e · The list chips
 
 ```
 🟢 13 Sept · ₦6,000 → Abdul · Total tp
-🟠 10 Sept · ₦25,000 → Muhammad · Fuel
 🔴 23 Aug · register account · Abdul
 ```
 
-Amount and payee on the row, so seven pending payments can be read without
-opening seven cards. `register payment account` rows keep their wording:
-they move no money and must not look like they do.
+Same length as today's `13 Sept · request payment · Abdul`; the words
+`request payment` are replaced by the amount and the payee, which is what
+an approver is actually scanning for. Account registrations keep their
+wording: they move no money and must not look like they do.
 
----
+### What this touches beyond payments
+
+The footer (C2) and the signature note (C3) are **shared by every category
+in the inbox** — one line of code each, rendered on sales, transfers,
+contacts, returns and the rest. So every approval card in the bot gets the
+date and gets shorter, in one vocabulary. That is the intent, not a
+side-effect; if the owner wants payments only, say so and it becomes a
+per-action branch instead.
 
 ## 3 · The two jobs on one phone
 
@@ -154,12 +211,15 @@ changes it touches `approvalEvents.js` — an ask-first file.
 
 ## 5 · Scope
 
-| Change | File | Size |
-|---|---|---|
-| Date on the approval card footer | `approvalsInboxFlow` | 1 line |
-| Name the first signer; drop ✅ for the signer themselves | `approvalsInboxFlow` | ~12 lines |
-| Short ref + amount + signer on the second-approval alert | `approvalEvents` (**ask-first**) | ~6 lines |
-| Amount → payee on payment chips | `approvalsInboxFlow` | ~8 lines |
+| Change | File | Size | Net effect on length |
+|---|---|---|---|
+| C1 merge payee + account | `paymentCards.buildApprovalSummary` | 2 lines | −1 line |
+| C2 footer carries the date | `approvalsInboxFlow` (all categories) | 1 line | −2 chars |
+| C3 signature note names the signer, loses the sentence | `approvalsInboxFlow` (all categories) | ~12 lines | −2 rendered lines |
+| No ✅ chip for your own signature | `approvalsInboxFlow` | ~4 lines | −0 |
+| DM card: short ref, drop the two dead lines | `approvalEvents` (**ask-first**) | ~6 lines | −5 rendered lines |
+| Alert: ref + amount + payee + signer | `approvalEvents` (**ask-first**) | ~6 lines | 0 |
+| Amount → payee on payment chips | `approvalsInboxFlow` | ~8 lines | 0 |
 
 No schema change, no new sheet or column, no change to how many signatures
 anything needs. Roughly 27 lines plus tests.
