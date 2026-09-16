@@ -6454,7 +6454,8 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   }
   backRow.push({ text: '❌ Cancel', callback_data: 'srf_cart:cancel' });
   rows.push(backRow);
-  const cartNote = cart.length ? `\n🛒 ${cart.length} in cart` : '';
+  // CART-PEEK — the block replaces the bare "🛒 N in cart" count.
+  const cartNote = cartPeek(session);
   const pageNote = designs.length > MAX_VISIBLE ? ` (${start + 1}–${Math.min(start + MAX_VISIBLE, designs.length)} of ${designs.length})` : '';
   // WH-SUM — warehouse totals under the header: unit total for everyone.
   // TV-6: intake warehouses (any GRN-attributed or legacy opening) keep the
@@ -6705,7 +6706,7 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
           // album is cleaned up with the rest of the screen, not left behind.
           session._auxMsgIds = [...(session._auxMsgIds || []), ...albumIds];
           const picker = await bot.sendMessage(chatId,
-            `📦 *${design}* in *${warehouse}*${soldOutDesign ? soldOutNote : '\n\nSelect shade:'}${overflowNote}`, {
+            `📦 *${design}* in *${warehouse}*${soldOutDesign ? soldOutNote : '\n\nSelect shade:'}${overflowNote}${cartPeek(session)}`, {
               parse_mode: 'Markdown',
               reply_markup: { inline_keyboard: rows },
             });
@@ -6727,7 +6728,7 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
         if (keepForMorph && session.previewMessageId && session.previewIsPhoto) {
           const back = await require('../services/shadePhotoPresenter').morphToPage(bot, chatId, session.previewMessageId, {
             photo: photoAsset.photo,
-            caption: `📷 *${design}* — *${warehouse}*${soldOutNote}${overflowNote}`,
+            caption: `📷 *${design}* — *${warehouse}*${soldOutNote}${overflowNote}${cartPeek(session)}`,
             rows,
           });
           if (back) {
@@ -6739,7 +6740,7 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
           await clearDesignPreview(bot, chatId, userId);
         }
         comboSent = await bot.sendPhoto(chatId, photoAsset.photo, {
-          caption: `📷 *${design}* — *${warehouse}*${soldOutNote}${overflowNote}`,
+          caption: `📷 *${design}* — *${warehouse}*${soldOutNote}${overflowNote}${cartPeek(session)}`,
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: rows },
         });
@@ -6772,8 +6773,8 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   // edited in place, exactly as before (TV-4: sold-out designs swap the
   // "Select shade:" prompt for the sold-out note — the buttons are info).
   const bodyText = soldOutDesign
-    ? `📦 *${design}* in *${warehouse}*${soldOutNote}\n_(remaining / opening)_${overflowNote}`
-    : `📦 *${design}* in *${warehouse}*\n\nSelect shade:${overflowNote}`;
+    ? `📦 *${design}* in *${warehouse}*${soldOutNote}\n_(remaining / opening)_${overflowNote}${cartPeek(session)}`
+    : `📦 *${design}* in *${warehouse}*\n\nSelect shade:${overflowNote}${cartPeek(session)}`;
   await editOrSendAnchored(bot, chatId, userId, bodyText, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
@@ -6849,7 +6850,9 @@ async function showQuantityPicker(bot, chatId, userId, design, shade, warehouse,
     ? { text: '⬅️ Back to designs', callback_data: 'srf_back:design' }
     : { text: '⬅️ Back to shades', callback_data: 'srf_back:shade' }]);
 
-  const caption = `🧵 *${design}* · *${shadeRef}*\n🏭 ${warehouse} · ${unitDisplayService.formatCounts({ bales: availPkgs })} available\n\nHow many ${askPlural}?`;
+  // CART-PEEK — the basket sits between the availability line and the
+  // question, so the question stays nearest the chips.
+  const caption = `🧵 *${design}* · *${shadeRef}*\n🏭 ${warehouse} · ${unitDisplayService.formatCounts({ bales: availPkgs })} available${cartPeek(session)}\n\nHow many ${askPlural}?`;
 
   // SHP-1 (owner, 02-Sep-2026) — the shade's own GARMENT photo
   // (specs/SHP-1_SHADE_PHOTOS.md). Resolved once; a 🔍 Full-quality chip
@@ -7006,6 +7009,28 @@ function supplyCartRows(cart) {
     return { icon: m.icon, design: c.design, name: m.name, shadeRef: formatShadeRef(c.shade, c.shadeName), quantity: c.quantity };
   });
 }
+
+/**
+ * CART-PEEK (owner, 16-Sep-2026) — the basket as a block under a picker
+ * card, or '' when the cart is empty. Every picker (design list, shade
+ * picker, quantity card) appends this so the person picking the NEXT line
+ * can see the ones already picked. Leading blank line included so callers
+ * splice it into a caption without spacing logic of their own.
+ * @param {object|null} session supply_req_flow session
+ * @returns {string}
+ */
+function cartPeek(session) {
+  const cart = (session && session.cart) || [];
+  if (!cart.length) return '';
+  const rows = supplyCartRows(cart);
+  let block = cartFormat.formatCartPeek(rows);
+  // Two of the three cards are photo captions (1,024 chars) that already
+  // carry shade overflow lines. Past this budget the lines go and the header
+  // — the tally — stays: the total is the fact that must never be cut.
+  if (block.length > CART_PEEK_MAX_CHARS) block = `🛒 In cart · ${cartFormat.formatCartTally(rows)} — see 🛒 Back to cart`;
+  return `\n\n${block}`;
+}
+const CART_PEEK_MAX_CHARS = 420;
 
 async function buildCartText(session) {
   const cart = session.cart || [];
@@ -11151,7 +11176,9 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       sessionStore.set(uid, session);
       const lbl = await productTypesRepo.getLabels(session.productType || 'fabric');
       const cPlural = productTypesRepo.pluralize(lbl.container_label, 2).toLowerCase();
-      const prompt = await bot.sendMessage(chatId, `Type the number of ${cPlural} (max ${session.currentAvailPkgs}):`, {
+      // CART-PEEK — the fourth place a quantity is chosen keeps the basket
+      // in view too (plain text: the block carries no Markdown).
+      const prompt = await bot.sendMessage(chatId, `Type the number of ${cPlural} (max ${session.currentAvailPkgs}):${cartPeek(session)}`, {
         reply_markup: { inline_keyboard: [[
           { text: '⬅️ Back', callback_data: 'srf_back:quantity' },
           { text: '❌ Cancel', callback_data: 'srf_cart:cancel' },

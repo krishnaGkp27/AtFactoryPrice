@@ -69,4 +69,39 @@ function formatCart(rows, opts = {}) {
   return `${lines.join('\n')}\n\n${formatCartTally(rows)}`;
 }
 
-module.exports = { formatCartBlock, formatCartTally, formatCart };
+/**
+ * CART-PEEK (owner, 16-Sep-2026: "I am not able to see what I have selected
+ * in the cart already … keep on selecting the quantity, looking at what I
+ * already have in my basket").
+ *
+ * The basket as it rides the PICKER cards — design list, shade picker,
+ * quantity card — so the person choosing the next line can see the ones
+ * already chosen without leaving for the cart. Same lines as the cart card
+ * (formatCartBlock, no category), so the peek and the cart can never say
+ * two different things; the tally rides the header so the total survives
+ * even when the lines are capped.
+ *
+ *   🛒 In cart · Σ 3B
+ *   202/201
+ *     • 3 - Navy Blue · 2B
+ *   9037
+ *     • 3 · 1B
+ *
+ * Capped because two of the three cards are PHOTO captions (Telegram: 1024
+ * characters), and the shade picker's caption already carries overflow
+ * lines. A cap is never silent: the cut line says where the rest is.
+ *
+ * @param {Array<object>} rows cart rows in formatCartBlock's shape
+ * @param {{maxLines?: number}} [opts] block lines kept (default 8)
+ * @returns {string} '' for an empty cart; otherwise the block, no leading newline
+ */
+function formatCartPeek(rows, opts = {}) {
+  const max = Math.max(1, Number(opts.maxLines) || 8);
+  const lines = formatCartBlock(rows, { showCategory: false });
+  if (!lines.length) return '';
+  const head = `🛒 In cart · ${formatCartTally(rows)}`;
+  if (lines.length <= max) return [head, ...lines].join('\n');
+  return [head, ...lines.slice(0, max), `${BULLET}…more in 🛒 Back to cart`].join('\n');
+}
+
+module.exports = { formatCartBlock, formatCartTally, formatCart, formatCartPeek };
