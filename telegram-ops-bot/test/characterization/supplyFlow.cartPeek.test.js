@@ -59,9 +59,25 @@ function seed(step, cart) {
 }
 /** Every text a screen could have been drawn with: message text or photo caption. */
 function screens(bot) {
+  // Every way a picker can be drawn — including a MORPH (editMessageMedia),
+  // which carries its caption inside the media object.
   return bot.calls
-    .filter((c) => ['sendMessage', 'editMessageText', 'sendPhoto', 'editMessageCaption'].includes(c.method))
-    .map((c) => c.args.text || c.args.caption || (c.args.opts && c.args.opts.caption) || '');
+    .filter((c) => ['sendMessage', 'editMessageText', 'sendPhoto', 'editMessageCaption', 'editMessageMedia'].includes(c.method))
+    .map((c) => c.args.text || c.args.caption || (c.args.media && c.args.media.caption) || (c.args.opts && c.args.opts.caption) || '');
+}
+function rowsWithStatus(design, shades, status) {
+  return rowsFor(design, shades).map((r) => ({ ...r, status }));
+}
+const PHOTO = { photo: 'FAKE_FILE_ID', photoSource: 'telegram_file_id', rowIndex: 2 };
+function withPhoto(fn) {
+  return async () => {
+    designAssetsRepo.findActive = async () => ({ design: '202/201', shades: [] });
+    designAssetsService.getPhotoForSend = async () => PHOTO;
+    try { await fn(); } finally {
+      designAssetsRepo.findActive = async () => null;
+      designAssetsService.getPhotoForSend = async () => null;
+    }
+  };
 }
 const last = (bot) => screens(bot).filter(Boolean).pop() || '';
 
@@ -122,14 +138,19 @@ test('CART-PEEK: the design list shows the block, not a bare "N in cart"', async
   assert.doesNotMatch(text, /\d+ in cart/, 'the old count line is gone');
 });
 
-test('CART-PEEK: an empty cart shows nothing — no header, no "in cart"', async () => {
+test('CART-PEEK: an empty cart shows nothing on any of the four surfaces — each screen positively identified', async () => {
   inventoryRepository.getAll = async () => rowsFor('202/201', { 1: 5, 3: 4 });
   seed('design', []);
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_dg:202/201'));
-  assert.doesNotMatch(last(bot), /In cart/i);
+  assert.match(last(bot), /Select shade:/); assert.doesNotMatch(last(bot), /In cart/i);
   await controller.handleCallbackQuery(bot, cb('srf_sh:202/201|1|5'));
-  assert.doesNotMatch(last(bot), /In cart/i);
+  assert.match(last(bot), /How many bales\?/); assert.doesNotMatch(last(bot), /In cart/i);
+  await controller.handleCallbackQuery(bot, cb('srf_qty:__custom__'));
+  assert.match(last(bot), /Type the number/); assert.doesNotMatch(last(bot), /In cart/i);
+  const s2 = sessionStore.get(UID); s2.step = 'shade'; sessionStore.set(UID, s2);
+  await controller.handleCallbackQuery(bot, cb('srf_back:design'));
+  assert.match(last(bot), /Select design/); assert.doesNotMatch(last(bot), /in cart/i);
 });
 
 test('CART-PEEK: the basket grows as lines are added, and the quantity card reflects it', async () => {
@@ -156,3 +177,135 @@ test('CART-PEEK: the typed Custom Quantity prompt keeps the basket in view too',
   assert.match(text, /Type the number of bales \(max 5\):/);
   assert.match(text, /🛒 In cart · Σ 3B/, `got:\n${text}`);
 });
+
+/* ── the renders the first review found untested ──────────────────────── */
+
+test('CART-PEEK: Back to shades from the quantity card MORPHS the photo back with the basket in its caption', withPhoto(async () => {
+  inventoryRepository.getAll = async () => rowsFor('202/201', { 1: 5, 3: 4 });
+  seed('design', CART);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:202/201'));        // photo combo, previewIsPhoto
+  assert.ok(sessionStore.get(UID).previewIsPhoto, 'the combo is on screen as a photo');
+  await controller.handleCallbackQuery(bot, cb('srf_sh:202/201|1|5'));    // morph → quantity
+  await controller.handleCallbackQuery(bot, cb('srf_back:shade'));         // morph BACK → shade picker
+  const morphs = bot.callsTo('editMessageMedia');
+  assert.ok(morphs.length, 'the way back is a morph of the same message, not a new one');
+  const caption = morphs[morphs.length - 1].args.media.caption;
+  assert.match(caption, /📷 \*202\/201\* — \*Lagos\*/, 'it is the shade picker again');
+  assert.match(caption, /🛒 In cart · Σ 3B/, `the morphed-back caption carries the basket, got:\n${caption}`);
+}));
+
+test('CART-PEEK: the picker under a multi-page ALBUM carries the basket, above the prompt', withPhoto(async () => {
+  inventoryRepository.getAll = async () => rowsFor('202/201', { 1: 5, 3: 4 });
+  const origPages = designAssetsService.getPhotosForSend;
+  const origAlbum = designAssetsService.sendDesignAlbum;
+  designAssetsService.getPhotosForSend = async () => [PHOTO, { ...PHOTO, rowIndex: 3 }];
+  designAssetsService.sendDesignAlbum = async () => [901, 902];
+  try {
+    seed('design', CART);
+    const bot = createFakeBot();
+    await controller.handleCallbackQuery(bot, cb('srf_dg:202/201'));
+    const text = last(bot);
+    assert.match(text, /📦 \*202\/201\* in \*Lagos\*/, 'the album picker text');
+    assert.ok(text.indexOf('🛒 In cart') < text.indexOf('Select shade:'), `basket above the prompt, got:\n${text}`);
+  } finally {
+    designAssetsService.getPhotosForSend = origPages;
+    designAssetsService.sendDesignAlbum = origAlbum;
+  }
+}));
+
+test('CART-PEEK: a sold-out design (text form) still shows the basket', async () => {
+  inventoryRepository.getAll = async () => rowsFor('202/201', { 1: 5 }).concat(rowsWithStatus('9037', { 3: 3 }, 'sold'));
+  seed('design', CART);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+  const text = last(bot);
+  assert.match(text, /Sold out/, `it is the sold-out screen, got:\n${text}`);
+  assert.match(text, /🛒 In cart · Σ 3B/, 'the basket does not vanish on a sold-out design');
+});
+
+test('CART-PEEK: tapping a SOLD-OUT shade keeps the basket on the note that replaces the picker', async () => {
+  // The note morphs (or replaces) the very message whose caption carried
+  // the basket — the first cut dropped it there.
+  inventoryRepository.getAll = async () => rowsFor('202/201', { 1: 5, 3: 4 });
+  seed('shade', CART);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_sh:202/201|7|0'));   // availPkgs 0 → sold-out note
+  const text = last(bot);
+  assert.match(text, /Sold out/);
+  assert.match(text, /Nothing available to add/);
+  assert.match(text, /🛒 In cart · Σ 3B/, `got:\n${text}`);
+});
+
+test('CART-PEEK: a single-shade design lands on the quantity card as a PHOTO with the basket above the question', async () => {
+  inventoryRepository.getAll = async () => rowsFor('9037', { 3: 3 });
+  designAssetsRepo.findActive = async () => ({ design: '9037', shades: [] });
+  designAssetsService.getPhotoForSend = async () => PHOTO;
+  try {
+    seed('design', CART);
+    const bot = createFakeBot();
+    await controller.handleCallbackQuery(bot, cb('srf_dg:9037'));
+    const photo = bot.callsTo('sendPhoto').pop();
+    assert.ok(photo, 'single-shade quantity card went out as a photo combo');
+    const caption = photo.args.opts.caption;
+    assert.match(caption, /How many bales\?/);
+    assert.ok(caption.indexOf('🛒 In cart') < caption.indexOf('How many'), `basket above the question, got:\n${caption}`);
+  } finally {
+    designAssetsRepo.findActive = async () => null;
+    designAssetsService.getPhotoForSend = async () => null;
+  }
+});
+
+test('CART-PEEK: Markdown specials in a shade name are escaped on Markdown pickers and left alone on the plain prompt', async () => {
+  inventoryRepository.getAll = async () => rowsFor('202/201', { 1: 5, 3: 4 });
+  const odd = [{ design: '202/201', shade: '3', shadeName: 'Navy_Blue *special*', quantity: 2 }];
+  seed('design', odd);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:202/201'));
+  const picker = last(bot);
+  assert.match(picker, /Navy\\_Blue \\\*special\\\*/, `escaped on a Markdown card, got:\n${picker}`);
+  await controller.handleCallbackQuery(bot, cb('srf_sh:202/201|1|5'));
+  await controller.handleCallbackQuery(bot, cb('srf_qty:__custom__'));
+  const prompt = last(bot);
+  assert.match(prompt, /Navy_Blue \*special\*/, `plain text on the typed prompt, got:\n${prompt}`);
+  assert.doesNotMatch(prompt, /\\_/, 'no escape backslashes leak into plain text');
+});
+
+test('CART-PEEK: past its budget the block collapses to the tally line — the total is never cut', async () => {
+  inventoryRepository.getAll = async () => rowsFor('202/201', { 1: 5, 3: 4 });
+  // Even after the 8-line cap the block must exceed the 420-char text
+  // budget, so every kept line is long: the collapse, not the cap, is
+  // what this pins.
+  const long = [];
+  for (let d = 1; d <= 4; d += 1) for (const sh of ['1', '2']) {
+    long.push({ design: `70${d}/30${d}`, shade: sh, shadeName: `A very long catalogue shade name number ${sh} indeed, as typed into the sheet by hand`, quantity: 1 });
+  }
+  seed('design', long);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:202/201'));
+  const text = last(bot);
+  assert.match(text, /🛒 In cart · Σ 8B — full list in the cart/, `collapsed to the tally, got:\n${text}`);
+  assert.doesNotMatch(text, /A very long catalogue/, 'the lines went, the tally stayed');
+});
+
+test('CART-PEEK: the photo caption stays under Telegram\'s 1,024 even with a heavy cart and many overflowing shade labels', withPhoto(async () => {
+  // 14 shades whose composed labels overflow (long names → body lines) + a
+  // full cart: the peek is sized to the room left, not to a fixed number.
+  const shades = {};
+  for (let i = 1; i <= 14; i += 1) shades[`${i}`] = 2;
+  inventoryRepository.getAll = async () => rowsFor('202/201', shades);
+  designAssetsRepo.findActive = async () => ({
+    design: '202/201',
+    shades: Object.keys(shades).map((n) => ({ shade: n, name: `Extraordinarily long shade name ${n}` })),
+  });
+  const heavy = [];
+  for (let d = 1; d <= 4; d += 1) for (const sh of ['1', '2']) heavy.push({ design: `70${d}/30${d}`, shade: sh, shadeName: `Long shade name ${sh}`, quantity: 1 });
+  seed('design', heavy);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_dg:202/201'));
+  const photo = bot.callsTo('sendPhoto').pop();
+  assert.ok(photo, `the picker still went out as a photo (no fallback to text): ${screens(bot).slice(-1)}`);
+  const caption = photo.args.opts.caption;
+  assert.ok(caption.length <= 1024, `caption ${caption.length} chars`);
+  assert.match(caption, /🛒 In cart · Σ 8B/, 'the tally is always there');
+}));

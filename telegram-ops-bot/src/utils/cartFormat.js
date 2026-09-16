@@ -89,19 +89,27 @@ function formatCart(rows, opts = {}) {
  *
  * Capped because two of the three cards are PHOTO captions (Telegram: 1024
  * characters), and the shade picker's caption already carries overflow
- * lines. A cap is never silent: the cut line says where the rest is.
+ * lines. A cap is never silent: the cut line says the rest is in the cart
+ * (wording that is true on every card — not every card has a cart button),
+ * and the cut never leaves a design header with no shade under it.
  *
  * @param {Array<object>} rows cart rows in formatCartBlock's shape
- * @param {{maxLines?: number}} [opts] block lines kept (default 8)
+ * @param {{maxLines?: number}} [opts] block lines kept; anything that is
+ *   not a whole number ≥ 1 means the default, 8
  * @returns {string} '' for an empty cart; otherwise the block, no leading newline
  */
 function formatCartPeek(rows, opts = {}) {
-  const max = Math.max(1, Number(opts.maxLines) || 8);
+  const n = Number(opts.maxLines);
+  const max = Number.isInteger(n) && n >= 1 ? n : 8;
   const lines = formatCartBlock(rows, { showCategory: false });
   if (!lines.length) return '';
   const head = `🛒 In cart · ${formatCartTally(rows)}`;
   if (lines.length <= max) return [head, ...lines].join('\n');
-  return [head, ...lines.slice(0, max), `${BULLET}…more in 🛒 Back to cart`].join('\n');
+  const kept = lines.slice(0, max);
+  // A design header as the last kept line would read as a design holding
+  // nothing but the pointer — cut on the boundary instead.
+  while (kept.length > 1 && !kept[kept.length - 1].startsWith(BULLET)) kept.pop();
+  return [head, ...kept, `${BULLET}…and more in the cart`].join('\n');
 }
 
 module.exports = { formatCartBlock, formatCartTally, formatCart, formatCartPeek };

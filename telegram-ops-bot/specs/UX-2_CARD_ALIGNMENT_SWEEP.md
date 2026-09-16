@@ -122,7 +122,7 @@ of their rule-lined block.
 ```
 🏭 IDUMOTA · Others
 📊 217B / 419B  (remaining / opening)
-🛒 2 in cart
+🛒 In cart · Σ 2B + the cart block (CART-PEEK, 16-Sep-2026 — see specs/CART-PEEK.md)
 
 Select design (1–8 of 15)
 ```
@@ -202,7 +202,7 @@ cart, confirmation and submitted cards, where the design code is enough.
 - UX-2b — the supply door's own cards, §3 items 3–6, 9, 13: label-less
   confirmation card in the submitted card's shape; design picker header
   `🏭 IDUMOTA · Others` / `📊 217B / 419B _(remaining / opening)_` /
-  `💰 45,000` (admins, only when > 0) / `🛒 2 in cart` /
+  `💰 45,000` (admins, only when > 0) / `🛒 In cart · Σ 2B + the cart block (CART-PEEK, 16-Sep-2026 — see specs/CART-PEEK.md)` /
   `Select design (1–8 of 15):`; quantity card and sold-out guard
   `🧵 202/201 · 3 - Navy Blue` / `🏭 IDUMOTA · 4B available` /
   `How many bales?`; caption `✅ 202/201 · 3 - Navy Blue · 1B in cart`;
