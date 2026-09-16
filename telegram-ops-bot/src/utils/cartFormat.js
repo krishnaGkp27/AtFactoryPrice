@@ -107,8 +107,9 @@ function formatCartPeek(rows, opts = {}) {
   if (lines.length <= max) return [head, ...lines].join('\n');
   const kept = lines.slice(0, max);
   // A design header as the last kept line would read as a design holding
-  // nothing but the pointer — cut on the boundary instead.
-  while (kept.length > 1 && !kept[kept.length - 1].startsWith(BULLET)) kept.pop();
+  // nothing but the pointer — cut on the boundary instead. With room for
+  // one line only, that leaves just the header and the pointer.
+  while (kept.length && !kept[kept.length - 1].startsWith(BULLET)) kept.pop();
   return [head, ...kept, `${BULLET}…and more in the cart`].join('\n');
 }
 

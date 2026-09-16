@@ -4304,14 +4304,15 @@ async function handleMessage(bot, msg) {
     if (srfSession.step === 'custom_quantity') {
       const qty = parseInt(text.trim());
       if (isNaN(qty) || qty < 1) {
-        const warn = await bot.sendMessage(chatId, '⚠️ Enter a valid number (minimum 1).');
+        const warn = // CART-PEEK — a re-prompt is still a quantity being chosen; plain text.
+        await bot.sendMessage(chatId, `⚠️ Enter a valid number (minimum 1).${cartPeek(srfSession, { markdown: false })}`);
         if (warn && warn.message_id) trackAux(userId, warn.message_id); // SJ-4
         return;
       }
       if (qty > srfSession.currentAvailPkgs) {
         const lbl = await productTypesRepo.getLabels(srfSession.productType || 'fabric');
         const cPlural = productTypesRepo.pluralize(lbl.container_label, srfSession.currentAvailPkgs).toLowerCase();
-        const warn = await bot.sendMessage(chatId, `⚠️ Only ${srfSession.currentAvailPkgs} ${cPlural} available. Enter a lower number.`);
+        const warn = await bot.sendMessage(chatId, `⚠️ Only ${srfSession.currentAvailPkgs} ${cPlural} available. Enter a lower number.${cartPeek(srfSession, { markdown: false })}`);
         if (warn && warn.message_id) trackAux(userId, warn.message_id); // SJ-4
         return;
       }
@@ -7049,9 +7050,7 @@ function supplyCartRows(cart) {
 function cartPeek(session, opts = {}) {
   const cart = (session && session.cart) || [];
   if (!cart.length) return '';
-  const md = opts.markdown !== false;
-  const esc = (v) => (md ? String(v).replace(/[*_`[\]]/g, '\\$&') : String(v));
-  const rows = supplyCartRows(cart).map((r) => ({ ...r, design: esc(r.design), shadeRef: esc(r.shadeRef) }));
+  const rows = opts.markdown !== false ? supplyCartRowsMd(cart) : supplyCartRows(cart);
   const budget = Number.isFinite(Number(opts.budget)) ? Number(opts.budget) : CART_PEEK_MAX_CHARS;
   const full = `\n\n${cartFormat.formatCartPeek(rows)}`;
   if (full.length <= budget) return full;
@@ -7061,13 +7060,26 @@ function cartPeek(session, opts = {}) {
 const CART_PEEK_MAX_CHARS = 420;
 const TELEGRAM_CAPTION_MAX = 1024;
 
+/**
+ * CART-PEEK b — the same rows, Markdown-safe. Design codes and shade names
+ * come from the catalogue and the sheet; every requester-side cart render
+ * (peek, cart card, confirmation, receipt) is a legacy-Markdown send, and
+ * one `_` in a shade name 400s the whole message. Escapes `* _ \` [` —
+ * NOT `]`: legacy Markdown has no `\]` escape and renders that backslash.
+ * The approval card builds its own plain-text rows and is untouched.
+ */
+function supplyCartRowsMd(cart) {
+  const esc = (v) => String(v).replace(/[*_`[]/g, '\\$&');
+  return supplyCartRows(cart).map((r) => ({ ...r, design: esc(r.design), shadeRef: esc(r.shadeRef) }));
+}
+
 async function buildCartText(session) {
   const cart = session.cart || [];
   if (!cart.length) return '🛒 Cart is empty.';
   // UX-2 — the shared cart block (utils/cartFormat): design header, shade
   // bullets in rule-6c counts, one Σ tally; no category on the requester's
   // own card (owner, 11-Sep-2026).
-  const block = cartFormat.formatCart(supplyCartRows(cart), { showCategory: false });
+  const block = cartFormat.formatCart(supplyCartRowsMd(cart), { showCategory: false });
   return `🛒 *Supply Cart* · 🏭 ${session.warehouse}\n\n${block}`;
 }
 
@@ -7259,7 +7271,7 @@ async function showSupplyConfirmation(bot, chatId, userId) {
 
   // UX-2 (item 3) — label-less, the same shape as the submitted receipt:
   // header · cart block · the four facts · one-line ask.
-  const block = cartFormat.formatCart(supplyCartRows(session.cart), { showCategory: false });
+  const block = cartFormat.formatCart(supplyCartRowsMd(session.cart), { showCategory: false });
   let text = `📦 *Supply request* · 🏭 ${session.warehouse}\n\n${block}\n`;
   text += `👤 ${session.customer}\n`;
   text += `🧑 ${session.salesperson}\n`;
@@ -7288,7 +7300,7 @@ async function finalizeSupplyRequest(bot, chatId, userId) {
   session.awaitingDocument = false;
   sessionStore.set(userId, session);
 
-  const block = cartFormat.formatCart(supplyCartRows(session.cart), { showCategory: false });
+  const block = cartFormat.formatCart(supplyCartRowsMd(session.cart), { showCategory: false });
   let text = `✅ *Confirm supply request* · 🏭 ${session.warehouse}\n\n${block}\n`;
   text += `👤 ${session.customer}\n`;
   text += `🧑 ${session.salesperson}\n`;

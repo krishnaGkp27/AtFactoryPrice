@@ -81,3 +81,9 @@ test('CART-PEEK: a maxLines that is not a whole number ≥ 1 means the default',
     assert.equal(formatCartPeek(big, { maxLines: bad }).split('\n').length, 10, `maxLines=${bad} → default 8`);
   }
 });
+
+test('CART-PEEK: maxLines 1 leaves the header and the pointer — never a headless design', () => {
+  const rows = [{ design: 'A', shadeRef: '1', quantity: 1 }, { design: 'B', shadeRef: '1', quantity: 1 }];
+  const lines = formatCartPeek(rows, { maxLines: 1 }).split('\n');
+  assert.deepEqual(lines, ['🛒 In cart · Σ 2B', '  • …and more in the cart']);
+});
