@@ -1,6 +1,9 @@
 # UX-2 — Card alignment sweep: short, crisp, one fact per line
 
-**Status: PROPOSAL — awaiting the owner's go (11-Sep-2026).** Single-pass
+**Status: SHIPPED 11–12-Sep-2026 — §4 steps 1–3 (commits UX-2a
+`e4e65775`, UX-2b, UX-2c); step 4, the lows, is DEFERRED pending the
+owner's word — see §6.** Owner's go: "Yes, if it is suitabl" (11-Sep).
+Originally a single-pass
 review of every Telegram card the bot renders, prompted by the supply cart:
 
 ```
@@ -180,3 +183,54 @@ for the supply card, `checkStock` / `listBales` characterization files.
 Does the design's category name stay on the cart header (`🧵 202/201 ·
 Cashmere`)? Recommended: yes on approver cards, dropped on the
 requester's own cards, where the design code is enough.
+
+## 6 · What shipped, what waits (12-Sep-2026)
+
+**§5 answered as recommended.** The category name stays on the approver's
+cards (`🧵 202/201 · Cashmere`) and is dropped on the requester's own
+cart, confirmation and submitted cards, where the design code is enough.
+
+**Shipped.**
+- UX-2a — `src/utils/cartFormat.js` is the one formatter (`formatCartBlock`
+  · `formatCartTally` · `formatCart`) behind six cards: the requester's
+  🛒 cart, the ✅ submitted receipt and the admin summary it queues, the
+  Dispatch compact and full cards, the "Assign to a warehouse boy" card,
+  the 📦 New supply assignment intimation, and
+  `approvalCards.buildSupplyRequestCard` (approval + reminder cards).
+  Rule lines and "📦 Total: N bales" gone; quantities in rule-6c grammar;
+  one Σ tally; "container(s)" no longer printed (§6b).
+- UX-2b — the supply door's own cards, §3 items 3–6, 9, 13: label-less
+  confirmation card in the submitted card's shape; design picker header
+  `🏭 IDUMOTA · Others` / `📊 217B / 419B _(remaining / opening)_` /
+  `💰 45,000` (admins, only when > 0) / `🛒 2 in cart` /
+  `Select design (1–8 of 15):`; quantity card and sold-out guard
+  `🧵 202/201 · 3 - Navy Blue` / `🏭 IDUMOTA · 4B available` /
+  `How many bales?`; caption `✅ 202/201 · 3 - Navy Blue · 1B in cart`;
+  the customer picker's rule line and the customer history's month rules
+  dropped. Two departures from §3's mock-ups, both deliberate: the
+  category ICON is dropped from the picker header (the name alone reads
+  cleaner), and the paged prompt keeps its colon after the range so every
+  prompt in the flow still ends the same way.
+- UX-2c — Check Stock and List Bales through
+  `unitDisplayService.createQtyLabeller`: `📦 Stock · 202/201 · Cashmere`
+  / `Available Σ 7B · 840 yds` / `• 3 - Navy Blue · 4B · 480 yds ·
+  IDUMOTA, Lagos` / `🚚 In transit 2B → Kano office`, and `📋 Bales ·
+  202/201` with one bullet per bale and `Σ 2B · 240 yds`. The one stock
+  never prints in both units (closes OPEN_ITEMS 12f for these two).
+  Departures: the report name stays in the header ("Stock ·", "Bales ·")
+  so a card read later in the chat still says what it is, and yards print
+  as `yds`, the form the rest of the sales side already uses.
+
+**Deferred — the §3 lows, owner's word needed.**
+- 10 · Stock Value `🧮 Grand Total:` → `Σ` (two pins in
+  `controllerMoney.cur1.test.js` to update deliberately).
+- 11 · Sale approval card: drop the `(bale/than · #shade)` legend line.
+- 12 · Inventory Details: a genuine table. Either a monospace block
+  (aligned by definition) or one fewer column (sold-%) — the owner's
+  preference, not a formatting call.
+
+Pins updated in this sweep: `supplyFlow.warehouseSummary`,
+`supplyFlow.thanVisibility`, `supplyFlow.categoryStep`,
+`supplyFlow.singleShadePhoto`, `shadePhotos`, `controllerMoney.cur1`,
+`transferFlow`, `supplyRequest.paymentModeRoute`, `approvalReminder`, and
+`test/unit/utils/cartFormat.test.js` rewritten for the new API.
