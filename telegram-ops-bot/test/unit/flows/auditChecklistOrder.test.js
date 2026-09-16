@@ -119,8 +119,9 @@ test('the chip shows the short date and the index still points at its own design
 
   // Oldest first: un-counted 44200, then 9037 (22nd), then 9045 (30th).
   assert.equal(labels[0].includes('44200'), true, `expected 44200 first, got ${labels}`);
-  assert.match(labels[1], /9037 \(done 22-Jul-26\)/);
-  assert.match(labels[2], /9045 \(done 30-Jul-26\)/);
+  // AUD-C1: admin 777 sees the figure-less form of a legacy tick-box row.
+  assert.match(labels[1], /^✅ 9037 · 22-Jul-26$/);
+  assert.match(labels[2], /^✅ 9045 · 30-Jul-26$/);
   assert.ok(!labels.some((l) => /done \d{4}-\d{2}-\d{2}/.test(l)), 'no ISO date left on any chip');
 
   // The tappable chip's index must resolve to the design it names.

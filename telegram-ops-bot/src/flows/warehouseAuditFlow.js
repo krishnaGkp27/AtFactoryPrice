@@ -43,6 +43,7 @@ const auth                = require('../middlewares/auth');
 const config              = require('../config');
 const logger              = require('../utils/logger');
 const fmtDate             = require('../utils/formatDate');
+const unitDisplayService  = require('../services/unitDisplayService');
 
 const SESSION_TYPE   = 'wh_audit_flow';
 const MAX_DESIGNS    = 30;
@@ -175,7 +176,13 @@ async function loadChecklist(session) {
       // reconciledAt stays ISO (YYYY-MM-DD) — it is the SORT key. Display
       // formatting happens at render, never here.
       // TIME-1 — the Lagos day of the stored instant, matching the state above.
-      return { ...d, reconciled, reconciledAt: reconciled ? normDay(rec.audited_at) : '' };
+      // AUD-C1 — the figure the auditor entered on that day rides along with
+      // the date (same record); legacy tick-box rows carry null.
+      return {
+        ...d, reconciled, reconciledAt: reconciled ? normDay(rec.audited_at) : '',
+        countedBales: reconciled ? rec.counted_bales : null,
+        countedThans: reconciled ? rec.counted_bundles : null,
+      };
     })
     .sort(byOldestReconciliation);
 }
@@ -528,7 +535,7 @@ async function renderChecklist(bot, chatId, userId) {
   const done = list.filter((d) => d.reconciled).length;
   const rows = list.map((d, i) => {
     const s = state.get(String(d.design).toUpperCase()) || {};
-    if (d.reconciled) return [{ text: `✅ ${d.design} (done ${fmtDate.short(d.reconciledAt)})`, callback_data: 'wai:noop' }];
+    if (d.reconciled) return [{ text: doneChipLabel(d, auth.isAdmin(userId)), callback_data: 'wai:noop' }];
     if (s.locked) return [{ text: `🚩 ${d.design} — locked (admin review)`, callback_data: 'wai:noop' }];
     const icon = s.mismatches ? '🔁' : '⬜';
     return [{ text: `${icon} ${d.design}`, callback_data: `wai:ck:${i}` }];
@@ -550,6 +557,31 @@ async function renderChecklist(bot, chatId, userId) {
     + `Reconciled ${done}/${list.length} designs\n\n`
     + 'Tap a design and enter what you PHYSICALLY count.\n'
     + 'Poor network in the store? Use 📄 Offline count sheet.', rows);
+}
+
+/**
+ * AUD-C1 (owner, 16-Sep-2026) — the figure on a done chip, ADMINS ONLY.
+ * "I want to see the count on the chips which is marked as green with the
+ * quantity filled in that time on that date." A green chip's figure is by
+ * definition what the book holds today, and the full re-audit sheet exists
+ * to re-count green designs — so an auditor's chips stay blind (WAU-3),
+ * exactly as before, and only an admin sees `✅ 9006 · 12B + 3t · 20-Aug-26`.
+ * Rule-6c grammar via formatCounts; a legacy tick-box row (no figure
+ * recorded) prints `✅ 9006 · 20-Aug-26`. A phone shows ~34 chars on a
+ * full-width chip; a long onboarding code drops the year on that chip alone.
+ */
+const CHIP_MAX = 34;
+function doneChipLabel(d, isAdmin) {
+  const date = fmtDate.short(d.reconciledAt);
+  if (!isAdmin) return `✅ ${d.design} (done ${date})`;
+  const hasFigure = d.countedBales !== null && d.countedBales !== undefined
+    && d.countedThans !== null && d.countedThans !== undefined;
+  const figure = hasFigure ? unitDisplayService.formatCounts({ bales: d.countedBales, thans: d.countedThans, empty: '0B' }) : '';
+  const parts = [`✅ ${d.design}`];
+  if (figure) parts.push(figure);
+  const full = [...parts, date].join(' · ');
+  if (full.length <= CHIP_MAX) return full;
+  return [...parts, date.replace(/-\d{2}$/, '')].join(' · ');
 }
 
 /* ───────────────────────── WAU-3: tap-pad count entry ───────────────────────── */
@@ -1710,7 +1742,7 @@ module.exports = {
   handleCallback,
   handleBatchText,
   handleText,
-  _internals: {
+  _internals: { doneChipLabel,
     renderLocationPicker, renderChecklist, loadChecklist, locationOf,
     reconcileDesign, todayStateFor, sendOfflineTemplate, buildDeltaReport,
     renderWarehousePicker, renderDesignPicker, renderShadePicker,
