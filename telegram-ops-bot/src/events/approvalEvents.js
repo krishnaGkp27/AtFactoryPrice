@@ -274,20 +274,24 @@ async function getLastPaidRate(customer, design) {
   const custNames = await customerSpellings(customer);
   const dgn = String(design).trim().toUpperCase();
 
-  // Source 1 — approved requests carrying the rate typed at approval.
+  // Source 1 — approved requests carrying the rate booked at approval.
   try {
-    const resolved = await approvalQueueRepository.getResolved();
-    const when = (r) => Date.parse(r.resolvedAt || r.createdAt || '') || 0;
+    const resolved = await resolvedQueueRows();
+    const isApproved = (r) => String(r.status || '').toLowerCase() === 'approved';
+    // A sale undone by an approved revert was not "paid": the original row
+    // keeps status=approved, so the revert rows are the only record of it.
+    const reverted = new Set(resolved
+      .filter((r) => isApproved(r) && (r.actionJSON || {}).action === 'revert_sale_bundle' && (r.actionJSON || {}).saleRefId)
+      .map((r) => String(r.actionJSON.saleRefId)));
+    const when = (r) => Date.parse(r.resolvedAt || r.createdAt || '') || Date.parse(r.createdAt || '') || 0;
     const hits = [];
     for (const r of resolved) {
-      if (String(r.status || '').toLowerCase() !== 'approved') continue;
+      if (!isApproved(r) || reverted.has(String(r.requestId))) continue;
       const aj = r.actionJSON || {};
+      if (aj.action === 'revert_sale_bundle') continue;
       if (!custNames.has(String(aj.customer || '').trim().toLowerCase())) continue;
-      const map = aj.enrichDraft && aj.enrichDraft.ratePerUnitByDesign;
-      if (!map || typeof map !== 'object') continue;
-      const key = Object.keys(map).find((k) => String(k).trim().toUpperCase() === dgn);
-      const rate = key ? parseFloat(map[key]) : NaN;
-      if (Number.isFinite(rate) && rate > 0) hits.push({ rate, at: when(r) });
+      const rate = bookedRateFor(aj, dgn);
+      if (rate) hits.push({ rate, at: when(r) });
     }
     if (hits.length) {
       hits.sort((a, b) => b.at - a.at);
@@ -314,6 +318,63 @@ async function getLastPaidRate(customer, design) {
   }
   return null;
 }
+
+/**
+ * RATE-1b — the rate this approved row BOOKED for a design.
+ *
+ * Two maps can sit on the row. `enrichment` is the executor's own record,
+ * written on every approved sale since INV-1a (14-Jul-2026) — the rate the
+ * ledger and the invoice actually carry. `enrichDraft` is the wizard's
+ * mid-flight copy (APC-1, 08-Aug-2026), best-effort and younger. Executed
+ * first, draft second: a row from before the draft existed, or whose draft
+ * write failed, still answers.
+ *
+ * A design the map does not key was still charged: the executor's
+ * getPricePerYard falls back to the FIRST rate in the map. Mirror that,
+ * but only when the row itself says the design was in the sale
+ * (yardsByDesign) — never invent a rate for goods the row never sold.
+ */
+function bookedRateFor(aj, dgn) {
+  const maps = [
+    aj.enrichment && aj.enrichment.ratePerUnitByDesign,
+    aj.enrichDraft && aj.enrichDraft.ratePerUnitByDesign,
+  ].filter((m) => m && typeof m === 'object');
+  const soldThisDesign = !!(aj.yardsByDesign && typeof aj.yardsByDesign === 'object'
+    && Object.keys(aj.yardsByDesign).some((k) => String(k).trim().toUpperCase() === dgn));
+  for (const map of maps) {
+    const key = Object.keys(map).find((k) => String(k).trim().toUpperCase() === dgn);
+    if (key) {
+      const v = parseFloat(map[key]);
+      if (Number.isFinite(v) && v > 0) return v;
+      continue;
+    }
+    if (soldThisDesign) {
+      const v = parseFloat(Object.values(map)[0]);
+      if (Number.isFinite(v) && v > 0) return v;
+    }
+  }
+  return null;
+}
+
+/**
+ * RATE-1b — the resolved ApprovalQueue rows, memoised for a short while.
+ * Step 2 re-renders on every ✎ Change customer, and each render read the
+ * whole sheet; thirty seconds of reuse costs nothing an admin can notice
+ * (a sale approved seconds ago is not the one being priced now).
+ */
+const RATE_MEMO_MS = 30 * 1000;
+let _rateMemo = { at: 0, rows: null };
+async function resolvedQueueRows() {
+  const now = Date.now();
+  if (_rateMemo.rows && now - _rateMemo.at < RATE_MEMO_MS) return _rateMemo.rows;
+  const rows = await approvalQueueRepository.getResolved();
+  _rateMemo = { at: now, rows };
+  return rows;
+}
+function _resetRateMemo() { _rateMemo = { at: 0, rows: null }; }
+
+/** Legacy-Markdown escape for the four characters that pair: `* _ \` [`. */
+function mdLite(v) { return String(v == null ? '' : v).replace(/[*_`[]/g, '\\$&'); }
 
 /**
  * CUS-2 — every spelling this customer has been filed under, lower-cased,
@@ -726,13 +787,20 @@ async function sendRateStep(bot, chatId, state) {
   // RATE-1 — when there is no chip the card SAYS so: a silently missing
   // chip read as a bug from the owner's side.
   let noHistoryLine = '';
+  // RATE-1b — a chipless render must FORGET the previous buyer's rate, or a
+  // surviving old card's chip could book it for the new buyer.
+  state.lastPaidRate = null;
   if (designs.length === 1) {
     const last = await getLastPaidRate(customer, designs[0]);
     if (last) {
       state.lastPaidRate = last;
       rows.push([{ text: `${rateText(last)} — last paid by ${String(customer).slice(0, 24)}`, callback_data: wizCb(state, 'rate:v') }]);
     } else if (customer) {
-      noHistoryLine = `\nNo earlier sale of ${designs[0]} to ${customer}.`;
+      // "found": the lookup can only vouch for what it can see (a legacy
+      // sale older than its window is not "no sale"). Escaped: this card is
+      // legacy Markdown and ends with an _italic_ note — one `_` in a name
+      // would pair with it and blank the whole card.
+      noHistoryLine = `\nNo earlier sale of ${mdLite(designs[0])} to ${mdLite(customer)} found.`;
     }
   }
   rows.push([{ text: '✏️ Type a custom rate', callback_data: wizCb(state, 'rate:custom') }]);
@@ -2916,7 +2984,7 @@ module.exports = {
   notifyDispatchManagers,
   startApprovalEnrichment,
   _internals: {
-    pendingEnrichment, getLastPaidRate, sendPaymentStep, sendRateStep, // RATE-1 — exposed for the Step 2 tests
+    pendingEnrichment, getLastPaidRate, sendPaymentStep, sendRateStep, bookedRateFor, _resetRateMemo, // RATE-1 — exposed for the Step 2 tests
     // DSP-1 — exposed for the fail-closed test: a sale with no customer
     // must never reach executeApprovedAction.
     runApprovedSaleWithEnrichment, updateRequesterCard, sendCustomerStep,
