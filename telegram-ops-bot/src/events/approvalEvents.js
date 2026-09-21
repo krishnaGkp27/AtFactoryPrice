@@ -252,24 +252,55 @@ async function getDesignsForSale(item) {
 
 /**
  * ST-1 Part B — the customer's LAST PAID rate for a design (owner-locked
- * rate chip source). Reads recent sale rows from the Transactions sheet
- * (they carry customerName + pricePerYard since the sale executors write
- * them). Returns null when no prior matching sale exists.
+ * rate chip source). Returns null when no prior matching sale exists.
+ *
+ * RATE-1 (owner, 17-Sep-2026: "there is a suggestion before this chip for
+ * the last sold rate but still I am getting a request to type in the rate
+ * again"). The lookup read the Transactions sheet and matched on its
+ * design column — but a BUNDLE sale, the main sale door, writes that row
+ * with an EMPTY design cell, and only the first design's rate. So for a
+ * buyer whose purchases went through the bundle door the chip never
+ * appeared, and the 400-row read cap hid older sales besides.
+ *
+ * Source 1 — the approved request's own row. The wizard persists every
+ * per-design rate the admin entered (`enrichDraft.ratePerUnitByDesign`,
+ * APC-1) and the row keeps it after approval: exact per design, however
+ * far back, every spelling the buyer has been filed under.
+ * Source 2 — the Transactions match, kept for legacy single-item sales
+ * that predate the draft and do carry a design on the row.
  */
 async function getLastPaidRate(customer, design) {
   if (!customer || !design) return null;
+  const custNames = await customerSpellings(customer);
+  const dgn = String(design).trim().toUpperCase();
+
+  // Source 1 — approved requests carrying the rate typed at approval.
+  try {
+    const resolved = await approvalQueueRepository.getResolved();
+    const when = (r) => Date.parse(r.resolvedAt || r.createdAt || '') || 0;
+    const hits = [];
+    for (const r of resolved) {
+      if (String(r.status || '').toLowerCase() !== 'approved') continue;
+      const aj = r.actionJSON || {};
+      if (!custNames.has(String(aj.customer || '').trim().toLowerCase())) continue;
+      const map = aj.enrichDraft && aj.enrichDraft.ratePerUnitByDesign;
+      if (!map || typeof map !== 'object') continue;
+      const key = Object.keys(map).find((k) => String(k).trim().toUpperCase() === dgn);
+      const rate = key ? parseFloat(map[key]) : NaN;
+      if (Number.isFinite(rate) && rate > 0) hits.push({ rate, at: when(r) });
+    }
+    if (hits.length) {
+      hits.sort((a, b) => b.at - a.at);
+      return hits[0].rate;
+    }
+  } catch (e) {
+    logger.warn(`getLastPaidRate(${customer}, ${design}): queue read failed, falling back to Transactions: ${e.message}`);
+  }
+
+  // Source 2 — legacy single-item sales on the Transactions sheet.
   try {
     const transactionsRepository = require('../repositories/transactionsRepository');
     const rows = await transactionsRepository.getLast(400);
-    // CUS-2 — match every spelling this customer has been filed under, so
-    // the "last paid" rate chip survives merges instead of going blind.
-    const custNames = new Set([String(customer).trim().toLowerCase()]);
-    try {
-      const entity = require('../services/customerEntity');
-      const cust0 = await entity.resolve({ name: customer });
-      if (cust0) entity.namesFor(cust0).forEach((n) => custNames.add(String(n).trim().toLowerCase()));
-    } catch (_) { /* single-spelling match still works */ }
-    const dgn = String(design).trim().toUpperCase();
     for (let i = rows.length - 1; i >= 0; i--) {
       const r = rows[i];
       if (!/^(sell|sale)/i.test(String(r.action || ''))) continue;
@@ -282,6 +313,22 @@ async function getLastPaidRate(customer, design) {
     logger.warn(`getLastPaidRate(${customer}, ${design}) failed: ${e.message}`);
   }
   return null;
+}
+
+/**
+ * CUS-2 — every spelling this customer has been filed under, lower-cased,
+ * so the chip survives merges instead of going blind. The typed spelling
+ * is always in the set; the entity lookup is best-effort.
+ * @returns {Promise<Set<string>>}
+ */
+async function customerSpellings(customer) {
+  const names = new Set([String(customer).trim().toLowerCase()]);
+  try {
+    const entity = require('../services/customerEntity');
+    const cust0 = await entity.resolve({ name: customer });
+    if (cust0) entity.namesFor(cust0).forEach((nm) => names.add(String(nm).trim().toLowerCase()));
+  } catch (_) { /* single-spelling match still works */ }
+  return names;
 }
 
 /** ST-1 Part B — registered banks (Settings BANK_LIST) for payment chips. */
@@ -676,11 +723,16 @@ async function sendRateStep(bot, chatId, state) {
   // a rate still works exactly as before at every step. This is why the
   // customer step runs FIRST — without a buyer there is no last-paid rate.
   const rows = [];
+  // RATE-1 — when there is no chip the card SAYS so: a silently missing
+  // chip read as a bug from the owner's side.
+  let noHistoryLine = '';
   if (designs.length === 1) {
     const last = await getLastPaidRate(customer, designs[0]);
     if (last) {
       state.lastPaidRate = last;
       rows.push([{ text: `${rateText(last)} — last paid by ${String(customer).slice(0, 24)}`, callback_data: wizCb(state, 'rate:v') }]);
+    } else if (customer) {
+      noHistoryLine = `\nNo earlier sale of ${designs[0]} to ${customer}.`;
     }
   }
   rows.push([{ text: '✏️ Type a custom rate', callback_data: wizCb(state, 'rate:custom') }]);
@@ -707,7 +759,7 @@ async function sendRateStep(bot, chatId, state) {
   }
 
   await renderWizard(bot, chatId, state,
-    `${wizHeader(state)}\n\nCustomer: *${customer || '—'}*${outstandingLine}\nDesign(s): ${designList}\nUnit: ${unit}\n\n*Step 2 — Rate:* tap below, or reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\`${TYPED_NOTE}`,
+    `${wizHeader(state)}\n\nCustomer: *${customer || '—'}*${outstandingLine}\nDesign(s): ${designList}\nUnit: ${unit}\n\n*Step 2 — Rate:* tap below, or reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\`${noHistoryLine}${TYPED_NOTE}`,
     rows);
 }
 
@@ -2864,7 +2916,7 @@ module.exports = {
   notifyDispatchManagers,
   startApprovalEnrichment,
   _internals: {
-    pendingEnrichment, getLastPaidRate, sendPaymentStep,
+    pendingEnrichment, getLastPaidRate, sendPaymentStep, sendRateStep, // RATE-1 — exposed for the Step 2 tests
     // DSP-1 — exposed for the fail-closed test: a sale with no customer
     // must never reach executeApprovedAction.
     runApprovedSaleWithEnrichment, updateRequesterCard, sendCustomerStep,

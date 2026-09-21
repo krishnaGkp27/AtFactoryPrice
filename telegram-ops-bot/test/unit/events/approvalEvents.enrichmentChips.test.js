@@ -34,6 +34,9 @@ settingsRepository.getAll = async () => ({ ...settings });
 approvalQueueRepository.updateStatus = async () => true;
 approvalQueueRepository.getByRequestId = async () => null;
 approvalQueueRepository.updateActionJSON = async () => true; // APC-1 draft persistence
+// RATE-1 — the chip now reads approved queue rows first; this file pins the
+// legacy Transactions source, so the first source is empty here.
+approvalQueueRepository.getResolved = async () => [];
 
 let executed = null;
 inventoryService.executeApprovedAction = async (requestId, adminId, enrichment) => {
