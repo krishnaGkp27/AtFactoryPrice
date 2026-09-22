@@ -25,10 +25,14 @@
  * written, no new column, no Settings knob.
  *
  * A than that was later returned is no longer 'sold' and drops off its
- * sale day — the same behaviour as 📒 Customer Supplies.
+ * sale day — the same behaviour as 📒 Customer Supplies. A sold row whose
+ * warehouse cell is blank belongs to no place and forms no chip (locked
+ * layout; the row is still listed by 📒 Customer Supplies).
  *
  * Callback namespace `sfs:*`:
- *   sfs:close        end the flow → menu
+ *   sfs:menu         screen 1's 🏠 Back to menu — ends the flow, then the
+ *                    controller's own act:__back__ path draws the menu
+ *   sfs:close        end the flow → the card becomes "Closed." + menu
  *   sfs:back         step back one screen
  *   sfs:w:<idx>      pick a place  (index into session._places)
  *   sfs:d:<idx>      pick a day    (index into session._dates)
@@ -36,19 +40,18 @@
  */
 
 const sessionStore = require('../utils/sessionStore');
-const { makeRenderer, rowsFor, chunk, mdEscape } = require('../utils/flowKit');
+const { makeRenderer, rowsFor, chunk, disposeAux } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const unitDisplayService = require('../services/unitDisplayService');
 const auth = require('../middlewares/auth');
 const { baleGroupKey, cmpNumericAware } = require('../utils/inventoryPickers');
+const { normalizeSalesDate } = require('../utils/dates');
 
 const SESSION_TYPE = 'store_sales_flow';
 const NS = 'sfs';
 const TILES_PER_ROW = 2;   // place chips per row
 const DATES_PER_PAGE = 8;  // the Customer Supplies page size (CSUP-1)
 const DAY_CARD_MAX_CHARS = 3600; // Telegram caps a message at 4,096
-/** Label for sold rows whose warehouse cell is blank (LOC-1: a place is never hidden). */
-const NO_PLACE_LABEL = '❔ No place recorded';
 
 const render = makeRenderer();
 const { backRow, closeRow, menuRow } = rowsFor(NS);
@@ -61,35 +64,52 @@ function fmtQty(n) { return (Math.round((n || 0) * 100) / 100).toLocaleString('e
 function placeKey(name) { return String(name || '').trim().toUpperCase(); }
 
 /**
- * Human-friendly date label ("25 Jun 2026"); passes an unparseable value
- * through unchanged. Mirrors soldBalesFlow.prettyDate.
+ * Legacy-Markdown escape for sheet text OUTSIDE an entity: `* _ \` [` —
+ * never `]` (legacy Markdown has no `\]` escape and prints that backslash;
+ * the same rule as the controller's supplyCartRowsMd).
+ */
+function mdEsc(v) { return String(v == null ? '' : v).replace(/[*_`[]/g, '\\$&'); }
+
+/**
+ * A sheet string inside a `*bold*` entity. Legacy Markdown honours NO
+ * escapes inside an entity (the parser copies bytes verbatim until the
+ * closing `*`), so `_ \` [` are literal there and a backslash would show;
+ * only `*` matters, handled the way the Bot API prescribes — close and
+ * reopen: `*2*\**2*` → 2*2.
+ */
+function bold(v) {
+  const s = String(v == null ? '' : v).trim() || '—';
+  return `*${s.replace(/\*/g, '*\\**')}*`;
+}
+
+/**
+ * "25 Jun 2026" for an ISO day key; any other key (a cell the normaliser
+ * rejected) is shown as it is — never rolled or re-ordered.
  * @param {string} s
  * @returns {string}
  */
 function prettyDate(s) {
   const raw = String(s || '').trim();
   if (!raw) return '—';
-  const ms = Date.parse(raw);
-  if (!isFinite(ms)) return raw;
-  return new Date(ms).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return raw;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]))
+    .toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
 }
 
 /**
- * Normalise a soldDate to ISO YYYY-MM-DD for grouping/sorting. The sheet
- * holds mixed formats (ISO, DD-MM-YYYY, DD/MM/YYYY). Mirrors
- * soldBalesFlow.normDay.
+ * Grouping key for a soldDate cell. parseRow has already normalised every
+ * valid spelling to ISO; a value that is still not ISO here is one the
+ * normaliser REJECTED (impossible month/day, two-digit year, stray words),
+ * so it keeps its raw text as the key instead of being re-converted into
+ * a fabricated date.
  * @param {string} sRaw
  * @returns {string}
  */
-function normDay(sRaw) {
+function dayKey(sRaw) {
   const raw = String(sRaw || '').trim();
   if (!raw) return '';
-  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
-  const dmy = raw.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
-  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
-  const ms = Date.parse(raw);
-  if (isFinite(ms)) return new Date(ms).toISOString().slice(0, 10);
-  return raw;
+  return normalizeSalesDate(raw) || raw;
 }
 
 /** Every sold row plus the quantity labeller (bales ⇄ thans per warehouse setting). */
@@ -103,9 +123,9 @@ async function loadSold() {
 /* ───────────────────────────── pure grouping ───────────────────────────── */
 
 /**
- * The places that have sold anything, alphabetical. Rows with a blank
- * warehouse cell are grouped under NO_PLACE_LABEL (sorted last) so a data
- * defect shows up as a chip instead of vanishing from the totals.
+ * The places that have sold anything, alphabetical, case-folded (the first
+ * spelling seen is the label). Rows with a blank warehouse cell form no
+ * chip.
  * @param {Array<object>} sold
  * @returns {Array<{key:string,label:string,rows:number}>}
  */
@@ -113,14 +133,12 @@ function groupPlaces(sold) {
   const byKey = new Map();
   for (const r of sold) {
     const key = placeKey(r.warehouse);
-    if (!byKey.has(key)) byKey.set(key, { key, label: key ? String(r.warehouse).trim() : NO_PLACE_LABEL, rows: 0 });
+    if (!key) continue;
+    if (!byKey.has(key)) byKey.set(key, { key, label: String(r.warehouse).trim(), rows: 0 });
     byKey.get(key).rows += 1;
   }
-  return Array.from(byKey.values()).sort((a, b) => {
-    if (!a.key) return 1;
-    if (!b.key) return -1;
-    return a.label.localeCompare(b.label, 'en', { sensitivity: 'base' });
-  });
+  return Array.from(byKey.values())
+    .sort((a, b) => a.label.localeCompare(b.label, 'en', { sensitivity: 'base' }));
 }
 
 /**
@@ -128,7 +146,7 @@ function groupPlaces(sold) {
  * and its display quantity. `totalQty` is the place's whole history in
  * one label (TV-8: not the sum of per-day bale counts).
  * @param {Array<object>} sold
- * @param {string} key   placeKey of the chosen place ('' = blank cell)
+ * @param {string} key   placeKey of the chosen place
  * @param {function(Array<object>):string} label
  * @returns {Array<{date:string,thans:number,yards:number,bales:number,qty:string}> & {totalQty:string, totalYards:number}}
  */
@@ -138,7 +156,7 @@ function groupDays(sold, key, label) {
   for (const r of sold) {
     if (placeKey(r.warehouse) !== key) continue;
     mine.push(r);
-    const day = normDay(r.soldDate);
+    const day = dayKey(r.soldDate);
     if (!byDate.has(day)) byDate.set(day, { date: day, rows: [], yards: 0, bales: new Set() });
     const e = byDate.get(day);
     e.rows.push(r);
@@ -155,15 +173,18 @@ function groupDays(sold, key, label) {
 
 /**
  * One day at one place: customer → design → shade → unique bale numbers.
+ * Design and shade buckets are case-folded like baleIdentity.baleKey, so
+ * a bale whose than rows spell the shade two ways lands in ONE bucket
+ * (ISC-1 C11) and prints once; the first spelling seen is the label.
  * Customers alphabetical; designs and shades in numeric-aware order.
  * @param {Array<object>} sold
  * @param {string} key
- * @param {string} day   ISO day
+ * @param {string} day   the dayKey
  * @param {function(Array<object>):string} label
  * @returns {{customers:Array<{name:string,rows:Array<object>,yards:number,designs:Array<{design:string,shades:Array<{shade:string,rows:Array<object>,bales:string[]}>}>}>, rows:Array<object>, dayQty:string, yards:number}}
  */
 function groupDay(sold, key, day, label) {
-  const rows = sold.filter((r) => placeKey(r.warehouse) === key && normDay(r.soldDate) === day);
+  const rows = sold.filter((r) => placeKey(r.warehouse) === key && dayKey(r.soldDate) === day);
   const byCust = new Map();
   for (const r of rows) {
     const name = String(r.soldTo || '').trim() || '—';
@@ -171,11 +192,13 @@ function groupDay(sold, key, day, label) {
     const c = byCust.get(name);
     c.rows.push(r);
     c.yards += Number(r.yards) || 0;
-    const dk = String(r.design || '').trim() || '—';
-    if (!c.designs.has(dk)) c.designs.set(dk, new Map());
-    const shades = c.designs.get(dk);
-    const sk = String(r.shade || '').trim();
-    if (!shades.has(sk)) shades.set(sk, { shade: sk, rows: [], bales: [], seen: new Set() });
+    const design = String(r.design || '').trim() || '—';
+    const dk = design.toUpperCase();
+    if (!c.designs.has(dk)) c.designs.set(dk, { design, shades: new Map() });
+    const { shades } = c.designs.get(dk);
+    const shade = String(r.shade || '').trim();
+    const sk = shade.toUpperCase();
+    if (!shades.has(sk)) shades.set(sk, { shade, rows: [], bales: [], seen: new Set() });
     const s = shades.get(sk);
     s.rows.push(r);
     const bk = baleGroupKey(r);
@@ -185,9 +208,9 @@ function groupDay(sold, key, day, label) {
     .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }))
     .map((c) => ({
       name: c.name, rows: c.rows, yards: c.yards,
-      designs: Array.from(c.designs.entries())
-        .sort(([a], [b]) => cmpNumericAware(a, b))
-        .map(([design, shades]) => ({
+      designs: Array.from(c.designs.values())
+        .sort((a, b) => cmpNumericAware(a.design, b.design))
+        .map(({ design, shades }) => ({
           design,
           shades: Array.from(shades.values())
             .sort((a, b) => cmpNumericAware(a.shade, b.shade))
@@ -214,6 +237,15 @@ async function start(bot, chatId, userId, messageId) {
     await bot.sendMessage(chatId, '🏬 Store Sales is admin-only.');
     return;
   }
+  // SJ-4 handoff — a tile tapped over another live flow abandons that flow:
+  // take its auxiliary messages down and end it deliberately (the janitor's
+  // instant cleanup and ANL-2 both hear the clear) instead of overwriting
+  // its session silently.
+  const prev = sessionStore.get(userId);
+  if (prev && prev.type !== SESSION_TYPE) {
+    await disposeAux(bot, chatId, userId);
+    sessionStore.clear(userId, 'cancelled');
+  }
   sessionStore.set(userId, {
     type: SESSION_TYPE,
     step: 'pick_place',
@@ -237,15 +269,19 @@ async function renderPlacePicker(bot, chatId, userId) {
   const { sold } = await loadSold();
   const places = groupPlaces(sold);
   if (!places.length) {
-    sessionStore.clear(userId);
+    // Render BEFORE clearing: the renderer anchors on session.flowMessageId.
     await render(bot, chatId, userId, '🏬 *Store Sales*\n\n_No sales recorded yet._', [menuRow()]);
+    sessionStore.clear(userId, 'completed');
     return;
   }
   session._places = places.map((p) => ({ key: p.key, label: p.label }));
   sessionStore.set(userId, session);
   const tiles = places.map((p, i) => ({ text: p.label, callback_data: `${NS}:w:${i}` }));
   const rows = chunk(tiles, TILES_PER_ROW);
-  rows.push(menuRow());
+  // The flow's own menu exit: it must END the session before the message
+  // becomes the greeting menu, or the janitor would later delete the menu
+  // as this flow's abandoned card.
+  rows.push([{ text: '🏠 Back to menu', callback_data: `${NS}:menu` }]);
   await render(bot, chatId, userId, '🏬 *Store Sales*\n\nTap a place to see its sales.', rows);
 }
 
@@ -256,7 +292,7 @@ async function renderDatePicker(bot, chatId, userId) {
   if (!session) return;
   const { sold, label } = await loadSold();
   const dates = groupDays(sold, session.placeKey, label);
-  const title = `🏬 *Sales — ${mdEscape(session.placeLabel)}*`;
+  const title = `🏬 ${bold(`Sales — ${session.placeLabel}`)}`;
   if (!dates.length) {
     await render(bot, chatId, userId, `${title}\n\n_No sales found for this place._`,
       [backRow('🏬 Change place'), closeRow()]);
@@ -291,9 +327,7 @@ async function renderDatePicker(bot, chatId, userId) {
 /* ───────────────────────────── screen 3 — one day ───────────────────────────── */
 
 /**
- * Body lines for the day card. Pure so the cut rule is testable: when the
- * lines would overrun Telegram's message cap the tail is replaced by one
- * italic "…and N more lines" — never cut silently.
+ * Body lines for the day card. Pure so the cut rule is testable.
  * @param {ReturnType<typeof groupDay>} day
  * @param {function(Array<object>):string} label
  * @returns {string[]}
@@ -301,11 +335,11 @@ async function renderDatePicker(bot, chatId, userId) {
 function dayCardLines(day, label) {
   const lines = [];
   for (const c of day.customers) {
-    lines.push(`👤 *${mdEscape(c.name)}*`);
+    lines.push(`👤 ${bold(c.name)}`);
     for (const d of c.designs) {
-      lines.push(` 🧵 *${mdEscape(d.design)}*`);
+      lines.push(` 🧵 ${bold(d.design)}`);
       for (const s of d.shades) {
-        lines.push(`  • Shade ${mdEscape(s.shade || '—')} ×${label(s.rows)} (${s.bales.map(mdEscape).join(', ')})`);
+        lines.push(`  • Shade ${mdEsc(s.shade || '—')} ×${label(s.rows)} (${s.bales.map(mdEsc).join(', ')})`);
       }
     }
     lines.push('');
@@ -317,7 +351,7 @@ function dayCardLines(day, label) {
 /**
  * Keep as many leading lines as fit in `budget` chars (newlines counted),
  * leaving room for the pointer line itself, and never end the kept part on
- * a customer or design header with nothing under it.
+ * a customer or design header with nothing under it. Never cuts silently.
  * @param {string[]} lines
  * @param {number} budget
  * @returns {string[]}
@@ -342,7 +376,7 @@ async function renderDay(bot, chatId, userId) {
   if (!session) return;
   const { sold, label } = await loadSold();
   const day = groupDay(sold, session.placeKey, session.soldDate, label);
-  const head = `🧾 *${mdEscape(session.placeLabel)}* · ${prettyDate(session.soldDate)}\n`;
+  const head = `🧾 ${bold(session.placeLabel)} · ${prettyDate(session.soldDate)}\n`;
   if (!day.rows.length) {
     await render(bot, chatId, userId, `${head}\n_Nothing found — it may have been returned._`,
       [backRow('⬅ Dates'), closeRow()]);
@@ -354,6 +388,12 @@ async function renderDay(bot, chatId, userId) {
 }
 
 /* ───────────────────────────── navigation ───────────────────────────── */
+
+/** The card becomes "Closed." in place, then the session ends. */
+async function closeFlow(bot, chatId, userId, outcome) {
+  await render(bot, chatId, userId, '🏬 Closed.', [menuRow()]);
+  sessionStore.clear(userId, outcome);
+}
 
 async function stepBack(bot, chatId, userId) {
   const session = sessionStore.get(userId);
@@ -374,8 +414,7 @@ async function stepBack(bot, chatId, userId) {
       await renderDatePicker(bot, chatId, userId);
       break;
     default:
-      sessionStore.clear(userId);
-      await render(bot, chatId, userId, '🏬 Closed.', [menuRow()]);
+      await closeFlow(bot, chatId, userId, 'cancelled');
   }
 }
 
@@ -389,11 +428,25 @@ async function handleCallback(bot, query) {
   const data = query.data || '';
   if (!data.startsWith(`${NS}:`)) return false;
   const chatId = query.message && query.message.chat && query.message.chat.id;
+  const messageId = query.message && query.message.message_id;
   const userId = String(query.from.id);
   const session = sessionStore.get(userId);
+
+  if (data === `${NS}:menu`) {
+    // End the flow first, then let the controller's own menu path draw the
+    // greeting menu into this message (it answers the callback itself).
+    if (session && session.type === SESSION_TYPE) sessionStore.clear(userId, 'cancelled');
+    await require('../controllers/telegramController').handleCallbackQuery(bot, { ...query, data: 'act:__back__' });
+    return true;
+  }
+
   try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
   if (!session || session.type !== SESSION_TYPE) {
-    // An old card after the session expired: say so instead of doing nothing.
+    // An old card after the session ended: take its buttons down so the
+    // notice fires at most once, then say so instead of doing nothing.
+    if (chatId && messageId) {
+      try { await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }); } catch (_) { /* gone */ }
+    }
     if (chatId) {
       try {
         await bot.sendMessage(chatId, '🏬 That Store Sales screen has expired — open 🏬 Store Sales again.',
@@ -404,8 +457,7 @@ async function handleCallback(bot, query) {
   }
 
   if (data === `${NS}:close`) {
-    sessionStore.clear(userId, 'completed');
-    await render(bot, chatId, userId, '🏬 Closed.', [menuRow()]);
+    await closeFlow(bot, chatId, userId, 'completed');
     return true;
   }
 
@@ -454,8 +506,8 @@ module.exports = {
   start,
   handleCallback,
   _internals: {
-    SESSION_TYPE, NS, NO_PLACE_LABEL, DATES_PER_PAGE, DAY_CARD_MAX_CHARS,
-    placeKey, prettyDate, normDay,
+    SESSION_TYPE, NS, DATES_PER_PAGE, DAY_CARD_MAX_CHARS,
+    placeKey, prettyDate, dayKey, mdEsc, bold,
     groupPlaces, groupDays, groupDay, dayCardLines, fitLines,
     renderPlacePicker, renderDatePicker, renderDay, stepBack,
   },

@@ -65,7 +65,7 @@ test('tile → places → days → day card, every tap routed by the controller'
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cq('777', 'act:store_sales'));
   assert.match(lastText(bot), /🏬 \*Store Sales\*\n\nTap a place to see its sales\./);
-  assert.deepEqual(kbTexts(bot), ['IDUMOTA|sfs:w:0', 'Kano office|sfs:w:1', '🏠 Back to menu|act:__back__']);
+  assert.deepEqual(kbTexts(bot), ['IDUMOTA|sfs:w:0', 'Kano office|sfs:w:1', '🏠 Back to menu|sfs:menu']);
   assert.equal(sessionStore.get('777').type, 'store_sales_flow');
 
   await controller.handleCallbackQuery(bot, cq('777', 'sfs:w:0'));
@@ -79,6 +79,22 @@ test('tile → places → days → day card, every tap routed by the controller'
   await controller.handleCallbackQuery(bot, cq('777', 'sfs:close'));
   assert.match(lastText(bot), /🏬 Closed\./);
   assert.equal(sessionStore.get('777'), null);
+});
+
+test('screen 1 → 🏠 Back to menu ends the session and the controller draws the greeting menu into the same message', async () => {
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cq('777', 'act:store_sales'));
+  assert.equal(sessionStore.get('777').type, 'store_sales_flow');
+  const before = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cq('777', 'sfs:menu'));
+  assert.equal(sessionStore.get('777'), null, 'no session is left anchored to the menu message for the janitor to delete');
+  const since = bot.calls.slice(before);
+  assert.equal(since.filter((c) => c.method === 'answerCallbackQuery').length, 1, 'answered exactly once');
+  const edit = since.filter((c) => c.method === 'editMessageText').pop();
+  assert.ok(edit, 'the menu is drawn by editing the tapped message');
+  assert.equal(edit.args.opts.message_id, 77);
+  assert.match(edit.args.text, /👋 Hi/);
+  assert.ok(!since.some((c) => c.method === 'sendMessage'), 'no fresh bubble');
 });
 
 test('a non-admin tapping the tile is refused in one line and gets no session', async () => {

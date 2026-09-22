@@ -34,6 +34,7 @@ const PREFIX_FEATURES = {
   'bs:': 'bundle_sale',
   'udf:': 'display_units',
   'sbl:': 'sold_bales_lookup',
+  'sfs:': 'store_sales', // SFS-1 — 🏬 Store Sales (sales by warehouse/store)
   'lcost:': 'finalize_landed_cost',
   'bops:': 'daily_branch_ops',
   'ofex:': 'office_expense',
