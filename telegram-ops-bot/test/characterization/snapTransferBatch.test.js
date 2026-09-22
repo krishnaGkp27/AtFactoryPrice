@@ -76,6 +76,10 @@ approvalQueueRepository.appendOnce = async (rec) => {
   return { created: true, existing: null };
 };
 approvalQueueRepository.getByRequestId = async (id) => qrows.get(String(id)) || null;
+// TRF-20 — the duplicate guard reads the OPEN transfers; without this the
+// guard would see the empty fake sheet, not this map.
+approvalQueueRepository.getAllPending = async () => [...qrows.values()]
+  .filter((r) => String(r.status || 'pending') === 'pending').map((r) => ({ ...r, actionJSON: { ...r.actionJSON } }));
 approvalQueueRepository.updateActionJSON = async (id, patch) => {
   const row = qrows.get(String(id));
   if (!row) return false;
@@ -168,6 +172,31 @@ test('admin PDF → transfer mode → dest + auto receiver → 2 transfers dispa
   assert.ok(rcvKb.some((b) => b.callback_data.startsWith('trf:rcv:')), 'existing Received button — rides the trf: pipeline');
   const rcvDocs = bot.calls.filter((c) => c.method === 'sendDocument' && String(c.args.chatId) === '5151');
   assert.equal(rcvDocs.length, 2, 'PDF forwarded per transfer');
+  assert.ok(!sessionStore.get('777'), 'session cleared');
+});
+
+test('TRF-20: the same PDF batch sent twice adds NO twin — each group reports the open transfer instead', async () => {
+  qrows.clear();
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('act:snap_sale'));
+  await controller.handleFileMessage(bot, pdfMsg());
+  await controller.handleCallbackQuery(bot, cb('sns:tmode'));
+  await controller.handleCallbackQuery(bot, cb(lastKb(bot).find((b) => b.text === '🏭 Kano office').callback_data));
+  await controller.handleCallbackQuery(bot, cb('sns:tok'));
+  const before = [...qrows.values()].filter((r) => r.actionJSON.action === 'transfer_stock');
+  assert.equal(before.length, 2, 'first batch: two transfers, both in transit');
+
+  // The very same PDF again — both loads are already open (in transit).
+  const again = createFakeBot();
+  await controller.handleCallbackQuery(again, cb('act:snap_sale'));
+  await controller.handleFileMessage(again, pdfMsg());
+  await controller.handleCallbackQuery(again, cb('sns:tmode'));
+  await controller.handleCallbackQuery(again, cb(lastKb(again).find((b) => b.text === '🏭 Kano office').callback_data));
+  await controller.handleCallbackQuery(again, cb('sns:tok'));
+  const after = [...qrows.values()].filter((r) => r.actionJSON.action === 'transfer_stock');
+  assert.equal(after.length, 2, 'no third or fourth transfer was written');
+  const text = plain(again);
+  assert.match(text, /already open as/, `the batch says why, got: ${text}`);
   assert.ok(!sessionStore.get('777'), 'session cleared');
 });
 

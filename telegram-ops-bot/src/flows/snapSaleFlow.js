@@ -536,10 +536,18 @@ async function submitTransferBatch(bot, chatId, userId, session) {
   for (const g of groups) {
     let requestId = null;
     try {
-      ({ requestId } = await transferService.createTransferRequest({
+      const made = await transferService.createTransferRequest({
         from: g.from, to, lines: g.lines, requestedBy: userId,
         dispatcher: userId, receiver: receiver.user_id,
-      }));
+      });
+      if (made.duplicate) {
+        // TRF-20 — the same load is already open: this batch must not add a
+        // twin. The open one is the order to dispatch, from 📋 Transfers.
+        const ref = require('../services/approvalCards').shortTransferRef(made.duplicate.requestId);
+        failed.push({ from: g.from, message: `this load is already open as ${ref} — dispatch that one from 📋 Transfers` });
+        continue;
+      }
+      requestId = made.requestId;
       const res = await transferService.dispatch(requestId, userId, g.picks);
       if (!res.ok) {
         failed.push({ from: g.from, message: res.message });
