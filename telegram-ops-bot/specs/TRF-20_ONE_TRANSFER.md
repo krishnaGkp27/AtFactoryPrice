@@ -1,6 +1,6 @@
 # TRF-20 · One transfer: one door, one identity, one row, and the move to Postgres
 
-**Status: SPEC — awaiting the owner's go (22-Sep-2026). No code.**
+**Status: steps 1–6 SHIPPED 22-Sep-2026 (owner's go the same day; D4 changed to date · dot · route · quantity). Steps 7–8 — the read flip, the seed of history and the sheet mirror — WAIT for the owner's backup confirmation and a clean parity report. See §7.**
 Evidence: the owner's workbook export of 20-Sep (ApprovalQueue 532 rows,
 AuditLog 6,700 rows) and the 14-screen `TRF_SURFACES` PDF of 21-Sep.
 Owner's words (19/20-Sep): "multiple requests for the same design and
@@ -147,3 +147,23 @@ weeks stale at admin review, the owner decides.
 
 The other 50 sheets. This spec moves ONE table and proves the pattern; the
 storage-split doc keeps the order for the rest.
+
+## 7 · Shipped 22-Sep-2026 — steps 1–6, and what each commit is
+
+| Commit | What it does |
+|---|---|
+| 1/8 | `transferGhosts` — the identity of a load; `scripts/list-ghost-transfers.js` (read-only census) and `scripts/decline-ghost-transfers.js` (dry-run, `--as <admin> --commit`) |
+| 2/8 · 2b · 2c | idempotent identity minted at the confirm card + `appendOnce`; the Send guard (D1) with Open / ⬅ Back / admin-only Send anyway; the snap PDF batch honours it; eight review findings fixed (key dies on edit, taken reference refused, sent-anyway rows still block, older twins never ghosts, the decliner stamped, script continues and says who to tell) |
+| 3/8 | `transferRow` — `18Sep·02 · 🔴 LAG▸KAN · 10B` on the inbox, the 📋 list and My Tasks; My Tasks' verb follows the stage |
+| 4/8 | `transferReminder` — the holder's card hourly, admins after `TRANSFER_STALE_DAYS` (default 3) |
+| 5/8 · 5b | the legacy single-bale / single-than tap doors, helpers, tiles and act: cases deleted (386 lines); typed intents still redirect |
+| 6a · 6b | `transfersPgRepository` (shadow, fail-open), migration `003_transfers` with the one-open-row-per-load index, `transferService.mirror` after every state write, `scripts/transfers-parity.js` |
+
+**Owner, in this order:**
+1. `node scripts/list-ghost-transfers.js` — read-only. Expect the seven in §5 (the 21-Sep test is already declined by hand).
+2. `node scripts/decline-ghost-transfers.js --as <your Telegram id> --commit` — then tell the requesters it prints.
+3. Confirm the offsite backup job (CLAUDE.md BKP row) ships and Railway Postgres snapshots are on.
+4. After a few days: `node scripts/transfers-parity.js` — when it says PARITY OK, say the word for step 7 (the Settings read flip) and step 8 (the sheet mirror job).
+5. Rule on **D8** (§2): do disjoint pinned bale numbers make two orders different loads?
+
+Live check meanwhile: raise the same load twice — the second Send shows the first transfer and offers Open; as admin, Send anyway stamps ⧉; the 📋 list, the 🛂 inbox and My Tasks all read `18Sep·02 · 🔴 LAG▸KAN · 10B`; leave one transfer alone for an hour and the dispatcher gets the card again.
