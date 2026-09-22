@@ -51,8 +51,9 @@ function byCreatedAsc(a, b) { return String(a.createdAt || '').localeCompare(Str
 /**
  * The OPEN transfer identical to the load about to be sent, or null. When
  * several exist the OLDEST is returned — that is the one the team should
- * open, and the one every later copy is a ghost of. Rows that were
- * knowingly sent as duplicates (`duplicateOf` set) never block a send.
+ * open. A row an admin knowingly sent anyway (`duplicateOf`) blocks too:
+ * once its original closes it is the only open order for that load, and
+ * exempting it let a third, unstamped copy through (review, 22-Sep).
  * @param {Array<object>} openRows pending ApprovalQueue rows
  * @param {{from:string,to:string,lines:Array<object>}} load
  * @returns {object|null}
@@ -60,18 +61,21 @@ function byCreatedAsc(a, b) { return String(a.createdAt || '').localeCompare(Str
 function findIdenticalOpen(openRows, load) {
   const key = loadKey(load);
   const hits = (openRows || [])
-    .filter((r) => isTransfer(r) && isOpen(r) && !r.actionJSON.duplicateOf && loadKey(r.actionJSON) === key)
+    .filter((r) => isTransfer(r) && isOpen(r) && loadKey(r.actionJSON) === key)
     .sort(byCreatedAsc);
   return hits[0] || null;
 }
 
 /**
  * Ghosts. A ghost is an OPEN row at a pre-dispatch stage (`requested` or
- * `admin_review`) whose load was ALSO raised as another row that went
- * further: received (`approved`) or in transit. The further row is the real
- * one; the open pre-dispatch row is the ghost. A twin that was merely
- * declined does not make the open row a ghost — that open row may be the
- * legitimate re-raise.
+ * `admin_review`) whose load was ALSO raised, at the same time or LATER, as
+ * another row that went further: received (`approved`) or in transit. The
+ * further row is the real one; the open pre-dispatch row is the ghost.
+ * Two rows are never ghosts: one whose only further twin is OLDER (a fresh
+ * re-order of a load received months ago is new work), and one an admin
+ * knowingly sent anyway (`duplicateOf` — an intended second order). A twin
+ * that was merely declined does not make the open row a ghost either —
+ * that open row may be the legitimate re-raise.
  * @param {Array<object>} rows every ApprovalQueue row (any status)
  * @returns {Array<{ghost:object, twin:object, reason:string}>} oldest ghost first
  */
@@ -89,9 +93,11 @@ function findGhosts(rows) {
       .filter((r) => norm(r.status) === 'approved' || (isOpen(r) && stageOf(r) === 'in_transit'))
       .sort(byCreatedAsc);
     if (!further.length) continue;
-    const twin = further[further.length - 1];
     for (const r of group) {
-      if (r === twin || !isOpen(r) || stageOf(r) === 'in_transit') continue;
+      if (!isOpen(r) || stageOf(r) === 'in_transit' || r.actionJSON.duplicateOf) continue;
+      const later = further.filter((f) => f !== r && String(f.createdAt || '') >= String(r.createdAt || ''));
+      if (!later.length) continue;
+      const twin = later[later.length - 1];
       const what = norm(twin.status) === 'approved' ? 'received' : 'in transit';
       out.push({ ghost: r, twin, reason: `same load as ${twin.requestId}, which is ${what}` });
     }

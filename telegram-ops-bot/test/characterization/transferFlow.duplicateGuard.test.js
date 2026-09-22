@@ -120,7 +120,7 @@ test('an identical open load blocks the send and shows the existing transfer ins
   assert.equal(sessionStore.get('4242').idemKey, keyBefore);
 });
 
-test('an admin may Send anyway — the second row is stamped duplicateOf and never blocks a third send itself', async () => {
+test('an admin may Send anyway — the second row is stamped duplicateOf; a third plain send is still blocked by the oldest open twin', async () => {
   armQueue(); sessionStore.clear('777'); sessionStore.clear('4242');
   const emp = createFakeBot();
   await toConfirm(emp, 4242);
@@ -140,6 +140,52 @@ test('an admin may Send anyway — the second row is stamped duplicateOf and nev
   assert.equal(dup.actionJSON.duplicateOf, original);
   assert.notEqual(dup.requestId, original, 'a fresh reference');
   assert.match(lastText(adm), /Transfer .* sent/);
+
+  // A third plain send of the same load is blocked and names the ORIGINAL.
+  sessionStore.clear('4242');
+  const third = createFakeBot();
+  await toConfirm(third, 4242);
+  await controller.handleCallbackQuery(third, cb('trf:send', 4242));
+  assert.equal(openRows().length, 2, 'no third row');
+  assert.match(lastText(third), new RegExp(require(path.join(SRC, 'services/approvalCards')).shortTransferRef(original).replace('·', '\\·')));
+
+  // Even after the original closes, the forced copy alone still blocks.
+  queue.get(original).status = 'rejected';
+  const fourth = createFakeBot();
+  await toConfirm(fourth, 4242);
+  await controller.handleCallbackQuery(fourth, cb('trf:send', 4242));
+  assert.equal(openRows().length, 1, 'the forced copy is the only open order — still no new row');
+});
+
+test('leaving the confirm card to EDIT ends the identity; a key never binds a different load', async () => {
+  armQueue(); sessionStore.clear('777');
+  const bot = createFakeBot();
+  await toConfirm(bot, 777);
+  const key = sessionStore.get('777').idemKey;
+  await controller.handleCallbackQuery(bot, cb('trf:back', 777));      // back from confirm → edit
+  assert.equal(sessionStore.get('777').idemKey, undefined, 'the key died with the card');
+  await controller.handleCallbackQuery(bot, cb('trf:dest:0', 777));    // re-reach confirm
+  const key2 = sessionStore.get('777').idemKey;
+  assert.ok(key2 && key2 !== key, 'a fresh key for the fresh card');
+
+  // Service-level: the same key with a DIFFERENT load is a new transfer, not "existing".
+  const transferService = require(path.join(SRC, 'services/transferService'));
+  const base = { from: 'Lagos', to: 'Kano office', requestedBy: '777', dispatcher: 'abdul', receiver: 'musa', idemKey: 'K-1' };
+  const first = await transferService.createTransferRequest({ ...base, lines: [{ design: '9006', shade: '3', qty: 1 }] });
+  const retry = await transferService.createTransferRequest({ ...base, lines: [{ design: '9006', shade: '3', qty: 1 }] });
+  assert.equal(retry.existing, true); assert.equal(retry.requestId, first.requestId);
+  const edited = await transferService.createTransferRequest({ ...base, lines: [{ design: '9006', shade: '3', qty: 3 }] });
+  assert.ok(!edited.existing && !edited.duplicate && edited.requestId !== first.requestId, `an edited load under the old key is a NEW row, got ${JSON.stringify(edited)}`);
+});
+
+test('a taken reference is refused, never reported as sent', async () => {
+  armQueue(); sessionStore.clear('777');
+  const transferService = require(path.join(SRC, 'services/transferService'));
+  const realOnce = approvalQueueRepository.appendOnce;
+  approvalQueueRepository.appendOnce = async () => ({ created: false, existing: { requestId: 'TR-x' } });
+  try {
+    await assert.rejects(() => transferService.createTransferRequest({ from: 'Lagos', to: 'Kano office', requestedBy: '777', dispatcher: 'abdul', receiver: 'musa', lines: [{ design: '9006', shade: '3', qty: 1 }] }), /already taken/);
+  } finally { approvalQueueRepository.appendOnce = realOnce; }
 });
 
 test('an employee cannot force: trf:send:force from a non-admin is still the guard', async () => {

@@ -45,7 +45,7 @@ test('findIdenticalOpen: returns the OLDEST open twin, ignores closed rows and k
   assert.equal(hit.requestId, 'TR-20260918-001', 'the first one raised is the one to open');
   assert.equal(g.findIdenticalOpen(open, { from: 'Lagos', to: 'Kano office', lines: [{ design: '9999', shade: '1', qty: 1 }] }), null);
   const marked = open.map((r) => ({ ...r, actionJSON: { ...r.actionJSON, duplicateOf: 'TR-x' } }));
-  assert.equal(g.findIdenticalOpen(marked, { from: 'Lagos', to: 'Kano office', lines: ten9031 }), null, 'a row sent anyway never blocks the next send');
+  assert.equal(g.findIdenticalOpen(marked, { from: 'Lagos', to: 'Kano office', lines: ten9031 }).requestId, 'TR-20260918-001', 'a row sent anyway still blocks the next send — it is the only open order for that load once its original closes');
 });
 
 test('findGhosts: the 18-Sep twins and the 10-Aug parked row are ghosts; re-raises and unique loads are not', () => {
@@ -66,4 +66,19 @@ test('staleOpen: old open rows that are not ghosts', () => {
   const stale = g.staleOpen(ROWS, 14, now).map((r) => r.requestId);
   assert.deepEqual(stale, ['TR-20260810-005'], 'six weeks at admin review, unique load');
   assert.ok(!stale.includes('TR-20260810-001'), 'ghosts are listed as ghosts, not as stale');
+});
+
+test('findGhosts: an OLDER received twin never makes a fresh re-order a ghost; it is stale work instead', () => {
+  const old = row('TR-20260801-001', '2026-08-01T09:00:00Z', 'approved', 'in_transit', { from: 'Lagos', to: 'Kano office', lines: ten9031 });
+  const fresh = row('TR-20260922-001', '2026-09-22T09:00:00Z', 'pending', 'requested', { from: 'Lagos', to: 'Kano office', lines: ten9031 });
+  assert.deepEqual(g.findGhosts([old, fresh]), [], 'the received twin is older — this is a new order');
+  const now = Date.parse('2026-10-20T00:00:00Z');
+  assert.deepEqual(g.staleOpen([old, fresh], 14, now).map((r) => r.requestId), ['TR-20260922-001'], 'so it surfaces as stale, not as a ghost');
+});
+
+test('findGhosts: a row an admin knowingly sent anyway is an intended second order, never a ghost', () => {
+  const a = row('TR-20260918-001', '2026-09-18T13:00:00Z', 'approved', 'in_transit');
+  const b = row('TR-20260918-004', '2026-09-18T13:30:00Z', 'pending', 'requested', { duplicateOf: 'TR-20260918-001' });
+  assert.deepEqual(g.findGhosts([a, b]), []);
+  assert.deepEqual(g.staleOpen([a, b], 1, Date.parse('2026-09-25T00:00:00Z')).map((r) => r.requestId), ['TR-20260918-004']);
 });

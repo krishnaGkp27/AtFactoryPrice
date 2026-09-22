@@ -82,8 +82,16 @@ function approverIds(actionJSON, actorId) {
  * @param {{actionJSON?:object, actorId?:string|number, bot?:object}} args
  * @returns {Promise<string>} e.g. "Emin" or "Emin + Boss"; '' when unknown
  */
-async function labelFor({ actionJSON, actorId, bot } = {}) {
+/**
+ * `actorAlways` (TRF-20 review, 22-Sep-2026): a transfer's approver ids are
+ * the releasing admin only — the receiver flipping the row is not an
+ * approver. A DECLINE or REJECT is different: the person who closed it IS
+ * the record, and without this the Approver column stayed blank for every
+ * declined transfer, button or script.
+ */
+async function labelFor({ actionJSON, actorId, bot, actorAlways = false } = {}) {
   const ids = approverIds(actionJSON, actorId);
+  if (actorAlways) for (const id of approverIds({}, actorId)) if (!ids.includes(id)) ids.push(id);
   if (!ids.length) return '';
   try {
     const { resolveUserLabel } = require('./approvalCards');

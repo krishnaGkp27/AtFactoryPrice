@@ -53,3 +53,11 @@ test('a transfer with no recorded admin yields nothing rather than guessing', ()
   // Better an empty cell than the receiver's name in an Approver column.
   assert.deepEqual(approverIds({ action: 'transfer_stock' }, 'receiver-7'), []);
 });
+
+test('TRF-20 review: actorAlways names the person who declined a transfer; without it the receiver is still not an approver', async () => {
+  const { labelFor } = require('../../../src/services/approverStamp');
+  const aj = { action: 'transfer_stock' };
+  assert.equal(await labelFor({ actionJSON: aj, actorId: 'receiver-7' }), '', 'a receive is not an approval');
+  const stamped = await labelFor({ actionJSON: aj, actorId: 'receiver-7', actorAlways: true });
+  assert.ok(stamped && stamped.includes('receiver-7'), `the decliner is on the record, got: ${stamped}`);
+});

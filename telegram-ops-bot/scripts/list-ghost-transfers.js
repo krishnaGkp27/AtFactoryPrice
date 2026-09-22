@@ -37,7 +37,8 @@ function describe(r) {
   const bales = (aj.lines || []).reduce((s, l) => s + (parseInt(l.qty, 10) || 0), 0);
   const designs = [...new Set((aj.lines || []).map((l) => l.design))].join(',');
   const age = ghosts.ageDays(r);
-  return `${r.requestId}  ${String(r.createdAt || '').slice(0, 10)}  ${aj.from} → ${aj.to}  ${bales}B  ${designs}  stage=${aj.stage || '-'}  by ${r.user}${age == null ? '' : `  ${age}d`}`;
+  const dup = aj.duplicateOf ? `  ⧉ sent anyway, dup of ${aj.duplicateOf}` : '';
+  return `${r.requestId}  ${String(r.createdAt || '').slice(0, 10)}  ${aj.from} → ${aj.to}  ${bales}B  ${designs}  stage=${aj.stage || '-'}  by ${r.user}${age == null ? '' : `  ${age}d`}${dup}`;
 }
 
 async function main() {

@@ -291,6 +291,15 @@ async function submit(bot, chatId, userId, { force = false } = {}) {
       return;
     }
     const { requestId, aj } = created;
+    if (created.existing) {
+      // TRF-20 — a retry of a send that already landed: the dispatcher and the
+      // admins were told the first time; say so and stop, no second round.
+      await render(bot, chatId, userId,
+        `✅ *Transfer ${shortTransferRef(requestId)} was already sent*\n${headOf(aj)}\n${linesBlock(aj.lines)}\n\n⏳ Waiting for *${session.dispatcher.name}* to dispatch.`,
+        [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]]);
+      sessionStore.clear(userId);
+      return;
+    }
     // Dispatcher card (best-effort DM).
     try {
       // TRF-19 — the card says whose move it is from the first send, not
@@ -346,7 +355,7 @@ async function showDuplicateBlock(bot, chatId, userId, twin) {
     `⚠️ *This load is already open — \`${ref}\`*\n`
     + `${headOf(aj)}\n${linesBlock(aj.lines)}\n`
     + `${waitingLine(twin, names)}\n\n`
-    + '_Sending again would create a second order for the same bales. Open the existing one instead._',
+    + '_Sending again would create a second order for the same load. Open the existing one instead._',
     rows);
 }
 
@@ -2419,6 +2428,10 @@ async function stepBack(bot, chatId, userId) {
   const order = { design: showSource, shade: showDesigns, qty: showShades, dest: showQty, dispatcher: showDest, receiver: showDest, confirm: showDest };
   // Re-picking destination re-resolves people; clear them.
   if (['dispatcher', 'receiver', 'confirm'].includes(session.step)) { session.dispatcher = null; session.receiver = null; }
+  // TRF-20 — the identity belongs to the card as drawn: leaving the confirm
+  // card to EDIT the load ends it, and the next confirm card mints a new one.
+  // (⬅ Back on the duplicate card returns to the same confirm card and keeps it.)
+  if (session.step === 'confirm') delete session.idemKey;
   const target = order[session.step] || showSource;
   sessionStore.set(userId, session);
   await target(bot, chatId, userId);

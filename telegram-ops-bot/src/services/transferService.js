@@ -175,10 +175,16 @@ async function createTransferRequest({ from, to, lines, requestedBy, dispatcher,
   // One exclusive section for read → allocate → write: the day counter used
   // to be computed from a scan of the sheet at send time, so two people
   // sending in the same second could both compute the same TR-<day>-<n>.
-  return mutex.runExclusive('transfer-create', async () => {
+  const wanted = transferGhosts.loadKey({ from, to, lines: cleanLines });
+  const made = await mutex.runExclusive('transfer-create', async () => {
     const open = await getOpenTransfers();
     if (idemKey) {
-      const mine = open.find((r) => r.actionJSON && r.actionJSON.idemKey === idemKey);
+      // A retry of THIS card — same load, same people. A key carried onto an
+      // edited load (review, 22-Sep) must never bind the old row.
+      const mine = open.find((r) => r.actionJSON && r.actionJSON.idemKey === idemKey
+        && transferGhosts.loadKey(r.actionJSON) === wanted
+        && String(r.actionJSON.dispatcher) === String(dispatcher || '')
+        && String(r.actionJSON.receiver) === String(receiver || ''));
       if (mine) return { requestId: mine.requestId, aj: mine.actionJSON, existing: true };
     }
     const twin = transferGhosts.findIdenticalOpen(open, { from, to, lines: cleanLines });
@@ -194,22 +200,32 @@ async function createTransferRequest({ from, to, lines, requestedBy, dispatcher,
       ...(idemKey ? { idemKey: String(idemKey) } : {}),
       ...(twin ? { duplicateOf: twin.requestId } : {}),
     };
-    await approvalQueueRepository.appendOnce({
+    const { created } = await approvalQueueRepository.appendOnce({
       requestId, user: String(requestedBy || ''),
       actionJSON: aj,
       riskReason: 'Warehouse transfer — dispatcher + receiver confirmation chain.',
       status: 'pending',
     });
-    // The row exists from here. A failed audit line must never report the
-    // transfer as failed — that re-armed Send and made the next tap a twin.
-    try {
-      await auditLogRepository.append('transfer.requested',
-        { requestId, from, to, lines: cleanLines, ...(twin ? { duplicateOf: twin.requestId } : {}) }, String(requestedBy || ''));
-    } catch (e) {
-      logger.warn(`transferService: audit line for ${requestId} failed: ${e.message}`);
-    }
-    return { requestId, aj };
+    // A taken reference means NOTHING was written (a same-day id minted by an
+    // earlier process that fell back to a random floor). Reporting success
+    // here would lose the load silently; throwing re-arms Send, and the next
+    // tap mints past the clash.
+    if (!created) throw new Error(`transfer reference ${requestId} is already taken — please tap Send again`);
+    return { requestId, aj, twin };
   });
+  if (made.duplicate || made.existing) return made;
+  // The row exists from here. The audit line sits OUTSIDE the exclusive
+  // section (it holds no reference) and is guarded: a failed log write must
+  // never report a created transfer as failed — that re-armed Send and made
+  // the next tap a twin.
+  try {
+    await auditLogRepository.append('transfer.requested',
+      { requestId: made.requestId, from, to, lines: cleanLines, ...(made.twin ? { duplicateOf: made.twin.requestId } : {}) },
+      String(requestedBy || ''));
+  } catch (e) {
+    logger.warn(`transferService: audit line for ${made.requestId} failed: ${e.message}`);
+  }
+  return { requestId: made.requestId, aj: made.aj };
 }
 
 /**
@@ -515,8 +531,11 @@ async function abortInner(requestId, byUserId) {
       await auditLogRepository.append('transfer.reject_mismatch', { requestId, ...mismatch }, String(byUserId || ''));
     }
   }
+  // TRF-20 review — the person who closed it IS the record (the transfer
+  // approver ids alone name only the releasing admin, so every declined
+  // transfer left the Approver column blank).
   const approverLabel = await require('./approverStamp')
-    .labelFor({ actionJSON: aj, actorId: byUserId });
+    .labelFor({ actionJSON: aj, actorId: byUserId, actorAlways: true });
   await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString(), approverLabel);
   await auditLogRepository.append(`transfer.${kind}`, { requestId }, String(byUserId || ''));
   return { ok: true, aj, kind, mismatch };

@@ -46,6 +46,7 @@ structure and architecture … migrate this onto PostgreSQL on Railway."
 | D5 | Stale transfers | Join the hourly re-send to the holder; after `TRANSFER_STALE_DAYS` (Settings, default 3) admins are nagged too. |
 | D6 | Ghosts already in the sheet | Declined by a script, listed by reference in §5, owner runs it. |
 | D7 | Postgres | Transfers are the pilot table; the sheet becomes a mirror. Backup first. |
+| D8 | **PENDING (review, 22-Sep)** — two typed orders for the same route, design, shade and count that name DISJOINT bale numbers | Assumed **one load** (the guard blocks the second; an admin may send anyway). BUSINESS_RULES §4 lets the dispatcher send different bales than the ones pinned, so pinned numbers are guidance, not identity. Say if they should count as different loads. |
 
 ## 3 · Design
 

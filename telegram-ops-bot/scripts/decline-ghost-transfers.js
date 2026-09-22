@@ -9,9 +9,13 @@
  * ghost here and is never declined by this script; that is a reversal and
  * a human's decision on the card.
  *
- * Each decline goes through `transferService.abort`, the same path as the
+ * Each decline goes through `transferService.abort`, the same engine as the
  * button: status → rejected, Approver column stamped with the acting admin,
- * `transfer.declined` audit line. Nothing is deleted.
+ * `transfer.declined` audit line. Nothing is deleted. What the button ALSO
+ * does and this script does NOT: edit the tapped card and DM the requester
+ * and the admins. So it prints, per declined row, who raised it — tell them.
+ * A live Accept button on an old DM copy is refused by the flow's own status
+ * check, so nothing can be dispatched against a declined row.
  *
  * SAFETY: dry-run by default — it writes only with --commit, and --commit
  * requires --as <adminTelegramId> so the record names a person.
@@ -65,12 +69,22 @@ async function main() {
     return;
   }
   let ok = 0;
+  const tell = new Map();
   for (const g of plan) {
-    const res = await transferService.abort(g.ghost.requestId, args.as);
-    console.log(`  ${res.ok ? '✅' : '❌'} ${g.ghost.requestId}${res.ok ? ` → ${res.kind}` : ` — ${res.message}`}`);
-    if (res.ok) ok += 1;
+    try {
+      const res = await transferService.abort(g.ghost.requestId, args.as);
+      console.log(`  ${res.ok ? '✅' : '❌'} ${g.ghost.requestId}${res.ok ? ` → ${res.kind}` : ` — ${res.message}`}`);
+      if (res.ok) { ok += 1; tell.set(String(g.ghost.user), [...(tell.get(String(g.ghost.user)) || []), g.ghost.requestId]); }
+    } catch (e) {
+      // One failed row must not strand the rest of the plan half-applied.
+      console.log(`  ❌ ${g.ghost.requestId} — ${e.message}`);
+    }
   }
   console.log(`\nDeclined ${ok}/${plan.length}.`);
+  if (tell.size) {
+    console.log('\nNobody was notified by this script. Tell the requesters:');
+    for (const [user, refs] of tell) console.log(`  ${user}: ${refs.join(', ')} closed as duplicates of transfers that went ahead`);
+  }
 }
 
 main().catch((e) => { console.error(e.message); process.exit(1); });
