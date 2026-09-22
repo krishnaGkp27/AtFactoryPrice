@@ -1,0 +1,232 @@
+<!doctype html><html><head><meta charset='utf-8'><title>Selling thans — operator guide</title><style>
+@page { size: A4; margin: 10mm 11mm; }
+* { box-sizing: border-box; }
+body { margin:0; font-family:"DejaVu Sans","Segoe UI",Arial,sans-serif; color:#16202a; font-size:11.2pt; line-height:1.42; }
+.page { page-break-after: always; }
+.page:last-child { page-break-after: auto; }
+h1 { font-size:34pt; margin:2mm 0 1mm; letter-spacing:-.5px; }
+.brand { font-size:8.4pt; letter-spacing:2.4px; text-transform:uppercase; color:#7d8b99; font-weight:700; }
+.sub { font-size:13pt; color:#3d4b59; margin-bottom:2mm; }
+.for { font-size:9.4pt; color:#4a5866; padding:1.6mm 0 0; border-top:1px solid #e2e8ee; }
+.ph { font-size:12.6pt; font-weight:700; color:#0e2a47; border-bottom:2.4px solid #0e2a47; padding-bottom:1.4mm; margin-bottom:3.4mm; }
+.lead { margin:0 0 3mm; color:#31404e; }
+.small { font-size:8.8pt; color:#5d6b79; }
+
+/* golden rule */
+.golden { margin:6mm 0; border:2.4px solid #b8860b; background:#fffaf0; border-radius:4mm; padding:4mm 5mm; }
+.gtitle { font-size:9pt; letter-spacing:2.4px; font-weight:800; color:#8a6508; }
+.gbody { font-size:17pt; font-weight:700; margin:1.4mm 0 2mm; color:#1d1502; }
+.gsteps { display:inline-block; margin-top:1.6mm; font-size:13pt; background:#fff; border:1px solid #e0cf9a; border-radius:2mm; padding:1.4mm 3mm; }
+.gwhy { font-size:9.6pt; color:#4a4231; }
+
+.two { display:flex; gap:5mm; margin:6mm 0; }
+.box { flex:1; border:1px solid #dde4ea; border-radius:3mm; padding:3.4mm 4mm; background:#fbfcfd; }
+.btitle { font-weight:700; color:#0e2a47; margin-bottom:1.6mm; }
+.box p { margin:0 0 1.8mm; }
+.box ul { margin:0 0 1.6mm; padding-left:5mm; }
+.box li { margin-bottom:.8mm; }
+
+.map { margin-top:5mm; border:1px solid #dde4ea; border-radius:3mm; padding:3mm 4mm; background:#f4f7fa; }
+.mtitle { font-weight:700; color:#0e2a47; margin-bottom:2mm; }
+.mrow { display:flex; align-items:center; gap:1.4mm; }
+.mstep { flex:1; text-align:center; background:#fff; border:1px solid #cfdae4; border-radius:2mm; padding:2mm .8mm; font-size:8.6pt; }
+.mstep b { display:block; font-size:12pt; color:#1d6fa5; }
+.mstep.last { background:#e5f4ec; border-color:#8ecfae; }
+.marr { color:#93a3b2; font-size:11pt; }
+
+/* steps */
+.step { display:flex; gap:6mm; margin-bottom:6.5mm; page-break-inside:avoid; }
+.sleft { flex:1.08; }
+.sright { flex:1; }
+.snum { display:inline-block; width:9mm; height:9mm; line-height:9mm; text-align:center; border-radius:50%;
+        background:#0e2a47; color:#fff; font-weight:800; font-size:13pt; }
+.stitle { display:inline-block; font-size:14pt; font-weight:700; margin-left:2.4mm; vertical-align:middle; color:#0e2a47; }
+.slead { margin-top:2.2mm; color:#31404e; }
+.path { margin:2.4mm 0; display:flex; flex-wrap:wrap; gap:1.4mm; align-items:center; }
+.path span { background:#eef3f8; border:1px solid #d3dde7; border-radius:1.6mm; padding:1mm 2.2mm; font-size:9.4pt; font-weight:600; color:#123; }
+.tip { margin-top:2.8mm; font-size:10pt; background:#eef6ff; border-left:3px solid #1d6fa5; padding:1.8mm 2.6mm; border-radius:0 2mm 2mm 0; }
+.warn { margin-top:2.8mm; font-size:10pt; background:#fff4f4; border-left:3px solid #a3232a; padding:1.8mm 2.6mm; border-radius:0 2mm 2mm 0; }
+
+/* telegram card */
+.tg { background:#0e1621; border-radius:3mm; padding:2.6mm; max-width:82mm; }
+.bubble { background:#182533; border-radius:2.4mm; padding:2.2mm 2.6mm 1.2mm; position:relative; }
+.txt { color:#e9eef3; font-size:9.4pt; line-height:1.4; word-wrap:break-word; }
+.txt b { color:#fff; }
+.dim, .txt i { color:#8fa3b5; font-style:italic; }
+.txt code { background:#0e1621; border-radius:1mm; padding:0 .8mm; font-family:"DejaVu Sans Mono",monospace; font-size:8.2pt; color:#a9c7e4; }
+.time { text-align:right; color:#6d8298; font-size:7pt; margin-top:.8mm; }
+.krow { display:flex; gap:1.2mm; margin-top:1mm; }
+.kbtn { flex:1; background:#22303f; color:#e9eef3; text-align:center; font-size:8.9pt; padding:1.5mm 1mm; border-radius:1.6mm; }
+.pic { height:34mm; border-radius:1.8mm; margin-bottom:1.6mm; overflow:hidden; }
+.doc { display:flex; align-items:center; gap:2mm; background:#0e1621; border-radius:1.8mm; padding:1.8mm 2mm; margin-bottom:1.4mm; }
+.dicon { font-size:13pt; }
+.dname { color:#a9c7e4; font-size:8.2pt; }
+.mockswatch, .mockgarment { height:100%; display:flex; align-items:center; justify-content:center; position:relative;
+  color:#fff; font-size:8pt; text-align:center; }
+.mockswatch { background:linear-gradient(100deg,#f4f2ee 0 18%,#3b2f26 18% 34%,#fbfbfb 34% 50%,#22304a 50% 66%,#1e5fd0 66% 82%,#4a4a45 82% 100%); color:#0e1621; font-weight:700; }
+.mockswatch span { background:rgba(255,255,255,.9); border-radius:1.4mm; padding:1.2mm 2.4mm; font-size:8.4pt; }
+.tabs { position:absolute; top:1mm; left:0; right:0; display:flex; justify-content:space-around; color:#d4af5f; font-size:8pt; }
+.mockgarment { background:radial-gradient(circle at 50% 32%, #23324a 0%, #16202e 62%); }
+.pic:has(.mockgarment) { height:26mm; }
+.mockgarment::before { content:""; position:absolute; left:50%; top:10%; width:24mm; height:18mm; transform:translateX(-50%);
+  background:repeating-linear-gradient(90deg,#fff 0 1.6mm,#e9e2ea 1.6mm 1.75mm); border-radius:2mm 2mm 1mm 1mm; }
+.mockgarment span { position:absolute; left:0; right:0; bottom:0; z-index:4; color:#c9d6e2; font-size:7.4pt; background:rgba(8,14,22,.82); padding:1mm 0; }
+.stamp { position:absolute; top:1.2mm; right:1.6mm; background:rgba(255,255,255,.9); color:#111; font-weight:800; font-size:7pt; padding:.4mm 1mm; border-radius:.8mm; z-index:3; }
+.cardnote { font-size:8.6pt; color:#5d6b79; margin-top:1.6mm; }
+
+/* compare */
+.compare { display:flex; gap:7mm; }
+.col { flex:1; }
+.chead { font-weight:800; font-size:11pt; padding:1.8mm 2.6mm; border-radius:2mm 2mm 0 0; margin-bottom:2.4mm; }
+.good .chead { background:#e5f4ec; color:#1c6b45; border:1px solid #8ecfae; }
+.bad .chead { background:#fdeeee; color:#8c1f24; border:1px solid #e2a3a6; }
+.chead.plain { background:#eef3f8; color:#0e2a47; border:1px solid #d3dde7; }
+.cnote { font-size:9.8pt; color:#41505e; margin-top:2.4mm; }
+
+.afterbox { display:flex; gap:6mm; margin-top:5mm; border-top:1px solid #e2e8ee; padding-top:4mm; }
+.ph + .afterbox { margin-top:0; border-top:0; padding-top:0; margin-bottom:5mm; }
+.atext { flex:1.25; }
+.acard { flex:1; }
+.atext p { margin:0 0 2mm; }
+
+.grid3 { display:flex; gap:5mm; }
+.grid3 > div { flex:1; }
+.gtitle2 { font-weight:700; color:#0e2a47; margin-bottom:2.2mm; font-size:10.4pt; }
+.warnwide { margin-top:5mm; background:#fff4f4; border:1.6px solid #d79a9d; border-left:5px solid #a3232a; border-radius:2.4mm; padding:3mm 3.6mm; font-size:10pt; }
+.notebox { margin-top:6mm; background:#f4f7fa; border:1px solid #dde4ea; border-radius:2.4mm; padding:2.8mm 3.4mm; font-size:9.6pt; }
+
+/* table */
+.tbl { width:100%; border-collapse:collapse; font-size:9.8pt; }
+.tbl th { text-align:left; background:#0e2a47; color:#fff; padding:2mm 2.4mm; font-size:8.6pt; letter-spacing:.4px; }
+.tbl td { border-bottom:1px solid #e2e8ee; padding:2.2mm 2.4mm; vertical-align:top; }
+.tbl .msg { width:41%; background:#182533; color:#e9eef3; border-radius:1.4mm; font-size:9pt; }
+.tbl .msg b { color:#fff; }
+.tbl .do { width:27%; font-weight:600; color:#1c6b45; }
+
+.qr { margin-top:4mm; border:2.6px dashed #7d8b99; border-radius:4mm; padding:6mm 7mm; }
+.qrtitle { font-weight:800; color:#0e2a47; margin-bottom:3.4mm; font-size:14pt; }
+.qrgrid { display:flex; flex-wrap:wrap; gap:4mm; }
+.qbox { flex:1 1 29%; background:#f4f7fa; border:1px solid #dde4ea; border-radius:2.4mm; padding:3.4mm 4mm; font-size:10.4pt; line-height:1.5; }
+.qgold { background:#fffaf0; border:2px solid #b8860b; border-radius:2.4mm; padding:3.4mm 4mm; font-size:13pt; text-align:center; margin-bottom:4.5mm; }
+.qfoot { margin-top:5mm; font-size:9.6pt; color:#4a5866; border-top:1px solid #dde4ea; padding-top:3mm; }
+.foot { margin-top:4mm; font-size:8.4pt; color:#7d8b99; border-top:1px solid #e2e8ee; padding-top:1.8mm; }
+</style></head><body>
+<section class="page cover">
+  <div class="kicker">AtFactoryPrice · Telegram bot · operator guide</div>
+  <h1>🧵 Selling thans from a store</h1>
+  <p class="sub">The whole path, card by card, from the first tap to the invoice — first the seller, then the admin who approves.</p>
+  <div class="who">
+    <div><b>Who</b><br>Any active employee or admin picks the thans and sends the sale. A <b>different</b> admin approves it.</div>
+    <div><b>Where</b><br>🛒 Sales &amp; Marketing → 📝 Orders → <b>🧵 Sell Bundles / Than</b></div>
+    <div><b>The rule</b><br>Nothing moves until an admin approves. The sales bill is always required. Customer, rate and payment are the <b>admin's</b> to set — the seller only says what physically left.</div>
+  </div>
+  <div class="notebox"><b>Worked example on every page:</b> container Mar26 · store IDUMOTA · design 202/201 · seller Abdul · admin Krishna · buyer ABBA. The words on the cards are the bot's exact words; the numbers are examples.</div>
+  <div class="foot">Guide version 22-Sep-2026 · built from the code on main. Regenerate with <code>python3 scripts/build-than-sale-guide.py</code>.</div>
+</section>
+
+<section class="page">
+  <div class="ph">Part 1 · The seller &nbsp;·&nbsp; steps 1–3 — where and what</div>
+  <div class="step"><div class="sleft"><div class="snum">1</div><div class="stitle">Open the door and pick the container</div><div class="slead">Tap <b>🧵 Sell Bundles / Than</b>. The bot asks which container (arrival batch) the goods came in; the number is how many thans it still has. One container → this card is skipped.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">🧵 <b>Bundle Sale — pick container</b><br><br>🚢 Select container (arrival batch):</div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">🚢 Mar26 · 412 than</div><div class="kbtn">🚢 Jun26 · 96 than</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div>
+  <div class="step"><div class="sleft"><div class="snum">2</div><div class="stitle">Pick the store</div><div class="slead">Only asked when that container sits in more than one store. One store → skipped.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">🧵 <b>Bundle Sale — pick warehouse</b><br>🚢 Container: <b>Mar26</b><br><br>Which location are you selling from?</div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">🏬 IDUMOTA</div></div><div class="krow"><div class="kbtn">🏬 Kano office</div></div><div class="krow"><div class="kbtn">⬅ Back to containers</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div>
+  <div class="step"><div class="sleft"><div class="snum">3</div><div class="stitle">Pick the design</div><div class="slead">Designs are listed largest stock first, with how many shades and yards are available here. Twelve show at a time.</div><div class="tip">⬅ Back always goes one screen up. ❌ Cancel drops everything — nothing has been written.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">🧵 <b>Bundle Sale — IDUMOTA</b><br>🚢 Container: <b>Mar26</b><br><br>Pick a design to drill into:</div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">🎨 202/201 · 5 shades · 1,380 yd</div></div><div class="krow"><div class="kbtn">🎨 9037 · 3 shades · 640 yd</div></div><div class="krow"><div class="kbtn">🎨 77019 · 2 shades · 410 yd</div></div><div class="krow"><div class="kbtn">⬅ Back</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div>
+</section>
+
+<section class="page">
+  <div class="ph">Part 1 · The seller &nbsp;·&nbsp; steps 4–5 — the shade and the bale</div>
+  <div class="step"><div class="sleft"><div class="snum">4</div><div class="stitle">Pick a shade</div><div class="slead">Each button is a shade with the thans still free to take — what is already in your cart is subtracted. <b>✅ Take ALL</b> puts every remaining than of every shade in the cart in one tap.</div><div class="warn">The bot never picks thans for you. Every than in a sale is ticked by a person (owner rule, TRF-15).</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">🧵 <b>202/201</b> @ <b>IDUMOTA</b><br><br>Pick a shade to open its bales:</div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">1 - White (24 thans)</div><div class="kbtn">2 - Dark Brown (18 thans)</div></div><div class="krow"><div class="kbtn">3 - Navy Blue (12 thans)</div><div class="kbtn">4 - Royal Blue (11 thans)</div></div><div class="krow"><div class="kbtn">5 - Taupe Grey (18 thans)</div></div><div class="krow"><div class="kbtn">✅ Take ALL 5 shades (83 thans)</div></div><div class="krow"><div class="kbtn">⬅️ Back to designs</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div>
+  <div class="step"><div class="sleft"><div class="snum">5</div><div class="stitle">Pick the bale</div><div class="slead">One row per bale. Tap the <b>bale number</b> to take the whole bale; tap <b>➡️</b> to open it and tick individual thans. The dot is the bale's age: 🟢 fresh · 🟡 ageing · 🔴 stale — sell the old ones first.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">🧵 <b>202/201</b>  🟢 <b>1 - White</b>  @ IDUMOTA<br><br>Tap a <b>bale number</b> to take the whole bale, or <b>➡️</b> to pick thans inside it.<br>⬜ none · ◪ some · ✅ whole bale.</div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">⬜ 🟢 5804 · 6 than</div><div class="kbtn">➡️</div></div><div class="krow"><div class="kbtn">⬜ 🟢 5805 · 6 than</div><div class="kbtn">➡️</div></div><div class="krow"><div class="kbtn">⬜ 🟡 5611 · 6 than</div><div class="kbtn">➡️</div></div><div class="krow"><div class="kbtn">⬜ 🔴 5402 · 6 than</div><div class="kbtn">➡️</div></div><div class="krow"><div class="kbtn">🎨 Change shade</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div>
+</section>
+
+<section class="page">
+  <div class="ph">Part 1 · The seller &nbsp;·&nbsp; step 6 — ticking thans inside a bale</div>
+  <div class="step"><div class="sleft"><div class="snum">6</div><div class="stitle">Tick the thans</div><div class="slead">Each chip is one than with its yards. Tap to tick, tap again to untick. <b>📦 Take whole bale</b> ticks all of them; <b>🧹 Clear bale</b> unticks. The <b>🛒 Cart</b> bar keeps the running total and opens the cart from anywhere.</div><div class="tip">Back on the bale list the row now shows ◪ 5804 · 3/6 than — some taken. ✅ means the whole bale.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">📦 <b>Bale 5804</b>  ·  6 than · 150 yd<br>🟢 <b>1 - White</b> · 202/201 @ IDUMOTA · 🟢 12d (fresh)<br><br>Selected: <b>0/6</b> than. Tap a than to toggle it.</div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">⬜ #1 · 25y</div><div class="kbtn">⬜ #2 · 25y</div><div class="kbtn">⬜ #3 · 25y</div></div><div class="krow"><div class="kbtn">⬜ #4 · 25y</div><div class="kbtn">⬜ #5 · 25y</div><div class="kbtn">⬜ #6 · 25y</div></div><div class="krow"><div class="kbtn">📦 Take whole bale</div></div><div class="krow"><div class="kbtn">⬅ Back to bales</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div><div class="tg"><div class="bubble"><div class="txt">📦 <b>Bale 5804</b>  ·  6 than · 150 yd<br>🟢 <b>1 - White</b> · 202/201 @ IDUMOTA · 🟢 12d (fresh)<br><br>Selected: <b>3/6</b> than. Tap a than to toggle it.</div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">☑️ #1 · 25y</div><div class="kbtn">☑️ #2 · 25y</div><div class="kbtn">☑️ #3 · 25y</div></div><div class="krow"><div class="kbtn">⬜ #4 · 25y</div><div class="kbtn">⬜ #5 · 25y</div><div class="kbtn">⬜ #6 · 25y</div></div><div class="krow"><div class="kbtn">📦 Take whole bale</div><div class="kbtn">🧹 Clear bale</div></div><div class="krow"><div class="kbtn">🛒 Cart · 3 than(s) · 75 yd</div></div><div class="krow"><div class="kbtn">⬅ Back to bales</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div>
+</section>
+
+<section class="page">
+  <div class="ph">Part 1 · The seller &nbsp;·&nbsp; between bales, and step 7 — the cart</div>
+  <div class="afterbox"><div class="atext"><p><b>Then:</b> ⬅ Back to bales → tick more bales of this shade, or 🎨 Change shade → another colour of the same design, or ⬅️ Back to designs → another design. Everything you ticked stays in the cart while you move around.</p></div><div class="acard"><div class="tg"><div class="bubble"><div class="txt">🧵 <b>202/201</b>  🟢 <b>1 - White</b>  @ IDUMOTA<br><br>Tap a <b>bale number</b> to take the whole bale, or <b>➡️</b> to pick thans inside it.<br>⬜ none · ◪ some · ✅ whole bale.</div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">◪ 🟢 5804 · 3/6 than</div><div class="kbtn">➡️</div></div><div class="krow"><div class="kbtn">⬜ 🟢 5805 · 6 than</div><div class="kbtn">➡️</div></div><div class="krow"><div class="kbtn">⬜ 🟡 5611 · 6 than</div><div class="kbtn">➡️</div></div><div class="krow"><div class="kbtn">⬜ 🔴 5402 · 6 than</div><div class="kbtn">➡️</div></div><div class="krow"><div class="kbtn">🛒 Cart · 3 than(s) · 75 yd</div></div><div class="krow"><div class="kbtn">🎨 Change shade</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div>
+  <div class="step"><div class="sleft"><div class="snum">7</div><div class="stitle">Review the cart</div><div class="slead">One line per shade. <b>🔽 Expand</b> shows the bales and than numbers behind a line; <b>🗑 Remove all</b> takes that shade out. <b>➕ Add more thans</b> goes back to the shades.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">🛒 <b>Cart · 5 than · 125 yd · 2 bale(s)</b><br><br>🟢 <b>1 - White</b> — 75 yd · 3 than · 1 bale(s)<br>🔵 <b>3 - Navy Blue</b> — 50 yd · 2 than · 1 bale(s)<br></div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">🔽 Expand 1 - White</div></div><div class="krow"><div class="kbtn">🔽 Expand 3 - Navy Blue</div></div><div class="krow"><div class="kbtn">➕ Add more thans</div></div><div class="krow"><div class="kbtn">✅ Continue — seller, date, bill</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div><div class="tg"><div class="bubble"><div class="txt">🛒 <b>Cart · 5 than · 125 yd · 2 bale(s)</b><br><br>🟢 <b>1 - White</b> — 75 yd · 3 than · 1 bale(s)<br>   · Bale 5804 — #1, #2, #3 = 75 yd<br>🔵 <b>3 - Navy Blue</b> — 50 yd · 2 than · 1 bale(s)<br></div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">🔼 Collapse 1 - White</div><div class="kbtn">🗑 Remove all 1 - White</div></div><div class="krow"><div class="kbtn">🔽 Expand 3 - Navy Blue</div></div><div class="krow"><div class="kbtn">… same buttons as above</div></div></div></div></div>
+</section>
+
+<section class="page">
+  <div class="ph">Part 1 · The seller &nbsp;·&nbsp; steps 8–9 — who sold it, when</div>
+  <div class="step"><div class="sleft"><div class="snum">8</div><div class="stitle">Who sold it</div><div class="slead">Tap the salesperson. It is stamped on the sales record and the approver sees it.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">🧑 <b>Who sold this?</b><br><br>Pick the salesperson — it is stamped on the sales record.</div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">🧑 Abdul</div><div class="kbtn">🧑 Musa</div></div><div class="krow"><div class="kbtn">🧑 Muhammad</div></div><div class="krow"><div class="kbtn">⬅ Back</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div>
+  <div class="step"><div class="sleft"><div class="snum">9</div><div class="stitle">When it was sold</div><div class="slead">Today and yesterday are one tap. Anything before yesterday is <b>BACKDATED</b>: allowed, but flagged to the approver and stamped on the record.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">📅 <b>When was it sold?</b><br><br>Tap the sale date.<br><i class=dim>Beyond yesterday is flagged BACKDATED to the approver.</i></div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">📅 Today (22-Sep-2026)</div></div><div class="krow"><div class="kbtn">Yesterday (21-Sep-2026)</div></div><div class="krow"><div class="kbtn">20-Sep-2026</div><div class="kbtn">19-Sep-2026</div></div><div class="krow"><div class="kbtn">18-Sep-2026</div><div class="kbtn">17-Sep-2026</div></div><div class="krow"><div class="kbtn">📆 Older date — calendar</div></div><div class="krow"><div class="kbtn">⬅ Back</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div>
+</section>
+
+<section class="page">
+  <div class="ph">Part 1 · The seller &nbsp;·&nbsp; steps 10–11 — confirm and bill</div>
+  <div class="step"><div class="sleft"><div class="snum">10</div><div class="stitle">Read the confirm card</div><div class="slead">Goods, total, seller and date on one card. <b>🧑 Change seller</b> and <b>📅 Change date</b> edit in place. When it is right, tap <b>📎 Attach bill &amp; submit</b>.</div><div class="warn">A backdated sale carries a red line on this card — the same line the approver sees.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">🧾 <b>Confirm sale</b><br><br><b>202/201</b> @ <b>IDUMOTA</b><br>🟢 1 - White — 75 yd · 3 than<br>🔵 3 - Navy Blue — 50 yd · 2 than<br><br><b>Total: 5 than · 125 yd</b><br><br>🧑 Abdul<br>📅 22-Sep-2026<br><br><i class=dim>Next: the sales bill, then it goes for approval.</i><br><i class=dim>Customer, rate and payment are set at approval — you get the customer name back here once approved.</i></div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">📎 Attach bill &amp; submit</div></div><div class="krow"><div class="kbtn">🧑 Change seller</div><div class="kbtn">📅 Change date</div></div><div class="krow"><div class="kbtn">⬅ Back</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div>
+  <div class="step"><div class="sleft"><div class="snum">11</div><div class="stitle">Send the sales bill</div><div class="slead">A photo or a PDF of the bill. This is the moment of submission: the request is created the instant the file lands — no second tap. Text, stickers or voice notes are refused.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">📎 <b>Send the sales bill</b><br><br>Photo or PDF of the bill for this sale — it is required before the request goes for approval.<br><br><i class=dim>Nothing is submitted until the bill arrives.</i></div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">⬅ Back</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div><div class="tg"><div class="bubble"><div class="txt">⚠️ Please send a <b>photo</b> or <b>PDF</b> of the sales bill.</div><div class="time">01:31</div></div></div></div></div>
+</section>
+
+<section class="page">
+  <div class="ph">Part 1 · The seller &nbsp;·&nbsp; step 12 — sent</div>
+  <div class="step"><div class="sleft"><div class="snum">12</div><div class="stitle">Sent</div><div class="slead">Your card seals into a receipt with the request number. Every admin except you receives the card and the bill. You will get the customer's name and phone number back on this same card once it is approved.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">⏳ <b>Submitting for approval…</b></div><div class="time">01:31</div></div></div><div class="tg"><div class="bubble"><div class="txt">⏳ <b>Submitted for approval</b><br><br>• Request: <code>4f72be16-982c-4241-b5d6-165b8db23cc6</code><br>• Items: <b>5 than · 125 yd</b><br>• Approver: 2nd admin (you cannot self-approve)<br><br><i class=dim>The admin assigns the customer, rate and payment when approving — you will get the customer name and number back here once approved.</i></div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">🏠 Menu</div></div></div></div></div>
+</section>
+
+<section class="page">
+  <div class="ph">Part 2 · The admin &nbsp;·&nbsp; the card, and Step 1 — who is buying</div>
+  <div class="step"><div class="sleft"><div class="snum">13</div><div class="stitle">The approval card arrives</div><div class="slead">By DM the moment the seller sends it, with the bill right after; also under <b>🛂 Approvals → 💰 Sales</b> for as long as it waits, and re-sent hourly by the reminder if it is left. Tap <b>✅ Approve</b> to open the five-step wizard. If the seller was an admin, the bot skipped them and the guard refuses their tap.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">🔔 <b>Approval required</b><br><br>Ref: <code>4f72be16-982c-4241-b5d6-165b8db23cc6</code><br>From: Abdul<br><br>🧾 Sale · IDUMOTA<br>🧑 Abdul · 📅 22-Sep-2026<br><br>🧵 202/201<br>  • 1 - White · 5804 #1, #2, #3 · 75 yd<br>  • 3 - Navy Blue · 5611 #2, #4 · 50 yd<br><br>Σ 5t · 125 yd<br>📎 Sales bill<br><br><i class=dim>Sent for approval</i><br><br>Use buttons below to approve or reject.</div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">✅ Approve</div><div class="kbtn">❌ Reject</div></div></div><div class="tg"><div class="bubble"><div class="pic"><div class="mockgarment"><span>the sales bill photo</span></div></div><div class="txt">📎 Sales bill for request 4f72be16-982c-4241-b5d6-165b8db23cc6</div><div class="time">01:31</div></div></div></div></div>
+  <div class="step"><div class="sleft"><div class="snum">14</div><div class="stitle">Step 1 — who is buying</div><div class="slead">Buyers of this design come first, each with the rate they last paid. <b>📋 All customers</b> lists everyone; or type a name to search. A new buyer is added through ➕ Add Contact first — never typed here.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">📋 <b>Confirm sale — R-4F72</b><br>Design(s): 202/201 · 2 item(s) · From: IDUMOTA<br><br><b>Step 1 — Who is buying 202/201?</b> Tap below, or reply with a name to search.<br><i class=dim>Buyers of this design first, with the rate they last paid for it.</i><br>✍️ <i class=dim>A typed reply goes to the request you touched last.</i></div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">👤 ABBA — 1,450/yd</div></div><div class="krow"><div class="kbtn">👤 CJE — 1,400/yd</div></div><div class="krow"><div class="kbtn">👤 Ketu madam</div><div class="kbtn">👤 Musa Bello</div></div><div class="krow"><div class="kbtn">📋 All customers</div></div></div></div></div>
+</section>
+
+<section class="page">
+  <div class="ph">Part 2 · The admin &nbsp;·&nbsp; Step 2 — the rate</div>
+  <div class="step"><div class="sleft"><div class="snum">15</div><div class="stitle">Step 2 — the rate</div><div class="slead">The first chip is the rate this buyer last paid for this design, taken from their last approved sale. One tap books it. Or tap <b>✏️ Type a custom rate</b> and reply with a number; for several designs reply with pairs, <code>44200:1500, 44201:1200</code>. <b>✎ Change customer</b> goes back to Step 1.</div><div class="tip">📒 Outstanding is the buyer's balance before this sale — the credit exposure you are adding to.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">📋 <b>Confirm sale — R-4F72</b><br><br>Customer: <b>ABBA</b><br>📒 Outstanding: 7,353,610<br>Design(s): 202/201<br>Unit: yard<br><br><b>Step 2 — Rate:</b> tap below, or reply with rate per yard.<br>• Single design: e.g. <code>1500</code><br>• Multiple: e.g. <code>44200:1500, 44201:1200</code><br>✍️ <i class=dim>A typed reply goes to the request you touched last.</i></div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">1,450/yd — last paid by ABBA</div></div><div class="krow"><div class="kbtn">✏️ Type a custom rate</div></div><div class="krow"><div class="kbtn">✎ Change customer (ABBA)</div></div></div></div></div>
+  <div class="afterbox"><div class="atext"><p><b>No history?</b> The card says so instead of silently dropping the chip. Type the rate.</p></div><div class="acard"><div class="tg"><div class="bubble"><div class="txt">📋 <b>Confirm sale — R-4F72</b><br><br>Customer: <b>ABBA</b><br>📒 Outstanding: 7,353,610<br>Design(s): 202/201<br>Unit: yard<br><br><b>Step 2 — Rate:</b> tap below, or reply with rate per yard.<br>• Single design: e.g. <code>1500</code><br>• Multiple: e.g. <code>44200:1500, 44201:1200</code><br>No earlier sale of 202/201 to ABBA found.<br>✍️ <i class=dim>A typed reply goes to the request you touched last.</i></div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">✏️ Type a custom rate</div></div><div class="krow"><div class="kbtn">✎ Change customer (ABBA)</div></div></div></div></div>
+</section>
+
+<section class="page">
+  <div class="ph">Part 2 · The admin &nbsp;·&nbsp; Steps 3–5 — payment, amount, multiplier</div>
+  <div class="step"><div class="sleft"><div class="snum">16</div><div class="stitle">Step 3 — payment mode</div><div class="slead">Cash, a registered bank, or <b>🕐 Not yet paid</b> (credit). Banks come from the Settings sheet.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">📋 <b>Confirm sale — R-4F72</b><br>👤 ABBA<br><br><b>Step 3 — Payment mode:</b> tap below, or reply with one of:<br>• Cash<br>• Paid to [Bank]<br>• Not yet paid<br>✍️ <i class=dim>A typed reply goes to the request you touched last.</i></div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">💵 Cash</div><div class="kbtn">🕐 Not yet paid</div></div><div class="krow"><div class="kbtn">🏦 ZENITH BANK</div><div class="kbtn">🏦 GTBank</div></div></div></div></div>
+  <div class="step"><div class="sleft"><div class="snum">17</div><div class="stitle">Step 4 — amount paid</div><div class="slead"><b>✅ Paid in full</b> is yards × rate, computed for you. Part payment: <b>✏️ Type the amount</b>. Not yet paid skips this step.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">📋 <b>Confirm sale — R-4F72</b><br>👤 ABBA · Cash<br><br><b>Step 4 — Amount paid:</b> tap below, or reply with the amount received, e.g. 50000<br>✍️ <i class=dim>A typed reply goes to the request you touched last.</i></div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">✅ Paid in full — 181,250</div></div><div class="krow"><div class="kbtn">✏️ Type the amount</div></div></div></div></div>
+  <div class="step"><div class="sleft"><div class="snum">18</div><div class="stitle">Step 5 — customer-copy multiplier</div><div class="slead">Internal only. The customer's invoice prints the rate × this number; the sheet, the ledger and every internal figure stay at the rate you entered. <b>No multiplier</b> prints the rate as typed. The factor never appears on the invoice, the caption or any card after this one.</div></div><div class="sright"><div class="tg"><div class="bubble"><div class="txt">📋 <b>Confirm sale — R-4F72</b><br>👤 ABBA · Cash · 181,250<br><br><b>Step 5 — Customer-copy multiplier:</b> tap below, or reply with the number the entered rate is multiplied by on the customer&#x27;s invoice.<br><i class=dim>No multiplier = the invoice prints the rate exactly as entered.</i><br>✍️ <i class=dim>A typed reply goes to the request you touched last.</i></div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">No multiplier</div><div class="kbtn">Settings: 1,250</div></div><div class="krow"><div class="kbtn">✏️ Type a number</div></div></div></div></div>
+</section>
+
+<section class="page">
+  <div class="ph">Part 2 · The admin &nbsp;·&nbsp; approved — what both sides see</div>
+  <div class="compare">
+    <div class="col good"><div class="chead">The admin's chat</div>
+      <div class="tg"><div class="bubble"><div class="txt">✅ Request R-4F72 approved. Sale and ledger updated.<br>📎 View Sales Bill</div><div class="time">01:31</div></div></div><div class="tg"><div class="bubble"><div class="txt">📒 <b>ABBA</b> — Outstanding as of today: 7,534,860</div><div class="time">01:31</div></div></div><div class="tg"><div class="bubble"><div class="doc"><span class="dicon">📄</span><span class="dname">INV-2026-0912 · ABBA · 22-Sep-2026.pdf</span></div><div class="txt">🧾 Invoice INV-2026-0912 · ABBA</div><div class="time">01:31</div></div></div>
+      <div class="cnote">Stock is marked sold, the ledger takes the sale, the invoice is issued and its PDF lands here and with the seller. The outstanding line is the balance <b>after</b> this sale.</div></div>
+    <div class="col good"><div class="chead">The seller's chat</div>
+      <div class="tg"><div class="bubble"><div class="txt">✅ <b>Approved — ready to dispatch</b><br><br>👤 Customer: <b>ABBA</b><br>📞 08031234567<br>Ref: R-4F72</div><div class="time">01:31</div></div><div class="krow"><div class="kbtn">🏠 Menu</div></div></div><div class="tg"><div class="bubble"><div class="doc"><span class="dicon">📄</span><span class="dname">INV-2026-0912 · ABBA · 22-Sep-2026.pdf</span></div><div class="txt">🧾 Invoice INV-2026-0912 · ABBA</div><div class="time">01:31</div></div></div>
+      <div class="cnote">The receipt from step 12 is edited in place: the buyer's name and phone number appear on it, so the goods can be dispatched.</div></div>
+  </div>
+  <div class="warnwide"><b>Rejected instead?</b> The seller's chat gets “❌ Your request R-4F72 has been rejected by admin.” Nothing was written. The request stays on record under 🛂 Approvals → ✅❌ Decided, naming who rejected it.</div>
+</section>
+
+<section class="page">
+  <div class="ph">If something goes wrong &nbsp;·&nbsp; the seller's side</div>
+  <p class="lead">Nothing here can move stock. The worst case is a request that has to be raised again.</p>
+  <table class="tbl"><thead><tr><th>The bot says</th><th>What it means</th><th>What you do</th></tr></thead><tbody><tr><td class="msg">🛒 <b>Cart is empty</b><br><br>Go back and pick a few thans, or use <b>🎯 Pack target yardage</b>.</td><td>You tapped Continue with nothing ticked.</td><td class="do">Tap 🎨 Pick another shade and tick the thans.</td></tr><tr><td class="msg">⚠️ <b>1 item(s) became unavailable</b><br><br>Dropped from cart:<br>  · Bale 5804 #2 — sold<br><br>Review the cart and decide.</td><td>Someone sold that than while you were picking. The bot re-checks live stock before the confirm card.</td><td class="do">Tap 🛒 Open cart, check what is left, continue.</td></tr><tr><td class="msg">⚠️ 25-Sep-2026 is in the FUTURE — future sales are not allowed.</td><td>You tapped a date after today.</td><td class="do">Tap today or the real day of the sale.</td></tr><tr><td class="msg">⚠️ 2026-02-01 is more than 180 days back — ask an admin if this is a genuine old sale.</td><td>The calendar reaches 180 days back (a Settings cell). Older sales need an admin.</td><td class="do">Tell the admin; do not force it.</td></tr><tr><td class="msg">⚠️ Please send a <b>photo</b> or <b>PDF</b> of the sales bill.</td><td>You sent text, a sticker or a voice note.</td><td class="do">Send the bill as a photo or a PDF file.</td></tr><tr><td class="msg">✅ <b>Already submitted.</b><br>Request: <code>…</code><br><br>⏳ Waiting for admin approval.</td><td>You tapped submit twice (or the app retried). One request exists, not two.</td><td class="do">Nothing. Wait for the admin.</td></tr><tr><td class="msg">⚠️ Bale 5611 has no available than in IDUMOTA.</td><td>That bale is sold out here (or sits in another store).</td><td class="do">Pick another bale, or check the store.</td></tr><tr><td class="msg">❌ Cancelled.</td><td>You tapped ❌ Cancel. Nothing was written anywhere.</td><td class="do">Start again from 🧵 Sell Bundles / Than.</td></tr></tbody></table>
+</section>
+
+<section class="page">
+  <div class="ph">If something goes wrong &nbsp;·&nbsp; the admin's side</div>
+  <table class="tbl"><thead><tr><th>The bot says</th><th>What it means</th><th>What you do</th></tr></thead><tbody><tr><td class="msg">🔒 You cannot approve your own request — a second admin must review it.</td><td>You raised this sale yourself. Another admin must approve it.</td><td class="do">Ask the other admin to open 🛂 Approvals → 💰 Sales.</td></tr><tr><td class="msg">Request … is already approved — no change made.</td><td>The other admin got there first (or you tapped an old card).</td><td class="do">Nothing to do.</td></tr><tr><td class="msg">⚠️ Request R-4F72 approved, but applied only 1 of 2 Bales. Ledger updated for what was applied.</td><td>One bale in the request was sold or moved before you approved. The rest went through.</td><td class="do">Check with the seller; the skipped item is listed under the card.</td></tr><tr><td class="msg">✅ Mark as done (no re-run)</td><td>Every than in this request is already sold (the stock check found nothing left to apply). The button replaces ✅ Approve.</td><td class="do">Tap it to close the request without selling anything twice.</td></tr><tr><td class="msg">ℹ️ <b>Abba Textiles</b> is filed under <b>ABBA</b> — the invoice and ledger will read ABBA.</td><td>The name you typed is an alias. The record uses the official name.</td><td class="do">Nothing. Continue to Step 2.</td></tr><tr><td class="msg">Please enter a positive number for the multiplier, e.g. 1250 — or tap No multiplier.</td><td>Step 5 was answered with a word or a zero.</td><td class="do">Type a number, or tap No multiplier.</td></tr></tbody></table>
+  <div class="notebox"><b>Several requests at once?</b> Each sale has its own wizard. Buttons always act on their own card; a <i>typed</i> reply goes to the request you touched last — the card says so in its last line.</div>
+</section>
+
+<section class="page">
+  <div class="ph">Quick card &nbsp;·&nbsp; cut this out and keep it by the phone</div>
+  <div class="qr">
+    <div class="qrtitle">✂ 🧵 Selling thans — the whole job on one card</div>
+    <div class="qgold">Tick the thans → 🧑 who sold → 📅 when → 📎 send the bill. That is the sale sent.</div>
+    <div class="qrgrid">
+      <div class="qbox"><b>Menu path</b><br>🛒 Sales &amp; Marketing → 📝 Orders → 🧵 Sell Bundles / Than</div>
+      <div class="qbox"><b>Pick</b><br>container → store → design → shade → bale → thans</div>
+      <div class="qbox"><b>Bale row</b><br>tap the number = whole bale<br>➡️ = pick thans inside</div>
+      <div class="qbox"><b>Marks</b><br>⬜ none · ◪ some · ✅ whole<br>🟢 fresh · 🟡 ageing · 🔴 stale</div>
+      <div class="qbox"><b>🛒 Cart bar</b><br>running total; tap it any time</div>
+      <div class="qbox"><b>Date</b><br>today / yesterday one tap<br>older = BACKDATED, flagged</div>
+      <div class="qbox"><b>The bill</b><br>photo or PDF — sending it IS the submit</div>
+      <div class="qbox"><b>Not yours to set</b><br>customer · rate · payment<br>(the admin, at approval)</div>
+      <div class="qbox"><b>After approval</b><br>your receipt shows the buyer's name and number → dispatch</div>
+    </div>
+    <div class="qfoot">Admins: 🛂 Approvals → 💰 Sales → ✅ Approve → five steps: buyer · rate · payment · amount · multiplier. You cannot approve your own sale.</div>
+  </div>
+  <div class="foot">AtFactoryPrice · 🧵 Sell Bundles / Than · guide version 22-Sep-2026</div>
+</section>
+</body></html>
