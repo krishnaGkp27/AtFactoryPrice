@@ -55,6 +55,7 @@ const { baleGroupKey } = require('../utils/inventoryPickers');
 const driveBackup = require('../services/vision/driveBackup');
 const telegramFiles = require('../utils/telegramFiles');
 const auth = require('../middlewares/auth');
+const transferRow = require('../services/transferRow');
 const config = require('../config');
 const logger = require('../utils/logger');
 const dateCalendar = require('../utils/dateCalendar');
@@ -2002,12 +2003,15 @@ async function myQueueSection(userId) {
   const rows = [];
   for (const t of pend.slice(0, MY_QUEUE_MAX)) {
     const aj = t.actionJSON;
-    const toDispatch = aj.stage !== 'in_transit';
+    // TRF-20 (3/8) — the duty comes from the STAGE: a parked (admin_review)
+    // transfer used to be listed as "waiting for you to dispatch", which it
+    // was not; it waits for the admin's approval.
+    const duty = transferRow.duty(t);
     const n = (aj.dispatched || []).reduce((s, d) => s + d.sent, 0) || totalBales(aj);
     lines.push(`   \`${shortTransferRef(t.requestId)}\` ${n} bale(s) · ${aj.from} → ${aj.to}`);
-    lines.push(`     ${toDispatch ? '⏳ waiting for you to dispatch' : '🚚 in transit — confirm receipt'}`);
+    lines.push(`     ${duty.line}`);
     rows.push([{
-      text: toDispatch ? `🚚 Dispatch — ${t.requestId}` : `📦 Receive — ${t.requestId}`,
+      text: transferRow.dutyLabel(t).slice(0, 60),
       callback_data: `trf:card:${t.requestId}`,
     }]);
   }
@@ -2133,8 +2137,10 @@ async function showList(bot, chatId, userId, messageId) {
       : aj.stage === 'admin_review' ? 'an admin' : names[String(aj.dispatcher)];
     text += `\n\`${shortTransferRef(t.requestId)}\` ${compactOf(aj)} — ${badge}`
       + `\n   _waiting on ${holder || '—'}${waitedFor(t.createdAt)}_`;
+    // TRF-20 (3/8) — the row is the owner's one shape (services/transferRow);
+    // the holder and the wait stay in the text block above the buttons.
     rows.push([{
-      text: `${shortTransferRef(t.requestId)} · ${badge} · ${holder || '—'}`.slice(0, 60),
+      text: transferRow.label(t).slice(0, 60),
       callback_data: `trf:lcard:${t.requestId}`,
     }]);
   }

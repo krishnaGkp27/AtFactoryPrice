@@ -190,7 +190,7 @@ test('APX-1: transfers are NOT approvable — no Approve button, routed instead'
 /* APX-3b — stage-shaded transfer chips: identical trucks hid which
  * transfers needed a hand. requested → 🟠 awaiting dispatch,
  * in_transit → 📦 receipt pending; category chip carries the mix. */
-test('APX-6: transfer chips are dot+route+bales on one newest-first timeline', async () => {
+test('TRF-20: transfer chips are date · dot · route · bales on one newest-first timeline', async () => {
   const orig = approvalQueueRepository.getAllPending;
   const origResolved = approvalQueueRepository.getResolved;
   approvalQueueRepository.getAllPending = async () => [
@@ -216,23 +216,26 @@ test('APX-6: transfer chips are dot+route+bales on one newest-first timeline', a
 
     await flow.handleCallback(bot, cb('abx:cat:transfers', ADMIN));
     const chips = lastKb(bot).filter((b) => b.callback_data.startsWith('abx:trf:')).map((b) => b.text);
-    assert.ok(chips.includes('🔴 LAG▸KAN ·2B'), `requested = red dot + requested bales, got: ${chips}`);
+    assert.ok(chips.includes('24Jul·01 · 🔴 LAG▸KAN · 2B'), `requested = date · red dot · route · requested bales, got: ${chips}`);
     // B counts whole bales ONLY — never the thans packed inside them.
-    assert.ok(chips.includes('🟡 IDU▸KAN ·3B'), `in-transit = yellow dot + bale count, got: ${chips}`);
+    assert.ok(chips.includes('24Jul·03 · 🟡 IDU▸KAN · 3B'), `in-transit = yellow dot + logged bale count, got: ${chips}`);
     // T counts LOOSE thans travelling as their own cargo (legacy single-than row).
-    assert.ok(chips.includes('🔴 R-ABC1 ·1T'), `loose than = T unit + ref fallback, got: ${chips}`);
-    assert.ok(chips.includes('🟢 IDU▸KAN'), `received = green dot, got: ${chips}`);
-    assert.ok(chips.includes('🟢 LAG▸IDU'), `old green KEPT (default: never vanish), got: ${chips}`);
+    assert.ok(chips.includes('R-ABC1 · 🔴 ?▸KAN · 1T'), `loose than = T unit; legacy row knows only its destination, got: ${chips}`);
+    assert.ok(chips.includes('31Jul·01 · 🟢 IDU▸KAN'), `received = green dot, got: ${chips}`);
+    assert.ok(chips.includes('20Jul·01 · 🟢 LAG▸IDU'), `old green KEPT (default: never vanish), got: ${chips}`);
     assert.equal(chips.length, 5, 'rejected resolved rows never appear');
-    // No stage words, no date tokens — colour is the stage, position is the date.
-    assert.ok(chips.every((t) => !/DSP|RCV|Jul·/.test(t)), `words/dates removed, got: ${chips}`);
+    // No stage words (owner 01-Aug); the DATE is back as the short reference
+    // (owner 22-Sep) so two rows for the same route and quantity can never
+    // look alike. Colour is still the stage.
+    assert.ok(chips.every((t) => !/DSP|RCV|awaiting|dispatch/.test(t)), `no stage words, got: ${chips}`);
+    assert.ok(chips.every((t) => /^(\d{2}[A-Z][a-z]{2}·\d{2,}|R-[A-Z0-9]{4}) · /.test(t)), `every chip starts with its reference, got: ${chips}`);
     // Newest→oldest across open AND received: the two 1-day rows lead (either
     // order), then 2d yellow, 3d legacy, 9-day green last.
-    assert.equal(chips[2], '🟡 IDU▸KAN ·3B', `2-day row third, got: ${chips}`);
-    assert.equal(chips[3], '🔴 R-ABC1 ·1T', `3-day row fourth, got: ${chips}`);
-    assert.equal(chips[4], '🟢 LAG▸IDU', `oldest last, got: ${chips}`);
+    assert.equal(chips[2], '24Jul·03 · 🟡 IDU▸KAN · 3B', `2-day row third, got: ${chips}`);
+    assert.equal(chips[3], 'R-ABC1 · 🔴 ?▸KAN · 1T', `3-day row fourth, got: ${chips}`);
+    assert.equal(chips[4], '20Jul·01 · 🟢 LAG▸IDU', `oldest last, got: ${chips}`);
     assert.match(lastText(bot), /3\* open · 2 🟢/, `header splits open vs received, got: ${lastText(bot)}`);
-    assert.match(lastText(bot), /🔴 requested · 🟡 in transit · 🟢 received · B bales · T thans/, 'legend teaches the dots and units');
+    assert.match(lastText(bot), /🔴 requested · 🛂 parked for approval · 🟡 in transit · 🟢 received/, 'legend teaches the dots');
 
     // APX-3e — a Settings row restores the display window once backups exist.
     const origSettings = settingsRepo.getAll;

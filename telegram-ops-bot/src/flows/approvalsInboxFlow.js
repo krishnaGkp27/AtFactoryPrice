@@ -672,19 +672,9 @@ function transferThanCount(aj) {
   return 0;
 }
 
-function transferChipLabel(it) {
-  const aj = it.actionJSON || {};
-  const dot = String(it.status || '').toLowerCase() === 'approved' ? '🟢'
-    : (aj.stage === 'in_transit' ? '🟡' : aj.stage === 'admin_review' ? '🛂' : '🔴');
-  // Legacy rows without a route keep the short ref so the chip isn't blank.
-  const route = (aj.from || aj.to) ? `${whCode(aj.from)}▸${whCode(aj.to)}` : shortTransferId(it.requestId);
-  const parts = [];
-  const b = transferBaleCount(aj);
-  const t = transferThanCount(aj);
-  if (b) parts.push(`${b}B`);
-  if (t) parts.push(`${t}T`);
-  return parts.length ? `${dot} ${route} ·${parts.join(', ')}` : `${dot} ${route}`;
-}
+// TRF-20 (3/8) — the one row every surface draws (services/transferRow):
+// date · dot · route · quantity, the owner's shape of 22-Sep-2026.
+function transferChipLabel(it) { return require('../services/transferRow').label(it); }
 
 /**
  * DEC-1 — outcome dot. A transfer's 'approved' means RECEIVED (the receiver
@@ -840,7 +830,7 @@ async function renderItems(bot, chatId, userId, opts = {}) {
     note = '\n✅ approved · ❌ rejected · 🚚 transfer (✅ = received) — newest decision first'
       + `\n_Record only — nothing here can be approved or undone. Tap one to see who decided it._${decidedCapNote(items)}`;
   } else if (isTransfers) {
-    note = '\n🔴 requested · 🟡 in transit · 🟢 received · B bales · T thans — newest first\n_Not approvals — tap one to open its transfer card._';
+    note = `\n${require('../services/transferRow').LEGEND} — newest first\n_Not approvals — tap one to open its transfer card._`;
   } else if (isSales) {
     // SLC-1 — the legend names only what an icon MEANS; a bare chip is an
     // ordinary sale. Exceptions are listed only when the page has one.

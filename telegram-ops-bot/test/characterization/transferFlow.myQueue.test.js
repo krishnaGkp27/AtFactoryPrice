@@ -144,7 +144,9 @@ test("dispatcher's My Tasks lists the pending transfer with a Dispatch button", 
   assert.ok(text.includes(require(path.join(SRC, 'services/approvalCards')).shortTransferRef(requestId)), 'short ref shown');
   assert.match(text, /waiting for you to dispatch/);
   const kb = lastKb(bot);
-  assert.ok(kb.some((b) => b === `🚚 Dispatch — ${requestId}|trf:card:${requestId}`), 'Dispatch button routes to trf:card');
+  // TRF-20 — the button is the duty + the row (date · route · bales); the full id stays in the callback.
+  const short = require(path.join(SRC, 'services/approvalCards')).shortTransferRef(requestId);
+  assert.ok(kb.some((b) => b === `🚚 Dispatch · ${short} · LAG▸KAN · 2B|trf:card:${requestId}`), `Dispatch button routes to trf:card, got: ${kb}`);
 });
 
 test('trf:card re-sends the dispatcher action card, session-free', async () => {
@@ -170,7 +172,8 @@ test('after dispatch the queue hands over to the receiver', async () => {
   await taskFlow.showMyTasks(br, 'musa', 'musa', null);
   assert.match(br.allText(), /in transit — confirm receipt/);
   const kb = lastKb(br);
-  assert.ok(kb.some((b) => b === `📦 Receive — ${requestId}|trf:card:${requestId}`), 'Receive button routes to trf:card');
+  const short2 = require(path.join(SRC, 'services/approvalCards')).shortTransferRef(requestId);
+  assert.ok(kb.some((b) => b === `📦 Receive · ${short2} · LAG▸KAN · 2B|trf:card:${requestId}`), `Receive button routes to trf:card, got: ${kb}`);
 
   // The receiver's card carries Received / Reject.
   const bc = createFakeBot();
