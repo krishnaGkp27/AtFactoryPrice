@@ -7,7 +7,7 @@
  *   admin wizard → order → dispatcher's My Tasks lists it with a
  *   [🚚 Dispatch] button → trf:card re-sends the action card (session-free)
  *   → after dispatch the queue hands over to the receiver
- *   → legacy tiles / typed transfer commands redirect to Transfer Stock.
+ *   → the legacy tiles are gone (TRF-20 5/8); typed transfer commands redirect to Transfer Stock.
  */
 
 process.env.ADMIN_IDS = '777';
@@ -210,9 +210,9 @@ test('trf:card on a settled transfer shows its state, no action buttons', async 
   assert.ok(!kb.some((b) => b.includes('trf:rcv:') || b.includes('trf:acc:')), 'no stale action buttons');
 });
 
-test('legacy tiles are hidden from menus but still resolvable', () => {
-  assert.equal(activityRegistry.getActivity('transfer_package').hub, '_hidden');
-  assert.equal(activityRegistry.getActivity('transfer_than').hub, '_hidden');
+test('TRF-20 (5/8): the legacy tiles are GONE from the registry, not merely hidden', () => {
+  assert.equal(activityRegistry.getActivity('transfer_package'), null);
+  assert.equal(activityRegistry.getActivity('transfer_than'), null);
   const grouped = activityRegistry.groupByHub(activityRegistry.getAll());
   const surfaced = grouped.hubs.flatMap((h) => h.activities.map((a) => a.code));
   assert.ok(!surfaced.includes('transfer_package'), 'tile no longer surfaces');
@@ -220,17 +220,16 @@ test('legacy tiles are hidden from menus but still resolvable', () => {
   assert.ok(surfaced.includes('transfer_stock'), 'staged flow still surfaces');
 });
 
-test('act:transfer_package / act:transfer_than redirect to Transfer Stock', async () => {
+test('TRF-20 (5/8): a stale act:transfer_package / act:transfer_than button opens nothing — no picker, no crash', async () => {
   seedInventory();
   armQueue();
   for (const code of ['act:transfer_package', 'act:transfer_than']) {
     sessionStore.clear('777');
     const bot = createFakeBot();
     await controller.handleCallbackQuery(bot, cb(code, 777));
-    assert.match(bot.allText(), /Transfer Stock/, `${code} redirects`);
-    assert.ok(!/Select the Bale/.test(bot.allText()), 'legacy picker never opens');
-    const kb = lastKb(bot);
-    assert.ok(kb.some((b) => b.includes('act:transfer_stock')), 'redirect button offered');
+    assert.ok(!/Select the Bale/.test(bot.allText()), 'the legacy picker no longer exists');
+    assert.match(bot.allText(), /Feature coming soon/, `${code} falls to the generic unknown-tile reply`);
+    assert.equal(sessionStore.get('777'), null, 'no legacy session was opened');
   }
 });
 
