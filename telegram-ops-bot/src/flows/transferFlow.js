@@ -251,7 +251,11 @@ async function showPersonPicker(bot, chatId, userId, role, cands) {
 
 async function showConfirm(bot, chatId, userId) {
   const session = sessionStore.get(userId);
-  session.step = 'confirm'; sessionStore.set(userId, session);
+  session.step = 'confirm';
+  // TRF-20 — the identity of THIS send is minted when the card is drawn, so
+  // every tap of it (a retry, a double delivery) means the same transfer.
+  if (!session.idemKey) session.idemKey = require('crypto').randomUUID();
+  sessionStore.set(userId, session);
   const items = (session.lines || []).map((l) => {
     const nums = Array.isArray(l.bales) && l.bales.length ? ` (${l.bales.join(', ')})` : '';
     return `  🧵 ${l.design} · Shade ${l.shade} · ×${l.qty} bls${nums}`;
@@ -265,17 +269,27 @@ async function showConfirm(bot, chatId, userId) {
     [[{ text: '✅ Send', callback_data: 'trf:send' }], session.cartOrigin ? cancelRow() : navRow()]);
 }
 
-async function submit(bot, chatId, userId) {
+async function submit(bot, chatId, userId, { force = false } = {}) {
   const session = sessionStore.get(userId);
+  if (!session || session.type !== SESSION_TYPE) return;
   // TRF-INT2 — double-tapped Send must not create two live transfer orders.
   if (session._submitting) return;
   session._submitting = true;
   sessionStore.set(userId, session);
   try {
-    const { requestId, aj } = await transferService.createTransferRequest({
+    const created = await transferService.createTransferRequest({
       from: session.from, to: session.to, lines: session.lines, requestedBy: userId,
       dispatcher: session.dispatcher.user_id, receiver: session.receiver.user_id,
+      idemKey: session.idemKey, force: force && auth.isAdmin(userId),
     });
+    if (created.duplicate) {
+      // TRF-20 D1 — the same load is already open: show it, do not add to it.
+      session._submitting = false;
+      sessionStore.set(userId, session);
+      await showDuplicateBlock(bot, chatId, userId, created.duplicate);
+      return;
+    }
+    const { requestId, aj } = created;
     // Dispatcher card (best-effort DM).
     try {
       // TRF-19 — the card says whose move it is from the first send, not
@@ -296,7 +310,8 @@ async function submit(bot, chatId, userId) {
     // branch and its lifecycle rides the trf:* dispatcher/receiver chain
     // (a generic reject after dispatch would strand in-transit bales; see
     // services/approvalReminder.js). The creator gets no approve buttons.
-    await notifyAdmins(bot, requestId, aj, 'requested ⏳ — awaiting dispatch', userId);
+    await notifyAdmins(bot, requestId, aj,
+      `requested ⏳ — awaiting dispatch${aj.duplicateOf ? ` · ⧉ sent anyway, duplicate of ${shortTransferRef(aj.duplicateOf)}` : ''}`, userId);
     // Render the receipt BEFORE clearing — the renderer is session-guarded.
     await render(bot, chatId, userId,
       `✅ *Transfer ${shortTransferRef(requestId)} sent*\n${headOf(aj)}\n${linesBlock(aj.lines)}\n\n⏳ Waiting for *${session.dispatcher.name}* to dispatch.`,
@@ -310,6 +325,28 @@ async function submit(bot, chatId, userId) {
     await render(bot, chatId, userId, `⚠️ Could not create the transfer: ${e.message}`,
       [session.cartOrigin ? cancelRow() : navRow()]);
   }
+}
+
+/**
+ * TRF-20 D1 — the identical load is already open. The card names it, who
+ * holds it and for how long, and offers to OPEN it. An admin may still send
+ * a second one knowingly ("Send anyway"), which stamps the new row as a
+ * duplicate; nobody else can. The user's own confirm card stays reachable
+ * through ⬅ Back so nothing typed is lost.
+ */
+async function showDuplicateBlock(bot, chatId, userId, twin) {
+  const aj = twin.actionJSON || {};
+  const names = await nameMap([twin.user, aj.dispatcher, aj.receiver]);
+  const ref = shortTransferRef(twin.requestId);
+  const rows = [[{ text: `📋 Open ${ref}`, callback_data: `trf:lcard:${twin.requestId}` }]];
+  if (auth.isAdmin(userId)) rows.push([{ text: '⚠️ Send anyway (a second order)', callback_data: 'trf:send:force' }]);
+  rows.push([{ text: '⬅ Back', callback_data: 'trf:back:confirm' }, ...cancelRow()]);
+  await render(bot, chatId, userId,
+    `⚠️ *This load is already open — \`${ref}\`*\n`
+    + `${headOf(aj)}\n${linesBlock(aj.lines)}\n`
+    + `${waitingLine(twin, names)}\n\n`
+    + '_Sending again would create a second order for the same bales. Open the existing one instead._',
+    rows);
 }
 
 /* ── counterparty actions (session-free, keyed by requestId) ───────────── */
@@ -2524,6 +2561,8 @@ async function handleCallback(bot, query) {
     return true;
   }
   if (data === 'trf:send') { await submit(bot, chatId, userId); return true; }
+  if (data === 'trf:send:force') { await submit(bot, chatId, userId, { force: true }); return true; }
+  if (data === 'trf:back:confirm') { await showConfirm(bot, chatId, userId); return true; }
 
   // TRF-16 — departure-date picker (session-backed, dispatch chain only).
   if (data === 'trf:noop') return true;

@@ -67,6 +67,14 @@ auditLogRepository.append = async () => {};
 // round-trip works without sheet plumbing.
 const qrows = new Map();
 approvalQueueRepository.append = async (r) => { qrows.set(r.requestId, { ...r }); return r; };
+// TRF-20 — createTransferRequest writes through appendOnce, whose internal
+// call binds to the module's own append; mirror it here so the stub sees it.
+approvalQueueRepository.appendOnce = async (rec) => {
+  const existing = await approvalQueueRepository.getByRequestId(rec.requestId);
+  if (existing) return { created: false, existing };
+  await approvalQueueRepository.append(rec);
+  return { created: true, existing: null };
+};
 approvalQueueRepository.getByRequestId = async (id) => qrows.get(String(id)) || null;
 approvalQueueRepository.updateActionJSON = async (id, patch) => {
   const row = qrows.get(String(id));

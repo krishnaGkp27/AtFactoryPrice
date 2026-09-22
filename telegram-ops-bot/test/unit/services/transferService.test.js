@@ -63,6 +63,14 @@ function stub(row, inventorySeed = INV) {
     return rows.map((r) => ({ ...r }));
   };
   approvalQueueRepository.append = async (rec) => { calls.appends.push(rec); current = { ...rec, status: 'pending' }; return rec; };
+  // TRF-20 — createTransferRequest writes through appendOnce, whose internal
+  // call binds to the module's own append; mirror it here so the stub sees it.
+  approvalQueueRepository.appendOnce = async (rec) => {
+    const existing = await approvalQueueRepository.getByRequestId(rec.requestId);
+    if (existing) return { created: false, existing };
+    await approvalQueueRepository.append(rec);
+    return { created: true, existing: null };
+  };
   approvalQueueRepository.getByRequestId = async () => (current ? JSON.parse(JSON.stringify(current)) : null);
   approvalQueueRepository.getAllPending = async () => (current && current.status === 'pending' ? [current] : []);
   approvalQueueRepository.updateStatus = async (id, status) => { calls.statusUpdates.push({ id, status }); current.status = status; return true; };

@@ -27,6 +27,8 @@ const inventoryRepository = require('../repositories/inventoryRepository');
 const transactionsRepository = require('../repositories/transactionsRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const mutex = require('../utils/asyncMutex');
+const transferGhosts = require('./transferGhosts');
+const logger = require('../utils/logger');
 
 const ACTION = 'transfer_stock';
 const AVAILABLE = 'available';
@@ -141,7 +143,22 @@ async function uniqueTransferId() {
   return `TR-${date}-${String(seq).padStart(3, '0')}`;
 }
 
-async function createTransferRequest({ from, to, lines, requestedBy, dispatcher, receiver }) {
+/**
+ * TRF-20 (2/8) — one identity that cannot repeat, and the duplicate guard.
+ *
+ * @param {object} p
+ * @param {string} [p.idemKey]  minted when the confirm card was DRAWN and
+ *   carried on Send. A retry after any failure (a timeout, a thrown audit
+ *   line, a double delivery) finds the row this key already produced and
+ *   returns it instead of writing a second one. Rides actionJSON; no column.
+ * @param {boolean} [p.force]   an admin's "Send anyway": the identical open
+ *   transfer no longer blocks, and the new row is stamped `duplicateOf` so
+ *   every surface can say so.
+ * @returns {Promise<{requestId:string, aj:object, existing?:boolean}
+ *   | {duplicate:object}>} `duplicate` = the OLDEST open transfer of the
+ *   same load (route + lines); nothing was written.
+ */
+async function createTransferRequest({ from, to, lines, requestedBy, dispatcher, receiver, idemKey, force }) {
   const cleanLines = (lines || [])
     .map((l) => {
       const line = { design: l.design, shade: l.shade, qty: Math.max(0, parseInt(l.qty, 10) || 0) };
@@ -155,23 +172,44 @@ async function createTransferRequest({ from, to, lines, requestedBy, dispatcher,
     })
     .filter((l) => l.design && l.qty > 0);
   if (!cleanLines.length) throw new Error('transferService: at least one line with qty > 0 required');
-  const requestId = await uniqueTransferId();
-  const aj = {
-    action: ACTION,
-    from, to,
-    lines: cleanLines,
-    dispatcher: String(dispatcher || ''),
-    receiver: String(receiver || ''),
-    stage: STAGES.REQUESTED,
-  };
-  await approvalQueueRepository.append({
-    requestId, user: String(requestedBy || ''),
-    actionJSON: aj,
-    riskReason: 'Warehouse transfer — dispatcher + receiver confirmation chain.',
-    status: 'pending',
+  // One exclusive section for read → allocate → write: the day counter used
+  // to be computed from a scan of the sheet at send time, so two people
+  // sending in the same second could both compute the same TR-<day>-<n>.
+  return mutex.runExclusive('transfer-create', async () => {
+    const open = await getOpenTransfers();
+    if (idemKey) {
+      const mine = open.find((r) => r.actionJSON && r.actionJSON.idemKey === idemKey);
+      if (mine) return { requestId: mine.requestId, aj: mine.actionJSON, existing: true };
+    }
+    const twin = transferGhosts.findIdenticalOpen(open, { from, to, lines: cleanLines });
+    if (twin && !force) return { duplicate: twin };
+    const requestId = await uniqueTransferId();
+    const aj = {
+      action: ACTION,
+      from, to,
+      lines: cleanLines,
+      dispatcher: String(dispatcher || ''),
+      receiver: String(receiver || ''),
+      stage: STAGES.REQUESTED,
+      ...(idemKey ? { idemKey: String(idemKey) } : {}),
+      ...(twin ? { duplicateOf: twin.requestId } : {}),
+    };
+    await approvalQueueRepository.appendOnce({
+      requestId, user: String(requestedBy || ''),
+      actionJSON: aj,
+      riskReason: 'Warehouse transfer — dispatcher + receiver confirmation chain.',
+      status: 'pending',
+    });
+    // The row exists from here. A failed audit line must never report the
+    // transfer as failed — that re-armed Send and made the next tap a twin.
+    try {
+      await auditLogRepository.append('transfer.requested',
+        { requestId, from, to, lines: cleanLines, ...(twin ? { duplicateOf: twin.requestId } : {}) }, String(requestedBy || ''));
+    } catch (e) {
+      logger.warn(`transferService: audit line for ${requestId} failed: ${e.message}`);
+    }
+    return { requestId, aj };
   });
-  await auditLogRepository.append('transfer.requested', { requestId, from, to, lines: cleanLines }, String(requestedBy || ''));
-  return { requestId, aj };
 }
 
 /**

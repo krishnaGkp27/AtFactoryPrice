@@ -60,6 +60,14 @@ function armQueue() {
   const calls = { appended: null };
   let row = null;
   approvalQueueRepository.append = async (rec) => { calls.appended = rec; row = { ...rec, status: 'pending' }; return rec; };
+  // TRF-20 — createTransferRequest writes through appendOnce, whose internal
+  // call binds to the module's own append; mirror it here so the stub sees it.
+  approvalQueueRepository.appendOnce = async (rec) => {
+    const existing = await approvalQueueRepository.getByRequestId(rec.requestId);
+    if (existing) return { created: false, existing };
+    await approvalQueueRepository.append(rec);
+    return { created: true, existing: null };
+  };
   approvalQueueRepository.getByRequestId = async () => (row ? JSON.parse(JSON.stringify(row)) : null);
   approvalQueueRepository.getAllPending = async () => (row && row.status === 'pending' ? [JSON.parse(JSON.stringify(row))] : []);
   approvalQueueRepository.updateStatus = async (id, status) => { row.status = status; return true; };

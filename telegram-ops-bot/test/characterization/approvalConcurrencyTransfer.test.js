@@ -62,6 +62,14 @@ inventoryRepository.transitionBales = async () => [];
 // Multi-row queue — TWO transfers must exist at once for these tests.
 const qRows = new Map();
 approvalQueueRepository.append = async (rec) => { qRows.set(rec.requestId, { ...rec, status: 'pending' }); return rec; };
+// TRF-20 — createTransferRequest writes through appendOnce, whose internal
+// call binds to the module's own append; mirror it here so the stub sees it.
+approvalQueueRepository.appendOnce = async (rec) => {
+  const existing = await approvalQueueRepository.getByRequestId(rec.requestId);
+  if (existing) return { created: false, existing };
+  await approvalQueueRepository.append(rec);
+  return { created: true, existing: null };
+};
 approvalQueueRepository.getByRequestId = async (id) => {
   const r = qRows.get(String(id)); return r ? JSON.parse(JSON.stringify(r)) : null;
 };
@@ -72,8 +80,10 @@ approvalQueueRepository.updateActionJSON = async (id, patch) => {
   const r = qRows.get(String(id)); r.actionJSON = { ...r.actionJSON, ...patch }; return true;
 };
 
-/** Admin builds a 2-bale Lagos → Kano office order; returns its requestId. */
-async function makeOrder() {
+/** Admin builds a Lagos → Kano office order; returns its requestId. TRF-20:
+ *  two orders in one test must be DIFFERENT loads (qty), or the duplicate
+ *  guard at Send blocks the second one — which is the point of TRF-20. */
+async function makeOrder(qty = 2) {
   sessionStore.clear('777');
   const bot = createFakeBot();
   const before = new Set(qRows.keys());
@@ -81,7 +91,7 @@ async function makeOrder() {
   await controller.handleCallbackQuery(bot, cb('trf:wh:1', 777));
   await controller.handleCallbackQuery(bot, cb('trf:dg:0', 777));
   await controller.handleCallbackQuery(bot, cb('trf:sh:0', 777));
-  await controller.handleCallbackQuery(bot, cb('trf:qty:2', 777));
+  await controller.handleCallbackQuery(bot, cb(`trf:qty:${qty}`, 777));
   await controller.handleCallbackQuery(bot, cb('trf:dest:0', 777));
   await controller.handleCallbackQuery(bot, cb('trf:send', 777));
   const rid = [...qRows.keys()].find((k) => !before.has(k));
@@ -90,8 +100,9 @@ async function makeOrder() {
 }
 
 test('a second Accept mid-pick offers Continue / Drop — never a silent wipe', async () => {
+  qRows.clear(); // TRF-20 — each test starts with an empty queue; an open twin from the previous test would block the send
   const t1 = await makeOrder();
-  const t2 = await makeOrder();
+  const t2 = await makeOrder(1);
   sessionStore.clear('abdul');
 
   const b1 = createFakeBot();
@@ -127,6 +138,7 @@ test('a second Accept mid-pick offers Continue / Drop — never a silent wipe', 
 });
 
 test('a stale picker card cannot tick bales into the current dispatch', async () => {
+  qRows.clear(); // TRF-20 — each test starts with an empty queue; an open twin from the previous test would block the send
   const t1 = await makeOrder();
   sessionStore.clear('abdul');
   const bot = createFakeBot();
@@ -147,8 +159,9 @@ test('a stale picker card cannot tick bales into the current dispatch', async ()
 });
 
 test("↩ Not now on ANOTHER transfer's card never kills the live photo gate", async () => {
+  qRows.clear(); // TRF-20 — each test starts with an empty queue; an open twin from the previous test would block the send
   const t1 = await makeOrder();
-  const t2 = await makeOrder();
+  const t2 = await makeOrder(1);
   sessionStore.clear('abdul');
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb(`trf:acc:${t1}`, 'abdul', 80));

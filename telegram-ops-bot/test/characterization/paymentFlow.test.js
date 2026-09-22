@@ -81,6 +81,14 @@ approvalCards.resolveUserLabel = async (id) => NAMES[String(id)] || String(id);
 auditLogRepository.append = async () => {};
 approvalEvents.notifyAdminsApprovalRequest = async () => ({ sent: 1, failed: 0 });
 approvalQueueRepository.append = async (row) => { QUEUED.push(row); return row; };
+// TRF-20 — createTransferRequest writes through appendOnce, whose internal
+// call binds to the module's own append; mirror it here so the stub sees it.
+approvalQueueRepository.appendOnce = async (rec) => {
+  const existing = await approvalQueueRepository.getByRequestId(rec.requestId);
+  if (existing) return { created: false, existing };
+  await approvalQueueRepository.append(rec);
+  return { created: true, existing: null };
+};
 approvalQueueRepository.getByRequestId = async (id) => QUEUED.find((q) => q.requestId === id) || null;
 approvalQueueRepository.getAllWithRowIndex = async () => QUEUED.map((q, i) => ({ ...q, rowIndex: i + 2 }));
 
