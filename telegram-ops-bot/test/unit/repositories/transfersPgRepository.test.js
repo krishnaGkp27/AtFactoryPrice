@@ -72,3 +72,14 @@ test('event: one trail row per lifecycle step', async () => {
   assert.deepEqual(fake.q[0].params.slice(0, 3), ['TR-20260918-002', 'dispatched', 'abdul']);
   assert.deepEqual(JSON.parse(fake.q[0].params[3]), { bales: ['1', '2'] });
 });
+
+test('migration 003_transfers is registered and carries the one-open-row-per-load index', () => {
+  const migrations = require(path.join(SRC, 'db/migrations'));
+  const m = migrations._internals.MIGRATIONS.find((x) => x.id === '003_transfers');
+  assert.ok(m, 'registered in MIGRATIONS[]');
+  assert.match(m.sql, /CREATE TABLE IF NOT EXISTS transfers/);
+  assert.match(m.sql, /transfers_one_open_per_load[\s\S]*WHERE status = 'pending' AND duplicate_of IS NULL/);
+  assert.match(m.sql, /CREATE TABLE IF NOT EXISTS transfer_events/);
+  const ids = migrations._internals.MIGRATIONS.map((x) => x.id);
+  assert.deepEqual(ids, [...ids].sort(), 'append-only, in order');
+});

@@ -216,7 +216,12 @@ header cell and touches no data row.
 **Railway Postgres tables (not sheets):** `stock_events` (STK shadow), the
 web/ext/usage/share tables, and since PAY-2 (09-Sep-2026) `payment_reasons`,
 `payment_events`, `payment_reason_codes` — the payment reason, the payment
-lifecycle trail and the reason-code index. Owner ruling: logging never goes
+lifecycle trail and the reason-code index; and since TRF-20 (22-Sep-2026)
+`transfers` + `transfer_events` (migration 003) — the SHADOW of every
+ApprovalQueue transfer row, written best-effort after each state change
+(`transferService.mirror`), the pilot of the move off the sheet:
+`scripts/transfers-parity.js` compares both sides; the read flip is a later
+step and waits for a clean parity report AND the offsite backup job. Owner ruling: logging never goes
 to a Google Sheet; new tables go through `src/db/migrations.js` MIGRATIONS[].
 
 ## Settings-sheet toggles (owner-editable, no deploy)

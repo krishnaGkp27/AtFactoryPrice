@@ -84,6 +84,47 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS payment_events_payment_idx ON payment_events (payment_id, kind);
     `,
   },
+  {
+    id: '003_transfers',
+    // TRF-20 (6b/8) — the transfers table, pilot of the move off the sheet.
+    // SHADOW at first (the sheet stays the truth); the partial unique index
+    // is the one-open-row-per-load rule the Send guard enforces in code.
+    sql: `
+      CREATE TABLE IF NOT EXISTS transfers (
+        id            BIGSERIAL PRIMARY KEY,
+        ref           TEXT NOT NULL UNIQUE,
+        idem_key      TEXT UNIQUE,
+        from_wh       TEXT NOT NULL DEFAULT '',
+        to_wh         TEXT NOT NULL DEFAULT '',
+        lines         JSONB NOT NULL DEFAULT '[]'::jsonb,
+        lines_hash    TEXT NOT NULL DEFAULT '',
+        stage         TEXT NOT NULL CHECK (stage IN ('requested','admin_review','in_transit')),
+        status        TEXT NOT NULL CHECK (status IN ('pending','received','declined','reverted')),
+        requested_by  TEXT NOT NULL DEFAULT '',
+        dispatcher    TEXT NOT NULL DEFAULT '',
+        receiver      TEXT NOT NULL DEFAULT '',
+        duplicate_of  TEXT,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+        decided_at    TIMESTAMPTZ,
+        decided_by    TEXT,
+        action_json   JSONB NOT NULL DEFAULT '{}'::jsonb
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS transfers_one_open_per_load
+        ON transfers (from_wh, to_wh, lines_hash)
+        WHERE status = 'pending' AND duplicate_of IS NULL;
+      CREATE INDEX IF NOT EXISTS transfers_status_idx ON transfers (status, stage);
+      CREATE TABLE IF NOT EXISTS transfer_events (
+        id      BIGSERIAL PRIMARY KEY,
+        ref     TEXT NOT NULL,
+        at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+        event   TEXT NOT NULL,
+        actor   TEXT NOT NULL DEFAULT '',
+        detail  JSONB NOT NULL DEFAULT '{}'::jsonb
+      );
+      CREATE INDEX IF NOT EXISTS transfer_events_ref_idx ON transfer_events (ref, at);
+    `,
+  },
 ];
 
 /**

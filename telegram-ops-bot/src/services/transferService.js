@@ -102,6 +102,22 @@ async function getActionableFor(userId) {
 }
 
 /** One transfer row by id (any status). Null when not a transfer. */
+/**
+ * TRF-20 (6b/8) — shadow the row on Postgres after EVERY state write, in the
+ * stock_events posture: best-effort, fails open, never throws. The sheet is
+ * still the truth; the parity script compares the two.
+ */
+async function mirror(requestId, event, actor, detail = {}) {
+  try {
+    const pg = require('../repositories/transfersPgRepository');
+    const row = await approvalQueueRepository.getByRequestId(requestId);
+    if (row) await pg.upsert(row);
+    await pg.event(requestId, event, actor, detail);
+  } catch (e) {
+    logger.warn(`transferService: mirror ${event} for ${requestId} failed: ${e.message}`);
+  }
+}
+
 async function findTransfer(requestId) {
   const row = await approvalQueueRepository.getByRequestId(requestId);
   if (!row || !row.actionJSON || row.actionJSON.action !== ACTION) return null;
@@ -225,6 +241,7 @@ async function createTransferRequest({ from, to, lines, requestedBy, dispatcher,
   } catch (e) {
     logger.warn(`transferService: audit line for ${made.requestId} failed: ${e.message}`);
   }
+  await mirror(made.requestId, 'requested', requestedBy, { from, to, lines: cleanLines });
   return { requestId: made.requestId, aj: made.aj };
 }
 
@@ -301,6 +318,7 @@ async function sendBackFromReview(requestId, adminId) {
     };
     await approvalQueueRepository.updateActionJSON(requestId, patch);
     await auditLogRepository.append('transfer.review_sent_back', { requestId }, String(adminId));
+    await mirror(requestId, 'review_sent_back', adminId);
     return { ok: true, aj: { ...aj, ...patch } };
   });
 }
@@ -389,6 +407,7 @@ async function dispatchPickAndFlip(requestId, byUserId, manualPicks, aj, opts = 
       },
     };
     await approvalQueueRepository.updateActionJSON(requestId, patch);
+    await mirror(requestId, 'review_submitted', byUserId);
     await auditLogRepository.append('transfer.review_submitted',
       { requestId, bales: picked, leftOn }, String(byUserId || ''));
     return { ok: true, aj: { ...aj, ...patch }, review: true };
@@ -432,6 +451,7 @@ async function dispatchPickAndFlip(requestId, byUserId, manualPicks, aj, opts = 
     pendingDispatch: null,
   };
   await approvalQueueRepository.updateActionJSON(requestId, patch);
+  await mirror(requestId, 'dispatched', byUserId);
   await auditLogRepository.append('transfer.dispatched',
     { requestId, dispatched, short, conflicts, dispatchedOn: leftOn }, String(byUserId || ''));
   return { ok: true, aj: { ...aj, ...patch }, short, conflicts };
@@ -482,6 +502,7 @@ async function confirmReceiptInner(requestId, byUserId) {
   const approverLabel = await require('./approverStamp')
     .labelFor({ actionJSON: aj, actorId: null });
   await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString(), approverLabel);
+  await mirror(requestId, 'received', byUserId);
   const totalSent = (aj.dispatched || []).reduce((s, d) => s + d.sent, 0) || (aj.bales || []).length;
   await transactionsRepository.append({
     user: String(byUserId || ''), action: ACTION,
@@ -538,6 +559,7 @@ async function abortInner(requestId, byUserId) {
     .labelFor({ actionJSON: aj, actorId: byUserId, actorAlways: true });
   await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString(), approverLabel);
   await auditLogRepository.append(`transfer.${kind}`, { requestId }, String(byUserId || ''));
+  await mirror(requestId, kind, byUserId);
   return { ok: true, aj, kind, mismatch };
 }
 
@@ -574,6 +596,7 @@ async function attachDocInner(requestId, kind, doc = {}) {
     at: new Date().toISOString(),
   };
   await approvalQueueRepository.updateActionJSON(requestId, { [key]: entry });
+  await mirror(requestId, `${kind}_doc`, entry.by, { url: entry.url });
   await auditLogRepository.append(`transfer.${kind}_doc`, { requestId, url: entry.url, name: entry.name }, entry.by);
   return { ok: true, key };
 }

@@ -245,7 +245,7 @@ test('backfill table: dry-run says so and names --commit; commit mode says INSER
 test('migration 002_payment_reasons is appended after 001 and creates the three PAY-2 tables', async () => {
   const ids = migrations._internals.MIGRATIONS.map((m) => m.id);
   assert.equal(ids[0], '001_stock_events', 'shipped step untouched');
-  assert.equal(ids[ids.length - 1], '002_payment_reasons');
+  assert.equal(ids[1], '002_payment_reasons', 'right after 001 — later migrations append behind it (003_transfers, TRF-20)');
   assert.equal(new Set(ids).size, ids.length, 'ids unique');
   const m = migrations._internals.MIGRATIONS.find((x) => x.id === '002_payment_reasons');
   for (const t of ['payment_reason_codes', 'payment_reasons', 'payment_events']) {

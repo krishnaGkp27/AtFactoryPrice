@@ -199,3 +199,32 @@ test('an employee cannot force: trf:send:force from a non-admin is still the gua
   assert.equal(openRows().length, 1, 'the forged force did not write');
   assert.match(lastText(b), /already open/);
 });
+
+test('TRF-20 (6b/8): every state write is mirrored to Postgres best-effort — create, and a decline', async () => {
+  armQueue(); sessionStore.clear('777');
+  const pg = require(path.join(SRC, 'repositories/transfersPgRepository'));
+  const calls = [];
+  const orig = { upsert: pg.upsert, event: pg.event };
+  pg.upsert = async (row) => { calls.push(['upsert', row.requestId, row.status]); return true; };
+  pg.event = async (ref, kind, actor) => { calls.push(['event', ref, kind, String(actor)]); return true; };
+  try {
+    const bot = createFakeBot();
+    await toConfirm(bot, 777);
+    await controller.handleCallbackQuery(bot, cb('trf:send', 777));
+    const ref = openRows()[0].requestId;
+    assert.deepEqual(calls, [['upsert', ref, 'pending'], ['event', ref, 'requested', '777']]);
+    calls.length = 0;
+    const transferService = require(path.join(SRC, 'services/transferService'));
+    const res = await transferService.abort(ref, 'abdul');
+    assert.equal(res.ok, true);
+    assert.deepEqual(calls, [['upsert', ref, 'rejected'], ['event', ref, 'declined', 'abdul']]);
+    // A broken mirror never breaks the flow.
+    pg.upsert = async () => { throw new Error('pg down'); };
+    armQueue(); sessionStore.clear('777');
+    const bot2 = createFakeBot();
+    await toConfirm(bot2, 777);
+    await controller.handleCallbackQuery(bot2, cb('trf:send', 777));
+    assert.equal(openRows().length, 1, 'the sheet write still happened');
+    assert.match(lastText(bot2), /Transfer .* sent/);
+  } finally { pg.upsert = orig.upsert; pg.event = orig.event; }
+});
