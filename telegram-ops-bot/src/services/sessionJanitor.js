@@ -50,8 +50,6 @@ const FLOW_LABELS = {
   landed_cost_flow: 'Landed Cost',
   po_new_flow: 'Procurement Order',
   update_price_flow: 'Update Price',
-  transfer_package_flow: 'Transfer Package',
-  transfer_than_flow: 'Transfer Than',
   return_than_flow: 'Return Than',
   add_customer_flow: 'Add Customer',
   sample_flow: 'Give Sample',

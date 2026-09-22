@@ -127,7 +127,7 @@ choosing a new namespace, `grep "startsWith('" src/controllers/telegramControlle
 Major namespaces already taken:
 
 - Menus: `act:` (tiles; `act:__hub__:<id>`, `act:__back__` are session-free navigation)
-- Supply request: `srf_*` (11-Sep-2026: `srf_sp:<name>` · `srf_sp:Customer direct` salesperson chips; `srf_pm:Not yet paid`) · legacy inline flows: `up*` (price), `tp*`/`tt*` (transfers), `rt*` (RETIRED return tap picker — dead since RET-4; `rtx*` is the still-live TYPED return preview), `sm*` (sample), `ac*` (CON-1 add-person one door:
+- Supply request: `srf_*` (11-Sep-2026: `srf_sp:<name>` · `srf_sp:Customer direct` salesperson chips; `srf_pm:Not yet paid`) · legacy inline flows: `up*` (price), `tp*`/`tt*` (RETIRED — the single-bale / single-than tap doors were DELETED 22-Sep-2026 by TRF-20 (5/8); typed `transfer_*` intents still redirect into 🚚 Transfer Stock), `rt*` (RETIRED return tap picker — dead since RET-4; `rtx*` is the still-live TYPED return preview), `sm*` (sample), `ac*` (CON-1 add-person one door:
   `actype:` kind · `accat:`/`accred:`/`acpt:` customer sub-categories ·
   `acskip:`/`acb:`/`acconf:`/`accanc:`/`acquick:`)
 - Flow modules: `gr:` `br:` `addstock:` `pr:` `wh:` `wai:` `edb:` (EDB-1 Edit Bale) `bs:` `udf:` `sbl:` `lcost:` `bops:` `ofex:` `usr:` `umg:` `rol:` `atd:` `atd_rpt:` `atd_adm:` `tsk:` `nf:` `swv:` `pp:` `pay:` (PAY-1 payments; `pay:done|dec` are

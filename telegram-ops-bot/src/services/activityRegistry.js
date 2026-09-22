@@ -131,8 +131,6 @@ const ACTIVITIES = [
   // no dispatcher/receiver chain, no in-transit stage, no load photos.
   // hub '_hidden' keeps old menu buttons / department CSVs resolvable; the
   // controller now redirects both codes to Transfer Stock.
-  { code: 'transfer_package',      label: 'Transfer Package',          icon: '🚚', callback: 'act:transfer_package',   hub: '_hidden' },
-  { code: 'transfer_than',         label: 'Transfer Than',             icon: '↔️', callback: 'act:transfer_than',      hub: '_hidden' },
   // RET-4 — the tile now opens the customer-first multi-than return card
   // (returnFlow, `rn:`). The `code` and `callback` are unchanged so hub
   // membership, the greeting menu and every existing pin survive.
