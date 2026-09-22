@@ -73,6 +73,10 @@ function summarize(aj) {
 async function sweep(bot, opts = {}) {
   const sent = await sweepPending(bot, opts);
   await sweepFinance(bot, opts);
+  // TRF-20 (4/8) — transfers are excluded from the standard sweep above (their
+  // lifecycle rides trf:* buttons); their own sweep re-sends the HOLDER's card
+  // and escalates past TRANSFER_STALE_DAYS. Best-effort, never blocks the rest.
+  try { await require('./transferReminder').sweep(bot, opts); } catch (e) { logger.warn(`transferReminder: ${e.message}`); }
   return sent;
 }
 

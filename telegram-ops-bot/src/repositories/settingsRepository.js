@@ -101,6 +101,10 @@ const DEFAULTS = {
   // APR-1 — hours between pending-approval reminder cards (0 disables).
   // Covers approvals queued outside the bot process too (Drive imports).
   APPROVAL_REMINDER_HOURS: 6,
+  // TRF-20 (4/8) — days an open transfer may wait on its holder before every
+  // admin is told as well (the holder's own card re-sends hourly regardless,
+  // on the APPROVAL_REMINDER_HOURS cadence). 0 = the holder only.
+  TRANSFER_STALE_DAYS: 3,
   // PAY-2 §2 H — hours after an approval (or the last finance card /
   // reminder) before an approved-but-unpaid payment re-sends the finance
   // card to the finance seat. 0 disables the nudge.
