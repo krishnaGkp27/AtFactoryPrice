@@ -7512,6 +7512,7 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['udf:'], handle: (bot, cq) => require('../flows/unitDisplayFlow').handleCallback(bot, cq) },
   { prefixes: ['trf:'], handle: (bot, cq) => require('../flows/transferFlow').handleCallback(bot, cq) },
   { prefixes: ['sbl:'], handle: (bot, cq) => require('../flows/soldBalesFlow').handleCallback(bot, cq) },
+  { prefixes: ['sfs:'], handle: (bot, cq) => require('../flows/storeSalesFlow').handleCallback(bot, cq) },
   { prefixes: ['sdd:'], handle: (bot, cq) => require('../flows/supplyDetailsFlow').handleCallback(bot, cq) },
   { prefixes: ['sdg:'], handle: (bot, cq) => require('../flows/supplyDetailsDesignFlow').handleCallback(bot, cq) },
   { prefixes: ['sds:'], handle: (bot, cq) => require('../flows/stockByShadeFlow').handleCallback(bot, cq) },
@@ -10280,6 +10281,12 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         // no admin gate here (non-price roles see quantities only).
         const soldBalesFlow = require('../flows/soldBalesFlow');
         await soldBalesFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'store_sales': {
+        // SFS-1 — sales by place (warehouse/store → sale days → the day's
+        // card). Read-only; admin-only, gated in the flow's start().
+        await require('../flows/storeSalesFlow').start(bot, chatId, uid, messageId);
         break;
       }
       case 'office_expense': {
