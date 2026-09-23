@@ -3879,6 +3879,11 @@ async function handleMessage(bot, msg) {
       const handled = await require('../flows/customerMergeFlow').handleText(bot, msg);
       if (handled) return;
     }
+    // RMV-1 Phase B — the removal door: a typed search on the pick step, the reason on the reason step.
+    if (brSession && brSession.type === 'customer_remove_flow') {
+      const handled = await require('../flows/customerRemoveFlow').handleText(bot, msg);
+      if (handled) return;
+    }
     // AUD-X1 — extra design numbers typed for the audit count sheet.
     if (brSession && brSession.type === 'wh_audit_flow') {
       const handled = await require('../flows/warehouseAuditFlow').handleText(bot, msg);
@@ -7538,6 +7543,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['rol:'], handle: (bot, cq) => require('../flows/roleEditFlow').handleCallback(bot, cq) },
   { prefixes: ['atd:'], handle: (bot, cq) => require('../flows/attendanceFlow').handleCallback(bot, cq) },
   { prefixes: ['cmg:'], handle: (bot, cq) => require('../flows/customerMergeFlow').handleCallback(bot, cq) },
+  // RMV-1 Phase B — ➖ Remove Customer / ↩️ Restore (dual-admin), owner go 23-Sep-2026.
+  { prefixes: ['rmc:'], handle: (bot, cq) => require('../flows/customerRemoveFlow').handleCallback(bot, cq) },
   { prefixes: ['bgl:'], handle: (bot, cq) => require('../flows/businessGlanceFlow').handleCallback(bot, cq) },
   { prefixes: ['atd_rpt:'], handle: (bot, cq) => require('../flows/attendanceReportFlow').handleCallback(bot, cq) },
   { prefixes: ['atd_adm:'], handle: (bot, cq) => require('../flows/attendanceAdminFlow').handleCallback(bot, cq) },

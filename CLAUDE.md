@@ -51,7 +51,7 @@ ask for their status instead of starting new features; help execute them if aske
 | 2 (agent) | Resume security remediation H6 + P3–P7 (audit fix plan) | **fresh session** | `telegram-ops-bot/docs/CODE_AUDIT_2026-07-07.md` |
 | 2b (agent) | MNU-1 reach: staleness inside `flowKit.makeRenderer` (26 flows) + `telegramUI.editOrSendAnchored`; migrate the 13 hand-rolled flow renderers. Menus are done; these are wizard cards. | **later** | `telegram-ops-bot/specs/MNU-1_MENU_ANCHOR.md` §Scope |
 | 2c (agent) | Audit Wave 2: verb-first labels + view/do split (W-1), one exit vocabulary (W-2), confirmation on destructive actions (W-3), opaque theme colours (D-7). **D-4 (identical approval rows) is the owner's stated top danger — do it first.** | **later** | `BLACK2.MD` Part 3 |
-| 3 (agent, owner-paused 17-Aug) | RMV-1 finish: the ➖ Remove Contact tile (engine shipped `5dfca04`, no Telegram door yet; controller edit needs owner go) + attendance `getAudience` status normalisation + Phase C reach items | **paused** | `telegram-ops-bot/specs/RMV-1_PERSON_REMOVAL.md` §Open when resumed |
+| **0 — OWNER LIVE CHECK** | RMV-1 Phase B customer door SHIPPED 23-Sep-2026 (your go: "deactivate the customer with two admin approvals"): 👥 CRM → **➖ Remove Customer** → tap the customer (or type a name) → type the reason → the card shows what they owe, their supplies on record and who sits under them in the network → ✅ Submit → a SECOND admin approves from 🛂 Approvals → the Customers row flips to `inactive` with a dated note, the bound Contacts node with it; nothing is deleted, every sale stays. ↩️ Restore in the same door brings one back. **Owner: remove `testcustomer` and `TestBuyer` this way (two admins), then confirm they are gone from every picker and still present in the sheet.** Still open in RMV-1: the employee door's last-admin / self-target guards, notifying the removed person, Phase C. | **Owner** | `telegram-ops-bot/specs/RMV-1_PERSON_REMOVAL.md`; `src/flows/customerRemoveFlow.js` |
 
 Known follow-up waiting on Emin's Task-4 finding: if photo archives to Drive are failing
 (service-account quota), build the OAuth-as-user upload fix for `driveBackup`.
@@ -133,7 +133,7 @@ Major namespaces already taken:
   `acskip:`/`acb:`/`acconf:`/`accanc:`/`acquick:`)
 - Flow modules: `gr:` `br:` `addstock:` `pr:` `wh:` `wai:` `edb:` (EDB-1 Edit Bale) `bs:` `udf:` `sbl:` `lcost:` `bops:` `ofex:` `usr:` `umg:` `rol:` `atd:` `atd_rpt:` `atd_adm:` `tsk:` `nf:` `swv:` `pp:` `pay:` (PAY-1 payments; `pay:done|dec` are
   session-free; PAY-2 adds `pay:proof:skip` · `pay:start:wait` · `pay:wait:<i>`) `pu:` (pending-user triage — IDR-2 adds
-  `pu:cust|net|link|linkcancel`) `cms:` `shr:` (share links) `rn:` (RET-4 ↩️ Return goods —
+  `pu:cust|net|link|linkcancel`) `cms:` `rmc:` (RMV-1 ➖ Remove Customer / ↩️ Restore, 23-Sep-2026) `shr:` (share links) `rn:` (RET-4 ↩️ Return goods —
   `rn:cust|csearch|bale|t|tall|tnext|dd|dm|dq|noop|c|pskip|back|cancel|submit`)
   `oq/oc/od*`/`os:` (orders; `os:__me__` · `os:__direct__` are the 11-Sep salesperson chips) `rc*` (receipts)
 - Transfers `trf:*` — TRF-19 adds `trf:lcard:<id>` (open a card FROM the 📋

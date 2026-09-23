@@ -188,6 +188,8 @@ const ACTIVITIES = [
   // CUS-1 Phase E — the typo-cleanup tool: fold a duplicate into the real
   // customer (merge, not delete — owner 29-Jul). Admin-gated in the flow.
   { code: 'merge_customers',       label: 'Merge Customers',           icon: '🔀', callback: 'act:merge_customers',    hub: 'crm' },
+  // RMV-1 Phase B (owner, 23-Sep-2026) — the removal door: status flip behind two admins, never a deletion.
+  { code: 'remove_customer',       label: 'Remove Customer',           icon: '➖', callback: 'rmc:start',             hub: 'crm' },
   { code: 'give_sample',           label: 'Give Sample',               icon: '🧪', callback: 'act:give_sample',        hub: 'crm' },
   { code: 'sample_status',         label: 'Sample Status',             icon: '📊', callback: 'act:sample_status',      hub: 'crm' },
 

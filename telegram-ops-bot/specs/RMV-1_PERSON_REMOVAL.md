@@ -11,12 +11,20 @@ the recommendation."
 
 ## Open when resumed (in order)
 
-1. **The customer-removal tile** — `remove_customer`/`restore_customer`
-   work end to end but nothing in Telegram raises one yet. Build: a
-   ➖ Remove Contact door (CRM hub, CON-1's shape: pick person → reason →
-   card enriched with outstanding/supply-count/children → queue), one
-   `act:` case + one prefix dispatch block in the controller (surgical —
-   **needs the owner's explicit go on the controller edit**, rule 2).
+1. ~~**The customer-removal tile**~~ **SHIPPED 23-Sep-2026** (owner: "make a
+   provision inside the bot to deactivate the customer with two admin
+   approvals") — `src/flows/customerRemoveFlow.js`, tile ➖ Remove Customer
+   in the CRM hub (`rmc:start`), admin-only to raise: pick (active
+   customers A–Z, ten a page, type to search) → typed reason (3–120) → the
+   `buildRemoveCustomerCard` enriched with what they owe, supplies on
+   record (name + aliases against Inventory sold rows) and network children
+   (active ContactLinks pointing at their node) → ✅ Submit → appendOnce with
+   a request id minted at the card. ↩️ Restore lists the inactive rows and
+   queues `restore_customer` through the same door. Two surgical controller
+   lines: the `rmc:` prefix in the dispatch table and the typed-text route
+   for `customer_remove_flow`. Test: `test/characterization/customerRemove.test.js`.
+   Still open from the Guards section: the employee door's last-admin and
+   self-target guards, and notifying the removed person.
 2. Attendance/auth status divergence (small): `attendanceService`
    compares `status`/`role` with exact `===` while `middlewares/auth.js`
    normalises since `ee6828a` — a Users cell reading `Active` keeps bot
