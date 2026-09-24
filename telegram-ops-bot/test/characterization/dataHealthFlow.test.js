@@ -87,3 +87,47 @@ test('drilling a check lists every finding and comes back', async () => {
   await flow.handleCallback(bot, cb('snt:back', ADMIN));
   sessionStore.clear(ADMIN);
 });
+
+/* ── SEN-2 (owner, 24-Sep-2026): the nightly DM card expands and collapses in place, session-free ── */
+test('SEN-2: 🔽 Show all on the DM card redraws the SAME night\'s result with every check; 🔼 collapses again', async () => {
+  const cached = await consistencySentinel.runAll();          // the fixture's 3-check result
+  consistencySentinel._internals._setLastResultForTests(cached);
+  sessionStore.clear(ADMIN);
+  const bot = createFakeBot();
+  await flow.handleCallback(bot, cb('snt:dm:all', ADMIN));
+  const edit = bot.calls.filter((c) => c.method === 'editMessageText').pop();
+  assert.ok(edit, 'the card is edited in place');
+  assert.equal(edit.args.opts.message_id, 7);
+  assert.match(edit.args.text, /✅ C1 Sold rows have sale movements/, 'green checks now listed');
+  assert.match(edit.args.text, /⚠️ C4/);
+  assert.ok(!/other checks clean/.test(edit.args.text));
+  let kb = edit.args.opts.reply_markup.inline_keyboard.flat();
+  assert.ok(kb.some((b) => b.callback_data === 'snt:dm:issues'), 'collapse offered');
+  assert.equal(sessionStore.get(ADMIN), null, 'no session was opened');
+
+  await flow.handleCallback(bot, cb('snt:dm:issues', ADMIN));
+  const back = bot.calls.filter((c) => c.method === 'editMessageText').pop();
+  assert.ok(!/✅ C1/.test(back.args.text) && /✅ 1 other check clean/.test(back.args.text), 'collapsed again');
+  kb = back.args.opts.reply_markup.inline_keyboard.flat();
+  assert.ok(kb.some((b) => b.callback_data === 'snt:dm:all'));
+});
+
+test('SEN-2: after a restart nothing is cached — the tap re-runs the checks once, then redraws', async () => {
+  consistencySentinel._internals._setLastResultForTests(null);
+  const origRunAll = consistencySentinel.runAll;
+  let runs = 0;
+  consistencySentinel.runAll = async () => { runs += 1; return origRunAll(); };
+  try {
+    const bot = createFakeBot();
+    await flow.handleCallback(bot, cb('snt:dm:all', ADMIN));
+    assert.equal(runs, 1, 're-ran once');
+    const edit = bot.calls.filter((c) => c.method === 'editMessageText').pop();
+    assert.match(edit.args.text, /⚠️ C9 .*— 105/);
+  } finally { consistencySentinel.runAll = origRunAll; }
+});
+
+test('SEN-2: a non-admin tap on the DM card does nothing', async () => {
+  const bot = createFakeBot();
+  await flow.handleCallback(bot, cb('snt:dm:all', EMPLOYEE));
+  assert.equal(bot.calls.filter((c) => c.method === 'editMessageText' || c.method === 'sendMessage').length, 0);
+});

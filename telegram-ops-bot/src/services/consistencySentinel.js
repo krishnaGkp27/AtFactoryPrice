@@ -51,7 +51,9 @@
  *     report on exactly the worst nights).
  *
  * Findings go to admin DMs + one AuditLog summary row. Silent when clean.
- * Settings: SENTINEL_ENABLED (0 disables), SENTINEL_HOUR (Lagos hour of
+ * The nightly DM is COLLAPSED (failing checks + a count of the clean ones)
+ * with 🔽 Show all / 🔼 Show issues only buttons handled by dataHealthFlow
+ * (`snt:dm:*`, session-free). Settings: SENTINEL_ENABLED (0 disables), SENTINEL_HOUR (Lagos hour of
  * the daily run).
  */
 
@@ -456,18 +458,51 @@ async function runAll() {
 /** Per-check line cap in the DM report; the 🩺 tile shows everything. */
 const DM_LINES_PER_CHECK = 8;
 
-function buildReport(result) {
+/**
+ * The report. `expanded` (default, the 🩺 tile) lists every check; the
+ * nightly DM sends it COLLAPSED (owner, 24-Sep-2026: "only send it when
+ * something is wrong … keep the other items with a tappable option"):
+ * the failing checks with their lines, then one line counting the clean
+ * ones, and a 🔽 Show all button that redraws the same night's result in
+ * place.
+ */
+function buildReport(result, { expanded = true } = {}) {
   let text = `🩺 Data Health — ${result.totalFindings ? `${result.totalFindings} issue(s) found` : 'all clean'}\n`;
+  let clean = 0;
   for (const c of result.checks) {
-    if (!c.findings.length) { text += `\n✅ ${c.id} ${c.title}`; continue; }
+    if (!c.findings.length) {
+      clean += 1;
+      if (expanded) text += `\n✅ ${c.id} ${c.title}`;
+      continue;
+    }
     text += `\n⚠️ ${c.id} ${c.title} — ${checkCount(c)}:`;
     for (const f of c.findings.slice(0, DM_LINES_PER_CHECK)) text += `\n   • ${f}`;
     if (c.findings.length > DM_LINES_PER_CHECK) {
       text += `\n   …and ${c.findings.length - DM_LINES_PER_CHECK} more — open 🩺 Data Health`;
     }
   }
+  if (!expanded && clean) text += `\n\n✅ ${clean} other check${clean === 1 ? '' : 's'} clean`;
   return text;
 }
+
+/** The DM's buttons: expand / collapse in place (session-free), and the tile. */
+function reportKeyboard(result, expanded) {
+  const total = (result.checks || []).length;
+  return { inline_keyboard: [[
+    expanded
+      ? { text: '🔼 Show issues only', callback_data: 'snt:dm:issues' }
+      : { text: `🔽 Show all ${total}`, callback_data: 'snt:dm:all' },
+    { text: '🩺 Open Data Health', callback_data: 'act:data_health' },
+  ]] };
+}
+
+// The last completed run, so a tap on tonight's card redraws THAT result
+// instead of re-reading the sheets. Process memory: gone after a restart,
+// in which case the tap re-runs the checks (seconds, not silence).
+let _lastResult = null;
+function getLastResult() { return _lastResult; }
+function _setLastResultForTests(r) { _lastResult = r; }
+const TELEGRAM_TEXT_MAX = 4096;
 
 /**
  * One scheduled/on-demand pass: run, DM admins on drift, audit-log the
@@ -484,11 +519,17 @@ async function sweep(bot) {
       await auditLogRepository.append('sentinel_run',
         Object.fromEntries(result.checks.map((c) => [c.id, checkCount(c)])), 'system');
     } catch (_) { /* the run matters more than its log row */ }
+    _lastResult = result;
     if (result.totalFindings && bot) {
       const { sendLong } = require('../utils/telegramUI');
-      const report = buildReport(result);
+      const report = buildReport(result, { expanded: false });
       for (const adminId of config.access.adminIds) {
-        try { await sendLong(bot, adminId, report); } catch (e) {
+        try {
+          // One message with the buttons; a report too long for one message
+          // goes the old way, in parts, without them.
+          if (report.length <= TELEGRAM_TEXT_MAX) await bot.sendMessage(adminId, report, { reply_markup: reportKeyboard(result, false) });
+          else await sendLong(bot, adminId, report);
+        } catch (e) {
           logger.warn(`sentinel: report to ${adminId} failed: ${e.message}`);
         }
       }
@@ -536,8 +577,9 @@ function startScheduler(bot) {
 }
 
 module.exports = {
-  runAll, sweep, buildReport, startScheduler, checkCount,
+  runAll, sweep, buildReport, reportKeyboard, getLastResult, startScheduler, checkCount,
   _internals: {
+    TELEGRAM_TEXT_MAX, _setLastResultForTests,
     checkSoldHaveSaleMovements, checkReturnsAreApproved, checkInTransit,
     checkCurrentFlags, checkSoldToResolves, checkDuplicateLiveNumbers,
     checkRequestIdUniqueness, checkPendingSalesAlreadySold, baleKey, isIsoDay, isRecent,

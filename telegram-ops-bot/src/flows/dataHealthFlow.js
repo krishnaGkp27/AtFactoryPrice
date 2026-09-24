@@ -13,6 +13,8 @@
  *   snt:c:<i>     open one check's full findings
  *   snt:pg:<n>    page within a check's findings
  *   snt:back      back to the summary
+ *   snt:dm:all    the nightly DM card: redraw it with every check (session-free)
+ *   snt:dm:issues the nightly DM card: back to the failing checks only
  */
 
 const sessionStore = require('../utils/sessionStore');
@@ -125,6 +127,35 @@ async function handleCallback(bot, query) {
   const chatId = query.message.chat.id;
   try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
   if (!auth.isAdmin(userId)) return true;
+
+  // The nightly DM's own buttons — SESSION-FREE: the card arrived at 20:00,
+  // the tap can come hours later. Redraws the same night's result in place;
+  // after a restart (nothing cached) it re-runs the checks.
+  if (data === 'snt:dm:all' || data === 'snt:dm:issues') {
+    const expanded = data === 'snt:dm:all';
+    let result = consistencySentinel.getLastResult();
+    if (!result) {
+      try { result = await consistencySentinel.runAll(); } catch (e) {
+        logger.warn(`dataHealthFlow: re-run for the DM card failed: ${e.message}`);
+        try { await bot.sendMessage(chatId, '⚠️ Could not re-run the checks just now — open 🩺 Data Health from the menu.'); } catch (_) { /* ignore */ }
+        return true;
+      }
+    }
+    const text = consistencySentinel.buildReport(result, { expanded });
+    const kb = consistencySentinel.reportKeyboard(result, expanded);
+    if (text.length <= consistencySentinel._internals.TELEGRAM_TEXT_MAX) {
+      try {
+        await bot.editMessageText(text, { chat_id: chatId, message_id: query.message.message_id, reply_markup: kb });
+        return true;
+      } catch (e) {
+        if (/not modified/i.test(String(e.message || ''))) return true;
+      }
+    }
+    // Too long for one message, or the card would not edit: send it below.
+    const { sendLong } = require('../utils/telegramUI');
+    try { await sendLong(bot, chatId, text); } catch (e) { logger.warn(`dataHealthFlow: DM card fallback failed: ${e.message}`); }
+    return true;
+  }
 
   let session = sessionStore.get(userId);
   if (!session || session.type !== SESSION_TYPE) {

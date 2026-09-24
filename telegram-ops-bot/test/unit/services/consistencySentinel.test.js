@@ -188,7 +188,9 @@ test('sweep DMs admins on drift, is silent when clean, and honours the kill swit
     assert.equal(sent.length, 1, 'one DM per admin');
     assert.equal(sent[0].to, '777');
     assert.match(sent[0].text, /⚠️ C1/);
-    assert.match(sent[0].text, /✅ C4/, 'clean checks still listed as ticks');
+    // SEN-2 (owner, 24-Sep-2026): the DM is COLLAPSED — clean checks are a count, not a list.
+    assert.ok(!/✅ C4/.test(sent[0].text), 'clean checks are not listed one by one');
+    assert.match(sent[0].text, /✅ \d+ other checks clean/, 'they are counted');
     assert.equal(audits[0].type, 'sentinel_run');
     assert.equal(audits[0].data.C1, 1);
 
@@ -483,4 +485,31 @@ test('runAll carries C9–C11 on the same snapshot, after C8, and they tick when
     approvalQueueRepository.getAllWithRowIndex = origs.rows;
     customerEntity.resolve = origs.resolve;
   }
+});
+
+test('SEN-2: buildReport collapsed vs expanded, and the DM keyboard', () => {
+  const result = { totalFindings: 2, checks: [
+    { id: 'C1', title: 'Sold rows have sale movements', findings: [] },
+    { id: 'C5', title: 'Every buyer is a real customer', findings: ['"Madam Motunrayo" on 30 sold row(s) matches no customer'] },
+    { id: 'C6', title: 'One live bale per printed number per store', findings: [] },
+    { id: 'C10', title: 'Every bale_uid is unique', findings: ['bale_uid X sits on 2 rows'] },
+  ] };
+  const dm = sentinel.buildReport(result, { expanded: false });
+  assert.match(dm, /^🩺 Data Health — 2 issue\(s\) found/);
+  assert.match(dm, /⚠️ C5 Every buyer is a real customer — 1:\n {3}• "Madam Motunrayo"/);
+  assert.match(dm, /⚠️ C10/);
+  assert.ok(!/✅ C1|✅ C6/.test(dm), 'no green lines in the DM');
+  assert.match(dm, /\n\n✅ 2 other checks clean$/);
+  const full = sentinel.buildReport(result, { expanded: true });
+  assert.match(full, /✅ C1 Sold rows have sale movements\n⚠️ C5/);
+  assert.match(full, /✅ C6 One live bale/);
+  assert.ok(!/other checks clean/.test(full));
+  assert.equal(sentinel.buildReport(result), full, 'expanded is the default — the 🩺 tile is unchanged');
+  const kbC = sentinel.reportKeyboard(result, false).inline_keyboard.flat();
+  assert.deepEqual(kbC.map((b) => b.callback_data), ['snt:dm:all', 'act:data_health']);
+  assert.equal(kbC[0].text, '🔽 Show all 4');
+  const kbE = sentinel.reportKeyboard(result, true).inline_keyboard.flat();
+  assert.equal(kbE[0].callback_data, 'snt:dm:issues'); assert.equal(kbE[0].text, '🔼 Show issues only');
+  // One clean check: singular.
+  assert.match(sentinel.buildReport({ totalFindings: 1, checks: [result.checks[0], result.checks[1]] }, { expanded: false }), /✅ 1 other check clean$/);
 });
