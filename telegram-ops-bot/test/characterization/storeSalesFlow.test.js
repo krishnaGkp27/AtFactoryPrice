@@ -97,9 +97,9 @@ test('screen 1 → 🏠 Back to menu ends the session and the controller draws t
   assert.ok(!since.some((c) => c.method === 'sendMessage'), 'no fresh bubble');
 });
 
-test('a non-admin tapping the tile is refused in one line and gets no session', async () => {
+test('a non-admin with no grant tapping the tile is refused in one line and gets no session', async () => {
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cq('4242', 'act:store_sales'));
-  assert.match(lastText(bot), /🏬 Store Sales is admin-only\./);
+  assert.equal(lastText(bot), '🏬 No store is assigned to you — ask an admin.');
   assert.equal(sessionStore.get('4242'), null);
 });

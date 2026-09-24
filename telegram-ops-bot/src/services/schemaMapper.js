@@ -41,7 +41,9 @@ const REQUIRED_SHEETS = {
     // Column K = notification_prefs (JSON object string). Stores per-user
     // opt-in/opt-out flags for the Admin Activity Feed events. Empty means
     // "use default policy" (currently: preserve today's all-ON behavior).
-    headers: ['user_id', 'name', 'role', 'branch', 'access_level', 'status', 'created_at', 'department', 'warehouses', 'manages', 'notification_prefs'],
+    // Column L = store_sales_places (SSA-1): CSV of the places whose sales
+    // this person may see in 🏬 Store Sales / 📒 Customer Supplies.
+    headers: ['user_id', 'name', 'role', 'branch', 'access_level', 'status', 'created_at', 'department', 'warehouses', 'manages', 'notification_prefs', 'store_sales_places'],
   },
   Departments: {
     // MG-1: column G `warehouses` is a CSV of warehouse names this
@@ -549,6 +551,14 @@ async function initialize() {
         const nextCol = colLetter(h.length + 1);
         await sheets.updateRange('Users', `${nextCol}1:${nextCol}1`, [['notification_prefs']]);
         logger.info('SchemaMapper: extended Users with notification_prefs column (T2)');
+        userHeader = await sheets.readRange('Users', 'A1:Z1');
+        h = userHeader[0] || [];
+      }
+      // SSA-1 — the places whose sales a person may see (admin-granted).
+      if (!h.includes('store_sales_places')) {
+        const nextCol = colLetter(h.length + 1);
+        await sheets.updateRange('Users', `${nextCol}1:${nextCol}1`, [['store_sales_places']]);
+        logger.info('SchemaMapper: extended Users with store_sales_places column (SSA-1)');
       }
     } catch (e) {
       logger.warn('SchemaMapper: could not extend Users —', e.message);

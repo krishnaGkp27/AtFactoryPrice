@@ -55,6 +55,7 @@ const { buildShadeNameMap, formatShadeRef } = require('../utils/shadeButtons');
 const { baleGroupKey } = require('../utils/inventoryPickers');
 const saleDocReconcile = require('../services/saleDocReconcile');
 const unitDisplayService = require('../services/unitDisplayService');
+const salesAccessService = require('../services/salesAccessService');
 
 const SESSION_TYPE   = 'sold_bales_flow';
 const TILES_PER_ROW  = 2;
@@ -124,7 +125,15 @@ async function start(bot, chatId, userId, messageId) {
     await bot.sendMessage(chatId, '📒 Customer Supplies is available to employees and admins.');
     return;
   }
+  // SSA-1 — a non-admin sees only the places an admin ticked for them;
+  // with nothing ticked, nothing (owner ruling 24-Sep-2026).
+  const scope = await salesAccessService.scopeFor(userId);
+  if (!scope.admin && !scope.keys.size) {
+    await bot.sendMessage(chatId, '📒 No store is assigned to you — ask an admin.');
+    return;
+  }
   sessionStore.set(userId, {
+    _scope: scope.admin ? null : [...scope.keys],
     type: SESSION_TYPE,
     step: 'pick_customer',
     flowMessageId: messageId || null,
@@ -139,6 +148,22 @@ async function start(bot, chatId, userId, messageId) {
   await renderCustomerPicker(bot, chatId, userId);
 }
 
+/* ───────────────────────────── scope (SSA-1) ───────────────────────────── */
+
+/**
+ * The sold rows this session may see: every row for an admin (no `_scope`),
+ * only the granted places' rows otherwise.
+ * @param {object|null|undefined} session
+ * @returns {Promise<Array<object>>}
+ */
+async function scopedSoldRows(session) {
+  const sold = await inventoryRepository.getSoldRows();
+  const keys = session && Array.isArray(session._scope) ? session._scope : null;
+  if (!keys) return sold;
+  const set = new Set(keys);
+  return sold.filter((r) => set.has(salesAccessService.placeKey(r.warehouse)));
+}
+
 /* ───────────────────────────── customer list ───────────────────────────── */
 
 /**
@@ -146,12 +171,12 @@ async function start(bot, chatId, userId, messageId) {
  * sold rows, sorted by most-recent purchase first.
  * @returns {Promise<Array<{name:string,lastDate:string,thans:number,bales:number,yards:number}>>}
  */
-async function loadCustomers() {
+async function loadCustomers(session) {
   // TV-8 — the chip label follows the goods, not a fixed unit: the whole
   // Inventory feeds the bale roster so a part-taken bale reads as thans.
   const all = await inventoryRepository.getAll();
   const label = await unitDisplayService.createQtyLabeller(all);
-  const sold = await inventoryRepository.getSoldRows();
+  const sold = await scopedSoldRows(session);
   const byCust = new Map();
   for (const r of sold) {
     const name = r.soldTo;
@@ -174,7 +199,7 @@ async function loadCustomers() {
 async function renderCustomerPicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const customers = await loadCustomers();
+  const customers = await loadCustomers(session);
   if (!customers.length) {
     sessionStore.clear(userId);
     await render(bot, chatId, userId,
@@ -209,10 +234,10 @@ async function renderCustomerPicker(bot, chatId, userId) {
  * Dates the current customer bought on, newest first, each with a summary.
  * @returns {Promise<Array<{date:string,thans:number,bales:number,yards:number}>>}
  */
-async function loadDatesForCustomer(customer) {
+async function loadDatesForCustomer(customer, session) {
   const all = await inventoryRepository.getAll();
   const label = await unitDisplayService.createQtyLabeller(all);
-  const sold = await inventoryRepository.getSoldRows();
+  const sold = await scopedSoldRows(session);
   const byDate = new Map();
   const mine = [];
   for (const r of sold) {
@@ -241,7 +266,7 @@ async function loadDatesForCustomer(customer) {
 async function renderDatePicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const dates = await loadDatesForCustomer(session.customer);
+  const dates = await loadDatesForCustomer(session.customer, session);
   if (!dates.length) {
     await render(bot, chatId, userId,
       `🔎 *${session.customer}*\n\n_No sold bales found for this customer._`,
@@ -285,7 +310,7 @@ async function renderDatePicker(bot, chatId, userId) {
 async function loadSummary(session) {
   const all = await inventoryRepository.getAll();
   const label = await unitDisplayService.createQtyLabeller(all);
-  const sold = await inventoryRepository.getSoldRows();
+  const sold = await scopedSoldRows(session);
   const rows = sold.filter((r) => r.soldTo === session.customer && normDay(r.soldDate) === session.soldDate);
   const designs = new Map();
   const seen = new Set();
@@ -321,7 +346,7 @@ async function renderSummary(bot, chatId, userId, opts = {}) {
     return;
   }
   if (!Array.isArray(session._docs)) {
-    session._docs = await saleDocReconcile.docsFor(session.customer, session.soldDate);
+    session._docs = await saleDocReconcile.docsFor(session.customer, session.soldDate, { placeKeys: session._scope || null });
     sessionStore.set(userId, session);
   }
   const verified = new Set(session._verified || []);
@@ -453,7 +478,7 @@ async function shadeNameMapFor(design) {
 async function renderDetail(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  const sold = await inventoryRepository.getSoldRows();
+  const sold = await scopedSoldRows(session);
   const rows = sold.filter((r) => r.soldTo === session.customer && normDay(r.soldDate) === session.soldDate);
   if (!rows.length) {
     await render(bot, chatId, userId,
@@ -671,7 +696,7 @@ module.exports = {
     // surface everywhere, per the owner's no-duplication order).
     renderSummary,
     renderCustomerPicker, renderDatePicker, renderDetail, stepBack,
-    loadCustomers, loadDatesForCustomer, prettyDate, baleGroupKey, chunkButtons,
+    loadCustomers, loadDatesForCustomer, scopedSoldRows, prettyDate, baleGroupKey, chunkButtons,
     SESSION_TYPE,
   },
 };

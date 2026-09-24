@@ -242,6 +242,9 @@ const ACTIVITIES = [
   // USR-C4 — deactivate (status=inactive). Dual-admin gated.
   { code: 'deactivate_user',       label: 'Deactivate User',           icon: '🛑', callback: 'umg:start:deactivate', hub: 'hr' },
   { code: 'manage_departments',    label: 'Manage Departments',        icon: '🏢', callback: 'act:manage_depts',       hub: 'hr' },
+  // SSA-1 — tick, per employee, the places whose SALES they may see
+  // (🏬 Store Sales + 📒 Customer Supplies). Admin-only, gated in start().
+  { code: 'sales_access',          label: 'Sales Access',              icon: '🔐', callback: 'act:sales_access',       hub: 'hr' },
 
   // ── Reporting ────────────────────────────────────────────────────────
   { code: 'sales_report',          label: 'Sales Report',              icon: '📊', callback: 'act:sales_report',       hub: 'reporting' },

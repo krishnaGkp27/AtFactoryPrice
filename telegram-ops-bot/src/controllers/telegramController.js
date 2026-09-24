@@ -5365,6 +5365,15 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
     logger.warn(`buildGreetingMenuMarkup: attendance visibility failed: ${e.message}`);
   }
 
+  // SSA-1 — 🏬 Store Sales / 📒 Customer Supplies follow the admin-ticked
+  // places on the person's Users row, never a department CSV: a grant adds
+  // both tiles, no grant removes both. Admins are untouched.
+  if (!fieldRole) {
+    try { require('../services/salesAccessService').adjustMenu(user, isAdminUser, allowed, activityRegistry); } catch (e) {
+      logger.warn(`buildGreetingMenuMarkup: sales access scope failed: ${e.message}`);
+    }
+  }
+
   // PAY-1 — 💳 Payments is injected for EVERY user, not drawn from a
   // department's allowed_activities. Asking for money you are owed is not
   // a departmental duty: the owner's own system design lists "Abdul,
@@ -5613,6 +5622,10 @@ async function renderHubSubmenu(bot, chatId, messageId, userId, hubId, callbackQ
     }
   } catch (e) {
     logger.warn(`renderHubSubmenu: taskFlow visibility failed: ${e.message}`);
+  }
+  // SSA-1 — same rule as the greeting grid (see buildGreetingMenuMarkup).
+  try { require('../services/salesAccessService').adjustMenu(user, isAdminUser, allowed, activityRegistry); } catch (e) {
+    logger.warn(`renderHubSubmenu: sales access scope failed: ${e.message}`);
   }
   // PAY-1 — same universal injection as the greeting menu, so the tile is
   // still there when the Finance hub is opened rather than vanishing one
@@ -7518,6 +7531,7 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['trf:'], handle: (bot, cq) => require('../flows/transferFlow').handleCallback(bot, cq) },
   { prefixes: ['sbl:'], handle: (bot, cq) => require('../flows/soldBalesFlow').handleCallback(bot, cq) },
   { prefixes: ['sfs:'], handle: (bot, cq) => require('../flows/storeSalesFlow').handleCallback(bot, cq) },
+  { prefixes: ['ssa:'], handle: (bot, cq) => require('../flows/salesAccessFlow').handleCallback(bot, cq) },
   { prefixes: ['sdd:'], handle: (bot, cq) => require('../flows/supplyDetailsFlow').handleCallback(bot, cq) },
   { prefixes: ['sdg:'], handle: (bot, cq) => require('../flows/supplyDetailsDesignFlow').handleCallback(bot, cq) },
   { prefixes: ['sds:'], handle: (bot, cq) => require('../flows/stockByShadeFlow').handleCallback(bot, cq) },
@@ -10294,6 +10308,12 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         // SFS-1 — sales by place (warehouse/store → sale days → the day's
         // card). Read-only; admin-only, gated in the flow's start().
         await require('../flows/storeSalesFlow').start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'sales_access': {
+        // SSA-1 — tick, per employee, the places whose sales they may see.
+        // Admin-only, gated in the flow's start().
+        await require('../flows/salesAccessFlow').start(bot, chatId, uid, messageId);
         break;
       }
       case 'office_expense': {

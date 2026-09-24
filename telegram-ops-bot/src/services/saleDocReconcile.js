@@ -50,10 +50,15 @@ function normDay(sRaw) {
  * @param {string} customer @param {string} day ISO YYYY-MM-DD
  * @returns {Promise<Array<{fileId:string, kind:'photo'|'document'}>>}
  */
-async function docsFor(customer, day) {
+async function docsFor(customer, day, opts = {}) {
   try {
     const approvalQueueRepository = require('../repositories/approvalQueueRepository');
     const cust = String(customer || '').trim().toLowerCase();
+    // SSA-1 — a place-scoped viewer never receives a bill raised from a
+    // place outside their grant (same customer, same day, other store).
+    const placeKeys = Array.isArray(opts.placeKeys)
+      ? new Set(opts.placeKeys.map((k) => String(k || '').trim().toUpperCase()).filter(Boolean))
+      : null;
     const seen = new Set();
     const docs = [];
     for (const r of await approvalQueueRepository.getResolved()) {
@@ -62,6 +67,7 @@ async function docsFor(customer, day) {
       if (!aj.sale_doc_file_id || seen.has(aj.sale_doc_file_id)) continue;
       if (String(aj.customer || '').trim().toLowerCase() !== cust) continue;
       if (normDay(aj.salesDate) !== day) continue;
+      if (placeKeys && aj.warehouse && !placeKeys.has(String(aj.warehouse).trim().toUpperCase())) continue;
       seen.add(aj.sale_doc_file_id);
       // snap PDF batches ride as documents; snap bill photos as photos.
       docs.push({ fileId: aj.sale_doc_file_id, kind: aj.action === 'sale_bundle' ? 'document' : 'photo' });

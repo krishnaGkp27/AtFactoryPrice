@@ -196,11 +196,11 @@ test('fitLines never cuts silently and never strands a header', () => {
 
 /* ───────── screens ───────── */
 
-test('screen 1: admin-only; one plain chip per selling place, two per row, then Back to menu — nothing else', async () => {
+test('screen 1: a person with no grant is refused; an admin gets one plain chip per selling place, two per row, then Back to menu — nothing else', async () => {
   seed(world());
   const bot = createFakeBot();
   await flow.start(bot, 1, '4242', 55);
-  assert.equal(lastText(bot), '🏬 Store Sales is admin-only.');
+  assert.equal(lastText(bot), '🏬 No store is assigned to you — ask an admin.');
   assert.equal(sessionStore.get('4242'), null);
 
   const bot2 = createFakeBot();
@@ -407,4 +407,67 @@ test('a foreign prefix is not handled', async () => {
   const bot = createFakeBot();
   assert.equal(await tap(bot, '777', 'sbl:close'), false);
   assert.equal(bot.calls.length, 0);
+});
+
+/* ───────── SSA-1 — a granted employee ───────── */
+
+const usersRepository = require(path.join(SRC, 'repositories/usersRepository'));
+const GRANTS = {};
+usersRepository.findByUserId = async (id) => (GRANTS[id] ? { user_id: String(id), name: 'X', status: 'active', store_sales_places: GRANTS[id] } : null);
+
+test('one granted place: screen 1 is skipped, the title is that place, no Change place, Back closes', async () => {
+  seed(world());
+  GRANTS['4242'] = ['kano office'];
+  const bot = createFakeBot();
+  await flow.start(bot, 1, '4242', 55);
+  assert.equal(lastText(bot),
+    '🏬 *Sales — kano office*\n\n'
+    + 'Total: *1t* · *25* yds\n'
+    + 'across *1* sale day · first: 30 Jul 2026\n\n'
+    + '_Tap a date for the day\'s detail._');
+  assert.deepEqual(kbTexts(bot), ['30 Jul 2026 — 1t (25 yds)|sfs:d:0', '❌ Close|sfs:close']);
+  const s = sessionStore.get('4242');
+  assert.equal(s.step, 'pick_date');
+  assert.deepEqual(s.scope, ['KANO OFFICE']);
+  assert.equal(s.single, true);
+  // A wrong-place tap cannot open another store.
+  await tap(bot, '4242', 'sfs:w:0');
+  assert.equal(sessionStore.get('4242').placeKey, 'KANO OFFICE');
+  // The day card and Back.
+  await tap(bot, '4242', 'sfs:d:0');
+  assert.equal(lastText(bot), '🧾 *kano office* · 30 Jul 2026\n_1t sold · 25 yds_\n\n👤 *Musa*\n 🧵 *9037*\n  • Shade — ×1t (9001)');
+  await tap(bot, '4242', 'sfs:back');
+  assert.deepEqual(kbTexts(bot), ['30 Jul 2026 — 1t (25 yds)|sfs:d:0', '❌ Close|sfs:close']);
+  await tap(bot, '4242', 'sfs:back');
+  assert.equal(lastText(bot), '🏬 Closed.');
+  assert.equal(sessionStore.get('4242'), null);
+});
+
+test('two granted places: screen 1 shows only those chips; a granted place with no sales is simply absent', async () => {
+  seed(world());
+  GRANTS['4242'] = ['Ketu', 'Kano office', 'Balogun'];
+  const bot = createFakeBot();
+  await flow.start(bot, 1, '4242', 55);
+  assert.deepEqual(kbTexts(bot), ['Kano office|sfs:w:0', 'Ketu|sfs:w:1', '🏠 Back to menu|sfs:menu']);
+  await tap(bot, '4242', 'sfs:w:1');
+  assert.match(lastText(bot), /^🏬 \*Sales — Ketu\*/);
+  assert.deepEqual(kbTexts(bot).slice(-2), ['🏬 Change place|sfs:back', '❌ Close|sfs:close']);
+});
+
+test('granted places with no sales at all: one line, session closed', async () => {
+  seed(world());
+  GRANTS['4242'] = ['Balogun', 'Lekki'];
+  const bot = createFakeBot();
+  await flow.start(bot, 1, '4242', 55);
+  assert.equal(lastText(bot), '🏬 *Store Sales*\n\n_No sales recorded yet for your places._');
+  assert.equal(sessionStore.get('4242'), null);
+});
+
+test('no grant: refused in one line, no session', async () => {
+  seed(world());
+  GRANTS['4242'] = [];
+  const bot = createFakeBot();
+  await flow.start(bot, 1, '4242', 55);
+  assert.equal(lastText(bot), '🏬 No store is assigned to you — ask an admin.');
+  assert.equal(sessionStore.get('4242'), null);
 });

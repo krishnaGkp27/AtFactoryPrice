@@ -10,7 +10,10 @@ functionalities, no more unnecessary items.**"
 
 ## 1. What it is
 
-Three read-only screens, admin-only, reached from 📊 Reporting → 🏬 **Store Sales**.
+Three read-only screens, reached from 📊 Reporting → 🏬 **Store Sales**. Admin-only at
+shipping; since **SSA-1 (24-Sep-2026)** an employee an admin has ticked places for
+sees exactly those places (one place → straight onto its day tiles, no Change place;
+nothing ticked → tile hidden, stale tap refused). See `specs/SSA-1_SALES_ACCESS.md`.
 
 | Screen | Shows | Buttons |
 |---|---|---|

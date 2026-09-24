@@ -57,6 +57,10 @@ function parse(r, rowIndex) {
     manages,
     /** Per-user Admin Activity Feed opt-ins (T2). null = use default. */
     notification_prefs: parseNotificationPrefs(r[10]),
+    /** SSA-1 — the places (warehouses / stores) whose SALES this person may
+     *  see in 🏬 Store Sales and 📒 Customer Supplies (column L, CSV).
+     *  Empty = none (the tiles are hidden). Admins are never scoped. */
+    store_sales_places: str(r[11]).split(',').map((w) => w.trim()).filter(Boolean),
   };
 }
 
@@ -95,9 +99,10 @@ function invalidateCache() {
 async function getAll() {
   const now = Date.now();
   if (_allCache && now - _allCacheTs < CACHE_TTL_MS) return _allCache;
-  // K = notification_prefs (T2). Older deployments may still have only
-  // A:J — sheets API returns shorter rows; the parser handles undefined.
-  const rows = await sheets.readRange(SHEET, 'A2:K');
+  // K = notification_prefs (T2), L = store_sales_places (SSA-1). Older
+  // deployments may still have only A:J — sheets API returns shorter rows;
+  // the parser handles undefined.
+  const rows = await sheets.readRange(SHEET, 'A2:L');
   _allCache = rows.map((r, i) => parse(r, i + 2)).filter((u) => u.user_id);
   _allCacheTs = Date.now();
   return _allCache;
@@ -189,6 +194,24 @@ async function updateWarehouses(userId, warehouses) {
   if (!u) return false;
   const csv = Array.isArray(warehouses) ? warehouses.join(',') : warehouses;
   await sheets.updateRange(SHEET, `I${u.rowIndex}`, [[csv]]);
+  invalidateCache();
+  return true;
+}
+
+/**
+ * SSA-1 — set the places whose sales this person may see (column L, CSV).
+ * An empty array clears the grant. Admins are never scoped, so a grant on
+ * an admin row is inert.
+ * @param {string} userId
+ * @param {string[]} places
+ * @returns {Promise<boolean>} false when the user has no row
+ */
+async function updateStoreSalesPlaces(userId, places) {
+  const u = await findByUserId(userId);
+  if (!u) return false;
+  const csv = (Array.isArray(places) ? places : [])
+    .map((w) => str(w)).filter(Boolean).join(',');
+  await sheets.updateRange(SHEET, `L${u.rowIndex}`, [[csv]]);
   invalidateCache();
   return true;
 }
@@ -310,6 +333,7 @@ module.exports = {
   updateDepartment,
   updateBranch,
   updateWarehouses,
+  updateStoreSalesPlaces,
   updateManages,
   updateRole,
   updateStatus,

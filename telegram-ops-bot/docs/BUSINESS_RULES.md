@@ -921,6 +921,32 @@ what value will fit in (I think we have a Railway variable)."*
   the invoice caption, the approved reply, the requester's card, the sealed
   wizard card, or any message to another Telegram user.
 
+## 18 · Who may see a store's sales is ticked by an admin, per person — nothing until ticked
+
+**Owner ruling, 24-Sep-2026** ("grant access to see the sales from different
+warehouses to different employees … through checkboxes"; "only kano details are
+being shown to the kano manager, not the other warehouses").
+
+- An **admin** sees every place's sales on every report door, as before.
+- Anyone else sees the sales of exactly the places an admin ticked for them in
+  👥 Human Resources → 🔐 **Sales Access** (Users sheet column L
+  `store_sales_places`). With nothing ticked they see **nothing**: the 🏬 Store Sales
+  and 📒 Customer Supplies tiles are hidden and a stale tap is refused in one line —
+  even if a department's `allowed_activities` lists Customer Supplies. A grant ADDS
+  both tiles; no grant REMOVES both.
+- The grant is **immediate** (one admin, no second signature — read access only, one
+  tap revokes), **logged** (AuditLog `sales_access_updated`) and **told** (a one-line
+  DM to the person when it changes).
+- The grant governs 🏬 Store Sales and 📒 Customer Supplies together (including
+  which sale bills the day card offers). 📦 Supply Details is **not** yet governed
+  (owner: "needs more polishing, leave this for now") — keep it out of a
+  place-bound department's CSV until it is.
+- Column L is separate from column I `warehouses` (the supply-door scope): granting
+  a report never changes where a person may raise a supply from.
+- A failed Users read scopes a person to **nothing**, never to every place.
+
+Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
+
 ## Incident log (why these rules exist)
 
 | Date | Incident | Rule born |

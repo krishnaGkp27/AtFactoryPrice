@@ -46,6 +46,7 @@ const unitDisplayService = require('../services/unitDisplayService');
 const auth = require('../middlewares/auth');
 const { baleGroupKey, cmpNumericAware } = require('../utils/inventoryPickers');
 const { normalizeSalesDate } = require('../utils/dates');
+const salesAccessService = require('../services/salesAccessService');
 
 const SESSION_TYPE = 'store_sales_flow';
 const NS = 'sfs';
@@ -233,8 +234,13 @@ function groupDay(sold, key, day, label) {
  * @param {number|null} messageId  message to edit in place, when known
  */
 async function start(bot, chatId, userId, messageId) {
-  if (!auth.isAdmin(userId)) {
-    await bot.sendMessage(chatId, '🏬 Store Sales is admin-only.');
+  // SSA-1 — an admin sees every place; anyone else only the places an
+  // admin ticked for them in 🔐 Sales Access, and with nothing ticked,
+  // nothing (owner ruling 24-Sep-2026). The Departments sheet can show the
+  // tile but never widen this.
+  const scope = await salesAccessService.scopeFor(userId);
+  if (!scope.admin && !scope.keys.size) {
+    await bot.sendMessage(chatId, '🏬 No store is assigned to you — ask an admin.');
     return;
   }
   // SJ-4 handoff — a tile tapped over another live flow abandons that flow:
@@ -257,7 +263,20 @@ async function start(bot, chatId, userId, messageId) {
     _places: [],
     _dates: [],
     _datePage: 0,
+    /** SSA-1 — null = every place (admin); else the granted placeKeys. */
+    scope: scope.admin ? null : [...scope.keys],
+    /** SSA-1 — one granted place: screen 1 is skipped and has no way back. */
+    single: !scope.admin && scope.keys.size === 1,
   });
+  if (!scope.admin && scope.keys.size === 1) {
+    const session = sessionStore.get(userId);
+    session.placeKey = scope.places[0].toUpperCase();
+    session.placeLabel = scope.places[0];
+    session.step = 'pick_date';
+    sessionStore.set(userId, session);
+    await renderDatePicker(bot, chatId, userId);
+    return;
+  }
   await renderPlacePicker(bot, chatId, userId);
 }
 
@@ -267,10 +286,12 @@ async function renderPlacePicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
   const { sold } = await loadSold();
-  const places = groupPlaces(sold);
+  const scoped = Array.isArray(session.scope) ? new Set(session.scope) : null;
+  const places = groupPlaces(sold).filter((p) => !scoped || scoped.has(p.key));
   if (!places.length) {
     // Render BEFORE clearing: the renderer anchors on session.flowMessageId.
-    await render(bot, chatId, userId, '🏬 *Store Sales*\n\n_No sales recorded yet._', [menuRow()]);
+    await render(bot, chatId, userId, '🏬 *Store Sales*\n\n_No sales recorded yet'
+      + (scoped ? ' for your places' : '') + '._', [menuRow()]);
     sessionStore.clear(userId, 'completed');
     return;
   }
@@ -292,10 +313,10 @@ async function renderDatePicker(bot, chatId, userId) {
   if (!session) return;
   const { sold, label } = await loadSold();
   const dates = groupDays(sold, session.placeKey, label);
+  const exitRows = session.single ? [closeRow()] : [backRow('🏬 Change place'), closeRow()];
   const title = `🏬 ${bold(`Sales — ${session.placeLabel}`)}`;
   if (!dates.length) {
-    await render(bot, chatId, userId, `${title}\n\n_No sales found for this place._`,
-      [backRow('🏬 Change place'), closeRow()]);
+    await render(bot, chatId, userId, `${title}\n\n_No sales found for this place._`, exitRows);
     return;
   }
   session._dates = dates.map((d) => d.date);
@@ -315,8 +336,7 @@ async function renderDatePicker(bot, chatId, userId) {
   }
   if (page > 0) nav.push({ text: '⬆ Newer', callback_data: `${NS}:pg:${page - 1}` });
   if (nav.length) rows.push(nav);
-  rows.push(backRow('🏬 Change place'));
-  rows.push(closeRow());
+  rows.push(...exitRows);
   await render(bot, chatId, userId,
     `${title}\n\n`
     + `Total: *${dates.totalQty}* · *${fmtQty(dates.totalYards)}* yds\n`
@@ -400,6 +420,7 @@ async function stepBack(bot, chatId, userId) {
   if (!session) return;
   switch (session.step) {
     case 'pick_date':
+      if (session.single) { await closeFlow(bot, chatId, userId, 'cancelled'); break; }
       session.step = 'pick_place';
       session.placeKey = null;
       session.placeLabel = '';

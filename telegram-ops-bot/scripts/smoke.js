@@ -7249,12 +7249,14 @@ async function runS40() {
 // ---------------------------------------------------------------------------
 async function runS41() {
   // Fake sold inventory: CJE (two dates) + Ibrahim (one date).
+  // SSA-1 — every sold row carries the place it was sold from; the
+  // non-admin 'emp' below holds a grant on it (nothing ticked = nothing).
   const sold = [
-    { status: 'sold', soldTo: 'CJE', soldDate: '2026-06-25', design: '9006', shade: '11', packageNo: '6534', baleUid: 'BAL-1', thanNo: 1, yards: 25, pricePerYard: 1200 },
-    { status: 'sold', soldTo: 'CJE', soldDate: '2026-06-25', design: '9006', shade: '11', packageNo: '6534', baleUid: 'BAL-1', thanNo: 2, yards: 25, pricePerYard: 1200 },
-    { status: 'sold', soldTo: 'CJE', soldDate: '2026-06-25', design: '80045', shade: '7', packageNo: '6101', baleUid: 'BAL-2', thanNo: 2, yards: 25, pricePerYard: 1150 },
-    { status: 'sold', soldTo: 'CJE', soldDate: '2026-06-20', design: '9006', shade: '11', packageNo: '6500', baleUid: 'BAL-3', thanNo: 1, yards: 30, pricePerYard: 1100 },
-    { status: 'sold', soldTo: 'Ibrahim', soldDate: '2026-06-24', design: '9006', shade: '9', packageNo: '6700', baleUid: 'BAL-4', thanNo: 1, yards: 20, pricePerYard: 1000 },
+    { status: 'sold', soldTo: 'CJE', soldDate: '2026-06-25', design: '9006', shade: '11', packageNo: '6534', baleUid: 'BAL-1', thanNo: 1, yards: 25, pricePerYard: 1200, warehouse: 'IDUMOTA' },
+    { status: 'sold', soldTo: 'CJE', soldDate: '2026-06-25', design: '9006', shade: '11', packageNo: '6534', baleUid: 'BAL-1', thanNo: 2, yards: 25, pricePerYard: 1200, warehouse: 'IDUMOTA' },
+    { status: 'sold', soldTo: 'CJE', soldDate: '2026-06-25', design: '80045', shade: '7', packageNo: '6101', baleUid: 'BAL-2', thanNo: 2, yards: 25, pricePerYard: 1150, warehouse: 'IDUMOTA' },
+    { status: 'sold', soldTo: 'CJE', soldDate: '2026-06-20', design: '9006', shade: '11', packageNo: '6500', baleUid: 'BAL-3', thanNo: 1, yards: 30, pricePerYard: 1100, warehouse: 'IDUMOTA' },
+    { status: 'sold', soldTo: 'Ibrahim', soldDate: '2026-06-24', design: '9006', shade: '9', packageNo: '6700', baleUid: 'BAL-4', thanNo: 1, yards: 20, pricePerYard: 1000, warehouse: 'IDUMOTA' },
   ];
   const assets = {
     '9006': { shades: [{ number: 11, name: 'White' }, { number: 9, name: 'Navy' }] },
@@ -7281,6 +7283,10 @@ async function runS41() {
   });
   stubModule(require.resolve('../src/middlewares/auth'), {
     isAdmin: (id) => String(id) === 'admin', isEmployee: () => true,
+  });
+  stubModule(require.resolve('../src/repositories/usersRepository'), {
+    findByUserId: async (id) => (String(id) === 'emp'
+      ? { user_id: 'emp', name: 'Emp', status: 'active', store_sales_places: ['IDUMOTA'] } : null),
   });
   stubModule(require.resolve('../src/utils/logger'), {
     info: () => {}, warn: () => {}, error: () => {},
@@ -7361,6 +7367,7 @@ async function runS41() {
   for (const p of [
     '../src/repositories/inventoryRepository',
     '../src/repositories/designAssetsRepository',
+    '../src/repositories/usersRepository',
     '../src/services/pricingService',
     '../src/middlewares/auth',
     '../src/utils/logger',
