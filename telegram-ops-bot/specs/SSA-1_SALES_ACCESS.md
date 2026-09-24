@@ -10,7 +10,7 @@ they'll be able to see it inside their Telegram account."
 
 **Rulings (24-Sep, before the build):** (1) **immediate** — one admin, no second
 signature (read access only; one tap revokes); (2) **tell the employee** — a one-line
-DM when their access changes; (3) **scope 🏬 Store Sales and 📒 Customer Supplies
+DM when they gain access (a removal is silent — ruled after shipping); (3) **scope 🏬 Store Sales and 📒 Customer Supplies
 together**; 📦 Supply Details "needs more polishing, leave this for now"; (4) an
 employee with **nothing ticked sees nothing** — the tiles are hidden and a stale tap
 is refused in one line — even if a department CSV lists Customer Supplies.
@@ -62,9 +62,9 @@ Tick the places Abdul may see, then Save.
 ```
 
 **✅ Save** writes the ticks, logs one AuditLog line (`sales_access_updated`: who, whom,
-before, after), DMs the person when the grant CHANGED (`🏬 You can now see the sales of
-Kano office. Open 📊 Reporting → 🏬 Store Sales or 📒 Customer Supplies.` / `🏬 Your
-access to store sales has been removed.`) and confirms:
+before, after), DMs the person when they GAINED something to see (`🏬 You can now see
+the sales of Kano office. Open 📊 Reporting → 🏬 Store Sales or 📒 Customer Supplies.`)
+and confirms:
 
 ```
 🔐 Sales Access
@@ -77,6 +77,11 @@ They have been told.
 ```
 
 A save with no change is written anyway and says `No change — nothing sent.`
+
+**A removal is silent (owner, 24-Sep, after shipping: "I don't want removal messages
+to be seen to employees").** Unticking everything writes the cell, logs the line and
+confirms `✅ Musa no longer sees any store's sales.` to the admin — the employee gets
+no message; the tiles simply leave their menu.
 
 ## 3. Where the grant lives
 
@@ -113,7 +118,7 @@ fold the bale identity and 🏬 Store Sales use.
    Store Sales opens straight on `🏬 Sales — Kano office` (your screenshot, with no
    🏬 Change place button); Customer Supplies lists only buyers who bought from Kano
    office, and their day cards show only Kano goods.
-3. Back on your phone: untick Kano office → ✅ Save. Abdul gets the removal DM; both
+3. Back on your phone: untick Kano office → ✅ Save. Abdul gets NO message; both
    tiles leave his Reporting hub; an old card he taps answers `No store is assigned
    to you — ask an admin.`
 4. Check the Users sheet gained exactly ONE trailing header cell `L = store_sales_places`

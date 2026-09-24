@@ -936,7 +936,9 @@ being shown to the kano manager, not the other warehouses").
   both tiles; no grant REMOVES both.
 - The grant is **immediate** (one admin, no second signature — read access only, one
   tap revokes), **logged** (AuditLog `sales_access_updated`) and **told** (a one-line
-  DM to the person when it changes).
+  DM to the person when they GAIN access). **A removal is silent** — no removal
+  message ever reaches an employee (owner, 24-Sep-2026); the tiles simply leave
+  their menu.
 - The grant governs 🏬 Store Sales and 📒 Customer Supplies together (including
   which sale bills the day card offers). 📦 Supply Details is **not** yet governed
   (owner: "needs more polishing, leave this for now") — keep it out of a

@@ -2,7 +2,8 @@
 
 /**
  * SSA-1 — 🔐 Sales Access: pick a person → tick places → Save. Admin-only,
- * immediate, the person is told (owner rulings 24-Sep-2026).
+ * immediate, the person is told what they gained, never what was removed
+ * (owner rulings 24-Sep-2026).
  */
 
 process.env.ADMIN_IDS = '777';
@@ -115,7 +116,7 @@ test('Save: writes column L, logs, tells the person, and confirms; a no-change s
   assert.match(lastText(bot), /_No change — nothing sent\._$/);
 });
 
-test('Save with everything unticked revokes and says so', async () => {
+test('Save with everything unticked revokes silently — the employee gets no removal message', async () => {
   const bot = createFakeBot();
   await flow.start(bot, 1, '777', 55);
   await tap(bot, '777', 'ssa:u:1');            // Musa: IDUMOTA + Ketu
@@ -123,8 +124,8 @@ test('Save with everything unticked revokes and says so', async () => {
   await tap(bot, '777', 'ssa:p:3');
   await tap(bot, '777', 'ssa:save');
   assert.deepEqual(writes, [['5151', []]]);
-  assert.deepEqual(dmsTo(bot, '5151'), ['🏬 Your access to store sales has been removed.']);
-  assert.equal(lastText(bot), '🔐 *Sales Access*\n\n✅ *Musa* no longer sees any store\'s sales.\n_They have been told._');
+  assert.deepEqual(dmsTo(bot, '5151'), [], 'no removal DM');
+  assert.equal(lastText(bot), '🔐 *Sales Access*\n\n✅ *Musa* no longer sees any store\'s sales.');
 });
 
 test('a granted place the register no longer lists is still shown ticked so it can be removed', async () => {

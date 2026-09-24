@@ -135,7 +135,7 @@ async function listPlaces() {
  * @param {string} p.adminId
  * @param {object} p.user      the Users row being granted
  * @param {string[]} p.places  the ticked names (may be empty = revoke)
- * @returns {Promise<{ok:boolean, changed:boolean}>}
+ * @returns {Promise<{ok:boolean, changed:boolean, told:boolean}>}
  */
 async function grant({ bot, adminId, user, places }) {
   const before = scopeOfUser(user, false);
@@ -143,21 +143,22 @@ async function grant({ bot, adminId, user, places }) {
   const changed = before.keys.size !== after.keys.size
     || [...after.keys].some((k) => !before.keys.has(k));
   const ok = await usersRepository().updateStoreSalesPlaces(user.user_id, after.places);
-  if (!ok) return { ok: false, changed: false };
+  if (!ok) return { ok: false, changed: false, told: false };
   try {
     await require('../repositories/auditLogRepository').append('sales_access_updated', {
       user_id: user.user_id, name: user.name, places: after.places, before: before.places,
     }, String(adminId));
   } catch (e) { logger.warn(`salesAccess: audit write failed: ${e.message}`); }
-  if (changed && bot) {
-    const text = after.places.length
-      ? `🏬 You can now see the sales of ${after.places.join(', ')}.\nOpen 📊 Reporting → 🏬 Store Sales or 📒 Customer Supplies.`
-      : '🏬 Your access to store sales has been removed.';
-    try { await bot.sendMessage(user.user_id, text); } catch (e) {
+  // Owner (24-Sep-2026): the person is told what they can NOW see; a
+  // removal is silent — no removal message ever reaches an employee.
+  let told = false;
+  if (changed && after.places.length && bot) {
+    const text = `🏬 You can now see the sales of ${after.places.join(', ')}.\nOpen 📊 Reporting → 🏬 Store Sales or 📒 Customer Supplies.`;
+    try { await bot.sendMessage(user.user_id, text); told = true; } catch (e) {
       logger.warn(`salesAccess: could not DM ${user.user_id}: ${e.message}`);
     }
   }
-  return { ok: true, changed };
+  return { ok: true, changed, told };
 }
 
 module.exports = {

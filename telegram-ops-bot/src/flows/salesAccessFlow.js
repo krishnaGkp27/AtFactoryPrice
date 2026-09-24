@@ -11,7 +11,8 @@
  *                    (`👤 Abdul · Kano office` / `👤 Musa · —`).
  *   B. tick_places — one ✅/⬜ chip per place the bot knows; tap toggles in
  *                    place; ✅ Save writes Users column L, logs one AuditLog
- *                    line and DMs the person (owner: immediate, tell them).
+ *                    line and DMs the person what they can now see (owner:
+ *                    immediate, tell them — but a removal is silent).
  *
  * Owner rulings (24-Sep-2026): immediate (single admin, no second
  * signature — read access only, one tap revokes); tell the employee;
@@ -174,7 +175,7 @@ async function save(bot, chatId, userId) {
   const line = places.length
     ? `✅ ${bold(user.name || user.user_id)} now sees the sales of ${places.map((p) => bold(p)).join(', ')}.`
     : `✅ ${bold(user.name || user.user_id)} no longer sees any store's sales.`;
-  const told = result.changed ? '\n_They have been told._' : '\n_No change — nothing sent._';
+  const told = result.told ? '\n_They have been told._' : (result.changed ? '' : '\n_No change — nothing sent._');
   session.step = 'saved';
   sessionStore.set(userId, session);
   await render(bot, chatId, userId, `🔐 *Sales Access*\n\n${line}${told}`,

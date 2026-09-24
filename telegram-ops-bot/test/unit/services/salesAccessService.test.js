@@ -78,14 +78,14 @@ test('adjustMenu: a grant adds both doors, no grant removes both even when a dep
   assert.deepEqual(admin.map((a) => a.code), ['my_orders']);
 });
 
-test('grant: writes column L, logs, DMs the person only when the grant changed', async () => {
+test('grant: writes column L, logs, DMs the person only when they gained something to see; a removal is silent', async () => {
   const writes = []; const audits = []; const dms = [];
   usersRepository.updateStoreSalesPlaces = async (id, places) => { writes.push([id, places]); return true; };
   auditLogRepository.append = async (type, payload, by) => { audits.push([type, payload, by]); };
   const bot = { sendMessage: async (id, text) => { dms.push([id, text]); } };
 
   let r = await svc.grant({ bot, adminId: '777', user: USERS[5151], places: ['Kano office', 'ketu'] });
-  assert.deepEqual(r, { ok: true, changed: true });
+  assert.deepEqual(r, { ok: true, changed: true, told: true });
   assert.deepEqual(writes, [['5151', ['Kano office', 'ketu']]]);
   assert.equal(audits[0][0], 'sales_access_updated');
   assert.deepEqual(audits[0][1], { user_id: '5151', name: 'Musa', places: ['Kano office', 'ketu'], before: [] });
@@ -94,23 +94,24 @@ test('grant: writes column L, logs, DMs the person only when the grant changed',
 
   // Same places in another case: no change, no DM, still written (harmless).
   r = await svc.grant({ bot, adminId: '777', user: USERS[4242], places: ['KANO OFFICE'] });
-  assert.deepEqual(r, { ok: true, changed: false });
+  assert.deepEqual(r, { ok: true, changed: false, told: false });
   assert.equal(dms.length, 1);
 
-  // Revoke.
+  // Revoke: written and logged, but SILENT — no removal message ever reaches an employee (owner, 24-Sep).
   r = await svc.grant({ bot, adminId: '777', user: USERS[4242], places: [] });
-  assert.deepEqual(r, { ok: true, changed: true });
-  assert.deepEqual(dms[1], ['4242', '🏬 Your access to store sales has been removed.']);
+  assert.deepEqual(r, { ok: true, changed: true, told: false });
+  assert.equal(dms.length, 1, 'no removal DM');
+  assert.deepEqual(writes[writes.length - 1], ['4242', []]);
 
   // A DM failure never fails the grant.
   const bot2 = { sendMessage: async () => { throw new Error('blocked'); } };
   r = await svc.grant({ bot: bot2, adminId: '777', user: USERS[5151], places: ['Ketu'] });
-  assert.deepEqual(r, { ok: true, changed: true });
+  assert.deepEqual(r, { ok: true, changed: true, told: false });
 
   // No Users row → not ok, nothing logged.
   usersRepository.updateStoreSalesPlaces = async () => false;
   const n = audits.length;
   r = await svc.grant({ bot, adminId: '777', user: { user_id: '9', name: 'Ghost', store_sales_places: [] }, places: ['Ketu'] });
-  assert.deepEqual(r, { ok: false, changed: false });
+  assert.deepEqual(r, { ok: false, changed: false, told: false });
   assert.equal(audits.length, n);
 });
