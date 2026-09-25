@@ -73,6 +73,14 @@
  * instead of choosing three. Same shape as the TRF-8b transfer preload and
  * SELL-T1's whole-bale preload.
  *
+ * SELL-T3c (owner, 25-Sep-2026 — "I want this to be auto selected with
+ * option to make changes as existing"): a BARE bale number ("771" in
+ * "sell 771, 6189/5 …") loads every available than of that bale — the
+ * same as tapping 📦 Take whole bale — instead of a "pick the thans
+ * yourself" chip. Naming the bale names its thans (§2 is about the bot
+ * CHOOSING; here it chooses nothing). Its 🔎 Open chip stays on the review
+ * so he can drop a than; "771 x3" is untouched — three of six is his pick.
+ *
  *   bs:pl:go                       (preload review → cart)
  *   bs:pl:open:<pkg>               (open one bale's than chips)
  */
@@ -316,6 +324,7 @@ async function startWithThans(bot, chatId, userId, parsed) {
   const lines = [];        // resolved than rows → cart
   const notLoaded = [];    // { packageNo, reason }
   const needPick = [];     // { packageNo, count } — he chooses the thans
+  const wholeBales = [];   // { packageNo, count } — SELL-T3c: bare bale, loaded whole
   for (const it of items) {
     const pkg = String(it.packageNo);
     const rows = avail.filter((r) => String(r.packageNo) === pkg && inStore(r));
@@ -344,12 +353,28 @@ async function startWithThans(bot, chatId, userId, parsed) {
           baleUid: row.baleUid, packageNo: row.packageNo, thanNo: row.thanNo,
           yards: row.yards, design: row.design, shade: row.shade,
           binLocation: row.binLocation || '',
+          // STK-E1 identity — without the container the line's bale key
+          // never matched the picker's, so 🧹 Clear bale left it in place.
+          arrivalBatch: row.arrivalBatch || '',
         });
       }
       continue;
     }
-    // "x3" or a bare bale — the human picks which thans, on chips.
-    needPick.push({ packageNo: pkg, count: it.count || 0, available: rows.length });
+    // "x3" — the human picks WHICH thans, on chips (§2).
+    if (it.count) {
+      needPick.push({ packageNo: pkg, count: it.count, available: rows.length });
+      continue;
+    }
+    // SELL-T3c — a bare bale is the whole bale: every available than of
+    // it goes in, and its 🔎 Open chip lets him drop one.
+    for (const row of rows) {
+      lines.push({
+        baleUid: row.baleUid, packageNo: row.packageNo, thanNo: row.thanNo,
+        yards: row.yards, design: row.design, shade: row.shade,
+        binLocation: row.binLocation || '', arrivalBatch: row.arrivalBatch || '',
+      });
+    }
+    wholeBales.push({ packageNo: pkg, count: rows.length });
   }
 
   sessionStore.set(userId, {
@@ -364,7 +389,7 @@ async function startWithThans(bot, chatId, userId, parsed) {
     customer: '', rate: 0, paymentMode: '',
     expandedShade: '', smartPack: null,
     _preload: {
-      notLoaded, needPick,
+      notLoaded, needPick, wholeBales,
       bad: (parsed && parsed.bad) || [],
       commaThanHint: !!(parsed && parsed.commaThanHint),
       ignoredCustomer: (parsed && parsed.ignoredCustomer) || '',
@@ -374,7 +399,7 @@ async function startWithThans(bot, chatId, userId, parsed) {
   const session = sessionStore.get(userId);
   const added = bundleSaleService.addLines(session.cart, lines);
   sessionStore.set(userId, session);
-  logger.info(`bundleSaleFlow.startWithThans: user=${userId} typed=${items.length} loaded=${added} notLoaded=${notLoaded.length} needPick=${needPick.length} wh=${warehouse}`);
+  logger.info(`bundleSaleFlow.startWithThans: user=${userId} typed=${items.length} loaded=${added} notLoaded=${notLoaded.length} needPick=${needPick.length} whole=${wholeBales.length} wh=${warehouse}`);
   await renderPreloadReview(bot, chatId, userId);
   return true;
 }
@@ -384,6 +409,7 @@ async function renderPreloadReview(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
   const pl = session._preload || { notLoaded: [], needPick: [], bad: [] };
+  const wholeBales = pl.wholeBales || [];
   const totals = bundleSaleService.totals(session.cart);
   const typedTotal = totals.thans + pl.notLoaded.length + pl.needPick.length;
 
@@ -410,6 +436,15 @@ async function renderPreloadReview(bot, chatId, userId) {
   }
 
   const rows = [];
+  // SELL-T3c — say which bales came in whole, and how to drop a than.
+  // Only the bales that still hold a than in the cart are named: once he
+  // has cleared one on its card it is no longer "loaded whole".
+  const inCart = new Set(session.cart.lines.map((l) => String(l.packageNo)));
+  const wholeStill = wholeBales.filter((w) => inCart.has(String(w.packageNo)));
+  if (wholeStill.length) {
+    text += `\n📦 Loaded whole: ${wholeStill.map((w) => escapeMd(w.packageNo)).join(', ')}`
+      + ' — tap 🔎 Open to drop a than.\n';
+  }
   if (pl.needPick.length) {
     text += `\n🔎 *Pick the thans yourself (${pl.needPick.length})*\n`;
     for (const n of pl.needPick) {
@@ -443,7 +478,13 @@ async function renderPreloadReview(bot, chatId, userId) {
   }
 
   // One chip per bale that still needs a human pick — opens its than list.
-  const openable = [...new Set([...pl.needPick.map((n) => n.packageNo), ...pl.notLoaded.map((n) => n.packageNo)])];
+  // SELL-T3c: every bale he typed whole gets the same chip — to drop a
+  // than, or to take the bale again after clearing it.
+  const openable = [...new Set([
+    ...pl.needPick.map((n) => n.packageNo),
+    ...pl.notLoaded.map((n) => n.packageNo),
+    ...wholeBales.map((w) => w.packageNo),
+  ])];
   for (let i = 0; i < openable.length; i += 2) {
     const row = [{ text: `🔎 Open ${openable[i]}`, callback_data: `bs:pl:open:${openable[i]}` }];
     if (openable[i + 1]) row.push({ text: `🔎 Open ${openable[i + 1]}`, callback_data: `bs:pl:open:${openable[i + 1]}` });
@@ -1462,6 +1503,7 @@ async function handleCallback(bot, query) {
         bundleSaleService.addLines(session.cart, bale.thans.map((t) => ({
           baleUid: t.baleUid, packageNo: t.packageNo, thanNo: t.thanNo,
           yards: t.yards, design: session.design, shade: bucket.shade, binLocation: bale.binLocation,
+          arrivalBatch: bale.arrivalBatch || '',
         })));
       }
       sessionStore.set(userId, session);
@@ -1490,7 +1532,7 @@ async function handleCallback(bot, query) {
         bundleSaleService.addLines(session.cart, [{
           baleUid: than.than.baleUid, packageNo: than.than.packageNo, thanNo: than.than.thanNo,
           yards: than.than.yards, design: session.design, shade: bucket.shade,
-          binLocation: than.bale.binLocation,
+          binLocation: than.bale.binLocation, arrivalBatch: than.bale.arrivalBatch || '',
         }]);
       }
     }
@@ -1509,6 +1551,7 @@ async function handleCallback(bot, query) {
         const lines = bale.thans.map((t) => ({
           baleUid: t.baleUid, packageNo: t.packageNo, thanNo: t.thanNo,
           yards: t.yards, design: session.design, shade: bucket.shade, binLocation: bale.binLocation,
+          arrivalBatch: bale.arrivalBatch || '',
         }));
         bundleSaleService.addLines(session.cart, lines);
         sessionStore.set(userId, session);

@@ -15,7 +15,9 @@
  *   sell 1100 x3                           THREE thans of 1100 — he picks
  *                                          which, on chips (§2: the bot
  *                                          never selects stock)
- *   sell 1100                              open that bale's than chips
+ *   sell 1100                              the whole bale — every available
+ *                                          than loads (SELL-T3c, 25-Sep);
+ *                                          he drops one on chips if needed
  *
  * Grammar rules that keep it unambiguous:
  *  - a comma (or "and") ALWAYS separates bales;
@@ -143,7 +145,8 @@ function parseThanList(raw) {
         }
       }
     }
-    // bare bale number — open its chips, never auto-pick
+    // bare bale number — returned bare; the flow loads the whole bale
+    // (SELL-T3c). The parser never decides what a number means.
     if (!matched) {
       const bare = s.match(/^(\d+)\b/);
       if (bare) {

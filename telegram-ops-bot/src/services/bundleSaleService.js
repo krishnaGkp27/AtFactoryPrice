@@ -68,6 +68,10 @@ function addLines(cart, lines) {
       design: l.design || '',
       shade: l.shade || '',
       binLocation: l.binLocation || '',
+      // STK-E1 identity — the container is part of the bale key; a line
+      // without it keyed to `pkg:D|P|` and never matched the picker's
+      // `pkg:D|P|JUL26`, so 🧹 Clear bale removed nothing (found 25-Sep).
+      arrivalBatch: l.arrivalBatch || '',
       _key: k,
     });
     added += 1;

@@ -11,8 +11,9 @@
  *  - the shorthand is parsed LOCALLY (no AI call) and preloads the cart
  *    from HIS OWN numbers, across designs and shades;
  *  - a than he named that is gone is REPORTED, never substituted (§2);
- *  - "x3" and a bare bale number open that bale's chips instead of the
- *    bot choosing which thans;
+ *  - "x3" opens that bale's chips instead of the bot choosing which
+ *    thans; a bare bale number loads the WHOLE bale (SELL-T3c, owner
+ *    25-Sep-2026) with an Open chip to drop a than;
  *  - the long AI-parsed sentence lands on the same review card;
  *  - the typed customer stays dropped — the admin assigns it at approval.
  */
@@ -142,15 +143,82 @@ test('a than that is gone is reported — never swapped for its neighbour', asyn
   assert.ok(kb.includes('bs:pl:open:1122'), 'open-bale chip offered so he picks by hand');
 });
 
-test('"x3" and a bare bale ask HIM which thans — the bot picks none', async () => {
+test('"x3" asks HIM which thans; a bare bale loads whole (SELL-T3c)', async () => {
   sessionStore.clear('4242');
   const bot = createFakeBot();
   await controller.handleMessage(bot, msg('sell 1100 x3, 1091 kano'));
   const t = lastText(bot).replace(/\\/g, '');
-  assert.match(t, /Pick the thans yourself \(2\)/);
+  // x3 is a CHOICE of three among the bale's thans — still his to make.
+  assert.match(t, /Pick the thans yourself \(1\)/);
   assert.match(t, /1100 — you asked for 3 of 3 available/);
-  assert.match(t, /1091 — 2 than available/);
-  assert.equal(sessionStore.get('4242').cart.lines.length, 0, 'nothing auto-selected');
+  // The bare bale is the whole bale: both of 1091's thans are in.
+  assert.match(t, /1091 · 9043-B · Shade 4 — than 1, 2 · 60 yd/);
+  assert.match(t, /Loaded whole: 1091 — tap 🔎 Open to drop a than/);
+  assert.match(t, /2 of 3 typed than\(s\) loaded/);
+  const lines = sessionStore.get('4242').cart.lines;
+  assert.deepEqual(lines.map((l) => `${l.packageNo}/${l.thanNo}`).sort(), ['1091/1', '1091/2']);
+  assert.ok(!lines.some((l) => String(l.packageNo) === '1100'), 'x3 selected nothing');
+  const kb = lastKb(bot).map((b) => b.callback_data);
+  assert.ok(kb.includes('bs:pl:open:1100'), 'the x3 bale opens for his pick');
+  assert.ok(kb.includes('bs:pl:open:1091'), 'the whole-loaded bale opens to drop a than');
+  assert.ok(kb.includes('bs:proceed'), 'he can continue straight away');
+});
+
+test('SELL-T3c: opening a whole-loaded bale shows its chips TICKED; one tap drops a than', async () => {
+  sessionStore.clear('4242');
+  const bot = createFakeBot();
+  await controller.handleMessage(bot, msg('sell 1100, 1082/1 kano'));
+  let t = lastText(bot).replace(/\\/g, '');
+  assert.match(t, /4 of 4 typed than\(s\) loaded/, `got: ${t}`);
+  assert.match(t, /1100 · 77014 · Shade 11 — than 1, 2, 3 · 90 yd/);
+  assert.match(t, /Loaded whole: 1100 —/);
+  assert.ok(!/Pick the thans yourself/.test(t), 'no manual pick asked');
+
+  const flow = require(path.join(SRC, 'flows/bundleSaleFlow'));
+  const q = (data) => ({ id: 'q', data, from: { id: '4242' }, message: { chat: { id: '4242' }, message_id: 7 } });
+  await flow.handleCallback(bot, q('bs:pl:open:1100'));
+  t = lastText(bot).replace(/\\/g, '');
+  assert.match(t, /Selected: \*3\/3\* than/, 'every than of the bale is ticked');
+  const chips = lastKb(bot).filter((b) => (b.callback_data || '').startsWith('bs:than:'));
+  assert.equal(chips.length, 3);
+  assert.ok(chips.every((c) => c.text.startsWith('☑️')), 'chips open ticked');
+  assert.ok(lastKb(bot).some((b) => b.callback_data === 'bs:rm_bale:U-1100-1' || (b.text || '').startsWith('🧹')),
+    'Clear bale offered');
+
+  // Drop than 2 — one tap — and go back to the list.
+  const drop = chips.find((c) => /#2/.test(c.text));
+  await flow.handleCallback(bot, q(drop.callback_data));
+  t = lastText(bot).replace(/\\/g, '');
+  assert.match(t, /Selected: \*2\/3\* than/);
+  await flow.handleCallback(bot, q('bs:back'));
+  t = lastText(bot).replace(/\\/g, '');
+  assert.equal(sessionStore.get('4242').step, 'preload_review');
+  assert.match(t, /1100 · 77014 · Shade 11 — than 1, 3 · 60 yd/, 'the list shows what is left');
+  // The header follows the cart: a than HE dropped is not a failure to load.
+  assert.match(t, /3 of 3 typed than\(s\) loaded/);
+  const lines = sessionStore.get('4242').cart.lines.map((l) => `${l.packageNo}/${l.thanNo}`).sort();
+  assert.deepEqual(lines, ['1082/1', '1100/1', '1100/3']);
+
+  // Clearing the bale on its card takes it off the "Loaded whole" line.
+  await flow.handleCallback(bot, q('bs:pl:open:1100'));
+  const clear = lastKb(bot).find((b) => (b.text || '').startsWith('🧹'));
+  assert.ok(clear, 'Clear bale chip present');
+  await flow.handleCallback(bot, q(clear.callback_data));
+  await flow.handleCallback(bot, q('bs:back'));
+  t = lastText(bot).replace(/\\/g, '');
+  assert.ok(!/Loaded whole/.test(t), 'a cleared bale is no longer named as loaded whole');
+  assert.ok(lastKb(bot).some((b) => b.callback_data === 'bs:pl:open:1100'),
+    'but it stays openable so he can take it again');
+});
+
+test('SELL-T3c: a bare bale with nothing available is still reported, never loaded', async () => {
+  sessionStore.clear('4242');
+  const bot = createFakeBot();
+  await controller.handleMessage(bot, msg('sell 1105, 1100/1 kano'));
+  const t = lastText(bot).replace(/\\/g, '');
+  assert.match(t, /Not loaded \(1\)/);
+  assert.match(t, /1105 — already sold/);
+  assert.equal(sessionStore.get('4242').cart.lines.length, 1);
 });
 
 test('opening a bale from the review shows its real than chips, and Back returns', async () => {

@@ -5,7 +5,9 @@
 > calendar keeps SELL-T2; the typed than-list is SELL-T3.
 
 **Status: SHIPPED.** `55d3b2a` (build, owner-confirmed 09-Aug-2026) +
-`2f855c2` (SELL-T3b, fixes from Abdul's first live use the same day).
+`2f855c2` (SELL-T3b, fixes from Abdul's first live use the same day)
++ **SELL-T3c** (owner, 25-Sep-2026 — a bare bale in the line loads whole,
+see the section at the end).
 
 ## Problem
 
@@ -37,8 +39,10 @@ than-level sales fell through to the generic "Sales now run through
    payment at approval. Same for a typed date.
 4. **Never substitute a than** (BUSINESS_RULES §2). A named than that is
    gone is reported with its reason; the bot never quietly loads its
-   neighbour. `1100 x3` and a bare `1100` open that bale's chips so the
-   human picks.
+   neighbour. `1100 x3` opens that bale's chips so the human picks.
+   **Amended 25-Sep-2026 (SELL-T3c):** a bare `1100` no longer opens
+   chips — it loads every available than of the bale, and the chips
+   open ticked for him to drop one.
 5. **Ambiguity asks, never guesses**: bales spread over two stores, or an
    unrecognised store name, stop and ask.
 
@@ -59,7 +63,7 @@ SELL-T1 (whole-bale typed preload) and TRF-8b (transfer preload).
 | `1100/1+2+3` | thans 1, 2 and 3 of bale 1100 |
 | `1100/1-3` | the same, as a range |
 | `1100 x3` | 3 thans of 1100 — **he** picks which, on chips |
-| `1100` | open that bale's chips |
+| `1100` | the whole bale — every available than loaded (SELL-T3c); 🔎 Open drops one |
 | `,` or `and` | **always** starts a new bale |
 | `from <store>` · `@<store>` · trailing words | the store |
 | `to <name>` · a date | read, reported as ignored |
@@ -137,7 +141,113 @@ Listing the thans a bale *does* have guides him without choosing for him.
 - `test/characterization/sellThanList.test.js` — the real controller:
   preload across designs, no-substitution, `x3`/bare-bale chips, each
   reason string, unknown store, no stray backslashes, split stores ask,
-  and the AI `sell_mixed` path landing on the same card.
+  the AI `sell_mixed` path landing on the same card, and (SELL-T3c) a
+  bare bale loading whole with its 🔎 Open chip and un-tick path.
+
+## SELL-T3c — a bare bale loads whole (owner, 25-Sep-2026)
+
+**Owner's line, verbatim:**
+
+```
+Sell 771,779,775,773,772,6189/5,6210/5,6199/5 to AbdulGayinu.
+```
+
+> "If I place it his, it is asking me to select the thans available in that
+> bale manually tapping making it longer to process. I want this to be auto
+> selected with option to make changes as existing. Just make this small
+> change."
+
+**What happened before.** The line has `<bale>/<than>` tokens, so it took
+the SELL-T3 shorthand path. The five bare numbers (`771 … 772`) each
+became a "🔎 Pick the thans yourself" entry: open the bale, tap every
+than, Back — five times, for bales he meant to sell whole.
+
+**What changed** (`bundleSaleFlow.startWithThans`, ~10 lines, plus the
+review card):
+
+- A bare bale number now loads **every available than of that bale** in
+  the chosen store into the cart, exactly as `📦 Take whole bale` does on
+  the bale card. The review card lists it like any other loaded bale
+  (`📦 771 · 77014 · Shade 11 — than 1, 2, 3, 4, 5, 6 · 180 yd`) and adds
+  one line naming the bales loaded whole.
+- Each whole-loaded bale keeps a `🔎 Open 771` chip. It opens the bale's
+  real than chips **ticked**; tapping one drops it; `🧹 Clear bale` drops
+  them all; ⬅ Back returns to the review. That is the "option to make
+  changes as existing".
+- `771 x3` is **unchanged**: three of six is a choice, and the choice
+  stays his (chips open unticked).
+- A bare bale with nothing available is unchanged: it lands under
+  ⚠️ Not loaded with its real reason.
+- A line of bare numbers only (`Sell 771, 779`) never reached this path
+  and still does not — it stays the SELL-T1 whole-bale door.
+- **Also fixed on the way:** no cart line carried `arrivalBatch` — the
+  preload dropped it and `bundleSaleService.addLines` discarded it for
+  the chip paths too — so every line's STK-E1 bale key read
+  `pkg:77014|1100|` while the picker's read `pkg:77014|1100|JUL26`, and
+  `🧹 Clear bale` removed nothing on batch-stamped stock (every bale since
+  the arrival-batch backfill). Tapping thans one by one still worked,
+  which is why it went unnoticed. The container now rides every cart
+  line (kept by `addLines`, passed by the preload and the three chip
+  adds); the submitted `sale_bundle` items are mapped field by field and
+  are unchanged.
+
+**Why §2 still holds.** §2 forbids the bot *choosing* stock. Here the
+human named the bale; naming a bale names its thans (SELL-T1 has loaded
+typed whole bales since 20-Jul). The bot decides nothing: it does not pick
+*which* thans, it does not substitute, and the one case that would be a
+choice — `x3` — is left to him. Recorded under §2 in BUSINESS_RULES.
+
+**Review card after the change** (owner's line, all bales in one store):
+
+```
+🧵 Sell Thans — 33 of 33 typed than(s) loaded
+From Kano office
+
+📦 771 · 77014 · Shade 11 — than 1, 2, 3, 4, 5, 6 · 180 yd
+📦 779 · …
+📦 6189 · 9043-B · Shade 4 — than 5 · 30 yd
+…
+━━━━━━━━━━
+33 than · 990 yd · 8 bale(s)
+
+📦 Loaded whole: 771, 779, 775, 773, 772 — tap 🔎 Open to drop a than.
+
+ℹ️ I ignored the customer "AbdulGayinu" — the admin sets that when approving.
+
+[🔎 Open 771] [🔎 Open 779]
+[🔎 Open 775] [🔎 Open 773]
+[🔎 Open 772]
+[✅ Continue — seller, date, bill]
+[🛒 Edit list]
+[➕ Add more]
+[❌ Cancel]
+```
+
+### Kept aside for later (owner: "document … for later modifications and enhancement")
+
+Not built; each needs the owner's word.
+
+1. **The typed customer.** `to AbdulGayinu` is still read and dropped
+   (DSP-1: the admin names the buyer at approval). Carrying it to the
+   approval card as a *suggested* buyer chip would save the admin a
+   search without letting the dispatcher set it. DSP-1 ruling needed.
+2. **`771 x3`.** Could open the bale card directly (skipping the review's
+   🔎 chip) when it is the only pick left. Navigation, not selection.
+3. **The header count.** `N of M typed than(s)` follows the cart, so after
+   he drops a than it reads `32 of 32` — his own edit never shows as a
+   failure to load. A `(1 dropped)` note would make the edit visible on
+   the review; wanted or not is his call.
+4. **Whole-bale lines on the review.** Print `· whole bale` instead of the
+   full than list when every than is in the cart, to keep a 6-than bale
+   to one short line.
+5. **Bare-only lines.** `Sell 771, 779 to X` goes through the AI parser to
+   `sellBaleFlow.startWithBales` (SELL-T1). Routing it through this local
+   parser too would make it instant and provider-free — but that door's
+   cards differ (bale-level, Lagos grammar) and must be reconciled first.
+6. **Lagos bales.** Untested here: a Lagos bale typed bare loads its than
+   rows the same way. The cart and executor already sell than rows in
+   either store, so this should simply work — confirm on a live Lagos
+   sale before relying on it.
 
 ## Open / next
 

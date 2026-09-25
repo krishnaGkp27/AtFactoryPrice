@@ -155,6 +155,15 @@ logged bales 867/842/873/863 while the truck carried 869/843/874/864.
   withheld at zero ticks), `transferService.dispatch` (refuses calls
   without explicit picks), Bundle Sale Smart-Pack retired. Spec:
   `specs/TRF-14_PINNED_BALES.md` (TRF-15 section).
+- **Clarified 25-Sep-2026 (SELL-T3c, owner: "I want this to be auto
+  selected with option to make changes as existing"):** a bale the
+  human TYPES whole — `771` in a `Sell 771, 6189/5 …` line — loads every
+  available than of that bale, the same as tapping `📦 Take whole bale`.
+  Naming the bale names its thans (SELL-T1 has loaded typed whole bales
+  since 20-Jul); the bot chooses nothing and substitutes nothing. The
+  chips then open ticked so he can drop one. `771 x3` still opens
+  unticked — three of six is a choice, and the choice is his. Spec:
+  `specs/SELL-T3_TYPED_THAN_LIST.md` (SELL-T3c section).
 
 ## 3 · Source-of-truth chain: goods → image → operator → approval
 
