@@ -368,7 +368,14 @@ async function markItemsSold(items, customer, soldDateOverride, opts = {}) {
     } else if (item && item.type === 'than') {
       const t = num(item.thanNo);
       const uid = item.baleUid ? str(item.baleUid) : null;
-      const r = all.find((x) => x.packageNo === p && x.thanNo === t && inWh(x) && (!uid || str(x.baleUid) === uid));
+      const same = (x) => x.packageNo === p && x.thanNo === t && inWh(x);
+      // The uid PINS between same-numbered rows only while it still resolves.
+      // A legacy row's uid is its POSITION (`BAL-LEGACY-<rowIndex>`, parseRow)
+      // and the bundle door queues it as-is, so a row shift or the ISC-1
+      // column-R backfill orphans it while the request is pending. Fall back
+      // to the packageNo+thanNo+warehouse match the per-item executor always
+      // used (bundleSaleService.reconcileWithLive falls back the same way).
+      const r = (uid && all.find((x) => same(x) && str(x.baleUid) === uid)) || all.find(same);
       if (!r || r.status !== 'available' || taken.has(r.rowIndex)) { failed.push({ item, reason: 'not found or not available' }); continue; }
       match = [r];
     } else {

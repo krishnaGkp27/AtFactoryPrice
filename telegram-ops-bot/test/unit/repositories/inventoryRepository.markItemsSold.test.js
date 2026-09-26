@@ -135,3 +135,21 @@ test('a mixed-spelling sale date is normalised once for every row', async () => 
     assert.ok(calls.batch[0].updates.every((u) => u.values[0][5] === '2026-08-19'));
   });
 });
+
+test('a than item\'s baleUid pins between same-numbered rows while it resolves, and falls back to number + warehouse when it is stale', async () => {
+  // Two physical bales both printed 5804 (two containers): uids BAL-A and BAL-B.
+  const rowA = invRow('5804', 1, 'available'); rowA[17] = 'BAL-A';
+  const rowB = invRow('5804', 1, 'available'); rowB[17] = 'BAL-B';
+  await withInventory([rowA, rowB], async (calls) => {
+    const r = await inventoryRepo.markItemsSold([{ type: 'than', packageNo: '5804', thanNo: 1, baleUid: 'BAL-B' }], 'ABBA', '2026-08-19');
+    assert.deepEqual(r.applied[0].rows.map((x) => x.baleUid), ['BAL-B'], 'the uid chose the second bale');
+    assert.deepEqual(calls.batch[0].updates.map((u) => u.range), ['H3:P3']);
+  });
+  // A legacy positional uid the sheet no longer carries (row shift / column-R
+  // backfill while the request was pending) must not orphan the item.
+  await withInventory([invRow('5804', 1, 'available')], async (calls) => {
+    const r = await inventoryRepo.markItemsSold([{ type: 'than', packageNo: '5804', thanNo: 1, baleUid: 'BAL-LEGACY-99' }], 'ABBA', '2026-08-19');
+    assert.equal(r.failed.length, 0);
+    assert.deepEqual(calls.batch[0].updates.map((u) => u.range), ['H2:P2']);
+  });
+});
