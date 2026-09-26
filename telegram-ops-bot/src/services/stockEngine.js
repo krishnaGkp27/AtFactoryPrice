@@ -105,7 +105,11 @@ async function sellItems(items, customer, salesDate, opts, auth) {
   const result = await inventoryRepository.markItemsSold(items, customer, salesDate,
     { ...(opts || {}), user: userOf(auth) });
   if (result && result.rows && result.rows.length) {
-    await shadow(result.rows, auth, { customer, businessDay: require('./baleMovementLog').businessDay(salesDate) });
+    // One shadow per warehouse: stock_events groups a call by bale identity
+    // alone (see markItemsSold's movement split).
+    for (const group of inventoryRepository.groupByWarehouse(result.rows)) {
+      await shadow(group, auth, { customer, businessDay: require('./baleMovementLog').businessDay(salesDate) });
+    }
   }
   return result;
 }

@@ -113,3 +113,28 @@ test('no rate enrichment → no rate callback; every item already sold → APF-1
   assert.equal(out2.txns.length, 0);
   assert.equal(out2.sales.length, 0);
 });
+
+test('a refused Transactions append after the flip is collected as a BOOKS NOT UPDATED failure, never a throw that invites a re-run', async () => {
+  const out = harness({
+    requestId: 'Q4', user: 'emp1', status: 'pending',
+    actionJSON: { action: 'sale_bundle', customer: 'ABBA', salesDate: '2026-08-19', items: [{ type: 'package', packageNo: 'B2' }] },
+  }, WORLD);
+  const quota = Object.assign(new Error('Google Sheets is rate-limiting writes right now — wait one minute, then tap again. (appendRows(Transactions))'), { code: 'SHEETS_QUOTA' });
+  transactionsRepository.append = async () => { throw quota; };
+  const res = await inventoryService.executeApprovedAction('Q4', 'admin1');
+  assert.equal(res.ok, true, 'the executor completes: the goods are sold, the row resolves');
+  assert.deepEqual(res.erpFailures.map((f) => f.stage), ['Transactions row (bundle)']);
+  assert.match(res.erpFailures[0].error, /rate-limiting writes/);
+  assert.equal(out.sales.length, 1, 'the ledger debit still posts');
+});
+
+test('a quota refusal on the final status write says the sale IS applied and what to tap, not "tap again"', async () => {
+  harness({
+    requestId: 'Q5', user: 'emp1', status: 'pending',
+    actionJSON: { action: 'sale_bundle', customer: 'ABBA', salesDate: '2026-08-19', items: [{ type: 'package', packageNo: 'B2' }] },
+  }, WORLD);
+  approvalQueueRepository.updateStatus = async () => { throw Object.assign(new Error('Google Sheets is rate-limiting writes right now — wait one minute, then tap again. (batchUpdate(ApprovalQueue))'), { code: 'SHEETS_QUOTA' }); };
+  await assert.rejects(inventoryService.executeApprovedAction('Q5', 'admin1'), (e) => e.code === 'SHEETS_QUOTA_AFTER_APPLY'
+    && /^Applied and booked — only the request could not be marked approved/.test(e.message)
+    && /choose ✅ Mark as done/.test(e.message));
+});

@@ -62,6 +62,9 @@ test('a package and a than sell in ONE batchUpdate and ONE movement append; tota
     assert.deepEqual(calls.batch[0].updates[0].values[0].slice(0, 6), ['sold', 'IDUMOTA', 100, '2026-01-01', 'ABBA', '2026-08-19']);
     assert.equal(calls.record.length, 1, 'ONE movement append');
     assert.equal(calls.record[0].moved.length, 3);
+    // The log names the state each row LEAVES: it must get the rows as read,
+    // not the flipped copies (else FromState reads "sold @ …" — 26-Sep-2026).
+    assert.deepEqual(calls.record[0].moved.map((x) => [x.packageNo, x.thanNo, x.status]), [['5804', 1, 'available'], ['5804', 2, 'available'], ['5611', 2, 'available']]);
     assert.deepEqual(calls.record[0].m, { to: 'sold', on: '2026-08-19', kind: 'sale', ref: 'ABBA', user: 'admin:777' });
   });
 });
@@ -151,5 +154,22 @@ test('a than item\'s baleUid pins between same-numbered rows while it resolves, 
     const r = await inventoryRepo.markItemsSold([{ type: 'than', packageNo: '5804', thanNo: 1, baleUid: 'BAL-LEGACY-99' }], 'ABBA', '2026-08-19');
     assert.equal(r.failed.length, 0);
     assert.deepEqual(calls.batch[0].updates.map((u) => u.range), ['H2:P2']);
+  });
+});
+
+test('two same-numbered bales sold from two warehouses in one request log ONE movement append PER warehouse', async () => {
+  await withInventory([
+    invRow('5804', 1, 'available', { wh: 'IDUMOTA' }), invRow('5804', 2, 'available', { wh: 'IDUMOTA' }),
+    invRow('5804', 1, 'available', { wh: 'KANO OFFICE' }),
+  ], async (calls) => {
+    const r = await inventoryRepo.markItemsSold([
+      { type: 'package', packageNo: '5804', warehouse: 'IDUMOTA' },
+      { type: 'package', packageNo: '5804', warehouse: 'Kano office' },
+    ], 'ABBA', '2026-08-19');
+    assert.equal(r.rows.length, 3);
+    assert.equal(calls.batch.length, 1, 'still ONE Inventory write');
+    assert.equal(calls.record.length, 2, 'one movement append per warehouse');
+    assert.deepEqual(calls.record.map((c) => [...new Set(c.moved.map((x) => x.warehouse))]), [['IDUMOTA'], ['KANO OFFICE']]);
+    assert.deepEqual(inventoryRepo.groupByWarehouse([{ warehouse: 'a' }, { warehouse: 'A' }, { warehouse: 'b' }]).map((g) => g.length), [2, 1]);
   });
 });

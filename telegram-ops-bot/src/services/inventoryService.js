@@ -424,19 +424,25 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     if (!result) return { ok: false, message: 'Than not found or no longer available.' };
     const pricePerYard = getPricePerYard(enrichment, aj.design);
     if (pricePerYard > 0) await inventoryRepository.updatePrice({ packageNo: aj.packageNo, warehouse: aj.warehouse }, pricePerYard);
-    await transactionsRepository.append({
-      user: item.user, action: 'sell_than', design: aj.design, color: aj.shade,
-      qty: aj.yards, before: 'available', after: 'sold', status: 'approved',
-      // SLP-1 (owner 10-Aug-2026, "are you logging the salesperson?") — the
-      // Transactions sheet has had a SalesPerson column since APU-1 and only
-      // sale_bundle filled it. Snap Sale queues sell_package with the name on
-      // the row and it was dropped at execution; sales history could not be
-      // read per seller. Same one line on both approved sale executors.
-      salesPerson: aj.salesPerson || '',
-      salesDate: aj.salesDate || '', customerName: aj.customer || '', paymentMode: enrichment?.paymentMode || '',
-      saleRefId: requestId, pricePerYard: pricePerYard || '', amountPaid: enrichment?.amountPaid ?? '',
-      customerId: aj.customerId || '',
-    });
+    // QTA-1 — the goods are already flipped; a refused write here must not
+    // throw the executor away and leave the request pending (a re-approve
+    // would refuse — every item sold — and Mark-as-done posts nothing). The
+    // failure is collected as an H6 book failure and shown as BOOKS NOT UPDATED.
+    try {
+      await transactionsRepository.append({
+        user: item.user, action: 'sell_than', design: aj.design, color: aj.shade,
+        qty: aj.yards, before: 'available', after: 'sold', status: 'approved',
+        // SLP-1 (owner 10-Aug-2026, "are you logging the salesperson?") — the
+        // Transactions sheet has had a SalesPerson column since APU-1 and only
+        // sale_bundle filled it. Snap Sale queues sell_package with the name on
+        // the row and it was dropped at execution; sales history could not be
+        // read per seller. Same one line on both approved sale executors.
+        salesPerson: aj.salesPerson || '',
+        salesDate: aj.salesDate || '', customerName: aj.customer || '', paymentMode: enrichment?.paymentMode || '',
+        saleRefId: requestId, pricePerYard: pricePerYard || '', amountPaid: enrichment?.amountPaid ?? '',
+        customerId: aj.customerId || '',
+      });
+    } catch (e) { await recordErpFailure('Transactions row (sell_than)', e); }
     try {
       await erpEmitAsync('sale', { type: 'sell_than', packageNo: aj.packageNo, thanNo: aj.thanNo, customer: aj.customer, customerId: aj.customerId || '', yards: aj.yards, pricePerYard, design: aj.design, shade: aj.shade, userId: item.user, txnId: `ST-${aj.packageNo}-${aj.thanNo}`, paymentMode: enrichment?.paymentMode ?? '', amountPaid: enrichment?.amountPaid ?? 0 });
     } catch (e) { await recordErpFailure('sale ledger (sell_than)', e); }
@@ -452,14 +458,20 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     if (!results.length) return { ok: false, message: 'Bale already sold.' };
     const pricePerYard = getPricePerYard(enrichment, aj.design);
     if (pricePerYard > 0) await inventoryRepository.updatePrice({ packageNo: aj.packageNo, warehouse: aj.warehouse }, pricePerYard);
-    await transactionsRepository.append({
-      user: item.user, action: 'sell_package', design: aj.design, color: aj.shade,
-      qty: aj.yards, before: `${aj.thans} thans`, after: 'sold', status: 'approved',
-      salesPerson: aj.salesPerson || '',   // SLP-1 — see the sell_than note above
-      salesDate: aj.salesDate || '', customerName: aj.customer || '', paymentMode: enrichment?.paymentMode || '',
-      saleRefId: requestId, pricePerYard: pricePerYard || '', amountPaid: enrichment?.amountPaid ?? '',
-      customerId: aj.customerId || '',
-    });
+    // QTA-1 — the goods are already flipped; a refused write here must not
+    // throw the executor away and leave the request pending (a re-approve
+    // would refuse — every item sold — and Mark-as-done posts nothing). The
+    // failure is collected as an H6 book failure and shown as BOOKS NOT UPDATED.
+    try {
+      await transactionsRepository.append({
+        user: item.user, action: 'sell_package', design: aj.design, color: aj.shade,
+        qty: aj.yards, before: `${aj.thans} thans`, after: 'sold', status: 'approved',
+        salesPerson: aj.salesPerson || '',   // SLP-1 — see the sell_than note above
+        salesDate: aj.salesDate || '', customerName: aj.customer || '', paymentMode: enrichment?.paymentMode || '',
+        saleRefId: requestId, pricePerYard: pricePerYard || '', amountPaid: enrichment?.amountPaid ?? '',
+        customerId: aj.customerId || '',
+      });
+    } catch (e) { await recordErpFailure('Transactions row (sell_package)', e); }
     try {
       await erpEmitAsync('sale', { type: 'sell_package', packageNo: aj.packageNo, customer: aj.customer, customerId: aj.customerId || '', yards: aj.yards, pricePerYard, design: aj.design, shade: aj.shade, userId: item.user, txnId: `SP-${aj.packageNo}`, paymentMode: enrichment?.paymentMode ?? '', amountPaid: enrichment?.amountPaid ?? 0 });
     } catch (e) { await recordErpFailure('sale ledger (sell_package)', e); }
@@ -1551,14 +1563,20 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       } catch (_) {}
     }
     const firstPrice = enrichment ? (Object.values(enrichment.ratePerUnitByDesign || {})[0] || 0) : 0;
-    await transactionsRepository.append({
-      user: item.user, action: 'sale_bundle', design: '', color: '',
-      qty: totalYards, before: `${totalThans} thans`, after: 'sold', status: 'approved',
-      salesDate: aj.salesDate || '', customerName: aj.customer || '',
-      salesPerson: aj.salesPerson || '', paymentMode: enrichment?.paymentMode || aj.paymentMode || '',
-      saleRefId: requestId, pricePerYard: firstPrice || '', amountPaid: enrichment?.amountPaid ?? '',
-      customerId: aj.customerId || '',
-    });
+    // QTA-1 — the goods are already flipped; a refused write here must not
+    // throw the executor away and leave the request pending (a re-approve
+    // would refuse — every item sold — and Mark-as-done posts nothing). The
+    // failure is collected as an H6 book failure and shown as BOOKS NOT UPDATED.
+    try {
+      await transactionsRepository.append({
+        user: item.user, action: 'sale_bundle', design: '', color: '',
+        qty: totalYards, before: `${totalThans} thans`, after: 'sold', status: 'approved',
+        salesDate: aj.salesDate || '', customerName: aj.customer || '',
+        salesPerson: aj.salesPerson || '', paymentMode: enrichment?.paymentMode || aj.paymentMode || '',
+        saleRefId: requestId, pricePerYard: firstPrice || '', amountPaid: enrichment?.amountPaid ?? '',
+        customerId: aj.customerId || '',
+      });
+    } catch (e) { await recordErpFailure('Transactions row (bundle)', e); }
     // Post sale to ledger so customer has DR (receivable) = yards * rate; outstanding = previous + this sale - payments
     const designsToEmit = Object.keys(byDesign).length ? Object.entries(byDesign) : [['', totalYards]];
     for (const [design, yards] of designsToEmit) {
@@ -1845,7 +1863,20 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   // any first signature parked in ActionJSON, so a dual approval names BOTH.
   const approverLabel = await require('./approverStamp')
     .labelFor({ actionJSON: aj, actorId: approvedBy });
-  await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString(), approverLabel);
+  try {
+    await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString(), approverLabel);
+  } catch (e) {
+    // QTA-1 — by now the action IS applied and booked; only the row's status
+    // is unwritten. "Tap again" would be read as "re-run": say what is true.
+    if (e && e.code === 'SHEETS_QUOTA') {
+      const done = new Error('Applied and booked — only the request could not be marked approved (Google Sheets is rate-limiting writes). '
+        + 'Wait one minute, tap Approve again and choose ✅ Mark as done (no re-run).');
+      done.code = 'SHEETS_QUOTA_AFTER_APPLY';
+      done.cause = e;
+      throw done;
+    }
+    throw e;
+  }
   // CUR-2 §7 — the who-chose-it trail: the customer-copy multiplier the
   // approving admin answered at the wizard's Step 5 rides on the existing
   // event (Invoices column W stays the durable record). Additive key only;

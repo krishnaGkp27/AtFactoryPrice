@@ -8367,7 +8367,7 @@ async function runS54() {
 function runS53() {
   const ROOT = path.join(__dirname, '..');
   const WRITERS = [
-    'markThanSold', 'markPackageSold', 'markThanAvailable',
+    'markThanSold', 'markPackageSold', 'markItemsSold', 'markThanAvailable',
     'markPackageAvailable', 'transitionBales', 'appendBale', 'appendThans',
     'renameWarehouse',
   ];

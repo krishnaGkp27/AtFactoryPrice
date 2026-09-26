@@ -77,16 +77,25 @@ of us.
    cap (default 50). Not a Settings-sheet cell: it governs the client that reads the
    Settings sheet.
 3. Approve the next large sale as usual; the card should never show Google's quota
-   text again. If it ever shows the new sentence, wait a minute and tap again — nothing
-   is half-written.
+   text again. If it ever shows `Google Sheets is rate-limiting writes right now — wait
+   one minute, then tap again.`, the Inventory flip did NOT happen (it is one call);
+   wait a minute and tap again. If a LATER step was refused the card instead shows
+   `🛑 BOOKS NOT UPDATED` with the step's name (the goods are sold, that book row is
+   not — re-post it by hand), and if only the request's own status could not be
+   written it says `Applied and booked — … choose ✅ Mark as done`.
 
 ## 6. Owed / follow-ups
 
-- **Idempotent money side.** After the one-call flip, a refusal on a LATER step
-  (Transactions, ledger, invoice) still leaves the goods sold and the request pending;
-  a re-approve then refuses (every item already sold) and offers Mark-as-done, which
-  posts nothing. The fix is to make those steps idempotent by request id so a
-  re-approve completes them. Proposed, not built — say the word.
+- **Idempotent money side.** A refused Transactions row is now collected as an H6
+  book failure (the executor completes, the row resolves, the card says BOOKS NOT
+  UPDATED with the step) instead of throwing the executor away with the goods sold and
+  the request pending. The remaining ask is a re-approve that COMPLETES a missing
+  book row by request id instead of you posting it by hand. Proposed, not built.
+- **The same per-item loop lives on in two other executors** and is the next
+  incident waiting: RET-4 `return_thans` flips per than (2 writes each, the credit
+  only after the loop — a mid-loop refusal under-credits the customer on the
+  re-approve) and `revertSaleBundle` undoes per item. Batch both the way
+  `markItemsSold` does. Ranked first among the owed loops.
 - **Other large loops** (a 43-bale dispatch, a 64-than return): batch them the same
   way. Ranked by realistic size in the review (spec §7).
 - `updatePrice` on a sale stamps the negotiated rate on every row of the bale in that
@@ -94,6 +103,31 @@ of us.
   carried over unchanged from the old per-item path; it rewrites history on those
   rows and needs your ruling.
 
-## 7. Adversarial review
+## 7. Adversarial review, 26-Sep-2026 (before shipping)
 
-Recorded below once the review completes.
+Four lenses (governor · batched writer · integrity · rules), two refuters per finding,
+23 findings, 22 confirmed by reproduction against the real modules. Closed in the
+same change:
+
+| # | Finding | What changed |
+|---|---|---|
+| 1 | a refused Transactions append AFTER the one-call flip threw the executor away: goods sold, request pending, card said "tap again" → re-approve refused (all sold) → Mark-as-done closed it with no money row | the append is collected as an H6 book failure (`Transactions row (bundle / sell_than / sell_package)`), the executor completes and the card shows BOOKS NOT UPDATED; a refusal on the final status write says `Applied and booked — … choose ✅ Mark as done` |
+| 2 | the movement log received the FLIPPED copies, so every bundle sale logged `sold → sold` (DML-1 could no longer see the sale leave) | the rows as READ go to the log |
+| 3 | a than item's stale legacy `baleUid` orphaned the item although the old executor never pinned on it | the uid decides between same-numbered rows only while it resolves; else number + warehouse |
+| 4 | two same-numbered bales from two stores in one request collapsed into one movement / stock-events row | one movement append and one shadow per warehouse |
+| 5 | retries bypassed the governor — a 429 storm re-created the burst | every attempt takes a slot |
+| 6 | `Date.now()` in the governor: a clock correction could hold every write for the jump plus a minute | monotonic `performance.now()` |
+| 7 | a READ that exhausted its retries said "rate-limiting writes" | reads say reads |
+| 8 | a typo in `SHEETS_WRITES_PER_MINUTE` switched the governor off silently; ≥60 removed the slack | not a number → default 50 (warned once); above 60 → clamped to 60 |
+| 9 | the checker matched the card's short ref on the LAST four id characters; the card mints the FIRST four | mirrors `shortRequestRef` |
+| 10 | the checker judged than ROWS against request ITEMS (a whole bale sale read Mixed; a partial could read Whole) | judged per item |
+| 11 | a duplicate request whose goods were sold under ANOTHER request read HALF-DONE (post by hand = double charge) | `DUPLICATE?` verdict naming the other request id |
+| 12 | `getLast(2000)` hid the Transactions row of an old sale | the whole sheet |
+| 13 | `markItemsSold` missing from the S53 one-door smoke lint | listed |
+| 14 | the incident's shape (N items → ONE Inventory write + ONE movement append) was not pinned end to end | `test/characterization/saleBundleOneWrite.test.js` |
+
+Recorded, not changed: RET-4 `return_thans` and `revertSaleBundle` still loop per
+item (§6); a package whose rows carry no design no longer receives the negotiated rate
+stamp (one refuter showed the premise is not producible by the bot); one refuted
+finding (the FIFO gate has no upper bound on one write's wait — by design, a wait is
+the alternative to a refusal).

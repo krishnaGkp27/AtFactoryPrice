@@ -18,7 +18,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { _internals } = require('../../../src/repositories/sheetsClient');
-const { isQuotaError, isRetryableError, withRetry, acquireWriteSlot, governor, quotaExhaustedError } = _internals;
+const { isQuotaError, isRetryableError, withRetry, governedWrite, acquireWriteSlot, governor, quotaExhaustedError, GOOGLE_WRITE_CAP, DEFAULT_WRITE_CAP } = _internals;
+const config = require('../../../src/config');
 
 /** A fake clock the governor and the retry sleep against. */
 function fakeClock() {
@@ -49,7 +50,7 @@ test('withRetry: a quota refusal that outlives the retries becomes one plain sen
   google.code = 429;
   let calls = 0;
   await assert.rejects(
-    withRetry(async () => { calls += 1; throw google; }, 'updateRange(Inventory)'),
+    withRetry(async () => { calls += 1; throw google; }, 'updateRange(Inventory)', 'writes'),
     (e) => e.code === 'SHEETS_QUOTA'
       && e.message === 'Google Sheets is rate-limiting writes right now — wait one minute, then tap again. (updateRange(Inventory))'
       && e.cause === google,
@@ -67,9 +68,36 @@ test('withRetry: a quota refusal that outlives the retries becomes one plain sen
   assert.equal(v, 'ok');
 });
 
-test('the message is the same whatever the label', () => {
-  const e = quotaExhaustedError(new Error('x'), 'appendRows(Transactions)');
+test('the message names writes for a write and reads for a read', () => {
+  const e = quotaExhaustedError(new Error('x'), 'appendRows(Transactions)', 'writes');
   assert.match(e.message, /^Google Sheets is rate-limiting writes right now — wait one minute, then tap again\./);
+  const r = quotaExhaustedError(new Error('x'), 'readRange(Inventory)');
+  assert.match(r.message, /^Google Sheets is rate-limiting reads right now/);
+});
+
+test('governedWrite meters EVERY attempt: a retry after a 429 takes a slot too', async () => {
+  const clock = fakeClock();
+  const google = Object.assign(new Error('Quota exceeded'), { code: 429 });
+  let n = 0;
+  await governedWrite(async () => { n += 1; if (n < 3) throw google; return 'ok'; }, 'appendRows(Transactions)');
+  assert.equal(n, 3);
+  assert.equal(governor.stamps.length, 3, 'three attempts, three slots — not one');
+});
+
+test('the cap is validated: a typo falls back to the default, a value above Google\'s cap is clamped, 0 stays off', () => {
+  const saved = config.sheets.writesPerMinute;
+  try {
+    config.sheets.writesPerMinute = 'abc';
+    assert.equal(governor.cap(), DEFAULT_WRITE_CAP);
+    config.sheets.writesPerMinute = NaN;
+    assert.equal(governor.cap(), DEFAULT_WRITE_CAP);
+    config.sheets.writesPerMinute = 70;
+    assert.equal(governor.cap(), GOOGLE_WRITE_CAP);
+    config.sheets.writesPerMinute = 0;
+    assert.equal(governor.cap(), 0);
+    config.sheets.writesPerMinute = 30;
+    assert.equal(governor.cap(), 30);
+  } finally { config.sheets.writesPerMinute = saved; }
 });
 
 test('governor: the cap-th write goes at once, the next waits until the oldest write is a minute old', async () => {

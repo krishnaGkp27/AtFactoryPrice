@@ -4,6 +4,7 @@
  */
 
 const { google } = require('googleapis');
+const { performance } = require('perf_hooks');
 const config = require('../config');
 const logger = require('../utils/logger');
 
@@ -35,15 +36,15 @@ function isRetryableError(err) {
  * consumer 'project_number:…'") says nothing about what to do; this does.
  * The original error rides as `cause` for the log.
  */
-function quotaExhaustedError(err, label) {
-  const e = new Error('Google Sheets is rate-limiting writes right now — wait one minute, then tap again. '
+function quotaExhaustedError(err, label, kind = 'reads') {
+  const e = new Error(`Google Sheets is rate-limiting ${kind} right now — wait one minute, then tap again. `
     + `(${label})`);
   e.code = 'SHEETS_QUOTA';
   e.cause = err;
   return e;
 }
 
-async function withRetry(fn, label = 'sheets') {
+async function withRetry(fn, label = 'sheets', kind = 'reads') {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       return await fn();
@@ -56,7 +57,7 @@ async function withRetry(fn, label = 'sheets') {
       }
       if (isQuotaError(err)) {
         logger.error(`[${label}] Sheets quota still refused after ${MAX_RETRIES} retries: ${err?.message}`);
-        throw quotaExhaustedError(err, label);
+        throw quotaExhaustedError(err, label, kind);
       }
       throw err;
     }
@@ -73,13 +74,40 @@ async function withRetry(fn, label = 'sheets') {
  * age out instead of sending a request Google will refuse. The retry above
  * stays as the backstop. Cap = config.sheets.writesPerMinute (0 = off).
  */
+const GOOGLE_WRITE_CAP = 60;   // Google's own per-user limit
+const DEFAULT_WRITE_CAP = 50;  // room left for scripts / a draining old container
+let _capWarned = '';
 const _governor = {
   windowMs: 60 * 1000,
   stamps: [],            // send times of the writes inside the window
   gate: Promise.resolve(), // serialises slot acquisition across concurrent callers
-  now: () => Date.now(),
+  // A MONOTONIC clock: a wall-clock correction must not turn a one-minute
+  // hold into "the size of the jump plus a minute".
+  now: () => performance.now(),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-  cap: () => (Number(config.sheets && config.sheets.writesPerMinute) > 0 ? Number(config.sheets.writesPerMinute) : 0),
+  /**
+   * The cap in force: SHEETS_WRITES_PER_MINUTE, clamped to Google's 60
+   * (anything above it removes the slack the governor exists to keep); a
+   * value that is not a number falls back to the default rather than
+   * silently switching the governor off. 0 = off, deliberately.
+   */
+  cap: () => {
+    const raw = config.sheets ? config.sheets.writesPerMinute : undefined;
+    const v = Number(raw);
+    let cap;
+    let note = '';
+    if (raw === undefined || raw === null || raw === '' || !Number.isFinite(v) || v < 0) {
+      cap = DEFAULT_WRITE_CAP;
+      if (raw !== undefined && raw !== null && raw !== '') note = `SHEETS_WRITES_PER_MINUTE="${raw}" is not a number — using ${DEFAULT_WRITE_CAP}`;
+    } else if (v > GOOGLE_WRITE_CAP) {
+      cap = GOOGLE_WRITE_CAP;
+      note = `SHEETS_WRITES_PER_MINUTE=${v} is above Google's ${GOOGLE_WRITE_CAP}/min — clamped to ${GOOGLE_WRITE_CAP}`;
+    } else {
+      cap = v;
+    }
+    if (note && _capWarned !== note) { _capWarned = note; logger.warn(`[sheets] ${note}`); }
+    return cap;
+  },
 };
 
 /** Wait for a write slot inside the rolling window (no-op when the cap is 0). */
@@ -101,10 +129,17 @@ function acquireWriteSlot(label) {
   return turn;
 }
 
-/** A write wrapped in the governor AND the retry. */
+/**
+ * A write wrapped in the governor AND the retry. The slot is taken inside
+ * the retried function, so EVERY attempt — the first and each retry after
+ * a 429 — is metered: a retry storm must not re-create the burst the
+ * governor exists to prevent.
+ */
 async function governedWrite(fn, label) {
-  await acquireWriteSlot(label);
-  return withRetry(fn, label);
+  return withRetry(async () => {
+    await acquireWriteSlot(label);
+    return fn();
+  }, label, 'writes');
 }
 
 async function getSheets() {
@@ -329,5 +364,5 @@ module.exports = {
   addSheet,
   columnLetter,
   // Exported for unit tests only — writes are already guarded / governed.
-  _internals: { sanitizeCell, sanitizeRows, isQuotaError, isRetryableError, withRetry, acquireWriteSlot, governor: _governor, quotaExhaustedError },
+  _internals: { sanitizeCell, sanitizeRows, isQuotaError, isRetryableError, withRetry, governedWrite, acquireWriteSlot, governor: _governor, quotaExhaustedError, GOOGLE_WRITE_CAP, DEFAULT_WRITE_CAP },
 };

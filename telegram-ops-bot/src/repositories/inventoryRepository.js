@@ -356,6 +356,11 @@ async function markItemsSold(items, customer, soldDateOverride, opts = {}) {
   const applied = [];
   const failed = [];
   const rows = [];
+  // The rows as READ. The movement log names the state a row LEAVES
+  // (`available @ IDUMOTA → sold @ IDUMOTA`, baleMovementLog.record reads
+  // `r.status`), so it must see these, never the flipped copies below —
+  // markThanSold / markPackageSold pass the pre-flip rows the same way.
+  const before = [];
   const taken = new Set();
   for (const item of items || []) {
     const p = str(item && item.packageNo);
@@ -383,6 +388,7 @@ async function markItemsSold(items, customer, soldDateOverride, opts = {}) {
       continue;
     }
     for (const r of match) taken.add(r.rowIndex);
+    before.push(...match);
     const sold = match.map((r) => {
       const rate = rateFor ? Number(rateFor(r)) : 0;
       return { ...r, status: 'sold', soldTo: customer || '', soldDate, pricePerYard: rate > 0 ? rate : r.pricePerYard, updatedAt: now };
@@ -418,10 +424,26 @@ async function markItemsSold(items, customer, soldDateOverride, opts = {}) {
   await sheets.batchUpdateRanges(SHEET, updates);
   invalidateCache();
   const movement = require('../services/baleMovementLog');
-  await movement.record(rows, {
-    to: 'sold', on: soldDate, kind: 'sale', ref: customer || '', user: opts.user,
-  });
+  // One append per WAREHOUSE: the log keys a call's rows by bale identity
+  // alone, so two same-numbered bales sold from two stores in one request
+  // would otherwise collapse into one row at the first bale's store.
+  for (const group of groupByWarehouse(before)) {
+    await movement.record(group, {
+      to: 'sold', on: soldDate, kind: 'sale', ref: customer || '', user: opts.user,
+    });
+  }
   return { applied, failed, rows };
+}
+
+/** Rows grouped by (case-folded) warehouse, in first-seen order. */
+function groupByWarehouse(rows) {
+  const byWh = new Map();
+  for (const r of rows || []) {
+    const k = upper(r && r.warehouse);
+    if (!byWh.has(k)) byWh.set(k, []);
+    byWh.get(k).push(r);
+  }
+  return [...byWh.values()];
 }
 
 async function appendThans(thanRows) {
@@ -1196,6 +1218,7 @@ module.exports = {
   markThanSold,
   markPackageSold,
   markItemsSold,
+  groupByWarehouse,
   markThanAvailable,
   markPackageAvailable,
   renameWarehouse,
