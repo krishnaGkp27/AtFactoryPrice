@@ -63,6 +63,17 @@ function harness(item) {
   };
   calls.updatePrice = [];
   inventoryRepository.updatePrice = async (filters) => { calls.updatePrice.push(filters || {}); return 1; };
+  // QTA-1 — a bundle sells every item in ONE call; the per-item warehouse
+  // rides on each item instead of on a per-item opts object.
+  calls.markItemsSold = [];
+  inventoryRepository.markItemsSold = async (items, customer, salesDate, opts) => {
+    calls.markItemsSold.push({ items, customer, salesDate, opts: opts || {} });
+    const applied = items.map((item) => ({
+      item,
+      rows: [{ packageNo: item.packageNo, thanNo: item.thanNo || 1, yards: 30, design: 'D', shade: '1', warehouse: item.warehouse || '' }],
+    }));
+    return { applied, failed: [], rows: applied.flatMap((a) => a.rows) };
+  };
   return calls;
 }
 
@@ -101,8 +112,11 @@ test('sale_bundle scopes each item by its own warehouse, falling back to the bun
   });
   const res = await inventoryService.executeApprovedAction('W3', 'admin1');
   assert.equal(res.ok, true);
-  assert.deepEqual(calls.markPackageSold.map((c) => c.opts.warehouse), ['IDUMOTA', 'KANO OFFICE']);
-  assert.equal(calls.markThanSold[0].opts.warehouse, 'LAGOS');
+  assert.equal(calls.markItemsSold.length, 1, 'one batched write for the whole bundle');
+  assert.deepEqual(calls.markItemsSold[0].items.map((i) => [i.type, i.packageNo, i.warehouse]),
+    [['package', 'A1', 'IDUMOTA'], ['package', 'B2', 'KANO OFFICE'], ['than', 'C3', 'LAGOS']]);
+  assert.equal(calls.markPackageSold.length, 0, 'no per-item writes any more');
+  assert.equal(calls.markThanSold.length, 0);
 });
 
 test('return_package passes aj.warehouse to markPackageAvailable (and the buyer lookup)', async () => {

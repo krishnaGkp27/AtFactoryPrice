@@ -1496,45 +1496,35 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // (approvalEvents) can surface it back to the admin AND the requester.
     const appliedPkgs = new Set();
     const failedItems = [];
-    for (const si of (aj.items || [])) {
-      // TRF-INT4 — each item sells only in the warehouse the flow picked it
-      // from (per-item, falling back to the bundle's). Pre-TRF-INT4 pending
-      // bundles carry neither → legacy unscoped match.
-      const siWh = si.warehouse || aj.warehouse;
-      if (si.type === 'package') {
-        const results = await stockEngine.sellPackage(si.packageNo, aj.customer, aj.salesDate, { warehouse: siWh }, { event: 'sale', approvalId: requestId, adminId: approvedBy });
-        if (!results.length) {
-          failedItems.push({ packageNo: si.packageNo, type: 'package', reason: 'not found or no available thans' });
-          continue;
-        }
-        totalThans += results.length;
-        const pkgYards = results.reduce((s, t) => s + t.yards, 0);
-        totalYards += pkgYards;
-        appliedPkgs.add(si.packageNo);
-        const design = results[0]?.design || '';
-        if (design) byDesign[design] = (byDesign[design] || 0) + pkgYards;
-        if (enrichment?.ratePerUnitByDesign && results[0]) {
-          const rate = getPricePerYard(enrichment, design);
-          if (rate > 0) await inventoryRepository.updatePrice({ packageNo: si.packageNo, warehouse: siWh }, rate);
-        }
-      } else if (si.type === 'than') {
-        const result = await stockEngine.sellThan(si.packageNo, si.thanNo, aj.customer, aj.salesDate, { warehouse: siWh }, { event: 'sale', approvalId: requestId, adminId: approvedBy });
-        if (!result) {
-          failedItems.push({ packageNo: si.packageNo, thanNo: si.thanNo, type: 'than', reason: 'not found or not available' });
-          continue;
-        }
-        totalThans += 1;
-        totalYards += result.yards;
-        appliedPkgs.add(si.packageNo);
-        const design = result.design || '';
-        if (design) byDesign[design] = (byDesign[design] || 0) + result.yards;
-        if (enrichment?.ratePerUnitByDesign && result.design) {
-          const rate = getPricePerYard(enrichment, result.design);
-          if (rate > 0) await inventoryRepository.updatePrice({ packageNo: si.packageNo, warehouse: siWh }, rate);
-        }
-      } else {
-        failedItems.push({ packageNo: si.packageNo, thanNo: si.thanNo, type: si.type || 'unknown', reason: `unknown item type "${si.type}"` });
-      }
+    // QTA-1 — ONE batched write for every item (was: per item, one row
+    // write + one movement append + one price stamp + a full re-read; a
+    // 20-item sale crossed Google's 60 writes/min and was refused halfway).
+    // TRF-INT4 — each item sells only in the warehouse the flow picked it
+    // from (per-item, falling back to the bundle's). Pre-TRF-INT4 pending
+    // bundles carry neither → legacy unscoped match.
+    const items = (aj.items || []).map((si) => ({ ...si, warehouse: si.warehouse || aj.warehouse }));
+    // The negotiated rate stamps the sold rows and the rest of each touched
+    // bale (updatePrice's old contract); a row with no design gets no stamp.
+    const rateFor = enrichment?.ratePerUnitByDesign
+      ? (r) => (r && r.design ? getPricePerYard(enrichment, r.design) : 0)
+      : null;
+    const sold = await stockEngine.sellItems(items, aj.customer, aj.salesDate,
+      rateFor ? { rateFor } : {}, { event: 'sale', approvalId: requestId, adminId: approvedBy });
+    for (const f of sold.failed) {
+      const it = f.item || {};
+      failedItems.push(it.type === 'than'
+        ? { packageNo: it.packageNo, thanNo: it.thanNo, type: 'than', reason: f.reason }
+        : (it.type === 'package'
+          ? { packageNo: it.packageNo, type: 'package', reason: f.reason }
+          : { packageNo: it.packageNo, thanNo: it.thanNo, type: it.type || 'unknown', reason: f.reason }));
+    }
+    for (const a of sold.applied) {
+      totalThans += a.rows.length;
+      const y = a.rows.reduce((sum, t) => sum + (t.yards || 0), 0);
+      totalYards += y;
+      appliedPkgs.add(a.item.packageNo);
+      const design = a.rows[0]?.design || '';
+      if (design) byDesign[design] = (byDesign[design] || 0) + y;
     }
     // APF-1 (owner report, 08-Aug-2026): when NOTHING flipped, this must
     // not fall through to the money footer — it used to post the payment,

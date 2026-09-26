@@ -13,11 +13,34 @@ let auth = null;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 2000;
 
-function isRetryableError(err) {
-  const code = err?.code || err?.response?.status || err?.status;
-  if (code === 429 || code === 503) return true;
+/** True for a quota / rate-limit refusal (gaxios reports the code as a NUMBER or a STRING). */
+function isQuotaError(err) {
+  const code = Number(err?.code) || Number(err?.response?.status) || Number(err?.status) || 0;
+  if (code === 429) return true;
+  const reason = String(err?.errors?.[0]?.reason || err?.response?.data?.error?.status || '').toLowerCase();
+  if (reason.includes('ratelimit') || reason.includes('resource_exhausted') || reason.includes('quota')) return true;
   const msg = (err?.message || '').toLowerCase();
   return msg.includes('quota') || msg.includes('rate limit') || msg.includes('too many requests');
+}
+
+function isRetryableError(err) {
+  const code = Number(err?.code) || Number(err?.response?.status) || Number(err?.status) || 0;
+  if (code === 503) return true;
+  return isQuotaError(err);
+}
+
+/**
+ * QTA-1 — the message an admin reads when the retries are spent. The raw
+ * Google text ("Quota exceeded for quota metric 'Write requests' … for
+ * consumer 'project_number:…'") says nothing about what to do; this does.
+ * The original error rides as `cause` for the log.
+ */
+function quotaExhaustedError(err, label) {
+  const e = new Error('Google Sheets is rate-limiting writes right now — wait one minute, then tap again. '
+    + `(${label})`);
+  e.code = 'SHEETS_QUOTA';
+  e.cause = err;
+  return e;
 }
 
 async function withRetry(fn, label = 'sheets') {
@@ -28,12 +51,60 @@ async function withRetry(fn, label = 'sheets') {
       if (attempt < MAX_RETRIES && isRetryableError(err)) {
         const delay = BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 1000;
         logger.warn(`[${label}] Quota/rate error (attempt ${attempt + 1}/${MAX_RETRIES}), retrying in ${Math.round(delay)}ms...`);
-        await new Promise((r) => setTimeout(r, delay));
+        await _governor.sleep(delay);
         continue;
+      }
+      if (isQuotaError(err)) {
+        logger.error(`[${label}] Sheets quota still refused after ${MAX_RETRIES} retries: ${err?.message}`);
+        throw quotaExhaustedError(err, label);
       }
       throw err;
     }
   }
+}
+
+/* ── QTA-1: client-side write governor ─────────────────────────────────────
+ * Google allows 60 WRITE requests per minute per user on the Sheets API, and
+ * the service account is one user for every flow, scheduler and sentinel at
+ * once. A 20-item sale used to make ~60 writes on its own, and when the
+ * burst crossed the cap Google refused mid-sale (the owner's 24-Sep
+ * screenshot). Every write now takes a slot from a rolling one-minute
+ * window first; when the window is full it WAITS for the oldest write to
+ * age out instead of sending a request Google will refuse. The retry above
+ * stays as the backstop. Cap = config.sheets.writesPerMinute (0 = off).
+ */
+const _governor = {
+  windowMs: 60 * 1000,
+  stamps: [],            // send times of the writes inside the window
+  gate: Promise.resolve(), // serialises slot acquisition across concurrent callers
+  now: () => Date.now(),
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  cap: () => (Number(config.sheets && config.sheets.writesPerMinute) > 0 ? Number(config.sheets.writesPerMinute) : 0),
+};
+
+/** Wait for a write slot inside the rolling window (no-op when the cap is 0). */
+function acquireWriteSlot(label) {
+  const cap = _governor.cap();
+  if (!cap) return Promise.resolve();
+  const turn = _governor.gate.then(async () => {
+    for (;;) {
+      const now = _governor.now();
+      const stamps = _governor.stamps;
+      while (stamps.length && now - stamps[0] >= _governor.windowMs) stamps.shift();
+      if (stamps.length < cap) { stamps.push(now); return; }
+      const wait = _governor.windowMs - (now - stamps[0]) + 50;
+      logger.warn(`[${label}] Sheets write cap ${cap}/min reached — holding this write ${Math.ceil(wait / 1000)}s`);
+      await _governor.sleep(wait);
+    }
+  });
+  _governor.gate = turn.catch(() => {});
+  return turn;
+}
+
+/** A write wrapped in the governor AND the retry. */
+async function governedWrite(fn, label) {
+  await acquireWriteSlot(label);
+  return withRetry(fn, label);
 }
 
 async function getSheets() {
@@ -171,7 +242,7 @@ async function readRangeUnformatted(sheetName, range) {
  */
 async function appendRows(sheetName, rows) {
   const s = await getSheets();
-  return withRetry(async () => {
+  return governedWrite(async () => {
     await s.spreadsheets.values.append({
       spreadsheetId: spreadsheetId(),
       range: `${sheetName}!A1`,
@@ -184,7 +255,7 @@ async function appendRows(sheetName, rows) {
 
 async function updateRange(sheetName, range, values) {
   const s = await getSheets();
-  return withRetry(async () => {
+  return governedWrite(async () => {
     await s.spreadsheets.values.update({
       spreadsheetId: spreadsheetId(),
       range: `${sheetName}!${range}`,
@@ -216,7 +287,7 @@ async function batchUpdateRanges(sheetName, updates) {
     range: `${sheetName}!${u.range}`,
     values: sanitizeRows(u.values),
   }));
-  return withRetry(async () => {
+  return governedWrite(async () => {
     await s.spreadsheets.values.batchUpdate({
       spreadsheetId: spreadsheetId(),
       requestBody: { valueInputOption: 'USER_ENTERED', data },
@@ -226,7 +297,7 @@ async function batchUpdateRanges(sheetName, updates) {
 
 async function addSheet(title) {
   const s = await getSheets();
-  return withRetry(async () => {
+  return governedWrite(async () => {
     await s.spreadsheets.batchUpdate({
       spreadsheetId: spreadsheetId(),
       requestBody: { requests: [{ addSheet: { properties: { title } } }] },
@@ -257,6 +328,6 @@ module.exports = {
   getSheetNames,
   addSheet,
   columnLetter,
-  // Exported for the SEC-FI1 unit tests only — writes are already guarded.
-  _internals: { sanitizeCell, sanitizeRows },
+  // Exported for unit tests only — writes are already guarded / governed.
+  _internals: { sanitizeCell, sanitizeRows, isQuotaError, isRetryableError, withRetry, acquireWriteSlot, governor: _governor, quotaExhaustedError },
 };

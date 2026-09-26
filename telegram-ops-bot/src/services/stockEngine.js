@@ -96,6 +96,20 @@ async function sellPackage(packageNo, customer, salesDate, opts, auth) {
   return results;
 }
 
+/**
+ * QTA-1 — every item of one approved sale in ONE write (see
+ * inventoryRepository.markItemsSold). One shadow record for the lot.
+ */
+async function sellItems(items, customer, salesDate, opts, auth) {
+  assertAuthority('sellItems', auth);
+  const result = await inventoryRepository.markItemsSold(items, customer, salesDate,
+    { ...(opts || {}), user: userOf(auth) });
+  if (result && result.rows && result.rows.length) {
+    await shadow(result.rows, auth, { customer, businessDay: require('./baleMovementLog').businessDay(salesDate) });
+  }
+  return result;
+}
+
 /* ── sold → available ─────────────────────────────────────────────────── */
 
 /** The movement kind comes from the EVENT — a correction can never pose
@@ -192,7 +206,7 @@ async function renameWarehouse(oldName, newName, auth) {
 }
 
 module.exports = {
-  sellThan, sellPackage, returnThan, returnPackage,
+  sellThan, sellPackage, sellItems, returnThan, returnPackage,
   transition, intakeBale, intakeThans, renameWarehouse,
   _internals: { EVENTS, assertAuthority, userOf, shadow },
 };

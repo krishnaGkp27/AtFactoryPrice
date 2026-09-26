@@ -60,6 +60,11 @@ const config = {
   sheets: {
     sheetId: process.env.GOOGLE_SHEET_ID || '',
     credentials: parseCredentials(),
+    // QTA-1 — Google caps Sheets WRITE requests at 60 per minute per user
+    // (the service account is one user). The client holds a write that
+    // would cross this many in a rolling minute instead of letting Google
+    // refuse it. 0 = no client-side cap (retries only).
+    writesPerMinute: Number(process.env.SHEETS_WRITES_PER_MINUTE || 50),
   },
 
   access: {

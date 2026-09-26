@@ -320,6 +320,103 @@ async function markPackageSold(packageNo, customer, soldDateOverride, opts = {})
   return available.map((than) => ({ ...than, status: 'sold', soldTo: customer, soldDate, updatedAt: now }));
 }
 
+/**
+ * QTA-1 — sell MANY items of one approved request in ONE Sheets write.
+ *
+ * The bundle executor used to sell item by item: one row write, one
+ * movement append and one price stamp per item, each invalidating the
+ * cache so the next item re-read the whole sheet. Google caps writes at 60
+ * per minute per user, so a 20-item sale on its own crossed the cap and
+ * Google refused it halfway (24-Sep-2026) — some thans flipped to sold,
+ * no Transactions or ledger row followed. Here every item is resolved from
+ * ONE read, every sold row (and the negotiated-rate stamp on the rest of
+ * each touched bale, the old updatePrice contract) goes out in ONE
+ * batchUpdate, and the movement log takes ONE append. One API call cannot
+ * half-apply, so a refused write leaves nothing flipped.
+ *
+ * Guards carried over: a than that is not 'available' is never
+ * overwritten (SEC-P2 C5); an item is scoped to its warehouse when given
+ * (TRF-INT4); the same physical row cannot be claimed twice by two items
+ * of one request.
+ *
+ * @param {Array<{type:'package'|'than', packageNo:string|number, thanNo?:number, warehouse?:string, baleUid?:string}>} items
+ * @param {string} customer
+ * @param {string} [soldDateOverride]
+ * @param {{user?:string, rateFor?:(row:object)=>number}} [opts]
+ *   rateFor — the negotiated rate for a row (by its design); > 0 stamps it
+ *   on the sold rows AND on the rest of that bale in that warehouse
+ *   (exactly what updatePrice({packageNo, warehouse}) did per item).
+ * @returns {Promise<{applied:Array<{item:object, rows:Array<object>}>, failed:Array<{item:object, reason:string}>, rows:Array<object>}>}
+ */
+async function markItemsSold(items, customer, soldDateOverride, opts = {}) {
+  const all = await getAll();
+  const now = new Date().toISOString();
+  const soldDate = normalizeSalesDate(soldDateOverride) || todayInLagos();
+  const rateFor = typeof opts.rateFor === 'function' ? opts.rateFor : null;
+  const applied = [];
+  const failed = [];
+  const rows = [];
+  const taken = new Set();
+  for (const item of items || []) {
+    const p = str(item && item.packageNo);
+    const wh = item && item.warehouse ? upper(item.warehouse) : null;
+    const inWh = (r) => !wh || upper(r.warehouse) === wh;
+    let match = [];
+    if (item && item.type === 'package') {
+      match = all.filter((r) => r.packageNo === p && inWh(r) && r.status === 'available' && !taken.has(r.rowIndex));
+      if (!match.length) { failed.push({ item, reason: 'not found or no available thans' }); continue; }
+    } else if (item && item.type === 'than') {
+      const t = num(item.thanNo);
+      const uid = item.baleUid ? str(item.baleUid) : null;
+      const r = all.find((x) => x.packageNo === p && x.thanNo === t && inWh(x) && (!uid || str(x.baleUid) === uid));
+      if (!r || r.status !== 'available' || taken.has(r.rowIndex)) { failed.push({ item, reason: 'not found or not available' }); continue; }
+      match = [r];
+    } else {
+      failed.push({ item, reason: `unknown item type "${item && item.type}"` });
+      continue;
+    }
+    for (const r of match) taken.add(r.rowIndex);
+    const sold = match.map((r) => {
+      const rate = rateFor ? Number(rateFor(r)) : 0;
+      return { ...r, status: 'sold', soldTo: customer || '', soldDate, pricePerYard: rate > 0 ? rate : r.pricePerYard, updatedAt: now };
+    });
+    applied.push({ item, rows: sold });
+    rows.push(...sold);
+  }
+  if (!rows.length) return { applied, failed, rows };
+
+  const updates = rows.map((r) => ({
+    range: `H${r.rowIndex}:P${r.rowIndex}`,
+    values: [['sold', r.warehouse, r.pricePerYard, r.dateReceived, r.soldTo, r.soldDate, r.netMtrs, r.netWeight, now]],
+  }));
+  if (rateFor) {
+    // The rest of each touched bale takes the same rate (updatePrice's
+    // contract: every row of that package in that warehouse).
+    const soldIdx = new Set(rows.map((r) => r.rowIndex));
+    const stamp = new Map();
+    for (const r of rows) {
+      const k = `${r.packageNo}|${upper(r.warehouse)}`;
+      const v = Number(rateFor(r));
+      if (v > 0 && !stamp.has(k)) stamp.set(k, v);
+    }
+    for (const r of all) {
+      if (soldIdx.has(r.rowIndex)) continue;
+      const v = stamp.get(`${r.packageNo}|${upper(r.warehouse)}`);
+      if (v > 0) {
+        updates.push({ range: `J${r.rowIndex}`, values: [[v]] });
+        updates.push({ range: `P${r.rowIndex}`, values: [[now]] });
+      }
+    }
+  }
+  await sheets.batchUpdateRanges(SHEET, updates);
+  invalidateCache();
+  const movement = require('../services/baleMovementLog');
+  await movement.record(rows, {
+    to: 'sold', on: soldDate, kind: 'sale', ref: customer || '', user: opts.user,
+  });
+  return { applied, failed, rows };
+}
+
 async function appendThans(thanRows) {
   await ensureHeader();
   const rows = thanRows.map(toRow);
@@ -1091,6 +1188,7 @@ module.exports = {
   findThan,
   markThanSold,
   markPackageSold,
+  markItemsSold,
   markThanAvailable,
   markPackageAvailable,
   renameWarehouse,
