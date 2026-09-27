@@ -241,8 +241,8 @@ R-9BF6 after this ships: Approve → wizard (both rates, payment, multiplier) �
 thans put back (BaleMovements `sold → available · restart · Ayubal Ansari`, dated the
 tap day), all 33 sold again under the sale date 25-Sep-2026 (`available → sold ·
 sale`), the reply reports 8 bales / 33 thans / 990 yd; ONE Transactions row (990 yd),
-ledger debits for 9037 (900 yd) and 9006 (90 yd), the payment pair if one was
-entered, one invoice; every row carries the rate entered at the tap.
+ledger debits for 9006 (90 yd), 9037-D (720 yd) and 9037-E (180 yd), the payment
+pair if one was entered, one invoice; every row carries the rate entered at the tap.
 
 ### 8c. Adversarial review 1, 27-Sep-2026 (three lenses, on the first — resume — cut)
 
