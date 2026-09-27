@@ -393,6 +393,11 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   // Fix B — captured by the sale_bundle branch so the caller can surface
   // partially-applied sales.
   let bundleReport = null;
+  // QTA-2 — set when a bundle sale is COMPLETING an earlier, half-done run;
+  // resumedBooksDone when that earlier run already wrote the Transactions
+  // row (so the enrichment it was booked with must stand).
+  let resumedSale = false;
+  let resumedBooksDone = false;
   // SEC-P2 (H7): branches that used to `return { ok: true }` early now set
   // this and fall through to the shared footer, so the ApprovalQueue row is
   // marked approved + audited (previously it stayed 'pending' and could be
@@ -1520,24 +1525,54 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const rateFor = enrichment?.ratePerUnitByDesign
       ? (r) => (r && r.design ? getPricePerYard(enrichment, r.design) : 0)
       : null;
+    // QTA-2 — a sale whose earlier run flipped some thans and died before
+    // the books: those thans are THIS sale's (sold to this customer on this
+    // date) and are counted, not sold again — unless an APPROVED request
+    // for the same customer and day already covers them (a duplicate). The
+    // duplicate check needs the resolved queue; if it cannot be read,
+    // nothing is written at all rather than half a sale being charged.
+    const saleResume = require('./saleResume');
+    let resolvedForResume = null;
+    const resumableBefore = saleResume.resumableItems(aj, await inventoryRepository.getAll());
+    if (resumableBefore.length) {
+      try {
+        resolvedForResume = await approvalQueueRepository.getResolved();
+      } catch (e) {
+        return {
+          ok: false,
+          message: `${resumableBefore.length} item(s) were already sold to ${aj.customer} on ${aj.salesDate} by an earlier run of this request, and the earlier sales could not be read to rule out a duplicate (${e.message}). Nothing was changed — try again in a minute.`,
+        };
+      }
+    }
     const sold = await stockEngine.sellItems(items, aj.customer, aj.salesDate,
       rateFor ? { rateFor } : {}, { event: 'sale', approvalId: requestId, adminId: approvedBy });
-    for (const f of sold.failed) {
-      const it = f.item || {};
-      failedItems.push(it.type === 'than'
-        ? { packageNo: it.packageNo, thanNo: it.thanNo, type: 'than', reason: f.reason }
-        : (it.type === 'package'
-          ? { packageNo: it.packageNo, type: 'package', reason: f.reason }
-          : { packageNo: it.packageNo, thanNo: it.thanNo, type: it.type || 'unknown', reason: f.reason }));
+    const shortRef = (id) => `R-${String(id || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 4)}`;
+    const shape = (it, reason) => (it.type === 'than'
+      ? { packageNo: it.packageNo, thanNo: it.thanNo, type: 'than', reason }
+      : (it.type === 'package'
+        ? { packageNo: it.packageNo, type: 'package', reason }
+        : { packageNo: it.packageNo, thanNo: it.thanNo, type: it.type || 'unknown', reason }));
+    const resumed = [];
+    for (const c of saleResume.classifyFailed({ failed: sold.failed, aj, requestId, resolved: resolvedForResume })) {
+      const it = c.entry.item || {};
+      if (c.kind === 'resumed') { resumed.push(c); continue; }
+      const reason = c.kind === 'duplicate'
+        ? `already sold to ${aj.customer} on ${aj.salesDate} under request ${shortRef(c.otherRequestId)} — a duplicate, not sold again`
+        : c.entry.reason;
+      failedItems.push(shape(it, reason));
     }
-    for (const a of sold.applied) {
-      totalThans += a.rows.length;
-      const y = a.rows.reduce((sum, t) => sum + (t.yards || 0), 0);
+    const count = (rows, packageNo) => {
+      totalThans += rows.length;
+      const y = rows.reduce((sum, t) => sum + (t.yards || 0), 0);
       totalYards += y;
-      appliedPkgs.add(a.item.packageNo);
-      const design = a.rows[0]?.design || '';
+      appliedPkgs.add(packageNo);
+      const design = rows[0]?.design || '';
       if (design) byDesign[design] = (byDesign[design] || 0) + y;
-    }
+    };
+    for (const a of sold.applied) count(a.rows, a.item.packageNo);
+    let resumedThans = 0;
+    for (const c of resumed) { count(c.rows, (c.entry.item || {}).packageNo); resumedThans += c.rows.length; }
+    resumedSale = resumed.length > 0;
     // APF-1 (owner report, 08-Aug-2026): when NOTHING flipped, this must
     // not fall through to the money footer — it used to post the payment,
     // issue a fresh invoice and append a qty-0 Transactions row for a sale
@@ -1556,7 +1591,24 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       appliedThans: totalThans,
       appliedYards: totalYards,
       failedItems,
+      // QTA-2 — items the earlier run had already flipped, counted here.
+      resumedItems: resumed.length,
+      resumedThans,
     };
+    // QTA-2 — the books of a resumed sale are written ONCE: a Transactions
+    // row already carrying this request means the earlier run got past the
+    // flip, so no second row, no second payment record.
+    let priorTxn = [];
+    if (resumedSale) {
+      try { priorTxn = await transactionsRepository.findBySaleRef(requestId); } catch (e) { await recordErpFailure('Transactions lookup (resume)', e); }
+      resumedBooksDone = priorTxn.length > 0;
+      try {
+        await auditLogRepository.append('sale_bundle_resumed', {
+          requestId, resumedItems: resumed.length, resumedThans, priorTransactionsRow: priorTxn.length > 0,
+          items: resumed.map((c) => { const it = c.entry.item || {}; return { packageNo: it.packageNo, thanNo: it.thanNo, type: it.type }; }),
+        }, approvedBy);
+      } catch (_) {}
+    }
     if (failedItems.length) {
       try {
         await auditLogRepository.append('sale_bundle_partial', { requestId, failedItems }, approvedBy);
@@ -1567,7 +1619,9 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // throw the executor away and leave the request pending (a re-approve
     // would refuse — every item sold — and Mark-as-done posts nothing). The
     // failure is collected as an H6 book failure and shown as BOOKS NOT UPDATED.
-    try {
+    if (priorTxn.length) {
+      // QTA-2 — the earlier run already wrote this sale's row: never a second.
+    } else try {
       await transactionsRepository.append({
         user: item.user, action: 'sale_bundle', design: '', color: '',
         qty: totalYards, before: `${totalThans} thans`, after: 'sold', status: 'approved',
@@ -1583,11 +1637,17 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       if (!yards || yards <= 0) continue;
       const pricePerYard = getPricePerYard(enrichment, design);
       const payload = { type: 'sale_bundle', customer: aj.customer, customerId: aj.customerId || '', yards, pricePerYard, design: design || undefined, shade: '', userId: item.user, txnId: `${requestId}-${design || 'sale'}`, paymentMode: enrichment?.paymentMode ?? '', amountPaid: enrichment?.amountPaid ?? 0 };
+      if (resumedSale) {
+        // QTA-2 — a debit this request already posted is never posted twice.
+        let already = [];
+        try { already = await require('../repositories/ledgerRepository').findByTxnId(payload.txnId); } catch (_) { already = []; }
+        if (already.length) continue;
+      }
       try {
         await erpEmitAsync('sale', payload);
       } catch (e) { await recordErpFailure(`sale ledger (bundle${design ? ` ${design}` : ''})`, e); }
     }
-    if (enrichment?.amountPaid > 0) {
+    if (enrichment?.amountPaid > 0 && !priorTxn.length) {
       try {
         const crmService = require('./crmService');
         await crmService.recordPayment({ customer: aj.customer, amount: enrichment.amountPaid, method: enrichment.paymentMode || 'Cash', userId: approvedBy });
@@ -1848,14 +1908,21 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   const INVOICED_ACTIONS = ['sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell', 'sale_bundle'];
   let invoice = null;
   if (INVOICED_ACTIONS.includes(aj.action)) {
-    if (enrichment) {
+    // QTA-2 — when the earlier run already booked the sale, the rates it
+    // was booked with stay on the row; the re-entered ones are not the record.
+    if (enrichment && !resumedBooksDone) {
       try {
         await approvalQueueRepository.updateActionJSON(requestId, { ...aj, enrichment });
       } catch (e) { await recordErpFailure('enrichment persist', e); }
     }
     try {
       const invoiceService = require('./invoiceService');
-      invoice = await invoiceService.createForSale({ item, enrichment, approvedBy });
+      let existing = null;
+      if (resumedSale) {
+        // QTA-2 — an invoice this request already issued is never re-issued.
+        try { existing = await require('../repositories/invoicesRepository').getByRequestId(requestId); } catch (_) { existing = null; }
+      }
+      invoice = existing ? null : await invoiceService.createForSale({ item, enrichment, approvedBy });
     } catch (e) { await recordErpFailure('invoice issue', e); }
   }
 
@@ -1869,8 +1936,13 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // QTA-1 — by now the action IS applied and booked; only the row's status
     // is unwritten. "Tap again" would be read as "re-run": say what is true.
     if (e && e.code === 'SHEETS_QUOTA') {
+      // QTA-2 — a bundle sale's stock now reads as ITS OWN, so the next tap
+      // walks the wizard and the executor resumes: nothing is sold, booked
+      // or charged twice. The single doors still get the Mark-as-done chip.
       const done = new Error('Applied and booked — only the request could not be marked approved (Google Sheets is rate-limiting writes). '
-        + 'Wait one minute, tap Approve again and choose ✅ Mark as done (no re-run).');
+        + (aj.action === 'sale_bundle'
+          ? 'Wait one minute, then tap Approve again — the bot recognises the sale as already applied and only marks the request approved (nothing is sold or charged twice).'
+          : 'Wait one minute, tap Approve again and choose ✅ Mark as done (no re-run).'));
       done.code = 'SHEETS_QUOTA_AFTER_APPLY';
       done.cause = e;
       throw done;

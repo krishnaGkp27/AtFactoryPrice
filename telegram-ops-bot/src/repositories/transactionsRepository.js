@@ -118,6 +118,20 @@ function parseRow(r) {
 }
 
 /** Get last N transaction rows (oldest to newest of the last N). */
+/**
+ * QTA-2 — the sale rows already written for one approval request (column
+ * O, SaleRefId). A resumed sale must never write a second one.
+ * @param {string} saleRefId
+ * @returns {Promise<Array<object>>}
+ */
+async function findBySaleRef(saleRefId) {
+  const ref = String(saleRefId || '').trim();
+  if (!ref) return [];
+  await ensureHeader();
+  const rows = await sheets.readRange(SHEET, 'A2:S');
+  return (rows || []).map((r) => parseRow(r)).filter((t) => String(t.saleRefId || '').trim() === ref);
+}
+
 async function getLast(n) {
   await ensureHeader();
   const rows = await sheets.readRange(SHEET, 'A2:S');
@@ -201,4 +215,4 @@ async function getBySalesDateRange(fromIso, toIso) {
   return rows.map(parseRow).filter((t) => t.salesDate && t.salesDate >= from && t.salesDate <= to);
 }
 
-module.exports = { append, ensureHeader, HEADERS, getLast, parseRow, setStatusReverted, getCustomersByDesign, getBySalesDateRange };
+module.exports = { append, ensureHeader, HEADERS, getLast, findBySaleRef, parseRow, setStatusReverted, getCustomersByDesign, getBySalesDateRange };

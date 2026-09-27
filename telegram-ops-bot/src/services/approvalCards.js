@@ -265,10 +265,16 @@ async function buildSaleCard(p) {
   text += `\n\nΣ ${pkgLabel ? `${pkgLabel} · ` : ''}${fmtQty(totalYards)} yd`;
   text += '\n(bale/than · #shade)';
   const noStock = items.filter((it) => it.noStock).length;
-  if (noStock && noStock === items.length) {
+  const ownSale = items.filter((it) => it.noStock && it.ownSale).length;
+  if (noStock && ownSale === noStock) {
+    // QTA-2 — every ⚠️ item is this request's own earlier, half-done run.
+    text += `\n⚠️ ${noStock} of ${items.length} item(s) marked ⚠️ are already sold to ${p.customer || 'this customer'}`
+      + `${p.salesDate ? ` on ${fmtDate(p.salesDate)}` : ''} by an earlier run of THIS request. Approve completes the sale: they are counted, not sold or charged again.`;
+  } else if (noStock && noStock === items.length) {
     text += '\n🚨 NOTHING in this request is available — it may already be executed, or duplicate another sale. Approving will NOT sell or charge anything.';
   } else if (noStock) {
     text += `\n⚠️ ${noStock} of ${items.length} item(s) marked ⚠️ have no available stock — check before approving.`;
+    if (ownSale) text += ` ${ownSale} of them were sold by an earlier run of THIS request and will be counted, not sold again.`;
   }
   // CARD-4 (owner 23-Aug) — the backdated banner belongs to the SHARED
   // builder, not to each door. Every sale path used to word it its own way
@@ -545,7 +551,7 @@ async function buildRemoveBankCard({ bankName }) {
  * Everything here is best-effort — a Sheets hiccup degrades to the old thin
  * card (reminders rebuild these cards and must never fail on a read).
  */
-async function enrichBundleItems(rawItems) {
+async function enrichBundleItems(rawItems, aj = null) {
   const inventoryRepository = require('../repositories/inventoryRepository');
   const inv = await inventoryRepository.getAll();
   const live = inv.filter((r) => r.status === 'available' || r.status === 'in_transit');
@@ -575,7 +581,16 @@ async function enrichBundleItems(rawItems) {
     // loudly — the R-9CEB executed-but-pending case); two designs under
     // one number = ambiguous (stay bare, §2: never guess); an Inventory
     // outage throws before this map and claims nothing.
-    if (!rows.length) return { ...it, noStock: true };
+    if (!rows.length) {
+      // QTA-2 — no live rows because THIS sale already took them (sold to
+      // the request's customer on its date): say so, the approver must
+      // know Approve completes the sale rather than duplicating it.
+      let ownSale = false;
+      if (aj && aj.customer) {
+        try { ownSale = require('./saleResume').isResumableItem(it, aj, inv); } catch (_) { ownSale = false; }
+      }
+      return { ...it, noStock: true, ownSale };
+    }
     if (designs.length !== 1) return { ...it }; // ambiguous — never guess
     if (it.type === 'than') {
       const row = rows.find((r) => String(r.thanNo) === String(it.thanNo)) || rows[0];
@@ -670,7 +685,7 @@ function docVerifyLine(aj) {
  *  Inventory best-effort; degrades to the bare item list on any failure. */
 async function buildSaleBundleCard(aj) {
   let items = (Array.isArray(aj.items) ? aj.items : []).map((it) => ({ ...it }));
-  try { items = await enrichBundleItems(items); } catch (_) { /* thin items still render */ }
+  try { items = await enrichBundleItems(items, aj); } catch (_) { /* thin items still render */ }
   let text = await buildSaleCard({
     headline: 'Sale',
     customer: aj.customer,

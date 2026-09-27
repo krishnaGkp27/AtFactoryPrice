@@ -33,6 +33,10 @@ function harness(item, world) {
   approvalQueueRepository.updateStatus = async (id, status) => { if (status === 'approved' || status === 'rejected') resolved = true; return true; };
   approvalQueueRepository.updateActionJSON = async () => true;
   auditLogRepository.append = async (type, payload) => { out.audits.push({ type, payload }); };
+  // QTA-2 — the executor reads Inventory once before the batched write to
+  // see whether any item is its own earlier, half-done run.
+  inventoryRepository.getAll = async () => Object.values(world).flat().map((r) => ({ ...r }));
+  approvalQueueRepository.getResolved = async () => [];
   transactionsRepository.append = async (row) => { out.txns.push(row); return true; };
   accountingService.recordSale = async (p) => { out.sales.push(p); return true; };
   inventoryRepository.markItemsSold = async (items, customer, salesDate, opts) => {
@@ -134,7 +138,9 @@ test('a quota refusal on the final status write says the sale IS applied and wha
     actionJSON: { action: 'sale_bundle', customer: 'ABBA', salesDate: '2026-08-19', items: [{ type: 'package', packageNo: 'B2' }] },
   }, WORLD);
   approvalQueueRepository.updateStatus = async () => { throw Object.assign(new Error('Google Sheets is rate-limiting writes right now — wait one minute, then tap again. (batchUpdate(ApprovalQueue))'), { code: 'SHEETS_QUOTA' }); };
+  // QTA-2 — a bundle's next Approve resumes it (nothing sold or charged
+  // twice), so the advice is "tap Approve again", not Mark as done.
   await assert.rejects(inventoryService.executeApprovedAction('Q5', 'admin1'), (e) => e.code === 'SHEETS_QUOTA_AFTER_APPLY'
     && /^Applied and booked — only the request could not be marked approved/.test(e.message)
-    && /choose ✅ Mark as done/.test(e.message));
+    && /tap Approve again — the bot recognises the sale as already applied/.test(e.message));
 });

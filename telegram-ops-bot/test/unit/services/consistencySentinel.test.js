@@ -326,6 +326,26 @@ test('C8 flags an old pending sale whose stock is gone; fresh or live ones are c
     pending: [oldRow({ actionJSON: { action: 'transfer_stock', stage: 'requested' } })],
   });
   assert.deepEqual(other, []);
+  // QTA-2 — the bale is sold to THIS request's customer on ITS date: not a
+  // zombie (Approve resumes it) but a half-done sale the admin must hear of.
+  const half = checkPendingSalesAlreadySold({
+    inventory: [
+      invRow({ packageNo: '516', status: 'sold', soldTo: 'AYUBAL ANSARI', soldDate: '2026-09-25' }),
+      invRow({ packageNo: '772', status: 'available', soldTo: '', soldDate: '' }),
+    ],
+    pending: [oldRow({ actionJSON: { action: 'sale_bundle', customer: 'Ayubal Ansari', salesDate: '2026-09-25', items: [{ type: 'package', packageNo: '516' }, { type: 'package', packageNo: '772' }] } })],
+    now,
+  });
+  assert.equal(half.length, 1);
+  assert.match(half[0], /R-9CEB is pending for 3d but 1 of 2 item\(s\) are already sold to Ayubal Ansari on 2026-09-25 — an earlier run flipped them without the books \(half-done\)\. Open it and Approve once/);
+  // A single-door sale keeps the zombie wording: its executor has no resume path.
+  const single = checkPendingSalesAlreadySold({
+    inventory: [invRow({ packageNo: '516', thanNo: 1, status: 'sold', soldTo: 'AYUBAL ANSARI', soldDate: '2026-09-25' })],
+    pending: [oldRow({ actionJSON: { action: 'sell_than', customer: 'Ayubal Ansari', salesDate: '2026-09-25', packageNo: '516', thanNo: 1 } })],
+    now,
+  });
+  assert.equal(single.length, 1);
+  assert.match(single[0], /every bale in it is already sold/);
 });
 
 /* ── ISC-1 Phase 1b: C9 / C10 / C11, the hand-edit alarm ── */

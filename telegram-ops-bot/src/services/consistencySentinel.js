@@ -300,9 +300,20 @@ function checkPendingSalesAlreadySold({ inventory, pending, now }) {
     if (!SALE_ACTIONS.includes(aj.action)) continue;
     const age = now - Date.parse(String(q.createdAt || ''));
     if (!isFinite(age) || age < HOUR) continue;
+    const days = Math.floor(age / 86400000);
     if (allItemsGone(aj, inventory)) {
-      const days = Math.floor(age / 86400000);
       findings.push(`Request ${q.requestId} is pending${days ? ` for ${days}d` : ''} but every bale in it is already sold/gone — executed-but-unresolved or a duplicate. Open it and use Mark as done or Reject; approving re-runs nothing.`);
+      continue;
+    }
+    // QTA-2 — a bundle whose earlier run flipped some (or all) of its thans
+    // and died before the books: not "gone" (the executor resumes it), but
+    // an admin must still be told it is waiting.
+    if (aj.action === 'sale_bundle') {
+      const own = require('./saleResume').resumableItems(aj, inventory);
+      if (own.length) {
+        const total = Array.isArray(aj.items) ? aj.items.length : own.length;
+        findings.push(`Request ${q.requestId} is pending${days ? ` for ${days}d` : ''} but ${own.length} of ${total} item(s) are already sold to ${aj.customer || 'its customer'} on ${aj.salesDate || 'its date'} — an earlier run flipped them without the books (half-done). Open it and Approve once: the bot completes the sale without selling or charging them again.`);
+      }
     }
   }
   return findings;

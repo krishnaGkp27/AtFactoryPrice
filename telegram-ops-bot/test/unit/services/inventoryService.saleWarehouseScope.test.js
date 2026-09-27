@@ -37,6 +37,10 @@ function harness(item) {
   };
   auditLogRepository.append = async () => {};
   transactionsRepository.append = async () => true;
+  // QTA-2 — the bundle executor reads Inventory once before its batched
+  // write (is any item its own earlier, half-done run?). Nothing here is.
+  inventoryRepository.getAll = async () => [];
+  approvalQueueRepository.getResolved = async () => [];
   inventoryRepository.markPackageSold = async (packageNo, customer, salesDate, opts) => {
     calls.markPackageSold.push({ packageNo, opts: opts || {} });
     return [{ packageNo, thanNo: 1, yards: 30, design: 'D', shade: '1', warehouse: (opts && opts.warehouse) || '' }];

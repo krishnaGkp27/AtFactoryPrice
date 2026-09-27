@@ -53,6 +53,16 @@ test('HALF-DONE: goods flipped to this customer on this date with no Transaction
   assert.match(j.reading, /no Transactions row carries this request/);
   assert.equal(j.flippedItems, 1);
   assert.equal(j.untouchedItems, 1);
+  // QTA-2 — a bundle is finished by ONE Approve; a single door is not.
+  assert.match(j.reading, /Tap Approve ONCE on this request/);
+  assert.ok(!/Do not re-approve/.test(j.reading));
+  const single = judge({
+    queue: { requestId: ID, status: 'pending', actionJSON: { action: 'sell_than', customer: 'ABBA', salesDate: '2026-08-19', packageNo: 'A1', thanNo: 1 } },
+    inventory: [row('A1', 1, 'sold', { soldTo: 'ABBA', soldDate: '2026-08-19' })],
+    txns: [], ledger: [],
+  });
+  assert.equal(single.verdict, 'HALF-DONE');
+  assert.match(single.reading, /Do not re-approve; post the missing side/);
 });
 
 test('a part-flipped bale is HALF-DONE too, never WHOLE', () => {

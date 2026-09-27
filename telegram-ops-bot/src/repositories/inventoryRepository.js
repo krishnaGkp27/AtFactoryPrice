@@ -368,8 +368,12 @@ async function markItemsSold(items, customer, soldDateOverride, opts = {}) {
     const inWh = (r) => !wh || upper(r.warehouse) === wh;
     let match = [];
     if (item && item.type === 'package') {
-      match = all.filter((r) => r.packageNo === p && inWh(r) && r.status === 'available' && !taken.has(r.rowIndex));
-      if (!match.length) { failed.push({ item, reason: 'not found or no available thans' }); continue; }
+      // QTA-2 — a failed entry carries the rows it found (sold or in
+      // transit) so the executor can tell "this sale already took it"
+      // from "gone elsewhere" without a second read.
+      const found = all.filter((r) => r.packageNo === p && inWh(r));
+      match = found.filter((r) => r.status === 'available' && !taken.has(r.rowIndex));
+      if (!match.length) { failed.push({ item, reason: 'not found or no available thans', rows: found }); continue; }
     } else if (item && item.type === 'than') {
       const t = num(item.thanNo);
       const uid = item.baleUid ? str(item.baleUid) : null;
@@ -381,10 +385,10 @@ async function markItemsSold(items, customer, soldDateOverride, opts = {}) {
       // to the packageNo+thanNo+warehouse match the per-item executor always
       // used (bundleSaleService.reconcileWithLive falls back the same way).
       const r = (uid && all.find((x) => same(x) && str(x.baleUid) === uid)) || all.find(same);
-      if (!r || r.status !== 'available' || taken.has(r.rowIndex)) { failed.push({ item, reason: 'not found or not available' }); continue; }
+      if (!r || r.status !== 'available' || taken.has(r.rowIndex)) { failed.push({ item, reason: 'not found or not available', rows: r ? [r] : [] }); continue; }
       match = [r];
     } else {
-      failed.push({ item, reason: `unknown item type "${item && item.type}"` });
+      failed.push({ item, reason: `unknown item type "${item && item.type}"`, rows: [] });
       continue;
     }
     for (const r of match) taken.add(r.rowIndex);

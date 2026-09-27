@@ -232,3 +232,31 @@ test('VRF-4: "+N more" states the persisted COUNT, not the length of a shed row 
   assert.match(card, /\n {2}⚠️ 4412 \(qty\) · 4413 \(qty\) · 4414 \(qty\) \+9 more/, card);
   assert.match(card, /\n {2}❌ 4421 · 4422 not on bill/, 'a complete list gets no "+more"');
 });
+
+test('QTA-2: ⚠️ items that are this request\'s OWN earlier flips say so — Approve completes, never duplicates', async () => {
+  const sold = (pkg, t, design) => ({ ...row(pkg, design, '1', 'Kano office', t, 'sold'), soldTo: 'AYUBAL ANSARI', soldDate: '25/09/2026' });
+  seed([
+    sold('771', 1, '9037'), sold('771', 2, '9037'),
+    sold('6189', 5, '9006'), { ...row('6189', '9006', '1', 'Kano office', 4, 'sold'), soldTo: 'Zakirullah', soldDate: '2026-07-08' },
+    row('772', '9037', '1', 'Kano office', 1), row('772', '9037', '1', 'Kano office', 2),
+  ]);
+  const aj = {
+    action: 'sale_bundle', customer: 'Ayubal Ansari', salesDate: '2026-09-25', warehouse: 'Kano office',
+    items: [{ type: 'package', packageNo: '771' }, { type: 'than', packageNo: '6189', thanNo: 5 }, { type: 'package', packageNo: '772' }],
+  };
+  const text = await approvalCards.buildSaleBundleCard(aj);
+  assert.match(text, /⚠️ 2 of 3 item\(s\) marked ⚠️ are already sold to Ayubal Ansari on 25-Sep-2026 by an earlier run of THIS request\. Approve completes the sale: they are counted, not sold or charged again\./);
+  assert.ok(!text.includes('have no available stock — check before approving'), 'the generic warning is replaced, not stacked');
+  // Mixed: one gone to someone else, one this sale's own.
+  seed([
+    sold('771', 1, '9037'),
+    { ...row('779', '9037', '1', 'Kano office', 1, 'sold'), soldTo: 'Musa', soldDate: '2026-09-25' },
+    row('772', '9037', '1', 'Kano office', 1),
+  ]);
+  const mixed = await approvalCards.buildSaleBundleCard({ ...aj, items: [{ type: 'package', packageNo: '771' }, { type: 'package', packageNo: '779' }, { type: 'package', packageNo: '772' }] });
+  assert.match(mixed, /⚠️ 2 of 3 item\(s\) marked ⚠️ have no available stock — check before approving\. 1 of them were sold by an earlier run of THIS request and will be counted, not sold again\./);
+  // Everything gone, none this sale's: the old 🚨 line, untouched.
+  seed([{ ...row('779', '9037', '1', 'Kano office', 1, 'sold'), soldTo: 'Musa', soldDate: '2026-09-25' }]);
+  const gone = await approvalCards.buildSaleBundleCard({ ...aj, items: [{ type: 'package', packageNo: '779' }] });
+  assert.match(gone, /🚨 NOTHING in this request is available/);
+});

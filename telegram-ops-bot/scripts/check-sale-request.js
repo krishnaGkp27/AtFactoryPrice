@@ -59,7 +59,9 @@ function matchesRef(requestId, ref) {
 function judge({ queue, inventory, txns, ledger }) {
   const aj = (queue && queue.actionJSON) || {};
   const requestId = String((queue && queue.requestId) || '');
-  const items = Array.isArray(aj.items) ? aj.items : [];
+  // QTA-2 — one item shape for every sale door (a single-door request is
+  // its one bale or than), so the checker can judge them too.
+  const items = require('../src/services/saleResume').itemsOf(aj);
   const custKey = upper(aj.customer);
   const saleDay = day(aj.salesDate);
   const soldHere = (r) => r.status === 'sold' && upper(r.soldTo) === custKey && day(r.soldDate) === saleDay;
@@ -102,7 +104,13 @@ function judge({ queue, inventory, txns, ledger }) {
     reading = `Every item is sold to ${aj.customer} on ${saleDay}, but the money rows carry OTHER request id(s): ${[...new Set(txnsSameDay.map(refOf))].join(', ')}. This request looks like a duplicate of that sale — reject it; do NOT post its money side.`;
   } else if ((flippedItems || mixedItems) && !booked) {
     verdict = 'HALF-DONE';
-    reading = `${flippedItems + mixedItems} item(s) are sold to ${aj.customer} on ${saleDay} but no ${txnsForRequest.length ? 'ledger entry' : 'Transactions row'} carries this request — the goods left stock, the customer was not charged for them. Do not re-approve; post the missing side with these numbers in front of you.`;
+    // QTA-2 — a BUNDLE's next Approve resumes it: the flipped thans are
+    // counted, not sold or charged again, and the books are written once.
+    // The single doors have no resume path: their missing side is posted by hand.
+    const next = aj.action === 'sale_bundle'
+      ? 'Tap Approve ONCE on this request and walk the wizard: the bot completes the sale — the flipped thans are counted, not sold or charged again, and the missing book rows are written once (QTA-2).'
+      : 'Do not re-approve; post the missing side with these numbers in front of you.';
+    reading = `${flippedItems + mixedItems} item(s) are sold to ${aj.customer} on ${saleDay} but no ${txnsForRequest.length ? 'ledger entry' : 'Transactions row'} carries this request — the goods left stock, the customer was not charged for them. ${next}`;
   } else if (flippedItems === 0 && mixedItems === 0 && untouchedItems === items.length - elsewhereItems && elsewhereItems === 0) {
     verdict = 'UNTOUCHED';
     reading = queue && queue.status === 'approved'

@@ -118,6 +118,29 @@ test('guards: a sold than is refused, a wrong warehouse is refused, an unknown t
     assert.deepEqual(r.applied.map((a) => [a.item.packageNo, a.rows.length]), [['5806', 2]]);
     assert.equal(calls.batch.length, 1);
     assert.equal(calls.batch[0].updates.length, 2);
+    // QTA-2 — each refusal carries the rows it FOUND (in the item's store),
+    // so the executor can tell "this sale already took it" from "gone".
+    assert.deepEqual(r.failed.map((f) => f.rows.map((x) => [x.packageNo, x.thanNo, x.status, x.soldTo])), [
+      [['5804', 1, 'sold', 'OLD']],
+      [],
+      [['5806', 2, 'available', '']],
+      [],
+    ]);
+  });
+});
+
+test('QTA-2: a bale whose thans are all sold comes back as a refusal carrying every one of those rows', async () => {
+  await withInventory([
+    invRow('771', 1, 'sold', { soldTo: 'AYUBAL ANSARI', soldDate: '2026-09-25', wh: 'KANO OFFICE' }),
+    invRow('771', 2, 'sold', { soldTo: 'AYUBAL ANSARI', soldDate: '2026-09-25', wh: 'KANO OFFICE' }),
+    invRow('771', 1, 'available', { wh: 'IDUMOTA' }),
+  ], async (calls) => {
+    const r = await inventoryRepo.markItemsSold([{ type: 'package', packageNo: '771', warehouse: 'Kano office' }], 'AYUBAL ANSARI', '2026-09-25');
+    assert.equal(r.applied.length, 0);
+    assert.deepEqual(r.failed[0].rows.map((x) => [x.thanNo, x.warehouse, x.soldTo, x.soldDate]),
+      [[1, 'KANO OFFICE', 'AYUBAL ANSARI', '2026-09-25'], [2, 'KANO OFFICE', 'AYUBAL ANSARI', '2026-09-25']],
+      'the same number in another store is not among them');
+    assert.equal(calls.batch.length, 0);
   });
 });
 
