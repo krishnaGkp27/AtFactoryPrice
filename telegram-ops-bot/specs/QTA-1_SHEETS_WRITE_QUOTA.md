@@ -67,11 +67,11 @@ node scripts/check-sale-request.js R-9BF6
 
 If it prints HALF-DONE, the goods have left stock but the customer has not been
 charged. Since QTA-2 (§8) a **bundle** in that state is finished by ONE Approve —
-the executor counts the flipped thans instead of selling them again and writes the
-missing book rows once. A single-door request (`sell_than` / `sell_package`) has no
-resume path: do not re-approve it; tell me the output and its missing side is posted
-by hand with the numbers in front of us. The checker's reading line says which of
-the two applies.
+the executor puts the flipped thans back and sells the whole request afresh in one
+pass, writing the books once. A single-door request (`sell_than` / `sell_package`)
+has no restart path: do not re-approve it; tell me the output and its missing side is
+posted by hand with the numbers in front of us. The checker's reading line says
+which of the two applies.
 
 ## 5. Owner steps
 
@@ -85,19 +85,21 @@ the two applies.
    wait a minute and tap again. If a LATER step was refused the card instead shows
    `🛑 BOOKS NOT UPDATED` with the step's name (the goods are sold, that book row is
    not — re-post it by hand), and if only the request's own status could not be
-   written it says `Applied and booked — …`: for a bundle, tap Approve again after a
-   minute (the executor recognises the sale as already applied and only marks the
-   request approved — §8); for a single door, choose ✅ Mark as done.
+   written it says `Applied and booked — …` (or `Applied — … N book write(s) FAILED as
+   well (…)`, naming what to post by hand): for a bundle, tap Approve again after a
+   minute (the executor sees the sale is already booked and only marks the request
+   approved — §8); for a single door, choose ✅ Mark as done.
 
 ## 6. Owed / follow-ups
 
 - ~~**Idempotent money side.**~~ Built as QTA-2 (§8, 27-Sep-2026) for the bundle
-  door: a re-approve completes a half-done sale and writes each missing book row once.
-  Still owed: the same for the single doors (`sell_than` / `sell_package` — their
-  executor refuses a sold than, so a half-done single sale is still closed by hand),
-  and rendering the resume on the admin's reply and the requester's notice
-  (`approvalEvents` renders `bundleReport.failedItems` only — `resumedItems` /
-  `resumedThans` are carried but not printed; one ask-first line).
+  door: a re-approve restarts a half-done sale (put back, sold afresh, booked once)
+  and closes an already-booked one without touching anything. Still owed: the same
+  for the single doors (`sell_than` / `sell_package` — their executor refuses a sold
+  than, so a half-done single sale is still closed by hand), and printing the
+  restart on the admin's reply and the requester's notice (`approvalEvents` renders
+  `bundleReport.failedItems` only — `restartedThans` / `alreadyBooked` are carried
+  but not printed; one ask-first line).
 - **The same per-item loop lives on in two other executors** and is the next
   incident waiting: RET-4 `return_thans` flips per than (2 writes each, the credit
   only after the loop — a mid-loop refusal under-credits the customer on the
@@ -143,87 +145,127 @@ the alternative to a refusal).
 
 **Owner, 26-Sep (after checking R-9BF6 on the phone: 27 of 33 thans sold to Ayubal
 Ansari on 25-Sep-2026, bale 772 untouched, no Transactions row, no ledger debit, no
-invoice, request still pending): "Go with your recommendation."** The recommendation
-was: build the resume path so ONE Approve completes the sale, guarded so a than sold
-to him that day under a different request is refused as a duplicate and never charged
-twice. Built and shipped the same day.
+invoice, request still pending): "Go with your recommendation."** A first cut
+RESUMED such a sale (the 27 counted, the 6 sold). **Owner, 27-Sep: "I think it should
+revert and restart for complete sale."** Rebuilt that way the same day: the flipped
+thans are PUT BACK and the whole request is sold AFRESH in one clean pass.
 
 ### 8a. The one question
 
-**Is this item's stock gone because THIS sale already took it?** An Inventory row is
-*this sale's* when it is `sold`, `soldTo` = the request's customer and `soldDate` =
-the request's sale date (both compared the way the rest of the bot compares them:
-case-blind names, `normDay` dates). A bale item is this sale's when EVERY row of that
-bale in the item's store is; a than item when its one row is. `src/services/saleResume.js`
+**Is this row's stock gone because THIS sale already took it?** An Inventory row is
+*this sale's own* when it is `sold`, `soldTo` = the request's customer and `soldDate`
+= the request's sale date (case-blind names; every date spelling the doors store —
+`25/09/2026`, `25.09.2026`, `yesterday`, ISO — read through `normalizeSalesDate`; an
+unreadable spelling is never a match). Judged **per row**, so a bale carrying a than
+sold to someone else months ago still restarts its own thans. Rows are resolved the
+way the sale writer resolves them (a than's `baleUid` pins between same-numbered
+rows; a package is its rows in the item's store). `src/services/saleRestart.js`
 answers it for every surface.
 
 | Surface | Before | After |
 |---|---|---|
-| `saleStockCheck.allItemsGone` (APF-2 pre-check, 🛂 inbox chips + card buttons, sentinel C8) | a half-done bundle read as *gone* → the admin was offered only **Mark as done** (posts nothing) or Reject | a bundle item that is its own sale's is **not gone**: the wizard runs and the executor resumes. Single doors are unchanged (their executor has no resume path) |
-| the approval card (`approvalCards.enrichBundleItems` → `buildSaleCard`) | `⚠️ N of M item(s) marked ⚠️ have no available stock — check before approving` | when every ⚠️ item is its own sale's: `⚠️ 7 of 8 item(s) marked ⚠️ are already sold to Ayubal Ansari on 25-Sep-2026 by an earlier run of THIS request. Approve completes the sale: they are counted, not sold or charged again.`; mixed: the old line plus `N of them were sold by an earlier run of THIS request and will be counted, not sold again.` |
-| the bundle executor (`inventoryService`, `sale_bundle` branch) | every already-sold item was a *failure*: the 6 free thans would have sold, the 27 would have been reported as failed, the customer charged for 180 of 990 yards | see 8b |
-| `inventoryRepository.markItemsSold` | a refusal said only *why* | each refusal also carries the rows it FOUND in the item's store, so the executor needs no second read to judge them |
-| `consistencySentinel` C8 | a half-done bundle pending > 1 h read as a zombie (*use Mark as done*) | `… but 7 of 8 item(s) are already sold to Ayubal Ansari on 2026-09-25 — an earlier run flipped them without the books (half-done). Open it and Approve once: the bot completes the sale without selling or charging them again.` |
-| `scripts/check-sale-request.js` | HALF-DONE always said *do not re-approve* | a bundle: *Tap Approve ONCE … (QTA-2)*; a single door: post by hand. The checker now judges single-door requests too |
-| the after-apply quota message (`SHEETS_QUOTA_AFTER_APPLY`) | `… choose ✅ Mark as done (no re-run)` | a bundle: `… tap Approve again — the bot recognises the sale as already applied and only marks the request approved (nothing is sold or charged twice)`; a single door: unchanged |
+| `saleStockCheck.allItemsGone` (APF-2 pre-check, 🛂 inbox chips + card buttons, sentinel C8) | a half-done bundle read as *gone* → the admin was offered only **Mark as done** (posts nothing) or Reject | a bundle item with rows of its own sale is **not gone**: the wizard runs and the executor restarts. Single doors unchanged (their executor has no restart path) |
+| the approval card (`approvalCards.enrichBundleItems` → `buildSaleCard`) | `⚠️ N of M item(s) marked ⚠️ have no available stock — check before approving` | when every ⚠️ item is its own sale's: `⚠️ 7 of 8 item(s) marked ⚠️ are sold to Ayubal Ansari on 25-Sep-2026 — this request's own half-done run. Approve restarts it: they are put back and the whole request is sold afresh; nothing is charged twice (a than another approved sale covers is refused as a duplicate).`; mixed: the old line plus `N of them are this request's own half-done run: put back and sold afresh on Approve.` |
+| the bundle executor (`inventoryService`, `sale_bundle` branch) | every already-sold item was a *failure*: the 6 free thans would have sold, the 27 reported as failed, the customer charged for 180 of 990 yards | see 8b |
+| `inventoryRepository.markRowsAvailable` (new, behind `stockEngine.restartSaleRows`, listed in the S53 one-door lint) | — | the put-back: each row re-read fresh and flipped only if it is still that row and still sold to that buyer on that date; ONE `batchUpdate` (H:P → available, buyer and date cleared, price kept); one BaleMovements append per warehouse, kind **`correction`** (RET-2: never a customer return), dated the day of the restart; one stock-events shadow per warehouse |
+| `inventoryRepository.markItemsSold` | a refusal said only *why* | each refusal also carries the rows it FOUND (kept from the first cut; the checker and tests read them) |
+| `consistencySentinel` C8 | a half-done bundle pending > 1 h read as a zombie (*use Mark as done*) | `… but 7 of 8 item(s) are already sold to Ayubal Ansari on 2026-09-25 — this request's own half-done run (flipped without the books). Open it and Approve once: the bot puts them back and sells the whole request afresh, nothing charged twice.` |
+| `scripts/check-sale-request.js` | HALF-DONE always said *do not re-approve*; judged bundles only | a bundle: *Tap Approve ONCE … puts the flipped thans back and sells the whole request afresh … If the reply names another request as a duplicate, Reject this one*; a single door: post by hand. Judges single-door requests too |
+| the after-apply quota message (`SHEETS_QUOTA_AFTER_APPLY`) | `Applied and booked — … choose ✅ Mark as done (no re-run)` even when a book write had been refused in the same storm | names any collected book failure (`Applied — … 1 book write(s) FAILED as well (Transactions row (bundle)) — post them by hand.`); a bundle: `… tap Approve again — the bot sees the sale is already booked and only marks the request approved (nothing is sold or charged twice)`; a single door: unchanged |
+| the single doors' rate stamp (`updatePrice` after the flip) | an unguarded write: a refusal threw the executor away with the than sold and the request pending | collected like the book writes (`rate stamp (sell_than / sell_package)`) |
+| the sale's payment record | `crmService.recordPayment` minted `PAY-<timestamp>` — nothing tied it to the request | an approved sale's payment pair is keyed `<requestId>-PAY`, so the books check below can see it |
 
 ### 8b. What the executor does now, in order
 
-1. Reads Inventory once and lists the items that are already this sale's
-   (`resumableItems`). None → a normal sale; the resolved queue is never read.
-2. Some → reads the resolved ApprovalQueue (`getResolved`) for the duplicate check.
-   **If that read throws, nothing is written**: `ok:false` — `7 item(s) were already
-   sold to Ayubal Ansari on 2026-09-25 by an earlier run of this request, and the
-   earlier sales could not be read to rule out a duplicate (…). Nothing was changed —
-   try again in a minute.` (A half-charged sale is worse than a minute's wait.)
-3. The one batched write (`sellItems` → `markItemsSold`) sells whatever is available.
-4. Each refusal is classified (`classifyFailed`):
-   - **resumed** — its rows are this sale's and no OTHER approved sale request
-     (`sale_bundle` / `sell_package` / `sell_than`, same customer, same day, not undone
-     by an approved `revert_sale_bundle`) covers the bale or than. Counted into the
-     totals (thans, yards, per-design yards for the ledger) exactly as if sold now.
-   - **duplicate** — such a request exists. Reported as a failed item:
+1. Reads Inventory **fresh** and lists the items with rows of this sale's own
+   (`ownRowsByItem`). None → a normal sale; no record is read, nothing is put back.
+2. Some → reads the resolved queue, the pending queue (already in hand), and the
+   request's book rows (`booksFor`: its Transactions row, every ledger entry whose
+   txn id starts with the request id — sale debits and the `-PAY` pair — and its
+   invoice). **If any read throws, nothing is written**: `ok:false` — `27 than(s) of 7
+   item(s) are already sold to Ayubal Ansari on 2026-09-25 by an earlier run of this
+   request, and the records needed to restart it safely could not be read (…). Nothing
+   was changed — try again in a minute.` The reads have their own quota; a doubtful
+   restart is worse than a minute's wait.
+3. `planRestart` decides row by row:
+   - a row another **PENDING** sale request of the same customer and day covers →
+     the whole restart is **blocked**: `… another PENDING sale request (R-PPPP) for the
+     same customer and day covers bale 6210/5 — decide that request first (approve or
+     reject it), then tap again. Nothing was changed.` (the D-4 danger: an identical
+     request whose own status write was refused would otherwise be invisible);
+   - a row an **APPROVED** one covers (not undone by an approved
+     `revert_sale_bundle`; a request whose sale date is unreadable still counts) →
+     that sale's: left sold; the item, if nothing of it can sell, is refused as
      `already sold to Ayubal Ansari on 2026-09-25 under request R-DDDD — a duplicate,
-     not sold again`. Not counted, not charged.
-   - **failed** — anything else (sold to someone else, another day, unknown number):
-     the old reason, unchanged.
-5. The books are written **once**. When any item resumed: a Transactions row already
-   carrying this request (`findBySaleRef`) → no second row and no second payment
-   record; a ledger debit already carrying `<requestId>-<design>` (`findByTxnId`) →
-   that design's debit is skipped; an invoice already issued for the request
-   (`getByRequestId`) → none re-issued; and the enrichment the earlier run booked with
-   stays on the row (the re-entered rates are not persisted over it). An audit row
-   `sale_bundle_resumed` records the resumed items and whether the earlier run had
-   reached the books.
-6. APF-1 still refuses a request in which every item FAILED (duplicates count as
-   failed); a request whose every item RESUMED proceeds to the books — that is exactly
-   the "flipped everything, then died before the books" shape.
+     not sold again`;
+   - every other own row → **put back**.
+4. **Any book row already carries the request** → the earlier run reached the
+   books. Nothing is put back, sold, booked or invoiced; the own rows are counted as
+   the sale as booked, any other item is reported as `not part of the sale already
+   booked under this request — raise a fresh request if it is still to be sold`, a
+   book side the earlier run never wrote is reported through the BOOKS NOT UPDATED
+   channel (`missing — … post it by hand (nothing is re-run)`), a typed amount paid is
+   NOT recorded again (`check the customer statement and record the 50,000 via 💰 if
+   it is missing`), the enrichment the earlier run booked with stays on the row, and
+   the request is marked approved. Audit `sale_bundle_already_booked`.
+5. Otherwise the put-back: `stockEngine.restartSaleRows` (one write, a correction
+   under the request's authority, the approving admin as actor). Audit
+   `sale_bundle_restarted` (rows, skipped rows, duplicates). A refusal here throws
+   before anything changed.
+6. The one batched sale write (`sellItems`) then sells every item — the put-back
+   rows and the never-touched ones alike — at today's rate, one movement row per
+   bale. A refusal here leaves the rows **available** and the request pending: the
+   next Approve is a plain sale.
+7. APF-1 still refuses a request in which every item failed, now naming every
+   item's reason (a duplicate names the request that has it). The books follow once:
+   Transactions row, ledger debit per design, the payment pair keyed to the request,
+   the invoice.
 
-R-9BF6 after this ships: Approve → wizard (customer, both rates, payment, multiplier)
-→ the card's reply reports 8 bales / 33 thans / 990 yd recorded; Inventory gains the 6
-thans of 772; ONE Transactions row (990 yd), ledger debits for 9037 (900 yd) and 9006
-(90 yd), one invoice; the 27 earlier thans are neither re-flipped nor re-charged.
+R-9BF6 after this ships: Approve → wizard (both rates, payment, multiplier) → 27 thans
+put back (BaleMovements: `sold @ Kano office → available @ Kano office · correction ·
+Ayubal Ansari`), then all 33 sold in one write (`available → sold · sale`), the reply
+reports 8 bales / 33 thans / 990 yd; ONE Transactions row (990 yd), ledger debits for
+9037 (900 yd) and 9006 (90 yd), one invoice; every row carries the rate entered today.
 
-### 8c. Not done / owed
+### 8c. Adversarial review, 27-Sep-2026 (three lenses, on the first — resume — cut)
 
-- The admin's reply and the requester's notice print `failedItems` only; the resume
-  is on the card (before) and in the audit trail (after), not in the reply. One
-  ask-first line in `approvalEvents` (render `bundleReport.resumedItems`).
-- The single doors (`sell_than` / `sell_package`) can be half-done the same way (flip
-  written, `updatePrice` or the Transactions append refused) and still close by hand.
-- After a `SHEETS_QUOTA_AFTER_APPLY` on a bundle the Mark-as-done chip is no longer
-  offered (the stock reads as the sale's own); the admin walks the wizard once more
-  and the executor books nothing twice. Acceptable; a "books done — just mark it"
-  shortcut would need the APF-2 pre-check to read Transactions (ask-first).
+Data shapes · money idempotency · surfaces. Every confirmed finding is closed by the
+rebuild or a same-day edit:
+
+| # | Finding (on the resume cut) | Closed by |
+|---|---|---|
+| 1 | the three "never booked twice" reads failed OPEN (a refused Transactions / ledger / invoice lookup → a second row, debits, invoice, payment; the reply said BOOKS NOT UPDATED while they were posted twice) | `booksFor` throws → `ok:false`, nothing written (8b step 2) |
+| 2 | a package item on a bale with ANY row not this sale's (a than sold to someone else in July, `in_transit`) could never resume: 150 yd flipped, never booked, request approved; the card steered to Mark-as-done | ownership per ROW; the July than stays Zakirullah's, the rest restarts |
+| 3 | the duplicate check saw APPROVED rows only: an identical request whose status write was refused (pending, booked) was invisible → both requests booked | a PENDING cover BLOCKS the restart by name |
+| 4 | the payment was gated on the Transactions row, two independent writes: double or lost payment | payment pair keyed `<id>-PAY`; a booked close never re-records and says so |
+| 5 | `priorTxn ⇒ books complete` was false after a partial first run (a transfer's `in_transit` bale refused, the rest booked) → items sold later with no row | a booked close sells nothing more; the other items are named for a fresh request |
+| 6 | `itemRows` ignored `baleUid` / picked all twins where the writer picks one → pre-read and writer disagreed | rows resolved the writer's way |
+| 7 | `normDay` handed `yesterday` / `25.09.2026` back unchanged → an approved duplicate with such a date was missed (double charge) and a request with such a date never resumed | `dayOf` = `normalizeSalesDate` first; an unreadable date on the OTHER request cannot clear it |
+| 8 | a than item of another request marked a whole pending bale a duplicate | coverage per row (`coversRow`) |
+| 9 | the card / chips / sentinel asserted "THIS request" without the duplicate check | worded as the request's own run with the duplicate refusal named; the executor is the guard |
+| 10 | the APF-1 refusal dropped the per-item reasons | the message lists every item's reason |
+| 11 | single doors: `updatePrice` was an unguarded write after the flip → a refusal left the than sold, the request pending, and Mark-as-done then closed it with no books | collected as `rate stamp (…)` |
+| 12 | after-apply message claimed "booked" over a collected book failure | names the failed writes |
+| 13 | resumed thans had no movement row (the earlier append never landed) | the restart logs the correction and the fresh sale |
+| 14 | the re-entered rates could overwrite the enrichment the books were made with | not persisted on a booked close |
+
+Recorded, not changed: the admin's reply and the requester's notice print
+`failedItems` only (`approvalEvents`, ask-first — the restart is on the card before
+and in the audit trail after); `✎ Change customer` on the re-run rewrites
+`aj.customer` so the earlier rows no longer match (they then fail as sold elsewhere —
+the safe direction); two DIFFERENT requests selling the same bale at the same moment
+run under different mutex keys (pre-existing since QTA-1; the restart's put-back →
+sell window is a second or two); the Drive bill upload repeats on a re-approve.
 
 ### 8d. Tests
 
-`test/unit/services/saleResume.test.js` (classification, warehouse scope, reverted
-sales, the single-door exemption), `test/unit/services/inventoryService.saleBundleResume.test.js`
-(the R-9BF6 shape end to end through the executor: resume, duplicate, books already
-written, unreadable queue → nothing written, all-resumed, sold elsewhere, enrichment
-not overwritten, the after-apply wording per door),
-`test/unit/repositories/inventoryRepository.markItemsSold.test.js` (refusals carry
-rows), `test/unit/repositories/transactionsRepository.findBySaleRef.test.js`,
-`test/unit/services/saleBundleCard.test.js` (the legend), the sentinel C8 case and the
-checker's reading.
+`test/unit/services/saleRestart.test.js` (date spellings, ownership per row, the
+writer's row resolution, `claimsRow`, `planRestart`, `booksFor`, the single-door
+exemption), `test/unit/services/inventoryService.saleBundleRestart.test.js` (the
+R-9BF6 shape end to end: restart, duplicate, pending block, booked close with the
+missing sides named, unreadable records → nothing written, normal sale, all-flipped,
+per-row bale, sold elsewhere, a refused sale write after the put-back, all-duplicate
+refusal with reasons, the request-keyed payment, the after-apply wording, the
+single doors' guarded rate stamp), `inventoryRepository.markItemsSold.test.js`
+(`markRowsAvailable`), `stockEngine.test.js` (`restartSaleRows`),
+`saleBundleCard.test.js` (the legend), the sentinel C8 case, the checker's reading.

@@ -54,7 +54,7 @@ test('HALF-DONE: goods flipped to this customer on this date with no Transaction
   assert.equal(j.flippedItems, 1);
   assert.equal(j.untouchedItems, 1);
   // QTA-2 — a bundle is finished by ONE Approve; a single door is not.
-  assert.match(j.reading, /Tap Approve ONCE on this request/);
+  assert.match(j.reading, /Tap Approve ONCE on this request and walk the wizard: the bot puts the flipped thans back and sells the whole request afresh/);
   assert.ok(!/Do not re-approve/.test(j.reading));
   const single = judge({
     queue: { requestId: ID, status: 'pending', actionJSON: { action: 'sell_than', customer: 'ABBA', salesDate: '2026-08-19', packageNo: 'A1', thanNo: 1 } },

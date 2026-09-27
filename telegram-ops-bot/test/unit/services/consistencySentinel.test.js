@@ -337,7 +337,7 @@ test('C8 flags an old pending sale whose stock is gone; fresh or live ones are c
     now,
   });
   assert.equal(half.length, 1);
-  assert.match(half[0], /R-9CEB is pending for 3d but 1 of 2 item\(s\) are already sold to Ayubal Ansari on 2026-09-25 — an earlier run flipped them without the books \(half-done\)\. Open it and Approve once/);
+  assert.match(half[0], /R-9CEB is pending for 3d but 1 of 2 item\(s\) are already sold to Ayubal Ansari on 2026-09-25 — this request's own half-done run \(flipped without the books\)\. Open it and Approve once: the bot puts them back and sells the whole request afresh/);
   // A single-door sale keeps the zombie wording: its executor has no resume path.
   const single = checkPendingSalesAlreadySold({
     inventory: [invRow({ packageNo: '516', thanNo: 1, status: 'sold', soldTo: 'AYUBAL ANSARI', soldDate: '2026-09-25' })],

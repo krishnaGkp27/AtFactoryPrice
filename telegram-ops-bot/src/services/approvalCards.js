@@ -268,13 +268,13 @@ async function buildSaleCard(p) {
   const ownSale = items.filter((it) => it.noStock && it.ownSale).length;
   if (noStock && ownSale === noStock) {
     // QTA-2 — every ⚠️ item is this request's own earlier, half-done run.
-    text += `\n⚠️ ${noStock} of ${items.length} item(s) marked ⚠️ are already sold to ${p.customer || 'this customer'}`
-      + `${p.salesDate ? ` on ${fmtDate(p.salesDate)}` : ''} by an earlier run of THIS request. Approve completes the sale: they are counted, not sold or charged again.`;
+    text += `\n⚠️ ${noStock} of ${items.length} item(s) marked ⚠️ are sold to ${p.customer || 'this customer'}`
+      + `${p.salesDate ? ` on ${fmtDate(p.salesDate)}` : ''} — this request's own half-done run. Approve restarts it: they are put back and the whole request is sold afresh; nothing is charged twice (a than another approved sale covers is refused as a duplicate).`;
   } else if (noStock && noStock === items.length) {
     text += '\n🚨 NOTHING in this request is available — it may already be executed, or duplicate another sale. Approving will NOT sell or charge anything.';
   } else if (noStock) {
     text += `\n⚠️ ${noStock} of ${items.length} item(s) marked ⚠️ have no available stock — check before approving.`;
-    if (ownSale) text += ` ${ownSale} of them were sold by an earlier run of THIS request and will be counted, not sold again.`;
+    if (ownSale) text += ` ${ownSale} of them are this request's own half-done run: put back and sold afresh on Approve.`;
   }
   // CARD-4 (owner 23-Aug) — the backdated banner belongs to the SHARED
   // builder, not to each door. Every sale path used to word it its own way
@@ -584,10 +584,10 @@ async function enrichBundleItems(rawItems, aj = null) {
     if (!rows.length) {
       // QTA-2 — no live rows because THIS sale already took them (sold to
       // the request's customer on its date): say so, the approver must
-      // know Approve completes the sale rather than duplicating it.
+      // know Approve restarts the sale rather than duplicating it.
       let ownSale = false;
       if (aj && aj.customer) {
-        try { ownSale = require('./saleResume').isResumableItem(it, aj, inv); } catch (_) { ownSale = false; }
+        try { ownSale = require('./saleRestart').hasOwnRows(it, aj, inv); } catch (_) { ownSale = false; }
       }
       return { ...it, noStock: true, ownSale };
     }

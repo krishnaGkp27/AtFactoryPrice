@@ -81,3 +81,26 @@ test('births demand the intake event; renames demand rename', async () => {
     inventoryRepository.renameWarehouse = origR;
   }
 });
+
+test('QTA-2 restartSaleRows: a correction only, one shadow per warehouse naming the buyer the flip cleared', async () => {
+  const stockEventsRepository = require(path.join(SRC, 'repositories/stockEventsRepository'));
+  const orig = { mark: inventoryRepository.markRowsAvailable, rec: stockEventsRepository.record };
+  const seen = []; const events = [];
+  inventoryRepository.markRowsAvailable = async (rows, opts) => {
+    seen.push(opts);
+    return { restored: rows.map((r) => ({ ...r, status: 'available', soldTo: '', soldToPrior: r.soldTo })), skipped: [] };
+  };
+  stockEventsRepository.record = async (rows, meta) => { events.push({ n: rows.length, meta }); return rows.length; };
+  try {
+    const rows = [{ packageNo: '771', thanNo: 1, warehouse: 'KANO OFFICE', soldTo: 'AYUBAL' }, { packageNo: '779', thanNo: 1, warehouse: 'IDUMOTA', soldTo: 'AYUBAL' }];
+    await assert.rejects(() => engine.restartSaleRows(rows, {}, { event: 'sale', approvalId: 'R-1' }), /must be 'correction'/);
+    await assert.rejects(() => engine.restartSaleRows(rows, {}, { event: 'return', approvalId: 'R-1' }), /must be 'correction'/);
+    assert.equal(seen.length, 0);
+    const r = await engine.restartSaleRows(rows, { ref: 'Ayubal Ansari' }, { event: 'correction', approvalId: 'R-1', adminId: '777' });
+    assert.equal(r.restored.length, 2);
+    assert.deepEqual({ kind: seen[0].kind, user: seen[0].user, ref: seen[0].ref }, { kind: 'correction', user: '777', ref: 'Ayubal Ansari' });
+    assert.deepEqual(events.map((e) => [e.n, e.meta.event, e.meta.authority, e.meta.approvalId, e.meta.customer]), [[1, 'correction', 'approval', 'R-1', 'AYUBAL'], [1, 'correction', 'approval', 'R-1', 'AYUBAL']]);
+  } finally {
+    inventoryRepository.markRowsAvailable = orig.mark; stockEventsRepository.record = orig.rec;
+  }
+});

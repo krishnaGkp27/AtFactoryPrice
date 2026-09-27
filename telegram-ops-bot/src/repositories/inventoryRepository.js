@@ -972,6 +972,59 @@ async function markPackageAvailable(packageNo, opts = {}) {
 }
 
 /**
+ * QTA-2 — put the rows an earlier, half-done run of ONE sale flipped back to
+ * available, in ONE write: the restart of that sale. Each row is re-read
+ * fresh and must still be the row it was judged as (same sheet row, number
+ * and than) and still sold to the same buyer on the same date — anything
+ * else is skipped and reported, never flipped. One BaleMovements append per
+ * warehouse, kind `correction` (an admin un-doing a flip is not a customer
+ * return, RET-2), dated the day of the restart.
+ *
+ * @param {Array<object>} rows parsed Inventory rows (with rowIndex) to restore
+ * @param {{user?:string, ref?:string, on?:string, kind?:string}} [opts]
+ * @returns {Promise<{restored:Array<object>, skipped:Array<{row:object, reason:string}>}>}
+ *          `restored` rows carry `soldToPrior` — the buyer the flip cleared
+ */
+async function markRowsAvailable(rows, opts = {}) {
+  const all = await getAll(true);
+  const byIndex = new Map(all.map((r) => [r.rowIndex, r]));
+  const skipped = [];
+  const before = [];
+  for (const want of rows || []) {
+    const live = want && byIndex.get(want.rowIndex);
+    if (!live) { skipped.push({ row: want, reason: 'row not found' }); continue; }
+    if (str(live.packageNo) !== str(want.packageNo) || num(live.thanNo) !== num(want.thanNo)) {
+      skipped.push({ row: want, reason: 'row moved' }); continue;
+    }
+    if (live.status !== 'sold' || upper(live.soldTo) !== upper(want.soldTo) || str(live.soldDate) !== str(want.soldDate)) {
+      skipped.push({ row: want, reason: 'no longer that sale\'s' }); continue;
+    }
+    before.push(live);
+  }
+  if (!before.length) return { restored: [], skipped };
+  const now = new Date().toISOString();
+  const updates = before.map((r) => ({
+    range: `H${r.rowIndex}:P${r.rowIndex}`,
+    values: [['available', r.warehouse, r.pricePerYard, r.dateReceived, '', '', r.netMtrs, r.netWeight, now]],
+  }));
+  await sheets.batchUpdateRanges(SHEET, updates);
+  invalidateCache();
+  const movement = require('../services/baleMovementLog');
+  for (const group of groupByWarehouse(before)) {
+    // Sequential: baleMovementsRepository.append serialises on its own mutex.
+    // eslint-disable-next-line no-await-in-loop
+    await movement.record(group, {
+      to: 'available', on: opts.on, kind: opts.kind || 'correction',
+      ref: opts.ref !== undefined && opts.ref !== null ? opts.ref : (group[0].soldTo || ''), user: opts.user,
+    });
+  }
+  const restored = before.map((r) => ({
+    ...r, status: 'available', soldTo: '', soldDate: '', updatedAt: now, soldToPrior: r.soldTo || '',
+  }));
+  return { restored, skipped };
+}
+
+/**
  * STK-E1 — warehouse rename (column I is a LABEL here, not a movement).
  * The old rename_warehouse executor rewrote column I via raw
  * sheetsClient.batchUpdateRanges, bypassing this repository entirely —
@@ -1222,6 +1275,7 @@ module.exports = {
   markThanSold,
   markPackageSold,
   markItemsSold,
+  markRowsAvailable,
   groupByWarehouse,
   markThanAvailable,
   markPackageAvailable,

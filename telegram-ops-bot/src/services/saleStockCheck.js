@@ -27,7 +27,7 @@ const SALE_ACTIONS = ['sale_bundle', 'sell_package', 'sell_than'];
 function itemsOf(aj) {
   if (!aj || !SALE_ACTIONS.includes(aj.action)) return [];
   if (aj.action === 'sale_bundle') return Array.isArray(aj.items) ? aj.items : [];
-  // QTA-2 — the single doors carry their type and than so a resume check
+  // QTA-2 — the single doors carry their type and than so a restart check
   // can tell one than from the whole bale.
   return [{
     type: aj.action === 'sell_than' ? 'than' : 'package',
@@ -52,19 +52,19 @@ function allItemsGone(aj, inventoryRows) {
     availPkg.add(p);
     availPkgWh.add(`${p}|${upper(r.warehouse)}`);
   }
-  // QTA-2 — a BUNDLE item whose stock this SAME sale already took (sold to
+  // QTA-2 — a BUNDLE item with rows this SAME sale already took (sold to
   // the request's customer on its sale date) is not gone: the bundle
-  // executor resumes it — counted, not sold again — so the wizard must run,
-  // not Mark-as-done. The single doors (sell_than / sell_package) have no
-  // resume path: their executor refuses a sold than, so for them "gone"
-  // keeps offering the Mark-as-done / Reject choice.
-  const saleResume = aj.action === 'sale_bundle' ? require('./saleResume') : null;
+  // executor restarts it — puts them back and sells the request afresh — so
+  // the wizard must run, not Mark-as-done. The single doors (sell_than /
+  // sell_package) have no restart path: their executor refuses a sold than,
+  // so for them "gone" keeps offering the Mark-as-done / Reject choice.
+  const saleRestart = aj.action === 'sale_bundle' ? require('./saleRestart') : null;
   return items.every((si) => {
     const p = upper(si.packageNo);
     if (!p) return false;
     const wh = upper(si.warehouse || aj.warehouse);
     const gone = wh ? !availPkgWh.has(`${p}|${wh}`) : !availPkg.has(p);
-    return gone && !(saleResume && saleResume.isResumableItem(si, aj, inventoryRows));
+    return gone && !(saleRestart && saleRestart.hasOwnRows(si, aj, inventoryRows));
   });
 }
 

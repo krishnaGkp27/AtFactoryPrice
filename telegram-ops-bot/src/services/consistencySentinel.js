@@ -306,13 +306,13 @@ function checkPendingSalesAlreadySold({ inventory, pending, now }) {
       continue;
     }
     // QTA-2 — a bundle whose earlier run flipped some (or all) of its thans
-    // and died before the books: not "gone" (the executor resumes it), but
+    // and died before the books: not "gone" (the executor restarts it), but
     // an admin must still be told it is waiting.
     if (aj.action === 'sale_bundle') {
-      const own = require('./saleResume').resumableItems(aj, inventory);
+      const own = require('./saleRestart').ownRowsByItem(aj, inventory);
       if (own.length) {
         const total = Array.isArray(aj.items) ? aj.items.length : own.length;
-        findings.push(`Request ${q.requestId} is pending${days ? ` for ${days}d` : ''} but ${own.length} of ${total} item(s) are already sold to ${aj.customer || 'its customer'} on ${aj.salesDate || 'its date'} — an earlier run flipped them without the books (half-done). Open it and Approve once: the bot completes the sale without selling or charging them again.`);
+        findings.push(`Request ${q.requestId} is pending${days ? ` for ${days}d` : ''} but ${own.length} of ${total} item(s) are already sold to ${aj.customer || 'its customer'} on ${aj.salesDate || 'its date'} — this request's own half-done run (flipped without the books). Open it and Approve once: the bot puts them back and sells the whole request afresh, nothing charged twice.`);
       }
     }
   }

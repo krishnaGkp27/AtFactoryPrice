@@ -44,10 +44,12 @@ async function listCustomers() {
   return customersRepo.getAll();
 }
 
-async function recordPayment({ customer, amount, method, userId }) {
+async function recordPayment({ customer, amount, method, userId, txnId: givenTxnId }) {
   const cust = await getCustomer(customer);
   if (!cust) return { status: 'not_found', message: `Customer "${customer}" not found.` };
-  const txnId = `PAY-${Date.now()}`;
+  // QTA-2 — an approved sale keys its payment pair to the request
+  // (`<requestId>-PAY`) so a restart can see it was already recorded.
+  const txnId = givenTxnId || `PAY-${Date.now()}`;
   await accountingService.recordPaymentReceived({ customer: cust.name, customerId: cust.customer_id, amount, method, userId, txnId });
   const newBalance = Math.max(0, cust.outstanding_balance - amount);
   await customersRepo.updateOutstanding(cust.customer_id, newBalance);

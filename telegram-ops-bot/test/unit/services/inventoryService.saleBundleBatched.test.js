@@ -138,9 +138,9 @@ test('a quota refusal on the final status write says the sale IS applied and wha
     actionJSON: { action: 'sale_bundle', customer: 'ABBA', salesDate: '2026-08-19', items: [{ type: 'package', packageNo: 'B2' }] },
   }, WORLD);
   approvalQueueRepository.updateStatus = async () => { throw Object.assign(new Error('Google Sheets is rate-limiting writes right now — wait one minute, then tap again. (batchUpdate(ApprovalQueue))'), { code: 'SHEETS_QUOTA' }); };
-  // QTA-2 — a bundle's next Approve resumes it (nothing sold or charged
-  // twice), so the advice is "tap Approve again", not Mark as done.
+  // QTA-2 — a bundle's next Approve finds the books written (nothing sold
+  // or charged twice), so the advice is "tap Approve again", not Mark as done.
   await assert.rejects(inventoryService.executeApprovedAction('Q5', 'admin1'), (e) => e.code === 'SHEETS_QUOTA_AFTER_APPLY'
     && /^Applied and booked — only the request could not be marked approved/.test(e.message)
-    && /tap Approve again — the bot recognises the sale as already applied/.test(e.message));
+    && /tap Approve again — the bot sees the sale is already booked/.test(e.message));
 });

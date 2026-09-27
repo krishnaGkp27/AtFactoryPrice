@@ -160,6 +160,29 @@ async function returnPackage(packageNo, opts, auth) {
   return results;
 }
 
+/**
+ * QTA-2 — RESTART a half-done sale: the rows its earlier run flipped go back
+ * to available in ONE write (inventoryRepository.markRowsAvailable) so the
+ * whole request can be sold afresh by sellItems. Always a `correction`
+ * (RET-2: never a customer return); one shadow per warehouse.
+ */
+async function restartSaleRows(rows, opts, auth) {
+  assertAuthority('restartSaleRows', auth);
+  if (auth.event !== 'correction') {
+    throw new Error(`stockEngine.restartSaleRows: event must be 'correction', got '${auth.event}'`);
+  }
+  const result = await inventoryRepository.markRowsAvailable(rows, { ...(opts || {}), kind: 'correction', user: userOf(auth) });
+  if (result && result.restored && result.restored.length) {
+    for (const group of inventoryRepository.groupByWarehouse(result.restored)) {
+      await shadow(group, auth, {
+        customer: group[0].soldToPrior || '',
+        businessDay: require('./baleMovementLog').businessDay(opts && opts.on),
+      });
+    }
+  }
+  return result;
+}
+
 /* ── transfers: available ⇄ in_transit ────────────────────────────────── */
 
 async function transition(packageNos, fromStatus, toStatus, toWarehouse, opts, auth) {
@@ -210,7 +233,7 @@ async function renameWarehouse(oldName, newName, auth) {
 }
 
 module.exports = {
-  sellThan, sellPackage, sellItems, returnThan, returnPackage,
+  sellThan, sellPackage, sellItems, restartSaleRows, returnThan, returnPackage,
   transition, intakeBale, intakeThans, renameWarehouse,
   _internals: { EVENTS, assertAuthority, userOf, shadow },
 };

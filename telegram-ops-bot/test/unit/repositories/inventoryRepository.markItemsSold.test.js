@@ -196,3 +196,36 @@ test('two same-numbered bales sold from two warehouses in one request log ONE mo
     assert.deepEqual(inventoryRepo.groupByWarehouse([{ warehouse: 'a' }, { warehouse: 'A' }, { warehouse: 'b' }]).map((g) => g.length), [2, 1]);
   });
 });
+
+test('QTA-2 markRowsAvailable: the rows an earlier run flipped go back in ONE write, logged as a correction per warehouse; a row that changed under us is skipped', async () => {
+  const sold = (pkg, t, wh) => invRow(pkg, t, 'sold', { soldTo: 'AYUBAL ANSARI', soldDate: '2026-09-25', wh });
+  await withInventory([
+    sold('771', 1, 'KANO OFFICE'), sold('771', 2, 'KANO OFFICE'), sold('779', 1, 'IDUMOTA'),
+    invRow('772', 1, 'available', { wh: 'KANO OFFICE' }), sold('773', 1, 'KANO OFFICE'),
+  ], async (calls) => {
+    const all = await inventoryRepo.getAll(true);
+    const want = [
+      all[0], all[1], all[2],
+      { ...all[3] }, // 772/1 is available — not that sale's any more
+      { ...all[4], soldTo: 'MUSA' }, // judged as Musa's but the sheet says Ayubal's — changed under us
+      { ...all[0], rowIndex: 99 }, // a row that is not there
+    ];
+    const r = await inventoryRepo.markRowsAvailable(want, { user: 'approval:R-1', ref: 'Ayubal Ansari' });
+    assert.deepEqual(r.restored.map((x) => [x.packageNo, x.thanNo, x.status, x.soldTo, x.soldDate, x.soldToPrior]),
+      [['771', 1, 'available', '', '', 'AYUBAL ANSARI'], ['771', 2, 'available', '', '', 'AYUBAL ANSARI'], ['779', 1, 'available', '', '', 'AYUBAL ANSARI']]);
+    assert.deepEqual(r.skipped.map((x) => [x.row.packageNo, x.reason]), [['772', 'no longer that sale\'s'], ['773', 'no longer that sale\'s'], ['771', 'row not found']]);
+    assert.equal(calls.update.length, 0);
+    assert.equal(calls.batch.length, 1, 'ONE write');
+    assert.deepEqual(calls.batch[0].updates.map((u) => u.range), ['H2:P2', 'H3:P3', 'H4:P4']);
+    assert.deepEqual(calls.batch[0].updates[0].values[0].slice(0, 6), ['available', 'KANO OFFICE', 100, '2026-01-01', '', '']);
+    assert.equal(calls.record.length, 2, 'one movement append per warehouse');
+    assert.deepEqual(calls.record.map((c) => [c.m.kind, c.m.ref, c.m.user, c.m.to, c.moved.map((x) => x.status)]),
+      [['correction', 'Ayubal Ansari', 'approval:R-1', 'available', ['sold', 'sold']], ['correction', 'Ayubal Ansari', 'approval:R-1', 'available', ['sold']]]);
+  });
+  // Nothing to restore → nothing written, nothing logged.
+  await withInventory([invRow('771', 1, 'available')], async (calls) => {
+    const all = await inventoryRepo.getAll(true);
+    const r = await inventoryRepo.markRowsAvailable([all[0]], {});
+    assert.deepEqual({ restored: r.restored.length, skipped: r.skipped.length, batch: calls.batch.length, record: calls.record.length }, { restored: 0, skipped: 1, batch: 0, record: 0 });
+  });
+});
