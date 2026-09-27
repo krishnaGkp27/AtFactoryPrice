@@ -349,7 +349,10 @@ async function markPackageSold(packageNo, customer, soldDateOverride, opts = {})
  * @returns {Promise<{applied:Array<{item:object, rows:Array<object>}>, failed:Array<{item:object, reason:string}>, rows:Array<object>}>}
  */
 async function markItemsSold(items, customer, soldDateOverride, opts = {}) {
-  const all = await getAll();
+  // TRF-INT1 / QTA-2 — a status-mutating path decides from a FRESH read: a
+  // 5 s-old snapshot taken before a restart's put-back would refuse every
+  // row the put-back just made available.
+  const all = await getAll(true);
   const now = new Date().toISOString();
   const soldDate = normalizeSalesDate(soldDateOverride) || todayInLagos();
   const rateFor = typeof opts.rateFor === 'function' ? opts.rateFor : null;
@@ -976,9 +979,11 @@ async function markPackageAvailable(packageNo, opts = {}) {
  * available, in ONE write: the restart of that sale. Each row is re-read
  * fresh and must still be the row it was judged as (same sheet row, number
  * and than) and still sold to the same buyer on the same date — anything
- * else is skipped and reported, never flipped. One BaleMovements append per
- * warehouse, kind `correction` (an admin un-doing a flip is not a customer
- * return, RET-2), dated the day of the restart.
+ * else is skipped and reported, never flipped; a row named twice is put back
+ * once. One BaleMovements append per warehouse, kind `restart`, dated the
+ * day of the restart: neither a customer return nor a §6d correction (which
+ * the supply ledger and DML-1 read as goods back / a sale erased) — the
+ * same pass re-sells the same rows, so the ledgers keep ONE supply.
  *
  * @param {Array<object>} rows parsed Inventory rows (with rowIndex) to restore
  * @param {{user?:string, ref?:string, on?:string, kind?:string}} [opts]
@@ -990,7 +995,10 @@ async function markRowsAvailable(rows, opts = {}) {
   const byIndex = new Map(all.map((r) => [r.rowIndex, r]));
   const skipped = [];
   const before = [];
+  const seen = new Set();
   for (const want of rows || []) {
+    if (want && seen.has(want.rowIndex)) continue;
+    if (want) seen.add(want.rowIndex);
     const live = want && byIndex.get(want.rowIndex);
     if (!live) { skipped.push({ row: want, reason: 'row not found' }); continue; }
     if (str(live.packageNo) !== str(want.packageNo) || num(live.thanNo) !== num(want.thanNo)) {
@@ -1014,7 +1022,7 @@ async function markRowsAvailable(rows, opts = {}) {
     // Sequential: baleMovementsRepository.append serialises on its own mutex.
     // eslint-disable-next-line no-await-in-loop
     await movement.record(group, {
-      to: 'available', on: opts.on, kind: opts.kind || 'correction',
+      to: 'available', on: opts.on, kind: opts.kind || 'restart',
       ref: opts.ref !== undefined && opts.ref !== null ? opts.ref : (group[0].soldTo || ''), user: opts.user,
     });
   }

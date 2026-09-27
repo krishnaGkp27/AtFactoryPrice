@@ -142,5 +142,5 @@ test('a quota refusal on the final status write says the sale IS applied and wha
   // or charged twice), so the advice is "tap Approve again", not Mark as done.
   await assert.rejects(inventoryService.executeApprovedAction('Q5', 'admin1'), (e) => e.code === 'SHEETS_QUOTA_AFTER_APPLY'
     && /^Applied and booked — only the request could not be marked approved/.test(e.message)
-    && /tap Approve again — the bot sees the sale is already booked/.test(e.message));
+    && /Post nothing by hand\. Wait one minute, then tap Approve again — the bot checks what was written/.test(e.message));
 });

@@ -307,3 +307,33 @@ test('an APPROVED return is still a credit — corrections do not swallow it', a
   const { entries } = await svc.buildLedger('Chief OKSON');
   assert.deepEqual(entries.map((e) => e.kind), ['supply', 'return']);
 });
+
+test('QTA-2: a RESTARTED sale (sale → restart → the same sale again) stays ONE supply — and one supply after a later return', async () => {
+  // The restart puts the half-done run's rows back (kind `restart`) and the
+  // same pass sells them again on the SAME sale date. The ledger must read
+  // neither a return (credit) nor an erased sale (§6d correction) out of it.
+  const sold = [1, 2].map((thanNo) => ({
+    packageNo: '869', design: '9060-A', shade: '01', thanNo, yards: 50,
+    status: 'sold', soldTo: 'Chief OKSON', soldDate: '2026-09-25', warehouse: 'IDUMOTA', arrivalBatch: 'Jul26',
+  }));
+  const moves = [
+    { kind: 'sale', ref: 'Chief OKSON', movedOn: '2026-09-25', timestamp: '2026-09-25T10:00:00Z', design: '9060-A', baleNo: '869', container: 'Jul26', thans: 2 },
+    { kind: 'restart', ref: 'Chief OKSON', movedOn: '2026-09-27', timestamp: '2026-09-27T09:00:00Z', design: '9060-A', baleNo: '869', container: 'Jul26', thans: 2 },
+    { kind: 'sale', ref: 'Chief OKSON', movedOn: '2026-09-25', timestamp: '2026-09-27T09:00:01Z', design: '9060-A', baleNo: '869', container: 'Jul26', thans: 2 },
+  ];
+  inventoryRepository.getAll = async () => sold;
+  inventoryRepository.getSoldRows = async () => sold;
+  baleMovementsRepository.getAll = async () => moves;
+  let led = await svc.buildLedger('Chief OKSON');
+  assert.deepEqual(led.entries.map((e) => [e.day, e.kind]), [['2026-09-25', 'supply']]);
+  assert.equal(led.net.thans, 2);
+  // Later returned: Inventory forgets the sale; the log carries it.
+  const back = sold.map((r) => ({ ...r, status: 'available', soldTo: '', soldDate: '' }));
+  inventoryRepository.getAll = async () => back;
+  inventoryRepository.getSoldRows = async () => [];
+  baleMovementsRepository.getAll = async () => [...moves,
+    { kind: 'return', ref: 'Chief OKSON', movedOn: '2026-09-30', timestamp: '2026-09-30T10:00:00Z', design: '9060-A', baleNo: '869', container: 'Jul26', thans: 2 }];
+  led = await svc.buildLedger('Chief OKSON');
+  assert.deepEqual(led.entries.map((e) => [e.day, e.kind]), [['2026-09-25', 'supply'], ['2026-09-30', 'return']]);
+  assert.equal(led.net.thans, 0, 'supplied 2 once, returned 2 — never minus two');
+});

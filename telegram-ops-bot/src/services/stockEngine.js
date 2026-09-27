@@ -163,15 +163,17 @@ async function returnPackage(packageNo, opts, auth) {
 /**
  * QTA-2 — RESTART a half-done sale: the rows its earlier run flipped go back
  * to available in ONE write (inventoryRepository.markRowsAvailable) so the
- * whole request can be sold afresh by sellItems. Always a `correction`
- * (RET-2: never a customer return); one shadow per warehouse.
+ * whole request can be sold afresh by sellItems. BaleMovements records it as
+ * kind `restart` (no ledger reads it as a return or an erased sale — the
+ * same pass re-sells the rows); the stock_events shadow, whose event list is
+ * closed, records the state change as a `correction`. One shadow per warehouse.
  */
 async function restartSaleRows(rows, opts, auth) {
   assertAuthority('restartSaleRows', auth);
   if (auth.event !== 'correction') {
     throw new Error(`stockEngine.restartSaleRows: event must be 'correction', got '${auth.event}'`);
   }
-  const result = await inventoryRepository.markRowsAvailable(rows, { ...(opts || {}), kind: 'correction', user: userOf(auth) });
+  const result = await inventoryRepository.markRowsAvailable(rows, { ...(opts || {}), kind: 'restart', user: userOf(auth) });
   if (result && result.restored && result.restored.length) {
     for (const group of inventoryRepository.groupByWarehouse(result.restored)) {
       await shadow(group, auth, {

@@ -312,7 +312,7 @@ function checkPendingSalesAlreadySold({ inventory, pending, now }) {
       const own = require('./saleRestart').ownRowsByItem(aj, inventory);
       if (own.length) {
         const total = Array.isArray(aj.items) ? aj.items.length : own.length;
-        findings.push(`Request ${q.requestId} is pending${days ? ` for ${days}d` : ''} but ${own.length} of ${total} item(s) are already sold to ${aj.customer || 'its customer'} on ${aj.salesDate || 'its date'} — this request's own half-done run (flipped without the books). Open it and Approve once: the bot puts them back and sells the whole request afresh, nothing charged twice.`);
+        findings.push(`Request ${q.requestId} is pending${days ? ` for ${days}d` : ''} but ${own.length} of ${total} item(s) are already sold to ${aj.customer || 'its customer'} on ${aj.salesDate || 'its date'} by this request's own earlier run. Open it and Approve once: the bot finishes it — puts them back and sells the whole request afresh, or, if that run already booked the sale, only closes it. Nothing is charged twice.`);
       }
     }
   }

@@ -93,12 +93,18 @@ function judge({ queue, inventory, txns, ledger }) {
     && /sale|sell/i.test(String(x.action || x.Action || '')));
   const ledgerForRequest = (ledger || []).filter((e) => String(e.txn_id || '').startsWith(requestId));
 
-  const booked = txnsForRequest.length > 0 && ledgerForRequest.length > 0;
+  // QTA-2 — the request's payment pair (`<id>-PAY`) is not a sale debit.
+  const saleLedger = ledgerForRequest.filter((e) => !/-PAY$/.test(String(e.txn_id || '')));
+  const booked = txnsForRequest.length > 0 && saleLedger.length > 0;
+  const stillPending = !queue || String(queue.status || 'pending').toLowerCase() === 'pending';
   let verdict; let reading;
   if (!items.length) {
     verdict = 'NO ITEMS'; reading = 'The request carries no items — nothing to judge.';
   } else if (flippedItems === items.length && booked) {
-    verdict = 'WHOLE'; reading = `Every item flipped to ${aj.customer} on ${saleDay}; Transactions and ledger posted.`;
+    verdict = 'WHOLE'; reading = `Every item flipped to ${aj.customer} on ${saleDay}; Transactions and ledger posted.`
+      + (stillPending && aj.action === 'sale_bundle'
+        ? ' The request still reads pending: tap Approve once — the bot sees the books and only closes it (issuing the invoice if that run never did). Post nothing by hand.'
+        : '');
   } else if (flippedItems === items.length && !booked && txnsSameDay.length) {
     verdict = 'DUPLICATE?';
     reading = `Every item is sold to ${aj.customer} on ${saleDay}, but the money rows carry OTHER request id(s): ${[...new Set(txnsSameDay.map(refOf))].join(', ')}. This request looks like a duplicate of that sale — reject it; do NOT post its money side.`;
@@ -107,9 +113,13 @@ function judge({ queue, inventory, txns, ledger }) {
     // QTA-2 — a BUNDLE's next Approve restarts it: the flipped thans are put
     // back and the whole request is sold afresh, the books written once.
     // The single doors have no restart path: their missing side is posted by hand.
-    const next = aj.action === 'sale_bundle'
-      ? 'Tap Approve ONCE on this request and walk the wizard: the bot puts the flipped thans back and sells the whole request afresh, writing the books once (QTA-2). If the reply names another request as a duplicate, Reject this one.'
-      : 'Do not re-approve; post the missing side with these numbers in front of you.';
+    const next = aj.action === 'sale_bundle' && stillPending
+      ? (txnsForRequest.length || saleLedger.length
+        ? 'Tap Approve ONCE on this request: the earlier run reached the books, so the bot only closes it and writes the missing book row itself, keyed to this request. Post nothing by hand.'
+        : 'Tap Approve ONCE on this request and walk the wizard: the bot puts the flipped thans back and sells the whole request afresh, writing the books once (QTA-2). If the reply names another request as a duplicate, Reject this one. Post nothing by hand.')
+      : (aj.action === 'sale_bundle'
+        ? 'The request is no longer pending, so Approve cannot finish it: post the missing side by hand with these numbers in front of you, carrying this request id.'
+        : 'Do not re-approve; post the missing side with these numbers in front of you.');
     reading = `${flippedItems + mixedItems} item(s) are sold to ${aj.customer} on ${saleDay} but no ${txnsForRequest.length ? 'ledger entry' : 'Transactions row'} carries this request — the goods left stock, the customer was not charged for them. ${next}`;
   } else if (flippedItems === 0 && mixedItems === 0 && untouchedItems === items.length - elsewhereItems && elsewhereItems === 0) {
     verdict = 'UNTOUCHED';

@@ -397,6 +397,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   // nothing is sold, booked or invoiced again and the enrichment it was
   // booked with stays on the row.
   let saleAlreadyBooked = false;
+  let bookedInvoice = null;
   // SEC-P2 (H7): branches that used to `return { ok: true }` early now set
   // this and fall through to the shared footer, so the ApprovalQueue row is
   // marked approved + audited (previously it stayed 'pending' and could be
@@ -1533,18 +1534,24 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       : null;
     // QTA-2 (owner, 27-Sep-2026: "it should revert and restart for complete
     // sale") — a sale whose earlier run flipped some thans and died before
-    // the books. Those rows are THIS sale's own (sold to its customer on its
-    // date). They are put back to available — one write, logged as an admin
-    // correction — and the whole request is then sold afresh by the one
-    // batched write below, so the sale is one clean pass: every row at
-    // today's rate, one movement row per bale, the books written once.
-    // Guards, all fail-CLOSED (a record that cannot be read writes nothing):
-    // a row another PENDING sale of the same customer/day covers blocks the
-    // restart until that request is decided; a row an APPROVED one covers is
-    // that sale's — left sold, the item refused as a duplicate; and when ANY
-    // book row already carries this request the earlier run reached the
-    // books: nothing is put back, sold or booked again — the request is only
-    // marked approved and whatever book row is missing is reported.
+    // the books. Those rows are THIS sale's own (sold on its date to its
+    // customer under any registered spelling). They are put back to
+    // available — one write, BaleMovements kind `restart` — and the whole
+    // request is then sold afresh by the one batched write below, so the
+    // sale is one clean pass: every row at today's rate, the books written
+    // once. Decided in order, every read fail-CLOSED (a record that cannot
+    // be read writes nothing):
+    //   1. the request's own SALE books exist (Transactions row, a ledger
+    //      debit `<id>-<design>`, its invoice) → the earlier run reached the
+    //      books: nothing is put back or sold; the request closes and only
+    //      the missing book rows are written, keyed to the request;
+    //   2. rows of its items sold on its date to someone else that no
+    //      request explains (the customer was changed on a re-run) → refused;
+    //   3. a row another PENDING sale of the same customer/day covers →
+    //      blocked until that request is decided;
+    //   4. a row an APPROVED one (or a REJECTED one that booked it) covers →
+    //      that sale's: left sold, the item refused as a duplicate;
+    //   5. every other own row is put back, then everything is sold afresh.
     const saleRestart = require('./saleRestart');
     const shortRef = (id) => `R-${String(id || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 4)}`;
     const shape = (it, reason) => (it.type === 'than'
@@ -1552,47 +1559,75 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       : (it.type === 'package'
         ? { packageNo: it.packageNo, type: 'package', reason }
         : { packageNo: it.packageNo, thanNo: it.thanNo, type: it.type || 'unknown', reason }));
-    const own = saleRestart.ownRowsByItem({ ...aj, items }, await inventoryRepository.getAll(true));
+    const reqAj = { ...aj, items };
+    const inv = await inventoryRepository.getAll(true);
+    // The customer's spellings (canonical + aliases). A failed Customers read
+    // falls back to the name as typed for this first look; if the request
+    // turns out to have rows of its own, the read is required (step below).
+    let names; let namesErr = null;
+    try { names = await saleRestart.spellingsOf(aj.customer); } catch (e) { namesErr = e; names = saleRestart.nameSet([aj.customer]); }
+    const own = saleRestart.ownRowsByItem(reqAj, inv, names);
+    const foreign = saleRestart.foreignSameDayRows(reqAj, inv, names);
     let plan = null;
     let booked = null;
     let restarted = null;
-    if (own.length) {
+    let skipPayment = false;
+    if (own.length || foreign.length) {
       const ownThans = own.reduce((n, x) => n + x.rows.length, 0);
-      const where = `${ownThans} than(s) of ${own.length} item(s) are already sold to ${aj.customer} on ${aj.salesDate} by an earlier run of this request`;
+      const where = own.length
+        ? `${ownThans} than(s) of ${own.length} item(s) are already sold to ${aj.customer} on ${aj.salesDate} by an earlier run of this request`
+        : `${foreign.length} than(s) of this request are already sold on ${aj.salesDate}`;
       let resolved; let books;
       try {
+        if (namesErr && own.length) throw namesErr;
         resolved = await approvalQueueRepository.getResolved();
-        books = await saleRestart.booksFor(requestId);
+        books = own.length ? await saleRestart.readBooks() : { forRequest: () => ({ sale: false, ledgerPay: [] }), hasSaleBooks: () => false };
       } catch (e) {
         return {
           ok: false,
-          message: `${where}, and the records needed to restart it safely could not be read (${e.message}). Nothing was changed — try again in a minute.`,
+          message: `${where}, and the records needed to finish it safely could not be read (${e.message}). Nothing was changed — try again in a minute.`,
         };
       }
-      plan = saleRestart.planRestart({ aj, requestId, own, resolved, pending });
-      if (plan.blockedBy.length) {
-        const b = plan.blockedBy[0].row;
-        const others = [...new Set(plan.blockedBy.map((x) => shortRef(x.otherRequestId)))].join(', ');
-        return {
-          ok: false,
-          message: `${where}, but another PENDING sale request (${others}) for the same customer and day covers bale ${b.packageNo}${b.thanNo ? `/${b.thanNo}` : ''} — decide that request first (approve or reject it), then tap again. Nothing was changed.`,
-        };
-      }
-      if (books.any) {
-        booked = books;
-      } else if (plan.revert.length) {
-        const undone = await stockEngine.restartSaleRows(plan.revert, { ref: aj.customer || '', user: item.user },
-          { event: 'correction', approvalId: requestId, adminId: approvedBy });
-        restarted = { thans: undone.restored.length, items: plan.items.filter((x) => x.revert.length).length, skipped: undone.skipped.length };
-        try {
-          await auditLogRepository.append('sale_bundle_restarted', {
-            requestId, customer: aj.customer || '', salesDate: aj.salesDate || '',
-            restoredThans: undone.restored.length,
-            skipped: undone.skipped.map((x) => ({ packageNo: x.row.packageNo, thanNo: x.row.thanNo, reason: x.reason })),
-            duplicates: plan.duplicates.map((d) => ({ packageNo: d.row.packageNo, thanNo: d.row.thanNo, otherRequestId: d.otherRequestId })),
-            items: plan.items.filter((x) => x.revert.length).map((x) => ({ packageNo: x.item.packageNo, thanNo: x.item.thanNo, type: x.item.type, thans: x.revert.length })),
-          }, approvedBy);
-        } catch (_) {}
+      const mine = books.forRequest(requestId);
+      skipPayment = mine.ledgerPay.length > 0;
+      if (own.length && mine.sale) {
+        booked = mine;
+      } else {
+        plan = saleRestart.planRestart({ aj: reqAj, requestId, own, foreign, resolved, pending, names, hasSaleBooks: books.hasSaleBooks });
+        if (plan.stranded.length) {
+          const r = plan.stranded[0];
+          const who = [...new Set(plan.stranded.map((x) => x.soldTo))].join(', ');
+          return {
+            ok: false,
+            message: `${plan.stranded.length} than(s) of this request (bale ${r.packageNo}${r.thanNo ? `/${r.thanNo}` : ''}…) are sold on ${aj.salesDate} to ${who}, not to ${aj.customer}, and no other request explains them — an earlier run of this request probably sold them before the customer was changed. `
+              + `If so, set the customer back to ${who} and approve again; otherwise Reject this request. Nothing was changed.`,
+          };
+        }
+        if (plan.blockedBy.length) {
+          const b = plan.blockedBy[0];
+          const bale = `${b.row.packageNo}${b.row.thanNo ? `/${b.row.thanNo}` : ''}`;
+          const other = shortRef(b.otherRequestId);
+          return {
+            ok: false,
+            message: b.otherBooked
+              ? `${where}, and another PENDING request, ${other}, already carries this sale's books (it covers bale ${bale}). Approve ${other} first — it closes without selling anything again — then Reject this one. Nothing was changed.`
+              : `${where}, and another PENDING sale request, ${other}, for the same customer and day covers the same thans (bale ${bale}). If the two are twins, Reject one of them and Approve the other; if ${other} is a different sale, decide it first. Nothing was changed.`,
+          };
+        }
+        if (plan.revert.length) {
+          const undone = await stockEngine.restartSaleRows(plan.revert, { ref: aj.customer || '', user: item.user },
+            { event: 'correction', approvalId: requestId, adminId: approvedBy });
+          restarted = { thans: undone.restored.length, items: plan.items.filter((x) => x.revert.length).length, skipped: undone.skipped.length };
+          try {
+            await auditLogRepository.append('sale_bundle_restarted', {
+              requestId, customer: aj.customer || '', salesDate: aj.salesDate || '',
+              restoredThans: undone.restored.length,
+              skipped: undone.skipped.map((x) => ({ packageNo: x.row.packageNo, thanNo: x.row.thanNo, reason: x.reason })),
+              duplicates: plan.duplicates.map((d) => ({ packageNo: d.row.packageNo, thanNo: d.row.thanNo, otherRequestId: d.otherRequestId })),
+              items: plan.items.filter((x) => x.revert.length).map((x) => ({ packageNo: x.item.packageNo, thanNo: x.item.thanNo, type: x.item.type, thans: x.revert.length })),
+            }, approvedBy);
+          } catch (_) {}
+        }
       }
     }
     const count = (rows, packageNo) => {
@@ -1606,9 +1641,11 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     if (booked) {
       // The earlier run reached the books. Its own rows are the sale as
       // booked; anything else in the request was never part of it. Nothing
-      // is put back, sold, booked or invoiced again — the request is only
-      // marked approved, and a book row the earlier run never wrote is
-      // reported through the BOOKS NOT UPDATED channel for hand posting.
+      // is put back or sold. A book row that run never wrote is written now,
+      // keyed to the request (so the next look finds it) and at the rates
+      // that run booked with when the row carries them — the request closes
+      // complete; nothing is ever written twice and nothing is left for hand
+      // posting except a payment the bot cannot prove was never recorded.
       saleAlreadyBooked = true;
       for (const x of own) count(x.rows, x.item.packageNo);
       for (const it of items) {
@@ -1616,24 +1653,56 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
           failedItems.push(shape(it, 'not part of the sale already booked under this request — raise a fresh request if it is still to be sold'));
         }
       }
+      const bookEnrich = aj.enrichment || enrichment;
+      const wrote = [];
+      if (!booked.transactions.length) {
+        try {
+          await transactionsRepository.append({
+            user: item.user, action: 'sale_bundle', design: '', color: '',
+            qty: totalYards, before: `${totalThans} thans`, after: 'sold', status: 'approved',
+            salesDate: aj.salesDate || '', customerName: aj.customer || '',
+            salesPerson: aj.salesPerson || '', paymentMode: bookEnrich?.paymentMode || aj.paymentMode || '',
+            saleRefId: requestId, pricePerYard: (bookEnrich ? (Object.values(bookEnrich.ratePerUnitByDesign || {})[0] || '') : ''), amountPaid: bookEnrich?.amountPaid ?? '',
+            customerId: aj.customerId || '',
+          });
+          wrote.push('Transactions row');
+        } catch (e) { await recordErpFailure('Transactions row (bundle)', e); }
+      }
+      const debited = new Set(booked.ledgerSale.map((e) => String(e.txn_id)));
+      if (!debited.has(`${requestId}-sale`)) {
+        for (const [design, yards] of (Object.keys(byDesign).length ? Object.entries(byDesign) : [['', totalYards]])) {
+          const txnId = `${requestId}-${design || 'sale'}`;
+          if (!yards || yards <= 0 || debited.has(txnId)) continue;
+          const pricePerYard = getPricePerYard(bookEnrich, design);
+          try {
+            await erpEmitAsync('sale', { type: 'sale_bundle', customer: aj.customer, customerId: aj.customerId || '', yards, pricePerYard, design: design || undefined, shade: '', userId: item.user, txnId, paymentMode: bookEnrich?.paymentMode ?? '', amountPaid: bookEnrich?.amountPaid ?? 0 });
+            wrote.push(`ledger debit ${design || 'sale'}`);
+          } catch (e) { await recordErpFailure(`sale ledger (bundle${design ? ` ${design}` : ''})`, e); }
+        }
+      }
+      if (booked.invoice) {
+        bookedInvoice = booked.invoice; // delivered again: the earlier run never got to
+      } else {
+        try {
+          const invoiceService = require('./invoiceService');
+          bookedInvoice = await invoiceService.createForSale({
+            item: { ...item, actionJSON: { ...aj, yardsByDesign: { ...byDesign } } }, enrichment: bookEnrich, approvedBy,
+          });
+          wrote.push('invoice');
+        } catch (e) { await recordErpFailure('invoice issue', e); }
+      }
+      if (enrichment?.amountPaid > 0 && !skipPayment) {
+        await recordErpFailure('payment record (bundle)',
+          new Error(`not recorded — this request was already booked by an earlier run, which may have recorded the payment under an older reference. Check ${aj.customer}'s statement and record the ${money.sale(enrichment.amountPaid)} via 💰 only if it is missing`));
+      }
       bundleReport = {
         requestedItems: items.length,
         appliedPkgCount: appliedPkgs.size,
         appliedThans: totalThans,
         appliedYards: totalYards,
         failedItems,
-        alreadyBooked: { transactions: booked.transactions.length, ledger: booked.ledger.length, invoice: Boolean(booked.invoice) },
+        alreadyBooked: { transactions: booked.transactions.length, ledger: booked.ledgerSale.length, invoice: Boolean(booked.invoice), wrote },
       };
-      const isPay = (e) => /-PAY$/.test(String(e.txn_id || ''));
-      const missing = (stage, what) => recordErpFailure(stage,
-        new Error(`missing — the earlier run of this request booked the rest but never wrote ${what}; post it by hand (nothing is re-run)`));
-      if (!booked.transactions.length) await missing('Transactions row (bundle)', 'its Transactions row');
-      if (!booked.ledger.some((e) => !isPay(e))) await missing('sale ledger (bundle)', "the customer's ledger debit");
-      if (!booked.invoice) await missing('invoice issue', 'the invoice');
-      if (enrichment?.amountPaid > 0 && !booked.ledger.some(isPay)) {
-        await recordErpFailure('payment record (bundle)',
-          new Error(`not recorded again on a request that is already booked — check the customer statement and record the ${money.sale(enrichment.amountPaid)} via 💰 if it is missing`));
-      }
       try {
         await auditLogRepository.append('sale_bundle_already_booked', { requestId, ...bundleReport.alreadyBooked, ownThans: totalThans }, approvedBy);
       } catch (_) {}
@@ -1642,10 +1711,12 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
         rateFor ? { rateFor } : {}, { event: 'sale', approvalId: requestId, adminId: approvedBy });
       for (const f of sold.failed) {
         const it = f.item || {};
-        const dup = plan && plan.items.find((x) => x.item === it && x.duplicate.length && !x.revert.length);
-        const reason = dup
-          ? `already sold to ${aj.customer} on ${aj.salesDate} under request ${shortRef(dup.duplicate[0].otherRequestId)} — a duplicate, not sold again`
-          : f.reason;
+        const entry = plan && plan.items.find((x) => x.item === it);
+        const reason = entry && entry.duplicate.length && !entry.revert.length
+          ? `already sold to ${aj.customer} on ${aj.salesDate} under request ${shortRef(entry.duplicate[0].otherRequestId)} — a duplicate, not sold again`
+          : (entry && entry.revert.length && restarted
+            ? `put back by the restart, then not available to sell again (another request or transfer took it in between) — check bale ${it.packageNo}`
+            : f.reason);
         failedItems.push(shape(it, reason));
       }
       for (const a of sold.applied) count(a.rows, a.item.packageNo);
@@ -1658,6 +1729,15 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       // every item's reason (a duplicate names the request that has it).
       if (items.length && failedItems.length === items.length) {
         const lines = failedItems.map((f) => `• Bale ${f.packageNo}${f.thanNo ? ` Than ${f.thanNo}` : ''}: ${f.reason}`).join('\n');
+        if (restarted && restarted.thans) {
+          // The put-back landed but nothing re-sold: the rows are AVAILABLE
+          // now, nothing is booked, the request stays pending — never the
+          // "already sold, Mark as done" card, which would close it unbooked.
+          return {
+            ok: false,
+            message: `the ${restarted.thans} than(s) of this request's earlier run were put back (they are available again) but the sale could not take them:\n${lines}\nNothing was booked and the request is still pending — check the bales, then Approve again.`,
+          };
+        }
         return {
           ok: false, allItemsFailed: true,
           message: `no item could be applied — every bale/than in this request is already sold or not found:\n${lines}`,
@@ -1704,7 +1784,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
           await erpEmitAsync('sale', payload);
         } catch (e) { await recordErpFailure(`sale ledger (bundle${design ? ` ${design}` : ''})`, e); }
       }
-      if (enrichment?.amountPaid > 0) {
+      if (enrichment?.amountPaid > 0 && !skipPayment) {
         try {
           const crmService = require('./crmService');
           // QTA-2 — keyed to the request so a restart can see it was recorded.
@@ -1976,9 +2056,10 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     }
     try {
       const invoiceService = require('./invoiceService');
-      // QTA-2 — a sale the earlier run already booked is never re-invoiced
-      // (a missing invoice was reported above for hand issue).
-      invoice = saleAlreadyBooked ? null : await invoiceService.createForSale({ item, enrichment, approvedBy });
+      // QTA-2 — a sale the earlier run already booked is never re-invoiced:
+      // its invoice (found, or issued above because that run never got to
+      // it) is the one delivered.
+      invoice = saleAlreadyBooked ? bookedInvoice : await invoiceService.createForSale({ item, enrichment, approvedBy });
     } catch (e) { await recordErpFailure('invoice issue', e); }
   }
 
@@ -1992,18 +2073,21 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // QTA-1 — by now the action IS applied and booked; only the row's status
     // is unwritten. "Tap again" would be read as "re-run": say what is true.
     if (e && e.code === 'SHEETS_QUOTA') {
-      // QTA-2 — a bundle sale's stock now reads as ITS OWN, so the next tap
-      // walks the wizard and the executor finds the books already written:
-      // nothing is sold, booked or charged twice. The single doors still get
-      // the Mark-as-done chip. A book write refused in the same storm is
-      // named here — "booked" must never be claimed over a collected failure.
+      // QTA-2 — a bundle is finished by the next Approve whatever landed: if
+      // the sale's books are there it closes (writing any missing book row,
+      // keyed to the request); if none are, it puts the thans back and books
+      // the sale itself. A hand posting before that tap is exactly what the
+      // bot cannot see (a hand row carries no request id) and would be
+      // written twice — so a bundle is told to post NOTHING. The single
+      // doors have no restart path: they name the failed writes for hand
+      // posting and close with Mark as done.
       const failedBooks = erpFailures.length
-        ? ` ${erpFailures.length} book write(s) FAILED as well (${erpFailures.map((f) => f.stage).join(', ')}) — post them by hand.`
+        ? ` ${erpFailures.length} book write(s) did not land as well (${erpFailures.map((f) => f.stage).join(', ')}).`
         : '';
       const done = new Error(`Applied${erpFailures.length ? '' : ' and booked'} — only the request could not be marked approved (Google Sheets is rate-limiting writes).${failedBooks} `
         + (aj.action === 'sale_bundle'
-          ? 'Wait one minute, then tap Approve again — the bot sees the sale is already booked and only marks the request approved (nothing is sold or charged twice).'
-          : 'Wait one minute, tap Approve again and choose ✅ Mark as done (no re-run).'));
+          ? 'Post nothing by hand. Wait one minute, then tap Approve again — the bot checks what was written: it closes the request and writes only a missing book row, or, if no book row landed, puts the thans back and books the sale itself. Nothing is sold or charged twice.'
+          : `${erpFailures.length ? 'Post those by hand, then wait' : 'Wait'} one minute, tap Approve again and choose ✅ Mark as done (no re-run).`));
       done.code = 'SHEETS_QUOTA_AFTER_APPLY';
       done.cause = e;
       throw done;

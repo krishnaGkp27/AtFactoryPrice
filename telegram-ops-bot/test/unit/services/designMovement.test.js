@@ -410,3 +410,32 @@ test('a late-logged sale outside the displayed range is still found', async () =
   assert.ok(out.hints.some((h) => /Logged after the count/.test(h.title)),
     'but the count-bounded scan still finds it, so the page never claims nothing was late');
 });
+
+test('QTA-2: a RESTARTED sale (sale → restart → the same sale again) is ONE out leg and no in leg — the opening never goes negative', async () => {
+  // The restart puts the half-done run's thans back (kind `restart`) and the
+  // same pass sells them again on the same sale date. Logged as a §6d
+  // `correction` it read as an IN leg with no matching OUT, and every
+  // balance before the restart day was one bale short (review 27-Sep-2026).
+  const SOLD_R = { status: 'sold', soldTo: 'AYUBAL ANSARI', soldDate: '2026-08-07' };
+  const inv = [than('R2', 1, SOLD_R), than('R2', 2, SOLD_R), than('S1', 1)];
+  const leg = (rowIndex, ts, movedOn, from, to, kind) => ({
+    rowIndex, timestamp: ts, movedOn, baleNo: 'R2', design: DESIGN, shade: '2', container: 'Aug26', thans: 2,
+    fromState: `${from} @ ${WH}`, toState: `${to} @ ${WH}`, kind, ref: 'AYUBAL ANSARI', user: '777',
+  });
+  stubAll({
+    inv,
+    moves: [
+      leg(3, '2026-08-07T09:00:00.000Z', '2026-08-07', 'available', 'sold', 'sale'),
+      leg(4, '2026-08-09T09:00:00.000Z', '2026-08-09', 'sold', 'available', 'restart'),
+      leg(5, '2026-08-09T09:00:01.000Z', '2026-08-07', 'available', 'sold', 'sale'),
+    ],
+  });
+  const out = await designMovementService.build({ design: DESIGN, warehouse: WH, range: 'all_time', today: '2026-08-31' });
+  const types = out.movements.map((m) => m.type);
+  assert.equal(types.filter((t) => t === 'sale').length, 1, 'the two sale rows are one sale');
+  assert.ok(!types.includes('correction') && !types.includes('return') && !types.includes('transfer_in'), 'the put-back is no movement at all');
+  const sale = out.movements.find((m) => m.type === 'sale');
+  assert.equal(sale.qty.yards, 60);
+  assert.equal(out.opening.yards, 0, 'received 90, sold 60 — opens at zero, never negative');
+  assert.equal(out.closing.book.yards, 30);
+});

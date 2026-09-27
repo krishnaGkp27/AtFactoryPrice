@@ -197,7 +197,7 @@ test('two same-numbered bales sold from two warehouses in one request log ONE mo
   });
 });
 
-test('QTA-2 markRowsAvailable: the rows an earlier run flipped go back in ONE write, logged as a correction per warehouse; a row that changed under us is skipped', async () => {
+test('QTA-2 markRowsAvailable: the rows an earlier run flipped go back in ONE write, logged as kind restart per warehouse; a row that changed under us, or named twice, is skipped', async () => {
   const sold = (pkg, t, wh) => invRow(pkg, t, 'sold', { soldTo: 'AYUBAL ANSARI', soldDate: '2026-09-25', wh });
   await withInventory([
     sold('771', 1, 'KANO OFFICE'), sold('771', 2, 'KANO OFFICE'), sold('779', 1, 'IDUMOTA'),
@@ -209,6 +209,7 @@ test('QTA-2 markRowsAvailable: the rows an earlier run flipped go back in ONE wr
       { ...all[3] }, // 772/1 is available — not that sale's any more
       { ...all[4], soldTo: 'MUSA' }, // judged as Musa's but the sheet says Ayubal's — changed under us
       { ...all[0], rowIndex: 99 }, // a row that is not there
+      all[1], // named twice — put back once
     ];
     const r = await inventoryRepo.markRowsAvailable(want, { user: 'approval:R-1', ref: 'Ayubal Ansari' });
     assert.deepEqual(r.restored.map((x) => [x.packageNo, x.thanNo, x.status, x.soldTo, x.soldDate, x.soldToPrior]),
@@ -220,7 +221,7 @@ test('QTA-2 markRowsAvailable: the rows an earlier run flipped go back in ONE wr
     assert.deepEqual(calls.batch[0].updates[0].values[0].slice(0, 6), ['available', 'KANO OFFICE', 100, '2026-01-01', '', '']);
     assert.equal(calls.record.length, 2, 'one movement append per warehouse');
     assert.deepEqual(calls.record.map((c) => [c.m.kind, c.m.ref, c.m.user, c.m.to, c.moved.map((x) => x.status)]),
-      [['correction', 'Ayubal Ansari', 'approval:R-1', 'available', ['sold', 'sold']], ['correction', 'Ayubal Ansari', 'approval:R-1', 'available', ['sold']]]);
+      [['restart', 'Ayubal Ansari', 'approval:R-1', 'available', ['sold', 'sold']], ['restart', 'Ayubal Ansari', 'approval:R-1', 'available', ['sold']]]);
   });
   // Nothing to restore → nothing written, nothing logged.
   await withInventory([invRow('771', 1, 'available')], async (calls) => {

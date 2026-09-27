@@ -127,9 +127,14 @@ function parseRow(r) {
 async function findBySaleRef(saleRefId) {
   const ref = String(saleRefId || '').trim();
   if (!ref) return [];
+  return (await getAll()).filter((t) => String(t.saleRefId || '').trim() === ref);
+}
+
+/** QTA-2 — every Transactions row, parsed (one read; the restart indexes it by request). */
+async function getAll() {
   await ensureHeader();
   const rows = await sheets.readRange(SHEET, 'A2:S');
-  return (rows || []).map((r) => parseRow(r)).filter((t) => String(t.saleRefId || '').trim() === ref);
+  return (rows || []).map((r) => parseRow(r));
 }
 
 async function getLast(n) {
@@ -215,4 +220,4 @@ async function getBySalesDateRange(fromIso, toIso) {
   return rows.map(parseRow).filter((t) => t.salesDate && t.salesDate >= from && t.salesDate <= to);
 }
 
-module.exports = { append, ensureHeader, HEADERS, getLast, findBySaleRef, parseRow, setStatusReverted, getCustomersByDesign, getBySalesDateRange };
+module.exports = { append, ensureHeader, HEADERS, getLast, getAll, findBySaleRef, parseRow, setStatusReverted, getCustomersByDesign, getBySalesDateRange };

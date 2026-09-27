@@ -6,11 +6,13 @@
  * 25-Sep-2026: 27 of 33 thans sold to Ayubal Ansari, no Transactions row,
  * no ledger debit, no invoice, request still pending).
  *
- * One Approve must now: put the 27 back (one write, a correction), sell all
- * 33 afresh in one write, book once; refuse a than another APPROVED
- * same-customer-same-day sale covers; block on a PENDING one; when the
- * books already carry the request, touch nothing and only mark it
- * approved; and write NOTHING when a needed record cannot be read.
+ * One Approve must now: put the 27 back (one write, kind `restart`), sell
+ * all 33 afresh in one write, book once; refuse a than another APPROVED (or
+ * booked-then-rejected) same-customer-same-day sale covers, under any
+ * spelling of the customer; block on a PENDING one; refuse rows stranded by
+ * a customer change; when the request's sale books exist, sell nothing and
+ * write only the missing book rows; and write NOTHING when a needed record
+ * cannot be read.
  */
 
 process.env.ADMIN_IDS = 'admin1';
@@ -29,6 +31,7 @@ const accountingService = require('../../../src/services/accountingService');
 const auditService = require('../../../src/services/auditService');
 const invoiceService = require('../../../src/services/invoiceService');
 const crmService = require('../../../src/services/crmService');
+const customerEntity = require('../../../src/services/customerEntity');
 const stockEventsRepository = require('../../../src/repositories/stockEventsRepository');
 
 auditService.log = async () => true;
@@ -121,14 +124,18 @@ function harness(rows, opts = {}) {
     return { applied, failed, rows: sold };
   };
   transactionsRepository.append = async (row) => { out.txns.push(row); return true; };
-  transactionsRepository.findBySaleRef = async (ref) => {
+  transactionsRepository.getAll = async () => {
     out.bookReads += 1;
     if (opts.booksThrow) throw new Error('Google Sheets is rate-limiting reads right now — wait one minute, then tap again. (readRange(Transactions))');
-    return (opts.priorTxn && ref === ID ? [{ action: 'sale_bundle', saleRefId: ID, qty: 990 }] : []);
+    return [...(opts.priorTxn ? [{ action: 'sale_bundle', saleRefId: ID, qty: 990 }] : []), ...(opts.otherTxns || [])];
   };
   ledgerRepository.getAll = async () => (opts.ledgerHas || []).map((txn_id) => ({ txn_id }));
-  invoicesRepository.getByRequestId = async (id) => (opts.invoiceExists && id === ID ? { requestId: ID, invoiceNo: 'INV-2026-0042' } : null);
-  invoiceService.createForSale = async () => { out.invoices += 1; return { invoiceNo: 'INV-2026-0099' }; };
+  invoicesRepository.getAll = async () => (opts.invoiceExists ? [{ requestId: ID, invoiceNo: 'INV-2026-0042', lines: [] }] : []);
+  customerEntity.resolve = async ({ name }) => {
+    if (opts.customersThrow) throw new Error('Google Sheets is rate-limiting reads right now — wait one minute, then tap again. (readRange(Customers))');
+    return /ayubal/i.test(String(name || '')) ? { customer_id: 'C-1', name: 'Ayubal Ansari', aliases: opts.aliases || [] } : null;
+  };
+  invoiceService.createForSale = async (p) => { out.invoices += 1; out.invoiceArgs = p; return { invoiceNo: 'INV-2026-0099' }; };
   crmService.recordPayment = async (p) => { out.payments.push(p); return true; };
   accountingService.recordSale = async (p) => { out.sales.push(p); return true; };
   return out;
@@ -143,11 +150,11 @@ test('R-9BF6: one Approve puts the 27 back, sells all 33 afresh in one write, an
   const res = await inventoryService.executeApprovedAction(ID, 'admin1', ENRICH);
   assert.equal(res.ok, true, JSON.stringify(res));
   assert.equal(out.resolvedReads, 1);
-  assert.equal(out.bookReads, 1);
+  assert.equal(out.bookReads, 1, 'the book sheets are read once');
   // The put-back: the 27 own rows, one call, as a correction under the request's authority.
   assert.equal(out.restores.length, 1);
   assert.equal(out.restores[0].want.length, 27);
-  assert.deepEqual({ kind: out.restores[0].o.kind, ref: out.restores[0].o.ref, user: out.restores[0].o.user }, { kind: 'correction', ref: CUSTOMER, user: 'admin1' }, 'the approving admin is the actor');
+  assert.deepEqual({ kind: out.restores[0].o.kind, ref: out.restores[0].o.ref, user: out.restores[0].o.user }, { kind: 'restart', ref: CUSTOMER, user: 'admin1' }, 'kind restart — neither a return nor a §6d correction; the approving admin is the actor');
   // Then ONE sale write for every item, all available now.
   assert.equal(out.sells.length, 1);
   assert.equal(out.sells[0].items.length, 8);
@@ -190,40 +197,108 @@ test('a PENDING sale of the same customer/day covering a row BLOCKS the restart:
   const out = harness(world9bf6(), { otherPending: [pend] });
   const res = await inventoryService.executeApprovedAction(ID, 'admin1', ENRICH);
   assert.equal(res.ok, false);
-  assert.match(res.message, /another PENDING sale request \(R-PPPP\) for the same customer and day covers bale 6210\/5 — decide that request first/);
+  assert.match(res.message, /another PENDING sale request, R-PPPP, for the same customer and day covers the same thans \(bale 6210\/5\)\. If the two are twins, Reject one of them and Approve the other/);
   assert.match(res.message, /Nothing was changed/);
   assert.equal(out.restores.length + out.sells.length + out.txns.length + out.sales.length + out.invoices, 0);
 });
 
-test('books already carry the request → nothing put back, sold, booked or invoiced; the request is only marked approved and the missing sides are named', async () => {
+test('sale books already carry the request → nothing put back or sold; only the missing book rows are written, keyed to the request; the found invoice is delivered', async () => {
   const rows = world9bf6();
-  const out = harness(rows, { priorTxn: true });
+  const out = harness(rows, { priorTxn: true, ledgerHas: [`${ID}-9037`] });
   const res = await inventoryService.executeApprovedAction(ID, 'admin1', { ...ENRICH, paymentMode: 'Cash', amountPaid: 50000 });
   assert.equal(res.ok, true, JSON.stringify(res));
-  assert.equal(out.restores.length + out.sells.length + out.txns.length + out.sales.length + out.invoices + out.payments.length, 0);
+  assert.equal(out.restores.length + out.sells.length, 0, 'no stock touched');
+  assert.equal(out.txns.length, 0, 'the Transactions row is there — not written again');
+  assert.deepEqual(out.sales.map((x) => [x.design, x.yards, x.txnId]), [['9006', 90, `${ID}-9006`]], 'only the missing debit, keyed to the request');
+  assert.equal(out.invoices, 1, 'the invoice that run never issued');
+  assert.deepEqual(out.invoiceArgs.item.actionJSON.yardsByDesign, { 9037: 720, 9006: 90 }, 'invoiced for the sale as booked (own rows), not the whole request');
+  assert.equal(res.invoice.invoiceNo, 'INV-2026-0099', 'and delivered');
+  assert.equal(out.payments.length, 0, 'a payment is never recorded on a booked close');
   assert.equal(out.persisted.length, 0, 'the earlier run\'s enrichment stays on the row');
-  assert.deepEqual({ t: res.bundleReport.appliedThans, y: res.bundleReport.appliedYards, ab: res.bundleReport.alreadyBooked }, { t: 27, y: 810, ab: { transactions: 1, ledger: 0, invoice: false } });
+  assert.deepEqual({ t: res.bundleReport.appliedThans, y: res.bundleReport.appliedYards }, { t: 27, y: 810 });
+  assert.deepEqual(res.bundleReport.alreadyBooked, { transactions: 1, ledger: 1, invoice: false, wrote: ['ledger debit 9006', 'invoice'] });
   assert.deepEqual(res.bundleReport.failedItems, [{ packageNo: '772', type: 'package', reason: 'not part of the sale already booked under this request — raise a fresh request if it is still to be sold' }]);
-  assert.deepEqual(res.erpFailures.map((f) => f.stage), ['sale ledger (bundle)', 'invoice issue', 'payment record (bundle)']);
-  assert.match(res.erpFailures[0].error, /never wrote the customer's ledger debit; post it by hand/);
-  assert.match(res.erpFailures[2].error, /check the customer statement and record the 50,000/);
+  assert.deepEqual(res.erpFailures.map((f) => f.stage), ['payment record (bundle)']);
+  assert.match(res.erpFailures[0].error, /record the 50,000 via 💰 only if it is missing/);
   assert.ok(rows.filter((r) => r.packageNo === '772').every((r) => r.status === 'available'), '772 untouched');
   assert.ok(out.audits.some((a) => a.type === 'sale_bundle_already_booked'));
-  // Every book side present → a clean close with nothing to report.
+  // Every sale book present (and the payment pair) → nothing written; the stored invoice is delivered.
   const out2 = harness(world9bf6(), { priorTxn: true, ledgerHas: [`${ID}-9037`, `${ID}-9006`, `${ID}-PAY`], invoiceExists: true });
   const res2 = await inventoryService.executeApprovedAction(ID, 'admin1', { ...ENRICH, paymentMode: 'Cash', amountPaid: 50000 });
   assert.equal(res2.ok, true);
   assert.deepEqual(res2.erpFailures, []);
-  assert.equal(out2.payments.length, 0);
+  assert.equal(out2.txns.length + out2.sales.length + out2.invoices + out2.payments.length, 0);
+  assert.equal(res2.invoice.invoiceNo, 'INV-2026-0042');
+  // Only the Transactions row missing → written with the sale as booked.
+  const out3 = harness(world9bf6(), { ledgerHas: [`${ID}-9037`, `${ID}-9006`], invoiceExists: true });
+  await inventoryService.executeApprovedAction(ID, 'admin1', ENRICH);
+  assert.equal(out3.sells.length, 0);
+  assert.deepEqual(out3.txns.map((t) => [t.qty, t.before, t.saleRefId]), [[810, '27 thans', ID]]);
+});
+
+test('only the payment pair landed (no sale book) → a normal restart that does not record the payment again', async () => {
+  const out = harness(world9bf6(), { ledgerHas: [`${ID}-PAY`] });
+  const res = await inventoryService.executeApprovedAction(ID, 'admin1', { ...ENRICH, paymentMode: 'Cash', amountPaid: 50000 });
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.equal(out.restores[0].want.length, 27);
+  assert.equal(out.txns.length, 1);
+  assert.equal(out.sales.length, 2);
+  assert.equal(out.payments.length, 0, 'the <id>-PAY pair is there');
+});
+
+test('a booked request whose pending twin is NOT booked: the booked one closes (books first); the twin then sees it as a duplicate', async () => {
+  const twin = { requestId: 'tttt0000-0000-4000-8000-000000000000', user: 'emp1', status: 'pending', actionJSON: AJ() };
+  const out = harness(world9bf6(), { otherPending: [twin], priorTxn: true, ledgerHas: [`${ID}-9037`, `${ID}-9006`], invoiceExists: true });
+  const res = await inventoryService.executeApprovedAction(ID, 'admin1', ENRICH);
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.equal(out.restores.length + out.sells.length + out.txns.length, 0);
+});
+
+test('the twin of a booked request: blocked with "Approve that one first, then Reject this"; once that one is REJECTED its books still claim the rows', async () => {
+  const booked = { requestId: 'bbbb0000-0000-4000-8000-000000000000', user: 'emp1', status: 'pending', actionJSON: AJ() };
+  const out = harness(world9bf6(), { otherPending: [booked], otherTxns: [{ action: 'sale_bundle', saleRefId: booked.requestId, qty: 810 }] });
+  const res = await inventoryService.executeApprovedAction(ID, 'admin1', ENRICH);
+  assert.equal(res.ok, false);
+  assert.match(res.message, /another PENDING request, R-BBBB, already carries this sale's books .* Approve R-BBBB first — it closes without selling anything again — then Reject this one/);
+  assert.equal(out.restores.length + out.sells.length, 0);
+  // The booked one was REJECTED instead: its books still claim every own row → duplicates → APF-1 refusal, nothing re-sold.
+  const out2 = harness(world9bf6().map((r) => (r.packageNo === '772' ? { ...mine('772', r.thanNo, '9037'), rowIndex: r.rowIndex } : r)),
+    { resolved: [{ ...booked, status: 'rejected' }], otherTxns: [{ action: 'sale_bundle', saleRefId: booked.requestId, qty: 990 }] });
+  const res2 = await inventoryService.executeApprovedAction(ID, 'admin1', ENRICH);
+  assert.equal(res2.ok, false);
+  assert.equal(res2.allItemsFailed, true);
+  assert.match(res2.message, /under request R-BBBB — a duplicate, not sold again/);
+  assert.equal(out2.restores.length + out2.txns.length + out2.sales.length, 0);
+});
+
+test('an APPROVED same-day sale filed under an ALIAS of the customer is a duplicate, never re-sold', async () => {
+  const alias = { requestId: 'cccc0000-0000-4000-8000-000000000000', user: 'emp2', status: 'approved', actionJSON: { ...AJ(), customer: 'Ayubal' } };
+  const out = harness(world9bf6(), { resolved: [alias], aliases: ['Ayubal'] });
+  const res = await inventoryService.executeApprovedAction(ID, 'admin1', ENRICH);
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.equal(out.restores.length, 0, 'nothing put back');
+  assert.deepEqual({ t: res.bundleReport.appliedThans, y: res.bundleReport.appliedYards }, { t: 6, y: 180 }, 'only 772 sells');
+  assert.equal(res.bundleReport.failedItems.length, 7);
+  assert.ok(res.bundleReport.failedItems.every((f) => /under request R-CCCC — a duplicate/.test(f.reason)));
+});
+
+test('the customer changed on a re-run: rows of its items sold that day to the OLD name that nothing explains are refused as stranded', async () => {
+  const aj = { ...AJ(), customer: 'Musa' };
+  const out = harness(world9bf6(), { aj });
+  const res = await inventoryService.executeApprovedAction(ID, 'admin1', ENRICH);
+  assert.equal(res.ok, false);
+  assert.match(res.message, /^27 than\(s\) of this request \(bale 771\/1…\) are sold on 2026-09-25 to AYUBAL ANSARI, not to Musa, and no other request explains them/);
+  assert.match(res.message, /set the customer back to AYUBAL ANSARI and approve again; otherwise Reject this request\. Nothing was changed\./);
+  assert.equal(out.restores.length + out.sells.length + out.txns.length, 0);
 });
 
 test('a needed record that cannot be read → NOTHING is written and the message says why', async () => {
-  for (const o of [{ resolvedThrows: true }, { booksThrow: true }]) {
+  for (const o of [{ resolvedThrows: true }, { booksThrow: true }, { customersThrow: true }]) {
     const out = harness(world9bf6(), o);
     const res = await inventoryService.executeApprovedAction(ID, 'admin1', ENRICH);
     assert.equal(res.ok, false);
     assert.match(res.message, /27 than\(s\) of 7 item\(s\) are already sold to Ayubal Ansari on 2026-09-25 by an earlier run of this request/);
-    assert.match(res.message, /could not be read/);
+    assert.match(res.message, /the records needed to finish it safely could not be read/);
     assert.match(res.message, /Nothing was changed — try again in a minute/);
     assert.equal(out.restores.length + out.sells.length + out.txns.length + out.sales.length + out.invoices, 0);
   }
@@ -265,9 +340,12 @@ test('a bale with a than sold to someone else months ago still restarts its OWN 
   assert.deepEqual([z.status, z.soldTo], ['sold', 'Zakirullah'], 'the July sale is untouched');
 });
 
-test('stock gone to SOMEONE ELSE is still a plain failure', async () => {
+test('stock gone to SOMEONE ELSE under their own request is still a plain failure', async () => {
   const rows = world9bf6().map((r) => (r.packageNo === '779' ? { ...r, soldTo: 'Musa' } : r));
-  const out = harness(rows);
+  const musaSale = { requestId: 'mmmm0000-0000-4000-8000-000000000000', user: 'emp2', status: 'approved', actionJSON: {
+    action: 'sale_bundle', customer: 'Musa', salesDate: DAY, warehouse: WH, items: [{ type: 'package', packageNo: '779', warehouse: WH }],
+  } };
+  const out = harness(rows, { resolved: [OTHER_SALE, musaSale] });
   const res = await inventoryService.executeApprovedAction(ID, 'admin1', ENRICH);
   assert.equal(res.ok, true);
   assert.deepEqual(res.bundleReport.failedItems, [{ packageNo: '779', type: 'package', reason: 'not found or no available thans' }]);
@@ -288,6 +366,19 @@ test('the sale write refused after the put-back → the executor throws, nothing
   await assert.rejects(inventoryService.executeApprovedAction(ID, 'admin1', ENRICH), (e) => e.code === 'SHEETS_QUOTA');
   assert.equal(out2.sells.length + out2.txns.length, 0);
   assert.equal(rows2.filter((r) => r.soldTo === 'AYUBAL ANSARI').length, 27);
+});
+
+test('the put-back landed but the sale write refused every row (taken in between) → pending, nothing booked, never the Mark-as-done card', async () => {
+  const rows = world9bf6().map((r) => (r.packageNo === '772' ? { ...mine('772', r.thanNo, '9037'), rowIndex: r.rowIndex } : r));
+  const out = harness(rows);
+  inventoryRepository.markItemsSold = async (items) => ({ applied: [], failed: items.map((it) => ({ item: it, reason: 'not found or no available thans', rows: [] })), rows: [] });
+  const res = await inventoryService.executeApprovedAction(ID, 'admin1', ENRICH);
+  assert.equal(res.ok, false);
+  assert.equal(res.allItemsFailed, undefined, 'not the "already sold — Mark as done" path');
+  assert.match(res.message, /^the 33 than\(s\) of this request's earlier run were put back \(they are available again\) but the sale could not take them/);
+  assert.match(res.message, /put back by the restart, then not available to sell again/);
+  assert.match(res.message, /Nothing was booked and the request is still pending/);
+  assert.equal(out.txns.length + out.sales.length + out.invoices, 0);
 });
 
 test('every item a duplicate → the APF-1 refusal names each item\'s reason', async () => {
@@ -314,9 +405,9 @@ test('the payment of a fresh pass is keyed to the request; a quota refusal on th
   approvalQueueRepository.updateStatus = async () => { throw quota(); };
   await assert.rejects(inventoryService.executeApprovedAction(ID, 'admin1', ENRICH), (e) => e.code === 'SHEETS_QUOTA_AFTER_APPLY'
     && /^Applied — only the request could not be marked approved/.test(e.message)
-    && /1 book write\(s\) FAILED as well \(Transactions row \(bundle\)\) — post them by hand/.test(e.message)
-    && /tap Approve again — the bot sees the sale is already booked/.test(e.message)
-    && !/Mark as done/.test(e.message));
+    && /1 book write\(s\) did not land as well \(Transactions row \(bundle\)\)\./.test(e.message)
+    && /Post nothing by hand\. Wait one minute, then tap Approve again — the bot checks what was written/.test(e.message)
+    && !/Mark as done/.test(e.message) && !/post them by hand/i.test(e.message));
 });
 
 test('single doors: a refused rate stamp after the flip is collected, not thrown; their after-apply advice stays Mark as done', async () => {

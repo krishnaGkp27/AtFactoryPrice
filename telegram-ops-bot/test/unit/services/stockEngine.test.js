@@ -82,7 +82,7 @@ test('births demand the intake event; renames demand rename', async () => {
   }
 });
 
-test('QTA-2 restartSaleRows: a correction only, one shadow per warehouse naming the buyer the flip cleared', async () => {
+test('QTA-2 restartSaleRows: authority event correction only, movement kind restart, one shadow per warehouse naming the buyer the flip cleared', async () => {
   const stockEventsRepository = require(path.join(SRC, 'repositories/stockEventsRepository'));
   const orig = { mark: inventoryRepository.markRowsAvailable, rec: stockEventsRepository.record };
   const seen = []; const events = [];
@@ -98,7 +98,7 @@ test('QTA-2 restartSaleRows: a correction only, one shadow per warehouse naming 
     assert.equal(seen.length, 0);
     const r = await engine.restartSaleRows(rows, { ref: 'Ayubal Ansari' }, { event: 'correction', approvalId: 'R-1', adminId: '777' });
     assert.equal(r.restored.length, 2);
-    assert.deepEqual({ kind: seen[0].kind, user: seen[0].user, ref: seen[0].ref }, { kind: 'correction', user: '777', ref: 'Ayubal Ansari' });
+    assert.deepEqual({ kind: seen[0].kind, user: seen[0].user, ref: seen[0].ref }, { kind: 'restart', user: '777', ref: 'Ayubal Ansari' });
     assert.deepEqual(events.map((e) => [e.n, e.meta.event, e.meta.authority, e.meta.approvalId, e.meta.customer]), [[1, 'correction', 'approval', 'R-1', 'AYUBAL'], [1, 'correction', 'approval', 'R-1', 'AYUBAL']]);
   } finally {
     inventoryRepository.markRowsAvailable = orig.mark; stockEventsRepository.record = orig.rec;
