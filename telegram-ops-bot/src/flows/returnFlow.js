@@ -367,7 +367,15 @@ async function showBales(bot, chatId, userId, opts = {}) {
   const { rows, label } = await snapshotFor(userId);
   const cust = (loadCustomers(rows, label)).find((c) => c.key === norm(session._customerKey || session.customer));
   const bales = balesFor(cust ? cust.rows : [], rows, label);
-  session._bales = bales.slice(0, MAX_BALE_CHIPS);
+  // A buyer can hold far more bales than one card carries (ABBA: 75 on
+  // 29-Sep-2026). The list used to stop at the first MAX_BALE_CHIPS without
+  // a word, so every bale past it could not be returned. Page it instead;
+  // `_bales` stays the visible page so `rn:bale:<i>` still indexes it.
+  const pages = Math.max(1, Math.ceil(bales.length / MAX_BALE_CHIPS));
+  let page = Number.isInteger(opts.page) ? opts.page : (Number(session._balePage) || 0);
+  page = Math.min(Math.max(page, 0), pages - 1);
+  session._balePage = page;
+  session._bales = bales.slice(page * MAX_BALE_CHIPS, (page + 1) * MAX_BALE_CHIPS);
   session.step = 'bale';
   sessionStore.set(userId, session);
   if (!session._bales.length) {
@@ -379,10 +387,20 @@ async function showBales(bot, chatId, userId, opts = {}) {
   const keyboard = session._bales.map((b, i) => ([
     { text: `📦 ${b.label}`, callback_data: cbSafe(`${NS}bale:${i}`) },
   ]));
+  let range = '';
+  if (pages > 1) {
+    const nav = [];
+    if (page > 0) nav.push({ text: '◀ Previous', callback_data: `${NS}bpg:${page - 1}` });
+    nav.push({ text: `${page + 1} / ${pages}`, callback_data: `${NS}noop` });
+    if (page < pages - 1) nav.push({ text: 'Next ▶', callback_data: `${NS}bpg:${page + 1}` });
+    keyboard.push(nav);
+    const first = page * MAX_BALE_CHIPS + 1;
+    range = `\n_Bales ${first}–${first + session._bales.length - 1} of ${bales.length}, by bale number._`;
+  }
   keyboard.push(backAndCancelRow());
   keyboard.push(menuRow());
   await render(bot, chatId, userId,
-    `${header(session)}\n\n${opts.note ? `${opts.note}\n\n` : ''}Which bale is coming back?`,
+    `${header(session)}\n\n${opts.note ? `${opts.note}\n\n` : ''}Which bale is coming back?${range}`,
     keyboard);
 }
 
@@ -777,6 +795,7 @@ async function handleCallback(bot, callbackQuery) {
       if (!entry) { await ack(); await expiredList(bot, chatId, userId); return true; }
       session.customer = entry.name;
       session._customerKey = entry.key;
+      session._balePage = 0;
       session.customerId = '';
       try {
         const c = await customerEntity.resolve({ name: entry.name });
@@ -785,6 +804,12 @@ async function handleCallback(bot, callbackQuery) {
       sessionStore.set(userId, session);
       await ack(entry.name);
       await showBales(bot, chatId, userId);
+      return true;
+    }
+
+    if (rest.startsWith('bpg:')) {
+      await ack();
+      await showBales(bot, chatId, userId, { page: parseInt(rest.slice(4), 10) || 0 });
       return true;
     }
 

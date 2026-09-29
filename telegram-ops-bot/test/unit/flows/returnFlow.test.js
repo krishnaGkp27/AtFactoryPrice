@@ -889,3 +889,39 @@ test('RET-4 · the helpers group by customer and by physical bale, and price at 
   assert.equal(returnFlow._internals.prevStep('date'), 'thans');
   assert.equal(returnFlow._internals.prevStep('condition'), 'date');
 });
+
+test('RET-4 · a buyer with more bales than one card pages them; a bale past the first page can be returned', async () => {
+  reset();
+  // 30 whole bales + the part bale 6250 (thans 1–2 of 5 sold) — 31 in all.
+  const many = [];
+  let ri = 100;
+  for (let b = 1000; b < 1030; b += 1) {
+    many.push({ rowIndex: ri++, packageNo: String(b), design: '9037', shade: '1', thanNo: 1, yards: 30, status: 'sold', warehouse: 'IDUMOTA', pricePerYard: 1000, soldTo: 'ABBA', soldDate: '2026-08-10', arrivalBatch: 'Jul26', baleUid: `U${b}` });
+  }
+  for (let t = 1; t <= 5; t += 1) {
+    many.push({ rowIndex: ri++, packageNo: '6250', design: '9032', shade: '4', thanNo: t, yards: 30, status: t <= 2 ? 'sold' : 'available', warehouse: 'Kano office', pricePerYard: 3900, soldTo: t <= 2 ? 'ABBA' : '', soldDate: t <= 2 ? '2026-07-10' : '', arrivalBatch: 'Mar26', baleUid: `V${t}` });
+  }
+  rows = many;
+  const bot = makeBot();
+  await returnFlow.start(bot, CHAT, EMP, CARD);
+  await returnFlow.handleCallback(bot, cbq('rn:cust:0'));
+  assert.equal(chipData(bot).filter((d) => d.startsWith('rn:bale:')).length, 24, 'one page of 24');
+  assert.ok(chipData(bot).includes('rn:bpg:1'), 'a Next button');
+  assert.ok(!chipTexts(bot).some((c) => /^📦 6250/.test(c)), '6250 is not on page 1');
+  assert.match(lastText(bot), /Bales 1–24 of 31/);
+
+  await returnFlow.handleCallback(bot, cbq('rn:bpg:1'));
+  assert.equal(sessionStore.get(EMP).step, 'bale');
+  assert.ok(chipData(bot).includes('rn:bpg:0'), 'a Previous button');
+  const i = chipTexts(bot).filter((c) => c.startsWith('📦')).findIndex((c) => /^📦 6250/.test(c));
+  assert.ok(i >= 0, `6250 on page 2, got ${chipTexts(bot).join(' | ')}`);
+
+  await returnFlow.handleCallback(bot, cbq(`rn:bale:${i}`));
+  assert.equal(sessionStore.get(EMP).step, 'thans');
+  assert.equal(sessionStore.get(EMP).packageNo, '6250');
+  assert.deepEqual(chipData(bot).filter((d) => d.startsWith('rn:t:')), ['rn:t:0', 'rn:t:1'], 'only the two thans sold to ABBA');
+
+  // Back from the thans returns to the SAME page.
+  await returnFlow.handleCallback(bot, cbq('rn:back'));
+  assert.ok(chipTexts(bot).some((c) => /^📦 6250/.test(c)));
+});
