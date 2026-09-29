@@ -4,6 +4,8 @@ Static lists extracted from `Inventory_Sept4_1.pdf` so the owner can start today
 
 ## A · Oversize thans (≥ 40 yd) — 64 rows → EDB-1 ✏️ Edit Bale, label photo each
 
+> **Update 28-Sep-2026:** every March (Mar26) row below matches the supplier packing list in the workbook's `CNTR CJE  FEB 2026` tab — they are genuine long pieces, not typing errors. Only the July (Jul26) rows remain unverified. See `docs/BALE_YARDS_CHECK_2026-09-28.pdf`, action A9 and Appendix B.
+
 | Design | Bale | Indent | Container | Than | Yards | Status | Warehouse | Sold to |
 |---|---|---|---|---|---|---|---|---|
 | 16032 | 6450 | SA/2150 | Mar26 | #1 | 60 | sold | Lagos | Awurawu |
