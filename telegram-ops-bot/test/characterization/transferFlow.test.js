@@ -404,6 +404,13 @@ test('TRF-21: a receipt with everything ticked is today\'s receipt; ↩ Not now 
   await controller.handleCallbackQuery(bot, cb(`trf:rp:nn:${requestId}`, 'musa'));
   assert.ok(!sessionStore.get('musa'), 'ticks dropped');
   assert.match(bot.allText(), /Transfer .* incoming/, 'the receiver card is back');
+  // Opened from a card that carried ⬅ Back (🛂 inbox / 📋 list): Not now
+  // restores the card WITH that Back.
+  const fromList = cb(`trf:rcvp:${requestId}`, 'musa');
+  fromList.message.reply_markup = { inline_keyboard: [[{ text: '⬅ Back', callback_data: 'trf:list' }]] };
+  await controller.handleCallbackQuery(bot, fromList);
+  await controller.handleCallbackQuery(bot, cb(`trf:rp:nn:${requestId}`, 'musa'));
+  assert.ok(kbTexts(bot).includes('⬅ Back|trf:list'), `Back survives the picker round-trip, got ${kbTexts(bot)}`);
   // Second attempt: tick both → same as ✅ Received.
   await controller.handleCallbackQuery(bot, cb(`trf:rcvp:${requestId}`, 'musa'));
   await controller.handleCallbackQuery(bot, cb('trf:rp:t:0', 'musa'));

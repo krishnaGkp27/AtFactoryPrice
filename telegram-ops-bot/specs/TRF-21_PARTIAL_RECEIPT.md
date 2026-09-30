@@ -132,4 +132,9 @@ step `receive_pick` joins the busy guard (APC-1) and the anchor guard.
 - Dispatch in several loads (the mirror problem on the sending side).
 - A `lost in transit` state distinct from reject.
 - Per-delivery arrival DATE (each delivery is stamped the day it is
-  confirmed, Lagos time; the dispatch date stays the SalesDate).
+  confirmed, Lagos time, in `receipts[].on` and in BaleMovements; the
+  dispatch date stays the Transactions SalesDate).
+- The `TRANSFER_STALE_DAYS` admin escalation still counts from the raise
+  date; only the holder's waiting line re-clocks from the last delivery.
+- 📋 census scripts (`list-ghost-transfers.js`) print the full logged
+  count, not the received figure.

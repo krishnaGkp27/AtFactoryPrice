@@ -1380,7 +1380,11 @@ async function handleAction(bot, query, requestId, action) {
   // the tapped card. The receipt applies (for the ticked bales only) when
   // the photo lands; the rest stay in transit.
   if (action === 'rcvp') {
-    await startReceivePicker(bot, chatId, userId, row, query.message.message_id);
+    // The tapped card may carry a ⬅ Back (opened from the 🛂 inbox or the
+    // 📋 list); remember where it led so ↩ Not now restores the same card.
+    const kb = ((query.message.reply_markup || {}).inline_keyboard || []).flat();
+    const back = kb.find((b) => b && typeof b.text === 'string' && b.text.startsWith('⬅ Back') && b.callback_data);
+    await startReceivePicker(bot, chatId, userId, row, query.message.message_id, back ? back.callback_data : null);
     return true;
   }
 
@@ -1891,7 +1895,7 @@ const RCV_CHIPS_PER_PAGE = 24;
  * gate applies the receipt for exactly those. Bales confirmed by an earlier
  * delivery are not offered again.
  */
-async function startReceivePicker(bot, chatId, userId, row, messageId) {
+async function startReceivePicker(bot, chatId, userId, row, messageId, backCb = null) {
   const aj = await ensureLineBales(row.actionJSON); // TRF-12 — per-line numbers
   const st = transferService.receiptState(aj);
   const remaining = new Set(st.remaining);
@@ -1905,7 +1909,7 @@ async function startReceivePicker(bot, chatId, userId, row, messageId) {
   for (const b of st.remaining) if (!seen.has(b)) { seen.add(b); items.push({ pkg: b, design: '', shade: '' }); }
   sessionStore.set(userId, {
     type: SESSION_TYPE, step: 'receive_pick', requestId: row.requestId,
-    from: aj.from, to: aj.to, _rcv: items, _rcvSel: [], _rcvPage: 0,
+    from: aj.from, to: aj.to, _rcv: items, _rcvSel: [], _rcvPage: 0, _backCb: backCb || null,
     flowMessageId: messageId || null,
     ttlMs: 30 * 60 * 1000, // counting bales off a truck — outlasts the default TTL
   });
@@ -2668,10 +2672,12 @@ async function handleCallback(bot, query) {
   const mRpNn = data.match(/^trf:rp:nn:(.+)$/);
   if (mRpNn) {
     const s0 = sessionStore.get(userId);
+    let backCb = null;
     if (s0 && s0.type === SESSION_TYPE && s0.step === 'receive_pick' && String(s0.requestId) === mRpNn[1]) {
+      backCb = s0._backCb || null;
       sessionStore.clear(userId);
     }
-    return showActionCard(bot, query, mRpNn[1]);
+    return showActionCard(bot, query, mRpNn[1], backCb ? { backCb } : {});
   }
   const mInfo = data.match(/^trf:info:(.+)$/);
   if (mInfo) return showInfo(bot, query, mInfo[1], true);
