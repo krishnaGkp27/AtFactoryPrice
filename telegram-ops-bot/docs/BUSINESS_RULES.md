@@ -402,6 +402,18 @@ inventory sheet. but you can add in different sheet."*
 - **Reconciliation on the review card is ON TAP only** (owner, 05-Aug-2026,
   superseding "auto" from earlier the same day): no OCR runs when the card
   is created; 🧮 reads the dispatch doc and dots the matches in place.
+- **TRF-21 (owner, 30-Sep-2026): a transfer may be RECEIVED in several
+  deliveries** ("whichever goods he receives by that time, they can be
+  updated instantly"). Each delivery is its own receipt — the receiver
+  ticks the bales physically in front of them (an UNTICKED list, rule 2),
+  sends that delivery's photo (rule 3), and exactly those bales go live at
+  the destination; the rest stay `in_transit` and the transfer stays open
+  until the last bale. One Transactions row per delivery. Reject after a
+  partial delivery returns only the bales still on the road; a bale once
+  received stays at the destination. The record rides the transfer's own
+  row (`receivedBales`, `receivedUids`, `receipts[]`) — no column, no
+  sheet. `approved` still means received in full. Dispatch is unchanged:
+  one load, one photo.
 
 ## 9 · Customers are entities; assignment happens at approval
 

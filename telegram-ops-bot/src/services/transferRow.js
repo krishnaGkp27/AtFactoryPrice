@@ -63,12 +63,26 @@ function thanCount(aj) {
   return 0;
 }
 
-/** "10B" · "3B + 5T" · "5T" · "" */
-function qty(aj) {
+/**
+ * TRF-21 — bales confirmed so far on a transfer still on the road. Zero
+ * unless a delivery has been confirmed AND something is still outstanding;
+ * a settled row keeps its plain count.
+ */
+function receivedCount(row) {
+  if (stateOf(row) !== 'in_transit') return 0;
+  const aj = (row && row.actionJSON) || {};
+  const bales = new Set((Array.isArray(aj.bales) ? aj.bales : []).map(String));
+  const got = new Set((Array.isArray(aj.receivedBales) ? aj.receivedBales : []).map(String).filter((b) => bales.has(b)));
+  return got.size > 0 && got.size < bales.size ? got.size : 0;
+}
+
+/** "10B" · "3B + 5T" · "5T" · "" — and, part-way through a receipt, "6/10B". */
+function qty(aj, row) {
   const parts = [];
   const b = baleCount(aj || {});
   const t = thanCount(aj || {});
-  if (b) parts.push(`${b}B`);
+  const got = row ? receivedCount(row) : 0;
+  if (b) parts.push(got ? `${got}/${b}B` : `${b}B`);
   if (t) parts.push(`${t}T`);
   return parts.join(' + ');
 }
@@ -93,7 +107,7 @@ function label(row) {
   const parts = [
     approvalCards.shortTransferRef(row && row.requestId),
     `${dup}${dot(row)}${route(aj) ? ` ${route(aj)}` : ''}`,
-    qty(aj),
+    qty(aj, row),
   ].filter(Boolean);
   return parts.join(' · ');
 }
@@ -105,7 +119,15 @@ function label(row) {
  */
 function duty(row) {
   const s = stateOf(row);
-  if (s === 'in_transit') return { icon: '📦', verb: 'Receive', line: '🚚 in transit — confirm receipt' };
+  if (s === 'in_transit') {
+    const got = receivedCount(row);
+    // TRF-21 — part of the load is here already; the duty is the rest.
+    if (got) {
+      const b = baleCount((row && row.actionJSON) || {});
+      return { icon: '📦', verb: 'Receive', line: `🚚 ${got} of ${b} received — confirm the rest as it arrives` };
+    }
+    return { icon: '📦', verb: 'Receive', line: '🚚 in transit — confirm receipt' };
+  }
   if (s === 'admin_review') return { icon: '🛂', verb: 'Approve', line: '🛂 parked — waiting for your approval' };
   return { icon: '🚚', verb: 'Dispatch', line: '⏳ waiting for you to dispatch' };
 }
@@ -114,10 +136,10 @@ function duty(row) {
 function dutyLabel(row) {
   const aj = (row && row.actionJSON) || {};
   const d = duty(row);
-  const parts = [approvalCards.shortTransferRef(row && row.requestId), route(aj), qty(aj)].filter(Boolean);
+  const parts = [approvalCards.shortTransferRef(row && row.requestId), route(aj), qty(aj, row)].filter(Boolean);
   return `${d.icon} ${d.verb} · ${parts.join(' · ')}`;
 }
 
-const LEGEND = '🔴 requested · 🛂 parked for approval · 🟡 in transit · 🟢 received · ⧉ sent as a duplicate · B bales · T loose thans';
+const LEGEND = '🔴 requested · 🛂 parked for approval · 🟡 in transit · 🟢 received · ⧉ sent as a duplicate · B bales · T loose thans · 6/10B = received so far';
 
-module.exports = { DOTS, LEGEND, whCode, stateOf, dot, baleCount, thanCount, qty, route, label, duty, dutyLabel };
+module.exports = { DOTS, LEGEND, whCode, stateOf, dot, baleCount, thanCount, receivedCount, qty, route, label, duty, dutyLabel };

@@ -410,18 +410,34 @@ function dispatchedBlock(aj) {
     byDesign.get(d.design).push(d);
   }
   const out = [];
+  // TRF-21 — a bale confirmed by an earlier delivery carries a ✅ in the
+  // bracket so the card reads which numbers are here and which are not.
+  const got = new Set((Array.isArray(aj.receivedBales) ? aj.receivedBales : []).map(String));
+  const mark = (b) => (got.has(String(b)) ? `${b} ✅` : String(b));
   for (const [design, list] of byDesign) {
     out.push(designHead(design));
     for (const d of list) {
       // TRF-12 (owner 01-Aug) — the bale numbers ride each row in brackets;
       // the flat bottom list is gone (the 📦 chip still shows it on tap).
-      const nums = Array.isArray(d.bales) && d.bales.length ? ` (${d.bales.join(', ')})` : '';
+      const nums = Array.isArray(d.bales) && d.bales.length ? ` (${d.bales.map(mark).join(', ')})` : '';
       out.push(d.sent < d.requested
         ? ` • Shade ${d.shade} — ${d.sent}/${d.requested} ⚠️ short${nums}`
         : ` • Shade ${d.shade} ×${d.sent}${nums}`);
     }
   }
   return out.join('\n');
+}
+
+/**
+ * TRF-21 — "✅ 6 of 10 received · 🚚 4 still on the road (P7, P8, P9, P10)".
+ * Empty unless a delivery has been confirmed while something is still
+ * outstanding, so every pre-TRF-21 card stays byte-identical.
+ */
+function receiptLine(aj) {
+  const st = transferService.receiptState(aj);
+  if (!st.partial) return '';
+  return `\n✅ *${st.received.length} of ${st.bales.length} received* · 🚚 ${st.remaining.length} still on the road`
+    + ` (${baleListPreview(st.remaining)})`;
 }
 
 /**
@@ -922,14 +938,27 @@ async function handleReviewReconcile(bot, query, requestId) {
 function receiverCard(requestId, aj, statusLine = '') {
   const shortNote = aj.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
   const status = statusLine ? `${statusLine}\n` : '';
+  // TRF-21 (owner, 30-Sep-2026) — the goods seldom arrive in one batch. ✅
+  // Received still confirms everything outstanding; when more than one bale
+  // is still on the road, a second door lets the receiver tick the ones
+  // that arrived NOW (unticked list — BUSINESS_RULES §2, the bot never
+  // pre-ticks) and leaves the rest in transit for a later delivery.
+  const st = transferService.receiptState(aj);
+  const prompt = st.partial
+    ? `\n\n✅ Received confirms the remaining ${st.remaining.length} — a photo/PDF of the goods is required:`
+    : '\n\nConfirm when the goods arrive and match — a photo/PDF of the received goods is required:';
+  const someRow = st.remaining.length > 1
+    ? [[{ text: '📦 Only some arrived — tick them', callback_data: `trf:rcvp:${requestId}` }]]
+    : [];
   return {
-    text: `📦 *Transfer ${shortTransferRef(requestId)} incoming*\n${status}${headOf(aj)}${departedLine(aj)}\n${dispatchedBlock(aj)}${shortNote}\n\nConfirm when the goods arrive and match — a photo/PDF of the received goods is required:`,
+    text: `📦 *Transfer ${shortTransferRef(requestId)} incoming*\n${status}${headOf(aj)}${departedLine(aj)}\n${dispatchedBlock(aj)}${shortNote}${receiptLine(aj)}${prompt}`,
     kb: { inline_keyboard: [[
       { text: '✅ Received', callback_data: `trf:rcv:${requestId}` },
       { text: '⚠️ Reject', callback_data: `trf:rej:${requestId}` },
+    ], ...someRow,
     // TRF-11 bale chip + TRF-9 docs — let the receiver check the load
     // against the numbers and the dispatcher's file BEFORE tapping Received.
-    ], ...balesChipRow(requestId, aj), ...docRows(requestId, aj)] },
+    ...balesChipRow(requestId, aj), ...docRows(requestId, aj)] },
   };
 }
 
@@ -940,7 +969,14 @@ function stateLabel(row) {
   if (row.status === 'rejected') return 'closed ❌';
   const stage = row.actionJSON && row.actionJSON.stage;
   if (stage === 'admin_review') return 'awaiting admin approval 🛂';
-  return stage === 'in_transit' ? 'in transit 🚚' : 'awaiting dispatch ⏳';
+  if (stage === 'in_transit') {
+    // TRF-21 — part of the load is here; the row is neither "in transit"
+    // nor "received" and must say so.
+    const st = transferService.receiptState(row.actionJSON);
+    if (st.partial) return `partly received 📦 (${st.received.length} of ${st.bales.length})`;
+    return 'in transit 🚚';
+  }
+  return 'awaiting dispatch ⏳';
 }
 
 /**
@@ -993,6 +1029,13 @@ function waitingLine(row, names = {}) {
   }
   if (aj.stage === 'in_transit') {
     const left = aj.dispatchedOn ? ` · left ${fmtDate(aj.dispatchedOn)}` : '';
+    // TRF-21 — after a partial delivery the receiver holds only the rest,
+    // and the clock restarts at the last confirmation, not at dispatch.
+    const st = transferService.receiptState(aj);
+    if (st.partial) {
+      return `🚚 *With ${nameOf(aj.receiver)} to confirm the rest* · ${st.received.length} of ${st.bales.length} received${left}`
+        + `${waitedFor(aj.lastReceivedAt || aj.dispatchedAt || row.createdAt)}`;
+    }
     return `🚚 *With ${nameOf(aj.receiver)} to confirm arrival*${left}`
       + `${waitedFor(aj.dispatchedAt || row.createdAt)}`;
   }
@@ -1066,6 +1109,17 @@ async function detailCard(row) {
     '',
     aj.dispatched && aj.dispatched.length ? dispatchedBlock(aj) : linesBlock(aj.lines),
   ];
+  const rl = receiptLine(aj);
+  if (rl) out.push(rl.trim());
+  // TRF-21 — every delivery on the record: when, who, which bales.
+  const receipts = Array.isArray(aj.receipts) ? aj.receipts : [];
+  if (receipts.length > 1 || (receipts.length === 1 && rl)) {
+    const nm = await nameMap(receipts.map((r) => r.by));
+    receipts.forEach((r, i) => {
+      out.push(`📦 Delivery ${i + 1}: ${(r.bales || []).length} bale(s) · ${fmtDate(r.on || r.at)} · ${mdEscape(nm[String(r.by)] || String(r.by || ''))}`
+        + `${r.doc && r.doc.url ? ` · 📸 ${r.doc.url}` : ''}`);
+    });
+  }
   // TRF-12 — bale numbers now ride each row; the flat list is the chip's job.
   if (aj.dispatchDoc && aj.dispatchDoc.url) out.push(`📸 Dispatch photo: ${aj.dispatchDoc.url}`);
   if (aj.receiveDoc && aj.receiveDoc.url) out.push(`📸 Receipt photo: ${aj.receiveDoc.url}`);
@@ -1192,7 +1246,7 @@ async function sendTransferDoc(bot, query, requestId, kind) {
  */
 function busyWithAnotherTransfer(userId, requestId) {
   const s = sessionStore.get(String(userId));
-  const BUSY_STEPS = ['dispatch_pick', 'dispatch_search', 'dispatch_confirm', 'dispatch_date', 'await_doc'];
+  const BUSY_STEPS = ['dispatch_pick', 'dispatch_search', 'dispatch_confirm', 'dispatch_date', 'await_doc', 'receive_pick'];
   return (s && s.type === SESSION_TYPE && s.requestId
     && String(s.requestId) !== String(requestId)
     && BUSY_STEPS.includes(s.step)) ? s : null;
@@ -1210,6 +1264,7 @@ async function handleBusySwitch(bot, query, verb, rest) {
       return true;
     }
     if (['dispatch_pick', 'dispatch_search'].includes(session.step)) await showBalePicker(bot, chatId, userId);
+    else if (session.step === 'receive_pick') await showReceivePicker(bot, chatId, userId); // TRF-21
     else if (session.step === 'dispatch_confirm') await showDispatchConfirm(bot, chatId, userId);
     else if (session.step === 'dispatch_date') await showDepartureDates(bot, chatId, userId);
     else {
@@ -1222,7 +1277,7 @@ async function handleBusySwitch(bot, query, verb, rest) {
   const cut = rest.indexOf(':');
   const action = rest.slice(0, cut);
   const rid = rest.slice(cut + 1);
-  if (!['acc', 'rcv'].includes(action) || !rid) return true;
+  if (!['acc', 'rcv', 'rcvp'].includes(action) || !rid) return true;
   sessionStore.clear(userId);
   return handleAction(bot, query, rid, action);
 }
@@ -1248,7 +1303,7 @@ async function handleAction(bot, query, requestId, action) {
   // stale ❌ tapped post-dispatch must never perform a full revert.
   if (row.status !== 'pending'
       || (action === 'acc' && aj.stage !== 'requested')
-      || (action === 'rcv' && aj.stage !== 'in_transit')
+      || ((action === 'rcv' || action === 'rcvp') && aj.stage !== 'in_transit')
       || (action === 'dec' && aj.stage !== 'requested')
       || ((action === 'rej' || action === 'rejc') && aj.stage !== 'in_transit')) {
     await bot.answerCallbackQuery(query.id, { text: `Transfer is ${stateLabel(row)} — nothing to do here.`, show_alert: true }).catch(() => {});
@@ -1259,9 +1314,14 @@ async function handleAction(bot, query, requestId, action) {
   // TRF-INT2 — rejecting reverts the stock records to the source while the
   // goods sit at the destination: one accidental tap must not do that.
   if (action === 'rej') {
-    const n = (aj.bales || []).length;
+    // TRF-21 — only what is still on the road goes back; bales confirmed by
+    // an earlier delivery are live at the destination and stay there.
+    const st = transferService.receiptState(aj);
+    const n = st.remaining.length;
+    const kept = st.received.length
+      ? ` The ${st.received.length} bale(s) already received stay at *${aj.to}*.` : '';
     await bot.editMessageText(
-      `⚠️ *Reject ${shortTransferRef(requestId)}?*\nThe records will return ${n} bale(s) to *${aj.from}* — only do this if the goods are NOT being accepted at ${aj.to}.`,
+      `⚠️ *Reject ${shortTransferRef(requestId)}?*\nThe records will return ${n} bale(s) to *${aj.from}* — only do this if the goods are NOT being accepted at ${aj.to}.${kept}`,
       {
         chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [
@@ -1275,13 +1335,13 @@ async function handleAction(bot, query, requestId, action) {
 
   // APC-1 Phase C — Accept/Received replace the per-user session: refuse to
   // do that silently while ANOTHER transfer's picks or photo gate are live.
-  if (action === 'acc' || action === 'rcv') {
+  if (action === 'acc' || action === 'rcv' || action === 'rcvp') {
     const busy = busyWithAnotherTransfer(userId, requestId);
     if (busy) {
       const curRef = shortTransferRef(busy.requestId);
       const newRef = shortTransferRef(requestId);
       const doing = busy.step === 'await_doc'
-        ? 'waiting for its photo' : 'picking bales';
+        ? 'waiting for its photo' : busy.step === 'receive_pick' ? 'ticking arrived bales' : 'picking bales';
       await bot.sendMessage(chatId,
         `✋ You are still ${doing} on *${curRef}*. Finish it first, or drop it and start *${newRef}* — dropped picks are NOT saved.`,
         { parse_mode: 'Markdown',
@@ -1303,14 +1363,24 @@ async function handleAction(bot, query, requestId, action) {
   // TRF-6: Received → photo gate. The receipt is applied by handleFile once
   // the mandatory photo/PDF arrives; nothing changes until then.
   if (action === 'rcv') {
+    const st = transferService.receiptState(aj);
+    const rest = st.partial ? `the remaining ${st.remaining.length} bale(s)` : 'the received goods';
     await armDocGate(bot, chatId, userId, requestId, 'receive', {
       sealMessageId: query.message.message_id,
       sealText: `📦 *${shortTransferRef(requestId)}* — receipt pending 📸`,
       promptText: `📸 *Photo required — ${shortTransferRef(requestId)}*\n`
-        + `Send a photo or PDF of the received goods now to confirm receipt.\n`
+        + `Send a photo or PDF of ${rest} now to confirm receipt.\n`
         + `_Stock goes live at *${aj.to}* when it arrives._`,
       kb: [[{ text: '↩ Not now', callback_data: `trf:nn:${requestId}` }]],
     });
+    return true;
+  }
+
+  // TRF-21 — only some of the load arrived: open the tick list anchored on
+  // the tapped card. The receipt applies (for the ticked bales only) when
+  // the photo lands; the rest stay in transit.
+  if (action === 'rcvp') {
+    await startReceivePicker(bot, chatId, userId, row, query.message.message_id);
     return true;
   }
 
@@ -1324,9 +1394,14 @@ async function handleAction(bot, query, requestId, action) {
   const mmNote = res.mismatch
     ? `\n⚠️ _Records only partially reverted (${res.mismatch.flippedBales}/${res.mismatch.expectedBales} bales matched) — admins should check the AuditLog._`
     : '';
+  // TRF-21 — after a partial delivery the reject sends back only the rest.
+  const keptNote = res.kept && res.kept.length
+    ? ` ${res.kept.length} bale(s) received earlier stay at *${aj.to}*.` : '';
+  const revertedWord = res.kept && res.kept.length
+    ? `${(res.returned || []).length} bale(s) reverted` : 'bales reverted';
   const card = res.kind === 'declined'
     ? `❌ *${shortTransferRef(requestId)} declined* — nothing was moved.\n${headOf(aj)}\n${linesBlock(aj.lines)}`
-    : `❌ *${shortTransferRef(requestId)} rejected* — bales reverted to *${aj.from}*.\n${headOf(aj)}\n${dispatchedBlock(aj)}${mmNote}`;
+    : `❌ *${shortTransferRef(requestId)} rejected* — ${revertedWord} to *${aj.from}*.${keptNote}\n${headOf(aj)}\n${dispatchedBlock(aj)}${mmNote}`;
   await bot.editMessageText(card, {
     chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] },
@@ -1747,11 +1822,33 @@ async function completeDispatch(bot, session, userId) {
 async function completeReceipt(bot, session, userId) {
   const requestId = session.requestId;
   const row = await transferService.findTransfer(requestId);
-  const res = await transferService.confirmReceipt(requestId, userId);
+  // TRF-21 — the gate may carry the bales ticked on the arrival picker; no
+  // picks = everything still on the road (the pre-TRF-21 path).
+  const picks = Array.isArray(session.rcvBales) && session.rcvBales.length ? { bales: session.rcvBales } : {};
+  const res = await transferService.confirmReceipt(requestId, userId, picks);
   if (!res.ok) return { ok: false, message: res.message };
   const aj = await ensureLineBales(res.aj); // TRF-12 — pre-storage transfers
-  await notifyAdmins(bot, requestId, aj, 'received ✅', userId);
-  if (row) await notifyRequester(bot, row, requestId, aj, 'received ✅', userId);
+  const st = transferService.receiptState(aj);
+  const deliveries = st.receipts.length;
+  const label = res.closed
+    ? (deliveries > 1 ? `received ✅ (all ${st.bales.length}, in ${deliveries} deliveries)` : 'received ✅')
+    : `partly received 📦 (${st.received.length} of ${st.bales.length})`;
+  await notifyAdmins(bot, requestId, aj, label, userId);
+  if (row) await notifyRequester(bot, row, requestId, aj, label, userId);
+  // TRF-21 — the dispatcher hears about every delivery too: what landed and
+  // what is still on the road is their load as much as the receiver's. (An
+  // admin dispatcher already got the admin card above; the actor never
+  // needs telling.)
+  const dispatcher = String(aj.dispatcher || '');
+  if ((!res.closed || deliveries > 1) && dispatcher && dispatcher !== String(userId)
+      && !config.access.adminIds.includes(dispatcher)) {
+    try {
+      const status = await pushStatus(requestId, aj);
+      await bot.sendMessage(aj.dispatcher,
+        `${shortCard(requestId, aj, label)}${status ? `\n${status}` : ''}\n📦 This delivery: ${res.received.join(', ')}`,
+        { parse_mode: 'Markdown', reply_markup: viewMoreKb(requestId) });
+    } catch (_) { /* best-effort */ }
+  }
   // TRF-INT1 — the receive flipped fewer rows than dispatch logged: the
   // sheet was touched outside the pipeline. Close, but tell the admins.
   let mismatchNote = '';
@@ -1765,10 +1862,117 @@ async function completeReceipt(bot, session, userId) {
       } catch (_) { /* best-effort */ }
     }
   }
+  if (!res.closed) {
+    return {
+      ok: true,
+      captionNote: ` — delivery ${deliveries}: ${res.received.join(', ')}`,
+      sealText: `📦 *${shortTransferRef(requestId)} — ${st.received.length} of ${st.bales.length} received* — `
+        + `${res.received.join(', ')} now live at *${aj.to}*; ${res.remaining.length} still on the road.\n`
+        + `${headOf(aj)}\n${dispatchedBlock(aj)}${receiptLine(aj)}${mismatchNote}\n_Tap ✅ Received on the card when the rest arrives._`,
+    };
+  }
+  const seriesNote = deliveries > 1 ? ` (in ${deliveries} deliveries)` : '';
   return {
     ok: true,
-    sealText: `✅ *${shortTransferRef(requestId)} received* — bales are now live at *${aj.to}*.\n${headOf(aj)}\n${dispatchedBlock(aj)}${mismatchNote}`,
+    captionNote: deliveries > 1 ? ` — delivery ${deliveries}: ${res.received.join(', ')}` : '',
+    sealText: `✅ *${shortTransferRef(requestId)} received* — bales are now live at *${aj.to}*${seriesNote}.\n${headOf(aj)}\n${dispatchedBlock(aj)}${mismatchNote}`,
   };
+}
+
+/* ── TRF-21: arrival picker (which of the dispatched bales are here now) ── */
+
+const RCV_CHIPS_PER_PAGE = 24;
+
+/**
+ * TRF-21 (owner, 30-Sep-2026) — open the arrival tick list anchored on the
+ * tapped receiver card. Every outstanding bale starts UNTICKED
+ * (BUSINESS_RULES §2 — the bot never pre-ticks physical stock); the
+ * receiver ticks the numbers physically in front of them, then the photo
+ * gate applies the receipt for exactly those. Bales confirmed by an earlier
+ * delivery are not offered again.
+ */
+async function startReceivePicker(bot, chatId, userId, row, messageId) {
+  const aj = await ensureLineBales(row.actionJSON); // TRF-12 — per-line numbers
+  const st = transferService.receiptState(aj);
+  const remaining = new Set(st.remaining);
+  const items = [];
+  const seen = new Set();
+  for (const d of (Array.isArray(aj.dispatched) ? aj.dispatched : [])) {
+    for (const b of (Array.isArray(d.bales) ? d.bales : []).map(String)) {
+      if (remaining.has(b) && !seen.has(b)) { seen.add(b); items.push({ pkg: b, design: String(d.design || ''), shade: String(d.shade || '') }); }
+    }
+  }
+  for (const b of st.remaining) if (!seen.has(b)) { seen.add(b); items.push({ pkg: b, design: '', shade: '' }); }
+  sessionStore.set(userId, {
+    type: SESSION_TYPE, step: 'receive_pick', requestId: row.requestId,
+    from: aj.from, to: aj.to, _rcv: items, _rcvSel: [], _rcvPage: 0,
+    flowMessageId: messageId || null,
+    ttlMs: 30 * 60 * 1000, // counting bales off a truck — outlasts the default TTL
+  });
+  await showReceivePicker(bot, chatId, userId);
+}
+
+/** Render the arrival tick list (paged; chips are session-relative indexes). */
+async function showReceivePicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || session.step !== 'receive_pick') return;
+  const items = session._rcv || [];
+  const sel = new Set(session._rcvSel || []);
+  const pages = Math.max(1, Math.ceil(items.length / RCV_CHIPS_PER_PAGE));
+  const page = Math.min(Math.max(Number(session._rcvPage) || 0, 0), pages - 1);
+  session._rcvPage = page;
+  sessionStore.set(userId, session);
+  const start = page * RCV_CHIPS_PER_PAGE;
+  const visible = items.slice(start, start + RCV_CHIPS_PER_PAGE);
+  const rows = chunk(visible.map((it, j) => ({
+    text: `${sel.has(it.pkg) ? '✅' : '⬜'} ${it.pkg}`, callback_data: `trf:rp:t:${start + j}`,
+  })), 3);
+  if (pages > 1) {
+    rows.push([
+      ...(page > 0 ? [{ text: '◀ Previous', callback_data: `trf:rp:pg:${page - 1}` }] : []),
+      { text: `${page + 1} / ${pages}`, callback_data: 'trf:noop' },
+      ...(page < pages - 1 ? [{ text: 'Next ▶', callback_data: `trf:rp:pg:${page + 1}` }] : []),
+    ]);
+  }
+  if (sel.size) {
+    rows.push([{ text: `✅ Confirm ${sel.size} of ${items.length} arrived`, callback_data: 'trf:rp:go' }]);
+  }
+  rows.push([{ text: '↩ Not now', callback_data: `trf:rp:nn:${session.requestId}` }]);
+  // The chips carry numbers only; the text says which design and shade each
+  // outstanding number belongs to, so the receiver can check the labels.
+  const byLine = new Map();
+  for (const it of items) {
+    const k = it.design ? `${it.design} · Shade ${it.shade}` : 'Other';
+    if (!byLine.has(k)) byLine.set(k, []);
+    byLine.get(k).push(it.pkg);
+  }
+  const lines = [...byLine].map(([k, list]) => ` • ${k}: ${list.join(', ')}`).join('\n');
+  const pageNote = pages > 1 ? `\n_Showing ${start + 1}–${start + visible.length} of ${items.length}._` : '';
+  await render(bot, chatId, userId,
+    `📦 *${shortTransferRef(session.requestId)} — which bales are here now?*\n`
+    + `*${session.from}* → *${session.to}* · ${items.length} still on the road\n${lines}\n\n`
+    + `Tick only the bales physically in front of you — the rest stay in transit for the next delivery.\n`
+    + `Ticked: *${sel.size}/${items.length}*${pageNote}`,
+    rows);
+}
+
+/** TRF-21 — ticks confirmed: arm the photo gate for exactly those bales. */
+async function askReceiptDoc(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || session.step !== 'receive_pick') return;
+  const picked = (session._rcvSel || []).slice();
+  if (!picked.length) { await showReceivePicker(bot, chatId, userId); return; }
+  const requestId = session.requestId;
+  const rest = (session._rcv || []).length - picked.length;
+  await armDocGate(bot, chatId, userId, requestId, 'receive', {
+    sealMessageId: session.flowMessageId,
+    sealText: `📦 *${shortTransferRef(requestId)}* — ${picked.length} bale(s) ticked ✔ · receipt pending 📸`,
+    promptText: `📸 *Photo required — ${shortTransferRef(requestId)}*\n`
+      + `Send a photo or PDF of the ${picked.length} bale(s) received now (${baleListPreview(picked)}).\n`
+      + `_They go live at *${session.to}* when it arrives; the other ${rest} stay on the road._`,
+    kb: [[{ text: '↩ Not now', callback_data: `trf:nn:${requestId}` }]],
+    keep: { rcvBales: picked },
+  });
 }
 
 /* ── load photo / PDF (dispatch + receive), reusing driveBackup ────────── */
@@ -1910,6 +2114,7 @@ async function handleFile(bot, msg) {
   // else already dispatched/declined) fails cleanly here, before any
   // notification goes out.
   let sealText = null;
+  let captionNote = '';
   if (session.gate) {
     const done = kind === 'receive'
       ? await completeReceipt(bot, session, userId)
@@ -1925,6 +2130,7 @@ async function handleFile(bot, msg) {
       return true;
     }
     sealText = done.sealText;
+    captionNote = done.captionNote || '';
   }
 
   let archive = null;
@@ -1946,7 +2152,7 @@ async function handleFile(bot, msg) {
   // Forward the file for eyes-on to the counterparty, admins, and requester.
   const row = await transferService.findTransfer(requestId);
   const aj = row && row.actionJSON;
-  const caption = `📸 ${kind === 'receive' ? 'Receipt' : 'Dispatch'} photo — ${requestId}`;
+  const caption = `📸 ${kind === 'receive' ? 'Receipt' : 'Dispatch'} photo — ${requestId}${captionNote}`;
   const targets = new Set();
   if (aj) {
     // TRF-18 — while the package awaits admin approval the receiver has no
@@ -2140,7 +2346,9 @@ async function showList(bot, chatId, userId, messageId) {
   const rows = [];
   for (const t of shown) {
     const aj = t.actionJSON || {};
-    const badge = aj.stage === 'in_transit' ? '🚚 in transit'
+    const rst = aj.stage === 'in_transit' ? transferService.receiptState(aj) : null;
+    const badge = aj.stage === 'in_transit'
+      ? (rst && rst.partial ? `📦 ${rst.received.length} of ${rst.bales.length} received` : '🚚 in transit') // TRF-21
       : aj.stage === 'admin_review' ? '🛂 awaiting approval' : '⏳ awaiting dispatch';
     const holder = aj.stage === 'in_transit' ? names[String(aj.receiver)]
       : aj.stage === 'admin_review' ? 'an admin' : names[String(aj.dispatcher)];
@@ -2454,8 +2662,17 @@ async function handleCallback(bot, query) {
   try { await require('../services/ephemeralDocs').sweep(bot, userId); } catch (_) { /* viewer state only */ }
 
   // Session-free actions first (cards live in counterparties' / admins' DMs).
-  const m = data.match(/^trf:(acc|dec|rcv|rej|rejc):(.+)$/);
+  const m = data.match(/^trf:(acc|dec|rcv|rcvp|rej|rejc):(.+)$/);
   if (m) return handleAction(bot, query, m[2], m[1]);
+  // TRF-21 — arrival picker "Not now": drop the ticks, restore the card.
+  const mRpNn = data.match(/^trf:rp:nn:(.+)$/);
+  if (mRpNn) {
+    const s0 = sessionStore.get(userId);
+    if (s0 && s0.type === SESSION_TYPE && s0.step === 'receive_pick' && String(s0.requestId) === mRpNn[1]) {
+      sessionStore.clear(userId);
+    }
+    return showActionCard(bot, query, mRpNn[1]);
+  }
   const mInfo = data.match(/^trf:info:(.+)$/);
   if (mInfo) return showInfo(bot, query, mInfo[1], true);
   const mVd = data.match(/^trf:vd:([dr]):(.+)$/);
@@ -2519,7 +2736,7 @@ async function handleCallback(bot, query) {
   // are the one legitimate off-anchor surface — TRF-7 sends them
   // separately. The requester-side create wizard stays un-guarded: its
   // steps carry no cross-request risk of this class.
-  const DISPATCH_CHAIN_STEPS = ['dispatch_pick', 'dispatch_search', 'dispatch_confirm', 'dispatch_date', 'await_doc'];
+  const DISPATCH_CHAIN_STEPS = ['dispatch_pick', 'dispatch_search', 'dispatch_confirm', 'dispatch_date', 'await_doc', 'receive_pick'];
   if (DISPATCH_CHAIN_STEPS.includes(session.step)
       && data !== 'trf:noop' && !data.startsWith('trf:bl:m:')
       && session.flowMessageId && query.message && query.message.message_id
@@ -2535,6 +2752,30 @@ async function handleCallback(bot, query) {
     return true;
   }
   if (data === 'trf:back') { await stepBack(bot, chatId, userId); return true; }
+  // TRF-21 — arrival picker (receive_pick only; indexes are session-relative).
+  if (data.startsWith('trf:rp:')) {
+    if (session.step !== 'receive_pick') return true;
+    const rest = data.slice(7);
+    if (rest.startsWith('t:')) {
+      const it = (session._rcv || [])[parseInt(rest.slice(2), 10)];
+      if (it) {
+        const sel = new Set(session._rcvSel || []);
+        if (sel.has(it.pkg)) sel.delete(it.pkg); else sel.add(it.pkg);
+        session._rcvSel = [...sel];
+        sessionStore.set(userId, session);
+      }
+      await showReceivePicker(bot, chatId, userId);
+      return true;
+    }
+    if (rest.startsWith('pg:')) {
+      session._rcvPage = parseInt(rest.slice(3), 10) || 0;
+      sessionStore.set(userId, session);
+      await showReceivePicker(bot, chatId, userId);
+      return true;
+    }
+    if (rest === 'go') { await askReceiptDoc(bot, chatId, userId); return true; }
+    return true;
+  }
   // TRF-8b — typed-preload review: continue to the destination step, or
   // straight to people when the typed "to <warehouse>" already resolved it.
   if (data === 'trf:pl:go') {
@@ -2700,7 +2941,8 @@ module.exports = {
     buildBaleBreakdown, baleCardRows, effectiveBales, ensureLineBales,
     buildAdminReviewCard, sendAdminReviewCards,
     handleReviewApprove, handleReviewSendBack, handleReviewReconcile,
-    linesBlock, dispatchedBlock, headOf, compactOf, designHead,
+    linesBlock, dispatchedBlock, headOf, compactOf, designHead, receiptLine,
+    startReceivePicker, showReceivePicker, askReceiptDoc,
     detailCard, shortCard, showActionCard, dispatcherCard, receiverCard, SESSION_TYPE,
     waitingLine, waitedFor, stateLabel, pushStatus,
   },

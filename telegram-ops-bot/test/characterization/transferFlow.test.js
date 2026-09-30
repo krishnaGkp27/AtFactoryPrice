@@ -307,3 +307,154 @@ test('TRF-7: no-match search explains why instead of a dead end', async () => {
   assert.match(bot.allText(), /No bale with that number exists/);
   assert.ok(kbTexts(bot).some((t) => t.includes('🔄 New search')), 'retry offered');
 });
+
+/* ── TRF-21 — the goods arrive in more than one batch (owner, 30-Sep-2026) ─ */
+
+/** Wizard + Abdul dispatches P1 and P2 + admin releases it: the load is on the road. */
+async function dispatchTwo() {
+  // Earlier tests leave Abdul mid-pick on another transfer; the APC-1 busy
+  // guard would otherwise answer Accept with the continue/drop prompt.
+  sessionStore.clear('abdul'); sessionStore.clear('musa');
+  const { calls, requestId } = await runWizard();
+  const bot2 = createFakeBot();
+  await controller.handleCallbackQuery(bot2, cb(`trf:acc:${requestId}`, 'abdul'));
+  await controller.handleCallbackQuery(bot2, cb('trf:bl:t:0', 'abdul'));
+  await controller.handleCallbackQuery(bot2, cb('trf:bl:t:1', 'abdul'));
+  await controller.handleCallbackQuery(bot2, cb('trf:bl:nx', 'abdul'));
+  await controller.handleCallbackQuery(bot2, cb('trf:bl:go', 'abdul'));
+  await controller.handleFileMessage(createFakeBot(), { chat: { id: 'abdul' }, from: { id: 'abdul', first_name: 'Abdul' }, photo: [{ file_id: 'F1' }] });
+  const r1 = await approvalQueueRepository.getByRequestId(requestId);
+  const t1 = (Date.parse(((r1.actionJSON || {}).pendingDispatch || {}).submittedAt || '') || 0).toString(36);
+  const bp = createFakeBot();
+  await controller.handleCallbackQuery(bp, cb(`trf:adok:${requestId}:${t1}`, 777));
+  const rdm = bp.callsTo('sendMessage').find((m) => m.args.chatId === 'musa');
+  return { calls, requestId, receiverKb: rdm.args.opts.reply_markup.inline_keyboard.flat() };
+}
+
+test('TRF-21: only P1 arrives — Musa ticks it, sends the photo, P1 goes live, P2 stays on the road, the transfer stays open', async () => {
+  const { calls, requestId, receiverKb } = await dispatchTwo();
+  assert.ok(receiverKb.some((b) => b.callback_data === `trf:rcvp:${requestId}`), 'the receiver card offers the "only some arrived" door');
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb(`trf:rcvp:${requestId}`, 'musa'));
+  let kb = kbTexts(bot);
+  assert.ok(kb.includes('⬜ P1|trf:rp:t:0') && kb.includes('⬜ P2|trf:rp:t:1'), `every outstanding bale UNTICKED (§2), got ${kb}`);
+  assert.ok(!kb.some((t) => t.includes('trf:rp:go')), 'no Confirm button before a human ticks');
+  assert.match(bot.allText(), /which bales are here now\?/);
+  assert.match(bot.allText(), /9006 · Shade 3: P1, P2/, 'the text says which design each number is');
+  await controller.handleCallbackQuery(bot, cb('trf:rp:t:0', 'musa'));
+  kb = kbTexts(bot);
+  assert.ok(kb.includes('✅ P1|trf:rp:t:0'), 'ticked');
+  assert.ok(kb.includes('✅ Confirm 1 of 2 arrived|trf:rp:go'));
+  await controller.handleCallbackQuery(bot, cb('trf:rp:go', 'musa'));
+  assert.ok(!calls.transitions.some((t) => t.from === 'in_transit'), 'TRF-6: nothing flips before the receipt photo');
+  assert.match(bot.allText(), /Photo required/);
+  assert.match(bot.allText(), /1 bale\(s\) received now \(P1\)/);
+  assert.match(bot.allText(), /the other 1 stay on the road/);
+  const br = createFakeBot();
+  await controller.handleFileMessage(br, { chat: { id: 'musa' }, from: { id: 'musa', first_name: 'Musa' }, photo: [{ file_id: 'F2' }] });
+  const unlock = calls.transitions.filter((t) => t.from === 'in_transit' && t.to === 'available');
+  assert.equal(unlock.length, 1);
+  assert.deepEqual(unlock[0].pkgs, ['P1']);
+  assert.equal(unlock[0].opts.uids.length, 1, 'only P1\'s row flips');
+  const row = await approvalQueueRepository.getByRequestId(requestId);
+  assert.equal(row.status, 'pending', 'the transfer stays open for P2');
+  assert.equal(row.actionJSON.stage, 'in_transit');
+  assert.deepEqual(row.actionJSON.receivedBales, ['P1']);
+  assert.equal(row.actionJSON.receipts.length, 1);
+  assert.ok(row.actionJSON.receipts[0].doc && row.actionJSON.receipts[0].doc.fileId === 'F2', 'the photo is stamped on its delivery');
+  assert.match(br.allText(), /1 of 2 received/);
+  assert.match(br.allText(), /P1 now live at \*Kano office\*; 1 still on the road/);
+  const admin = br.callsTo('sendMessage').find((m) => String(m.args.chatId) === '777');
+  assert.ok(admin && /partly received 📦 \(1 of 2\)/.test(admin.args.text), 'admins hear it is partly received');
+  const disp = br.callsTo('sendMessage').find((m) => String(m.args.chatId) === 'abdul');
+  assert.ok(disp && /This delivery: P1/.test(disp.args.text), 'the dispatcher hears which bales landed');
+  const photo = br.callsTo('sendPhoto').find((m) => String(m.args.chatId) === '777');
+  assert.match(photo.args.opts.caption, /delivery 1: P1/);
+  const inv = await inventoryRepository.getAll();
+  assert.equal(inv.find((r) => r.packageNo === 'P1').status, 'available');
+  assert.equal(inv.find((r) => r.packageNo === 'P2').status, 'in_transit');
+  assert.ok(!sessionStore.get('musa'), 'gate session cleared');
+
+  // The card now reads the state; ✅ Received confirms the rest.
+  const bc = createFakeBot();
+  await controller.handleCallbackQuery(bc, cb(`trf:card:${requestId}`, 'musa'));
+  assert.match(bc.allText(), /1 of 2 received\* · 🚚 1 still on the road \(P2\)/);
+  assert.match(bc.allText(), /P1 ✅, P2/, 'received bales are ticked in the line');
+  assert.match(bc.allText(), /With Musa to confirm the rest\* · 1 of 2 received/);
+  assert.ok(!kbTexts(bc).some((t) => t.includes('trf:rcvp:')), 'one bale left — no "only some" door (a single option is navigation)');
+  await controller.handleCallbackQuery(bc, cb(`trf:rcv:${requestId}`, 'musa'));
+  assert.match(bc.allText(), /the remaining 1 bale\(s\)/);
+  const br2 = createFakeBot();
+  await controller.handleFileMessage(br2, { chat: { id: 'musa' }, from: { id: 'musa', first_name: 'Musa' }, photo: [{ file_id: 'F3' }] });
+  const row2 = await approvalQueueRepository.getByRequestId(requestId);
+  assert.equal(row2.status, 'approved', 'the last bale closes the transfer');
+  assert.deepEqual(row2.actionJSON.receivedBales, ['P1', 'P2']);
+  assert.equal(row2.actionJSON.receipts.length, 2);
+  assert.match(br2.allText(), /received\* — bales are now live at \*Kano office\* \(in 2 deliveries\)/);
+  const unlock2 = calls.transitions.filter((t) => t.from === 'in_transit' && t.to === 'available');
+  assert.equal(unlock2.length, 2);
+  assert.deepEqual(unlock2[1].pkgs, ['P2']);
+});
+
+test('TRF-21: a receipt with everything ticked is today\'s receipt; ↩ Not now on the picker drops the ticks', async () => {
+  const { calls, requestId } = await dispatchTwo();
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb(`trf:rcvp:${requestId}`, 'musa'));
+  await controller.handleCallbackQuery(bot, cb('trf:rp:t:1', 'musa'));
+  await controller.handleCallbackQuery(bot, cb(`trf:rp:nn:${requestId}`, 'musa'));
+  assert.ok(!sessionStore.get('musa'), 'ticks dropped');
+  assert.match(bot.allText(), /Transfer .* incoming/, 'the receiver card is back');
+  // Second attempt: tick both → same as ✅ Received.
+  await controller.handleCallbackQuery(bot, cb(`trf:rcvp:${requestId}`, 'musa'));
+  await controller.handleCallbackQuery(bot, cb('trf:rp:t:0', 'musa'));
+  await controller.handleCallbackQuery(bot, cb('trf:rp:t:1', 'musa'));
+  assert.ok(kbTexts(bot).includes('✅ Confirm 2 of 2 arrived|trf:rp:go'));
+  await controller.handleCallbackQuery(bot, cb('trf:rp:go', 'musa'));
+  const br = createFakeBot();
+  await controller.handleFileMessage(br, { chat: { id: 'musa' }, from: { id: 'musa', first_name: 'Musa' }, photo: [{ file_id: 'F2' }] });
+  const row = await approvalQueueRepository.getByRequestId(requestId);
+  assert.equal(row.status, 'approved');
+  assert.equal(row.actionJSON.receivedBales, undefined, 'a single all-at-once receipt writes no delivery record');
+  const unlock = calls.transitions.find((t) => t.from === 'in_transit' && t.to === 'available');
+  assert.deepEqual(unlock.pkgs, ['P1', 'P2']);
+  assert.match(br.allText(), /received\* — bales are now live at \*Kano office\*\./);
+});
+
+test('TRF-21: reject after a partial delivery sends back only P2; P1 stays live at the destination', async () => {
+  const { calls, requestId } = await dispatchTwo();
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb(`trf:rcvp:${requestId}`, 'musa'));
+  await controller.handleCallbackQuery(bot, cb('trf:rp:t:0', 'musa'));
+  await controller.handleCallbackQuery(bot, cb('trf:rp:go', 'musa'));
+  await controller.handleFileMessage(createFakeBot(), { chat: { id: 'musa' }, from: { id: 'musa', first_name: 'Musa' }, photo: [{ file_id: 'F2' }] });
+  const bj = createFakeBot();
+  await controller.handleCallbackQuery(bj, cb(`trf:rej:${requestId}`, 'musa'));
+  assert.match(bj.allText(), /return 1 bale\(s\) to \*Lagos\*/);
+  assert.match(bj.allText(), /The 1 bale\(s\) already received stay at \*Kano office\*/);
+  await controller.handleCallbackQuery(bj, cb(`trf:rejc:${requestId}`, 'musa'));
+  const home = calls.transitions.filter((t) => t.from === 'in_transit' && t.wh === 'Lagos');
+  assert.equal(home.length, 1);
+  assert.deepEqual(home[0].pkgs, ['P2']);
+  assert.match(bj.allText(), /1 bale\(s\) reverted to \*Lagos\*\. 1 bale\(s\) received earlier stay at \*Kano office\*/);
+  const inv = await inventoryRepository.getAll();
+  assert.equal(inv.find((r) => r.packageNo === 'P1').warehouse, 'Kano office');
+  assert.equal(inv.find((r) => r.packageNo === 'P1').status, 'available');
+  assert.equal(inv.find((r) => r.packageNo === 'P2').warehouse, 'Lagos');
+  const row = await approvalQueueRepository.getByRequestId(requestId);
+  assert.equal(row.status, 'rejected');
+});
+
+test('TRF-21: a stranger cannot open the arrival picker; a stale picker card cannot tick into a newer one', async () => {
+  const { requestId } = await dispatchTwo();
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb(`trf:rcvp:${requestId}`, '5555'));
+  assert.match(bot.callsTo('answerCallbackQuery')[0].args.opts.text, /assigned person only/i);
+  assert.ok(!sessionStore.get('5555'));
+  // Musa opens the picker on message 5; a tap from an older card (message 4) is refused.
+  const bm = createFakeBot();
+  await controller.handleCallbackQuery(bm, cb(`trf:rcvp:${requestId}`, 'musa', 5));
+  await controller.handleCallbackQuery(bm, cb('trf:rp:t:0', 'musa', 4));
+  assert.match(bm.allText(), /belongs to an earlier step/);
+  assert.deepEqual(sessionStore.get('musa')._rcvSel, [], 'nothing ticked from the stale card');
+  sessionStore.clear('musa');
+});

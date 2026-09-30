@@ -461,61 +461,182 @@ async function dispatchPickAndFlip(requestId, byUserId, manualPicks, aj, opts = 
  * Destination receiver confirms: bales sellable @ destination; row closed.
  * @returns {Promise<{ok:boolean, aj?:object, message?:string}>}
  */
-async function confirmReceipt(requestId, byUserId) {
-  // SEC-P2 (H3): serialized with dispatch/abort on the same request.
-  return mutex.runExclusive(requestId, () => confirmReceiptInner(requestId, byUserId));
+/**
+ * TRF-21 (owner, 30-Sep-2026: "the goods received by the receiver do not
+ * come in the same batch … whichever goods he receives by that time, they
+ * can be updated instantly") — what a transfer's receipt looks like so far.
+ *
+ * The record rides the same ApprovalQueue row (no column, no sheet, no
+ * migration): `receivedBales` (printed numbers confirmed so far),
+ * `receivedUids` (the rows those confirmations covered) and `receipts[]`
+ * (one entry per delivery: when, who, which bales). The row stays
+ * `pending` / `in_transit` until the LAST bale is confirmed — `approved`
+ * still means "everything received", exactly as every reader expects.
+ *
+ * @param {object} aj transfer actionJSON
+ * @returns {{bales:string[], received:string[], remaining:string[], uids:string[],
+ *   receivedUids:string[], remainingUids:string[], receipts:object[], partial:boolean}}
+ */
+function receiptState(aj) {
+  const a = aj || {};
+  const bales = (Array.isArray(a.bales) ? a.bales : []).map(String);
+  const baleSet = new Set(bales);
+  const received = [];
+  const seen = new Set();
+  for (const b of (Array.isArray(a.receivedBales) ? a.receivedBales : []).map(String)) {
+    if (baleSet.has(b) && !seen.has(b)) { seen.add(b); received.push(b); }
+  }
+  const remaining = bales.filter((b) => !seen.has(b));
+  const uids = (Array.isArray(a.baleUids) ? a.baleUids : []).map(String);
+  const gotUid = new Set((Array.isArray(a.receivedUids) ? a.receivedUids : []).map(String));
+  const receivedUids = uids.filter((u) => gotUid.has(u));
+  const remainingUids = uids.filter((u) => !gotUid.has(u));
+  const receipts = Array.isArray(a.receipts) ? a.receipts : [];
+  return {
+    bales, received, remaining, uids, receivedUids, remainingUids, receipts,
+    partial: received.length > 0 && remaining.length > 0,
+  };
 }
 
-async function confirmReceiptInner(requestId, byUserId) {
+/**
+ * Confirm arrival of a transfer — the whole outstanding load, or (TRF-21)
+ * the bales that physically arrived in THIS delivery.
+ *
+ * @param {string} requestId
+ * @param {string} byUserId the receiver (or an admin in that seat)
+ * @param {{bales?:string[]}} [opts] printed numbers received now; absent =
+ *   everything still on the road (the pre-TRF-21 path, byte-identical).
+ * @returns {Promise<{ok:boolean, aj?:object, mismatch?:object|null, closed?:boolean,
+ *   received?:string[], remaining?:string[], message?:string}>}
+ */
+async function confirmReceipt(requestId, byUserId, opts = {}) {
+  // SEC-P2 (H3): serialized with dispatch/abort on the same request.
+  return mutex.runExclusive(requestId, () => confirmReceiptInner(requestId, byUserId, opts));
+}
+
+async function confirmReceiptInner(requestId, byUserId, opts = {}) {
   const row = await findTransfer(requestId);
   if (!row) return { ok: false, message: 'transferService: transfer not found' };
   if (row.status !== 'pending' || row.actionJSON.stage !== STAGES.IN_TRANSIT) {
     return { ok: false, message: `transferService: cannot confirm (${row.status}/${row.actionJSON.stage})` };
   }
   const aj = row.actionJSON;
+  const state = receiptState(aj);
+  // TRF-21 — which bales this delivery covers. A number already confirmed
+  // by an earlier delivery is dropped (a stale picker card must never
+  // count a bale twice); a number the transfer never carried is ignored.
+  let picked;
+  if (Array.isArray(opts.bales)) {
+    const remainingSet = new Set(state.remaining);
+    picked = [...new Set(opts.bales.map(String))].filter((b) => remainingSet.has(b));
+    if (!picked.length) {
+      return { ok: false, message: state.remaining.length
+        ? 'transferService: none of those bales is still on the road for this transfer'
+        : 'transferService: every bale of this transfer is already received' };
+    }
+  } else {
+    picked = state.remaining;
+  }
+  // A row that never carried a bale list (nothing was logged at dispatch)
+  // keeps the pre-TRF-21 close: flip nothing, settle the row.
+  const bareRow = !state.bales.length;
+  if (!picked.length && !bareRow) return { ok: false, message: 'transferService: nothing left to receive' };
+  const everything = picked.length === state.remaining.length;
   // TRF-INT1 — flip exactly the rows dispatch logged (uids); transfers from
   // before uid storage fall back to printed numbers scoped to the transfer's
   // own destination (dispatch stamped the rows there), so a same-numbered
   // bale elsewhere can never be flipped by this receive.
-  const hasUids = Array.isArray(aj.baleUids) && aj.baleUids.length > 0;
+  const hasUids = state.uids.length > 0;
+  let uids = state.remainingUids;
+  if (hasUids && !everything) {
+    // TRF-21 — a subset: the transfer stores uids per ROW, not per bale, so
+    // the rows of the picked bales are resolved from the sheet (any status
+    // — a hand-flipped row still belongs to its bale and is counted as
+    // expected, so the mismatch check below still sees it).
+    const want = new Set(state.remainingUids);
+    const pickedSet = new Set(picked.map((b) => b.toLowerCase()));
+    uids = (await inventoryRepository.getAll())
+      .filter((r) => want.has(String(r.baleUid)) && pickedSet.has(String(r.packageNo || '').toLowerCase()))
+      .map((r) => String(r.baleUid));
+  }
   const arrivedOn = todayInLagos();  // TIME-1
-  const flipped = await require('./stockEngine').transition(aj.bales || [], IN_TRANSIT, AVAILABLE, null,
-    Object.assign(hasUids ? { uids: aj.baleUids } : { warehouse: aj.to },
-      // BMV-1 — prev_state keeps the ORIGIN visible after arrival:
-      // "in_transit @ IDUMOTA".
-      { on: arrivedOn, fromWarehouse: aj.from, ref: requestId }),
-    { event: 'receive', adminId: byUserId, approvalId: requestId });
+  // A uid transfer whose picked rows resolve to NOTHING must not fall
+  // through to the unscoped printed-number path (transitionBales treats an
+  // empty uid list as "no uid filter") — flip nothing, report the mismatch.
+  const flipped = (hasUids && !uids.length) ? []
+    : await require('./stockEngine').transition(picked, IN_TRANSIT, AVAILABLE, null,
+      Object.assign(hasUids ? { uids } : { warehouse: aj.to },
+        // BMV-1 — prev_state keeps the ORIGIN visible after arrival:
+        // "in_transit @ IDUMOTA".
+        { on: arrivedOn, fromWarehouse: aj.from, ref: requestId }),
+      { event: 'receive', adminId: byUserId, approvalId: requestId });
   // Result check: fewer rows than expected means the sheet was touched
   // outside the pipeline (hand edit / cross-contamination). The goods are
-  // physically here, so the transfer still closes — but never silently.
-  const expected = hasUids ? aj.baleUids.length : null;
-  const flippedPkgs = new Set(flipped.map((r) => String(r.packageNo)));
-  const mismatch = (hasUids && flipped.length !== expected)
-    || (!hasUids && flippedPkgs.size !== (aj.bales || []).length)
-    ? { expectedRows: expected, flippedRows: flipped.length, expectedBales: (aj.bales || []).length, flippedBales: flippedPkgs.size }
+  // physically here, so the receipt still applies — but never silently.
+  const expected = hasUids ? uids.length : null;
+  const flippedPkgs = new Set(flipped.map((r) => String(r.packageNo).toLowerCase()));
+  // TRF-21 — the bale count is checked on the uid path too: a subset's rows
+  // are resolved from the live sheet, so a bale whose rows were edited away
+  // resolves to NO uid at all and would otherwise pass as "0 of 0 flipped".
+  const mismatch = (hasUids && flipped.length !== expected) || flippedPkgs.size !== picked.length
+    ? { expectedRows: expected, flippedRows: flipped.length, expectedBales: picked.length, flippedBales: flippedPkgs.size }
     : null;
   if (mismatch) {
     await auditLogRepository.append('transfer.receive_mismatch', { requestId, ...mismatch }, String(byUserId || ''));
   }
-  // APR-1 — `byUserId` here is the destination RECEIVER, not an approver.
-  // labelFor reads the admin who released the transfer off the record.
-  const approverLabel = await require('./approverStamp')
-    .labelFor({ actionJSON: aj, actorId: null });
-  await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString(), approverLabel);
-  await mirror(requestId, 'received', byUserId);
+  const now = new Date().toISOString();
+  const receivedBales = [...state.received, ...picked];
+  const receivedUids = [...state.receivedUids, ...uids];
+  const remaining = state.remaining.filter((b) => !picked.includes(b));
+  const receipts = [...state.receipts, {
+    at: now, on: arrivedOn, by: String(byUserId || ''), bales: picked, rows: flipped.length,
+  }];
+  // TRF-21 — a delivery that is part of a series is written to the row
+  // (a single all-at-once receipt keeps the pre-TRF-21 record untouched).
+  const series = receipts.length > 1 || remaining.length > 0;
+  const patch = series ? { receivedBales, receivedUids, receipts, lastReceivedAt: now } : null;
+  if (patch) await approvalQueueRepository.updateActionJSON(requestId, patch);
+  const ajOut = patch ? { ...aj, ...patch } : aj;
+  // One Transactions row per delivery (owner default, 30-Sep-2026): the
+  // bales confirmed that day, not the whole load.
   const totalSent = (aj.dispatched || []).reduce((s, d) => s + d.sent, 0) || (aj.bales || []).length;
+  const linesOf = () => {
+    const ds = Array.isArray(aj.dispatched) ? aj.dispatched : [];
+    const pickedSet = new Set(picked);
+    const hit = ds.filter((d) => Array.isArray(d.bales) && d.bales.some((b) => pickedSet.has(String(b))));
+    return hit.length ? hit : (aj.lines || []);
+  };
+  const txnLines = series ? linesOf() : (aj.lines || []);
+  if (!remaining.length) {
+    // APR-1 — `byUserId` here is the destination RECEIVER, not an approver.
+    // labelFor reads the admin who released the transfer off the record.
+    const approverLabel = await require('./approverStamp')
+      .labelFor({ actionJSON: ajOut, actorId: null });
+    await approvalQueueRepository.updateStatus(requestId, 'approved', now, approverLabel);
+    await mirror(requestId, 'received', byUserId, series ? { delivery: receipts.length, bales: picked.length } : {});
+  } else {
+    await mirror(requestId, 'partly_received', byUserId,
+      { delivery: receipts.length, bales: picked.length, remaining: remaining.length });
+  }
   await transactionsRepository.append({
     user: String(byUserId || ''), action: ACTION,
-    design: (aj.lines || []).map((l) => l.design).join('+'),
-    color: (aj.lines || []).map((l) => l.shade).join('+'),
-    qty: totalSent, before: aj.from || '', after: aj.to || '', status: 'completed',
+    design: txnLines.map((l) => l.design).join('+'),
+    color: txnLines.map((l) => l.shade).join('+'),
+    qty: series ? picked.length : totalSent, before: aj.from || '', after: aj.to || '', status: 'completed',
     // TRF-16 — the physical departure date the dispatcher chose. The
     // SalesDate column is this sheet's business-date column; backdatedStamp
     // only stamps sell/sale actions, so a transfer row stays unstamped.
     salesDate: aj.dispatchedOn || '',
   });
-  await auditLogRepository.append('transfer.received', { requestId }, String(byUserId || ''));
-  return { ok: true, aj, mismatch };
+  if (!remaining.length) {
+    await auditLogRepository.append('transfer.received',
+      series ? { requestId, deliveries: receipts.length, bales: picked.length } : { requestId },
+      String(byUserId || ''));
+  } else {
+    await auditLogRepository.append('transfer.partly_received',
+      { requestId, delivery: receipts.length, bales: picked, remaining: remaining.length }, String(byUserId || ''));
+  }
+  return { ok: true, aj: ajOut, mismatch, closed: !remaining.length, received: picked, remaining };
 }
 
 /**
@@ -535,20 +656,24 @@ async function abortInner(requestId, byUserId) {
   const aj = row.actionJSON;
   const kind = aj.stage === STAGES.IN_TRANSIT ? 'rejected' : 'declined';
   let mismatch = null;
+  const state = receiptState(aj);
   if (kind === 'rejected') {
     // Bales were logged at dispatch — send them home. TRF-INT1: exactly the
     // logged rows (uids), or printed numbers scoped to this transfer's
     // destination for pre-uid transfers; result checked, never silent.
-    const hasUids = Array.isArray(aj.baleUids) && aj.baleUids.length > 0;
-    const flipped = await require('./stockEngine').transition(aj.bales || [], IN_TRANSIT, AVAILABLE, aj.from,
-      Object.assign(hasUids ? { uids: aj.baleUids } : { warehouse: aj.to },
-        { on: todayInLagos(), fromWarehouse: aj.from, ref: requestId }),  // TIME-1
-      { event: 'reject', adminId: byUserId, approvalId: requestId });
-    const expected = hasUids ? aj.baleUids.length : null;
+    // TRF-21 — only the bales still ON THE ROAD go back; a bale confirmed
+    // by an earlier delivery is live at the destination and stays there.
+    const hasUids = state.uids.length > 0;
+    const flipped = (hasUids && !state.remainingUids.length) ? []
+      : await require('./stockEngine').transition(state.remaining, IN_TRANSIT, AVAILABLE, aj.from,
+        Object.assign(hasUids ? { uids: state.remainingUids } : { warehouse: aj.to },
+          { on: todayInLagos(), fromWarehouse: aj.from, ref: requestId }),  // TIME-1
+        { event: 'reject', adminId: byUserId, approvalId: requestId });
+    const expected = hasUids ? state.remainingUids.length : null;
     const flippedPkgs = new Set(flipped.map((r) => String(r.packageNo)));
     if ((hasUids && flipped.length !== expected)
-      || (!hasUids && flippedPkgs.size !== (aj.bales || []).length)) {
-      mismatch = { expectedRows: expected, flippedRows: flipped.length, expectedBales: (aj.bales || []).length, flippedBales: flippedPkgs.size };
+      || (!hasUids && flippedPkgs.size !== state.remaining.length)) {
+      mismatch = { expectedRows: expected, flippedRows: flipped.length, expectedBales: state.remaining.length, flippedBales: flippedPkgs.size };
       await auditLogRepository.append('transfer.reject_mismatch', { requestId, ...mismatch }, String(byUserId || ''));
     }
   }
@@ -558,9 +683,12 @@ async function abortInner(requestId, byUserId) {
   const approverLabel = await require('./approverStamp')
     .labelFor({ actionJSON: aj, actorId: byUserId, actorAlways: true });
   await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString(), approverLabel);
-  await auditLogRepository.append(`transfer.${kind}`, { requestId }, String(byUserId || ''));
-  await mirror(requestId, kind, byUserId);
-  return { ok: true, aj, kind, mismatch };
+  await auditLogRepository.append(`transfer.${kind}`,
+    state.received.length ? { requestId, returned: state.remaining.length, kept: state.received.length } : { requestId },
+    String(byUserId || ''));
+  await mirror(requestId, kind, byUserId,
+    state.received.length ? { returned: state.remaining.length, kept: state.received.length } : {});
+  return { ok: true, aj, kind, mismatch, returned: state.remaining, kept: state.received };
 }
 
 /**
@@ -595,7 +723,16 @@ async function attachDocInner(requestId, kind, doc = {}) {
     by: String(doc.by || ''),
     at: new Date().toISOString(),
   };
-  await approvalQueueRepository.updateActionJSON(requestId, { [key]: entry });
+  const patch = { [key]: entry };
+  // TRF-21 — a receipt photo belongs to ITS delivery: stamp the newest
+  // receipt entry too, so an earlier delivery's photo is not lost when the
+  // next one overwrites `receiveDoc`.
+  if (kind === 'receive' && Array.isArray(row.actionJSON.receipts) && row.actionJSON.receipts.length) {
+    const receipts = row.actionJSON.receipts.map((r) => ({ ...r }));
+    receipts[receipts.length - 1].doc = { url: entry.url, name: entry.name, fileId: entry.fileId, mime: entry.mime };
+    patch.receipts = receipts;
+  }
+  await approvalQueueRepository.updateActionJSON(requestId, patch);
   await mirror(requestId, `${kind}_doc`, entry.by, { url: entry.url });
   await auditLogRepository.append(`transfer.${kind}_doc`, { requestId, url: entry.url, name: entry.name }, entry.by);
   return { ok: true, key };
@@ -616,6 +753,7 @@ module.exports = {
   approveDispatch,
   sendBackFromReview,
   confirmReceipt,
+  receiptState,
   abort,
   attachDoc,
 };

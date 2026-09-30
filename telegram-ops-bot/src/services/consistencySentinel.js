@@ -190,12 +190,19 @@ function checkInTransit({ inventory, pending, now }) {
     const aj = q.actionJSON || {};
     return aj.action === 'transfer_stock' && aj.stage === 'in_transit';
   });
+  // TRF-21 — a bale confirmed by an earlier delivery is live at the
+  // destination while its transfer stays open for the rest: those uids are
+  // no longer a claim on the road in either direction.
+  const stillClaimed = (aj) => {
+    const got = new Set((Array.isArray(aj.receivedUids) ? aj.receivedUids : []).map(String));
+    return (Array.isArray(aj.baleUids) ? aj.baleUids : []).map(String).filter((u) => !got.has(u));
+  };
   const claimedUids = new Set();
   let uidlessTransfers = 0;
   for (const q of openTransfers) {
     const aj = q.actionJSON || {};
     if (Array.isArray(aj.baleUids) && aj.baleUids.length) {
-      aj.baleUids.forEach((u) => claimedUids.add(String(u)));
+      stillClaimed(aj).forEach((u) => claimedUids.add(u));
     } else {
       uidlessTransfers += 1;
     }
@@ -223,7 +230,7 @@ function checkInTransit({ inventory, pending, now }) {
   for (const q of openTransfers) {
     const aj = q.actionJSON || {};
     if (!Array.isArray(aj.baleUids) || !aj.baleUids.length) continue;
-    const missing = aj.baleUids.filter((u) => !transitUids.has(String(u)));
+    const missing = stillClaimed(aj).filter((u) => !transitUids.has(u));
     if (missing.length && !missing.some((u) => recentUids.has(String(u)))) {
       findings.push(`Transfer ${q.requestId} (${aj.from || '?'} → ${aj.to || '?'}) claims ${missing.length} bale(s) that are not in_transit any more`);
     }

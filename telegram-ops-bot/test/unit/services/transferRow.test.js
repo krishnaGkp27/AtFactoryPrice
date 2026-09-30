@@ -36,3 +36,19 @@ test('duty: the verb follows the STAGE — a parked transfer is an approval, not
   assert.deepEqual(row.duty(mk('TR-20260918-003', 'pending', { stage: 'in_transit' })).verb, 'Receive');
   assert.equal(row.dutyLabel(mk('TR-20260810-001', 'pending', { stage: 'admin_review', from: 'IDUMOTA', lines: [{ design: '202/201', shade: '1', qty: 5 }] })), '🛂 Approve · 10Aug·01 · IDU▸KAN · 5B');
 });
+
+test('TRF-21 label: part-way through a receipt the quantity reads received/total; settled rows keep the plain count', () => {
+  const ten = Array.from({ length: 10 }, (_, i) => String(i + 1));
+  const part = mk('TR-20260918-003', 'pending', { stage: 'in_transit', bales: ten, receivedBales: ['1', '2', '3', '4', '5', '6'] });
+  assert.equal(row.label(part), '18Sep·03 · 🟡 LAG▸KAN · 6/10B');
+  assert.equal(row.receivedCount(part), 6);
+  assert.equal(row.dutyLabel(part), '📦 Receive · 18Sep·03 · LAG▸KAN · 6/10B');
+  assert.match(row.duty(part).line, /6 of 10 received — confirm the rest/);
+  const done = mk('TR-20260918-003', 'approved', { stage: 'in_transit', bales: ten, receivedBales: ten });
+  assert.equal(row.label(done), '18Sep·03 · 🟢 LAG▸KAN · 10B', 'received in full — no fraction');
+  assert.equal(row.receivedCount(done), 0);
+  const fresh = mk('TR-20260918-003', 'pending', { stage: 'in_transit', bales: ten });
+  assert.equal(row.label(fresh), '18Sep·03 · 🟡 LAG▸KAN · 10B', 'nothing received yet — unchanged');
+  const stray = mk('TR-20260918-003', 'pending', { stage: 'in_transit', bales: ten, receivedBales: ['ZZ'] });
+  assert.equal(row.label(stray), '18Sep·03 · 🟡 LAG▸KAN · 10B', 'a number the transfer never carried does not count');
+});

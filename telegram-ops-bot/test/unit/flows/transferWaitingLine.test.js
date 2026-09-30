@@ -218,3 +218,19 @@ test('TRF-19b a settled transfer names the person who closed it and when', () =>
   assert.match(line, /Closed by Krishna/);
   assert.match(line, /bales back at Kano office/);
 });
+
+test('TRF-21 after a partial delivery the line says how much is here and clocks from the last confirmation', () => {
+  const part = row('in_transit');
+  part.actionJSON.bales = ['1', '2', '3', '4'];
+  part.actionJSON.receivedBales = ['1', '2', '3'];
+  part.actionJSON.dispatchedOn = '2026-09-10';
+  part.actionJSON.dispatchedAt = daysAgo(5);
+  part.actionJSON.lastReceivedAt = daysAgo(1);
+  const line = waitingLine(part, NAMES);
+  assert.match(line, /With Abdul to confirm the rest/);
+  assert.match(line, /3 of 4 received/);
+  assert.match(line, /left 10-Sep-2026/);
+  assert.match(line, /1d waiting/, `clock restarts at the last delivery, got: ${line}`);
+  assert.equal(transferFlow._internals.stateLabel(part), 'partly received 📦 (3 of 4)');
+  assert.equal(transferFlow._internals.stateLabel(row('in_transit')), 'in transit 🚚');
+});

@@ -124,6 +124,16 @@ test('C3 flags stranded in-transit rows and transfers claiming landed bales', ()
     pending: [{ requestId: 'TR-2', actionJSON: { action: 'transfer_stock', stage: 'in_transit' } }],
   });
   assert.match(legacy[0], /unverifiable/);
+  // TRF-21 — a bale confirmed by an earlier delivery is live at the
+  // destination while the transfer stays open for the rest: not a claim.
+  const partly = { requestId: 'TR-3', actionJSON: { action: 'transfer_stock', stage: 'in_transit', baleUids: ['BAL-869-1', 'BAL-870-1'], receivedUids: ['BAL-869-1'], from: 'IDUMOTA', to: 'Kano office' } };
+  const other = invRow({ status: 'in_transit', warehouse: 'Kano office', soldTo: '', soldDate: '', baleUid: 'BAL-870-1', packageNo: '870' });
+  assert.deepEqual(checkInTransit({ inventory: [other], pending: [partly] }), [], 'the received uid is not "missing", the outstanding one is claimed');
+  const landedRow = invRow({ status: 'available', warehouse: 'Kano office', soldTo: '', soldDate: '' });
+  assert.deepEqual(checkInTransit({ inventory: [landedRow, other], pending: [partly] }), []);
+  const strandedAgain = checkInTransit({ inventory: [transit, other], pending: [partly] });
+  assert.equal(strandedAgain.length, 1, 'a received uid still sitting in_transit is stranded (no open claim on it)');
+  assert.match(strandedAgain[0], /NO open transfer claiming it/);
 });
 
 /* ── C4 ── */

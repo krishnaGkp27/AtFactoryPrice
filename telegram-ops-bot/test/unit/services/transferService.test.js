@@ -262,3 +262,176 @@ test('SEC-P2 H3: dispatch racing abort — bales are not both moved and reverted
   assert.ok(d.ok || a.ok, 'at least one op resolves the row');
   assert.deepEqual(calls.statusUpdates.map((s) => s.status).filter(Boolean).slice(-1), ['rejected']);
 });
+
+/* ── TRF-21 — partial receipt (owner, 30-Sep-2026) ─────────────────────── */
+
+const PARTIAL_ROW = () => ROW('in_transit', {
+  bales: ['P1', 'P2', 'P4'], baleUids: ['U-P1a', 'U-P2a', 'U-P4a'],
+  dispatched: [
+    { design: 'Rose', shade: 'Red', requested: 2, sent: 2, bales: ['P1', 'P2'] },
+    { design: 'Lily', shade: 'Blue', requested: 2, sent: 1, bales: ['P4'] },
+  ],
+});
+
+test('TRF-21 receiptState: nothing received → not partial; a stray number is ignored', () => {
+  const none = transferService.receiptState(PARTIAL_ROW().actionJSON);
+  assert.deepEqual(none.remaining, ['P1', 'P2', 'P4']);
+  assert.equal(none.partial, false);
+  const some = transferService.receiptState({ ...PARTIAL_ROW().actionJSON, receivedBales: ['P1', 'ZZ', 'P1'], receivedUids: ['U-P1a'] });
+  assert.deepEqual(some.received, ['P1'], 'dedup + only numbers the transfer carries');
+  assert.deepEqual(some.remaining, ['P2', 'P4']);
+  assert.deepEqual(some.remainingUids, ['U-P2a', 'U-P4a']);
+  assert.equal(some.partial, true);
+  const all = transferService.receiptState({ ...PARTIAL_ROW().actionJSON, receivedBales: ['P1', 'P2', 'P4'] });
+  assert.equal(all.partial, false, 'everything received is not "partial"');
+});
+
+test('TRF-21 a delivery of ONE bale flips only its rows, keeps the row open, books one Transactions row', async () => {
+  const calls = stub(PARTIAL_ROW(), IN_TRANSIT_INV);
+  const res = await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1'] });
+  assert.equal(res.ok, true);
+  assert.equal(res.closed, false);
+  assert.deepEqual(res.received, ['P1']);
+  assert.deepEqual(res.remaining, ['P2', 'P4']);
+  assert.equal(res.mismatch, null);
+  const t0 = calls.transitions[0];
+  assert.deepEqual(t0.pkgs, ['P1']);
+  assert.deepEqual(t0.opts.uids, ['U-P1a'], 'uid-exact subset: the PH P1 is untouchable');
+  assert.equal(t0.from, 'in_transit');
+  assert.equal(t0.to, 'available');
+  assert.equal(calls.statusUpdates.length, 0, 'the row stays pending / in_transit');
+  const patch = calls.ajPatches[0].patch;
+  assert.deepEqual(patch.receivedBales, ['P1']);
+  assert.deepEqual(patch.receivedUids, ['U-P1a']);
+  assert.equal(patch.receipts.length, 1);
+  assert.deepEqual(patch.receipts[0].bales, ['P1']);
+  assert.equal(patch.receipts[0].by, 'musa');
+  assert.ok(patch.lastReceivedAt);
+  assert.equal(calls.txns.length, 1);
+  assert.equal(calls.txns[0].qty, 1, 'one Transactions row per delivery, the bales of that day');
+  assert.equal(calls.txns[0].design, 'Rose', 'the delivery names its own design');
+  assert.ok(calls.audits.some((a) => a.event === 'transfer.partly_received'));
+  assert.ok(!calls.audits.some((a) => a.event === 'transfer.received'));
+  const row = await approvalQueueRepository.getByRequestId('TR-1');
+  assert.equal(row.status, 'pending');
+  assert.equal(row.actionJSON.stage, 'in_transit');
+  const inv = await inventoryRepository.getAll();
+  assert.equal(inv.find((r) => r.baleUid === 'U-P1a').status, 'available');
+  assert.equal(inv.find((r) => r.baleUid === 'U-P2a').status, 'in_transit', 'the rest stay on the road');
+  assert.equal(inv.find((r) => r.baleUid === 'U-P1x').status, 'in_transit', 'same number elsewhere untouched');
+});
+
+test('TRF-21 the last delivery closes the transfer; the record shows both deliveries', async () => {
+  const calls = stub(PARTIAL_ROW(), IN_TRANSIT_INV);
+  await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1'] });
+  const res = await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P2', 'P4'] });
+  assert.equal(res.ok, true);
+  assert.equal(res.closed, true);
+  assert.deepEqual(res.remaining, []);
+  assert.deepEqual(calls.transitions[1].opts.uids, ['U-P2a', 'U-P4a'], 'all outstanding uids, no sheet lookup needed');
+  assert.deepEqual(calls.statusUpdates[0], { id: 'TR-1', status: 'approved' });
+  const patch = calls.ajPatches[1].patch;
+  assert.deepEqual(patch.receivedBales, ['P1', 'P2', 'P4']);
+  assert.equal(patch.receipts.length, 2);
+  assert.equal(calls.txns.length, 2);
+  assert.equal(calls.txns[1].qty, 2);
+  assert.equal(calls.txns[1].design, 'Rose+Lily');
+  assert.ok(calls.audits.some((a) => a.event === 'transfer.received'));
+  const again = await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1'] });
+  assert.equal(again.ok, false, 'a closed transfer takes no more deliveries');
+});
+
+test('TRF-21 an already-received bale is dropped from a later delivery; nothing new = refused', async () => {
+  const calls = stub(PARTIAL_ROW(), IN_TRANSIT_INV);
+  await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1'] });
+  const dup = await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1'] });
+  assert.equal(dup.ok, false, 'a stale picker card cannot count a bale twice');
+  assert.match(dup.message, /none of those bales is still on the road/);
+  assert.equal(calls.transitions.length, 1);
+  const mixed = await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1', 'P2', 'ZZ'] });
+  assert.equal(mixed.ok, true);
+  assert.deepEqual(mixed.received, ['P2'], 'only the outstanding number counts');
+  assert.deepEqual(mixed.remaining, ['P4']);
+});
+
+test('TRF-21 ticking EVERY outstanding bale at once is the pre-TRF-21 receipt, byte for byte', async () => {
+  const calls = stub(PARTIAL_ROW(), IN_TRANSIT_INV);
+  const res = await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1', 'P2', 'P4'] });
+  assert.equal(res.ok, true);
+  assert.equal(res.closed, true);
+  assert.deepEqual(calls.transitions[0].opts.uids, ['U-P1a', 'U-P2a', 'U-P4a']);
+  assert.equal(calls.ajPatches.length, 0, 'a single all-at-once receipt writes no delivery record');
+  assert.equal(calls.txns[0].qty, 3, 'transaction logs the whole sent count as before');
+  assert.equal(calls.txns[0].design, 'Rose+Lily');
+  assert.deepEqual(calls.statusUpdates[0], { id: 'TR-1', status: 'approved' });
+});
+
+test('TRF-21 reject after a partial delivery returns ONLY the bales still on the road', async () => {
+  const calls = stub(PARTIAL_ROW(), IN_TRANSIT_INV);
+  await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1'] });
+  const res = await transferService.abort('TR-1', 'musa');
+  assert.equal(res.ok, true);
+  assert.equal(res.kind, 'rejected');
+  assert.deepEqual(res.returned, ['P2', 'P4']);
+  assert.deepEqual(res.kept, ['P1']);
+  const t1 = calls.transitions[1];
+  assert.deepEqual(t1.pkgs, ['P2', 'P4']);
+  assert.deepEqual(t1.opts.uids, ['U-P2a', 'U-P4a'], 'the received row is never sent home');
+  assert.equal(t1.wh, 'Lagos');
+  assert.equal(res.mismatch, null);
+  const inv = await inventoryRepository.getAll();
+  assert.equal(inv.find((r) => r.baleUid === 'U-P1a').status, 'available');
+  assert.equal(inv.find((r) => r.baleUid === 'U-P1a').warehouse, 'Kano office', 'P1 stays live at the destination');
+  assert.equal(inv.find((r) => r.baleUid === 'U-P2a').warehouse, 'Lagos');
+  assert.deepEqual(calls.statusUpdates[0], { id: 'TR-1', status: 'rejected' });
+});
+
+test('TRF-21 a pre-uid transfer receives a subset by printed number, scoped to its destination', async () => {
+  const calls = stub(ROW('in_transit', { bales: ['P1', 'P2', 'P4'] }), IN_TRANSIT_INV);
+  const res = await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1'] });
+  assert.equal(res.ok, true);
+  assert.equal(res.closed, false);
+  assert.equal(res.mismatch, null);
+  const t0 = calls.transitions[0];
+  assert.deepEqual(t0.pkgs, ['P1']);
+  assert.equal(t0.opts.warehouse, 'Kano office', 'legacy fallback stays inside aj.to');
+  assert.equal(t0.opts.uids, undefined);
+  const inv = await inventoryRepository.getAll();
+  assert.equal(inv.find((r) => r.baleUid === 'U-P1x').status, 'in_transit', 'PH P1 untouched');
+});
+
+test('TRF-21 a picked bale whose rows were hand-edited away is a mismatch, recorded received, never an unscoped flip', async () => {
+  const calls = stub(PARTIAL_ROW(), IN_TRANSIT_INV.filter((r) => r.baleUid !== 'U-P1a'));
+  const res = await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1'] });
+  assert.equal(res.ok, true, 'goods physically arrived — the delivery still records');
+  assert.ok(res.mismatch);
+  assert.equal(res.mismatch.expectedBales, 1);
+  assert.equal(res.mismatch.flippedBales, 0);
+  assert.equal(calls.transitions.length, 0, 'no uid resolved → nothing flipped (the PH P1 must not be touched)');
+  assert.ok(calls.audits.some((a) => a.event === 'transfer.receive_mismatch'));
+  assert.deepEqual(calls.ajPatches[0].patch.receivedBales, ['P1']);
+  assert.deepEqual(calls.ajPatches[0].patch.receivedUids, [], 'no row claimed');
+});
+
+test('TRF-21 the receipt photo is stamped on ITS delivery, so the next delivery\'s photo does not erase it', async () => {
+  const calls = stub(PARTIAL_ROW(), IN_TRANSIT_INV);
+  await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1'] });
+  await transferService.attachDoc('TR-1', 'receive', { url: 'https://drive/one', fileId: 'F1', mime: 'image/jpeg', by: 'musa' });
+  await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P2', 'P4'] });
+  await transferService.attachDoc('TR-1', 'receive', { url: 'https://drive/two', fileId: 'F2', mime: 'image/jpeg', by: 'musa' });
+  const row = await approvalQueueRepository.getByRequestId('TR-1');
+  assert.equal(row.actionJSON.receiveDoc.url, 'https://drive/two', 'receiveDoc is the latest, as before');
+  assert.equal(row.actionJSON.receipts[0].doc.url, 'https://drive/one');
+  assert.equal(row.actionJSON.receipts[1].doc.url, 'https://drive/two');
+  assert.ok(calls.ajPatches.length >= 4);
+});
+
+test('TRF-21 a row that logged no bales at dispatch still settles on ✅ Received (pre-TRF-21 close)', async () => {
+  const calls = stub(ROW('in_transit', { bales: [] }), IN_TRANSIT_INV);
+  const res = await transferService.confirmReceipt('TR-1', 'musa');
+  assert.equal(res.ok, true);
+  assert.equal(res.closed, true);
+  assert.equal(res.mismatch, null);
+  assert.deepEqual(calls.statusUpdates[0], { id: 'TR-1', status: 'approved' });
+  assert.equal(calls.ajPatches.length, 0);
+});
