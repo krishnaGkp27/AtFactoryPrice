@@ -64,12 +64,15 @@ function thanCount(aj) {
 }
 
 /**
- * TRF-21 — bales confirmed so far on a transfer still on the road. Zero
- * unless a delivery has been confirmed AND something is still outstanding;
- * a settled row keeps its plain count.
+ * TRF-21 — bales confirmed so far on a transfer still on the road (or one
+ * rejected part-way). Zero unless a delivery has been confirmed AND
+ * something is still outstanding; a row received in full keeps its plain count.
  */
 function receivedCount(row) {
-  if (stateOf(row) !== 'in_transit') return 0;
+  // A row closed after a partial delivery keeps its fraction (❌ … 6/10B):
+  // six bales are at the destination, not "10 back at the source".
+  const st = stateOf(row);
+  if (st !== 'in_transit' && st !== 'closed') return 0;
   const aj = (row && row.actionJSON) || {};
   const bales = new Set((Array.isArray(aj.bales) ? aj.bales : []).map(String));
   const got = new Set((Array.isArray(aj.receivedBales) ? aj.receivedBales : []).map(String).filter((b) => bales.has(b)));

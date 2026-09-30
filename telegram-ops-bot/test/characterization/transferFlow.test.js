@@ -336,16 +336,20 @@ test('TRF-21: only P1 arrives — Musa ticks it, sends the photo, P1 goes live, 
   assert.ok(receiverKb.some((b) => b.callback_data === `trf:rcvp:${requestId}`), 'the receiver card offers the "only some arrived" door');
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb(`trf:rcvp:${requestId}`, 'musa'));
+  // Review (30-Sep) — the picker is its own message; the card (msg 5) keeps its buttons.
+  const pid = sessionStore.get('musa').flowMessageId;
+  assert.ok(pid && pid !== 5, 'picker sent as a fresh message');
+  assert.ok(!bot.callsTo('editMessageText').some((m) => m.args.opts.message_id === 5), 'the receiver card was not touched');
   let kb = kbTexts(bot);
   assert.ok(kb.includes('⬜ P1|trf:rp:t:0') && kb.includes('⬜ P2|trf:rp:t:1'), `every outstanding bale UNTICKED (§2), got ${kb}`);
   assert.ok(!kb.some((t) => t.includes('trf:rp:go')), 'no Confirm button before a human ticks');
   assert.match(bot.allText(), /which bales are here now\?/);
   assert.match(bot.allText(), /9006 · Shade 3: P1, P2/, 'the text says which design each number is');
-  await controller.handleCallbackQuery(bot, cb('trf:rp:t:0', 'musa'));
+  await controller.handleCallbackQuery(bot, cb('trf:rp:t:0', 'musa', pid));
   kb = kbTexts(bot);
   assert.ok(kb.includes('✅ P1|trf:rp:t:0'), 'ticked');
   assert.ok(kb.includes('✅ Confirm 1 of 2 arrived|trf:rp:go'));
-  await controller.handleCallbackQuery(bot, cb('trf:rp:go', 'musa'));
+  await controller.handleCallbackQuery(bot, cb('trf:rp:go', 'musa', pid));
   assert.ok(!calls.transitions.some((t) => t.from === 'in_transit'), 'TRF-6: nothing flips before the receipt photo');
   assert.match(bot.allText(), /Photo required/);
   assert.match(bot.allText(), /1 bale\(s\) received now \(P1\)/);
@@ -364,6 +368,12 @@ test('TRF-21: only P1 arrives — Musa ticks it, sends the photo, P1 goes live, 
   assert.ok(row.actionJSON.receipts[0].doc && row.actionJSON.receipts[0].doc.fileId === 'F2', 'the photo is stamped on its delivery');
   assert.match(br.allText(), /1 of 2 received/);
   assert.match(br.allText(), /P1 now live at \*Kano office\*; 1 still on the road/);
+  // The picker seal is gone and the receiver's card (msg 5) is redrawn live, buttons included.
+  assert.ok(br.callsTo('deleteMessage').some((m) => m.args.messageId === pid), 'picker message deleted');
+  const cardEdit = br.callsTo('editMessageText').find((m) => m.args.opts.message_id === 5);
+  assert.ok(cardEdit, 'receiver card redrawn in place');
+  assert.match(cardEdit.args.text, /1 of 2 received\* · 🚚 1 still on the road \(P2\)/);
+  assert.ok(cardEdit.args.opts.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === `trf:rcv:${requestId}`), 'card keeps ✅ Received');
   const admin = br.callsTo('sendMessage').find((m) => String(m.args.chatId) === '777');
   assert.ok(admin && /partly received 📦 \(1 of 2\)/.test(admin.args.text), 'admins hear it is partly received');
   const disp = br.callsTo('sendMessage').find((m) => String(m.args.chatId) === 'abdul');
@@ -400,23 +410,31 @@ test('TRF-21: a receipt with everything ticked is today\'s receipt; ↩ Not now 
   const { calls, requestId } = await dispatchTwo();
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb(`trf:rcvp:${requestId}`, 'musa'));
-  await controller.handleCallbackQuery(bot, cb('trf:rp:t:1', 'musa'));
-  await controller.handleCallbackQuery(bot, cb(`trf:rp:nn:${requestId}`, 'musa'));
+  let pid = sessionStore.get('musa').flowMessageId;
+  await controller.handleCallbackQuery(bot, cb('trf:rp:t:1', 'musa', pid));
+  // A stale copy's ↩ Not now (another message id) must not wipe the live ticks.
+  await controller.handleCallbackQuery(bot, cb(`trf:rp:nn:${requestId}`, 'musa', 4));
+  assert.deepEqual(sessionStore.get('musa')._rcvSel, ['P2'], 'live picker untouched by a stale Not now');
+  await controller.handleCallbackQuery(bot, cb(`trf:rp:nn:${requestId}`, 'musa', pid));
   assert.ok(!sessionStore.get('musa'), 'ticks dropped');
-  assert.match(bot.allText(), /Transfer .* incoming/, 'the receiver card is back');
+  assert.ok(bot.callsTo('deleteMessage').some((m) => m.args.messageId === pid), 'picker message deleted');
+  const back = bot.callsTo('editMessageText').filter((m) => m.args.opts.message_id === 5).pop();
+  assert.ok(back && /Transfer .* incoming/.test(back.args.text), 'the receiver card is redrawn where it stands');
   // Opened from a card that carried ⬅ Back (🛂 inbox / 📋 list): Not now
   // restores the card WITH that Back.
   const fromList = cb(`trf:rcvp:${requestId}`, 'musa');
   fromList.message.reply_markup = { inline_keyboard: [[{ text: '⬅ Back', callback_data: 'trf:list' }]] };
   await controller.handleCallbackQuery(bot, fromList);
-  await controller.handleCallbackQuery(bot, cb(`trf:rp:nn:${requestId}`, 'musa'));
+  pid = sessionStore.get('musa').flowMessageId;
+  await controller.handleCallbackQuery(bot, cb(`trf:rp:nn:${requestId}`, 'musa', pid));
   assert.ok(kbTexts(bot).includes('⬅ Back|trf:list'), `Back survives the picker round-trip, got ${kbTexts(bot)}`);
   // Second attempt: tick both → same as ✅ Received.
   await controller.handleCallbackQuery(bot, cb(`trf:rcvp:${requestId}`, 'musa'));
-  await controller.handleCallbackQuery(bot, cb('trf:rp:t:0', 'musa'));
-  await controller.handleCallbackQuery(bot, cb('trf:rp:t:1', 'musa'));
+  pid = sessionStore.get('musa').flowMessageId;
+  await controller.handleCallbackQuery(bot, cb('trf:rp:t:0', 'musa', pid));
+  await controller.handleCallbackQuery(bot, cb('trf:rp:t:1', 'musa', pid));
   assert.ok(kbTexts(bot).includes('✅ Confirm 2 of 2 arrived|trf:rp:go'));
-  await controller.handleCallbackQuery(bot, cb('trf:rp:go', 'musa'));
+  await controller.handleCallbackQuery(bot, cb('trf:rp:go', 'musa', pid));
   const br = createFakeBot();
   await controller.handleFileMessage(br, { chat: { id: 'musa' }, from: { id: 'musa', first_name: 'Musa' }, photo: [{ file_id: 'F2' }] });
   const row = await approvalQueueRepository.getByRequestId(requestId);
@@ -431,8 +449,9 @@ test('TRF-21: reject after a partial delivery sends back only P2; P1 stays live 
   const { calls, requestId } = await dispatchTwo();
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb(`trf:rcvp:${requestId}`, 'musa'));
-  await controller.handleCallbackQuery(bot, cb('trf:rp:t:0', 'musa'));
-  await controller.handleCallbackQuery(bot, cb('trf:rp:go', 'musa'));
+  const pid = sessionStore.get('musa').flowMessageId;
+  await controller.handleCallbackQuery(bot, cb('trf:rp:t:0', 'musa', pid));
+  await controller.handleCallbackQuery(bot, cb('trf:rp:go', 'musa', pid));
   await controller.handleFileMessage(createFakeBot(), { chat: { id: 'musa' }, from: { id: 'musa', first_name: 'Musa' }, photo: [{ file_id: 'F2' }] });
   const bj = createFakeBot();
   await controller.handleCallbackQuery(bj, cb(`trf:rej:${requestId}`, 'musa'));
@@ -449,6 +468,12 @@ test('TRF-21: reject after a partial delivery sends back only P2; P1 stays live 
   assert.equal(inv.find((r) => r.packageNo === 'P2').warehouse, 'Lagos');
   const row = await approvalQueueRepository.getByRequestId(requestId);
   assert.equal(row.status, 'rejected');
+  // The closed record says what stayed and what went home, on every surface.
+  const bd = createFakeBot();
+  await controller.handleCallbackQuery(bd, cb(`trf:info:${requestId}`, 777));
+  assert.match(bd.allText(), /1 bale\(s\) back at Lagos · 1 kept at Kano office/);
+  assert.match(bd.allText(), /1 received\* at Kano office · ↩ 1 returned to Lagos/);
+  assert.doesNotMatch(bd.allText(), /still on the road/);
 });
 
 test('TRF-21: a stranger cannot open the arrival picker; a stale picker card cannot tick into a newer one', async () => {
@@ -463,5 +488,8 @@ test('TRF-21: a stranger cannot open the arrival picker; a stale picker card can
   await controller.handleCallbackQuery(bm, cb('trf:rp:t:0', 'musa', 4));
   assert.match(bm.allText(), /belongs to an earlier step/);
   assert.deepEqual(sessionStore.get('musa')._rcvSel, [], 'nothing ticked from the stale card');
+  const pid = sessionStore.get('musa').flowMessageId;
+  await controller.handleCallbackQuery(bm, cb('trf:rp:t:0', 'musa', pid));
+  assert.deepEqual(sessionStore.get('musa')._rcvSel, ['P1'], 'the live picker ticks');
   sessionStore.clear('musa');
 });

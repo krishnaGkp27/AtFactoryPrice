@@ -433,9 +433,17 @@ function dispatchedBlock(aj) {
  * Empty unless a delivery has been confirmed while something is still
  * outstanding, so every pre-TRF-21 card stays byte-identical.
  */
-function receiptLine(aj) {
+function receiptLine(aj, row = null) {
   const st = transferService.receiptState(aj);
   if (!st.partial) return '';
+  const status = row ? String(row.status || '') : 'pending';
+  if (status === 'rejected') {
+    // The rest went home when the transfer was rejected — say so, never
+    // "still on the road" under a ❌ Closed line.
+    return `\n✅ *${st.received.length} received* at ${aj.to} · ↩ ${st.remaining.length} returned to ${aj.from}`
+      + ` (${baleListPreview(st.remaining)})`;
+  }
+  if (status !== 'pending') return '';
   return `\n✅ *${st.received.length} of ${st.bales.length} received* · 🚚 ${st.remaining.length} still on the road`
     + ` (${baleListPreview(st.remaining)})`;
 }
@@ -944,10 +952,15 @@ function receiverCard(requestId, aj, statusLine = '') {
   // that arrived NOW (unticked list — BUSINESS_RULES §2, the bot never
   // pre-ticks) and leaves the rest in transit for a later delivery.
   const st = transferService.receiptState(aj);
+  // One printed number on two lines is two bales (two containers); a
+  // number-keyed tick list cannot tell them apart, so that load is
+  // received in one go.
+  const repeated = new Set(st.bales).size !== st.bales.length;
   const prompt = st.partial
     ? `\n\n✅ Received confirms the remaining ${st.remaining.length} — a photo/PDF of the goods is required:`
-    : '\n\nConfirm when the goods arrive and match — a photo/PDF of the received goods is required:';
-  const someRow = st.remaining.length > 1
+    : `${repeated ? '\n_This load carries the same bale number twice — it is received in one go._' : ''}`
+      + '\n\nConfirm when the goods arrive and match — a photo/PDF of the received goods is required:';
+  const someRow = st.remaining.length > 1 && !repeated
     ? [[{ text: '📦 Only some arrived — tick them', callback_data: `trf:rcvp:${requestId}` }]]
     : [];
   return {
@@ -1018,7 +1031,12 @@ function waitingLine(row, names = {}) {
   }
   if (String(row.status) === 'rejected') {
     const by = row.approver ? ` by ${mdEscape(String(row.approver))}` : '';
-    return `❌ *Closed${by}* · bales back at ${mdEscape(aj.from || 'the source')}`
+    // TRF-21 — rejected after a partial delivery: only the rest went home.
+    const st = transferService.receiptState(aj);
+    const where = st.received.length
+      ? `${st.remaining.length} bale(s) back at ${mdEscape(aj.from || 'the source')} · ${st.received.length} kept at ${mdEscape(aj.to || 'the destination')}`
+      : `bales back at ${mdEscape(aj.from || 'the source')}`;
+    return `❌ *Closed${by}* · ${where}`
       + `${row.resolvedAt ? ` · ${fmtDate(row.resolvedAt)}` : ''}`;
   }
   if (aj.stage === 'admin_review') {
@@ -1109,20 +1127,22 @@ async function detailCard(row) {
     '',
     aj.dispatched && aj.dispatched.length ? dispatchedBlock(aj) : linesBlock(aj.lines),
   ];
-  const rl = receiptLine(aj);
+  const rl = receiptLine(aj, row);
   if (rl) out.push(rl.trim());
   // TRF-21 — every delivery on the record: when, who, which bales.
   const receipts = Array.isArray(aj.receipts) ? aj.receipts : [];
   if (receipts.length > 1 || (receipts.length === 1 && rl)) {
     const nm = await nameMap(receipts.map((r) => r.by));
     receipts.forEach((r, i) => {
+      // A Drive id can carry `_`: as raw text it would pair with another
+      // and blank the card (legacy Markdown) — a link entity is not parsed.
       out.push(`📦 Delivery ${i + 1}: ${(r.bales || []).length} bale(s) · ${fmtDate(r.on || r.at)} · ${mdEscape(nm[String(r.by)] || String(r.by || ''))}`
-        + `${r.doc && r.doc.url ? ` · 📸 ${r.doc.url}` : ''}`);
+        + `${r.doc && r.doc.url ? ` · [📸 photo](${r.doc.url})` : ''}`);
     });
   }
   // TRF-12 — bale numbers now ride each row; the flat list is the chip's job.
-  if (aj.dispatchDoc && aj.dispatchDoc.url) out.push(`📸 Dispatch photo: ${aj.dispatchDoc.url}`);
-  if (aj.receiveDoc && aj.receiveDoc.url) out.push(`📸 Receipt photo: ${aj.receiveDoc.url}`);
+  if (aj.dispatchDoc && aj.dispatchDoc.url) out.push(`[📸 Dispatch photo](${aj.dispatchDoc.url})`);
+  if (aj.receiveDoc && aj.receiveDoc.url) out.push(`[📸 Receipt photo](${aj.receiveDoc.url})`);
   return out.join('\n');
 }
 
@@ -1845,7 +1865,8 @@ async function completeReceipt(bot, session, userId) {
   // needs telling.)
   const dispatcher = String(aj.dispatcher || '');
   if ((!res.closed || deliveries > 1) && dispatcher && dispatcher !== String(userId)
-      && !config.access.adminIds.includes(dispatcher)) {
+      && !config.access.adminIds.includes(dispatcher)
+      && !(row && String(row.user) === dispatcher)) {
     try {
       const status = await pushStatus(requestId, aj);
       await bot.sendMessage(aj.dispatcher,
@@ -1869,15 +1890,26 @@ async function completeReceipt(bot, session, userId) {
   if (!res.closed) {
     return {
       ok: true,
+      partial: true,
+      delivery: res.delivery,
       captionNote: ` — delivery ${deliveries}: ${res.received.join(', ')}`,
       sealText: `📦 *${shortTransferRef(requestId)} — ${st.received.length} of ${st.bales.length} received* — `
-        + `${res.received.join(', ')} now live at *${aj.to}*; ${res.remaining.length} still on the road.\n`
-        + `${headOf(aj)}\n${dispatchedBlock(aj)}${receiptLine(aj)}${mismatchNote}\n_Tap ✅ Received on the card when the rest arrives._`,
+        + `${res.received.join(', ')} now live at *${aj.to}*; ${res.remaining.length} still on the road.`
+        + `${mismatchNote}\n_Your transfer card is updated — use it for the next delivery._`,
+    };
+  }
+  if (res.recovered) {
+    return {
+      ok: true,
+      delivery: res.delivery,
+      captionNote: '',
+      sealText: `✅ *${shortTransferRef(requestId)} received* — every bale was already live at *${aj.to}*; the transfer is now closed.\n${headOf(aj)}\n${dispatchedBlock(aj)}`,
     };
   }
   const seriesNote = deliveries > 1 ? ` (in ${deliveries} deliveries)` : '';
   return {
     ok: true,
+    delivery: res.delivery,
     captionNote: deliveries > 1 ? ` — delivery ${deliveries}: ${res.received.join(', ')}` : '',
     sealText: `✅ *${shortTransferRef(requestId)} received* — bales are now live at *${aj.to}*${seriesNote}.\n${headOf(aj)}\n${dispatchedBlock(aj)}${mismatchNote}`,
   };
@@ -1907,13 +1939,28 @@ async function startReceivePicker(bot, chatId, userId, row, messageId, backCb = 
     }
   }
   for (const b of st.remaining) if (!seen.has(b)) { seen.add(b); items.push({ pkg: b, design: '', shade: '' }); }
+  // Review (30-Sep) — the picker is its OWN message: the receiver's card
+  // keeps its buttons, and a picker that times out is tombstoned by the
+  // janitor without taking the card with it.
   sessionStore.set(userId, {
     type: SESSION_TYPE, step: 'receive_pick', requestId: row.requestId,
     from: aj.from, to: aj.to, _rcv: items, _rcvSel: [], _rcvPage: 0, _backCb: backCb || null,
-    flowMessageId: messageId || null,
+    _cardMessageId: messageId || null,
+    flowMessageId: null,
     ttlMs: 30 * 60 * 1000, // counting bales off a truck — outlasts the default TTL
   });
   await showReceivePicker(bot, chatId, userId);
+}
+
+/**
+ * TRF-21 — redraw the receiver's card in place from the live row (after a
+ * delivery, or when the picker is dropped). Goes through showActionCard so
+ * there is one card builder; the synthetic query carries no callback id.
+ */
+async function refreshCard(bot, chatId, messageId, userId, requestId, backCb) {
+  if (!messageId) return;
+  const query = { id: null, from: { id: userId }, message: { chat: { id: chatId }, message_id: messageId } };
+  try { await showActionCard(bot, query, requestId, backCb ? { backCb } : {}); } catch (_) { /* best-effort */ }
 }
 
 /** Render the arrival tick list (paged; chips are session-relative indexes). */
@@ -1975,7 +2022,10 @@ async function askReceiptDoc(bot, chatId, userId) {
       + `Send a photo or PDF of the ${picked.length} bale(s) received now (${baleListPreview(picked)}).\n`
       + `_They go live at *${session.to}* when it arrives; the other ${rest} stay on the road._`,
     kb: [[{ text: '↩ Not now', callback_data: `trf:nn:${requestId}` }]],
-    keep: { rcvBales: picked },
+    keep: {
+      rcvBales: picked, cardMessageId: session._cardMessageId || null,
+      pickerMessageId: session.flowMessageId || null, backCb: session._backCb || null,
+    },
   });
 }
 
@@ -2119,6 +2169,8 @@ async function handleFile(bot, msg) {
   // notification goes out.
   let sealText = null;
   let captionNote = '';
+  let delivery = 0;
+  let cardStale = false;
   if (session.gate) {
     const done = kind === 'receive'
       ? await completeReceipt(bot, session, userId)
@@ -2135,6 +2187,10 @@ async function handleFile(bot, msg) {
     }
     sealText = done.sealText;
     captionNote = done.captionNote || '';
+    delivery = done.delivery || 0;
+    // TRF-21 — a receipt taken through the picker leaves the receiver's own
+    // card standing; it is redrawn from the live row once the photo is on.
+    cardStale = kind === 'receive' && !!session.cardMessageId;
   }
 
   let archive = null;
@@ -2151,6 +2207,7 @@ async function handleFile(bot, msg) {
   const url = (archive && archive.drive && archive.drive.webViewLink) || '';
   await transferService.attachDoc(requestId, kind, {
     url, name: (archive && archive.readableName) || fileName, fileId, mime: mimeType, by: userId,
+    ...(delivery ? { delivery } : {}),
   });
 
   // Forward the file for eyes-on to the counterparty, admins, and requester.
@@ -2191,6 +2248,17 @@ async function handleFile(bot, msg) {
     { chat_id: chatId, message_id: flowMessageId, parse_mode: 'Markdown', disable_web_page_preview: true,
       reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] } },
   ).catch(() => {});
+  if (cardStale) {
+    // The sealed picker is done with; the card carries the live state.
+    if (session.pickerMessageId) {
+      try { await bot.deleteMessage(chatId, session.pickerMessageId); } catch (_) {
+        await bot.editMessageText(`📦 *${shortTransferRef(requestId)}* — delivery ${delivery || ''} logged ✔`, {
+          chat_id: chatId, message_id: session.pickerMessageId, parse_mode: 'Markdown',
+        }).catch(() => {});
+      }
+    }
+    await refreshCard(bot, chatId, session.cardMessageId, userId, requestId, session.backCb || null);
+  }
   // TRF-18 — the doc is on the row now; the admin review cards can go out.
   // Sent AFTER attachDoc so the 📄/🧮 chips on the card have a doc to open.
   if (kind === 'dispatch' && aj && aj.stage === 'admin_review') {
@@ -2672,12 +2740,23 @@ async function handleCallback(bot, query) {
   const mRpNn = data.match(/^trf:rp:nn:(.+)$/);
   if (mRpNn) {
     const s0 = sessionStore.get(userId);
-    let backCb = null;
-    if (s0 && s0.type === SESSION_TYPE && s0.step === 'receive_pick' && String(s0.requestId) === mRpNn[1]) {
-      backCb = s0._backCb || null;
+    const live = s0 && s0.type === SESSION_TYPE && s0.step === 'receive_pick'
+      && String(s0.requestId) === mRpNn[1] && s0.flowMessageId === query.message.message_id;
+    // Only the LIVE picker may drop the session (a stale copy from an earlier
+    // open must not wipe the ticks on the current one); the picker message
+    // goes and the receiver's card is redrawn where it stands.
+    if (live) {
+      await bot.answerCallbackQuery(query.id).catch(() => {});
       sessionStore.clear(userId);
+      try { await bot.deleteMessage(chatId, query.message.message_id); } catch (_) {
+        await bot.editMessageText(`📦 *${shortTransferRef(mRpNn[1])}* — nothing ticked, nothing changed.`, {
+          chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown',
+        }).catch(() => {});
+      }
+      await refreshCard(bot, chatId, s0._cardMessageId, userId, mRpNn[1], s0._backCb || null);
+      return true;
     }
-    return showActionCard(bot, query, mRpNn[1], backCb ? { backCb } : {});
+    return showActionCard(bot, query, mRpNn[1]);
   }
   const mInfo = data.match(/^trf:info:(.+)$/);
   if (mInfo) return showInfo(bot, query, mInfo[1], true);
@@ -2948,7 +3027,7 @@ module.exports = {
     buildAdminReviewCard, sendAdminReviewCards,
     handleReviewApprove, handleReviewSendBack, handleReviewReconcile,
     linesBlock, dispatchedBlock, headOf, compactOf, designHead, receiptLine,
-    startReceivePicker, showReceivePicker, askReceiptDoc,
+    startReceivePicker, showReceivePicker, askReceiptDoc, refreshCard,
     detailCard, shortCard, showActionCard, dispatcherCard, receiverCard, SESSION_TYPE,
     waitingLine, waitedFor, stateLabel, pushStatus,
   },

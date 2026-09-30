@@ -415,15 +415,90 @@ test('TRF-21 a picked bale whose rows were hand-edited away is a mismatch, recor
 
 test('TRF-21 the receipt photo is stamped on ITS delivery, so the next delivery\'s photo does not erase it', async () => {
   const calls = stub(PARTIAL_ROW(), IN_TRANSIT_INV);
-  await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1'] });
-  await transferService.attachDoc('TR-1', 'receive', { url: 'https://drive/one', fileId: 'F1', mime: 'image/jpeg', by: 'musa' });
-  await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P2', 'P4'] });
-  await transferService.attachDoc('TR-1', 'receive', { url: 'https://drive/two', fileId: 'F2', mime: 'image/jpeg', by: 'musa' });
+  const d1 = await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1'] });
+  assert.equal(d1.delivery, 1);
+  const d2 = await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P2', 'P4'] });
+  assert.equal(d2.delivery, 2);
+  // The photos land in the OTHER order (the first archive was slow): each is
+  // stamped on the delivery it names, never on "the newest".
+  await transferService.attachDoc('TR-1', 'receive', { url: 'https://drive/two', fileId: 'F2', mime: 'image/jpeg', by: 'musa', delivery: 2 });
+  await transferService.attachDoc('TR-1', 'receive', { url: 'https://drive/one', fileId: 'F1', mime: 'image/jpeg', by: 'musa', delivery: 1 });
   const row = await approvalQueueRepository.getByRequestId('TR-1');
-  assert.equal(row.actionJSON.receiveDoc.url, 'https://drive/two', 'receiveDoc is the latest, as before');
+  assert.equal(row.actionJSON.receiveDoc.url, 'https://drive/one', 'receiveDoc is the latest attach, as before');
   assert.equal(row.actionJSON.receipts[0].doc.url, 'https://drive/one');
   assert.equal(row.actionJSON.receipts[1].doc.url, 'https://drive/two');
+  // A post-hoc attach (legacy Attach button) names no delivery: receiveDoc only.
+  await transferService.attachDoc('TR-1', 'receive', { url: 'https://drive/three', fileId: 'F3', mime: 'image/jpeg', by: 'musa' });
+  const row2 = await approvalQueueRepository.getByRequestId('TR-1');
+  assert.equal(row2.actionJSON.receiveDoc.url, 'https://drive/three');
+  assert.equal(row2.actionJSON.receipts[1].doc.url, 'https://drive/two', 'no delivery named — no entry touched');
   assert.ok(calls.ajPatches.length >= 4);
+});
+
+test('TRF-21 review: a row whose record says every bale arrived but is still open is closed, nothing flipped or booked twice', async () => {
+  const calls = stub(ROW('in_transit', {
+    bales: ['P1', 'P2', 'P4'], baleUids: ['U-P1a', 'U-P2a', 'U-P4a'],
+    receivedBales: ['P1', 'P2', 'P4'], receivedUids: ['U-P1a', 'U-P2a', 'U-P4a'],
+    receipts: [{ bales: ['P1'] }, { bales: ['P2', 'P4'] }],
+  }), IN_TRANSIT_INV.map((r) => (r.warehouse === 'Kano office' ? { ...r, status: 'available' } : r)));
+  const res = await transferService.confirmReceipt('TR-1', 'musa');
+  assert.equal(res.ok, true);
+  assert.equal(res.closed, true);
+  assert.equal(res.recovered, true);
+  assert.equal(calls.transitions.length, 0, 'nothing flipped');
+  assert.equal(calls.txns.length, 0, 'nothing booked again');
+  assert.deepEqual(calls.statusUpdates[0], { id: 'TR-1', status: 'approved' });
+  assert.ok(calls.audits.some((a) => a.event === 'transfer.received'));
+  const viaTicks = await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1'] });
+  assert.equal(viaTicks.ok, false, 'closed now');
+});
+
+test('TRF-21 review: the closing delivery writes the status BEFORE the record patch', async () => {
+  const calls = stub(PARTIAL_ROW(), IN_TRANSIT_INV);
+  await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1'] });
+  const order = [];
+  const origStatus = approvalQueueRepository.updateStatus;
+  const origPatch = approvalQueueRepository.updateActionJSON;
+  approvalQueueRepository.updateStatus = async (...a) => { order.push('status'); return origStatus(...a); };
+  approvalQueueRepository.updateActionJSON = async (...a) => { order.push('patch'); return origPatch(...a); };
+  const res = await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P2', 'P4'] });
+  assert.equal(res.closed, true);
+  assert.deepEqual(order, ['status', 'patch']);
+  assert.equal(calls.txns.length, 2);
+});
+
+test('TRF-21 review: a load carrying the same printed number twice is received in one go only', async () => {
+  const twoTwelves = [
+    { rowIndex: 2, baleUid: 'U-12a', packageNo: '12', design: 'Rose', shade: 'Red', warehouse: 'Kano office', status: 'in_transit' },
+    { rowIndex: 3, baleUid: 'U-12b', packageNo: '12', design: 'Lily', shade: 'Blue', warehouse: 'Kano office', status: 'in_transit' },
+  ];
+  const calls = stub(ROW('in_transit', {
+    bales: ['12', '12'], baleUids: ['U-12a', 'U-12b'],
+    dispatched: [{ design: 'Rose', shade: 'Red', requested: 1, sent: 1, bales: ['12'] }, { design: 'Lily', shade: 'Blue', requested: 1, sent: 1, bales: ['12'] }],
+  }), twoTwelves);
+  const sub = await transferService.confirmReceipt('TR-1', 'musa', { bales: ['12'] });
+  assert.equal(sub.ok, false, 'a number-keyed subset cannot tell the two bales apart');
+  assert.match(sub.message, /same bale number more than once/);
+  assert.equal(calls.transitions.length, 0);
+  const all = await transferService.confirmReceipt('TR-1', 'musa');
+  assert.equal(all.ok, true);
+  assert.equal(all.closed, true);
+  assert.equal(all.mismatch, null, 'two rows flipped for two uids — no false mismatch on the whole-load path');
+  assert.equal(calls.txns[0].qty, 2);
+});
+
+test('TRF-21 review: reject after a mismatch delivery keeps the bale the card said stays', async () => {
+  // P1's row lost its number by hand (uid intact, still in_transit): the
+  // delivery of P1 matched no row, so U-P1a stayed in the outstanding uids.
+  const inv = IN_TRANSIT_INV.map((r) => (r.baleUid === 'U-P1a' ? { ...r, packageNo: 'P1x' } : r));
+  const calls = stub(PARTIAL_ROW(), inv);
+  const d = await transferService.confirmReceipt('TR-1', 'musa', { bales: ['P1'] });
+  assert.ok(d.mismatch, 'delivery recorded with a mismatch');
+  const res = await transferService.abort('TR-1', 'musa');
+  assert.equal(res.kind, 'rejected');
+  const t = calls.transitions[calls.transitions.length - 1];
+  assert.ok(!t.opts.uids.includes('U-P1a'), `U-P1a must not go home, got ${t.opts.uids}`);
+  assert.deepEqual(t.opts.uids, ['U-P2a', 'U-P4a']);
 });
 
 test('TRF-21 a row that logged no bales at dispatch still settles on ✅ Received (pre-TRF-21 close)', async () => {

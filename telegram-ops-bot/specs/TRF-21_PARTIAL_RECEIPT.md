@@ -21,16 +21,20 @@ gains one more door:
 
 > `📦 Only some arrived — tick them`
 
-which opens an arrival list anchored on the same card — one chip per
-outstanding bale (`⬜ P1`, `⬜ P2`, …, 24 per page), grouped in the text by
-design and shade so the labels can be checked. **Every chip starts
+which opens an arrival list as its own message under the card (the card
+keeps its buttons; a picker that times out is tombstoned without it) —
+one chip per outstanding bale (`⬜ P1`, `⬜ P2`, …, 24 per page), grouped in
+the text by design and shade so the labels can be checked. **Every chip starts
 unticked** (BUSINESS_RULES §2: the bot never pre-ticks physical stock —
 see §4 below on why this differs from the proposal). The receiver ticks the
 bales physically in front of them, taps `✅ Confirm n of m arrived`, sends
 the receipt photo (mandatory, as for every receipt — §3 of the rules), and:
 
 - the ticked bales flip `in_transit → available` at the destination at
-  once — sellable immediately;
+  once — sellable immediately; the picker message goes, the photo prompt
+  becomes the delivery's seal, and the receiver's card is redrawn in place
+  with the live state (`✅ 1 of 3 received · 🚚 2 still on the road`) and
+  its buttons, ready for the next delivery;
 - the rest stay `in_transit` (in neither warehouse's stock, §5), the
   transfer stays open in My Tasks, on the 📋 list and in the 🛂 inbox;
 - the dispatcher, the requester and every admin are told what landed and
@@ -42,6 +46,10 @@ the receipt photo (mandatory, as for every receipt — §3 of the rules), and:
 
 Ticking every outstanding bale is the ordinary receipt, byte for byte: no
 delivery record is written and the Transactions row logs the whole load.
+
+A load that carries the same printed number twice (one number in two
+containers is two bales) shows no tick door — a number-keyed list cannot
+tell them apart — and says so on the card; it is received in one go.
 
 ## 2 · Defaults the owner accepted (30-Sep-2026)
 
@@ -62,11 +70,18 @@ No column, no sheet, no migration. The transfer's own ApprovalQueue row
 - `receivedBales[]` — printed numbers confirmed so far;
 - `receivedUids[]` — the Inventory rows those confirmations covered;
 - `receipts[]` — one entry per delivery: `{at, on, by, bales[], rows, doc?}`
-  (`doc` = that delivery's receipt photo, stamped by `attachDoc`, so the
-  next delivery's photo overwriting `receiveDoc` loses nothing);
+  (`doc` = that delivery's receipt photo: the delivery number rides the
+  photo gate into `attachDoc`, which stamps exactly that entry, so the
+  next delivery's photo overwriting `receiveDoc` loses nothing; a post-hoc
+  attach names no delivery and touches `receiveDoc` alone);
 - `lastReceivedAt` — the clock the waiting line restarts from.
 
 Column E stays `pending` and `stage` stays `in_transit` until the last bale.
+On the closing delivery the status flip is written BEFORE the bookkeeping
+patch; and a row whose record already says every bale arrived but is still
+open (a write failed between the two, or the process died) is closed by
+the next ✅ Received without flipping or booking anything again
+(`transfer.received {recovered: true}`).
 Postgres mirror: `transfer_events` gets `partly_received` (detail: delivery
 number, bales, remaining); `transfers.stage/status` are unchanged until the
 close, so `scripts/transfers-parity.js` needs nothing. AuditLog:
@@ -100,6 +115,7 @@ you want, and §2 gets the exception recorded.**
 | Admin / requester DM | `🚚 *18Sep·02* partly received 📦 (6 of 10) — 10 bale(s) · Lagos → Kano office` + waiting line; the dispatcher's copy adds `📦 This delivery: P1, P2` |
 | Photo forward caption | `📸 Receipt photo — TR-… — delivery 2: P7, P8` |
 | Reject confirm | `The records will return 4 bale(s) to *Lagos* … The 6 bale(s) already received stay at *Kano office*.` |
+| Rejected after a partial delivery | row `❌ LAG▸KAN · 6/10B`; waiting line `❌ *Closed by Musa* · 4 bale(s) back at Lagos · 6 kept at Kano office`; detail `✅ 6 received at Kano office · ↩ 4 returned to Lagos`; Postgres `transfers.status` stays `reverted` (no migration) with the split in `transfer_events.detail` |
 | Detail card | one `📦 Delivery n: 2 bale(s) · date · name · 📸 url` line per delivery |
 
 ## 6 · Callbacks
@@ -108,6 +124,23 @@ you want, and §2 gets the exception recorded.**
 `trf:rp:t:<i>` tick · `trf:rp:pg:<n>` page · `trf:rp:go` confirm →
 photo gate · `trf:rp:nn:<id>` drop the ticks and restore the card. Session
 step `receive_pick` joins the busy guard (APC-1) and the anchor guard.
+
+## 6b · Hardened the same day (adversarial review, 28 findings, 12 acted on)
+
+The picker moved to its own message (the receiver's card kept its buttons,
+and no longer dies with a timed-out picker); a partial delivery redraws the
+card in place instead of leaving two dead seals; the closing delivery
+writes the status before the record and a stranded "all received but still
+open" row self-heals on the next ✅ Received; a subset resolves its rows
+from a FRESH sheet read; a load with a repeated printed number gets no tick
+door; the receipt photo is stamped on its own delivery by number; reject
+after a partial delivery never sends home a bale the record calls received
+even when its rows could not be matched; a stale picker copy's ↩ Not now
+cannot wipe the live picker's ticks; a dispatcher who also raised the
+transfer hears about a delivery once; rejected-after-partial rows keep
+their fraction and say what went home and what stayed; Drive links on the
+detail card are link entities (an `_` in a file id no longer blanks the
+card); §6c records the `6/10B` token.
 
 ## 7 · Live check (owner)
 

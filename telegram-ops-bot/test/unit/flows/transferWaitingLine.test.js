@@ -233,4 +233,11 @@ test('TRF-21 after a partial delivery the line says how much is here and clocks 
   assert.match(line, /1d waiting/, `clock restarts at the last delivery, got: ${line}`);
   assert.equal(transferFlow._internals.stateLabel(part), 'partly received 📦 (3 of 4)');
   assert.equal(transferFlow._internals.stateLabel(row('in_transit')), 'in transit 🚚');
+  // Rejected after the partial delivery: the rest went home, the three stayed.
+  const closed = { ...part, status: 'rejected', approver: 'Musa', resolvedAt: '2026-09-13T10:00:00Z' };
+  const cl = waitingLine(closed, NAMES);
+  assert.match(cl, /Closed by Musa/);
+  assert.match(cl, /1 bale\(s\) back at Kano office · 3 kept at Lagos/);
+  assert.equal(transferFlow._internals.receiptLine(part.actionJSON, closed).trim(), '✅ *3 received* at Lagos · ↩ 1 returned to Kano office (4)');
+  assert.equal(transferFlow._internals.receiptLine(part.actionJSON, { ...part, status: 'approved' }), '');
 });

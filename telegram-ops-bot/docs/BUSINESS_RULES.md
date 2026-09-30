@@ -297,6 +297,12 @@ invoice and movement ledger already obey the amended rule.
 - Navigation tiles that describe a **stock position** rather than what a
   customer received (container tiles, the design supplied/total pair) stay
   in bales — owner's call, so the pairs stay readable.
+- **TRF-21 (owner default, 30-Sep-2026):** a transfer row part-way through
+  its receipt prints `received/logged` bales — `6/10B` — on the 🛂 inbox,
+  📋 list and My Tasks rows (the TRF-20 row shape; the legend explains it).
+  A row rejected after a partial delivery keeps the fraction (`❌ … 6/10B`:
+  six at the destination, four sent home). Transfers move whole bales, so
+  the row stays in B.
 
 ## 6d · Bale movement history lives in its own sheet
 

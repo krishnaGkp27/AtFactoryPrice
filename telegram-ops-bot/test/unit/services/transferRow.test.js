@@ -51,4 +51,6 @@ test('TRF-21 label: part-way through a receipt the quantity reads received/total
   assert.equal(row.label(fresh), '18Sep·03 · 🟡 LAG▸KAN · 10B', 'nothing received yet — unchanged');
   const stray = mk('TR-20260918-003', 'pending', { stage: 'in_transit', bales: ten, receivedBales: ['ZZ'] });
   assert.equal(row.label(stray), '18Sep·03 · 🟡 LAG▸KAN · 10B', 'a number the transfer never carried does not count');
+  const closed = mk('TR-20260918-003', 'rejected', { stage: 'in_transit', bales: ten, receivedBales: ['1', '2', '3', '4', '5', '6'] });
+  assert.equal(row.label(closed), '18Sep·03 · ❌ LAG▸KAN · 6/10B', 'rejected after a partial delivery keeps the split');
 });

@@ -522,6 +522,23 @@ async function confirmReceiptInner(requestId, byUserId, opts = {}) {
   }
   const aj = row.actionJSON;
   const state = receiptState(aj);
+  // Review (30-Sep) — a printed number can ride two lines of one transfer
+  // (the same number in two containers is two bales). A subset keyed on
+  // numbers alone would flip both; such a load is received in one go.
+  if (Array.isArray(opts.bales) && new Set(state.bales).size !== state.bales.length) {
+    return { ok: false, message: 'transferService: this load carries the same bale number more than once — receive it in one go with ✅ Received' };
+  }
+  // Review (30-Sep) — every bale is on the record as received but the row
+  // is still open (the status write failed after the record write, or the
+  // process died between them): close it, flip nothing, book nothing twice.
+  if (state.bales.length && !state.remaining.length) {
+    const approverLabel = await require('./approverStamp').labelFor({ actionJSON: aj, actorId: null });
+    await approvalQueueRepository.updateStatus(requestId, 'approved', new Date().toISOString(), approverLabel);
+    await mirror(requestId, 'received', byUserId, { recovered: true, delivery: state.receipts.length });
+    await auditLogRepository.append('transfer.received',
+      { requestId, recovered: true, deliveries: state.receipts.length }, String(byUserId || ''));
+    return { ok: true, aj, mismatch: null, closed: true, received: [], remaining: [], recovered: true, delivery: state.receipts.length };
+  }
   // TRF-21 — which bales this delivery covers. A number already confirmed
   // by an earlier delivery is dropped (a stale picker card must never
   // count a bale twice); a number the transfer never carried is ignored.
@@ -555,7 +572,9 @@ async function confirmReceiptInner(requestId, byUserId, opts = {}) {
     // expected, so the mismatch check below still sees it).
     const want = new Set(state.remainingUids);
     const pickedSet = new Set(picked.map((b) => b.toLowerCase()));
-    uids = (await inventoryRepository.getAll())
+    // Fresh, under the lock — deciding what to flip from a cached snapshot
+    // is how a row edited seconds ago gets flipped by the wrong bale.
+    uids = (await inventoryRepository.getAll(true))
       .filter((r) => want.has(String(r.baleUid)) && pickedSet.has(String(r.packageNo || '').toLowerCase()))
       .map((r) => String(r.baleUid));
   }
@@ -575,11 +594,15 @@ async function confirmReceiptInner(requestId, byUserId, opts = {}) {
   // physically here, so the receipt still applies — but never silently.
   const expected = hasUids ? uids.length : null;
   const flippedPkgs = new Set(flipped.map((r) => String(r.packageNo).toLowerCase()));
-  // TRF-21 — the bale count is checked on the uid path too: a subset's rows
+  const pickedDistinct = new Set(picked.map((b) => b.toLowerCase())).size;
+  // TRF-21 — the bale count is checked on the uid SUBSET path too: its rows
   // are resolved from the live sheet, so a bale whose rows were edited away
   // resolves to NO uid at all and would otherwise pass as "0 of 0 flipped".
-  const mismatch = (hasUids && flipped.length !== expected) || flippedPkgs.size !== picked.length
-    ? { expectedRows: expected, flippedRows: flipped.length, expectedBales: picked.length, flippedBales: flippedPkgs.size }
+  // The whole-load uid path keeps the row comparison alone (one number on
+  // two lines is two bales there, and the rows already say so).
+  const mismatch = (hasUids && flipped.length !== expected)
+    || ((!hasUids || !everything) && flippedPkgs.size !== pickedDistinct)
+    ? { expectedRows: expected, flippedRows: flipped.length, expectedBales: pickedDistinct, flippedBales: flippedPkgs.size }
     : null;
   if (mismatch) {
     await auditLogRepository.append('transfer.receive_mismatch', { requestId, ...mismatch }, String(byUserId || ''));
@@ -595,8 +618,19 @@ async function confirmReceiptInner(requestId, byUserId, opts = {}) {
   // (a single all-at-once receipt keeps the pre-TRF-21 record untouched).
   const series = receipts.length > 1 || remaining.length > 0;
   const patch = series ? { receivedBales, receivedUids, receipts, lastReceivedAt: now } : null;
-  if (patch) await approvalQueueRepository.updateActionJSON(requestId, patch);
   const ajOut = patch ? { ...aj, ...patch } : aj;
+  // Review (30-Sep) — on the CLOSING delivery the status flip is written
+  // before the bookkeeping patch: a failure between the two then leaves a
+  // closed row missing one record line (AuditLog has it), never an open row
+  // whose record says everything arrived (see the recovery branch above).
+  if (!remaining.length) {
+    // APR-1 — `byUserId` here is the destination RECEIVER, not an approver.
+    // labelFor reads the admin who released the transfer off the record.
+    const approverLabel = await require('./approverStamp')
+      .labelFor({ actionJSON: ajOut, actorId: null });
+    await approvalQueueRepository.updateStatus(requestId, 'approved', now, approverLabel);
+  }
+  if (patch) await approvalQueueRepository.updateActionJSON(requestId, patch);
   // One Transactions row per delivery (owner default, 30-Sep-2026): the
   // bales confirmed that day, not the whole load.
   const totalSent = (aj.dispatched || []).reduce((s, d) => s + d.sent, 0) || (aj.bales || []).length;
@@ -608,11 +642,6 @@ async function confirmReceiptInner(requestId, byUserId, opts = {}) {
   };
   const txnLines = series ? linesOf() : (aj.lines || []);
   if (!remaining.length) {
-    // APR-1 — `byUserId` here is the destination RECEIVER, not an approver.
-    // labelFor reads the admin who released the transfer off the record.
-    const approverLabel = await require('./approverStamp')
-      .labelFor({ actionJSON: ajOut, actorId: null });
-    await approvalQueueRepository.updateStatus(requestId, 'approved', now, approverLabel);
     await mirror(requestId, 'received', byUserId, series ? { delivery: receipts.length, bales: picked.length } : {});
   } else {
     await mirror(requestId, 'partly_received', byUserId,
@@ -636,7 +665,7 @@ async function confirmReceiptInner(requestId, byUserId, opts = {}) {
     await auditLogRepository.append('transfer.partly_received',
       { requestId, delivery: receipts.length, bales: picked, remaining: remaining.length }, String(byUserId || ''));
   }
-  return { ok: true, aj: ajOut, mismatch, closed: !remaining.length, received: picked, remaining };
+  return { ok: true, aj: ajOut, mismatch, closed: !remaining.length, received: picked, remaining, delivery: receipts.length };
 }
 
 /**
@@ -664,12 +693,27 @@ async function abortInner(requestId, byUserId) {
     // TRF-21 — only the bales still ON THE ROAD go back; a bale confirmed
     // by an earlier delivery is live at the destination and stays there.
     const hasUids = state.uids.length > 0;
-    const flipped = (hasUids && !state.remainingUids.length) ? []
+    let homeUids = state.remainingUids;
+    if (hasUids && state.received.length) {
+      // Review (30-Sep) — after a partial delivery only the rows of the
+      // bales STILL ON THE ROAD go home. A bale recorded received whose rows
+      // could not be matched at the time (a hand-edited number cell) still
+      // has its uids in the outstanding list; the card promised it stays,
+      // so a row that no longer answers to an outstanding number is left
+      // for a human (the sentinel names it), never sent home by guesswork.
+      const still = new Set(state.remaining.map((b) => b.toLowerCase()));
+      const byUid = new Map((await inventoryRepository.getAll(true)).map((r) => [String(r.baleUid), r]));
+      homeUids = state.remainingUids.filter((u) => {
+        const r = byUid.get(u);
+        return !!r && still.has(String(r.packageNo || '').toLowerCase());
+      });
+    }
+    const flipped = (hasUids && !homeUids.length) ? []
       : await require('./stockEngine').transition(state.remaining, IN_TRANSIT, AVAILABLE, aj.from,
-        Object.assign(hasUids ? { uids: state.remainingUids } : { warehouse: aj.to },
+        Object.assign(hasUids ? { uids: homeUids } : { warehouse: aj.to },
           { on: todayInLagos(), fromWarehouse: aj.from, ref: requestId }),  // TIME-1
         { event: 'reject', adminId: byUserId, approvalId: requestId });
-    const expected = hasUids ? state.remainingUids.length : null;
+    const expected = hasUids ? homeUids.length : null;
     const flippedPkgs = new Set(flipped.map((r) => String(r.packageNo)));
     if ((hasUids && flipped.length !== expected)
       || (!hasUids && flippedPkgs.size !== state.remaining.length)) {
@@ -699,7 +743,7 @@ async function abortInner(requestId, byUserId) {
  *
  * @param {string} requestId
  * @param {'dispatch'|'receive'} kind
- * @param {{url?:string, name?:string, fileId?:string, by?:string}} doc
+ * @param {{url?:string, name?:string, fileId?:string, by?:string, delivery?:number}} doc
  * @returns {Promise<{ok:boolean, key?:string, message?:string}>}
  */
 async function attachDoc(requestId, kind, doc = {}) {
@@ -724,12 +768,15 @@ async function attachDocInner(requestId, kind, doc = {}) {
     at: new Date().toISOString(),
   };
   const patch = { [key]: entry };
-  // TRF-21 — a receipt photo belongs to ITS delivery: stamp the newest
-  // receipt entry too, so an earlier delivery's photo is not lost when the
-  // next one overwrites `receiveDoc`.
-  if (kind === 'receive' && Array.isArray(row.actionJSON.receipts) && row.actionJSON.receipts.length) {
+  // TRF-21 — a receipt photo belongs to ITS delivery (`doc.delivery`,
+  // 1-based, carried from confirmReceipt through the photo gate): stamp
+  // that entry, so an earlier delivery's photo is not lost when the next
+  // one overwrites `receiveDoc`. A post-hoc attach names no delivery and
+  // touches `receiveDoc` alone.
+  const n = Number(doc.delivery) || 0;
+  if (kind === 'receive' && n > 0 && Array.isArray(row.actionJSON.receipts) && n <= row.actionJSON.receipts.length) {
     const receipts = row.actionJSON.receipts.map((r) => ({ ...r }));
-    receipts[receipts.length - 1].doc = { url: entry.url, name: entry.name, fileId: entry.fileId, mime: entry.mime };
+    receipts[n - 1].doc = { url: entry.url, name: entry.name, fileId: entry.fileId, mime: entry.mime };
     patch.receipts = receipts;
   }
   await approvalQueueRepository.updateActionJSON(requestId, patch);
