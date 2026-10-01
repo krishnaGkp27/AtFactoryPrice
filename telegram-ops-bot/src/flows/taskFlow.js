@@ -136,18 +136,9 @@ function isFinance(userId) {
   return ids.includes(String(userId));
 }
 
-function fmtDate(iso) {
-  if (!iso) return '';
-  try {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return iso;
-    const dd = String(d.getDate()).padStart(2, '0');
-    const mmm = d.toLocaleString('en-US', { month: 'short' });
-    // 4-digit year to match the canonical fmtDate() output (DD-MMM-YYYY).
-    const yyyy = String(d.getFullYear());
-    return `${dd}-${mmm}-${yyyy}`;
-  } catch (_) { return iso; }
-}
+// The house formatter (DD-MMM-YYYY, Lagos day for timestamps — TIME-1);
+// an empty value prints as '' on these lines, not the card dash.
+const fmtDate = (iso) => (iso ? dateUtil(iso) : '');
 
 function addDays(days) {
   return lagosDayPlus(days);  // TIME-1 — offsets from the Lagos day
