@@ -19,6 +19,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { str } = require('../utils/text');
 
 const SHEET = 'Incentives';
 
@@ -33,7 +34,6 @@ const INCENTIVE_CURRENCY = 'NGN';
 const READ_RANGE = 'A2:J';
 const NUM_COLS = 10;
 
-function str(v) { return (v ?? '').toString().trim(); }
 function floatOr(v, d) { const n = parseFloat(v); return Number.isFinite(n) ? n : d; }
 
 function parse(r, rowIndex) {

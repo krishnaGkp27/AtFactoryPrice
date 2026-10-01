@@ -41,6 +41,7 @@ const { fmtQty } = require('../utils/format');
 const money = require('../utils/money');
 const fmtDate = require('../utils/formatDate');
 const logger = require('../utils/logger');
+const { upper } = require('../utils/text');
 
 const SESSION_TYPE = 'return_flow';
 const NS = 'rn:';
@@ -88,7 +89,6 @@ function forgetSnapshot(userId) { _snapshots.delete(String(userId)); }
 
 /* ── data helpers ─────────────────────────────────────────────────────── */
 
-const upper = (v) => String(v == null ? '' : v).trim().toUpperCase();
 
 /** Bale identity for the picker: §6c — a printed number recycles across
  *  containers, and §5 lets a SOLD 9037 sit beside a LIVE 9037 in one store. */

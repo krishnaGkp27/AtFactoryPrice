@@ -80,6 +80,7 @@ const { buildShadeNameMap, buildShadeLabel } = require('../utils/shadeButtons');
 const auth = require('../middlewares/auth');
 const fmtDate = require('../utils/formatDate');
 const logger = require('../utils/logger');
+const { upper } = require('../utils/text');
 
 const SESSION_TYPE = 'stock_by_shade_flow';
 const { backRow, menuRow } = rowsFor('sds');
@@ -88,7 +89,6 @@ const render = makeRenderer();
 const DESIGNS_PER_PAGE = 8;
 const SOLD_LINES_CAP = 40;
 
-const upper = (v) => String(v == null ? '' : v).trim().toUpperCase();
 
 /** Admins + active members of the Dispatch department. */
 async function canUse(userId) {

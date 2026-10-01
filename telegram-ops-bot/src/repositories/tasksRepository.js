@@ -46,6 +46,7 @@
 
 const sheets = require('./sheetsClient');
 const idGenerator = require('../utils/idGenerator');
+const { str } = require('../utils/text');
 
 const SHEET = 'Tasks';
 const READ_RANGE = 'A2:V';
@@ -72,7 +73,6 @@ const VALID_STATUSES = new Set(Object.values(STATUSES));
 const LEGACY_STATUS_MAP = { pending: STATUSES.ASSIGNED, in_progress: STATUSES.ACTIVE };
 const VALID_TRACKS = new Set(['incentivized', 'salaried']);
 
-function str(v) { return (v ?? '').toString().trim(); }
 function intOr(v, d) { const n = parseInt(v, 10); return Number.isFinite(n) ? n : d; }
 function floatOr(v, d) { const n = parseFloat(v); return Number.isFinite(n) ? n : d; }
 

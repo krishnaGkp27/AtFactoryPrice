@@ -6,6 +6,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { str, num } = require('../utils/text');
 
 const SHEET = 'CatalogStock';
 const HEADERS = [
@@ -19,8 +20,6 @@ let _cache = null;
 let _cacheTs = 0;
 const CACHE_TTL_MS = 10000;
 
-function str(v) { return (v ?? '').toString().trim(); }
-function num(v) { return parseFloat(v) || 0; }
 
 function parseRow(r, rowIndex) {
   return {

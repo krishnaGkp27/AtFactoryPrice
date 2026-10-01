@@ -5,6 +5,7 @@
 
 const sheets = require('./sheetsClient');
 const { ttlCache } = require('../utils/ttlCache');
+const { str } = require('../utils/text');
 
 const SHEET = 'Departments';
 const HEADERS = [
@@ -15,7 +16,6 @@ const HEADERS = [
   'warehouses',
 ];
 
-function str(v) { return (v ?? '').toString().trim(); }
 
 /**
  * Parse one Departments row.

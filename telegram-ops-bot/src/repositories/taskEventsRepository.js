@@ -23,12 +23,12 @@
 
 const sheets = require('./sheetsClient');
 const idGenerator = require('../utils/idGenerator');
+const { str } = require('../utils/text');
 
 const SHEET = 'TaskEvents';
 const READ_RANGE = 'A2:H';
 const NUM_COLS = 8;
 
-function str(v) { return (v ?? '').toString().trim(); }
 
 function parse(r, rowIndex) {
   let meta = null;

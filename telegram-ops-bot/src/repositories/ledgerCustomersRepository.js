@@ -5,12 +5,11 @@
  */
 
 const googleSheetsRepository = require('./googleSheetsRepository');
+const { str, num } = require('../utils/text');
 
 const SHEET_NAME = 'Ledger_Customers';
 const HEADERS = ['customer_id', 'customer_name', 'phone', 'credit_limit', 'created_at', 'status'];
 
-function str(v) { return (v ?? '').toString().trim(); }
-function num(v) { return parseFloat(v) || 0; }
 
 function parseRow(row, rowIndex) {
   return {

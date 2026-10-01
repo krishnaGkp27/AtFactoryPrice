@@ -4,11 +4,10 @@
 
 const sheets = require('./sheetsClient');
 const { ttlCache } = require('../utils/ttlCache');
+const { str, num } = require('../utils/text');
 
 const SHEET = 'Customers';
 
-function str(v) { return (v ?? '').toString().trim(); }
-function num(v) { return parseFloat(v) || 0; }
 
 function parse(r, rowIndex) {
   return {

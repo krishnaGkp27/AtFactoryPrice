@@ -16,8 +16,8 @@
  */
 
 const logger = require('../utils/logger');
+const { norm } = require('../utils/text');
 
-const norm = (s) => String(s == null ? '' : s).trim().toLowerCase();
 
 /** Alias set for matching sold rows: customer entity when linked to one. */
 async function aliasSetFor(info) {

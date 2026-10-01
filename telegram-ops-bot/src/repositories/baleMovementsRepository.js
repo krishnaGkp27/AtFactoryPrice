@@ -38,6 +38,7 @@
 
 const sheets = require('./sheetsClient');
 const mutex = require('../utils/asyncMutex');
+const { str } = require('../utils/text');
 
 const SHEET = 'BaleMovements';
 const HEADERS = ['Timestamp', 'MovedOn', 'BaleNo', 'Design', 'Shade', 'Container',
@@ -47,7 +48,6 @@ const CURRENT_YES = 'YES';
 
 let _headerReady = false;
 
-function str(v) { return (v ?? '').toString().trim(); }
 
 async function ensureHeader() {
   if (_headerReady) return;

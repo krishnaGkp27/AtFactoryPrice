@@ -30,9 +30,9 @@ const inventoryRepository = require('../repositories/inventoryRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const idGenerator = require('../utils/idGenerator');
+const { num } = require('../utils/text');
 
 function upper(v) { return (v || '').toString().toUpperCase().trim(); }
-function num(v) { return parseFloat(v) || 0; }
 
 /* ──────────────────────────────────────────────────────────────────── */
 /*  Cart model                                                          */

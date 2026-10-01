@@ -1,4 +1,5 @@
 'use strict';
+const { upper } = require('../utils/text');
 
 /**
  * saleStockCheck — APF-2: ONE answer to "is this sale request's stock
@@ -18,7 +19,6 @@
  * another request. The bot never guesses which — it only reports.
  */
 
-const upper = (v) => String(v == null ? '' : v).trim().toUpperCase();
 
 /** The sale actions this check understands. */
 const SALE_ACTIONS = ['sale_bundle', 'sell_package', 'sell_than'];

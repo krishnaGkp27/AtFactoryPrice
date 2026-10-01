@@ -5,12 +5,11 @@
  */
 
 const googleSheetsRepository = require('./googleSheetsRepository');
+const { str, num } = require('../utils/text');
 
 const SHEET_NAME = 'LedgerBalanceCache';
 const HEADERS = ['customer_id', 'balance', 'last_updated'];
 
-function str(v) { return (v ?? '').toString().trim(); }
-function num(v) { return parseFloat(v) || 0; }
 
 function parseRow(row, rowIndex) {
   return {

@@ -12,6 +12,7 @@
 const sheets = require('./sheetsClient');
 const idGenerator = require('../utils/idGenerator');
 const phone = require('../utils/phone');
+const { str } = require('../utils/text');
 
 const SHEET = 'Contacts';
 const TYPES = ['worker', 'customer', 'agent', 'supplier', 'other'];
@@ -21,7 +22,6 @@ let _cache = null;
 let _cacheTs = 0;
 function invalidateCache() { _cache = null; _cacheTs = 0; }
 
-function str(v) { return (v ?? '').toString().trim(); }
 
 function parse(r, rowIndex) {
   return {

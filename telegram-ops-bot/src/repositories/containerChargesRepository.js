@@ -14,11 +14,10 @@
  */
 
 const sheets = require('./sheetsClient');
+const { str, num } = require('../utils/text');
 
 const SHEET = 'ContainerCharges';
 
-function str(v) { return (v ?? '').toString().trim(); }
-function num(v) { return parseFloat(v) || 0; }
 
 let _seq = 0;
 function _chargeId() {

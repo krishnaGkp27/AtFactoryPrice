@@ -21,8 +21,8 @@
 
 const customersRepository = require('../repositories/customersRepository');
 const logger = require('../utils/logger');
+const { norm } = require('../utils/text');
 
-const norm = (s) => String(s == null ? '' : s).trim().toLowerCase();
 
 /** Statuses that keep a customer OUT of every picker and suggestion.
  *  CUS-2: 'rejected' added — the reject door writes it (approvalEvents),

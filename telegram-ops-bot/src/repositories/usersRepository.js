@@ -11,10 +11,10 @@
  */
 
 const sheets = require('./sheetsClient');
+const { str } = require('../utils/text');
 
 const SHEET = 'Users';
 
-function str(v) { return (v ?? '').toString().trim(); }
 
 function parseDeptCsv(raw) {
   return str(raw).split(',').map((d) => d.trim()).filter(Boolean);

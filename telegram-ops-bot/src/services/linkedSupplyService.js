@@ -22,8 +22,8 @@
 
 const crypto = require('crypto');
 const logger = require('../utils/logger');
+const { norm } = require('../utils/text');
 
-const norm = (s) => String(s == null ? '' : s).trim().toLowerCase();
 
 /** Is there already an open supply request by this person for design(+shade)? */
 async function openRequestExists(telegramId, design, shade) {

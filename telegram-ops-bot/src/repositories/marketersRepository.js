@@ -8,6 +8,7 @@
 
 const sheets = require('./sheetsClient');
 const idGenerator = require('../utils/idGenerator');
+const { str } = require('../utils/text');
 
 const SHEET = 'Marketers';
 const HEADERS = [
@@ -22,7 +23,6 @@ let _cache = null;
 let _cacheTs = 0;
 const CACHE_TTL_MS = 10000;
 
-function str(v) { return (v ?? '').toString().trim(); }
 
 function parseRow(r, rowIndex) {
   return {

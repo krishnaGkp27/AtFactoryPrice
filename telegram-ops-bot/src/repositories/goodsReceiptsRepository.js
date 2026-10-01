@@ -37,6 +37,7 @@
 
 const sheets = require('./sheetsClient');
 const idGenerator = require('../utils/idGenerator');
+const { str, num } = require('../utils/text');
 
 const SHEET = 'GoodsReceipts';
 const HEADERS = [
@@ -55,8 +56,6 @@ const HEADERS = [
   'lc_ngn_per_yard', 'lc_finalized_at', 'lc_finalized_by', 'lc_request_id',
 ];
 
-function str(v) { return (v ?? '').toString().trim(); }
-function num(v) { return parseFloat(v) || 0; }
 
 function parse(r, rowIndex) {
   return {

@@ -3,6 +3,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { str, num } = require('../utils/text');
 
 const SHEET = 'Receipts';
 const HEADERS = [
@@ -12,8 +13,6 @@ const HEADERS = [
   'upload_date', 'created_at', 'notes',
 ];
 
-function str(v) { return (v ?? '').toString().trim(); }
-function num(v) { return parseFloat(v) || 0; }
 
 function parse(r, rowIndex) {
   return {

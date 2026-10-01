@@ -25,6 +25,7 @@
 
 const sheets = require('./sheetsClient');
 const { normDay } = require('../utils/dates');
+const { str } = require('../utils/text');
 
 const SHEET = 'Attendance';
 const HEADERS = [
@@ -33,7 +34,6 @@ const HEADERS = [
   'geo', 'distance_m', 'photo_file_id', 'photo_sha256',
 ];
 
-function str(v) { return (v ?? '').toString().trim(); }
 
 function parse(r, rowIndex) {
   return {

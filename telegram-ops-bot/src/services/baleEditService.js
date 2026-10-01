@@ -32,10 +32,10 @@ const inventoryRepository = require('../repositories/inventoryRepository');
 const { baleKey } = require('./baleIdentity');
 const idGenerator = require('../utils/idGenerator');
 const logger = require('../utils/logger');
+const { upper } = require('../utils/text');
 
 const EDITABLE_HEADER = ['design', 'shade', 'indent'];
 const MAX_YARDS = 2000;
-const upper = (v) => String(v == null ? '' : v).trim().toUpperCase();
 const str = (v) => String(v == null ? '' : v).trim();
 
 /** The rows of ONE physical bale, in than order, reduced to what the edit needs. */

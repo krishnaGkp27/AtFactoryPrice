@@ -28,6 +28,7 @@
 
 const sheets = require('./sheetsClient');
 const idGenerator = require('../utils/idGenerator');
+const { str } = require('../utils/text');
 
 const SHEET = 'PaymentAccounts';
 const HEADERS = [
@@ -44,7 +45,6 @@ let _cache = null;
 let _cacheTs = 0;
 function invalidateCache() { _cache = null; _cacheTs = 0; }
 
-function str(v) { return (v ?? '').toString().trim(); }
 
 /** Digits only — how two account numbers are compared for sameness. */
 function digits(v) { return str(v).replace(/\D/g, ''); }

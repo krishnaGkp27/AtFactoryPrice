@@ -38,6 +38,7 @@ const auth = require('../middlewares/auth');
 const logger = require('../utils/logger');
 const { fmtQty } = require('../utils/format');
 const fmtDate = require('../utils/formatDate');
+const { upper } = require('../utils/text');
 
 const SESSION_TYPE = 'edit_bale_flow';
 const ACTION = 'edit_bale';
@@ -46,7 +47,6 @@ const MAX_CHIPS = 8;
 
 const render = makeRenderer({});
 const { cancelRow, menuRow } = rowsFor('edb');
-const upper = (v) => String(v == null ? '' : v).trim().toUpperCase();
 
 async function photoRequired() {
   try {

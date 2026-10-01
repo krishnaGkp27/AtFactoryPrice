@@ -40,6 +40,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { str } = require('../utils/text');
 
 const SHEET = 'DesignShadeAssets';
 const HEADERS = [
@@ -52,7 +53,6 @@ const HEADERS = [
 const READ_RANGE = 'A2:S';
 const STATUSES = Object.freeze({ PENDING: 'pending', ACTIVE: 'active', REPLACED: 'replaced', INACTIVE: 'inactive' });
 
-function str(v) { return (v ?? '').toString().trim(); }
 function upper(v) { return str(v).toUpperCase(); }
 function num(v) { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; }
 /** Shade tab numbers are keyed as the chips key them: trimmed strings ("1", "03" → "3"). */

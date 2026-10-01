@@ -36,6 +36,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { str } = require('../utils/text');
 
 const SHEET = 'Locations';
 const HEADERS = ['name', 'location', 'kind', 'status', 'notes', 'updated_by', 'updated_at'];
@@ -48,7 +49,6 @@ let _cache = null;
 let _cacheTs = 0;
 function invalidateCache() { _cache = null; _cacheTs = 0; }
 
-function str(v) { return (v ?? '').toString().trim(); }
 
 function parse(r, rowIndex) {
   const kind = str(r[2]).toLowerCase();

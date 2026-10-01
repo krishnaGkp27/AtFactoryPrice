@@ -18,6 +18,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { str } = require('../utils/text');
 
 const SHEET = 'Shades';
 const DEFAULT_EMOJI = '🎨';
@@ -26,7 +27,6 @@ const TTL_MS = 60_000;
 let _cache = null;
 let _cacheTs = 0;
 
-function str(v) { return (v ?? '').toString().trim(); }
 
 function parse(r) {
   if (!r || !r[0]) return null;

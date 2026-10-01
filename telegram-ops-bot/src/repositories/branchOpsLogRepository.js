@@ -35,11 +35,10 @@
 
 const sheets = require('./sheetsClient');
 const { normDay } = require('../utils/dates');
+const { str, num } = require('../utils/text');
 
 const SHEET = 'BranchOpsLog';
 
-function str(v) { return (v ?? '').toString().trim(); }
-function num(v) { return parseFloat(v) || 0; }
 
 let _seq = 0;
 function _opId() {

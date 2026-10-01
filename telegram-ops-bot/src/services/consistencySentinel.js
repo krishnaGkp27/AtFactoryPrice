@@ -67,6 +67,7 @@ const { normDay } = require('../utils/dates');
 const fmtDate = require('../utils/formatDate');
 const config = require('../config');
 const logger = require('../utils/logger');
+const { upper } = require('../utils/text');
 
 /** BMV-1 went live 03-Aug-2026 — movement-backed checks start there. */
 const BMV_CUTOFF = '2026-08-03';
@@ -76,7 +77,6 @@ const GRACE_MS = 5 * 60 * 1000;
 /** C2 — an approved return executes within this many days of resolution. */
 const RETURN_WINDOW_DAYS = 2;
 
-const upper = (v) => String(v == null ? '' : v).trim().toUpperCase();
 
 /** One physical bale — STK-E1: the canonical identity. */
 function baleKey(design, pkg, container) {

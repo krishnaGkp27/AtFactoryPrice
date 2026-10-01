@@ -38,6 +38,7 @@
 
 const sheets = require('./sheetsClient');
 const idGenerator = require('../utils/idGenerator');
+const { str } = require('../utils/text');
 
 const SHEET = 'PaymentRequests';
 const HEADERS = [
@@ -63,7 +64,6 @@ let _cache = null;
 let _cacheTs = 0;
 function invalidateCache() { _cache = null; _cacheTs = 0; }
 
-function str(v) { return (v ?? '').toString().trim(); }
 function num(v) { return Number(String(v ?? '').replace(/[^\d.-]/g, '')) || 0; }
 
 function parse(r, rowIndex) {

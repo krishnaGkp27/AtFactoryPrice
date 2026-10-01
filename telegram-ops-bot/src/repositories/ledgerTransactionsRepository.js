@@ -5,6 +5,7 @@
  */
 
 const googleSheetsRepository = require('./googleSheetsRepository');
+const { str, num } = require('../utils/text');
 
 const SHEET_NAME = 'LedgerTransactions';
 const HEADERS = ['txn_id', 'timestamp', 'customer_id', 'txn_type', 'direction', 'amount', 'description', 'reference', 'created_by', 'status'];
@@ -12,8 +13,6 @@ const HEADERS = ['txn_id', 'timestamp', 'customer_id', 'txn_type', 'direction', 
 const TXN_TYPES = Object.freeze({ SALE: 'SALE', PAYMENT: 'PAYMENT', ADJUSTMENT: 'ADJUSTMENT' });
 const DIRECTIONS = Object.freeze({ debit: 'debit', credit: 'credit' });
 
-function str(v) { return (v ?? '').toString().trim(); }
-function num(v) { return parseFloat(v) || 0; }
 
 function parseRow(row) {
   return {

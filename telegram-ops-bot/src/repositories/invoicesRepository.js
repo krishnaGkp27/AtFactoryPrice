@@ -15,6 +15,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { str } = require('../utils/text');
 
 const SHEET = 'Invoices';
 // CUR-2 — `rate_multiplier` (column W) is the LAST entry and must stay last:
@@ -38,7 +39,6 @@ const RATE_MULTIPLIER_COL = HEADERS.indexOf('rate_multiplier'); // 22 → W
 function colLetter(i) { return String.fromCharCode('A'.charCodeAt(0) + i); }
 const LAST_COL = colLetter(HEADERS.length - 1);
 
-function str(v) { return (v ?? '').toString().trim(); }
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 
 /**

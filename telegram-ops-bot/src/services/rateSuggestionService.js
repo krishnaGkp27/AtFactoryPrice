@@ -29,6 +29,7 @@
 const inventoryRepository = require('../repositories/inventoryRepository');
 const goodsReceiptsRepository = require('../repositories/goodsReceiptsRepository');
 const money = require('../utils/money');
+const { num, str } = require('../utils/text');
 
 let _sheetsClient = null;
 function sheets() {
@@ -36,8 +37,6 @@ function sheets() {
   return _sheetsClient;
 }
 
-function num(v) { return parseFloat(v) || 0; }
-function str(v) { return (v ?? '').toString().trim(); }
 function upper(v) { return str(v).toUpperCase(); }
 
 function median(values) {

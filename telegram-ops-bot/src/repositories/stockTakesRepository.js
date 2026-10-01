@@ -21,6 +21,7 @@
 const crypto = require('crypto');
 const { normDay } = require('../utils/dates');
 const sheets = require('./sheetsClient');
+const { str } = require('../utils/text');
 
 const SHEET = 'StockTakes';
 const HEADERS = [
@@ -36,7 +37,6 @@ let _cache = null;
 let _cacheTs = 0;
 function invalidateCache() { _cache = null; _cacheTs = 0; }
 
-function str(v) { return (v ?? '').toString().trim(); }
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 
 function parse(r, rowIndex) {

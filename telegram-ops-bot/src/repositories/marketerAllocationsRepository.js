@@ -13,6 +13,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { str } = require('../utils/text');
 
 const SHEET = 'MarketerAllocations';
 // MYP-2 (owner, 23-Aug-2026): shade-level allocation — col H at the END
@@ -23,7 +24,6 @@ let _cache = null;
 let _cacheTs = 0;
 const CACHE_TTL_MS = 10000;
 
-function str(v) { return (v ?? '').toString().trim(); }
 
 /** @param {Array<string>} row Raw sheet row. @returns {object} Parsed record. */
 function parse(row) {

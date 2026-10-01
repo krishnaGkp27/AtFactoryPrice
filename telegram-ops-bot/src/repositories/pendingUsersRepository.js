@@ -44,6 +44,7 @@
 'use strict';
 
 const sheets = require('./sheetsClient');
+const { str } = require('../utils/text');
 
 const SHEET = 'PendingUsers';
 const HEADERS = [
@@ -63,7 +64,6 @@ const HEADERS = [
 // a customer. Only a marketer may take commission (BUSINESS_RULES §16).
 const LINK_TYPES = ['employee', 'customer', 'contact', 'marketer'];
 
-function str(v) { return (v ?? '').toString().trim(); }
 
 function parse(r, rowIndex) {
   const linkType = str(r[9]).toLowerCase();

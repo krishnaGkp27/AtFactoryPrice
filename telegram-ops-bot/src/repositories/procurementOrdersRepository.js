@@ -22,6 +22,7 @@
 
 const sheets = require('./sheetsClient');
 const idGenerator = require('../utils/idGenerator');
+const { str, num } = require('../utils/text');
 
 const HEADER_SHEET = 'ProcurementOrders';
 const LINES_SHEET  = 'ProcurementOrderLines';
@@ -44,8 +45,6 @@ const STATUSES = Object.freeze({
   CANCELLED: 'cancelled',
 });
 
-function str(v) { return (v ?? '').toString().trim(); }
-function num(v) { return parseFloat(v) || 0; }
 
 function parseHeader(r, rowIndex) {
   return {

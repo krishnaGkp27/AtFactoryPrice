@@ -14,10 +14,10 @@
 
 const sheets = require('./sheetsClient');
 const idGenerator = require('../utils/idGenerator');
+const { str } = require('../utils/text');
 
 const SHEET = 'LandedCostTypes';
 
-function str(v) { return (v ?? '').toString().trim(); }
 
 function parse(r) {
   if (!r || !r[0]) return null;

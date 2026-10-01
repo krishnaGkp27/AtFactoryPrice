@@ -39,6 +39,7 @@ const sheets = require('./sheetsClient');
 const { todayInLagos } = require('../utils/dates');
 const idGenerator = require('../utils/idGenerator');
 const { normalizeSalesDate } = require('../utils/dates');
+const { str, num } = require('../utils/text');
 
 const SHEET = 'Inventory';
 const COL_COUNT = 23;
@@ -70,8 +71,6 @@ let _allCache = null;
 let _allCacheTs = 0;
 const CACHE_TTL_MS = 5000;
 
-function str(v) { return (v ?? '').toString().trim(); }
-function num(v) { return parseFloat(v) || 0; }
 function upper(v) { return str(v).toUpperCase(); }
 
 /**

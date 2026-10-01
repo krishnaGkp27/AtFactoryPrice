@@ -30,6 +30,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { str } = require('../utils/text');
 
 const SHEET = 'DesignAssets';
 const HEADERS = [
@@ -44,7 +45,6 @@ const HEADERS = [
 ];
 const COL_COUNT = HEADERS.length;
 
-function str(v) { return (v ?? '').toString().trim(); }
 function num(v) { return parseInt(v, 10) || 0; }
 function upper(v) { return str(v).toUpperCase(); }
 
