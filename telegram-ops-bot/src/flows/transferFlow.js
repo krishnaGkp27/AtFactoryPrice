@@ -2103,16 +2103,38 @@ async function rearmDoc(bot, query, code, requestId, opts = {}) {
 async function gateNotNow(bot, query, requestId) {
   await bot.answerCallbackQuery(query.id).catch(() => {});
   const userId = String(query.from.id);
+  const chatId = query.message.chat.id;
   const session = sessionStore.get(userId);
+  let viaPicker = null;
   // APC-1 Phase C — only stand down THIS transfer's gate: a stale "Not now"
   // must never kill the gate another transfer is currently waiting on.
   if (session && session.type === SESSION_TYPE && session.step === 'await_doc' && session.gate
       && String(session.requestId) === String(requestId)) {
-    await disposeAux(bot, query.message.chat.id, userId); // SJ-4 — sweep file-type warnings
+    await disposeAux(bot, chatId, userId); // SJ-4 — sweep file-type warnings
+    // TRF-21 — a gate armed from the arrival picker left the receiver's own
+    // card standing (with its buttons) and a sealed picker above the prompt.
+    if (session.cardMessageId) {
+      viaPicker = { cardMessageId: session.cardMessageId, pickerMessageId: session.pickerMessageId || null, backCb: session.backCb || null };
+    }
     sessionStore.clear(userId);
   }
   const row = await transferService.findTransfer(requestId);
   if (!row || row.status !== 'pending') return true;
+  if (viaPicker) {
+    // The card is the live surface: the prompt and the "receipt pending"
+    // picker seal go (a seal that outlives the gate would read as a receipt
+    // in progress), and the card is redrawn from the row where it stands.
+    for (const mid of [query.message.message_id, viaPicker.pickerMessageId]) {
+      if (!mid) continue;
+      try { await bot.deleteMessage(chatId, mid); } catch (_) {
+        await bot.editMessageText(`📦 *${shortTransferRef(requestId)}* — nothing received, nothing changed.`, {
+          chat_id: chatId, message_id: mid, parse_mode: 'Markdown',
+        }).catch(() => {});
+      }
+    }
+    await refreshCard(bot, chatId, viaPicker.cardMessageId, userId, requestId, viaPicker.backCb);
+    return true;
+  }
   const card = receiverCard(requestId, await ensureLineBales(row.actionJSON),
     waitingLine(row, await nameMap([
       (row.actionJSON || {}).dispatcher, (row.actionJSON || {}).receiver, row.user])));

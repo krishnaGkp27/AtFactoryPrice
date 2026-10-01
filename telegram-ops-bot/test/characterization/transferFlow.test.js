@@ -476,6 +476,36 @@ test('TRF-21: reject after a partial delivery sends back only P2; P1 stays live 
   assert.doesNotMatch(bd.allText(), /still on the road/);
 });
 
+test('TRF-21: ↩ Not now on the photo prompt after a picker Confirm drops the prompt and the seal, redraws the card', async () => {
+  const { calls, requestId } = await dispatchTwo();
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb(`trf:rcvp:${requestId}`, 'musa'));
+  const pid = sessionStore.get('musa').flowMessageId;
+  await controller.handleCallbackQuery(bot, cb('trf:rp:t:0', 'musa', pid));
+  await controller.handleCallbackQuery(bot, cb('trf:rp:go', 'musa', pid));
+  const promptId = sessionStore.get('musa').flowMessageId;
+  assert.ok(promptId && promptId !== pid && promptId !== 5, 'the photo prompt is a fresh message');
+  const bn = createFakeBot();
+  await controller.handleCallbackQuery(bn, cb(`trf:nn:${requestId}`, 'musa', promptId));
+  assert.ok(!sessionStore.get('musa'), 'gate stood down');
+  const deleted = bn.callsTo('deleteMessage').map((m) => m.args.messageId);
+  assert.ok(deleted.includes(promptId) && deleted.includes(pid), `prompt and picker seal deleted, got ${deleted}`);
+  const cardEdit = bn.callsTo('editMessageText').find((m) => m.args.opts.message_id === 5);
+  assert.ok(cardEdit && /Transfer .* incoming/.test(cardEdit.args.text), 'the receiver card is redrawn where it stands');
+  assert.ok(cardEdit.args.opts.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === `trf:rcvp:${requestId}`), 'with its buttons');
+  assert.ok(!calls.transitions.some((t) => t.from === 'in_transit'), 'nothing received');
+  // The plain ✅ Received gate (no picker) keeps the old behaviour: the prompt turns back into the card.
+  const bp = createFakeBot();
+  await controller.handleCallbackQuery(bp, cb(`trf:rcv:${requestId}`, 'musa', 5));
+  const prompt2 = sessionStore.get('musa').flowMessageId;
+  const bn2 = createFakeBot();
+  await controller.handleCallbackQuery(bn2, cb(`trf:nn:${requestId}`, 'musa', prompt2));
+  assert.equal(bn2.callsTo('deleteMessage').length, 0, 'no picker — nothing to delete');
+  const back = bn2.callsTo('editMessageText').find((m) => m.args.opts.message_id === prompt2);
+  assert.ok(back && /Transfer .* incoming/.test(back.args.text), 'the prompt becomes the card again');
+  sessionStore.clear('musa');
+});
+
 test('TRF-21: a stranger cannot open the arrival picker; a stale picker card cannot tick into a newer one', async () => {
   const { requestId } = await dispatchTwo();
   const bot = createFakeBot();
