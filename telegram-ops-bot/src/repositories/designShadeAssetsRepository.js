@@ -40,6 +40,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { ttlCache } = require('../utils/ttlCache');
 const { str } = require('../utils/text');
 
 const SHEET = 'DesignShadeAssets';
@@ -112,20 +113,15 @@ function toRow(o) {
   ];
 }
 
-let _cache = null;
-let _cacheTs = 0;
-const CACHE_TTL_MS = 10000;
 
-function invalidateCache() { _cache = null; _cacheTs = 0; }
 
-async function getAll() {
-  const now = Date.now();
-  if (_cache && now - _cacheTs < CACHE_TTL_MS) return _cache;
+const _cache = ttlCache(10000, async () => {
   const rows = await sheets.readRange(SHEET, READ_RANGE).catch(() => []);
-  _cache = rows.map((r, i) => parseRow(r, i + 2)).filter((x) => x.design && x.shadeNo);
-  _cacheTs = now;
-  return _cache;
-}
+  return rows.map((r, i) => parseRow(r, i + 2)).filter((x) => x.design && x.shadeNo);
+});
+function invalidateCache() { _cache.invalidate(); }
+
+async function getAll() { return _cache.get(); }
 
 async function list(status) {
   const all = await getAll();

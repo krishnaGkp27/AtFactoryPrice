@@ -6,6 +6,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { ttlCache } = require('../utils/ttlCache');
 const { str, num } = require('../utils/text');
 
 const SHEET = 'CatalogStock';
@@ -16,9 +17,6 @@ const HEADERS = [
 const COL_COUNT = HEADERS.length;
 
 /** Short-lived cache to avoid hammering the API during batch ops. */
-let _cache = null;
-let _cacheTs = 0;
-const CACHE_TTL_MS = 10000;
 
 
 function parseRow(r, rowIndex) {
@@ -75,17 +73,15 @@ async function ensureHeader() {
   _headerReady = true;
 }
 
-function invalidateCache() { _cache = null; _cacheTs = 0; }
 
-async function getAll() {
-  const now = Date.now();
-  if (_cache && (now - _cacheTs) < CACHE_TTL_MS) return _cache;
+const _cache = ttlCache(10000, async () => {
   await ensureHeader();
   const rows = await sheets.readRange(SHEET, `A2:${columnLetter(COL_COUNT)}`).catch(() => []);
-  _cache = rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.design);
-  _cacheTs = Date.now();
-  return _cache;
-}
+  return rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.design);
+});
+function invalidateCache() { _cache.invalidate(); }
+
+async function getAll() { return _cache.get(); }
 
 async function find(design, catalogSize, warehouse) {
   const all = await getAll();

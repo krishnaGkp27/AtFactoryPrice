@@ -12,15 +12,12 @@
 
 const crypto = require('crypto');
 const sheets = require('./sheetsClient');
+const { ttlCache } = require('../utils/ttlCache');
 const { str } = require('../utils/text');
 
 const SHEET = 'ContactLinks';
 const RELATIONS = ['subordinate_of'];
 
-const CACHE_TTL_MS = 30 * 1000;
-let _cache = null;
-let _cacheTs = 0;
-function invalidateCache() { _cache = null; _cacheTs = 0; }
 
 
 function parse(r, rowIndex) {
@@ -37,14 +34,13 @@ function parse(r, rowIndex) {
   };
 }
 
-async function getAll() {
-  const now = Date.now();
-  if (_cache && now - _cacheTs < CACHE_TTL_MS) return _cache;
+const _cache = ttlCache(30 * 1000, async () => {
   const rows = await sheets.readRange(SHEET, 'A2:H');
-  _cache = rows.map((r, i) => parse(r, i + 2)).filter((l) => l.link_id);
-  _cacheTs = Date.now();
-  return _cache;
-}
+  return rows.map((r, i) => parse(r, i + 2)).filter((l) => l.link_id);
+});
+function invalidateCache() { _cache.invalidate(); }
+
+async function getAll() { return _cache.get(); }
 
 async function getActive() {
   return (await getAll()).filter((l) => l.status === 'active');

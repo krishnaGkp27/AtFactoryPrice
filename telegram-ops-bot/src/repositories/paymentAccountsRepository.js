@@ -27,6 +27,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { ttlCache } = require('../utils/ttlCache');
 const idGenerator = require('../utils/idGenerator');
 const { str } = require('../utils/text');
 
@@ -40,10 +41,6 @@ const HEADERS = [
 const OWNER_TYPES = ['employee', 'contractor'];
 const STATUSES = ['pending', 'active', 'inactive'];
 
-const CACHE_TTL_MS = 10 * 1000;
-let _cache = null;
-let _cacheTs = 0;
-function invalidateCache() { _cache = null; _cacheTs = 0; }
 
 
 /** Digits only — how two account numbers are compared for sameness. */
@@ -81,18 +78,16 @@ async function ensureHeader() {
   _headerReady = true;
 }
 
+// A read failure (sheet not bootstrapped yet) yields an empty register for
+// THIS call only — nothing is cached, the next caller retries the sheet.
+const _cache = ttlCache(10 * 1000, async () => {
+  const rows = await sheets.readRange(SHEET, 'A2:L');
+  return (rows || []).map((r, i) => parse(r, i + 2)).filter((a) => a.account_id);
+});
+function invalidateCache() { _cache.invalidate(); }
+
 async function getAll() {
-  const now = Date.now();
-  if (_cache && now - _cacheTs < CACHE_TTL_MS) return [..._cache];
-  let rows;
-  try {
-    rows = await sheets.readRange(SHEET, 'A2:L');
-  } catch (_) {
-    return []; // sheet not bootstrapped yet — an empty register, never a crash
-  }
-  _cache = (rows || []).map((r, i) => parse(r, i + 2)).filter((a) => a.account_id);
-  _cacheTs = now;
-  return [..._cache];
+  try { return [...await _cache.get()]; } catch (_) { return []; }
 }
 
 async function findById(accountId) {

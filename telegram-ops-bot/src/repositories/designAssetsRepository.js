@@ -30,6 +30,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { ttlCache } = require('../utils/ttlCache');
 const { str } = require('../utils/text');
 
 const SHEET = 'DesignAssets';
@@ -142,9 +143,6 @@ function toRow(o) {
   ];
 }
 
-let _cache = null;
-let _cacheTs = 0;
-const CACHE_TTL_MS = 10000;
 
 let _headerReady = false;
 
@@ -171,17 +169,15 @@ async function ensureHeader() {
 
 const { columnLetter } = require('./sheetsClient');
 
-function invalidateCache() { _cache = null; _cacheTs = 0; }
 
-async function getAll() {
-  const now = Date.now();
-  if (_cache && (now - _cacheTs) < CACHE_TTL_MS) return _cache;
+const _cache = ttlCache(10000, async () => {
   await ensureHeader();
   const rows = await sheets.readRange(SHEET, `A2:${columnLetter(COL_COUNT)}`).catch(() => []);
-  _cache = rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.design);
-  _cacheTs = Date.now();
-  return _cache;
-}
+  return rows.map((r, i) => parseRow(r, i + 2)).filter((r) => r.design);
+});
+function invalidateCache() { _cache.invalidate(); }
+
+async function getAll() { return _cache.get(); }
 
 /**
  * CAT-C1 — pure resolution over a row array (unit-testable):

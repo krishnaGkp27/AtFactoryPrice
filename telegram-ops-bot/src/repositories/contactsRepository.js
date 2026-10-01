@@ -10,6 +10,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { ttlCache } = require('../utils/ttlCache');
 const idGenerator = require('../utils/idGenerator');
 const phone = require('../utils/phone');
 const { str } = require('../utils/text');
@@ -17,10 +18,6 @@ const { str } = require('../utils/text');
 const SHEET = 'Contacts';
 const TYPES = ['worker', 'customer', 'agent', 'supplier', 'other'];
 
-const CACHE_TTL_MS = 30 * 1000;
-let _cache = null;
-let _cacheTs = 0;
-function invalidateCache() { _cache = null; _cacheTs = 0; }
 
 
 function parse(r, rowIndex) {
@@ -51,14 +48,13 @@ function isInactive(c) {
   return String((c && c.status) || 'active').trim().toLowerCase() === 'inactive';
 }
 
-async function getAll() {
-  const now = Date.now();
-  if (_cache && now - _cacheTs < CACHE_TTL_MS) return [..._cache];
+const _cache = ttlCache(30 * 1000, async () => {
   const rows = await sheets.readRange(SHEET, 'A2:L');
-  _cache = rows.map((r, i) => parse(r, i + 2)).filter((c) => c.contact_id || c.name);
-  _cacheTs = Date.now();
-  return [..._cache];
-}
+  return rows.map((r, i) => parse(r, i + 2)).filter((c) => c.contact_id || c.name);
+});
+function invalidateCache() { _cache.invalidate(); }
+
+async function getAll() { return [...await _cache.get()]; }
 
 async function getByType(type) {
   const all = await getAll();

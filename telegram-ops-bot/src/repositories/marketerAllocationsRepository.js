@@ -13,6 +13,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { ttlCache } = require('../utils/ttlCache');
 const { str } = require('../utils/text');
 
 const SHEET = 'MarketerAllocations';
@@ -20,9 +21,6 @@ const SHEET = 'MarketerAllocations';
 // (§10). A blank shade = the design-level row (pre-MYP-2 rows unchanged).
 const HEADERS = ['marketer_id', 'marketer_name', 'design', 'allocated_qty', 'updated_by', 'updated_at', 'notes', 'shade'];
 
-let _cache = null;
-let _cacheTs = 0;
-const CACHE_TTL_MS = 10000;
 
 
 /** @param {Array<string>} row Raw sheet row. @returns {object} Parsed record. */
@@ -43,17 +41,17 @@ function parse(row) {
  * All allocation rows (cached, 10 s TTL).
  * @returns {Promise<Array<object>>} Parsed rows (marketer_id + design present).
  */
+// A failed read serves the last good list (or nothing) and is retried on
+// the next call — the loader throws, so ttlCache never caches a failure.
+let _last = null;
+const _cache = ttlCache(10000, async () => {
+  const rows = await sheets.readRange(SHEET, 'A2:H');
+  _last = (rows || []).map(parse).filter((r) => r.marketer_id && r.design);
+  return _last;
+});
+
 async function getAll() {
-  const now = Date.now();
-  if (_cache && (now - _cacheTs) < CACHE_TTL_MS) return _cache;
-  try {
-    const rows = await sheets.readRange(SHEET, 'A2:H');
-    _cache = (rows || []).map(parse).filter((r) => r.marketer_id && r.design);
-    _cacheTs = Date.now();
-    return _cache;
-  } catch {
-    return _cache || [];
-  }
+  try { return await _cache.get(); } catch { return _last || []; }
 }
 
 /**
@@ -119,10 +117,7 @@ async function setAllocation({ marketerId, marketerName = '', design, qty, updat
 }
 
 /** Drop the read cache. */
-function invalidateCache() {
-  _cache = null;
-  _cacheTs = 0;
-}
+function invalidateCache() { _cache.invalidate(); _last = null; }
 
 module.exports = {
   getAll,

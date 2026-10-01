@@ -36,6 +36,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { ttlCache } = require('../utils/ttlCache');
 const { str } = require('../utils/text');
 
 const SHEET = 'Locations';
@@ -44,10 +45,6 @@ const HEADERS = ['name', 'location', 'kind', 'status', 'notes', 'updated_by', 'u
 const KINDS = ['warehouse', 'store'];
 const STATUSES = ['active', 'planned', 'closed'];
 
-const CACHE_TTL_MS = 60 * 1000;
-let _cache = null;
-let _cacheTs = 0;
-function invalidateCache() { _cache = null; _cacheTs = 0; }
 
 
 function parse(r, rowIndex) {
@@ -68,22 +65,17 @@ function parse(r, rowIndex) {
 }
 
 /** Every registered place. Cached ~60 s; a read failure yields []. */
+const _cache = ttlCache(60 * 1000, async () => {
+  const rows = await sheets.readRange(SHEET, 'A2:G');
+  return (rows || []).map((r, i) => parse(r, i + 2)).filter((p) => p.name);
+});
+function invalidateCache() { _cache.invalidate(); }
+
 async function getAll() {
-  const now = Date.now();
-  if (_cache && now - _cacheTs < CACHE_TTL_MS) return _cache;
-  let rows;
-  try {
-    rows = await sheets.readRange(SHEET, 'A2:G');
-  } catch (_) {
-    // The sheet may not exist yet on a deploy that predates schemaMapper's
-    // bootstrap. An empty register means "nothing annotated", never a crash.
-    return [];
-  }
-  _cache = (rows || [])
-    .map((r, i) => parse(r, i + 2))
-    .filter((p) => p.name);
-  _cacheTs = now;
-  return _cache;
+  // The sheet may not exist yet on a deploy that predates schemaMapper's
+  // bootstrap. An empty register means "nothing annotated", never a crash —
+  // and nothing is cached, so the next caller retries the sheet.
+  try { return await _cache.get(); } catch (_) { return []; }
 }
 
 /** Register one place. Callers dedupe by name first (see locationService). */

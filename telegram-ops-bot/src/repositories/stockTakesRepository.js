@@ -21,6 +21,7 @@
 const crypto = require('crypto');
 const { normDay } = require('../utils/dates');
 const sheets = require('./sheetsClient');
+const { ttlCache } = require('../utils/ttlCache');
 const { str } = require('../utils/text');
 
 const SHEET = 'StockTakes';
@@ -32,10 +33,6 @@ const HEADERS = [
   'counted_bales', 'counted_bundles', 'note',
 ];
 
-const CACHE_TTL_MS = 30 * 1000;
-let _cache = null;
-let _cacheTs = 0;
-function invalidateCache() { _cache = null; _cacheTs = 0; }
 
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 
@@ -58,14 +55,13 @@ function parse(r, rowIndex) {
   };
 }
 
-async function getAll() {
-  const now = Date.now();
-  if (_cache && now - _cacheTs < CACHE_TTL_MS) return _cache;
+const _cache = ttlCache(30 * 1000, async () => {
   const rows = await sheets.readRange(SHEET, 'A2:M');
-  _cache = rows.map((r, i) => parse(r, i + 2)).filter((x) => x.stocktake_id);
-  _cacheTs = Date.now();
-  return _cache;
-}
+  return rows.map((r, i) => parse(r, i + 2)).filter((x) => x.stocktake_id);
+});
+function invalidateCache() { _cache.invalidate(); }
+
+async function getAll() { return _cache.get(); }
 
 /**
  * Append one audit-event row per record. Returns the records WITH their

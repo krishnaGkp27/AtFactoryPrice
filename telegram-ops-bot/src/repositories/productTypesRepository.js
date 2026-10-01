@@ -4,6 +4,7 @@
  */
 
 const sheets = require('./sheetsClient');
+const { ttlCache } = require('../utils/ttlCache');
 
 const SHEET = 'ProductTypes';
 const HEADERS = ['type_id', 'type_name', 'container_label', 'container_short', 'subunit_label', 'measure_unit', 'has_subunits', 'status'];
@@ -19,9 +20,6 @@ const DEFAULT_LABELS = {
   status: 'active',
 };
 
-let _cache = null;
-let _cacheTs = 0;
-const CACHE_TTL_MS = 60000;
 
 function parse(row) {
   return {
@@ -36,17 +34,17 @@ function parse(row) {
   };
 }
 
+// A failed read serves the last good list (or the defaults) and is retried
+// on the next call — the loader throws, so ttlCache never caches a failure.
+let _last = null;
+const _cache = ttlCache(60000, async () => {
+  const rows = await sheets.readRange(SHEET, 'A2:H');
+  _last = (rows || []).map(parse).filter((r) => r.type_id);
+  return _last;
+});
+
 async function getAll() {
-  const now = Date.now();
-  if (_cache && (now - _cacheTs) < CACHE_TTL_MS) return _cache;
-  try {
-    const rows = await sheets.readRange(SHEET, 'A2:H');
-    _cache = (rows || []).map(parse).filter((r) => r.type_id);
-    _cacheTs = Date.now();
-    return _cache;
-  } catch (_) {
-    return _cache || [DEFAULT_LABELS];
-  }
+  try { return await _cache.get(); } catch (_) { return _last || [DEFAULT_LABELS]; }
 }
 
 async function findById(typeId) {

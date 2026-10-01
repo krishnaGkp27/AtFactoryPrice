@@ -18,14 +18,12 @@
  */
 
 const sheets = require('./sheetsClient');
+const { ttlCache } = require('../utils/ttlCache');
 const { str } = require('../utils/text');
 
 const SHEET = 'Shades';
 const DEFAULT_EMOJI = '🎨';
-const TTL_MS = 60_000;
 
-let _cache = null;
-let _cacheTs = 0;
 
 
 function parse(r) {
@@ -42,24 +40,17 @@ function parse(r) {
   };
 }
 
+const _cache = ttlCache(60_000, async () => {
+  const rows = await sheets.readRange(SHEET, 'A2:H').catch(() => []);
+  return (rows || []).map(parse).filter(Boolean);
+});
+
 async function getAll({ force = false } = {}) {
-  const now = Date.now();
-  if (!force && _cache && (now - _cacheTs) < TTL_MS) return _cache;
-  let rows;
-  try {
-    rows = await sheets.readRange(SHEET, 'A2:H');
-  } catch (_) {
-    rows = [];
-  }
-  _cache = (rows || []).map(parse).filter(Boolean);
-  _cacheTs = now;
-  return _cache;
+  if (force) _cache.invalidate();
+  return _cache.get();
 }
 
-function invalidate() {
-  _cache = null;
-  _cacheTs = 0;
-}
+function invalidate() { _cache.invalidate(); }
 
 async function getActive() {
   return (await getAll()).filter((s) => s.active);
