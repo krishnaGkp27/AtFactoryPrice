@@ -1360,7 +1360,7 @@ async function showCmsAddQuantityPicker(bot, chatId, userId) {
   saveSession(userId, session);
 
   const existing = await catalogStockRepo.find(session.design, session.catalogSize, session.warehouse);
-  const existNote = existing ? `\n\n_Existing stock: ${existing.inOfficeQty} in office_` : '';
+  const existNote = existing ? `\n\n_Existing stock: ${existing.in_office_qty} in office_` : '';
 
   const rows = [
     [
@@ -1392,9 +1392,9 @@ async function submitCmsAdd(bot, chatId, userId) {
   if (existing) {
     await catalogStockRepo.updateQty(
       existing.rowIndex,
-      existing.inOfficeQty + qty,
-      existing.withCustomersQty,
-      existing.withMarketersQty,
+      existing.in_office_qty + qty,
+      existing.with_customers_qty,
+      existing.with_marketers_qty,
     );
   } else {
     await catalogStockRepo.append({
@@ -1410,7 +1410,7 @@ async function submitCmsAdd(bot, chatId, userId) {
   catalogStockRepo.invalidateCache();
 
   const action = existing ? 'Updated' : 'Added';
-  const newTotal = existing ? existing.inOfficeQty + qty : qty;
+  const newTotal = existing ? existing.in_office_qty + qty : qty;
 
   await safeDelete(bot, chatId, session.flowMessageId);
   sessionStore.clear(userId);
@@ -1443,7 +1443,7 @@ async function showCmsStockList(bot, chatId, userId, page, messageId) {
     return;
   }
 
-  all.sort((a, b) => a.design.localeCompare(b.design, undefined, { numeric: true }) || a.catalogSize.localeCompare(b.catalogSize) || a.warehouse.localeCompare(b.warehouse));
+  all.sort((a, b) => a.design.localeCompare(b.design, undefined, { numeric: true }) || a.catalog_size.localeCompare(b.catalog_size) || a.warehouse.localeCompare(b.warehouse));
 
   const totalPages = Math.max(1, Math.ceil(all.length / CMS_PAGE_SIZE));
   if (page < 0) page = 0;
@@ -1452,9 +1452,9 @@ async function showCmsStockList(bot, chatId, userId, page, messageId) {
   const slice = all.slice(page * CMS_PAGE_SIZE, (page + 1) * CMS_PAGE_SIZE);
   const rows = [];
   for (const s of slice) {
-    const icon = s.catalogSize === 'Big' ? '📘' : '📗';
-    const label = `${icon} ${s.design} ${s.catalogSize} · ${s.warehouse} — ${s.inOfficeQty} in`;
-    rows.push([{ text: label, callback_data: cbSafe(`cms:edit:${s.design}|${s.catalogSize}|${s.warehouse}`) }]);
+    const icon = s.catalog_size === 'Big' ? '📘' : '📗';
+    const label = `${icon} ${s.design} ${s.catalog_size} · ${s.warehouse} — ${s.in_office_qty} in`;
+    rows.push([{ text: label, callback_data: cbSafe(`cms:edit:${s.design}|${s.catalog_size}|${s.warehouse}`) }]);
   }
 
   const nav = [];
@@ -1477,11 +1477,11 @@ async function showCmsEditEntry(bot, chatId, userId, design, catalogSize, wareho
   }
 
   const icon = catalogSize === 'Big' ? '📘' : '📗';
-  const total = entry.inOfficeQty + entry.withCustomersQty + entry.withMarketersQty;
+  const total = entry.in_office_qty + entry.with_customers_qty + entry.with_marketers_qty;
   const text = `${icon} *${design} — ${catalogSize}*\n🏭 ${warehouse}\n\n` +
-    `📦 In office: *${entry.inOfficeQty}*\n` +
-    `👤 With customers: *${entry.withCustomersQty}*\n` +
-    `🧑‍💼 With marketers: *${entry.withMarketersQty}*\n` +
+    `📦 In office: *${entry.in_office_qty}*\n` +
+    `👤 With customers: *${entry.with_customers_qty}*\n` +
+    `🧑‍💼 With marketers: *${entry.with_marketers_qty}*\n` +
     `━━━━━━━━━━━━━━\n` +
     `Total: *${total}*`;
 
@@ -1520,9 +1520,9 @@ async function showCmsSummary(bot, chatId, userId, messageId) {
 
   let totalInOffice = 0, totalWithCust = 0, totalWithMkt = 0;
   for (const s of all) {
-    totalInOffice += s.inOfficeQty;
-    totalWithCust += s.withCustomersQty;
-    totalWithMkt += s.withMarketersQty;
+    totalInOffice += s.in_office_qty;
+    totalWithCust += s.with_customers_qty;
+    totalWithMkt += s.with_marketers_qty;
   }
 
   let text = `📊 *Catalog Stock Summary*\n\n` +
@@ -1535,12 +1535,12 @@ async function showCmsSummary(bot, chatId, userId, messageId) {
 
   for (const wh of warehouses) {
     const whStock = all.filter((s) => s.warehouse === wh);
-    const whIn = whStock.reduce((s, r) => s + r.inOfficeQty, 0);
-    const whOut = whStock.reduce((s, r) => s + r.withCustomersQty + r.withMarketersQty, 0);
+    const whIn = whStock.reduce((s, r) => s + r.in_office_qty, 0);
+    const whOut = whStock.reduce((s, r) => s + r.with_customers_qty + r.with_marketers_qty, 0);
     text += `\n🏭 *${wh}*: ${whIn} in office, ${whOut} out\n`;
     for (const s of whStock) {
-      const icon = s.catalogSize === 'Big' ? '📘' : '📗';
-      text += `  ${icon} ${s.design} ${s.catalogSize}: ${s.inOfficeQty} in / ${s.withCustomersQty + s.withMarketersQty} out\n`;
+      const icon = s.catalog_size === 'Big' ? '📘' : '📗';
+      text += `  ${icon} ${s.design} ${s.catalog_size}: ${s.in_office_qty} in / ${s.with_customers_qty + s.with_marketers_qty} out\n`;
     }
   }
 
@@ -1662,8 +1662,8 @@ async function handleCmsCallback(bot, callbackQuery) {
     const [design, catalogSize, warehouse] = parts;
     const entry = await catalogStockRepo.find(design, catalogSize, warehouse);
     if (!entry) { await bot.sendMessage(chatId, '⚠️ Stock entry not found.'); return true; }
-    const newInOffice = Math.max(0, entry.inOfficeQty + delta);
-    await catalogStockRepo.updateQty(entry.rowIndex, newInOffice, entry.withCustomersQty, entry.withMarketersQty);
+    const newInOffice = Math.max(0, entry.in_office_qty + delta);
+    await catalogStockRepo.updateQty(entry.rowIndex, newInOffice, entry.with_customers_qty, entry.with_marketers_qty);
     catalogStockRepo.invalidateCache();
     await showCmsEditEntry(bot, chatId, uid, design, catalogSize, warehouse, messageId);
     return true;
@@ -1733,7 +1733,7 @@ async function _handleCmsText(bot, chatId, userId, text) {
     }
     const entry = await catalogStockRepo.find(session.design, session.catalogSize, session.warehouse);
     if (!entry) { await bot.sendMessage(chatId, '⚠️ Stock entry not found.'); sessionStore.clear(userId); return true; }
-    await catalogStockRepo.updateQty(entry.rowIndex, qty, entry.withCustomersQty, entry.withMarketersQty);
+    await catalogStockRepo.updateQty(entry.rowIndex, qty, entry.with_customers_qty, entry.with_marketers_qty);
     catalogStockRepo.invalidateCache();
     sessionStore.clear(userId);
     await bot.sendMessage(chatId,

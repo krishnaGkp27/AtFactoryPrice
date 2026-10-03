@@ -1986,13 +1986,16 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const stockRow = await catalogStockRepo.find(aj.design, aj.catalogSize, aj.warehouse);
     if (!stockRow) return { ok: false, message: `No catalog stock found for ${aj.design} ${aj.catalogSize} at ${aj.warehouse}.` };
     const qty = parseInt(aj.quantity, 10) || 1;
-    if (stockRow.inOfficeQty < qty) return { ok: false, message: `Insufficient stock: only ${stockRow.inOfficeQty} available.` };
+    // CAT-F1 (03-Oct-2026) — the stock row is snake_case (catalogStockRepository
+    // .parseRow); the camelCase reads here saw undefined, so the guard never
+    // fired and every approval rewrote the row with zeros.
+    if (stockRow.in_office_qty < qty) return { ok: false, message: `Insufficient stock: only ${stockRow.in_office_qty} available.` };
     const isLoan = aj.action === 'catalog_loan';
     await catalogStockRepo.updateQty(
       stockRow.rowIndex,
-      stockRow.inOfficeQty - qty,
-      isLoan ? stockRow.withCustomersQty : stockRow.withCustomersQty + qty,
-      isLoan ? stockRow.withMarketersQty + qty : stockRow.withMarketersQty,
+      stockRow.in_office_qty - qty,
+      isLoan ? stockRow.with_customers_qty : stockRow.with_customers_qty + qty,
+      isLoan ? stockRow.with_marketers_qty + qty : stockRow.with_marketers_qty,
     );
     await catalogLedgerRepo.append({
       design: aj.design,
@@ -2017,19 +2020,19 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const returnItems = aj.returnItems || [];
     for (const ri of returnItems) {
       const ledgerRow = (await catalogLedgerRepo.getAll()).find(
-        (r) => r.ledgerId === ri.ledgerId && r.status === 'active'
+        (r) => r.ledger_id === ri.ledgerId && r.status === 'active'
       );
       if (!ledgerRow) continue;
       await catalogLedgerRepo.markReturned(ledgerRow.rowIndex, approvedBy, new Date().toISOString());
       const returnWarehouse = aj.returnWarehouse || ledgerRow.warehouse;
-      const stockRow = await catalogStockRepo.find(ledgerRow.design, ledgerRow.catalogSize, returnWarehouse);
+      const stockRow = await catalogStockRepo.find(ledgerRow.design, ledgerRow.catalog_size, returnWarehouse);
       if (stockRow) {
-        const isMarketer = ledgerRow.recipientType === 'marketer';
+        const isMarketer = ledgerRow.recipient_type === 'marketer';
         await catalogStockRepo.updateQty(
           stockRow.rowIndex,
-          stockRow.inOfficeQty + ledgerRow.quantity,
-          isMarketer ? stockRow.withCustomersQty : stockRow.withCustomersQty - ledgerRow.quantity,
-          isMarketer ? stockRow.withMarketersQty - ledgerRow.quantity : stockRow.withMarketersQty,
+          stockRow.in_office_qty + ledgerRow.quantity,
+          isMarketer ? stockRow.with_customers_qty : stockRow.with_customers_qty - ledgerRow.quantity,
+          isMarketer ? stockRow.with_marketers_qty - ledgerRow.quantity : stockRow.with_marketers_qty,
         );
       }
     }
