@@ -81,7 +81,7 @@ function seedStock() {
   sessionStore.set(UID, { type: 'supply_req_flow', warehouse: 'IDUMOTA', cart: [], step: 'design', productType: 'fabric', flowMessageId: 50 });
 }
 
-const flat = (kb) => (kb ? kb.inline_keyboard.flat() : []);
+const flat = (kb) => (kb ? kb.inline_keyboard.flat().filter((b) => !/^act:/.test(b.callback_data)) : []); // NAV-1 footer aside
 const last = (bot, method) => bot.calls.filter((c) => c.method === method).pop();
 const lastCard = (bot) => bot.calls.filter((c) => c.method === 'sendMessage' || c.method === 'editMessageText').pop();
 /** Queue rows for shade batches, read from the fake sheet (appendOnce is idempotent on requestId). */

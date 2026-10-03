@@ -148,6 +148,24 @@ async function tombstone(bot, entry, cfg) {
 }
 
 /**
+ * NAV-1 — a flow left through 🏠 Menu / ⬅ Back to <Hub>: the session ends
+ * now and every message it owned is taken down, except the one that is
+ * becoming the menu (`keepMessageId`). The person chose to leave, so nothing
+ * is logged as expired and no tombstone is drawn.
+ * @returns {Promise<boolean>} true when a live flow was ended
+ */
+async function leaveFlow(bot, userId, keepMessageId) {
+  const s = sessionStore.get(userId);
+  if (!s) return false;
+  sessionStore.clear(userId, 'cancelled');
+  for (const mid of [s.flowMessageId, s.previewMessageId, s.comboMessageId, s.recordPhotoId, s.confirmMsgId, ...(s.auxMsgIds || [])]) {
+    if (!mid || String(mid) === String(keepMessageId)) continue;
+    try { await bot.deleteMessage(userId, mid); } catch (_) { /* already gone */ }
+  }
+  return true;
+}
+
+/**
  * One janitor pass: expire timed-out sessions, then tombstone the ones
  * whose per-activity grace has lapsed. Exposed for tests and for the
  * interval installed by start().
@@ -208,6 +226,7 @@ module.exports = {
   start,
   stop,
   tick,
+  leaveFlow,
   invalidateConfigCache,
   _internals: { humanize, graceMsFor, getConfig, tombstone, pending, FLOW_LABELS },
 };

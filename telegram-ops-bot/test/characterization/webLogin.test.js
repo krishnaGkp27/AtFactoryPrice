@@ -108,7 +108,7 @@ test('LNK-1: an unregistered bot domain falls back to plain url buttons, fresh t
   assert.equal(rejected, 1, 'login_url attempted first');
   const msg = bot.calls.find((c) => c.method === 'sendMessage' && /dashboard login/i.test(c.args.text));
   assert.ok(msg, 'fallback card delivered');
-  const btns = msg.args.opts.reply_markup.inline_keyboard.flat();
+  const btns = msg.args.opts.reply_markup.inline_keyboard.flat().filter((b) => !/^act:/.test(b.callback_data)); // NAV-1 footer aside
   assert.equal(btns.length, 3);
   for (const b of btns) {
     assert.ok(b.url && !b.login_url, 'plain url buttons on the fallback');

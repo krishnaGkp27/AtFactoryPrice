@@ -133,7 +133,7 @@ test('a Customer direct order completes its lifecycle: row keyed to the submitte
   const acceptCard = bot.callsTo('sendMessage').find((c) => /New Supply Order Assigned/.test(c.args.text));
   assert.ok(acceptCard, 'the Accept card is sent');
   assert.equal(String(acceptCard.args.chatId), '777', 'it lands in the submitter\'s own chat, not on an empty chat id');
-  assert.deepEqual(acceptCard.args.opts.reply_markup.inline_keyboard.flat().map((b) => b.callback_data), [`oacc:${orderId}`]);
+  assert.deepEqual(acceptCard.args.opts.reply_markup.inline_keyboard.flat().map((b) => b.callback_data).filter((d) => !d.startsWith('act:')), [`oacc:${orderId}`]); // NAV-1 footer aside
   assert.doesNotMatch(bot.allText(), /Could not notify/, 'no failed-DM warning');
 
   // Someone else cannot accept it.

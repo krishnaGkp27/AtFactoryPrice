@@ -64,8 +64,8 @@ test('sample flow: an AMBIGUOUS name becomes tappable chips, and the tap resumes
   await controller.handleMessage(bot, { ...msg(), text: 'cj' });
   const kbCall = bot.calls.find((c) => c.method === 'sendMessage' && c.args.opts && c.args.opts.reply_markup);
   assert.ok(kbCall, 'chips offered');
-  const chips = kbCall.args.opts.reply_markup.inline_keyboard.flat();
-  assert.ok(chips.every((b) => b.callback_data.startsWith('cpk:')), 'shared cpk: namespace');
+  const chips = kbCall.args.opts.reply_markup.inline_keyboard.flat().filter((b) => !b.callback_data.startsWith('act:')); // NAV-1 footer aside
+  assert.ok(chips.length && chips.every((b) => b.callback_data.startsWith('cpk:')), 'shared cpk: namespace');
   assert.ok(chips.some((b) => /CJEBU STORES/.test(b.text)));
   const s1 = sessionStore.get('4242');
   assert.equal(s1.step, 'customer_new', 'still waiting — nothing selected yet');
@@ -115,8 +115,8 @@ test('NLP record_payment with an unknown name offers CANDIDATES, never a ledger 
   await controller.handleMessage(bot, { ...msg('4242'), text: 'Record payment 50000 from CJEB via cash' });
   const kbCall = bot.calls.find((c) => c.method === 'sendMessage' && c.args.opts && c.args.opts.reply_markup);
   assert.ok(kbCall, 'candidate chips offered');
-  const chips = kbCall.args.opts.reply_markup.inline_keyboard.flat();
-  assert.ok(chips.every((b) => b.callback_data.startsWith('rpk:')));
+  const chips = kbCall.args.opts.reply_markup.inline_keyboard.flat().filter((b) => !b.callback_data.startsWith('act:')); // NAV-1 footer aside
+  assert.ok(chips.length && chips.every((b) => b.callback_data.startsWith('rpk:')));
   assert.ok(chips.some((b) => /CJEBU STORES/.test(b.text)), 'closest real customers offered');
   sessionStore.clear('4242');
   intentResult = { action: 'unknown', confidence: 0 };

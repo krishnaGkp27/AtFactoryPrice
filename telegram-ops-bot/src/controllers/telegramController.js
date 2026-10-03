@@ -55,6 +55,8 @@ const photoReceiveFlow = require('../flows/photoReceiveFlow');
 const warehouseFlow = require('../flows/warehouseFlow');
 const adminFeed = require('../services/adminFeed');
 const menuNav = require('../utils/menuNav');
+const navGuard = require('../utils/navGuard');
+const sessionJanitor = require('../services/sessionJanitor');
 const { downloadTelegramFile } = require('../utils/telegramFiles');
 const idGenerator = require('../utils/idGenerator');
 const config = require('../config');
@@ -3545,6 +3547,7 @@ async function handleLocationMessage(bot, msg) {
 async function handleFileMessage(bot, msg) {
   const chatId = msg.chat?.id;
   const userId = String(msg.from?.id || '');
+  bot = navGuard.wrap(bot, { chatId, userId }); // NAV-1
 
   if (!auth.isAllowed(userId)) {
     // MYP-1 §16 — linked people are view-only; a photo does nothing.
@@ -3768,6 +3771,7 @@ async function handleFileMessage(bot, msg) {
 async function handleMessage(bot, msg) {
   const chatId = msg.chat?.id;
   const userId = String(msg.from?.id || '');
+  bot = navGuard.wrap(bot, { chatId, userId }); // NAV-1
   const text = (msg.text || '').trim();
 
   if (!auth.isAllowed(userId)) {
@@ -7586,6 +7590,8 @@ const FLOW_CALLBACK_ROUTES = [
  * spinner without printing anything over a branch's deliberate silence.
  */
 async function handleCallbackQuery(bot, callbackQuery) {
+  // NAV-1 — every screen drawn for this tap carries a way back (utils/navGuard).
+  bot = navGuard.wrap(bot, { chatId: callbackQuery.message && callbackQuery.message.chat && callbackQuery.message.chat.id, userId: callbackQuery.from && callbackQuery.from.id, tapped: true });
   // Install the recorder HERE, not in server.js wiring: the guarantee must
   // hold for whoever constructed the bot — production, a test harness, a
   // future entry point — and not depend on a separate file remembering to
@@ -9886,9 +9892,15 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     // (a delivered dispatch/receipt file must not linger once they move on).
     try { await require('../services/ephemeralDocs').sweep(bot, uid); } catch (_) { /* viewer state only */ }
 
+    // NAV-1 — menu navigation ENDS a live flow (its other messages come down;
+    // this one becomes the menu, which the janitor would otherwise tombstone),
+    // and the hub the user works under is remembered for the "⬅ Back to <Hub>" footer.
+    if (actCode === '__back__' || actCode.startsWith('__hub__:')) await sessionJanitor.leaveFlow(bot, uid, messageId);
+    if (actCode === '__back__') navGuard.rememberHub(uid, null);
     // Hub tap → expand sub-activities in place (no keyboard wipe).
     if (actCode.startsWith('__hub__:')) {
       const hubId = actCode.slice('__hub__:'.length);
+      navGuard.rememberHub(uid, hubId);
       await renderHubSubmenu(bot, chatId, messageId, uid, hubId, callbackQuery);
       return;
     }
@@ -9898,6 +9910,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       await renderGreetingMenuEdit(bot, chatId, messageId, uid, false);
       return;
     }
+    { const act = activityRegistry.getActivity(actCode); if (act) navGuard.rememberHub(uid, act.hub); } // NAV-1
 
     // MNU-1 / audit D-2 — More Options used to fall through to the keyboard
     // wipe below and then fresh-send the expanded grid, so ONE button in the

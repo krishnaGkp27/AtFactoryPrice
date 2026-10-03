@@ -484,7 +484,7 @@ test('PAY-2: at the ✔ tap — row done, buttons wiped, Paid notice to the thre
   assert.match(lastTo(bot, OFFICE), /Send a screenshot of the bank transfer, or skip\./);
   assert.match(lastTo(bot, OFFICE), /₦4,000 → Abdul · `PAY-9`/);
   const kb = bot.calls.filter((c) => c.args.opts && c.args.opts.reply_markup).pop().args.opts.reply_markup.inline_keyboard.flat();
-  assert.deepEqual(kb.map((b) => b.callback_data), ['pay:proof:skip']);
+  assert.deepEqual(kb.map((b) => b.callback_data).filter((d) => !d.startsWith('act:')), ['pay:proof:skip']); // NAV-1 footer aside
   assert.equal(sessionStore.get(OFFICE).step, 'done_proof');
 });
 
