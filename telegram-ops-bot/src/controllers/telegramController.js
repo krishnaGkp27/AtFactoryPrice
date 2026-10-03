@@ -53,6 +53,7 @@ const procurementPlanView = require('../flows/procurementPlanView');
 const bulkReceiveFlow = require('../flows/bulkReceiveFlow');
 const photoReceiveFlow = require('../flows/photoReceiveFlow');
 const warehouseFlow = require('../flows/warehouseFlow');
+const salesReportFlow = require('../flows/salesReportFlow');
 const adminFeed = require('../services/adminFeed');
 const menuNav = require('../utils/menuNav');
 const navGuard = require('../utils/navGuard');
@@ -612,13 +613,6 @@ async function buildInventoryDesignReport(allItems, opts = {}) {
 }
 
 // ─── Sales Report (Interactive) ─────────────────────────────────────────────
-
-function filterSoldByPeriod(sold, periodDays) {
-  // TIME-1 — the window is counted back from the LAGOS day; soldDate rows
-  // are Lagos calendar days, so a UTC cutoff let an extra day in.
-  const cutoffStr = lagosDayPlus(-periodDays);
-  return sold.filter((r) => r.soldDate >= cutoffStr);
-}
 
 function buildSalesDesignReport(sold, periodLabel, opts = {}) {
   const expandAll = !!opts.expand;
@@ -5176,14 +5170,7 @@ async function handleMessage(bot, msg) {
           await bot.sendMessage(chatId, 'Sales report is admin-only.');
           return;
         }
-        await bot.sendMessage(chatId, '📊 *Sales Report*\n\nSelect period:', {
-          parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [
-            [{ text: '📅 Weekly (7 days)', callback_data: 'sr:7' }, { text: '📅 Monthly (30 days)', callback_data: 'sr:30' }],
-            [{ text: '📅 Quarterly (90 days)', callback_data: 'sr:90' }, { text: '📅 Yearly (365 days)', callback_data: 'sr:365' }],
-            [{ text: '⬅ Back to menu', callback_data: 'act:__back__' }],
-          ] },
-        });
+        { const card = salesReportFlow.periodCard(); await bot.sendMessage(chatId, card.text, card.opts); } // SRP-1
         return;
       }
 
@@ -7578,6 +7565,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['rmn:'], handle: (bot, cq) => require('../flows/reminderConfigFlow').handleCallback(bot, cq) },
   // RPT-2 — 📈 sales/supplies browser (read-only drill-down).
   { prefixes: ['sbr:'], handle: (bot, cq) => require('../flows/salesBrowserFlow').handleCallback(bot, cq) },
+  // SRP-1 — 📊 Sales Report → 📆 Pick dates (start / end calendar).
+  { prefixes: ['srd:'], handle: (bot, cq) => salesReportFlow.handleCallback(bot, cq) },
 ];
 
 /**
@@ -7937,41 +7926,29 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     }
 
   } else if (data.startsWith('sr:')) {
-    const days = parseInt(data.slice(3));
+    const days = parseInt(data.slice(3), 10) || 7;
     const uid = String(callbackQuery.from.id);
     if (!config.access.adminIds.includes(uid)) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' }); return; }
     await bot.answerCallbackQuery(callbackQuery.id);
-    sessionStore.set(uid, { type: 'sales_report_period', days });
-    const labels = { 7: 'Weekly', 30: 'Monthly', 90: 'Quarterly', 365: 'Yearly' };
-    const periodLabel = labels[days] || `Last ${days} days`;
-    await editOrSend(bot, callbackQuery.message.chat.id, callbackQuery.message.message_id,
-      `📊 *${periodLabel} Sales Report*\n\nGroup by:`, {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: [
-        [{ text: '📦 Design wise', callback_data: 'srg:design' }],
-        [{ text: '👤 Customer wise', callback_data: 'srg:customer' }],
-        menuNav.backToMenuRow(),
-      ] },
-    });
+    await salesReportFlow.showGroupBy(bot, callbackQuery.message.chat.id, callbackQuery.message.message_id, uid, String(days)); // SRP-1
 
   } else if (data.startsWith('srg:')) {
     const groupBy = data.slice(4);
     const uid = String(callbackQuery.from.id);
     if (!config.access.adminIds.includes(uid)) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' }); return; }
     const session = sessionStore.get(uid);
-    const days = (session && session.type === 'sales_report_period') ? session.days : 30;
+    const periodKey = (session && session.type === 'sales_report_period') ? session.key : '30'; // SRP-1
     sessionStore.clear(uid);
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Generating...' });
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
     try {
       const allItems = await inventoryRepository.getAll();
       const sold = allItems.filter((r) => r.status === 'sold' && r.soldTo && r.soldDate);
-      const filtered = filterSoldByPeriod(sold, days);
-      const labels = { 7: 'Last 7 Days', 30: 'Last 30 Days', 90: 'Last 90 Days', 365: 'Last 365 Days' };
-      const periodLabel = labels[days] || `Last ${days} Days`;
+      const filtered = salesReportFlow.filterByPeriod(sold, periodKey);
+      const periodLabel = salesReportFlow.periodLabel(periodKey);
       const report = groupBy === 'design'
-        ? buildSalesDesignReport(filtered, periodLabel, { periodKey: String(days) })
-        : buildSalesCustomerReport(filtered, periodLabel, { periodKey: String(days) });
+        ? buildSalesDesignReport(filtered, periodLabel, { periodKey })
+        : buildSalesCustomerReport(filtered, periodLabel, { periodKey });
       await sendLong(bot, callbackQuery.message.chat.id, report.text, {
         parse_mode: 'Markdown',
         ...(report.keyboard ? { reply_markup: report.keyboard } : {}),
@@ -9572,12 +9549,10 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
           break;
         }
         case 'sales_d': {
-          const days = parseInt(payload, 10) || 30;
           const allItems = await inventoryRepository.getAll();
           const sold = allItems.filter((r) => r.status === 'sold' && r.soldTo && r.soldDate);
-          const filtered = filterSoldByPeriod(sold, days);
-          const labels = { 7: 'Last 7 Days', 30: 'Last 30 Days', 90: 'Last 90 Days', 365: 'Last 365 Days' };
-          const periodLabel = labels[days] || `Last ${days} Days`;
+          const filtered = salesReportFlow.filterByPeriod(sold, payload);
+          const periodLabel = salesReportFlow.periodLabel(payload);
           const expanded = buildSalesDesignReport(filtered, periodLabel, { expand: true, periodKey: payload });
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
@@ -9587,14 +9562,13 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         }
         case 'sales_c': {
           const pipe = payload.indexOf('|');
-          const days = parseInt(pipe > 0 ? payload.slice(0, pipe) : payload, 10) || 30;
+          const periodKey = pipe > 0 ? payload.slice(0, pipe) : payload;
           const customer = pipe > 0 ? payload.slice(pipe + 1) : '';
           const allItems = await inventoryRepository.getAll();
           const sold = allItems.filter((r) => r.status === 'sold' && r.soldTo && r.soldDate);
-          const filtered = filterSoldByPeriod(sold, days);
-          const labels = { 7: 'Last 7 Days', 30: 'Last 30 Days', 90: 'Last 90 Days', 365: 'Last 365 Days' };
-          const periodLabel = labels[days] || `Last ${days} Days`;
-          const expanded = buildSalesCustomerReport(filtered, periodLabel, { expand: customer, periodKey: String(days) });
+          const filtered = salesReportFlow.filterByPeriod(sold, periodKey);
+          const periodLabel = salesReportFlow.periodLabel(periodKey);
+          const expanded = buildSalesCustomerReport(filtered, periodLabel, { expand: customer, periodKey });
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
             ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),
@@ -10054,14 +10028,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       }
       case 'sales_report': {
         if (!config.access.adminIds.includes(uid)) { await bot.sendMessage(chatId, 'Admin only.'); break; }
-        await editOrSend(bot, chatId, messageId, '📊 *Sales Report*\n\nSelect period:', {
-          parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [
-            [{ text: '📅 Weekly (7 days)', callback_data: 'sr:7' }, { text: '📅 Monthly (30 days)', callback_data: 'sr:30' }],
-            [{ text: '📅 Quarterly (90 days)', callback_data: 'sr:90' }, { text: '📅 Yearly (365 days)', callback_data: 'sr:365' }],
-            [{ text: '⬅ Back to menu', callback_data: 'act:__back__' }],
-          ] },
-        });
+        { const card = salesReportFlow.periodCard(); await editOrSend(bot, chatId, messageId, card.text, card.opts); } // SRP-1
         break;
       }
       case 'customer_ranking': {

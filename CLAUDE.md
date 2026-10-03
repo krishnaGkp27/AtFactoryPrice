@@ -156,7 +156,7 @@ Major namespaces already taken:
   (SHP-1 shade photos upload door; `srf_shpfull` + `myp:sc|sf|sb` are the
   shade-photo chips on the Orders / My Collection cards)
 - Approvals: `approve:` `reject:` `ctg:` (contact triage) `srf_acc/ack/dec/assign:` `smc:` `confirm_sale:` `cancel_sale:`
-- Reports: `cks:` `lpk:` `svr:` `inv:` `sr:`/`srg:` `mdo:` `sfs:` (SFS-1 🏬 Store Sales: `w:<i>` place · `d:<i>` day · `pg:<n>` · `back` · `close` · `menu` — the flow-owned menu exit)
+- Reports: `cks:` `lpk:` `svr:` `inv:` `sr:`/`srg:` (SRP-1 03-Oct-2026: the period key is `7` or `D<from>.<to>`) `srd:` (SRP-1 📆 Pick dates: `start` · `dm:<YYYY-MM>` · `dd:<ISO>` · `back` · `noop`) `mdo:` `sfs:` (SFS-1 🏬 Store Sales: `w:<i>` place · `d:<i>` day · `pg:<n>` · `back` · `close` · `menu` — the flow-owned menu exit)
 
 Telegram caps `callback_data` at 64 bytes — keep payloads short (indexes into
 session arrays, `cbSafe()` from `src/utils/telegramUI.js`).
