@@ -105,6 +105,9 @@ const DEFAULTS = {
   // admin is told as well (the holder's own card re-sends hourly regardless,
   // on the APPROVAL_REMINDER_HOURS cadence). 0 = the holder only.
   TRANSFER_STALE_DAYS: 3,
+  // TRF-22 — days after a receipt during which ↩️ Not all arrived may be
+  // raised on it (from the last delivery). 0 = no limit.
+  TRANSFER_UNRECEIVE_DAYS: 14,
   // PAY-2 §2 H — hours after an approval (or the last finance card /
   // reminder) before an approved-but-unpaid payment re-sends the finance
   // card to the finance seat. 0 disables the nudge.

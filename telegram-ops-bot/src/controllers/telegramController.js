@@ -3954,9 +3954,10 @@ async function handleMessage(bot, msg) {
   {
     const trfSession = sessionStore.get(userId);
     // TRF-16 adds 'dispatch_date' — a typed departure date navigates the
-    // calendar to that month (the tap still commits).
+    // calendar to that month (the tap still commits). TRF-22 adds
+    // 'unrcv_reason' — the typed reason of a receipt reversal.
     if (trfSession && trfSession.type === 'transfer_flow'
-      && ['dispatch_search', 'dispatch_date'].includes(trfSession.step)) {
+      && ['dispatch_search', 'dispatch_date', 'unrcv_reason'].includes(trfSession.step)) {
       const handled = await require('../flows/transferFlow').handleText(bot, msg);
       if (handled) return;
     }

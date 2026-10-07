@@ -77,6 +77,9 @@ const ALWAYS_APPROVAL_ACTIONS = [
   'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell',
   // RET-4 — the multi-than return card (one request, several thans).
   'return_than', 'return_package', 'return_thans', 'revert_sale_bundle',
+  // TRF-22 (owner, 07-Oct-2026) — a sealed receipt is reversed only behind
+  // approval: bales confirmed received that never arrived go back on the road.
+  'transfer_unreceive',
   'record_payment', 'update_price', 'supply_request',
   // P2 — dual-admin gate for warehouse structural changes.
   'add_warehouse', 'rename_warehouse',
@@ -224,6 +227,8 @@ const DUAL_ADMIN_ACTIONS = [
   'task_reminder_enable',
   // EDB-1 — the owner's ruling: "dual admin approval for the above correction".
   'edit_bale',
+  // TRF-22 — the owner chose the longer path: two admins reverse a receipt.
+  'transfer_unreceive',
 ];
 
 /**

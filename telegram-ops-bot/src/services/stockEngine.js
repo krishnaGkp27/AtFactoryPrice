@@ -31,8 +31,7 @@ const inventoryRepository = require('../repositories/inventoryRepository');
 
 const EVENTS = new Set([
   'sale', 'return', 'correction', 'dispatch', 'receive', 'reject',
-  'repair', 'intake', 'rename',
-]);
+  'repair', 'intake', 'rename', 'unreceive']);
 
 /**
  * @typedef {{event:string, approvalId?:string, adminId?:string, system?:string}} Authority
@@ -189,7 +188,8 @@ async function restartSaleRows(rows, opts, auth) {
 
 async function transition(packageNos, fromStatus, toStatus, toWarehouse, opts, auth) {
   assertAuthority('transition', auth);
-  if (!['dispatch', 'receive', 'reject', 'repair'].includes(auth.event)) {
+  // TRF-22 — 'unreceive' sends received bales back on the road (available → in_transit).
+  if (!['dispatch', 'receive', 'reject', 'repair', 'unreceive'].includes(auth.event)) {
     throw new Error(`stockEngine.transition: event must be a transfer event, got '${auth.event}'`);
   }
   const flipped = await inventoryRepository.transitionBales(packageNos, fromStatus, toStatus, toWarehouse,

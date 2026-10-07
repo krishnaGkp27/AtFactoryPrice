@@ -63,6 +63,8 @@ ask for their status instead of starting new features; help execute them if aske
 
 | **0 — OWNER STEPS** | FIN-V2 SHIPPED 07-Oct-2026 (owner: "stop this feature … customer outstanding and the value of the container"; "adding a finance with it set to payments only"). The finance seat (`FINANCE_IDS`) is payment-only: typed customer balances and ₦ container values are ADMINS ONLY now (BUSINESS_RULES 07-Oct row). **Owner: (1) put the finance person's id in Railway `FINANCE_IDS` (never an id that approves — PAY-4); (2) `node scripts/seed-finance-department.js` (dry-run) → `--commit` adds the `Finance` department with `payments` only (or add it in-bot: 👥 HR → 🏢 Manage Departments); (3) Users sheet → that person's `department` = Finance (an active row, not an admin). Their menu: 💰 Finance → 💳 Payments (+ Waiting for me to pay), plus the injected My Tasks and 💰 Payouts tiles (hiding those two needs code — say the word).** | **Owner** | `scripts/seed-finance-department.js`; `test/characterization/checkBalanceGate.test.js` |
 
+| **0 — OWNER LIVE CHECK** | TRF-22 SHIPPED 07-Oct-2026 (owner: "my manager has accepted all the bales, but some of the bales did not arrive yet"; "I would not avoid the longer path" = two admins). A received (or partly received) transfer carries `↩️ Not all arrived — put some back` for the receiver / an admin: the TRF-21 list asking the opposite question (untick → tick the bales NOT here) → typed reason → ✅ Send → **two admins** approve from 🛂 Approvals → ↩️ Returns & reversals → `transferService.reverseReceipt` flips exactly those rows `available → in_transit`, forgets them as received, remembers the reversal on the row, REOPENS the transfer (pending / in_transit) and re-arms the receiver's card (tick door, ✅ Received, ⚠️ Reject); one Transactions row, PG event `receipt_reversed`. A bale sold / moved since the receipt is refused BY NAME, nothing flipped. Guards: receiver or admin · Settings `TRANSFER_UNRECEIVE_DAYS` (14; 0 = no limit) · one pending reversal per transfer. **Owner: run spec §7 on the transfer received last week — tap the chip on its old card (or 🛂 → ✅❌ Decided), tick the missing bales, reason, two approvals; confirm the manager's card comes back with `n of m received` and the sheet shows those rows in_transit.** | **Owner** | `telegram-ops-bot/specs/TRF-22_RECEIPT_REVERSAL.md` §7; `src/services/transferService.js` (`reverseReceipt`) |
+
 Known follow-up waiting on Emin's Task-4 finding: if photo archives to Drive are failing
 (service-account quota), build the OAuth-as-user upload fix for `driveBackup`.
 Remove each row (and this section when empty) once signed off.
@@ -150,7 +152,10 @@ Major namespaces already taken:
   list; ⬅ Back returns to the list, unlike `trf:card:` from My Tasks);
   TRF-21 adds `trf:rcvp:<id>` (the "only some arrived" door, session-free)
   and the arrival picker `trf:rp:t:<i>` · `trf:rp:pg:<n>` · `trf:rp:go` ·
-  `trf:rp:nn:<id>` (session step `receive_pick`)
+  `trf:rp:nn:<id>` (session step `receive_pick`); TRF-22 adds `trf:unrcv:<id>`
+  (↩️ Not all arrived, session-free; the same `trf:rp:*` picker on step
+  `unrcv_pick`) and `trf:ur:go|reason|back|cancel` (steps `unrcv_reason` ·
+  `unrcv_confirm`); approval action `transfer_unreceive` (dual)
 - Approvals inbox `abx:*` — DEC-1 adds `abx:cat:decided` (the read-only
   record group; its rows reuse `abx:i:<idx>`)
 - Catalog: `csf:` `clf:` `crf:` `mkr:` `ctr:` `dab:` `das:` `dat:` `dap:` (incl.
@@ -263,6 +268,7 @@ to a Google Sheet; new tables go through `src/db/migrations.js` MIGRATIONS[].
 | `INVOICE_RATE_MULTIPLIER` | blank (env `INVOICE_RATE_MULTIPLIER` seeds it) | CUR-2 — the factor the CUSTOMER COPY of a sale invoice multiplies the entered rate by (`1250`: entered `3.20/yd` → `4,000.00/yd` on the PDF / web copy). Blank / 0 / 1 = none — the document prints the entered figures unconverted. Read ONCE at issue and frozen in `Invoices.rate_multiplier`; a later change never touches an issued invoice. The sheet's own figures, the ledger and Transactions are never multiplied (§17). the wizard's Step 5 (`INVOICE_MULTIPLIER_ASK`) can override it per sale |
 | `INVOICE_MULTIPLIER_ASK` | 1 | CUR-2 — 1 = the sale approval wizard asks Step 5 (customer-copy multiplier: No multiplier · Settings value · type); 0 = the step is skipped and the Settings cell alone decides |
 | `APPROVALS_DECIDED_DAYS` | 7 | DEC-1 — days of DECIDED (approved or rejected) requests the 🛂 inbox keeps in its ✅❌ Decided group; `0` = every decided row ever. Display only: the ApprovalQueue sheet keeps every row regardless, and the screen caps at 60 and says when it did |
+| `TRANSFER_UNRECEIVE_DAYS` | 14 | TRF-22 — days after a receipt (from the last delivery) during which `↩️ Not all arrived` may be raised on it; `0` = no limit. Outside it the chip is not drawn and an admin corrects the sheet by hand |
 | `TRANSFER_STALE_DAYS` | 3 | TRF-20 — days an OPEN transfer may wait on its holder (dispatcher / receiver) before every admin is told too (`⚠️ 18Sep·02 · 🔴 LAG▸KAN · 10B has waited 5d on Abdul to dispatch` + Open button). The holder's own card re-sends every `APPROVAL_REMINDER_HOURS` regardless; 0 = holder only |
 | `PAYMENT_FINANCE_REMINDER_HOURS` | 4 | PAY-2 — hours after approval (or the last finance card / reminder) before an approved-but-unpaid payment re-sends its finance card to the finance seat; 0 = off |
 
